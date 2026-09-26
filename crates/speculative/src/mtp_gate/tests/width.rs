@@ -28,6 +28,30 @@ fn decode_steps_charge_the_batch_width() {
     );
 }
 
+/// 2026-09-26: The serial refresh comes after the same number of MTP steps at
+/// width 16 as at width 1: the interval is per sequence of the width bucket.
+/// Unscaled, 16 sequences at 2 tokens each would reach 1024 tokens in 32 steps.
+#[test]
+fn serial_refresh_interval_is_per_sequence_of_the_width() {
+    let steps_until_probe = |width: usize| {
+        let mut g = MtpGate::new(1);
+        for step in 0..10_000 {
+            if g.next_step() == GateStep::MeasureDecode {
+                return step;
+            }
+            g.record_verify_step(ms(50), 2 * width, width);
+        }
+        panic!("gate never opened a serial probe at width {width}");
+    };
+    let narrow = steps_until_probe(1);
+    let wide = steps_until_probe(16);
+    assert!(narrow >= 400, "width 1 refresh after {narrow} steps");
+    assert_eq!(
+        wide, narrow,
+        "width 16 must refresh after as many steps as width 1"
+    );
+}
+
 /// 2026-09-26: Drain-tail graph borrowing (metrale-model-engine
 /// `model/trait_impl/graph_borrow.rs`) can replay a wider captured CUDA graph
 /// for a shrinking batch, so a step's wall includes padding lanes. The gate

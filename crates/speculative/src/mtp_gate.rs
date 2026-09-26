@@ -68,7 +68,9 @@ fn reprobe_tokens() -> usize {
 }
 
 /// 2026-09-25: Tokens between serial-estimate refreshes in Mtp mode:
-/// `METRALE_MTP_GATE_REFRESH`, default 1024.
+/// `METRALE_MTP_GATE_REFRESH`, default 1024. 2026-09-26: per sequence of the
+/// batch-width bucket, so the refresh comes after the same number of steps at
+/// every width (`MtpGate::event_interval`).
 fn serial_refresh_tokens() -> usize {
     env_usize("METRALE_MTP_GATE_REFRESH", 1024)
 }
@@ -259,6 +261,9 @@ impl MtpGate {
             self.win_wall = 0.0;
             self.win_steps = 0;
             self.losing_windows = 0;
+            // 2026-09-26: The interval of the new bucket, which the Mtp-mode
+            // refresh scales with.
+            self.width_regime = regime;
             self.tokens_since_event = self.tokens_since_event.max(self.event_interval());
         }
         self.width_regime = regime;
@@ -271,9 +276,16 @@ impl MtpGate {
         }
     }
 
+    /// 2026-09-25: Tokens recorded outside probes before the next probe.
+    /// 2026-09-26: In Mtp mode the refresh interval is per sequence: it scales
+    /// with the batch-width bucket, because a step at width W records W times
+    /// the tokens. Unscaled, the one-window serial refresh came every
+    /// 1024 / (W * tokens per step) steps, a third of all steps at W = 16 (the
+    /// `serial` share of the MTP Done lines). Serial mode's MTP re-probe keeps
+    /// its token interval, so a gate that chose serial re-tests MTP as often.
     fn event_interval(&self) -> usize {
         match self.mode {
-            Mode::Mtp => self.refresh,
+            Mode::Mtp => self.refresh * self.width_regime.max(1),
             Mode::Serial => self.reprobe,
         }
     }
