@@ -42,6 +42,9 @@ enum Expect {
     Batched(u64),
     /// 2026-09-25: The per-sequence scalar `w8a16_gemv` loop (one launch per row).
     Scalar,
+    /// 2026-09-26: One strided launch per chunk of at most 16 rows, on the given
+    /// kernel.
+    Chunked(u64),
 }
 
 struct Case {
@@ -114,15 +117,16 @@ fn native_fp8_qkv_batches_five_to_sixteen_rows_on_batch16() {
     }
 }
 
-/// 2026-09-25: Negative control: without `w8a16_gemm_pipelined_m32`, widths
-/// above 16 exceed the GEMVs' MAX_M and stay on the scalar loop. The positive
-/// cases are `m32::native_fp8_qkv_takes_the_m32_tile_above_sixteen_rows`.
+/// 2026-09-26: Without `w8a16_gemm_pipelined_m32`, widths above 16 exceed the
+/// GEMVs' MAX_M and run `batch16` once per chunk of at most 16 rows (not the
+/// per-row scalar loop). With the tile they take it:
+/// `m32::native_fp8_qkv_takes_the_m32_tile_above_sixteen_rows`.
 #[test]
-fn native_fp8_qkv_declines_rows_above_the_kernel_max_m_without_the_m32_tile() {
-    for rows in [17, 24, 32] {
+fn native_fp8_qkv_chunks_rows_above_the_kernel_max_m_without_the_m32_tile() {
+    for rows in [17, 24, 32, 33] {
         let mut case = Case::new(rows);
         case.m32_handles = false;
-        check_dispatch(&case, Expect::Scalar);
+        check_dispatch(&case, Expect::Chunked(BATCH16_K));
     }
 }
 
@@ -409,6 +413,25 @@ fn run_phase(case: &Case, expect: Option<Expect>) -> usize {
                 assert_eq!(l.args[6], u32_arg(width as u32));
                 assert_eq!(l.args[7], u32_arg(width as u32), "A row stride = hidden");
                 assert_eq!(l.args[8], u32_arg(c_stride), "C row stride = per_seq_qkv");
+            }
+            Expect::Chunked(kernel) => {
+                assert_eq!(
+                    launches.len(),
+                    case.rows.div_ceil(16),
+                    "one launch per chunk"
+                );
+                for (i, l) in launches.iter().enumerate() {
+                    let row0 = i * 16;
+                    assert_eq!(l.func, kernel);
+                    assert_eq!(
+                        l.args[0],
+                        MockArg::Buffer(c.normed.offset(row0 * width * bf16))
+                    );
+                    let out = c.qkv_buf.offset(row0 * c.per_seq_qkv + out_off);
+                    assert_eq!(l.args[3], MockArg::Buffer(out));
+                    assert_eq!(l.args[4], u32_arg((case.rows - row0).min(16) as u32));
+                    assert_eq!(l.args[8], u32_arg(c_stride), "C row stride = per_seq_qkv");
+                }
             }
             Expect::Scalar => {
                 assert_eq!(launches.len(), case.rows, "one scalar GEMV per row");

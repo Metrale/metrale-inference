@@ -82,12 +82,12 @@ impl Qwen3AttentionLayer {
     /// splits it at the same `FP8_QKV_GEMV_MAX_ROWS`.
     ///
     /// * `2..=FP8_QKV_GEMV_MAX_ROWS`: the strided GEMV arms.
-    /// * wider: `w8a16_gemm_pipelined_m32_strided`, whose `grid.y` tiles M, so the
-    ///   band has no upper edge of its own. Only when that handle is non-zero
-    ///   (it is zero unless `ModelLevers::fp8_attn_m32` is on); otherwise those
-    ///   widths keep the per-sequence loop.
+    /// * wider: `w8a16_gemm_pipelined_m32_strided`, whose `grid.y` tiles M, when
+    ///   that handle is non-zero (it is zero unless `ModelLevers::fp8_attn_m32`
+    ///   is on); otherwise (2026-09-26) `batch16` over chunks of at most
+    ///   `FP8_QKV_GEMV_MAX_ROWS` rows, which keeps the scalar kernel's bits.
     pub(super) fn fp8_qkv_batch_band_admits(&self, n: usize) -> bool {
-        n >= 2 && (n <= FP8_QKV_GEMV_MAX_ROWS || self.w8a16_gemm_pipelined_m32_k.0 != 0)
+        n >= 2
     }
 
     /// 2026-09-25: q, k and v, when all three are native FP8 with 2D block scales
@@ -227,21 +227,41 @@ impl Qwen3AttentionLayer {
                 self.w8a16_gemv_batch16_strided_k,
             )
         };
-        let gemv = |w: &Fp8Weight, out: DevicePtr, n_out: u32| {
-            launch(
-                fwd.gpu,
-                kernel,
-                normed,
-                w.weight,
-                w.row_scale,
-                out,
-                n as u32,
-                n_out,
-                h as u32,
-                a_stride,
-                c_stride,
-                stream,
-            )
+        // 2026-09-26: Above FP8_QKV_GEMV_MAX_ROWS without the M32 tile, `batch16`
+        // runs once per chunk of at most that many rows: each weight is read
+        // ceil(n / 16) times instead of n times by the per-sequence loop, and every
+        // row keeps the scalar kernel's bits.
+        let (launch, kernel, chunk) =
+            if n > FP8_QKV_GEMV_MAX_ROWS && self.w8a16_gemm_pipelined_m32_k.0 == 0 {
+                (
+                    ops::w8a16_gemv_batch16_strided as StridedBatchGemv,
+                    self.w8a16_gemv_batch16_strided_k,
+                    FP8_QKV_GEMV_MAX_ROWS,
+                )
+            } else {
+                (launch, kernel, n)
+            };
+        let gemv = |w: &Fp8Weight, out: DevicePtr, n_out: u32| -> Result<()> {
+            let mut done = 0usize;
+            while done < n {
+                let rows = (n - done).min(chunk);
+                launch(
+                    fwd.gpu,
+                    kernel,
+                    normed.offset(done * h * bf16),
+                    w.weight,
+                    w.row_scale,
+                    out.offset(done * c_stride as usize * bf16),
+                    rows as u32,
+                    n_out,
+                    h as u32,
+                    a_stride,
+                    c_stride,
+                    stream,
+                )?;
+                done += rows;
+            }
+            Ok(())
         };
 
         // 2026-09-25: `q_proj_dim` is `2 * q_dim` when gated (`[Q|gate]`) and
