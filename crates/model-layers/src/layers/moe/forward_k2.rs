@@ -105,17 +105,7 @@ impl MoeLayer {
                 stream,
             )?;
         } else {
-            ops::dense_gemm(
-                ctx.gpu,
-                self.dense_gemm,
-                router_in,
-                &self.weights.gate,
-                gate_logits,
-                2,
-                num_experts,
-                h,
-                stream,
-            )?;
+            self.router_gemm_bf16(router_in, gate_logits, 2, num_experts, h, ctx, stream)?;
         }
 
         // 2026-09-25: scratch holds indices [2, top_k] u32, then weights [2, top_k] f32.

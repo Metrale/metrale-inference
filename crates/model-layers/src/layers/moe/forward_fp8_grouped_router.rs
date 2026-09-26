@@ -13,8 +13,9 @@
 //! - `PerRow`: `MoeLayer::forward` once per row. `dense_gemv_bf16_batchm`
 //!   (row-for-row `dense_gemv_bf16`, at most 16 rows a launch) and
 //!   `moe_topk_softmax_rows` (the `moe_topk_softmax` body per row).
-//! - `PerToken`: `MoeLayer::forward_batched`. The same `dense_gemm_bf16` over
-//!   all rows, then `moe_topk_softmax_rows`.
+//! - `PerToken`: `MoeLayer::forward_batched`. The router GEMM of
+//!   `batched_gate_logits` (`router_gemm_bf16`, the bits of `dense_gemm_bf16`)
+//!   over all rows, then `moe_topk_softmax_rows`.
 //!
 //! Owner: model-layers (MoE).
 //! Invariants: `grouped_route` launches nothing unless
@@ -108,17 +109,7 @@ impl MoeLayer {
                 }
             }
             GroupedRouting::PerToken => {
-                ops::dense_gemm(
-                    ctx.gpu,
-                    self.dense_gemm,
-                    router_in,
-                    &self.weights.gate,
-                    gate_logits,
-                    n,
-                    num_experts,
-                    h,
-                    stream,
-                )?;
+                self.router_gemm_bf16(router_in, gate_logits, n, num_experts, h, ctx, stream)?;
             }
             GroupedRouting::Batched => {
                 return self.grouped_route_batched(
@@ -174,17 +165,7 @@ impl MoeLayer {
                 stream,
             )?;
         } else {
-            ops::dense_gemm(
-                ctx.gpu,
-                self.dense_gemm,
-                router_in,
-                &self.weights.gate,
-                gate_logits,
-                n,
-                num_experts,
-                h,
-                stream,
-            )?;
+            self.router_gemm_bf16(router_in, gate_logits, n, num_experts, h, ctx, stream)?;
         }
         if let Some(bias) = self.correction_bias_dev {
             ops::moe_topk_sigmoid_batched(

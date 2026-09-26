@@ -9,6 +9,10 @@
 //!   `moe_topk_softmax_rows`, against `MoeLayer::forward_batched`'s router, the same GEMM
 //!   then `moe_topk_softmax` once per row.
 //!
+//! 2026-09-26: Also `moe_router_gemm_bf16` (`router_gemm_bf16`, used by every
+//! BF16 decode router) against `dense_gemm_bf16` on the same operands, byte for
+//! byte at M = 1..64, with both legs timed.
+//!
 //! The expert and blend half of the grouped decode is checked against the per-row
 //! kernels by `fp8_moe_grouped_decode_microtest`; with this test, the whole grouped MoE
 //! output is shown equal to the per-row path's bytes.
@@ -158,6 +162,37 @@ fn same(gpu: &dyn GpuBackend, b: &Bufs, m: usize) -> Result<(bool, bool)> {
     Ok((logits, routing))
 }
 
+/// 2026-09-26: `moe_router_gemm_bf16` against `dense_gemm_bf16` at E = 256: the
+/// number of M values whose output bytes differ, with the mean time of each leg.
+fn router_gemm_parity(gpu: &dyn GpuBackend, gate: &DenseWeight, input: DevicePtr) -> Result<usize> {
+    let gemm = gpu.kernel("gemm", "dense_gemm_bf16")?;
+    let fast = gpu.kernel("moe_router_gemm", "moe_router_gemm_bf16")?;
+    let (e, h) = (256u32, H as u32);
+    let out_ref = gpu.alloc(MAX_M * 256 * 2)?;
+    let out_new = gpu.alloc(MAX_M * 256 * 2)?;
+    let mut failures = 0usize;
+    for m in [1u32, 2, 3, 4, 8, 16, 17, 32, 33, 64] {
+        let time = |f: &dyn Fn() -> Result<()>| -> Result<f64> {
+            gpu.synchronize(0)?;
+            let t = std::time::Instant::now();
+            for _ in 0..50 {
+                f()?;
+            }
+            gpu.synchronize(0)?;
+            Ok(t.elapsed().as_secs_f64() * 1e6 / 50.0)
+        };
+        let us_ref = time(&|| ops::dense_gemm(gpu, gemm, input, gate, out_ref, m, e, h, 0))?;
+        let us_new = time(&|| ops::moe_router_gemm(gpu, fast, input, gate, out_new, m, e, h, 0))?;
+        let n = m as usize * 256 * 2;
+        let same = read(gpu, out_ref, n)? == read(gpu, out_new, n)?;
+        println!(
+            "router GEMM M={m:2}: dense_gemm {us_ref:7.1}us, moe_router_gemm {us_new:7.1}us, bytes equal {same}"
+        );
+        failures += usize::from(!same);
+    }
+    Ok(failures)
+}
+
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let k = Kernels {
@@ -178,6 +213,9 @@ fn main() -> Result<()> {
         let gate = DenseWeight {
             weight: upload(&gpu, &tied_gate(&mut rng, e_count))?,
         };
+        if e_count == 256 {
+            failures += router_gemm_parity(&gpu, &gate, input)?;
+        }
         let b = Bufs {
             e: e_count,
             logits_ref: gpu.alloc(MAX_M * e_count * 2)?,

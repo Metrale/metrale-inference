@@ -134,6 +134,50 @@ pub fn dense_gemm(
         .launch(stream)
 }
 
+/// 2026-09-26: Output columns per block of `moe_router_gemm_bf16`
+/// (`RC_COLS` in `kernels/gb10/common/moe_router_gemm.cu`).
+pub const MOE_ROUTER_GEMM_COLS: u32 = 4;
+/// 2026-09-26: Activation rows per block of `moe_router_gemm_bf16` (`RC_ROWS`).
+pub const MOE_ROUTER_GEMM_ROWS: u32 = 16;
+
+/// 2026-09-26: The MoE router gate GEMM, `C = A @ B^T` with the operands of
+/// [`dense_gemm`] and its bits (kernel `moe_router_gemm_bf16`): each output
+/// keeps one FP32 accumulator over k = 0..K-1 in order, but a block stages a
+/// 512-wide K slice of 4 weight rows and up to 16 activation rows in shared
+/// memory at once instead of waiting on every 16-wide tile. `k` must be a
+/// multiple of 16 (below that [`dense_gemm`] adds zero padding terms).
+#[allow(clippy::too_many_arguments)]
+pub fn moe_router_gemm(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: &DenseWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        k.is_multiple_of(16),
+        "moe_router_gemm: k={k} is not a multiple of 16"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([
+            div_ceil(n, MOE_ROUTER_GEMM_COLS),
+            div_ceil(m, MOE_ROUTER_GEMM_ROWS),
+            1,
+        ])
+        .block([256, 1, 1])
+        .arg_ptr(input)
+        .arg_ptr(weight.weight)
+        .arg_ptr(output)
+        .arg_u32(m)
+        .arg_u32(n)
+        .arg_u32(k)
+        .launch(stream)
+}
+
 /// 2026-09-25: Register-blocked BF16 GEMM (kernel `dense_gemm_bf16_router`)
 /// that keeps the scalar `dense_gemm_bf16`'s per-output FP32 accumulation
 /// order, strict k = 0..K-1, and with it the scalar kernel's results under the

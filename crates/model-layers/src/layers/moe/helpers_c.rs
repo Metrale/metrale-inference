@@ -279,6 +279,49 @@ impl MoeLayer {
         )
     }
 
+    /// 2026-09-26: The BF16 router gate GEMM `[m, k] x [n, k]^T`, with the bits of
+    /// `dense_gemm_bf16`: `moe_router_gemm_bf16` when this target ships it and `k`
+    /// is a multiple of 16, else `dense_gemm_bf16` itself. The decode routers
+    /// (`forward_k2`, `forward_k3`, `batched_gate_logits`, the grouped decode) run
+    /// it at 2 to 64 rows, where `dense_gemm_bf16` waits on a global load per
+    /// 16-wide K tile across 16 blocks.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn router_gemm_bf16(
+        &self,
+        router_in: DevicePtr,
+        gate_logits: DevicePtr,
+        m: u32,
+        n: u32,
+        k: u32,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        if self.moe_router_gemm_k.0 != 0 && k.is_multiple_of(16) {
+            return ops::moe_router_gemm(
+                ctx.gpu,
+                self.moe_router_gemm_k,
+                router_in,
+                &self.weights.gate,
+                gate_logits,
+                m,
+                n,
+                k,
+                stream,
+            );
+        }
+        ops::dense_gemm(
+            ctx.gpu,
+            self.dense_gemm,
+            router_in,
+            &self.weights.gate,
+            gate_logits,
+            m,
+            n,
+            k,
+            stream,
+        )
+    }
+
     /// 2026-09-25: The router input. With `router_pre_norm` (the Gemma-4 weight map
     /// stores `scale * hidden_size^-0.5` in it), rms-norm `input` with that
     /// weight into `ctx.buffers.qkv_output()` and return it; without, return
