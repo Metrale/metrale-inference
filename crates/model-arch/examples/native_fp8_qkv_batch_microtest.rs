@@ -37,7 +37,7 @@ const K: usize = 5120;
 const Q_PROJ_DIM: usize = 12288;
 const KV_DIM: usize = 1024;
 const PER_SEQ_QKV: usize = Q_PROJ_DIM + 2 * KV_DIM;
-const MAX_M: usize = 32;
+const MAX_M: usize = 64;
 const GUARD: usize = 64;
 const SENTINEL: u8 = 0x5a;
 
@@ -143,18 +143,21 @@ fn run_batched(
     gpu: &dyn GpuBackend,
     batch4: KernelHandle,
     batch16: KernelHandle,
-    m32: KernelHandle,
+    tiles: (KernelHandle, KernelHandle),
     input: DevicePtr,
     out: DevicePtr,
     p: &Proj,
     m: usize,
 ) -> Result<()> {
+    let (m32, m64) = tiles;
     let (launch, kernel): (StridedBatchGemv, KernelHandle) = if m <= 4 {
         (ops::w8a16_gemv_batch4_strided, batch4)
     } else if m <= 16 {
         (ops::w8a16_gemv_batch16_strided, batch16)
-    } else {
+    } else if m <= 32 {
         (ops::w8a16_gemm_pipelined_m32_strided, m32)
+    } else {
+        (ops::w8a16_gemm_pipelined_m64_strided, m64)
     };
     launch(
         gpu,
@@ -202,6 +205,7 @@ fn main() -> Result<()> {
     let batch4 = gpu.kernel("w8a16_gemv_batch4", "w8a16_gemv_batch4_strided")?;
     let batch16 = gpu.kernel("w8a16_gemv_batch4", "w8a16_gemv_batch16_strided")?;
     let m32 = gpu.kernel("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m32")?;
+    let m64 = gpu.kernel("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m64")?;
 
     let mut state = 0x0132_8a16_2026_u64;
     let mut random = move || {
@@ -275,7 +279,7 @@ fn main() -> Result<()> {
     let mut first_m32_oracle = true;
     let mut failures = 0usize;
 
-    for m in [2_usize, 3, 4, 5, 8, 16, 17, 24, 32] {
+    for m in [2_usize, 3, 4, 5, 8, 16, 17, 24, 32, 33, 48, 64] {
         // 2026-09-25: Pass 1: each projection alone. The other two
         // projections' slots in the row are a gap that must stay sentinel, so
         // this tests the C row stride directly.
@@ -283,7 +287,7 @@ fn main() -> Result<()> {
             gpu.copy_h2d(&sentinel, scalar_base)?;
             gpu.copy_h2d(&sentinel, batch_base)?;
             run_scalar(&gpu, scalar, input, scalar_out, p, m)?;
-            run_batched(&gpu, batch4, batch16, m32, input, batch_out, p, m)?;
+            run_batched(&gpu, batch4, batch16, (m32, m64), input, batch_out, p, m)?;
             gpu.synchronize(0)?;
             let mut baseline = vec![0_u8; sentinel.len()];
             let mut observed = vec![0_u8; sentinel.len()];
@@ -334,7 +338,7 @@ fn main() -> Result<()> {
         gpu.copy_h2d(&sentinel, batch_base)?;
         for p in &projections {
             run_scalar(&gpu, scalar, input, scalar_out, p, m)?;
-            run_batched(&gpu, batch4, batch16, m32, input, batch_out, p, m)?;
+            run_batched(&gpu, batch4, batch16, (m32, m64), input, batch_out, p, m)?;
         }
         gpu.synchronize(0)?;
         let mut baseline = vec![0_u8; sentinel.len()];
@@ -361,8 +365,8 @@ fn main() -> Result<()> {
     ensure!(failures == 0, "{failures} case(s) failed");
     println!(
         "ALL PASS: Qwen3.8-27B q/k/v shapes — strided batch4 M2/M3/M4 and batch16 \
-         M5/M8/M16 byte-exact vs scalar; M32 tile M17/M24/M32 within the tensor-core \
-         budget vs scalar; gaps and guards intact on every leg"
+         M5/M8/M16 byte-exact vs scalar; M32 tile M17/M24/M32 and M64 tile M33/M48/M64 \
+         within the tensor-core budget vs scalar; gaps and guards intact on every leg"
     );
     Ok(())
 }
@@ -374,8 +378,10 @@ fn kernel_name(m: usize) -> &'static str {
         "batch4"
     } else if m <= 16 {
         "batch16"
-    } else {
+    } else if m <= 32 {
         "m32_tile"
+    } else {
+        "m64_tile"
     }
 }
 

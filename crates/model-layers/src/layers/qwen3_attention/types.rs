@@ -225,6 +225,9 @@ pub struct Qwen3AttentionLayer {
     /// Zero unless `ModelLevers::fp8_attn_m32` is on and the target has the
     /// module; zero keeps those rows on the per-row loop.
     pub(super) w8a16_gemm_pipelined_m32_k: KernelHandle,
+    /// 2026-09-26: `w8a16_gemm_pipelined_m64`, for 33..=64 rows; zero under the
+    /// same conditions as the 32-row handle.
+    pub(super) w8a16_gemm_pipelined_m64_k: KernelHandle,
     pub(super) w4a16_gemv_dual_k: KernelHandle,
     pub(super) rope_k: KernelHandle,
     /// 2026-09-25: `rope_forward_strided`; zero when absent.

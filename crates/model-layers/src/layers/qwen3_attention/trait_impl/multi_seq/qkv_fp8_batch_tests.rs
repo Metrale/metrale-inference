@@ -33,6 +33,8 @@ const M16TC_STRIDED_K: u64 = 0xF08E;
 /// 2026-09-25: The 32-row M-tile arm (`w8a16_gemm_pipelined_m32`) for 17+ rows;
 /// its cases are in `qkv_fp8_batch_m32_tests.rs`.
 const M32_STRIDED_K: u64 = 0xF032;
+/// 2026-09-26: The 64-row twin (`w8a16_gemm_pipelined_m64`) for 33+ rows.
+const M64_STRIDED_K: u64 = 0xF064;
 const WIDTH: usize = 128;
 
 /// 2026-09-25: What the tier under test should emit for one projection.
@@ -66,6 +68,8 @@ struct Case {
     /// 2026-09-25: Whether the `w8a16_gemm_pipelined_m32` handle is linked; the
     /// band above 16 rows exists only when it is.
     m32_handles: bool,
+    /// 2026-09-26: Whether the `w8a16_gemm_pipelined_m64` handle is linked.
+    m64_handles: bool,
 }
 
 impl Case {
@@ -81,6 +85,7 @@ impl Case {
             m16_tc: false,
             m16_tc_handles: true,
             m32_handles: true,
+            m64_handles: false,
         }
     }
 
@@ -294,6 +299,8 @@ fn run_phase(case: &Case, expect: Option<Expect>) -> usize {
     });
     layer.w8a16_gemm_pipelined_m32_k =
         KernelHandle(if case.m32_handles { M32_STRIDED_K } else { 0 });
+    layer.w8a16_gemm_pipelined_m64_k =
+        KernelHandle(if case.m64_handles { M64_STRIDED_K } else { 0 });
     layer.deinterleave_qg_k = KernelHandle(0xF0D1);
 
     let q_dim = (config.num_attention_heads * config.head_dim) as u32;
@@ -459,6 +466,24 @@ fn u32_arg(v: u32) -> MockArg {
 /// 2026-09-25: The `m16_tc` arm's cases, a child module sharing this harness.
 #[path = "qkv_fp8_batch_m16_tc_tests.rs"]
 mod m16_tc;
+
+/// 2026-09-26: With the 64-row twin linked, 33..=64 rows take it (one strided
+/// launch per projection); 17..=32 stay on the 32-row tile.
+#[test]
+fn native_fp8_qkv_takes_the_m64_tile_above_thirty_two_rows() {
+    for rows in [33, 48, 64] {
+        let case = Case {
+            m64_handles: true,
+            ..Case::new(rows)
+        };
+        check_dispatch(&case, Expect::Batched(M64_STRIDED_K));
+    }
+    let case = Case {
+        m64_handles: true,
+        ..Case::new(32)
+    };
+    check_dispatch(&case, Expect::Batched(M32_STRIDED_K));
+}
 
 /// 2026-09-25: The 17+ row arm's cases, a child module sharing this harness.
 #[path = "qkv_fp8_batch_m32_tests.rs"]

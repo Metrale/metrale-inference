@@ -220,6 +220,14 @@ impl Qwen3AttentionLayer {
                     self.w8a16_gemv_batch4_k,
                     1,
                 )
+            } else if n > 32 && self.w8a16_gemm_pipelined_m64_k.0 != 0 {
+                // 2026-09-26: 33 or more rows with the 64-row twin linked (same
+                // lever as the 32-row tile): one weight pass per 64 rows.
+                (
+                    ops::w8a16_gemm_pipelined_m64 as BatchGemv,
+                    self.w8a16_gemm_pipelined_m64_k,
+                    n,
+                )
             } else if n > 16 && self.w8a16_gemm_pipelined_m32_k.0 != 0 {
                 // 2026-09-25: 17 or more rows: one launch of the 32-row M-tile
                 // kernel over all n rows (`grid.y = ceil(n / 32)`, one weight

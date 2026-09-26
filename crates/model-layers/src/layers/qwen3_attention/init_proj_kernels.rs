@@ -63,6 +63,7 @@ pub(super) struct ProjKernels {
     pub(super) w8a16_gemm_k: KernelHandle,
     pub(super) w8a16_gemm_pipelined_k: KernelHandle,
     pub(super) w8a16_gemm_pipelined_m32_k: KernelHandle,
+    pub(super) w8a16_gemm_pipelined_m64_k: KernelHandle,
     pub(super) w4a16_gemv_dual_k: KernelHandle,
     pub(super) rope_k: KernelHandle,
     pub(super) rope_strided_k: KernelHandle,
@@ -236,6 +237,16 @@ impl ProjKernels {
                     gpu,
                     "w8a16_gemm_pipelined_m32",
                     "w8a16_gemm_pipelined_m32",
+                )
+            } else {
+                KernelHandle(0)
+            },
+            // 2026-09-26: The 64-row twin, for 33..=64 rows, under the same lever.
+            w8a16_gemm_pipelined_m64_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32 {
+                super::super::try_target_kernel(
+                    gpu,
+                    "w8a16_gemm_pipelined_m32",
+                    "w8a16_gemm_pipelined_m64",
                 )
             } else {
                 KernelHandle(0)

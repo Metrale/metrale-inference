@@ -203,6 +203,13 @@ impl Qwen3AttentionLayer {
                 ops::w8a16_gemv_batch4_strided,
                 self.w8a16_gemv_batch4_strided_k,
             )
+        } else if n > 2 * FP8_QKV_GEMV_MAX_ROWS && self.w8a16_gemm_pipelined_m64_k.0 != 0 {
+            // 2026-09-26: 33 or more rows with the 64-row twin linked (same lever as
+            // the 32-row tile): one weight pass per 64 rows.
+            (
+                ops::w8a16_gemm_pipelined_m64_strided,
+                self.w8a16_gemm_pipelined_m64_k,
+            )
         } else if n > FP8_QKV_GEMV_MAX_ROWS {
             // 2026-09-25: Above 16 rows, `w8a16_gemm_pipelined_m32_strided`: one
             // launch per projection with `grid.y = ceil(n/32)`. Not bit-identical

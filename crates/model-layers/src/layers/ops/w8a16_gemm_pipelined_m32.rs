@@ -166,11 +166,12 @@ pub fn w8a16_pipelined_prefers_m64(m: u32, k: u32, m64_kernel: KernelHandle) -> 
         && m64_kernel.0 != 0
 }
 
-/// 2026-09-26: Contiguous launch of `w8a16_gemm_pipelined_m64`: the arguments
-/// and checks of [`w8a16_gemm_pipelined_m32_strided`] with pitches `k` and `n`,
-/// grid (ceil(N/32), ceil(M/64), 1), block 256.
+/// 2026-09-26: Strided launch of `w8a16_gemm_pipelined_m64`: the arguments
+/// and checks of [`w8a16_gemm_pipelined_m32_strided`], grid
+/// (ceil(N/32), ceil(M/64), 1), block 256. The multi-seq attention Q/K/V and
+/// O arms take it above 32 rows under `ModelLevers::fp8_attn_m32`.
 #[allow(clippy::too_many_arguments)]
-pub fn w8a16_gemm_pipelined_m64(
+pub fn w8a16_gemm_pipelined_m64_strided(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
     input: DevicePtr,
@@ -180,12 +181,19 @@ pub fn w8a16_gemm_pipelined_m64(
     m: u32,
     n: u32,
     k: u32,
+    a_row_stride: u32,
+    c_row_stride: u32,
     stream: u64,
 ) -> Result<()> {
     ensure!(
         m >= 1 && k >= W8A16_M32_K_BLOCK && k.is_multiple_of(W8A16_M32_K_BLOCK),
         "w8a16_gemm_pipelined_m64: m={m} must be positive and K={k} a positive multiple \
          of {W8A16_M32_K_BLOCK}"
+    );
+    ensure!(
+        a_row_stride >= k && c_row_stride >= n && a_row_stride.is_multiple_of(8),
+        "w8a16_gemm_pipelined_m64: row pitches (a={a_row_stride}, c={c_row_stride}) must \
+         cover k={k} / n={n}, and a must keep rows 16B-aligned"
     );
     KernelLaunch::new(gpu, kernel)
         .grid([
@@ -201,9 +209,40 @@ pub fn w8a16_gemm_pipelined_m64(
         .arg_u32(m)
         .arg_u32(n)
         .arg_u32(k)
-        .arg_u32(k)
-        .arg_u32(n)
+        .arg_u32(a_row_stride)
+        .arg_u32(c_row_stride)
         .launch(stream)
+}
+
+/// 2026-09-26: Contiguous launch of `w8a16_gemm_pipelined_m64` (pitches `k`
+/// and `n`). Same signature as [`super::w8a16_gemm_pipelined`].
+#[allow(clippy::too_many_arguments)]
+pub fn w8a16_gemm_pipelined_m64(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: DevicePtr,
+    block_scale: DevicePtr,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    w8a16_gemm_pipelined_m64_strided(
+        gpu,
+        kernel,
+        input,
+        weight,
+        block_scale,
+        output,
+        m,
+        n,
+        k,
+        k,
+        n,
+        stream,
+    )
 }
 
 /// 2026-09-25: Contiguous block-scaled W8A16 GEMM, tile chosen by

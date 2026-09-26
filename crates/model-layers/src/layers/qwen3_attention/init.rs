@@ -219,6 +219,7 @@ impl Qwen3AttentionLayer {
             w8a16_gemm_k: proj.w8a16_gemm_k,
             w8a16_gemm_pipelined_k: proj.w8a16_gemm_pipelined_k,
             w8a16_gemm_pipelined_m32_k: proj.w8a16_gemm_pipelined_m32_k,
+            w8a16_gemm_pipelined_m64_k: proj.w8a16_gemm_pipelined_m64_k,
             w4a16_gemv_dual_k: proj.w4a16_gemv_dual_k,
             rope_k: proj.rope_k,
             rope_strided_k: proj.rope_strided_k,
