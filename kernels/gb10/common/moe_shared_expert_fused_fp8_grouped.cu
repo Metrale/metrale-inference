@@ -7,39 +7,25 @@
 // Invariants:
 // - Rows are in sorted order (moe_sort_by_expert): expert e owns positions
 //   [expert_offsets[e], expert_offsets[e + 1]), and position pos reads input row
-//   sorted_token_ids[pos]. gate_out, up_out and the routed C are indexed by position; the
-//   blend in moe_fp8_grouped_blend.cu maps a token's slot back through token_to_perm.
+//   sorted_token_ids[pos]. act and the routed C are indexed by position; the blend in
+//   moe_fp8_grouped_blend.cu maps a token's slot back through token_to_perm.
 // - blockIdx.y < cap indexes active_experts (from moe_fp8_grouped_compact), and blocks at
 //   or past active_count[0] return. blockIdx.y == cap is the shared expert, over rows
 //   0 to num_tokens - 1. The host sets cap = min(num_tokens * top_k, num_experts)
 //   (fp8_grouped_active_cap), so the grid does not depend on the routing.
-// - Rows run in passes of GROUP_ROWS; an expert with more rows reads its weights once per
-//   pass.
-// - Per row, gate+up repeats the arithmetic of moe_shared_expert_fused_fp8.cu's gate+up
-//   (16-input lane chunks, the same four-product sums, the same shuffle reduction), and
-//   down repeats that file's down (8-input chunks, four-product sums), in the same order.
+// - 2026-09-26: Per row, the output equals moe_shared_expert_fused_fp8.cu's gate+up, SiLU
+//   and down bit for bit. gate+up keeps its 16-input lane chunks, four-product sums and
+//   shuffle reduction, rounds gate and up to BF16 as that kernel stores them, and writes
+//   the FP32 product (g / (1 + __expf(-g))) * u that its down kernel stages; down keeps the
+//   8-input chunks and four-product sums in the same order, reading that product from act.
+//   A row's sums are independent of the other rows and of the order rows are visited in.
 // - Weights are row-major [N, K] FP8 E4M3 with FP32 scales [ceil(N / 128), ceil(K / 128)].
-//   A null routed weight pointer zeroes that expert's rows; the shared-expert pointers
-//   are not checked.
-// - Launch: compact grid 1, block 256; gate+up grid (ceil(N / 8), cap + 1, 2), block 128;
-//   down grid (ceil(N / 32), cap + 1, 1), block 256, and GROUP_ROWS * K * 4 bytes of
-//   dynamic shared memory. GROUP_ROWS and DOWN_COLS_PER_CTA must equal
-//   FP8_GROUPED_ROWS_PER_PASS and FP8_GROUPED_DOWN_COLS_PER_CTA in fp8_moe_grouped.rs.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+//   A null routed gate or up pointer makes that expert's act 0, a null routed down pointer
+//   zeroes its output rows; the shared-expert pointers are not checked.
+// - Launch: compact grid 1, block 256; gate+up grid (ceil(N / GU_COLS_PER_CTA), cap + 1, 1),
+//   block 128; down grid (ceil(N / DOWN_COLS_PER_CTA), cap + 1, 1), block 256, no dynamic
+//   shared memory. GU_COLS_PER_CTA and DOWN_COLS_PER_CTA must equal
+//   FP8_GROUPED_GATE_UP_COLS_PER_CTA and FP8_GROUPED_DOWN_COLS_PER_CTA in fp8_moe_grouped.rs.
 
 #include <cuda_bf16.h>
 
@@ -47,7 +33,11 @@
 #define N_PER_BLOCK 4
 #define WARP_SIZE 32
 #define FP8_BLOCK 128
+// 2026-09-26: Rows per down pass; an expert with more rows reads its weights once per pass.
 #define GROUP_ROWS 8
+// 2026-09-26: Rows per gate+up pass, and the columns of a gate+up CTA (one pair per warp).
+#define GU_GROUP_ROWS 4
+#define GU_COLS_PER_CTA (2 * N_PER_BLOCK)
 #define DOWN_BLOCK 256
 #define DOWN_COLS_PER_WARP 4
 #define DOWN_COLS_PER_CTA ((DOWN_BLOCK / WARP_SIZE) * DOWN_COLS_PER_WARP)
@@ -145,63 +135,69 @@ extern "C" __global__ void moe_fp8_grouped_compact(
     active_count[0] = n;
 }
 
-extern "C" __global__ void moe_expert_gate_up_shared_fp8_grouped(
+// 2026-09-26: Routed block (expert, columns) or shared block: its row range, and whether it
+// runs at all. Shared by the gate+up and down kernels.
+__device__ __forceinline__ bool grouped_block_rows(
+    const int* __restrict__ expert_offsets, const int* __restrict__ active_experts,
+    const int* __restrict__ active_count, unsigned int cap, unsigned int num_tokens,
+    unsigned int* expert, unsigned int* begin, unsigned int* end
+) {
+    const unsigned int y = blockIdx.y;
+    if (y == cap) {
+        *expert = 0; *begin = 0; *end = num_tokens;
+    } else {
+        if ((int)y >= active_count[0]) return false;
+        *expert = (unsigned int)active_experts[y];
+        *begin = (unsigned int)expert_offsets[*expert];
+        *end = (unsigned int)expert_offsets[*expert + 1];
+    }
+    return *begin < *end;
+}
+
+// 2026-09-26: Gate and up projections of columns n1 = 2 * (blockIdx.x * N_PER_BLOCK +
+// warp) and n2 = n1 + 1 in one warp, then the SiLU product into act[pos * N + n].
+extern "C" __global__ void moe_expert_gate_up_act_fp8_grouped(
     const __nv_bfloat16* __restrict__ A,
     const unsigned long long* __restrict__ gate_weight_ptrs,
     const unsigned long long* __restrict__ gate_block_scale_ptrs,
-    __nv_bfloat16* __restrict__ gate_out,
     const unsigned long long* __restrict__ up_weight_ptrs,
     const unsigned long long* __restrict__ up_block_scale_ptrs,
-    __nv_bfloat16* __restrict__ up_out,
+    float* __restrict__ act,
     const int* __restrict__ expert_offsets,
     const int* __restrict__ sorted_token_ids,
     const int* __restrict__ active_experts,
     const int* __restrict__ active_count,
     const unsigned char* __restrict__ sh_gate_weight,
     const float* __restrict__ sh_gate_block_scale,
-    __nv_bfloat16* __restrict__ sh_gate_out,
     const unsigned char* __restrict__ sh_up_weight,
     const float* __restrict__ sh_up_block_scale,
-    __nv_bfloat16* __restrict__ sh_up_out,
+    float* __restrict__ sh_act,
     unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
 ) {
-    const unsigned int y = blockIdx.y;
-    const unsigned int proj = blockIdx.z;
-    const bool is_shared = (y == cap);
+    const bool is_shared = (blockIdx.y == cap);
+    unsigned int expert, begin, end;
+    if (!grouped_block_rows(expert_offsets, active_experts, active_count, cap, num_tokens,
+                            &expert, &begin, &end)) return;
 
-    unsigned int begin, end, expert = 0;
+    const unsigned char* Wg;
+    const float* Sg;
+    const unsigned char* Wu;
+    const float* Su;
+    float* out;
     if (is_shared) {
-        begin = 0; end = num_tokens;
+        Wg = sh_gate_weight; Sg = sh_gate_block_scale;
+        Wu = sh_up_weight; Su = sh_up_block_scale; out = sh_act;
     } else {
-        if ((int)y >= active_count[0]) return;
-        expert = (unsigned int)active_experts[y];
-        begin = (unsigned int)expert_offsets[expert];
-        end = (unsigned int)expert_offsets[expert + 1];
-    }
-    if (begin >= end) return;
-
-    const unsigned char* B_weight;
-    const float* B_block_scale;
-    __nv_bfloat16* C;
-    if (is_shared) {
-        if (proj == 0) { B_weight = sh_gate_weight; B_block_scale = sh_gate_block_scale; C = sh_gate_out; }
-        else           { B_weight = sh_up_weight;   B_block_scale = sh_up_block_scale;   C = sh_up_out; }
-    } else {
-        if (proj == 0) {
-            B_weight = (const unsigned char*)gate_weight_ptrs[expert];
-            B_block_scale = (const float*)gate_block_scale_ptrs[expert];
-            C = gate_out;
-        } else {
-            B_weight = (const unsigned char*)up_weight_ptrs[expert];
-            B_block_scale = (const float*)up_block_scale_ptrs[expert];
-            C = up_out;
-        }
-
-        if (B_weight == 0) {
-            const unsigned int n_base = blockIdx.x * (N_PER_BLOCK * 2);
+        Wg = (const unsigned char*)gate_weight_ptrs[expert];
+        Sg = (const float*)gate_block_scale_ptrs[expert];
+        Wu = (const unsigned char*)up_weight_ptrs[expert];
+        Su = (const float*)up_block_scale_ptrs[expert];
+        out = act;
+        if (Wg == 0 || Wu == 0) {
+            const unsigned int n_base = blockIdx.x * GU_COLS_PER_CTA;
             for (unsigned int pos = begin; pos < end; pos++) {
-                for (unsigned int i = threadIdx.x; i < N_PER_BLOCK * 2 && n_base + i < N; i += BLOCK_SIZE) {
-                    C[(unsigned long long)pos * N + n_base + i] = __float2bfloat16(0.0f);
+                for (unsigned int i = threadIdx.x; i < GU_COLS_PER_CTA && n_base + i < N; i += BLOCK_SIZE) {
+                    act[(unsigned long long)pos * N + n_base + i] = 0.0f;
                 }
             }
             return;
@@ -212,153 +208,158 @@ extern "C" __global__ void moe_expert_gate_up_shared_fp8_grouped(
     const unsigned int local_out = threadIdx.x / threads_per_out;
     const unsigned int lane = threadIdx.x % threads_per_out;
 
-    const unsigned int n1 = blockIdx.x * (N_PER_BLOCK * 2) + local_out * 2;
-    const unsigned int n2 = n1 + 1;
-    if (n1 >= N) return;
-    const bool have_n2 = (n2 < N);
-
-    const unsigned int K16 = K / 16;
-    const unsigned int k_blocks = (K + FP8_BLOCK - 1) / FP8_BLOCK;
-    const unsigned int n1_block = n1 / FP8_BLOCK;
-    const unsigned int n2_block = n2 / FP8_BLOCK;
-
     __shared__ float s_lut[256];
     s_lut[threadIdx.x] = E4M3_LUT_MOE_GROUPED[threadIdx.x];
     s_lut[threadIdx.x + BLOCK_SIZE] = E4M3_LUT_MOE_GROUPED[threadIdx.x + BLOCK_SIZE];
     __syncthreads();
 
-    for (unsigned int row0 = begin; row0 < end; row0 += GROUP_ROWS) {
-        const unsigned int cnt = min((unsigned int)GROUP_ROWS, end - row0);
-        const __nv_bfloat16* a_rows[GROUP_ROWS];
+    const unsigned int n1 = blockIdx.x * GU_COLS_PER_CTA + local_out * 2;
+    const unsigned int n2 = n1 + 1;
+    if (n1 >= N) return;
+    const bool have_n2 = (n2 < N);
+    const unsigned int K16 = K / 16;
+    const unsigned int k_blocks = (K + FP8_BLOCK - 1) / FP8_BLOCK;
+    const unsigned int s1 = (n1 / FP8_BLOCK) * k_blocks;
+    const unsigned int s2 = (n2 / FP8_BLOCK) * k_blocks;
+    const unsigned long long r1 = (unsigned long long)n1 * K;
+    const unsigned long long r2 = (unsigned long long)n2 * K;
+
+    for (unsigned int row0 = begin; row0 < end; row0 += GU_GROUP_ROWS) {
+        const unsigned int cnt = min((unsigned int)GU_GROUP_ROWS, end - row0);
+        unsigned int a_row[GU_GROUP_ROWS];
         #pragma unroll
-        for (int r = 0; r < GROUP_ROWS; r++) {
-            a_rows[r] = (r < (int)cnt)
-                ? A + (unsigned long long)grouped_a_row(sorted_token_ids, is_shared, row0 + r) * K
-                : A;
+        for (int r = 0; r < GU_GROUP_ROWS; r++) {
+            a_row[r] = (r < (int)cnt) ? grouped_a_row(sorted_token_ids, is_shared, row0 + r) : 0u;
         }
-        float acc1[GROUP_ROWS], acc2[GROUP_ROWS];
+        // 2026-09-26: [projection][column]: g1, g2, u1, u2.
+        float acc[4][GU_GROUP_ROWS];
         #pragma unroll
-        for (int r = 0; r < GROUP_ROWS; r++) { acc1[r] = 0.0f; acc2[r] = 0.0f; }
+        for (int q = 0; q < 4; q++)
+            #pragma unroll
+            for (int r = 0; r < GU_GROUP_ROWS; r++) acc[q][r] = 0.0f;
+
+        // 2026-09-26: The next chunk's weights and scales are loaded while the current one is
+        // computed; each chunk is dequantized once per b for all the rows of the pass.
+        uint4 w[4];
+        float sc[4];
+        #pragma unroll
+        for (int q = 0; q < 4; q++) { w[q] = make_uint4(0u, 0u, 0u, 0u); sc[q] = 0.0f; }
+        if (lane < K16) {
+            const unsigned int kb = (lane * 16) / FP8_BLOCK;
+            sc[0] = Sg[s1 + kb]; w[0] = *(const uint4*)(Wg + r1 + lane * 16);
+            sc[2] = Su[s1 + kb]; w[2] = *(const uint4*)(Wu + r1 + lane * 16);
+            if (have_n2) {
+                sc[1] = Sg[s2 + kb]; w[1] = *(const uint4*)(Wg + r2 + lane * 16);
+                sc[3] = Su[s2 + kb]; w[3] = *(const uint4*)(Wu + r2 + lane * 16);
+            }
+        }
 
         for (unsigned int k16 = lane; k16 < K16; k16 += threads_per_out) {
-            const unsigned int base_k = k16 * 16;
-            const unsigned int k_block = base_k / FP8_BLOCK;
-            float sc1 = B_block_scale[n1_block * k_blocks + k_block];
-            float sc2 = have_n2 ? B_block_scale[n2_block * k_blocks + k_block] : 0.0f;
-
-
-            uint4 w_n1 = *(const uint4*)(B_weight + (unsigned long long)n1 * K + base_k);
-            uint4 w_n2;
-            if (have_n2) {
-                w_n2 = *(const uint4*)(B_weight + (unsigned long long)n2 * K + base_k);
-            } else {
-                w_n2.x = 0; w_n2.y = 0; w_n2.z = 0; w_n2.w = 0;
-            }
-            const unsigned int w1[4] = {w_n1.x, w_n1.y, w_n1.z, w_n1.w};
-            const unsigned int w2[4] = {w_n2.x, w_n2.y, w_n2.z, w_n2.w};
-
+            unsigned int cw[4][4];
+            float cs[4];
             #pragma unroll
-            for (int r = 0; r < GROUP_ROWS; r++) {
-                if (r < (int)cnt) {
-                    uint4 a_data0 = ((const uint4*)a_rows[r])[k16 * 2];
-                    uint4 a_data1 = ((const uint4*)a_rows[r])[k16 * 2 + 1];
-                    const unsigned int a0[4] = {a_data0.x, a_data0.y, a_data0.z, a_data0.w};
-                    const unsigned int a1[4] = {a_data1.x, a_data1.y, a_data1.z, a_data1.w};
+            for (int q = 0; q < 4; q++) {
+                cw[q][0] = w[q].x; cw[q][1] = w[q].y; cw[q][2] = w[q].z; cw[q][3] = w[q].w;
+                cs[q] = sc[q];
+            }
+            const unsigned int nk = k16 + threads_per_out;
+            if (nk < K16) {
+                const unsigned int kb = (nk * 16) / FP8_BLOCK;
+                sc[0] = Sg[s1 + kb]; w[0] = *(const uint4*)(Wg + r1 + nk * 16);
+                sc[2] = Su[s1 + kb]; w[2] = *(const uint4*)(Wu + r1 + nk * 16);
+                if (have_n2) {
+                    sc[1] = Sg[s2 + kb]; w[1] = *(const uint4*)(Wg + r2 + nk * 16);
+                    sc[3] = Su[s2 + kb]; w[3] = *(const uint4*)(Wu + r2 + nk * 16);
+                }
+            }
+            const unsigned int base_k = k16 * 16;
+            #pragma unroll
+            for (int b = 0; b < 4; b++) {
+                float wf[4][4];
+                #pragma unroll
+                for (int q = 0; q < 4; q++)
                     #pragma unroll
-                    for (int b = 0; b < 4; b++) {
-                        unsigned int w32_1 = w1[b];
-                        unsigned int w32_2 = w2[b];
-                        unsigned int a32_lo = (b < 2) ? a0[b * 2] : a1[(b - 2) * 2];
-                        unsigned int a32_hi = (b < 2) ? a0[b * 2 + 1] : a1[(b - 2) * 2 + 1];
-
-                        float wf1_0 = s_lut[(w32_1      ) & 0xFF] * sc1;
-                        float wf1_1 = s_lut[(w32_1 >>  8) & 0xFF] * sc1;
-                        float wf1_2 = s_lut[(w32_1 >> 16) & 0xFF] * sc1;
-                        float wf1_3 = s_lut[(w32_1 >> 24) & 0xFF] * sc1;
-
-                        float wf2_0 = s_lut[(w32_2      ) & 0xFF] * sc2;
-                        float wf2_1 = s_lut[(w32_2 >>  8) & 0xFF] * sc2;
-                        float wf2_2 = s_lut[(w32_2 >> 16) & 0xFF] * sc2;
-                        float wf2_3 = s_lut[(w32_2 >> 24) & 0xFF] * sc2;
-
+                    for (int j = 0; j < 4; j++) wf[q][j] = s_lut[(cw[q][b] >> (8 * j)) & 0xFF] * cs[q];
+                #pragma unroll
+                for (int r = 0; r < GU_GROUP_ROWS; r++) {
+                    if (r < (int)cnt) {
+                        // 2026-09-26: Elements base_k + 4b .. + 3 of the row: the two words the
+                        // per-row kernel takes from its uint4 loads for this b.
+                        const uint2 a2 = *(const uint2*)(A + (unsigned long long)a_row[r] * K + base_k + 4 * b);
                         __nv_bfloat16 av0, av1, av2, av3;
-                        *(unsigned short*)&av0 = (unsigned short)(a32_lo & 0xFFFF);
-                        *(unsigned short*)&av1 = (unsigned short)(a32_lo >> 16);
-                        *(unsigned short*)&av2 = (unsigned short)(a32_hi & 0xFFFF);
-                        *(unsigned short*)&av3 = (unsigned short)(a32_hi >> 16);
-                        float af0 = __bfloat162float(av0), af1 = __bfloat162float(av1);
-                        float af2 = __bfloat162float(av2), af3 = __bfloat162float(av3);
-
-                        acc1[r] += af0 * wf1_0 + af1 * wf1_1 + af2 * wf1_2 + af3 * wf1_3;
-                        acc2[r] += af0 * wf2_0 + af1 * wf2_1 + af2 * wf2_2 + af3 * wf2_3;
+                        *(unsigned short*)&av0 = (unsigned short)(a2.x & 0xFFFF);
+                        *(unsigned short*)&av1 = (unsigned short)(a2.x >> 16);
+                        *(unsigned short*)&av2 = (unsigned short)(a2.y & 0xFFFF);
+                        *(unsigned short*)&av3 = (unsigned short)(a2.y >> 16);
+                        const float af0 = __bfloat162float(av0), af1 = __bfloat162float(av1);
+                        const float af2 = __bfloat162float(av2), af3 = __bfloat162float(av3);
+                        #pragma unroll
+                        for (int q = 0; q < 4; q++)
+                            acc[q][r] += af0 * wf[q][0] + af1 * wf[q][1] + af2 * wf[q][2] + af3 * wf[q][3];
                     }
                 }
             }
         }
 
         #pragma unroll
-        for (int r = 0; r < GROUP_ROWS; r++) {
+        for (int r = 0; r < GU_GROUP_ROWS; r++) {
             if (r < (int)cnt) {
-                const unsigned long long base = (unsigned long long)(row0 + r) * N;
-                float v1 = acc1[r];
+                float v[4];
                 #pragma unroll
-                for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
-                    v1 += __shfl_down_sync(0xFFFFFFFF, v1, offset);
-                if (lane == 0) C[base + n1] = __float2bfloat16(v1);
-                if (have_n2) {
-                    float v2 = acc2[r];
+                for (int q = 0; q < 4; q++) {
+                    v[q] = acc[q][r];
                     #pragma unroll
                     for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
-                        v2 += __shfl_down_sync(0xFFFFFFFF, v2, offset);
-                    if (lane == 0) C[base + n2] = __float2bfloat16(v2);
+                        v[q] += __shfl_down_sync(0xFFFFFFFF, v[q], offset);
+                }
+                if (lane == 0) {
+                    const unsigned long long base = (unsigned long long)(row0 + r) * N;
+                    const float g1 = __bfloat162float(__float2bfloat16(v[0]));
+                    const float u1 = __bfloat162float(__float2bfloat16(v[2]));
+                    out[base + n1] = (g1 / (1.0f + __expf(-g1))) * u1;
+                    if (have_n2) {
+                        const float g2 = __bfloat162float(__float2bfloat16(v[1]));
+                        const float u2 = __bfloat162float(__float2bfloat16(v[3]));
+                        out[base + n2] = (g2 / (1.0f + __expf(-g2))) * u2;
+                    }
                 }
             }
         }
     }
 }
 
-extern "C" __global__ void moe_expert_silu_down_shared_fp8_grouped(
-    const __nv_bfloat16* __restrict__ gate_out,
-    const __nv_bfloat16* __restrict__ up_out,
+// 2026-09-26: Down projection of the SiLU product act ([pos, K] FP32), DOWN_COLS_PER_WARP
+// output columns per warp.
+extern "C" __global__ void moe_expert_down_act_fp8_grouped(
+    const float* __restrict__ act,
     const unsigned long long* __restrict__ weight_ptrs,
     const unsigned long long* __restrict__ block_scale_ptrs,
     __nv_bfloat16* __restrict__ C,
     const int* __restrict__ expert_offsets,
     const int* __restrict__ active_experts,
     const int* __restrict__ active_count,
-    const __nv_bfloat16* __restrict__ sh_gate_in,
-    const __nv_bfloat16* __restrict__ sh_up_in,
+    const float* __restrict__ sh_act,
     const unsigned char* __restrict__ sh_down_weight,
     const float* __restrict__ sh_down_block_scale,
     __nv_bfloat16* __restrict__ sh_down_out,
     unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
 ) {
-    const unsigned int y = blockIdx.y;
-    const bool is_shared = (y == cap);
-
-    unsigned int begin, end, expert = 0;
-    if (is_shared) {
-        begin = 0; end = num_tokens;
-    } else {
-        if ((int)y >= active_count[0]) return;
-        expert = (unsigned int)active_experts[y];
-        begin = (unsigned int)expert_offsets[expert];
-        end = (unsigned int)expert_offsets[expert + 1];
-    }
-    if (begin >= end) return;
+    const bool is_shared = (blockIdx.y == cap);
+    unsigned int expert, begin, end;
+    if (!grouped_block_rows(expert_offsets, active_experts, active_count, cap, num_tokens,
+                            &expert, &begin, &end)) return;
 
     const unsigned char* B_weight;
     const float* B_block_scale;
-    const __nv_bfloat16* g_base;
-    const __nv_bfloat16* u_base;
+    const float* a_base;
     __nv_bfloat16* out_base;
     if (is_shared) {
         B_weight = sh_down_weight; B_block_scale = sh_down_block_scale;
-        g_base = sh_gate_in; u_base = sh_up_in; out_base = sh_down_out;
+        a_base = sh_act; out_base = sh_down_out;
     } else {
         B_weight = (const unsigned char*)weight_ptrs[expert];
         B_block_scale = (const float*)block_scale_ptrs[expert];
-        g_base = gate_out; u_base = up_out; out_base = C;
+        a_base = act; out_base = C;
         if (B_weight == 0) {
             const unsigned int n_base = blockIdx.x * DOWN_COLS_PER_CTA;
             for (unsigned int pos = begin; pos < end; pos++) {
@@ -370,12 +371,14 @@ extern "C" __global__ void moe_expert_silu_down_shared_fp8_grouped(
         }
     }
 
+    __shared__ float s_lut[256];
+    s_lut[threadIdx.x] = E4M3_LUT_MOE_GROUPED[threadIdx.x];
+    __syncthreads();
+
     const unsigned int warp = threadIdx.x / WARP_SIZE;
     const unsigned int lane = threadIdx.x % WARP_SIZE;
-    // 2026-09-25: This warp's DOWN_COLS_PER_WARP output columns. A column at or past N uses
-    // zero weights and a zero scale, and is not written.
     const unsigned int n0 = blockIdx.x * DOWN_COLS_PER_CTA + warp * DOWN_COLS_PER_WARP;
-    const bool active = (n0 < N);
+    if (n0 >= N) return;
     unsigned int ncol[DOWN_COLS_PER_WARP];
     bool have[DOWN_COLS_PER_WARP];
     #pragma unroll
@@ -383,64 +386,60 @@ extern "C" __global__ void moe_expert_silu_down_shared_fp8_grouped(
         have[c] = (n0 + c < N);
         ncol[c] = have[c] ? n0 + c : 0;
     }
-
     const unsigned int K8 = K / 8;
     const unsigned int k_blocks = (K + FP8_BLOCK - 1) / FP8_BLOCK;
 
-    __shared__ float s_lut[256];
-    extern __shared__ float s_act[];
-    s_lut[threadIdx.x] = E4M3_LUT_MOE_GROUPED[threadIdx.x];
-
     for (unsigned int row0 = begin; row0 < end; row0 += GROUP_ROWS) {
         const unsigned int cnt = min((unsigned int)GROUP_ROWS, end - row0);
-        __syncthreads();
-
-
-        for (unsigned int idx = threadIdx.x; idx < cnt * K; idx += DOWN_BLOCK) {
-            const unsigned int r = idx / K;
-            const unsigned int i = idx - r * K;
-            const unsigned long long row = (unsigned long long)(row0 + r) * K;
-            float gf = __bfloat162float(g_base[row + i]);
-            float uf = __bfloat162float(u_base[row + i]);
-            s_act[idx] = (gf / (1.0f + __expf(-gf))) * uf;
-        }
-        __syncthreads();
-        if (!active) continue;
-
         float acc[GROUP_ROWS][DOWN_COLS_PER_WARP];
         #pragma unroll
         for (int r = 0; r < GROUP_ROWS; r++)
             #pragma unroll
             for (int c = 0; c < DOWN_COLS_PER_WARP; c++) acc[r][c] = 0.0f;
 
-        for (unsigned int k8 = lane; k8 < K8; k8 += WARP_SIZE) {
-            const unsigned int base_k = k8 * 8;
-            const unsigned int k_block = base_k / FP8_BLOCK;
-            float sc[DOWN_COLS_PER_WARP];
-            unsigned int wa[DOWN_COLS_PER_WARP], wb[DOWN_COLS_PER_WARP];
-            #pragma unroll
-            for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
-                sc[c] = have[c] ? B_block_scale[(ncol[c] / FP8_BLOCK) * k_blocks + k_block] : 0.0f;
-                const unsigned char* wrow = B_weight + (unsigned long long)ncol[c] * K + base_k;
-                wa[c] = have[c] ? *(const unsigned int*)(wrow) : 0u;
-                wb[c] = have[c] ? *(const unsigned int*)(wrow + 4) : 0u;
+        // 2026-09-26: The next chunk's weights and scales are loaded one chunk ahead.
+        uint2 wv[DOWN_COLS_PER_WARP];
+        float sc[DOWN_COLS_PER_WARP];
+        #pragma unroll
+        for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
+            wv[c] = make_uint2(0u, 0u); sc[c] = 0.0f;
+            if (have[c] && lane < K8) {
+                sc[c] = B_block_scale[(ncol[c] / FP8_BLOCK) * k_blocks + (lane * 8) / FP8_BLOCK];
+                wv[c] = *(const uint2*)(B_weight + (unsigned long long)ncol[c] * K + lane * 8);
             }
+        }
 
+        for (unsigned int k8 = lane; k8 < K8; k8 += WARP_SIZE) {
+            unsigned int wa[DOWN_COLS_PER_WARP], wb[DOWN_COLS_PER_WARP];
+            float cs[DOWN_COLS_PER_WARP];
+            #pragma unroll
+            for (int c = 0; c < DOWN_COLS_PER_WARP; c++) { wa[c] = wv[c].x; wb[c] = wv[c].y; cs[c] = sc[c]; }
+            const unsigned int nk = k8 + WARP_SIZE;
+            if (nk < K8) {
+                #pragma unroll
+                for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
+                    if (have[c]) {
+                        sc[c] = B_block_scale[(ncol[c] / FP8_BLOCK) * k_blocks + (nk * 8) / FP8_BLOCK];
+                        wv[c] = *(const uint2*)(B_weight + (unsigned long long)ncol[c] * K + nk * 8);
+                    }
+                }
+            }
+            const unsigned int base_k = k8 * 8;
             #pragma unroll
             for (int b = 0; b < 2; b++) {
                 float wf[DOWN_COLS_PER_WARP][4];
                 #pragma unroll
                 for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
                     const unsigned int w32 = (b == 0) ? wa[c] : wb[c];
-                    wf[c][0] = s_lut[(w32      ) & 0xFF] * sc[c];
-                    wf[c][1] = s_lut[(w32 >>  8) & 0xFF] * sc[c];
-                    wf[c][2] = s_lut[(w32 >> 16) & 0xFF] * sc[c];
-                    wf[c][3] = s_lut[(w32 >> 24) & 0xFF] * sc[c];
+                    wf[c][0] = s_lut[(w32      ) & 0xFF] * cs[c];
+                    wf[c][1] = s_lut[(w32 >>  8) & 0xFF] * cs[c];
+                    wf[c][2] = s_lut[(w32 >> 16) & 0xFF] * cs[c];
+                    wf[c][3] = s_lut[(w32 >> 24) & 0xFF] * cs[c];
                 }
                 #pragma unroll
                 for (int r = 0; r < GROUP_ROWS; r++) {
                     if (r < (int)cnt) {
-                        const float4 al = *(const float4*)(s_act + r * K + base_k + b * 4);
+                        const float4 al = *(const float4*)(a_base + (unsigned long long)(row0 + r) * K + base_k + b * 4);
                         #pragma unroll
                         for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
                             acc[r][c] += al.x * wf[c][0] + al.y * wf[c][1] + al.z * wf[c][2] + al.w * wf[c][3];

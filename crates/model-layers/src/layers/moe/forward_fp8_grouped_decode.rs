@@ -48,8 +48,8 @@ impl GroupedKernels {
         use super::super::try_kernel;
         const FUSED: &str = "moe_shared_expert_fused_fp8_grouped";
         Self {
-            gate_up: try_kernel(gpu, FUSED, "moe_expert_gate_up_shared_fp8_grouped"),
-            silu_down: try_kernel(gpu, FUSED, "moe_expert_silu_down_shared_fp8_grouped"),
+            gate_up: try_kernel(gpu, FUSED, "moe_expert_gate_up_act_fp8_grouped"),
+            silu_down: try_kernel(gpu, FUSED, "moe_expert_down_act_fp8_grouped"),
             blend: try_kernel(
                 gpu,
                 "moe_fp8_grouped_blend",
@@ -76,20 +76,15 @@ fn fp8_grouped_decode_enabled() -> bool {
 /// 2026-09-25: Shape admission for the grouped kernels, without a GPU.
 ///
 /// * `m` in `2..=FP8_GROUPED_DECODE_MAX_ROWS`.
-/// * `hidden % 16 == 0`: the gate/up kernel reads each activation row as two
-///   `uint4` per 16 K-elements.
-/// * The silu/down pass keeps `FP8_GROUPED_ROWS_PER_PASS × inter` FP32
-///   activations in dynamic shared memory beside a 1 KB LUT, which together
-///   must fit the 48 KB available without an opt-in.
+/// * `hidden % 16 == 0`: the gate/up kernel reads weights in 16-element chunks.
+/// * `inter % 8 == 0`: the down kernel reads weights in 8-element chunks and the
+///   SiLU product rows as `float4`.
 pub fn fp8_grouped_decode_shape_ok(m: usize, hidden: u32, inter: u32) -> bool {
-    const SMEM_NO_OPT_IN: usize = 48 * 1024;
-    const LUT_BYTES: usize = 256 * 4;
     (2..=FP8_GROUPED_DECODE_MAX_ROWS).contains(&m)
         && hidden >= 16
         && hidden.is_multiple_of(16)
         && inter >= 8
         && inter.is_multiple_of(8)
-        && ops::fp8_grouped_silu_down_smem_bytes(inter) + LUT_BYTES <= SMEM_NO_OPT_IN
 }
 
 /// 2026-09-25: Bytes this path needs in each arena buffer it borrows, so a batch
@@ -99,7 +94,7 @@ pub(crate) struct GroupedDecodeBufferNeed {
     pub gate_logits: usize,
     pub expert_gate_out: usize,
     pub expert_down_out: usize,
-    pub shared_inter: usize,
+    pub shared_act: usize,
     pub row_hidden: usize,
 }
 
@@ -120,10 +115,11 @@ pub(crate) fn grouped_decode_buffer_need(
         // active_count `[1]`), with `cap = min(te, E)`.
         gate_logits: (m * num_experts * 2)
             .max(te * 4 * 3 + (num_experts + 1) * 4 + (te.min(num_experts) + 1) * 4),
-        expert_gate_out: te * inter * 2,
+        // 2026-09-26: The routed SiLU product `[te, inter]` FP32.
+        expert_gate_out: te * inter * 4,
         expert_down_out: te * hidden * 2,
-        // 2026-09-25: Shared-expert gate/up scratch `[m, inter]` BF16.
-        shared_inter: m * inter * 2,
+        // 2026-09-26: The shared-expert SiLU product `[m, inter]` FP32, in `logits()`.
+        shared_act: m * inter * 4,
         // 2026-09-25: Shared-expert down output and `moe_output`, `[m, hidden]` BF16.
         row_hidden: m * hidden * 2,
     }
@@ -150,8 +146,8 @@ impl MoeLayer {
             && self.fp8_up_weight_ptrs.is_some()
             && self.fp8_down_weight_ptrs.is_some()
             && self.fp8_shared_expert.is_some()
-            && self.moe_expert_gate_up_shared_fp8_grouped_k.0 != 0
-            && self.moe_expert_silu_down_shared_fp8_grouped_k.0 != 0
+            && self.moe_expert_gate_up_act_fp8_grouped_k.0 != 0
+            && self.moe_expert_down_act_fp8_grouped_k.0 != 0
             && self.moe_weighted_sum_blend_fp8_grouped_k.0 != 0
             && self.moe_fp8_grouped_compact_k.0 != 0
             && self.moe_sort_by_expert.0 != 0
@@ -169,8 +165,7 @@ impl MoeLayer {
             && b.gate_logits_bytes() >= need.gate_logits
             && b.expert_gate_out_bytes() >= need.expert_gate_out
             && b.expert_down_out_bytes() >= need.expert_down_out
-            && b.logits_bytes() >= need.shared_inter
-            && b.ssm_qkvz_bytes() >= need.shared_inter
+            && b.logits_bytes() >= need.shared_act
             && b.attn_output_bytes() >= need.row_hidden
             && b.moe_output_bytes() >= need.row_hidden
     }
@@ -287,51 +282,48 @@ impl MoeLayer {
             num_experts,
             stream,
         )?;
-        let expert_gate_out = ctx.buffers.expert_gate_out();
-        let expert_up_out = ctx.buffers.expert_up_out();
+        // 2026-09-26: The SiLU products are FP32: routed `[te, inter]` in
+        // `expert_gate_out()`, shared `[m, inter]` in `logits()`
+        // (`grouped_decode_buffer_need`).
+        let act = ctx.buffers.expert_gate_out();
         let expert_down_out = ctx.buffers.expert_down_out();
-        let shared_gate_scratch = ctx.buffers.logits();
-        let shared_up_scratch = ctx.buffers.ssm_qkvz();
+        let shared_act = ctx.buffers.logits();
         let shared_out = ctx.buffers.attn_output();
         let output = ctx.buffers.moe_output();
 
-        ops::moe_expert_gate_up_shared_fp8_grouped(
+        ops::moe_expert_gate_up_act_fp8_grouped(
             ctx.gpu,
-            self.moe_expert_gate_up_shared_fp8_grouped_k,
+            self.moe_expert_gate_up_act_fp8_grouped_k,
             input,
             gp.weight_ptrs,
             gp.scale_ptrs,
-            expert_gate_out,
             up.weight_ptrs,
             up.scale_ptrs,
-            expert_up_out,
+            act,
             expert_offsets,
             sorted_token_ids,
             active_experts,
             active_count,
             &sh.gate_proj,
-            shared_gate_scratch,
             &sh.up_proj,
-            shared_up_scratch,
+            shared_act,
             inter,
             h,
             cap,
             n,
             stream,
         )?;
-        ops::moe_expert_silu_down_shared_fp8_grouped(
+        ops::moe_expert_down_act_fp8_grouped(
             ctx.gpu,
-            self.moe_expert_silu_down_shared_fp8_grouped_k,
-            expert_gate_out,
-            expert_up_out,
+            self.moe_expert_down_act_fp8_grouped_k,
+            act,
             dp.weight_ptrs,
             dp.scale_ptrs,
             expert_down_out,
             expert_offsets,
             active_experts,
             active_count,
-            shared_gate_scratch,
-            shared_up_scratch,
+            shared_act,
             &sh.down_proj,
             shared_out,
             h,

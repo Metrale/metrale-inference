@@ -231,8 +231,8 @@ pub struct MoeLayer {
     moe_weighted_sum_blend_fp8_batch3: KernelHandle,
     // 2026-09-25: Grouped FP8 decode kernels from `GroupedKernels::resolve`; 0 on
     // targets that do not ship them.
-    moe_expert_gate_up_shared_fp8_grouped_k: KernelHandle,
-    moe_expert_silu_down_shared_fp8_grouped_k: KernelHandle,
+    moe_expert_gate_up_act_fp8_grouped_k: KernelHandle,
+    moe_expert_down_act_fp8_grouped_k: KernelHandle,
     moe_weighted_sum_blend_fp8_grouped_k: KernelHandle,
     moe_fp8_grouped_compact_k: KernelHandle,
     // 2026-09-26: The exact-router kernels of the grouped decode

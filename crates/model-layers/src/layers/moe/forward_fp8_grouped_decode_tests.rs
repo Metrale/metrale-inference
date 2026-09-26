@@ -37,15 +37,15 @@ fn hidden_must_be_a_multiple_of_16_for_the_uint4_pair_loads() {
 }
 
 #[test]
-fn intermediate_must_be_a_multiple_of_8_and_fit_the_smem_pass() {
+fn intermediate_must_be_a_multiple_of_8() {
     assert!(fp8_grouped_decode_shape_ok(4, H, 768));
     assert!(fp8_grouped_decode_shape_ok(4, H, 1024));
     assert!(!fp8_grouped_decode_shape_ok(4, H, 516));
     assert!(!fp8_grouped_decode_shape_ok(4, H, 0));
-    // 2026-09-25: 8 rows x inter x 4 B + 1 KB LUT must fit the 48 KB (49152 B) no-opt-in
-    // limit: inter=1504 lands exactly on it (48128 + 1024), 1512 is over.
-    assert!(fp8_grouped_decode_shape_ok(4, H, 1504));
-    assert!(!fp8_grouped_decode_shape_ok(4, H, 1512));
+    // 2026-09-26: The down kernel reads the SiLU product from global memory, so
+    // no shared-memory pass bounds the width any more.
+    assert!(fp8_grouped_decode_shape_ok(4, H, 1512));
+    assert!(fp8_grouped_decode_shape_ok(4, H, 4096));
 }
 
 #[test]
@@ -59,9 +59,9 @@ fn buffer_need_matches_the_launch_layout() {
         (16 * 256 * 2).max(3 * te * 4 + 257 * 4 + 129 * 4)
     );
     assert_eq!(n.gate_logits, 8192);
-    assert_eq!(n.expert_gate_out, te * 512 * 2);
+    assert_eq!(n.expert_gate_out, te * 512 * 4);
     assert_eq!(n.expert_down_out, te * 2048 * 2);
-    assert_eq!(n.shared_inter, 16 * 512 * 2);
+    assert_eq!(n.shared_act, 16 * 512 * 4);
     assert_eq!(n.row_hidden, 16 * 2048 * 2);
     // 2026-09-25: At M=2 the sort scratch dominates the logits extent (cap = 16 < E).
     let n2 = grouped_decode_buffer_need(2, 2048, 256, 256, 8);
