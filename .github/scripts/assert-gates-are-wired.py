@@ -18,9 +18,6 @@ Two instances of one defect prompted this, and they were found a wave apart:
 A check that reports without gating is worse than no check, because it reads as
 safety. What this file pins:
 
-  * `needed_by` -- some other job must refuse to run if this one failed. This
-    is the half of "gating" that a file in the tree can express.
-
   * unconditionality -- the job must carry no `if:` and no `needs:`, and its
     workflow's `pull_request` trigger must carry no `paths:` filter. This is
     NOT a stylistic preference. A required context is only satisfiable if the
@@ -41,21 +38,13 @@ import yaml
 
 WORKFLOWS = pathlib.Path(__file__).resolve().parents[1] / "workflows"
 
-# workflow, job, human name, job that must depend on it (or None), and whether
-# the job is a required context on main (and so must also report in the queue).
+# workflow, job, human name, and whether the job is a required context on main
+# (and so must also report in the queue).
 GATES = [
-    {
-        "workflow": "site.yml",
-        "job": "unit",
-        "reports_as": "Site unit tests",
-        "needed_by": "deploy",
-        "required_context": True,
-    },
     {
         "workflow": "merge-ancestry.yml",
         "job": "guard",
         "reports_as": "PR shares history with its base",
-        "needed_by": None,
         "required_context": True,
     },
 ]
@@ -90,8 +79,6 @@ REQUIRED_CONTEXTS = [
     ("Build mdBook + rustdoc", "docs.yml", "build", None),
     ("nvcc -> PTX (all gb10 targets)", "kernel-compile.yml", "compile", None),
     ("No block_on under tui/ or recipe/", "tui-threading.yml", "no-blocking-on-the-render-thread", None),
-    ("Build SvelteKit site", "site.yml", "build", None),
-    ("Site unit tests", "site.yml", "unit", None),
     ("Merge-ancestry guard self-test", "merge-ancestry.yml", "self-test", None),
 ]
 
@@ -279,17 +266,6 @@ def check(gate: dict) -> None:
             f"a renamed job leaves the required context uncreated"
         )
 
-    consumer = gate["needed_by"]
-    if consumer:
-        needs = jobs.get(consumer, {}).get("needs") or []
-        if isinstance(needs, str):
-            needs = [needs]
-        if job_id not in needs:
-            problems.append(
-                f"{wf} `{consumer}` does not need `{job_id}` (needs: {needs or 'nothing'}). "
-                f"A failing {gate['reports_as']} would not stop it."
-            )
-
     if job.get("if") is not None:
         problems.append(f"{wf} `{job_id}` grew an `if:`; it is a required context and must report on every run")
     if job.get("needs"):
@@ -317,8 +293,7 @@ def main() -> None:
             print(f"REFUSE: {p}", file=sys.stderr)
         sys.exit(1)
     for gate in GATES:
-        via = f"needed by `{gate['needed_by']}`, " if gate["needed_by"] else ""
-        print(f"ok: {gate['reports_as']} ({gate['workflow']}) {via}reports unconditionally in PRs and the queue")
+        print(f"ok: {gate['reports_as']} ({gate['workflow']}) reports unconditionally in PRs and the queue")
     print(f"ok: all {len(REQUIRED_CONTEXTS)} required contexts resolve to a live job, "
           f"and none can be skipped by a dependency's failure")
     for spec in STUB_FREE_STEPS:

@@ -88,7 +88,7 @@ What reads it here:
 | file | what it feeds |
 | --- | --- |
 | `src/geometry.js`, `src/paths.json` | `node assets/brand/lockup.mjs` writes the plain wordmark masters `svg/wordmark*.svg` and the book's menu-bar wordmark `book/theme/metrale.js` |
-| `tokens/brand.json` | `web-shared/metrale-tokens.css` restates it for the book |
+| `tokens/brand.json` | `book/theme/css/metrale-tokens.css` restates it for the book |
 | `svg/wordmark-ondark.svg` | the book's menu bar, and the social cards |
 | `social/og-image-dark.png` | `book/brand/og-image.png` |
 | `social/github-social-preview-*.png` | uploaded by hand in the repository settings |

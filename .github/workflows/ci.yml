@@ -47,8 +47,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Which trees does this change touch? A PR that only edits the web
-  # properties does not need the Rust and CUDA work, but the SKIP has to happen
+  # Which trees does this change touch? A PR that only edits the book
+  # (book/) does not need the Rust and CUDA work, but the SKIP has to happen
   # at JOB level: a `paths:` filter on the trigger would stop the workflow
   # running at all, the required check would never be created, and the PR would
   # wait on it forever. Five workflows here carry that lesson in their
@@ -70,7 +70,6 @@ jobs:
     outputs:
       web_only: ${{ steps.classify.outputs.web_only }}
       web_touched: ${{ steps.classify.outputs.web_touched }}
-      blog_touched: ${{ steps.classify.outputs.blog_touched }}
       # ★ A STEP OUTPUT IS NOT A JOB OUTPUT, AND THE DIFFERENCE IS SILENT.
       # These two were computed, logged, and then never exported, so every
       # `needs.changes.outputs.<name>` consumer read the EMPTY STRING.
@@ -436,7 +435,7 @@ jobs:
       # NOTE the behavioural difference this inherits, which matters when the
       # standalone `cargo fmt --check` job is retired: that job is UNGATED,
       # while this one is skipped on a web-only diff. A web-only diff touches
-      # only site/blog/book/web-shared and so contains no .rs file for the
+      # only book/ and so contains no .rs file for the
       # formatter to reject — skipping is sound, but it IS a change, and it
       # should be stated rather than discovered.
       - name: cargo fmt --all -- --check
@@ -1729,7 +1728,6 @@ jobs:
           elif all_match '^(Cargo\.(toml|lock)|deny\.toml|rust-toolchain\.toml)$|/Cargo\.toml$'; then bucket=infrastructure/build-system
           elif all_match '^\.benchmarks/';                                  then bucket=infrastructure/benchmark-gate
           elif all_match '^(docs|book)/|\.md$';                             then bucket=documentation/reference
-          elif all_match '^site/';                                          then bucket=documentation/reference
           elif all_match '^tests/';                                         then bucket=infrastructure/ci
           fi
 
@@ -1959,7 +1957,7 @@ jobs:
     name: PR Benchmark Certifications
     runs-on: ubuntu-latest
     needs: [changes, stamp]
-    # The web trees are not measured inputs of any record — `record_covers`
+    # book/ is not a measured input of any record — `record_covers`
     # invalidates on crates/, kernels/, Cargo.*, vendor/, jinja-templates and
     # the toolchain, none of which a web-only diff can reach. So on such a diff
     # the verdict is a foregone "records still cover", bought with a full
@@ -2282,8 +2280,8 @@ jobs:
             exit 0
           fi
           # THE ONE SKIP THAT IS A PASS: the certification was deliberately not
-          # run because every changed file is under site/ blog/ book/
-          # web-shared/, none of which is a measured input of any record. The
+          # run because every changed file is under book/, which is not a
+          # measured input of any record. The
           # condition is positive on purpose — a skip caused by a BROKEN
           # classifier leaves WEB_ONLY empty and stays red below, so this
           # branch cannot become a hole in branch protection.

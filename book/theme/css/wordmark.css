@@ -1,7 +1,7 @@
 /* The Metrale wordmark in the book's menu bar.
 
-   Colours and the two type stacks come from web-shared/metrale-tokens.css (the
-   css/metrale-tokens.css link), and the faces from fonts/fonts.css. The skin
+   Colours and the two type stacks come from css/metrale-tokens.css, and the
+   faces from fonts/fonts.css. The skin
    (css/metrale.css) keeps every rule it has. This file only places the
    wordmark that ../metrale.js puts where mdBook set the book's title in type,
    with "Engine docs" beside it, and keeps the title readable for the

@@ -24,7 +24,6 @@ metrale-inference-alpha/
 ├── jinja-templates/              chat templates for models that need custom ones
 ├── bench/                        benchmark harnesses and tracked results
 ├── governance/                   PR journey ledgers (governance/pr-<n>.jsonl)
-├── site/, blog/, web-shared/     web sources
 ├── book/                         this book (mdBook source)
 └── vendor/                       vendored deps (cudarc)
 ```

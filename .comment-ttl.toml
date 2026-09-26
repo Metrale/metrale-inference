@@ -26,12 +26,11 @@ exempt_paths = '''(?x)
   | ^bench/qwen4_exp/ref/
   | ^bench/ngram_ref/modeling_longcat_ngram\.py$
   | ^crates/bench/assets/mlperf-agentic/gen_parity_fixtures\.py$
-  | ^(site|blog|book|web-shared|assets/brand)/
+  | ^(book|assets/brand)/
   | ^crates/server/src/cli\.rs$
   | ^crates/server/src/cli/(serve_args|bench_args|bench_certify/args)(\.rs$|/)
   | ^target/
   | (^|/)node_modules/
-  | (^|/)\.svelte-kit/
 '''
 
 # 2026-09-26: `pragma: no cover` (coverage.py) and `shellcheck` directives are

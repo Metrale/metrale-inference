@@ -1,7 +1,7 @@
 /* =============================================================================
    Metrale Engine docs skin.
 
-   Colour values come from web-shared/metrale-tokens.css (linked immediately
+   Colour values come from metrale-tokens.css (linked immediately
    before this file); mdBook's own chrome variables are mapped onto those
    tokens in variables.css. This file is the finish layer — the parts of the
    generated markup that have no variable to point at.

@@ -8,7 +8,7 @@
    SAME Metrale Engine values, and any stored choice renders the brand by construction.
    The picker is then a control with no effect, and metrale.css removes it.
 
-   Every value here is a `var()` into web-shared/metrale-tokens.css — the single
+   Every value here is a `var()` into metrale-tokens.css — the single
    authoritative copy, linked just before this file. Nothing is restated.
 
    ★ `--bg` is deliberately absent. mdBook's `--bg` and the Metrale Engine token `--bg`
