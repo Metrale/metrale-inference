@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-26: Tells metrale.ai that main advanced, so the site's benchmark dashboard and the
+# book rebuild from the new tree (new certified records, gate limits, docs) without a manual
+# push to the site repository. metrale.ai's deploy.yml and docs.yml listen for
+# `repository_dispatch` of type `engine-main-updated`.
+name: Site dispatch
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: site-dispatch
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    name: Rebuild metrale.ai
+    runs-on: ubuntu-latest
+    if: github.repository == 'Metrale/metrale-inference-alpha' || github.repository == 'Metrale/metrale-inference'
+    steps:
+      # 2026-09-26: GITHUB_TOKEN cannot write to another repository, so the governance App mints
+      # a token limited to metrale.ai and to contents: write, the one permission a dispatch needs.
+      - name: Mint a token for metrale.ai
+        id: apptoken
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.GOVERNANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          owner: Metrale
+          repositories: metrale.ai
+          permission-contents: write
+
+      - name: Send engine-main-updated
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api -X POST repos/Metrale/metrale.ai/dispatches \
+            -f event_type=engine-main-updated \
+            -F "client_payload[sha]=$SHA"
+          echo "dispatched engine-main-updated for $SHA"
