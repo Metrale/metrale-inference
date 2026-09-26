@@ -447,6 +447,8 @@ impl MoeLayer {
             moe_expert_silu_down_shared_fp8_grouped_k: grouped.silu_down,
             moe_weighted_sum_blend_fp8_grouped_k: grouped.blend,
             moe_fp8_grouped_compact_k: grouped.compact,
+            moe_topk_softmax_rows_k: grouped.topk_rows,
+            router_gemv_batchm_k: grouped.router_gemv,
             fp8_gate_weight_ptrs: None,
             fp8_up_weight_ptrs: None,
             fp8_down_weight_ptrs: None,

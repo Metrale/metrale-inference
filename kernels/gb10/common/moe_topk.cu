@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// 2026-09-25: Kernels `moe_topk_softmax`, `moe_topk_softmax_f32` and `moe_topk_softmax_batched`: softmax MoE routing.
+// 2026-09-25: Kernels `moe_topk_softmax`, `moe_topk_softmax_rows`, `moe_topk_softmax_f32` and `moe_topk_softmax_batched`:
+// softmax MoE routing.
 // Each picks the top_k experts by gate logit, highest first, and returns their softmax weights.
 //
 // One 256-thread block per token. Only the first MAX_EXPERTS logits are read. The weight of a chosen expert is
@@ -20,6 +21,7 @@
 
 // 2026-09-25: `moe_topk_softmax`: one token, BF16 logits, grid (1, 1, 1). Experts are picked one per round by a
 // block-wide argmax; on equal logits the lower expert index wins, in the thread, warp and cross-warp steps.
+// 2026-09-26: The body is `topk_softmax_lowidx_block`, which `moe_topk_softmax_rows` also runs.
 
 
 
@@ -27,7 +29,7 @@
 
 
 
-extern "C" __global__ void moe_topk_softmax(
+__device__ __forceinline__ void topk_softmax_lowidx_block(
     const __nv_bfloat16* __restrict__ gate_logits,
     unsigned int* __restrict__ expert_indices,
     float* __restrict__ expert_weights,
@@ -175,6 +177,34 @@ extern "C" __global__ void moe_topk_softmax(
             }
         }
     }
+}
+
+extern "C" __global__ void moe_topk_softmax(
+    const __nv_bfloat16* __restrict__ gate_logits,
+    unsigned int* __restrict__ expert_indices,
+    float* __restrict__ expert_weights,
+    unsigned int num_experts,
+    unsigned int top_k,
+    unsigned int normalize
+) {
+    topk_softmax_lowidx_block(gate_logits, expert_indices, expert_weights, num_experts, top_k, normalize);
+}
+
+// 2026-09-26: `moe_topk_softmax_rows`: `moe_topk_softmax` for N tokens, one block per token, grid (N, 1, 1).
+// Row t reads gate_logits[t * num_experts ..] and writes expert_indices / expert_weights[t * top_k ..]. It
+// runs the same device function as `moe_topk_softmax`, so each row's indices, weights and lower-index
+// tie-break are those of a `moe_topk_softmax` launch on that row (unlike `moe_topk_softmax_batched`).
+extern "C" __global__ void moe_topk_softmax_rows(
+    const __nv_bfloat16* __restrict__ gate_logits,
+    unsigned int* __restrict__ expert_indices,
+    float* __restrict__ expert_weights,
+    unsigned int num_experts,
+    unsigned int top_k,
+    unsigned int normalize
+) {
+    const unsigned int t = blockIdx.x;
+    topk_softmax_lowidx_block(gate_logits + (unsigned long long)t * num_experts, expert_indices + t * top_k,
+                              expert_weights + t * top_k, num_experts, top_k, normalize);
 }
 
 // 2026-09-25: `moe_topk_softmax_f32`: `moe_topk_softmax` with F32 logits, same tie-break. The MoE layer uses it when

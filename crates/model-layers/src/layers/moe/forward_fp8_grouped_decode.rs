@@ -27,13 +27,18 @@ use super::*;
 /// grouped GEMM above 64 rows when that kernel resolved.
 pub const FP8_GROUPED_DECODE_MAX_ROWS: usize = 64;
 
-/// 2026-09-25: The grouped decode's four kernels, looked up with `try_kernel`; a
-/// zero handle declines the path in [`MoeLayer::fp8_grouped_decode_arena_ok`].
+/// 2026-09-25: The grouped decode's kernels, looked up with `try_kernel`. A zero
+/// handle among the first four declines the path in
+/// [`MoeLayer::fp8_grouped_decode_arena_ok`]; a zero `topk_rows` or `router_gemv`
+/// (2026-09-26) declines only the exact routings in
+/// [`MoeLayer::fp8_grouped_routing_ok`].
 pub(super) struct GroupedKernels {
     pub gate_up: KernelHandle,
     pub silu_down: KernelHandle,
     pub blend: KernelHandle,
     pub compact: KernelHandle,
+    pub topk_rows: KernelHandle,
+    pub router_gemv: KernelHandle,
 }
 
 impl GroupedKernels {
@@ -51,6 +56,8 @@ impl GroupedKernels {
                 "moe_weighted_sum_blend_fp8_grouped",
             ),
             compact: try_kernel(gpu, FUSED, "moe_fp8_grouped_compact"),
+            topk_rows: try_kernel(gpu, "moe_topk", "moe_topk_softmax_rows"),
+            router_gemv: try_kernel(gpu, "dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm"),
         }
     }
 }
@@ -59,7 +66,8 @@ impl GroupedKernels {
 /// path off. Read once per process. It covers the MTP drafter, which is on by
 /// default, and the target model's multi-row decode, which also needs the
 /// `ModelLevers::moe_fp8_grouped_decode_target` lever
-/// (`FfnComponent::fp8_grouped_decode_ok`).
+/// (`FfnComponent::fp8_grouped_decode_ok`). 2026-09-26: It also turns off the
+/// exact routings (`GroupedRouting::PerRow` / `PerToken`), which are on by default.
 fn fp8_grouped_decode_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_FP8_MOE_GROUPED_DECODE").is_none())
@@ -180,7 +188,8 @@ impl MoeLayer {
 
     /// 2026-09-25: The FP8 MoE of `m` rows: `input` is `[m, H]` BF16, the output
     /// lands in rows `0..m` of `moe_output()`. Returns an error, launching
-    /// nothing, when `fp8_grouped_decode_ok(m, ctx)` is false.
+    /// nothing, when `fp8_grouped_decode_ok(m, ctx)` is false. Routes with
+    /// [`GroupedRouting::Batched`].
     pub fn forward_fp8_grouped_decode(
         &self,
         input: DevicePtr,
@@ -188,9 +197,23 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        self.forward_fp8_grouped_decode_routed(input, m, GroupedRouting::Batched, ctx, stream)
+    }
+
+    /// 2026-09-26: [`Self::forward_fp8_grouped_decode`] with the router arithmetic
+    /// `routing` names. Returns an error, launching nothing, when
+    /// `fp8_grouped_routing_ok(m, routing, ctx)` is false.
+    pub fn forward_fp8_grouped_decode_routed(
+        &self,
+        input: DevicePtr,
+        m: usize,
+        routing: GroupedRouting,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
         anyhow::ensure!(
-            self.fp8_grouped_decode_ok(m, ctx),
-            "forward_fp8_grouped_decode: predicate false for m={m} (caller must gate on it)"
+            self.fp8_grouped_routing_ok(m, routing, ctx),
+            "forward_fp8_grouped_decode: predicate false for m={m}, {routing:?} (caller must gate on it)"
         );
         let (Some(gp), Some(up), Some(dp), Some(sh)) = (
             &self.fp8_gate_weight_ptrs,
@@ -207,76 +230,26 @@ impl MoeLayer {
         let n = m as u32;
         let te = m * top_k as usize;
 
-        if ctx.stats.once("log:moe_fp8_grouped_decode") {
+        let log_key = match routing {
+            GroupedRouting::Batched => "log:moe_fp8_grouped_decode",
+            GroupedRouting::PerRow => "log:moe_fp8_grouped_decode_per_row",
+            GroupedRouting::PerToken => "log:moe_fp8_grouped_decode_per_token",
+        };
+        if ctx.stats.once(log_key) {
             tracing::info!(
                 "MoE FP8 grouped decode: cross-row batched routed+shared expert dispatch \
-                 active (first use M={m}, top_k={top_k}, experts={num_experts}; one-time log)"
+                 active (first use M={m}, top_k={top_k}, experts={num_experts}, \
+                 routing={routing:?}; one-time log)"
             );
         }
 
-        // 2026-09-25: 1. Router: `[m, H] x [H, E]` -> `gate_logits [m, E]`.
-        let router_in = self.router_input(input, n, h, ctx, stream)?;
-        let gate_logits = ctx.buffers.gate_logits();
-        if let Some(ref nvfp4) = self.gate_nvfp4 {
-            ops::w4a16_gemm(
-                ctx.gpu,
-                self.w4a16_gemm,
-                router_in,
-                nvfp4,
-                gate_logits,
-                n,
-                num_experts,
-                h,
-                stream,
-            )?;
-        } else {
-            ops::dense_gemm(
-                ctx.gpu,
-                self.dense_gemm,
-                router_in,
-                &self.weights.gate,
-                gate_logits,
-                n,
-                num_experts,
-                h,
-                stream,
-            )?;
-        }
-
-        // 2026-09-25: 2. Batched top-k: indices `[m*top_k]` u32, weights
-        // `[m*top_k]` f32.
+        // 2026-09-25: 1-2. Router and top-k: indices `[m*top_k]` u32, weights
+        // `[m*top_k]` f32, with the arithmetic `routing` names.
         let scratch = ctx.buffers.scratch();
         let indices_dev = scratch;
         let weights_dev = scratch.offset(te * 4);
-        if let Some(bias) = self.correction_bias_dev {
-            ops::moe_topk_sigmoid_batched(
-                ctx.gpu,
-                self.moe_topk_sigmoid_batched_k,
-                gate_logits,
-                bias,
-                indices_dev,
-                weights_dev,
-                num_experts,
-                top_k,
-                ctx.config.norm_topk_prob,
-                ctx.config.routed_scaling_factor as f32,
-                n,
-                stream,
-            )?;
-        } else {
-            ops::moe_topk_softmax_batched(
-                ctx.gpu,
-                self.moe_topk_batched,
-                gate_logits,
-                indices_dev,
-                weights_dev,
-                num_experts,
-                top_k,
-                ctx.config.norm_topk_prob,
-                n,
-                stream,
-            )?;
-        }
+        self.grouped_route(input, m, routing, indices_dev, weights_dev, ctx, stream)?;
+        let gate_logits = ctx.buffers.gate_logits();
 
         // 2026-09-25: 3. Group slots by expert. Top-k has read `gate_logits`
         //    earlier on the same stream, so the sort scratch reuses it.

@@ -67,6 +67,10 @@ name = "fp8_moe_grouped_routing_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "fp8_moe_grouped_exact_routing_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "fp8gemm_microtest"
 required-features = ["cuda", "gpu-examples"]
 

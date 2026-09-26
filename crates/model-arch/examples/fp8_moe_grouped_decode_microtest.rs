@@ -33,7 +33,7 @@ const H: usize = 2048;
 const INTER: usize = 512;
 const E: usize = 32;
 const TOP_K: usize = 8;
-const MAX_M: usize = 32;
+const MAX_M: usize = 64;
 const GUARD: usize = 64;
 const SENTINEL: u8 = 0x5a;
 
@@ -380,7 +380,7 @@ fn main() -> Result<()> {
 
     let mut failures = 0usize;
     let mut first = true;
-    for m in [2usize, 3, 4, 8, 16, 32] {
+    for m in [2usize, 3, 4, 8, 16, 32, 48, 64] {
         gpu.copy_h2d(&sentinel, loop_base)?;
         gpu.copy_h2d(&sentinel, grouped_base)?;
         run_loop(&gpu, &h, &x, &scratch, input, indices, weights, loop_out, m)?;
@@ -464,6 +464,6 @@ fn main() -> Result<()> {
         }
     }
     ensure!(failures == 0, "{failures} case(s) failed");
-    println!("ALL PASS: grouped FP8 MoE decode == per-token loop, bit for bit, M=2..32");
+    println!("ALL PASS: grouped FP8 MoE decode == per-token loop, bit for bit, M=2..64");
     Ok(())
 }

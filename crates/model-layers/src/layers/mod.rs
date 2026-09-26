@@ -352,6 +352,36 @@ impl FfnComponent {
             && matches!(self, Self::Moe(moe) if moe.fp8_grouped_decode_ok(m, ctx))
     }
 
+    /// 2026-09-26: Whether this is a MoE whose grouped FP8 decode serves `m`
+    /// rows with `routing` (`MoeLayer::fp8_grouped_routing_ok`). Unlike
+    /// [`Self::fp8_grouped_decode_ok`] it does not read the
+    /// `moe_fp8_grouped_decode_target` lever: the exact routings reproduce the
+    /// path they replace byte for byte, so they need no opt-in.
+    pub fn fp8_grouped_routing_ok(
+        &self,
+        m: usize,
+        routing: moe::GroupedRouting,
+        ctx: &ForwardContext,
+    ) -> bool {
+        matches!(self, Self::Moe(moe) if moe.fp8_grouped_routing_ok(m, routing, ctx))
+    }
+
+    /// 2026-09-26: [`Self::forward_fp8_grouped_decode`] with `routing`. Errors
+    /// for dense and none; callers gate on `fp8_grouped_routing_ok` first.
+    pub fn forward_fp8_grouped_decode_routed(
+        &self,
+        input: DevicePtr,
+        m: usize,
+        routing: moe::GroupedRouting,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        match self {
+            Self::Moe(moe) => moe.forward_fp8_grouped_decode_routed(input, m, routing, ctx, stream),
+            _ => anyhow::bail!("forward_fp8_grouped_decode_routed is MoE-only (m={m})"),
+        }
+    }
+
     /// 2026-09-25: Cross-row grouped FP8 MoE decode over `[m, H]` rows into
     /// `moe_output()`. Errors for dense and none; callers gate on
     /// `fp8_grouped_decode_ok` first.

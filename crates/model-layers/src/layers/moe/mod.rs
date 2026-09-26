@@ -235,6 +235,11 @@ pub struct MoeLayer {
     moe_expert_silu_down_shared_fp8_grouped_k: KernelHandle,
     moe_weighted_sum_blend_fp8_grouped_k: KernelHandle,
     moe_fp8_grouped_compact_k: KernelHandle,
+    // 2026-09-26: The exact-router kernels of the grouped decode
+    // (`GroupedRouting::PerRow` / `PerToken`): `moe_topk_softmax_rows` and
+    // `dense_gemv_bf16_batchm`; 0 on targets that do not ship them.
+    moe_topk_softmax_rows_k: KernelHandle,
+    router_gemv_batchm_k: KernelHandle,
     // 2026-09-25: Routed-expert FP8 grouped GEMM over the tile work-list that
     // `moe_build_tile_worklist` builds; 0 on targets that do not ship it.
     moe_fp8_grouped_gemm_k: KernelHandle,
@@ -345,6 +350,8 @@ mod forward_batched_gate;
 mod forward_ep;
 mod forward_fp8_grouped_decode;
 pub use forward_fp8_grouped_decode::fp8_grouped_decode_shape_ok;
+mod forward_fp8_grouped_router;
+pub use forward_fp8_grouped_router::GroupedRouting;
 mod forward_k2;
 mod forward_k3;
 mod forward_phase;
