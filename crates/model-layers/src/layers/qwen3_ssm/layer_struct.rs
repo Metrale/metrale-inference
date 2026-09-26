@@ -300,6 +300,8 @@ pub struct Qwen3SsmLayer {
     // 2026-09-25: 32-row M-tile variant; `ops::w8a16_gemm_pipelined_by_m`
     // chooses between it and `w8a16_gemm_pipelined` by row count.
     pub(super) w8a16_gemm_pipelined_m32_k: KernelHandle,
+    // 2026-09-26: 64-row M-tile variant for 33..=64 rows, same module.
+    pub(super) w8a16_gemm_pipelined_m64_k: KernelHandle,
     // 2026-09-25: `w8a16_gemv_batch4` (M <= 4) and, below it,
     // `w8a16_gemv_batch16`, both from module `w8a16_gemv_batch4`.
     pub(super) w8a16_gemv_batch4_k: KernelHandle,

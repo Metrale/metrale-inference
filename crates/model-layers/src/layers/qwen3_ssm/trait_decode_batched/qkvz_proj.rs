@@ -133,6 +133,7 @@ impl Qwen3SsmLayer {
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
                     self.w8a16_gemm_pipelined_m32_k,
+                    self.w8a16_gemm_pipelined_m64_k,
                     normed,
                     fp8.weight,
                     fp8.row_scale,

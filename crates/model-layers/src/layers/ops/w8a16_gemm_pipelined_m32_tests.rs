@@ -14,6 +14,7 @@ use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
 const FULL_K: u64 = 0xB128;
 const M32_K: u64 = 0xB032;
+const M64_K: u64 = 0xB064;
 
 struct Fixture {
     gpu: MockGpuBackend,
@@ -156,6 +157,7 @@ fn by_m_flips_at_exactly_32_rows_and_on_a_missing_handle() {
             &f.gpu,
             KernelHandle(FULL_K),
             KernelHandle(m32),
+            KernelHandle(0),
             f.input,
             f.weight,
             f.scale,
@@ -196,6 +198,7 @@ fn by_m_flips_at_exactly_32_rows_and_on_a_missing_handle() {
         &f.gpu,
         KernelHandle(FULL_K),
         KernelHandle(M32_K),
+        KernelHandle(0),
         f.input,
         f.weight,
         f.scale,
@@ -269,4 +272,42 @@ fn guards_refuse_without_launching() {
     .expect_err("contiguous K guard");
     assert!(err.to_string().contains("multiple of 128"));
     assert_eq!(f.gpu.launch_count(), 0);
+}
+
+/// 2026-09-26: With a 64-row twin linked, 33..=64 rows take it (nine args,
+/// grid.y = 1 up to 64 rows); 1..=32 stay on the 32-row twin, and 65 and more
+/// rows, or a K that is not whole scale blocks, go to the 128-row tile.
+#[test]
+fn by_m_takes_the_64_row_twin_from_33_to_64_rows() {
+    let f = Fixture::new();
+    let launch = |m: u32, k: u32| {
+        w8a16_gemm_pipelined_by_m(
+            &f.gpu,
+            KernelHandle(FULL_K),
+            KernelHandle(M32_K),
+            KernelHandle(M64_K),
+            f.input,
+            f.weight,
+            f.scale,
+            f.output,
+            m,
+            2048,
+            k,
+            0,
+        )
+        .unwrap();
+        f.launches().last().unwrap().clone()
+    };
+    for m in [33u32, 48, 64] {
+        let l = launch(m, 4096);
+        assert_eq!(l.func, M64_K, "m={m}");
+        assert_eq!(l.grid, [64, 1, 1]);
+        assert_eq!(l.args.len(), 9);
+        assert_eq!(l.args[4], u32_arg(m));
+        assert!(w8a16_pipelined_prefers_m64(m, 4096, KernelHandle(M64_K)));
+    }
+    assert_eq!(launch(32, 4096).func, M32_K);
+    assert_eq!(launch(65, 4096).func, FULL_K);
+    assert_eq!(launch(48, 4000).func, FULL_K);
+    assert!(!w8a16_pipelined_prefers_m64(48, 4096, KernelHandle(0)));
 }
