@@ -20,26 +20,39 @@ quantization)` target has its own CUDA kernel set, compiled to PTX at build
 time. The primary target is the NVIDIA GB10 in the DGX Spark, serving NVFP4
 and FP8 checkpoints with speculative decoding (MTP, DFlash, n-gram).
 
-On one DGX Spark serving `unsloth/Qwen3.8-27B-NVFP4`, it delivers more
-aggregate decode throughput than vLLM 0.27.1 running its own MTP speculative
-decoding, at every concurrency from 1 to 128, with every workload axis
-matched:
+On one DGX Spark serving `unsloth/Qwen3.8-27B-NVFP4`, it matches or exceeds
+vLLM 0.27.1 with vLLM's own MTP speculative decoding in aggregate decode
+throughput at every concurrency from 1 to 128, with every workload axis
+matched, and is clearly ahead at C=1, 2, 64 and 128:
 
 | Concurrency | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Metrale Engine (tok/s) | 23.59 | 41.02 | 74.21 | 125.95 | 203.36 | 291.01 | 386.63 | 478.11 |
 | vLLM 0.27.1 + MTP (tok/s) | 19.72 | 37.11 | 71.61 | 124.48 | 197.03 | 283.48 | 361.39 | 358.57 |
 | Ratio | 1.196x | 1.105x | 1.036x | 1.012x | 1.032x | 1.027x | 1.070x | 1.333x |
+| Metrale Engine, certified gate record at `68dd6bea35` (tok/s) | 25.30 | 46.59 | 78.49 | 130.64 | 216.04 | 311.48 | 403.35 | 461.89 |
+| Ratio, certified record / vLLM + MTP | 1.283x | 1.256x | 1.096x | 1.049x | 1.097x | 1.099x | 1.116x | 1.288x |
 
 Source: [`bench/ladder38/published.json`](bench/ladder38/published.json) and
-the raw per-rung files it names in the same directory. Each cell is the mean
-of 3 timed reps after 1 discarded warmup: ISL 128, OSL 1024, temperature 0,
-seed 42, context 2048, batch cap 128, GPU memory utilization 0.85, fp8 KV
-cache, prefix caching on, thinking off, MTP K=4 on both engines, same box and
-same client. From C=4 to C=32 the margin (1.2% to 3.6%) is no larger than the
-spread between the three reps recorded in those files (up to 3.5%), so read
-those rungs as parity. C=1, C=2, C=64 and C=128 are separated. The campaign
-log is [`bench/ladder38/RESULTS.md`](bench/ladder38/RESULTS.md).
+the raw per-rung files it names, plus the gate record
+[`.benchmarks/concurrency-sweep/2026-09-26-68dd6bea35.json`](.benchmarks/concurrency-sweep/2026-09-26-68dd6bea35.json).
+The first two rows were measured on 2026-08-17 and 2026-08-18 on a
+pre-release build. The row for `68dd6bea35` is the gate record this tree
+carries, measured 2026-09-26 on the same instrument, and the only Metrale
+Engine row you can rebuild from this repository (see
+[Step 6](#step-6-run-the-concurrency-ladder-gate); it serves with W4A4
+activation downcast and a different MTP K ladder, which is why it differs
+from the August row). Each August cell is the mean of 3 timed reps after 1
+discarded warmup; the gate row is one batch per rung after one warmup. The
+instrument: ISL 128, OSL 1024, temperature 0, seed 42, context 2048, batch
+cap 128, GPU memory utilization 0.85, fp8 KV cache, prefix caching on,
+thinking off, MTP K=4 on both engines in the August rows, same box and same
+client. In the August pair the C=4 to C=32 margins (1.2% to 3.6%) are no
+larger than the rep-to-rep spread recorded in those files (up to 3.5%), so
+read those rungs as parity; C=1, C=2, C=64 and C=128 are clear of that
+spread. Against the same vLLM leg the certified row is ahead by 5% to 29% at
+every rung. The campaign log is
+[`bench/ladder38/RESULTS.md`](bench/ladder38/RESULTS.md).
 
 The tree at commit `68dd6bea35` is certified: all 13 required gates pass,
 backed by 23 Ed25519-signed records in [`.benchmarks/`](.benchmarks) dated
@@ -113,7 +126,7 @@ reference is at [docs.dev.metrale.ai](https://docs.dev.metrale.ai).
 | CUDA toolkit | 13.0 with `nvcc` on `PATH`. The certified kernels were compiled by nvcc 13.0.88 (`cuda_13.0.r13.0/compiler.36424714_0` in each record's `closure`). | 2026-09-26 records |
 | Rust | 1.93.1, pinned in [`rust-toolchain.toml`](rust-toolchain.toml); rustup installs it on the first `cargo` call. | `rust-toolchain.toml` |
 | Build packages | `build-essential pkg-config git cmake libclang-dev libibverbs-dev` | build stage of `docker/gb10/Dockerfile` |
-| Containers | Docker and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), for `metralectl` and the vLLM baseline. | |
+| Containers | Docker and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), for `metralectl` and the vLLM baseline. | [Metrale/metralectl README](https://github.com/Metrale/metralectl) |
 | Python | `python3` and `python3-venv`, with `aiohttp` for the ladder harness, `cryptography` to check signatures without `met`, and the `hf` CLI from `huggingface_hub` for downloads. | [`bench/ladder38/harness_w55_conc_ladder.py`](bench/ladder38/harness_w55_conc_ladder.py) |
 | Network | `huggingface.co` (checkpoints); `api.github.com` and `raw.githubusercontent.com` (`met sync-recipes` reads the recipe library in [Metrale/metralectl](https://github.com/Metrale/metralectl)); Docker Hub (images); crates.io (the build, and the agentic gate's generated projects); `metrale.ai` (installer). | [`crates/server/src/recipe/fetch.rs`](crates/server/src/recipe/fetch.rs) |
 
@@ -171,13 +184,17 @@ metralectl run qwen3.6-35b-a3b-fp8-mtp              # serve Qwen3.6-35B-A3B-FP8 
 Docker with the NVIDIA Container Toolkit; this recipe pulls
 `metrale/metrale-inference-gb10:latest` and the 37.49 GB checkpoint.
 
-From source, with the [requirements](#requirements) above in place:
+From source, with the [requirements](#requirements) above in place
+(`met serve` reads the Hugging Face cache and does not download; the first
+build takes 15 to 30 minutes):
 
 ```bash
 git clone https://github.com/Metrale/metrale-inference.git
 cd metrale-inference
 export PATH=/usr/local/cuda/bin:$PATH
 cargo build --release --bin met
+pip install -U huggingface_hub                     # provides the `hf` CLI
+hf download Qwen/Qwen3.6-35B-A3B-FP8               # 37.49 GB into ~/.cache/huggingface/hub
 target/release/met serve Qwen/Qwen3.6-35B-A3B-FP8 --max-seq-len 16384
 ```
 
@@ -212,20 +229,23 @@ The concurrency ladder's pins live in
 ```bash
 git clone https://github.com/Metrale/metrale-inference.git
 cd metrale-inference
-git fetch origin 68dd6bea351a20db0295f20687ff83bdefa000f9
-git checkout --detach 68dd6bea351a20db0295f20687ff83bdefa000f9
+git checkout --detach certified-2026-09-26      # tag on 68dd6bea351a20db0295f20687ff83bdefa000f9
 ```
 
-`68dd6bea35` is the commit every 2026-09-26 record names in its `git_sha`.
-The records were committed on top of it and are on `main`; the commands below
-read them from there with `git show origin/main:<path>`. At the measured
-commit itself no record is present yet, so every gate is owed again, which is
-what you want when re-measuring.
+`68dd6bea35` is the commit every 2026-09-26 record names in its `git_sha`;
+the tag `certified-2026-09-26` points at it. If your clone lacks the tag,
+`git fetch origin refs/pull/24/head` brings the commit in. The records were
+committed on top of it and reached `main` by squash merge;
+`git diff --stat certified-2026-09-26 origin/main` shows what `main` adds.
+The commands below read the records from `main` with
+`git show origin/main:<path>`. At the measured commit itself no record is
+present yet, so every gate is owed again, which is what you want when
+re-measuring.
 
 ### Step 2. Install the toolchain
 
 ```bash
-sudo apt-get install -y build-essential pkg-config git cmake libclang-dev libibverbs-dev python3-venv
+sudo apt-get install -y build-essential pkg-config git cmake libclang-dev libibverbs-dev curl python3 python3-venv
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 export PATH=/usr/local/cuda/bin:$HOME/.cargo/bin:$PATH
 nvcc --version      # release 13.0; V13.0.88 compiled the certified kernels
@@ -268,9 +288,10 @@ from a local index, and `sync-recipes` fills it from the `recipes/` tree of
 [Metrale/metralectl](https://github.com/Metrale/metralectl). It is a separate
 command so that a benchmark never reaches the network mid-run. It prints the
 path of the index, the recipe count and the tree sha it read. `met doctor`
-checks the box. On a new machine it reports that your signing key is not
-committed in `.github/record-signers/`; that matters only for records you
-intend to merge.
+checks the box. On a new machine its `identity` line reads `no signing key
+yet — one is minted on this box's first gate record`; after your first gate
+run it will say the key is not committed in `.github/record-signers/`, which
+matters only for records you intend to merge.
 
 ### Step 5. Download the checkpoints
 
@@ -321,7 +342,9 @@ against regression. The ratio against vLLM comes from the ladder files.
 
 **How long.** The 2026-09-26 run measured for 1,652 s (27.5 minutes, from the
 record's `hardware_state`), plus the model load. `met bench list` gives the
-range as 25 to 90 minutes.
+range as 25 to 90 minutes. The widest rungs are slow to report: a C=128 rung
+takes several minutes (its energy window in the record is 283 s) and its
+TTFT p50 was 33 s, so long gaps between progress lines there are not a hang.
 
 **What it prints.** Progress goes to stderr. The record path is printed as
 soon as it is written:
@@ -429,10 +452,17 @@ Sources:
 and [`bench/baselines/qwen36-35b-a3b/published.json`](bench/baselines/qwen36-35b-a3b/published.json)
 (raw file `vllm_moe_c1_16.json`, measured once on 2026-09-19, with vLLM
 forced onto its Marlin FP8 MoE path because its default DeepGEMM path fails
-at weight load on GB10). On this model vLLM is ahead from C=4 up, by 2.8x at
-C=16. That manifest scores no pair, because no Metrale Engine leg has been
-run with its exact serve profile, and the `BENCH.toml` note says so
-directly: these floors guard regression, not parity.
+at weight load on GB10).
+
+On this model vLLM is ahead from C=4 up, by 2.8x at C=16; Metrale Engine
+leads at C=1. The MoE decode path is the part of the engine that is not yet
+competitive at width, and this gate exists to hold its curve while that work
+lands: its floors are cut from Metrale Engine's own measured curve and guard
+regression, not parity, as the `BENCH.toml` note says directly. The vLLM
+figure is a single day's run (2026-09-19, three reps per rung, never
+re-run), and no Metrale Engine leg has been run under that manifest's exact
+serve profile (its parity note requires MTP K=4; the gate serves
+`num_drafts=1`), so the manifest scores no pair.
 
 ### The single-stream decode floor
 
@@ -447,14 +477,18 @@ target/release/met bench run decode-floor \
 The certified record,
 [`.benchmarks/decode-floor/2026-09-26-68dd6bea35.json`](.benchmarks/decode-floor/2026-09-26-68dd6bea35.json),
 reads `server_decode_tok_s` 27.61 with an MTP accept length of 2.67 and 817
-output tokens, against a floor of 25.5 with a declared noise of 0.5; its
+output tokens, against a floor of 25.5 with a declared noise of 0.5 (the
+verdict prints the noise-adjusted bar, 25.0); its
 verdict reads "median decode 27.6 tok/s over 3 pinned runs (accept_len_mean
 2.67) — clears the 25.0 tok/s floor". It measured for 97 s.
 
 ### Verify the signed records
 
 The gate check is what CI runs on every pull request. It needs no GPU and no
-server. Run it where the records are, on `main`:
+server. The check diffs each record's commit against `HEAD`, so `68dd6bea35`
+must be present in the clone (Step 1 brings it in); in a clone without it,
+every gate reads `NONE` with `git cannot diff that commit`. Run it where the
+records are, on `main`:
 
 ```bash
 git worktree add ../metrale-inference-main origin/main
@@ -524,8 +558,13 @@ sets out that threat model.
 [`bench/ladder38/published.json`](bench/ladder38/published.json) records the
 `vllm-mtp` series as the image digest (`vllm/vllm-openai:latest @
 sha256:0a51ea5b…`, tag `v0.27.1`), the environment (`HF_HUB_OFFLINE=1`) and
-the `vllm serve` arguments. The image's entrypoint is `vllm serve`, so as a
-container command they read:
+the `vllm serve` arguments. The `metrale` series' `cli` field is the August
+command line for that build and is kept as recorded; four of its flags
+(`--host`, `--scheduling-policy`, `--disable-tool-grammar`,
+`--ssm-tail-midchunk`) are not accepted by this tree's `met serve`, so use
+the gate in [Step 6](#step-6-run-the-concurrency-ladder-gate) to serve the
+Metrale Engine side rather than that string. The image's entrypoint is
+`vllm serve`, so as a container command the vLLM arguments read:
 
 ```bash
 docker run --rm --network host --gpus all --ipc=host \
@@ -550,6 +589,10 @@ python3 bench/ladder38/harness_w55_conc_ladder.py \
   --label vllm_mtp --out vllm_mtp.json \
   --concs 1,2,4,8,16,32,64,128 --reps 3 --isl 128 --osl 1024 --warmup 1
 ```
+
+Each rep prints one line (`[vllm_mtp] C=  1 rep0  tok/s= …`); the reference
+leg's `tok_s_mean` per rung is the vLLM row of the table at the top. Expect
+roughly an hour for all eight rungs.
 
 Every measurement argument is required; the harness defaults nothing. It
 prints its own sha256 first and writes it into the output as
@@ -707,9 +750,8 @@ Metrale Engine is licensed under either of [MIT](LICENSE-MIT) or
 licence; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
 [`CITATIONS.md`](CITATIONS.md).
 
-The public history of this repository begins on 2026-09-26. The benchmark
-records in `.benchmarks/` are dated, and each can be checked against its
-signature and the commit it names.
+The benchmark records in `.benchmarks/` are dated, and each can be checked
+against its signature and the commit it names.
 
 <a id="appendix-people"></a>
 ## <img src="docs/readme/icons/people.svg" width="20" height="20" alt="People icon"> Appendix: people
