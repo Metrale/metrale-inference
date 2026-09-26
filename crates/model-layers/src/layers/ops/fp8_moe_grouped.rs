@@ -26,6 +26,13 @@ pub const FP8_GROUPED_GATE_UP_COLS_PER_CTA: u32 = 8;
 /// `.cu`.
 pub const FP8_GROUPED_DOWN_COLS_PER_CTA: u32 = 32;
 
+/// 2026-09-26: Rows per gate+up pass. Must equal `GU_GROUP_ROWS` in the `.cu`:
+/// the shared expert takes `ceil(num_tokens / this)` block rows.
+pub const FP8_GROUPED_GATE_UP_ROWS_PER_PASS: u32 = 4;
+
+/// 2026-09-26: Rows per down pass. Must equal `GROUP_ROWS` in the `.cu`.
+pub const FP8_GROUPED_DOWN_ROWS_PER_PASS: u32 = 8;
+
 /// 2026-09-25: Cap on active experts, which sizes the grouped grids' Y extent:
 /// `num_tokens * top_k` rows can reach at most that many distinct experts. It
 /// does not depend on the routing, so a captured graph stays valid for every
@@ -57,7 +64,8 @@ pub fn moe_fp8_grouped_compact(
 }
 
 /// 2026-09-26: Grouped FP8 gate+up and SiLU. `cap` is [`fp8_grouped_active_cap`];
-/// the extra `blockIdx.y` is the shared expert. Writes the FP32 product
+/// the first `ceil(num_tokens / FP8_GROUPED_GATE_UP_ROWS_PER_PASS)` block rows are
+/// the shared expert. Writes the FP32 product
 /// `silu(bf16(gate)) * bf16(up)`, `[positions, n]` for the routed experts into
 /// `act` and `[num_tokens, n]` for the shared expert into `sh_act`.
 #[allow(clippy::too_many_arguments)]
@@ -84,7 +92,11 @@ pub fn moe_expert_gate_up_act_fp8_grouped(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n, FP8_GROUPED_GATE_UP_COLS_PER_CTA), cap + 1, 1])
+        .grid([
+            div_ceil(n, FP8_GROUPED_GATE_UP_COLS_PER_CTA),
+            cap + div_ceil(num_tokens, FP8_GROUPED_GATE_UP_ROWS_PER_PASS),
+            1,
+        ])
         .block([128, 1, 1])
         .arg_ptr(input)
         .arg_ptr(gp_w)
@@ -132,7 +144,11 @@ pub fn moe_expert_down_act_fp8_grouped(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n, FP8_GROUPED_DOWN_COLS_PER_CTA), cap + 1, 1])
+        .grid([
+            div_ceil(n, FP8_GROUPED_DOWN_COLS_PER_CTA),
+            cap + div_ceil(num_tokens, FP8_GROUPED_DOWN_ROWS_PER_PASS),
+            1,
+        ])
         .block([256, 1, 1])
         .arg_ptr(act)
         .arg_ptr(down_w)

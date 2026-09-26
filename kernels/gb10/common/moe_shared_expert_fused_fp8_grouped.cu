@@ -9,10 +9,11 @@
 //   [expert_offsets[e], expert_offsets[e + 1]), and position pos reads input row
 //   sorted_token_ids[pos]. act and the routed C are indexed by position; the blend in
 //   moe_fp8_grouped_blend.cu maps a token's slot back through token_to_perm.
-// - blockIdx.y < cap indexes active_experts (from moe_fp8_grouped_compact), and blocks at
-//   or past active_count[0] return. blockIdx.y == cap is the shared expert, over rows
-//   0 to num_tokens - 1. The host sets cap = min(num_tokens * top_k, num_experts)
-//   (fp8_grouped_active_cap), so the grid does not depend on the routing.
+// - 2026-09-26: blockIdx.y < S = ceil(num_tokens / rows per pass) is the shared expert,
+//   rows [y * rows, (y + 1) * rows); blockIdx.y = S + i indexes active_experts[i] (from
+//   moe_fp8_grouped_compact), and blocks with i at or past active_count[0] return. The host
+//   sets cap = min(num_tokens * top_k, num_experts) (fp8_grouped_active_cap) and grid.y =
+//   cap + S, so the grid does not depend on the routing.
 // - 2026-09-26: Per row, the output equals moe_shared_expert_fused_fp8.cu's gate+up, SiLU
 //   and down bit for bit. gate+up keeps its 16-input lane chunks, four-product sums and
 //   shuffle reduction, rounds gate and up to BF16 as that kernel stores them, and writes
@@ -22,10 +23,11 @@
 // - Weights are row-major [N, K] FP8 E4M3 with FP32 scales [ceil(N / 128), ceil(K / 128)].
 //   A null routed gate or up pointer makes that expert's act 0, a null routed down pointer
 //   zeroes its output rows; the shared-expert pointers are not checked.
-// - Launch: compact grid 1, block 256; gate+up grid (ceil(N / GU_COLS_PER_CTA), cap + 1, 1),
-//   block 128; down grid (ceil(N / DOWN_COLS_PER_CTA), cap + 1, 1), block 256, no dynamic
-//   shared memory. GU_COLS_PER_CTA and DOWN_COLS_PER_CTA must equal
-//   FP8_GROUPED_GATE_UP_COLS_PER_CTA and FP8_GROUPED_DOWN_COLS_PER_CTA in fp8_moe_grouped.rs.
+// - Launch: compact grid 1, block 256; gate+up grid (ceil(N / GU_COLS_PER_CTA), cap + S, 1),
+//   block 128; down grid (ceil(N / DOWN_COLS_PER_CTA), cap + S, 1), block 256, no dynamic
+//   shared memory. GU_COLS_PER_CTA, GU_GROUP_ROWS, DOWN_COLS_PER_CTA and GROUP_ROWS must
+//   equal FP8_GROUPED_GATE_UP_COLS_PER_CTA, FP8_GROUPED_GATE_UP_ROWS_PER_PASS,
+//   FP8_GROUPED_DOWN_COLS_PER_CTA and FP8_GROUPED_DOWN_ROWS_PER_PASS in fp8_moe_grouped.rs.
 
 #include <cuda_bf16.h>
 
@@ -135,19 +137,25 @@ extern "C" __global__ void moe_fp8_grouped_compact(
     active_count[0] = n;
 }
 
-// 2026-09-26: Routed block (expert, columns) or shared block: its row range, and whether it
-// runs at all. Shared by the gate+up and down kernels.
+// 2026-09-26: The row range of this block, and whether it runs at all. The first
+// ceil(num_tokens / rows) block rows are the shared expert, `rows` tokens each (one pass),
+// so its all-token work spreads over as many blocks as passes and is dispatched first,
+// instead of trailing the grid; block row shared_slots + i is active expert i. Shared by the
+// gate+up and down kernels.
 __device__ __forceinline__ bool grouped_block_rows(
     const int* __restrict__ expert_offsets, const int* __restrict__ active_experts,
-    const int* __restrict__ active_count, unsigned int cap, unsigned int num_tokens,
-    unsigned int* expert, unsigned int* begin, unsigned int* end
+    const int* __restrict__ active_count, unsigned int num_tokens, unsigned int rows,
+    bool* is_shared, unsigned int* expert, unsigned int* begin, unsigned int* end
 ) {
     const unsigned int y = blockIdx.y;
-    if (y == cap) {
-        *expert = 0; *begin = 0; *end = num_tokens;
+    const unsigned int shared_slots = (num_tokens + rows - 1) / rows;
+    *is_shared = (y < shared_slots);
+    if (*is_shared) {
+        *expert = 0; *begin = y * rows; *end = min(num_tokens, (y + 1) * rows);
     } else {
-        if ((int)y >= active_count[0]) return false;
-        *expert = (unsigned int)active_experts[y];
+        const unsigned int i = y - shared_slots;
+        if ((int)i >= active_count[0]) return false;
+        *expert = (unsigned int)active_experts[i];
         *begin = (unsigned int)expert_offsets[*expert];
         *end = (unsigned int)expert_offsets[*expert + 1];
     }
@@ -174,10 +182,10 @@ extern "C" __global__ void moe_expert_gate_up_act_fp8_grouped(
     float* __restrict__ sh_act,
     unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
 ) {
-    const bool is_shared = (blockIdx.y == cap);
+    bool is_shared;
     unsigned int expert, begin, end;
-    if (!grouped_block_rows(expert_offsets, active_experts, active_count, cap, num_tokens,
-                            &expert, &begin, &end)) return;
+    if (!grouped_block_rows(expert_offsets, active_experts, active_count, num_tokens,
+                            GU_GROUP_ROWS, &is_shared, &expert, &begin, &end)) return;
 
     const unsigned char* Wg;
     const float* Sg;
@@ -344,10 +352,10 @@ extern "C" __global__ void moe_expert_down_act_fp8_grouped(
     __nv_bfloat16* __restrict__ sh_down_out,
     unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
 ) {
-    const bool is_shared = (blockIdx.y == cap);
+    bool is_shared;
     unsigned int expert, begin, end;
-    if (!grouped_block_rows(expert_offsets, active_experts, active_count, cap, num_tokens,
-                            &expert, &begin, &end)) return;
+    if (!grouped_block_rows(expert_offsets, active_experts, active_count, num_tokens,
+                            GROUP_ROWS, &is_shared, &expert, &begin, &end)) return;
 
     const unsigned char* B_weight;
     const float* B_block_scale;
