@@ -11,7 +11,7 @@ Metrale Engine is designed for broad hardware support — the engine is vendor-a
 - `docker` with `--gpus all` support (recent `nvidia-container-toolkit`)
 - Internet access for the first model download; models are cached under `~/.cache/huggingface` after that
 
-H100/H200 and B200 images build from `docker/hopper/Dockerfile` and `docker/b200/Dockerfile` (see `docker/docker-guide.md`); AMD and Apple targets build from source. The GB10 image's PTX is compiled with `-arch=sm_121f` using SM121-specific tile shapes and a software E2M1 conversion — none of that is architectural, it's just the first target we hyperoptimized. Adding a new hardware target is two trait impls plus kernel source; see [Adding a new hardware target](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target).
+H100/H200 and B200 images build from `docker/hopper/Dockerfile` and `docker/b200/Dockerfile` (see `docker/docker-guide.md`); AMD and Apple targets build from source. The GB10 image's PTX is compiled with `-arch=sm_121f` using SM121-specific tile shapes and a software E2M1 conversion — none of that is architectural, it's just the first target we hyperoptimized. Adding a new hardware target is two trait impls plus kernel source; see [Adding a new hardware target](https://github.com/Metrale/metrale-inference/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target).
 
 ## Install metralectl
 
@@ -59,8 +59,8 @@ Mount the cache directory into the container:
 You only need to build from source if you are modifying Metrale Engine. `rust-toolchain.toml` pins the Rust release; CUDA 13.0+ with `nvcc` on `PATH` (or `CUDA_HOME` set) is required for a real build. Clippy and fmt can run without CUDA via `METRALE_SKIP_BUILD=1`.
 
 ```bash
-git clone https://github.com/Metrale/metrale-inference-alpha.git
-cd metrale-inference-alpha
+git clone https://github.com/Metrale/metrale-inference.git
+cd metrale-inference
 
 # Full build — compiles every (gb10, model, quant) target (~6 min)
 docker build -f docker/gb10/Dockerfile -t metrale-inference-gb10 .

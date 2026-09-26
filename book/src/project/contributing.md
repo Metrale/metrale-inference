@@ -1,6 +1,6 @@
 # Contributing
 
-The canonical references are [`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/CONTRIBUTING.md) and [`AGENTS.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/AGENTS.md). This chapter gives a working overview for anyone reading the book first.
+The canonical references are [`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference/blob/main/CONTRIBUTING.md) and [`AGENTS.md`](https://github.com/Metrale/metrale-inference/blob/main/AGENTS.md). This chapter gives a working overview for anyone reading the book first.
 
 ## The AI-first policy
 
@@ -14,9 +14,9 @@ This is not branding — it's the operational consequence of the specialization 
 
 ## What kinds of PRs are welcome
 
-[`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/CONTRIBUTING.md) lists four categories:
+[`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference/blob/main/CONTRIBUTING.md) lists four categories:
 
-- **New `(H, M_q)` targets.** Porting Metrale Engine kernels to new hardware (H100, B200, MI300X, Apple M4, Intel) or new models. Each target is a self-contained body of work. See the [Adding a new hardware target](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target) and [Adding a new model](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-model-family) guides.
+- **New `(H, M_q)` targets.** Porting Metrale Engine kernels to new hardware (H100, B200, MI300X, Apple M4, Intel) or new models. Each target is a self-contained body of work. See the [Adding a new hardware target](https://github.com/Metrale/metrale-inference/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target) and [Adding a new model](https://github.com/Metrale/metrale-inference/blob/main/docs/HARDWARE.md#adding-a-new-model-family) guides.
 - **Kernel optimization.** Profile existing kernels, experiment with tiling strategies, register pressure, shared-memory layouts. If you can beat the numbers in the [Benchmarks](../operations/benchmarks.md) chapter, send the PR.
 - **Benchmark coverage.** Add shapes and configurations not yet tested. More data points sharpen the hypercompiler.
 - **Bug reports.** Include hardware details, repro steps, and kernel timings.
@@ -73,7 +73,7 @@ Metrale Engine is licensed under MIT OR Apache-2.0, at your option. Unless you s
 
 ## Adding a new hardware target
 
-High-level (full walkthrough in [`docs/HARDWARE.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target)):
+High-level (full walkthrough in [`docs/HARDWARE.md`](https://github.com/Metrale/metrale-inference/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target)):
 
 1. `kernels/<hw>/HARDWARE.toml` with `vendor = "..."` and `arch`; `[hardware] inherits` to reuse another tree's sources.
 2. `impl ComputeTarget` for the vendor's compiler, registered in `crates/kernels/build_target.rs::resolve_compute_target()` (the build reads `METRALE_TARGET_HW`, default `gb10`, and the tree's `vendor` picks the `ComputeTarget`).
@@ -115,7 +115,7 @@ If a task is ambiguous, ask in the issue/PR before implementing. If scope grows 
 
 ## References
 
-- [`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/CONTRIBUTING.md) — canonical.
-- [`AGENTS.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/AGENTS.md) — practical contributor guide.
-- [`SECURITY.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/SECURITY.md) — disclosure (also this book's [Security chapter](./security.md)).
-- [`docs/adr/`](https://github.com/Metrale/metrale-inference-alpha/tree/main/docs/adr) — authoritative architecture decision records.
+- [`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference/blob/main/CONTRIBUTING.md) — canonical.
+- [`AGENTS.md`](https://github.com/Metrale/metrale-inference/blob/main/AGENTS.md) — practical contributor guide.
+- [`SECURITY.md`](https://github.com/Metrale/metrale-inference/blob/main/SECURITY.md) — disclosure (also this book's [Security chapter](./security.md)).
+- [`docs/adr/`](https://github.com/Metrale/metrale-inference/tree/main/docs/adr) — authoritative architecture decision records.

@@ -5,7 +5,7 @@ Metrale Engine is a **twenty-one**-member Cargo workspace plus a build-time kern
 ## Repository tree (top level)
 
 ```
-metrale-inference-alpha/
+metrale-inference/
 ├── README.md
 ├── QUICKSTART.md                 per-model Docker recipes
 ├── CONTRIBUTING.md, AGENTS.md    contributor workflow

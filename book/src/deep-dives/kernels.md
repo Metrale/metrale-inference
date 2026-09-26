@@ -118,4 +118,4 @@ Turning graphs off (`--profile`) disables capture — useful when you are profil
 - Per-op specifics: [Attention & Paged KV Cache](./attention.md), [MoE](./moe.md), [SSM](./ssm.md)
 - Per-feature specifics: [Speculative Decoding](./mtp.md), [XGrammar](./xgrammar.md)
 - Measuring results: [Benchmarking](../operations/benchmarks.md)
-- Authoritative designs: [`docs/adr/`](https://github.com/Metrale/metrale-inference-alpha/tree/main/docs/adr) in the repo
+- Authoritative designs: [`docs/adr/`](https://github.com/Metrale/metrale-inference/tree/main/docs/adr) in the repo

@@ -128,8 +128,8 @@ normally. Configure the App once and the loop is unattended.
 3. **Install App**, scoped to the `metrale` repository only.
 4. Register it with the repository:
    ```bash
-   gh variable set GOVERNANCE_APP_CLIENT_ID --repo Metrale/metrale-inference-alpha --body '<client id>'
-   gh secret set GOVERNANCE_APP_PRIVATE_KEY --repo Metrale/metrale-inference-alpha < path/to/key.pem
+   gh variable set GOVERNANCE_APP_CLIENT_ID --repo Metrale/metrale-inference --body '<client id>'
+   gh secret set GOVERNANCE_APP_PRIVATE_KEY --repo Metrale/metrale-inference < path/to/key.pem
    ```
 
 `governance-harvest.yml` mints an installation token when
