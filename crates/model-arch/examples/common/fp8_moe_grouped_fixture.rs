@@ -23,6 +23,62 @@ impl Rng {
     }
 }
 
+/// 2026-09-26: Routed experts: the first argument, default 32 (rows share experts).
+/// `256` is the model's count, where the distinct-expert bandwidth is representative.
+pub fn experts() -> usize {
+    std::env::args()
+        .nth(1)
+        .and_then(|a| a.parse().ok())
+        .unwrap_or(32)
+}
+
+/// 2026-09-26: The second argument, a Zipf exponent for the routing (default 0,
+/// uniform): expert e is drawn with weight (e + 1)^-alpha. At 256 experts,
+/// alpha 0.9 gives about the distinct-expert counts the 35B verify step
+/// routes to (121 at 32 rows, 153 at 64, measured with
+/// METRALE_DUMP_EXPERT_IDS=1 on the concurrency ladder).
+pub fn zipf_alpha() -> f64 {
+    std::env::args()
+        .nth(2)
+        .and_then(|a| a.parse().ok())
+        .unwrap_or(0.0)
+}
+
+/// 2026-09-26: `rows` rows of `top_k` distinct experts each, drawn from `e_count` experts
+/// with weight (e + 1)^-alpha.
+pub fn zipf_routing(
+    rng: &mut Rng,
+    e_count: usize,
+    alpha: f64,
+    rows: usize,
+    top_k: usize,
+) -> Vec<u32> {
+    let weights: Vec<f64> = (0..e_count)
+        .map(|e| ((e + 1) as f64).powf(-alpha))
+        .collect();
+    let total: f64 = weights.iter().sum();
+    let cdf: Vec<f64> = weights
+        .iter()
+        .scan(0.0, |acc, w| {
+            *acc += w / total;
+            Some(*acc)
+        })
+        .collect();
+    let mut idx = Vec::with_capacity(rows * top_k);
+    for _ in 0..rows {
+        let mut row: Vec<u32> = Vec::new();
+        while row.len() < top_k {
+            let u = rng.next() as f64 / u32::MAX as f64;
+            let e = cdf.partition_point(|&c| c < u).min(e_count - 1) as u32;
+            if !row.contains(&e) {
+                row.push(e);
+            }
+        }
+        idx.extend(row);
+    }
+    idx
+}
+
 pub fn upload(gpu: &dyn GpuBackend, bytes: &[u8]) -> Result<DevicePtr> {
     let ptr = gpu.alloc(bytes.len().max(16))?;
     gpu.copy_h2d(bytes, ptr)?;

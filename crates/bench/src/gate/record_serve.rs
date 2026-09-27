@@ -28,6 +28,9 @@ pub const PREFILL_CODISPATCH: &str = "prefill_codispatch";
 /// flag defaults to false and has no environment fallback, so an absent key
 /// means off.
 pub const W4A4_DOWNCAST: &str = "w4a4_downcast";
+/// 2026-09-27: Key for `--moe-nvfp4-experts`, present (`true`) only when on. Like
+/// `--w4a4-downcast` it defaults to false with no environment fallback.
+pub const MOE_NVFP4_EXPERTS: &str = "moe_nvfp4_experts";
 
 /// 2026-09-26: The disclosure for a server whose rendered flags resolved to
 /// these values.
@@ -45,6 +48,7 @@ pub fn disclosure(
     speculative: bool,
     prefill_codispatch: bool,
     w4a4_downcast: bool,
+    moe_nvfp4_experts: bool,
 ) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     m.insert(SPECULATIVE.to_string(), speculative.to_string());
@@ -59,6 +63,9 @@ pub fn disclosure(
     }
     if w4a4_downcast {
         m.insert(W4A4_DOWNCAST.to_string(), "true".to_string());
+    }
+    if moe_nvfp4_experts {
+        m.insert(MOE_NVFP4_EXPERTS.to_string(), "true".to_string());
     }
     m
 }

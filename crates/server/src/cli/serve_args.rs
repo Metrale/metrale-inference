@@ -265,6 +265,27 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = false)]
     pub w4a4_downcast_wide: bool,
 
+    /// Add an NVFP4 copy of a native-FP8 checkpoint's routed MoE experts at load, and run MoE
+    /// decode through the grouped NVFP4 kernels (default: false). This lowers routed-expert
+    /// precision from FP8 to 4 bits, so the model's answers change and accuracy can move.
+    ///
+    /// The routed experts are requantized to NVFP4 (E2M1 with E4M3 block scales of 16, each
+    /// scale chosen by squared error) when the model loads, which halves the routed-expert bytes
+    /// a decode step reads. Every MoE decode of 1 to 64 rows (single-sequence decode,
+    /// multi-sequence decode, MTP verify) then runs the grouped NVFP4 W4A16 kernels, whose
+    /// output for a row does not depend on how many rows share the launch; the shared expert
+    /// and prefill keep the FP8 weights. Off unless a recipe asks for it. No environment
+    /// fallback.
+    //
+    // 2026-09-27: Measured on Qwen3.6-35B-A3B-FP8 with canonical tiers, BFCL echolp shard 1/4
+    // (N=253), overall/normalized: FP8 experts 85.38/87.72; this flag 86.56/88.86; the first
+    // version of this flag (NVFP4 shared expert and prefill, absmax scales) 83.40/83.21.
+    // agentic-webserver with this flag: 10/10 webserver_ok and followed_directions, but 168
+    // turns and 774 s summed wall against 128 turns and 545 s with FP8 experts (the gate's
+    // ceiling is 700 s).
+    #[arg(long, default_value_t = false)]
+    pub moe_nvfp4_experts: bool,
+
     /// Sequential-decode-exact GDN/SSM verify chain, opt-in (default: off).
     ///
     /// With it, MTP verify runs, per token, the GDN/SSM kernel chain sequential
@@ -294,6 +315,19 @@ pub struct ServeArgs {
     /// reachable.
     #[arg(long)]
     pub no_ssm_tail_midchunk: bool,
+
+    /// Keep the row-count tiers on an FP8 MoE checkpoint (canonical tiers are on by
+    /// default there).
+    ///
+    /// By default an FP8 MoE checkpoint gives every row the same summation order at
+    /// every batch width: the W8A16 projections take the tensor-core tile family,
+    /// the NVFP4 LM head its tile GEMM and the FP8 MoE the grouped kernels with
+    /// the per-row router, so greedy output does not depend on how many rows share
+    /// a launch. With this flag those ops pick kernels by row count, as other
+    /// checkpoints do. `METRALE_CANONICAL_TIERS` (presence) turns canonical tiers
+    /// on for any checkpoint; this flag wins over it.
+    #[arg(long)]
+    pub no_canonical_tiers: bool,
 
     /// MTP throughput gate: `auto` (default) or `force`.
     ///

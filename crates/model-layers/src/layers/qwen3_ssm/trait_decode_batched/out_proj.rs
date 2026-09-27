@@ -41,6 +41,20 @@ impl Qwen3SsmLayer {
                 value_dim as u32,
                 stream,
             )?;
+        } else if let Some(ref fp8) = self.out_proj_fp8w
+            && self.row_tier_fp8_proj(
+                ctx,
+                fp8,
+                normed_out_buf,
+                out_proj_buf,
+                num_tokens,
+                h as u32,
+                value_dim as u32,
+                stream,
+            )?
+        {
+            // 2026-09-27: A row-invariant tier policy (`row_tier_fp8_proj`) served a
+            // block-scaled FP8 out_proj at every row count.
         } else if (2..=4).contains(&num_tokens)
             && let Some(ref fp8) = self.out_proj_fp8w
         {
@@ -121,6 +135,7 @@ impl Qwen3SsmLayer {
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
                     self.w8a16_gemm_pipelined_m32_k,
+                    self.w8a16_gemm_pipelined_m64_k,
                     normed_out_buf,
                     fp8.weight,
                     fp8.row_scale,

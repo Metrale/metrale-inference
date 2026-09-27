@@ -18,20 +18,20 @@ use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 
 use crate::weight_map::Fp8Weight;
 
-/// 2026-09-25: Rows per register pass inside the grouped kernels. Must equal
-/// `GROUP_ROWS` in the `.cu`; the SiLU+down launch sizes its dynamic shared
-/// memory from it.
-pub const FP8_GROUPED_ROWS_PER_PASS: u32 = 8;
+/// 2026-09-26: Output columns per gate+up CTA. Must equal `GU_COLS_PER_CTA` in the
+/// `.cu`.
+pub const FP8_GROUPED_GATE_UP_COLS_PER_CTA: u32 = 8;
 
-/// 2026-09-25: Output columns per SiLU+down CTA. Must equal
-/// `DOWN_COLS_PER_CTA` in the `.cu`.
-pub const FP8_GROUPED_DOWN_COLS_PER_CTA: u32 = 32;
+/// 2026-09-25: Output columns per down CTA. Must equal `DOWN_CTA_COLS` in the
+/// `.cu`: 2026-09-27, four column groups of 32.
+pub const FP8_GROUPED_DOWN_COLS_PER_CTA: u32 = 128;
 
-/// 2026-09-25: Dynamic shared memory, in bytes, the SiLU+down kernel needs for
-/// intermediate width `k`.
-pub fn fp8_grouped_silu_down_smem_bytes(k: u32) -> usize {
-    FP8_GROUPED_ROWS_PER_PASS as usize * k as usize * 4
-}
+/// 2026-09-26: Rows per gate+up pass. Must equal `GU_GROUP_ROWS` in the `.cu`:
+/// the shared expert takes `ceil(num_tokens / this)` block rows.
+pub const FP8_GROUPED_GATE_UP_ROWS_PER_PASS: u32 = 4;
+
+/// 2026-09-26: Rows per down pass. Must equal `GROUP_ROWS` in the `.cu`.
+pub const FP8_GROUPED_DOWN_ROWS_PER_PASS: u32 = 4;
 
 /// 2026-09-25: Cap on active experts, which sizes the grouped grids' Y extent:
 /// `num_tokens * top_k` rows can reach at most that many distinct experts. It
@@ -41,50 +41,77 @@ pub fn fp8_grouped_active_cap(num_tokens: u32, top_k: u32, num_experts: u32) -> 
     (num_tokens * top_k).min(num_experts)
 }
 
-/// 2026-09-25: Builds the compacted active-expert list from `expert_offsets`:
-/// `active_experts[0..count]` in ascending order, and `active_count[0] =
-/// count`. Launch it on the stream of the grouped kernels that read it.
-pub fn moe_fp8_grouped_compact(
+/// 2026-09-27: Experts `moe_fp8_grouped_sort` handles (`PMS_MAX_EXPERTS`).
+pub const FP8_GROUPED_SORT_MAX_EXPERTS: u32 = 1024;
+
+/// 2026-09-27: The outputs of [`moe_fp8_grouped_sort`]: `moe_sort_by_expert`'s
+/// four and the active-expert list with its length.
+pub struct Fp8GroupedSortOut {
+    pub sorted_token_ids: DevicePtr,
+    pub sorted_expert_ids: DevicePtr,
+    pub expert_offsets: DevicePtr,
+    pub token_to_perm: DevicePtr,
+    pub active_experts: DevicePtr,
+    pub active_count: DevicePtr,
+}
+
+/// 2026-09-27: Sorts the `total_expanded` slots of `topk_ids` by expert, as
+/// `moe_sort_by_expert` does, and writes `active_experts[0..count]` in
+/// ascending order with `active_count[0] = count`, in one launch on `stream`
+/// (the grouped kernels that read them must follow on it).
+#[allow(clippy::too_many_arguments)]
+pub fn moe_fp8_grouped_sort(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
-    expert_offsets: DevicePtr,
-    active_experts: DevicePtr,
-    active_count: DevicePtr,
+    out: Fp8GroupedSortOut,
+    topk_ids: DevicePtr,
+    total_expanded: u32,
     num_experts: u32,
+    top_k: u32,
     stream: u64,
 ) -> Result<()> {
+    anyhow::ensure!(
+        num_experts <= FP8_GROUPED_SORT_MAX_EXPERTS,
+        "moe_fp8_grouped_sort: {num_experts} experts exceed {FP8_GROUPED_SORT_MAX_EXPERTS}"
+    );
     KernelLaunch::new(gpu, kernel)
         .grid([1, 1, 1])
         .block([256, 1, 1])
-        .arg_ptr(expert_offsets)
-        .arg_ptr(active_experts)
-        .arg_ptr(active_count)
+        .arg_ptr(topk_ids)
+        .arg_ptr(out.sorted_token_ids)
+        .arg_ptr(out.sorted_expert_ids)
+        .arg_ptr(out.expert_offsets)
+        .arg_ptr(out.token_to_perm)
+        .arg_ptr(out.active_experts)
+        .arg_ptr(out.active_count)
+        .arg_u32(total_expanded)
         .arg_u32(num_experts)
+        .arg_u32(top_k)
         .launch(stream)
 }
 
-/// 2026-09-25: Grouped FP8 gate+up. `cap` is [`fp8_grouped_active_cap`]; the
-/// extra `blockIdx.y` is the shared expert. Rows of `gate_out`/`up_out` are
-/// sorted positions.
+/// 2026-09-26: Grouped FP8 gate+up and SiLU. `cap` is [`fp8_grouped_active_cap`];
+/// the first `ceil(num_tokens / FP8_GROUPED_GATE_UP_ROWS_PER_PASS)` block rows are
+/// the shared expert. Writes the FP32 product
+/// `silu(bf16(gate)) * bf16(up)`, `[positions, n]` for the routed experts into
+/// `act` and `[num_tokens, n]` for the shared expert into `sh_act`.
 #[allow(clippy::too_many_arguments)]
-pub fn moe_expert_gate_up_shared_fp8_grouped(
+pub fn moe_expert_gate_up_act_fp8_grouped(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
     input: DevicePtr,
     gp_w: DevicePtr,
     gp_s: DevicePtr,
-    gate_out: DevicePtr,
     up_w: DevicePtr,
     up_s: DevicePtr,
-    up_out: DevicePtr,
+    act: DevicePtr,
     expert_offsets: DevicePtr,
     sorted_token_ids: DevicePtr,
     active_experts: DevicePtr,
     active_count: DevicePtr,
     sh_gate: &Fp8Weight,
-    sh_gate_out: DevicePtr,
     sh_up: &Fp8Weight,
-    sh_up_out: DevicePtr,
+    sh_act: DevicePtr,
     n: u32,
     k: u32,
     cap: u32,
@@ -92,25 +119,27 @@ pub fn moe_expert_gate_up_shared_fp8_grouped(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n, 8), cap + 1, 2])
+        .grid([
+            div_ceil(n, FP8_GROUPED_GATE_UP_COLS_PER_CTA),
+            cap + div_ceil(num_tokens, FP8_GROUPED_GATE_UP_ROWS_PER_PASS),
+            1,
+        ])
         .block([128, 1, 1])
         .arg_ptr(input)
         .arg_ptr(gp_w)
         .arg_ptr(gp_s)
-        .arg_ptr(gate_out)
         .arg_ptr(up_w)
         .arg_ptr(up_s)
-        .arg_ptr(up_out)
+        .arg_ptr(act)
         .arg_ptr(expert_offsets)
         .arg_ptr(sorted_token_ids)
         .arg_ptr(active_experts)
         .arg_ptr(active_count)
         .arg_ptr(sh_gate.weight)
         .arg_ptr(sh_gate.row_scale)
-        .arg_ptr(sh_gate_out)
         .arg_ptr(sh_up.weight)
         .arg_ptr(sh_up.row_scale)
-        .arg_ptr(sh_up_out)
+        .arg_ptr(sh_act)
         .arg_u32(n)
         .arg_u32(k)
         .arg_u32(cap)
@@ -118,23 +147,21 @@ pub fn moe_expert_gate_up_shared_fp8_grouped(
         .launch(stream)
 }
 
-/// 2026-09-25: Grouped FP8 SiLU+down: 256 threads, 8 warps of 4 output
-/// columns each. `k` is the intermediate width; rows of
-/// `gate_out`/`up_out`/`output` are sorted positions.
+/// 2026-09-26: Grouped FP8 down over the SiLU product: 256 threads, 8 warps of 4
+/// output columns each. `k` is the intermediate width; rows of `act` and
+/// `output` are sorted positions, rows of `sh_act` and `sh_down_out` tokens.
 #[allow(clippy::too_many_arguments)]
-pub fn moe_expert_silu_down_shared_fp8_grouped(
+pub fn moe_expert_down_act_fp8_grouped(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
-    gate_out: DevicePtr,
-    up_out: DevicePtr,
+    act: DevicePtr,
     down_w: DevicePtr,
     down_s: DevicePtr,
     output: DevicePtr,
     expert_offsets: DevicePtr,
     active_experts: DevicePtr,
     active_count: DevicePtr,
-    sh_gate_in: DevicePtr,
-    sh_up_in: DevicePtr,
+    sh_act: DevicePtr,
     sh_down: &Fp8Weight,
     sh_down_out: DevicePtr,
     n: u32,
@@ -144,19 +171,20 @@ pub fn moe_expert_silu_down_shared_fp8_grouped(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n, FP8_GROUPED_DOWN_COLS_PER_CTA), cap + 1, 1])
+        .grid([
+            div_ceil(n, FP8_GROUPED_DOWN_COLS_PER_CTA),
+            cap + div_ceil(num_tokens, FP8_GROUPED_DOWN_ROWS_PER_PASS),
+            1,
+        ])
         .block([256, 1, 1])
-        .shared_mem(fp8_grouped_silu_down_smem_bytes(k) as u32)
-        .arg_ptr(gate_out)
-        .arg_ptr(up_out)
+        .arg_ptr(act)
         .arg_ptr(down_w)
         .arg_ptr(down_s)
         .arg_ptr(output)
         .arg_ptr(expert_offsets)
         .arg_ptr(active_experts)
         .arg_ptr(active_count)
-        .arg_ptr(sh_gate_in)
-        .arg_ptr(sh_up_in)
+        .arg_ptr(sh_act)
         .arg_ptr(sh_down.weight)
         .arg_ptr(sh_down.row_scale)
         .arg_ptr(sh_down_out)

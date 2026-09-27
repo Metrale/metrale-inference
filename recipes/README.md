@@ -52,3 +52,4 @@ recipes until the next `met sync-recipes`.
 The 32 recipe files are byte-identical to `recipes/` in
 [Metrale/metralectl](https://github.com/Metrale/metralectl) at
 `e89a8d1b7dd46cbabdf454ac3cde7a012197e3ba`.
+`qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-nvfp4experts.yaml` was added here since.

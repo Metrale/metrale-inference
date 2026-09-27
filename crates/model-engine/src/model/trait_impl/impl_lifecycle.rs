@@ -13,6 +13,7 @@ use crate::traits::{ModelLifecycle, SequenceState};
 
 impl ModelLifecycle for TransformerModel {
     fn teardown(&mut self) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.release_pools()
     }
 
@@ -36,26 +37,36 @@ impl ModelLifecycle for TransformerModel {
     }
 
     fn alloc_sequence(&self) -> Result<SequenceState> {
+        self.gdn_carry_flush_pending()?;
         self.alloc_sequence_dispatch(usize::MAX)
     }
 
     fn alloc_sequence_for(&self, budget_tokens: usize) -> Result<SequenceState> {
+        self.gdn_carry_flush_pending()?;
         self.alloc_sequence_dispatch(budget_tokens)
     }
 
     fn cache_sequence(&self, seq: &SequenceState) {
+        if let Err(e) = self.gdn_carry_flush_pending() {
+            tracing::error!("gdn carry flush before {}: {e:#}", "cache_sequence");
+        }
         self.cache_sequence_dispatch(seq)
     }
 
     fn free_sequence(&self, seq: &mut SequenceState) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.free_sequence_dispatch(seq)
     }
 
     fn compact_sequence(&self, seq: &mut SequenceState, new_slot: usize) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.compact_sequence_dispatch(seq, new_slot)
     }
 
     fn detach_slot_for_reuse(&self, seq: &mut SequenceState) {
+        if let Err(e) = self.gdn_carry_flush_pending() {
+            tracing::error!("gdn carry flush before {}: {e:#}", "detach_slot_for_reuse");
+        }
         self.detach_slot_for_reuse_dispatch(seq)
     }
 
@@ -64,6 +75,7 @@ impl ModelLifecycle for TransformerModel {
         seq: &SequenceState,
         writer: &mut dyn std::io::Write,
     ) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.save_sequence_state_dispatch(seq, writer)
     }
 
@@ -73,6 +85,7 @@ impl ModelLifecycle for TransformerModel {
         num_blocks: usize,
         reader: &mut dyn std::io::Read,
     ) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.restore_sequence_state_dispatch(seq, num_blocks, reader)
     }
 

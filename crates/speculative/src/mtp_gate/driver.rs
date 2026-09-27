@@ -53,11 +53,13 @@ impl MtpGate {
             win_wall: 0.0,
             win_steps: 0,
             losing_windows: 0,
+            loss_other_windows: 0,
             tokens_since_event: 0,
             observed_depth: 0,
             measured_at_depth: 0,
             width_regime: 0,
             fresh: None,
+            settle_steps: 0,
             regime_reprobes: 0,
         }
     }

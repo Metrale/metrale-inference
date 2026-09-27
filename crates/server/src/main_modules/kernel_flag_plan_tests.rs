@@ -29,6 +29,7 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
             gdn: None,
             w4a4_downcast: false,
             w4a4_downcast_wide: false,
+            moe_nvfp4_experts: false,
             prefill_codispatch: None,
             prefill_varlen: None,
             ssm_tail_midchunk: None,
@@ -103,4 +104,10 @@ fn the_wide_downcast_needs_the_downcast() {
     assert!(!alone.w4a4_downcast && !alone.w4a4_downcast_wide);
     let both = plan(&["--w4a4-downcast", "--w4a4-downcast-wide"]);
     assert!(both.w4a4_downcast && both.w4a4_downcast_wide);
+}
+
+#[test]
+fn the_nvfp4_moe_flag_is_carried_and_off_by_default() {
+    assert!(!plan(&[]).moe_nvfp4_experts);
+    assert!(plan(&["--moe-nvfp4-experts"]).moe_nvfp4_experts);
 }

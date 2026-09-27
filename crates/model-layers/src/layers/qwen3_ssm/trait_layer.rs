@@ -268,6 +268,14 @@ impl LayerWriteOnAccept for Qwen3SsmLayer {
         self.woa_bind_impl(flag, stash, seqs)
     }
 
+    fn gdn_carry_seq_floats(&self) -> Option<usize> {
+        self.carry.seq_floats()
+    }
+
+    fn gdn_carry_bind(&self, binding: crate::layer::GdnCarryBinding) {
+        let _ = self.carry.binding.set(binding);
+    }
+
     fn gdn_fold_accepted(
         &self,
         gpu: &dyn GpuBackend,

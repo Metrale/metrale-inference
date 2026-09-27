@@ -168,6 +168,7 @@ impl Qwen3SsmLayer {
                     let batched = self.decode_batched_conv_gdn_multi(
                         &mut states[g0..g1],
                         run_tables,
+                        g0,
                         ctx,
                         &run_args,
                     )?;

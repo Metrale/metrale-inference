@@ -67,6 +67,10 @@ name = "fp8_moe_grouped_routing_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "fp8_moe_grouped_exact_routing_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "fp8gemm_microtest"
 required-features = ["cuda", "gpu-examples"]
 
@@ -104,6 +108,18 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "gdn_verify_fused_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "gdn_carry_conv_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "gdn_carry_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "nvfp4_moe_grouped_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
@@ -310,6 +326,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "w4a16_parity_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "w4a16_gemm_t_skinny_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]

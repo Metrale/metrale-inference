@@ -22,7 +22,7 @@ use std::time::Duration;
 /// public (it is sent in every device-flow POST); a fork overrides both with
 /// `METRALE_REPORT_CLIENT_ID` and `METRALE_REPORT_REPO` (`target()`).
 pub const OFFICIAL_CLIENT_ID: &str = "Iv23liAv6nlb4RaYaJSp";
-pub const OFFICIAL_REPO: &str = "Metrale/metrale-inference-alpha";
+pub const OFFICIAL_REPO: &str = "Metrale/metrale-inference";
 
 /// 2026-09-26: Hidden marker appended to every report body. The issue
 /// payload carries no labels (`run_submit`), so the marker is how a report

@@ -33,6 +33,8 @@ const M16TC_STRIDED_K: u64 = 0xF08E;
 /// 2026-09-25: The 32-row M-tile arm (`w8a16_gemm_pipelined_m32`) for 17+ rows;
 /// its cases are in `qkv_fp8_batch_m32_tests.rs`.
 const M32_STRIDED_K: u64 = 0xF032;
+/// 2026-09-26: The 64-row twin (`w8a16_gemm_pipelined_m64`) for 33+ rows.
+const M64_STRIDED_K: u64 = 0xF064;
 const WIDTH: usize = 128;
 
 /// 2026-09-25: What the tier under test should emit for one projection.
@@ -42,6 +44,9 @@ enum Expect {
     Batched(u64),
     /// 2026-09-25: The per-sequence scalar `w8a16_gemv` loop (one launch per row).
     Scalar,
+    /// 2026-09-26: One strided launch per chunk of at most 16 rows, on the given
+    /// kernel.
+    Chunked(u64),
 }
 
 struct Case {
@@ -63,6 +68,8 @@ struct Case {
     /// 2026-09-25: Whether the `w8a16_gemm_pipelined_m32` handle is linked; the
     /// band above 16 rows exists only when it is.
     m32_handles: bool,
+    /// 2026-09-26: Whether the `w8a16_gemm_pipelined_m64` handle is linked.
+    m64_handles: bool,
 }
 
 impl Case {
@@ -78,6 +85,7 @@ impl Case {
             m16_tc: false,
             m16_tc_handles: true,
             m32_handles: true,
+            m64_handles: false,
         }
     }
 
@@ -114,15 +122,16 @@ fn native_fp8_qkv_batches_five_to_sixteen_rows_on_batch16() {
     }
 }
 
-/// 2026-09-25: Negative control: without `w8a16_gemm_pipelined_m32`, widths
-/// above 16 exceed the GEMVs' MAX_M and stay on the scalar loop. The positive
-/// cases are `m32::native_fp8_qkv_takes_the_m32_tile_above_sixteen_rows`.
+/// 2026-09-26: Without `w8a16_gemm_pipelined_m32`, widths above 16 exceed the
+/// GEMVs' MAX_M and run `batch16` once per chunk of at most 16 rows (not the
+/// per-row scalar loop). With the tile they take it:
+/// `m32::native_fp8_qkv_takes_the_m32_tile_above_sixteen_rows`.
 #[test]
-fn native_fp8_qkv_declines_rows_above_the_kernel_max_m_without_the_m32_tile() {
-    for rows in [17, 24, 32] {
+fn native_fp8_qkv_chunks_rows_above_the_kernel_max_m_without_the_m32_tile() {
+    for rows in [17, 24, 32, 33] {
         let mut case = Case::new(rows);
         case.m32_handles = false;
-        check_dispatch(&case, Expect::Scalar);
+        check_dispatch(&case, Expect::Chunked(BATCH16_K));
     }
 }
 
@@ -290,6 +299,8 @@ fn run_phase(case: &Case, expect: Option<Expect>) -> usize {
     });
     layer.w8a16_gemm_pipelined_m32_k =
         KernelHandle(if case.m32_handles { M32_STRIDED_K } else { 0 });
+    layer.w8a16_gemm_pipelined_m64_k =
+        KernelHandle(if case.m64_handles { M64_STRIDED_K } else { 0 });
     layer.deinterleave_qg_k = KernelHandle(0xF0D1);
 
     let q_dim = (config.num_attention_heads * config.head_dim) as u32;
@@ -410,6 +421,25 @@ fn run_phase(case: &Case, expect: Option<Expect>) -> usize {
                 assert_eq!(l.args[7], u32_arg(width as u32), "A row stride = hidden");
                 assert_eq!(l.args[8], u32_arg(c_stride), "C row stride = per_seq_qkv");
             }
+            Expect::Chunked(kernel) => {
+                assert_eq!(
+                    launches.len(),
+                    case.rows.div_ceil(16),
+                    "one launch per chunk"
+                );
+                for (i, l) in launches.iter().enumerate() {
+                    let row0 = i * 16;
+                    assert_eq!(l.func, kernel);
+                    assert_eq!(
+                        l.args[0],
+                        MockArg::Buffer(c.normed.offset(row0 * width * bf16))
+                    );
+                    let out = c.qkv_buf.offset(row0 * c.per_seq_qkv + out_off);
+                    assert_eq!(l.args[3], MockArg::Buffer(out));
+                    assert_eq!(l.args[4], u32_arg((case.rows - row0).min(16) as u32));
+                    assert_eq!(l.args[8], u32_arg(c_stride), "C row stride = per_seq_qkv");
+                }
+            }
             Expect::Scalar => {
                 assert_eq!(launches.len(), case.rows, "one scalar GEMV per row");
                 for (row, l) in launches.iter().enumerate() {
@@ -436,6 +466,24 @@ fn u32_arg(v: u32) -> MockArg {
 /// 2026-09-25: The `m16_tc` arm's cases, a child module sharing this harness.
 #[path = "qkv_fp8_batch_m16_tc_tests.rs"]
 mod m16_tc;
+
+/// 2026-09-26: With the 64-row twin linked, 33..=64 rows take it (one strided
+/// launch per projection); 17..=32 stay on the 32-row tile.
+#[test]
+fn native_fp8_qkv_takes_the_m64_tile_above_thirty_two_rows() {
+    for rows in [33, 48, 64] {
+        let case = Case {
+            m64_handles: true,
+            ..Case::new(rows)
+        };
+        check_dispatch(&case, Expect::Batched(M64_STRIDED_K));
+    }
+    let case = Case {
+        m64_handles: true,
+        ..Case::new(32)
+    };
+    check_dispatch(&case, Expect::Batched(M32_STRIDED_K));
+}
 
 /// 2026-09-25: The 17+ row arm's cases, a child module sharing this harness.
 #[path = "qkv_fp8_batch_m32_tests.rs"]

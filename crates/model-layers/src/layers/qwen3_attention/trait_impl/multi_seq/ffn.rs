@@ -92,7 +92,52 @@ impl Qwen3AttentionLayer {
             && n >= grouped_routed_decode_min()
             && grouped_routed_decode_enabled()
             && self.ffn.moe_grouped_decode_ok();
-        if !use_grouped && n == 3 && !force_seq_ffn {
+        // 2026-09-27: Under a row-invariant tier policy the FP8 MoE takes the grouped
+        // kernels with the per-row router at every row count (the bits of
+        // `MoeLayer::forward`), ahead of every other arm.
+        let row_invariant_moe = !force_seq_ffn
+            && n >= 2
+            && crate::layers::row_invariant()
+            && self
+                .ffn
+                .fp8_grouped_routing_ok(n, crate::layers::moe::GroupedRouting::PerRow, fwd);
+        // 2026-09-27: `--moe-nvfp4-experts` takes the grouped NVFP4 decode at every row count.
+        let nvfp4_moe = !force_seq_ffn && self.ffn.nvfp4_grouped_ok(n, fwd);
+        if row_invariant_moe || nvfp4_moe {
+            let normed2 = fwd.buffers.norm_output();
+            ops::residual_add_rms_norm(
+                fwd.gpu,
+                self.residual_add_rms_norm_k,
+                hidden,
+                o_out,
+                &self.post_attn_norm,
+                normed2,
+                residual,
+                n as u32,
+                h as u32,
+                eps,
+                stream,
+            )?;
+            if nvfp4_moe {
+                self.ffn.forward_nvfp4_grouped(normed2, n, fwd, stream)?;
+            } else {
+                self.ffn.forward_fp8_grouped_decode_routed(
+                    normed2,
+                    n,
+                    crate::layers::moe::GroupedRouting::PerRow,
+                    fwd,
+                    stream,
+                )?;
+            }
+            ops::residual_add(
+                fwd.gpu,
+                self.residual_add_k,
+                hidden,
+                fwd.buffers.moe_output(),
+                (n * h) as u32,
+                stream,
+            )?;
+        } else if !use_grouped && n == 3 && !force_seq_ffn {
             let normed2 = fwd.buffers.norm_output();
             ops::residual_add_rms_norm(
                 fwd.gpu,

@@ -28,6 +28,13 @@ impl MoeLayer {
         if !single_seq_decode {
             self.reject_decode_lora(ctx, "forward")?;
         }
+        // 2026-09-27: `--moe-nvfp4-experts`: the grouped NVFP4 decode, whose rows do not
+        // depend on how many share the call.
+        if self.nvfp4_grouped_decode_ok(1, ctx) {
+            return self
+                .forward_nvfp4_grouped_decode(input, 1, ctx, stream)
+                .map(|()| ctx.buffers.moe_output());
+        }
         // 2026-09-25: With one sequence, the router delta folds onto
         // `gate_logits` before top-k and the expert gate/up/down deltas onto
         // their intermediates; each fold's `moe_route_gate` still refuses a

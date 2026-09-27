@@ -82,10 +82,48 @@ impl Qwen3SsmLayer {
     /// clear) and the caller must run each sequence alone. Under `--exact-verify` it
     /// returns `decode_batched_conv_gdn_multi_exact`'s result instead. The pointer checks
     /// are host arithmetic.
+    ///
+    /// Under a carry request (`carry.rs`) the run's pending rows are folded exactly once:
+    /// inside the carry kernel when it engages, otherwise by `carry_flush_run` before
+    /// anything else reads H. `run_first` is the run's first batch position.
     pub(super) fn decode_batched_conv_gdn_multi(
         &self,
         states: &mut [&mut (dyn LayerState + 'static)],
         wy_tables: DevicePtr,
+        run_first: usize,
+        ctx: &crate::layer::ForwardContext,
+        args: &ConvGdnArgs,
+    ) -> Result<bool> {
+        let Some(binding) = self.carry_requested(ctx.gdn_write_on_accept) else {
+            return self.decode_batched_conv_gdn_multi_inner(states, wy_tables, None, ctx, args);
+        };
+        let n = states.len();
+        let slot_tab = binding.slot_tab.offset(run_first * 4);
+        let flag = binding.flag.offset(run_first * 4);
+        let carry = !super::verify_exact_enabled() && self.carry_now(true, args.num_tokens);
+        if !carry {
+            self.carry_flush_run(ctx.gpu, wy_tables, run_first, n, args.stream)?;
+        }
+        let ran = self.decode_batched_conv_gdn_multi_inner(
+            states,
+            wy_tables,
+            carry.then_some((slot_tab, flag)),
+            ctx,
+            args,
+        )?;
+        if carry && !ran {
+            self.carry_flush_run(ctx.gpu, wy_tables, run_first, n, args.stream)?;
+        }
+        Ok(ran)
+    }
+
+    /// 2026-09-26: The body of [`Self::decode_batched_conv_gdn_multi`]; `carry` is the run's
+    /// `(slot table, engaged words)` when its WY launch is the carry kernel.
+    fn decode_batched_conv_gdn_multi_inner(
+        &self,
+        states: &mut [&mut (dyn LayerState + 'static)],
+        wy_tables: DevicePtr,
+        carry: Option<(DevicePtr, DevicePtr)>,
         ctx: &crate::layer::ForwardContext,
         args: &ConvGdnArgs,
     ) -> Result<bool> {
@@ -189,31 +227,35 @@ impl Qwen3SsmLayer {
         } = *args;
 
         // 2026-09-25: One launch: conv1d + L2 norm for n sequences × k rows, writing every
-        // conv intermediate.
-        ops::gdn_verify_fused_conv_kn_batched(
-            ctx.gpu,
-            self.gdn_verify_fused_conv_kn_batched_k,
-            conv_base,
-            deinterleaved,
-            &self.ssm.conv1d,
-            conv_out_buf,
-            inter_base,
-            kk as u32,
-            conv_dim as u32,
-            d_conv as u32,
-            qk_ch,
-            kd as u32,
-            qkvz_size as u32,
-            conv_dim as u32,
-            (conv_bytes / 4) as u32,
-            1e-6,
-            n as u32,
-            (conv_bytes / 4) as u32,
-            (kk * qkvz_size) as u32,
-            (kk * conv_dim) as u32,
-            (inter_seq_stride / 4) as u32,
-            stream,
-        )?;
+        // conv intermediate; its carried twin writes none (`carry.rs`).
+        if let Some((slot_tab, _)) = carry {
+            self.carry_conv_launch(ctx.gpu, conv_base, slot_tab, n, args)?;
+        } else {
+            ops::gdn_verify_fused_conv_kn_batched(
+                ctx.gpu,
+                self.gdn_verify_fused_conv_kn_batched_k,
+                conv_base,
+                deinterleaved,
+                &self.ssm.conv1d,
+                conv_out_buf,
+                inter_base,
+                kk as u32,
+                conv_dim as u32,
+                d_conv as u32,
+                qk_ch,
+                kd as u32,
+                qkvz_size as u32,
+                conv_dim as u32,
+                (conv_bytes / 4) as u32,
+                1e-6,
+                n as u32,
+                (conv_bytes / 4) as u32,
+                (kk * qkvz_size) as u32,
+                (kk * conv_dim) as u32,
+                (inter_seq_stride / 4) as u32,
+                stream,
+            )?;
+        }
 
         // 2026-09-25: One WY launch over the n sequences. Rows are sequence-major
         // (`b * k + t`); the state arguments are pointer tables (h, Hi0, ...),
@@ -228,8 +270,25 @@ impl Qwen3SsmLayer {
         // 2026-09-25: Write-on-accept: only when the caller requests it
         // (`ctx.gdn_write_on_accept`) and `woa::woa_decision` agrees, the K=4 twin runs
         // instead and the model folds the accepted rows after the verdict.
-        let woa_now = self.woa_now(ctx.gdn_write_on_accept, kk, n);
-        if woa_now {
+        let woa_now = carry.is_none() && self.woa_now(ctx.gdn_write_on_accept, kk, n);
+        if let Some((slot_tab, flag)) = carry {
+            self.carry_launch(
+                ctx.gpu,
+                kk,
+                wy_tables,
+                slot_tab,
+                flag,
+                q_ptr,
+                k_ptr,
+                v_ptr,
+                gate_ptr,
+                beta_ptr,
+                gdn_out_buf,
+                n,
+                conv_dim,
+                stream,
+            )?;
+        } else if woa_now {
             self.woa_launch(
                 ctx.gpu,
                 wy_tables,

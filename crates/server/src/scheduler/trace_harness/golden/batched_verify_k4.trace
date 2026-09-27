@@ -70,9 +70,10 @@ mtp_slot_draft_capacity(1)
 mtp_slot_draft_capacity(2)
 can_batch_verify([4, 4, 3]) -> true
 sync_secondary()
-decode_verify_batched(tokens=[11, 12, 13, 14, 21, 22, 24, 24, 31, 32, 33], ks=[4, 4, 3], seqs=["s1@0:len=10", "s2@1:len=11", "s3@2:len=11"], stream=0, woa=false) -> [12, 13, 14, 15, 22, 23, 1, 1, 32, 33, 34]
+decode_verify_batched(tokens=[11, 12, 13, 14, 21, 22, 24, 24, 31, 32, 33], ks=[4, 4, 3], seqs=["s1@0:len=10", "s2@1:len=11", "s3@2:len=11"], stream=0, woa=true) -> [12, 13, 14, 15, 22, 23, 1, 1, 32, 33, 34]
 stash_verify_hidden_rows([3, 5, 10], stream=0)
 stash_verify_catchup_rows([(0, 0), (1, 1), (2, 2), (4, 4), (8, 8), (9, 9)])
+gdn_fold_accepted(slots=[0, 1, 2], accepted=[4, 2, 3], k=4) -> true
 commit_accepted_prefix(s1@0:len=10, na=4, k=4)
 trim_proposer_state(s1@0:len=10, na=3, stream=0)
 trim_proposer_state(s2@1:len=9, na=1, stream=0)
@@ -88,9 +89,10 @@ mtp_slot_draft_capacity(1)
 mtp_slot_draft_capacity(2)
 can_batch_verify([4, 4, 3]) -> true
 sync_secondary()
-decode_verify_batched(tokens=[15, 16, 17, 18, 23, 24, 25, 27, 34, 35, 36], ks=[4, 4, 3], seqs=["s1@0:len=14", "s2@1:len=13", "s3@2:len=14"], stream=0, woa=false) -> [16, 17, 18, 19, 24, 25, 26, 1, 35, 36, 37]
+decode_verify_batched(tokens=[15, 16, 17, 18, 23, 24, 25, 27, 34, 35, 36], ks=[4, 4, 3], seqs=["s1@0:len=14", "s2@1:len=13", "s3@2:len=14"], stream=0, woa=true) -> [16, 17, 18, 19, 24, 25, 26, 1, 35, 36, 37]
 stash_verify_hidden_rows([3, 6, 10], stream=0)
 stash_verify_catchup_rows([(0, 0), (1, 1), (2, 2), (4, 4), (5, 5), (8, 8), (9, 9)])
+gdn_fold_accepted(slots=[0, 1, 2], accepted=[4, 3, 3], k=4) -> true
 commit_accepted_prefix(s1@0:len=14, na=4, k=4)
 trim_proposer_state(s1@0:len=14, na=3, stream=0)
 trim_proposer_state(s2@1:len=12, na=2, stream=0)
@@ -106,9 +108,10 @@ mtp_slot_draft_capacity(1)
 mtp_slot_draft_capacity(2)
 can_batch_verify([4, 4, 3]) -> true
 sync_secondary()
-decode_verify_batched(tokens=[19, 20, 21, 63, 26, 27, 28, 30, 37, 38, 39], ks=[4, 4, 3], seqs=["s1@0:len=18", "s2@1:len=16", "s3@2:len=17"], stream=0, woa=false) -> [20, 21, 63, 63, 27, 28, 29, 1, 38, 39, 40]
+decode_verify_batched(tokens=[19, 20, 21, 63, 26, 27, 28, 30, 37, 38, 39], ks=[4, 4, 3], seqs=["s1@0:len=18", "s2@1:len=16", "s3@2:len=17"], stream=0, woa=true) -> [20, 21, 63, 63, 27, 28, 29, 1, 38, 39, 40]
 stash_verify_hidden_rows([3, 6, 10], stream=0)
 stash_verify_catchup_rows([(0, 0), (1, 1), (2, 2), (4, 4), (5, 5), (8, 8), (9, 9)])
+gdn_fold_accepted(slots=[0, 1, 2], accepted=[4, 3, 3], k=4) -> true
 trim_proposer_state(s2@1:len=15, na=2, stream=0)
 commit_accepted_prefix(s2@1:len=15, na=3, k=4)
 commit_accepted_prefix(s3@2:len=17, na=3, k=3)
@@ -127,9 +130,10 @@ mtp_slot_draft_capacity(1)
 mtp_slot_draft_capacity(0)
 can_batch_verify([4, 3]) -> true
 sync_secondary()
-decode_verify_batched(tokens=[29, 30, 31, 1, 40, 41, 63], ks=[4, 3], seqs=["s2@1:len=19", "s3@0:len=20"], stream=0, woa=false) -> [30, 31, 63, 1, 41, 63, 63]
+decode_verify_batched(tokens=[29, 30, 31, 1, 40, 41, 63], ks=[4, 3], seqs=["s2@1:len=19", "s3@0:len=20"], stream=0, woa=true) -> [30, 31, 63, 1, 41, 63, 63]
 stash_verify_hidden_rows([2, 6], stream=0)
 stash_verify_catchup_rows([(0, 0), (1, 1), (4, 4), (5, 5)])
+gdn_fold_accepted(slots=[1, 0], accepted=[3, 3], k=4) -> true
 trim_proposer_state(s2@1:len=18, na=2, stream=0)
 commit_accepted_prefix(s2@1:len=18, na=3, k=4)
 fx apply ReleaseSeq{cache=true, finish_sequence}

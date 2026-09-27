@@ -15,7 +15,9 @@ use crate::weight_map::{DenseWeight, Fp8DenseWeight, Fp8Weight, QuantizedWeight}
 
 use super::super::*;
 
-/// 2026-09-25: The top-k softmax router for `num_tokens` tokens.
+/// 2026-09-25: The top-k softmax router for `num_tokens` tokens. The handle picks the
+/// tie-break: `moe_topk_softmax_batched` keeps the lower lane on an equal logit,
+/// `moe_topk_softmax_rows` (2026-09-26) the lower expert index, as `moe_topk_softmax` does.
 #[allow(clippy::too_many_arguments)]
 pub fn moe_topk_softmax_batched(
     gpu: &dyn GpuBackend,

@@ -6,6 +6,8 @@
 // (quantize_to_nvfp4 in crates/model-layers/src/weight_map/loaders_fp8.rs). quantize_bf16_to_nvfp4
 // then writes packed [N, K/2] (two E2M1 codes per byte, the even element in the low nibble) and
 // scales [N, K/16] (one E4M3 per 16 elements). Dequant: E2M1 value * E4M3 scale * scale2.
+// quantize_bf16_to_nvfp4_mse (2026-09-27) writes the same layout with each block scale chosen
+// by squared error among five neighbouring E4M3 bytes.
 //
 // Owner: gb10 kernels.
 // Invariants:
@@ -237,6 +239,84 @@ extern "C" __global__ void quantize_bf16_to_nvfp4(
             unsigned int n1 = quantize_e2m1(v1);
 
 
+            row_packed[g * 8 + i / 2] = (unsigned char)((n1 << 4) | (n0 & 0xF));
+        }
+    }
+}
+
+// 2026-09-27: A positive E4M3 scale byte as a float (the decode quantize_bf16_to_nvfp4 spells out
+// inline).
+__device__ float nvfp4_scale_byte_value(unsigned int b) {
+    const unsigned int e = (b >> 3) & 0xFu, m = b & 0x7u;
+    if (e == 0u) return (float)m * 0.001953125f;
+    return __uint_as_float(((e + 120u) << 23) | (m << 20));
+}
+
+// 2026-09-27: The E2M1 magnitude of code index idx (0..7): 0, 0.5, 1, 1.5, 2, 3, 4, 6.
+__device__ float nvfp4_e2m1_magnitude(unsigned int idx) {
+    return (idx < 4u) ? 0.5f * (float)idx : (float)(idx == 7u ? 6u : idx - 2u);
+}
+
+// 2026-09-27: quantize_bf16_to_nvfp4 with the block scale chosen by error: besides the
+// absmax scale byte b0 (max |x| maps to 6), the four bytes b0 - 3 .. b0 + 1 are tried and the
+// one with the least squared dequantization error over the block's 16 elements is kept (b0 on
+// a tie). Same layout, launch and scale2 as quantize_bf16_to_nvfp4; used for the experts
+// requantized under --moe-nvfp4-experts.
+extern "C" __global__ void quantize_bf16_to_nvfp4_mse(
+    const __nv_bfloat16* __restrict__ input,
+    unsigned char* __restrict__ packed_out,
+    unsigned char* __restrict__ scale_out,
+    float scale2,
+    unsigned int N,
+    unsigned int K
+) {
+    const unsigned int row = blockIdx.x;
+    if (row >= N) return;
+    const __nv_bfloat16* row_in = input + (unsigned long long)row * K;
+    unsigned char* row_packed = packed_out + (unsigned long long)row * (K / 2);
+    unsigned char* row_scale = scale_out + (unsigned long long)row * (K / GROUP_SIZE);
+    const float inv_scale2 = (scale2 > 0.0f) ? (1.0f / scale2) : 0.0f;
+
+    for (unsigned int g = threadIdx.x; g < K / GROUP_SIZE; g += blockDim.x) {
+        const unsigned int base = g * GROUP_SIZE;
+        float x[GROUP_SIZE];
+        float group_max = 0.0f;
+        #pragma unroll
+        for (int i = 0; i < GROUP_SIZE; i++) {
+            x[i] = __bfloat162float(row_in[base + i]);
+            const float a = fabsf(x[i]);
+            if (a > group_max) group_max = a;
+        }
+        const unsigned int b0 = (group_max > 0.0f)
+            ? (float_to_fp8_e4m3(group_max * inv_scale2 / 6.0f) & 0x7Fu) : 0u;
+        unsigned int best = b0;
+        if (b0 != 0u) {
+            float best_err = 3.4e38f;
+            #pragma unroll
+            for (int d = 0; d < 5; d++) {
+                // 2026-09-27: b0 first, then b0 - 3 .. b0 - 1 and b0 + 1; never 0 or the NaN code.
+                const int c = (d == 0) ? (int)b0 : (d < 4 ? (int)b0 - 4 + d : (int)b0 + 1);
+                if (c < 1 || c > 0x7E) continue;
+                const float eff = nvfp4_scale_byte_value((unsigned int)c) * scale2;
+                const float inv = 1.0f / eff;
+                float err = 0.0f;
+                #pragma unroll
+                for (int i = 0; i < GROUP_SIZE; i++) {
+                    const unsigned int q = quantize_e2m1(x[i] * inv);
+                    const float r = nvfp4_e2m1_magnitude(q & 7u) * eff;
+                    const float e = fabsf(x[i]) - r;
+                    err += e * e;
+                }
+                if (err < best_err) { best_err = err; best = (unsigned int)c; }
+            }
+        }
+        row_scale[g] = (unsigned char)best;
+        const float eff = nvfp4_scale_byte_value(best) * scale2;
+        const float inv_eff = (eff > 0.0f) ? (1.0f / eff) : 0.0f;
+        #pragma unroll
+        for (int i = 0; i < GROUP_SIZE; i += 2) {
+            const unsigned int n0 = quantize_e2m1(x[i] * inv_eff);
+            const unsigned int n1 = quantize_e2m1(x[i + 1] * inv_eff);
             row_packed[g * 8 + i / 2] = (unsigned char)((n1 << 4) | (n0 & 0xF));
         }
     }

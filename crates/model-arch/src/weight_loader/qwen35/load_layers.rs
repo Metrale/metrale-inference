@@ -82,6 +82,13 @@ pub(super) fn load_layers(
 
     let absmax_k = gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?;
     let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
+    // 2026-09-27: `--moe-nvfp4-experts` requantizes the experts with the error-chosen block
+    // scales.
+    let expert_quantize_k = if metrale_model_layers::layers::moe_nvfp4_experts_enabled() {
+        gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4_mse")?
+    } else {
+        quantize_k
+    };
     let stream = gpu.default_stream();
     let h = config.hidden_size;
 
@@ -202,13 +209,21 @@ pub(super) fn load_layers(
             .ok()
             .as_deref()
             == Some("1");
+        // 2026-09-27: `--moe-nvfp4-experts` loads the same NVFP4 experts; its decode path is
+        // `MoeLayer::forward_nvfp4_grouped_decode`.
         let force_nvfp4_moe = force_nvfp4_all
-            || std::env::var("METRALE_FORCE_NVFP4_MOE").ok().as_deref() == Some("1");
+            || std::env::var("METRALE_FORCE_NVFP4_MOE").ok().as_deref() == Some("1")
+            || metrale_model_layers::layers::moe_nvfp4_experts_enabled();
         // 2026-09-25: Routed experts in the fused layout (`mlp.experts.gate_up_proj`) take the
         // NVFP4 expert path even for an FP8 checkpoint: `load_moe_qwen35` slices the fused
         // tensors, and `load_moe_qwen35_fp8_experts` reads only per-expert tensors.
         let fused_experts = store.contains(&format!("{lp}.mlp.experts.gate_up_proj"));
         let skip_nvfp4_experts = native_fp8 && !force_nvfp4_moe && !fused_experts;
+        // 2026-09-27: Under `--moe-nvfp4-experts` a native-FP8 layer keeps its FP8 experts as
+        // well: prefill runs them as without the flag, and the NVFP4 copies serve decode only.
+        let nvfp4_decode_fp8_prefill = native_fp8
+            && !fused_experts
+            && metrale_model_layers::layers::moe_nvfp4_experts_enabled();
         if skip_nvfp4_experts {
             tracing::info!(
                 "FP8: skipping NVFP4 routed experts (FP8 fused MoE batch1/2/3 handles all dispatch)"
@@ -218,9 +233,18 @@ pub(super) fn load_layers(
                 "FP8: routed experts use FUSED layout — loading via NVFP4 expert path (dequant→NVFP4)"
             );
         } else if native_fp8 && force_nvfp4_moe {
-            tracing::warn!(
-                "METRALE_FORCE_NVFP4_MOE=1: routing MoE through NVFP4 path (diagnostic — slower)"
-            );
+            if metrale_model_layers::layers::moe_nvfp4_experts_enabled() {
+                if i == 0 {
+                    tracing::warn!(
+                        "--moe-nvfp4-experts: FP8 routed experts requantized to NVFP4 for decode \
+                         (precision-lowering); prefill and the shared expert stay FP8"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "METRALE_FORCE_NVFP4_MOE=1: routing MoE through NVFP4 path (diagnostic — slower)"
+                );
+            }
         }
         let moe_weights = load_moe_qwen35(
             store,
@@ -230,7 +254,7 @@ pub(super) fn load_layers(
             config,
             variant,
             absmax_k,
-            quantize_k,
+            expert_quantize_k,
             stream,
             skip_nvfp4_experts,
         )?;
@@ -283,6 +307,7 @@ pub(super) fn load_layers(
             );
         }
         if (!native_fp8 || force_nvfp4_moe)
+            && !nvfp4_decode_fp8_prefill
             && (!skip_moe_transpose || fast_holo_moe_layer)
             && !skip_moe_prefill_copies
         {
@@ -298,7 +323,8 @@ pub(super) fn load_layers(
                 }
             }
         }
-        if (!native_fp8 || force_nvfp4_moe) && !skip_moe_prefill_copies {
+        if (!native_fp8 || force_nvfp4_moe) && !nvfp4_decode_fp8_prefill && !skip_moe_prefill_copies
+        {
             moe_layer.predequant_for_prefill(gpu, config, stream)?;
         }
         // 2026-09-25: `METRALE_HOLO_MOE_GROUPED_CUTLASS=1` on a fast-MoE layer builds the swizzled
@@ -339,7 +365,11 @@ pub(super) fn load_layers(
         // 2026-09-25: Native-FP8 routed experts, for an FP8 checkpoint that is not forced to
         // NVFP4, not dequantized to BF16 and not in the fused layout. A load failure is
         // logged, and the MoE is left without FP8 experts.
-        if native_fp8 && !force_nvfp4_moe && !dequant_moe_to_bf16 && !fused_experts {
+        if native_fp8
+            && (!force_nvfp4_moe || nvfp4_decode_fp8_prefill)
+            && !dequant_moe_to_bf16
+            && !fused_experts
+        {
             moe_experts::install_native_fp8_experts(&cx, &lp, i, &mut moe_layer);
         }
 

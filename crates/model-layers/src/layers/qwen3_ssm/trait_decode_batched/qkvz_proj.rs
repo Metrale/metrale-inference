@@ -43,9 +43,23 @@ impl Qwen3SsmLayer {
                     stream,
                 )?;
             }
-        // 2026-09-25: 2..=4 rows with a block-scaled FP8 QKVZ (`qkvz_fp8w`, the only
-        // QKVZ weight a native-FP8 GDN checkpoint holds): one `w8a16_gemv_batch4` weight
-        // pass (M <= 4), or `w8a16_gemv` per row when that kernel is not linked.
+        // 2026-09-27: A row-invariant tier policy (`row_tier_fp8_proj`) serves a
+        // block-scaled FP8 QKVZ at every row count.
+        } else if let Some(ref fp8) = self.qkvz_fp8w
+            && self.row_tier_fp8_proj(
+                ctx,
+                fp8,
+                normed,
+                proj_dst,
+                num_tokens,
+                qkvz_size as u32,
+                h as u32,
+                stream,
+            )?
+        {
+            // 2026-09-25: 2..=4 rows with a block-scaled FP8 QKVZ (`qkvz_fp8w`, the only
+            // QKVZ weight a native-FP8 GDN checkpoint holds): one `w8a16_gemv_batch4` weight
+            // pass (M <= 4), or `w8a16_gemv` per row when that kernel is not linked.
         } else if (2..=4).contains(&num_tokens)
             && let Some(ref fp8) = self.qkvz_fp8w
         {
@@ -133,6 +147,7 @@ impl Qwen3SsmLayer {
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
                     self.w8a16_gemm_pipelined_m32_k,
+                    self.w8a16_gemm_pipelined_m64_k,
                     normed,
                     fp8.weight,
                     fp8.row_scale,

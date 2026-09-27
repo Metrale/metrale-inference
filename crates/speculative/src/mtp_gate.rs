@@ -68,7 +68,9 @@ fn reprobe_tokens() -> usize {
 }
 
 /// 2026-09-25: Tokens between serial-estimate refreshes in Mtp mode:
-/// `METRALE_MTP_GATE_REFRESH`, default 1024.
+/// `METRALE_MTP_GATE_REFRESH`, default 1024. 2026-09-26: per sequence of the
+/// batch-width bucket, so the refresh comes after the same number of steps at
+/// every width (`MtpGate::event_interval`).
 fn serial_refresh_tokens() -> usize {
     env_usize("METRALE_MTP_GATE_REFRESH", 1024)
 }
@@ -177,6 +179,9 @@ struct ModeStats {
     /// 2026-09-25: Set by a depth or width regime change; cleared by the next
     /// window folded in.
     stale: bool,
+    /// 2026-09-26: Windows folded in so far, so an arbitration can tell a new
+    /// measurement from a repeat of the last one.
+    windows: u64,
 }
 
 impl ModeStats {
@@ -198,6 +203,7 @@ impl ModeStats {
             }
         }
         self.stale = false;
+        self.windows += 1;
     }
 }
 
@@ -221,8 +227,11 @@ pub struct MtpGate {
     win_wall: f64,
     win_steps: usize,
     /// 2026-09-25: Consecutive arbitrations in which the other mode beat the
-    /// current one by more than the margin.
+    /// current one by more than the margin. 2026-09-26: Only arbitrations on a
+    /// new measurement of the other mode count.
     losing_windows: usize,
+    /// 2026-09-26: The other mode's `windows` at the last counted loss.
+    loss_other_windows: u64,
     /// 2026-09-25: Tokens recorded outside probes since the last probe or
     /// switch; a regime change raises it to the event interval.
     tokens_since_event: usize,
@@ -232,6 +241,9 @@ pub struct MtpGate {
     /// (0 before any). See [`Self::note_width`].
     width_regime: usize,
     fresh: Option<GateDecision>,
+    /// 2026-09-26: Steps still to be left out of every window after a
+    /// batch-width bucket change ([`Self::note_width`]).
+    settle_steps: usize,
     /// 2026-09-25: Depth-regime changes seen by this gate.
     regime_reprobes: usize,
 }
@@ -259,7 +271,14 @@ impl MtpGate {
             self.win_wall = 0.0;
             self.win_steps = 0;
             self.losing_windows = 0;
+            // 2026-09-26: The interval of the new bucket, which the Mtp-mode
+            // refresh scales with.
+            self.width_regime = regime;
             self.tokens_since_event = self.tokens_since_event.max(self.event_interval());
+            // 2026-09-26: A sequence that joined (or left) is bootstrapping its
+            // drafts and the batch is still reshaping, so the next window's
+            // steps would not measure the new regime's steady state.
+            self.settle_steps = WINDOW_STEPS;
         }
         self.width_regime = regime;
     }
@@ -271,9 +290,16 @@ impl MtpGate {
         }
     }
 
+    /// 2026-09-25: Tokens recorded outside probes before the next probe.
+    /// 2026-09-26: In Mtp mode the refresh interval is per sequence: it scales
+    /// with the batch-width bucket, because a step at width W records W times
+    /// the tokens. Unscaled, the one-window serial refresh came every
+    /// 1024 / (W * tokens per step) steps, a third of all steps at W = 16 (the
+    /// `serial` share of the MTP Done lines). Serial mode's MTP re-probe keeps
+    /// its token interval, so a gate that chose serial re-tests MTP as often.
     fn event_interval(&self) -> usize {
         match self.mode {
-            Mode::Mtp => self.refresh,
+            Mode::Mtp => self.refresh * self.width_regime.max(1),
             Mode::Serial => self.reprobe,
         }
     }
@@ -286,6 +312,12 @@ impl MtpGate {
     }
 
     fn record_step(&mut self, wall: Duration, tokens: usize) {
+        // 2026-09-26: The settle steps after a width change count toward
+        // nothing, not even the probe cadence.
+        if self.settle_steps > 0 {
+            self.settle_steps -= 1;
+            return;
+        }
         self.win_tokens += tokens as f64;
         self.win_wall += wall.as_secs_f64();
         self.win_steps += 1;
@@ -294,9 +326,21 @@ impl MtpGate {
         }
         if self.win_steps >= WINDOW_STEPS {
             self.close_window();
-        } else if !self.probing && self.tokens_since_event >= self.event_interval() {
+        } else if !self.probing
+            && self.tokens_since_event >= self.event_interval()
+            && !self.stats_mut(self.mode).stale
+        {
             // 2026-09-25: A probe is due: close the window early so the
-            // probe starts on empty accumulators.
+            // probe starts on empty accumulators. 2026-09-26: Not while the
+            // running mode's estimate is stale: the window that replaces it
+            // must be a full one, or one step decides the next arbitration.
+            // A partial window shorter than half a window is dropped rather
+            // than blended in.
+            if self.win_steps < WINDOW_STEPS / 2 {
+                self.win_tokens = 0.0;
+                self.win_wall = 0.0;
+                self.win_steps = 0;
+            }
             self.close_window();
         }
     }
@@ -320,8 +364,10 @@ impl MtpGate {
             self.probe_windows_left = self.probe_windows_left.saturating_sub(1);
             if self.probe_windows_left == 0 {
                 self.probing = false;
-                self.arbitrate();
+                // 2026-09-26: Reset before arbitrating, which may make a
+                // confirming probe due at once.
                 self.tokens_since_event = 0;
+                self.arbitrate();
             }
             return;
         }
@@ -356,7 +402,24 @@ impl MtpGate {
         };
         let margin = (MARGIN_REL_FLOOR * cur).max(0.5 * (self.dev_of(self.mode) + other_dev));
         if other > cur + margin {
+            // 2026-09-26: A loss counts toward the dwell only on a measurement
+            // of the other mode newer than the last counted loss's: two
+            // arbitrations against one probe window are one sample, and one
+            // noisy serial window (140-180 tok/s at C=4 on GB10) switched the
+            // gate. After a loss short of the dwell, the confirming probe is
+            // due at once.
+            let other_windows = match self.mode {
+                Mode::Mtp => self.serial.windows,
+                Mode::Serial => self.mtp.windows,
+            };
+            if self.losing_windows > 0 && other_windows == self.loss_other_windows {
+                return;
+            }
             self.losing_windows += 1;
+            self.loss_other_windows = other_windows;
+            if self.losing_windows < SWITCH_DWELL_WINDOWS {
+                self.tokens_since_event = self.tokens_since_event.max(self.event_interval());
+            }
             if self.losing_windows >= SWITCH_DWELL_WINDOWS {
                 let to = Self::other(self.mode);
                 tracing::info!(

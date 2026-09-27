@@ -66,6 +66,7 @@ pub(crate) fn load_model(
     let ptx_set = model_setup::select_kernel_target(&args, &config, &model_dir)?;
     let sampling_presets = ptx_set.sampling;
     model_setup::check_kernel_target(&ptx_set, &mut config)?;
+    model_setup::publish_row_tiers(&args, &config);
 
     // 2026-09-26: After this call `args.num_drafts` is `Some`, so
     // `args.resolved_num_drafts()` is valid.

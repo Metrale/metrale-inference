@@ -14,6 +14,7 @@ use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
 const FULL_K: u64 = 0xB128;
 const M32_K: u64 = 0xB032;
+const M64_K: u64 = 0xB064;
 
 struct Fixture {
     gpu: MockGpuBackend,
@@ -52,8 +53,15 @@ fn u32_arg(v: u32) -> MockArg {
 /// declares them (`crates/kernels/tests/kernel_arity.rs` pins the count).
 fn assert_m32_launch(l: &MockLaunch, f: &Fixture, m: u32, n: u32, k: u32, lda: u32, ldc: u32) {
     assert_eq!(l.func, M32_K);
-    assert_eq!(l.grid, [n.div_ceil(32), m.div_ceil(32), 1]);
-    assert_eq!(l.block, [256, 1, 1]);
+    if m <= 16 && k <= 5120 {
+        // 2026-09-27: The skinny body: one 8-column block per 8 weight rows.
+        assert_eq!(l.grid, [n.div_ceil(8), 1, 1]);
+        assert_eq!(l.block, [256, 1, 1]);
+        assert_eq!(l.shared_mem, 8 * (k + 16));
+    } else {
+        assert_eq!(l.grid, [n.div_ceil(32), m.div_ceil(32), 1]);
+        assert_eq!(l.block, [256, 1, 1]);
+    }
     assert_eq!(
         l.args,
         vec![
@@ -93,6 +101,52 @@ fn strided_launch_carries_both_pitches_and_tiles_m_by_32() {
     let l = f.launches();
     assert_eq!(l.len(), 1);
     assert_m32_launch(&l[0], &f, 32, 8192, 2048, 2048, 17408);
+}
+
+/// 2026-09-27: 1..=16 rows with K <= 5120 launch the skinny body: one
+/// 256-thread block per 8 columns, with the block's 8 weight rows (K + 16
+/// bytes apart) as dynamic shared memory; 17 rows, or a K above 5120, go back
+/// to the 32x32 tile and its 44,032 bytes.
+#[test]
+fn skinny_rows_launch_one_block_per_eight_columns() {
+    let f = Fixture::new();
+    for (m, n, k, grid, block, smem) in [
+        (
+            1u32,
+            12288u32,
+            2048u32,
+            [1536u32, 1, 1],
+            [256u32, 1, 1],
+            16_512u32,
+        ),
+        (16, 2048, 4096, [256, 1, 1], [256, 1, 1], 32_896),
+        (2, 512, 5120, [64, 1, 1], [256, 1, 1], 41_088),
+        (2, 512, 5248, [16, 1, 1], [256, 1, 1], 44_032),
+        (17, 2048, 2048, [64, 1, 1], [256, 1, 1], 44_032),
+    ] {
+        w8a16_gemm_pipelined_m32_strided(
+            &f.gpu,
+            KernelHandle(M32_K),
+            f.input,
+            f.weight,
+            f.scale,
+            f.output,
+            m,
+            n,
+            k,
+            k,
+            n,
+            0,
+        )
+        .unwrap();
+        let l = f.launches();
+        let l = l.last().unwrap();
+        assert_eq!(
+            (l.grid, l.block, l.shared_mem),
+            (grid, block, smem),
+            "m={m} n={n} k={k}"
+        );
+    }
 }
 
 /// 2026-09-25: Above 32 rows the wrapper adds M tiles (`grid.y = ceil(M/32)`)
@@ -156,6 +210,7 @@ fn by_m_flips_at_exactly_32_rows_and_on_a_missing_handle() {
             &f.gpu,
             KernelHandle(FULL_K),
             KernelHandle(m32),
+            KernelHandle(0),
             f.input,
             f.weight,
             f.scale,
@@ -196,6 +251,7 @@ fn by_m_flips_at_exactly_32_rows_and_on_a_missing_handle() {
         &f.gpu,
         KernelHandle(FULL_K),
         KernelHandle(M32_K),
+        KernelHandle(0),
         f.input,
         f.weight,
         f.scale,
@@ -269,4 +325,42 @@ fn guards_refuse_without_launching() {
     .expect_err("contiguous K guard");
     assert!(err.to_string().contains("multiple of 128"));
     assert_eq!(f.gpu.launch_count(), 0);
+}
+
+/// 2026-09-26: With a 64-row twin linked, 33..=64 rows take it (nine args,
+/// grid.y = 1 up to 64 rows); 1..=32 stay on the 32-row twin, and 65 and more
+/// rows, or a K that is not whole scale blocks, go to the 128-row tile.
+#[test]
+fn by_m_takes_the_64_row_twin_from_33_to_64_rows() {
+    let f = Fixture::new();
+    let launch = |m: u32, k: u32| {
+        w8a16_gemm_pipelined_by_m(
+            &f.gpu,
+            KernelHandle(FULL_K),
+            KernelHandle(M32_K),
+            KernelHandle(M64_K),
+            f.input,
+            f.weight,
+            f.scale,
+            f.output,
+            m,
+            2048,
+            k,
+            0,
+        )
+        .unwrap();
+        f.launches().last().unwrap().clone()
+    };
+    for m in [33u32, 48, 64] {
+        let l = launch(m, 4096);
+        assert_eq!(l.func, M64_K, "m={m}");
+        assert_eq!(l.grid, [64, 1, 1]);
+        assert_eq!(l.args.len(), 9);
+        assert_eq!(l.args[4], u32_arg(m));
+        assert!(w8a16_pipelined_prefers_m64(m, 4096, KernelHandle(M64_K)));
+    }
+    assert_eq!(launch(32, 4096).func, M32_K);
+    assert_eq!(launch(65, 4096).func, FULL_K);
+    assert_eq!(launch(48, 4000).func, FULL_K);
+    assert!(!w8a16_pipelined_prefers_m64(48, 4096, KernelHandle(0)));
 }

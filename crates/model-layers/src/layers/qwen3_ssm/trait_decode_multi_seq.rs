@@ -139,6 +139,47 @@ impl Qwen3SsmLayer {
 
         let normed_base = ctx.buffers.norm_output();
         match n {
+            // 2026-09-27: `--moe-nvfp4-experts` takes the grouped NVFP4 decode at every row
+            // count.
+            n if self.ffn.nvfp4_grouped_ok(n, ctx) => {
+                self.ffn
+                    .forward_nvfp4_grouped(normed_base, n, ctx, stream)?;
+                ops::residual_add(
+                    ctx.gpu,
+                    self.residual_add_k,
+                    hidden,
+                    ctx.buffers.moe_output(),
+                    (n * h) as u32,
+                    stream,
+                )?;
+            }
+            // 2026-09-27: Under a row-invariant tier policy the FP8 MoE takes the
+            // grouped kernels with the per-row router at every row count, the bits
+            // of `MoeLayer::forward` and of the batched verify's GDN arm.
+            n if n >= 2
+                && crate::layers::row_invariant()
+                && self.ffn.fp8_grouped_routing_ok(
+                    n,
+                    crate::layers::moe::GroupedRouting::PerRow,
+                    ctx,
+                ) =>
+            {
+                self.ffn.forward_fp8_grouped_decode_routed(
+                    normed_base,
+                    n,
+                    crate::layers::moe::GroupedRouting::PerRow,
+                    ctx,
+                    stream,
+                )?;
+                ops::residual_add(
+                    ctx.gpu,
+                    self.residual_add_k,
+                    hidden,
+                    ctx.buffers.moe_output(),
+                    (n * h) as u32,
+                    stream,
+                )?;
+            }
             2 | 3 => {
                 if n == 2 {
                     self.ffn.forward_k2(normed_base, ctx, stream)?;

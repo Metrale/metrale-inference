@@ -237,7 +237,10 @@ impl TransformerModel {
             // 2026-09-25: At `padded_n >= 5` a tile GEMM over the padded transposed twin
             // (`lm_head_nvfp4_t`) serves the head; below that, or without it, the batched GEMV
             // for `padded_n`; `w4a16_gemm` when no GEMV kernel applies or the batched GEMV is off.
-            if padded_n >= 5
+            // 2026-09-27: Under a row-invariant tier policy the tile GEMM serves every
+            // `padded_n`.
+            let tile_rows = padded_n >= 5 || metrale_model_layers::layers::row_invariant();
+            if tile_rows
                 && self.w4a16_gemm_t_bf16_kernel.0 != 0
                 && let Some((ref nvfp4_t, ldb)) = self.lm_head_nvfp4_t
             {
@@ -254,7 +257,7 @@ impl TransformerModel {
                     ldb,
                     stream,
                 )?;
-            } else if padded_n >= 5
+            } else if tile_rows
                 && self.w4a16_gemm_t_kernel.0 != 0
                 && let Some((ref nvfp4_t, ldb)) = self.lm_head_nvfp4_t
             {

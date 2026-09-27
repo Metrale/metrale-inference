@@ -112,6 +112,22 @@ fn the_w4a4_downcast_flag_is_disclosed_off_the_rendered_serve() {
     );
 }
 
+/// 2026-09-27: `--moe-nvfp4-experts` is disclosed when on; off discloses nothing.
+#[test]
+fn the_moe_nvfp4_experts_flag_is_disclosed_off_the_rendered_serve() {
+    assert_eq!(
+        disclosed(
+            "  max_batch_size: \"8\"\n",
+            &[("moe_nvfp4_experts", "true")]
+        ),
+        pairs(&[("moe_nvfp4_experts", "true"), ("speculative", "false")])
+    );
+    assert_eq!(
+        disclosed("  max_batch_size: \"8\"\n", &[]),
+        pairs(&[("speculative", "false")])
+    );
+}
+
 /// 2026-09-26: Every `[benchmarks.serve_overrides]` pin in the committed `BENCH.toml` files,
 /// `--hermetic` expanded as `plan_serve` expands it, renders on a minimal recipe to a `met serve`
 /// command line that clap parses and `validate_serve_args` accepts. A pin naming a renamed or

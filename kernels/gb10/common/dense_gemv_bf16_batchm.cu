@@ -7,8 +7,10 @@
 // Invariants:
 // - A is [M, K] contiguous, B is [N, K] row-major, row t of C starts at
 //   C + t * out_stride (BF16 elements).
-// - Launch: grid (ceil(N / 4), 1, 1), block (256, 1, 1); 64 threads (2 warps) per output.
-// - Only the first min(M, MAX_M) rows are computed; the host wrapper refuses a larger M.
+// - Launch: grid (ceil(N / 4), Y, 1), block (256, 1, 1); 64 threads (2 warps) per output.
+//   2026-09-27: Y > 1 splits the rows over block rows of ceil(M / Y) each.
+// - Only the first min(ceil(M / Y), MAX_M) rows of a block row are computed; the host
+//   wrappers refuse more.
 // - Assumes K % 8 == 0: rows of A and B start at byte 2 * row * K, which is 16-byte
 //   aligned for the uint4 loads only then. The scalar tail covers K % 8, not that alignment.
 // - Each row's result is bit-identical to dense_gemv_bf16 on that row: the same kv order
@@ -90,6 +92,14 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
     unsigned int K,
     unsigned int out_stride
 ) {
+    // 2026-09-27: With gridDim.y > 1, block row y takes rows [y * R, min((y + 1) * R, M)),
+    // R = ceil(M / gridDim.y); each row's arithmetic is the same in every block.
+    const unsigned int rows_per_y = (M + gridDim.y - 1) / gridDim.y;
+    const unsigned int r0 = blockIdx.y * rows_per_y;
+    if (r0 >= M) return;
+    A += (unsigned long long)r0 * K;
+    C += (unsigned long long)r0 * out_stride;
+    M = min(rows_per_y, M - r0);
     const unsigned int threads_per_out = BLOCK_SIZE / N_PER_BLOCK;
     const unsigned int local_out = threadIdx.x / threads_per_out;
     const unsigned int lane = threadIdx.x % threads_per_out;

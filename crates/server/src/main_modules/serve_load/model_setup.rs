@@ -276,6 +276,19 @@ pub(super) fn check_kernel_target(
     Ok(())
 }
 
+/// 2026-09-27: Publish the model's row-tier policy before it is built:
+/// canonical for an FP8 MoE checkpoint unless `--no-canonical-tiers`, with the two
+/// `METRALE_*` levers over the checkpoint default (`row_tiers`).
+pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
+    use metrale_model_layers::layers::{publish_row_tiers, resolve_row_tiers};
+    publish_row_tiers(resolve_row_tiers(
+        args.no_canonical_tiers,
+        std::env::var_os("METRALE_ROW_EXACT_TIERS").is_some(),
+        std::env::var_os("METRALE_CANONICAL_TIERS").is_some(),
+        config.num_experts > 0 && canonicalize_model_quant(config) == "fp8",
+    ));
+}
+
 pub(super) fn resolve_behavior(
     ptx_set: &metrale_kernels::TargetPtxSet,
     args: &cli::ServeArgs,

@@ -27,7 +27,11 @@
 //   * lda and ldc let the multi-seq attention Q/K/V tier (qkv_fp8_batch.rs) write each row's
 //     Q, K and V straight into the per-sequence decode buffer.
 //
-// Static shared memory: A 2 x 32 x 136 x 2 B = 17,408; B as BF16 ([n][k], K-contiguous, +8 pad)
+// 2026-09-27: 1..=16 rows with K <= 5120 run pm16_skinny (w8a16_gemm_pipelined_m16.cuh)
+// instead, on the launcher's grid (ceil(N / 8), 1, 1) and block 256; the arithmetic per output
+// is the same.
+//
+// Shared memory (dynamic, sized by the launcher): A 2 x 32 x 136 x 2 B = 17,408; B as BF16 ([n][k], K-contiguous, +8 pad)
 // 17,408; raw B 2 x 32 x 128 = 8,192; LUT 1,024; 44,032 B in all, under the 48 KiB static
 // limit. Both padded strides are 68 words, 68 mod 32 = 4, so the eight group_id rows of an MMA
 // fragment read land on banks 0, 4, ..., 28 (+ tid) without conflicts, as the 20-word A rows of
@@ -62,6 +66,7 @@
 
 #include <cuda_bf16.h>
 #include "e4m3_lut.cuh"
+#include "w8a16_gemm_pipelined_m16.cuh"
 // 2026-09-25: PM32_PAD (8 BF16) keeps every A and B row 16-byte aligned: 136 BF16 = 272 bytes.
 #define PM32_M_TILE 32
 #define PM32_N_TILE 32
@@ -77,6 +82,11 @@
 #define PM32_WARPS_M (PM32_M_TILE / 16)
 #define PM32_WARPS_N (PM32_WARPS / PM32_WARPS_M)
 #define PM32_STAGES 2
+#define PM32_A_BYTES (PM32_STAGES * PM32_M_TILE * PM32_A_STRIDE * 2)
+#define PM32_B_BYTES (PM32_STAGES * PM32_N_TILE * PM32_B_STRIDE * 2)
+#define PM32_BRAW_BYTES (PM32_STAGES * PM32_N_TILE * PM32_K_STEP)
+#define PM32_SMEM_BYTES (PM32_A_BYTES + PM32_B_BYTES + PM32_BRAW_BYTES + 1024)
+static_assert(PM16_SMEM_BYTES(PM16_MAX_K) <= 48 * 1024, "a skinny block must fit without an opt-in");
 
 __device__ __forceinline__ void pm32_cp_async_cg_16(void* smem_ptr, const void* gmem_ptr) {
     unsigned int s = (unsigned int)__cvta_generic_to_shared(smem_ptr);
@@ -166,10 +176,20 @@ extern "C" __global__ void w8a16_gemm_pipelined_m32(
     const unsigned int group_id = lane_id >> 2;
     const unsigned int tid = lane_id & 3;
 
-    __shared__ __align__(16) __nv_bfloat16 smem_A[PM32_STAGES][PM32_M_TILE][PM32_A_STRIDE];
-    __shared__ __align__(16) __nv_bfloat16 smem_B[PM32_STAGES][PM32_N_TILE][PM32_B_STRIDE];
-    __shared__ __align__(16) unsigned char smem_Braw[PM32_STAGES][PM32_N_TILE][PM32_K_STEP];
-    __shared__ float smem_lut[256];
+    // 2026-09-27: One dynamic buffer (PM32_SMEM_BYTES, or PM16_SMEM_BYTES(K) for the skinny
+    // body, which runs 1..=PM16_MAX_M rows on the launcher's N-only grid), carved into the
+    // 32-row tile's arrays.
+    extern __shared__ __align__(16) unsigned char smem_raw[];
+    if (M <= PM16_MAX_M && K <= PM16_MAX_K) {
+        pm16_skinny(A, B, block_scale, C, M, N, K, lda, ldc, smem_raw);
+        return;
+    }
+    auto& smem_A = *reinterpret_cast<__nv_bfloat16 (*)[PM32_STAGES][PM32_M_TILE][PM32_A_STRIDE]>(smem_raw);
+    auto& smem_B = *reinterpret_cast<__nv_bfloat16 (*)[PM32_STAGES][PM32_N_TILE][PM32_B_STRIDE]>(
+        smem_raw + PM32_A_BYTES);
+    auto& smem_Braw = *reinterpret_cast<unsigned char (*)[PM32_STAGES][PM32_N_TILE][PM32_K_STEP]>(
+        smem_raw + PM32_A_BYTES + PM32_B_BYTES);
+    float* smem_lut = reinterpret_cast<float*>(smem_raw + PM32_A_BYTES + PM32_B_BYTES + PM32_BRAW_BYTES);
     smem_lut[threadIdx.x] = E4M3_LUT[threadIdx.x];
     __syncthreads();
 
@@ -269,4 +289,165 @@ extern "C" __global__ void w8a16_gemm_pipelined_m32(
     if (row0 < M && col1 < N) C[(unsigned long long)row0 * ldc + col1] = __float2bfloat16(outer_acc[1]);
     if (row1 < M && col0 < N) C[(unsigned long long)row1 * ldc + col0] = __float2bfloat16(outer_acc[2]);
     if (row1 < M && col1 < N) C[(unsigned long long)row1 * ldc + col1] = __float2bfloat16(outer_acc[3]);
+}
+
+// 2026-09-26: w8a16_gemm_pipelined_m64: the 64-row M-tile twin, for 33 to 64 rows (a batched
+// verify at k = 2 or 3). Arguments, K-step, pipeline and scale fold are
+// w8a16_gemm_pipelined_m32's. The 8 warps are laid out 2 (M) x 4 (N), each owning two 16 x 8 slabs
+// 16 rows apart that share one B fragment. B is not staged as BF16 in shared memory: each warp
+// converts its fragment's E4M3 bytes from the raw tile through the LUT (the same exact BF16
+// values the twins stage), so a CTA fits 44 KiB of static shared memory and two CTAs share an SM.
+// Every output gets the same m16n8k16 sub-MMAs over the same K windows in ascending order, folded
+// with the block scale after every 128 K, as in the 32- and 128-row kernels
+// (native_fp8_gdn_proj_m32_microtest compares them byte for byte).
+//
+// Grid (ceil(N / 32), ceil(M / 64), 1), block 256. Static shared memory: A 2 x 64 x 136 x 2 B =
+// 34,816; raw B 2 x 32 x 128 = 8,192; LUT 1,024; 44,032 B.
+#define PM64_M_TILE 64
+
+// 2026-09-26: The BF16 pair of E4M3 bytes k and k + 1 of raw row n, low half first, as the
+// 32-bit B fragment register pm32_mma_kstep reads from smem_B.
+__device__ __forceinline__ unsigned int pm64_b_pair(
+    const unsigned char* raw_row, unsigned int k, const float* lut
+) {
+    const __nv_bfloat16 lo = __float2bfloat16(lut[raw_row[k]]);
+    const __nv_bfloat16 hi = __float2bfloat16(lut[raw_row[k + 1]]);
+    return (unsigned int)(*(const unsigned short*)&lo) | ((unsigned int)(*(const unsigned short*)&hi) << 16);
+}
+
+extern "C" __global__ void w8a16_gemm_pipelined_m64(
+    const __nv_bfloat16* __restrict__ A,
+    const unsigned char* __restrict__ B,
+    const float* __restrict__ block_scale,
+    __nv_bfloat16* __restrict__ C,
+    unsigned int M,
+    unsigned int N,
+    unsigned int K,
+    unsigned int lda,
+    unsigned int ldc
+) {
+    const unsigned int cta_m = blockIdx.y * PM64_M_TILE;
+    const unsigned int cta_n = blockIdx.x * PM32_N_TILE;
+    const unsigned int warp_id = threadIdx.x / 32;
+    const unsigned int lane_id = threadIdx.x % 32;
+    // 2026-09-26: Warp w owns rows (w % 2) * 32 + {0, 16} + 0..15 and columns (w / 2) * 8 + 0..7.
+    const unsigned int warp_m_offset = (warp_id % 2) * 32;
+    const unsigned int warp_n_offset = (warp_id / 2) * 8;
+    const unsigned int group_id = lane_id >> 2;
+    const unsigned int tid = lane_id & 3;
+
+    __shared__ __align__(16) __nv_bfloat16 smem_A[PM32_STAGES][PM64_M_TILE][PM32_A_STRIDE];
+    __shared__ __align__(16) unsigned char smem_Braw[PM32_STAGES][PM32_N_TILE][PM32_K_STEP];
+    __shared__ float smem_lut[256];
+    smem_lut[threadIdx.x] = E4M3_LUT[threadIdx.x];
+    __syncthreads();
+
+    float inner_acc[2][4] = {{0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}};
+    float outer_acc[2][4] = {{0.0f, 0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f, 0.0f}};
+
+    const unsigned int k_blocks = K / PM32_FP8_BLOCK;
+    const unsigned int n_block = cta_n / PM32_FP8_BLOCK;
+    const unsigned int n_steps = K / PM32_K_STEP;
+    const unsigned int a_chunks = (PM64_M_TILE * PM32_K_STEP) / 8;
+    const unsigned int b_chunks = (PM32_N_TILE * PM32_K_STEP) / 16;
+
+    auto prefetch = [&](unsigned int step, unsigned int stage) {
+        const unsigned int k_base = step * PM32_K_STEP;
+        #pragma unroll
+        for (unsigned int c = threadIdx.x; c < a_chunks; c += PM32_THREADS) {
+            const unsigned int row = (c * 8) / PM32_K_STEP;
+            const unsigned int col = (c * 8) % PM32_K_STEP;
+            const unsigned int gr = cta_m + row;
+            __nv_bfloat16* dst = &smem_A[stage][row][col];
+            if (gr < M) {
+                pm32_cp_async_cg_16(dst, &A[(unsigned long long)gr * lda + k_base + col]);
+            } else {
+                #pragma unroll
+                for (unsigned int e = 0; e < 8; e++) dst[e] = __float2bfloat16(0.0f);
+            }
+        }
+        #pragma unroll
+        for (unsigned int c = threadIdx.x; c < b_chunks; c += PM32_THREADS) {
+            const unsigned int nrow = (c * 16) / PM32_K_STEP;
+            const unsigned int kcol = (c * 16) % PM32_K_STEP;
+            const unsigned int gn = cta_n + nrow;
+            unsigned char* dst = &smem_Braw[stage][nrow][kcol];
+            if (gn < N) {
+                pm32_cp_async_cg_16(dst, &B[(unsigned long long)gn * K + k_base + kcol]);
+            } else {
+                #pragma unroll
+                for (unsigned int e = 0; e < 16; e++) dst[e] = 0;
+            }
+        }
+        pm32_cp_async_commit();
+    };
+
+    #pragma unroll
+    for (unsigned int p = 0; p < PM32_STAGES - 1; p++) {
+        if (p < n_steps) prefetch(p, p % PM32_STAGES);
+    }
+
+    const unsigned int n_col = warp_n_offset + group_id;
+    for (unsigned int step = 0; step < n_steps; step++) {
+        const unsigned int cur = step % PM32_STAGES;
+        const unsigned int ahead = step + (PM32_STAGES - 1);
+        if (ahead < n_steps) prefetch(ahead, ahead % PM32_STAGES);
+        const unsigned int committed = min(n_steps, PM32_STAGES + step);
+        pm32_cp_async_wait_le(committed - (step + 1));
+        __syncthreads();
+
+        // 2026-09-26: pm32_mma_kstep's sub-MMA loop with the B fragment from the raw tile.
+        const unsigned short* sA = (const unsigned short*)&smem_A[cur][0][0];
+        const unsigned char* b_row = &smem_Braw[cur][n_col][0];
+        #pragma unroll
+        for (int s = 0; s < PM32_K_SUBS; s++) {
+            const unsigned int c0 = s * PM32_K_SUB + tid * 2;
+            const unsigned int c1 = c0 + 8;
+            const unsigned int b0 = pm64_b_pair(b_row, c0, smem_lut);
+            const unsigned int b1 = pm64_b_pair(b_row, c1, smem_lut);
+            #pragma unroll
+            for (int t = 0; t < 2; t++) {
+                const unsigned int frag_r0 = warp_m_offset + t * 16 + group_id;
+                const unsigned int frag_r1 = frag_r0 + 8;
+                unsigned int a0 = *(const unsigned int*)&sA[frag_r0 * PM32_A_STRIDE + c0];
+                unsigned int a1 = *(const unsigned int*)&sA[frag_r1 * PM32_A_STRIDE + c0];
+                unsigned int a2 = *(const unsigned int*)&sA[frag_r0 * PM32_A_STRIDE + c1];
+                unsigned int a3 = *(const unsigned int*)&sA[frag_r1 * PM32_A_STRIDE + c1];
+                asm volatile(
+                    "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 "
+                    "{%0, %1, %2, %3}, "
+                    "{%4, %5, %6, %7}, "
+                    "{%8, %9}, "
+                    "{%10, %11, %12, %13};"
+                    : "=f"(inner_acc[t][0]), "=f"(inner_acc[t][1]), "=f"(inner_acc[t][2]), "=f"(inner_acc[t][3])
+                    : "r"(a0), "r"(a1), "r"(a2), "r"(a3),
+                      "r"(b0), "r"(b1),
+                      "f"(inner_acc[t][0]), "f"(inner_acc[t][1]), "f"(inner_acc[t][2]), "f"(inner_acc[t][3])
+                );
+            }
+        }
+        __syncthreads();
+
+        const float scale = block_scale[n_block * k_blocks + step];
+        #pragma unroll
+        for (int t = 0; t < 2; t++) {
+            #pragma unroll
+            for (int i = 0; i < 4; i++) {
+                outer_acc[t][i] += inner_acc[t][i] * scale;
+                inner_acc[t][i] = 0.0f;
+            }
+        }
+    }
+
+    const unsigned int col0 = cta_n + warp_n_offset + tid * 2;
+    const unsigned int col1 = col0 + 1;
+    #pragma unroll
+    for (int t = 0; t < 2; t++) {
+        const unsigned int row0 = cta_m + warp_m_offset + t * 16 + group_id;
+        const unsigned int row1 = row0 + 8;
+        if (row0 < M && col0 < N) C[(unsigned long long)row0 * ldc + col0] = __float2bfloat16(outer_acc[t][0]);
+        if (row0 < M && col1 < N) C[(unsigned long long)row0 * ldc + col1] = __float2bfloat16(outer_acc[t][1]);
+        if (row1 < M && col0 < N) C[(unsigned long long)row1 * ldc + col0] = __float2bfloat16(outer_acc[t][2]);
+        if (row1 < M && col1 < N) C[(unsigned long long)row1 * ldc + col1] = __float2bfloat16(outer_acc[t][3]);
+    }
 }

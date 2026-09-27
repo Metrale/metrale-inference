@@ -50,9 +50,10 @@ mtp_slot_draft_capacity(0)
 mtp_slot_draft_capacity(1)
 can_batch_verify([2, 2]) -> true
 sync_secondary()
-decode_verify_batched(tokens=[11, 12, 21, 22], ks=[2, 2], seqs=["s1@0:len=8", "s2@1:len=8"], stream=0, woa=false) -> [12, 13, 22, 63]
+decode_verify_batched(tokens=[11, 12, 21, 22], ks=[2, 2], seqs=["s1@0:len=8", "s2@1:len=8"], stream=0, woa=true) -> [12, 13, 22, 63]
 stash_verify_hidden_rows([1, 3], stream=0)
 stash_verify_catchup_rows([(0, 0), (4, 2)])
+gdn_fold_accepted(slots=[0, 1], accepted=[2, 2], k=2) -> true
 commit_accepted_prefix(s1@0:len=8, na=2, k=2)
 trim_proposer_state(s1@0:len=8, na=1, stream=0)
 run_mtp_catchup_batched(tokens=[[12]], slots=[0], pos=[7]) -> 0

@@ -35,6 +35,26 @@ pub const W8A16_M32_TILE_ROWS: u32 = 32;
 /// 2026-09-25: N tile (`PM32_N_TILE`), the grid.x granularity.
 const W8A16_M32_TILE_COLS: u32 = 32;
 
+/// 2026-09-27: Rows the skinny body of the same kernel takes (`PM16_MAX_M`),
+/// when `K` is at most [`W8A16_M16_MAX_K`]. It gives each 8-column block the
+/// canonical tile's per-output arithmetic with the 128-K steps' products
+/// computed in parallel by 8 warps and added in step order.
+pub const W8A16_M16_MAX_ROWS: u32 = 16;
+
+/// 2026-09-27: Largest `K` of the skinny body (`PM16_MAX_K`): one 1152-byte
+/// shared slot per 128-K step within 48 KiB.
+pub const W8A16_M16_MAX_K: u32 = 5120;
+
+/// 2026-09-27: Dynamic shared memory of the 32-row tile: `PM32_SMEM_BYTES`
+/// (A and BF16 B stages, the raw B stages and the E4M3 table).
+const W8A16_M32_SMEM_BYTES: u32 = 44_032;
+
+/// 2026-09-27: Dynamic shared memory of a skinny block for `k`:
+/// `PM16_SMEM_BYTES(K)`, the block's 8 weight rows `k + 16` bytes apart.
+pub fn w8a16_m16_smem_bytes(k: u32) -> u32 {
+    8 * (k + 16)
+}
+
 /// 2026-09-25: K granularity: one FP8 scale block per K-step (`PM32_K_STEP ==
 /// PM32_FP8_BLOCK`), which is why `K % 128 == 0` is required rather than
 /// padded.
@@ -65,7 +85,8 @@ pub fn w8a16_pipelined_prefers_m32(m: u32, k: u32, m32_kernel: KernelHandle) -> 
 /// multiple of 8. Same argument order as `w8a16_gemv_batch{4,16}_strided`, so
 /// the multi-seq Q/K/V tier holds it as one more `StridedBatchGemv` arm.
 ///
-/// Grid: (ceil(N/32), ceil(M/32), 1)  Block: (256, 1, 1)
+/// Grid: (ceil(N/32), ceil(M/32), 1)  Block: (256, 1, 1); 2026-09-27: at
+/// 1..=16 rows with K <= [`W8A16_M16_MAX_K`], (ceil(N / 8), 1, 1).
 #[allow(clippy::too_many_arguments)]
 pub fn w8a16_gemm_pipelined_m32_strided(
     gpu: &dyn GpuBackend,
@@ -100,13 +121,24 @@ pub fn w8a16_gemm_pipelined_m32_strided(
         "w8a16_gemm_pipelined_m32: a_row_stride={a_row_stride} must keep rows \
          16B-aligned (cp.async A tile)"
     );
+    // 2026-09-27: 1..=16 rows (K <= 5120) run the kernel's skinny body.
+    let (grid, block, smem) = if m <= W8A16_M16_MAX_ROWS && k <= W8A16_M16_MAX_K {
+        ([div_ceil(n, 8), 1, 1], [256, 1, 1], w8a16_m16_smem_bytes(k))
+    } else {
+        (
+            [
+                div_ceil(n, W8A16_M32_TILE_COLS),
+                div_ceil(m, W8A16_M32_TILE_ROWS),
+                1,
+            ],
+            [256, 1, 1],
+            W8A16_M32_SMEM_BYTES,
+        )
+    };
     KernelLaunch::new(gpu, kernel)
-        .grid([
-            div_ceil(n, W8A16_M32_TILE_COLS),
-            div_ceil(m, W8A16_M32_TILE_ROWS),
-            1,
-        ])
-        .block([256, 1, 1])
+        .grid(grid)
+        .block(block)
+        .shared_mem(smem)
         .arg_ptr(input)
         .arg_ptr(weight)
         .arg_ptr(block_scale)
@@ -150,15 +182,113 @@ pub fn w8a16_gemm_pipelined_m32(
     )
 }
 
+/// 2026-09-26: Rows of the `w8a16_gemm_pipelined_m64` tile.
+pub const W8A16_M64_TILE_ROWS: u32 = 64;
+
+/// 2026-09-26: 33..=64 rows take the 64-row twin `w8a16_gemm_pipelined_m64`
+/// when its handle is nonzero and `K` is a positive multiple of 128: one weight
+/// pass for a whole k = 2 or 3 batched verify at C = 16, where the 32-row twin
+/// would stream the weight per tile and the 128-row tile is three-quarters
+/// empty. The three kernels give every output the same sub-MMAs in the same
+/// order (`native_fp8_gdn_proj_m32_microtest` compares them byte for byte).
+pub fn w8a16_pipelined_prefers_m64(m: u32, k: u32, m64_kernel: KernelHandle) -> bool {
+    (W8A16_M32_TILE_ROWS + 1..=W8A16_M64_TILE_ROWS).contains(&m)
+        && k >= W8A16_M32_K_BLOCK
+        && k.is_multiple_of(W8A16_M32_K_BLOCK)
+        && m64_kernel.0 != 0
+}
+
+/// 2026-09-26: Strided launch of `w8a16_gemm_pipelined_m64`: the arguments
+/// and checks of [`w8a16_gemm_pipelined_m32_strided`], grid
+/// (ceil(N/32), ceil(M/64), 1), block 256. The multi-seq attention Q/K/V and
+/// O arms take it above 32 rows under `ModelLevers::fp8_attn_m32`.
+#[allow(clippy::too_many_arguments)]
+pub fn w8a16_gemm_pipelined_m64_strided(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: DevicePtr,
+    block_scale: DevicePtr,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    a_row_stride: u32,
+    c_row_stride: u32,
+    stream: u64,
+) -> Result<()> {
+    ensure!(
+        m >= 1 && k >= W8A16_M32_K_BLOCK && k.is_multiple_of(W8A16_M32_K_BLOCK),
+        "w8a16_gemm_pipelined_m64: m={m} must be positive and K={k} a positive multiple \
+         of {W8A16_M32_K_BLOCK}"
+    );
+    ensure!(
+        a_row_stride >= k && c_row_stride >= n && a_row_stride.is_multiple_of(8),
+        "w8a16_gemm_pipelined_m64: row pitches (a={a_row_stride}, c={c_row_stride}) must \
+         cover k={k} / n={n}, and a must keep rows 16B-aligned"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([
+            div_ceil(n, W8A16_M32_TILE_COLS),
+            div_ceil(m, W8A16_M64_TILE_ROWS),
+            1,
+        ])
+        .block([256, 1, 1])
+        .arg_ptr(input)
+        .arg_ptr(weight)
+        .arg_ptr(block_scale)
+        .arg_ptr(output)
+        .arg_u32(m)
+        .arg_u32(n)
+        .arg_u32(k)
+        .arg_u32(a_row_stride)
+        .arg_u32(c_row_stride)
+        .launch(stream)
+}
+
+/// 2026-09-26: Contiguous launch of `w8a16_gemm_pipelined_m64` (pitches `k`
+/// and `n`). Same signature as [`super::w8a16_gemm_pipelined`].
+#[allow(clippy::too_many_arguments)]
+pub fn w8a16_gemm_pipelined_m64(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: DevicePtr,
+    block_scale: DevicePtr,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    w8a16_gemm_pipelined_m64_strided(
+        gpu,
+        kernel,
+        input,
+        weight,
+        block_scale,
+        output,
+        m,
+        n,
+        k,
+        k,
+        n,
+        stream,
+    )
+}
+
 /// 2026-09-25: Contiguous block-scaled W8A16 GEMM, tile chosen by
-/// [`w8a16_pipelined_prefers_m32`]: the 32-tile twin on `m32_kernel`, else the
-/// 128-tile `w8a16_gemm_pipelined` on `full_kernel`. The GDN `in_proj_qkvz` /
-/// `out_proj` batched-verify arms (`trait_decode_batched.rs`) call it.
+/// [`w8a16_pipelined_prefers_m32`]: the 32-tile twin on `m32_kernel`, else
+/// (2026-09-26) [`w8a16_pipelined_prefers_m64`]'s 64-tile twin on `m64_kernel`,
+/// else the 128-tile `w8a16_gemm_pipelined` on `full_kernel`. The GDN
+/// `in_proj_qkvz` / `out_proj` batched-verify arms (`trait_decode_batched.rs`)
+/// call it.
 #[allow(clippy::too_many_arguments)]
 pub fn w8a16_gemm_pipelined_by_m(
     gpu: &dyn GpuBackend,
     full_kernel: KernelHandle,
     m32_kernel: KernelHandle,
+    m64_kernel: KernelHandle,
     input: DevicePtr,
     weight: DevicePtr,
     block_scale: DevicePtr,
@@ -172,6 +302,19 @@ pub fn w8a16_gemm_pipelined_by_m(
         w8a16_gemm_pipelined_m32(
             gpu,
             m32_kernel,
+            input,
+            weight,
+            block_scale,
+            output,
+            m,
+            n,
+            k,
+            stream,
+        )
+    } else if w8a16_pipelined_prefers_m64(m, k, m64_kernel) {
+        w8a16_gemm_pipelined_m64(
+            gpu,
+            m64_kernel,
             input,
             weight,
             block_scale,

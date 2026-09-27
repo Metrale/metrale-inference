@@ -294,7 +294,40 @@ impl Qwen3SsmLayer {
             eps,
             stream,
         )?;
-        if num_tokens == 3 {
+        // 2026-09-27: Under a row-invariant tier policy the FP8 MoE takes the
+        // grouped kernels with the per-row router at every row count, so the
+        // two- and three-row arms below do not change a row's bits.
+        let row_invariant_moe = crate::layers::row_invariant()
+            && self.ffn.fp8_grouped_routing_ok(
+                num_tokens,
+                crate::layers::moe::GroupedRouting::PerRow,
+                ctx,
+            );
+        // 2026-09-27: `--moe-nvfp4-experts` takes the grouped NVFP4 decode at every row count.
+        let nvfp4_moe = self.ffn.nvfp4_grouped_ok(num_tokens, ctx);
+        if row_invariant_moe || nvfp4_moe {
+            if nvfp4_moe {
+                self.ffn
+                    .forward_nvfp4_grouped(normed2_base, num_tokens, ctx, stream)?;
+            } else {
+                self.ffn.forward_fp8_grouped_decode_routed(
+                    normed2_base,
+                    num_tokens,
+                    crate::layers::moe::GroupedRouting::PerRow,
+                    ctx,
+                    stream,
+                )?;
+            }
+            let moe_out = ctx.buffers.moe_output();
+            ops::residual_add(
+                ctx.gpu,
+                self.residual_add_k,
+                hidden,
+                moe_out,
+                (num_tokens * h) as u32,
+                stream,
+            )?;
+        } else if num_tokens == 3 {
             self.ffn.forward_k3(normed2_base, ctx, stream)?;
             let moe_out = ctx.buffers.moe_output();
             ops::residual_add(
@@ -359,6 +392,33 @@ impl Qwen3SsmLayer {
             self.ffn
                 .forward_prefill(normed2_base, num_tokens, ctx, stream)?;
             k4_diag_checkpoint(ctx, "10b:ffn_forward_prefill", stream)?;
+            let moe_out = ctx.buffers.moe_output();
+            ops::residual_add(
+                ctx.gpu,
+                self.residual_add_k,
+                hidden,
+                moe_out,
+                (num_tokens * h) as u32,
+                stream,
+            )?;
+        } else if self.ffn.fp8_grouped_routing_ok(
+            num_tokens,
+            crate::layers::moe::GroupedRouting::PerRow,
+            ctx,
+        ) {
+            // 2026-09-26: The per-row arm below, grouped by expert: each routed and
+            // shared expert streams its weights once for all rows, with the per-row
+            // router's arithmetic (`GroupedRouting::PerRow`), so the output bytes
+            // are those of the per-row loop. `METRALE_NO_FP8_MOE_GROUPED_DECODE`
+            // (presence) turns it off.
+            self.ffn.forward_fp8_grouped_decode_routed(
+                normed2_base,
+                num_tokens,
+                crate::layers::moe::GroupedRouting::PerRow,
+                ctx,
+                stream,
+            )?;
+            k4_diag_checkpoint(ctx, "10b:ffn_fp8_grouped_per_row", stream)?;
             let moe_out = ctx.buffers.moe_output();
             ops::residual_add(
                 ctx.gpu,

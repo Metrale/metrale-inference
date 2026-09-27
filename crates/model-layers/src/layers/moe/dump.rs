@@ -266,3 +266,27 @@ pub fn dump_moe_out(
     );
     Ok(())
 }
+
+/// 2026-09-26: Log how many distinct routed experts a grouped FP8 decode of
+/// `m` rows touched (`active_count[0]` from `moe_fp8_grouped_sort`), the
+/// quantity its weight traffic scales with. Eager forwards only: under graph
+/// capture it returns at once.
+pub fn dump_grouped_active(
+    gpu: &dyn GpuBackend,
+    stream: u64,
+    active_count: DevicePtr,
+    m: usize,
+    graph_capture: bool,
+) -> Result<()> {
+    if !enabled() || graph_capture {
+        return Ok(());
+    }
+    gpu.synchronize(stream)?;
+    let mut buf = [0u8; 4];
+    gpu.copy_d2h(active_count, &mut buf)?;
+    tracing::info!(
+        "MoE grouped decode: m={m} distinct_experts={}",
+        i32::from_le_bytes(buf)
+    );
+    Ok(())
+}

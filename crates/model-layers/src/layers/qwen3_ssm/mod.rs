@@ -19,6 +19,7 @@ mod layer_struct;
 mod ple_seq;
 pub use layer_struct::Qwen3SsmLayer;
 
+mod carry;
 mod debug;
 mod decode_w8a8_proj;
 pub mod gdn_flags;
@@ -29,6 +30,7 @@ mod kernel_select;
 mod lora;
 mod prefill_out_w8a8;
 mod prefill_w8a8;
+mod row_tier_proj;
 mod rowwise_bf16;
 mod ssm_forward;
 pub(crate) mod ssm_h_fp16;

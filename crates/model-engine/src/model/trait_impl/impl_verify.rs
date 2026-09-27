@@ -18,6 +18,7 @@ impl ModelVerify for TransformerModel {
         seq: &mut SequenceState,
         stream: u64,
     ) -> Result<Vec<u32>> {
+        self.gdn_carry_flush_pending()?;
         self.ssm_pool.require_verify_rollback_supported()?;
         let r = self.decode_verify_dispatch(tokens, seq, stream);
         self.release_verify_capture_on_err(r)
@@ -29,6 +30,7 @@ impl ModelVerify for TransformerModel {
         seq: &mut SequenceState,
         _stream: u64,
     ) -> Result<[u32; 2]> {
+        self.gdn_carry_flush_pending()?;
         self.ssm_pool.require_verify_rollback_supported()?;
         let r = self.decode_verify_graphed_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
@@ -40,6 +42,7 @@ impl ModelVerify for TransformerModel {
         seq: &mut SequenceState,
         _stream: u64,
     ) -> Result<[u32; 3]> {
+        self.gdn_carry_flush_pending()?;
         self.ssm_pool.require_verify_rollback_supported()?;
         let r = self.decode_verify_graphed_k3_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
@@ -51,6 +54,7 @@ impl ModelVerify for TransformerModel {
         seq: &mut SequenceState,
         _stream: u64,
     ) -> Result<[u32; 4]> {
+        self.gdn_carry_flush_pending()?;
         self.ssm_pool.require_verify_rollback_supported()?;
         let r = self.decode_verify_graphed_k4_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
@@ -79,6 +83,7 @@ impl ModelVerify for TransformerModel {
         seq: &mut SequenceState,
         _stream: u64,
     ) -> Result<Vec<u32>> {
+        self.gdn_carry_flush_pending()?;
         self.ssm_pool.require_verify_rollback_supported()?;
         let r = self.decode_verify_graphed_kgamma_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)
@@ -90,6 +95,7 @@ impl ModelVerify for TransformerModel {
         seq: &mut SequenceState,
         _stream: u64,
     ) -> Result<Vec<u32>> {
+        self.gdn_carry_flush_pending()?;
         self.ssm_pool.require_verify_rollback_supported()?;
         let r = self.decode_and_verify_fused_dispatch(tokens, seq, _stream);
         self.release_verify_capture_on_err(r)

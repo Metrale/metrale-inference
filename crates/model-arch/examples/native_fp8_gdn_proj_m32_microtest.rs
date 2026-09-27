@@ -17,8 +17,8 @@
 //!   per-row scalar `w8a16_gemv`. The known-bad controls in `controls` must
 //!   each be refused.
 //!
-//! Each shape is also timed at M = 16 and 32, both tiles, over `REPS`
-//! launches after one warmup, as µs per launch and weight GB/s.
+//! 2026-09-26: The 64-row twin is compared with the 128-row tile byte for byte
+//! at M in `M64S`. Timings: µs per launch over `REPS` launches after a warmup.
 //!
 //! Run:
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
@@ -33,20 +33,32 @@ use metrale_model_layers::layers::dense_ffn::m16_tc::oracle::{
 use metrale_model_layers::layers::ops;
 use std::time::Instant;
 
-const MAX_M: usize = 32;
+const MAX_M: usize = 64;
 const GUARD: usize = 64;
 const SENTINEL: u8 = 0x5a;
 const A_PAD: usize = 8; // 2026-09-25: elements; keeps strided A rows 16 B-aligned.
 const C_PAD: usize = 64;
 const REPS: usize = 20;
+/// 2026-09-27: Weight bytes the skinny timing rotates through, several times
+/// GB10's L2.
+const COLD_BYTES: usize = 160 << 20;
 /// 2026-09-25: Block-level rel_rms gate, the value `common/m16_tc_compare.rs`
 /// uses.
 const REL_RMS_GATE: f64 = 1e-3;
-const MS: [usize; 7] = [1, 5, 7, 16, 17, 24, 32];
+/// 2026-09-27: Every M of the kernel's skinny body (1..=16), then the 32-row tile.
+const MS: [usize; 19] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 24, 32,
+];
+/// 2026-09-26: Rows the 64-row twin `w8a16_gemm_pipelined_m64` serves in the
+/// GDN arms (`ops::w8a16_pipelined_prefers_m64`).
+const M64S: [usize; 3] = [33, 48, 64];
 /// 2026-09-25: (name, N, K).
-const SHAPES: [(&str, usize, usize); 4] = [
+const SHAPES: [(&str, usize, usize); 7] = [
     ("35B in_proj_qkvz", 12288, 2048),
     ("35B out_proj", 2048, 4096),
+    ("35B attn q", 8192, 2048),
+    ("35B attn k/v", 512, 2048),
+    ("35B attn o", 2048, 4096),
     ("27B in_proj_qkvz", 12288, 5120),
     ("27B out_proj", 5120, 4096),
 ];
@@ -211,15 +223,19 @@ fn main() -> Result<()> {
     let scalar = gpu.kernel("w8a16_gemv", "w8a16_gemv")?;
     let full = gpu.kernel("w8a16_gemm_pipelined", "w8a16_gemm_pipelined")?;
     let m32 = gpu.kernel("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m32")?;
+    let m64 = gpu.kernel("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m64")?;
+    let batch4 = gpu.kernel("w8a16_gemv_batch4", "w8a16_gemv_batch4")?;
+    let batch16 = gpu.kernel("w8a16_gemv_batch4", "w8a16_gemv_batch16")?;
     let mut rng = Lcg(0x0323_8a16_2026_u64);
     let mut failures = 0usize;
     let mut controls_done = false;
 
     for (name, n, k) in SHAPES {
+        // 2026-09-27: Every E4M3 code, the NaN codes 0x7F and 0xFF included.
         let weight: Vec<u8> = (0..n * k)
             .map(|_| {
                 let x = rng.next();
-                ((x % 127) as u8) | (((x >> 7) & 1) as u8 * 128)
+                ((x % 128) as u8) | (((x >> 7) & 1) as u8 * 128)
             })
             .collect();
         let scale: Vec<u8> = (0..(n / 128) * (k / 128))
@@ -325,6 +341,92 @@ fn main() -> Result<()> {
             }
         }
 
+        // 2026-09-26: The 64-row twin against the 128-row tile, byte for byte, and all
+        // three timed.
+        for m in M64S {
+            out_full.reset(&gpu)?;
+            out_m32.reset(&gpu)?;
+            let (mu, nu, ku) = (m as u32, n as u32, k as u32);
+            ops::w8a16_gemm_pipelined(&gpu, full, a, w, s, out_full.ptr(), mu, nu, ku, 0)?;
+            ops::w8a16_gemm_pipelined_m64(&gpu, m64, a, w, s, out_m32.ptr(), mu, nu, ku, 0)?;
+            gpu.synchronize(0)?;
+            let (full_o, m64_o) = (out_full.read(&gpu)?, out_m32.read(&gpu)?);
+            let live = rows(m, n, n);
+            let verdict = check_extent(&m64_o, &out_m32.image, &live, "64-tile")
+                .and_then(|()| check_bits(&m64_o, &live, &full_o, &live, "64-tile vs 128-tile"));
+            let t_full = time_launch(&gpu, || {
+                ops::w8a16_gemm_pipelined(&gpu, full, a, w, s, out_full.ptr(), mu, nu, ku, 0)
+            })?;
+            let t_m32 = time_launch(&gpu, || {
+                ops::w8a16_gemm_pipelined_m32(&gpu, m32, a, w, s, out_full.ptr(), mu, nu, ku, 0)
+            })?;
+            let t_m64 = time_launch(&gpu, || {
+                ops::w8a16_gemm_pipelined_m64(&gpu, m64, a, w, s, out_m32.ptr(), mu, nu, ku, 0)
+            })?;
+            match verdict {
+                Ok(()) => println!(
+                    "PASS {name} M={m}: 64-tile bits==128-tile; 128-tile {t_full:.1} us, \
+                     32-tile x{} {t_m32:.1} us, 64-tile {t_m64:.1} us ({:.0} GB/s)",
+                    m.div_ceil(32),
+                    weight_bytes / t_m64 / 1e3
+                ),
+                Err(e) => {
+                    println!("FAIL {name} M={m} 64-tile: {e}");
+                    failures += 1;
+                }
+            }
+        }
+
+        // 2026-09-27: The skinny body against the row-count GEMV it replaces under
+        // canonical tiers (w8a16_gemv at 1 row, batch4 at 2..=4, batch16 above), each
+        // launch on the next of `COLD_BYTES` worth of weight copies, so neither reads
+        // its weight from L2 as a model's layer sequence never does.
+        let copies = COLD_BYTES.div_ceil(n * k).max(2);
+        let cold: Vec<DevicePtr> = (0..copies)
+            .map(|_| upload(&gpu, &weight))
+            .collect::<Result<_>>()?;
+        for m in [1usize, 2, 4, 8, 16] {
+            let (mu, nu, ku) = (m as u32, n as u32, k as u32);
+            let mut i = 0usize;
+            let t_gemv = time_launch(&gpu, || {
+                i += 1;
+                let w = cold[i % copies];
+                match m {
+                    1 => ops::w8a16_gemv(&gpu, scalar, a, w, s, out_full.ptr(), nu, ku, 0),
+                    2..=4 => {
+                        ops::w8a16_gemv_batch4(&gpu, batch4, a, w, s, out_full.ptr(), mu, nu, ku, 0)
+                    }
+                    _ => ops::w8a16_gemv_batch16(
+                        &gpu,
+                        batch16,
+                        a,
+                        w,
+                        s,
+                        out_full.ptr(),
+                        mu,
+                        nu,
+                        ku,
+                        0,
+                    ),
+                }
+            })?;
+            let t_skinny = time_launch(&gpu, || {
+                i += 1;
+                let w = cold[i % copies];
+                ops::w8a16_gemm_pipelined_m32(&gpu, m32, a, w, s, out_m32.ptr(), mu, nu, ku, 0)
+            })?;
+            println!(
+                "SKINNY {name} M={m}: gemv tier {t_gemv:.1} us ({:.0} GB/s)  skinny {t_skinny:.1} \
+                 us ({:.0} GB/s)  ratio {:.2}",
+                weight_bytes / t_gemv / 1e3,
+                weight_bytes / t_skinny / 1e3,
+                t_skinny / t_gemv
+            );
+        }
+        for w in cold {
+            gpu.free(w)?;
+        }
+
         // 2026-09-25: Timing: both tiles at M=16 and M=32.
         for m in [16usize, 32] {
             let (mu, nu, ku) = (m as u32, n as u32, k as u32);
@@ -347,7 +449,8 @@ fn main() -> Result<()> {
     ensure!(failures == 0, "{failures} case(s) failed");
     println!(
         "ALL PASS: w8a16_gemm_pipelined_m32 byte-identical to w8a16_gemm_pipelined at M in \
-         {MS:?} on {} shapes, strided == contiguous, within the tensor-core budget vs scalar",
+         {MS:?} and w8a16_gemm_pipelined_m64 at M in {M64S:?} on {} shapes, strided == \
+         contiguous, within the tensor-core budget vs scalar",
         SHAPES.len()
     );
     Ok(())

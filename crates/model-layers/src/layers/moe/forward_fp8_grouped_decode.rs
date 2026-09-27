@@ -27,13 +27,18 @@ use super::*;
 /// grouped GEMM above 64 rows when that kernel resolved.
 pub const FP8_GROUPED_DECODE_MAX_ROWS: usize = 64;
 
-/// 2026-09-25: The grouped decode's four kernels, looked up with `try_kernel`; a
-/// zero handle declines the path in [`MoeLayer::fp8_grouped_decode_arena_ok`].
+/// 2026-09-25: The grouped decode's kernels, looked up with `try_kernel`. A zero
+/// handle among the first four declines the path in
+/// [`MoeLayer::fp8_grouped_decode_arena_ok`]; a zero `topk_rows` or `router_gemv`
+/// (2026-09-26) declines only the exact routings in
+/// [`MoeLayer::fp8_grouped_routing_ok`].
 pub(super) struct GroupedKernels {
     pub gate_up: KernelHandle,
     pub silu_down: KernelHandle,
     pub blend: KernelHandle,
-    pub compact: KernelHandle,
+    pub sort: KernelHandle,
+    pub topk_rows: KernelHandle,
+    pub router_gemv: KernelHandle,
 }
 
 impl GroupedKernels {
@@ -43,14 +48,16 @@ impl GroupedKernels {
         use super::super::try_kernel;
         const FUSED: &str = "moe_shared_expert_fused_fp8_grouped";
         Self {
-            gate_up: try_kernel(gpu, FUSED, "moe_expert_gate_up_shared_fp8_grouped"),
-            silu_down: try_kernel(gpu, FUSED, "moe_expert_silu_down_shared_fp8_grouped"),
+            gate_up: try_kernel(gpu, FUSED, "moe_expert_gate_up_act_fp8_grouped"),
+            silu_down: try_kernel(gpu, FUSED, "moe_expert_down_act_fp8_grouped"),
             blend: try_kernel(
                 gpu,
                 "moe_fp8_grouped_blend",
                 "moe_weighted_sum_blend_fp8_grouped",
             ),
-            compact: try_kernel(gpu, FUSED, "moe_fp8_grouped_compact"),
+            sort: try_kernel(gpu, "moe_fp8_grouped_sort", "moe_fp8_grouped_sort"),
+            topk_rows: try_kernel(gpu, "moe_topk", "moe_topk_softmax_rows"),
+            router_gemv: try_kernel(gpu, "dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm"),
         }
     }
 }
@@ -59,7 +66,8 @@ impl GroupedKernels {
 /// path off. Read once per process. It covers the MTP drafter, which is on by
 /// default, and the target model's multi-row decode, which also needs the
 /// `ModelLevers::moe_fp8_grouped_decode_target` lever
-/// (`FfnComponent::fp8_grouped_decode_ok`).
+/// (`FfnComponent::fp8_grouped_decode_ok`). 2026-09-26: It also turns off the
+/// exact routings (`GroupedRouting::PerRow` / `PerToken`), which are on by default.
 fn fp8_grouped_decode_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_FP8_MOE_GROUPED_DECODE").is_none())
@@ -68,20 +76,15 @@ fn fp8_grouped_decode_enabled() -> bool {
 /// 2026-09-25: Shape admission for the grouped kernels, without a GPU.
 ///
 /// * `m` in `2..=FP8_GROUPED_DECODE_MAX_ROWS`.
-/// * `hidden % 16 == 0`: the gate/up kernel reads each activation row as two
-///   `uint4` per 16 K-elements.
-/// * The silu/down pass keeps `FP8_GROUPED_ROWS_PER_PASS × inter` FP32
-///   activations in dynamic shared memory beside a 1 KB LUT, which together
-///   must fit the 48 KB available without an opt-in.
+/// * `hidden % 16 == 0`: the gate/up kernel reads weights in 16-element chunks.
+/// * `inter % 8 == 0`: the down kernel reads weights in 8-element chunks and the
+///   SiLU product rows as `float4`.
 pub fn fp8_grouped_decode_shape_ok(m: usize, hidden: u32, inter: u32) -> bool {
-    const SMEM_NO_OPT_IN: usize = 48 * 1024;
-    const LUT_BYTES: usize = 256 * 4;
     (2..=FP8_GROUPED_DECODE_MAX_ROWS).contains(&m)
         && hidden >= 16
         && hidden.is_multiple_of(16)
         && inter >= 8
         && inter.is_multiple_of(8)
-        && ops::fp8_grouped_silu_down_smem_bytes(inter) + LUT_BYTES <= SMEM_NO_OPT_IN
 }
 
 /// 2026-09-25: Bytes this path needs in each arena buffer it borrows, so a batch
@@ -91,7 +94,7 @@ pub(crate) struct GroupedDecodeBufferNeed {
     pub gate_logits: usize,
     pub expert_gate_out: usize,
     pub expert_down_out: usize,
-    pub shared_inter: usize,
+    pub shared_act: usize,
     pub row_hidden: usize,
 }
 
@@ -112,10 +115,11 @@ pub(crate) fn grouped_decode_buffer_need(
         // active_count `[1]`), with `cap = min(te, E)`.
         gate_logits: (m * num_experts * 2)
             .max(te * 4 * 3 + (num_experts + 1) * 4 + (te.min(num_experts) + 1) * 4),
-        expert_gate_out: te * inter * 2,
+        // 2026-09-26: The routed SiLU product `[te, inter]` FP32.
+        expert_gate_out: te * inter * 4,
         expert_down_out: te * hidden * 2,
-        // 2026-09-25: Shared-expert gate/up scratch `[m, inter]` BF16.
-        shared_inter: m * inter * 2,
+        // 2026-09-26: The shared-expert SiLU product `[m, inter]` FP32, in `logits()`.
+        shared_act: m * inter * 4,
         // 2026-09-25: Shared-expert down output and `moe_output`, `[m, hidden]` BF16.
         row_hidden: m * hidden * 2,
     }
@@ -142,11 +146,11 @@ impl MoeLayer {
             && self.fp8_up_weight_ptrs.is_some()
             && self.fp8_down_weight_ptrs.is_some()
             && self.fp8_shared_expert.is_some()
-            && self.moe_expert_gate_up_shared_fp8_grouped_k.0 != 0
-            && self.moe_expert_silu_down_shared_fp8_grouped_k.0 != 0
+            && self.moe_expert_gate_up_act_fp8_grouped_k.0 != 0
+            && self.moe_expert_down_act_fp8_grouped_k.0 != 0
             && self.moe_weighted_sum_blend_fp8_grouped_k.0 != 0
-            && self.moe_fp8_grouped_compact_k.0 != 0
-            && self.moe_sort_by_expert.0 != 0
+            && self.moe_fp8_grouped_sort_k.0 != 0
+            && cfg.num_experts <= ops::FP8_GROUPED_SORT_MAX_EXPERTS as usize
             // 2026-09-25: This path has no LoRA fold hooks.
             && self.lora.is_none()
             && self.pre_expert_norm.is_none()
@@ -161,8 +165,7 @@ impl MoeLayer {
             && b.gate_logits_bytes() >= need.gate_logits
             && b.expert_gate_out_bytes() >= need.expert_gate_out
             && b.expert_down_out_bytes() >= need.expert_down_out
-            && b.logits_bytes() >= need.shared_inter
-            && b.ssm_qkvz_bytes() >= need.shared_inter
+            && b.logits_bytes() >= need.shared_act
             && b.attn_output_bytes() >= need.row_hidden
             && b.moe_output_bytes() >= need.row_hidden
     }
@@ -180,7 +183,8 @@ impl MoeLayer {
 
     /// 2026-09-25: The FP8 MoE of `m` rows: `input` is `[m, H]` BF16, the output
     /// lands in rows `0..m` of `moe_output()`. Returns an error, launching
-    /// nothing, when `fp8_grouped_decode_ok(m, ctx)` is false.
+    /// nothing, when `fp8_grouped_decode_ok(m, ctx)` is false. Routes with
+    /// [`GroupedRouting::Batched`].
     pub fn forward_fp8_grouped_decode(
         &self,
         input: DevicePtr,
@@ -188,9 +192,23 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        self.forward_fp8_grouped_decode_routed(input, m, GroupedRouting::Batched, ctx, stream)
+    }
+
+    /// 2026-09-26: [`Self::forward_fp8_grouped_decode`] with the router arithmetic
+    /// `routing` names. Returns an error, launching nothing, when
+    /// `fp8_grouped_routing_ok(m, routing, ctx)` is false.
+    pub fn forward_fp8_grouped_decode_routed(
+        &self,
+        input: DevicePtr,
+        m: usize,
+        routing: GroupedRouting,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
         anyhow::ensure!(
-            self.fp8_grouped_decode_ok(m, ctx),
-            "forward_fp8_grouped_decode: predicate false for m={m} (caller must gate on it)"
+            self.fp8_grouped_routing_ok(m, routing, ctx),
+            "forward_fp8_grouped_decode: predicate false for m={m}, {routing:?} (caller must gate on it)"
         );
         let (Some(gp), Some(up), Some(dp), Some(sh)) = (
             &self.fp8_gate_weight_ptrs,
@@ -207,76 +225,26 @@ impl MoeLayer {
         let n = m as u32;
         let te = m * top_k as usize;
 
-        if ctx.stats.once("log:moe_fp8_grouped_decode") {
+        let log_key = match routing {
+            GroupedRouting::Batched => "log:moe_fp8_grouped_decode",
+            GroupedRouting::PerRow => "log:moe_fp8_grouped_decode_per_row",
+            GroupedRouting::PerToken => "log:moe_fp8_grouped_decode_per_token",
+        };
+        if ctx.stats.once(log_key) {
             tracing::info!(
                 "MoE FP8 grouped decode: cross-row batched routed+shared expert dispatch \
-                 active (first use M={m}, top_k={top_k}, experts={num_experts}; one-time log)"
+                 active (first use M={m}, top_k={top_k}, experts={num_experts}, \
+                 routing={routing:?}; one-time log)"
             );
         }
 
-        // 2026-09-25: 1. Router: `[m, H] x [H, E]` -> `gate_logits [m, E]`.
-        let router_in = self.router_input(input, n, h, ctx, stream)?;
-        let gate_logits = ctx.buffers.gate_logits();
-        if let Some(ref nvfp4) = self.gate_nvfp4 {
-            ops::w4a16_gemm(
-                ctx.gpu,
-                self.w4a16_gemm,
-                router_in,
-                nvfp4,
-                gate_logits,
-                n,
-                num_experts,
-                h,
-                stream,
-            )?;
-        } else {
-            ops::dense_gemm(
-                ctx.gpu,
-                self.dense_gemm,
-                router_in,
-                &self.weights.gate,
-                gate_logits,
-                n,
-                num_experts,
-                h,
-                stream,
-            )?;
-        }
-
-        // 2026-09-25: 2. Batched top-k: indices `[m*top_k]` u32, weights
-        // `[m*top_k]` f32.
+        // 2026-09-25: 1-2. Router and top-k: indices `[m*top_k]` u32, weights
+        // `[m*top_k]` f32, with the arithmetic `routing` names.
         let scratch = ctx.buffers.scratch();
         let indices_dev = scratch;
         let weights_dev = scratch.offset(te * 4);
-        if let Some(bias) = self.correction_bias_dev {
-            ops::moe_topk_sigmoid_batched(
-                ctx.gpu,
-                self.moe_topk_sigmoid_batched_k,
-                gate_logits,
-                bias,
-                indices_dev,
-                weights_dev,
-                num_experts,
-                top_k,
-                ctx.config.norm_topk_prob,
-                ctx.config.routed_scaling_factor as f32,
-                n,
-                stream,
-            )?;
-        } else {
-            ops::moe_topk_softmax_batched(
-                ctx.gpu,
-                self.moe_topk_batched,
-                gate_logits,
-                indices_dev,
-                weights_dev,
-                num_experts,
-                top_k,
-                ctx.config.norm_topk_prob,
-                n,
-                stream,
-            )?;
-        }
+        self.grouped_route(input, m, routing, indices_dev, weights_dev, ctx, stream)?;
+        let gate_logits = ctx.buffers.gate_logits();
 
         // 2026-09-25: 3. Group slots by expert. Top-k has read `gate_logits`
         //    earlier on the same stream, so the sort scratch reuses it.
@@ -285,80 +253,73 @@ impl MoeLayer {
         let sorted_expert_ids = gate_logits.offset(te * 4);
         let expert_offsets = gate_logits.offset(te * 4 * 2);
         let token_to_perm = gate_logits.offset(te * 4 * 2 + (ne + 1) * 4);
-        ops::moe_sort_by_expert(
+        // 2026-09-25: 4. The active experts go to a list of fixed capacity `cap`
+        //    (a function of `m`, so the grids are the same for a captured graph),
+        //    then gate+up, silu+down and blend. 2026-09-27: One launch sorts the
+        //    slots and builds the list.
+        let cap = ops::fp8_grouped_active_cap(n, top_k, num_experts);
+        let active_experts = token_to_perm.offset(te * 4);
+        let active_count = active_experts.offset(cap as usize * 4);
+        ops::moe_fp8_grouped_sort(
             ctx.gpu,
-            self.moe_sort_by_expert,
+            self.moe_fp8_grouped_sort_k,
+            ops::Fp8GroupedSortOut {
+                sorted_token_ids,
+                sorted_expert_ids,
+                expert_offsets,
+                token_to_perm,
+                active_experts,
+                active_count,
+            },
             indices_dev,
-            sorted_token_ids,
-            sorted_expert_ids,
-            expert_offsets,
-            token_to_perm,
             te as u32,
             num_experts,
             top_k,
             stream,
         )?;
-
-        // 2026-09-25: 4. Compact the active experts into a list of fixed
-        //    capacity `cap` (a function of `m`, so the grids are the same for a
-        //    captured graph), then gate+up, silu+down and blend.
-        let cap = ops::fp8_grouped_active_cap(n, top_k, num_experts);
-        let active_experts = token_to_perm.offset(te * 4);
-        let active_count = active_experts.offset(cap as usize * 4);
-        ops::moe_fp8_grouped_compact(
-            ctx.gpu,
-            self.moe_fp8_grouped_compact_k,
-            expert_offsets,
-            active_experts,
-            active_count,
-            num_experts,
-            stream,
-        )?;
-        let expert_gate_out = ctx.buffers.expert_gate_out();
-        let expert_up_out = ctx.buffers.expert_up_out();
+        super::dump::dump_grouped_active(ctx.gpu, stream, active_count, m, ctx.graph_capture)?;
+        // 2026-09-26: The SiLU products are FP32: routed `[te, inter]` in
+        // `expert_gate_out()`, shared `[m, inter]` in `logits()`
+        // (`grouped_decode_buffer_need`).
+        let act = ctx.buffers.expert_gate_out();
         let expert_down_out = ctx.buffers.expert_down_out();
-        let shared_gate_scratch = ctx.buffers.logits();
-        let shared_up_scratch = ctx.buffers.ssm_qkvz();
+        let shared_act = ctx.buffers.logits();
         let shared_out = ctx.buffers.attn_output();
         let output = ctx.buffers.moe_output();
 
-        ops::moe_expert_gate_up_shared_fp8_grouped(
+        ops::moe_expert_gate_up_act_fp8_grouped(
             ctx.gpu,
-            self.moe_expert_gate_up_shared_fp8_grouped_k,
+            self.moe_expert_gate_up_act_fp8_grouped_k,
             input,
             gp.weight_ptrs,
             gp.scale_ptrs,
-            expert_gate_out,
             up.weight_ptrs,
             up.scale_ptrs,
-            expert_up_out,
+            act,
             expert_offsets,
             sorted_token_ids,
             active_experts,
             active_count,
             &sh.gate_proj,
-            shared_gate_scratch,
             &sh.up_proj,
-            shared_up_scratch,
+            shared_act,
             inter,
             h,
             cap,
             n,
             stream,
         )?;
-        ops::moe_expert_silu_down_shared_fp8_grouped(
+        ops::moe_expert_down_act_fp8_grouped(
             ctx.gpu,
-            self.moe_expert_silu_down_shared_fp8_grouped_k,
-            expert_gate_out,
-            expert_up_out,
+            self.moe_expert_down_act_fp8_grouped_k,
+            act,
             dp.weight_ptrs,
             dp.scale_ptrs,
             expert_down_out,
             expert_offsets,
             active_experts,
             active_count,
-            shared_gate_scratch,
-            shared_up_scratch,
+            shared_act,
             &sh.down_proj,
             shared_out,
             h,

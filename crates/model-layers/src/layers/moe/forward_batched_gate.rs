@@ -73,14 +73,10 @@ impl MoeLayer {
                 h,
                 stream,
             )?;
-        } else {
+        } else if fp32_gate {
             ops::dense_gemm(
                 ctx.gpu,
-                if fp32_gate {
-                    self.dense_gemm_f32out
-                } else {
-                    self.dense_gemm
-                },
+                self.dense_gemm_f32out,
                 router_in,
                 &self.weights.gate,
                 gate_logits,
@@ -89,6 +85,8 @@ impl MoeLayer {
                 h,
                 stream,
             )?;
+        } else {
+            self.router_gemm_bf16(router_in, gate_logits, n, num_experts, h, ctx, stream)?;
         }
         // 2026-09-25: `dump_gate_logits` reads BF16, so the FP32-gate path skips it.
         if !fp32_gate {

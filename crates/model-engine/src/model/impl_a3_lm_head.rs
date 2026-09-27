@@ -136,6 +136,15 @@ impl TransformerModel {
         if self.lm_head_q6k_run(hidden, num_tokens, logits, stream)? {
             return Ok(logits);
         }
+        // 2026-09-27: Under a row-invariant tier policy an NVFP4 head takes the
+        // wide arm's tile GEMM at every row count, the order the batched verify
+        // uses from 9 rows.
+        if metrale_model_layers::layers::row_invariant()
+            && self.lm_head_nvfp4_t.is_some()
+            && self.lm_head_batched_wide(hidden, num_tokens, logits, stream)?
+        {
+            return Ok(logits);
+        }
         if let Some(ref fp8) = self.lm_head_fp8 {
             // 2026-09-25: FP8 E4M3 head. Two rows use the dual GEMV; any other
             // row count, or a missing dual kernel, runs one GEMV per row.
