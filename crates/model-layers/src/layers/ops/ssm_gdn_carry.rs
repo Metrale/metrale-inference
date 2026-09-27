@@ -216,10 +216,11 @@ pub fn gdn_carry_conv_flush(
 pub const GDN_CARRY_CAP: usize = 8;
 
 /// 2026-09-26: Launch width (sequences) from which a run takes the lazy verify kernels,
-/// which write the state back only when the stash is full. Measured 2026-09-26 on
-/// dgx2/dgx3 (k=1, --mtp-gate force): at 16 sequences the lazy form is 2 % faster end to
-/// end, at 8 it is even and at 2 and 4 the eager form is ahead.
-pub const GDN_CARRY_LAZY_MIN_SEQS: usize = 16;
+/// which write the state back only when the stash is full. Measured on dgx3 (k=1,
+/// --mtp-gate force): from 16 the lazy form is 2.5 % faster end to end at C=16; a threshold
+/// of 8 instead of 16 gives C=8 214.4 -> 216.2 tok/s (three reps each) with C=4 unchanged;
+/// at 2 and 4 sequences the eager form is ahead.
+pub const GDN_CARRY_LAZY_MIN_SEQS: usize = 8;
 
 /// 2026-09-26: Most pending rows an eager verify kernel folds; a slot holding more (only
 /// after lazy verifies) is folded by `gdn_carry_flush` first.

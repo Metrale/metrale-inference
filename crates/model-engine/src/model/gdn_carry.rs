@@ -9,8 +9,8 @@
 //! of H, verifies without writing any intermediate state and stashes its rows. The verdict
 //! then only records how many of them each slot accepted (`pend`). They stay pending,
 //! stacked up to `GDN_CARRY_CAP` rows, until a carry verify of that slot writes the state
-//! back (every verify below 16 sequences; from 16 only when its own rows might not fit
-//! behind them), or until any other call that reads the state folds every pending slot
+//! back (every verify below `GDN_CARRY_LAZY_MIN_SEQS` sequences; from there only when its
+//! own rows might not fit behind them), or until any other call that reads the state folds every pending slot
 //! first (`gdn_carry_flush_pending`, called at the top of those `Model` methods).
 //!
 //! Owner: model-engine speculative decoding.

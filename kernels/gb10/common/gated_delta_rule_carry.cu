@@ -36,7 +36,7 @@
 // Two forms: gdn_carry_wy{K} writes the state back on every verify (pass 2 then re-reads
 // it, which stays in L2 at moderate width) and folds at most four pending rows, and
 // gdn_carry_wy{K}_lazy writes it back only when the stash is full and keeps half of the
-// column in registers across the passes, which pays off from 16 sequences
+// column in registers across the passes, which pays off from 8 sequences
 // (ops::GDN_CARRY_LAZY_MIN_SEQS). Both give the same bits.
 
 #include <cuda_bf16.h>
