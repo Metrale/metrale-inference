@@ -11,11 +11,13 @@ metadata:
     faster, lower-accuracy sibling of qwen3.6-35b-a3b-fp8-nvfp4head. Every other
     setting is that recipe's, except gpu_memory_utilization at the GB10 ceiling of 0.85.
 
-    ACCURACY TRADE-OFF: the flag lowers the routed and shared experts from FP8 to
-    4-bit NVFP4. Decode reads half the expert bytes and runs faster, but the model's
-    answers change. Measured 2026-09-27 on GB10, BFCL overall/normalized, FP8 vs NVFP4
-    experts: shard 1/4 (N=253) 85.38/87.72 vs 83.40/83.21, shard 2/4 (N=250) 84.40/84.99
-    vs 86.40/86.62; both shards (N=503) 84.89 vs 84.89 overall.
+    ACCURACY TRADE-OFF: the flag adds a 4-bit NVFP4 copy of the routed experts and
+    decodes with it; the shared expert and prefill stay FP8. Decode reads half the
+    routed-expert bytes and runs faster, but the model's answers change. Measured
+    2026-09-27 on GB10 with canonical tiers, BFCL echolp shard 1/4 (N=253),
+    overall/normalized: FP8 experts 85.38/87.72, NVFP4 experts 86.56/88.86.
+    agentic-webserver passed 10/10 but ran 168 turns and 774 s summed wall
+    (FP8 experts: 128 turns, 545 s), over that gate's 700 s ceiling.
     Use qwen3.6-35b-a3b-fp8-nvfp4head where accuracy matters.
   maintainer: metrale
   category: agent
