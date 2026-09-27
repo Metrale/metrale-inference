@@ -101,15 +101,14 @@ jobs:
           probe_write "contents:write" "certificate images reach the bot-cards branch" \
             contents_write_probe
 
-          # actions:write. Without it /stamp records its mark and then fails to
-          # re-run the held lane, so the gate stays red telling the operator to
-          # comment /stamp -- which they just did. That shipped: the failure was
-          # sent to /dev/null and the Stamp check went green regardless.
+          # actions:write. Without it merge-pipeline.yml cannot re-run the held
+          # `stamp lookup` job once a stamp arrives, so certification stays
+          # held on a stamped PR.
           #
           # Enabling an already-enabled workflow is the probe: it needs
           # actions:write, it is idempotent, and this very workflow is provably
           # enabled because it is the one running.
-          probe_write "actions:write" "/stamp re-runs the held CI run to release it" \
+          probe_write "actions:write" "the merge pipeline re-runs the held lane to release it" \
             gh api -X PUT "repos/$REPO/actions/workflows/certification-preflight.yml/enable"
 
           # checks:write. Without it /stamp, /seal and /expedite cannot mint

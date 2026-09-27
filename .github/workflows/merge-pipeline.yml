@@ -1,0 +1,170 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: Merge pipeline
+
+# ── From /stamp and /seal to the merge queue, with nothing to re-run ─────────
+#
+# `/stamp` and `/seal` mint `Stamp` / `Seal` check runs (certification-
+# commands.yml). This workflow turns them into `stamp status` and `seal status`
+# on the PR's head commit, written by the certification App:
+#
+#   * before a mark exists, the check is IN PROGRESS, with the reason in its
+#     title. Pending, never red: nothing has failed, a person has yet to act.
+#   * once it exists, the same check run completes with success.
+#
+# These used to be ci.yml jobs that read the marks once, when they ran. A mark
+# minted after that left them red for the life of the run, and a job inside a
+# run still in progress cannot be re-run, so someone had to notice, wait, and
+# re-run CI by hand. A check run the App writes has no such window: whichever
+# event comes last -- the mark, the push, the CI run finishing -- evaluates the
+# PR again and writes the answer.
+#
+# The same evaluation:
+#   * re-runs ci.yml's `stamp lookup` job when every stamp was minted after it
+#     finished, which releases the held certification lane (the job's
+#     dependents re-run with it), and only once that CI run has completed;
+#   * puts the PR into the merge queue once it is stamped, sealed, and every
+#     check `main` requires is green. The base of a stack goes through
+#     merge-async instead, once every layer above it has merged down.
+#
+# Every decision is a pure function in merge_pipeline_logic.py, tested with
+# positive and negative controls, and against mutations of itself, by
+# merge-pipeline-selftest.py. Evaluating twice writes nothing the second time.
+#
+# It never checks out or runs anything from a PR's head. Every trigger below
+# reads the default branch's scripts and talks to the API.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, edited, enqueued]
+  issue_comment:
+    types: [created]
+  # The marks. Filtered to their names below, so the other check runs a push
+  # produces cost one skipped job each at most.
+  check_run:
+    types: [completed]
+  # Required checks finishing. A check run the Actions app creates for a job is
+  # not reliably delivered as a `check_run` event, so the workflows that
+  # produce `main`'s required contexts are listed instead.
+  workflow_run:
+    workflows:
+      - CI
+      - Docs
+      - Coverage
+      - Kernel compile
+      - Security Audit
+      - File size cap (≤500 LoC per .rs)
+      - TUI threading contract
+      - Merge ancestry
+      - Merge queue guard
+    types: [completed]
+  # The backstop: every open PR, every ten minutes, in case an event was lost.
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (empty evaluates every open PR)
+        required: false
+
+permissions: {}
+
+# Serialised per PR so two events cannot write the same check run at once. A
+# newer run may cancel a pending older one; that is harmless here, because the
+# newer run reads the live state and reaches the same answer.
+concurrency:
+  group: >-
+    merge-pipeline-${{ github.event.pull_request.number || github.event.issue.number
+    || github.event.inputs.pr || github.event.workflow_run.head_sha
+    || github.event.check_run.head_sha || github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    name: evaluate
+    if: >-
+      ${{ (github.event_name == 'pull_request_target' && github.event.action != 'enqueued')
+          || github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+          || github.event_name == 'workflow_run'
+          || (github.event_name == 'check_run'
+              && contains(fromJSON('["Stamp", "Seal", "Expedite"]'), github.event.check_run.name))
+          || (github.event_name == 'issue_comment' && github.event.issue.pull_request != null
+              && (startsWith(github.event.comment.body, '/stamp')
+                  || startsWith(github.event.comment.body, '/seal')
+                  || startsWith(github.event.comment.body, '/expedite'))) }}
+    runs-on: ${{ vars.CMD_RUNNER_LABEL || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            crates/bench/src/gate/coverage.rs
+          sparse-checkout-cone-mode: false
+
+      # Check runs, job re-runs and the merge queue all need an App: a check run
+      # cannot be written with a user token, and GITHUB_TOKEN's writes trigger
+      # nothing downstream. The certification App already mints the marks and
+      # holds checks, actions, merge_queues and pull_requests write.
+      - name: Mint the certification App token
+        id: apptoken
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.CERTIFICATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CERTIFICATION_APP_PRIVATE_KEY }}
+
+      - name: Evaluate
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+          REPO: ${{ github.repository }}
+          # Only marks this App wrote count. A workflow's own GITHUB_TOKEN can
+          # create a check run called `Seal` on its own head.
+          MARK_APP_CLIENT_ID: ${{ vars.CERTIFICATION_APP_CLIENT_ID }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.event.check_run.head_sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request_target|issue_comment) args=(--pr "$PR") ;;
+            check_run|workflow_run)            args=(--sha "$SHA") ;;
+            workflow_dispatch)                 if [ -n "$PR" ]; then args=(--pr "$PR"); else args=(--all); fi ;;
+            schedule)                          args=(--all) ;;
+            *) echo "::error::no evaluation is defined for $EVENT_NAME"; exit 1 ;;
+          esac
+          python3 .github/scripts/merge-pipeline.py evaluate "${args[@]}"
+
+  # The fast half of merge-queue-guard.yml's `perf-path exclusivity`: the moment
+  # a perf-path PR is enqueued behind another, take it back out and say why,
+  # before a merge group is built for it.
+  dequeue:
+    name: dequeue a second perf-path PR
+    if: github.event_name == 'pull_request_target' && github.event.action == 'enqueued'
+    runs-on: ${{ vars.CMD_RUNNER_LABEL || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            crates/bench/src/gate/coverage.rs
+          sparse-checkout-cone-mode: false
+
+      - name: Mint the certification App token
+        id: apptoken
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.CERTIFICATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CERTIFICATION_APP_PRIVATE_KEY }}
+
+      - name: Take a second perf-path PR back out
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 .github/scripts/merge-pipeline.py guard-enqueued --pr "$PR"

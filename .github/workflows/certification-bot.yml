@@ -176,11 +176,11 @@ jobs:
 
           Three stages. **Stage 1** runs on every push and is cheap. **Stage 2**
           opens when someone with write access comments \`/stamp\`, which releases
-          the certification job and the nine release-matrix builds — they are held
-          back so a draft does not burn an hour of runners. Stage 2 needs two
-          things: a codeowner of every path in the diff comments \`/seal\`, and
-          benchmark records for this tree are committed. **Stage 3** is green, and
-          the merge queue re-runs everything against its own merge commit.
+          the certification job — it is held back so a draft does not burn runners
+          on it. Stage 2 needs two things: a codeowner of every path in the diff
+          comments \`/seal\`, and benchmark records for this tree are committed.
+          **Stage 3** is green: the PR is enqueued by itself, and the merge queue
+          re-runs everything against its own merge commit.
 
           A new commit voids the seal. \`main\` advancing voids the records only if
           it moved a perf path. The stamp always holds. The full rules, including

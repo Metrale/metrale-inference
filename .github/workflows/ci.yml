@@ -183,11 +183,15 @@ jobs:
 
   # ── Is the expensive lane released? ───────────────────────────────────────
   #
-  # Stage 1 is cheap and runs on every push. Certification and the nine
-  # release-matrix legs cost about an hour of runners between them, so they wait
+  # Stage 1 is cheap and runs on every push. Certification is not, so it waits
   # for a human to say this PR is worth it: anyone with write access comments
   # `/stamp`, and the certification bot records a `Stamp` check run on the head
   # sha.
+  #
+  # This job only READS the marks, once, for the jobs that need its outputs.
+  # What a person sees is `stamp status`, a check run merge-pipeline.yml writes
+  # and keeps current. When a stamp arrives after this job ran, that workflow
+  # re-runs this job once the run has finished, and its dependents with it.
   #
   # ★ READ LIVE FROM THE CHECK RUNS, never from a file. A stamp stored in the
   # repo would be settable by the branch it gates — the property
@@ -196,7 +200,7 @@ jobs:
   # FAIL OPEN, like `changes`: any error here emits `true` and the lane runs.
   # A broken stamp lookup must cost runner minutes, never wave a PR through.
   stamp:
-    name: stamp status
+    name: stamp lookup
     runs-on: >-
       ${{ vars.USE_METRALE_UBUNTU_RUNNERS == '1'
           && (github.event_name != 'pull_request'
@@ -295,92 +299,6 @@ jobs:
           else
             echo "expedited=false" >>"$GITHUB_OUTPUT"
           fi
-
-  # The binding half of `/seal`. The Seal CHECK RUN is minted by the App in
-  # certification-commands.yml, which triggers on comments only — it never runs
-  # on `merge_group`, so on a `gh-readonly-queue/**` commit no Seal exists and
-  # requiring the raw `Seal` context would wedge the queue forever. This job is
-  # the requireable context: it reports on BOTH event types and re-derives the
-  # verdict on the queue side from the PR the entry came from.
-  seal:
-    name: seal status
-    runs-on: >-
-      ${{ vars.USE_METRALE_UBUNTU_RUNNERS == '1'
-          && (github.event_name != 'pull_request'
-           || github.event.pull_request.head.repo.full_name == github.repository)
-          && (vars.PR_CHEAP_RUNNER || 'ubuntu-latest')
-          || 'ubuntu-latest' }}
-    steps:
-      - id: q
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          EVENT: ${{ github.event_name }}
-          PR_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUM: ${{ github.event.pull_request.number }}
-          MQ_HEAD_REF: ${{ github.event.merge_group.head_ref }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -uo pipefail
-          # A push to main has already landed and a dispatch has no diff to
-          # vouch for; neither carries a PR, so there is nothing to seal.
-          if [ "$EVENT" != "pull_request" ] && [ "$EVENT" != "merge_group" ]; then
-            echo "$EVENT carries no pull request — nothing to seal."
-            exit 0
-          fi
-          # AN UPPER LAYER OF A STACK. Its base is another PR's head branch, so
-          # merging it lands nothing on the default branch — it merges DOWNWARD
-          # into the layer beneath it, and the accumulated history is vouched
-          # for once, at the stack's BASE. Maintainer decision 2026-09-12: "that
-          # is the one that needs a seal and stamp, NOT the items above it."
-          #
-          # Both variables must be present and must DIFFER. An empty base ref or
-          # an empty default branch falls through and still demands a seal, so a
-          # broken event payload cannot buy a PR out of being vouched for.
-          if [ "$EVENT" = "pull_request" ] && [ -n "${PR_BASE_REF:-}" ] \
-             && [ -n "${DEFAULT_BRANCH:-}" ] && [ "$PR_BASE_REF" != "$DEFAULT_BRANCH" ]; then
-            echo "base is '$PR_BASE_REF', not '$DEFAULT_BRANCH' — an upper stack layer \
-          merges downward and is sealed at the stack's base."
-            exit 0
-          fi
-          sha="$PR_SHA"; num="$PR_NUM"
-          if [ "$EVENT" = "merge_group" ]; then
-            # Queue branches are GitHub-generated:
-            # gh-readonly-queue/<base>/pr-<N>-<sha>
-            branch="${MQ_HEAD_REF#refs/heads/}"
-            num="$(printf '%s' "$branch" | sed -n 's|.*/pr-\([0-9][0-9]*\)-.*|\1|p')"
-            if [ -z "$num" ]; then
-              echo "::error title=Cannot identify the queued PR::queue branch '$branch' does not name a PR, so the seal cannot be re-proved. Refusing rather than guessing."
-              exit 1
-            fi
-            sha="$(gh api "repos/$REPO/pulls/$num" --jq '.head.sha' 2>/dev/null)" || sha=""
-          fi
-          if [ -z "$sha" ]; then
-            echo "::error title=Cannot resolve the sealed commit::no head sha for PR #$num."
-            exit 1
-          fi
-          # A seal vouches for a DIFF, so only a Seal on the CURRENT head counts
-          # — unlike a stamp, which deliberately carries across new commits.
-          n=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" \
-                --jq '[.check_runs[] | select((.name == "Seal" or .name == "Expedite") and .conclusion == "success")] | length' \
-                2>/dev/null) || n=REFUSE
-          case "$n" in ''|*[!0-9]*) n=REFUSE ;; esac
-          # Deliberately fails CLOSED, inverting the fail-open shape of `stamp`
-          # beside it. A stamp only spends runners, so guessing "yes" is cheap;
-          # a seal is a person vouching for the diff, and an unreadable API must
-          # never be read as a vouch nobody gave. Same direction as
-          # seal-coverage.py, and the same reason.
-          if [ "$n" = "REFUSE" ]; then
-            echo "::error title=Could not read the seal::the check-runs API did not answer for $sha, and a seal is never assumed. Re-run this job."
-            exit 1
-          fi
-          if [ "$n" -gt 0 ]; then
-            echo "sealed at $sha — a codeowner has vouched for this diff."
-            exit 0
-          fi
-          echo "::error title=Not sealed::PR #$num has no Seal on $sha. A codeowner of every path in the diff must comment /seal. The next commit voids it, so seal once the diff has settled."
-          exit 1
 
   fmt:
     name: cargo fmt --check
@@ -1331,38 +1249,29 @@ jobs:
     # Runs for pull_request AND merge_group (queue entry validation on the
     # temporary gh-readonly-queue/** commit). github.event.number is empty
     # under merge_group, so the version string falls back to "queue".
-    # ★ This caller must RUN on every PR and queue entry, web-only ones
-    # included. The required context is `release matrix / dry-run summary`, a
-    # job INSIDE the called workflow — and if the caller is skipped, that
-    # nested check may never be created at all. That is the permanent
-    # "Expected" trap, not the benign skipped-counts-as-satisfied case. So the
-    # skip happens INSIDE release-build.yml via the `web_only` input: the nine
-    # build legs skip, and the summary job runs and reports a real success.
     #
-    # Explicit result checks rather than bare `needs`, because clippy/test/
-    # metal may now be legitimately `skipped` and default semantics would drag
-    # this caller down with them. A genuine FAILURE of any dependency still
-    # skips the matrix exactly as before — that PR is already red on the failed
-    # check itself, so nothing hangs. `changes` is deliberately not in the
-    # conditions: if it failed, the gates all ran and `web_only` resolves to
-    # false, which is the fail-open direction in both places.
+    # ★ THE NINE LEGS BUILD ON MAIN ONLY, in dev-release.yml, which publishes
+    # what they produce. Here `main_only` skips every leg: 30-40 minutes of
+    # cross-compiles per push proved nothing clippy, the tests and the queue do
+    # not, and the binaries were thrown away after a day. `validate` still
+    # checks the matrix and the inputs, and `dry-run summary` -- the required
+    # context -- reports a real success naming why nothing was built.
+    #
+    # ★ This caller must RUN on every PR and queue entry. The required context
+    # is a job INSIDE the called workflow, and if the caller is skipped that
+    # nested check is never created: the permanent "Expected" trap, not the
+    # benign skipped-counts-as-satisfied case. So it depends on nothing that can
+    # be skipped or held -- not the stamp, not the seal, not the Rust jobs.
     if: >-
       ${{ !cancelled() &&
-          (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
-          needs.fmt.result == 'success' &&
-          needs.license-headers.result == 'success' &&
-          needs.typos.result == 'success' &&
-          needs.kernel-structure.result == 'success' &&
-          (needs.clippy.result == 'success' || needs.clippy.result == 'skipped') &&
-          (needs.test.result == 'success' || needs.test.result == 'skipped') &&
-          (needs.test-macos-metal.result == 'success' || needs.test-macos-metal.result == 'skipped') &&
-          (needs.stamp.outputs.stamped != 'false' || needs.seal.result == 'success') }}
-    needs: [changes, stamp, seal, fmt, clippy, license-headers, typos, kernel-structure, test, test-macos-metal]
+          (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    needs: [changes]
     uses: ./.github/workflows/release-build.yml
     with:
       version: 0.0.0-pr${{ github.event.number || 'queue' }}
       pr_mode: true
       retention_days: 1
+      main_only: true
       web_only: ${{ needs.changes.outputs.web_only == 'true' }}
       stack_layer: ${{ needs.changes.outputs.is_stack_layer == 'true' }}
       builds_binaries: ${{ needs.changes.outputs.builds_binaries != 'false' }}
@@ -2071,9 +1980,9 @@ jobs:
         # diff that commit … is it in this clone?"). The same job's
         # `pull_request`-event run passed because the PR ref is present
         # there. This step makes that commit reachable by fetching it
-        # straight from the PR ref, exactly like the PR-number derivation the
-        # `seal` job already does for the same `gh-readonly-queue/**` head
-        # ref shape (see the `seal` job above, ~line 345).
+        # straight from the PR ref, recovering the PR number from the
+        # `gh-readonly-queue/**` head ref the same way `pr_from_queue_ref` in
+        # merge_pipeline_logic.py does.
         #
         # `continue-on-error: true`: a failed fetch (rate limit, ref already
         # gone, unparseable head ref) must leave today's behavior exactly as

@@ -47,6 +47,7 @@ REQUIRED_CONTEXTS = {
     "cargo test --workspace",
     "kernel shadow structure",
     "nvcc -> PTX (all gb10 targets)",
+    "perf-path exclusivity",
     "release matrix / dry-run summary",
     "typos",
 }

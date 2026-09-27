@@ -39,7 +39,9 @@ esac
 #
 #   PR benchmark gate / PR Benchmark Certifications — certification is HELD
 #     until someone comments /stamp. Nobody stamps a bot PR.
-#   seal status — fails closed until a codeowner comments /seal.
+#   seal status — pending until a codeowner comments /seal (merge-pipeline.yml
+#     writes it; governance-harvest.yml leaves it out of the in-flight count).
+#     Still listed here for runs of the retired ci.yml job that failed closed.
 #
 # Counting them as broken meant every harvest cycle read its own healthy PR as
 # terminal and recreated it. Measured 2026-09-04: twelve PRs opened and closed

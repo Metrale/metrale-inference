@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+name: Merge queue guard
+
+# ── One perf-path PR in the merge queue at a time ───────────────────────────
+#
+# Records measured apart never compose. When a PR that touches a perf path
+# (`PERF_PATHS` in crates/bench/src/gate/coverage.rs) lands, main has moved on a
+# perf path, so the records of every other perf-path PR behind it stop covering
+# the tree their merge group builds. Their certification then fails, but only
+# after a full CI run each. Non-perf PRs compose freely and pass through.
+#
+# `perf-path exclusivity` is the check. On a merge group it fails when another
+# perf-path PR is ahead in the queue, which ejects the entry. On a pull request
+# it passes at once: exclusivity is a property of the queue, and a required
+# context must report on every PR or none can merge.
+#
+# Its faster half lives in merge-pipeline.yml: the moment a PR is enqueued,
+# `dequeue a second perf-path PR` takes a second perf-path PR straight back out
+# and says why, before any merge group is built for it.
+#
+# The decision is `exclusivity` in merge_pipeline_logic.py, tested with
+# controls by merge-pipeline-selftest.py.
+on:
+  pull_request:
+  merge_group:
+
+permissions: {}
+
+# No concurrency group. `perf-path exclusivity` is meant to become a required
+# context, and a shared group cancels pending runs whatever cancel-in-progress
+# says -- a cancelled required check reads as a failure.
+
+jobs:
+  exclusivity:
+    name: perf-path exclusivity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Pull requests pass; the queue is where this is judged
+        if: github.event_name == 'pull_request'
+        run: echo "exclusivity is judged on the merge group, where the queue's order exists"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: github.event_name == 'merge_group'
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            crates/bench/src/gate/coverage.rs
+          sparse-checkout-cone-mode: false
+
+      - name: No other perf-path PR is ahead of this one
+        if: github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+        run: python3 .github/scripts/merge-pipeline.py exclusivity --queue-ref "$QUEUE_REF"
