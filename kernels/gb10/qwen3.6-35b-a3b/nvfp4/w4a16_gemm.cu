@@ -356,9 +356,14 @@ extern "C" __global__ void w4a16_gemm_t(
     const unsigned int cta_m = blockIdx.y * M_TILE;
     const unsigned int warp_id = threadIdx.x / 32;
     const unsigned int lane_id = threadIdx.x % 32;
-    const unsigned int warp_m_offset = warp_id * 16;
+    // 2026-09-27: At M <= 16 the tile's rows 16..63 are all padding, so every warp takes
+    // rows 0..15 and a quarter of the N tiles (NT_LIVE) instead of a 16-row slab of all 16:
+    // each output still gets the same MMAs in the same K order, so the bits do not change.
+    const bool skinny = M <= 16;
+    const unsigned int warp_m_offset = skinny ? 0 : warp_id * 16;
     const unsigned int group_id = lane_id >> 2;
     const unsigned int tid = lane_id & 3;
+    #define NT_LIVE(nt) (!skinny || ((unsigned int)(nt) >> 2) == warp_id)
 
     __shared__ __nv_bfloat16 smem_A[2][M_TILE][K_STEP_T + PAD_T];
     __shared__ unsigned char smem_Bp[2][K_STEP_T / 2][N_TILE_LG + BP_PAD];
@@ -449,6 +454,7 @@ extern "C" __global__ void w4a16_gemm_t(
             unsigned int a3 = *(const unsigned int*)&sA[fr1 * a_stride + fc1]; \
             _Pragma("unroll") \
             for (int nt = 0; nt < 16; nt++) { \
+                if (!NT_LIVE(nt)) continue; \
                 unsigned int nc = nt * 8 + group_id; \
                 const __nv_bfloat16* sb = &smem_B_bf16[nc][0]; \
                 unsigned int b0 = *(const unsigned int*)&sb[fc0]; \
@@ -502,6 +508,7 @@ extern "C" __global__ void w4a16_gemm_t(
         unsigned int a3 = bf16x4_to_e4m3x4(&sA[fr1 * a_stride + 16 + tid * 4]); \
         _Pragma("unroll") \
         for (int nt = 0; nt < 16; nt++) { \
+            if (!NT_LIVE(nt)) continue; \
             unsigned int nc = nt * 8 + group_id; \
             unsigned int b0 = *(const unsigned int*)&smem_B_fp8[nc][4 * tid]; \
             unsigned int b1 = *(const unsigned int*)&smem_B_fp8[nc][16 + 4 * tid]; \
@@ -514,27 +521,80 @@ extern "C" __global__ void w4a16_gemm_t(
     } while(0)
 #endif
 
-    ISSUE_LOADS(0, 0);
-    cp_async_commit();
-    cp_async_wait_all();
-    __syncthreads();
-    DEQUANT_T(0);
-    __syncthreads();
-
-    int cur = 0;
-    for (unsigned int k_base = K_STEP_T; k_base < K; k_base += K_STEP_T) {
-        int nxt = 1 - cur;
-        ISSUE_LOADS(nxt, k_base);
-        cp_async_commit();
+    if (skinny) {
+        // 2026-09-27: The same tiles, staged through registers (LDG then STS) instead of
+        // cp.async. Only A rows 0..15 are staged: no skinny warp reads the others.
+        const unsigned int a_row = threadIdx.x >> 2;
+        const unsigned int a_col = (threadIdx.x & 3) << 3;
+        const unsigned int kp = threadIdx.x >> 3;
+        const unsigned int ns = (threadIdx.x & 7) << 4;
+        const unsigned int gns = cta_n + ns;
+        const bool n_ok = gns + 15 < LDB;
+        struct Regs { uint4 a, b, s; };
+        auto load_regs = [&](Regs& r, unsigned int kb) {
+            r.a = make_uint4(0u, 0u, 0u, 0u);
+            r.b = r.a;
+            r.s = r.a;
+            if (a_row < 16 && cta_m + a_row < M && kb + a_col + 7 < K)
+                r.a = __ldg((const uint4*)&A[(cta_m + a_row) * K + kb + a_col]);
+            if (kb + (kp << 1) + 1 <= K && n_ok)
+                r.b = __ldg((const uint4*)&B_packed[(unsigned long long)((kb + (kp << 1)) >> 1) * LDB + gns]);
+            if (kp < K_STEP_T / GROUP_SIZE && n_ok)
+                r.s = __ldg((const uint4*)&B_scale[(unsigned long long)(kb / GROUP_SIZE + kp) * LDB + gns]);
+        };
+        auto store_regs = [&](const Regs& r, int buf) {
+            if (a_row < 16) *(uint4*)&smem_A[buf][a_row][a_col] = r.a;
+            *(uint4*)&smem_Bp[buf][kp][ns] = r.b;
+            if (kp < K_STEP_T / GROUP_SIZE) *(uint4*)&smem_Bs[buf][kp][ns] = r.s;
+        };
+        // 2026-09-27: Two register sets: step s + 1 is loaded while step s - 1 computes and
+        // step s is stored, so a load has a whole step and a compute to land.
+        Regs r0, r1;
+        load_regs(r0, 0);
+        if (K_STEP_T < K) load_regs(r1, K_STEP_T);
+        store_regs(r0, 0);
+        __syncthreads();
+        DEQUANT_T(0);
+        __syncthreads();
+        int cur = 0;
+        auto step = [&](Regs& ready, Regs& spare, unsigned int k_base) {
+            int nxt = 1 - cur;
+            if (k_base + K_STEP_T < K) load_regs(spare, k_base + K_STEP_T);
+            COMPUTE_MMA(cur);
+            store_regs(ready, nxt);
+            __syncthreads();
+            DEQUANT_T(nxt);
+            __syncthreads();
+            cur = nxt;
+        };
+        for (unsigned int k_base = K_STEP_T; k_base < K; k_base += 2 * K_STEP_T) {
+            step(r1, r0, k_base);
+            if (k_base + K_STEP_T < K) step(r0, r1, k_base + K_STEP_T);
+        }
         COMPUTE_MMA(cur);
+    } else {
+        ISSUE_LOADS(0, 0);
+        cp_async_commit();
         cp_async_wait_all();
         __syncthreads();
-        DEQUANT_T(nxt);
+        DEQUANT_T(0);
         __syncthreads();
-        cur = nxt;
-    }
 
-    COMPUTE_MMA(cur);
+        int cur = 0;
+        for (unsigned int k_base = K_STEP_T; k_base < K; k_base += K_STEP_T) {
+            int nxt = 1 - cur;
+            ISSUE_LOADS(nxt, k_base);
+            cp_async_commit();
+            COMPUTE_MMA(cur);
+            cp_async_wait_all();
+            __syncthreads();
+            DEQUANT_T(nxt);
+            __syncthreads();
+            cur = nxt;
+        }
+
+        COMPUTE_MMA(cur);
+    }
 
     #undef ISSUE_LOADS
     #undef DEQUANT_T
@@ -542,6 +602,7 @@ extern "C" __global__ void w4a16_gemm_t(
 
     #pragma unroll
     for (int nt = 0; nt < 16; nt++) {
+        if (!NT_LIVE(nt)) continue;
         unsigned int c0 = cta_n + nt*8 + tid*2;
         unsigned int c1 = c0 + 1;
         unsigned int r0 = cta_m + warp_m_offset + group_id;
@@ -551,6 +612,7 @@ extern "C" __global__ void w4a16_gemm_t(
         if (r1 < M && c0 < N) C[r1*N+c0] = __float2bfloat16(acc[nt][2]);
         if (r1 < M && c1 < N) C[r1*N+c1] = __float2bfloat16(acc[nt][3]);
     }
+    #undef NT_LIVE
 }
 
 // 2026-09-25: fp8_gemm_t: C[M, N] = A[M, K] (BF16) x B_fp8[N, K]^T, with B_fp8 from
