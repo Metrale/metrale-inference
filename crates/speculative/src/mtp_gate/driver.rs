@@ -58,6 +58,7 @@ impl MtpGate {
             measured_at_depth: 0,
             width_regime: 0,
             fresh: None,
+            settle_steps: 0,
             regime_reprobes: 0,
         }
     }

@@ -14,9 +14,10 @@ fn decode_steps_charge_the_batch_width() {
     let mut g = MtpGate::new(1);
     run_mtp_until_probe(&mut g, 2, ms(50));
     // 2026-09-25: Serial probe at width 4: 4 tokens per 10 ms step, 400 tok/s.
-    // The width-1 to width-4 change lands on the probe's still-empty window,
-    // so all `WINDOW_STEPS` steps are measured in the new bucket.
-    for _ in 0..WINDOW_STEPS {
+    // 2026-09-26: The width-1 to width-4 change leaves the next
+    // `WINDOW_STEPS` steps out (settle), then a full window is measured in the
+    // new bucket.
+    for _ in 0..2 * WINDOW_STEPS {
         assert_eq!(g.next_step(), GateStep::MeasureDecode);
         g.record_decode(ms(10), 4);
     }
@@ -101,9 +102,10 @@ fn arbiter_charges_active_width_never_a_padded_width() {
 }
 
 /// 2026-09-25: A width-bucket change discards the partial window and makes a
-/// probe due, as a depth-regime change does. The first step in the new bucket
-/// closes a one-step window that replaces the current mode's estimate, and the
-/// next step probes the other mode at the new width.
+/// probe due, as a depth-regime change does. 2026-09-26: The first
+/// `WINDOW_STEPS` steps in the new bucket are settle steps; the full window
+/// after them replaces the current mode's estimate, and the next step probes
+/// the other mode at the new width.
 #[test]
 fn width_regime_change_stales_and_remeasures_in_the_new_regime() {
     let mut g = MtpGate::new(1);
@@ -115,16 +117,24 @@ fn width_regime_change_stales_and_remeasures_in_the_new_regime() {
     // 2026-09-25: Half a window at width 1, then the batch widens into bucket
     // 8.
     drive_mtp(&mut g, WINDOW_STEPS / 2, 2, ms(50));
-    g.record_verify_step(ms(5), 6, 8);
+    // 2026-09-26: The joining step and the settle steps after it are left out:
+    // made slow here (1 token in 100 ms), they would drag the estimate down.
+    for _ in 0..WINDOW_STEPS {
+        g.record_verify_step(ms(100), 1, 8);
+    }
     assert!(
-        g.serial.stale,
-        "off-mode baseline is stale after the change"
+        g.serial.stale && g.mtp.stale,
+        "both baselines are stale after the change"
     );
-    let mtp = g.mtp_tps_debug().expect("one-step window closed");
+    for _ in 0..WINDOW_STEPS {
+        g.record_verify_step(ms(5), 6, 8);
+    }
+    let mtp = g.mtp_tps_debug().expect("full window closed");
     assert!(
         (mtp - 1200.0).abs() < 1.0,
         "Mtp EWMA must be REPLACED by the in-regime window (6 tok / 5 ms = \
-         1200 tok/s), not blended with the width-1 40 tok/s (got {mtp:.0})"
+         1200 tok/s), not blended with the width-1 40 tok/s or the settle steps \
+         (got {mtp:.0})"
     );
     // 2026-09-25: The early probe opens at once and measures serial at the
     // new width.
@@ -159,14 +169,25 @@ fn width_jitter_inside_a_bucket_does_not_stale() {
     );
     assert_eq!(g.win_steps, 7, "nothing discarded inside the bucket");
     // 2026-09-25: Dropping to bucket 4 is a regime change: the partial window
-    // is discarded, the step's own window (closed early by the due probe)
-    // re-measures Mtp, and serial stays stale until its probe.
+    // is discarded. 2026-09-26: That step and the next `WINDOW_STEPS - 1` are
+    // settle steps; then one full window re-measures Mtp, and serial stays
+    // stale until the probe that follows.
     g.record_verify_step(ms(10), 8, 4);
-    assert!(g.serial.stale && !g.mtp.stale);
+    assert!(g.serial.stale && g.mtp.stale);
+    assert_eq!(g.win_steps, 0, "mixed-width window discarded");
+    for _ in 1..WINDOW_STEPS {
+        g.record_verify_step(ms(10), 8, 4);
+    }
+    assert_eq!(g.win_steps, 0, "settle steps are not measured");
     assert_eq!(
-        g.win_steps, 0,
-        "mixed-width window discarded, fresh one closed"
+        g.next_step(),
+        GateStep::MeasureVerify,
+        "no probe on a stale estimate"
     );
+    for _ in 0..WINDOW_STEPS {
+        g.record_verify_step(ms(10), 8, 4);
+    }
+    assert!(g.serial.stale && !g.mtp.stale);
     assert_eq!(
         g.next_step(),
         GateStep::MeasureDecode,

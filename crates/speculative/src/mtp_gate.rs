@@ -234,6 +234,9 @@ pub struct MtpGate {
     /// (0 before any). See [`Self::note_width`].
     width_regime: usize,
     fresh: Option<GateDecision>,
+    /// 2026-09-26: Steps still to be left out of every window after a
+    /// batch-width bucket change ([`Self::note_width`]).
+    settle_steps: usize,
     /// 2026-09-25: Depth-regime changes seen by this gate.
     regime_reprobes: usize,
 }
@@ -265,6 +268,10 @@ impl MtpGate {
             // refresh scales with.
             self.width_regime = regime;
             self.tokens_since_event = self.tokens_since_event.max(self.event_interval());
+            // 2026-09-26: A sequence that joined (or left) is bootstrapping its
+            // drafts and the batch is still reshaping, so the next window's
+            // steps would not measure the new regime's steady state.
+            self.settle_steps = WINDOW_STEPS;
         }
         self.width_regime = regime;
     }
@@ -298,6 +305,12 @@ impl MtpGate {
     }
 
     fn record_step(&mut self, wall: Duration, tokens: usize) {
+        // 2026-09-26: The settle steps after a width change count toward
+        // nothing, not even the probe cadence.
+        if self.settle_steps > 0 {
+            self.settle_steps -= 1;
+            return;
+        }
         self.win_tokens += tokens as f64;
         self.win_wall += wall.as_secs_f64();
         self.win_steps += 1;
@@ -306,9 +319,14 @@ impl MtpGate {
         }
         if self.win_steps >= WINDOW_STEPS {
             self.close_window();
-        } else if !self.probing && self.tokens_since_event >= self.event_interval() {
+        } else if !self.probing
+            && self.tokens_since_event >= self.event_interval()
+            && !self.stats_mut(self.mode).stale
+        {
             // 2026-09-25: A probe is due: close the window early so the
-            // probe starts on empty accumulators.
+            // probe starts on empty accumulators. 2026-09-26: Not while the
+            // running mode's estimate is stale: the window that replaces it
+            // must be a full one, or one step decides the next arbitration.
             self.close_window();
         }
     }

@@ -186,8 +186,9 @@ fn depth_change_schedules_early_probe_without_state_wipe() {
         tps_before,
         "no state wipe on regime change"
     );
-    // 2026-09-25: The due probe closes the window on the next step.
-    drive_mtp(&mut g, 1, 2, ms(50));
+    // 2026-09-26: The due probe opens once the stale Mtp estimate has been
+    // replaced by a full window in the new regime.
+    drive_mtp(&mut g, WINDOW_STEPS, 2, ms(50));
     assert_eq!(
         g.next_step(),
         GateStep::MeasureDecode,
