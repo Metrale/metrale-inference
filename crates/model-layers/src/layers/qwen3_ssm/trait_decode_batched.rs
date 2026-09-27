@@ -303,14 +303,21 @@ impl Qwen3SsmLayer {
                 crate::layers::moe::GroupedRouting::PerRow,
                 ctx,
             );
-        if row_invariant_moe {
-            self.ffn.forward_fp8_grouped_decode_routed(
-                normed2_base,
-                num_tokens,
-                crate::layers::moe::GroupedRouting::PerRow,
-                ctx,
-                stream,
-            )?;
+        // 2026-09-27: `--moe-nvfp4-experts` takes the grouped NVFP4 decode at every row count.
+        let nvfp4_moe = self.ffn.nvfp4_grouped_ok(num_tokens, ctx);
+        if row_invariant_moe || nvfp4_moe {
+            if nvfp4_moe {
+                self.ffn
+                    .forward_nvfp4_grouped(normed2_base, num_tokens, ctx, stream)?;
+            } else {
+                self.ffn.forward_fp8_grouped_decode_routed(
+                    normed2_base,
+                    num_tokens,
+                    crate::layers::moe::GroupedRouting::PerRow,
+                    ctx,
+                    stream,
+                )?;
+            }
             let moe_out = ctx.buffers.moe_output();
             ops::residual_add(
                 ctx.gpu,

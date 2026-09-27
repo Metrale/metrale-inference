@@ -49,6 +49,8 @@ mod fp8_moe_batch_a;
 #[path = "ops/fp8_moe_batch_b.rs"]
 mod fp8_moe_batch_b;
 mod fp8_moe_grouped;
+// 2026-09-27: The grouped NVFP4 MoE decode kernels (`moe/forward_nvfp4_grouped_decode.rs`).
+mod nvfp4_moe_grouped;
 // 2026-09-25: The 32-row M-tile twin of `w8a16_gemm_pipelined` and its by-M selector.
 mod w8a16_gemm_pipelined_m32;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
@@ -224,6 +226,7 @@ pub use gemm_quant::*;
 pub use gemv_q2::*;
 pub use gemv_q2_vec::*;
 pub use gemv_sw::*;
+pub use nvfp4_moe_grouped::*;
 
 pub use hyper_connection::*;
 pub use hyper_connection_dispatch::*;

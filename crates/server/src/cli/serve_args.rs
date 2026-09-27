@@ -265,6 +265,18 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = false)]
     pub w4a4_downcast_wide: bool,
 
+    /// Requantize a native-FP8 checkpoint's MoE experts to NVFP4 at load, and run MoE decode
+    /// through the grouped NVFP4 kernels (default: false).
+    ///
+    /// The routed and shared experts are dequantized and requantized to NVFP4 (E2M1 with E4M3
+    /// block scales of 16) when the model loads, which halves the expert bytes a decode step
+    /// reads. Every MoE decode of 1 to 64 rows (single-sequence decode, multi-sequence decode,
+    /// MTP verify) then runs the grouped NVFP4 W4A16 kernels, whose output for a row does not
+    /// depend on how many rows share the launch. It is a numerics change, so it is off unless
+    /// a recipe asks for it. No environment fallback.
+    #[arg(long, default_value_t = false)]
+    pub moe_nvfp4_experts: bool,
+
     /// Sequential-decode-exact GDN/SSM verify chain, opt-in (default: off).
     ///
     /// With it, MTP verify runs, per token, the GDN/SSM kernel chain sequential

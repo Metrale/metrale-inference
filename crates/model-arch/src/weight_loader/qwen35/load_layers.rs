@@ -202,8 +202,11 @@ pub(super) fn load_layers(
             .ok()
             .as_deref()
             == Some("1");
+        // 2026-09-27: `--moe-nvfp4-experts` loads the same NVFP4 experts; its decode path is
+        // `MoeLayer::forward_nvfp4_grouped_decode`.
         let force_nvfp4_moe = force_nvfp4_all
-            || std::env::var("METRALE_FORCE_NVFP4_MOE").ok().as_deref() == Some("1");
+            || std::env::var("METRALE_FORCE_NVFP4_MOE").ok().as_deref() == Some("1")
+            || metrale_model_layers::layers::moe_nvfp4_experts_enabled();
         // 2026-09-25: Routed experts in the fused layout (`mlp.experts.gate_up_proj`) take the
         // NVFP4 expert path even for an FP8 checkpoint: `load_moe_qwen35` slices the fused
         // tensors, and `load_moe_qwen35_fp8_experts` reads only per-expert tensors.
@@ -218,9 +221,18 @@ pub(super) fn load_layers(
                 "FP8: routed experts use FUSED layout — loading via NVFP4 expert path (dequant→NVFP4)"
             );
         } else if native_fp8 && force_nvfp4_moe {
-            tracing::warn!(
-                "METRALE_FORCE_NVFP4_MOE=1: routing MoE through NVFP4 path (diagnostic — slower)"
-            );
+            if metrale_model_layers::layers::moe_nvfp4_experts_enabled() {
+                if i == 0 {
+                    tracing::warn!(
+                        "--moe-nvfp4-experts: FP8 routed and shared experts requantized to \
+                         NVFP4 (precision-lowering); MoE decode takes the grouped NVFP4 kernels"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "METRALE_FORCE_NVFP4_MOE=1: routing MoE through NVFP4 path (diagnostic — slower)"
+                );
+            }
         }
         let moe_weights = load_moe_qwen35(
             store,

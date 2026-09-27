@@ -245,6 +245,9 @@ pub struct MoeLayer {
     // `dense_gemv_bf16_batchm`; 0 on targets that do not ship them.
     moe_topk_softmax_rows_k: KernelHandle,
     router_gemv_batchm_k: KernelHandle,
+    // 2026-09-27: The grouped NVFP4 decode's expert kernels (`--moe-nvfp4-experts`); 0 on
+    // targets that do not ship them.
+    nvfp4_grouped: forward_nvfp4_grouped_decode::Nvfp4GroupedKernels,
     // 2026-09-25: Routed-expert FP8 grouped GEMM over the tile work-list that
     // `moe_build_tile_worklist` builds; 0 on targets that do not ship it.
     moe_fp8_grouped_gemm_k: KernelHandle,
@@ -357,6 +360,10 @@ mod forward_fp8_grouped_decode;
 pub use forward_fp8_grouped_decode::fp8_grouped_decode_shape_ok;
 mod forward_fp8_grouped_router;
 pub use forward_fp8_grouped_router::GroupedRouting;
+mod forward_nvfp4_grouped_decode;
+pub use forward_nvfp4_grouped_decode::{
+    NVFP4_GROUPED_DECODE_MAX_ROWS, nvfp4_grouped_decode_shape_ok,
+};
 mod forward_k2;
 mod forward_k3;
 mod forward_phase;

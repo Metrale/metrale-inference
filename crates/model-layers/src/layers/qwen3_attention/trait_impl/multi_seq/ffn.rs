@@ -101,7 +101,9 @@ impl Qwen3AttentionLayer {
             && self
                 .ffn
                 .fp8_grouped_routing_ok(n, crate::layers::moe::GroupedRouting::PerRow, fwd);
-        if row_invariant_moe {
+        // 2026-09-27: `--moe-nvfp4-experts` takes the grouped NVFP4 decode at every row count.
+        let nvfp4_moe = !force_seq_ffn && self.ffn.nvfp4_grouped_ok(n, fwd);
+        if row_invariant_moe || nvfp4_moe {
             let normed2 = fwd.buffers.norm_output();
             ops::residual_add_rms_norm(
                 fwd.gpu,
@@ -116,13 +118,17 @@ impl Qwen3AttentionLayer {
                 eps,
                 stream,
             )?;
-            self.ffn.forward_fp8_grouped_decode_routed(
-                normed2,
-                n,
-                crate::layers::moe::GroupedRouting::PerRow,
-                fwd,
-                stream,
-            )?;
+            if nvfp4_moe {
+                self.ffn.forward_nvfp4_grouped(normed2, n, fwd, stream)?;
+            } else {
+                self.ffn.forward_fp8_grouped_decode_routed(
+                    normed2,
+                    n,
+                    crate::layers::moe::GroupedRouting::PerRow,
+                    fwd,
+                    stream,
+                )?;
+            }
             ops::residual_add(
                 fwd.gpu,
                 self.residual_add_k,

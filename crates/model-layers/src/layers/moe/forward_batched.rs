@@ -18,6 +18,11 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        // 2026-09-27: `--moe-nvfp4-experts`: the grouped NVFP4 decode, whose rows do not
+        // depend on how many share the call.
+        if self.nvfp4_grouped_decode_ok(num_tokens, ctx) {
+            return self.forward_nvfp4_grouped_decode(input, num_tokens, ctx, stream);
+        }
         // 2026-09-25: A zero-expert router is served only through the
         // softmax+bias arm (`router_bias_one`). `forward_prefill` sends BF16
         // and FP8 expert prefills here unless it takes their grouped GEMM

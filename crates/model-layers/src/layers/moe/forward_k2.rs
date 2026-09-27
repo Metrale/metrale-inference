@@ -26,6 +26,11 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        // 2026-09-27: `--moe-nvfp4-experts`: the grouped NVFP4 decode, whose rows do not
+        // depend on how many share the call.
+        if self.nvfp4_grouped_decode_ok(2, ctx) {
+            return self.forward_nvfp4_grouped_decode(input, 2, ctx, stream);
+        }
         // 2026-09-25: The batch2 kernels do not handle zero-computation experts
         // (router width above num_experts), so refuse instead of mis-routing.
         anyhow::ensure!(

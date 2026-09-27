@@ -67,6 +67,7 @@ impl MoeLayer {
         let _ = num_experts;
         let rms_norm_k = gpu.kernel("norm", "rms_norm")?;
         let grouped = super::forward_fp8_grouped_decode::GroupedKernels::resolve(gpu);
+        let nvfp4_grouped = super::forward_nvfp4_grouped_decode::Nvfp4GroupedKernels::resolve(gpu);
         Ok(Self {
             weights,
             // 2026-09-25: NVFP4 until a loader says otherwise; the DeepSeek-V4
@@ -454,6 +455,7 @@ impl MoeLayer {
             moe_fp8_grouped_sort_k: grouped.sort,
             moe_topk_softmax_rows_k: grouped.topk_rows,
             router_gemv_batchm_k: grouped.router_gemv,
+            nvfp4_grouped,
             fp8_gate_weight_ptrs: None,
             fp8_up_weight_ptrs: None,
             fp8_down_weight_ptrs: None,
