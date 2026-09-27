@@ -266,14 +266,22 @@ pub struct ServeArgs {
     pub w4a4_downcast_wide: bool,
 
     /// Requantize a native-FP8 checkpoint's MoE experts to NVFP4 at load, and run MoE decode
-    /// through the grouped NVFP4 kernels (default: false).
+    /// through the grouped NVFP4 kernels (default: false). This lowers expert precision from
+    /// FP8 to 4 bits and costs accuracy.
     ///
     /// The routed and shared experts are dequantized and requantized to NVFP4 (E2M1 with E4M3
     /// block scales of 16) when the model loads, which halves the expert bytes a decode step
-    /// reads. Every MoE decode of 1 to 64 rows (single-sequence decode, multi-sequence decode,
-    /// MTP verify) then runs the grouped NVFP4 W4A16 kernels, whose output for a row does not
-    /// depend on how many rows share the launch. It is a numerics change, so it is off unless
-    /// a recipe asks for it. No environment fallback.
+    /// reads and makes decode faster. The model's answers change: on Qwen3.6-35B-A3B-FP8 one
+    /// BFCL shard lost 2 points overall and 4.5 normalized.
+    /// Every MoE decode of 1 to 64 rows (single-sequence decode, multi-sequence decode, MTP
+    /// verify) then runs the grouped NVFP4 W4A16 kernels, whose output for a row does not
+    /// depend on how many rows share the launch. Off unless a recipe asks for it. No
+    /// environment fallback.
+    //
+    // 2026-09-27: Measured BFCL at e9a46156, Qwen3.6-35B-A3B-FP8, overall/normalized, canonical
+    // tiers alone vs with this flag: shard 1/4 (N=253) 85.38/87.72 vs 83.40/83.21; shard 2/4
+    // (N=250) 84.40/84.99 vs 86.40/86.62; the two shards together (N=503) 84.89 vs 84.89
+    // overall.
     #[arg(long, default_value_t = false)]
     pub moe_nvfp4_experts: bool,
 

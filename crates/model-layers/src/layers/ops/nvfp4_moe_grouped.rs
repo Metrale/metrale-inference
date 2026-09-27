@@ -7,8 +7,8 @@
 //! Invariants: none beyond the types.
 //!
 //! The layout is that of the grouped FP8 decode (`fp8_moe_grouped.rs`): rows grouped by
-//! expert with `moe_sort_by_expert`, the active experts compacted by
-//! `moe_fp8_grouped_compact`, intermediates laid out by sorted position, and the blend
+//! expert and the active experts listed by `moe_fp8_grouped_sort`, intermediates laid out
+//! by sorted position, and the blend
 //! `moe_weighted_sum_blend_fp8_grouped`. Only the weight format differs: row-major
 //! NVFP4 (packed E2M1, E4M3 block scales of 16, per-tensor scale 2).
 

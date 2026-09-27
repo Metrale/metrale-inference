@@ -4,8 +4,8 @@
 //! routed+shared expert dispatch, under `--moe-nvfp4-experts`.
 //!
 //! The steps are those of the grouped FP8 decode (`forward_fp8_grouped_decode.rs`): the
-//! per-row router (`GroupedRouting::PerRow`), `moe_sort_by_expert`, the active-expert
-//! compaction, gate+up and SiLU, down, and the grouped blend. The expert kernels
+//! per-row router (`GroupedRouting::PerRow`), `moe_fp8_grouped_sort` (the slot sort and the
+//! active-expert list), gate+up and SiLU, down, and the grouped blend. The expert kernels
 //! (`ops/nvfp4_moe_grouped.rs`) read each active expert's NVFP4 weights once per pass for all
 //! the rows routed to it. Every step computes a row independently of the other rows, so a
 //! row's output bits do not depend on `m`: the path serves every width from one row up, and a
@@ -23,7 +23,7 @@ pub const NVFP4_GROUPED_DECODE_MAX_ROWS: usize =
     super::forward_fp8_grouped_decode::FP8_GROUPED_DECODE_MAX_ROWS;
 
 /// 2026-09-27: The two expert kernels of this path, looked up with `try_kernel`; a zero handle
-/// declines it. The sort, compaction, router and blend are the grouped FP8 decode's.
+/// declines it. The sort, router and blend are the grouped FP8 decode's.
 pub(super) struct Nvfp4GroupedKernels {
     pub gate_up: KernelHandle,
     pub down: KernelHandle,
@@ -82,8 +82,8 @@ impl MoeLayer {
             && self.nvfp4_grouped.gate_up.0 != 0
             && self.nvfp4_grouped.down.0 != 0
             && self.moe_weighted_sum_blend_fp8_grouped_k.0 != 0
-            && self.moe_fp8_grouped_compact_k.0 != 0
-            && self.moe_sort_by_expert.0 != 0
+            && self.moe_fp8_grouped_sort_k.0 != 0
+            && cfg.num_experts <= ops::FP8_GROUPED_SORT_MAX_EXPERTS as usize
             && self.moe_topk_softmax_rows_k.0 != 0
             && self.router_gemv_batchm_k.0 != 0
             && self.experts_scale_kind == crate::weight_map::WeightQuantFormat::Nvfp4
@@ -167,29 +167,24 @@ impl MoeLayer {
         let sorted_expert_ids = gate_logits.offset(te * 4);
         let expert_offsets = gate_logits.offset(te * 4 * 2);
         let token_to_perm = gate_logits.offset(te * 4 * 2 + (ne + 1) * 4);
-        ops::moe_sort_by_expert(
-            ctx.gpu,
-            self.moe_sort_by_expert,
-            indices_dev,
-            sorted_token_ids,
-            sorted_expert_ids,
-            expert_offsets,
-            token_to_perm,
-            te as u32,
-            num_experts,
-            top_k,
-            stream,
-        )?;
         let cap = ops::fp8_grouped_active_cap(n, top_k, num_experts);
         let active_experts = token_to_perm.offset(te * 4);
         let active_count = active_experts.offset(cap as usize * 4);
-        ops::moe_fp8_grouped_compact(
+        ops::moe_fp8_grouped_sort(
             ctx.gpu,
-            self.moe_fp8_grouped_compact_k,
-            expert_offsets,
-            active_experts,
-            active_count,
+            self.moe_fp8_grouped_sort_k,
+            ops::Fp8GroupedSortOut {
+                sorted_token_ids,
+                sorted_expert_ids,
+                expert_offsets,
+                token_to_perm,
+                active_experts,
+                active_count,
+            },
+            indices_dev,
+            te as u32,
             num_experts,
+            top_k,
             stream,
         )?;
 

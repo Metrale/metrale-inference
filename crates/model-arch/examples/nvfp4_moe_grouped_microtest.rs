@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-27: The grouped NVFP4 MoE decode (`moe_sort_by_expert`, `moe_fp8_grouped_compact`,
+//! 2026-09-27: The grouped NVFP4 MoE decode (`moe_fp8_grouped_sort`,
 //! `moe_expert_{gate_up,down}_act_nvfp4_grouped`, `moe_weighted_sum_blend_fp8_grouped`) at
 //! Qwen3.6-35B-A3B shapes.
 //!
@@ -184,11 +184,7 @@ fn main() -> Result<()> {
     let stream = g.default_stream();
     let k_gate_up = g.kernel("moe_nvfp4_grouped", "moe_expert_gate_up_act_nvfp4_grouped")?;
     let k_down = g.kernel("moe_nvfp4_grouped", "moe_expert_down_act_nvfp4_grouped")?;
-    let k_sort = g.kernel("moe", "moe_sort_by_expert")?;
-    let k_compact = g.kernel(
-        "moe_shared_expert_fused_fp8_grouped",
-        "moe_fp8_grouped_compact",
-    )?;
+    let k_sort = g.kernel("moe_fp8_grouped_sort", "moe_fp8_grouped_sort")?;
     let k_blend = g.kernel(
         "moe_fp8_grouped_blend",
         "moe_weighted_sum_blend_fp8_grouped",
@@ -283,26 +279,21 @@ fn main() -> Result<()> {
     let run = |m: usize, iters: usize| -> Result<Run> {
         let (te, n) = (m * TOP_K, m as u32);
         let cap = ops::fp8_grouped_active_cap(n, TOP_K as u32, num_experts as u32);
-        ops::moe_sort_by_expert(
+        ops::moe_fp8_grouped_sort(
             g,
             k_sort,
+            ops::Fp8GroupedSortOut {
+                sorted_token_ids: sorted,
+                sorted_expert_ids: sorted_e,
+                expert_offsets: offsets,
+                token_to_perm: to_perm,
+                active_experts: active,
+                active_count,
+            },
             idx,
-            sorted,
-            sorted_e,
-            offsets,
-            to_perm,
             te as u32,
             num_experts as u32,
             TOP_K as u32,
-            stream,
-        )?;
-        ops::moe_fp8_grouped_compact(
-            g,
-            k_compact,
-            offsets,
-            active,
-            active_count,
-            num_experts as u32,
             stream,
         )?;
         let experts_once = || -> Result<()> {
