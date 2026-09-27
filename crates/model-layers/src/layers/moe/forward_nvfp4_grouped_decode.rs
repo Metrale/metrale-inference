@@ -7,7 +7,10 @@
 //! per-row router (`GroupedRouting::PerRow`), `moe_fp8_grouped_sort` (the slot sort and the
 //! active-expert list), gate+up and SiLU, down, and the grouped blend. The expert kernels
 //! (`ops/nvfp4_moe_grouped.rs`) read each active expert's NVFP4 weights once per pass for all
-//! the rows routed to it. Every step computes a row independently of the other rows, so a
+//! the rows routed to it. When the layer keeps its FP8 experts too (the qwen35 loader does,
+//! for a native-FP8 checkpoint), the shared expert runs in FP8 through the grouped FP8 kernels
+//! (with no active experts), the NVFP4 kernels take only the routed experts, and prefill keeps
+//! the FP8 experts. Every step computes a row independently of the other rows, so a
 //! row's output bits do not depend on `m`: the path serves every width from one row up, and a
 //! row-invariant tier policy (`row_tiers.rs`) holds with it on.
 //! `model-arch/examples/nvfp4_moe_grouped_microtest.rs` checks this.
@@ -94,7 +97,9 @@ impl MoeLayer {
             && !self.weights.shared_expert.gate_proj.weight.is_null()
             && !self.weights.shared_expert.up_proj.weight.is_null()
             && !self.weights.shared_expert.down_proj.weight.is_null()
-            && self.fp8_gate_weight_ptrs.is_none()
+            && (self.nvfp4_decode_fp8_shared().is_none()
+                || (self.moe_expert_gate_up_act_fp8_grouped_k.0 != 0
+                    && self.moe_expert_down_act_fp8_grouped_k.0 != 0))
             && self.bf16_gate_weight_ptrs.is_none()
             && self.bf16_shared_expert.is_none()
             && !self.use_t_layout_for_decode()
@@ -117,6 +122,12 @@ impl MoeLayer {
             && b.logits_bytes() >= need.shared_act
             && b.attn_output_bytes() >= need.row_hidden
             && b.moe_output_bytes() >= need.row_hidden
+    }
+
+    /// 2026-09-27: The FP8 shared expert this path runs instead of the NVFP4 one, when the
+    /// layer keeps its FP8 experts (`set_fp8_experts`).
+    fn nvfp4_decode_fp8_shared(&self) -> Option<&Fp8ExpertWeight> {
+        self.fp8_shared_expert.as_ref()
     }
 
     /// 2026-09-27: The NVFP4 MoE of `m` rows: `input` is `[m, H]` BF16, the output lands in
@@ -198,6 +209,54 @@ impl MoeLayer {
             scale2_vals: t.scale2_vals,
         };
         let sh = &self.weights.shared_expert;
+        // 2026-09-27: With the layer's FP8 experts kept, the grouped FP8 kernels run the FP8
+        // shared expert alone (no active experts), and the NVFP4 kernels run only the routed
+        // experts (no shared rows).
+        let fp8_shared = self.nvfp4_decode_fp8_shared();
+        if let Some(fsh) = fp8_shared {
+            ops::moe_expert_gate_up_act_fp8_grouped(
+                ctx.gpu,
+                self.moe_expert_gate_up_act_fp8_grouped_k,
+                input,
+                DevicePtr::NULL,
+                DevicePtr::NULL,
+                DevicePtr::NULL,
+                DevicePtr::NULL,
+                act,
+                expert_offsets,
+                sorted_token_ids,
+                active_experts,
+                active_count,
+                &fsh.gate_proj,
+                &fsh.up_proj,
+                shared_act,
+                inter,
+                h,
+                0,
+                n,
+                stream,
+            )?;
+            ops::moe_expert_down_act_fp8_grouped(
+                ctx.gpu,
+                self.moe_expert_down_act_fp8_grouped_k,
+                act,
+                DevicePtr::NULL,
+                DevicePtr::NULL,
+                expert_down_out,
+                expert_offsets,
+                active_experts,
+                active_count,
+                shared_act,
+                &fsh.down_proj,
+                shared_out,
+                h,
+                inter,
+                0,
+                n,
+                stream,
+            )?;
+        }
+        let nvfp4_shared_rows = if fp8_shared.is_some() { 0 } else { n };
         ops::moe_expert_gate_up_act_nvfp4_grouped(
             ctx.gpu,
             self.nvfp4_grouped.gate_up,
@@ -215,7 +274,7 @@ impl MoeLayer {
             inter,
             h,
             cap,
-            n,
+            nvfp4_shared_rows,
             stream,
         )?;
         ops::moe_expert_down_act_nvfp4_grouped(
@@ -233,7 +292,7 @@ impl MoeLayer {
             h,
             inter,
             cap,
-            n,
+            nvfp4_shared_rows,
             stream,
         )?;
         ops::moe_weighted_sum_blend_fp8_grouped(

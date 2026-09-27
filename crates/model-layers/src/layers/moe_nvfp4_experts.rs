@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-27: `--moe-nvfp4-experts`: requantize an FP8 checkpoint's routed and shared MoE
-//! experts to NVFP4 at load, and run every MoE decode of 1 to 64 rows through the grouped
-//! NVFP4 kernels (`moe/forward_nvfp4_grouped_decode.rs`).
+//! 2026-09-27: `--moe-nvfp4-experts`: add an NVFP4 copy of an FP8 checkpoint's routed MoE
+//! experts at load, and run every MoE decode of 1 to 64 rows through the grouped NVFP4
+//! kernels (`moe/forward_nvfp4_grouped_decode.rs`). The shared expert and prefill keep the FP8
+//! weights.
 //!
-//! It lowers the experts' precision, so it is off unless the serve command line asks for it;
-//! there is no environment fallback. The loader reads it (`qwen35/load_layers.rs`) together
-//! with the diagnostic `METRALE_FORCE_NVFP4_MOE`, which loads the same NVFP4 experts but keeps
-//! today's NVFP4 decode arms.
+//! It lowers the routed experts' precision in decode, so it is off unless the serve command
+//! line asks for it; there is no environment fallback. The loader reads it
+//! (`qwen35/load_layers.rs`) beside the diagnostic `METRALE_FORCE_NVFP4_MOE`, which loads
+//! NVFP4 experts only and keeps today's NVFP4 arms.
 //!
 //! Owner: model-layers (MoE).
 //! Invariants:
