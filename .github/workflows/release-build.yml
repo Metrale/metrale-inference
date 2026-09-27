@@ -41,8 +41,8 @@ on:
         default: false
       web_only:
         description: >-
-          The caller classified the diff as touching only site/ blog/ book/
-          web-shared/. The nine build legs skip; `dry-run summary` still RUNS
+          The caller classified the diff as touching only book/. The nine
+          build legs skip; `dry-run summary` still RUNS
           and reports, because it is a required context and must never depend
           on skip semantics crossing a workflow_call boundary.
         required: false
@@ -64,7 +64,7 @@ on:
       builds_binaries:
         description: >-
           Can this diff change a shipped binary? False only when every changed
-          path is provably inert -- web trees, docs, assets, root markdown, and
+          path is provably inert -- book, docs, assets, root markdown, and
           .github/ EXCEPT the workflows and composite actions that decide how
           binaries are produced. Defaults to true, so a caller that does not set
           it still builds.
@@ -230,8 +230,8 @@ jobs:
   build:
     name: build ${{ matrix.id }}
     needs: validate
-    # Nothing under site/ blog/ book/ web-shared/ reaches any build leg, so a
-    # web-only diff would compile nine targets to prove it changed nothing.
+    # Nothing under book/ reaches any build leg, so a web-only diff would
+    # compile nine targets to prove it changed nothing.
     # A lower stack layer skips for a different reason: only the aggregation
     # PR's composed tree lands on main, and that PR builds the full matrix.
     # And an inert diff — one that provably cannot change a binary — skips
@@ -787,7 +787,7 @@ jobs:
           {
             echo "### Release matrix: not built — nothing here can change a binary"
             echo
-            echo "Every changed path is provably inert: web trees, \`docs/\`, \`assets/\`,"
+            echo "Every changed path is provably inert: \`book/\`, \`docs/\`, \`assets/\`,"
             echo "root markdown, or \`.github/\` outside the workflows and composite"
             echo "actions that decide how binaries are produced. This summary job still"
             echo "runs and is still the required context, so the merge is never left"
@@ -800,10 +800,10 @@ jobs:
           {
             echo "### Release matrix: not built — web-only diff"
             echo
-            echo "Every changed file is under \`site/\`, \`blog/\`, \`book/\` or"
-            echo "\`web-shared/\`, none of which reaches a build leg. This summary job"
-            echo "still runs, and is still the required context, precisely so the merge"
-            echo "is never left waiting on a check that was never created."
+            echo "Every changed file is under \`book/\`, which reaches no build leg."
+            echo "This summary job still runs, and is still the required context,"
+            echo "precisely so the merge is never left waiting on a check that was"
+            echo "never created."
           } >> "$GITHUB_STEP_SUMMARY"
       # From here down the job inspects artifacts. On a web-only diff there are
       # none by design, so these steps stand down while the job itself still

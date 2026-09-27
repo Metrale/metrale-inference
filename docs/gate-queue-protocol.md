@@ -40,7 +40,7 @@ campaign commands.
 Two record-bearing performance PRs can never successfully share a merge-queue
 group; the second is guaranteed to bounce after burning a full CI run.
 Consider restricting the queue's max group size to 1, or socially serializing
-perf-PR landings. Non-perf PRs (docs, site, workflows, `scripts/`) compose
+perf-PR landings. Non-perf PRs (docs, book, workflows, `scripts/`) compose
 freely — none of their paths invalidate records.
 
 ## Known costs, accepted

@@ -95,6 +95,5 @@ ignore:
   - "kernels/**"
   - "cuda_kernels/**"
   - "book/**"
-  - "site/**"
   - "scripts/**"
   - "tests/**"

@@ -33,14 +33,12 @@ import yaml
 # a stale mirror only ever makes this check WEAKER (a required context missing
 # from it is simply not examined), never wrong in the dangerous direction.
 REQUIRED_CONTEXTS = {
-    "Build SvelteKit site",
     "Build mdBook + rustdoc",
     "Enforce ≤500 LoC per source file",
     "Merge-ancestry guard self-test",
     "No block_on under tui/ or recipe/",
     "PR benchmark gate",
     "SPDX license headers",
-    "Site unit tests",
     "cargo clippy --tests",
     "cargo deny",
     "cargo fmt --check",

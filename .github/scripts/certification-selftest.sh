@@ -644,8 +644,8 @@ if [ -s "$TMP/rbsum.sh" ]; then
   # from grep. These passed locally (variable unset -> /dev/stdout) and failed
   # on the runner for exactly that reason.
   classify() { printf '%s\n' "$@" | env GITHUB_OUTPUT=/dev/stdout GITHUB_EVENT_NAME=pull_request bash .github/scripts/classify-diff.sh - 2>/dev/null | grep "^builds_binaries="; }
-  # The wildcard (push/schedule/workflow_call) branch must emit ALL FOUR
-  # outputs: under `set -u` a three-argument emit dies on unbound $4, and no
+  # The wildcard (push/schedule/workflow_call) branch must emit ALL THREE
+  # outputs: under `set -u` a two-argument emit dies on unbound $3, and no
   # row exercised that branch at all.
   wildcard_classify() { env GITHUB_OUTPUT=/dev/stdout GITHUB_EVENT_NAME=schedule bash .github/scripts/classify-diff.sh 2>/dev/null | grep "^builds_binaries="; }
   want_rc_msg 0 "builds_binaries=false" "classify: a docs-only diff cannot change a binary" \
@@ -655,7 +655,7 @@ if [ -s "$TMP/rbsum.sh" ]; then
   want_rc_msg 0 "builds_binaries=true" "control: one crates/ file makes the whole diff build" \
     classify docs/AUTOMERGER.md crates/model-layers/src/lib.rs
   want_rc_msg 0 "builds_binaries=true" \
-    "classify: a schedule event never fast-paths and emits all four outputs" \
+    "classify: a schedule event never fast-paths and emits all three outputs" \
     wildcard_classify
 
   # ── The API path: the classifier no longer reads a clone ──────────────────
@@ -1366,10 +1366,8 @@ fi
 # ---------------------------------------------------------------------------
 # Jobs that report a verdict nobody consults (#810, and the ancestry guard)
 # ---------------------------------------------------------------------------
-# Two instances of one defect. `Site unit tests` ran on every PR and blocked
-# neither merge nor deploy. And `Merge-ancestry guard self-test` -- the test
-# proving the guard CAN fail -- was required, while the guard's actual verdict
-# on your branch was not.
+# `Merge-ancestry guard self-test` -- the test proving the guard CAN fail --
+# was required, while the guard's actual verdict on your branch was not.
 #
 # The guard is hosted here, in a required context, rather than in either
 # workflow's own lane: a job cannot be relied on to notice it has been unwired
@@ -1378,7 +1376,7 @@ fi
 # Every control pins the *message* as well as the exit code. Six distinct
 # defects leave through the same exit 1, so asserting rc alone asserts nothing
 # about which one fired -- the wave 4 and wave 7 lesson.
-want_rc 0 "both gated jobs are wired as things stand" \
+want_rc 0 "the gated jobs are wired as things stand" \
   python3 .github/scripts/assert-gates-are-wired.py
 mkdir -p "$TMP/sg/scripts" "$TMP/sg/workflows"
 cp .github/scripts/assert-gates-are-wired.py "$TMP/sg/scripts/"
@@ -1403,20 +1401,16 @@ p.write_text(yaml.safe_dump(d, sort_keys=False))
 PY
 }
 
-sg_sabotage site.yml 'd["jobs"]["deploy"]["needs"] = ["build"]'
-want_rc_msg 1 "does not need" "control: dropping unit from deploy's needs is caught" \
+sg_sabotage merge-ancestry.yml 'd["jobs"]["guard"]["needs"] = ["self-test"]'
+want_rc_msg 1 "grew a \`needs:\`" "control: holding the ancestry guard behind another job is caught" \
   python3 "$TMP/sg/scripts/assert-gates-are-wired.py"
 
-sg_sabotage site.yml 'd["jobs"]["unit"]["if"] = "github.event_name == \"push\""'
-want_rc_msg 1 "grew an \`if:\`" "control: making the site suite conditional is caught" \
-  python3 "$TMP/sg/scripts/assert-gates-are-wired.py"
-
-sg_sabotage site.yml 'd[True]["pull_request"] = {"branches": ["main"], "paths": ["site/**"]}'
+sg_sabotage merge-ancestry.yml 'd[True]["pull_request"] = {"branches": ["main"], "paths": ["crates/**"]}'
 want_rc_msg 1 "grew a \`paths:\` filter" "control: a paths filter that would deadlock PRs is caught" \
   python3 "$TMP/sg/scripts/assert-gates-are-wired.py"
 
-sg_sabotage site.yml 'd["jobs"].pop("unit")'
-want_rc_msg 1 "no longer exists" "control: deleting the site suite outright is caught" \
+sg_sabotage merge-ancestry.yml 'd["jobs"].pop("guard")'
+want_rc_msg 1 "no longer exists" "control: deleting the ancestry guard outright is caught" \
   python3 "$TMP/sg/scripts/assert-gates-are-wired.py"
 
 # The ancestry guard's own regression: restoring the `if:` that made its
@@ -2485,59 +2479,6 @@ want_rc_msg 1 "OWASP" "control: re-enabling the legacy XSS auditor is caught" \
   python3 "$TMP/vh/.github/scripts/assert-vhost-headers.py"
 
 # ---------------------------------------------------------------------------
-# The retired hosts publish their redirects and nothing else
-# ---------------------------------------------------------------------------
-# site/ and blog/ are the whole Cloudflare Pages deployments of dev.metrale.ai
-# and blog.dev.metrale.ai: one `_redirects` each. A stray file there is a page
-# served on a retired host; a 302, an off-host target, a path that stops being
-# kept, or a rule stranded below the catch-all each sends an old link to the
-# wrong place with the job still green. Each control below pins its message.
-want_rc 0 "the two redirect deployments hold what they claim" \
-  python3 .github/scripts/assert-host-redirects.py
-
-hr_sabotage() {  # $1 = file under the tree copy, $2 = python edit over its text as `t`
-  rm -rf "$TMP/hr"; mkdir -p "$TMP/hr/.github/scripts" "$TMP/hr/site" "$TMP/hr/blog"
-  cp .github/scripts/assert-host-redirects.py "$TMP/hr/.github/scripts/"
-  cp site/_redirects "$TMP/hr/site/"; cp blog/_redirects "$TMP/hr/blog/"
-  [ -n "${1:-}" ] || return 0
-  python3 - "$TMP/hr/$1" "$2" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1]); t = p.read_text() if p.exists() else ""
-ns = {"t": t}; exec(sys.argv[2], ns)
-assert ns["t"] != t, "sabotage did not change the file -- the control would measure nothing"
-p.write_text(ns["t"])
-PY
-}
-
-hr_sabotage
-want_rc 0 "control setup: an unmodified copy of the two trees is accepted" \
-  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
-
-hr_sabotage site/index.html 't = "<!doctype html>"'
-want_rc_msg 1 "would be published beside the redirects" "control: a page left beside the redirects is caught" \
-  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
-
-hr_sabotage site/_redirects 't = t.replace("https://metrale.ai/control 301", "https://metrale.ai/control 302", 1)'
-want_rc_msg 1 "answers 302" "control: a temporary redirect is caught" \
-  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
-
-hr_sabotage site/_redirects 't = t.replace("https://metrale.ai/install.ps1 301", "https://metrale.ai/engine 301", 1)'
-want_rc_msg 1 "keeps its path" "control: a path metrale.ai serves sent elsewhere is caught" \
-  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
-
-hr_sabotage site/_redirects 't = t + "/late https://metrale.ai/late 301\n"'
-want_rc_msg 1 "must end with the /* catch-all" "control: a rule stranded below the catch-all is caught" \
-  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
-
-hr_sabotage blog/_redirects 't = t.replace("https://blog.metrale.ai/:splat", "https://metrale.ai/:splat", 1)'
-want_rc_msg 1 "which is not on https://blog.metrale.ai" "control: a blog rule leaving the blog's host is caught" \
-  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
-
-hr_sabotage blog/_redirects 't = t.replace("https://blog.metrale.ai/:splat", "https://blog.metrale.ai/", 1)'
-want_rc_msg 1 "must be the single rule" "control: a blog rule that drops the path is caught" \
-  python3 "$TMP/hr/.github/scripts/assert-host-redirects.py"
-
-# ---------------------------------------------------------------------------
 # Markdown links that point at nothing
 # ---------------------------------------------------------------------------
 # docs/lora-implementation-status.md linked to two files that have never existed
@@ -2547,38 +2488,31 @@ want_rc_msg 1 "must be the single rule" "control: a blog rule that drops the pat
 # found that defect reported nineteen broken links and SEVENTEEN were its own
 # bugs (it stripped the dot from `.github`, and resolved `/images/...` against
 # the filesystem). A checker that cries wolf gets muted. So the controls prove
-# both directions: that real breakage is caught, AND that the site-root and
-# generated-path cases are resolved rather than quietly skipped -- a checker
-# that skips what it cannot resolve passes vacuously.
+# both directions: that real breakage is caught, AND that a site-root link is
+# refused while the generated path is accepted -- a checker that skips what it
+# cannot resolve passes vacuously.
 want_rc 0 "every in-repo markdown link resolves" \
   python3 .github/scripts/assert-doc-links.py
 
 dl_tree() {  # build a miniature repo the checker can be pointed at
   rm -rf "$TMP/dl"
-  mkdir -p "$TMP/dl/.github/scripts" "$TMP/dl/docs" \
-           "$TMP/dl/blog/src" "$TMP/dl/blog/static/images" "$TMP/dl/book/src"
+  mkdir -p "$TMP/dl/.github/scripts" "$TMP/dl/docs" "$TMP/dl/book/src"
   cp .github/scripts/assert-doc-links.py "$TMP/dl/.github/scripts/"
   : > "$TMP/dl/docs/target.md"
-  printf 'PNG' > "$TMP/dl/blog/static/images/hero.webp"
   printf '[ok](target.md)\n'          > "$TMP/dl/docs/good.md"
-  printf '![h](/images/hero.webp)\n'  > "$TMP/dl/blog/src/post.md"
   printf '[api](/api/metrale_core/)\n'  > "$TMP/dl/book/src/redirect.md"
 }
 dl_run() { python3 "$TMP/dl/.github/scripts/assert-doc-links.py"; }
 
 dl_tree
-want_rc 0 "control: a good tree passes (relative, site-root and generated all resolve)" dl_run
+want_rc 0 "control: a good tree passes (relative and generated both resolve)" dl_run
 
 # The defect exactly as it was found.
 dl_tree; printf '[mvp](lora-mvp-proposal.md)\n' > "$TMP/dl/docs/dead.md"
 want_rc_msg 1 "no such file" "control: a relative link to a missing file is caught" dl_run
 
-# If site-root links were skipped rather than resolved, this would still pass.
-dl_tree; rm "$TMP/dl/blog/static/images/hero.webp"
-want_rc_msg 1 "no such file" "control: a site-root link is really resolved, not skipped" dl_run
-
-# A site-root link from a tree that publishes no static dir must be loud, not
-# silently ignored -- silence is how the seventeen false negatives would hide.
+# A site-root link must be loud, not silently ignored -- silence is how the
+# seventeen false negatives would hide. No tree here publishes a static dir.
 dl_tree; printf '![x](/images/hero.webp)\n' > "$TMP/dl/docs/rooted.md"
 want_rc_msg 1 "no known static root" "control: a site-root link from an unknown tree is refused" dl_run
 

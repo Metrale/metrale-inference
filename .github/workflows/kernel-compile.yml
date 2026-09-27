@@ -47,8 +47,8 @@ concurrency:
 permissions: {}
 
 jobs:
-  # Which trees does this change touch? A PR that only edits the web
-  # properties does not need the Rust and CUDA work, but the SKIP has to happen
+  # Which trees does this change touch? A PR that only edits the book
+  # (book/) does not need the Rust and CUDA work, but the SKIP has to happen
   # at JOB level: a `paths:` filter on the trigger would stop the workflow
   # running at all, the required check would never be created, and the PR would
   # wait on it forever. Five workflows here carry that lesson in their
@@ -70,7 +70,6 @@ jobs:
     outputs:
       web_only: ${{ steps.classify.outputs.web_only }}
       web_touched: ${{ steps.classify.outputs.web_touched }}
-      blog_touched: ${{ steps.classify.outputs.blog_touched }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

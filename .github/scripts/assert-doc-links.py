@@ -14,9 +14,9 @@ site-root URLs like `/images/...` against the filesystem. A link checker that
 cries wolf is worse than none, because it will be muted or removed. So this one
 is explicit about every root it knows and silent about everything else:
 
-  * a link starting with `/` is a SITE-ROOT url, and which site depends on which
-    tree the file lives in -- `blog/**` publishes `blog/static`, `site/**`
-    publishes `site/static`. Resolved there, not against the repo root.
+  * a link starting with `/` is a SITE-ROOT url. No tree in this repository
+    publishes a static root, so every such link is refused rather than resolved
+    against the repo root.
   * `book/**` links to `/api/...` are rustdoc output, assembled at deploy time by
     docs.yml (`cp -a target/doc/. book/output/api/`). They cannot exist in the
     tree and are not a defect.
@@ -33,16 +33,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 LINK = re.compile(r"(?<!\!)\[[^\]]*\]\(\s*([^)\s]+?)\s*\)|!\[[^\]]*\]\(\s*([^)\s]+?)\s*\)")
 EXTERNAL = ("http://", "https://", "mailto:", "tel:", "data:", "#", "<")
 
-# tree prefix -> directory its site-root URLs are published from
-SITE_ROOTS = {"blog": "blog/static", "site": "site/static"}
 # paths that are generated at deploy time and cannot exist in the tree
 GENERATED = ("/api/",)
-SKIP_DIRS = {"node_modules", "target", ".git", "build", ".svelte-kit", "vendor"}
-
-
-def site_root_for(md: pathlib.Path) -> str | None:
-    top = md.relative_to(ROOT).parts[0]
-    return SITE_ROOTS.get(top)
+SKIP_DIRS = {"node_modules", "target", ".git", "build", "vendor"}
 
 
 def main() -> None:
@@ -65,13 +58,9 @@ def main() -> None:
             if target.startswith("/"):
                 if target.startswith(GENERATED):
                     continue
-                root = site_root_for(md)
-                if root is None:
-                    broken.append((rel, url, "site-root link in a tree with no known static root"))
-                    continue
-                path = ROOT / root / target.lstrip("/")
-            else:
-                path = md.parent / target
+                broken.append((rel, url, "site-root link in a tree with no known static root"))
+                continue
+            path = md.parent / target
             checked += 1
             if not path.exists():
                 broken.append((rel, url, "no such file"))

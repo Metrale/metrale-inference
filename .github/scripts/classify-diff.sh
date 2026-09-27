@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Classify the change set of the current event, so a PR that only edits the web
-# properties does not have to wait on the Rust and CUDA work.
+# Classify the change set of the current event, so a PR that only edits the
+# book does not have to wait on the Rust and CUDA work.
 #
 # Emits to $GITHUB_OUTPUT:
 #   web_only      true iff >=1 file changed AND every changed file is under
-#                 site/ blog/ book/ web-shared/
-#   web_touched   true iff any changed file is under those trees
-#   blog_touched  true iff any changed file is under blog/
+#                 book/ (the one web property built from this repository)
+#   web_touched   true iff any changed file is under book/
 #   builds_binaries  false iff >=1 file changed AND every changed path is
-#                 provably inert (web trees, docs/, assets/, root markdown,
+#                 provably inert (book/, docs/, assets/, root markdown,
 #                 .github/ minus the release workflows and composite actions).
 #                 Fail-safe: any doubt answers true (build).
 #
@@ -29,7 +28,7 @@
 # carry that lesson in their comments. Job-level `if:` is the only safe skip.
 #
 # The allowlist must stay disjoint from every Rust build input. Nothing under
-# crates/ embeds a file from these four trees today (no include_str!/
+# crates/ embeds a file from book/ today (no include_str!/
 # include_bytes! points at them); anything that starts to must shrink this list.
 set -euo pipefail
 
@@ -37,8 +36,7 @@ emit() {
   {
     echo "web_only=$1"
     echo "web_touched=$2"
-    echo "blog_touched=$3"
-    echo "builds_binaries=$4"
+    echo "builds_binaries=$3"
   } >>"${GITHUB_OUTPUT:-/dev/stdout}"
 }
 
@@ -74,7 +72,7 @@ case "${classify_only:+stdin}${GITHUB_EVENT_NAME:-}" in
       # to be conservative for `web_only` and `builds_binaries`, it silently
       # sets `web_touched=false` and it teaches the next reader that the two
       # cases are the same. They are not.
-      emit false true true true
+      emit false true true
       echo "could not list the PR's files, so nothing is fast-pathed: $files"
       exit 0
     fi
@@ -82,7 +80,7 @@ case "${classify_only:+stdin}${GITHUB_EVENT_NAME:-}" in
     # and every rule below would be reasoning about a partial diff, so refuse
     # to classify instead — fail-safe means "build everything", never "skip".
     if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 3000 ]; then
-      emit false true true true
+      emit false true true
       echo "the PR touches >= 3000 files; the API list is truncated, so nothing is fast-pathed"
       exit 0
     fi
@@ -95,34 +93,32 @@ case "${classify_only:+stdin}${GITHUB_EVENT_NAME:-}" in
     # is usable here at all.
     if ! files=$(gh api "repos/${REPO:?}/compare/${MG_BASE_SHA:?}...${MG_HEAD_SHA:?}" \
                    --paginate --jq '.files[]?.filename' 2>&1); then
-      emit false true true true
+      emit false true true
       echo "could not compare the queue entry, so nothing is fast-pathed: $files"
       exit 0
     fi
     # The compare endpoint truncates at 300 files with no flag saying so.
     if [ "$(printf '%s\n' "$files" | grep -c .)" -ge 300 ]; then
-      emit false true true true
+      emit false true true
       echo "the queue entry touches >= 300 files; the compare list may be truncated, so nothing is fast-pathed"
       exit 0
     fi
     ;;
   *)
     # push, schedule, workflow_dispatch, workflow_call: never fast-path.
-    emit false true true true
+    emit false true true
     echo "event '${GITHUB_EVENT_NAME:-?}' never classifies as web-only"
     exit 0
     ;;
 esac
 
 total=$(printf '%s\n' "$files" | grep -c . || true)
-non_web=$(printf '%s\n' "$files" | grep -cvE '^(site|blog|book|web-shared)/' || true)
-web=$(printf '%s\n' "$files" | grep -cE '^(site|blog|book|web-shared)/' || true)
-blog=$(printf '%s\n' "$files" | grep -cE '^blog/' || true)
+non_web=$(printf '%s\n' "$files" | grep -cvE '^book/' || true)
+web=$(printf '%s\n' "$files" | grep -cE '^book/' || true)
 
 web_only=false
 if [ "$total" -gt 0 ] && [ "$non_web" -eq 0 ]; then web_only=true; fi
 web_touched=false; [ "$web" -gt 0 ] && web_touched=true
-blog_touched=false; [ "$blog" -gt 0 ] && blog_touched=true
 
 # Can this diff change a shipped binary?
 #
@@ -139,7 +135,7 @@ blog_touched=false; [ "$blog" -gt 0 ] && blog_touched=true
 # `certification-commands.yml` cannot change a binary; `release-build.yml`,
 # `release.yml` and `.github/actions/**` decide how binaries are produced, so a
 # change there must build even though it lives under `.github/`.
-inert_re='^(site|blog|book|web-shared|docs|assets)/|^[^/]*\.md$|^\.github/'
+inert_re='^(book|docs|assets)/|^[^/]*\.md$|^\.github/'
 build_re='^\.github/(workflows/(release|dev-release|kernel-compile)|actions/)'
 non_inert=$(printf '%s\n' "$files" | grep -cvE "$inert_re" || true)
 build_touched=$(printf '%s\n' "$files" | grep -cE "$build_re" || true)
@@ -148,6 +144,6 @@ if [ "$total" -gt 0 ] && [ "$non_inert" -eq 0 ] && [ "$build_touched" -eq 0 ]; t
   builds_binaries=false
 fi
 
-emit "$web_only" "$web_touched" "$blog_touched" "$builds_binaries"
-echo "changed=$total non_web=$non_web web=$web blog=$blog -> web_only=$web_only"
+emit "$web_only" "$web_touched" "$builds_binaries"
+echo "changed=$total non_web=$non_web web=$web -> web_only=$web_only"
 printf '%s\n' "$files" | sed 's/^/  /'
