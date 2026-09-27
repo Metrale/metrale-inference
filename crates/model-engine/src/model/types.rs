@@ -332,6 +332,8 @@ pub struct TransformerModel {
     /// request, before any capture, and never moved. `(NULL, NULL, 0)` until
     /// then.
     pub(super) gdn_woa_bound: Mutex<(DevicePtr, DevicePtr, usize)>,
+    /// 2026-09-26: Carried-state GDN verify buffers and pending rows (`gdn_carry.rs`).
+    pub(super) gdn_carry: super::gdn_carry::GdnCarry,
     /// 2026-09-25: Key of the bytes currently staged in `verify_wy_tables`
     /// (`verify_wy_cache_key`), or `None` when nothing has been staged. A step
     /// whose key matches skips the host build and the H2D. Presence of

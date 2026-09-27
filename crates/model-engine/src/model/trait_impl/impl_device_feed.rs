@@ -25,6 +25,7 @@ impl ModelDeviceFeed for TransformerModel {
         seqs: &mut [&mut SequenceState],
         stream: u64,
     ) -> Result<DevicePtr> {
+        self.gdn_carry_flush_pending()?;
         self.decode_batch_fed_dispatch(sources, seqs, stream)
     }
 

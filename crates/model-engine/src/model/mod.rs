@@ -12,6 +12,7 @@
 
 pub(crate) mod block_mgmt;
 pub(crate) mod drop;
+mod gdn_carry;
 pub(crate) mod impl_a1;
 pub(crate) mod impl_a1_init;
 pub(crate) mod impl_a2;

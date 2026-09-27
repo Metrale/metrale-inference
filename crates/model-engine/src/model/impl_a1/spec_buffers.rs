@@ -18,7 +18,12 @@ use metrale_model_layers::layers::ops::ModelLevers;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::QuantizedWeight;
 
-use super::lmhead_tgemm_enabled;
+/// 2026-09-25: Whether to build the transposed lm_head twin for the tile-GEMM
+/// decode path: on unless `METRALE_NO_LMHEAD_TGEMM` is exactly `1`. Read once,
+/// in `TransformerModel::new`, so changing it later has no effect.
+fn lmhead_tgemm_enabled() -> bool {
+    std::env::var("METRALE_NO_LMHEAD_TGEMM").ok().as_deref() != Some("1")
+}
 
 /// 2026-09-26: The padded transposed lm_head twin and its row stride, or `None`.
 pub(super) fn build_lm_head_nvfp4_t(

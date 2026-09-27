@@ -94,6 +94,10 @@ impl TransformerModel {
         k_rows: usize,
     ) -> Result<bool> {
         self.gdn_woa_folded_slots.lock().clear();
+        if self.gdn_carry_commit(slots, accepted_rows)? {
+            self.gdn_woa_folded_slots.lock().extend_from_slice(slots);
+            return Ok(true);
+        }
         let eligible = self
             .gdn_woa_eligible
             .swap(false, std::sync::atomic::Ordering::AcqRel);

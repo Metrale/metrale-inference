@@ -230,6 +230,8 @@ pub struct Qwen3SsmLayer {
     pub(super) woa_stash: std::sync::atomic::AtomicU64,
     pub(super) woa_seqs: std::sync::atomic::AtomicUsize,
     pub(super) woa_dims: [usize; 4],
+    /// 2026-09-26: Carried-state verify handles and binding (`carry.rs`).
+    pub(super) carry: super::carry::CarryState,
     /// 2026-09-25: FP16 h-state variants of the WY verify kernels, 0 when
     /// absent. Under `ssm_h_fp16_enabled()`, `wy2_kernel` and `wy3_kernel`
     /// return these, even when 0, and never the FP32 kernels.

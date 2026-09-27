@@ -43,13 +43,6 @@ mod ssm_setup;
 
 use kernels::{AuxKernels, ModelKernels};
 
-/// 2026-09-25: Whether to build the transposed lm_head twin for the tile-GEMM
-/// decode path: on unless `METRALE_NO_LMHEAD_TGEMM` is exactly `1`. Read once,
-/// in `TransformerModel::new`, so changing it later has no effect.
-fn lmhead_tgemm_enabled() -> bool {
-    std::env::var("METRALE_NO_LMHEAD_TGEMM").ok().as_deref() != Some("1")
-}
-
 impl TransformerModel {
     pub fn new(
         config: ModelConfig,
@@ -452,6 +445,7 @@ impl TransformerModel {
             gdn_woa_folded_slots: parking_lot::Mutex::new(Vec::new()),
             gdn_woa_eligible: std::sync::atomic::AtomicBool::new(false),
             gdn_woa_bound: parking_lot::Mutex::new((DevicePtr::NULL, DevicePtr::NULL, 0)),
+            gdn_carry: Default::default(),
             // 2026-09-25: Nothing staged yet, so the first batched verify step
             // uploads the tables.
             verify_wy_cache: Mutex::new(None),

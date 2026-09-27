@@ -320,6 +320,7 @@ impl Qwen3SsmLayer {
             woa_stash: std::sync::atomic::AtomicU64::new(0),
             woa_seqs: std::sync::atomic::AtomicUsize::new(0),
             woa_dims: [nk, nv, kd, vd],
+            carry: super::carry::CarryState::new(gpu, [nk, nv, kd, vd]),
             gdn_wy2_f16_k: super::super::try_kernel(
                 gpu,
                 "gated_delta_rule_wy_f16",

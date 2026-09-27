@@ -13,10 +13,12 @@ use crate::traits::{ModelSsmState, SequenceState};
 
 impl ModelSsmState for TransformerModel {
     fn checkpoint_ssm_states(&self, seq: &mut SequenceState) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.checkpoint_ssm_states_dispatch(seq)
     }
 
     fn rollback_ssm_states(&self, seq: &mut SequenceState, num_accepted: usize) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.rollback_ssm_states_dispatch(seq, num_accepted)
     }
 
@@ -37,14 +39,22 @@ impl ModelSsmState for TransformerModel {
     }
 
     fn save_decode_ssm_snapshot(&self, seq: &SequenceState, ring_slot: usize) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.save_decode_ssm_snapshot_dispatch(seq, ring_slot)
     }
 
     fn restore_decode_ssm_snapshot(&self, seq: &SequenceState, ring_slot: usize) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.restore_decode_ssm_snapshot_dispatch(seq, ring_slot)
     }
 
     fn decode_marconi_checkpoint(&self, seq: &mut SequenceState) {
+        if let Err(e) = self.gdn_carry_flush_pending() {
+            tracing::error!(
+                "gdn carry flush before {}: {e:#}",
+                "decode_marconi_checkpoint"
+            );
+        }
         self.decode_marconi_checkpoint_dispatch(seq)
     }
 
@@ -54,6 +64,7 @@ impl ModelSsmState for TransformerModel {
     }
 
     fn start_checkpoint_async(&self, seq: &mut SequenceState) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.start_checkpoint_async_dispatch(seq)
     }
 
@@ -62,6 +73,7 @@ impl ModelSsmState for TransformerModel {
         seq: &mut SequenceState,
         num_accepted: usize,
     ) -> Result<()> {
+        self.gdn_carry_flush_pending()?;
         self.start_rollback_and_checkpoint_async_dispatch(seq, num_accepted)
     }
 

@@ -199,8 +199,17 @@ impl TransformerModel {
         // 2026-09-25: A write-on-accept request is honoured only with the WY
         // tables staged, since the fold reads them. `gdn_woa_bind` allocates
         // and binds the stash on the first request, before any capture.
-        let write_on_accept =
-            opts.write_on_accept && !wy_tables_base.is_null() && self.gdn_woa_bind()?;
+        // 2026-09-26: The carried-state verify takes the request first
+        // (`gdn_carry.rs`); DFlash and a verify without tables never carry.
+        let carry = self.gdn_carry_begin(
+            opts.write_on_accept && dflash_k.is_none() && !wy_tables_base.is_null(),
+            stream,
+        )?;
+        let write_on_accept = !carry
+            && opts.write_on_accept
+            && ks.iter().all(|&k| k == k_max)
+            && !wy_tables_base.is_null()
+            && self.gdn_woa_bind()?;
 
         // 2026-09-25: Graph decision. An exact key hit replays. On a miss,
         // with `graph_borrow_enabled()`, `find_borrowable_verify_key` may pick
@@ -212,7 +221,12 @@ impl TransformerModel {
         // `pick_verify_graph`).
         let graphs_on = super::verify_e2::verify_graphs_enabled() && !k4_diag;
         let graph_key = if graphs_on {
-            self.verify_batched_graph_key(&*seqs, ks, wy_tables_base.is_null(), write_on_accept)
+            self.verify_batched_graph_key(
+                &*seqs,
+                ks,
+                wy_tables_base.is_null(),
+                write_on_accept || carry,
+            )
         } else {
             None
         };
@@ -245,6 +259,9 @@ impl TransformerModel {
             );
         }
 
+        if carry {
+            self.gdn_carry_stage(&*seqs, &ghosts, stream)?;
+        }
         let metadata = self.stage_verify_metadata(&*seqs, ks, &off, bs, r_total, r_up, stream)?;
 
         if let Some(graph) = replay {
@@ -275,7 +292,7 @@ impl TransformerModel {
                 graph_capture: capture,
                 decode_step: false,
                 gdn_exact_replay: false,
-                gdn_write_on_accept: write_on_accept,
+                gdn_write_on_accept: write_on_accept || carry,
                 token_ids: None,
                 host_token_ids: None,
                 routed_lora_layers: None,
@@ -364,6 +381,9 @@ impl TransformerModel {
         let t_d2h = std::time::Instant::now();
         let launch_us = t_d2h.duration_since(t_launch).as_micros() as u64;
         let buf = self.read_verify_argmax(mapped_argmax, r_total, stream)?;
+        if carry {
+            self.gdn_carry_end(&*seqs, ks, stream)?;
+        }
         {
             // 2026-09-25: `METRALE_MTP_TIMING=1`: sum the launch and readback
             // times and log their per-call means once per 100 batched

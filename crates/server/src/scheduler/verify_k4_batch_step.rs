@@ -93,10 +93,12 @@ pub(super) fn step_verify_k4_batched(
     let t_verify = sched.io.clock.now();
     let results: Vec<u32> = {
         let mut seq_refs: Vec<&mut SequenceState> = batch.iter_mut().map(|a| &mut a.seq).collect();
-        // 2026-09-25: default opts, no write-on-accept: this path commits
-        // through `k4_apply_verdict` and never calls `gdn_fold_accepted`,
-        // which write-on-accept requires.
-        let opts = metrale_model_engine::traits::VerifyBatchedOpts::default();
+        // 2026-09-26: write-on-accept: the GDN layers carry their state
+        // (`model-engine gdn_carry.rs`), and every verdict reaches
+        // `gdn_fold_accepted` below before any `commit_accepted_prefix`.
+        let opts = metrale_model_engine::traits::VerifyBatchedOpts {
+            write_on_accept: true,
+        };
         match model.decode_verify_batched(&tokens, ks, &mut seq_refs, 0, opts) {
             Ok(r) => r,
             Err(e) => {
@@ -215,6 +217,26 @@ pub(super) fn step_verify_k4_batched(
         .tel
         .mark(crate::scheduler::mtp_timing::Phase::SaveHidden, t_stash);
     let t_verdict = sched.io.clock.now();
+    // 2026-09-26: the GDN h-state commit of the whole batch, rows `0..=na`
+    // per sequence (`k4_apply_verdict` clamps `na` to `ks[i] - 1` the same
+    // way). A failure leaves the batch's recurrent state untrusted, so every
+    // sequence finishes.
+    {
+        let slots: Vec<usize> = batch.iter().map(|a| a.seq.slot_idx).collect();
+        let rows: Vec<u32> = verdicts
+            .iter()
+            .enumerate()
+            .map(|(i, &(_, na, _))| (na.min(ks[i] - 1) + 1) as u32)
+            .collect();
+        let k_max = ks.iter().copied().max().unwrap_or(2);
+        if let Err(e) = model.gdn_fold_accepted(&slots, &rows, k_max) {
+            tracing::error!("gdn_fold_accepted (mtp batched): {e:#}");
+            for a in batch.iter_mut() {
+                a.finished = true;
+            }
+            return;
+        }
+    }
     // 2026-09-25: per-sequence verdict through `k4_apply_verdict`, with the
     // propose deferred (`K4Hidden::DeferPropose`) so it can be batched below.
     for (i, (a, (v, num_accepted, verify_lps))) in
