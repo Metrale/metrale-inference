@@ -795,6 +795,9 @@ jobs:
             exit 1
           fi
           python3 scripts/chki_reach_table.py --pr "$pr" --chki-json chki.json --out table.md
+          # A merge that reaches no kernel path gets no row: the script says so and
+          # writes no table, and that is a pass, not a missing file.
+          if [ ! -f table.md ]; then exit 0; fi
           {
             echo "### CHKI reach table — the row for $pr"; echo; cat table.md;
           } >> "${GITHUB_STEP_SUMMARY}"
