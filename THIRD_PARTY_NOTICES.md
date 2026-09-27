@@ -217,6 +217,25 @@ Font files served by the book, each under its own font license.
 
 ---
 
+## 10. Public-domain text
+
+### 10a. *Moby-Dick; or, The Whale*, Herman Melville (1851) — public domain
+
+The opening chapters, up to part of chapter 9, as the prompt of the high-ISL
+TTFT gates. The file is compiled into the bench binary with `include_str!`.
+
+- **License**: none. The work is in the public domain in the United States.
+- **Source**: Project Gutenberg eBook #2701,
+  https://www.gutenberg.org/ebooks/2701. The Project Gutenberg header, footer,
+  licence and trademark text and the transcriber's note are removed, so no
+  Project Gutenberg licence term applies to the file.
+- **In-repo path**: `crates/bench/src/benchmarks/ttft/prompts/long-32k.txt`;
+  [`NOTICE.md`](crates/bench/src/benchmarks/ttft/prompts/NOTICE.md) beside it
+  records the download's sha256 and the trimming, and
+  `scripts/make_long_prompt.py` rebuilds the file from the download.
+
+---
+
 ## Keeping this file current
 
 Re-run these after any change that adds a vendored directory, a build-time
