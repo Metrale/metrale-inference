@@ -4,27 +4,51 @@
 # book rebuild from the new tree (new certified records, gate limits, docs) without a manual
 # push to the site repository. metrale.ai's deploy.yml and docs.yml listen for
 # `repository_dispatch` of type `engine-main-updated`.
+#
+# 2026-09-27: It also moves the site's engine pin. The site reads the engine at the commit in
+# its `site/engine.ref`, so a dispatch alone rebuilds the old numbers. Each run for this
+# repository's main opens (or rebuilds) the metrale.ai PR `engine-ref/auto`, which sets that
+# pin to this commit with the generated data rebuilt at it, and arms auto-merge: the site's
+# required checks decide whether it lands. .github/scripts/site-follow-triage.sh decides what
+# a run does; its table is site-follow-triage-test.sh.
 name: Site dispatch
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+  # 2026-09-27: metrale.ai's branch protection is strict and GitHub never updates a branch for
+  # auto-merge, so a bump PR that main moved under would wait for the next engine merge. The
+  # hourly run rebuilds such a PR once its checks are idle. It never sends the dispatch.
+  schedule:
+    - cron: "23 * * * *"
 
 permissions: {}
 
+# 2026-09-27: One run at a time, and a newer push cancels an older run, so a burst of merges
+# converges on the last one. A scheduled run never cancels a push run: it queues behind it.
 concurrency:
   group: site-dispatch
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   dispatch:
     name: Rebuild metrale.ai
     runs-on: ubuntu-latest
     if: github.repository == 'Metrale/metrale-inference'
+    timeout-minutes: 30
+    # 2026-09-27: Read-only here. Writes to metrale.ai go through the App token below; this
+    # token only checks out public trees and reads public star counts during the site build.
+    permissions:
+      contents: read
+    env:
+      SITE_REPO: Metrale/metrale.ai
+      BUMP_BRANCH: engine-ref/auto
+      TARGET: ${{ github.sha }}
     steps:
       # 2026-09-26: GITHUB_TOKEN cannot write to another repository, so the governance App mints
-      # a token limited to metrale.ai and to contents: write, the one permission a dispatch needs.
+      # a token limited to metrale.ai. contents: write sends the dispatch and pushes the bump
+      # branch; pull-requests: write opens, edits, comments on and closes the bump PR.
       - name: Mint a token for metrale.ai
         id: apptoken
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
@@ -34,14 +58,189 @@ jobs:
           owner: Metrale
           repositories: metrale.ai
           permission-contents: write
+          permission-pull-requests: write
 
+      # 2026-09-27: Only for main: a dispatch run on another branch would announce a commit
+      # that main does not have.
       - name: Send engine-main-updated
+        if: github.event_name != 'schedule' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}
-          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          gh api -X POST repos/Metrale/metrale.ai/dispatches \
+          gh api -X POST "repos/$SITE_REPO/dispatches" \
             -f event_type=engine-main-updated \
-            -F "client_payload[sha]=$SHA"
-          echo "dispatched engine-main-updated for $SHA"
+            -F "client_payload[sha]=$TARGET"
+          echo "dispatched engine-main-updated for $TARGET"
+
+      # 2026-09-27: The site at the root of the workspace, because its build is its own
+      # composite action (.github/actions/build-site), which resolves its steps from there.
+      - name: Check out metrale.ai main
+        if: github.ref == 'refs/heads/main'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ env.SITE_REPO }}
+          ref: main
+          persist-credentials: false
+
+      # 2026-09-27: .inputs/ is ignored by metrale.ai, so this never shows as a change there.
+      - name: Check out the triage script
+        if: github.ref == 'refs/heads/main'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: .inputs/site-follow
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /.github/scripts/site-follow-triage.sh
+
+      - name: Decide
+        id: triage
+        if: github.ref == 'refs/heads/main'
+        env:
+          APP_TOKEN: ${{ steps.apptoken.outputs.token }}
+        run: |
+          set -euo pipefail
+          export GH_TOKEN="$APP_TOKEN"
+          engine_head=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/main | cut -f1)
+          main_sha=$(git rev-parse HEAD)
+          main_ref=$(tr -d '[:space:]' < site/engine.ref)
+          pr=$(gh pr list -R "$SITE_REPO" --head "$BUMP_BRANCH" --base main --state open \
+            --json number,headRefOid,isCrossRepository \
+            -q '[.[] | select(.isCrossRepository | not)][0] // empty | "\(.number) \(.headRefOid)"')
+          number='' branch_ref=- behind=0 ahead=0 in_flight=0
+          if [ -n "$pr" ]; then
+            read -r number head <<<"$pr"
+            branch_ref=$(gh api "repos/$SITE_REPO/contents/site/engine.ref?ref=$head" -q .content \
+              | base64 -d | tr -d '[:space:]')
+            read -r behind ahead < <(gh api "repos/$SITE_REPO/compare/$main_sha...$head" \
+              -q '"\(.behind_by) \(.ahead_by)"')
+            in_flight=$(gh api "repos/$SITE_REPO/commits/$head/check-runs?per_page=100" \
+              -q '[.check_runs[] | select(.status != "completed")] | length')
+          fi
+          decision=$(bash .inputs/site-follow/.github/scripts/site-follow-triage.sh \
+            "$TARGET" "$engine_head" "$main_ref" "$branch_ref" "$behind" "$ahead" "$in_flight")
+          echo "engine main $engine_head, this run $TARGET"
+          echo "metrale.ai main $main_sha pins $main_ref"
+          echo "open bump PR: ${number:-none} (pins $branch_ref, behind $behind, ahead $ahead, $in_flight checks running)"
+          echo "decision: $decision"
+          {
+            echo "decision=$decision"
+            echo "number=$number"
+            echo "main_sha=$main_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Close the superseded bump PR
+        if: steps.triage.outputs.decision == 'close'
+        env:
+          APP_TOKEN: ${{ steps.apptoken.outputs.token }}
+          NUMBER: ${{ steps.triage.outputs.number }}
+        run: |
+          set -euo pipefail
+          export GH_TOKEN="$APP_TOKEN"
+          gh pr close "$NUMBER" -R "$SITE_REPO" \
+            --comment "metrale.ai's main already reads the engine at ${TARGET:0:10}, so this bump is no longer needed."
+
+      - name: Pin the engine commit
+        if: steps.triage.outputs.decision == 'build'
+        run: printf '%s\n' "$TARGET" > site/engine.ref
+
+      # 2026-09-27: The site's own build regenerates src/lib/*.generated.json and static/llms.txt
+      # from the engine at the new pin; those are what a hand bump commits beside the pin. The
+      # unit suite checks the committed ladders against the engine, so a pin-only commit could
+      # fail it. If the build fails here, the PR still opens with the pin alone, and the same
+      # failure shows in its checks rather than only in this run.
+      - name: Build the site at the new pin
+        id: build
+        if: steps.triage.outputs.decision == 'build'
+        continue-on-error: true
+        uses: ./.github/actions/build-site
+        with:
+          commit: ${{ steps.triage.outputs.main_sha }}
+          github-token: ${{ github.token }}
+
+      - name: Push the bump and open its PR
+        if: steps.triage.outputs.decision == 'build'
+        env:
+          APP_TOKEN: ${{ steps.apptoken.outputs.token }}
+          NUMBER: ${{ steps.triage.outputs.number }}
+          MAIN_SHA: ${{ steps.triage.outputs.main_sha }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ARMED_QUERY: >-
+            query($id: ID!) { node(id: $id) { ... on PullRequest { autoMergeRequest { enabledAt } } } }
+          ARM_MUTATION: >-
+            mutation($id: ID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: MERGE})
+            { clientMutationId } }
+        run: |
+          set -euo pipefail
+          export GH_TOKEN="$APP_TOKEN"
+          short=${TARGET:0:10}
+
+          # What the build rewrote: tracked files only, and never a deletion.
+          if [ -n "$(git diff --name-only --diff-filter=ADRTUXB)" ]; then
+            echo "::error::the site build did more than modify tracked files:"
+            git diff --name-status --diff-filter=ADRTUXB
+            exit 1
+          fi
+          if [ "$BUILD_OUTCOME" = success ]; then
+            mapfile -t files < <(git diff --name-only)
+            list=$(printf '%s, ' "${files[@]}")
+            generated="Regenerated by the site build at the new pin: ${list%, }."
+          else
+            files=(site/engine.ref)
+            generated="**Not regenerated:** the site build failed at this pin in [the engine's run]($RUN_URL), so this PR carries the pin alone and its checks show the failure."
+          fi
+          printf '%s\n' "${files[@]}" | grep -qx site/engine.ref \
+            || { echo "::error::site/engine.ref is not among the changes"; exit 1; }
+
+          # One commit on metrale.ai's main, made through the API so the App is its author.
+          tree='[]'
+          for f in "${files[@]}"; do
+            blob=$(jq -n --rawfile c <(base64 -w0 "$f") '{content: $c, encoding: "base64"}' \
+              | gh api "repos/$SITE_REPO/git/blobs" --input - -q .sha)
+            mode=$(git ls-files -s -- "$f" | cut -d' ' -f1)
+            tree=$(jq -c --arg p "$f" --arg m "$mode" --arg s "$blob" \
+              '. + [{path: $p, mode: $m, type: "blob", sha: $s}]' <<<"$tree")
+          done
+          tree_sha=$(jq -n --arg b "$(git rev-parse "$MAIN_SHA^{tree}")" --argjson t "$tree" \
+            '{base_tree: $b, tree: $t}' | gh api "repos/$SITE_REPO/git/trees" --input - -q .sha)
+          commit=$(jq -n --arg m "site: engine.ref -> $short" --arg t "$tree_sha" --arg p "$MAIN_SHA" \
+            '{message: $m, tree: $t, parents: [$p]}' | gh api "repos/$SITE_REPO/git/commits" --input - -q .sha)
+          if gh api "repos/$SITE_REPO/git/ref/heads/$BUMP_BRANCH" --silent 2>/dev/null; then
+            gh api -X PATCH "repos/$SITE_REPO/git/refs/heads/$BUMP_BRANCH" -f sha="$commit" -F force=true --silent
+          else
+            gh api -X POST "repos/$SITE_REPO/git/refs" -f ref="refs/heads/$BUMP_BRANCH" -f sha="$commit" --silent
+          fi
+          echo "$BUMP_BRANCH -> $commit (${#files[@]} files, on metrale.ai main $MAIN_SHA)"
+
+          title="site: follow engine main ($short)"
+          body=$(cat <<EOF
+          \`site/engine.ref\` follows the engine's main.
+
+          - Engine: [$GITHUB_REPOSITORY@$short]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$TARGET)
+          - Built on metrale.ai main at \`${MAIN_SHA:0:10}\`.
+          - $generated
+
+          Opened by [site-dispatch]($RUN_URL). It merges itself once the required checks pass.
+          EOF
+          )
+          if [ -z "$NUMBER" ]; then
+            url=$(gh pr create -R "$SITE_REPO" --base main --head "$BUMP_BRANCH" --title "$title" --body "$body")
+            NUMBER=${url##*/}
+            echo "opened $url"
+            gh pr comment "$NUMBER" -R "$SITE_REPO" --body-file - <<'EOF'
+          This pull request is automated. Every merge to the engine's main rebuilds this branch from metrale.ai's main at the new engine commit, and auto-merge lands it once every required check passes.
+
+          **If a check is red**, the engine commit changed something the site reads. Fix it on this branch: push a commit here and the checks run again, and it lands with the bump. The next engine merge re-points `site/engine.ref` and rebuilds this branch from main, so a fix that has to outlive this bump belongs on main (a normal pull request) as well.
+          EOF
+          else
+            jq -n --arg t "$title" --arg b "$body" '{title: $t, body: $b}' \
+              | gh api -X PATCH "repos/$SITE_REPO/pulls/$NUMBER" --input - --silent
+          fi
+
+          node_id=$(gh api "repos/$SITE_REPO/pulls/$NUMBER" -q .node_id)
+          armed=$(gh api graphql -f id="$node_id" -f query="$ARMED_QUERY" -q '.data.node.autoMergeRequest != null')
+          if [ "$armed" != true ]; then
+            gh api graphql -f id="$node_id" -f query="$ARM_MUTATION" --silent
+          fi
+          echo "PR #$NUMBER: $title, auto-merge armed"
