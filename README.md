@@ -149,7 +149,7 @@ re-running them on your own hardware, and the vLLM side too.
   every required gate has a passing record that still covers the tree.
 
 The [book](https://docs.metrale.ai) covers the design in depth; the API
-reference is at [docs.dev.metrale.ai](https://docs.dev.metrale.ai).
+reference is at [docs.metrale.ai/api](https://docs.metrale.ai/api/).
 
 <a id="requirements"></a>
 ## <img src="docs/readme/icons/hardware.svg" width="20" height="20" alt="Chip icon"> Requirements
@@ -861,7 +861,7 @@ in the certified commit `aa5d059438`.
 - Benchmark dashboard: [metrale.ai/benchmarks](https://metrale.ai/benchmarks)
 - Verification steps for reviewers: [metrale.ai/diligence](https://metrale.ai/diligence)
 - Documentation (the book): [docs.metrale.ai](https://docs.metrale.ai)
-- API reference: [docs.dev.metrale.ai](https://docs.dev.metrale.ai)
+- API reference: [docs.metrale.ai/api](https://docs.metrale.ai/api/)
 - Engineering blog: [blog.metrale.ai](https://blog.metrale.ai)
 - Launch recipes: [`recipes/`](recipes/)
 - Launcher: [Metrale/metralectl](https://github.com/Metrale/metralectl)

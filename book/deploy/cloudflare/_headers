@@ -3,8 +3,8 @@
 # Cache-Control is NOT on `/*`: Pages concatenates a header a later rule
 # re-declares rather than replacing it, and a browser reads the first max-age —
 # so a catch-all silently caps every override. Every rule below is scoped so no
-# two match the same path. rustdoc is its own site (docs.dev.metrale.ai) with
-# its own control file, rustdoc/_headers.
+# two match the same path. The API reference (rustdoc) is not part of this
+# site: it is published at docs.metrale.ai/api/.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: SAMEORIGIN

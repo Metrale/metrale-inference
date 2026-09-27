@@ -190,38 +190,14 @@ jobs:
           # The retired orange skin must not come back with a theme bump.
           ! grep -rq 'ff6600' book/output/
 
+      # A check, not a publication: rustdoc must keep building (broken
+      # intra-doc links, doc-comment syntax). The API reference is published
+      # from the site repository's docs build, which runs this same command on
+      # the engine commit the site pins and serves the result at
+      # docs.metrale.ai/api/.
       - name: Build rustdoc
         if: needs.changes.outputs.web_only != 'true'
         run: cargo doc --workspace --no-deps
-
-      # rustdoc is its own site (docs.dev.metrale.ai), not a subtree of the
-      # book. Skipped with the rustdoc build above; `deploy` is push-only and a
-      # push never classifies as web-only, so production always receives it.
-      - name: Assemble rustdoc site
-        if: needs.changes.outputs.web_only != 'true'
-        run: |
-          mkdir -p rustdoc-site
-          cp -a target/doc/. rustdoc-site/
-          cp book/deploy/cloudflare/rustdoc/_headers rustdoc-site/_headers
-          # Friendly index pointing at metrale_core
-          cat > rustdoc-site/index.html <<'EOF'
-          <!DOCTYPE html>
-          <html><head><meta charset="utf-8">
-          <title>Metrale Engine API Reference</title>
-          <meta http-equiv="refresh" content="0; url=metrale_core/index.html">
-          </head><body>
-          <p>Redirecting to <a href="metrale_core/index.html">metrale_core</a>…</p>
-          </body></html>
-          EOF
-
-      - name: Upload rustdoc artifact
-        if: needs.changes.outputs.web_only != 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: rustdoc-site
-          path: rustdoc-site
-          retention-days: 7
-          if-no-files-found: error
 
       - name: Upload site artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -232,7 +208,9 @@ jobs:
           if-no-files-found: error
 
   # Cloudflare Pages is what book.dev.metrale.ai and docs.dev.metrale.ai
-  # resolve to, so this is the job that publishes both.
+  # resolve to, so this is the job that publishes both. docs.dev.metrale.ai no
+  # longer carries the API reference: it is a redirect, every path to the same
+  # path under docs.metrale.ai/api/.
   #
   # Direct Upload rather than Pages' git integration — the build above needs a
   # Rust toolchain, mdBook and a full `cargo doc --workspace`, and it carries
@@ -267,13 +245,6 @@ jobs:
           name: docs-site
           path: docs-site
 
-      - name: Download rustdoc artifact
-        if: steps.cf_check.outputs.configured == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: rustdoc-site
-          path: rustdoc-site
-
       # Explicit, because nothing else in this workflow needs Node, so the job
       # would otherwise inherit whatever the runner image ships. wrangler v4
       # refuses to start below Node 22.
@@ -297,13 +268,49 @@ jobs:
             --branch=main \
             --commit-dirty=true
 
-      - name: Publish docs.dev.metrale.ai
+      # Pages applies _redirects before any file, and a splat target may be an
+      # absolute external URL. `/` is spelled out first because an empty splat
+      # is not documented to match; the top-most rule for a path wins. The
+      # index.html is never served while the rules stand; it is there so the
+      # upload is not empty, and says where the reference went if they do not.
+      - name: Publish docs.dev.metrale.ai (redirect to docs.metrale.ai/api/)
         if: steps.cf_check.outputs.configured == 'true'
         env:
           CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          npx --yes wrangler@4 pages deploy rustdoc-site \
+          mkdir -p rustdoc-redirect
+          printf '%s\n' \
+            '/ https://docs.metrale.ai/api/ 301' \
+            '/* https://docs.metrale.ai/api/:splat 301' \
+            > rustdoc-redirect/_redirects
+          cat > rustdoc-redirect/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html><head><meta charset="utf-8">
+          <title>Metrale Engine API Reference</title>
+          <meta http-equiv="refresh" content="0; url=https://docs.metrale.ai/api/">
+          </head><body>
+          <p>The API reference is at <a href="https://docs.metrale.ai/api/">docs.metrale.ai/api/</a>.</p>
+          </body></html>
+          EOF
+          cat rustdoc-redirect/_redirects
+          npx --yes wrangler@4 pages deploy rustdoc-redirect \
             --project-name=metrale-engine-docs \
             --branch=main \
             --commit-dirty=true
+
+      # The redirect is the whole product of that deploy, so it is read back:
+      # a deep item page must answer 301 with the same path under /api/.
+      - name: docs.dev.metrale.ai redirects to docs.metrale.ai/api/
+        if: steps.cf_check.outputs.configured == 'true'
+        run: |
+          path=/metrale_core/index.html
+          want="https://docs.metrale.ai/api$path"
+          for i in $(seq 1 30); do
+            got=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code} %{redirect_url}' "https://docs.dev.metrale.ai$path?t=$GITHUB_RUN_ID-$i" || true)
+            echo "attempt $i: $got"
+            case "$got" in "301 $want?t=$GITHUB_RUN_ID-$i"|"301 $want") exit 0 ;; esac
+            sleep 10
+          done
+          echo "::error::docs.dev.metrale.ai$path did not 301 to $want within five minutes"
+          exit 1
