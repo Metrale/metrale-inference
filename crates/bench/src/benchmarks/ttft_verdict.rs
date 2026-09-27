@@ -36,7 +36,7 @@ impl TtftGate {
             Ok(h) => h.artifacts().clone(),
             Err(_) => return (Verdict::info("no handle"), Vec::new()),
         };
-        let id = self.mode.descriptor().id;
+        let id = self.descriptor.id;
         // 2026-09-26: Baselines are stored per model (`baseline::save`), so a
         // gate run against several checkpoints reads the one for the model it
         // is serving.
