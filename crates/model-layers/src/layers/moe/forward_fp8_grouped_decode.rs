@@ -282,6 +282,7 @@ impl MoeLayer {
             num_experts,
             stream,
         )?;
+        super::dump::dump_grouped_active(ctx.gpu, stream, active_count, m, ctx.graph_capture)?;
         // 2026-09-26: The SiLU products are FP32: routed `[te, inter]` in
         // `expert_gate_out()`, shared `[m, inter]` in `logits()`
         // (`grouped_decode_buffer_need`).

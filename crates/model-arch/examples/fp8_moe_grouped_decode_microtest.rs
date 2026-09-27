@@ -18,7 +18,7 @@
 //! Run (GB10), optionally with the routed-expert count (default 32; 256 is the model's,
 //! where rows rarely share an expert and the printed bandwidth is representative):
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
-//!     --example fp8_moe_grouped_decode_microtest -- [experts]
+//!     --example fp8_moe_grouped_decode_microtest -- [experts] [zipf_alpha]
 
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
@@ -39,6 +39,18 @@ fn experts() -> usize {
         .nth(1)
         .and_then(|a| a.parse().ok())
         .unwrap_or(32)
+}
+
+/// 2026-09-26: The second argument, a Zipf exponent for the routing (default 0,
+/// uniform): expert e is drawn with weight (e + 1)^-alpha. At 256 experts,
+/// alpha 0.9 gives about the distinct-expert counts the 35B verify step
+/// routes to (121 at 32 rows, 153 at 64, measured with
+/// METRALE_DUMP_EXPERT_IDS=1 on the concurrency ladder).
+fn zipf_alpha() -> f64 {
+    std::env::args()
+        .nth(2)
+        .and_then(|a| a.parse().ok())
+        .unwrap_or(0.0)
 }
 const TOP_K: usize = 8;
 const MAX_M: usize = 64;
@@ -355,12 +367,25 @@ fn main() -> Result<()> {
     let input = upload(&gpu, &bf16_bytes(&mut rng, MAX_M * H, 1.0))?;
 
     // 2026-09-25: Routing: distinct experts within a row; rows draw from the same
-    // `e_count` experts.
+    // `e_count` experts, with the weights of `zipf_alpha`.
+    let alpha = zipf_alpha();
+    let weights: Vec<f64> = (0..e_count)
+        .map(|e| ((e + 1) as f64).powf(-alpha))
+        .collect();
+    let total: f64 = weights.iter().sum();
+    let cdf: Vec<f64> = weights
+        .iter()
+        .scan(0.0, |acc, w| {
+            *acc += w / total;
+            Some(*acc)
+        })
+        .collect();
     let mut idx = Vec::with_capacity(MAX_M * TOP_K);
     for _ in 0..MAX_M {
         let mut row: Vec<u32> = Vec::new();
         while row.len() < TOP_K {
-            let e = rng.next() % e_count as u32;
+            let u = rng.next() as f64 / u32::MAX as f64;
+            let e = cdf.partition_point(|&c| c < u).min(e_count - 1) as u32;
             if !row.contains(&e) {
                 row.push(e);
             }
@@ -385,7 +410,15 @@ fn main() -> Result<()> {
         sh_down_out: upload(&gpu, &vec![SENTINEL; MAX_M * H * 2])?,
         sort: upload(
             &gpu,
-            &vec![0u8; te * 12 + (e_count + 1) * 4 + (e_count + 1) * 4],
+            &vec![
+                0u8;
+                te * 12
+                    + (e_count + 1) * 4
+                    + (ops::fp8_grouped_active_cap(MAX_M as u32, TOP_K as u32, e_count as u32)
+                        as usize
+                        + 1)
+                        * 4
+            ],
         )?,
         act: upload(&gpu, &vec![SENTINEL; te * INTER * 4])?,
         sh_act: upload(&gpu, &vec![SENTINEL; MAX_M * INTER * 4])?,
