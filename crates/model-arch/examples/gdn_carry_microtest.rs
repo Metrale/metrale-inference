@@ -17,7 +17,9 @@
 //! writes back, the lazy one when `pend + K > GDN_CARRY_CAP`). It checks:
 //!
 //! * every round's `output`, carry against parent, bit for bit;
-//! * after the last round, `gdn_carry_flush` leaves H bit-equal to the reference.
+//! * after the last round, `gdn_carry_flush` leaves H bit-equal to the reference;
+//! * across verify widths: rows 0 and 1 of a K-row verify (parent, eager and lazy carry,
+//!   K = 2, 3, 4) equal those of the 2-row parent verify of the same two rows.
 //!
 //!   cargo run -p metrale-model-arch --release --features gpu-examples \
 //!       --example gdn_carry_microtest
@@ -25,149 +27,13 @@
 //! Env: SEQS (default 5), SEED (default 1), NK/NV (default 16/32), ROUNDS (default 9).
 
 use anyhow::{Context, Result};
-use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::ops;
 
-const KD: usize = 128;
-const VD: usize = 128;
-/// 2026-09-26: Pointer entries per table, equal to
-/// `metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS`.
-const SLAB_ENTRIES: usize = 32;
-
-fn env_usize(k: &str, d: usize) -> usize {
-    std::env::var(k)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(d)
-}
-
-/// 2026-09-26: Deterministic LCG in [-1, 1).
-struct Rng(u64);
-impl Rng {
-    fn next_f32(&mut self) -> f32 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((self.0 >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
-    }
-}
-
-fn upload_bytes(g: &dyn GpuBackend, bytes: &[u8]) -> Result<DevicePtr> {
-    let p = g.alloc(bytes.len())?;
-    g.copy_h2d(bytes, p)?;
-    Ok(p)
-}
-fn f32_bytes(v: &[f32]) -> Vec<u8> {
-    v.iter().flat_map(|x| x.to_le_bytes()).collect()
-}
-fn u32_bytes(v: &[u32]) -> Vec<u8> {
-    v.iter().flat_map(|x| x.to_le_bytes()).collect()
-}
-fn read_f32(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<f32>> {
-    let mut b = vec![0u8; n * 4];
-    g.copy_d2h(p, &mut b)?;
-    Ok(b.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect())
-}
-fn ptr_table(g: &dyn GpuBackend, ptrs: &[DevicePtr]) -> Result<DevicePtr> {
-    let mut bytes = vec![0u8; SLAB_ENTRIES * 8];
-    for (i, p) in ptrs.iter().enumerate() {
-        bytes[i * 8..i * 8 + 8].copy_from_slice(&p.0.to_le_bytes());
-    }
-    upload_bytes(g, &bytes)
-}
-
-/// 2026-09-26: (mismatching elements, max ULP distance) between two f32 buffers.
-fn diff_f32(a: &[f32], b: &[f32]) -> (usize, u32) {
-    let mut n = 0usize;
-    let mut ulp = 0u32;
-    for (x, y) in a.iter().zip(b) {
-        if x.to_bits() != y.to_bits() {
-            n += 1;
-            let d = (x.to_bits() as i64 - y.to_bits() as i64).unsigned_abs();
-            ulp = ulp.max(d.min(u32::MAX as u64) as u32);
-        }
-    }
-    (n, ulp)
-}
-
-struct Dims {
-    seqs: usize,
-    nk: usize,
-    nv: usize,
-    conv_dim: usize,
-    value_dim: usize,
-    gb_stride: usize,
-    h_numel: usize,
-}
-
-/// 2026-09-26: One round of verify inputs: bf16 q|k|v rows and f32 gate|beta rows.
-struct Round {
-    q: DevicePtr,
-    k: DevicePtr,
-    v: DevicePtr,
-    gate: DevicePtr,
-    beta: DevicePtr,
-}
-
-fn make_round(g: &dyn GpuBackend, d: &Dims, kk: usize, rng: &mut Rng) -> Result<Round> {
-    let rows = d.seqs * kk;
-    let qkv: Vec<u8> = (0..rows * d.conv_dim)
-        .flat_map(|_| bf16::from_f32(rng.next_f32() * 0.5).to_bits().to_le_bytes())
-        .collect();
-    let mut gb = vec![0f32; rows * d.gb_stride];
-    for r in 0..rows {
-        for h in 0..d.nv {
-            gb[r * d.gb_stride + h] = 0.5 + 0.49 * rng.next_f32();
-            gb[r * d.gb_stride + d.nv + h] = 0.5 + 0.5 * rng.next_f32().abs();
-        }
-    }
-    let qkv_dev = upload_bytes(g, &qkv)?;
-    let gb_dev = upload_bytes(g, &f32_bytes(&gb))?;
-    let key_dim = d.nk * KD;
-    Ok(Round {
-        q: qkv_dev,
-        k: qkv_dev.offset(key_dim * 2),
-        v: qkv_dev.offset(key_dim * 2 * 2),
-        gate: gb_dev,
-        beta: gb_dev.offset(d.nv * 4),
-    })
-}
-
-/// 2026-09-26: Parent verify of width `kk` in table form: `h` states, `hi[t]` intermediates.
-fn run_parent(
-    g: &dyn GpuBackend,
-    k: KernelHandle,
-    kk: usize,
-    d: &Dims,
-    r: &Round,
-    h: DevicePtr,
-    hi: &[DevicePtr],
-    out: DevicePtr,
-) -> Result<()> {
-    let s = g.default_stream();
-    let (n, nk, nv) = (d.seqs as u32, d.nk as u32, d.nv as u32);
-    let (cd, gbs) = (d.conv_dim as u32, d.gb_stride as u32);
-    match kk {
-        2 => ops::gdn_decode_wy2(
-            g, k, h, r.q, r.k, r.v, r.gate, r.beta, out, hi[0], n, nk, nv, KD as u32, VD as u32,
-            cd, cd, gbs, true, s,
-        )?,
-        3 => ops::gdn_decode_wy3(
-            g, k, h, r.q, r.k, r.v, r.gate, r.beta, out, hi[0], hi[1], n, nk, nv, KD as u32,
-            VD as u32, cd, cd, gbs, true, s,
-        )?,
-        _ => ops::gdn_decode_wy4(
-            g, k, h, r.q, r.k, r.v, r.gate, r.beta, out, hi[0], hi[1], hi[2], n, nk, nv, KD as u32,
-            VD as u32, cd, cd, gbs, true, s,
-        )?,
-    }
-    g.synchronize(s)
-}
+#[path = "common/gdn_carry_fixture.rs"]
+mod gdn_carry_fixture;
+use gdn_carry_fixture::*;
 
 fn main() -> Result<()> {
     let seqs = env_usize("SEQS", 5);
@@ -387,6 +253,101 @@ fn main() -> Result<()> {
             n,
             ulp,
             seqs * d.h_numel,
+        );
+    }
+
+    // 2026-09-26: Across K: the first K rows of each sequence's 4-row verify, verified as a
+    // K-row verify from the same state, give the same row outputs, for the parents and for
+    // both carry forms.
+    let (qkv4, gb4) = round_data(&d, seqs * 4, &mut rng);
+    let h_init: Vec<Vec<f32>> = (0..seqs)
+        .map(|_| (0..d.h_numel).map(|_| rng.next_f32() * 0.1).collect())
+        .collect();
+    let row_bytes = d.value_dim * 2;
+    let mut outs: Vec<(String, usize, Vec<u8>)> = Vec::new();
+    for kk in 2..=4usize {
+        let pick = |b: usize, t: usize| b * 4 + t;
+        let mut qkv = Vec::with_capacity(seqs * kk * d.conv_dim * 2);
+        let mut gb = Vec::with_capacity(seqs * kk * d.gb_stride);
+        for b in 0..seqs {
+            for t in 0..kk {
+                let r = pick(b, t);
+                qkv.extend_from_slice(&qkv4[r * d.conv_dim * 2..(r + 1) * d.conv_dim * 2]);
+                gb.extend_from_slice(&gb4[r * d.gb_stride..(r + 1) * d.gb_stride]);
+            }
+        }
+        let r = upload_round(g, &d, &qkv, &gb)?;
+        let out = g.alloc(seqs * kk * row_bytes)?;
+        let fresh = || -> Result<Vec<DevicePtr>> {
+            h_init
+                .iter()
+                .map(|h| upload_bytes(g, &f32_bytes(h)))
+                .collect()
+        };
+        let hi: Vec<Vec<DevicePtr>> = (0..kk - 1)
+            .map(|_| (0..seqs).map(|_| g.alloc(d.h_numel * 4)).collect())
+            .collect::<Result<_>>()?;
+        let t_hi: Vec<DevicePtr> = hi.iter().map(|v| ptr_table(g, v)).collect::<Result<_>>()?;
+        run_parent(
+            g,
+            parents[kk - 2],
+            kk,
+            &d,
+            &r,
+            ptr_table(g, &fresh()?)?,
+            &t_hi,
+            out,
+        )?;
+        let mut b = vec![0u8; seqs * kk * row_bytes];
+        g.copy_d2h(out, &mut b)?;
+        outs.push((format!("parent wy{kk}"), kk, b));
+        for (name, k) in [("carry", carries[kk - 2]), ("carry lazy", lazies[kk - 2])] {
+            upload_pend(&vec![0; seqs])?;
+            ops::gdn_carry_wy(
+                g,
+                k,
+                ptr_table(g, &fresh()?)?,
+                r.q,
+                r.k,
+                r.v,
+                r.gate,
+                r.beta,
+                out,
+                stash,
+                slot_tab,
+                pend,
+                seq_floats as u32,
+                seqs as u32,
+                nk as u32,
+                nv as u32,
+                d.conv_dim as u32,
+                d.conv_dim as u32,
+                d.gb_stride as u32,
+                KD as u32,
+                flags,
+                stream,
+            )?;
+            g.synchronize(stream)?;
+            let mut b = vec![0u8; seqs * kk * row_bytes];
+            g.copy_d2h(out, &mut b)?;
+            outs.push((format!("{name} K={kk}"), kk, b));
+        }
+    }
+    let (_, _, reference) = &outs[0];
+    for (name, kk, b) in &outs {
+        let mut bad = 0;
+        for s_ in 0..seqs {
+            for t in 0..*kk.min(&2) {
+                let x = &b[(s_ * kk + t) * row_bytes..(s_ * kk + t + 1) * row_bytes];
+                let y = &reference[(s_ * 2 + t) * row_bytes..(s_ * 2 + t + 1) * row_bytes];
+                bad += x.chunks(2).zip(y.chunks(2)).filter(|(p, q)| p != q).count();
+            }
+        }
+        report(
+            &format!("across K: {name} rows 0..1 vs parent wy2"),
+            bad,
+            0,
+            seqs * 2 * d.value_dim,
         );
     }
 
