@@ -65,6 +65,22 @@ impl MoeLayer {
             stream,
         )? {
             mprof!("grouped_gemm_w8a8_adaptive");
+        } else if self.try_e4m3_grouped(
+            super::E4m3Proj::GateUp,
+            input_fp8,
+            input_a_scale,
+            &[(gp, expert_gate_out), (up, expert_up_out)],
+            expert_offsets,
+            sorted_token_ids,
+            num_experts,
+            inter,
+            h,
+            te,
+            fp8_scratch,
+            ctx,
+            stream,
+        )? {
+            mprof!("grouped_gemm_w8a8_e4m3");
         } else if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
             // 2026-09-25: PM4 W8A8 over the compacted work-list. One work-list
             // serves gate and up (same expert_offsets, weight NULL-ness and

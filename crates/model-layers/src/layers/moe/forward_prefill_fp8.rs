@@ -33,8 +33,11 @@ const PM4_N_TILE: u32 = 64;
 const PM4_M_TILE: u32 = 128;
 
 mod down;
+mod e4m3;
 mod gate_up;
 mod shared;
+
+pub(super) use e4m3::{E4m3Kernels, E4m3Proj};
 
 impl MoeLayer {
     /// 2026-09-25: Whether `silu_mul_quant_fp8` replaces the `silu_mul` then

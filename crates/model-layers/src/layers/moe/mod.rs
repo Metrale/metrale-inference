@@ -267,6 +267,9 @@ pub struct MoeLayer {
     // `moe_build_tile_worklist_k` are non-zero; otherwise the W8A8 path runs
     // `moe_w8a8_grouped_gemm_k`.
     moe_w8a8_grouped_gemm_pm4_k: KernelHandle,
+    // 2026-09-27: The PM4 computation on the native e4m3 MMA (`forward_prefill_fp8/e4m3.rs`),
+    // preferred over PM4 for non-decode prefill.
+    moe_e4m3: forward_prefill_fp8::E4m3Kernels,
     per_token_group_quant_fp8_k: ops::Fp8ActQuant,
     /// 2026-09-25: Fused SiLU·mul + per-token-group FP8 quant for the W8A8 prefill
     /// down inputs. When `fused_silu_quant_ok` is false (handle 0, GeGLU, or an

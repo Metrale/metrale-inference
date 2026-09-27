@@ -21,8 +21,9 @@ use super::*;
 #[path = "gemm_quant_moe.rs"]
 mod moe_grouped;
 pub use moe_grouped::{
-    moe_bf16_grouped_gemm, moe_build_tile_worklist, moe_fp8_grouped_gemm, moe_gate_topk_fused,
-    moe_w8a8_grouped_gemm, moe_w8a8_grouped_gemm_pm4,
+    MOE_E4M3_DN, MOE_E4M3_GU, MoeE4m3Tile, moe_bf16_grouped_gemm, moe_build_tile_worklist,
+    moe_fp8_grouped_gemm, moe_gate_topk_fused, moe_w8a8_grouped_gemm, moe_w8a8_grouped_gemm_e4m3,
+    moe_w8a8_grouped_gemm_pm4,
 };
 #[path = "gemm_quant_w8a16.rs"]
 mod w8a16;

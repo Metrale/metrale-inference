@@ -96,6 +96,22 @@ impl MoeLayer {
             stream,
         )? {
             mprof!("grouped_gemm_w8a8_adaptive");
+        } else if self.try_e4m3_grouped(
+            super::E4m3Proj::Down,
+            down_in_fp8,
+            down_in_scale,
+            &[(dp, expert_down_out)],
+            expert_offsets,
+            DevicePtr::NULL,
+            num_experts,
+            h,
+            inter,
+            te,
+            fp8_scratch,
+            ctx,
+            stream,
+        )? {
+            mprof!("grouped_gemm_w8a8_e4m3");
         } else if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
             // 2026-09-25: The down GEMM (N = h) needs its own work-list. Its
             // input rows are already sorted, so `sorted_token_ids` is NULL.
