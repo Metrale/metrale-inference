@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 // 2026-09-26: Carried-state GDN verify for K = 2, 3, 4 rows per sequence
-// (gdn_carry_wy2/3/4) and its standalone fold (gdn_carry_flush).
+// (gdn_carry_wy2/3/4) and its standalone fold (gdn_carry_flush), with the same treatment of
+// the conv window (gdn_carry_conv, gdn_carry_conv_flush, at the end of this file).
 //
 // Owner: gb10 kernels.
 // Invariants:
@@ -252,4 +253,145 @@ extern "C" __global__ void gdn_carry_flush(
         for (unsigned int t = 0; t < np; ++t) h = pg[t] * h + pk[t][j] * fvn[t];
         H[j * CARRY_VD + tid] = h;
     }
+}
+
+// 2026-09-26: Carried-state twin of gdn_verify_fused_conv_kn_batched (gdn_verify_fused_conv_kn.cu).
+// Thread ch owns channel ch of sequence blockIdx.y. It shifts the `pend[slot]` pending input
+// rows of the previous verify into its window and writes the window back when there were any,
+// so conv_state then holds what the parent's snapshot (pend - 1) held. Positions 0..num_tokens-1
+// then run the parent's arithmetic in the parent's order; no snapshot and no final window is
+// written, and the position inputs are stashed (as the BF16 the window converts) at
+// conv_stash + slot * stash_seq_elems, row t at t * dim.
+// Grid (ceil(dim / 256), batch), block 256; the parent's contract on d_conv, head_dim and
+// qk_channels applies.
+extern "C" __global__ void gdn_carry_conv(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ new_input,
+    const __nv_bfloat16* __restrict__ weight,
+    __nv_bfloat16* __restrict__ output,
+    __nv_bfloat16* __restrict__ conv_stash,
+    const unsigned int* __restrict__ slot_tab,
+    const unsigned int* __restrict__ pend,
+    unsigned int stash_seq_elems,
+    unsigned int num_tokens,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    unsigned int input_stride,
+    unsigned int output_stride,
+    float l2_eps,
+    unsigned int conv_state_seq_stride,
+    unsigned int input_seq_stride,
+    unsigned int output_seq_stride
+) {
+    const unsigned int seq = blockIdx.y;
+    conv_state += (size_t) seq * conv_state_seq_stride;
+    new_input  += (size_t) seq * input_seq_stride;
+    output     += (size_t) seq * output_seq_stride;
+    const unsigned int slot = slot_tab[seq];
+    __nv_bfloat16* stash = conv_stash + (size_t) slot * stash_seq_elems;
+    const unsigned int np = pend[slot];
+
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int tid = threadIdx.x;
+    const unsigned int block_start = blockIdx.x * blockDim.x;
+    const bool block_needs_l2 = (block_start < qk_channels);
+    const bool valid = (ch < dim);
+
+    float win[8];
+    if (valid) {
+        const float* state = conv_state + ch * d_conv;
+        for (unsigned int i = 0; i < d_conv; i++) win[i] = state[i];
+        for (unsigned int t = 0; t < np; t++) {
+            for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
+            win[d_conv - 1] = (float)stash[t * dim + ch];
+        }
+        if (np > 0) {
+            float* out_state = conv_state + ch * d_conv;
+            for (unsigned int i = 0; i < d_conv; i++) out_state[i] = win[i];
+        }
+    }
+
+    const __nv_bfloat16* w = valid ? (weight + ch * d_conv) : nullptr;
+    float wcoef[8];
+    if (valid) {
+        for (unsigned int k = 0; k < d_conv; k++) wcoef[k] = (float)w[k];
+    }
+
+    __shared__ float warp_sums[8];
+
+    for (unsigned int t = 0; t < num_tokens; t++) {
+        float silu = 0.0f;
+        if (valid) {
+            const __nv_bfloat16 x = new_input[t * input_stride + ch];
+            for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
+            win[d_conv - 1] = (float)x;
+            stash[t * dim + ch] = x;
+
+            float acc = 0.0f;
+            for (unsigned int k = 0; k < d_conv; k++) acc += win[k] * wcoef[k];
+            float sigmoid_acc = 1.0f / (1.0f + __expf(-acc));
+            silu = acc * sigmoid_acc;
+        }
+
+        if (block_needs_l2) {
+            float sq = valid ? (silu * silu) : 0.0f;
+            const unsigned int warp_id = tid / 32;
+            const unsigned int lane = tid % 32;
+            for (int offset = 16; offset >= 1; offset >>= 1)
+                sq += __shfl_down_sync(0xFFFFFFFF, sq, offset);
+            if (lane == 0) warp_sums[warp_id] = sq;
+            __syncthreads();
+            const unsigned int head_in_block = tid / head_dim;
+            const unsigned int base_warp = head_in_block * (head_dim / 32);
+            if (tid == 0 || tid == head_dim) {
+                float total = warp_sums[base_warp] + warp_sums[base_warp + 1]
+                            + warp_sums[base_warp + 2] + warp_sums[base_warp + 3];
+                warp_sums[base_warp] = rsqrtf(total + l2_eps);
+            }
+            __syncthreads();
+            if (valid) silu *= warp_sums[base_warp];
+            // 2026-09-26: Keeps the next position's lane-0 write to warp_sums behind this read.
+            __syncthreads();
+        }
+
+        if (valid) output[t * output_stride + ch] = __float2bfloat16(silu);
+    }
+}
+
+// 2026-09-26: Shift pending input rows into the conv windows without a verify. Grid
+// (ceil(dim / 256), batch, layers), block 256: layer l reads its conv-state pointers at
+// state_table + l * table_layer_entries, its stash at conv_stash + l * stash_layer_elems
+// and its counts at pend + l * pend_layer_entries. A count of 0 leaves the window alone.
+extern "C" __global__ void gdn_carry_conv_flush(
+    float* const* __restrict__ state_table,
+    unsigned long long table_layer_entries,
+    const __nv_bfloat16* __restrict__ conv_stash,
+    unsigned long long stash_layer_elems,
+    const unsigned int* __restrict__ slot_tab,
+    const unsigned int* __restrict__ pend,
+    unsigned int pend_layer_entries,
+    unsigned int stash_seq_elems,
+    unsigned int batch_size,
+    unsigned int dim,
+    unsigned int d_conv
+) {
+    const unsigned int b = blockIdx.y;
+    const unsigned int l = blockIdx.z;
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    if (b >= batch_size || ch >= dim) return;
+    const unsigned int slot = slot_tab[b];
+    const unsigned int np = pend[(unsigned long long)l * pend_layer_entries + slot];
+    if (np == 0) return;
+    float* state = state_table[l * table_layer_entries + b] + ch * d_conv;
+    const __nv_bfloat16* stash =
+        conv_stash + l * stash_layer_elems + (unsigned long long)slot * stash_seq_elems;
+    float win[8];
+    for (unsigned int i = 0; i < d_conv; i++) win[i] = state[i];
+    for (unsigned int t = 0; t < np; t++) {
+        for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
+        win[d_conv - 1] = (float)stash[t * dim + ch];
+    }
+    for (unsigned int i = 0; i < d_conv; i++) state[i] = win[i];
 }

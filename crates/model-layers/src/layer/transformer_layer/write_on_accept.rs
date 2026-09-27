@@ -24,6 +24,13 @@ pub struct GdnCarryBinding {
     /// 2026-09-26: Batch position to slot, shared by every layer.
     pub slot_tab: DevicePtr,
     pub seq_floats: usize,
+    /// 2026-09-26: This layer's conv stash, `slots * conv_seq_elems` BF16 (four input rows
+    /// per slot).
+    pub conv_stash: DevicePtr,
+    pub conv_seq_elems: usize,
+    /// 2026-09-26: This layer's conv-state pointer per batch position, staged per verify;
+    /// a declining layer folds through it.
+    pub conv_tab: DevicePtr,
 }
 
 /// 2026-09-26: A supertrait of `TransformerLayer`; see the module header.

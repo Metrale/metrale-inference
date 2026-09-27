@@ -111,6 +111,10 @@ name = "gdn_verify_fused_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "gdn_carry_conv_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "gdn_carry_microtest"
 required-features = ["cuda", "gpu-examples"]
 

@@ -31,6 +31,8 @@ use crate::layers::ops;
 pub(super) struct CarryKernels {
     pub wy: [KernelHandle; 3],
     pub flush: KernelHandle,
+    pub conv: KernelHandle,
+    pub conv_flush: KernelHandle,
 }
 
 pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
@@ -42,6 +44,8 @@ pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
             crate::layers::try_kernel(gpu, m, "gdn_carry_wy4"),
         ],
         flush: crate::layers::try_kernel(gpu, m, "gdn_carry_flush"),
+        conv: crate::layers::try_kernel(gpu, m, "gdn_carry_conv"),
+        conv_flush: crate::layers::try_kernel(gpu, m, "gdn_carry_conv_flush"),
     }
 }
 
@@ -92,7 +96,9 @@ impl CarryState {
     /// kd == vd == 128. `None` otherwise.
     pub(super) fn seq_floats(&self) -> Option<usize> {
         let [_, nv, kd, vd] = self.dims;
-        let linked = self.kernels.wy.iter().all(|k| k.0 != 0) && self.kernels.flush.0 != 0;
+        let k = &self.kernels;
+        let linked = k.wy.iter().all(|h| h.0 != 0)
+            && [k.flush, k.conv, k.conv_flush].iter().all(|h| h.0 != 0);
         (linked && kd == 128 && vd == 128).then(|| ops::gdn_carry_seq_floats(nv, kd, vd))
     }
 
@@ -189,14 +195,58 @@ impl Qwen3SsmLayer {
         Ok(())
     }
 
-    /// 2026-09-26: Fold the pending rows of `n` sequences into this layer's H before a
-    /// parent kernel reads it. `h_table` and `slot_tab` are the run's slices of the WY
-    /// table slab 0 and the slot table. A no-op without a binding.
+    /// 2026-09-26: The carried conv launch for one run (`gdn_carry_conv`), with the batched
+    /// parent's arguments: `conv_base` is the run's first conv state, the rest follow at
+    /// `conv_bytes` strides; `slot_tab` is the run's slice of the slot table.
+    pub(super) fn carry_conv_launch(
+        &self,
+        gpu: &dyn GpuBackend,
+        conv_base: DevicePtr,
+        slot_tab: DevicePtr,
+        n: usize,
+        a: &super::trait_decode_batched_conv_gdn::ConvGdnArgs,
+    ) -> Result<()> {
+        let b = self
+            .carry
+            .binding
+            .get()
+            .ok_or_else(|| anyhow::anyhow!("carry_conv_launch: no carry binding"))?;
+        ops::gdn_carry_conv(
+            gpu,
+            self.carry.kernels.conv,
+            conv_base,
+            a.deinterleaved,
+            &self.ssm.conv1d,
+            a.conv_out_buf,
+            b.conv_stash,
+            slot_tab,
+            b.pend,
+            b.conv_seq_elems as u32,
+            a.num_tokens as u32,
+            a.conv_dim as u32,
+            a.d_conv as u32,
+            a.qk_ch,
+            a.kd as u32,
+            a.qkvz_size as u32,
+            a.conv_dim as u32,
+            1e-6,
+            n as u32,
+            (self.conv_state_bytes / 4) as u32,
+            (a.num_tokens * a.qkvz_size) as u32,
+            (a.num_tokens * a.conv_dim) as u32,
+            a.stream,
+        )
+    }
+
+    /// 2026-09-26: Fold the pending rows of `n` sequences into this layer's H and conv
+    /// window before a parent kernel reads them. `h_table`, `slot_tab` and `run_first`
+    /// locate the run in the WY table slab 0, the slot table and the conv-state table. A
+    /// no-op without a binding.
     pub(super) fn carry_flush_run(
         &self,
         gpu: &dyn GpuBackend,
         h_table: DevicePtr,
-        slot_tab: DevicePtr,
+        run_first: usize,
         n: usize,
         stream: u64,
     ) -> Result<()> {
@@ -207,7 +257,8 @@ impl Qwen3SsmLayer {
             !h_table.is_null(),
             "carry_flush_run: a layer asked to carry declined without WY tables"
         );
-        let [_, nv, _, _] = self.carry.dims;
+        let [nk, nv, kd, vd] = self.carry.dims;
+        let slot_tab = b.slot_tab.offset(run_first * 4);
         ops::gdn_carry_flush(
             gpu,
             self.carry.kernels.flush,
@@ -221,6 +272,23 @@ impl Qwen3SsmLayer {
             b.seq_floats as u32,
             n as u32,
             nv as u32,
+            1,
+            stream,
+        )?;
+        ops::gdn_carry_conv_flush(
+            gpu,
+            self.carry.kernels.conv_flush,
+            b.conv_tab.offset(run_first * 8),
+            0,
+            b.conv_stash,
+            0,
+            slot_tab,
+            b.pend,
+            0,
+            b.conv_seq_elems as u32,
+            n as u32,
+            (nk * kd * 2 + nv * vd) as u32,
+            (self.conv_state_bytes / 4 / (nk * kd * 2 + nv * vd)) as u32,
             1,
             stream,
         )

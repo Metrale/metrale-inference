@@ -22,7 +22,7 @@
 
 use anyhow::Result;
 use metrale_config::LayerType;
-use metrale_gpu_runtime::gpu::DevicePtr;
+use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use metrale_model_layers::layer::{GdnCarryBinding, VERIFY_WY_TABLE_SEQS};
 use parking_lot::Mutex;
 
@@ -39,23 +39,37 @@ fn gdn_carry_enabled() -> bool {
 
 struct CarryBufs {
     stash: DevicePtr,
+    conv_stash: DevicePtr,
     pend: DevicePtr,
     slot_tab: DevicePtr,
+    conv_tab: DevicePtr,
     flags: DevicePtr,
     flush_tab: DevicePtr,
+    flush_conv_tab: DevicePtr,
     flush_slots: DevicePtr,
-    flush_k: metrale_gpu_runtime::gpu::KernelHandle,
+    flush_k: KernelHandle,
+    conv_flush_k: KernelHandle,
     layers: usize,
     slots: usize,
     seq_floats: usize,
+    conv_seq_elems: usize,
     nv: usize,
+    conv_dim: usize,
+    d_conv: usize,
+}
+
+/// 2026-09-26: One sequence's GDN state pointers, per GDN layer.
+#[derive(Clone)]
+struct SlotStates {
+    slot: usize,
+    h: Vec<DevicePtr>,
+    conv: Vec<DevicePtr>,
 }
 
 /// 2026-09-26: The last carry verify, consumed by its verdict.
 struct LastCarry {
-    slots: Vec<usize>,
+    seqs: Vec<SlotStates>,
     ks: Vec<usize>,
-    h_ptrs: Vec<Vec<DevicePtr>>,
     /// 2026-09-26: `[layer][VERIFY_WY_TABLE_SEQS]`: whether that layer's carry kernel
     /// verified that batch position.
     engaged: Vec<bool>,
@@ -66,9 +80,12 @@ struct CarryInner {
     probed: bool,
     bufs: Option<CarryBufs>,
     mirror: Vec<u32>,
-    /// 2026-09-26: `(slot, h pointer per GDN layer)` of every slot with pending rows.
-    pending: Vec<(usize, Vec<DevicePtr>)>,
+    /// 2026-09-26: Every slot with pending rows.
+    pending: Vec<SlotStates>,
     last: Option<LastCarry>,
+    /// 2026-09-26: Slots whose last verdict `gdn_carry_commit` committed (pending rows and
+    /// any restore); `commit_accepted_prefix` copies nothing for them.
+    committed: Vec<usize>,
 }
 
 /// 2026-09-26: The carry state of one model; see the module header.
@@ -100,12 +117,16 @@ impl TransformerModel {
             Some(Some(f)) if per_layer.iter().all(|p| *p == Some(*f)) => *f,
             _ => return Ok(false),
         };
-        let flush_k = metrale_model_layers::layers::try_kernel(
-            self.gpu.as_ref(),
-            "gated_delta_rule_carry",
-            "gdn_carry_flush",
-        );
+        let kernel = |name| {
+            metrale_model_layers::layers::try_kernel(
+                self.gpu.as_ref(),
+                "gated_delta_rule_carry",
+                name,
+            )
+        };
+        let (flush_k, conv_flush_k) = (kernel("gdn_carry_flush"), kernel("gdn_carry_conv_flush"));
         if flush_k.0 == 0
+            || conv_flush_k.0 == 0
             || self.ssm_pool.mtp_slots == 0
             || self.ssm_pool.h_stored_bytes != self.ssm_pool.h_bytes
         {
@@ -113,7 +134,14 @@ impl TransformerModel {
         }
         let layers = gdn.len();
         let slots = self.ssm_pool.mtp_slots + 1;
+        let c = &self.config;
+        let conv_dim = c.linear_num_key_heads * c.linear_key_head_dim * 2
+            + c.linear_num_value_heads * c.linear_value_head_dim;
+        let conv_seq_elems = metrale_model_layers::layers::ops::gdn_carry_conv_seq_elems(conv_dim);
         let stash = self.gpu.alloc(layers * slots * seq_floats * 4)?;
+        let conv_stash = self.gpu.alloc(layers * slots * conv_seq_elems * 2)?;
+        let conv_tab = self.gpu.alloc(layers * VERIFY_WY_TABLE_SEQS * 8)?;
+        let flush_conv_tab = self.gpu.alloc(layers * VERIFY_WY_TABLE_SEQS * 8)?;
         let pend = self.gpu.alloc(layers * slots * 4)?;
         self.gpu.memset(pend, 0, layers * slots * 4)?;
         let slot_tab = self.gpu.alloc(VERIFY_WY_TABLE_SEQS * 4)?;
@@ -129,26 +157,36 @@ impl TransformerModel {
                 pend: pend.offset(l * slots * 4),
                 slot_tab,
                 seq_floats,
+                conv_stash: conv_stash.offset(l * slots * conv_seq_elems * 2),
+                conv_seq_elems,
+                conv_tab: conv_tab.offset(l * VERIFY_WY_TABLE_SEQS * 8),
             });
         }
         let nv = self.config.linear_num_value_heads;
         tracing::info!(
             "GDN carry: bound {:.1} MB stash ({layers} GDN layers x {slots} slots)",
-            (layers * slots * seq_floats * 4) as f64 / 1e6
+            (layers * slots * (seq_floats * 4 + conv_seq_elems * 2)) as f64 / 1e6
         );
         inner.mirror = vec![0; layers * slots];
         inner.bufs = Some(CarryBufs {
             stash,
+            conv_stash,
             pend,
             slot_tab,
+            conv_tab,
             flags,
             flush_tab,
+            flush_conv_tab,
             flush_slots,
             flush_k,
+            conv_flush_k,
             layers,
             slots,
             seq_floats,
+            conv_seq_elems,
             nv,
+            conv_dim,
+            d_conv: c.linear_conv_kernel_dim,
         });
         Ok(true)
     }
@@ -175,8 +213,27 @@ impl TransformerModel {
         Ok(true)
     }
 
-    /// 2026-09-26: Stage the slot table of a carried verify: the batch's slots, then the
-    /// ghost rows' slots of a borrowed graph, in table order.
+    /// 2026-09-26: This sequence's h and conv state per GDN layer.
+    fn slot_states(&self, seq: &SequenceState) -> Result<SlotStates> {
+        let gdn = self.gdn_layer_indices();
+        let mut out = SlotStates {
+            slot: self.carry_slot(seq),
+            h: Vec::with_capacity(gdn.len()),
+            conv: Vec::with_capacity(gdn.len()),
+        };
+        for &i in &gdn {
+            let st = seq.layer_states[i]
+                .as_any()
+                .downcast_ref::<metrale_model_layers::layer::SsmLayerState>()
+                .ok_or_else(|| anyhow::anyhow!("GDN carry: layer {i} is not SSM"))?;
+            out.h.push(st.h_state);
+            out.conv.push(st.conv_state);
+        }
+        Ok(out)
+    }
+
+    /// 2026-09-26: Stage the slot table and the conv-state table of a carried verify: the
+    /// batch's entries, then the ghost rows' entries of a borrowed graph, in table order.
     pub(super) fn gdn_carry_stage(
         &self,
         seqs: &[&mut SequenceState],
@@ -185,17 +242,27 @@ impl TransformerModel {
     ) -> Result<()> {
         let inner = self.gdn_carry.inner.lock();
         let b = inner.bufs.as_ref().expect("bound");
-        let slots: Vec<u8> = seqs
+        let mut rows: Vec<SlotStates> = seqs
             .iter()
-            .map(|s| self.carry_slot(s) as u32)
-            .chain(
-                ghosts
-                    .iter()
-                    .map(|&(g, _)| (g as usize).min(self.ssm_pool.mtp_slots) as u32),
-            )
-            .flat_map(|v| v.to_le_bytes())
+            .map(|s| self.slot_states(s))
+            .collect::<Result<_>>()?;
+        for &(g, _) in ghosts {
+            let slot = g as usize;
+            rows.push(SlotStates {
+                slot: slot.min(self.ssm_pool.mtp_slots),
+                h: Vec::new(),
+                conv: (0..b.layers)
+                    .map(|l| self.ssm_pool.conv_state(l, slot))
+                    .collect(),
+            });
+        }
+        let slots: Vec<u8> = rows
+            .iter()
+            .flat_map(|r| (r.slot as u32).to_le_bytes())
             .collect();
-        self.gpu.copy_h2d_async(&slots, b.slot_tab, stream)
+        self.gpu.copy_h2d_async(&slots, b.slot_tab, stream)?;
+        let tab = state_table(&rows, b.layers, |r| &r.conv);
+        self.gpu.copy_h2d_async(&tab, b.conv_tab, stream)
     }
 
     fn upload_mirror(&self, inner: &CarryInner, stream: u64) -> Result<()> {
@@ -221,31 +288,19 @@ impl TransformerModel {
         let mut raw = vec![0u8; layers * VERIFY_WY_TABLE_SEQS * 4];
         self.gpu.copy_d2h_on_stream(flags, &mut raw, stream)?;
         let engaged: Vec<bool> = raw.chunks(4).map(|c| c != [0, 0, 0, 0]).collect();
-        let gdn = self.gdn_layer_indices();
-        let mut slots = Vec::with_capacity(seqs.len());
-        let mut h_ptrs = Vec::with_capacity(seqs.len());
+        let mut rows = Vec::with_capacity(seqs.len());
         for seq in seqs {
-            let slot = self.carry_slot(seq);
+            let r = self.slot_states(seq)?;
             for l in 0..layers {
-                inner.mirror[l * slots_n + slot] = 0;
+                inner.mirror[l * slots_n + r.slot] = 0;
             }
-            inner.pending.retain(|(s, _)| *s != slot);
-            let mut hp = Vec::with_capacity(layers);
-            for &i in &gdn {
-                let st = seq.layer_states[i]
-                    .as_any()
-                    .downcast_ref::<metrale_model_layers::layer::SsmLayerState>()
-                    .ok_or_else(|| anyhow::anyhow!("gdn_carry_end: layer {i} is not SSM"))?;
-                hp.push(st.h_state);
-            }
-            slots.push(slot);
-            h_ptrs.push(hp);
+            inner.pending.retain(|p| p.slot != r.slot);
+            rows.push(r);
         }
         self.upload_mirror(&inner, stream)?;
         inner.last = Some(LastCarry {
-            slots,
+            seqs: rows,
             ks: ks.to_vec(),
-            h_ptrs,
             engaged,
         });
         Ok(())
@@ -253,50 +308,73 @@ impl TransformerModel {
 
     /// 2026-09-26: Commit a carried verify's verdict: `accepted_rows[i]` rows (anchor
     /// included) of the sequence on `slots[i]`. Engaged layers get them as pending rows; a
-    /// layer that declined ran its parent kernels, and a partial accept restores its H from
-    /// Hi here. `Ok(false)` when the last verify was not carried.
+    /// layer that declined ran its parent kernels, and a partial accept restores its h and
+    /// conv state from the intermediates here. `commit_accepted_prefix` then copies nothing
+    /// for these slots. `Ok(false)` when the last verify was not carried.
     pub(super) fn gdn_carry_commit(&self, slots: &[usize], accepted_rows: &[u32]) -> Result<bool> {
         let mut inner = self.gdn_carry.inner.lock();
+        inner.committed.clear();
         let Some(last) = inner.last.take() else {
             return Ok(false);
         };
         let stream = self.gpu.default_stream();
         anyhow::ensure!(
-            accepted_rows.len() == last.slots.len()
-                && slots.len() == last.slots.len()
+            accepted_rows.len() == last.seqs.len()
+                && slots.len() == last.seqs.len()
                 && slots
                     .iter()
-                    .zip(&last.slots)
-                    .all(|(&s, &c)| s.min(self.ssm_pool.mtp_slots) == c),
+                    .zip(&last.seqs)
+                    .all(|(&s, r)| s.min(self.ssm_pool.mtp_slots) == r.slot),
             "gdn_carry_commit: verdict for slots {slots:?} after a carried verify of {:?}",
-            last.slots
+            last.seqs.iter().map(|r| r.slot).collect::<Vec<_>>()
         );
-        let slots_n = inner.bufs.as_ref().expect("bound").slots;
-        let mut restores = Vec::new();
-        for (b, (&slot, &rows)) in last.slots.iter().zip(accepted_rows).enumerate() {
+        let (slots_n, d_conv, conv_dim) = {
+            let b = inner.bufs.as_ref().expect("bound");
+            (b.slots, b.d_conv, b.conv_dim)
+        };
+        let (mut h_restores, mut conv_restores) = (Vec::new(), Vec::new());
+        for (b, (r, &rows)) in last.seqs.iter().zip(accepted_rows).enumerate() {
             anyhow::ensure!(
                 rows >= 1 && rows as usize <= last.ks[b] && rows <= 4,
                 "gdn_carry_commit: {rows} accepted rows of a {}-row verify",
                 last.ks[b]
             );
-            for l in 0..last.h_ptrs[b].len() {
+            for l in 0..r.h.len() {
                 if last.engaged[l * VERIFY_WY_TABLE_SEQS + b] {
-                    inner.mirror[l * slots_n + slot] = rows;
+                    inner.mirror[l * slots_n + r.slot] = rows;
                 } else if (rows as usize) < last.ks[b] {
-                    restores.push(StateCopy {
-                        src: self.ssm_pool.h_intermediate(l, slot, rows as usize - 1),
-                        dst: last.h_ptrs[b][l],
+                    let t = rows as usize - 1;
+                    h_restores.push(StateCopy {
+                        src: self.ssm_pool.h_intermediate(l, r.slot, t),
+                        dst: r.h[l],
                         bytes: self.ssm_pool.h_stored_bytes,
+                    });
+                    conv_restores.push(StateCopy {
+                        src: self.ssm_pool.conv_intermediate(l, r.slot, t),
+                        dst: r.conv[l],
+                        bytes: conv_dim * d_conv * 4,
                     });
                 }
             }
         }
-        run_ssm_state_copies(self.gpu.as_ref(), &restores, &[], stream)?;
+        run_ssm_state_copies(self.gpu.as_ref(), &h_restores, &conv_restores, stream)?;
         self.upload_mirror(&inner, stream)?;
-        for (b, &slot) in last.slots.iter().enumerate() {
-            inner.pending.push((slot, last.h_ptrs[b].clone()));
-        }
+        inner.committed = slots.to_vec();
+        inner.pending.extend(last.seqs);
         Ok(true)
+    }
+
+    /// 2026-09-26: Whether `slot`'s last verdict was committed by `gdn_carry_commit`; the
+    /// entry is consumed.
+    pub(super) fn gdn_carry_take_committed(&self, slot: usize) -> bool {
+        let mut inner = self.gdn_carry.inner.lock();
+        match inner.committed.iter().position(|&s| s == slot) {
+            Some(p) => {
+                inner.committed.swap_remove(p);
+                true
+            }
+            None => false,
+        }
     }
 
     /// 2026-09-26: Fold every pending row into H. A no-op when nothing is pending.
@@ -314,18 +392,17 @@ impl TransformerModel {
         let b = inner.bufs.as_ref().expect("bound");
         let (layers, slots_n) = (b.layers, b.slots);
         for chunk in pending.chunks(VERIFY_WY_TABLE_SEQS) {
-            let mut tab = vec![0u64; layers * VERIFY_WY_TABLE_SEQS];
-            for (j, (_, hp)) in chunk.iter().enumerate() {
-                for (l, p) in hp.iter().enumerate() {
-                    tab[l * VERIFY_WY_TABLE_SEQS + j] = p.0;
-                }
-            }
-            let tab_bytes: Vec<u8> = tab.iter().flat_map(|v| v.to_le_bytes()).collect();
             let slot_bytes: Vec<u8> = chunk
                 .iter()
-                .flat_map(|(s, _)| (*s as u32).to_le_bytes())
+                .flat_map(|r| (r.slot as u32).to_le_bytes())
                 .collect();
-            self.gpu.copy_h2d_async(&tab_bytes, b.flush_tab, stream)?;
+            self.gpu
+                .copy_h2d_async(&state_table(chunk, layers, |r| &r.h), b.flush_tab, stream)?;
+            self.gpu.copy_h2d_async(
+                &state_table(chunk, layers, |r| &r.conv),
+                b.flush_conv_tab,
+                stream,
+            )?;
             self.gpu
                 .copy_h2d_async(&slot_bytes, b.flush_slots, stream)?;
             metrale_model_layers::layers::ops::gdn_carry_flush(
@@ -344,12 +421,45 @@ impl TransformerModel {
                 layers as u32,
                 stream,
             )?;
+            metrale_model_layers::layers::ops::gdn_carry_conv_flush(
+                self.gpu.as_ref(),
+                b.conv_flush_k,
+                b.flush_conv_tab,
+                VERIFY_WY_TABLE_SEQS as u64,
+                b.conv_stash,
+                (slots_n * b.conv_seq_elems) as u64,
+                b.flush_slots,
+                b.pend,
+                slots_n as u32,
+                b.conv_seq_elems as u32,
+                chunk.len() as u32,
+                b.conv_dim as u32,
+                b.d_conv as u32,
+                layers as u32,
+                stream,
+            )?;
         }
-        for (slot, _) in &pending {
+        for r in &pending {
             for l in 0..layers {
-                inner.mirror[l * slots_n + slot] = 0;
+                inner.mirror[l * slots_n + r.slot] = 0;
             }
         }
         self.upload_mirror(inner, stream)
     }
+}
+
+/// 2026-09-26: `[layer][VERIFY_WY_TABLE_SEQS]` u64 pointer table of `rows` (row `j` at
+/// entry `j` of each layer), from `pick`; rows without an entry for a layer leave 0.
+fn state_table(
+    rows: &[SlotStates],
+    layers: usize,
+    pick: impl Fn(&SlotStates) -> &Vec<DevicePtr>,
+) -> Vec<u8> {
+    let mut tab = vec![0u64; layers * VERIFY_WY_TABLE_SEQS];
+    for (j, r) in rows.iter().enumerate() {
+        for (l, p) in pick(r).iter().enumerate() {
+            tab[l * VERIFY_WY_TABLE_SEQS + j] = p.0;
+        }
+    }
+    tab.iter().flat_map(|v| v.to_le_bytes()).collect()
 }

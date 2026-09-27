@@ -102,7 +102,7 @@ impl Qwen3SsmLayer {
         let flag = binding.flag.offset(run_first * 4);
         let carry = !super::verify_exact_enabled() && self.carry_now(true, args.num_tokens);
         if !carry {
-            self.carry_flush_run(ctx.gpu, wy_tables, slot_tab, n, args.stream)?;
+            self.carry_flush_run(ctx.gpu, wy_tables, run_first, n, args.stream)?;
         }
         let ran = self.decode_batched_conv_gdn_multi_inner(
             states,
@@ -112,7 +112,7 @@ impl Qwen3SsmLayer {
             args,
         )?;
         if carry && !ran {
-            self.carry_flush_run(ctx.gpu, wy_tables, slot_tab, n, args.stream)?;
+            self.carry_flush_run(ctx.gpu, wy_tables, run_first, n, args.stream)?;
         }
         Ok(ran)
     }
@@ -227,31 +227,35 @@ impl Qwen3SsmLayer {
         } = *args;
 
         // 2026-09-25: One launch: conv1d + L2 norm for n sequences × k rows, writing every
-        // conv intermediate.
-        ops::gdn_verify_fused_conv_kn_batched(
-            ctx.gpu,
-            self.gdn_verify_fused_conv_kn_batched_k,
-            conv_base,
-            deinterleaved,
-            &self.ssm.conv1d,
-            conv_out_buf,
-            inter_base,
-            kk as u32,
-            conv_dim as u32,
-            d_conv as u32,
-            qk_ch,
-            kd as u32,
-            qkvz_size as u32,
-            conv_dim as u32,
-            (conv_bytes / 4) as u32,
-            1e-6,
-            n as u32,
-            (conv_bytes / 4) as u32,
-            (kk * qkvz_size) as u32,
-            (kk * conv_dim) as u32,
-            (inter_seq_stride / 4) as u32,
-            stream,
-        )?;
+        // conv intermediate; its carried twin writes none (`carry.rs`).
+        if let Some((slot_tab, _)) = carry {
+            self.carry_conv_launch(ctx.gpu, conv_base, slot_tab, n, args)?;
+        } else {
+            ops::gdn_verify_fused_conv_kn_batched(
+                ctx.gpu,
+                self.gdn_verify_fused_conv_kn_batched_k,
+                conv_base,
+                deinterleaved,
+                &self.ssm.conv1d,
+                conv_out_buf,
+                inter_base,
+                kk as u32,
+                conv_dim as u32,
+                d_conv as u32,
+                qk_ch,
+                kd as u32,
+                qkvz_size as u32,
+                conv_dim as u32,
+                (conv_bytes / 4) as u32,
+                1e-6,
+                n as u32,
+                (conv_bytes / 4) as u32,
+                (kk * qkvz_size) as u32,
+                (kk * conv_dim) as u32,
+                (inter_seq_stride / 4) as u32,
+                stream,
+            )?;
+        }
 
         // 2026-09-25: One WY launch over the n sequences. Rows are sequence-major
         // (`b * k + t`); the state arguments are pointer tables (h, Hi0, ...),

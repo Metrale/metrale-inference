@@ -220,6 +220,12 @@ impl TransformerModel {
     ) -> Result<()> {
         use metrale_model_layers::layer::SsmLayerState;
 
+        // 2026-09-26: A carried verify's verdict is already committed
+        // (`gdn_carry_commit`): pending rows and any restore, h and conv alike.
+        if self.gdn_carry_take_committed(seq.slot_idx) {
+            return Ok(());
+        }
+
         // 2026-09-25: Consume this slot's entry from the write-on-accept fold: when
         // present, the fold already wrote the accepted `h` state.
         let h_folded = {

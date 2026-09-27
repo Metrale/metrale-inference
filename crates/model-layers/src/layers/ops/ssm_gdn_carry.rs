@@ -2,7 +2,7 @@
 
 //! 2026-09-26: Launchers for the carried-state GDN verify
 //! (`kernels/gb10/common/gated_delta_rule_carry.cu`): the K = 2..4 verify
-//! kernels and the standalone fold.
+//! kernels, the conv twin, and their standalone folds.
 //!
 //! Owner: model-layers ops (GDN).
 //! Invariants: none beyond the types.
@@ -109,6 +109,103 @@ pub fn gdn_carry_flush(
         .arg_u32(batch_size)
         .arg_u32(num_v_heads)
         .launch(stream)
+}
+
+/// 2026-09-26: Carried-state conv verify (`gdn_carry_conv`): the twin of
+/// `gdn_verify_fused_conv_kn_batched` that first shifts each sequence's pending input rows
+/// into its window (writing it back when there were any), writes no snapshot and no final
+/// window, and stashes the position inputs at `conv_stash + slot * stash_seq_elems`.
+#[allow(clippy::too_many_arguments)]
+pub fn gdn_carry_conv(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    conv_state: DevicePtr,
+    new_input: DevicePtr,
+    weight: &crate::weight_map::DenseWeight,
+    output: DevicePtr,
+    conv_stash: DevicePtr,
+    slot_tab: DevicePtr,
+    pend: DevicePtr,
+    stash_seq_elems: u32,
+    num_tokens: u32,
+    dim: u32,
+    d_conv: u32,
+    qk_channels: u32,
+    head_dim: u32,
+    input_stride: u32,
+    output_stride: u32,
+    l2_eps: f32,
+    n_seq: u32,
+    conv_state_seq_stride: u32,
+    input_seq_stride: u32,
+    output_seq_stride: u32,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([dim.div_ceil(256), n_seq, 1])
+        .block([256, 1, 1])
+        .arg_ptr(conv_state)
+        .arg_ptr(new_input)
+        .arg_ptr(weight.weight)
+        .arg_ptr(output)
+        .arg_ptr(conv_stash)
+        .arg_ptr(slot_tab)
+        .arg_ptr(pend)
+        .arg_u32(stash_seq_elems)
+        .arg_u32(num_tokens)
+        .arg_u32(dim)
+        .arg_u32(d_conv)
+        .arg_u32(qk_channels)
+        .arg_u32(head_dim)
+        .arg_u32(input_stride)
+        .arg_u32(output_stride)
+        .arg_f32(l2_eps)
+        .arg_u32(conv_state_seq_stride)
+        .arg_u32(input_seq_stride)
+        .arg_u32(output_seq_stride)
+        .launch(stream)
+}
+
+/// 2026-09-26: Standalone conv fold (`gdn_carry_conv_flush`) over `layers` GDN layers, laid
+/// out as in [`gdn_carry_flush`] with conv-state pointers and a BF16 stash.
+#[allow(clippy::too_many_arguments)]
+pub fn gdn_carry_conv_flush(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    state_table: DevicePtr,
+    table_layer_entries: u64,
+    conv_stash: DevicePtr,
+    stash_layer_elems: u64,
+    slot_tab: DevicePtr,
+    pend: DevicePtr,
+    pend_layer_entries: u32,
+    stash_seq_elems: u32,
+    batch_size: u32,
+    dim: u32,
+    d_conv: u32,
+    layers: u32,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([dim.div_ceil(256), batch_size, layers])
+        .block([256, 1, 1])
+        .arg_ptr(state_table)
+        .arg_u64(table_layer_entries)
+        .arg_ptr(conv_stash)
+        .arg_u64(stash_layer_elems)
+        .arg_ptr(slot_tab)
+        .arg_ptr(pend)
+        .arg_u32(pend_layer_entries)
+        .arg_u32(stash_seq_elems)
+        .arg_u32(batch_size)
+        .arg_u32(dim)
+        .arg_u32(d_conv)
+        .launch(stream)
+}
+
+/// 2026-09-26: Per-(layer, slot) conv stash length in BF16 elements: four input rows.
+pub const fn gdn_carry_conv_seq_elems(conv_dim: usize) -> usize {
+    4 * conv_dim
 }
 
 /// 2026-09-26: Per-(layer, slot) stash width in floats:
