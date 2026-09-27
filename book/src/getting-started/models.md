@@ -37,7 +37,7 @@ Throughput figures are p50 single-request decode on a short prompt (`max_tokens 
 
 ## Per-model serve commands
 
-Every command below uses `metrale/metrale-inference-gb10:latest`, `--network host --gpus all --ipc=host`, and the `-v ~/.cache/huggingface:/root/.cache/huggingface` volume mount — omitted here for readability. Full copy-pasteable commands are in [`QUICKSTART.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/QUICKSTART.md).
+Every command below uses `metrale/metrale-inference-gb10:latest`, `--network host --gpus all --ipc=host`, and the `-v ~/.cache/huggingface:/root/.cache/huggingface` volume mount — omitted here for readability. Full copy-pasteable commands are in [`QUICKSTART.md`](https://github.com/Metrale/metrale-inference/blob/main/QUICKSTART.md).
 
 ### Qwen3.5-35B-A3B (flagship)
 ```
@@ -79,4 +79,4 @@ serve Sehyo/Qwen3.5-122B-A10B-NVFP4 \
 
 ## Adding a new model
 
-The entire model-specific surface is **one new `ModelWeightLoader` impl** and **one match arm in `crates/model-engine/src/factory.rs`**. The KV cache, buffer arena, scheduler, and HTTP server are all model-agnostic. The full walkthrough with a live example (Mistral-Small-4) is in the repo's [Adding a new model](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-model-family) guide. The chapter on [metrale-model-engine](../crates/metrale-model-engine.md) covers the trait shape.
+The entire model-specific surface is **one new `ModelWeightLoader` impl** and **one match arm in `crates/model-engine/src/factory.rs`**. The KV cache, buffer arena, scheduler, and HTTP server are all model-agnostic. The full walkthrough with a live example (Mistral-Small-4) is in the repo's [Adding a new model](https://github.com/Metrale/metrale-inference/blob/main/docs/HARDWARE.md#adding-a-new-model-family) guide. The chapter on [metrale-model-engine](../crates/metrale-model-engine.md) covers the trait shape.

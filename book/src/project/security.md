@@ -1,6 +1,6 @@
 # Security Policy
 
-Canonical: [`SECURITY.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/SECURITY.md). This chapter summarises the policy and the threat model.
+Canonical: [`SECURITY.md`](https://github.com/Metrale/metrale-inference/blob/main/SECURITY.md). This chapter summarises the policy and the threat model.
 
 ## Reporting a vulnerability
 

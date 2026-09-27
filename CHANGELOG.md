@@ -176,5 +176,5 @@ multi-stage scheduler refactor — see
 [`docs/METRALE_JOURNEY.md`](docs/METRALE_JOURNEY.md) and the
 [`book/`](book/) chapters under `deep-dives/`.
 
-[Unreleased]: https://github.com/Metrale/metrale-inference-alpha/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Metrale/metrale-inference-alpha/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Metrale/metrale-inference/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Metrale/metrale-inference/releases/tag/v0.1.0

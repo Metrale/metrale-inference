@@ -21,7 +21,7 @@ jobs:
   dispatch:
     name: Rebuild metrale.ai
     runs-on: ubuntu-latest
-    if: github.repository == 'Metrale/metrale-inference-alpha' || github.repository == 'Metrale/metrale-inference'
+    if: github.repository == 'Metrale/metrale-inference'
     steps:
       # 2026-09-26: GITHUB_TOKEN cannot write to another repository, so the governance App mints
       # a token limited to metrale.ai and to contents: write, the one permission a dispatch needs.

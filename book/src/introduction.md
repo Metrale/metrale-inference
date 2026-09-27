@@ -6,17 +6,17 @@ On an NVIDIA GB10 Grace-Blackwell Superchip, Metrale Engine reaches **131 tok/s 
 
 This book is the canonical long-form documentation for Metrale Engine. It complements — rather than replaces — the source-of-truth material already in the repository:
 
-- [`QUICKSTART.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/QUICKSTART.md) — Docker recipes for every supported model.
-- [`AGENTS.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/AGENTS.md) / [`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference-alpha/blob/main/CONTRIBUTING.md) — contributor workflow.
-- [`docs/`](https://github.com/Metrale/metrale-inference-alpha/tree/main/docs) — design notes, release history, benchmark journeys.
+- [`QUICKSTART.md`](https://github.com/Metrale/metrale-inference/blob/main/QUICKSTART.md) — Docker recipes for every supported model.
+- [`AGENTS.md`](https://github.com/Metrale/metrale-inference/blob/main/AGENTS.md) / [`CONTRIBUTING.md`](https://github.com/Metrale/metrale-inference/blob/main/CONTRIBUTING.md) — contributor workflow.
+- [`docs/`](https://github.com/Metrale/metrale-inference/tree/main/docs) — design notes, release history, benchmark journeys.
 
 ## Who this book is for
 
 Three audiences, one narrative arc:
 
 - **Operators** who want to serve one of the supported models on a GB10 today (every `(model, quant)` target under `kernels/gb10/` ships in the image; the compatibility matrix is `docs/GB10_DEPLOYMENT_GUIDE.md` §2). Start with *Installation* and *Quickstart*, then jump to *Operating Metrale Engine* for CLI flags, KV-cache dtypes, and multi-GPU bring-up.
-- **Model authors** extending Metrale Engine with a new architecture. Read *Architecture* → *metrale-model-engine* → *Engineering Deep Dives* in order, then follow [Adding a new model family](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-model-family) alongside `crates/model-arch/src/weight_loader/minimax.rs` as a template.
-- **Kernel engineers** porting Metrale Engine to a new hardware target or hyperoptimizing an existing kernel. Read *Philosophy* → *Kernel Dispatch Pipeline* → the *CUDA Kernel Engineering* deep dive, then use the [Adding a new hardware target](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target) walkthrough with `kernels/gb10/` as a reference implementation.
+- **Model authors** extending Metrale Engine with a new architecture. Read *Architecture* → *metrale-model-engine* → *Engineering Deep Dives* in order, then follow [Adding a new model family](https://github.com/Metrale/metrale-inference/blob/main/docs/HARDWARE.md#adding-a-new-model-family) alongside `crates/model-arch/src/weight_loader/minimax.rs` as a template.
+- **Kernel engineers** porting Metrale Engine to a new hardware target or hyperoptimizing an existing kernel. Read *Philosophy* → *Kernel Dispatch Pipeline* → the *CUDA Kernel Engineering* deep dive, then use the [Adding a new hardware target](https://github.com/Metrale/metrale-inference/blob/main/docs/HARDWARE.md#adding-a-new-hardware-target) walkthrough with `kernels/gb10/` as a reference implementation.
 
 ## What Metrale Engine is not
 

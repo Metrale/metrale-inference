@@ -88,7 +88,7 @@ def author_slots(authors, x, y0, dy, fs, clip_prefix, fade_x, anchor="start"):
 
 SAMPLE = dict(pr="#840",
               pr_title="Fuse the GDN spine epilogue into the decode kernel",
-              repo="Metrale/metrale-inference-alpha", commit="9d4e1f07c2",
+              repo="Metrale/metrale-inference", commit="9d4e1f07c2",
               date="2026-09-02", gates="11 / 11 CERTIFIED",
               stamp=("m-ferraro", "3f9c2d81ab"), seal=("a-hoffmann", "3f9c2d81ab"),
               merge_count=263)  # gh search/issues total_count for the OPENER

@@ -103,7 +103,7 @@ sudo docker stop metrale-35b && sudo docker rm metrale-35b
 
 - **`error: out of memory`** during start-up — drop `--gpu-memory-utilization` to `0.85`, or `--max-seq-len` to `4096`. 35B has the headroom; it's usually leaked GPU state from a previous container. `nvidia-smi` should show ~0 MB used before starting.
 - **Server logs `loaded 0 tensors`** — your HF cache is empty or the path is wrong. Verify with `ls ~/.cache/huggingface/hub/models--Sehyo--Qwen3.5-35B-A3B-NVFP4`.
-- **Connection refused on port 8888** — the server hasn't finished initialising. Watch the log; `Listening on <bind>:<port>` is the readiness marker. If it *has* printed and you're still refused from another machine, that's the `--bind 127.0.0.1` default, not a start-up problem — see [Quickstart §Network exposure](https://github.com/Metrale/metrale-inference-alpha/blob/main/QUICKSTART.md#network-exposure).
+- **Connection refused on port 8888** — the server hasn't finished initialising. Watch the log; `Listening on <bind>:<port>` is the readiness marker. If it *has* printed and you're still refused from another machine, that's the `--bind 127.0.0.1` default, not a start-up problem — see [Quickstart §Network exposure](https://github.com/Metrale/metrale-inference/blob/main/QUICKSTART.md#network-exposure).
 - **Tokens are gibberish** — almost always a model/loader mismatch. Check that the HF model id in the command line matches the cached directory. If the kernel target the binary picked is wrong (unlikely — Metrale Engine logs it on startup), open an issue; Metrale Engine's house rule is *never blame the model, always find the Metrale Engine bug*.
 
 Next: pick a different model from [Supported Models](./models.md), or dive into the [Architecture](../architecture/philosophy.md).

@@ -32,7 +32,7 @@ import subprocess
 import sys
 import collections
 
-REPO = "Metrale/metrale-inference-alpha"
+REPO = "Metrale/metrale-inference"
 PERF_PATHS = (
     "crates", "kernels", "Cargo.toml", "Cargo.lock",
     "vendor", "jinja-templates", "rust-toolchain.toml",

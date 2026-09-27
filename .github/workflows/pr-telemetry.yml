@@ -170,7 +170,7 @@ jobs:
     # rewrites itself every four hours, and an issue nobody ever closes reads as
     # a task left unfinished. The thread it maintains is the Discussion named by
     # the PR_TELEMETRY_DISCUSSION repository variable (#10,
-    # https://github.com/Metrale/metrale-inference-alpha/discussions/10).
+    # https://github.com/Metrale/metrale-inference/discussions/10).
     permissions: {}
     steps:
       # PCND: once a Discussion is configured, the App is required. The mint is

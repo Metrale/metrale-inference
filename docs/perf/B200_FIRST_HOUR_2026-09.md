@@ -204,7 +204,7 @@ Times are budgets. The clock starts when the GPU is attached; the shards are alr
 
 2. **0:03 Clone** (needed for the scripts, the oracle comparison and option B).
    ```bash
-   git clone https://github.com/<fork>/metrale-inference-alpha.git ~/metrale && cd ~/metrale
+   git clone https://github.com/<fork>/metrale-inference.git ~/metrale && cd ~/metrale
    git fetch origin ds41-b200-prep && git checkout ds41-b200-prep && git log --oneline -1
    # expect 6e0f1ca04 or a later head of #1156; record the sha
    ```
@@ -222,10 +222,10 @@ Times are budgets. The clock starts when the GPU is attached; the shards are alr
    chmod +x, run").
    ```bash
    # before the rental, from any machine with gh:
-   gh workflow run datacenter-binaries.yml -R <fork>/metrale-inference-alpha --ref ds41-b200-prep \
+   gh workflow run datacenter-binaries.yml -R <fork>/metrale-inference --ref ds41-b200-prep \
      -f hw=b200 -f model=deepseek-v4.1-flash
    # on the box:
-   gh run download <run-id> -R <fork>/metrale-inference-alpha -n met-b200-x86_64 -D ~/ds41_bin
+   gh run download <run-id> -R <fork>/metrale-inference -n met-b200-x86_64 -D ~/ds41_bin
    cat ~/ds41_bin/BUILD-INFO.txt   # sha256, nvcc, libnccl, "carries sm_100a PTX and nothing else"
    sha256sum -c ~/ds41_bin/met.sha256 && chmod +x ~/ds41_bin/met && ~/ds41_bin/met --version
    ```

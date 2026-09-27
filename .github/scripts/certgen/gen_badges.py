@@ -75,7 +75,7 @@ def sine_ring(rc, amp, n, phase=0.0, step=2):
     return " ".join(d)
 
 # ------------------------------------------------------------------ QR ------
-QR_URL = "https://github.com/Metrale/metrale-inference-alpha/pull/840"
+QR_URL = "https://github.com/Metrale/metrale-inference/pull/840"
 QR_X, QR_Y, QR_M = 968, 8, 4  # plaque origin, module size
 
 def qr_group(url=QR_URL, x=QR_X, y=QR_Y, m=QR_M, side=None):

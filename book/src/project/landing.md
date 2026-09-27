@@ -5,7 +5,7 @@ process that produced them. A change reaches `main` through three stages, and
 nothing about that is manual goodwill — it is enforced.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Metrale/metrale-inference-alpha/main/docs/diagrams/pr-certification.png" alt="PR certification flow: Stage 1 Verification, Stage 2 Certification requiring an engineer's seal and benchmark records, Stage 3 Ready to merge, then the merge queue. A table shows what survives a new commit, main advancing, and conflicts." width="960">
+  <img src="https://raw.githubusercontent.com/Metrale/metrale-inference/main/docs/diagrams/pr-certification.png" alt="PR certification flow: Stage 1 Verification, Stage 2 Certification requiring an engineer's seal and benchmark records, Stage 3 Ready to merge, then the merge queue. A table shows what survives a new commit, main advancing, and conflicts." width="960">
 </p>
 
 **Stage 1 — Verification** runs on every push: formatting, clippy, typos, licence

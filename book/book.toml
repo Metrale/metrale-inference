@@ -14,9 +14,9 @@ create-missing = false
 default-theme = "navy"
 preferred-dark-theme = "navy"
 site-url = "/"
-git-repository-url = "https://github.com/Metrale/metrale-inference-alpha"
+git-repository-url = "https://github.com/Metrale/metrale-inference"
 git-repository-icon = "fa-github"
-edit-url-template = "https://github.com/Metrale/metrale-inference-alpha/edit/main/book/{path}"
+edit-url-template = "https://github.com/Metrale/metrale-inference/edit/main/book/{path}"
 no-section-label = false
 # Tokens first, then the skin that consumes them, then the Metrale layer that
 # puts the wordmark in the menu bar. metrale-tokens.css is a symlink to

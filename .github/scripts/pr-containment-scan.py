@@ -35,7 +35,7 @@ import sys
 import tempfile
 import pathlib
 
-REPO = "Metrale/metrale-inference-alpha"
+REPO = "Metrale/metrale-inference"
 
 
 def run(*a, **kw):

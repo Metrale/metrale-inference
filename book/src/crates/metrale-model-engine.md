@@ -58,7 +58,7 @@ pub fn loader_for_config(config: &ModelConfig) -> Result<Box<dyn ModelWeightLoad
 }
 ```
 
-This is the **single code site where `model_type` strings are matched to a loader**. Everything downstream holds a `Model` and is model-agnostic. See [Adding a new model family](https://github.com/Metrale/metrale-inference-alpha/blob/main/docs/HARDWARE.md#adding-a-new-model-family).
+This is the **single code site where `model_type` strings are matched to a loader**. Everything downstream holds a `Model` and is model-agnostic. See [Adding a new model family](https://github.com/Metrale/metrale-inference/blob/main/docs/HARDWARE.md#adding-a-new-model-family).
 
 ## The generate loop (`engine.rs`)
 
