@@ -198,3 +198,50 @@ pub fn w8a16_gemm_t_pipelined(
         .arg_u32(k)
         .launch(stream)
 }
+
+/// 2026-09-27: One row's block-scaled W8A16 projection `[1, k] x [n, k]^T` for
+/// a single-row decode site: under `RowTiers::Canonical`, when `m32_kernel` is
+/// linked and `k` is whole 128-wide scale blocks, the 32-row tile (the order
+/// every other row count takes under that policy); otherwise the scalar
+/// [`w8a16_gemv`].
+#[allow(clippy::too_many_arguments)]
+pub fn w8a16_gemv_row_tiered(
+    gpu: &dyn GpuBackend,
+    gemv_kernel: KernelHandle,
+    m32_kernel: KernelHandle,
+    input: DevicePtr,
+    weight: DevicePtr,
+    block_scale: DevicePtr,
+    output: DevicePtr,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    if crate::layers::row_tiers() == crate::layers::RowTiers::Canonical
+        && super::w8a16_pipelined_prefers_m32(1, k, m32_kernel)
+    {
+        return super::w8a16_gemm_pipelined_m32(
+            gpu,
+            m32_kernel,
+            input,
+            weight,
+            block_scale,
+            output,
+            1,
+            n,
+            k,
+            stream,
+        );
+    }
+    w8a16_gemv(
+        gpu,
+        gemv_kernel,
+        input,
+        weight,
+        block_scale,
+        output,
+        n,
+        k,
+        stream,
+    )
+}

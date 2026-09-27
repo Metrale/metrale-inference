@@ -28,7 +28,7 @@ pub use moe_grouped::{
 mod w8a16;
 pub use w8a16::{
     w8a16_gemm, w8a16_gemm_n128_m128, w8a16_gemm_pipelined, w8a16_gemm_t, w8a16_gemm_t_pipelined,
-    w8a16_gemv,
+    w8a16_gemv, w8a16_gemv_row_tiered,
 };
 #[path = "gemm_quant_gemv.rs"]
 mod gemv;

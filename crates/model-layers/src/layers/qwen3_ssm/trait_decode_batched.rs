@@ -294,7 +294,33 @@ impl Qwen3SsmLayer {
             eps,
             stream,
         )?;
-        if num_tokens == 3 {
+        // 2026-09-27: Under a row-invariant tier policy the FP8 MoE takes the
+        // grouped kernels with the per-row router at every row count, so the
+        // two- and three-row arms below do not change a row's bits.
+        let row_invariant_moe = crate::layers::row_invariant()
+            && self.ffn.fp8_grouped_routing_ok(
+                num_tokens,
+                crate::layers::moe::GroupedRouting::PerRow,
+                ctx,
+            );
+        if row_invariant_moe {
+            self.ffn.forward_fp8_grouped_decode_routed(
+                normed2_base,
+                num_tokens,
+                crate::layers::moe::GroupedRouting::PerRow,
+                ctx,
+                stream,
+            )?;
+            let moe_out = ctx.buffers.moe_output();
+            ops::residual_add(
+                ctx.gpu,
+                self.residual_add_k,
+                hidden,
+                moe_out,
+                (num_tokens * h) as u32,
+                stream,
+            )?;
+        } else if num_tokens == 3 {
             self.ffn.forward_k3(normed2_base, ctx, stream)?;
             let moe_out = ctx.buffers.moe_output();
             ops::residual_add(

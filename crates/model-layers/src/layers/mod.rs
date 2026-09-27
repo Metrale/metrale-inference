@@ -179,6 +179,9 @@ pub fn k64_n64_wins(m: u32, n: u32) -> bool {
 mod moe_grouped_decode;
 pub use moe_grouped_decode::*;
 
+mod row_tiers;
+pub use row_tiers::{RowTiers, row_invariant, row_tiers, row_tiers_from};
+
 mod kernel_probe;
 pub use kernel_probe::{try_kernel, try_target_kernel};
 

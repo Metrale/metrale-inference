@@ -47,9 +47,10 @@ impl Qwen3AttentionLayer {
                     stream,
                 )?;
             } else if let Some(fp8) = self.q_weight.as_ref().and_then(|w| w.as_fp8()) {
-                ops::w8a16_gemv(
+                ops::w8a16_gemv_row_tiered(
                     ctx.gpu,
                     self.w8a16_gemv_k,
+                    self.w8a16_gemm_pipelined_m32_k,
                     normed,
                     fp8.weight,
                     fp8.row_scale,
@@ -140,9 +141,10 @@ impl Qwen3AttentionLayer {
             if let Some(q2) = self.q_weight.as_ref().and_then(|w| w.as_packed_q2()) {
                 ops::q2_0_gemv_vec(ctx.gpu, self.q2_0_gemv_k, normed, q2, q_out, stream)?;
             } else if let Some(fp8) = self.q_weight.as_ref().and_then(|w| w.as_fp8()) {
-                ops::w8a16_gemv(
+                ops::w8a16_gemv_row_tiered(
                     ctx.gpu,
                     self.w8a16_gemv_k,
+                    self.w8a16_gemm_pipelined_m32_k,
                     normed,
                     fp8.weight,
                     fp8.row_scale,

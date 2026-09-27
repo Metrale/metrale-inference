@@ -230,9 +230,12 @@ impl ProjKernels {
                 "w8a16_gemm_pipelined",
             ),
             // 2026-09-25: Looked up only when `ModelLevers::fp8_attn_m32` is on
-            // (`METRALE_FP8_ATTN_M32=1`). Every reader checks for a nonzero
-            // handle before it uses it.
-            w8a16_gemm_pipelined_m32_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32 {
+            // (`METRALE_FP8_ATTN_M32=1`), or (2026-09-27) under
+            // `RowTiers::Canonical`. Every reader checks for a nonzero handle
+            // before it uses it.
+            w8a16_gemm_pipelined_m32_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32
+                || crate::layers::row_tiers() == crate::layers::RowTiers::Canonical
+            {
                 super::super::try_target_kernel(
                     gpu,
                     "w8a16_gemm_pipelined_m32",
@@ -242,7 +245,9 @@ impl ProjKernels {
                 KernelHandle(0)
             },
             // 2026-09-26: The 64-row twin, for 33..=64 rows, under the same lever.
-            w8a16_gemm_pipelined_m64_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32 {
+            w8a16_gemm_pipelined_m64_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32
+                || crate::layers::row_tiers() == crate::layers::RowTiers::Canonical
+            {
                 super::super::try_target_kernel(
                     gpu,
                     "w8a16_gemm_pipelined_m32",

@@ -55,7 +55,10 @@ impl Qwen3AttentionLayer {
     /// batched decode path that is `padded_n`, the width the decode graph cache
     /// is keyed by. The row band is [`Self::fp8_qkv_batch_band_admits`].
     pub(super) fn ms_qkv_batchm_fp8_selected(&self, c: &MultiSeqCtx<'_>, enabled: bool) -> bool {
-        if !enabled || !self.fp8_qkv_batch_band_admits(c.n) {
+        // 2026-09-27: `RowTiers::Canonical` takes the tile family for a single row
+        // too, so the tier admits `n = 1` there.
+        let canonical_row = c.n == 1 && self.canonical_qkv_tiles();
+        if !enabled || !(self.fp8_qkv_batch_band_admits(c.n) || canonical_row) {
             return false;
         }
         if self.w8a16_gemv_batch4_strided_k.0 == 0 || self.w8a16_gemv_batch16_strided_k.0 == 0 {
@@ -76,6 +79,14 @@ impl Qwen3AttentionLayer {
         let strides_ok = c.per_seq_qkv.is_multiple_of(c.bf16) && c.h.is_multiple_of(8);
         let shapes_ok = q.n == c.q_proj_dim && k.n == kv_dim && v.n == kv_dim;
         dims_ok && strides_ok && shapes_ok
+    }
+
+    /// 2026-09-27: Whether `RowTiers::Canonical` is on and both tile twins are
+    /// linked, so every row count takes the tile family.
+    pub(super) fn canonical_qkv_tiles(&self) -> bool {
+        crate::layers::row_tiers() == crate::layers::RowTiers::Canonical
+            && self.w8a16_gemm_pipelined_m32_k.0 != 0
+            && self.w8a16_gemm_pipelined_m64_k.0 != 0
     }
 
     /// 2026-09-25: The row band of the batched tier. `ms_qkv_batchm_fp8_gemv`
@@ -144,7 +155,9 @@ impl Qwen3AttentionLayer {
         // 2026-09-25: The W8A8 cuBLASLt arm (`w8a8_decode.rs`) first; when it
         // declines (`Ok(false)`), the GEMV arms. The gated deinterleave below
         // runs after either.
-        if !self.try_ms_qkv_decode_w8a8(c, q, k, v, kv_dim)? {
+        // 2026-09-27: Under a row-invariant tier policy the W8A8 route, which
+        // quantizes the activations, is skipped.
+        if crate::layers::row_invariant() || !self.try_ms_qkv_decode_w8a8(c, q, k, v, kv_dim)? {
             self.ms_qkv_batchm_fp8_gemv(c, q, k, v, kv_dim, a_stride, c_stride)?;
         }
 
@@ -197,20 +210,36 @@ impl Qwen3AttentionLayer {
         // the GEMV arms. `self.m16_tc` is the resolved `attn_m16_tc` setting: the
         // target's `HARDWARE.toml` `[defaults]` row, overridden by
         // `METRALE_ATTN_M16_TC`, else by `METRALE_M16_TC`.
-        let tc = self.m16_tc && self.w8a16_gemm_m16_strided_k.0 != 0 && h.is_multiple_of(128);
-        let (launch, kernel): (StridedBatchGemv, KernelHandle) = if n <= 4 {
+        let by_rows = !crate::layers::row_invariant();
+        let tc =
+            by_rows && self.m16_tc && self.w8a16_gemm_m16_strided_k.0 != 0 && h.is_multiple_of(128);
+        let (launch, kernel): (StridedBatchGemv, KernelHandle) = if self.canonical_qkv_tiles() {
+            // 2026-09-27: `RowTiers::Canonical`: the tile family at every row count.
+            if n <= 32 {
+                (
+                    ops::w8a16_gemm_pipelined_m32_strided,
+                    self.w8a16_gemm_pipelined_m32_k,
+                )
+            } else {
+                (
+                    ops::w8a16_gemm_pipelined_m64_strided,
+                    self.w8a16_gemm_pipelined_m64_k,
+                )
+            }
+        } else if n <= 4 {
             (
                 ops::w8a16_gemv_batch4_strided,
                 self.w8a16_gemv_batch4_strided_k,
             )
-        } else if n > 2 * FP8_QKV_GEMV_MAX_ROWS && self.w8a16_gemm_pipelined_m64_k.0 != 0 {
+        } else if by_rows && n > 2 * FP8_QKV_GEMV_MAX_ROWS && self.w8a16_gemm_pipelined_m64_k.0 != 0
+        {
             // 2026-09-26: 33 or more rows with the 64-row twin linked (same lever as
             // the 32-row tile): one weight pass per 64 rows.
             (
                 ops::w8a16_gemm_pipelined_m64_strided,
                 self.w8a16_gemm_pipelined_m64_k,
             )
-        } else if n > FP8_QKV_GEMV_MAX_ROWS {
+        } else if n > FP8_QKV_GEMV_MAX_ROWS && by_rows {
             // 2026-09-25: Above 16 rows, `w8a16_gemm_pipelined_m32_strided`: one
             // launch per projection with `grid.y = ceil(n/32)`. Not bit-identical
             // to the GEMV arms (its oracle grades it on a tolerance). It comes
@@ -222,7 +251,7 @@ impl Qwen3AttentionLayer {
         } else if tc {
             crate::layers::qwen3_attention::attn_m16_tc_route::log_qkv_m16_tc_route(fwd.stats);
             (ops::w8a16_gemm_m16_strided, self.w8a16_gemm_m16_strided_k)
-        } else if let Some(route) = self.ncol_strided_route(n) {
+        } else if let Some(route) = self.ncol_strided_route(n).filter(|_| by_rows) {
             // 2026-09-25: N-column-blocked GEMV (`attn_ncol_gemv.rs`): one thread
             // owns N_COLS adjacent output columns and keeps the scalar kernel's
             // per-row reduction order, so it stays bit-exact. It sits below the
@@ -238,16 +267,18 @@ impl Qwen3AttentionLayer {
         // runs once per chunk of at most that many rows: each weight is read
         // ceil(n / 16) times instead of n times by the per-sequence loop, and every
         // row keeps the scalar kernel's bits.
-        let (launch, kernel, chunk) =
-            if n > FP8_QKV_GEMV_MAX_ROWS && self.w8a16_gemm_pipelined_m32_k.0 == 0 {
-                (
-                    ops::w8a16_gemv_batch16_strided as StridedBatchGemv,
-                    self.w8a16_gemv_batch16_strided_k,
-                    FP8_QKV_GEMV_MAX_ROWS,
-                )
-            } else {
-                (launch, kernel, n)
-            };
+        let (launch, kernel, chunk) = if self.canonical_qkv_tiles() {
+            (launch, kernel, 64)
+        } else if n > FP8_QKV_GEMV_MAX_ROWS && (!by_rows || self.w8a16_gemm_pipelined_m32_k.0 == 0)
+        {
+            (
+                ops::w8a16_gemv_batch16_strided as StridedBatchGemv,
+                self.w8a16_gemv_batch16_strided_k,
+                FP8_QKV_GEMV_MAX_ROWS,
+            )
+        } else {
+            (launch, kernel, n)
+        };
         let gemv = |w: &Fp8Weight, out: DevicePtr, n_out: u32| -> Result<()> {
             let mut done = 0usize;
             while done < n {

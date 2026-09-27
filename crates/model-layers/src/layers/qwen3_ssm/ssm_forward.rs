@@ -66,30 +66,10 @@ impl Qwen3SsmLayer {
                     "ssm_forward::qkvz_fp8w → w8a16_gemv",
                 );
                 if self.sequential_qkvz {
-                    ops::w8a16_gemv(
-                        ctx.gpu,
-                        self.w8a16_gemv_k,
-                        normed,
-                        fp8.weight,
-                        fp8.row_scale,
-                        deinterleaved,
-                        qkvz_size,
-                        h,
-                        stream,
-                    )
+                    self.single_row_fp8_proj(ctx, fp8, normed, deinterleaved, qkvz_size, h, stream)
                 } else {
                     let qkvz_out = ctx.buffers.ssm_qkvz();
-                    ops::w8a16_gemv(
-                        ctx.gpu,
-                        self.w8a16_gemv_k,
-                        normed,
-                        fp8.weight,
-                        fp8.row_scale,
-                        qkvz_out,
-                        qkvz_size,
-                        h,
-                        stream,
-                    )?;
+                    self.single_row_fp8_proj(ctx, fp8, normed, qkvz_out, qkvz_size, h, stream)?;
                     ops::deinterleave_qkvz(
                         ctx.gpu,
                         self.deinterleave_k,
@@ -408,17 +388,7 @@ impl Qwen3SsmLayer {
                 crate::weight_map::WeightQuantFormat::Fp8BlockScaled,
                 "ssm_forward::out_proj_fp8w → w8a16_gemv",
             );
-            ops::w8a16_gemv(
-                ctx.gpu,
-                self.w8a16_gemv_k,
-                normed_out,
-                fp8.weight,
-                fp8.row_scale,
-                out,
-                h,
-                value_dim as u32,
-                stream,
-            )?;
+            self.single_row_fp8_proj(ctx, fp8, normed_out, out, h, value_dim as u32, stream)?;
         } else if let Some(ref dense_out) = self.out_proj_dense {
             ops::dense_gemv(
                 ctx.gpu,

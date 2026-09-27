@@ -189,7 +189,12 @@ impl Qwen3AttentionLayer {
         } else if let Some(o_fp8) = self.o_weight.as_ref().and_then(|w| w.as_fp8()) {
             // 2026-09-25: The cuBLASLt W8A8 route (`w8a8_decode.rs`) goes first.
             // When it declines (`Ok(false)`) the W8A16 route below runs.
-            if self.try_ms_o_proj_decode_w8a8(c, o_fp8, attn_out, o_out)? {
+            // 2026-09-27: Under a row-invariant tier policy (`row_tiers`) the
+            // W8A8 route, which quantizes the activations, is skipped.
+            let tiers = crate::layers::row_tiers();
+            if tiers == crate::layers::RowTiers::ByRows
+                && self.try_ms_o_proj_decode_w8a8(c, o_fp8, attn_out, o_out)?
+            {
                 return self.ms_o_proj_lora(c, attn_out, o_out);
             }
             // 2026-09-25: Each launch serves `step` contiguous rows from one pass
@@ -209,18 +214,41 @@ impl Qwen3AttentionLayer {
             // MMA reassociates the K reduction, so it is not bit-identical to the
             // GEMV. `ops::w8a16_gemm_m16` requires `K = nq * hd` to be a multiple
             // of 128.
+            let by_rows = tiers == crate::layers::RowTiers::ByRows;
+            let canonical = tiers == crate::layers::RowTiers::Canonical
+                && block_scaled
+                && self.w8a16_gemm_pipelined_m32_k.0 != 0
+                && self.w8a16_gemm_pipelined_m64_k.0 != 0;
             let tc = wide
+                && by_rows
                 && self.m16_tc
                 && self.w8a16_gemm_m16_k.0 != 0
                 && (nq * hd).is_multiple_of(128);
-            let batched = n > 1 && block_scaled && (self.w8a16_gemv_batch4_k.0 != 0 || wide);
-            let (gemv, kernel, step) = if !batched {
+            let batched =
+                canonical || (n > 1 && block_scaled && (self.w8a16_gemv_batch4_k.0 != 0 || wide));
+            let (gemv, kernel, step) = if canonical {
+                // 2026-09-27: `RowTiers::Canonical`: the tile family at every row
+                // count, 32 rows a launch up to 32, else 64.
+                if n <= 32 {
+                    (
+                        ops::w8a16_gemm_pipelined_m32 as BatchGemv,
+                        self.w8a16_gemm_pipelined_m32_k,
+                        32,
+                    )
+                } else {
+                    (
+                        ops::w8a16_gemm_pipelined_m64 as BatchGemv,
+                        self.w8a16_gemm_pipelined_m64_k,
+                        64,
+                    )
+                }
+            } else if !batched {
                 (
                     ops::w8a16_gemv_batch4 as BatchGemv,
                     self.w8a16_gemv_batch4_k,
                     1,
                 )
-            } else if n > 32 && self.w8a16_gemm_pipelined_m64_k.0 != 0 {
+            } else if by_rows && n > 32 && self.w8a16_gemm_pipelined_m64_k.0 != 0 {
                 // 2026-09-26: 33 or more rows with the 64-row twin linked (same
                 // lever as the 32-row tile): one weight pass per 64 rows.
                 (
@@ -228,7 +256,7 @@ impl Qwen3AttentionLayer {
                     self.w8a16_gemm_pipelined_m64_k,
                     n,
                 )
-            } else if n > 16 && self.w8a16_gemm_pipelined_m32_k.0 != 0 {
+            } else if by_rows && n > 16 && self.w8a16_gemm_pipelined_m32_k.0 != 0 {
                 // 2026-09-25: 17 or more rows: one launch of the 32-row M-tile
                 // kernel over all n rows (`grid.y = ceil(n / 32)`, one weight
                 // pass per tile). `step = n` makes the loop below one iteration.
@@ -245,7 +273,7 @@ impl Qwen3AttentionLayer {
                     fwd.stats,
                 );
                 (ops::w8a16_gemm_m16 as BatchGemv, self.w8a16_gemm_m16_k, 16)
-            } else if let Some((gemv, kernel)) = self.ncol_contiguous_route(n) {
+            } else if let Some((gemv, kernel)) = self.ncol_contiguous_route(n).filter(|_| by_rows) {
                 // 2026-09-25: The N-column-blocked GEMV (`attn_ncol_gemv.rs`): the
                 // batch16 GEMV's weight pass and per-row reduction order, with the
                 // activation loads and converts shared by adjacent output columns.

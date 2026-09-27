@@ -46,9 +46,10 @@ impl Qwen3AttentionLayer {
             self.k_weight.as_ref().and_then(|w| w.as_fp8()),
             self.v_weight.as_ref().and_then(|w| w.as_fp8()),
         ) {
-            ops::w8a16_gemv(
+            ops::w8a16_gemv_row_tiered(
                 ctx.gpu,
                 self.w8a16_gemv_k,
+                self.w8a16_gemm_pipelined_m32_k,
                 normed,
                 k_fp8.weight,
                 k_fp8.row_scale,
@@ -57,9 +58,10 @@ impl Qwen3AttentionLayer {
                 h,
                 stream,
             )?;
-            ops::w8a16_gemv(
+            ops::w8a16_gemv_row_tiered(
                 ctx.gpu,
                 self.w8a16_gemv_k,
+                self.w8a16_gemm_pipelined_m32_k,
                 normed,
                 v_fp8.weight,
                 v_fp8.row_scale,
