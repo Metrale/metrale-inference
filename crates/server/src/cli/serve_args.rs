@@ -295,10 +295,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub no_ssm_tail_midchunk: bool,
 
-    /// Keep the row-count tiers on an FP8 checkpoint (canonical tiers are on by
+    /// Keep the row-count tiers on an FP8 MoE checkpoint (canonical tiers are on by
     /// default there).
     ///
-    /// By default an FP8 checkpoint gives every row the same summation order at
+    /// By default an FP8 MoE checkpoint gives every row the same summation order at
     /// every batch width: the W8A16 projections take the tensor-core tile family,
     /// the NVFP4 LM head its tile GEMM and the FP8 MoE the grouped kernels with
     /// the per-row router, so greedy output does not depend on how many rows share

@@ -16,7 +16,7 @@
 //!   chunks above 16 rows).
 //! - Canonical: the W8A16 projections take the tensor-core tile family's order
 //!   at every R (`w8a16_gemm_pipelined` and its 32/64-row twins, which sum
-//!   identically). 2026-09-27: The default for FP8 checkpoints;
+//!   identically). 2026-09-27: The default for FP8 MoE checkpoints;
 //!   `--no-canonical-tiers` opts out, and `METRALE_CANONICAL_TIERS` (presence)
 //!   turns it on for any checkpoint.
 //!
@@ -58,20 +58,20 @@ pub fn row_tiers_from(exact: bool, canonical: bool) -> RowTiers {
 
 /// 2026-09-27: A model's policy: `--no-canonical-tiers` keeps the scalar order
 /// if `METRALE_ROW_EXACT_TIERS` is present and the by-rows tiers otherwise; else
-/// a present lever decides; else FP8 checkpoints run canonical and the others
-/// by rows. The dense NVFP4 checkpoints keep their tiers: their projections are
-/// NVFP4 and the policy would move only their LM head.
+/// a present lever decides; else FP8 MoE checkpoints run canonical and the
+/// others by rows. The dense mixed FP8/NVFP4 checkpoints (Qwen3.8-27B) keep
+/// their tiers: canonical tiers cost them 2-4% of decode throughput.
 pub fn resolve_row_tiers(
     no_canonical: bool,
     exact_env: bool,
     canonical_env: bool,
-    fp8_checkpoint: bool,
+    fp8_moe_checkpoint: bool,
 ) -> RowTiers {
     if no_canonical {
         row_tiers_from(exact_env, false)
     } else if canonical_env || exact_env {
         row_tiers_from(exact_env, canonical_env)
-    } else if fp8_checkpoint {
+    } else if fp8_moe_checkpoint {
         RowTiers::Canonical
     } else {
         RowTiers::ByRows
@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(row_tiers_from(true, true), RowTiers::Canonical);
     }
 
-    /// 2026-09-27: FP8 checkpoints default to canonical and the others to by rows;
+    /// 2026-09-27: FP8 MoE checkpoints default to canonical and the others to by rows;
     /// the opt-out beats the canonical lever but keeps an exact one; a lever
     /// decides for any checkpoint.
     #[test]
