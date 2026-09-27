@@ -27,7 +27,11 @@
 //   * lda and ldc let the multi-seq attention Q/K/V tier (qkv_fp8_batch.rs) write each row's
 //     Q, K and V straight into the per-sequence decode buffer.
 //
-// Static shared memory: A 2 x 32 x 136 x 2 B = 17,408; B as BF16 ([n][k], K-contiguous, +8 pad)
+// 2026-09-27: 1..=16 rows with K <= 5120 run pm16_skinny (w8a16_gemm_pipelined_m16.cuh)
+// instead, on the launcher's grid (ceil(N / 8), 1, 1) and block 256; the arithmetic per output
+// is the same.
+//
+// Shared memory (dynamic, sized by the launcher): A 2 x 32 x 136 x 2 B = 17,408; B as BF16 ([n][k], K-contiguous, +8 pad)
 // 17,408; raw B 2 x 32 x 128 = 8,192; LUT 1,024; 44,032 B in all, under the 48 KiB static
 // limit. Both padded strides are 68 words, 68 mod 32 = 4, so the eight group_id rows of an MMA
 // fragment read land on banks 0, 4, ..., 28 (+ tid) without conflicts, as the 20-word A rows of
@@ -62,6 +66,7 @@
 
 #include <cuda_bf16.h>
 #include "e4m3_lut.cuh"
+#include "w8a16_gemm_pipelined_m16.cuh"
 // 2026-09-25: PM32_PAD (8 BF16) keeps every A and B row 16-byte aligned: 136 BF16 = 272 bytes.
 #define PM32_M_TILE 32
 #define PM32_N_TILE 32
@@ -77,6 +82,11 @@
 #define PM32_WARPS_M (PM32_M_TILE / 16)
 #define PM32_WARPS_N (PM32_WARPS / PM32_WARPS_M)
 #define PM32_STAGES 2
+#define PM32_A_BYTES (PM32_STAGES * PM32_M_TILE * PM32_A_STRIDE * 2)
+#define PM32_B_BYTES (PM32_STAGES * PM32_N_TILE * PM32_B_STRIDE * 2)
+#define PM32_BRAW_BYTES (PM32_STAGES * PM32_N_TILE * PM32_K_STEP)
+#define PM32_SMEM_BYTES (PM32_A_BYTES + PM32_B_BYTES + PM32_BRAW_BYTES + 1024)
+static_assert(PM16_SMEM_BYTES(PM16_MAX_K) <= 48 * 1024, "a skinny block must fit without an opt-in");
 
 __device__ __forceinline__ void pm32_cp_async_cg_16(void* smem_ptr, const void* gmem_ptr) {
     unsigned int s = (unsigned int)__cvta_generic_to_shared(smem_ptr);
@@ -166,10 +176,20 @@ extern "C" __global__ void w8a16_gemm_pipelined_m32(
     const unsigned int group_id = lane_id >> 2;
     const unsigned int tid = lane_id & 3;
 
-    __shared__ __align__(16) __nv_bfloat16 smem_A[PM32_STAGES][PM32_M_TILE][PM32_A_STRIDE];
-    __shared__ __align__(16) __nv_bfloat16 smem_B[PM32_STAGES][PM32_N_TILE][PM32_B_STRIDE];
-    __shared__ __align__(16) unsigned char smem_Braw[PM32_STAGES][PM32_N_TILE][PM32_K_STEP];
-    __shared__ float smem_lut[256];
+    // 2026-09-27: One dynamic buffer (PM32_SMEM_BYTES, or PM16_SMEM_BYTES(K) for the skinny
+    // body, which runs 1..=PM16_MAX_M rows on the launcher's N-only grid), carved into the
+    // 32-row tile's arrays.
+    extern __shared__ __align__(16) unsigned char smem_raw[];
+    if (M <= PM16_MAX_M && K <= PM16_MAX_K) {
+        pm16_skinny(A, B, block_scale, C, M, N, K, lda, ldc, smem_raw);
+        return;
+    }
+    auto& smem_A = *reinterpret_cast<__nv_bfloat16 (*)[PM32_STAGES][PM32_M_TILE][PM32_A_STRIDE]>(smem_raw);
+    auto& smem_B = *reinterpret_cast<__nv_bfloat16 (*)[PM32_STAGES][PM32_N_TILE][PM32_B_STRIDE]>(
+        smem_raw + PM32_A_BYTES);
+    auto& smem_Braw = *reinterpret_cast<unsigned char (*)[PM32_STAGES][PM32_N_TILE][PM32_K_STEP]>(
+        smem_raw + PM32_A_BYTES + PM32_B_BYTES);
+    float* smem_lut = reinterpret_cast<float*>(smem_raw + PM32_A_BYTES + PM32_B_BYTES + PM32_BRAW_BYTES);
     smem_lut[threadIdx.x] = E4M3_LUT[threadIdx.x];
     __syncthreads();
 

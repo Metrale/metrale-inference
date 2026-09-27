@@ -39,10 +39,15 @@ fn projection_launches(gpu: &MockGpuBackend, weight: &Fp8Weight, m: u32) -> Vec<
 }
 
 /// 2026-09-25: Assert a launch of the 32-row twin: grid `(ceil(N/32), ceil(M/32))`, and
-/// nine arguments ending in the contiguous pitches `lda = K`, `ldc = N`.
+/// nine arguments ending in the contiguous pitches `lda = K`, `ldc = N`. 2026-09-27: At
+/// 1..=16 rows with K <= 5120 the same kernel runs its skinny body on `(ceil(N/8), 1)`.
 fn assert_m32_tile(l: &MockLaunch, m: u32, n: u32, k: u32) {
     assert_eq!(l.args.len(), 9, "the twin takes lda/ldc");
-    assert_eq!(l.grid, [n.div_ceil(32), m.div_ceil(32), 1]);
+    if m <= 16 && k <= 5_120 {
+        assert_eq!(l.grid, [n.div_ceil(8), 1, 1]);
+    } else {
+        assert_eq!(l.grid, [n.div_ceil(32), m.div_ceil(32), 1]);
+    }
     assert_eq!(l.block, [256, 1, 1]);
     assert_eq!(scalar_u32(&l.args[5]), Some(n));
     assert_eq!(scalar_u32(&l.args[6]), Some(k));

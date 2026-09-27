@@ -53,8 +53,15 @@ fn u32_arg(v: u32) -> MockArg {
 /// declares them (`crates/kernels/tests/kernel_arity.rs` pins the count).
 fn assert_m32_launch(l: &MockLaunch, f: &Fixture, m: u32, n: u32, k: u32, lda: u32, ldc: u32) {
     assert_eq!(l.func, M32_K);
-    assert_eq!(l.grid, [n.div_ceil(32), m.div_ceil(32), 1]);
-    assert_eq!(l.block, [256, 1, 1]);
+    if m <= 16 && k <= 5120 {
+        // 2026-09-27: The skinny body: one 8-column block per 8 weight rows.
+        assert_eq!(l.grid, [n.div_ceil(8), 1, 1]);
+        assert_eq!(l.block, [256, 1, 1]);
+        assert_eq!(l.shared_mem, 8 * (k + 16));
+    } else {
+        assert_eq!(l.grid, [n.div_ceil(32), m.div_ceil(32), 1]);
+        assert_eq!(l.block, [256, 1, 1]);
+    }
     assert_eq!(
         l.args,
         vec![
@@ -94,6 +101,52 @@ fn strided_launch_carries_both_pitches_and_tiles_m_by_32() {
     let l = f.launches();
     assert_eq!(l.len(), 1);
     assert_m32_launch(&l[0], &f, 32, 8192, 2048, 2048, 17408);
+}
+
+/// 2026-09-27: 1..=16 rows with K <= 5120 launch the skinny body: one
+/// 256-thread block per 8 columns, with the block's 8 weight rows (K + 16
+/// bytes apart) as dynamic shared memory; 17 rows, or a K above 5120, go back
+/// to the 32x32 tile and its 44,032 bytes.
+#[test]
+fn skinny_rows_launch_one_block_per_eight_columns() {
+    let f = Fixture::new();
+    for (m, n, k, grid, block, smem) in [
+        (
+            1u32,
+            12288u32,
+            2048u32,
+            [1536u32, 1, 1],
+            [256u32, 1, 1],
+            16_512u32,
+        ),
+        (16, 2048, 4096, [256, 1, 1], [256, 1, 1], 32_896),
+        (2, 512, 5120, [64, 1, 1], [256, 1, 1], 41_088),
+        (2, 512, 5248, [16, 1, 1], [256, 1, 1], 44_032),
+        (17, 2048, 2048, [64, 1, 1], [256, 1, 1], 44_032),
+    ] {
+        w8a16_gemm_pipelined_m32_strided(
+            &f.gpu,
+            KernelHandle(M32_K),
+            f.input,
+            f.weight,
+            f.scale,
+            f.output,
+            m,
+            n,
+            k,
+            k,
+            n,
+            0,
+        )
+        .unwrap();
+        let l = f.launches();
+        let l = l.last().unwrap();
+        assert_eq!(
+            (l.grid, l.block, l.shared_mem),
+            (grid, block, smem),
+            "m={m} n={n} k={k}"
+        );
+    }
 }
 
 /// 2026-09-25: Above 32 rows the wrapper adds M tiles (`grid.y = ceil(M/32)`)

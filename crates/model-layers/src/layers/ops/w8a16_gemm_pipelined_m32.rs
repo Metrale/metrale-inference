@@ -35,6 +35,26 @@ pub const W8A16_M32_TILE_ROWS: u32 = 32;
 /// 2026-09-25: N tile (`PM32_N_TILE`), the grid.x granularity.
 const W8A16_M32_TILE_COLS: u32 = 32;
 
+/// 2026-09-27: Rows the skinny body of the same kernel takes (`PM16_MAX_M`),
+/// when `K` is at most [`W8A16_M16_MAX_K`]. It gives each 8-column block the
+/// canonical tile's per-output arithmetic with the 128-K steps' products
+/// computed in parallel by 8 warps and added in step order.
+pub const W8A16_M16_MAX_ROWS: u32 = 16;
+
+/// 2026-09-27: Largest `K` of the skinny body (`PM16_MAX_K`): one 1152-byte
+/// shared slot per 128-K step within 48 KiB.
+pub const W8A16_M16_MAX_K: u32 = 5120;
+
+/// 2026-09-27: Dynamic shared memory of the 32-row tile: `PM32_SMEM_BYTES`
+/// (A and BF16 B stages, the raw B stages and the E4M3 table).
+const W8A16_M32_SMEM_BYTES: u32 = 44_032;
+
+/// 2026-09-27: Dynamic shared memory of a skinny block for `k`:
+/// `PM16_SMEM_BYTES(K)`, the block's 8 weight rows `k + 16` bytes apart.
+pub fn w8a16_m16_smem_bytes(k: u32) -> u32 {
+    8 * (k + 16)
+}
+
 /// 2026-09-25: K granularity: one FP8 scale block per K-step (`PM32_K_STEP ==
 /// PM32_FP8_BLOCK`), which is why `K % 128 == 0` is required rather than
 /// padded.
@@ -65,7 +85,8 @@ pub fn w8a16_pipelined_prefers_m32(m: u32, k: u32, m32_kernel: KernelHandle) -> 
 /// multiple of 8. Same argument order as `w8a16_gemv_batch{4,16}_strided`, so
 /// the multi-seq Q/K/V tier holds it as one more `StridedBatchGemv` arm.
 ///
-/// Grid: (ceil(N/32), ceil(M/32), 1)  Block: (256, 1, 1)
+/// Grid: (ceil(N/32), ceil(M/32), 1)  Block: (256, 1, 1); 2026-09-27: at
+/// 1..=16 rows with K <= [`W8A16_M16_MAX_K`], (ceil(N / 8), 1, 1).
 #[allow(clippy::too_many_arguments)]
 pub fn w8a16_gemm_pipelined_m32_strided(
     gpu: &dyn GpuBackend,
@@ -100,13 +121,24 @@ pub fn w8a16_gemm_pipelined_m32_strided(
         "w8a16_gemm_pipelined_m32: a_row_stride={a_row_stride} must keep rows \
          16B-aligned (cp.async A tile)"
     );
+    // 2026-09-27: 1..=16 rows (K <= 5120) run the kernel's skinny body.
+    let (grid, block, smem) = if m <= W8A16_M16_MAX_ROWS && k <= W8A16_M16_MAX_K {
+        ([div_ceil(n, 8), 1, 1], [256, 1, 1], w8a16_m16_smem_bytes(k))
+    } else {
+        (
+            [
+                div_ceil(n, W8A16_M32_TILE_COLS),
+                div_ceil(m, W8A16_M32_TILE_ROWS),
+                1,
+            ],
+            [256, 1, 1],
+            W8A16_M32_SMEM_BYTES,
+        )
+    };
     KernelLaunch::new(gpu, kernel)
-        .grid([
-            div_ceil(n, W8A16_M32_TILE_COLS),
-            div_ceil(m, W8A16_M32_TILE_ROWS),
-            1,
-        ])
-        .block([256, 1, 1])
+        .grid(grid)
+        .block(block)
+        .shared_mem(smem)
         .arg_ptr(input)
         .arg_ptr(weight)
         .arg_ptr(block_scale)
