@@ -254,7 +254,8 @@ extern "C" __global__ void moe_sort_by_expert(
 //   total_tiles[0]    = number of items
 // m_tile and n_tiles must match the GEMM's tile shape (PM4_M_TILE rows, PM4_N_TILE
 // columns). The worklist capacity is not checked: the caller sizes it for the worst case.
-// Only thread 0 works, emitting items in expert, then m_tile, then n_tile order.
+// Items are in expert, then m_tile, then n_tile order. 2026-09-27: up to 1024 experts the whole
+// block builds the list in parallel; above that thread 0 alone does.
 // The GEMM that reads total_tiles and worklist must run on the same stream after this
 // kernel; no event orders them.
 
@@ -270,6 +271,8 @@ extern "C" __global__ void moe_sort_by_expert(
 
 
 
+#define TILE_WL_MAX_EXPERTS 1024
+
 extern "C" __global__ void moe_build_tile_worklist(
     const int* __restrict__ expert_offsets,
     const unsigned long long* __restrict__ B_weight_ptrs,
@@ -279,6 +282,40 @@ extern "C" __global__ void moe_build_tile_worklist(
     unsigned int n_tiles,
     unsigned int m_tile
 ) {
+    // 2026-09-27: The whole block builds the list: per-expert item counts in parallel, one
+    // serial prefix over them, then every item written in parallel at its prefix position.
+    // The list (order and content) is the one the thread-0 loop below emits.
+    __shared__ unsigned int base[TILE_WL_MAX_EXPERTS + 1];
+    if (num_experts <= TILE_WL_MAX_EXPERTS) {
+        for (unsigned int e = threadIdx.x; e < num_experts; e += blockDim.x) {
+            int M_e = expert_offsets[e + 1] - expert_offsets[e];
+            base[e + 1] = (M_e <= 0 || B_weight_ptrs[e] == 0)
+                ? 0u : (((unsigned int)M_e + m_tile - 1) / m_tile) * n_tiles;
+        }
+        __syncthreads();
+        if (threadIdx.x == 0) {
+            base[0] = 0;
+            for (unsigned int e = 0; e < num_experts; e++) base[e + 1] += base[e];
+            total_tiles[0] = (int)base[num_experts];
+        }
+        __syncthreads();
+        const unsigned int total = base[num_experts];
+        for (unsigned int w = threadIdx.x; w < total; w += blockDim.x) {
+            unsigned int lo = 0, hi = num_experts;   // 2026-09-27: last e with base[e] <= w
+            while (hi - lo > 1) {
+                unsigned int mid = (lo + hi) >> 1;
+                if (base[mid] <= w) lo = mid; else hi = mid;
+            }
+            unsigned int local = w - base[lo];
+            unsigned int mt = local / n_tiles;
+            unsigned int nt = local - mt * n_tiles;
+            assert(mt < (1u << 26) && nt < 64u);
+            worklist[w * 2 + 0] = lo;
+            worklist[w * 2 + 1] = (mt << 6) | nt;
+        }
+        return;
+    }
+
     if (threadIdx.x != 0) return;
 
     unsigned int w = 0;
