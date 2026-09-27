@@ -129,6 +129,41 @@ pub fn dense_gemv_batchm(
         .launch(stream)
 }
 
+/// 2026-09-27: [`dense_gemv_batchm`] over `m` rows split into `y_blocks` block
+/// rows of `ceil(m / y_blocks)` rows each (at most `DENSE_GEMV_BATCHM_MAX_M`):
+/// more blocks for a narrow weight such as the MoE router, and one launch past
+/// 16 rows. Each row's result is the same as in any other split.
+#[allow(clippy::too_many_arguments)]
+pub fn dense_gemv_batchm_split(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: &DenseWeight,
+    output: DevicePtr,
+    m: u32,
+    y_blocks: u32,
+    n: u32,
+    k: u32,
+    out_stride: u32,
+    stream: u64,
+) -> Result<()> {
+    ensure!(
+        m >= 1 && (1..=m).contains(&y_blocks) && m.div_ceil(y_blocks) <= DENSE_GEMV_BATCHM_MAX_M,
+        "dense_gemv_batchm_split: m={m} over y_blocks={y_blocks} must give 1..={DENSE_GEMV_BATCHM_MAX_M} rows per block row"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([div_ceil(n, 4), y_blocks, 1])
+        .block([256, 1, 1])
+        .arg_ptr(input)
+        .arg_ptr(weight.weight)
+        .arg_ptr(output)
+        .arg_u32(m)
+        .arg_u32(n)
+        .arg_u32(k)
+        .arg_u32(out_stride)
+        .launch(stream)
+}
+
 /// 2026-09-25: FP8-weight GEMV for one row,
 /// `C = A @ (dequant(B_fp8) * row_scale)^T`: A `[1, K]` BF16, B `[N, K]` FP8
 /// E4M3, row_scale `[N]` f32, C `[1, N]` BF16. One byte per weight, against

@@ -268,7 +268,7 @@ pub fn dump_moe_out(
 }
 
 /// 2026-09-26: Log how many distinct routed experts a grouped FP8 decode of
-/// `m` rows touched (`active_count[0]` from `moe_fp8_grouped_compact`), the
+/// `m` rows touched (`active_count[0]` from `moe_fp8_grouped_sort`), the
 /// quantity its weight traffic scales with. Eager forwards only: under graph
 /// capture it returns at once.
 pub fn dump_grouped_active(

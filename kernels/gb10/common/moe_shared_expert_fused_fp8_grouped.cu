@@ -11,7 +11,7 @@
 //   moe_fp8_grouped_blend.cu maps a token's slot back through token_to_perm.
 // - 2026-09-26: blockIdx.y < S = ceil(num_tokens / rows per pass) is the shared expert,
 //   rows [y * rows, (y + 1) * rows); blockIdx.y = S + i indexes active_experts[i] (from
-//   moe_fp8_grouped_compact), and blocks with i at or past active_count[0] return. The host
+//   moe_fp8_grouped_sort), and blocks with i at or past active_count[0] return. The host
 //   sets cap = min(num_tokens * top_k, num_experts) (fp8_grouped_active_cap) and grid.y =
 //   cap + S, so the grid does not depend on the routing.
 // - 2026-09-26: Per row, the output equals moe_shared_expert_fused_fp8.cu's gate+up, SiLU
@@ -23,9 +23,9 @@
 // - Weights are row-major [N, K] FP8 E4M3 with FP32 scales [ceil(N / 128), ceil(K / 128)].
 //   A null routed gate or up pointer makes that expert's act 0, a null routed down pointer
 //   zeroes its output rows; the shared-expert pointers are not checked.
-// - Launch: compact grid 1, block 256; gate+up grid (ceil(N / GU_COLS_PER_CTA), cap + S, 1),
-//   block 128; down grid (ceil(N / DOWN_COLS_PER_CTA), cap + S, 1), block 256, no dynamic
-//   shared memory. GU_COLS_PER_CTA, GU_GROUP_ROWS, DOWN_COLS_PER_CTA and GROUP_ROWS must
+// - Launch: gate+up grid (ceil(N / GU_COLS_PER_CTA), cap + S, 1),
+//   block 128; down grid (ceil(N / DOWN_CTA_COLS), cap + S, 1), block 256, no dynamic
+//   shared memory. GU_COLS_PER_CTA, GU_GROUP_ROWS, DOWN_CTA_COLS and GROUP_ROWS must
 //   equal FP8_GROUPED_GATE_UP_COLS_PER_CTA, FP8_GROUPED_GATE_UP_ROWS_PER_PASS,
 //   FP8_GROUPED_DOWN_COLS_PER_CTA and FP8_GROUPED_DOWN_ROWS_PER_PASS in fp8_moe_grouped.rs.
 
@@ -43,6 +43,9 @@
 #define DOWN_BLOCK 256
 #define DOWN_COLS_PER_WARP 4
 #define DOWN_COLS_PER_CTA ((DOWN_BLOCK / WARP_SIZE) * DOWN_COLS_PER_WARP)
+// 2026-09-27: Column groups per down block: a block covers DOWN_CTA_COLS output columns.
+#define DOWN_CG 4
+#define DOWN_CTA_COLS (DOWN_COLS_PER_CTA * DOWN_CG)
 
 __device__ __constant__ float E4M3_LUT_MOE_GROUPED[256] = {
 
@@ -118,23 +121,6 @@ __device__ __forceinline__ unsigned int grouped_a_row(
     const int* __restrict__ sorted_token_ids, bool is_shared, unsigned int pos
 ) {
     return is_shared ? pos : (unsigned int)sorted_token_ids[pos];
-}
-
-// 2026-09-25: Compacted list of the experts with at least one row, in ascending id order;
-// active_count[0] is its length. Thread 0 does all the work.
-
-extern "C" __global__ void moe_fp8_grouped_compact(
-    const int* __restrict__ expert_offsets,
-    int* __restrict__ active_experts,
-    int* __restrict__ active_count,
-    unsigned int num_experts
-) {
-    if (threadIdx.x != 0) return;
-    int n = 0;
-    for (unsigned int e = 0; e < num_experts; e++) {
-        if (expert_offsets[e + 1] > expert_offsets[e]) active_experts[n++] = (int)e;
-    }
-    active_count[0] = n;
 }
 
 // 2026-09-26: The row range of this block, and whether it runs at all. The first
@@ -337,9 +323,11 @@ extern "C" __global__ void moe_expert_gate_up_act_fp8_grouped(
 }
 
 // 2026-09-26: Down projection of the SiLU product act ([pos, K] FP32), DOWN_COLS_PER_WARP
-// output columns per warp. A block streams only 16 KB of weight, so the SM keeps three blocks
+// output columns per warp. A column group streams 16 KB of weight, so the SM keeps three blocks
 // resident (at most 85 registers, 4 rows per pass) to overlap their loads with each other's
-// arithmetic.
+// arithmetic. 2026-09-27: A block runs DOWN_CG column groups in turn (DOWN_CTA_COLS columns),
+// which took the M = 32..64 down launches 18% lower on GB10 than one group per block: the row
+// lookups, pointer loads and table fill ahead of the first weight byte are paid once per 64 KB.
 extern "C" __global__ void __launch_bounds__(DOWN_BLOCK, 3) moe_expert_down_act_fp8_grouped(
     const float* __restrict__ act,
     const unsigned long long* __restrict__ weight_ptrs,
@@ -371,9 +359,9 @@ extern "C" __global__ void __launch_bounds__(DOWN_BLOCK, 3) moe_expert_down_act_
         B_block_scale = (const float*)block_scale_ptrs[expert];
         a_base = act; out_base = C;
         if (B_weight == 0) {
-            const unsigned int n_base = blockIdx.x * DOWN_COLS_PER_CTA;
+            const unsigned int n_base = blockIdx.x * DOWN_CTA_COLS;
             for (unsigned int pos = begin; pos < end; pos++) {
-                for (unsigned int i = threadIdx.x; i < DOWN_COLS_PER_CTA && n_base + i < N; i += DOWN_BLOCK) {
+                for (unsigned int i = threadIdx.x; i < DOWN_CTA_COLS && n_base + i < N; i += DOWN_BLOCK) {
                     C[(unsigned long long)pos * N + n_base + i] = __float2bfloat16(0.0f);
                 }
             }
@@ -387,89 +375,93 @@ extern "C" __global__ void __launch_bounds__(DOWN_BLOCK, 3) moe_expert_down_act_
 
     const unsigned int warp = threadIdx.x / WARP_SIZE;
     const unsigned int lane = threadIdx.x % WARP_SIZE;
-    const unsigned int n0 = blockIdx.x * DOWN_COLS_PER_CTA + warp * DOWN_COLS_PER_WARP;
-    if (n0 >= N) return;
-    unsigned int ncol[DOWN_COLS_PER_WARP];
-    bool have[DOWN_COLS_PER_WARP];
-    #pragma unroll
-    for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
-        have[c] = (n0 + c < N);
-        ncol[c] = have[c] ? n0 + c : 0;
-    }
-    const unsigned int K8 = K / 8;
-    const unsigned int k_blocks = (K + FP8_BLOCK - 1) / FP8_BLOCK;
-
-    for (unsigned int row0 = begin; row0 < end; row0 += GROUP_ROWS) {
-        const unsigned int cnt = min((unsigned int)GROUP_ROWS, end - row0);
-        float acc[GROUP_ROWS][DOWN_COLS_PER_WARP];
-        #pragma unroll
-        for (int r = 0; r < GROUP_ROWS; r++)
-            #pragma unroll
-            for (int c = 0; c < DOWN_COLS_PER_WARP; c++) acc[r][c] = 0.0f;
-
-        // 2026-09-26: The next chunk's weights and scales are loaded one chunk ahead.
-        uint2 wv[DOWN_COLS_PER_WARP];
-        float sc[DOWN_COLS_PER_WARP];
+    // 2026-09-27: DOWN_CG column groups of DOWN_COLS_PER_CTA per block, one after another,
+    // so a block's row lookups and table fill serve DOWN_CG times the weight bytes.
+    for (unsigned int cg = 0; cg < DOWN_CG; cg++) {
+        const unsigned int n0 = (blockIdx.x * DOWN_CG + cg) * DOWN_COLS_PER_CTA + warp * DOWN_COLS_PER_WARP;
+        if (n0 >= N) break;
+        unsigned int ncol[DOWN_COLS_PER_WARP];
+        bool have[DOWN_COLS_PER_WARP];
         #pragma unroll
         for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
-            wv[c] = make_uint2(0u, 0u); sc[c] = 0.0f;
-            if (have[c] && lane < K8) {
-                sc[c] = B_block_scale[(ncol[c] / FP8_BLOCK) * k_blocks + (lane * 8) / FP8_BLOCK];
-                wv[c] = *(const uint2*)(B_weight + (unsigned long long)ncol[c] * K + lane * 8);
-            }
+            have[c] = (n0 + c < N);
+            ncol[c] = have[c] ? n0 + c : 0;
         }
+        const unsigned int K8 = K / 8;
+        const unsigned int k_blocks = (K + FP8_BLOCK - 1) / FP8_BLOCK;
 
-        for (unsigned int k8 = lane; k8 < K8; k8 += WARP_SIZE) {
-            unsigned int wa[DOWN_COLS_PER_WARP], wb[DOWN_COLS_PER_WARP];
-            float cs[DOWN_COLS_PER_WARP];
+        for (unsigned int row0 = begin; row0 < end; row0 += GROUP_ROWS) {
+            const unsigned int cnt = min((unsigned int)GROUP_ROWS, end - row0);
+            float acc[GROUP_ROWS][DOWN_COLS_PER_WARP];
             #pragma unroll
-            for (int c = 0; c < DOWN_COLS_PER_WARP; c++) { wa[c] = wv[c].x; wb[c] = wv[c].y; cs[c] = sc[c]; }
-            const unsigned int nk = k8 + WARP_SIZE;
-            if (nk < K8) {
+            for (int r = 0; r < GROUP_ROWS; r++)
                 #pragma unroll
-                for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
-                    if (have[c]) {
-                        sc[c] = B_block_scale[(ncol[c] / FP8_BLOCK) * k_blocks + (nk * 8) / FP8_BLOCK];
-                        wv[c] = *(const uint2*)(B_weight + (unsigned long long)ncol[c] * K + nk * 8);
+                for (int c = 0; c < DOWN_COLS_PER_WARP; c++) acc[r][c] = 0.0f;
+
+            // 2026-09-26: The next chunk's weights and scales are loaded one chunk ahead.
+            uint2 wv[DOWN_COLS_PER_WARP];
+            float sc[DOWN_COLS_PER_WARP];
+            #pragma unroll
+            for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
+                wv[c] = make_uint2(0u, 0u); sc[c] = 0.0f;
+                if (have[c] && lane < K8) {
+                    sc[c] = B_block_scale[(ncol[c] / FP8_BLOCK) * k_blocks + (lane * 8) / FP8_BLOCK];
+                    wv[c] = *(const uint2*)(B_weight + (unsigned long long)ncol[c] * K + lane * 8);
+                }
+            }
+
+            for (unsigned int k8 = lane; k8 < K8; k8 += WARP_SIZE) {
+                unsigned int wa[DOWN_COLS_PER_WARP], wb[DOWN_COLS_PER_WARP];
+                float cs[DOWN_COLS_PER_WARP];
+                #pragma unroll
+                for (int c = 0; c < DOWN_COLS_PER_WARP; c++) { wa[c] = wv[c].x; wb[c] = wv[c].y; cs[c] = sc[c]; }
+                const unsigned int nk = k8 + WARP_SIZE;
+                if (nk < K8) {
+                    #pragma unroll
+                    for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
+                        if (have[c]) {
+                            sc[c] = B_block_scale[(ncol[c] / FP8_BLOCK) * k_blocks + (nk * 8) / FP8_BLOCK];
+                            wv[c] = *(const uint2*)(B_weight + (unsigned long long)ncol[c] * K + nk * 8);
+                        }
                     }
                 }
-            }
-            const unsigned int base_k = k8 * 8;
-            #pragma unroll
-            for (int b = 0; b < 2; b++) {
-                float wf[DOWN_COLS_PER_WARP][4];
+                const unsigned int base_k = k8 * 8;
                 #pragma unroll
-                for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
-                    const unsigned int w32 = (b == 0) ? wa[c] : wb[c];
-                    wf[c][0] = s_lut[(w32      ) & 0xFF] * cs[c];
-                    wf[c][1] = s_lut[(w32 >>  8) & 0xFF] * cs[c];
-                    wf[c][2] = s_lut[(w32 >> 16) & 0xFF] * cs[c];
-                    wf[c][3] = s_lut[(w32 >> 24) & 0xFF] * cs[c];
-                }
-                #pragma unroll
-                for (int r = 0; r < GROUP_ROWS; r++) {
-                    if (r < (int)cnt) {
-                        const float4 al = *(const float4*)(a_base + (unsigned long long)(row0 + r) * K + base_k + b * 4);
-                        #pragma unroll
-                        for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
-                            acc[r][c] += al.x * wf[c][0] + al.y * wf[c][1] + al.z * wf[c][2] + al.w * wf[c][3];
+                for (int b = 0; b < 2; b++) {
+                    float wf[DOWN_COLS_PER_WARP][4];
+                    #pragma unroll
+                    for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
+                        const unsigned int w32 = (b == 0) ? wa[c] : wb[c];
+                        wf[c][0] = s_lut[(w32      ) & 0xFF] * cs[c];
+                        wf[c][1] = s_lut[(w32 >>  8) & 0xFF] * cs[c];
+                        wf[c][2] = s_lut[(w32 >> 16) & 0xFF] * cs[c];
+                        wf[c][3] = s_lut[(w32 >> 24) & 0xFF] * cs[c];
+                    }
+                    #pragma unroll
+                    for (int r = 0; r < GROUP_ROWS; r++) {
+                        if (r < (int)cnt) {
+                            const float4 al = *(const float4*)(a_base + (unsigned long long)(row0 + r) * K + base_k + b * 4);
+                            #pragma unroll
+                            for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
+                                acc[r][c] += al.x * wf[c][0] + al.y * wf[c][1] + al.z * wf[c][2] + al.w * wf[c][3];
+                            }
                         }
                     }
                 }
             }
-        }
 
-        #pragma unroll
-        for (int r = 0; r < GROUP_ROWS; r++) {
-            if (r < (int)cnt) {
-                __nv_bfloat16* out = out_base + (unsigned long long)(row0 + r) * N;
-                #pragma unroll
-                for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
-                    float v = acc[r][c];
+            #pragma unroll
+            for (int r = 0; r < GROUP_ROWS; r++) {
+                if (r < (int)cnt) {
+                    __nv_bfloat16* out = out_base + (unsigned long long)(row0 + r) * N;
                     #pragma unroll
-                    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
-                        v += __shfl_down_sync(0xFFFFFFFF, v, offset);
-                    if (lane == 0 && have[c]) out[ncol[c]] = __float2bfloat16(v);
+                    for (int c = 0; c < DOWN_COLS_PER_WARP; c++) {
+                        float v = acc[r][c];
+                        #pragma unroll
+                        for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1)
+                            v += __shfl_down_sync(0xFFFFFFFF, v, offset);
+                        if (lane == 0 && have[c]) out[ncol[c]] = __float2bfloat16(v);
+                    }
                 }
             }
         }

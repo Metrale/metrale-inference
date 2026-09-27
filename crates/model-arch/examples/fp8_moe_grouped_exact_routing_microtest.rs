@@ -2,8 +2,8 @@
 
 //! 2026-09-26: Byte parity of the grouped FP8 MoE decode's exact routings against the
 //! routers they replace, at Qwen3.6-35B-A3B shapes (hidden 2048, 256 experts, top-8):
-//! - `GroupedRouting::PerRow`: `dense_gemv_bf16_batchm` in launches of at most
-//!   `DENSE_GEMV_BATCHM_MAX_M` rows, then `moe_topk_softmax_rows`, against
+//! - `GroupedRouting::PerRow`: `dense_gemv_bf16_batchm` in one launch with 4, 16 or 1
+//!   rows per block row (2026-09-27), then `moe_topk_softmax_rows`, against
 //!   `MoeLayer::forward`'s router, `dense_gemv_bf16` + `moe_topk_softmax` once per row.
 //! - `GroupedRouting::PerToken`: `dense_gemm_bf16` over all rows, then
 //!   `moe_topk_softmax_rows`, against `MoeLayer::forward_batched`'s router, the same GEMM
@@ -234,30 +234,29 @@ fn main() -> Result<()> {
                     ops::dense_gemv(&gpu, k.gemv, inp, &gate, out, e, h, 0)?;
                 }
                 topk_per_row(&gpu, &k, &b, m, norm)?;
-                let max_rows = ops::DENSE_GEMV_BATCHM_MAX_M as usize;
-                let mut done = 0usize;
-                while done < m {
-                    let rows = (m - done).min(max_rows);
-                    let inp = input.offset(done * H * 2);
-                    let out = b.logits_new.offset(done * b.e * 2);
-                    ops::dense_gemv_batchm(
+                // 2026-09-27: One `dense_gemv_batchm_split` launch, at the router's 4 rows
+                // per block row (`forward_fp8_grouped_router.rs`), 16 and 1.
+                for per_block in [4usize, 16, 1] {
+                    ops::dense_gemv_batchm_split(
                         &gpu,
                         k.gemv_m,
-                        inp,
+                        input,
                         &gate,
-                        out,
-                        rows as u32,
+                        b.logits_new,
+                        m as u32,
+                        m.div_ceil(per_block) as u32,
                         e,
                         h,
                         e,
                         0,
                     )?;
-                    done += rows;
+                    topk_all(&gpu, k.topk_rows, &b, m, norm)?;
+                    let (lg, rt) = same(&gpu, &b, m)?;
+                    println!(
+                        "E={e_count} PerRow/{per_block:2} norm={norm:5} M={m:2}: logits {lg}, routing {rt}"
+                    );
+                    failures += usize::from(!(lg && rt));
                 }
-                topk_all(&gpu, k.topk_rows, &b, m, norm)?;
-                let (lg, rt) = same(&gpu, &b, m)?;
-                println!("E={e_count} PerRow   norm={norm:5} M={m:2}: logits {lg}, routing {rt}");
-                failures += usize::from(!(lg && rt));
 
                 // 2026-09-26: Control: the batched tie-break on the same logits.
                 topk_all(&gpu, k.topk_batched, &b, m, norm)?;

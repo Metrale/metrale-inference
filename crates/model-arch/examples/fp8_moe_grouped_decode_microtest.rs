@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: The per-token FP8 MoE loop (single-token gate_up, silu_down and blend
-//! kernels, once per row) against one cross-row grouped dispatch (`moe_sort_by_expert`,
-//! `moe_fp8_grouped_compact` and the `_fp8_grouped` kernels), at Qwen3.6-35B-A3B shapes.
+//! kernels, once per row) against one cross-row grouped dispatch (`moe_fp8_grouped_sort`
+//! and the `_fp8_grouped` kernels), at Qwen3.6-35B-A3B shapes.
 //!
 //! Owner: model-arch examples.
 //! Invariants:
@@ -43,11 +43,10 @@ struct Handles {
     gate_up: KernelHandle,
     silu_down: KernelHandle,
     blend: KernelHandle,
-    sort: KernelHandle,
     g_gate_up: KernelHandle,
     g_silu_down: KernelHandle,
     g_blend: KernelHandle,
-    g_compact: KernelHandle,
+    g_sort: KernelHandle,
 }
 
 struct Experts {
@@ -171,26 +170,21 @@ fn run_grouped(
     let cap = ops::fp8_grouped_active_cap(m as u32, TOP_K as u32, s.e as u32);
     let active_experts = token_to_perm.offset(te * 4);
     let active_count = active_experts.offset(cap as usize * 4);
-    ops::moe_sort_by_expert(
+    ops::moe_fp8_grouped_sort(
         gpu,
-        h.sort,
+        h.g_sort,
+        ops::Fp8GroupedSortOut {
+            sorted_token_ids,
+            sorted_expert_ids,
+            expert_offsets,
+            token_to_perm,
+            active_experts,
+            active_count,
+        },
         indices,
-        sorted_token_ids,
-        sorted_expert_ids,
-        expert_offsets,
-        token_to_perm,
         te as u32,
         s.e as u32,
         TOP_K as u32,
-        0,
-    )?;
-    ops::moe_fp8_grouped_compact(
-        gpu,
-        h.g_compact,
-        expert_offsets,
-        active_experts,
-        active_count,
-        s.e as u32,
         0,
     )?;
     ops::moe_expert_gate_up_act_fp8_grouped(
@@ -291,7 +285,6 @@ fn main() -> Result<()> {
             "moe_expert_silu_down_shared_fp8",
         )?,
         blend: gpu.kernel("moe_expert_gemv", "moe_weighted_sum_blend")?,
-        sort: gpu.kernel("moe", "moe_sort_by_expert")?,
         g_gate_up: gpu.kernel(
             "moe_shared_expert_fused_fp8_grouped",
             "moe_expert_gate_up_act_fp8_grouped",
@@ -304,10 +297,7 @@ fn main() -> Result<()> {
             "moe_fp8_grouped_blend",
             "moe_weighted_sum_blend_fp8_grouped",
         )?,
-        g_compact: gpu.kernel(
-            "moe_shared_expert_fused_fp8_grouped",
-            "moe_fp8_grouped_compact",
-        )?,
+        g_sort: gpu.kernel("moe_fp8_grouped_sort", "moe_fp8_grouped_sort")?,
     };
     let mut rng = Rng(0x6d6f_6520_6739_2026);
     let e_count = experts();

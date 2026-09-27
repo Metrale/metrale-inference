@@ -237,7 +237,9 @@ pub struct MoeLayer {
     moe_expert_gate_up_act_fp8_grouped_k: KernelHandle,
     moe_expert_down_act_fp8_grouped_k: KernelHandle,
     moe_weighted_sum_blend_fp8_grouped_k: KernelHandle,
-    moe_fp8_grouped_compact_k: KernelHandle,
+    // 2026-09-27: `moe_fp8_grouped_sort`: the slot sort and the active-expert list in
+    // one launch.
+    moe_fp8_grouped_sort_k: KernelHandle,
     // 2026-09-26: The exact-router kernels of the grouped decode
     // (`GroupedRouting::PerRow` / `PerToken`): `moe_topk_softmax_rows` and
     // `dense_gemv_bf16_batchm`; 0 on targets that do not ship them.

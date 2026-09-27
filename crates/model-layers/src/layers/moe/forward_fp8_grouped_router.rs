@@ -35,6 +35,10 @@ pub enum GroupedRouting {
     PerToken,
 }
 
+/// 2026-09-27: Rows per block row of the per-row router GEMV
+/// (`dense_gemv_batchm_split`); at most `DENSE_GEMV_BATCHM_MAX_M`.
+const ROUTER_ROWS_PER_BLOCK: u32 = 4;
+
 impl MoeLayer {
     /// 2026-09-26: Whether the grouped decode serves `m` rows with `routing`.
     /// `Batched` is [`Self::fp8_grouped_decode_ok`]. The exact routings also need
@@ -89,24 +93,21 @@ impl MoeLayer {
         let gate_logits = ctx.buffers.gate_logits();
         match routing {
             GroupedRouting::PerRow => {
-                let max_rows = ops::DENSE_GEMV_BATCHM_MAX_M as usize;
-                let mut done = 0usize;
-                while done < m {
-                    let rows = (m - done).min(max_rows);
-                    ops::dense_gemv_batchm(
-                        ctx.gpu,
-                        self.router_gemv_batchm_k,
-                        router_in.offset(done * h as usize * 2),
-                        &self.weights.gate,
-                        gate_logits.offset(done * num_experts as usize * 2),
-                        rows as u32,
-                        num_experts,
-                        h,
-                        num_experts,
-                        stream,
-                    )?;
-                    done += rows;
-                }
+                // 2026-09-27: One launch, ROUTER_ROWS_PER_BLOCK rows per block row: the
+                // router's 256 columns give only 64 blocks per row group.
+                ops::dense_gemv_batchm_split(
+                    ctx.gpu,
+                    self.router_gemv_batchm_k,
+                    router_in,
+                    &self.weights.gate,
+                    gate_logits,
+                    n,
+                    n.div_ceil(ROUTER_ROWS_PER_BLOCK),
+                    num_experts,
+                    h,
+                    num_experts,
+                    stream,
+                )?;
             }
             GroupedRouting::PerToken => {
                 self.router_gemm_bf16(router_in, gate_logits, n, num_experts, h, ctx, stream)?;

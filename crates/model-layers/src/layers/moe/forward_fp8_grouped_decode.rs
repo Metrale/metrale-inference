@@ -36,7 +36,7 @@ pub(super) struct GroupedKernels {
     pub gate_up: KernelHandle,
     pub silu_down: KernelHandle,
     pub blend: KernelHandle,
-    pub compact: KernelHandle,
+    pub sort: KernelHandle,
     pub topk_rows: KernelHandle,
     pub router_gemv: KernelHandle,
 }
@@ -55,7 +55,7 @@ impl GroupedKernels {
                 "moe_fp8_grouped_blend",
                 "moe_weighted_sum_blend_fp8_grouped",
             ),
-            compact: try_kernel(gpu, FUSED, "moe_fp8_grouped_compact"),
+            sort: try_kernel(gpu, "moe_fp8_grouped_sort", "moe_fp8_grouped_sort"),
             topk_rows: try_kernel(gpu, "moe_topk", "moe_topk_softmax_rows"),
             router_gemv: try_kernel(gpu, "dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm"),
         }
@@ -149,8 +149,8 @@ impl MoeLayer {
             && self.moe_expert_gate_up_act_fp8_grouped_k.0 != 0
             && self.moe_expert_down_act_fp8_grouped_k.0 != 0
             && self.moe_weighted_sum_blend_fp8_grouped_k.0 != 0
-            && self.moe_fp8_grouped_compact_k.0 != 0
-            && self.moe_sort_by_expert.0 != 0
+            && self.moe_fp8_grouped_sort_k.0 != 0
+            && cfg.num_experts <= ops::FP8_GROUPED_SORT_MAX_EXPERTS as usize
             // 2026-09-25: This path has no LoRA fold hooks.
             && self.lora.is_none()
             && self.pre_expert_norm.is_none()
@@ -253,33 +253,28 @@ impl MoeLayer {
         let sorted_expert_ids = gate_logits.offset(te * 4);
         let expert_offsets = gate_logits.offset(te * 4 * 2);
         let token_to_perm = gate_logits.offset(te * 4 * 2 + (ne + 1) * 4);
-        ops::moe_sort_by_expert(
-            ctx.gpu,
-            self.moe_sort_by_expert,
-            indices_dev,
-            sorted_token_ids,
-            sorted_expert_ids,
-            expert_offsets,
-            token_to_perm,
-            te as u32,
-            num_experts,
-            top_k,
-            stream,
-        )?;
-
-        // 2026-09-25: 4. Compact the active experts into a list of fixed
-        //    capacity `cap` (a function of `m`, so the grids are the same for a
-        //    captured graph), then gate+up, silu+down and blend.
+        // 2026-09-25: 4. The active experts go to a list of fixed capacity `cap`
+        //    (a function of `m`, so the grids are the same for a captured graph),
+        //    then gate+up, silu+down and blend. 2026-09-27: One launch sorts the
+        //    slots and builds the list.
         let cap = ops::fp8_grouped_active_cap(n, top_k, num_experts);
         let active_experts = token_to_perm.offset(te * 4);
         let active_count = active_experts.offset(cap as usize * 4);
-        ops::moe_fp8_grouped_compact(
+        ops::moe_fp8_grouped_sort(
             ctx.gpu,
-            self.moe_fp8_grouped_compact_k,
-            expert_offsets,
-            active_experts,
-            active_count,
+            self.moe_fp8_grouped_sort_k,
+            ops::Fp8GroupedSortOut {
+                sorted_token_ids,
+                sorted_expert_ids,
+                expert_offsets,
+                token_to_perm,
+                active_experts,
+                active_count,
+            },
+            indices_dev,
+            te as u32,
             num_experts,
+            top_k,
             stream,
         )?;
         super::dump::dump_grouped_active(ctx.gpu, stream, active_count, m, ctx.graph_capture)?;

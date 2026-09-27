@@ -22,9 +22,9 @@ use crate::weight_map::Fp8Weight;
 /// `.cu`.
 pub const FP8_GROUPED_GATE_UP_COLS_PER_CTA: u32 = 8;
 
-/// 2026-09-25: Output columns per down CTA. Must equal `DOWN_COLS_PER_CTA` in the
-/// `.cu`.
-pub const FP8_GROUPED_DOWN_COLS_PER_CTA: u32 = 32;
+/// 2026-09-25: Output columns per down CTA. Must equal `DOWN_CTA_COLS` in the
+/// `.cu`: 2026-09-27, four column groups of 32.
+pub const FP8_GROUPED_DOWN_COLS_PER_CTA: u32 = 128;
 
 /// 2026-09-26: Rows per gate+up pass. Must equal `GU_GROUP_ROWS` in the `.cu`:
 /// the shared expert takes `ceil(num_tokens / this)` block rows.
@@ -41,25 +41,52 @@ pub fn fp8_grouped_active_cap(num_tokens: u32, top_k: u32, num_experts: u32) -> 
     (num_tokens * top_k).min(num_experts)
 }
 
-/// 2026-09-25: Builds the compacted active-expert list from `expert_offsets`:
-/// `active_experts[0..count]` in ascending order, and `active_count[0] =
-/// count`. Launch it on the stream of the grouped kernels that read it.
-pub fn moe_fp8_grouped_compact(
+/// 2026-09-27: Experts `moe_fp8_grouped_sort` handles (`PMS_MAX_EXPERTS`).
+pub const FP8_GROUPED_SORT_MAX_EXPERTS: u32 = 1024;
+
+/// 2026-09-27: The outputs of [`moe_fp8_grouped_sort`]: `moe_sort_by_expert`'s
+/// four and the active-expert list with its length.
+pub struct Fp8GroupedSortOut {
+    pub sorted_token_ids: DevicePtr,
+    pub sorted_expert_ids: DevicePtr,
+    pub expert_offsets: DevicePtr,
+    pub token_to_perm: DevicePtr,
+    pub active_experts: DevicePtr,
+    pub active_count: DevicePtr,
+}
+
+/// 2026-09-27: Sorts the `total_expanded` slots of `topk_ids` by expert, as
+/// `moe_sort_by_expert` does, and writes `active_experts[0..count]` in
+/// ascending order with `active_count[0] = count`, in one launch on `stream`
+/// (the grouped kernels that read them must follow on it).
+#[allow(clippy::too_many_arguments)]
+pub fn moe_fp8_grouped_sort(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
-    expert_offsets: DevicePtr,
-    active_experts: DevicePtr,
-    active_count: DevicePtr,
+    out: Fp8GroupedSortOut,
+    topk_ids: DevicePtr,
+    total_expanded: u32,
     num_experts: u32,
+    top_k: u32,
     stream: u64,
 ) -> Result<()> {
+    anyhow::ensure!(
+        num_experts <= FP8_GROUPED_SORT_MAX_EXPERTS,
+        "moe_fp8_grouped_sort: {num_experts} experts exceed {FP8_GROUPED_SORT_MAX_EXPERTS}"
+    );
     KernelLaunch::new(gpu, kernel)
         .grid([1, 1, 1])
         .block([256, 1, 1])
-        .arg_ptr(expert_offsets)
-        .arg_ptr(active_experts)
-        .arg_ptr(active_count)
+        .arg_ptr(topk_ids)
+        .arg_ptr(out.sorted_token_ids)
+        .arg_ptr(out.sorted_expert_ids)
+        .arg_ptr(out.expert_offsets)
+        .arg_ptr(out.token_to_perm)
+        .arg_ptr(out.active_experts)
+        .arg_ptr(out.active_count)
+        .arg_u32(total_expanded)
         .arg_u32(num_experts)
+        .arg_u32(top_k)
         .launch(stream)
 }
 
