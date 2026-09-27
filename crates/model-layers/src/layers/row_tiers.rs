@@ -37,11 +37,11 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// 2026-09-27: The projection order a process runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowTiers {
-    /// Pick by row count (today's behaviour).
+    /// 2026-09-27: Pick by row count (the order before canonical tiers).
     ByRows,
-    /// Scalar-GEMV order at every row count.
+    /// 2026-09-27: Scalar-GEMV order at every row count.
     Exact,
-    /// Tensor-core tile order at every row count.
+    /// 2026-09-27: Tensor-core tile order at every row count.
     Canonical,
 }
 

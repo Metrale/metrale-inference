@@ -26,12 +26,12 @@ use super::*;
 /// 2026-09-26: Which router arithmetic `forward_fp8_grouped_decode_routed` runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GroupedRouting {
-    /// The batched gate GEMM (NVFP4 or BF16) and the batched softmax or sigmoid
+    /// 2026-09-27: The batched gate GEMM (NVFP4 or BF16) and the batched softmax or sigmoid
     /// top-k: the MTP drafter and the `METRALE_FP8_MOE_GROUPED_DECODE` arm.
     Batched,
-    /// The router of `MoeLayer::forward`, row by row.
+    /// 2026-09-27: The router of `MoeLayer::forward`, row by row.
     PerRow,
-    /// The router of `MoeLayer::forward_batched` with BF16 logits.
+    /// 2026-09-27: The router of `MoeLayer::forward_batched` with BF16 logits.
     PerToken,
 }
 
