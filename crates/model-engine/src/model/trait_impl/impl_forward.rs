@@ -170,4 +170,8 @@ impl ModelForward for TransformerModel {
     fn kv_block_size(&self) -> Option<usize> {
         Some(self.kv_cache.lock().block_size())
     }
+
+    fn prefill_tail_split(&self, tokens: &[u32]) -> Option<usize> {
+        self.prefill_tail_split_dispatch(tokens)
+    }
 }

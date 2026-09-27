@@ -130,7 +130,21 @@ pub fn start_chunked_prefill(
     };
 
     let total = prompt_tokens.len();
-    let chunk_len = total.min(max_prefill_tokens);
+    // 2026-09-27: A non-last chunk 0 ends on a KV block boundary, or at the tail
+    // split point, as later chunks do (`prefill_plan::plan_chunk_len`); an idle
+    // chunk 0 of `prefill_budget + max_batch_size` tokens otherwise leaves every
+    // later chunk end off the block grid. MLA prompts are not split.
+    let chunk_len = if model.is_mla() {
+        total.min(max_prefill_tokens)
+    } else {
+        metrale_model_engine::prefill_plan::plan_chunk_len(
+            0,
+            total,
+            total.min(max_prefill_tokens),
+            model.kv_block_size(),
+            model.prefill_tail_split(&prompt_tokens),
+        )
+    };
     let is_last = chunk_len >= total;
 
     tracing::info!(
