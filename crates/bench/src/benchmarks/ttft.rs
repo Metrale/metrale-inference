@@ -7,6 +7,10 @@
 //! * Cold: every sample gets a unique prefix tag, so no two requests share a
 //!   prefix.
 //!
+//! 2026-09-27: The synthetic gates send `prompt_lengths` of filler; the
+//! high-ISL gates send one committed long prompt and check the server's
+//! prompt-token count on every sample (`ttft/long_prompt.rs`).
+//!
 //! Owner: bench, ttft.
 //! Invariants:
 //! - The verdict compares the run's median and p90 with the stored baseline of
@@ -31,7 +35,11 @@ use crate::plugin::{Plugin, PluginHandle};
 use crate::result::{BenchmarkResult, Cell, CellStyle, Column, LogLine, ResultTable, RunStatus};
 
 mod descriptors;
-pub use descriptors::{COLD_DESCRIPTOR, COLD_METADATA, WARM_DESCRIPTOR, WARM_METADATA};
+mod long_prompt;
+pub use descriptors::{
+    COLD_DESCRIPTOR, COLD_METADATA, HIGH_ISL_COLD_DESCRIPTOR, HIGH_ISL_COLD_MOE_DESCRIPTOR,
+    HIGH_ISL_WARM_DESCRIPTOR, HIGH_ISL_WARM_MOE_DESCRIPTOR, WARM_DESCRIPTOR, WARM_METADATA,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -86,6 +94,12 @@ fn valid_ttft_ms(value: f64) -> bool {
 
 pub struct TtftGate {
     mode: Mode,
+    descriptor: &'static BenchmarkDescriptor,
+    metadata: &'static PluginMetadata,
+    /// 2026-09-27: Whether this gate sends a committed long prompt
+    /// (`long_prompt.rs`) in place of `prompt_lengths` of synthetic filler.
+    fixture: bool,
+    long: Option<long_prompt::LongPrompt>,
     handle: Option<PluginHandle>,
     lengths: Vec<usize>,
     repeats: usize,
@@ -106,8 +120,21 @@ impl TtftGate {
     const NOISE_FLOOR_MS: f64 = 2.0;
 
     pub fn new(mode: Mode) -> Self {
+        Self::build(mode, mode.descriptor(), mode.metadata(), false)
+    }
+
+    fn build(
+        mode: Mode,
+        descriptor: &'static BenchmarkDescriptor,
+        metadata: &'static PluginMetadata,
+        fixture: bool,
+    ) -> Self {
         Self {
             mode,
+            descriptor,
+            metadata,
+            fixture,
+            long: None,
             handle: None,
             lengths: Vec::new(),
             repeats: 0,
@@ -135,21 +162,21 @@ impl TtftGate {
         self.rows.iter().flat_map(|r| r.samples.clone()).collect()
     }
 
-    async fn measure(&self, tokens: usize, prefix_tag: &str) -> Result<http::ChatOutcome> {
+    async fn measure(&self, content: &str) -> Result<http::ChatOutcome> {
         let handle = self.handle()?;
         let target = handle.target();
-        let body = json!({
+        let mut body = json!({
             "model": target.model,
             "stream": true,
             // 2026-09-26: Enough for a first-token timestamp; TTFT does not
             // depend on the reply length.
             "max_tokens": 8,
             "temperature": 0.0,
-            "messages": [{
-                "role": "user",
-                "content": stats::make_prompt(tokens, PromptMode::Natural, prefix_tag),
-            }],
+            "messages": [{"role": "user", "content": content}],
         });
+        if self.long.is_some() {
+            long_prompt::extend_request(&mut body);
+        }
         http::chat_stream(target, &body, self.timeout).await
     }
 
@@ -165,14 +192,23 @@ impl TtftGate {
                 i + 1,
                 self.repeats
             ));
-            let prefix_tag = sample_prefix_tag(self.mode, tokens, i, handle.run_id());
+            let content = match &self.long {
+                Some(long) => long.prompt(self.mode, i),
+                None => {
+                    let prefix_tag = sample_prefix_tag(self.mode, tokens, i, handle.run_id());
+                    stats::make_prompt(tokens, PromptMode::Natural, &prefix_tag)
+                }
+            };
             if self.mode == Mode::Warm {
                 // 2026-09-26: Prime, then measure: the priming request's result
                 // is discarded, and only the second request is sampled.
-                let _ = self.measure(tokens, &prefix_tag).await;
+                let _ = self.measure(&content).await;
                 handle.check_cancelled()?;
             }
-            let outcome = self.measure(tokens, &prefix_tag).await?;
+            let outcome = self.measure(&content).await?;
+            if let Some(long) = &mut self.long {
+                long.admit(i, outcome.prompt_tokens)?;
+            }
             cached_tokens = cached_tokens.max(outcome.cached_prompt_tokens);
             match outcome.ttft_ms {
                 Some(ms) if valid_ttft_ms(ms) => samples.push(ms),
@@ -183,7 +219,8 @@ impl TtftGate {
             }
         }
         Ok(LengthRow {
-            prompt_tokens: tokens,
+            // 2026-09-27: A long prompt's row shows the server's count.
+            prompt_tokens: self.observed_prompt_tokens().unwrap_or(tokens),
             samples,
             cached_tokens,
         })
@@ -228,7 +265,7 @@ impl TtftGate {
 
 impl Plugin for TtftGate {
     fn metadata(&self) -> &'static PluginMetadata {
-        self.mode.metadata()
+        self.metadata
     }
 
     fn load(&mut self, handle: PluginHandle) -> impl Future<Output = Result<()>> + Send {
@@ -240,12 +277,14 @@ impl Plugin for TtftGate {
 
 impl Benchmark for TtftGate {
     fn descriptor(&self) -> &'static BenchmarkDescriptor {
-        self.mode.descriptor()
+        self.descriptor
     }
 
     fn parameters(&self) -> Vec<ParamSpec> {
-        vec![
-            ParamSpec::new(
+        let source = if self.fixture {
+            long_prompt::source_parameters()
+        } else {
+            vec![ParamSpec::new(
                 "prompt_lengths",
                 "Prompt lengths",
                 "Prompt sizes in tokens; one table row each.",
@@ -254,7 +293,9 @@ impl Benchmark for TtftGate {
                     max: 131_072,
                 },
                 ParamValue::IntList(vec![256, 1024, 4096]),
-            ),
+            )]
+        };
+        source.into_iter().chain([
             ParamSpec::new(
                 "repeats",
                 "Samples per length",
@@ -296,17 +337,20 @@ impl Benchmark for TtftGate {
                 ParamKind::Int { min: 10, max: 3600 },
                 ParamValue::Int(300),
             ),
-        ]
+        ])
+        .collect()
     }
 
     fn configure(&mut self, values: &ParamValues) -> Result<()> {
         let specs = self.parameters();
         values.validate_against(&specs)?;
-        self.lengths = values
-            .int_list("prompt_lengths")?
-            .iter()
-            .map(|v| *v as usize)
-            .collect();
+        (self.lengths, self.long) = if self.fixture {
+            let long = long_prompt::LongPrompt::configure(values)?;
+            (vec![long.min_prompt_tokens], Some(long))
+        } else {
+            let lengths = values.int_list("prompt_lengths")?;
+            (lengths.iter().map(|v| *v as usize).collect(), None)
+        };
         self.repeats = values.usize("repeats")?;
         self.median_limit_pct = values.float("median_limit_pct")?;
         self.p90_limit_pct = values.float("p90_limit_pct")?;
@@ -359,11 +403,16 @@ impl Benchmark for TtftGate {
             if let Some(v) = p90 {
                 metrics.insert("p90_ms".to_string(), v);
             }
+            // 2026-09-27: The server's count, so a record shows the prompt size
+            // it was measured at rather than the size the gate asked for.
+            if let Some(n) = self.observed_prompt_tokens() {
+                metrics.insert("prompt_tokens".to_string(), n as f64);
+            }
             if self.should_store(&verdict) {
                 let target = handle.target();
                 baseline::save(
                     handle.artifacts(),
-                    self.mode.descriptor().id,
+                    self.descriptor.id,
                     &target.base_url,
                     &target.model,
                     metrics.clone(),
