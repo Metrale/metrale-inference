@@ -38,10 +38,13 @@ campaign commands.
 ## For queue administrators
 
 Two record-bearing performance PRs can never successfully share a merge-queue
-group; the second is guaranteed to bounce after burning a full CI run.
-Consider restricting the queue's max group size to 1, or socially serializing
-perf-PR landings. Non-perf PRs (docs, book, workflows, `scripts/`) compose
-freely — none of their paths invalidate records.
+group; the second is guaranteed to bounce after burning a full CI run. The
+queue builds one entry at a time, and `perf-path exclusivity`
+(`.github/workflows/merge-queue-guard.yml`) keeps a second perf-path PR out of
+it: the moment one is enqueued behind another it is taken back out with a
+comment, and a merge group built for one anyway fails that check. Non-perf PRs
+(docs, book, workflows, `scripts/`) compose freely — none of their paths
+invalidate records.
 
 ## Known costs, accepted
 

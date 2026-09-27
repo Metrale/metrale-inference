@@ -132,8 +132,9 @@ jobs:
           echo "will publish b$n from $sha"
 
   # ---------------------------------------------------------------------
-  # The SAME reusable matrix every PR dry-runs and every semver release
-  # uses. If this ever diverges from what a PR validated, that is a bug.
+  # The SAME reusable matrix every semver release uses. Pull requests and
+  # queue entries only validate it (ci.yml passes `main_only`), so this is
+  # where the nine legs actually build.
   # ---------------------------------------------------------------------
   build:
     name: build

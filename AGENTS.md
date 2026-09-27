@@ -94,10 +94,12 @@ a free box, `campaign-guard.sh`, no other PR mid-certification, top of stack, st
 sequencing, one `git_sha` across added records, and one Speed-class signer. `met bench
 certify` claims the campaign lock itself. Anything you override, quote in the PR.
 
-★ **A red `stamp status` or `seal status` is not a failure until it is dated.** Those jobs
-freeze their outputs for the life of a CI run, so a mark minted *after* they ran leaves them
-red until a FULL `gh run rerun <id>` — `--failed` cannot work, because they *succeeded* while
-emitting `false`. Compare the mark's time with the run's start before reading the red.
+★ **`stamp status` and `seal status` are check runs the merge pipeline writes, not CI jobs.**
+Pending means a person has yet to act; they complete by themselves once `/stamp` / `/seal`
+is recorded, and nothing needs re-running. A stamp that arrives after CI read the marks
+re-runs the held `stamp lookup` job automatically once that CI run finishes. A stamped,
+sealed, green PR is enqueued by the pipeline; if the queue throws it out, re-enqueue it by
+hand after fixing the cause.
 
 For a `kernels/` change that reaches a second hardware, choose the remedy before pushing
 (benign, parameterize in `kernels/<hw>/HARDWARE.toml` **with a reader added in the same

@@ -47,6 +47,12 @@ GATES = [
         "reports_as": "PR shares history with its base",
         "required_context": True,
     },
+    {
+        "workflow": "merge-queue-guard.yml",
+        "job": "exclusivity",
+        "reports_as": "perf-path exclusivity",
+        "required_context": True,
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -80,6 +86,7 @@ REQUIRED_CONTEXTS = [
     ("nvcc -> PTX (all gb10 targets)", "kernel-compile.yml", "compile", None),
     ("No block_on under tui/ or recipe/", "tui-threading.yml", "no-blocking-on-the-render-thread", None),
     ("Merge-ancestry guard self-test", "merge-ancestry.yml", "self-test", None),
+    ("perf-path exclusivity", "merge-queue-guard.yml", "exclusivity", None),
 ]
 
 # An `if:` that names one of these suppresses the implicit `success()` that

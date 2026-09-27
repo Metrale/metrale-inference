@@ -1,0 +1,185 @@
+{
+  "evaluate": [
+    {"name": "stamped, sealed and green is enqueued",
+     "patch": {}, "expect": {"stamp": "success", "seal": "success", "rerun": null, "queue": "enqueue"}},
+
+    {"name": "control: no marks at all leaves both checks pending, not red",
+     "patch": {"marks": []},
+     "expect": {"stamp": "pending", "seal": "pending", "queue": null}},
+
+    {"name": "a stamp on an earlier commit still holds",
+     "patch": {}, "expect": {"stamp": "success"}},
+
+    {"name": "control: a seal on an earlier commit does not hold",
+     "patch": {"marks": [
+       {"name": "Stamp", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T10:00:00Z"},
+       {"name": "Seal", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "created_at": "2026-09-26T09:00:00Z"}]},
+     "expect": {"stamp": "success", "seal": "pending", "queue": null}},
+
+    {"name": "control: a Seal written by another app (a workflow's own token) is not a seal",
+     "patch": {"marks": [
+       {"name": "Stamp", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T10:00:00Z"},
+       {"name": "Seal", "conclusion": "success", "app_client_id": "Iv-github-actions",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T11:00:00Z"}]},
+     "expect": {"seal": "pending", "queue": null}},
+
+    {"name": "control: a Stamp from a commit that is not in this PR does not count",
+     "patch": {"marks": [
+       {"name": "Stamp", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "ffffffffffffffffffffffffffffffffffffffff", "created_at": "2026-09-26T10:00:00Z"},
+       {"name": "Seal", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T11:00:00Z"}]},
+     "expect": {"stamp": "pending", "queue": null}},
+
+    {"name": "an Expedite on the head stands in for both marks",
+     "patch": {"marks": [
+       {"name": "Expedite", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T10:00:00Z"}]},
+     "expect": {"stamp": "success", "seal": "success", "queue": "enqueue"}},
+
+    {"name": "control: with no mark App configured, nothing counts",
+     "patch": {"mark_app_client_id": ""},
+     "expect": {"stamp": "pending", "seal": "pending", "queue": null}},
+
+    {"name": "an upper stack layer is never held and never enqueued",
+     "patch": {"pr": {"base_ref": "stack/base"}, "marks": []},
+     "expect": {"stamp": "success", "seal": "success", "queue": null, "queue_reason": "merges down"}},
+
+    {"name": "control: a required check still failing blocks the queue",
+     "patch": {"head_checks": [
+       {"id": 1, "name": "cargo test --workspace", "status": "completed", "conclusion": "failure", "app_id": 15368, "started_at": "2026-09-26T10:30:00Z"},
+       {"id": 2, "name": "PR benchmark gate", "status": "completed", "conclusion": "success", "app_id": 15368, "started_at": "2026-09-26T10:31:00Z"},
+       {"id": 3, "name": "release matrix / dry-run summary", "status": "completed", "conclusion": "success", "app_id": 15368, "started_at": "2026-09-26T10:32:00Z"}]},
+     "expect": {"queue": null, "queue_reason": "cargo test --workspace"}},
+
+    {"name": "control: a required check that never reported blocks the queue (missing is not skipped)",
+     "patch": {"head_checks": [
+       {"id": 2, "name": "PR benchmark gate", "status": "completed", "conclusion": "success", "app_id": 15368, "started_at": "2026-09-26T10:31:00Z"},
+       {"id": 3, "name": "release matrix / dry-run summary", "status": "completed", "conclusion": "success", "app_id": 15368, "started_at": "2026-09-26T10:32:00Z"}]},
+     "expect": {"queue": null, "queue_reason": "cargo test --workspace"}},
+
+    {"name": "control: a required check produced by the wrong app does not satisfy it",
+     "patch": {"head_checks": [
+       {"id": 1, "name": "cargo test --workspace", "status": "completed", "conclusion": "success", "app_id": 999, "started_at": "2026-09-26T10:30:00Z"},
+       {"id": 2, "name": "PR benchmark gate", "status": "completed", "conclusion": "success", "app_id": 15368, "started_at": "2026-09-26T10:31:00Z"},
+       {"id": 3, "name": "release matrix / dry-run summary", "status": "completed", "conclusion": "success", "app_id": 15368, "started_at": "2026-09-26T10:32:00Z"}]},
+     "expect": {"queue": null}},
+
+    {"name": "the latest run of a required check decides, not an older red one",
+     "patch": {"head_checks": [
+       {"id": 1, "name": "cargo test --workspace", "status": "completed", "conclusion": "failure", "app_id": 15368, "started_at": "2026-09-26T10:30:00Z"},
+       {"id": 9, "name": "cargo test --workspace", "status": "completed", "conclusion": "success", "app_id": 15368, "started_at": "2026-09-26T12:30:00Z"},
+       {"id": 2, "name": "PR benchmark gate", "status": "completed", "conclusion": "success", "app_id": 15368, "started_at": "2026-09-26T10:31:00Z"},
+       {"id": 3, "name": "release matrix / dry-run summary", "status": "completed", "conclusion": "skipped", "app_id": 15368, "started_at": "2026-09-26T10:32:00Z"}]},
+     "expect": {"queue": "enqueue"}},
+
+    {"name": "control: unreadable required checks never enqueue",
+     "patch": {"required": null}, "expect": {"queue": null, "queue_reason": "could not be read"}},
+
+    {"name": "control: a draft is not enqueued", "patch": {"pr": {"draft": true}}, "expect": {"queue": null}},
+    {"name": "control: a PR already in the queue is not enqueued again",
+     "patch": {"pr": {"in_merge_queue": true}}, "expect": {"queue": null}},
+    {"name": "control: a conflicting PR is not enqueued",
+     "patch": {"pr": {"mergeable_state": "dirty"}}, "expect": {"queue": null}},
+    {"name": "control: a PR the queue already threw out at this commit is not put straight back",
+     "patch": {"dequeued_since_head": true}, "expect": {"queue": null, "queue_reason": "left the merge queue"}},
+
+    {"name": "the base of a stack with every layer merged down goes through merge-async",
+     "patch": {"stack": {"in_open_stack": true, "is_bottom": true, "open_above": 0}},
+     "expect": {"queue": "merge-async"}},
+    {"name": "control: a stack base with open layers above is not enqueued",
+     "patch": {"stack": {"in_open_stack": true, "is_bottom": true, "open_above": 2}},
+     "expect": {"queue": null, "queue_reason": "merge them down"}},
+
+    {"name": "a perf-path PR alone is enqueued",
+     "patch": {"perf": true, "queue": [{"pr": 7, "position": 1, "perf": false}]},
+     "expect": {"queue": "enqueue"}},
+    {"name": "control: a perf-path PR waits while another perf-path PR is queued",
+     "patch": {"perf": true, "queue": [{"pr": 7, "position": 1, "perf": true}]},
+     "expect": {"queue": null, "queue_reason": "#7"}},
+
+    {"name": "a stamp minted after the lookup ran re-runs the lookup job",
+     "patch": {"marks": [
+       {"name": "Stamp", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T10:40:00Z"},
+       {"name": "Seal", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T11:00:00Z"}],
+       "head_checks": [
+       {"id": 4, "name": "PR Benchmark Certifications", "status": "completed", "conclusion": "skipped", "app_id": 15368, "started_at": "2026-09-26T10:21:00Z"}]},
+     "expect": {"rerun": 77, "queue": null}},
+    {"name": "control: a run still in progress is not re-run",
+     "patch": {"marks": [
+       {"name": "Stamp", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T10:40:00Z"}],
+       "ci": {"status": "in_progress"},
+       "head_checks": [
+       {"id": 4, "name": "PR Benchmark Certifications", "status": "completed", "conclusion": "skipped", "app_id": 15368, "started_at": "2026-09-26T10:21:00Z"}]},
+     "expect": {"rerun": null}},
+    {"name": "control: a lookup that ran after the stamp is not re-run",
+     "patch": {"ci": {"lookup_job": {"completed_at": "2026-09-26T10:50:00Z"}},
+       "marks": [
+       {"name": "Stamp", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T10:40:00Z"}],
+       "head_checks": [
+       {"id": 4, "name": "PR Benchmark Certifications", "status": "completed", "conclusion": "skipped", "app_id": 15368, "started_at": "2026-09-26T10:51:00Z"}]},
+     "expect": {"rerun": null}},
+    {"name": "control: a certification that ran is not re-run however the times fall",
+     "patch": {"marks": [
+       {"name": "Stamp", "conclusion": "success", "app_client_id": "Iv-cert",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T10:40:00Z"}]},
+     "expect": {"rerun": null}},
+    {"name": "control: nothing is re-run without a stamp", "patch": {"marks": []}, "expect": {"rerun": null}}
+  ],
+
+  "status_write": [
+    {"name": "no check run yet: create", "desired": {"status": "in_progress", "conclusion": null, "title": "Waiting for /stamp"},
+     "existing": null, "expect": "create"},
+    {"name": "unchanged: write nothing", "desired": {"status": "in_progress", "conclusion": null, "title": "Waiting for /stamp"},
+     "existing": {"id": 5, "status": "in_progress", "conclusion": null, "title": "Waiting for /stamp"}, "expect": "none"},
+    {"name": "pending to success: update in place", "desired": {"status": "completed", "conclusion": "success", "title": "Stamped (Stamp)"},
+     "existing": {"id": 5, "status": "in_progress", "conclusion": null, "title": "Waiting for /stamp"}, "expect": "update"},
+    {"name": "a completed run is superseded, never reopened", "desired": {"status": "in_progress", "conclusion": null, "title": "Waiting for /seal on this commit"},
+     "existing": {"id": 5, "status": "completed", "conclusion": "success", "title": "Sealed (Seal)"}, "expect": "create"}
+  ],
+
+  "exclusivity": [
+    {"name": "a PR touching no perf path always passes", "me": 5, "my_perf": false,
+     "entries": [{"pr": 3, "position": 1, "perf": true}, {"pr": 5, "position": 2, "perf": false}], "expect": true},
+    {"name": "the first perf-path PR passes", "me": 5, "my_perf": true,
+     "entries": [{"pr": 5, "position": 1, "perf": true}, {"pr": 8, "position": 2, "perf": true}], "expect": true},
+    {"name": "control: a second perf-path PR behind another fails", "me": 8, "my_perf": true,
+     "entries": [{"pr": 5, "position": 1, "perf": true}, {"pr": 8, "position": 2, "perf": true}], "expect": false},
+    {"name": "a perf-path PR behind only non-perf PRs passes", "me": 8, "my_perf": true,
+     "entries": [{"pr": 5, "position": 1, "perf": false}, {"pr": 8, "position": 2, "perf": true}], "expect": true},
+    {"name": "a racing pair on equal positions agrees on the earlier enqueue", "me": 8, "my_perf": true,
+     "entries": [{"pr": 9, "position": 1, "perf": true, "enqueued_at": "2026-09-26T10:00:00Z"},
+                 {"pr": 8, "position": 1, "perf": true, "enqueued_at": "2026-09-26T10:00:05Z"}], "expect": false},
+    {"name": "and the earlier one of that pair stays", "me": 9, "my_perf": true,
+     "entries": [{"pr": 9, "position": 1, "perf": true, "enqueued_at": "2026-09-26T10:00:00Z"},
+                 {"pr": 8, "position": 1, "perf": true, "enqueued_at": "2026-09-26T10:00:05Z"}], "expect": true}
+  ],
+
+  "perf_paths": [
+    {"path": "crates/bench/src/lib.rs", "expect": true},
+    {"path": "crates", "expect": true},
+    {"path": "Cargo.lock", "expect": true},
+    {"path": "rust-toolchain.toml", "expect": true},
+    {"path": "cratesx/a.rs", "expect": false},
+    {"path": "docs/crates/a.md", "expect": false},
+    {"path": "book/src/kernels.md", "expect": false},
+    {"path": ".github/workflows/ci.yml", "expect": false},
+    {"path": "sub/Cargo.toml", "expect": false}
+  ],
+
+  "queue_refs": [
+    {"ref": "refs/heads/gh-readonly-queue/main/pr-840-abc1234567", "expect": 840},
+    {"ref": "gh-readonly-queue/main/pr-7-0123456789abcdef", "expect": 7},
+    {"ref": "refs/heads/gh-readonly-queue/release/v1/pr-12-deadbeef", "expect": 12},
+    {"ref": "refs/heads/gh-readonly-queue/main/garbage", "expect": null},
+    {"ref": "refs/heads/feature/pr-840-abc", "expect": null},
+    {"ref": "", "expect": null}
+  ]
+}

@@ -3,10 +3,11 @@
 # Reusable build matrix: compile, package and verify `met` for every
 # (OS, arch, GPU-platform) in `.github/release-matrix.json`.
 #
-# Defined ONCE and called from two places, so a PR proves exactly what a
-# release will later do:
-#   - ci.yml       (pull_request) -> after the base CI gates pass
-#   - release.yml  (dispatch)     -> after CI, before publish
+# Defined ONCE and called from three places:
+#   - ci.yml          (pull_request, merge_group) -> `main_only`: validate and
+#                     report; the legs themselves do not build here
+#   - dev-release.yml (main, after CI)            -> builds and publishes b<N>
+#   - release.yml     (dispatch)                  -> after CI, before publish
 #
 # It never tags, pushes or publishes. Only release.yml's `publish` job does
 # that, and only on workflow_dispatch with dry_run=false.
@@ -39,6 +40,17 @@ on:
         required: false
         type: boolean
         default: false
+      main_only:
+        description: >-
+          The caller is a pull request or a merge-queue entry. The nine legs
+          build on main only (dev-release.yml publishes them), so they skip;
+          `validate` still runs, and `dry-run summary` still RUNS and reports,
+          because it is a required context and must never depend on skip
+          semantics crossing a workflow_call boundary.
+        required: false
+        type: boolean
+        default: false
+
       web_only:
         description: >-
           The caller classified the diff as touching only book/. The nine
@@ -239,7 +251,7 @@ jobs:
     # can trigger. In every case `dry-run summary` is `if: always()`, so the
     # REQUIRED context still reports and no merge waits on a check that was
     # never created.
-    if: ${{ !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+    if: ${{ !inputs.main_only && !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.experimental }}
     strategy:
@@ -758,6 +770,7 @@ jobs:
         env:
           VALIDATE_RESULT: ${{ needs.validate.result }}
           BUILD_RESULT: ${{ needs.build.result }}
+          MAIN_ONLY: ${{ inputs.main_only }}
           WEB_ONLY: ${{ inputs.web_only }}
           STACK_LAYER: ${{ inputs.stack_layer }}
           BUILDS_BINARIES: ${{ inputs.builds_binaries }}
@@ -767,7 +780,9 @@ jobs:
           [ "$VALIDATE_RESULT" = success ] || bad="validate ($VALIDATE_RESULT)"
           # A skipped build is acceptable for exactly one reason, and the
           # condition names it. Any other skip is still a failure.
-          if [ "$WEB_ONLY" = "true" ] && [ "$BUILD_RESULT" = skipped ]; then
+          if [ "${MAIN_ONLY:-}" = "true" ] && [ "$BUILD_RESULT" = skipped ]; then
+            echo "build legs deliberately skipped: they build on main, in dev-release.yml"
+          elif [ "$WEB_ONLY" = "true" ] && [ "$BUILD_RESULT" = skipped ]; then
             echo "build legs deliberately skipped: web-only diff"
           elif [ "$STACK_LAYER" = "true" ] && [ "$BUILD_RESULT" = skipped ]; then
             echo "build legs deliberately skipped: lower layer of a stack"
@@ -781,8 +796,21 @@ jobs:
             exit 1
           fi
 
+      - name: Report the main-only skip
+        if: ${{ inputs.main_only }}
+        run: |
+          {
+            echo "### Release matrix: built on main, not here"
+            echo
+            echo "The nine legs build when a commit reaches \`main\`, in \`dev-release.yml\`,"
+            echo "which publishes the archives as a prerelease. A pull request or a queue"
+            echo "entry only has the matrix and its inputs validated. This summary job still"
+            echo "runs and is still the required context, so the merge is never left"
+            echo "waiting on a check that was never created."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Report the inert-diff skip
-        if: ${{ !inputs.web_only && !inputs.stack_layer && !inputs.builds_binaries }}
+        if: ${{ !inputs.main_only && !inputs.web_only && !inputs.stack_layer && !inputs.builds_binaries }}
         run: |
           {
             echo "### Release matrix: not built — nothing here can change a binary"
@@ -795,7 +823,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report the web-only skip
-        if: ${{ inputs.web_only }}
+        if: ${{ !inputs.main_only && inputs.web_only }}
         run: |
           {
             echo "### Release matrix: not built — web-only diff"
@@ -809,19 +837,19 @@ jobs:
       # none by design, so these steps stand down while the job itself still
       # reports — which is the whole point of keeping it running.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: ${{ !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+        if: ${{ !inputs.main_only && !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        if: ${{ !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+        if: ${{ !inputs.main_only && !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
         with:
           path: dist
           merge-multiple: true
 
       - name: Verify every artifact is real (checksums + non-empty)
-        if: ${{ !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+        if: ${{ !inputs.main_only && !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
         run: |
           set -euo pipefail
           # The point of the PR dry run is that a later release CANNOT fail in
@@ -852,7 +880,7 @@ jobs:
       # a publishing run, and a summary that contradicts what the run just did
       # is worse than no summary.
       - name: Report what WOULD be published
-        if: ${{ !inputs.publishing && !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
+        if: ${{ !inputs.publishing && !inputs.main_only && !inputs.web_only && !inputs.stack_layer && inputs.builds_binaries }}
         env:
           GH_TOKEN: ${{ github.token }}
           NEW_VERSION: ${{ inputs.version }}

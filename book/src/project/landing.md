@@ -9,9 +9,10 @@ nothing about that is manual goodwill — it is enforced.
 </p>
 
 **Stage 1 — Verification** runs on every push: formatting, clippy, typos, licence
-headers, kernel structure, tests, merge ancestry. Certification and the nine
-release-matrix build legs are held back, so an early draft does not burn an hour
-of runners.
+headers, kernel structure, tests, merge ancestry. Certification is held back, so
+an early draft does not burn runners on it. The nine release-matrix build legs do
+not run on pull requests at all: they build once a change reaches `main`, and
+each build is published as a prerelease.
 
 **Stage 2 — Certification** opens on `/stamp` from anyone with write access **or
 the PR's own author** — nobody is better placed to say their own branch has
@@ -33,14 +34,20 @@ execution. What this makes nearly impossible is the *accident* — shipping the
 wrong records — and what it makes attributable is everything else.
 
 **Stage 3 — Ready to merge**, then the queue, which re-runs the whole pipeline
-against its own merge commit.
+against its own merge commit. Nobody has to press the button: once the PR is
+stamped, sealed and every required check is green, the merge pipeline enqueues
+it. `stamp status` and `seal status` on the head commit say where it stands.
+Each stays *pending*, never red, until its mark exists, and completes by itself
+when it does. Only one PR that touches a perf path is in the queue at a time; a
+second one is taken back out with a comment, because its records would stop
+covering the tree the moment the first one lands.
 
 The bot takes five comment commands, and they are the whole interface:
 
 | command | who may use it | what it does |
 |---|---|---|
 | `/help` | anyone | prints this table on the PR, with the current state |
-| `/stamp` | write access, or the PR author | releases certification and the nine release-matrix legs. **Survives new commits** |
+| `/stamp` | write access, or the PR author | releases certification. **Survives new commits** |
 | `/seal` | a codeowner with write access whose owned paths cover the whole diff | records the engineer's seal. **Voided by the next commit** |
 | `/review` | anyone | an advisory LLM read of the diff. Never gates anything |
 | `/expedite` | admin only, and it requires a stated reason | skips certification and lets the PR merge once the pipeline's own checks pass. Purely administrative, and it announces itself on the PR |

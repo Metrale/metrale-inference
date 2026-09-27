@@ -1,0 +1,38 @@
+{
+  "pr": {
+    "number": 101, "state": "open", "draft": false, "merged": false,
+    "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "base_ref": "main", "default_branch": "main", "mergeable_state": "clean",
+    "in_merge_queue": false, "node_id": "PR_node"
+  },
+  "mark_app_client_id": "Iv-cert",
+  "commits": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cccccccccccccccccccccccccccccccccccccccc"],
+  "marks": [
+    {"name": "Stamp", "conclusion": "success", "app_client_id": "Iv-cert",
+     "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "created_at": "2026-09-26T10:00:00Z",
+     "title": "Released by @alice."},
+    {"name": "Seal", "conclusion": "success", "app_client_id": "Iv-cert",
+     "sha": "cccccccccccccccccccccccccccccccccccccccc", "created_at": "2026-09-26T11:00:00Z",
+     "title": "Sealed by @bob, whose owned paths cover every file in this diff."}
+  ],
+  "required": [
+    {"context": "cargo test --workspace", "app_id": 15368},
+    {"context": "PR benchmark gate", "app_id": 15368},
+    {"context": "release matrix / dry-run summary", "app_id": 15368}
+  ],
+  "head_checks": [
+    {"id": 1, "name": "cargo test --workspace", "status": "completed", "conclusion": "success",
+     "app_id": 15368, "started_at": "2026-09-26T10:30:00Z"},
+    {"id": 2, "name": "PR benchmark gate", "status": "completed", "conclusion": "success",
+     "app_id": 15368, "started_at": "2026-09-26T10:31:00Z"},
+    {"id": 3, "name": "release matrix / dry-run summary", "status": "completed", "conclusion": "success",
+     "app_id": 15368, "started_at": "2026-09-26T10:32:00Z"},
+    {"id": 4, "name": "PR Benchmark Certifications", "status": "completed", "conclusion": "success",
+     "app_id": 15368, "started_at": "2026-09-26T10:31:00Z"}
+  ],
+  "ci": {"run_id": 900, "status": "completed",
+         "lookup_job": {"id": 77, "status": "completed", "completed_at": "2026-09-26T10:20:00Z"}},
+  "perf": false,
+  "queue": [],
+  "stack": {"in_open_stack": false}
+}
