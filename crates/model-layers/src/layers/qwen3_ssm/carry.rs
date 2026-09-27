@@ -30,6 +30,7 @@ use crate::layers::ops;
 /// K = 2, 3, 4 and the fold.
 pub(super) struct CarryKernels {
     pub wy: [KernelHandle; 3],
+    pub wy_lazy: [KernelHandle; 3],
     pub flush: KernelHandle,
     pub conv: KernelHandle,
     pub conv_flush: KernelHandle,
@@ -43,10 +44,21 @@ pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
             crate::layers::try_kernel(gpu, m, "gdn_carry_wy3"),
             crate::layers::try_kernel(gpu, m, "gdn_carry_wy4"),
         ],
+        wy_lazy: [
+            crate::layers::try_kernel(gpu, m, "gdn_carry_wy2_lazy"),
+            crate::layers::try_kernel(gpu, m, "gdn_carry_wy3_lazy"),
+            crate::layers::try_kernel(gpu, m, "gdn_carry_wy4_lazy"),
+        ],
         flush: crate::layers::try_kernel(gpu, m, "gdn_carry_flush"),
         conv: crate::layers::try_kernel(gpu, m, "gdn_carry_conv"),
         conv_flush: crate::layers::try_kernel(gpu, m, "gdn_carry_conv_flush"),
     }
+}
+
+/// 2026-09-26: Whether a run of `n` sequences takes the lazy kernels
+/// (`ops::GDN_CARRY_LAZY_MIN_SEQS`).
+fn carry_lazy(n: usize) -> bool {
+    n >= ops::GDN_CARRY_LAZY_MIN_SEQS
 }
 
 /// 2026-09-26: The per-layer carry state: handles, head dims and the binding.
@@ -97,14 +109,15 @@ impl CarryState {
     pub(super) fn seq_floats(&self) -> Option<usize> {
         let [_, nv, kd, vd] = self.dims;
         let k = &self.kernels;
-        let linked = k.wy.iter().all(|h| h.0 != 0)
+        let linked = k.wy.iter().chain(&k.wy_lazy).all(|h| h.0 != 0)
             && [k.flush, k.conv, k.conv_flush].iter().all(|h| h.0 != 0);
         (linked && kd == 128 && vd == 128).then(|| ops::gdn_carry_seq_floats(nv, kd, vd))
     }
 
-    fn kernel_for(&self, kk: usize) -> KernelHandle {
-        match kk {
-            2..=4 => self.kernels.wy[kk - 2],
+    fn kernel_for(&self, kk: usize, lazy: bool) -> KernelHandle {
+        match (kk, lazy) {
+            (2..=4, false) => self.kernels.wy[kk - 2],
+            (2..=4, true) => self.kernels.wy_lazy[kk - 2],
             _ => KernelHandle(0),
         }
     }
@@ -128,7 +141,7 @@ impl Qwen3SsmLayer {
             h_f16: super::ssm_h_fp16_enabled(),
             kd,
             vd,
-            kernel_linked: self.carry.kernel_for(kk).0 != 0,
+            kernel_linked: self.carry.kernel_for(kk, false).0 != 0,
             bound: self.carry.binding.get().is_some(),
         })
     }
@@ -162,7 +175,7 @@ impl Qwen3SsmLayer {
         let [nk, nv, kd, _] = self.carry.dims;
         ops::gdn_carry_wy(
             gpu,
-            self.carry.kernel_for(kk),
+            self.carry.kernel_for(kk, carry_lazy(n)),
             h_table,
             q_ptr,
             k_ptr,
@@ -234,6 +247,7 @@ impl Qwen3SsmLayer {
             (self.conv_state_bytes / 4) as u32,
             (a.num_tokens * a.qkvz_size) as u32,
             (a.num_tokens * a.conv_dim) as u32,
+            carry_lazy(n),
             a.stream,
         )
     }

@@ -11,10 +11,13 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
-/// 2026-09-26: Carried-state verify (`gdn_carry_wy{2,3,4}`, chosen by the
-/// caller's `kernel`). It first applies each sequence's pending rows
-/// (`pend[slot_tab[b]]`) to H, then writes the output but no state, and
-/// stashes the rows it verified at `carry_base + slot * seq_floats`.
+/// 2026-09-26: Carried-state verify (`gdn_carry_wy{2,3,4}` or its `_lazy` form, chosen
+/// by the caller's `kernel`). It applies each sequence's pending rows
+/// (`pend[slot_tab[b]]`) to its copy of H and writes H back (the lazy form only when
+/// this verify's rows might not fit behind them in the stash,
+/// `pending + K > GDN_CARRY_CAP`), writes the output, and stashes the rows it verified
+/// at `carry_base + slot * seq_floats`. Engaged word b becomes 2 after a write-back,
+/// else 1.
 #[allow(clippy::too_many_arguments)]
 pub fn gdn_carry_wy(
     gpu: &dyn GpuBackend,
@@ -114,7 +117,9 @@ pub fn gdn_carry_flush(
 /// 2026-09-26: Carried-state conv verify (`gdn_carry_conv`): the twin of
 /// `gdn_verify_fused_conv_kn_batched` that first shifts each sequence's pending input rows
 /// into its window (writing it back when there were any), writes no snapshot and no final
-/// window, and stashes the position inputs at `conv_stash + slot * stash_seq_elems`.
+/// window, and stashes the position inputs at `conv_stash + slot * stash_seq_elems`. `lazy`
+/// must match the verify kernel of the same run (`gdn_carry_wy{K}_lazy`): the window is then
+/// written back only when the stash is full, else on every launch.
 #[allow(clippy::too_many_arguments)]
 pub fn gdn_carry_conv(
     gpu: &dyn GpuBackend,
@@ -139,6 +144,7 @@ pub fn gdn_carry_conv(
     conv_state_seq_stride: u32,
     input_seq_stride: u32,
     output_seq_stride: u32,
+    lazy: bool,
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
@@ -163,6 +169,7 @@ pub fn gdn_carry_conv(
         .arg_u32(conv_state_seq_stride)
         .arg_u32(input_seq_stride)
         .arg_u32(output_seq_stride)
+        .arg_u32(u32::from(lazy))
         .launch(stream)
 }
 
@@ -203,14 +210,30 @@ pub fn gdn_carry_conv_flush(
         .launch(stream)
 }
 
-/// 2026-09-26: Per-(layer, slot) conv stash length in BF16 elements: four input rows.
+/// 2026-09-26: Rows the carry stash holds per (layer, slot): `CARRY_CAP` in
+/// gated_delta_rule_carry.cu. A verify whose K rows might not fit behind the pending ones
+/// (`pending + K > GDN_CARRY_CAP`) writes the state back and restarts the stash.
+pub const GDN_CARRY_CAP: usize = 8;
+
+/// 2026-09-26: Launch width (sequences) from which a run takes the lazy verify kernels,
+/// which write the state back only when the stash is full. Measured 2026-09-26 on
+/// dgx2/dgx3 (k=1, --mtp-gate force): at 16 sequences the lazy form is 2 % faster end to
+/// end, at 8 it is even and at 2 and 4 the eager form is ahead.
+pub const GDN_CARRY_LAZY_MIN_SEQS: usize = 16;
+
+/// 2026-09-26: Most pending rows an eager verify kernel folds; a slot holding more (only
+/// after lazy verifies) is folded by `gdn_carry_flush` first.
+pub const GDN_CARRY_EAGER_MAX_PENDING: usize = 4;
+
+/// 2026-09-26: Per-(layer, slot) conv stash length in BF16 elements: `GDN_CARRY_CAP` input
+/// rows.
 pub const fn gdn_carry_conv_seq_elems(conv_dim: usize) -> usize {
-    4 * conv_dim
+    GDN_CARRY_CAP * conv_dim
 }
 
 /// 2026-09-26: Per-(layer, slot) stash width in floats:
-/// `vn[4][nv][vd] | g[4][nv] | sk[4][nv][kd]`, the layout of the kernel's
+/// `vn[CAP][nv][vd] | g[CAP][nv] | sk[CAP][nv][kd]`, the layout of the kernel's
 /// `CARRY_VN`/`CARRY_G`/`CARRY_SK` macros.
 pub const fn gdn_carry_seq_floats(nv: usize, kd: usize, vd: usize) -> usize {
-    4 * (nv * vd + nv + nv * kd)
+    GDN_CARRY_CAP * (nv * vd + nv + nv * kd)
 }

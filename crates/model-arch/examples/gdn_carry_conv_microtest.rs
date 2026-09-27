@@ -8,20 +8,17 @@
 //! Invariants:
 //! - Exit 1 on any mismatch below; each check prints its mismatch count.
 //!
-//! `SEQS` sequences on scattered slots, two verify rounds of K rows, for K = 2, 3, 4:
-//!
-//! * round-1 outputs bit-equal to the parent's, and the carried kernel leaves every conv
-//!   state alone;
-//! * for na in 1..=K: `gdn_carry_conv_flush` with `pend = na` leaves the conv state
-//!   bit-equal to the parent's snapshot na-1;
-//! * for na in 1..=K: a round-2 carried launch from the round-1 state with `pend = na`
-//!   gives the outputs of a parent launch from snapshot na-1, and leaves that snapshot as
-//!   the conv state.
+//! `SEQS` sequences on scattered slots, `ROUNDS` verify rounds of K rows, for K = 2, 3, 4.
+//! Each round runs the parent from the committed reference windows and the carried kernel
+//! (eager or lazy write-back, drawn per round) with each slot's pending count, draws an
+//! accepted count per sequence, commits the parent's snapshot na-1 into the reference and
+//! advances the pending counts by the kernels' rule. It checks every round's outputs bit for bit, and that
+//! `gdn_carry_conv_flush` after the last round leaves the reference windows.
 //!
 //!   cargo run -p metrale-model-arch --release --features cuda,gpu-examples \
 //!       --example gdn_carry_conv_microtest
 //!
-//! Env: SEQS (default 5), SEED (default 1).
+//! Env: SEQS (default 5), SEED (default 1), ROUNDS (default 9).
 
 use anyhow::{Context, Result};
 use half::bf16;
@@ -89,6 +86,7 @@ fn mismatches(a: &[u8], b: &[u8], width: usize) -> usize {
 fn main() -> Result<()> {
     let seqs = env_usize("SEQS", 5);
     let seed = env_usize("SEED", 1) as u64;
+    let rounds = env_usize("ROUNDS", 9);
     anyhow::ensure!((1..=16).contains(&seqs));
     let set = metrale_kernels::ptx_for_exact_target("qwen3.8-27b", "nvfp4")
         .context("no compiled qwen3.8-27b/nvfp4 kernel set (METRALE_TARGET_MODEL=qwen3.8-27b)")?;
@@ -108,23 +106,23 @@ fn main() -> Result<()> {
     };
     // 2026-09-26: Sequence b on slot 2b + 1; pend is indexed by slot.
     let n_slots = 2 * seqs + 2;
-    let slots: Vec<u32> = (0..seqs as u32).map(|b| 2 * b + 1).collect();
-    let slot_bytes: Vec<u8> = slots.iter().flat_map(|s| s.to_le_bytes()).collect();
+    let slots: Vec<usize> = (0..seqs).map(|b| 2 * b + 1).collect();
+    let slot_bytes: Vec<u8> = slots
+        .iter()
+        .flat_map(|&s| (s as u32).to_le_bytes())
+        .collect();
     let slot_tab = upload(g, &slot_bytes)?;
     let seq_elems = ops::gdn_carry_conv_seq_elems(CONV_DIM);
     let stash = g.alloc(n_slots * seq_elems * 2)?;
     let pend = g.alloc(n_slots * 4)?;
-    let set_pend = |na: u32| -> Result<()> {
+    let upload_pend = |np: &[usize]| -> Result<()> {
         let mut v = vec![0u8; n_slots * 4];
-        for &s in &slots {
-            v[s as usize * 4..s as usize * 4 + 4].copy_from_slice(&na.to_le_bytes());
+        for (b, &s) in slots.iter().enumerate() {
+            v[s * 4..s * 4 + 4].copy_from_slice(&(np[b] as u32).to_le_bytes());
         }
         g.copy_h2d(&v, pend)
     };
     let state_bytes = STATE_ELEMS * 4;
-    let init: Vec<u8> = (0..seqs * STATE_ELEMS)
-        .flat_map(|_| (rng.next_f32() * 0.5).to_le_bytes())
-        .collect();
 
     let mut failures = 0usize;
     let mut report = |label: &str, n: usize, total: usize| {
@@ -132,24 +130,27 @@ fn main() -> Result<()> {
             failures += 1;
         }
         println!(
-            "{label:<50} {}  mismatches={n}/{total}",
+            "{label:<56} {}  mismatches={n}/{total}",
             if n == 0 { "PASS" } else { "FAIL" }
         );
     };
 
     for kk in 2..=4usize {
-        let rounds: Vec<DevicePtr> = (0..2)
-            .map(|_| upload(g, &bf16_bytes(seqs * kk * QKVZ_SIZE, &mut rng, 1.0)))
-            .collect::<Result<_>>()?;
+        let init: Vec<u8> = (0..seqs * STATE_ELEMS)
+            .flat_map(|_| (rng.next_f32() * 0.5).to_le_bytes())
+            .collect();
         let out_bytes = seqs * kk * CONV_DIM * 2;
         let (out_p, out_c) = (g.alloc(out_bytes)?, g.alloc(out_bytes)?);
-        let state_p = upload(g, &init)?;
+        let (state_ref, state_c) = (upload(g, &init)?, upload(g, &init)?);
         let inter = g.alloc(seqs * kk * state_bytes)?;
-        let run_parent = |state: DevicePtr, input: DevicePtr| -> Result<()> {
+        let mut np = vec![0usize; seqs];
+        let mut bad = 0usize;
+        for _ in 0..rounds {
+            let input = upload(g, &bf16_bytes(seqs * kk * QKVZ_SIZE, &mut rng, 1.0))?;
             ops::gdn_verify_fused_conv_kn_batched(
                 g,
                 parent,
-                state,
+                state_ref,
                 input,
                 &weight,
                 out_p,
@@ -170,11 +171,9 @@ fn main() -> Result<()> {
                 (kk * STATE_ELEMS) as u32,
                 stream,
             )?;
-            g.synchronize(stream)
-        };
-        let state_c = upload(g, &init)?;
-        let run_carry = |input: DevicePtr, na: u32| -> Result<()> {
-            set_pend(na)?;
+            upload_pend(&np)?;
+            // 2026-09-26: Eager or lazy write-back, drawn per round.
+            let lazy = rng.next_f32() > 0.0;
             ops::gdn_carry_conv(
                 g,
                 carry,
@@ -198,37 +197,33 @@ fn main() -> Result<()> {
                 STATE_ELEMS as u32,
                 (kk * QKVZ_SIZE) as u32,
                 (kk * CONV_DIM) as u32,
+                lazy,
                 stream,
             )?;
-            g.synchronize(stream)
-        };
-
-        run_parent(state_p, rounds[0])?;
-        let out1 = read(g, out_p, out_bytes)?;
-        let snaps = read(g, inter, seqs * kk * state_bytes)?;
-        // 2026-09-26: Snapshot t of sequence b, the parent's state after t + 1 rows.
-        let snap = |t: usize| -> Vec<u8> {
-            (0..seqs)
-                .flat_map(|b| {
-                    let o = (b * kk + t) * state_bytes;
-                    snaps[o..o + state_bytes].to_vec()
-                })
-                .collect()
-        };
-        run_carry(rounds[0], 0)?;
-        let n = mismatches(&read(g, out_c, out_bytes)?, &out1, 2);
+            g.synchronize(stream)?;
+            bad += mismatches(&read(g, out_c, out_bytes)?, &read(g, out_p, out_bytes)?, 2);
+            // 2026-09-26: Commit snapshot na-1 into the reference; advance the pending counts.
+            let snaps = read(g, inter, seqs * kk * state_bytes)?;
+            for b in 0..seqs {
+                let na = 1 + (rng.next_f32().abs() * kk as f32) as usize % kk;
+                let o = (b * kk + na - 1) * state_bytes;
+                g.copy_h2d(
+                    &snaps[o..o + state_bytes],
+                    state_ref.offset(b * state_bytes),
+                )?;
+                let kept = if !lazy || np[b] + kk > ops::GDN_CARRY_CAP {
+                    0
+                } else {
+                    np[b]
+                };
+                np[b] = kept + na;
+            }
+        }
         report(
-            &format!("K={kk} round-1 output vs parent"),
-            n,
-            out_bytes / 2,
+            &format!("K={kk} {rounds} rounds: outputs vs parent"),
+            bad,
+            rounds * out_bytes / 2,
         );
-        let n = mismatches(&read(g, state_c, seqs * state_bytes)?, &init, 4);
-        report(
-            &format!("K={kk} carried launch wrote no state"),
-            n,
-            seqs * STATE_ELEMS,
-        );
-
         let table: Vec<u8> = (0..32)
             .flat_map(|b| {
                 let p = if b < seqs {
@@ -240,64 +235,39 @@ fn main() -> Result<()> {
             })
             .collect();
         let state_table = upload(g, &table)?;
-        for na in 1..=kk {
-            let want = snap(na - 1);
-            // 2026-09-26: Standalone fold of the round-1 stash, which the round-1 launch
-            // writes again first (the previous na's round 2 overwrote it).
-            g.copy_h2d(&init, state_c)?;
-            run_carry(rounds[0], 0)?;
-            g.copy_h2d(&init, state_c)?;
-            set_pend(na as u32)?;
-            ops::gdn_carry_conv_flush(
-                g,
-                flush,
-                state_table,
-                0,
-                stash,
-                0,
-                slot_tab,
-                pend,
-                0,
-                seq_elems as u32,
-                seqs as u32,
-                CONV_DIM as u32,
-                D_CONV as u32,
-                1,
-                stream,
-            )?;
-            g.synchronize(stream)?;
-            let n = mismatches(&read(g, state_c, seqs * state_bytes)?, &want, 4);
-            report(
-                &format!("K={kk} flush na={na} vs snapshot"),
-                n,
-                seqs * STATE_ELEMS,
-            );
-
-            // 2026-09-26: Round 2: parent from snapshot na-1 against the carried launch from
-            // the initial state with na pending.
-            let from = upload(g, &want)?;
-            run_parent(from, rounds[1])?;
-            let out2 = read(g, out_p, out_bytes)?;
-            g.copy_h2d(&init, state_c)?;
-            run_carry(rounds[0], 0)?;
-            run_carry(rounds[1], na as u32)?;
-            let n = mismatches(&read(g, out_c, out_bytes)?, &out2, 2);
-            report(
-                &format!("K={kk} na={na} round-2 output vs parent"),
-                n,
-                out_bytes / 2,
-            );
-            let n = mismatches(&read(g, state_c, seqs * state_bytes)?, &want, 4);
-            report(
-                &format!("K={kk} na={na} round-2 state = snapshot"),
-                n,
-                seqs * STATE_ELEMS,
-            );
-        }
+        upload_pend(&np)?;
+        ops::gdn_carry_conv_flush(
+            g,
+            flush,
+            state_table,
+            0,
+            stash,
+            0,
+            slot_tab,
+            pend,
+            0,
+            seq_elems as u32,
+            seqs as u32,
+            CONV_DIM as u32,
+            D_CONV as u32,
+            1,
+            stream,
+        )?;
+        g.synchronize(stream)?;
+        let n = mismatches(
+            &read(g, state_c, seqs * state_bytes)?,
+            &read(g, state_ref, seqs * state_bytes)?,
+            4,
+        );
+        report(
+            &format!("K={kk} flushed windows vs reference (pend {np:?})"),
+            n,
+            seqs * STATE_ELEMS,
+        );
     }
 
     println!(
-        "gdn_carry_conv_microtest: seqs={seqs} seed={seed}: {}",
+        "gdn_carry_conv_microtest: seqs={seqs} seed={seed} rounds={rounds}: {}",
         if failures == 0 {
             "ALL PASS (bit-equal)"
         } else {

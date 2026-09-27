@@ -6,42 +6,79 @@
 //
 // Owner: gb10 kernels.
 // Invariants:
-// - A verify kernel first applies the `pend[slot]` accepted rows of the previous verify
-//   from the carry stash to H, with the parent kernels' update expression in row order,
-//   and writes H once when there were any. H then holds what the parent kernel of that
-//   verify left in Hi(pend-1), or in its final H when every row was accepted.
+// - The state in memory lags the sequence by `pend[slot]` accepted rows (at most CARRY_CAP),
+//   held in the slot's stash. A verify kernel applies them to its copy of H with the parent
+//   kernels' update expression in row order, so that copy is what the parent kernels would
+//   have committed. It writes that H back and restarts the stash on every verify (the
+//   eager form) or only when this verify's K rows might not fit behind the pending ones,
+//   pend + K > CARRY_CAP (the lazy form).
 // - It then computes `output` with gated_delta_rule_wy{2,3,4}'s expressions and
-//   accumulation order from that H, writes no h-state, and stashes what a later fold
-//   needs: the K vn vectors, the K clamped gates and the K key rows, as the floats it
-//   used. The key rows are stored once per v-head, so each block reads and writes only
-//   its own part of the stash.
-// - gdn_carry_flush applies `pend` rows the same way, reading and writing H once.
-//   Neither kernel clears `pend`; the host owns it.
-// gdn_carry_microtest (model-arch examples) checks output and every accepted count
-// bitwise against the parent kernels.
+//   accumulation order, writes no other h-state, and stashes its K rows behind the pending
+//   ones (at row 0 after a write-back): the vn vectors, the clamped gates and the key
+//   rows, as the floats it used. The key rows are stored once per v-head, so each block
+//   reads and writes only its own part of the stash.
+// - gdn_carry_flush applies `pend` rows the same way and writes H. Neither kernel clears
+//   `pend`; the host owns it.
+// gdn_carry_microtest (model-arch examples) checks outputs and states over several verify
+// rounds bitwise against the parent kernels.
 //
-// State traffic per verify: one read of H, plus one write when rows were pending; pass 2
-// reads the column again, mostly from L2. The parent kernels read H once (resident) or
-// twice and write K blobs, and a partial accept costs one more read and write for the
-// restore copy.
+// State traffic per verify: one read of H, plus one write (eager form) or one write every
+// few verifies, when the stash fills (lazy form). The parent kernels read H once (resident) or twice and write K blobs, and
+// a partial accept costs one more read and write for the restore copy.
 //
-// Stash per (layer, slot), in floats: vn[4][num_v_heads][v_dim] | g[4][num_v_heads] |
-// sk[4][num_v_heads][k_dim]. k_dim == v_dim == 128 is checked on the host; the kernels
-// index with the compile-time 128 and use the k_dim argument only for the output scale. Grid
+// Stash per (layer, slot), in floats: vn[CAP][num_v_heads][v_dim] | g[CAP][num_v_heads] |
+// sk[CAP][num_v_heads][k_dim]. k_dim == v_dim == 128 is checked on the host. Grid
 // (num_v_heads, batch), block 128. The h-state is a per-sequence pointer table (slab 0 of
 // the verify WY tables); slot_tab maps a batch position to its carry slot, and each
-// position's engaged word (engaged_flag[b]) is set to 1.
+// position's engaged word (engaged_flag[b]) is set to 1, or to 2 when the kernel wrote the
+// state back; the host reads it to learn how many rows stay pending.
+//
+// Two forms: gdn_carry_wy{K} writes the state back on every verify (pass 2 then re-reads
+// it, which stays in L2 at moderate width) and folds at most four pending rows, and
+// gdn_carry_wy{K}_lazy writes it back only when the stash is full and keeps half of the
+// column in registers across the passes, which pays off from 16 sequences
+// (ops::GDN_CARRY_LAZY_MIN_SEQS). Both give the same bits.
 
 #include <cuda_bf16.h>
 #include "gdn_reduce.cuh"
 #define CARRY_KD 128u
 #define CARRY_VD 128u
+// 2026-09-26: Rows the stash holds per slot; ops::GDN_CARRY_CAP on the host.
+#define CARRY_CAP 8u
 
 #define CARRY_VN(S, T, VH) ((S) + ((T) * num_v_heads + (VH)) * CARRY_VD)
-#define CARRY_G(S, T, VH)  ((S) + 4 * num_v_heads * CARRY_VD + (T) * num_v_heads + (VH))
-#define CARRY_SK(S, T, VH) ((S) + 4 * num_v_heads * CARRY_VD + 4 * num_v_heads + ((T) * num_v_heads + (VH)) * CARRY_KD)
+#define CARRY_G(S, T, VH)  ((S) + CARRY_CAP * num_v_heads * CARRY_VD + (T) * num_v_heads + (VH))
+#define CARRY_SK(S, T, VH) ((S) + CARRY_CAP * num_v_heads * CARRY_VD + CARRY_CAP * num_v_heads \
+                            + ((T) * num_v_heads + (VH)) * CARRY_KD)
 
-template <int K>
+// 2026-09-26: The pending rows t < np applied to one element of row j of a column, from the
+// stashed key rows `pk` and this thread's gates `pgr` and vn values `pvr` (registers: the
+// loop is unrolled over CARRY_CAP and guarded, so the arrays index statically).
+__device__ __forceinline__ float carry_fold(
+    float x, unsigned int np, unsigned int j,
+    const float (*pk)[CARRY_KD], const float* pgr, const float* pvr
+) {
+    #pragma unroll
+    for (unsigned int t = 0; t < CARRY_CAP; ++t) if (t < np) x = pgr[t] * x + pk[t][j] * pvr[t];
+    return x;
+}
+
+// 2026-09-26: The same fold for the eager form, at most four rows from registers (`pv0`..
+// `pv3`), predicated so that the unrolled pass keeps its loads independent. The host never
+// hands an eager launch a slot with more than four pending rows (model-engine
+// gdn_carry.rs folds such a slot first).
+__device__ __forceinline__ float carry_fold4(
+    float x, unsigned int np, unsigned int j, const float (*pk)[CARRY_KD], const float* pg,
+    float pv0, float pv1, float pv2, float pv3
+) {
+    if (np > 0) x = pg[0] * x + pk[0][j] * pv0;
+    if (np > 1) x = pg[1] * x + pk[1][j] * pv1;
+    if (np > 2) x = pg[2] * x + pk[2][j] * pv2;
+    if (np > 3) x = pg[3] * x + pk[3][j] * pv3;
+    return x;
+}
+
+template <int K, bool LAZY>
 __device__ __forceinline__ void gdn_carry_verify(
     float* const* __restrict__ h_table,
     const __nv_bfloat16* __restrict__ query,
@@ -66,7 +103,7 @@ __device__ __forceinline__ void gdn_carry_verify(
     const unsigned int vh = blockIdx.x;
     const unsigned int b = blockIdx.y;
     if (vh >= num_v_heads || b >= batch_size) return;
-    if (threadIdx.x == 0 && vh == 0) engaged_flag[b] = 1u;
+
     const unsigned int tid = threadIdx.x;
     const unsigned int hr = num_v_heads / num_k_heads;
     const unsigned int kh = vh / hr;
@@ -75,9 +112,14 @@ __device__ __forceinline__ void gdn_carry_verify(
     const unsigned int slot = slot_tab[b];
     float* S = carry_base + (unsigned long long)slot * seq_floats;
     const unsigned int np = pend[slot];
+    // 2026-09-26: Write back now if this verify's rows might not fit behind the pending ones;
+    // this verify's rows then go to row 0 of the stash, else behind the pending rows.
+    const bool wb = !LAZY || np + K > CARRY_CAP;
+    const unsigned int base = wb ? 0u : np;
+    if (threadIdx.x == 0 && vh == 0) engaged_flag[b] = wb ? 2u : 1u;
 
     __shared__ float sk[K][CARRY_KD], sq[K][CARRY_KD];
-    __shared__ float pk[4][CARRY_KD], pg[4];
+    __shared__ float pk[CARRY_CAP][CARRY_KD], pg[CARRY_CAP];
     __shared__ float smem_warp[4];
     __shared__ float kd[4][4];
 
@@ -87,15 +129,31 @@ __device__ __forceinline__ void gdn_carry_verify(
         sk[t][tid] = (float)key[row * qk_stride + kh * CARRY_KD + tid];
         sq[t][tid] = (float)query[row * qk_stride + kh * CARRY_KD + tid];
     }
-    // 2026-09-26: The pending rows are read before the barrier; this block overwrites the
+    // 2026-09-26: The pending rows are read before the barrier; this block may overwrite the
     // same stash rows further down.
-    for (unsigned int t = 0; t < np; ++t) pk[t][tid] = CARRY_SK(S, t, vh)[tid];
+    // The lazy form keeps this thread's vn values and the gates in registers, since it folds
+    // the second half of the column again in pass 2; the eager form keeps four vn values in
+    // registers and reads the gates from shared memory.
+    float pvr[LAZY ? CARRY_CAP : 1], pgr[LAZY ? CARRY_CAP : 1];
+    if (LAZY) {
+        #pragma unroll
+        for (unsigned int t = 0; t < CARRY_CAP; ++t) {
+            if (t < np) { pk[t][tid] = CARRY_SK(S, t, vh)[tid]; pvr[t] = CARRY_VN(S, t, vh)[tid]; }
+            else pvr[t] = 0.0f;
+        }
+    } else {
+        for (unsigned int t = 0; t < np; ++t) pk[t][tid] = CARRY_SK(S, t, vh)[tid];
+    }
+    const float pv0 = !LAZY && np > 0 ? CARRY_VN(S, 0, vh)[tid] : 0.0f;
+    const float pv1 = !LAZY && np > 1 ? CARRY_VN(S, 1, vh)[tid] : 0.0f;
+    const float pv2 = !LAZY && np > 2 ? CARRY_VN(S, 2, vh)[tid] : 0.0f;
+    const float pv3 = !LAZY && np > 3 ? CARRY_VN(S, 3, vh)[tid] : 0.0f;
     if (tid < np) pg[tid] = *CARRY_G(S, tid, vh);
-    const float pv0 = np > 0 ? CARRY_VN(S, 0, vh)[tid] : 0.0f;
-    const float pv1 = np > 1 ? CARRY_VN(S, 1, vh)[tid] : 0.0f;
-    const float pv2 = np > 2 ? CARRY_VN(S, 2, vh)[tid] : 0.0f;
-    const float pv3 = np > 3 ? CARRY_VN(S, 3, vh)[tid] : 0.0f;
     __syncthreads();
+    if (LAZY) {
+        #pragma unroll
+        for (unsigned int t = 0; t < CARRY_CAP; ++t) pgr[t] = t < np ? pg[t] : 0.0f;
+    }
 
     // 2026-09-26: kd[a][c] = k_a . k_c for c < a, in the parents' order (kd10, kd20, kd21,
     // kd30, kd31, kd32), each a separate block reduction.
@@ -110,11 +168,11 @@ __device__ __forceinline__ void gdn_carry_verify(
         }
     }
 
-    // 2026-09-26: Pass 1 over the column: H with the pending rows applied (g_t * h +
-    // sk_t[j] * vn_t for t < np in row order, the parents' update expression), written back
-    // when there were any, and summed into hk_t = H . k_t in groups of four j as the
-    // parents sum them.
+    // 2026-09-26: Pass 1 over the column: H with the pending rows applied, written back
+    // under `wb`, and summed into hk_t = H . k_t in groups of four j as the parents sum
+    // them. The first half of the column stays in registers for pass 2.
     float* __restrict__ Hc = H + tid;
+    float H_lo[LAZY ? CARRY_KD / 2 : 1];
     float hk[K];
     #pragma unroll
     for (int t = 0; t < K; ++t) hk[t] = 0.0f;
@@ -123,13 +181,12 @@ __device__ __forceinline__ void gdn_carry_verify(
         float h[4];
         #pragma unroll
         for (unsigned int e = 0; e < 4; ++e) {
-            float x = Hc[(j + e) * CARRY_VD];
-            if (np > 0) x = pg[0] * x + pk[0][j + e] * pv0;
-            if (np > 1) x = pg[1] * x + pk[1][j + e] * pv1;
-            if (np > 2) x = pg[2] * x + pk[2][j + e] * pv2;
-            if (np > 3) x = pg[3] * x + pk[3][j + e] * pv3;
-            if (np > 0) Hc[(j + e) * CARRY_VD] = x;
+            const float x = LAZY
+                ? carry_fold(Hc[(j + e) * CARRY_VD], np, j + e, pk, pgr, pvr)
+                : carry_fold4(Hc[(j + e) * CARRY_VD], np, j + e, pk, pg, pv0, pv1, pv2, pv3);
+            if (wb && np > 0) Hc[(j + e) * CARRY_VD] = x;
             h[e] = x;
+            if (LAZY && j < CARRY_KD / 2) H_lo[j + e] = x;
         }
         #pragma unroll
         for (int t = 0; t < K; ++t)
@@ -162,17 +219,29 @@ __device__ __forceinline__ void gdn_carry_verify(
         vn[3] = (vi[3] - g[3] * hk3c) * bt[3];
     }
 
-    // 2026-09-26: Pass 2 reads the column again (this thread wrote it in pass 1 when rows
-    // were pending; at the verify widths it is mostly still in L2): row t updates it in
-    // registers, then qd_t += h_t . q_t, per group of
-    // four j in the parents' order. Nothing is written back.
+    // 2026-09-26: Pass 2: the column again, the first half from registers and the second
+    // from memory (mostly from L2; pending rows are applied again unless pass 1 wrote them
+    // back). Row t updates it in registers, then qd_t += h_t . q_t, per group of four j in
+    // the parents' order. Nothing is written back.
     float qd[K];
     #pragma unroll
     for (int t = 0; t < K; ++t) qd[t] = 0.0f;
+    const unsigned int refold = wb ? 0u : np;
     #pragma unroll
     for (unsigned int j = 0; j < CARRY_KD; j += 4) {
-        float h0 = Hc[j * CARRY_VD], h1 = Hc[(j + 1) * CARRY_VD];
-        float h2 = Hc[(j + 2) * CARRY_VD], h3 = Hc[(j + 3) * CARRY_VD];
+        float h0, h1, h2, h3;
+        if (LAZY && j < CARRY_KD / 2) {
+            h0 = H_lo[j]; h1 = H_lo[j + 1]; h2 = H_lo[j + 2]; h3 = H_lo[j + 3];
+        } else {
+            h0 = Hc[j * CARRY_VD]; h1 = Hc[(j + 1) * CARRY_VD];
+            h2 = Hc[(j + 2) * CARRY_VD]; h3 = Hc[(j + 3) * CARRY_VD];
+            if (LAZY) {
+                h0 = carry_fold(h0, refold, j, pk, pgr, pvr);
+                h1 = carry_fold(h1, refold, j + 1, pk, pgr, pvr);
+                h2 = carry_fold(h2, refold, j + 2, pk, pgr, pvr);
+                h3 = carry_fold(h3, refold, j + 3, pk, pgr, pvr);
+            }
+        }
         #pragma unroll
         for (int t = 0; t < K; ++t) {
             h0 = g[t] * h0 + sk[t][j] * vn[t];
@@ -191,14 +260,14 @@ __device__ __forceinline__ void gdn_carry_verify(
 
     #pragma unroll
     for (int t = 0; t < K; ++t) {
-        CARRY_VN(S, t, vh)[tid] = vn[t];
-        CARRY_SK(S, t, vh)[tid] = sk[t][tid];
+        CARRY_VN(S, base + t, vh)[tid] = vn[t];
+        CARRY_SK(S, base + t, vh)[tid] = sk[t][tid];
     }
-    if (tid < K) *CARRY_G(S, tid, vh) = g[tid];
+    if (tid < K) *CARRY_G(S, base + tid, vh) = g[tid];
 }
 
-#define CARRY_ENTRY(K) \
-extern "C" __global__ void __launch_bounds__(128) gdn_carry_wy##K( \
+#define CARRY_ENTRY(NAME, K, LAZY) \
+extern "C" __global__ void __launch_bounds__(128) NAME( \
     float* const* __restrict__ h_table, const __nv_bfloat16* __restrict__ query, \
     const __nv_bfloat16* __restrict__ key, const __nv_bfloat16* __restrict__ value, \
     const float* __restrict__ gate, const float* __restrict__ beta, \
@@ -207,18 +276,21 @@ extern "C" __global__ void __launch_bounds__(128) gdn_carry_wy##K( \
     unsigned int seq_floats, unsigned int batch_size, unsigned int num_k_heads, \
     unsigned int num_v_heads, unsigned int qk_stride, unsigned int v_stride, \
     unsigned int gb_stride, unsigned int k_dim, unsigned int* __restrict__ engaged_flag) { \
-    gdn_carry_verify<K>(h_table, query, key, value, gate, beta, output, carry_base, slot_tab, \
+    gdn_carry_verify<K, LAZY>(h_table, query, key, value, gate, beta, output, carry_base, slot_tab, \
         pend, seq_floats, batch_size, num_k_heads, num_v_heads, qk_stride, v_stride, \
         gb_stride, k_dim, engaged_flag); \
 }
-CARRY_ENTRY(2)
-CARRY_ENTRY(3)
-CARRY_ENTRY(4)
+CARRY_ENTRY(gdn_carry_wy2, 2, false)
+CARRY_ENTRY(gdn_carry_wy3, 3, false)
+CARRY_ENTRY(gdn_carry_wy4, 4, false)
+CARRY_ENTRY(gdn_carry_wy2_lazy, 2, true)
+CARRY_ENTRY(gdn_carry_wy3_lazy, 3, true)
+CARRY_ENTRY(gdn_carry_wy4_lazy, 4, true)
 
-// 2026-09-26: Apply pending rows without a verify. Grid (num_v_heads, batch, layers):
-// layer l reads its h pointers at h_table + l * table_layer_entries, its stash at
-// carry_base + l * carry_layer_floats and its counts at pend + l * pend_layer_entries.
-// A count of 0 leaves H alone.
+// 2026-09-26: Apply pending rows without a verify and write H. Grid (num_v_heads, batch,
+// layers): layer l reads its h pointers at h_table + l * table_layer_entries, its stash at
+// carry_base + l * carry_layer_floats and its counts at pend + l * pend_layer_entries. A
+// count of 0 leaves H alone.
 extern "C" __global__ void gdn_carry_flush(
     float* const* __restrict__ h_table,
     unsigned long long table_layer_entries,
@@ -241,26 +313,30 @@ extern "C" __global__ void gdn_carry_flush(
     const unsigned int tid = threadIdx.x;
     float* H = h_table[l * table_layer_entries + b] + (unsigned long long)vh * CARRY_KD * CARRY_VD;
     const float* S = carry_base + l * carry_layer_floats + (unsigned long long)slot * seq_floats;
-    __shared__ float pk[4][CARRY_KD], pg[4];
-    for (unsigned int t = 0; t < np; ++t) pk[t][tid] = CARRY_SK(S, t, vh)[tid];
+    __shared__ float pk[CARRY_CAP][CARRY_KD], pg[CARRY_CAP];
+    float pvr[CARRY_CAP], pgr[CARRY_CAP];
+    #pragma unroll
+    for (unsigned int t = 0; t < CARRY_CAP; ++t) {
+        if (t < np) { pk[t][tid] = CARRY_SK(S, t, vh)[tid]; pvr[t] = CARRY_VN(S, t, vh)[tid]; }
+        else pvr[t] = 0.0f;
+    }
     if (tid < np) pg[tid] = *CARRY_G(S, tid, vh);
     __syncthreads();
-    float fvn[4];
-    for (unsigned int t = 0; t < np; ++t) fvn[t] = CARRY_VN(S, t, vh)[tid];
+    #pragma unroll
+    for (unsigned int t = 0; t < CARRY_CAP; ++t) pgr[t] = t < np ? pg[t] : 0.0f;
     #pragma unroll 4
-    for (unsigned int j = 0; j < CARRY_KD; ++j) {
-        float h = H[j * CARRY_VD + tid];
-        for (unsigned int t = 0; t < np; ++t) h = pg[t] * h + pk[t][j] * fvn[t];
-        H[j * CARRY_VD + tid] = h;
-    }
+    for (unsigned int j = 0; j < CARRY_KD; ++j)
+        H[j * CARRY_VD + tid] = carry_fold(H[j * CARRY_VD + tid], np, j, pk, pgr, pvr);
 }
 
 // 2026-09-26: Carried-state twin of gdn_verify_fused_conv_kn_batched (gdn_verify_fused_conv_kn.cu).
 // Thread ch owns channel ch of sequence blockIdx.y. It shifts the `pend[slot]` pending input
-// rows of the previous verify into its window and writes the window back when there were any,
-// so conv_state then holds what the parent's snapshot (pend - 1) held. Positions 0..num_tokens-1
-// then run the parent's arithmetic in the parent's order; no snapshot and no final window is
-// written, and the position inputs are stashed (as the BF16 the window converts) at
+// rows into its window, which is then what the parent kernels would have committed, and
+// writes the window back under the rule of the verify kernel it runs with (always, or with
+// `lazy` when pend + num_tokens > CARRY_CAP).
+// Positions 0..num_tokens-1 then run the parent's arithmetic in the parent's order; no
+// snapshot and no final window is written, and the position inputs are stashed (as the BF16
+// the window converts) behind the pending rows, or from row 0 after a write-back, at
 // conv_stash + slot * stash_seq_elems, row t at t * dim.
 // Grid (ceil(dim / 256), batch), block 256; the parent's contract on d_conv, head_dim and
 // qk_channels applies.
@@ -283,7 +359,8 @@ extern "C" __global__ void gdn_carry_conv(
     float l2_eps,
     unsigned int conv_state_seq_stride,
     unsigned int input_seq_stride,
-    unsigned int output_seq_stride
+    unsigned int output_seq_stride,
+    unsigned int lazy
 ) {
     const unsigned int seq = blockIdx.y;
     conv_state += (size_t) seq * conv_state_seq_stride;
@@ -292,6 +369,8 @@ extern "C" __global__ void gdn_carry_conv(
     const unsigned int slot = slot_tab[seq];
     __nv_bfloat16* stash = conv_stash + (size_t) slot * stash_seq_elems;
     const unsigned int np = pend[slot];
+    const bool wb = !lazy || np + num_tokens > CARRY_CAP;
+    const unsigned int base = wb ? 0u : np;
 
     const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int tid = threadIdx.x;
@@ -307,7 +386,7 @@ extern "C" __global__ void gdn_carry_conv(
             for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
             win[d_conv - 1] = (float)stash[t * dim + ch];
         }
-        if (np > 0) {
+        if (wb && np > 0) {
             float* out_state = conv_state + ch * d_conv;
             for (unsigned int i = 0; i < d_conv; i++) out_state[i] = win[i];
         }
@@ -327,7 +406,7 @@ extern "C" __global__ void gdn_carry_conv(
             const __nv_bfloat16 x = new_input[t * input_stride + ch];
             for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
             win[d_conv - 1] = (float)x;
-            stash[t * dim + ch] = x;
+            stash[(base + t) * dim + ch] = x;
 
             float acc = 0.0f;
             for (unsigned int k = 0; k < d_conv; k++) acc += win[k] * wcoef[k];

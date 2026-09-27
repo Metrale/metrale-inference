@@ -8,21 +8,21 @@
 //! - Exit 1 on any mismatch below; each check prints its mismatch count and max ULP delta.
 //!
 //! One GDN layer, random H / q / k / v / gate / beta over `SEQS` sequences on scattered
-//! slots, two verify rounds. For K = 2, 3, 4 it runs the parent `gated_delta_rule_wy{K}`
-//! (table form) and `gdn_carry_wy{K}`, then checks:
+//! slots, `ROUNDS` verify rounds. For K = 2, 3, 4 it runs, each round, the parent
+//! `gated_delta_rule_wy{K}` (table form) from the committed reference state and
+//! `gdn_carry_wy{K}` or `gdn_carry_wy{K}_lazy` (drawn per round) from the carried state
+//! with each slot's pending count, draws an accepted count per sequence, commits the
+//! parent's Hi(na-1) or final H into the reference and advances the pending counts by the
+//! kernels' rule (`pend' = na` after a write-back, else `pend + na`; the eager form always
+//! writes back, the lazy one when `pend + K > GDN_CARRY_CAP`). It checks:
 //!
-//! * round-1 `output` bit-equal, the carry kernel leaves every H alone and sets every
-//!   engaged word;
-//! * for na in 1..=K: `gdn_carry_flush` with `pend = na` leaves H bit-equal to the parent's
-//!   Hi(na-1) (na < K) or its final H (na == K);
-//! * for na in 1..=K: a round-2 carry verify that starts from the round-1 H with
-//!   `pend = na` gives the round-2 output of a parent verify that starts from the
-//!   committed state, bit for bit, and leaves H at that committed state.
+//! * every round's `output`, carry against parent, bit for bit;
+//! * after the last round, `gdn_carry_flush` leaves H bit-equal to the reference.
 //!
 //!   cargo run -p metrale-model-arch --release --features gpu-examples \
 //!       --example gdn_carry_microtest
 //!
-//! Env: SEQS (default 5), SEED (default 1), NK/NV (default 16/32).
+//! Env: SEQS (default 5), SEED (default 1), NK/NV (default 16/32), ROUNDS (default 9).
 
 use anyhow::{Context, Result};
 use half::bf16;
@@ -71,13 +71,6 @@ fn read_f32(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<f32>> {
     g.copy_d2h(p, &mut b)?;
     Ok(b.chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect())
-}
-fn read_u32(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u32>> {
-    let mut b = vec![0u8; n * 4];
-    g.copy_d2h(p, &mut b)?;
-    Ok(b.chunks_exact(4)
-        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
         .collect())
 }
 fn ptr_table(g: &dyn GpuBackend, ptrs: &[DevicePtr]) -> Result<DevicePtr> {
@@ -181,6 +174,7 @@ fn main() -> Result<()> {
     let seed = env_usize("SEED", 1) as u64;
     let nk = env_usize("NK", 16);
     let nv = env_usize("NV", 32);
+    let rounds = env_usize("ROUNDS", 9);
     anyhow::ensure!((1..=SLAB_ENTRIES / 2).contains(&seqs) && nv.is_multiple_of(nk));
     let d = Dims {
         seqs,
@@ -206,20 +200,26 @@ fn main() -> Result<()> {
         g.kernel("gated_delta_rule_carry", "gdn_carry_wy3")?,
         g.kernel("gated_delta_rule_carry", "gdn_carry_wy4")?,
     ];
+    let lazies = [
+        g.kernel("gated_delta_rule_carry", "gdn_carry_wy2_lazy")?,
+        g.kernel("gated_delta_rule_carry", "gdn_carry_wy3_lazy")?,
+        g.kernel("gated_delta_rule_carry", "gdn_carry_wy4_lazy")?,
+    ];
     let flush = g.kernel("gated_delta_rule_carry", "gdn_carry_flush")?;
 
     // 2026-09-26: Sequence b lives on slot 2b + 1, so the slot indirection is exercised.
     let n_slots = 2 * seqs + 2;
-    let slots: Vec<u32> = (0..seqs as u32).map(|b| 2 * b + 1).collect();
-    let slot_tab = upload_bytes(g, &u32_bytes(&slots))?;
+    let slots: Vec<usize> = (0..seqs).map(|b| 2 * b + 1).collect();
+    let slot_bytes: Vec<u32> = slots.iter().map(|&s| s as u32).collect();
+    let slot_tab = upload_bytes(g, &u32_bytes(&slot_bytes))?;
     let seq_floats = ops::gdn_carry_seq_floats(nv, KD, VD);
     let stash = g.alloc(n_slots * seq_floats * 4)?;
     let pend = g.alloc(n_slots * 4)?;
     let flags = g.alloc(SLAB_ENTRIES * 4)?;
-    let set_pend = |na: u32| -> Result<()> {
+    let upload_pend = |np: &[usize]| -> Result<()> {
         let mut v = vec![0u32; n_slots];
-        for &s in &slots {
-            v[s as usize] = na;
+        for (b, &s) in slots.iter().enumerate() {
+            v[s] = np[b] as u32;
         }
         g.copy_h2d(&u32_bytes(&v), pend)
     };
@@ -238,70 +238,80 @@ fn main() -> Result<()> {
     let mut rng = Rng(seed);
     for kk in 2..=4usize {
         let rows = seqs * kk;
-        let r1 = make_round(g, &d, kk, &mut rng)?;
-        let r2 = make_round(g, &d, kk, &mut rng)?;
+        let out_bytes = rows * d.value_dim * 2;
+        let (out_p, out_c) = (g.alloc(out_bytes)?, g.alloc(out_bytes)?);
+        let alloc_h =
+            || -> Result<Vec<DevicePtr>> { (0..seqs).map(|_| g.alloc(d.h_numel * 4)).collect() };
         let h_init: Vec<Vec<f32>> = (0..seqs)
             .map(|_| (0..d.h_numel).map(|_| rng.next_f32() * 0.1).collect())
             .collect();
-        let alloc_h =
-            || -> Result<Vec<DevicePtr>> { (0..seqs).map(|_| g.alloc(d.h_numel * 4)).collect() };
-        let load = |ptrs: &[DevicePtr], vals: &[Vec<f32>]| -> Result<()> {
-            for (p, v) in ptrs.iter().zip(vals) {
-                g.copy_h2d(&f32_bytes(v), *p)?;
-            }
-            Ok(())
-        };
-        let read_all = |ptrs: &[DevicePtr]| -> Result<Vec<Vec<f32>>> {
-            ptrs.iter().map(|&p| read_f32(g, p, d.h_numel)).collect()
-        };
-        let out_bytes = rows * d.value_dim * 2;
-        let (out_p, out_c) = (g.alloc(out_bytes)?, g.alloc(out_bytes)?);
-
-        // 2026-09-26: Parent round 1 from h_init.
-        let h_p = alloc_h()?;
-        load(&h_p, &h_init)?;
-        let hi_p: Vec<Vec<DevicePtr>> = (0..kk - 1).map(|_| alloc_h()).collect::<Result<_>>()?;
-        let t_hi: Vec<DevicePtr> = hi_p
-            .iter()
-            .map(|v| ptr_table(g, v))
-            .collect::<Result<_>>()?;
-        run_parent(
-            g,
-            parents[kk - 2],
-            kk,
-            &d,
-            &r1,
-            ptr_table(g, &h_p)?,
-            &t_hi,
-            out_p,
-        )?;
-        let out1_parent = read_f32(g, out_p, out_bytes / 4)?;
-        let committed: Vec<Vec<Vec<f32>>> = (1..=kk)
-            .map(|na| {
-                if na == kk {
-                    read_all(&h_p)
-                } else {
-                    read_all(&hi_p[na - 1])
+        let (h_ref, h_c) = (alloc_h()?, alloc_h()?);
+        for b in 0..seqs {
+            g.copy_h2d(&f32_bytes(&h_init[b]), h_ref[b])?;
+            g.copy_h2d(&f32_bytes(&h_init[b]), h_c[b])?;
+        }
+        let hi: Vec<Vec<DevicePtr>> = (0..kk - 1).map(|_| alloc_h()).collect::<Result<_>>()?;
+        let t_hi: Vec<DevicePtr> = hi.iter().map(|v| ptr_table(g, v)).collect::<Result<_>>()?;
+        let (t_ref, t_c) = (ptr_table(g, &h_ref)?, ptr_table(g, &h_c)?);
+        let mut np = vec![0usize; seqs];
+        let (mut out_bad, mut out_ulp) = (0usize, 0u32);
+        for _ in 0..rounds {
+            let r = make_round(g, &d, kk, &mut rng)?;
+            run_parent(g, parents[kk - 2], kk, &d, &r, t_ref, &t_hi, out_p)?;
+            upload_pend(&np)?;
+            // 2026-09-26: Eager or lazy form, drawn per round, so the two share the stash. As
+            // the host does, a slot holding more rows than an eager launch folds is folded
+            // by `gdn_carry_flush` first.
+            let lazy = rng.next_f32() > 0.0;
+            if !lazy && np.iter().any(|&p| p > ops::GDN_CARRY_EAGER_MAX_PENDING) {
+                let deep: Vec<usize> = np
+                    .iter()
+                    .map(|&p| {
+                        if p > ops::GDN_CARRY_EAGER_MAX_PENDING {
+                            p
+                        } else {
+                            0
+                        }
+                    })
+                    .collect();
+                upload_pend(&deep)?;
+                ops::gdn_carry_flush(
+                    g,
+                    flush,
+                    t_c,
+                    0,
+                    stash,
+                    0,
+                    slot_tab,
+                    pend,
+                    0,
+                    seq_floats as u32,
+                    seqs as u32,
+                    nv as u32,
+                    1,
+                    stream,
+                )?;
+                for p in np.iter_mut() {
+                    if *p > ops::GDN_CARRY_EAGER_MAX_PENDING {
+                        *p = 0;
+                    }
                 }
-            })
-            .collect::<Result<_>>()?;
-
-        // 2026-09-26: Carry round 1 from h_init with nothing pending.
-        let h_c = alloc_h()?;
-        let t_h_c = ptr_table(g, &h_c)?;
-        let carry_round = |r: &Round, na: u32, out: DevicePtr| -> Result<()> {
-            set_pend(na)?;
-            g.memset(flags, 0, SLAB_ENTRIES * 4)?;
+                upload_pend(&np)?;
+            }
             ops::gdn_carry_wy(
                 g,
-                carries[kk - 2],
-                t_h_c,
+                if lazy {
+                    lazies[kk - 2]
+                } else {
+                    carries[kk - 2]
+                },
+                t_c,
                 r.q,
                 r.k,
                 r.v,
                 r.gate,
                 r.beta,
-                out,
+                out_c,
                 stash,
                 slot_tab,
                 pend,
@@ -316,123 +326,72 @@ fn main() -> Result<()> {
                 flags,
                 stream,
             )?;
-            g.synchronize(stream)
-        };
-        load(&h_c, &h_init)?;
-        carry_round(&r1, 0, out_c)?;
-        let (n, ulp) = diff_f32(&read_f32(g, out_c, out_bytes / 4)?, &out1_parent);
+            g.synchronize(stream)?;
+            let (n, u) = diff_f32(
+                &read_f32(g, out_c, out_bytes / 4)?,
+                &read_f32(g, out_p, out_bytes / 4)?,
+            );
+            out_bad += n;
+            out_ulp = out_ulp.max(u);
+            // 2026-09-26: Commit a random accepted count per sequence: the parent's state
+            // after na rows into the reference, and the pending counts by the kernels' rule.
+            for b in 0..seqs {
+                let na = 1 + (rng.next_f32().abs() * kk as f32) as usize % kk;
+                if na < kk {
+                    let v = read_f32(g, hi[na - 1][b], d.h_numel)?;
+                    g.copy_h2d(&f32_bytes(&v), h_ref[b])?;
+                }
+                let kept = if !lazy || np[b] + kk > ops::GDN_CARRY_CAP {
+                    0
+                } else {
+                    np[b]
+                };
+                np[b] = kept + na;
+            }
+        }
         report(
-            &format!("K={kk} round-1 output vs parent"),
+            &format!("K={kk} {rounds} rounds: outputs vs parent"),
+            out_bad,
+            out_ulp,
+            rounds * out_bytes / 4,
+        );
+        upload_pend(&np)?;
+        ops::gdn_carry_flush(
+            g,
+            flush,
+            t_c,
+            0,
+            stash,
+            0,
+            slot_tab,
+            pend,
+            0,
+            seq_floats as u32,
+            seqs as u32,
+            nv as u32,
+            1,
+            stream,
+        )?;
+        g.synchronize(stream)?;
+        let (mut n, mut ulp) = (0, 0);
+        for b in 0..seqs {
+            let (dn, du) = diff_f32(
+                &read_f32(g, h_c[b], d.h_numel)?,
+                &read_f32(g, h_ref[b], d.h_numel)?,
+            );
+            n += dn;
+            ulp = ulp.max(du);
+        }
+        report(
+            &format!("K={kk} flushed state vs committed reference (pend {np:?})"),
             n,
             ulp,
-            out_bytes / 4,
-        );
-        let now = read_all(&h_c)?;
-        let bad: usize = now.iter().zip(&h_init).map(|(a, b)| diff_f32(a, b).0).sum();
-        report(
-            &format!("K={kk} carry verify wrote no state"),
-            bad,
-            0,
             seqs * d.h_numel,
         );
-        let fl = read_u32(g, flags, SLAB_ENTRIES)?;
-        let unset = (0..SLAB_ENTRIES)
-            .filter(|&b| fl[b] != u32::from(b < seqs))
-            .count();
-        report(
-            &format!("K={kk} engaged words = batch positions"),
-            unset,
-            0,
-            SLAB_ENTRIES,
-        );
-
-        for na in 1..=kk {
-            // 2026-09-26: Standalone fold of the round-1 stash, which the round-1 carry
-            // writes again first (the previous na's round 2 overwrote it).
-            load(&h_c, &h_init)?;
-            carry_round(&r1, 0, out_c)?;
-            load(&h_c, &h_init)?;
-            set_pend(na as u32)?;
-            ops::gdn_carry_flush(
-                g,
-                flush,
-                t_h_c,
-                0,
-                stash,
-                0,
-                slot_tab,
-                pend,
-                0,
-                seq_floats as u32,
-                seqs as u32,
-                nv as u32,
-                1,
-                stream,
-            )?;
-            g.synchronize(stream)?;
-            let now = read_all(&h_c)?;
-            let (mut n, mut ulp) = (0, 0);
-            for (a, b) in now.iter().zip(&committed[na - 1]) {
-                let (dn, du) = diff_f32(a, b);
-                n += dn;
-                ulp = ulp.max(du);
-            }
-            report(
-                &format!("K={kk} flush na={na} vs parent state"),
-                n,
-                ulp,
-                seqs * d.h_numel,
-            );
-
-            // 2026-09-26: Round 2: parent from the committed state against carry from h_init
-            // with na pending. The round-1 carry runs again first to restore its stash.
-            let h_q = alloc_h()?;
-            load(&h_q, &committed[na - 1])?;
-            let hi_q: Vec<Vec<DevicePtr>> =
-                (0..kk - 1).map(|_| alloc_h()).collect::<Result<_>>()?;
-            let t_hi_q: Vec<DevicePtr> = hi_q
-                .iter()
-                .map(|v| ptr_table(g, v))
-                .collect::<Result<_>>()?;
-            run_parent(
-                g,
-                parents[kk - 2],
-                kk,
-                &d,
-                &r2,
-                ptr_table(g, &h_q)?,
-                &t_hi_q,
-                out_p,
-            )?;
-            let out2_parent = read_f32(g, out_p, out_bytes / 4)?;
-            load(&h_c, &h_init)?;
-            carry_round(&r1, 0, out_c)?;
-            carry_round(&r2, na as u32, out_c)?;
-            let (n, ulp) = diff_f32(&read_f32(g, out_c, out_bytes / 4)?, &out2_parent);
-            report(
-                &format!("K={kk} na={na} round-2 output vs parent"),
-                n,
-                ulp,
-                out_bytes / 4,
-            );
-            let now = read_all(&h_c)?;
-            let (mut n, mut ulp) = (0, 0);
-            for (a, b) in now.iter().zip(&committed[na - 1]) {
-                let (dn, du) = diff_f32(a, b);
-                n += dn;
-                ulp = ulp.max(du);
-            }
-            report(
-                &format!("K={kk} na={na} round-2 H = committed"),
-                n,
-                ulp,
-                seqs * d.h_numel,
-            );
-        }
     }
 
     println!(
-        "gdn_carry_microtest: seqs={seqs} nk={nk} nv={nv} seed={seed}: {}",
+        "gdn_carry_microtest: seqs={seqs} nk={nk} nv={nv} seed={seed} rounds={rounds}: {}",
         if failures == 0 {
             "ALL PASS (bit-equal)"
         } else {

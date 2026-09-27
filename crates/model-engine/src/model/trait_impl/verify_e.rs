@@ -203,6 +203,8 @@ impl TransformerModel {
         // (`gdn_carry.rs`); DFlash and a verify without tables never carry.
         let carry = self.gdn_carry_begin(
             opts.write_on_accept && dflash_k.is_none() && !wy_tables_base.is_null(),
+            &*seqs,
+            ks,
             stream,
         )?;
         let write_on_accept = !carry

@@ -5,12 +5,13 @@
 //! commit of a verdict as pending rows.
 //!
 //! A batched MTP verify that asks for write-on-accept runs, in every GDN layer that
-//! engages, a carry kernel: it folds the rows the previous verdict accepted into H, then
-//! verifies without writing any h-state and stashes its rows. The verdict then only
-//! records how many of them each slot accepted (`pend`); they stay pending until the next
-//! carry verify of that slot folds them, or until any other call that reads the state
-//! folds every pending slot first (`gdn_carry_flush_pending`, called at the top of those
-//! `Model` methods).
+//! engages, a carry kernel: it folds the rows the previous verdicts accepted into its copy
+//! of H, verifies without writing any intermediate state and stashes its rows. The verdict
+//! then only records how many of them each slot accepted (`pend`). They stay pending,
+//! stacked up to `GDN_CARRY_CAP` rows, until a carry verify of that slot writes the state
+//! back (every verify below 16 sequences; from 16 only when its own rows might not fit
+//! behind them), or until any other call that reads the state folds every pending slot
+//! first (`gdn_carry_flush_pending`, called at the top of those `Model` methods).
 //!
 //! Owner: model-engine speculative decoding.
 //! Invariants:
@@ -24,11 +25,15 @@ use anyhow::Result;
 use metrale_config::LayerType;
 use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use metrale_model_layers::layer::{GdnCarryBinding, VERIFY_WY_TABLE_SEQS};
+use metrale_model_layers::layers::ops::{GDN_CARRY_EAGER_MAX_PENDING, GDN_CARRY_LAZY_MIN_SEQS};
 use parking_lot::Mutex;
 
 use super::ssm_batched_copy::{StateCopy, run_ssm_state_copies};
 use super::types::TransformerModel;
 use crate::traits::SequenceState;
+
+mod flush;
+use flush::state_table;
 
 /// 2026-09-26: Presence of `METRALE_NO_GDN_CARRY` (any value, `0` included) turns the
 /// carried-state verify off. Read once per process.
@@ -196,20 +201,54 @@ impl TransformerModel {
     }
 
     /// 2026-09-26: Whether this batched verify runs carried. Called before the graph
-    /// decision; clears the engaged words on the default stream.
-    pub(super) fn gdn_carry_begin(&self, requested: bool, stream: u64) -> Result<bool> {
+    /// decision; clears the engaged words on the default stream. `ks` gives the runs the
+    /// layers launch (maximal groups of adjacent sequences with equal `ks`, as
+    /// `batched_conv_gdn_route` forms them): a slot in a run narrower than
+    /// `GDN_CARRY_LAZY_MIN_SEQS` goes to an eager kernel, which folds at most
+    /// `GDN_CARRY_EAGER_MAX_PENDING` rows, so a slot holding more is folded here first.
+    pub(super) fn gdn_carry_begin(
+        &self,
+        requested: bool,
+        seqs: &[&mut SequenceState],
+        ks: &[usize],
+        stream: u64,
+    ) -> Result<bool> {
         let mut inner = self.gdn_carry.inner.lock();
         inner.last = None;
         if !requested || !gdn_carry_enabled() || !self.gdn_carry_bind(&mut inner)? {
             // 2026-09-26: This verify's parent kernels read H: nothing may stay pending.
             if !inner.pending.is_empty() {
-                self.gdn_carry_flush_locked(&mut inner, stream)?;
+                self.gdn_carry_flush_locked(&mut inner, stream, |_| true)?;
             }
             return Ok(false);
         }
-        let b = inner.bufs.as_ref().expect("bound");
+        let (layers, slots_n, flags) = {
+            let b = inner.bufs.as_ref().expect("bound");
+            (b.layers, b.slots, b.flags)
+        };
+        let mut eager_deep = Vec::new();
+        let mut g0 = 0;
+        while g0 < ks.len() {
+            let g1 = (g0..ks.len())
+                .find(|&i| ks[i] != ks[g0])
+                .unwrap_or(ks.len());
+            if g1 - g0 < GDN_CARRY_LAZY_MIN_SEQS {
+                for seq in &seqs[g0..g1] {
+                    let slot = self.carry_slot(seq);
+                    if (0..layers).any(|l| {
+                        inner.mirror[l * slots_n + slot] as usize > GDN_CARRY_EAGER_MAX_PENDING
+                    }) {
+                        eager_deep.push(slot);
+                    }
+                }
+            }
+            g0 = g1;
+        }
+        if !eager_deep.is_empty() {
+            self.gdn_carry_flush_locked(&mut inner, stream, |r| eager_deep.contains(&r.slot))?;
+        }
         self.gpu
-            .memset_async(b.flags, 0, b.layers * VERIFY_WY_TABLE_SEQS * 4, stream)?;
+            .memset_async(flags, 0, layers * VERIFY_WY_TABLE_SEQS * 4, stream)?;
         Ok(true)
     }
 
@@ -271,9 +310,10 @@ impl TransformerModel {
         self.gpu.copy_h2d_async(&bytes, b.pend, stream)
     }
 
-    /// 2026-09-26: After a carried verify's forward completed (its argmax was read back):
-    /// every layer consumed the batch's pending rows, in its carry kernel or in the fold a
-    /// declining layer runs. Records which layers engaged for the verdict.
+    /// 2026-09-26: After a carried verify's forward completed (its argmax was read back).
+    /// A layer that engaged kept the batch's pending rows unless it wrote the state back
+    /// (its engaged word says which); a declining layer folded them. Records which layers
+    /// engaged for the verdict.
     pub(super) fn gdn_carry_end(
         &self,
         seqs: &[&mut SequenceState],
@@ -287,14 +327,27 @@ impl TransformerModel {
         };
         let mut raw = vec![0u8; layers * VERIFY_WY_TABLE_SEQS * 4];
         self.gpu.copy_d2h_on_stream(flags, &mut raw, stream)?;
-        let engaged: Vec<bool> = raw.chunks(4).map(|c| c != [0, 0, 0, 0]).collect();
+        // 2026-09-26: 0 = the layer declined this position, 1 = carried with the rows kept
+        // pending, 2 = carried and written back.
+        let words: Vec<u32> = raw
+            .chunks(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let engaged: Vec<bool> = words.iter().map(|&w| w != 0).collect();
         let mut rows = Vec::with_capacity(seqs.len());
-        for seq in seqs {
+        for (b, seq) in seqs.iter().enumerate() {
             let r = self.slot_states(seq)?;
             for l in 0..layers {
-                inner.mirror[l * slots_n + r.slot] = 0;
+                if words[l * VERIFY_WY_TABLE_SEQS + b] != 1 {
+                    inner.mirror[l * slots_n + r.slot] = 0;
+                }
             }
+            // 2026-09-26: A slot still holding rows stays listed, so a later fold reaches
+            // it even if its verdict never commits.
             inner.pending.retain(|p| p.slot != r.slot);
+            if (0..layers).any(|l| inner.mirror[l * slots_n + r.slot] != 0) {
+                inner.pending.push(r.clone());
+            }
             rows.push(r);
         }
         self.upload_mirror(&inner, stream)?;
@@ -341,7 +394,7 @@ impl TransformerModel {
             );
             for l in 0..r.h.len() {
                 if last.engaged[l * VERIFY_WY_TABLE_SEQS + b] {
-                    inner.mirror[l * slots_n + r.slot] = rows;
+                    inner.mirror[l * slots_n + r.slot] += rows;
                 } else if (rows as usize) < last.ks[b] {
                     let t = rows as usize - 1;
                     h_restores.push(StateCopy {
@@ -360,6 +413,9 @@ impl TransformerModel {
         run_ssm_state_copies(self.gpu.as_ref(), &h_restores, &conv_restores, stream)?;
         self.upload_mirror(&inner, stream)?;
         inner.committed = slots.to_vec();
+        inner
+            .pending
+            .retain(|p| last.seqs.iter().all(|r| r.slot != p.slot));
         inner.pending.extend(last.seqs);
         Ok(true)
     }
@@ -376,90 +432,4 @@ impl TransformerModel {
             None => false,
         }
     }
-
-    /// 2026-09-26: Fold every pending row into H. A no-op when nothing is pending.
-    pub(crate) fn gdn_carry_flush_pending(&self) -> Result<()> {
-        let mut inner = self.gdn_carry.inner.lock();
-        if inner.pending.is_empty() {
-            return Ok(());
-        }
-        let stream = self.gpu.default_stream();
-        self.gdn_carry_flush_locked(&mut inner, stream)
-    }
-
-    fn gdn_carry_flush_locked(&self, inner: &mut CarryInner, stream: u64) -> Result<()> {
-        let pending = std::mem::take(&mut inner.pending);
-        let b = inner.bufs.as_ref().expect("bound");
-        let (layers, slots_n) = (b.layers, b.slots);
-        for chunk in pending.chunks(VERIFY_WY_TABLE_SEQS) {
-            let slot_bytes: Vec<u8> = chunk
-                .iter()
-                .flat_map(|r| (r.slot as u32).to_le_bytes())
-                .collect();
-            self.gpu
-                .copy_h2d_async(&state_table(chunk, layers, |r| &r.h), b.flush_tab, stream)?;
-            self.gpu.copy_h2d_async(
-                &state_table(chunk, layers, |r| &r.conv),
-                b.flush_conv_tab,
-                stream,
-            )?;
-            self.gpu
-                .copy_h2d_async(&slot_bytes, b.flush_slots, stream)?;
-            metrale_model_layers::layers::ops::gdn_carry_flush(
-                self.gpu.as_ref(),
-                b.flush_k,
-                b.flush_tab,
-                VERIFY_WY_TABLE_SEQS as u64,
-                b.stash,
-                (slots_n * b.seq_floats) as u64,
-                b.flush_slots,
-                b.pend,
-                slots_n as u32,
-                b.seq_floats as u32,
-                chunk.len() as u32,
-                b.nv as u32,
-                layers as u32,
-                stream,
-            )?;
-            metrale_model_layers::layers::ops::gdn_carry_conv_flush(
-                self.gpu.as_ref(),
-                b.conv_flush_k,
-                b.flush_conv_tab,
-                VERIFY_WY_TABLE_SEQS as u64,
-                b.conv_stash,
-                (slots_n * b.conv_seq_elems) as u64,
-                b.flush_slots,
-                b.pend,
-                slots_n as u32,
-                b.conv_seq_elems as u32,
-                chunk.len() as u32,
-                b.conv_dim as u32,
-                b.d_conv as u32,
-                layers as u32,
-                stream,
-            )?;
-        }
-        for r in &pending {
-            for l in 0..layers {
-                inner.mirror[l * slots_n + r.slot] = 0;
-            }
-        }
-        self.upload_mirror(inner, stream)
-    }
-}
-
-/// 2026-09-26: `[layer][VERIFY_WY_TABLE_SEQS]` u64 pointer table of `rows` (row `j` at
-/// entry `j` of each layer), from `pick`; rows without an entry for a layer leave 0.
-fn state_table(
-    rows: &[SlotStates],
-    layers: usize,
-    pick: impl Fn(&SlotStates) -> &Vec<DevicePtr>,
-) -> Vec<u8> {
-    let mut tab = vec![0u64; layers * VERIFY_WY_TABLE_SEQS];
-    for (j, r) in rows.iter().enumerate() {
-        for (l, p) in pick(r).iter().enumerate() {
-            tab[l * VERIFY_WY_TABLE_SEQS + j] = p.0;
-        }
-    }
-    tab.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
