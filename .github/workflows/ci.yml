@@ -942,6 +942,57 @@ jobs:
       # is run locally on GB10 hardware via `-- --ignored`.
       - run: cargo test --workspace --locked
 
+  # 2026-09-27: Every launch recipe under recipes/ against THIS tree's `met`: the
+  # flag surface it dumps, `met serve` itself (clap, the METRALE_* lever check and
+  # `validate_serve_args`, which all run before a model is looked at), the engine's
+  # own recipe reader via `met doctor`, and every `recipe =` id in
+  # kernels/**/BENCH.toml. A CLI change that strands a recipe fails here, in the PR
+  # that makes it. gpu_memory_utilization above a box class's ceiling only warns.
+  #
+  # ADVISORY: not a required check yet. The bundle it writes (recipes.tar.gz,
+  # serve-options.json, index.json, each with a .sha256) is what dev-release.yml
+  # attaches to the b-release built from the same commit.
+  recipes:
+    name: recipes (advisory)
+    needs: [changes]
+    # Advisory twice over: not a required check, and a failure here does not
+    # fail the CI run, whose conclusion gates dev-release.yml. The job still
+    # shows red, and on main dev-release then publishes without the recipe
+    # assets.
+    continue-on-error: true
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && needs.changes.outputs.web_only != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .github/python-version
+      - run: python3 -m pip install --quiet PyYAML
+      # The checker's own controls first: seconds, and they need no binary.
+      - name: Recipe checker self-test (no binary)
+        run: python3 .github/scripts/recipes-selftest.py
+      # The same no-GPU stubs and METRALE_SKIP_BUILD as the test job: `met`
+      # links, and the commands used here never reach a GPU call.
+      - name: Generate no-GPU library stubs
+        run: bash scripts/ci_gpu_stubs.sh
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Build met
+        run: cargo build --locked -p metrale-server --bin met
+      - name: Recipe checker self-test (through met)
+        run: python3 .github/scripts/recipes-selftest.py --met target/debug/met
+      - name: Check every recipe and write the bundle
+        run: python3 .github/scripts/recipes.py check --met target/debug/met --out recipes-dist --github
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: recipes-bundle
+          # dev-release.yml downloads it from the push run on main, which can
+          # queue behind the release matrix; a pull request's copy is only for
+          # looking at.
+          retention-days: ${{ github.event_name == 'push' && 7 || 1 }}
+          path: recipes-dist/
+          if-no-files-found: error
+
   test-macos-metal:
     name: cargo test --features metal (macOS aarch64)
     needs: [changes]
@@ -1398,68 +1449,18 @@ jobs:
           fi
           emit_file histogram histogram.txt
           emit_file paths paths.txt
-      - name: Cross-repo context — which recipes exist
+      - name: Which recipes exist
         id: recipes
-        # The serve recipes are in a DIFFERENT repository, and they determine
-        # every gated number (`--kv-cache-dtype` alone is worth -3 to -4% wall
-        # in this campaign's own data). A classifier that cannot see them
-        # cannot reason about them. Read-only, best-effort, never fatal.
-        #
-        # A TOKEN CHAIN, most-capable rung first, each rung VERIFIED by its
-        # HTTP status instead of assumed to work:
-        #   1. GH_ORGANIZATION_READ_TOKEN — org-scoped read, 5000/hr. Empty on
-        #      fork PRs (secrets are withheld there) and revocable without
-        #      notice, so its absence or refusal must not be fatal.
-        #   2. github.token — scoped to THIS repo, which is why the first live
-        #      run fell through to anonymous and classified without recipe
-        #      context: a sibling repo normally refuses it. Tried anyway,
-        #      because "normally" is org policy, not physics — a 200 is a 200,
-        #      and the check below believes responses, not documentation.
-        #   3. anonymous — works because metralectl is public
-        #      (`"private": false`); rate-limited to 60/hr per IP, shared
-        #      across the runner fleet, hence last.
-        # The first rung answering HTTP 200 with parseable JSON wins. When
-        # none does, classify without recipe context: this is evidence for a
-        # classifier, not a gate input, so it degrades rather than fails.
-        env:
-          ORG_READ: ${{ secrets.GH_ORGANIZATION_READ_TOKEN }}
-          REPO_TOKEN: ${{ github.token }}
+        # The launch recipes determine every gated number (`--kv-cache-dtype`
+        # alone is worth -3 to -4% wall in this campaign's own data), so the
+        # classifier sees which exist. They are in this checkout, as this PR
+        # leaves them. Evidence for a classifier, not a gate input.
         run: |
-          set -uo pipefail
-          API='https://api.github.com/repos/Metrale/metralectl/git/trees/main?recursive=1'
-          out=$(mktemp)
-          fetch() {  # extra curl args; body on stdout iff the answer was 200
-            local code
-            code=$(curl -sS --max-time 20 -o "$out" -w '%{http_code}' \
-                     -H 'Accept: application/vnd.github+json' "$@" "$API" \
-                     2>/dev/null) || return 1
-            [ "$code" = "200" ] || return 1
-            cat "$out"
-          }
-          body=""
-          if [ -n "${ORG_READ:-}" ]; then
-            echo "::add-mask::$ORG_READ"
-            body=$(fetch -H "Authorization: Bearer $ORG_READ") || body=""
-          fi
-          if [ -z "$body" ] && [ -n "${REPO_TOKEN:-}" ]; then
-            body=$(fetch -H "Authorization: Bearer $REPO_TOKEN") || body=""
-          fi
-          if [ -z "$body" ]; then
-            body=$(fetch) || body=""
-          fi
-          if [ -n "$body" ] \
-             && names=$(printf '%s' "$body" \
-                  | jq -r '[.tree[]? | select(.path | endswith(".yaml")) | .path] | .[0:60] | join("\n")' \
-                    2>/dev/null) \
-             && [ -n "$names" ]; then
-            printf '%s' "$names" > recipes.txt
-          else
-            : > recipes.txt
-            echo "::notice::metralectl not readable on any rung of the token chain; classifying without recipe context"
-          fi
+          set -euo pipefail
+          find recipes -name '*.yaml' 2>/dev/null | LC_ALL=C sort | head -n 60 > recipes.txt || true
           echo "count=$(wc -l < recipes.txt)" >> "$GITHUB_OUTPUT"
-          # Randomized marker, same reason as the diff step: recipe names come
-          # from a sibling repo's tree listing, which is not this repo's data.
+          # Randomized marker, same reason as the diff step: a pull request can
+          # name a recipe file anything.
           d="__METRALE_EOF_$RANDOM$RANDOM"
           { printf 'names<<%s\n' "$d"; cat recipes.txt; printf '\n%s\n' "$d"; } >> "$GITHUB_OUTPUT"
       - name: Test PR body sanitization
@@ -1593,7 +1594,7 @@ jobs:
             Changed paths (${{ steps.diff.outputs.count }} total, sorted):
             ${{ steps.diff.outputs.paths }}
 
-            Serve recipes available in Metrale/metralectl
+            Launch recipes under recipes/
             (${{ steps.recipes.outputs.count }}):
             ${{ steps.recipes.outputs.names }}
           taxonomy: .github/pr-taxonomy.json

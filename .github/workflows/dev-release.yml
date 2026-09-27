@@ -157,6 +157,9 @@ jobs:
     permissions:
       # The only job in this workflow that can write anything.
       contents: write
+      # Reads the recipe bundle artifact from the CI run that validated this
+      # commit.
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -179,13 +182,52 @@ jobs:
           echo "publishing $count artifact(s)"
           find dist -type f | sort
 
+      # 2026-09-27: The launch recipes, as ci.yml's `recipes (advisory)` job
+      # checked them against this commit's own `met`: recipes.tar.gz,
+      # serve-options.json and index.json, each with a .sha256. Taken from that
+      # run rather than rebuilt, so what is attached is what was checked. A
+      # missing or failed bundle costs the release these three assets, never the
+      # binaries: this step may fail, and the next one attaches them only when
+      # it did not.
+      - name: Fetch the checked recipe bundle
+        id: recipes
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # A manual dispatch has no upstream run: use the newest successful
+          # push run of CI on this commit.
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$SHA" \
+                       --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          fi
+          [ -n "$RUN_ID" ] || { echo "::warning::no CI run for $SHA to take the recipe bundle from"; exit 1; }
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n recipes-bundle -D recipes-dist || {
+            echo "::warning::CI run $RUN_ID has no recipes-bundle artifact (the recipe check failed or did not run); publishing without the recipe assets"
+            exit 1
+          }
+          want="index.json index.json.sha256 recipes.tar.gz recipes.tar.gz.sha256 serve-options.json serve-options.json.sha256"
+          got=$(cd recipes-dist && ls | sort | tr '\n' ' ' | sed 's/ $//')
+          [ "$got" = "$want" ] || { echo "::warning::unexpected recipe bundle contents: $got"; exit 1; }
+          (cd recipes-dist && sha256sum -c ./*.sha256)
+          commit=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' recipes-dist/index.json)
+          [ "$commit" = "$SHA" ] || { echo "::warning::the bundle was built from $commit, not $SHA"; exit 1; }
+
       - name: Create the prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD: ${{ needs.prepare.outputs.build_number }}
           SHA: ${{ needs.prepare.outputs.sha }}
+          RECIPES: ${{ steps.recipes.outcome }}
         run: |
           set -euo pipefail
+          extra=()
+          if [ "$RECIPES" = success ]; then
+            extra=(recipes-dist/*)
+          fi
           # --target creates the tag as part of creating the release, so this
           # job needs no git push and no tag step that could half-apply.
           # --prerelease keeps `bNNNN` out of the "Latest release" slot that
@@ -213,11 +255,20 @@ jobs:
             echo "Per-target caveats — including which ones are known *not* to run"
             echo "yet — are recorded in \`.github/release-matrix.json\` under each"
             echo "entry's \`note\` field."
+            if [ "$RECIPES" = success ]; then
+              echo
+              echo "The launch recipes at this commit are attached as \`recipes.tar.gz\`,"
+              echo "with \`index.json\` (each recipe's id, path and sha256) and"
+              echo "\`serve-options.json\` (the \`met serve\` flag surface they were checked"
+              echo "against). \`index.json\` is also a recipe cache: saved as"
+              echo "\`~/.metrale/metrale-recipes/index.json\`, it pins \`met benchmark\` to"
+              echo "these recipes until the next \`met sync-recipes\`."
+            fi
           } > notes.md
           gh release create "$BUILD" \
             --title "Metrale Engine $BUILD" \
             --notes-file notes.md \
             --prerelease \
             --target "$SHA" \
-            dist/*
+            dist/* "${extra[@]}"
           echo "published: $(gh release view "$BUILD" --json url --jq .url)"

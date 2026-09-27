@@ -1,0 +1,33 @@
+recipe_version: "2"
+model: ig1/Qwen3-VL-30B-A3B-Instruct-NVFP4
+runtime: metrale
+container: metrale/metrale-inference-gb10:latest
+max_nodes: 1
+
+metadata:
+  description: |
+    Qwen3-VL-30B-A3B vision-language model — pure attention (48 layers,
+    NO SSM, head_dim=128, ungated Q), MoE without shared experts.
+    Accepts images in OpenAI content-parts format (`{"type":
+    "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}`).
+    ~97 tok/s decode per the Metrale Engine performance table (FP8 KV).
+  maintainer: metrale
+  category: vision
+  model_params: 30B
+  model_dtype: nvfp4
+  quantization: nvfp4
+  kv_dtype: fp8
+
+defaults:
+  port: 8888
+  host: 0.0.0.0
+  max_model_len: 32768
+  kv_cache_dtype: fp8
+  gpu_memory_utilization: 0.88
+  scheduler: slai
+  # Without this the ttft-warm-gate has nothing to be warm ABOUT: it serves this
+  # recipe, every warm leg reports `cached 0 tok`, and it re-measures cold
+  # prefill under a warm label. Observed on dgx1 at 546.1 ms warm vs 549.1 ms
+  # cold — the two are within 0.5% because they are the same work. The sibling
+  # qwen3.6-35b-a3b-nvfp4 recipe has carried this since it gained a warm gate.
+  enable_prefix_caching: true

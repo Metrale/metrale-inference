@@ -1,0 +1,19 @@
+recipe_version: "2"
+model: example/model
+runtime: metrale
+container: metrale/metrale-inference-gb10:latest
+min_nodes: 2
+metadata:
+  description: |
+    Fixture for recipes-selftest.py. Every key maps to a flag the engine
+    has had since the recipe format existed.
+defaults:
+  port: 8888
+  host: 0.0.0.0
+  max_model_len: 4096
+  gpu_memory_utilization: 0.85
+  scheduler: slai
+  speculative: true
+  ep_size: 2
+env:
+  METRALE_EP_GRAPHS: "0"

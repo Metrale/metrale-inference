@@ -1,0 +1,6 @@
+[[baseline]]
+model = "example/model"
+recipe = "fam/good"
+
+[baseline.nested]
+recipe = "fam/good"
