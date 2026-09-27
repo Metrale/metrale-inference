@@ -40,9 +40,9 @@ inputs:
       never spliced.
 
       This exists because a title alone is not evidence. The caller should
-      pass the CHANGED PATHS, and may pass CROSS-REPO context: the serve
-      recipes live in `Metrale/metralectl`, and which recipe a
-      change affects is often only visible there.
+      pass the CHANGED PATHS, and may pass the launch recipes under
+      recipes/: which recipe a change affects is often only visible
+      there.
     required: false
     default: ""
   taxonomy:

@@ -149,3 +149,14 @@ subtree, so an abstention can never manufacture GPU spend.
 Unchanged: the union is still advisory (`check_gates` iterates
 `REQUIRED_GATES` unconditionally and the exit code cannot see intent), and
 `_benches` still may only ADD — both by the same doctrine as before.
+
+## Amendment (2026-09-27): `recipes/` is reachable
+
+Point 2 of the 2026-08-16 amendment no longer holds: the launch recipes live in
+this repository under `recipes/`, so a `recipes/` path can appear in the diff the
+gate filters. It is outside `PERF_PATHS`, so it still invalidates nothing by
+path, and intent remains its only source of coverage. No gate serves from
+`recipes/` yet: a gate run reads the recipe index `met sync-recipes` writes, so a
+`recipes/` change reaches a gate run through that index, not through the commit
+being certified. The live case becomes load-bearing when a gate serves the
+recipes of the tree it certifies.

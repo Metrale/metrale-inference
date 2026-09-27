@@ -1,0 +1,92 @@
+{
+ "schema_version": 2,
+ "engine_version": "fixture",
+ "flags": [
+  {
+   "key": "port",
+   "flag": "port",
+   "presence_only": false,
+   "is_bool": false,
+   "options": [],
+   "recipe_aliases": []
+  },
+  {
+   "key": "max_seq_len",
+   "flag": "max-seq-len",
+   "presence_only": false,
+   "is_bool": false,
+   "options": [],
+   "recipe_aliases": [
+    "max_model_len"
+   ]
+  },
+  {
+   "key": "gpu_memory_utilization",
+   "flag": "gpu-memory-utilization",
+   "presence_only": false,
+   "is_bool": false,
+   "options": [],
+   "recipe_aliases": []
+  },
+  {
+   "key": "speculative",
+   "flag": "speculative",
+   "presence_only": true,
+   "is_bool": true,
+   "options": [],
+   "recipe_aliases": []
+  },
+  {
+   "key": "scheduler",
+   "flag": "scheduler",
+   "presence_only": false,
+   "is_bool": false,
+   "options": [
+    "fifo",
+    "slai"
+   ],
+   "recipe_aliases": []
+  },
+  {
+   "key": "world_size",
+   "flag": "world-size",
+   "presence_only": false,
+   "is_bool": false,
+   "options": [],
+   "recipe_aliases": []
+  },
+  {
+   "key": "ep_size",
+   "flag": "ep-size",
+   "presence_only": false,
+   "is_bool": false,
+   "options": [],
+   "recipe_aliases": []
+  },
+  {
+   "key": "no_tui",
+   "flag": "no-tui",
+   "presence_only": true,
+   "is_bool": true,
+   "options": [],
+   "recipe_aliases": []
+  },
+  {
+   "key": "bind",
+   "flag": "bind",
+   "presence_only": false,
+   "is_bool": false,
+   "options": [],
+   "recipe_aliases": [
+    "host"
+   ]
+  }
+ ],
+ "levers": [
+  {
+   "env": "METRALE_EP_GRAPHS",
+   "type": "switch",
+   "class": "runtime"
+  }
+ ]
+}

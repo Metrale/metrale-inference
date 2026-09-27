@@ -15,6 +15,8 @@ warn_within = "7d"
 # comments are still swept, just not enforced.
 # 2026-09-26: `gen_parity_fixtures.py` is listed because `scoring_tests.rs`
 # pins its SHA-256 (include_str!), so its comments are data for that test.
+# 2026-09-27: `recipes/` is listed because a launch recipe's comments are part of the recipe
+# (the reason beside a measured value), shipped byte for byte in the release's recipes.tar.gz.
 # 2026-09-25: Paths whose comments are never judged: third-party sources kept
 # verbatim (THIRD_PARTY_NOTICES.md, `.licenserc.yaml` paths-ignore), the
 # website trees (owner decision 2026-09-24), and build output. `build/` is not
@@ -27,6 +29,7 @@ exempt_paths = '''(?x)
   | ^bench/ngram_ref/modeling_longcat_ngram\.py$
   | ^crates/bench/assets/mlperf-agentic/gen_parity_fixtures\.py$
   | ^(book|assets/brand)/
+  | ^recipes/
   | ^crates/server/src/cli\.rs$
   | ^crates/server/src/cli/(serve_args|bench_args|bench_certify/args)(\.rs$|/)
   | ^target/

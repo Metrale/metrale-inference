@@ -287,7 +287,9 @@ A gate resolves its recipe (for example `qwen3.8/qwen3.8-27b-nvfp4-throughput`)
 from a local index, and `sync-recipes` fills it from the `recipes/` tree of
 [Metrale/metralectl](https://github.com/Metrale/metralectl). It is a separate
 command so that a benchmark never reaches the network mid-run. It prints the
-path of the index, the recipe count and the tree sha it read. `met doctor`
+path of the index, the recipe count and the tree sha it read. The same recipes
+are in this repository under [`recipes/`](recipes/), where CI checks each one
+against the `met` built from the same commit. `met doctor`
 checks the box. On a new machine its `identity` line reads `no signing key
 yet — one is minted on this box's first gate record`; after your first gate
 run it will say the key is not committed in `.github/record-signers/`, which
@@ -780,7 +782,8 @@ merged in the certified commit `68dd6bea35`.
 - Documentation (the book): [docs.metrale.ai](https://docs.metrale.ai)
 - API reference: [docs.dev.metrale.ai](https://docs.dev.metrale.ai)
 - Engineering blog: [blog.metrale.ai](https://blog.metrale.ai)
-- Launcher and recipe library: [Metrale/metralectl](https://github.com/Metrale/metralectl)
+- Launch recipes: [`recipes/`](recipes/)
+- Launcher: [Metrale/metralectl](https://github.com/Metrale/metralectl)
 - Issues and discussions: [GitHub issues](https://github.com/Metrale/metrale-inference/issues), [GitHub discussions](https://github.com/Metrale/metrale-inference/discussions)
 - Contact: [metrale.ai/contact](https://metrale.ai/contact) and the [Metrale Discord](https://discord.gg/RQcGakU2jW)
 - Security reports: security@metrale.ai

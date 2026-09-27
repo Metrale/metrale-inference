@@ -1,0 +1,9 @@
+recipe_version: "1"
+model: example/model
+container: other-runtime
+defaults:
+  port: 8000
+  gpu_memory_utilization: 0.95
+env: {}
+command: |
+  other-server --port {port}
