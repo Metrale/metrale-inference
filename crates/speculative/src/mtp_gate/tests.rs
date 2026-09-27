@@ -59,6 +59,16 @@ fn run_serial_until_probe(g: &mut MtpGate, wall: Duration) {
     panic!("gate never opened an MTP re-probe");
 }
 
+/// 2026-09-26: Switches a fresh gate to Serial: MTP at 20 tok/s against serial
+/// probes at 100 tok/s, one probe window per loss of the dwell (each loss
+/// needs a new serial measurement, and the confirming probe opens at once).
+fn switch_to_serial(g: &mut MtpGate) {
+    for _ in 0..SWITCH_DWELL_WINDOWS {
+        run_mtp_until_probe(g, 2, ms(100));
+        drive_serial(g, WINDOW_STEPS, ms(10));
+    }
+}
+
 #[test]
 fn starts_in_mtp_mode() {
     let g = MtpGate::new(1);
@@ -105,12 +115,17 @@ fn switches_to_serial_when_clearly_faster_with_dwell() {
         !g.in_serial_mode(),
         "dwell must prevent single-window switches"
     );
-    for _ in 0..(WINDOW_STEPS * SWITCH_DWELL_WINDOWS) {
-        if g.next_step() != GateStep::MeasureVerify {
-            break;
-        }
-        g.record_verify_step(ms(100), 2, 1);
-    }
+    // 2026-09-26: More MTP windows do not count as a second loss: the serial
+    // estimate has not been measured again. The confirming probe opens after
+    // the next MTP step.
+    g.record_verify_step(ms(100), 2, 1);
+    assert!(!g.in_serial_mode(), "one serial window is one sample");
+    assert_eq!(
+        g.next_step(),
+        GateStep::MeasureDecode,
+        "confirming probe due at once"
+    );
+    drive_serial(&mut g, WINDOW_STEPS, ms(10));
     assert!(
         g.in_serial_mode(),
         "sustained 5x serial advantage must switch"
@@ -118,6 +133,26 @@ fn switches_to_serial_when_clearly_faster_with_dwell() {
     assert_eq!(g.take_fresh_decision(), Some(GateDecision::DisableMtp));
     assert_eq!(g.take_fresh_decision(), None, "fresh decision is one-shot");
     assert_eq!(g.next_step(), GateStep::MeasureDecode);
+}
+
+/// 2026-09-26: One fast serial window that the confirming probe does not
+/// repeat leaves the gate in Mtp and clears the loss.
+#[test]
+fn unconfirmed_serial_window_does_not_switch() {
+    let mut g = MtpGate::new(1);
+    // 2026-09-26: MTP at 40 tok/s; the first serial probe reads 100 tok/s.
+    run_mtp_until_probe(&mut g, 2, ms(50));
+    drive_serial(&mut g, WINDOW_STEPS, ms(10));
+    assert!(!g.in_serial_mode());
+    // 2026-09-26: The confirming probe reads 25 tok/s.
+    run_mtp_until_probe(&mut g, 2, ms(50));
+    drive_serial(&mut g, WINDOW_STEPS, ms(40));
+    assert!(
+        !g.in_serial_mode(),
+        "an unconfirmed serial window must not switch"
+    );
+    assert_eq!(g.losing_windows, 0);
+    assert_eq!(g.take_fresh_decision(), None);
 }
 
 #[test]
@@ -145,14 +180,7 @@ fn hysteresis_blocks_within_margin_switches() {
 fn serial_mode_reprobes_mtp_and_recovers() {
     let mut g = MtpGate::new(1);
     // 2026-09-25: MTP at 20 tok/s, serial at 100 tok/s: switch to Serial.
-    run_mtp_until_probe(&mut g, 2, ms(100));
-    drive_serial(&mut g, WINDOW_STEPS, ms(10));
-    for _ in 0..(WINDOW_STEPS * SWITCH_DWELL_WINDOWS) {
-        if g.next_step() != GateStep::MeasureVerify {
-            break;
-        }
-        g.record_verify_step(ms(100), 2, 1);
-    }
+    switch_to_serial(&mut g);
     assert!(g.in_serial_mode());
     g.take_fresh_decision();
 
@@ -246,14 +274,7 @@ fn bootstrap_steps_count_at_least_one_token() {
 fn entry_pin_overrides_serial_mode_for_answer_openings() {
     let mut g = MtpGate::new(1);
     // 2026-09-25: Switch the gate to Serial (MTP 20 tok/s, serial 100 tok/s).
-    run_mtp_until_probe(&mut g, 2, ms(100));
-    drive_serial(&mut g, WINDOW_STEPS, ms(10));
-    for _ in 0..(WINDOW_STEPS * SWITCH_DWELL_WINDOWS) {
-        if g.next_step() != GateStep::MeasureVerify {
-            break;
-        }
-        g.record_verify_step(ms(100), 2, 1);
-    }
+    switch_to_serial(&mut g);
     assert!(g.in_serial_mode());
     assert_eq!(g.next_step(), GateStep::MeasureDecode);
 
@@ -271,14 +292,7 @@ fn entry_pin_overrides_serial_mode_for_answer_openings() {
 #[test]
 fn entry_pin_steps_do_not_touch_arbitration_state() {
     let mut g = MtpGate::new(1);
-    run_mtp_until_probe(&mut g, 2, ms(100));
-    drive_serial(&mut g, WINDOW_STEPS, ms(10));
-    for _ in 0..(WINDOW_STEPS * SWITCH_DWELL_WINDOWS) {
-        if g.next_step() != GateStep::MeasureVerify {
-            break;
-        }
-        g.record_verify_step(ms(100), 2, 1);
-    }
+    switch_to_serial(&mut g);
     assert!(g.in_serial_mode());
     g.take_fresh_decision();
     let serial_before = g.serial_tps_debug();
