@@ -17,8 +17,8 @@ is explicit about every root it knows and silent about everything else:
   * a link starting with `/` is a SITE-ROOT url. No tree in this repository
     publishes a static root, so every such link is refused rather than resolved
     against the repo root.
-  * `book/**` links to `/api/...` are rustdoc output, assembled at deploy time by
-    docs.yml (`cp -a target/doc/. book/output/api/`). They cannot exist in the
+  * `book/**` links to `/api/...` are rustdoc output, placed under /api/ beside
+    the book at deploy time (docs.metrale.ai/api/). They cannot exist in the
     tree and are not a defect.
   * external schemes, anchors, and template placeholders are not links to files.
 

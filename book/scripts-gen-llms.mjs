@@ -52,7 +52,7 @@ ${withItems.map((p) => `## ${p.name}\n\n${p.items.join('\n')}`).join('\n\n')}
 
 ## Machine-readable
 
-- [Full API reference](https://docs.dev.metrale.ai/): rustdoc for every public crate
+- [Full API reference](https://docs.metrale.ai/api/): rustdoc for every public crate
 - [Print view](${SITE}/print.html): the entire book as one HTML document
 
 ## Optional

@@ -48,5 +48,5 @@ expand = true
 heading-split-level = 3
 
 [output.html.redirect]
-"/api.html" = "https://docs.dev.metrale.ai/"
-"/api/index.html" = "https://docs.dev.metrale.ai/"
+"/api.html" = "https://docs.metrale.ai/api/"
+"/api/index.html" = "https://docs.metrale.ai/api/"
