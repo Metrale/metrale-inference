@@ -180,7 +180,9 @@ mod moe_grouped_decode;
 pub use moe_grouped_decode::*;
 
 mod row_tiers;
-pub use row_tiers::{RowTiers, row_invariant, row_tiers, row_tiers_from};
+pub use row_tiers::{
+    RowTiers, publish_row_tiers, resolve_row_tiers, row_invariant, row_tiers, row_tiers_from,
+};
 
 mod kernel_probe;
 pub use kernel_probe::{try_kernel, try_target_kernel};
