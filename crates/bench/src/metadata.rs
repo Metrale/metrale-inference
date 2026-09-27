@@ -46,9 +46,9 @@ impl PluginMetadata {
             author: "Metrale Engine Cybersecurity",
             author_url: "https://metrale.ai/engine",
             email: "support@metrale.ai",
-            repository: "https://github.com/Metrale/metrale-inference-alpha",
+            repository: "https://github.com/Metrale/metrale-inference",
             help_url: "https://book.dev.metrale.ai/benchmarks",
-            bug_report_url: "https://github.com/Metrale/metrale-inference-alpha/issues/new",
+            bug_report_url: "https://github.com/Metrale/metrale-inference/issues/new",
             license: "MIT OR Apache-2.0",
             official: true,
         }
@@ -115,9 +115,9 @@ mod tests {
                 author: "Metrale Engine Cybersecurity",
                 author_url: "https://metrale.ai/engine",
                 email: "support@metrale.ai",
-                repository: "https://github.com/Metrale/metrale-inference-alpha",
+                repository: "https://github.com/Metrale/metrale-inference",
                 help_url: "https://book.dev.metrale.ai/benchmarks",
-                bug_report_url: "https://github.com/Metrale/metrale-inference-alpha/issues/new",
+                bug_report_url: "https://github.com/Metrale/metrale-inference/issues/new",
                 license: "MIT OR Apache-2.0",
                 official: true,
             }
