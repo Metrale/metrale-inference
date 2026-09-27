@@ -31,7 +31,7 @@ pub const FP8_GROUPED_DOWN_COLS_PER_CTA: u32 = 32;
 pub const FP8_GROUPED_GATE_UP_ROWS_PER_PASS: u32 = 4;
 
 /// 2026-09-26: Rows per down pass. Must equal `GROUP_ROWS` in the `.cu`.
-pub const FP8_GROUPED_DOWN_ROWS_PER_PASS: u32 = 8;
+pub const FP8_GROUPED_DOWN_ROWS_PER_PASS: u32 = 4;
 
 /// 2026-09-25: Cap on active experts, which sizes the grouped grids' Y extent:
 /// `num_tokens * top_k` rows can reach at most that many distinct experts. It

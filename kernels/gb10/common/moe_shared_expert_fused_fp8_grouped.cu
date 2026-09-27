@@ -36,7 +36,7 @@
 #define WARP_SIZE 32
 #define FP8_BLOCK 128
 // 2026-09-26: Rows per down pass; an expert with more rows reads its weights once per pass.
-#define GROUP_ROWS 8
+#define GROUP_ROWS 4
 // 2026-09-26: Rows per gate+up pass, and the columns of a gate+up CTA (one pair per warp).
 #define GU_GROUP_ROWS 4
 #define GU_COLS_PER_CTA (2 * N_PER_BLOCK)
@@ -337,8 +337,10 @@ extern "C" __global__ void moe_expert_gate_up_act_fp8_grouped(
 }
 
 // 2026-09-26: Down projection of the SiLU product act ([pos, K] FP32), DOWN_COLS_PER_WARP
-// output columns per warp.
-extern "C" __global__ void moe_expert_down_act_fp8_grouped(
+// output columns per warp. A block streams only 16 KB of weight, so the SM keeps three blocks
+// resident (at most 85 registers, 4 rows per pass) to overlap their loads with each other's
+// arithmetic.
+extern "C" __global__ void __launch_bounds__(DOWN_BLOCK, 3) moe_expert_down_act_fp8_grouped(
     const float* __restrict__ act,
     const unsigned long long* __restrict__ weight_ptrs,
     const unsigned long long* __restrict__ block_scale_ptrs,
