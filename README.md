@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/readme/banner-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="docs/readme/banner-light.svg">
-    <img alt="Metrale Engine: LLM inference engine in Rust and CUDA for NVIDIA DGX Spark" src="docs/readme/banner-light.svg" width="640">
+    <img alt="Metrale Engine: Next-Generation LLM Inference Engine in Rust" src="docs/readme/banner-light.svg" width="640">
   </picture>
 </p>
 
@@ -11,14 +11,16 @@
   <a href="#licence"><img alt="Licence: MIT OR Apache-2.0" src="https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-8A76CC"></a>
 </p>
 
-# Metrale Engine: LLM inference for NVIDIA DGX Spark (GB10)
+# Metrale Engine: Next-Generation LLM Inference Engine in Rust
 
 Metrale Engine is an LLM inference engine written in Rust and CUDA. One
 binary, `met`, serves an OpenAI-compatible HTTP API (and the Anthropic
 Messages API) with no Python in the serving path. Every `(hardware, model,
 quantization)` target has its own CUDA kernel set, compiled to PTX at build
-time. The primary target is the NVIDIA GB10 in the DGX Spark, serving NVFP4
-and FP8 checkpoints with speculative decoding (MTP, DFlash, n-gram).
+time. Kernel sets cover NVIDIA GB10 (DGX Spark), Hopper and Blackwell
+(B200, B300), AMD Strix Halo and Apple Metal, serving NVFP4 and FP8
+checkpoints with speculative decoding (MTP, DFlash, n-gram). The certified
+results below were measured on the GB10.
 
 On one DGX Spark serving `unsloth/Qwen3.8-27B-NVFP4`, it matches or exceeds
 vLLM 0.27.1 with vLLM's own MTP speculative decoding in aggregate decode
