@@ -28,30 +28,12 @@ use metrale_model_layers::weight_map::Fp8Weight;
 
 #[path = "common/fp8_moe_grouped_fixture.rs"]
 mod fixture;
-use fixture::{Rng, bf16_bytes, check, fp8_bytes, fp8w, scale_bytes, upload};
+use fixture::{
+    Rng, bf16_bytes, check, experts, fp8_bytes, fp8w, scale_bytes, upload, zipf_alpha, zipf_routing,
+};
 
 const H: usize = 2048;
 const INTER: usize = 512;
-/// 2026-09-26: Routed experts: the first argument, default 32 (rows share experts).
-/// `256` is the model's count, where the distinct-expert bandwidth is representative.
-fn experts() -> usize {
-    std::env::args()
-        .nth(1)
-        .and_then(|a| a.parse().ok())
-        .unwrap_or(32)
-}
-
-/// 2026-09-26: The second argument, a Zipf exponent for the routing (default 0,
-/// uniform): expert e is drawn with weight (e + 1)^-alpha. At 256 experts,
-/// alpha 0.9 gives about the distinct-expert counts the 35B verify step
-/// routes to (121 at 32 rows, 153 at 64, measured with
-/// METRALE_DUMP_EXPERT_IDS=1 on the concurrency ladder).
-fn zipf_alpha() -> f64 {
-    std::env::args()
-        .nth(2)
-        .and_then(|a| a.parse().ok())
-        .unwrap_or(0.0)
-}
 const TOP_K: usize = 8;
 const MAX_M: usize = 64;
 const GUARD: usize = 64;
@@ -368,30 +350,7 @@ fn main() -> Result<()> {
 
     // 2026-09-25: Routing: distinct experts within a row; rows draw from the same
     // `e_count` experts, with the weights of `zipf_alpha`.
-    let alpha = zipf_alpha();
-    let weights: Vec<f64> = (0..e_count)
-        .map(|e| ((e + 1) as f64).powf(-alpha))
-        .collect();
-    let total: f64 = weights.iter().sum();
-    let cdf: Vec<f64> = weights
-        .iter()
-        .scan(0.0, |acc, w| {
-            *acc += w / total;
-            Some(*acc)
-        })
-        .collect();
-    let mut idx = Vec::with_capacity(MAX_M * TOP_K);
-    for _ in 0..MAX_M {
-        let mut row: Vec<u32> = Vec::new();
-        while row.len() < TOP_K {
-            let u = rng.next() as f64 / u32::MAX as f64;
-            let e = cdf.partition_point(|&c| c < u).min(e_count - 1) as u32;
-            if !row.contains(&e) {
-                row.push(e);
-            }
-        }
-        idx.extend(row);
-    }
+    let idx = zipf_routing(&mut rng, e_count, zipf_alpha(), MAX_M, TOP_K);
     let idx_bytes: Vec<u8> = idx.iter().flat_map(|e| e.to_le_bytes()).collect();
     let w_bytes: Vec<u8> = (0..MAX_M * TOP_K)
         .flat_map(|_| ((rng.next() % 1000) as f32 / 1000.0).to_le_bytes())
