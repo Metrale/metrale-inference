@@ -33,6 +33,7 @@ const L: &str = "model.language_model.layers";
 const CAPS: KernelCaps = KernelCaps {
     w8a8_decode: false,
     w8a8_moe_decode: false,
+    w8a8_block_scaled_decode: false,
     fp8_lm_head_batched: false,
 };
 
@@ -210,6 +211,56 @@ fn fp8_block_moe_under_declared() {
         assert_eq!(pol.fp8_decode_act(&shared), Some(want_expert), "{caps:?}");
         assert_eq!(pol.fp8_decode_act(&attn), Some(want_attn), "{caps:?}");
     }
+}
+
+/// 2026-09-28: The block-scaled and MoE W8A8 caps on Qwen/Qwen3.6-35B-A3B-FP8 under `declared`.
+/// Path A: with the dense bit on and both others off (the shipped caps), the experts and the
+/// block-scaled attention/GDN decode BF16 (W8A16) while still declaring FP8 activations.
+/// Path B: with both on, FP8. Path C: the dense per-channel checkpoint answers FP8 with the
+/// block-scaled bit off, so it is unaffected; the `nvfp4` tier asks for nothing.
+#[test]
+fn block_scaled_and_moe_w8a8_wait_for_their_own_caps() {
+    let p = plan("fp8_moe");
+    let experts = format!("{L}.0.mlp.experts.0.gate_proj");
+    let attn = format!("{L}.3.self_attn.q_proj");
+    let gdn = format!("{L}.0.linear_attn.in_proj_qkv");
+    let dense_only = KernelCaps {
+        w8a8_decode: true,
+        ..CAPS
+    };
+    let held = WeightQuantPolicy::new(declared(), &p, dense_only);
+    for m in [&experts, &attn, &gdn] {
+        assert_eq!(
+            held.fp8_block_scaled_decode_act(m),
+            Some(ActFormat::Bf16),
+            "{m}"
+        );
+        assert!(held.declares_fp8_activations(m), "{m}");
+    }
+    let all = KernelCaps {
+        w8a8_decode: true,
+        w8a8_moe_decode: true,
+        w8a8_block_scaled_decode: true,
+        ..CAPS
+    };
+    let open = WeightQuantPolicy::new(declared(), &p, all);
+    for m in [&experts, &attn, &gdn] {
+        assert_eq!(
+            open.fp8_block_scaled_decode_act(m),
+            Some(ActFormat::Fp8),
+            "{m}"
+        );
+    }
+    let dense = plan("unsloth");
+    let d = WeightQuantPolicy::new(declared(), &dense, dense_only);
+    assert_eq!(
+        d.fp8_decode_act(&format!("{L}.3.self_attn.q_proj")),
+        Some(ActFormat::Fp8)
+    );
+    assert!(!d.declares_fp8_activations(&format!("{L}.0.mlp.down_proj")));
+    let nv = WeightQuantPolicy::new(nvfp4(W4a4Downcast::Off), &p, all);
+    assert_eq!(nv.fp8_block_scaled_decode_act(&attn), None);
+    assert!(!nv.declares_fp8_activations(&attn));
 }
 
 /// 2026-09-28: A checkpoint without `quantization_config` declares nothing, so both tiers

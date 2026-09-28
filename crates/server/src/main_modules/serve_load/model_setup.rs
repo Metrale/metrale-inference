@@ -343,6 +343,17 @@ pub(super) fn publish_moe_expert_act(config: &ModelConfig) {
             policy.fp8_decode_act(&module) == Some(ActFormat::Fp8)
         });
     let published = metrale_model_layers::layers::set_moe_expert_fp8_act(fp8);
+    let declared_a8 = config.num_experts > 0
+        && (0..config.num_hidden_layers).any(|i| {
+            let module = format!("{}.mlp.experts.0.gate_proj", config.layer_prefix(i));
+            policy.declares_fp8_activations(&module)
+        });
+    if !fp8 && declared_a8 {
+        tracing::info!(
+            "--weight-quantization declared: the checkpoint declares FP8 activations for its MoE \
+             experts; they decode W8A16 until the MoE W8A8 path is validated"
+        );
+    }
     if published != fp8 {
         tracing::warn!(
             "MoE expert decode activations were fixed before the serve published them: \

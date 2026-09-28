@@ -21,8 +21,10 @@ use metrale_model_layers::layers::qwen3_ssm::Qwen3SsmLayer;
 
 /// 2026-09-28: Adopt W8A8 on every layer that holds block-scaled FP8 attention or GDN weights and
 /// whose first projection the declared-precision policy wants run W8A8
-/// (`WeightQuantPolicy::fp8_decode_act(module) == Some(Fp8)`). Returns `(attention layers, GDN
-/// layers)` adopted.
+/// (`WeightQuantPolicy::fp8_block_scaled_decode_act(module) == Some(Fp8)`). While
+/// `kernel_caps().w8a8_block_scaled_decode` is off, nothing is adopted, and the log says once
+/// that the declared FP8 activations run W8A16. Returns `(attention layers, GDN layers)`
+/// adopted.
 pub(super) fn adopt_declared(
     layers: &mut [Box<dyn TransformerLayer>],
     config: &ModelConfig,
@@ -37,8 +39,31 @@ pub(super) fn adopt_declared(
         return Ok((0, 0));
     }
     let wants = |m: String| {
-        policy.fp8_decode_act(&m) == Some(metrale_config::weight_quantization::ActFormat::Fp8)
+        policy.fp8_block_scaled_decode_act(&m)
+            == Some(metrale_config::weight_quantization::ActFormat::Fp8)
     };
+    let modules = |i: usize| {
+        let lp = config.layer_prefix(i);
+        [
+            format!("{lp}.self_attn.q_proj"),
+            format!("{lp}.linear_attn.in_proj_qkv"),
+        ]
+    };
+    let any_wanted = (0..config.num_hidden_layers).any(|i| modules(i).into_iter().any(&wants));
+    if !any_wanted {
+        if (0..config.num_hidden_layers).any(|i| {
+            modules(i)
+                .iter()
+                .any(|m| policy.declares_fp8_activations(m))
+        }) {
+            tracing::info!(
+                "--weight-quantization declared: the checkpoint declares FP8 activations for \
+                 its block-scaled attention and GDN projections; they decode W8A16 until the \
+                 block-scaled W8A8 path is validated"
+            );
+        }
+        return Ok((0, 0));
+    }
     let q_dim = (config.num_attention_heads * config.head_dim) as u32;
     let value_dim = (config.linear_num_value_heads * config.linear_value_head_dim) as u32;
     let h = config.hidden_size as u32;

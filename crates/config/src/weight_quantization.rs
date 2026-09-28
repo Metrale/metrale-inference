@@ -219,6 +219,11 @@ pub struct KernelCaps {
     /// 2026-09-28: The same for MoE experts (routed and shared), whose grouped kernels land
     /// separately ([`is_expert_module`]).
     pub w8a8_moe_decode: bool,
+    /// 2026-09-28: The W8A8 decode of non-expert projections whose FP8 weights are 128x128
+    /// block-scaled (HF `fp8`, e.g. the attention and GDN of Qwen3.6-35B-A3B-FP8), validated
+    /// separately from the per-channel dense family
+    /// ([`WeightQuantPolicy::fp8_block_scaled_decode_act`]).
+    pub w8a8_block_scaled_decode: bool,
     /// 2026-09-28: An FP8 lm_head that serves every decode row count in one pass. The FP8
     /// head today launches once per row, which collapses throughput at width (C16 88.9 tok/s
     /// against 200.0 on the NVFP4 head, C128 not finishing), so `declared` takes a declared
@@ -358,6 +363,36 @@ impl<'a> WeightQuantPolicy<'a> {
         } else {
             ActFormat::Bf16
         })
+    }
+
+    /// 2026-09-28: [`Self::fp8_decode_act`] for a non-expert `module` whose FP8 weight is
+    /// 128x128 block-scaled: FP8 only when [`KernelCaps::w8a8_block_scaled_decode`] is set as
+    /// well, BF16 (W8A16) otherwise. An expert module answers as `fp8_decode_act` does.
+    pub fn fp8_block_scaled_decode_act(&self, module: &str) -> Option<ActFormat> {
+        let act = self.fp8_decode_act(module)?;
+        Some(
+            if act == ActFormat::Fp8
+                && !is_expert_module(module)
+                && !self.caps.w8a8_block_scaled_decode
+            {
+                ActFormat::Bf16
+            } else {
+                act
+            },
+        )
+    }
+
+    /// 2026-09-28: Whether the policy serves `module` at its FP8 weights and the checkpoint
+    /// declares FP8 activations for it, whatever the kernels. Where the W8A8 answer is BF16,
+    /// the layer runs above its declared activations until its W8A8 path is validated, which
+    /// the load log states.
+    pub fn declares_fp8_activations(&self, module: &str) -> bool {
+        self.wants_fp8_weights(module)
+            && self
+                .plan
+                .resolve(module)
+                .activation
+                .is_some_and(|a| a.is_fp8())
     }
 
     /// 2026-09-28: The head `--lm-head-dtype default` takes: under `declared`, the declared
