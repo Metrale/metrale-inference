@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "title": "Qwen3.6-35B-A3B-FP8 concurrency ladder: vLLM one-shot baseline",
-  "subtitle": "vLLM 0.27.1 + MTP, C=1..16, on the published ladder instrument; no Metrale Engine leg at this instrument yet",
+  "subtitle": "vLLM 0.27.1 + MTP, C=1..16 (throughput) and C=1..128 (energy leg), on the published ladder instrument; no Metrale Engine leg at this instrument yet",
   "aggregate": "mean tok/s over 3 timed reps (1 warmup discarded)",
   "results_doc": "bench/baselines/qwen36-35b-a3b/published.json",
   "subject_note": "No series has role \"subject\": no Metrale Engine run exists at this instrument for this checkpoint. This manifest deliberately mirrors bench/ladder38/published.json so that when one does, it is added as a series with role \"subject\" whose sources name its raw harness files, and gen-ladder.mjs scores the pair with the same code it scores the dense ladder with. Until then the generator emits no rows and no summary for this ladder, and the site says so instead of drawing a zero.",
@@ -75,7 +75,7 @@
           64,
           128
         ],
-        "reason": "The ladder stops at C=16 because of memory, not because of time. GB10 carries 121.7 GB of UNIFIED memory shared between CPU and GPU -- there is no separate VRAM to fall back on. At C >= 32 the vLLM + MTP working set (per-sequence KV cache plus MTP's speculative draft state) outgrows what that shared pool can carry alongside the host, and because the pool is shared, exhausting it takes the whole machine down rather than failing a single allocation: three physical powercycles in one day, at the safe util 0.85 and with --max-num-seqs already capped. We did not isolate it further because every attempt costs the box. These rungs were deliberately not run. They have no value here: not zero, not interpolated, and the generator refuses a raw file that contains them."
+        "reason": "The ladder stops at C=16 because of memory, not because of time. GB10 carries 121.7 GB of UNIFIED memory shared between CPU and GPU -- there is no separate VRAM to fall back on. At C >= 32 the vLLM + MTP working set (per-sequence KV cache plus MTP's speculative draft state) outgrows what that shared pool can carry alongside the host, and because the pool is shared, exhausting it takes the whole machine down rather than failing a single allocation: three physical powercycles in one day, at the safe util 0.85 and with --max-num-seqs already capped. We did not isolate it further because every attempt costs the box. These rungs were deliberately not run. They have no value here: not zero, not interpolated, and the generator refuses a raw file that contains them. 2026-09-28: this one-shot was not re-run, but the energy leg (vllm-mtp-energy) did drive C=32/64/128 on the same box with the same command, one fresh container per rung. All three rungs completed, with zero request errors and no stall; host MemAvailable never fell below 4.9 GB, and the box stayed up. So the memory explanation above held on 2026-08-18, and was not reproduced on 2026-09-28."
       },
       "source_note": "One-shot: measured once, on 2026-09-19 on dgx2, and never re-run. Every rung comes from the single raw file vllm_moe_c1_16.json (sha256 7788d19a16bb32466a53f72fc13c70c8f9352fb888b758f786a54c1a6b7ad648, byte-identical to dgx2:/home/claude/ladder-moe-baseline/). Two earlier attempts the same evening produced no numbers and are not here: one died in DeepGEMM at weight load (kernel_override), one ran the ladder against a serve whose harness preflight had failed (no first token; TypeError on ttft_p50_ms). Zero request errors at every rung."
     },
@@ -105,23 +105,19 @@
         "seed": 42
       },
       "instrument_note": "Measured 2026-09-28 on spark-43fa (dgx2) to give the Cost tab a MoE vLLM leg that carries JOULES; vllm-mtp is throughput-only. Same engine (vLLM 0.27.1), same image, same checkpoint, same command and same instrument as vllm-mtp. Throughput landed within 1.6% of it on every rung (52.92/92.10/145.65/222.64/329.97 vs 52.11/93.16/145.94/222.08/329.93 tok/s; +1.6/-1.1/-0.2/+0.3/+0.0%), on the same box on a different day, which is the agreement that makes the energy quotable. Energy is GPU RAIL ONLY: nvidia-smi power.draw.average at 250 ms, integrated over each rep's own window -- the same source and cadence the Metrale Engine gate sampler integrates -- so Grace and LPDDR5X are outside it for both engines. An NVML cumulative-energy-counter sidecar ran beside it as a cross-check and read 1.2-3.7% lower per rung (higher gap at higher load), the known bias of integrating power.draw.average; ratios between two engines measured the same way hold. kv_cache_dtype is bf16 although the command says `--kv-cache-dtype auto`: auto takes the model dtype and `--dtype bfloat16` is set; spelled `bf16` because that is how a Metrale Engine gate record writes serve_overrides.kv_cache_dtype. prompt_mode essay: the pinned harness defaults to it (PROMPT_MODE = os.environ.get(\"W55_PROMPT_MODE\", \"essay\")) and neither the run's environment nor the box's shell profile sets W55_PROMPT_MODE. parity is `matched` because every instrument axis equals vllm-mtp's; this manifest has no subject series, so no published ratio is computed against either leg.",
-      "unmeasured": {
-        "rungs": [
-          32,
-          64,
-          128
-        ],
-        "reason": "not driven -- the owner has paused every vLLM measurement at C >= 32 on GB10: vLLM + MTP has taken a GB10 box down at the wide rungs (three physical powercycles in one day, at util 0.85 and with --max-num-seqs capped), so the serve keeps the published cap of 128 while only C=1..16 were driven. These rungs have no value: not zero and not interpolated."
-      },
       "sources": {
         "1": "vllm_moe_energy_c1_16.json",
         "2": "vllm_moe_energy_c1_16.json",
         "4": "vllm_moe_energy_c1_16.json",
         "8": "vllm_moe_energy_c1_16.json",
-        "16": "vllm_moe_energy_c1_16.json"
+        "16": "vllm_moe_energy_c1_16.json",
+        "32": "vllm_moe_energy_c32.json",
+        "64": "vllm_moe_energy_c64.json",
+        "128": "vllm_moe_energy_c128.json"
       },
       "source_note": "One run, 2026-09-28 08:48-08:59 UTC on dgx2, nothing else on the box. Every rung comes from the single raw file vllm_moe_energy_c1_16.json (sha256 eb4f73b0c9ca76d8c6a6e0982050897c94a501417f04c5a8718bba64353d2eb4). Zero request errors, every rep gpu_rail_trustworthy with 98-100% sample coverage, no HW power brake; GPU die 58-77 C across the ladder.",
-      "scope": "cost"
+      "scope": "cost",
+      "wide_note": "C=32/64/128 measured 2026-09-28 on spark-43fa (dgx2) with nothing else on the box, after the owner lifted the pause on vLLM at C >= 32. Each rung ran on its own FRESH container, because vLLM+MTP has taken a GB10 down at these widths before: C=32 20:14-20:19, C=64 20:30-20:38, C=128 20:49-21:02 UTC. The command is the one above, verbatim, started detached and named (`docker run -d --name vllm-wide-moe-c<C>`). The image was checked before each launch: id 2c211a1273b4, repo digest 0a51ea5b4ae2, label v0.27.1. A stall probe beside the harness watched vLLM's /metrics and host memory. It never fired; the lowest host MemAvailable was 4.9 GB, at C=128. vLLM sized its KV cache at 327,680-331,655 tokens, 160x the 2048-token context, so all 128 streams ran at once (/metrics read 128 running). Zero request errors. Every rep is gpu_rail_trustworthy with 99.5-99.9% sample coverage and no HW power brake; the GPU die peaked at 77-83 C. Raw files: vllm_moe_energy_c32.json (sha256 dde20fd70a06f122393e1ece85de4f7061cecb3ccc23db4a81663e75c609e898), vllm_moe_energy_c64.json (sha256 5c06ac7647a92a9f3cb2261f701e0659f86413332b629975a97ef9fd0139ca66), vllm_moe_energy_c128.json (sha256 a9dd852f81452de53c41b6dfa6b40c9ac17190f2c0f4d81abbe4aab4a5954adc)."
     }
   ]
 }
