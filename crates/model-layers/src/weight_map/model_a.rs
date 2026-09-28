@@ -139,6 +139,7 @@ pub fn quantized(
             DevicePtr::NULL
         },
         weight_scale_2_vec: DevicePtr::NULL,
+        act: metrale_config::Nvfp4Act::Unstamped,
     })
 }
 
@@ -186,6 +187,7 @@ pub fn quantized_mxfp4_e8m0_pair(
         weight_scale_2: 1.0,
         input_scale: DevicePtr::NULL,
         weight_scale_2_vec: DevicePtr::NULL,
+        act: metrale_config::Nvfp4Act::Unstamped,
     })
 }
 

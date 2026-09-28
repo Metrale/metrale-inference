@@ -332,6 +332,7 @@ impl MoeLayer {
                     weight_scale_2: w.weight_scale_2,
                     input_scale: w.input_scale,
                     weight_scale_2_vec: w.weight_scale_2_vec,
+                    act: w.act,
                 });
             }
         }

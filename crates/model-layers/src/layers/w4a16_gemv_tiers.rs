@@ -27,7 +27,7 @@ use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 /// field of [`W4a16BatchmTiers`] and to the `present` array of
 /// [`select_tier`]. `w4a16_gemv_batch16`/`_batch32` are not in this table:
 /// they are held separately (`wide`, `wide32`) and handed out only above 8
-/// rows, within `w4a4_proj::proj_max_rows()`.
+/// rows, within the row edge ([`W4a16BatchmTiers::edge`]).
 pub const W4A16_BATCHM_WIDTHS: [u32; 5] = [4, 5, 6, 7, 8];
 
 /// 2026-09-25: Index into [`W4A16_BATCHM_WIDTHS`] of width 5, the first tier
@@ -83,14 +83,16 @@ pub fn select_tier(
 pub struct W4a16BatchmTiers {
     /// 2026-09-25: Parallel to [`W4A16_BATCHM_WIDTHS`].
     handles: [KernelHandle; W4A16_BATCHM_WIDTHS.len()],
-    /// 2026-09-25: `w4a16_gemv_batch16`, handed out for 9..=16 rows when
-    /// `w4a4_proj::proj_max_rows()` exceeds 8: under `gemv_tc::wide_rows_enabled()`
-    /// or `--w4a4-downcast`. `ops::w4a16_gemv_batchm` launches the tensor-core
-    /// kernel instead when `gemv_tc::tc_kernel` returns one.
+    /// 2026-09-25: `w4a16_gemv_batch16`, handed out for 9..=16 rows when the
+    /// row edge exceeds 8: under `gemv_tc::wide_rows_enabled()`, or for a weight
+    /// that declares FP4 activations. `ops::w4a16_gemv_batchm` launches the
+    /// tensor-core kernel instead when `gemv_tc::tc_kernel` returns one.
     wide: KernelHandle,
-    /// 2026-09-25: `w4a16_gemv_batch32`, resolved only under `--w4a4-downcast`
-    /// (null otherwise) and handed out above 16 rows.
+    /// 2026-09-25: `w4a16_gemv_batch32`, handed out above 16 rows within the edge.
     wide32: KernelHandle,
+    /// 2026-09-28: `w4a4_proj::max_rows` for this backend: the widest the W4A4 kernels serve
+    /// (0 when they are absent or the published tier does not prepare them).
+    a4_rows: u32,
 }
 
 /// 2026-09-25: The "no NVFP4 kernels" state: an all-zero table, for which `kernel`
@@ -101,6 +103,7 @@ impl Default for W4a16BatchmTiers {
             handles: [KernelHandle(0); W4A16_BATCHM_WIDTHS.len()],
             wide: KernelHandle(0),
             wide32: KernelHandle(0),
+            a4_rows: 0,
         }
     }
 }
@@ -123,11 +126,11 @@ impl W4a16BatchmTiers {
         // 2026-09-25: The only call of `w4a4_proj::prepare`, which allocates the
         // W4A4 activation scratch; `resolve` runs while layers are built.
         if let Err(e) = crate::layers::ops::w4a4_proj::prepare(gpu) {
-            tracing::warn!(
-                "--w4a4-downcast: scratch/kernels unavailable, projections stay W4A16: {e:#}"
-            );
+            tracing::warn!("w4a4 scratch/kernels unavailable, projections stay W4A16: {e:#}");
         }
-        let wide32 = if crate::layers::ops::w4a4_proj::w4a4_downcast_enabled() {
+        // 2026-09-28: `w4a16_gemv_batch32` is handed out only within a W4A4 edge above 16
+        // rows, so it is resolved only when the published tier can take the W4A4 path.
+        let wide32 = if crate::layers::weight_quantization().uses_w4a4_decode() {
             super::try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_batch32")
         } else {
             KernelHandle(0)
@@ -136,7 +139,48 @@ impl W4a16BatchmTiers {
             handles,
             wide,
             wide32,
+            a4_rows: crate::layers::ops::w4a4_proj::max_rows(gpu),
         }
+    }
+
+    /// 2026-09-28: Row edge of the narrow projection arms for a weight stamped `act`: the
+    /// W4A4 edge the published tier gives it (`WeightQuantTier::w4a4_rows`), else the W4A16
+    /// edge `gemv_tc::narrow_gemv_max_rows`.
+    fn edge_of(&self, act: metrale_config::Nvfp4Act) -> u32 {
+        let rows = crate::layers::weight_quantization().w4a4_rows(
+            act,
+            super::ops::w4a4_proj::W4A4_MAX_M,
+            super::ops::w4a4_proj::W4A4_WIDE_MAX_M,
+            self.a4_rows,
+        );
+        if rows > 0 {
+            rows
+        } else {
+            super::ops::gemv_tc::narrow_gemv_max_rows()
+        }
+    }
+
+    /// 2026-09-28: [`Self::edge_of`] for `w`.
+    pub fn edge(&self, w: &crate::weight_map::QuantizedWeight) -> u32 {
+        self.edge_of(w.act)
+    }
+
+    /// 2026-09-28: `w` declares FP4 activations and this backend has the W4A4 kernels. The
+    /// published tier decides what that means for a dense FFN's narrow steps
+    /// (`WeightQuantTier::ffn_small_batch_w4a4`).
+    pub fn declares_a4(&self, w: &crate::weight_map::QuantizedWeight) -> bool {
+        w.act == metrale_config::Nvfp4Act::A4 && self.a4_rows > 0
+    }
+
+    /// 2026-09-28: [`Self::edge`] capped at `w4a4_proj::W4A4_MAX_M`: the dense FFN's
+    /// narrow arms stop at 32 rows, and 33..=64 go to `forward_prefill`.
+    pub fn ffn_edge(&self, w: &crate::weight_map::QuantizedWeight) -> u32 {
+        self.edge(w).min(super::ops::w4a4_proj::W4A4_MAX_M)
+    }
+
+    /// 2026-09-28: [`Self::kernel`] for a projection over `w`, within [`Self::edge`].
+    pub fn kernel_for(&self, m: u32, w: &crate::weight_map::QuantizedWeight) -> KernelHandle {
+        self.kernel_within(m, self.edge(w))
     }
 
     /// 2026-09-25: Which tiers this target resolved: the `present` argument of
@@ -146,13 +190,18 @@ impl W4a16BatchmTiers {
     }
 
     /// 2026-09-25: Narrowest resolved tier covering `m` rows, or `KernelHandle(0)` when
-    /// this family cannot serve `m`.
+    /// this family cannot serve `m`, for a projection without a policy stamp (the lm_head,
+    /// the MTP head): within the edge of an unstamped weight (2026-09-28: the W4A16 edge,
+    /// or under `nvfp4` with `--w4a4-downcast` the lever's edge, as before the tiers).
     pub fn kernel(&self, m: u32) -> KernelHandle {
-        let edge = crate::layers::ops::w4a4_proj::proj_max_rows();
+        self.kernel_within(m, self.edge_of(metrale_config::Nvfp4Act::Unstamped))
+    }
+
+    fn kernel_within(&self, m: u32, edge: u32) -> KernelHandle {
         if m > W4A16_BATCHM_WIDTHS[W4A16_BATCHM_WIDTHS.len() - 1] && m <= edge {
-            // 2026-09-25: 9..=16 → batch16, 17.. → batch32. Under
-            // `--w4a4-downcast-wide` this also covers 33..=64, which the W4A4
-            // path serves; `ops::w4a16_gemv_batchm` refuses more than 32 rows.
+            // 2026-09-25: 9..=16 → batch16, 17.. → batch32. With the 64-row W4A4
+            // edge this also covers 33..=64, which the W4A4 path serves;
+            // `ops::w4a16_gemv_batchm` refuses more than 32 rows.
             return if m <= 16 { self.wide } else { self.wide32 };
         }
         select_tier(m, self.present(), exact_m_tiers_enabled())

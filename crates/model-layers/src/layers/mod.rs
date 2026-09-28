@@ -184,6 +184,9 @@ pub use expert_quantization::{
     ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
 };
 
+mod weight_quantization;
+pub use weight_quantization::{kernel_caps, set_weight_quantization_from_cli, weight_quantization};
+
 mod row_tiers;
 pub use row_tiers::{
     RowTiers, publish_row_tiers, resolve_row_tiers, row_invariant, row_tiers, row_tiers_from,
@@ -264,6 +267,16 @@ impl FfnComponent {
     /// asks before computing the pre-FFN norm.
     pub fn can_forward_km(&self, m: u32) -> bool {
         matches!(self, Self::Dense(d) if d.can_forward_km(m))
+    }
+
+    /// 2026-09-28: Row edge of a dense FFN's narrow decode arms (`DenseFfnLayer::narrow_rows`:
+    /// its W4A4 edge under the weight-quantization tier, capped at 32, else the W4A16 edge).
+    /// MoE and none answer the W4A16 edge; `can_forward_km` is false for them anyway.
+    pub fn narrow_rows(&self) -> u32 {
+        match self {
+            Self::Dense(d) => d.narrow_rows(),
+            _ => ops::gemv_tc::narrow_gemv_max_rows().min(ops::w4a4_proj::W4A4_MAX_M),
+        }
     }
 
     /// 2026-09-25: `DenseFfnLayer::forward_km` over `m` rows. Returns `Ok(false)`

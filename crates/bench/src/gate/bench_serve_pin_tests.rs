@@ -135,6 +135,9 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
         // 2026-09-26: `--w4a4-downcast-wide` extends the same numerics to 33..=64 rows and
         // needs `--w4a4-downcast`; both ladders pin both.
         ("w4a4_downcast_wide", "true"),
+        // 2026-09-28: The lever exists only under `--weight-quantization nvfp4`, the tier the
+        // published ladder ran; both ladders pin it beside the lever.
+        ("weight_quantization", "nvfp4"),
     ] {
         assert_eq!(
             c.serve_overrides.get(key).map(String::as_str),
@@ -143,7 +146,7 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
             c.serve_overrides
         );
     }
-    assert_eq!(c.serve_overrides.len(), 6, "{:?}", c.serve_overrides);
+    assert_eq!(c.serve_overrides.len(), 7, "{:?}", c.serve_overrides);
     assert!(
         !c.serve_overrides.contains_key("lm_head_dtype"),
         "the throughput recipe leaves the head at the checkpoint's native NVFP4; pinning \
@@ -169,6 +172,7 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
         ("dflash_gamma", "8"),
         ("w4a4_downcast", "true"),
         ("w4a4_downcast_wide", "true"),
+        ("weight_quantization", "nvfp4"),
     ] {
         assert_eq!(
             d.serve_overrides.get(key).map(String::as_str),
@@ -177,7 +181,7 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
             d.serve_overrides
         );
     }
-    assert_eq!(d.serve_overrides.len(), 9, "{:?}", d.serve_overrides);
+    assert_eq!(d.serve_overrides.len(), 10, "{:?}", d.serve_overrides);
     assert!(
         !d.serve_overrides.contains_key("speculative"),
         "--dflash conflicts with --speculative at the CLI: pinning both would not start"

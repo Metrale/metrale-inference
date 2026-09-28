@@ -18,6 +18,7 @@
 //! Owner: server CLI (`met serve`).
 //! Invariants: none beyond the types.
 
+use metrale_config::WeightQuantization;
 use metrale_model_layers::layers::ExpertQuantization;
 
 /// 2026-09-26: What `--kv-high-precision-layers auto` resolves to. The flag's
@@ -170,6 +171,41 @@ impl clap::ValueEnum for ExpertQuantizationArg {
     }
 }
 
+/// 2026-09-28: `--weight-quantization`: a clap value enum over the config crate's tiers
+/// (`metrale_config::WeightQuantization`), which own the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeightQuantizationArg(pub WeightQuantization);
+
+impl clap::ValueEnum for WeightQuantizationArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [WeightQuantizationArg; 2] = [
+            WeightQuantizationArg(WeightQuantization::ALL[0]),
+            WeightQuantizationArg(WeightQuantization::ALL[1]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self.0 {
+            WeightQuantization::Declared => WEIGHT_QUANT_DECLARED_HELP,
+            WeightQuantization::Nvfp4 => WEIGHT_QUANT_NVFP4_HELP,
+        };
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
+/// 2026-09-28: The `declared` tier's one-line help (`met serve --help`).
+const WEIGHT_QUANT_DECLARED_HELP: &str = "each layer at the precision its checkpoint's \
+     quantization_config declares, weights and activations (W4A4 where it declares FP4 \
+     activations, W4A16 where weight-only). Until the W8A8 decode kernels land, FP8-declared \
+     layers run 16-bit activations (above declared), and the dense loader still requantizes \
+     per-channel FP8 attention/GDN/MLP to NVFP4";
+
+/// 2026-09-28: The `nvfp4` tier's one-line help.
+const WEIGHT_QUANT_NVFP4_HELP: &str = "the engine before the tiers: FP8-declared layers \
+     requantized to NVFP4 at load (below declared), 16-bit decode activations unless \
+     --w4a4-downcast, FP4 MMQ prefill on every NVFP4 FFN; the certified recipes' tier";
+
 /// 2026-09-26: The closed value set for a `met serve` flag, by its long name,
 /// or `None` for a free-form flag. For `--kv-cache-dtype` it lists each
 /// dtype's canonical name only; parse aliases such as `fp8k2v` for
@@ -188,6 +224,12 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
         "ssm-batched-recurrent" | "content-loop-watchdog" | "tool-grammar" => {
             Some(owned(TRISTATES))
         }
+        "weight-quantization" => Some(
+            WeightQuantization::ALL
+                .iter()
+                .map(|q| q.name().to_string())
+                .collect(),
+        ),
         "expert-quantization" => Some(
             ExpertQuantization::ALL
                 .iter()

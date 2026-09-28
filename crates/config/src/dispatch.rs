@@ -297,7 +297,7 @@ fn parse_config_dispatch(json: &str) -> Result<ModelConfig> {
             config.linear_value_head_dim = 0;
             config.mtp_num_hidden_layers = 0;
             config.vision = None;
-            config.quantization_config = parse_quantization_config(&raw);
+            config.quantization_config = parse_quantization_config(&raw)?;
             validate_config(&config)?;
             Ok(config)
         }

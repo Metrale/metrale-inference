@@ -98,6 +98,10 @@ pub struct QuantizedWeight {
     /// 2026-09-25: Per-row scale2 on the device, or NULL. The loaders in this
     /// module always set NULL; the transposes copy it through.
     pub weight_scale_2_vec: DevicePtr,
+    /// 2026-09-28: The activation format the weight-quantization policy set for this weight
+    /// (`metrale_config::WeightQuantPolicy::nvfp4_act`). Unstamped unless a loader asks the
+    /// policy; derived copies (transposes, concatenations, TP shards) carry it through.
+    pub act: metrale_config::Nvfp4Act,
 }
 
 impl QuantizedWeight {
@@ -109,6 +113,7 @@ impl QuantizedWeight {
             weight_scale_2: 0.0,
             input_scale: DevicePtr::NULL,
             weight_scale_2_vec: DevicePtr::NULL,
+            act: metrale_config::Nvfp4Act::Unstamped,
         }
     }
 
@@ -175,6 +180,7 @@ impl QuantizedWeight {
             weight_scale_2: self.weight_scale_2,
             input_scale: DevicePtr::NULL,
             weight_scale_2_vec: DevicePtr::NULL,
+            act: metrale_config::Nvfp4Act::combine([self.act, other.act]),
         })
     }
 

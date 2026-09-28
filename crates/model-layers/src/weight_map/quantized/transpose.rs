@@ -82,6 +82,7 @@ impl QuantizedWeight {
                 weight_scale_2: self.weight_scale_2,
                 input_scale: self.input_scale,
                 weight_scale_2_vec: self.weight_scale_2_vec,
+                act: self.act,
             });
         }
 
@@ -113,6 +114,7 @@ impl QuantizedWeight {
             weight_scale_2: self.weight_scale_2,
             input_scale: self.input_scale,
             weight_scale_2_vec: self.weight_scale_2_vec,
+            act: self.act,
         })
     }
 
@@ -233,6 +235,7 @@ impl QuantizedWeight {
                 weight_scale_2: first.weight_scale_2,
                 input_scale: first.input_scale,
                 weight_scale_2_vec: first.weight_scale_2_vec,
+                act: metrale_config::Nvfp4Act::combine(parts.iter().map(|(w, _)| w.act)),
             });
         }
 
@@ -269,6 +272,7 @@ impl QuantizedWeight {
             weight_scale_2: first.weight_scale_2,
             input_scale: first.input_scale,
             weight_scale_2_vec: first.weight_scale_2_vec,
+            act: metrale_config::Nvfp4Act::combine(parts.iter().map(|(w, _)| w.act)),
         })
     }
 }

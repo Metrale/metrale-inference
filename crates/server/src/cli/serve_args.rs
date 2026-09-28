@@ -9,7 +9,7 @@ use clap::Parser;
 use metrale_model_layers::layers::ExpertQuantization;
 use std::path::PathBuf;
 
-use super::flag_values::ExpertQuantizationArg;
+use super::flag_values::{ExpertQuantizationArg, WeightQuantizationArg};
 
 mod scheduling;
 mod service;
@@ -247,15 +247,50 @@ pub struct ServeArgs {
     #[arg(long)]
     pub prefill_codispatch: bool,
 
+    /// Precision of each linear layer (default: declared).
+    ///
+    /// `declared` runs each layer at the precision the checkpoint's `quantization_config`
+    /// declares, for the weights and the input activations: W4A4 where it declares FP4
+    /// activations (the dense Qwen3.8-27B MLP of layers 0-55, at every decode row count and
+    /// in prefill), W4A16 where it declares NVFP4 weights only (no FP4 MMQ prefill there),
+    /// and the checkpoint's own lm_head format under `--lm-head-dtype default`. Gaps that
+    /// remain: FP8-declared layers run 16-bit activations until the W8A8 decode kernels land
+    /// (above declared); the dense loader still requantizes per-channel FP8 attention, GDN and
+    /// MLP projections to NVFP4 (below declared on the weights, 16-bit activations); attention
+    /// and GDN projections that declare FP4 activations run W4A4 on the batched small-M arms
+    /// only, and 16-bit activations at one to three rows and on the GDN tile GEMM (above
+    /// declared); `METRALE_*` diagnostic levers that force FP4 activations still do.
+    ///
+    /// `nvfp4` is the engine before this flag: FP8-declared projections requantized to NVFP4
+    /// at load, 16-bit decode activations unless `--w4a4-downcast`, FP4 MMQ prefill on every
+    /// NVFP4 FFN. Every certified recipe pins it. Gate records disclose the tier. No
+    /// environment fallback.
+    ///
+    /// `--expert-quantization` governs routed MoE experts on its own: its `fp8` default is
+    /// the declared precision of an FP8 checkpoint's experts, and its NVFP4 tiers go below it
+    /// under either value of this flag.
+    ///
+    /// Measured cost of `declared` against `nvfp4` on GB10 (one box, same binary). On
+    /// unsloth/Qwen3.8-27B-NVFP4: decode-floor recipe 26.2 vs 27.2 tok/s and 1.65 vs 1.89 J/tok;
+    /// throughput recipe at C1/C16/C128 with the declared FP8 lm_head (W8A16, which loops per
+    /// row) 20.0/88.9 tok/s and C128 not finishing, against 25.0/216.6/457.0 tok/s; with
+    /// `--lm-head-dtype nvfp4` 24.8/200.0/457.6 tok/s and 1.65/0.268/0.137 against
+    /// 1.43/0.211/0.133 J/tok. On Qwen3.6-35B-A3B-FP8 the tiers produce identical output and
+    /// speed: nothing there is requantized or declares FP4 activations.
+    #[arg(long, value_enum, default_value_t = WeightQuantizationArg(metrale_config::WeightQuantization::Declared))]
+    pub weight_quantization: WeightQuantizationArg,
+
     /// Downcast activations to NVFP4 (W4A4) on the small-M projection paths
-    /// (default: false).
+    /// (default: false). Only with `--weight-quantization nvfp4`.
     ///
     /// On, the projection sites that call `nvfp4_proj_small_m` (GDN qkvz/out_proj,
     /// attention q/k/v/o, dense-FFN gate/up/down) run up to 32 rows on the FP4
     /// block-scale tensor-core MMA (`w4a4_gemv_mx`), which reads the checkpoint's
     /// NVFP4 weights with no dequant; the activations are quantized per row to
-    /// NVFP4. It is a numerics change, so it is off unless a recipe asks for it.
-    /// No environment fallback. The lm_head is not affected.
+    /// NVFP4, whatever the checkpoint declares. It is a numerics change, so it is off
+    /// unless a recipe asks for it. Under `--weight-quantization declared` it is refused:
+    /// the checkpoint decides each layer's activations there. No environment fallback.
+    /// The lm_head is not affected.
     #[arg(long, default_value_t = false)]
     pub w4a4_downcast: bool,
 
@@ -398,6 +433,16 @@ impl std::ops::DerefMut for ServeArgs {
 }
 
 impl ServeArgs {
+    /// 2026-09-28: `--weight-quantization` with its `--w4a4-downcast` lever, as published to
+    /// the kernel crates. Errors for the lever under `declared`; `validate_serve_args`
+    /// refuses that command line first.
+    pub fn weight_quant_tier(&self) -> anyhow::Result<metrale_config::WeightQuantTier> {
+        metrale_config::WeightQuantTier::new(
+            self.weight_quantization.0,
+            metrale_config::W4a4Downcast::from_flags(self.w4a4_downcast, self.w4a4_downcast_wide),
+        )
+    }
+
     /// 2026-09-26: `--dflash-gamma` when given, else `drafter_block_size`, else 16.
     /// Every caller passes `None`, so this is the flag or 16; the built drafter head
     /// resolves an unset flag itself (`default_dflash_gamma`), and `serve_load` reads

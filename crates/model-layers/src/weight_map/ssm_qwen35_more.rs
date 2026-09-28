@@ -86,6 +86,7 @@ pub fn load_moe_minimax(
             weight_scale_2: 0.0,
             input_scale: DevicePtr::NULL,
             weight_scale_2_vec: DevicePtr::NULL,
+            act: metrale_config::Nvfp4Act::Unstamped,
         })
     };
     let shared_expert = ExpertWeight {
@@ -251,6 +252,7 @@ pub fn load_moe_gemma4(
             weight_scale_2: 0.0,
             input_scale: DevicePtr::NULL,
             weight_scale_2_vec: DevicePtr::NULL,
+            act: metrale_config::Nvfp4Act::Unstamped,
         })
     };
     let shared_expert = ExpertWeight {

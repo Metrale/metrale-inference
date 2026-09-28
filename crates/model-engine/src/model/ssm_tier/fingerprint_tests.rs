@@ -162,6 +162,7 @@ fn every_fingerprint_field_is_load_bearing() {
                     quant_algo: "NVFP4".into(),
                     format: String::new(),
                     ignore_modules: Vec::new(),
+                    precision: Default::default(),
                 });
             }),
         ),
@@ -208,6 +209,7 @@ fn string_encoding_is_injective() {
         quant_algo: String::new(),
         format: String::new(),
         ignore_modules: Vec::new(),
+        precision: Default::default(),
     });
     let mut b = hybrid();
     b.model_type = "a".into();
@@ -216,6 +218,7 @@ fn string_encoding_is_injective() {
         quant_algo: String::new(),
         format: String::new(),
         ignore_modules: Vec::new(),
+        precision: Default::default(),
     });
     assert_ne!(fp(&a), fp(&b));
 }

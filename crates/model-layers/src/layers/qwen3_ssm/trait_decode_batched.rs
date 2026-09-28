@@ -52,7 +52,7 @@ fn batched_norm_enabled() -> bool {
 /// transposed twin through a tile GEMM (`ms_proj_gemm`) ahead of the single-scale FP8
 /// prefill-copy arm (`qkvz_fp8` / `out_proj_fp8`). Both projections use this one value.
 /// It equals `ops::gemv_tc::NARROW_MAX_ROWS`, the default row edge of the NVFP4 GEMV arms
-/// earlier in the dispatch (`ops::w4a4_proj::proj_max_rows`).
+/// earlier in the dispatch (`W4a16BatchmTiers::edge`).
 pub(super) const VERIFY_TGEMM_MIN_TOKENS: usize = 8;
 
 /// 2026-09-25: Kill switch for the NVFP4 QKVZ arm above `VERIFY_TGEMM_MIN_TOKENS` rows:
@@ -350,7 +350,7 @@ impl Qwen3SsmLayer {
                 (2 * h) as u32,
                 stream,
             )?;
-        } else if (4..=ops::w4a4_proj::ffn_proj_max_rows() as usize).contains(&num_tokens)
+        } else if (4..=self.ffn.narrow_rows() as usize).contains(&num_tokens)
             && self
                 .ffn
                 .try_forward_km(normed2_base, num_tokens as u32, ctx, stream)

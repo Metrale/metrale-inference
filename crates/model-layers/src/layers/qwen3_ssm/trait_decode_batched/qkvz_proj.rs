@@ -91,15 +91,16 @@ impl Qwen3SsmLayer {
                     )?;
                 }
             }
-        } else if (5..=ops::w4a4_proj::proj_max_rows() as usize).contains(&num_tokens)
-            && self.w4a16_batchm.kernel(num_tokens as u32).0 != 0
-            && let Some(ref nvfp4) = self.qkvz_nvfp4
+        } else if let Some(ref nvfp4) = self.qkvz_nvfp4
+            && (5..=self.w4a16_batchm.edge(nvfp4) as usize).contains(&num_tokens)
+            && self.w4a16_batchm.kernel_for(num_tokens as u32, nvfp4).0 != 0
         {
-            // 2026-09-25: 5..=`proj_max_rows()` rows with an NVFP4 QKVZ:
-            // `nvfp4_proj_small_m` with the `w4a16_batchm` tier for this row count.
+            // 2026-09-25: 5..=edge rows with an NVFP4 QKVZ: `nvfp4_proj_small_m` with the
+            // `w4a16_batchm` tier for this row count (W4A4 when the checkpoint declares FP4
+            // activations).
             ops::w4a4_proj::nvfp4_proj_small_m(
                 ctx.gpu,
-                self.w4a16_batchm.kernel(num_tokens as u32),
+                self.w4a16_batchm.kernel_for(num_tokens as u32, nvfp4),
                 normed,
                 nvfp4,
                 proj_dst,

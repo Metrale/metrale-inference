@@ -86,6 +86,7 @@ fn slice_fused_experts(
                 fused_input_scale.offset(e * input_scale_bytes_per_expert)
             },
             weight_scale_2_vec: DevicePtr::NULL,
+            act: metrale_config::Nvfp4Act::Unstamped,
         })
         .collect()
 }

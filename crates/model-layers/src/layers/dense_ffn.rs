@@ -318,6 +318,7 @@ impl DenseFfnLayer {
             && self.nvfp4_repack_k.0 != 0
             && self.nvfp4_silu_scaled_k.0 != 0
             && matches!(self.activation, FfnActivation::SiLU)
+            && self.mmq_gate_up_declared()
             && std::env::var_os("METRALE_NO_FFN_NVFP4_MMQ").is_none();
         if !active {
             return Ok(());

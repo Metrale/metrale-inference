@@ -102,7 +102,12 @@ For coherence at long context, `--kv-high-precision-layers N` keeps the first an
 
 What SM121 lacks is the *conversion* instruction, not FP4 tensor cores. Consumer Blackwell has the warp-level block-scaled MMA (`mma … .kind::mxf4nvf4.block_scale`: E2M1 × E2M1 with UE4M3 scales per 16 elements of K), which datacenter Blackwell (`sm_100a`) does not.
 
-Metrale Engine uses it for **W4A4** projections. With `--w4a4-downcast`, the small-M projection sites (GDN qkvz/out_proj, attention q/k/v/o, dense-FFN gate/up/down) run up to 32 rows through `w4a4_gemv_mx`: the checkpoint's NVFP4 weights are read with no dequant, and the activations are quantized per row to NVFP4. `--w4a4-downcast-wide` extends it to 64 rows. It is a numerics change, so it is off unless a recipe asks for it, and the default path stays W4A16 — dequant to BF16 at the fragment boundary, as above. The lm_head is never affected.
+Metrale Engine uses it for **W4A4** projections through `w4a4_gemv_mx`: the checkpoint's NVFP4 weights are read with no dequant, and the activations are quantized per row to NVFP4. The small-M projection sites (GDN qkvz/out_proj, attention q/k/v/o, dense-FFN gate/up/down) take it. Which layers do is the `--weight-quantization` tier's decision:
+
+- **`declared`** (the default) follows the checkpoint's `quantization_config` (`metrale_config::DeclaredPrecisionPlan`, applied through `WeightQuantPolicy`). A layer whose scheme declares 4-bit float `input_activations` (compressed-tensors `nvfp4-pack-quantized`, ModelOpt `NVFP4`) runs W4A4 at every decode row count up to 64 (32 for the dense FFN, whose wider steps take the FP4 MMQ prefill arm). A layer that declares no activation quantization (ModelOpt `W4A16_NVFP4`, or compressed-tensors with `input_activations: null`) stays W4A16, as described above, and takes no FP4 MMQ arm in prefill either. So does the NVFP4 copy of an FP8-declared layer.
+- **`nvfp4`** is the behaviour from before the tiers. Decode is W4A16 unless `--w4a4-downcast` runs every NVFP4 projection W4A4 up to 32 rows, or 64 with `--w4a4-downcast-wide`, whatever the checkpoint declares. Prefill runs the FP4 MMQ arm on every NVFP4 dense FFN.
+
+The lm_head never takes this path.
 
 The Hopper and B200 targets compile `kernels/gb10/common` with `METRALE_NO_WARP_BLOCKSCALE_MMA`, so on those GPUs the W4A4 modules have no entry points and projections stay W4A16.
 

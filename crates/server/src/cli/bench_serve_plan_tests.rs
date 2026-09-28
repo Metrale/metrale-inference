@@ -31,7 +31,14 @@ fn disclosed(defaults: &str, overrides: &[(&str, &str)]) -> Vec<(String, String)
 }
 
 fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs_with_tier(v, "declared")
+}
+
+/// 2026-09-28: `v` plus the `weight_quantization` key every disclosure carries, which sorts
+/// after the others.
+fn pairs_with_tier(v: &[(&str, &str)], tier: &str) -> Vec<(String, String)> {
     v.iter()
+        .chain(&[("weight_quantization", tier)])
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
 }
@@ -99,16 +106,45 @@ fn the_codispatch_flag_is_disclosed_off_the_rendered_serve() {
     );
 }
 
-/// 2026-09-26: `--w4a4-downcast` is disclosed when on; off discloses nothing.
+/// 2026-09-26: `--w4a4-downcast` is disclosed when on; off discloses nothing. 2026-09-28: it
+/// belongs to the `nvfp4` tier, which the recipe pins beside it.
 #[test]
 fn the_w4a4_downcast_flag_is_disclosed_off_the_rendered_serve() {
+    let nvfp4 = "  weight_quantization: nvfp4\n";
     assert_eq!(
-        disclosed("  max_batch_size: \"8\"\n", &[("w4a4_downcast", "true")]),
-        pairs(&[("speculative", "false"), ("w4a4_downcast", "true")])
+        disclosed(nvfp4, &[("w4a4_downcast", "true")]),
+        pairs_with_tier(
+            &[("speculative", "false"), ("w4a4_downcast", "true")],
+            "nvfp4"
+        )
     );
     assert_eq!(
-        disclosed("  w4a4_downcast: \"true\"\n", &[("w4a4_downcast", "false")]),
-        pairs(&[("speculative", "false")])
+        disclosed(
+            &format!("{nvfp4}  w4a4_downcast: \"true\"\n"),
+            &[("w4a4_downcast", "false")]
+        ),
+        pairs_with_tier(&[("speculative", "false")], "nvfp4")
+    );
+}
+
+/// 2026-09-28: `--weight-quantization` is disclosed by name for either tier: the recipe's
+/// pin, an override over it, and the `declared` default when neither names it.
+#[test]
+fn the_weight_quantization_tier_is_disclosed_off_the_rendered_serve() {
+    assert_eq!(
+        disclosed("  weight_quantization: nvfp4\n", &[]),
+        pairs_with_tier(&[("speculative", "false")], "nvfp4")
+    );
+    assert_eq!(
+        disclosed(
+            "  weight_quantization: nvfp4\n",
+            &[("weight_quantization", "declared")]
+        ),
+        pairs_with_tier(&[("speculative", "false")], "declared")
+    );
+    assert_eq!(
+        disclosed("  max_batch_size: \"8\"\n", &[]),
+        pairs_with_tier(&[("speculative", "false")], "declared")
     );
 }
 

@@ -63,8 +63,7 @@ impl DenseFfnLayer {
     }
 
     /// 2026-09-25: FFN for 2 rows. Packed-Q2 goes to `forward_km_q2`, FP8/BF16 to
-    /// `forward_prefill`, and with `--w4a4-downcast` to `forward_km` when `can_forward_km(2)`;
-    /// otherwise NVFP4 runs `w4a16_gemv_dual_batch2`, `act_mul` and `w4a16_gemv_batch2`, plus the
+    /// `forward_prefill`, and to `forward_km` when `small_batch_w4a4` and `can_forward_km(2)`; otherwise NVFP4 runs `w4a16_gemv_dual_batch2`, `act_mul` and `w4a16_gemv_batch2`, plus the
     /// LoRA deltas.
     pub fn forward_k2(&self, input: DevicePtr, ctx: &ForwardContext, stream: u64) -> Result<()> {
         if let Some(ref q2w) = self.q2_weights {
@@ -74,9 +73,9 @@ impl DenseFfnLayer {
         {
             return self.forward_prefill(input, 2, ctx, stream);
         }
-        // 2026-09-25: `--w4a4-downcast`: the batch2 kernels below are W4A16; `forward_km` routes
-        // every projection through the W4A4 launcher.
-        if crate::layers::ops::w4a4_proj::w4a4_downcast_enabled() && self.can_forward_km(2) {
+        // 2026-09-28: The batch2 kernels below are W4A16; `forward_km` routes every projection
+        // through the W4A4 launcher, which follows the weight-quantization tier.
+        if self.small_batch_w4a4() && self.can_forward_km(2) {
             return self.forward_km(input, 2, ctx, stream);
         }
 
@@ -133,9 +132,8 @@ impl DenseFfnLayer {
         {
             return self.forward_prefill(input, 3, ctx, stream);
         }
-        // 2026-09-25: `--w4a4-downcast`: the batch3 kernels below are W4A16; `forward_km` routes
-        // every projection through the W4A4 launcher.
-        if crate::layers::ops::w4a4_proj::w4a4_downcast_enabled() && self.can_forward_km(3) {
+        // 2026-09-28: As in `forward_k2`.
+        if self.small_batch_w4a4() && self.can_forward_km(3) {
             return self.forward_km(input, 3, ctx, stream);
         }
 
@@ -183,10 +181,37 @@ impl DenseFfnLayer {
         Ok(())
     }
 
-    /// 2026-09-25: The `w4a16_gemv_batch{M}` handle for `m` rows, from `W4a16BatchmTiers::kernel`;
-    /// zero when no tier serves `m`.
+    /// 2026-09-25: The `w4a16_gemv_batch{M}` handle for `m` rows, from
+    /// `W4a16BatchmTiers::kernel_for` over the gate weight (so within the W4A4 edge when the
+    /// checkpoint declares FP4 activations); zero when no tier serves `m`.
     pub(super) fn batchm_kernel(&self, m: u32) -> KernelHandle {
-        self.w4a16_batchm.kernel(m)
+        self.w4a16_batchm.kernel_for(m, &self.weights.gate_proj)
+    }
+
+    /// 2026-09-28: Any of gate/up/down declares FP4 activations and the W4A4 kernels are
+    /// present (`W4a16BatchmTiers::declares_a4`).
+    fn declares_a4(&self) -> bool {
+        let t = &self.w4a16_batchm;
+        t.declares_a4(&self.weights.gate_proj)
+            || t.declares_a4(&self.weights.up_proj)
+            || t.declares_a4(&self.weights.down_proj)
+    }
+
+    /// 2026-09-28: Whether the 2- and 3-row steps go through `forward_km`, whose projections
+    /// run W4A4 where the tier admits them (`WeightQuantTier::ffn_small_batch_w4a4`).
+    pub fn small_batch_w4a4(&self) -> bool {
+        crate::layers::weight_quantization().ffn_small_batch_w4a4(self.declares_a4())
+    }
+
+    /// 2026-09-28: Whether the single decode row goes through `forward_km`
+    /// (`WeightQuantTier::ffn_single_row_w4a4`).
+    pub fn single_row_w4a4(&self) -> bool {
+        crate::layers::weight_quantization().ffn_single_row_w4a4(self.declares_a4())
+    }
+
+    /// 2026-09-28: Row edge of the dense FFN's narrow arms (`W4a16BatchmTiers::ffn_edge`).
+    pub fn narrow_rows(&self) -> u32 {
+        self.w4a16_batchm.ffn_edge(&self.weights.gate_proj)
     }
 
     /// 2026-09-25: Whether `forward_km` can serve `m` rows: a batchm tier resolved, and the layer
@@ -202,7 +227,7 @@ impl DenseFfnLayer {
 
     /// 2026-09-25: FFN for `m` verify rows. FP8/BF16 layers go to `forward_prefill`. NVFP4 runs
     /// gate, up and down through `ops::w4a4_proj::nvfp4_proj_small_m` with the `batchm_kernel(m)`
-    /// tier (W4A4 under `--w4a4-downcast`), plus `act_mul` and the LoRA deltas. There is no
+    /// tier (W4A4 where the weight-quantization tier admits it), plus `act_mul` and the LoRA deltas. There is no
     /// packed-Q2 arm; `can_forward_km` is false for a layer without NVFP4 or FP8 weights.
     pub fn forward_km(
         &self,

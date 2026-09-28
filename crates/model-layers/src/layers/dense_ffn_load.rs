@@ -132,6 +132,9 @@ impl DenseFfnLayer {
         stream: u64,
         down_mmq: bool,
     ) -> Result<()> {
+        // 2026-09-28: A down stamped `Wide` keeps its `_t` twin for the W4A16 GEMM:
+        // `nvfp4_prefill_plan` gives it no MMQ arm.
+        let down_mmq = down_mmq && self.weights.down_proj.act.allows_fp4_prefill();
         if down_mmq {
             self.ensure_nvfp4_mmq_weight(
                 &self.fp4mmq_down,

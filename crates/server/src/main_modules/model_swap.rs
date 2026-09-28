@@ -97,6 +97,28 @@ fn carry_process_flags(next: &mut cli::ServeArgs, previous: &cli::ServeArgs) {
     next.dump = previous.dump.clone();
 }
 
+/// 2026-09-28: `--weight-quantization` and its lever are published once per process
+/// (`layers::weight_quantization`), and the kernels, the loaders and the lm_head all follow the
+/// published tier. A swapped-in recipe that asks for another tier cannot get it, so its argv is
+/// rewritten to the tier in force (what runs, and what a record discloses), with a warning.
+fn pin_published_weight_quantization(next: &mut cli::ServeArgs) {
+    let published = metrale_model_layers::layers::weight_quantization();
+    if next.weight_quant_tier().ok() == Some(published) {
+        return;
+    }
+    tracing::warn!(
+        "this recipe asks for --weight-quantization {} (downcast {:?}), but this process \
+         published {} (downcast {:?}) at startup and keeps it; restart the server to change it",
+        next.weight_quantization.0.name(),
+        metrale_config::W4a4Downcast::from_flags(next.w4a4_downcast, next.w4a4_downcast_wide),
+        published.tier().name(),
+        published.downcast()
+    );
+    next.weight_quantization = cli::flag_values::WeightQuantizationArg(published.tier());
+    next.w4a4_downcast = published.downcast() != metrale_config::W4a4Downcast::Off;
+    next.w4a4_downcast_wide = published.downcast() == metrale_config::W4a4Downcast::Wide;
+}
+
 /// 2026-09-26: How long in-flight requests get to release the outgoing model
 /// before the swap gives up and republishes it.
 const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
@@ -186,6 +208,7 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
         }
         carry_process_flags(&mut next, previous);
     }
+    pin_published_weight_quantization(&mut next);
 
     // 2026-09-26: A caller that waited on the guard may ask for what the
     // previous holder just loaded. The whole argv is compared, after the

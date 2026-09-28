@@ -15,11 +15,12 @@ use crate::layers::ops;
 use crate::weight_map::QuantizedWeight;
 
 impl Qwen3SsmLayer {
-    /// 2026-09-25: The W4A16 batch-m GEMV handle for `m` rows, as chosen by
-    /// `W4a16BatchmTiers::kernel`. `KernelHandle(0)` when no resolved tier
-    /// serves `m`; callers check `.0 != 0` before launching.
-    pub(super) fn w4a16_batchm_kernel(&self, m: usize) -> KernelHandle {
-        self.w4a16_batchm.kernel(m as u32)
+    /// 2026-09-25: The W4A16 batch-m GEMV handle for `m` rows of a projection over
+    /// `w`, as chosen by `W4a16BatchmTiers::kernel_for` (2026-09-28: within the W4A4
+    /// edge when `w` declares FP4 activations). `KernelHandle(0)` when no resolved
+    /// tier serves `m`; callers check `.0 != 0` before launching.
+    pub(super) fn w4a16_batchm_kernel(&self, m: usize, w: &QuantizedWeight) -> KernelHandle {
+        self.w4a16_batchm.kernel_for(m as u32, w)
     }
 
     /// 2026-09-25: The transposed-weight tile GEMM for reduction depth `k`:

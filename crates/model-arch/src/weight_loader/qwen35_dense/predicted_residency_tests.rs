@@ -49,6 +49,7 @@ fn qwen38_27b() -> ModelConfig {
         quant_algo: String::new(),
         format: String::new(),
         ignore_modules: Vec::new(),
+        precision: Default::default(),
     });
     c
 }

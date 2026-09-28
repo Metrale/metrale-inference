@@ -89,6 +89,11 @@ w4a4_downcast = "true"
 # pins one pins both.
 w4a4_downcast_wide = "true"
 
+# 2026-09-28: `--w4a4-downcast` exists only under `--weight-quantization nvfp4` (the serve
+# refuses it under the `declared` default), so every entry that pins the lever pins the tier
+# beside it. The recipe pins the same tier.
+weight_quantization = "nvfp4"
+
 
 [benchmarks.metrics.followed_directions]
 min = 10.0
@@ -671,6 +676,7 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
+weight_quantization = "nvfp4"
 
 [benchmarks.serve_env]
 
@@ -1530,6 +1536,7 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
+weight_quantization = "nvfp4"
 
 [benchmarks.param_overrides]
 
@@ -1813,6 +1820,7 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
+weight_quantization = "nvfp4"
 
 
 [benchmarks.metrics.geometry_matched]

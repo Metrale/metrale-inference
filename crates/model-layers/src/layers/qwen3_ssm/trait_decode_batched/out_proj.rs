@@ -88,15 +88,16 @@ impl Qwen3SsmLayer {
                     )?;
                 }
             }
-        } else if (4..=ops::w4a4_proj::proj_max_rows() as usize).contains(&num_tokens)
+        } else if (4..=self.w4a16_batchm.edge(&self.ssm.out_proj) as usize).contains(&num_tokens)
             && !self.ssm.out_proj.weight.is_null()
-            && self.w4a16_batchm_kernel(num_tokens).0 != 0
+            && self.w4a16_batchm_kernel(num_tokens, &self.ssm.out_proj).0 != 0
         {
-            // 2026-09-25: 4..=`proj_max_rows()` rows with an NVFP4 out_proj: the batched
-            // NVFP4 GEMV tier for this row count, one weight pass for all rows.
+            // 2026-09-25: 4..=edge rows with an NVFP4 out_proj: the batched NVFP4 GEMV tier
+            // for this row count (W4A4 when the checkpoint declares FP4 activations), one
+            // weight pass for all rows.
             ops::w4a4_proj::nvfp4_proj_small_m(
                 ctx.gpu,
-                self.w4a16_batchm_kernel(num_tokens),
+                self.w4a16_batchm_kernel(num_tokens, &self.ssm.out_proj),
                 normed_out_buf,
                 &self.ssm.out_proj,
                 out_proj_buf,

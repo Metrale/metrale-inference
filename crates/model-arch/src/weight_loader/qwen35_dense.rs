@@ -305,6 +305,8 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         // `fp8_residency.rs`).
         let route_env = RouteEnv::from_env();
         let mut residency = DerivedResidency::default();
+        let policy = load_cx::weight_quant_policy(config);
+        load_cx::log_declared_plan(&policy, config, &layer_types);
         let cx = LoadCx {
             store,
             config,
@@ -317,6 +319,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             h,
             bf16_to_fp8_k,
             route_env: &route_env,
+            policy,
         };
 
         for (i, lt) in layer_types.iter().enumerate() {

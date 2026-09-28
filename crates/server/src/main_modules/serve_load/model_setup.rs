@@ -54,8 +54,40 @@ pub(super) fn configure_model(
     // 2026-09-26: A sibling `hf_quant_config.json` fills `quantization_config`
     // when config.json has none; its top level is read as the quantization
     // block.
-    serve_phases::merge_sidecar_quant_config(model_dir, &mut config);
+    serve_phases::merge_sidecar_quant_config(model_dir, &mut config)?;
+    if args.lm_head_dtype == "default" {
+        apply_declared_lm_head(args, &mut config)?;
+    }
     Ok((config, config_json))
+}
+
+/// 2026-09-28: Under `--weight-quantization declared`, `--lm-head-dtype default` takes the head
+/// format the checkpoint declares (`WeightQuantPolicy::lm_head`): its FP8 head where it
+/// declares FP8 (W8A16 until the W8A8 kernels land), BF16 where it leaves the head
+/// unquantized, NVFP4 where it declares NVFP4. Under `nvfp4`, or with no declaration, the
+/// per-model default stands.
+fn apply_declared_lm_head(args: &cli::ServeArgs, config: &mut ModelConfig) -> Result<()> {
+    use metrale_config::weight_quantization::LmHeadFormat;
+    let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
+        args.weight_quant_tier()?,
+        config.quantization_config.as_ref(),
+        metrale_model_layers::layers::kernel_caps(),
+    );
+    let Some(head) = policy.lm_head() else {
+        return Ok(());
+    };
+    let (bf16, fp8) = match head {
+        LmHeadFormat::Bf16 => (true, false),
+        LmHeadFormat::Fp8 => (false, true),
+        LmHeadFormat::Nvfp4 => (false, false),
+    };
+    tracing::info!(
+        "--weight-quantization declared: lm_head {head:?}, as the checkpoint declares \
+         (--lm-head-dtype overrides)"
+    );
+    config.lm_head_bf16_override = Some(bf16);
+    config.lm_head_fp8 = fp8;
+    Ok(())
 }
 
 pub(super) fn resolve_media_policies(

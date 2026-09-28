@@ -216,6 +216,14 @@ pub fn quantized_any(
     } else if has_fp8_dense
         && !matches!(variant, Nvfp4Variant::Fp8Dequanted | Nvfp4Variant::Bf16Raw)
     {
+        // 2026-09-28: KNOWN DEVIATION under `--weight-quantization declared`. A checkpoint that
+        // declares this projection FP8 W8A8 with per-channel scales (unsloth/Qwen3.8-27B-NVFP4:
+        // attention q/k/v/o, GDN in_proj_qkv/in_proj_z/out_proj, MLP of layers 56-63) asks for its
+        // FP8 weights (`WeightQuantPolicy::wants_fp8_weights`), but no decode arm reads a per-row
+        // FP8 scale yet, so it is requantized to NVFP4 here: below the declared weight precision.
+        // The loader stamps the copy `Nvfp4Act::Wide`, so its activations stay 16-bit (no W4A4
+        // below the declared A8). Serving it as declared needs the per-row FP8 decode arms (the
+        // W8A8 decode branch); under `nvfp4` this requantization is the tier's definition.
         tracing::debug!("{prefix}: FP8 key in an NVFP4 checkpoint; dequant FP8→BF16→NVFP4");
         Nvfp4Variant::Fp8Dequanted
     } else {

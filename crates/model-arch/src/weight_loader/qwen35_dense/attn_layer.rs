@@ -91,7 +91,7 @@ pub(super) fn load_full_attention(
         && matches!(variant, Nvfp4Variant::Fp8Dequanted)
         && proj_is_native_fp8(store, &format!("{p}.q_proj"));
     let attn_nvfp4 = route_env.attn_nvfp4(attn_fp8);
-    let (attn, q_nvfp4, k_nvfp4, v_nvfp4) = match variant {
+    let (mut attn, mut q_nvfp4, mut k_nvfp4, mut v_nvfp4) = match variant {
         Nvfp4Variant::CompressedTensors => {
             attn_arms::compressed_tensors_arm(cx, &p, tp_rank, tp_size)?
         }
@@ -106,6 +106,18 @@ pub(super) fn load_full_attention(
         }
     };
 
+    // 2026-09-28: The policy's activation stamp per projection (`QuantizedWeight::act`); the
+    // transposes below carry it through.
+    attn.o_proj.act = cx.nvfp4_act(&format!("{p}.o_proj"));
+    for (name, w) in [
+        ("q_proj", &mut q_nvfp4),
+        ("k_proj", &mut k_nvfp4),
+        ("v_proj", &mut v_nvfp4),
+    ] {
+        if let Some(w) = w.as_mut() {
+            w.act = cx.nvfp4_act(&format!("{p}.{name}"));
+        }
+    }
     let mut attn_layer = Qwen3AttentionLayer::new(
         input_norm,
         attn,

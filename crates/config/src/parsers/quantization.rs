@@ -13,8 +13,12 @@ use serde_json::Value;
 
 use super::super::{ModelConfig, QuantizationConfig};
 
-pub fn parse_quantization_config(raw: &serde_json::Value) -> Option<QuantizationConfig> {
-    let qc_raw = raw.get("quantization_config")?;
+/// 2026-09-28: `Ok(None)` when there is no block or it declares nothing; an error when the
+/// block's precision declaration is malformed (`DeclaredPrecisionPlan`).
+pub fn parse_quantization_config(raw: &serde_json::Value) -> Result<Option<QuantizationConfig>> {
+    let Some(qc_raw) = raw.get("quantization_config") else {
+        return Ok(None);
+    };
     // 2026-09-26: A ModelOpt `hf_quant_config.json`, which `merge_sidecar_quant_config` places
     // in this slot, nests the fields under `"quantization"` and has no `quant_method`; the
     // scheme is named by `producer.name == "modelopt"` (the Nemotron-3 Nano and Super
@@ -83,15 +87,18 @@ pub fn parse_quantization_config(raw: &serde_json::Value) -> Option<Quantization
 
     // 2026-09-26: No method, algorithm or ignore list means no quantization config.
     if quant_method.is_empty() && quant_algo.is_empty() && ignore_modules.is_empty() {
-        return None;
+        return Ok(None);
     }
+    let precision = crate::precision_plan::DeclaredPrecisionPlan::from_quantization_config(qc_raw)
+        .context("quantization_config")?;
 
-    Some(QuantizationConfig {
+    Ok(Some(QuantizationConfig {
         quant_method,
         quant_algo,
         format,
         ignore_modules,
-    })
+        precision,
+    }))
 }
 
 /// 2026-09-26: Flatten a ModelOpt `hf_quant_config.json` payload into the shape
@@ -156,6 +163,7 @@ mod tests {
             }
         });
         let qc = parse_quantization_config(&raw)
+            .expect("parses")
             .expect("ModelOpt nested sidecar must yield a QuantizationConfig");
         assert_eq!(qc.quant_method, "modelopt");
         assert_eq!(qc.quant_algo, "NVFP4");
@@ -186,7 +194,9 @@ mod tests {
         let flat = &raw["quantization_config"];
         assert_eq!(normalize_modelopt_sidecar(flat), flat.clone());
 
-        let qc = parse_quantization_config(&raw).expect("flat block must still parse");
+        let qc = parse_quantization_config(&raw)
+            .expect("parses")
+            .expect("flat block must still parse");
         assert_eq!(qc.quant_method, "compressed-tensors");
         assert_eq!(qc.format, "nvfp4-pack-quantized");
         assert_eq!(qc.ignore_modules, vec!["lm_head".to_string()]);
@@ -201,11 +211,15 @@ mod tests {
                 "producer": { "name": "modelopt", "version": "0.43.0" },
                 "quantization": {
                     "quant_algo": "MIXED_PRECISION",
-                    "kv_cache_quant_algo": "FP8"
+                    "kv_cache_quant_algo": "FP8",
+                    "quantized_layers": {
+                        "backbone.layers.0.mixer.in_proj": { "quant_algo": "FP8" }
+                    }
                 }
             }
         });
         let qc = parse_quantization_config(&raw)
+            .expect("parses")
             .expect("mixed-precision sidecar must yield a QuantizationConfig");
         assert_eq!(qc.quant_method, "modelopt");
         assert_eq!(qc.quant_algo, "MIXED_PRECISION");

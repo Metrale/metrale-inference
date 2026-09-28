@@ -37,6 +37,10 @@ metadata:
   kv_dtype: fp8
 
 defaults:
+  # The --weight-quantization tier this recipe was measured under: FP8-declared layers
+  # requantized to NVFP4, the engine as it ran before the tiers. `declared` (the
+  # engine default) is not measured on this recipe.
+  weight_quantization: nvfp4
   port: 8888
   host: 0.0.0.0
   tensor_parallel: 1

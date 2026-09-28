@@ -120,8 +120,10 @@ fn width_table_and_resolver_stay_in_lockstep() {
     let gpu = MockGpuBackend::new();
     let tiers = W4a16BatchmTiers::resolve(&gpu);
     assert!(tiers.handles.iter().all(|h| h.0 != 0));
-    // 2026-09-25: Then one lookup of `w4a16_gemv_batch16`, which `resolve` always
-    // makes (with `--w4a4-downcast` off, nothing else is looked up).
+    // 2026-09-28: Then `w4a16_gemv_batch16` and `w4a16_gemv_batch32`. Between them
+    // `w4a4_proj::prepare` resolves the W4A4 kernels once per backend; its cache is keyed
+    // by the backend's address, which a later mock can reuse, so those lookups are
+    // filtered out here and covered by `the_row_edge_follows_the_weights_declared_activations`.
     let mut expected: Vec<(String, String)> = W4A16_BATCHM_WIDTHS
         .map(|w| {
             let func = if w == 8 {
@@ -133,6 +135,66 @@ fn width_table_and_resolver_stay_in_lockstep() {
         })
         .to_vec();
     expected.push(("w4a16_gemv".to_owned(), "w4a16_gemv_batch16".to_owned()));
-    assert_eq!(gpu.kernel_lookups_snapshot(), expected);
+    expected.push(("w4a16_gemv".to_owned(), "w4a16_gemv_batch32".to_owned()));
+    let w4a16: Vec<(String, String)> = gpu
+        .kernel_lookups_snapshot()
+        .into_iter()
+        .filter(|(module, _)| module == "w4a16_gemv")
+        .collect();
+    assert_eq!(w4a16, expected);
     assert_ne!(tiers.wide.0, 0);
+    assert_ne!(tiers.wide32.0, 0);
+}
+
+/// 2026-09-28: Under the `declared` tier (the default this test binary resolves, as nothing
+/// publishes another) the narrow-arm edge and tier follow each weight's stamp: a weight
+/// stamped `Nvfp4Act::A4` gets the W4A4 edge (64, or 32 for the dense FFN) and a tier up to
+/// it; a `Wide` or unstamped weight keeps the W4A16 edge, and no weight gets the W4A4 edge on
+/// a backend without the W4A4 kernels. A mutation that routes by a process-wide switch
+/// instead fails the first pair of assertions.
+#[test]
+fn the_row_edge_follows_the_weights_declared_activations() {
+    use crate::layers::ops::gemv_tc::narrow_gemv_max_rows;
+    use crate::weight_map::QuantizedWeight;
+    use metrale_config::Nvfp4Act;
+    assert_eq!(
+        crate::layers::weight_quantization(),
+        metrale_config::WeightQuantTier::default()
+    );
+    let stamped = |act| QuantizedWeight {
+        act,
+        ..QuantizedWeight::null()
+    };
+    let declared = stamped(Nvfp4Act::A4);
+    let gpu = MockGpuBackend::new();
+    let tiers = W4a16BatchmTiers::resolve(&gpu);
+    assert_eq!(
+        tiers.a4_rows,
+        crate::layers::ops::w4a4_proj::W4A4_WIDE_MAX_M
+    );
+    assert!(tiers.declares_a4(&declared));
+    assert_eq!(tiers.edge(&declared), 64);
+    assert_eq!(tiers.ffn_edge(&declared), 32);
+    for other in [Nvfp4Act::Wide, Nvfp4Act::Unstamped] {
+        let w = stamped(other);
+        assert!(!tiers.declares_a4(&w), "{other:?}");
+        assert_eq!(tiers.edge(&w), narrow_gemv_max_rows(), "{other:?}");
+        for m in [9, 16, 17, 32, 33, 64] {
+            assert_ne!(tiers.kernel_for(m, &declared).0, 0, "declared, m={m}");
+            if m > narrow_gemv_max_rows() {
+                assert_eq!(tiers.kernel_for(m, &w).0, 0, "{other:?}, m={m}");
+                assert_eq!(
+                    tiers.kernel(m).0,
+                    0,
+                    "kernel(m) keeps the W4A16 edge, m={m}"
+                );
+            }
+        }
+    }
+    assert_eq!(tiers.kernel_for(65, &declared).0, 0);
+    // 2026-09-28: No W4A4 kernels (the default, all-zero table): the declaration cannot be
+    // served, so the weight keeps the W4A16 edge.
+    let absent = W4a16BatchmTiers::default();
+    assert!(!absent.declares_a4(&declared));
+    assert_eq!(absent.edge(&declared), narrow_gemv_max_rows());
 }

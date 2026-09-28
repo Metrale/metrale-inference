@@ -17,7 +17,8 @@ use crate::weight_map::QuantizedWeight;
 
 impl DenseFfnLayer {
     /// 2026-09-25: Decode for one token; returns `moe_output` holding `[1, hidden]`. Packed-Q2, FP8
-    /// and BF16 layers take their own branches. NVFP4 runs the fused gate+up GEMV, then either
+    /// and BF16 layers take their own branches. NVFP4 that `single_row_w4a4` admits runs
+    /// `forward_km` at one row (W4A4, 2026-09-28). Other NVFP4 runs the fused gate+up GEMV, then either
     /// `act_mul` plus the down GEMV (split SiLU: the default, and always with a LoRA adapter or
     /// GELU) or the SiLU-fused down GEMV. `METRALE_DECODE_FFN_VIA_GEMM=1` runs NVFP4 through
     /// `w4a16_prefill_gemm` instead.
@@ -237,6 +238,17 @@ impl DenseFfnLayer {
                 stream,
             )?;
             return Ok(output);
+        }
+
+        // 2026-09-28: Under `--weight-quantization declared`, an FFN that declares FP4
+        // activations sends its single row through `forward_km`, whose projections run the
+        // W4A4 FP4 MMA as at 2..=32 rows. The GEMVs below are W4A16.
+        if self.single_row_w4a4()
+            && self.activation == FfnActivation::SiLU
+            && self.can_forward_km(1)
+        {
+            self.forward_km(input, 1, ctx, stream)?;
+            return Ok(ctx.buffers.moe_output());
         }
 
         // 2026-09-25: `METRALE_DECODE_FFN_VIA_GEMM=1` (SiLU layers): run the three NVFP4

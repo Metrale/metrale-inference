@@ -1584,6 +1584,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
  "metrale-core",
+ "regex",
  "serde",
  "serde_json",
 ]

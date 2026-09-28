@@ -323,10 +323,11 @@ impl Qwen3AttentionLayer {
         let gpu = c.fwd.gpu;
         let stream = c.stream;
         // 2026-09-25: The batched GEMV reads the base (non-transposed) weight
-        // once for all rows. `w4a16_batchm.kernel(m)` covers m <= 8, and more
-        // rows only in the wide modes (`w4a16_gemv_tiers.rs`); otherwise it is
-        // zero and the GEMMs below run.
-        let batchm = self.w4a16_batchm.kernel(m);
+        // once for all rows. `w4a16_batchm.kernel_for(m, w_base)` covers m <= 8,
+        // and more rows in the wide TC mode or, up to the W4A4 edge, when the
+        // checkpoint declares FP4 activations for `w_base` (`w4a16_gemv_tiers.rs`);
+        // otherwise it is zero and the GEMMs below run.
+        let batchm = self.w4a16_batchm.kernel_for(m, w_base);
         if batchm.0 != 0 {
             return if same_input_as_previous {
                 ops::w4a4_proj::nvfp4_proj_small_m_same_input(

@@ -171,7 +171,7 @@ impl Qwen3SsmLayer {
                     )?;
                 }
                 // 2026-09-25: `nvfp4_proj_small_m` over all `n` rows (the
-                // W4A16 batched GEMV, or W4A4 under `--w4a4-downcast`), written
+                // W4A16 batched GEMV, or W4A4 where the checkpoint declares FP4 activations), written
                 // straight into `deinterleaved` (QKVZ is sequential here).
                 _ => {
                     // 2026-09-25: The eligibility check in `ssm_batched.rs`

@@ -8,8 +8,8 @@
 //! - A cell is published only when the command line gave one of its flags;
 //!   otherwise it resolves from its `METRALE_*` fallback on first read. Once
 //!   one of the four GDN flags is given, the GDN cell is published whole.
-//! - The two w4a4 cells (no fallback) and `--ssm-rollback-mode` (explicit
-//!   clap default) are published on every serve.
+//! - The weight-quantization cell and the expert-quantization cell (no fallback) and
+//!   `--ssm-rollback-mode` (explicit clap default) are published on every serve.
 
 use crate::cli;
 
@@ -46,22 +46,18 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
         }
         warn_shadowed_env();
     }
-    // 2026-09-26: `--w4a4-downcast` is always published: it has no environment
-    // fallback, and the model build reads it (`w4a16_gemv_tiers.rs`).
-    let w4a4 = metrale_model_layers::layers::ops::w4a4_proj::set_w4a4_downcast_from_cli(
-        plan.w4a4_downcast,
-    );
-    if w4a4 != plan.w4a4_downcast {
+    // 2026-09-28: `--weight-quantization` (with its `--w4a4-downcast` lever) is always
+    // published: it has no environment fallback, and the model build reads it
+    // (`w4a16_gemv_tiers.rs`, `w4a4_proj.rs`, the loaders' `WeightQuantPolicy`).
+    let tier = metrale_model_layers::layers::set_weight_quantization_from_cli(plan.weight_quant);
+    if tier != plan.weight_quant {
         tracing::warn!(
-            "w4a4-downcast was already resolved ({w4a4}); the command line's \
-             ({}) did NOT take effect",
-            plan.w4a4_downcast
+            "weight-quantization was already resolved ({tier:?}); the command line's \
+             ({:?}) did NOT take effect",
+            plan.weight_quant
         );
     }
-    let wide = metrale_model_layers::layers::ops::w4a4_proj::set_w4a4_wide_from_cli(
-        plan.w4a4_downcast_wide,
-    );
-    if args.w4a4_downcast_wide && !wide {
+    if args.w4a4_downcast_wide && !args.w4a4_downcast {
         tracing::warn!("--w4a4-downcast-wide needs --w4a4-downcast; it did NOT take effect");
     }
     // 2026-09-27: `--expert-quantization` is always published: it has no environment

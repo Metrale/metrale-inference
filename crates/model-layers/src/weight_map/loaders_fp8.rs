@@ -267,6 +267,7 @@ pub fn quantize_to_nvfp4(
         weight_scale_2: scale2,
         input_scale: DevicePtr::NULL,
         weight_scale_2_vec: DevicePtr::NULL,
+        act: metrale_config::Nvfp4Act::Unstamped,
     })
 }
 

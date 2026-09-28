@@ -198,6 +198,7 @@ fn load_moe_ffn(
                         weight_scale_2,
                         input_scale,
                         weight_scale_2_vec: DevicePtr::NULL,
+                        act: metrale_config::Nvfp4Act::Unstamped,
                     })
                 };
                 let gate_proj = load_expert_proj("gate_proj")?;

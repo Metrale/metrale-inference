@@ -128,15 +128,22 @@ pub(super) fn load_gdn_dequant(
             gpu,
             Nvfp4Variant::Standard,
         )?;
+        // 2026-09-28: The policy's activation stamp (`QuantizedWeight::act`); the fused
+        // `[QKV|Z]` combines both halves' (`concat_rows`, `Nvfp4Act::combine`).
+        let mut qkv_qw = qkv_qw;
+        let mut z_qw = z_qw;
+        qkv_qw.act = cx.nvfp4_act(&format!("{la}.in_proj_qkv"));
+        z_qw.act = cx.nvfp4_act(&format!("{la}.in_proj_z"));
         let qkvz_nvfp4 = qkv_qw.concat_rows(&z_qw, qkv_rows, z_rows, h, gpu)?;
         let qkvz_nvfp4_t = qkvz_nvfp4.transpose_for_gemm(gpu, qkvz_size, h)?;
 
-        let out_proj_nvfp4 = quantized_auto(
+        let mut out_proj_nvfp4 = quantized_auto(
             store,
             &format!("{la}.out_proj"),
             gpu,
             Nvfp4Variant::Standard,
         )?;
+        out_proj_nvfp4.act = cx.nvfp4_act(&format!("{la}.out_proj"));
         let out_proj_nvfp4_t = out_proj_nvfp4.transpose_for_gemm(gpu, h, value_dim)?;
 
         let ssm = SsmWeights {
@@ -298,12 +305,26 @@ pub(super) fn load_gdn_dequant(
         return Ok(Flow::Continue);
     }
 
-    let qkvz_nvfp4 =
+    // 2026-09-28: KNOWN DEVIATION under `--weight-quantization declared`. A checkpoint that
+    // declares this projection FP8 W8A8 with per-channel scales (unsloth/Qwen3.8-27B-NVFP4:
+    // attention q/k/v/o, GDN in_proj_qkv/in_proj_z/out_proj, MLP of layers 56-63) asks for its
+    // FP8 weights (`WeightQuantPolicy::wants_fp8_weights`), but no decode arm reads a per-row
+    // FP8 scale yet, so it is requantized to NVFP4 here: below the declared weight precision.
+    // The loader stamps the copy `Nvfp4Act::Wide`, so its activations stay 16-bit (no W4A4
+    // below the declared A8). Serving it as declared needs the per-row FP8 decode arms (the
+    // W8A8 decode branch); under `nvfp4` this requantization is the tier's definition.
+    // 2026-09-28: The policy's activation stamp (`QuantizedWeight::act`), before the
+    // transposes copy it.
+    let mut qkvz_nvfp4 =
         quantize_to_nvfp4(&qkvz_dense, qkvz_size, h, gpu, absmax_k, quantize_k, stream)?;
+    qkvz_nvfp4.act = metrale_config::Nvfp4Act::combine([
+        cx.nvfp4_act(&format!("{la}.in_proj_qkv")),
+        cx.nvfp4_act(&format!("{la}.in_proj_z")),
+    ]);
 
     let qkvz_nvfp4_t = qkvz_nvfp4.transpose_for_gemm(gpu, qkvz_size, h)?;
 
-    let out_proj_nvfp4 = quantize_to_nvfp4(
+    let mut out_proj_nvfp4 = quantize_to_nvfp4(
         &out_proj_dense,
         h,
         value_dim,
@@ -312,6 +333,7 @@ pub(super) fn load_gdn_dequant(
         quantize_k,
         stream,
     )?;
+    out_proj_nvfp4.act = cx.nvfp4_act(&format!("{la}.out_proj"));
 
     let out_proj_nvfp4_t = out_proj_nvfp4.transpose_for_gemm(gpu, h, value_dim)?;
 
