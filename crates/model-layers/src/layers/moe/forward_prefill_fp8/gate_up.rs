@@ -10,7 +10,9 @@ use super::*;
 
 impl MoeLayer {
     /// 2026-09-26: W8A8 gate/up, taken when `fp8_blockscaled_prefill` and its kernels
-    /// resolved and `max_m_tiles > 0`.
+    /// resolved and `max_m_tiles > 0`. 2026-09-28: Returns the quantized down input and its
+    /// scales when the fused gate/up + SiLU + quant kernel ran (`try_e4m3_gateup_silu`),
+    /// else None (the BF16 gate/up rows are in `expert_gate_out` / `expert_up_out`).
     pub(super) fn fp8_prefill_gate_up_w8a8(
         &self,
         input: DevicePtr,
@@ -32,7 +34,7 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
         mt: &mut Option<std::time::Instant>,
-    ) -> Result<()> {
+    ) -> Result<Option<(DevicePtr, DevicePtr)>> {
         macro_rules! mprof {
             ($label:expr) => {
                 mprof_step!(*mt, ctx, stream, n, $label)
@@ -65,6 +67,25 @@ impl MoeLayer {
             stream,
         )? {
             mprof!("grouped_gemm_w8a8_adaptive");
+        } else if let Some(down_in) = self.try_e4m3_gateup_silu(
+            input_fp8,
+            input_a_scale,
+            gp,
+            up,
+            expert_gate_out,
+            expert_up_out,
+            expert_offsets,
+            sorted_token_ids,
+            num_experts,
+            inter,
+            h,
+            num_tokens,
+            fp8_scratch,
+            ctx,
+            stream,
+        )? {
+            mprof!("gateup_silu_e4m3");
+            return Ok(Some(down_in));
         } else if self.try_e4m3_grouped(
             super::E4m3Proj::GateUp,
             input_fp8,
@@ -177,7 +198,7 @@ impl MoeLayer {
             )?;
             mprof!("grouped_gemm_w8a8");
         }
-        Ok(())
+        Ok(None)
     }
 
     /// 2026-09-26: FP8 (W8A16) gate/up, taken otherwise when `max_m_tiles > 0`.

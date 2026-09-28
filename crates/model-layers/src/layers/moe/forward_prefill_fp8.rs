@@ -306,8 +306,9 @@ impl MoeLayer {
             && self.moe_w8a8_grouped_gemm_k.0 != 0
             && self.per_token_group_quant_fp8_k.available();
 
+        let mut down_in = None;
         if force_w8a8 && max_m_tiles > 0 {
-            self.fp8_prefill_gate_up_w8a8(
+            down_in = self.fp8_prefill_gate_up_w8a8(
                 input,
                 gp,
                 up,
@@ -369,6 +370,7 @@ impl MoeLayer {
         let expert_down_out = ctx.buffers.expert_down_out();
         if force_w8a8 && max_m_tiles > 0 {
             self.fp8_prefill_down_w8a8(
+                down_in,
                 dp,
                 expert_gate_out,
                 expert_up_out,
