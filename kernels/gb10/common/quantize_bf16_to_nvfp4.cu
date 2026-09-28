@@ -257,11 +257,11 @@ __device__ float nvfp4_e2m1_magnitude(unsigned int idx) {
     return (idx < 4u) ? 0.5f * (float)idx : (float)(idx == 7u ? 6u : idx - 2u);
 }
 
-// 2026-09-27: quantize_bf16_to_nvfp4 with the block scale chosen by error: besides the
+// 2026-09-28: quantize_bf16_to_nvfp4 with the block scale chosen by error: besides the
 // absmax scale byte b0 (max |x| maps to 6), the four bytes b0 - 3 .. b0 + 1 are tried and the
 // one with the least squared dequantization error over the block's 16 elements is kept (b0 on
-// a tie). Same layout, launch and scale2 as quantize_bf16_to_nvfp4; used for the experts
-// requantized under --moe-nvfp4-experts.
+// a tie). Same layout, launch and scale2 as quantize_bf16_to_nvfp4; used for the routed experts
+// requantized under --expert-quantization nvfp4-gate-up and nvfp4.
 extern "C" __global__ void quantize_bf16_to_nvfp4_mse(
     const __nv_bfloat16* __restrict__ input,
     unsigned char* __restrict__ packed_out,
