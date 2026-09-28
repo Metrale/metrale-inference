@@ -33,6 +33,7 @@ const L: &str = "model.language_model.layers";
 const CAPS: KernelCaps = KernelCaps {
     w8a8_decode: false,
     w8a8_moe_decode: false,
+    fp8_lm_head_batched: false,
 };
 
 /// 2026-09-28: The tiers' names are the flag values, `declared` is the default, and the
@@ -54,7 +55,8 @@ fn tiers_name_default_and_refuse_the_lever_under_declared() {
 /// 2026-09-28: unsloth/Qwen3.8-27B-NVFP4 (compressed-tensors, mixed). Under `declared`, MLP
 /// 0-55 is stamped A4, and every FP8-declared projection's NVFP4 copy (MLP 56-63, attention,
 /// GDN) is stamped `Wide`, so no FP4 activations run below the declared FP8. The FP8 weights
-/// are asked for, and the head resolves to the checkpoint's FP8.
+/// are asked for, and the head resolves to the checkpoint's FP8 once the batched FP8 head
+/// kernel is present.
 #[test]
 fn unsloth_mixed_checkpoint_under_declared() {
     let p = plan("unsloth");
@@ -75,7 +77,17 @@ fn unsloth_mixed_checkpoint_under_declared() {
         assert_eq!(pol.nvfp4_act(&m), Nvfp4Act::Wide, "{m}");
         assert!(pol.wants_fp8_weights(&m), "{m}");
     }
-    assert_eq!(pol.lm_head(), Some(LmHeadFormat::Fp8));
+    // 2026-09-28: Path A: without the batched FP8 head the engine default head stays.
+    assert_eq!(pol.lm_head(), LmHeadChoice::PendingFp8Kernel);
+    // 2026-09-28: Path B: with it, the declared FP8 head.
+    let head_caps = KernelCaps {
+        fp8_lm_head_batched: true,
+        ..CAPS
+    };
+    assert_eq!(
+        WeightQuantPolicy::new(declared(), &p, head_caps).lm_head(),
+        LmHeadChoice::Declared(LmHeadFormat::Fp8)
+    );
     let attn = format!("{L}.3.self_attn.q_proj");
     assert_eq!(pol.fp8_decode_act(&attn), Some(ActFormat::Bf16));
     assert_eq!(pol.fp8_decode_act(&format!("{L}.0.mlp.up_proj")), None);
@@ -106,7 +118,17 @@ fn nvfp4_tier_ignores_the_plan() {
             assert!(!pol.wants_fp8_weights(&m), "{m}");
             assert_eq!(pol.fp8_decode_act(&m), None, "{m}");
         }
-        assert_eq!(pol.lm_head(), None);
+        // 2026-09-28: Path C: the `nvfp4` tier keeps the engine default head, with or
+        // without the batched FP8 head.
+        assert_eq!(pol.lm_head(), LmHeadChoice::EngineDefault);
+        let head_caps = KernelCaps {
+            fp8_lm_head_batched: true,
+            ..CAPS
+        };
+        assert_eq!(
+            WeightQuantPolicy::new(nvfp4(d), &p, head_caps).lm_head(),
+            LmHeadChoice::EngineDefault
+        );
     }
 }
 
@@ -123,7 +145,7 @@ fn nvidia_weight_only_mlp_under_declared() {
     );
     assert!(!Nvfp4Act::Wide.allows_fp4_prefill());
     assert!(pol.wants_fp8_weights(&format!("{L}.0.linear_attn.in_proj_qkv")));
-    assert_eq!(pol.lm_head(), Some(LmHeadFormat::Nvfp4));
+    assert_eq!(pol.lm_head(), LmHeadChoice::Declared(LmHeadFormat::Nvfp4));
 }
 
 /// 2026-09-28: A ModelOpt NVFP4 checkpoint (nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4, every
@@ -142,7 +164,7 @@ fn modelopt_nvfp4_is_a4_where_quantized() {
         pol.nvfp4_act("model.layers.0.linear_attn.in_proj_qkvz"),
         Nvfp4Act::Wide
     );
-    assert_eq!(pol.lm_head(), Some(LmHeadFormat::Bf16));
+    assert_eq!(pol.lm_head(), LmHeadChoice::Declared(LmHeadFormat::Bf16));
 }
 
 /// 2026-09-28: Qwen/Qwen3.6-35B-A3B-FP8 (HF fp8, 128x128 blocks): every projection asks for
@@ -160,7 +182,7 @@ fn fp8_block_moe_under_declared() {
         assert!(pol.wants_fp8_weights(&m), "{m}");
         assert_eq!(pol.nvfp4_act(&m), Nvfp4Act::Wide, "{m}");
     }
-    assert_eq!(pol.lm_head(), Some(LmHeadFormat::Bf16));
+    assert_eq!(pol.lm_head(), LmHeadChoice::Declared(LmHeadFormat::Bf16));
     // 2026-09-28: Each W8A8 family's bit serves its own modules only.
     let experts = format!("{L}.0.mlp.experts.3.down_proj");
     let shared = format!("{L}.0.mlp.shared_expert.up_proj");
@@ -203,7 +225,7 @@ fn unquantized_checkpoint_keeps_the_engine_defaults() {
             Nvfp4Act::Unstamped
         );
         assert!(!pol.wants_fp8_weights(&format!("{L}.0.mlp.gate_proj")));
-        assert_eq!(pol.lm_head(), None);
+        assert_eq!(pol.lm_head(), LmHeadChoice::EngineDefault);
     }
 }
 

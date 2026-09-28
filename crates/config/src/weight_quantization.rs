@@ -219,6 +219,11 @@ pub struct KernelCaps {
     /// 2026-09-28: The same for MoE experts (routed and shared), whose grouped kernels land
     /// separately ([`is_expert_module`]).
     pub w8a8_moe_decode: bool,
+    /// 2026-09-28: An FP8 lm_head that serves every decode row count in one pass. The FP8
+    /// head today launches once per row, which collapses throughput at width (C16 88.9 tok/s
+    /// against 200.0 on the NVFP4 head, C128 not finishing), so `declared` takes a declared
+    /// FP8 head only once this is set ([`LmHeadChoice::PendingFp8Kernel`]).
+    pub fp8_lm_head_batched: bool,
 }
 
 /// 2026-09-28: Whether `module` is a MoE expert projection (routed or shared), which the
@@ -249,6 +254,20 @@ pub enum LmHeadFormat {
     Fp8,
     /// 2026-09-28: NVFP4.
     Nvfp4,
+}
+
+/// 2026-09-28: What `--lm-head-dtype default` resolves to ([`WeightQuantPolicy::lm_head`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LmHeadChoice {
+    /// 2026-09-28: The engine's per-model default head: under `nvfp4`, or with nothing
+    /// declared.
+    EngineDefault,
+    /// 2026-09-28: The head format the checkpoint declares.
+    Declared(LmHeadFormat),
+    /// 2026-09-28: The checkpoint declares an FP8 head but the batched FP8 head kernel
+    /// ([`KernelCaps::fp8_lm_head_batched`]) is absent: the engine's default head, which is
+    /// above or below the declared precision depending on the model, until it lands.
+    PendingFp8Kernel,
 }
 
 /// 2026-09-28: The per-layer answers for one model: its declared plan under the published
@@ -341,18 +360,21 @@ impl<'a> WeightQuantPolicy<'a> {
         })
     }
 
-    /// 2026-09-28: The lm_head format `--lm-head-dtype default` takes: the declared one under
-    /// `declared`, `None` (the engine's per-model default) otherwise or for a declaration
-    /// with no matching head format.
-    pub fn lm_head(&self) -> Option<LmHeadFormat> {
+    /// 2026-09-28: The head `--lm-head-dtype default` takes: under `declared`, the declared
+    /// format, except a declared FP8 head while [`KernelCaps::fp8_lm_head_batched`] is false;
+    /// the engine's per-model default otherwise, or for a format with no head kernel.
+    pub fn lm_head(&self) -> LmHeadChoice {
         if !self.follows_plan() {
-            return None;
+            return LmHeadChoice::EngineDefault;
         }
         match self.plan.resolve("lm_head").weight {
-            None => Some(LmHeadFormat::Bf16),
-            Some(w) if w.is_fp8() => Some(LmHeadFormat::Fp8),
-            Some(w) if w.is_fp4() => Some(LmHeadFormat::Nvfp4),
-            Some(_) => None,
+            None => LmHeadChoice::Declared(LmHeadFormat::Bf16),
+            Some(w) if w.is_fp8() && self.caps.fp8_lm_head_batched => {
+                LmHeadChoice::Declared(LmHeadFormat::Fp8)
+            }
+            Some(w) if w.is_fp8() => LmHeadChoice::PendingFp8Kernel,
+            Some(w) if w.is_fp4() => LmHeadChoice::Declared(LmHeadFormat::Nvfp4),
+            Some(_) => LmHeadChoice::EngineDefault,
         }
     }
 }

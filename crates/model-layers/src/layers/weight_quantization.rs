@@ -29,14 +29,16 @@ pub fn weight_quantization() -> WeightQuantTier {
     *TIER.get_or_init(WeightQuantTier::default)
 }
 
-/// 2026-09-28: Which W8A8 decode families are present: the dense/non-expert family
-/// (`ops::w8a8_decode`) and the MoE expert family (`moe/fp8_grouped_tc_w8a8.rs`), so
-/// `WeightQuantPolicy::fp8_decode_act` reports FP8 activations for the layers each serves.
-/// Each family still checks at run time that its kernels resolved and the shapes fit, and
-/// falls back to W8A16 otherwise.
+/// 2026-09-28: Which decode families the policy may rely on: the dense/non-expert W8A8 family
+/// (`ops::w8a8_decode`), the MoE expert W8A8 family (`moe/fp8_grouped_tc_w8a8.rs`), and the
+/// batched FP8 lm_head. `WeightQuantPolicy::fp8_decode_act` reports FP8 activations for the
+/// layers each W8A8 family serves; each still checks at run time that its kernels resolved and
+/// the shapes fit, and falls back to W8A16 otherwise. `fp8_lm_head_batched` stays false until a
+/// batched FP8 head is verified, so `declared` keeps the engine's default head.
 pub fn kernel_caps() -> metrale_config::weight_quantization::KernelCaps {
     metrale_config::weight_quantization::KernelCaps {
         w8a8_decode: true,
         w8a8_moe_decode: true,
+        fp8_lm_head_batched: false,
     }
 }

@@ -29,12 +29,57 @@ pub(super) fn configure_model(
     metrale_telemetry::progress::phase(2, "config");
     let (mut config, config_json) = serve_phases::load_model_config(model_dir)?;
 
-    // 2026-09-26: `--lm-head-dtype` sets `lm_head_bf16_override` (read first by
-    // `skip_lm_head_quantization`) and `lm_head_fp8`; `setup_lm_heads` reads
-    // both, and uses a checkpoint's pre-packed NVFP4 head whatever they say.
-    // An unknown value fails the boot.
-    let (lm_head_bf16_override, lm_head_fp8) = match args.lm_head_dtype.as_str() {
-        "default" => (None, false),
+    // 2026-09-26: A sibling `hf_quant_config.json` fills `quantization_config`
+    // when config.json has none; its top level is read as the quantization
+    // block.
+    serve_phases::merge_sidecar_quant_config(model_dir, &mut config)?;
+
+    // 2026-09-28: The head `--lm-head-dtype default` takes under the published tier.
+    let choice = metrale_config::WeightQuantPolicy::for_checkpoint(
+        args.weight_quant_tier()?,
+        config.quantization_config.as_ref(),
+        metrale_model_layers::layers::kernel_caps(),
+    )
+    .lm_head();
+    let (lm_head_bf16_override, lm_head_fp8) = lm_head_flags(&args.lm_head_dtype, choice)?;
+    config.lm_head_bf16_override = lm_head_bf16_override;
+    config.lm_head_fp8 = lm_head_fp8;
+    Ok((config, config_json))
+}
+
+/// 2026-09-26: `--lm-head-dtype` as `(lm_head_bf16_override, lm_head_fp8)`. The first is read
+/// first by `skip_lm_head_quantization`; `setup_lm_heads` reads both, and uses a checkpoint's
+/// pre-packed NVFP4 head whatever they say. An unknown value fails the boot. An explicit value
+/// always wins; `default` takes `choice` (2026-09-28: `WeightQuantPolicy::lm_head`), and
+/// logs it when it is not the engine's per-model default.
+fn lm_head_flags(
+    lm_head_dtype: &str,
+    choice: metrale_config::weight_quantization::LmHeadChoice,
+) -> Result<(Option<bool>, bool)> {
+    use metrale_config::weight_quantization::{LmHeadChoice, LmHeadFormat};
+    Ok(match lm_head_dtype {
+        "default" => match choice {
+            LmHeadChoice::EngineDefault => (None, false),
+            LmHeadChoice::PendingFp8Kernel => {
+                tracing::info!(
+                    "--weight-quantization declared: the checkpoint declares an FP8 lm_head; the \
+                     engine's default head runs instead until the batched FP8 head kernel lands \
+                     (the FP8 head launches once per row); --lm-head-dtype fp8 serves it now"
+                );
+                (None, false)
+            }
+            LmHeadChoice::Declared(head) => {
+                tracing::info!(
+                    "--weight-quantization declared: lm_head {head:?}, as the checkpoint \
+                     declares (--lm-head-dtype overrides)"
+                );
+                match head {
+                    LmHeadFormat::Bf16 => (Some(true), false),
+                    LmHeadFormat::Fp8 => (Some(false), true),
+                    LmHeadFormat::Nvfp4 => (Some(false), false),
+                }
+            }
+        },
         "bf16" => (Some(true), false),
         // 2026-09-26: Quantize the lm_head to NVFP4 whatever the model's own
         // default is.
@@ -47,47 +92,7 @@ pub(super) fn configure_model(
                 "--lm-head-dtype must be 'default', 'bf16', 'nvfp4', or 'fp8', got '{other}'"
             )
         }
-    };
-    config.lm_head_bf16_override = lm_head_bf16_override;
-    config.lm_head_fp8 = lm_head_fp8;
-
-    // 2026-09-26: A sibling `hf_quant_config.json` fills `quantization_config`
-    // when config.json has none; its top level is read as the quantization
-    // block.
-    serve_phases::merge_sidecar_quant_config(model_dir, &mut config)?;
-    if args.lm_head_dtype == "default" {
-        apply_declared_lm_head(args, &mut config)?;
-    }
-    Ok((config, config_json))
-}
-
-/// 2026-09-28: Under `--weight-quantization declared`, `--lm-head-dtype default` takes the head
-/// format the checkpoint declares (`WeightQuantPolicy::lm_head`): its FP8 head where it
-/// declares FP8 (W8A16 until the W8A8 kernels land), BF16 where it leaves the head
-/// unquantized, NVFP4 where it declares NVFP4. Under `nvfp4`, or with no declaration, the
-/// per-model default stands.
-fn apply_declared_lm_head(args: &cli::ServeArgs, config: &mut ModelConfig) -> Result<()> {
-    use metrale_config::weight_quantization::LmHeadFormat;
-    let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
-        args.weight_quant_tier()?,
-        config.quantization_config.as_ref(),
-        metrale_model_layers::layers::kernel_caps(),
-    );
-    let Some(head) = policy.lm_head() else {
-        return Ok(());
-    };
-    let (bf16, fp8) = match head {
-        LmHeadFormat::Bf16 => (true, false),
-        LmHeadFormat::Fp8 => (false, true),
-        LmHeadFormat::Nvfp4 => (false, false),
-    };
-    tracing::info!(
-        "--weight-quantization declared: lm_head {head:?}, as the checkpoint declares \
-         (--lm-head-dtype overrides)"
-    );
-    config.lm_head_bf16_override = Some(bf16);
-    config.lm_head_fp8 = fp8;
-    Ok(())
+    })
 }
 
 pub(super) fn resolve_media_policies(
@@ -403,3 +408,7 @@ pub(super) fn parse_default_kwargs(args: &cli::ServeArgs) -> Result<DefaultChatT
         .unwrap_or_default();
     Ok(default_kwargs)
 }
+
+#[cfg(test)]
+#[path = "model_setup_tests.rs"]
+mod tests;

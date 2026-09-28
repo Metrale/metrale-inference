@@ -253,7 +253,9 @@ pub struct ServeArgs {
     /// declares, for the weights and the input activations: W4A4 where it declares FP4
     /// activations (the dense Qwen3.8-27B MLP of layers 0-55, at every decode row count and
     /// in prefill), W4A16 where it declares NVFP4 weights only (no FP4 MMQ prefill there),
-    /// and the checkpoint's own lm_head format under `--lm-head-dtype default`. Gaps that
+    /// and the checkpoint's own lm_head format under `--lm-head-dtype default`, except a
+    /// declared FP8 head, which waits for the batched FP8 head kernel (the engine's default
+    /// head runs until then; `--lm-head-dtype fp8` serves it now). Gaps that
     /// remain: FP8-declared layers run 16-bit activations until the W8A8 decode kernels land
     /// (above declared); the dense loader still requantizes per-channel FP8 attention, GDN and
     /// MLP projections to NVFP4 (below declared on the weights, 16-bit activations); attention
@@ -272,10 +274,10 @@ pub struct ServeArgs {
     ///
     /// Measured cost of `declared` against `nvfp4` on GB10 (one box, same binary). On
     /// unsloth/Qwen3.8-27B-NVFP4: decode-floor recipe 26.2 vs 27.2 tok/s and 1.65 vs 1.89 J/tok;
-    /// throughput recipe at C1/C16/C128 with the declared FP8 lm_head (W8A16, which loops per
-    /// row) 20.0/88.9 tok/s and C128 not finishing, against 25.0/216.6/457.0 tok/s; with
-    /// `--lm-head-dtype nvfp4` 24.8/200.0/457.6 tok/s and 1.65/0.268/0.137 against
-    /// 1.43/0.211/0.133 J/tok. On Qwen3.6-35B-A3B-FP8 the tiers produce identical output and
+    /// throughput recipe at C1/C16/C128 with the default (NVFP4) head 24.8/200.0/457.6 tok/s and
+    /// 1.65/0.268/0.137 J/tok, against 25.0/216.6/457.0 tok/s and 1.43/0.211/0.133 J/tok. With
+    /// `--lm-head-dtype fp8` (W8A16, one launch per row) `declared` falls to 20.0/88.9 tok/s and
+    /// C128 does not finish. On Qwen3.6-35B-A3B-FP8 the tiers produce identical output and
     /// speed: nothing there is requantized or declares FP4 activations.
     #[arg(long, value_enum, default_value_t = WeightQuantizationArg(metrale_config::WeightQuantization::Declared))]
     pub weight_quantization: WeightQuantizationArg,

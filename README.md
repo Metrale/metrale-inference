@@ -539,7 +539,9 @@ rung.
   `unsloth/Qwen3.8-27B-NVFP4`), decode and prefill run it W4A4. Where it declares
   NVFP4 weights only (`nvidia/Qwen3.6-27B-NVFP4`'s MLP), it runs W4A16, with no FP4
   MMQ prefill. `--lm-head-dtype default` takes the head format the checkpoint
-  declares. Two gaps remain until the W8A8 decode kernels land:
+  declares, except an FP8 head: that waits for the batched FP8 head kernel, and
+  the engine's default head runs until then. Two gaps remain until the W8A8
+  decode kernels land:
   - FP8-declared layers run 16-bit activations, above the declared precision.
   - The dense loader still requantizes per-channel FP8 attention, GDN and MLP
     projections to NVFP4, below the declared weight precision. They run with
