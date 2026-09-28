@@ -185,7 +185,13 @@ pub async fn acquire(plan: ServePlan, owner_pid: Option<u32>) -> Result<SelfServ
                          same rendering",
                         lease.pid, lease.port, lease.recipe_id
                     );
-                    let resolved = plan.disclosed(lease.port)?;
+                    let mut resolved = plan.disclosed(lease.port)?;
+                    super::bench_serve_plan::attach_live_forward(
+                        &target,
+                        plan.serve_args(lease.port)?.forward,
+                        &mut resolved,
+                    )
+                    .await?;
                     return Ok(SelfServed::external(
                         target,
                         plan.recipe_id,
@@ -327,7 +333,9 @@ async fn start(
         return Err(e);
     }
     eprintln!("gate: endpoint is serving {}", plan.model);
-    let resolved = plan.disclosed(port)?;
+    let mut resolved = plan.disclosed(port)?;
+    super::bench_serve_plan::attach_live_forward(&target, serve_args.forward, &mut resolved)
+        .await?;
     Ok(SelfServed::external(
         target,
         plan.recipe_id,

@@ -169,6 +169,39 @@ pub fn residual_add_rms_norm(
         .launch(stream)
 }
 
+/// 2026-09-28: `residual_add_rms_norm_exact` (`residual_add_rms_norm_exact.cu`): the arguments
+/// and launch of [`residual_add_rms_norm`], with the bytes of `bf16_residual_add` followed by
+/// [`rms_norm_residual`]: the sum of squares reads the BF16-rounded sums. The circuit executor
+/// launches it across a layer boundary, with the next layer's input-norm weight.
+#[allow(clippy::too_many_arguments)]
+pub fn residual_add_rms_norm_exact(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    hidden: DevicePtr,
+    src: DevicePtr,
+    weight: &DenseWeight,
+    output: DevicePtr,
+    residual: DevicePtr,
+    num_tokens: u32,
+    hidden_size: u32,
+    eps: f32,
+    stream: u64,
+) -> Result<()> {
+    residual_add_rms_norm(
+        gpu,
+        kernel,
+        hidden,
+        src,
+        weight,
+        output,
+        residual,
+        num_tokens,
+        hidden_size,
+        eps,
+        stream,
+    )
+}
+
 /// 2026-09-25: [`residual_add_rms_norm`] that also writes the normed row in FP32
 /// to `output_f32`, the MoE router input, so routing does not see the BF16
 /// rounding of the norm output. Callers use it when `METRALE_FP32_ROUTING` is

@@ -14,6 +14,16 @@ use super::super::super::Qwen3AttentionLayer;
 use super::super::splitk_dispatch::{self, SplitkPlan};
 use crate::layers::ops;
 
+/// 2026-09-28: The BF16 paged-decode kernel a shape takes, with its logged split count.
+pub(super) enum Bf16DecodeRoute {
+    /// 2026-09-28: The split-K pair.
+    Splitk(splitk_dispatch::SplitkPair, u32),
+    /// 2026-09-28: The GQA-packed non-split kernel.
+    Gqa(metrale_gpu_runtime::gpu::KernelHandle, u32),
+    /// 2026-09-28: The unpacked non-split kernel (the 512-wide one for heads over 256).
+    Plain(metrale_gpu_runtime::gpu::KernelHandle, u32),
+}
+
 impl Qwen3AttentionLayer {
     /// 2026-09-26: The `KvCacheDtype::Bf16` arm.
     pub(super) fn run_paged_decode_bf16(
@@ -39,45 +49,121 @@ impl Qwen3AttentionLayer {
         // 2026-09-25: A layer the loader gave a sliding window (`set_sliding_window`)
         // attends only to the last `sliding_window` positions; every other layer passes 0.
         let sliding = self.sliding_window.unwrap_or(0);
-        // 2026-09-25: BF16 split-K runs only where `bf16_splitk_pair` finds the Hopper twin
-        // (`kernels/hopper/common/paged_decode_bf16_splitk_hopper.cu`); otherwise this
-        // falls through to the non-split kernels below.
-        let bf16_splitk = self.bf16_splitk_pair(head_dim);
-        let num_splits =
-            splitk_dispatch::num_splits(num_q_heads, head_dim, num_seqs, max_decode_seqs);
-        if let (true, Some(pair)) = (
-            splitk_dispatch::splits_are_worth_it(num_splits),
-            bf16_splitk,
+        match self.bf16_decode_route(
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            num_seqs,
+            max_decode_seqs,
         ) {
-            splitk_dispatch::log_decode_route(
-                splitk_dispatch::RouteArm::Bf16,
-                pair.name,
-                num_splits,
-            );
-            return self.launch_splitk_bf16(
-                gpu,
-                &pair,
-                SplitkPlan {
+            Bf16DecodeRoute::Splitk(pair, num_splits) => {
+                splitk_dispatch::log_decode_route(
+                    splitk_dispatch::RouteArm::Bf16,
+                    pair.name,
                     num_splits,
+                );
+                self.launch_splitk_bf16(
+                    gpu,
+                    &pair,
+                    SplitkPlan {
+                        num_splits,
+                        num_q_heads,
+                        num_kv_heads,
+                        head_dim,
+                        block_size,
+                        max_blocks_per_seq,
+                        num_seqs,
+                        inv_sqrt_d,
+                        q_stride,
+                        sliding_window: sliding,
+                    },
+                    q,
+                    kv_cache.k_pool_ptr(self.attn_layer_idx),
+                    kv_cache.v_pool_ptr(self.attn_layer_idx),
+                    workspace,
+                    output,
+                    block_table,
+                    seq_lens,
+                    stream,
+                )
+            }
+            Bf16DecodeRoute::Gqa(gqa_k, num_splits) => {
+                splitk_dispatch::log_decode_route(
+                    splitk_dispatch::RouteArm::Bf16,
+                    splitk_dispatch::ROUTE_GQA_BF16,
+                    num_splits,
+                );
+                ops::paged_decode_attn_bf16_gqa(
+                    gpu,
+                    gqa_k,
+                    q,
+                    kv_cache.k_pool_ptr(self.attn_layer_idx),
+                    kv_cache.v_pool_ptr(self.attn_layer_idx),
+                    output,
+                    block_table,
+                    seq_lens,
+                    max_blocks_per_seq,
+                    num_seqs,
                     num_q_heads,
                     num_kv_heads,
                     head_dim,
                     block_size,
-                    max_blocks_per_seq,
-                    num_seqs,
                     inv_sqrt_d,
                     q_stride,
-                    sliding_window: sliding,
-                },
-                q,
-                kv_cache.k_pool_ptr(self.attn_layer_idx),
-                kv_cache.v_pool_ptr(self.attn_layer_idx),
-                workspace,
-                output,
-                block_table,
-                seq_lens,
-                stream,
-            );
+                    sliding,
+                    stream,
+                )
+            }
+            Bf16DecodeRoute::Plain(kernel, num_splits) => {
+                splitk_dispatch::log_decode_route(
+                    splitk_dispatch::RouteArm::Bf16,
+                    splitk_dispatch::ROUTE_NONSPLIT_BF16,
+                    num_splits,
+                );
+                ops::paged_decode_attn_bf16(
+                    gpu,
+                    kernel,
+                    q,
+                    kv_cache.k_pool_ptr(self.attn_layer_idx),
+                    kv_cache.v_pool_ptr(self.attn_layer_idx),
+                    output,
+                    block_table,
+                    seq_lens,
+                    max_blocks_per_seq,
+                    num_seqs,
+                    num_q_heads,
+                    num_kv_heads,
+                    head_dim,
+                    block_size,
+                    inv_sqrt_d,
+                    q_stride,
+                    sliding,
+                    stream,
+                )
+            }
+        }
+    }
+
+    /// 2026-09-28: The kernel `run_paged_decode_bf16` launches for this shape, and the split
+    /// count it logs: the one home of the choice, read by the decode and by the circuit binding.
+    pub(super) fn bf16_decode_route(
+        &self,
+        num_q_heads: u32,
+        num_kv_heads: u32,
+        head_dim: u32,
+        num_seqs: u32,
+        max_decode_seqs: u32,
+    ) -> Bf16DecodeRoute {
+        // 2026-09-25: BF16 split-K runs only where `bf16_splitk_pair` finds the Hopper twin
+        // (`kernels/hopper/common/paged_decode_bf16_splitk_hopper.cu`); otherwise this
+        // falls through to the non-split kernels below.
+        let num_splits =
+            splitk_dispatch::num_splits(num_q_heads, head_dim, num_seqs, max_decode_seqs);
+        if let (true, Some(pair)) = (
+            splitk_dispatch::splits_are_worth_it(num_splits),
+            self.bf16_splitk_pair(head_dim),
+        ) {
+            return Bf16DecodeRoute::Splitk(pair, num_splits);
         }
         // 2026-09-25: GQA-packed kernel: one CTA per (kv_head, seq) instead of per (q_head,
         // seq), loading each K and V row once for the whole query group. `gqa_pack_kernel`
@@ -90,62 +176,28 @@ impl Qwen3AttentionLayer {
             num_kv_heads,
             head_dim,
         ) {
-            splitk_dispatch::log_decode_route(
-                splitk_dispatch::RouteArm::Bf16,
-                splitk_dispatch::ROUTE_GQA_BF16,
-                num_splits,
-            );
-            return ops::paged_decode_attn_bf16_gqa(
-                gpu,
-                gqa_k,
-                q,
-                kv_cache.k_pool_ptr(self.attn_layer_idx),
-                kv_cache.v_pool_ptr(self.attn_layer_idx),
-                output,
-                block_table,
-                seq_lens,
-                max_blocks_per_seq,
-                num_seqs,
-                num_q_heads,
-                num_kv_heads,
-                head_dim,
-                block_size,
-                inv_sqrt_d,
-                q_stride,
-                sliding,
-                stream,
-            );
+            return Bf16DecodeRoute::Gqa(gqa_k, num_splits);
         }
-        splitk_dispatch::log_decode_route(
-            splitk_dispatch::RouteArm::Bf16,
-            splitk_dispatch::ROUTE_NONSPLIT_BF16,
-            num_splits,
-        );
         // 2026-09-25: The HDIM=512 kernel for heads wider than 256, when loaded.
         let kernel = if head_dim > 256 && self.paged_decode_512_k.0 != 0 {
             self.paged_decode_512_k
         } else {
             self.paged_decode_k
         };
-        ops::paged_decode_attn_bf16(
-            gpu,
-            kernel,
-            q,
-            kv_cache.k_pool_ptr(self.attn_layer_idx),
-            kv_cache.v_pool_ptr(self.attn_layer_idx),
-            output,
-            block_table,
-            seq_lens,
-            max_blocks_per_seq,
-            num_seqs,
-            num_q_heads,
-            num_kv_heads,
-            head_dim,
-            block_size,
-            inv_sqrt_d,
-            q_stride,
-            sliding,
-            stream,
+        Bf16DecodeRoute::Plain(kernel, num_splits)
+    }
+
+    /// 2026-09-28: Whether one-row BF16 decode takes the plain `paged_decode_k` kernel.
+    pub(in crate::layers::qwen3_attention) fn bf16_decode_is_plain(
+        &self,
+        num_q_heads: u32,
+        num_kv_heads: u32,
+        head_dim: u32,
+        max_decode_seqs: u32,
+    ) -> bool {
+        matches!(
+            self.bf16_decode_route(num_q_heads, num_kv_heads, head_dim, 1, max_decode_seqs),
+            Bf16DecodeRoute::Plain(k, _) if k.0 == self.paged_decode_k.0
         )
     }
 

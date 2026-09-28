@@ -30,6 +30,9 @@ pub fn resolve_adapter_slot(adapter_names: &[String], adapter: Option<&str>) -> 
 }
 
 pub struct AppState {
+    /// 2026-09-28: The model's forward (`--forward`) and its decode plan digest, as
+    /// `GET /forward` reports them.
+    pub forward: metrale_bench::gate::record_serve::LiveForward,
     pub tokenizer: ChatTokenizer,
     pub model_name: String,
     /// 2026-09-26: The first `--lora-adapter`'s name, if any. No handler reads

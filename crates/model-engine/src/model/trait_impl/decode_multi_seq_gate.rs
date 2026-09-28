@@ -82,6 +82,7 @@ mod tests {
         impl LayerGraphHooks for Plain {}
         impl LayerAuxState for Plain {}
         impl LayerSplitPrefill for Plain {}
+        impl metrale_model_layers::circuit_exec::CircuitBindings for Plain {}
         assert!(
             !Plain.decode_multi_seq_unsupported(),
             "default must be false — a new predicate may not re-route existing models"
@@ -108,6 +109,7 @@ mod tests {
         impl LayerGraphHooks for DeclinesDecode {}
         impl LayerAuxState for DeclinesDecode {}
         impl LayerSplitPrefill for DeclinesDecode {}
+        impl metrale_model_layers::circuit_exec::CircuitBindings for DeclinesDecode {}
         struct DeclinesVerify;
         impl TransformerLayer for DeclinesVerify {
             stub_forward!();
@@ -122,6 +124,7 @@ mod tests {
         impl LayerGraphHooks for DeclinesVerify {}
         impl LayerAuxState for DeclinesVerify {}
         impl LayerSplitPrefill for DeclinesVerify {}
+        impl metrale_model_layers::circuit_exec::CircuitBindings for DeclinesVerify {}
         assert!(DeclinesDecode.decode_multi_seq_unsupported());
         assert!(
             !DeclinesDecode.decode_verify_multi_unsupported(),

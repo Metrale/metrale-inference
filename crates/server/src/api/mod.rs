@@ -56,8 +56,8 @@ pub use inference_types::{
 pub use lora_control::{load_lora_into_slot, set_active_lora};
 #[allow(unused_imports)]
 pub use misc_handlers::{
-    DetokenizeRequest, cancel_response, detokenize, hardware, health, health_live, metrics_handler,
-    serve_config, tokenize,
+    DetokenizeRequest, cancel_response, detokenize, forward, hardware, health, health_live,
+    metrics_handler, serve_config, tokenize,
 };
 pub use models::{embeddings_stub, get_model, list_models};
 pub use responses::responses_endpoint;

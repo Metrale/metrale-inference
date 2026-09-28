@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-28: `CircuitBindings`, the supertrait of `TransformerLayer` through which a layer hands
+//! the circuit executor its weights by role and the facts its kernels need. Layers keep owning
+//! their weights; a binding is a copy of pointers.
+//!
+//! Owner: model-layers circuit executor.
+//! Invariants:
+//! - A layer lists in `unmodelled` every feature it carries that the circuit does not model
+//!   (hyper-connections, LoRA, a projection format the rules do not cover, ...). The executor
+//!   refuses a model with any, so a plan never runs over a layer it misdescribes.
+//! - A bound weight carries its storage format; the executor checks it against the format the
+//!   plan's node was resolved to.
+
+use std::collections::BTreeMap;
+
+use metrale_cache::kv_cache::KvCacheDtype;
+use metrale_circuit::LinearRole;
+
+use crate::weight_map::{DenseWeight, QuantizedWeight};
+
+/// 2026-09-28: Which weight of a layer a circuit node reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WeightSlot {
+    /// 2026-09-28: The mixer's input RMSNorm.
+    InputNorm,
+    /// 2026-09-28: The FFN's input RMSNorm (`post_attention_layernorm`).
+    PostNorm,
+    /// 2026-09-28: A projection; `GateUp` is bound as [`WeightSlot::FfnGate`] and
+    /// [`WeightSlot::FfnUp`].
+    Linear(LinearRole),
+    /// 2026-09-28: The dense FFN's gate projection.
+    FfnGate,
+    /// 2026-09-28: The dense FFN's up projection.
+    FfnUp,
+    /// 2026-09-28: Attention's per-head Q RMSNorm.
+    QNorm,
+    /// 2026-09-28: Attention's per-head K RMSNorm.
+    KNorm,
+    /// 2026-09-28: GatedDeltaNet `A_log`.
+    GdnALog,
+    /// 2026-09-28: GatedDeltaNet `dt_bias`.
+    GdnDtBias,
+    /// 2026-09-28: GatedDeltaNet conv1d taps.
+    GdnConv1d,
+    /// 2026-09-28: GatedDeltaNet output norm.
+    GdnNorm,
+}
+
+/// 2026-09-28: A bound weight and its storage format.
+#[derive(Debug, Clone, Copy)]
+pub enum BoundWeight {
+    /// 2026-09-28: Unquantized (BF16 for projections; norms and GDN vectors as loaded).
+    Dense(DenseWeight),
+    /// 2026-09-28: NVFP4, group 16.
+    Nvfp4(QuantizedWeight),
+}
+
+impl BoundWeight {
+    /// 2026-09-28: The format family, spelled as the precision tables spell weights.
+    pub fn family(&self) -> &'static str {
+        match self {
+            BoundWeight::Dense(_) => "bf16",
+            BoundWeight::Nvfp4(_) => "nvfp4",
+        }
+    }
+}
+
+/// 2026-09-28: What a GatedDeltaNet layer's kernels need beyond its weights.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GdnFacts {
+    /// 2026-09-28: The qkvz projection writes `[Q | K | V | Z]` itself (`sequential_qkvz`), so no
+    /// deinterleave follows it.
+    pub qkvz_deinterleaved: bool,
+}
+
+/// 2026-09-28: A full-attention layer's rotary embedding.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RopeFacts {
+    /// 2026-09-28: Interleaved MRoPE (`mrope_interleaved` with its kernel loaded).
+    pub mrope_interleaved: bool,
+    /// 2026-09-28: `rope_theta`, after any per-layer override.
+    pub theta: f32,
+    /// 2026-09-28: Rotated dims per head, after any per-layer override.
+    pub rotary_dim: u32,
+}
+
+/// 2026-09-28: What a full-attention layer's kernels need beyond its weights.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AttnFacts {
+    /// 2026-09-28: This layer's index among the attention layers: its KV-cache layer.
+    pub attn_layer_idx: usize,
+    /// 2026-09-28: KV-cache dtype of this layer.
+    pub kv_dtype: KvCacheDtype,
+    /// 2026-09-28: Query heads.
+    pub num_q_heads: u32,
+    /// 2026-09-28: KV heads.
+    pub num_kv_heads: u32,
+    /// 2026-09-28: Head dim.
+    pub head_dim: u32,
+    /// 2026-09-28: Q carries an output gate (`[Q | Gate]` after the split).
+    pub gated: bool,
+    /// 2026-09-28: Rotary embedding.
+    pub rope: RopeFacts,
+    /// 2026-09-28: Sliding window in positions; 0 for none.
+    pub sliding_window: u32,
+    /// 2026-09-28: Softmax scale (`effective_attn_scale`).
+    pub softmax_scale: f32,
+    /// 2026-09-28: The layer's own decode routing picks the plain non-split paged kernel
+    /// (`paged_decode_k`): no split-K pair, no GQA-packed kernel, no 512-wide head kernel.
+    pub paged_decode_plain: bool,
+}
+
+/// 2026-09-28: The mixer a layer runs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MixerFacts {
+    /// 2026-09-28: GatedDeltaNet.
+    Gdn(GdnFacts),
+    /// 2026-09-28: Full attention.
+    Attention(AttnFacts),
+}
+
+/// 2026-09-28: One layer, as the executor sees it.
+#[derive(Debug, Clone)]
+pub struct CircuitLayer {
+    /// 2026-09-28: The mixer.
+    pub mixer: MixerFacts,
+    /// 2026-09-28: Weights by slot.
+    pub weights: BTreeMap<WeightSlot, BoundWeight>,
+    /// 2026-09-28: Features present on this layer that the circuit does not model.
+    pub unmodelled: Vec<String>,
+}
+
+/// 2026-09-28: A supertrait of `TransformerLayer`; see the module header.
+pub trait CircuitBindings {
+    /// 2026-09-28: This layer for the circuit executor; `None` for a layer type it does not bind.
+    /// `config` and `levers` are the model's, as its decode reads them.
+    fn circuit_layer(
+        &self,
+        _config: &metrale_config::ModelConfig,
+        _levers: &crate::layers::ops::ModelLevers,
+    ) -> Option<CircuitLayer> {
+        None
+    }
+}
+
+/// 2026-09-28: The model's own weights the head block reads, filled by the model.
+#[derive(Debug, Clone)]
+pub struct HeadBinding {
+    /// 2026-09-28: The final RMSNorm.
+    pub final_norm: DenseWeight,
+    /// 2026-09-28: The vocabulary projection.
+    pub lm_head: BoundWeight,
+    /// 2026-09-28: Head features the circuit does not model (a logit overlay, softcapping,
+    /// FP32 logits, a vocab-parallel head, ...).
+    pub unmodelled: Vec<String>,
+}

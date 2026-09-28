@@ -1743,6 +1743,7 @@ dependencies = [
  "half",
  "image",
  "metrale-cache",
+ "metrale-circuit",
  "metrale-closure",
  "metrale-comm",
  "metrale-config",

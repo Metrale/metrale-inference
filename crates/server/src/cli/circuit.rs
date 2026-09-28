@@ -13,77 +13,17 @@
 
 use std::io::{IsTerminal, Write};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use metrale_circuit::display::{DisplayOpts, Expand, Glyphs};
-use metrale_circuit::{ArchShape, AvailableKernels, Instance, LayerKind, Mode, Sources};
+use metrale_circuit::{AvailableKernels, Instance, Mode};
 
 use super::{CircuitAction, CircuitArgs, CircuitMode, CircuitPlanArgs, circuit_paint};
 
-/// 2026-09-28: kernels/circuits/INSTANCES.toml as built.
-const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
-
-/// 2026-09-28: Every circuit, block library, precision table and FUSIONS.toml an instance can
-/// name, as built.
-/// `every_instance_source_is_embedded_and_loads` fails when INSTANCES.toml names one missing here.
-const CIRCUITS: [(&str, &str); 2] = [
-    (
-        "qwen3_5",
-        include_str!("../../../../kernels/circuits/qwen3_5.toml"),
-    ),
-    (
-        "qwen3_6_moe",
-        include_str!("../../../../kernels/circuits/qwen3_6_moe.toml"),
-    ),
-];
-const PRECISION: [(&str, &str); 2] = [
-    (
-        "qwen3.8-27b-nvfp4-unsloth",
-        include_str!("../../../../kernels/circuits/precision/qwen3.8-27b-nvfp4-unsloth.toml"),
-    ),
-    (
-        "qwen3.6-35b-a3b-fp8-bf16head",
-        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
-    ),
-];
-const BLOCKS: [(&str, &str); 1] = [(
-    "qwen3_hybrid",
-    include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
-)];
-const FUSIONS: [(&str, &str); 1] = [(
-    "gb10",
-    include_str!("../../../../kernels/gb10/common/FUSIONS.toml"),
-)];
-
-fn lookup<'a>(table: &[(&str, &'a str)], key: &str, what: &str) -> Result<&'a str> {
-    table
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, v)| *v)
-        .ok_or_else(|| anyhow!("{what} `{key}` is not built into this binary"))
-}
-
-/// 2026-09-28: The embedded texts `instance` is built from.
-pub(crate) fn sources(instance: &Instance) -> Result<Sources<'static>> {
-    let hw = instance.target.split('/').next().unwrap_or_default();
-    Ok(Sources {
-        circuit: lookup(&CIRCUITS, &instance.arch, "circuit")?,
-        precision: lookup(&PRECISION, &instance.precision, "precision table")?,
-        rules: lookup(&FUSIONS, hw, "FUSIONS.toml for hardware")?,
-        blocks: &BLOCKS,
-    })
-}
-
-/// 2026-09-28: The instance serving `recipe`.
-pub(crate) fn instance(recipe: &str) -> Result<Instance> {
-    let all = metrale_circuit::parse_instances(INSTANCES)?;
-    let known: Vec<String> = all.iter().map(|i| i.recipe.clone()).collect();
-    all.into_iter().find(|i| i.recipe == recipe).ok_or_else(|| {
-        anyhow!(
-            "no circuit instance for recipe `{recipe}`; kernels/circuits/INSTANCES.toml has: {}",
-            known.join(", ")
-        )
-    })
-}
+// 2026-09-28: The embedded texts and the instance lookups live with the executor, so the view
+// and the executor read one copy.
+pub(crate) use metrale_model_layers::circuit_exec::sources::{
+    arch_shape, instance, shape_drift, sources,
+};
 
 fn mode_of(m: CircuitMode) -> Mode {
     match m {
@@ -109,58 +49,6 @@ pub(crate) fn rows_of(inst: &Instance, args: &CircuitPlanArgs) -> Result<u64> {
             )
         }
     }
-}
-
-/// 2026-09-28: The arch shape of a parsed `config.json`, in the dim names the circuits read.
-pub(crate) fn arch_shape(cfg: &metrale_config::ModelConfig) -> Result<ArchShape> {
-    let mut layer_kinds = Vec::with_capacity(cfg.num_hidden_layers);
-    for i in 0..cfg.num_hidden_layers {
-        layer_kinds.push(match cfg.layer_type(i) {
-            metrale_config::LayerType::LinearAttention => LayerKind::LinearAttention,
-            metrale_config::LayerType::FullAttention => LayerKind::FullAttention,
-            other => bail!("layer {i} is {other:?}, which no circuit models"),
-        });
-    }
-    let dims = [
-        ("hidden", cfg.hidden_size),
-        ("inter", cfg.intermediate_size),
-        ("vocab", cfg.vocab_size),
-        ("q_heads", cfg.num_attention_heads),
-        ("kv_heads", cfg.num_key_value_heads),
-        ("head_dim", cfg.head_dim),
-        ("lin_k_heads", cfg.linear_num_key_heads),
-        ("lin_k_dim", cfg.linear_key_head_dim),
-        ("lin_v_heads", cfg.linear_num_value_heads),
-        ("lin_v_dim", cfg.linear_value_head_dim),
-        ("experts", cfg.num_experts),
-        ("top_k", cfg.num_experts_per_tok),
-        ("moe_inter", cfg.moe_intermediate_size),
-        ("shared_inter", cfg.shared_expert_intermediate_size),
-    ]
-    .into_iter()
-    .filter(|(_, v)| *v > 0)
-    .map(|(k, v)| (k.to_string(), v as u64))
-    .collect();
-    Ok(ArchShape { layer_kinds, dims })
-}
-
-/// 2026-09-28: Every way `from_config` disagrees with the instance's stated shape.
-pub(crate) fn shape_drift(stated: &ArchShape, from_config: &ArchShape) -> Vec<String> {
-    let mut out = Vec::new();
-    if stated.layer_kinds != from_config.layer_kinds {
-        out.push(format!(
-            "layer kinds: INSTANCES.toml has {} layers, config.json {} (or the kinds differ)",
-            stated.layer_kinds.len(),
-            from_config.layer_kinds.len()
-        ));
-    }
-    for (k, v) in &stated.dims {
-        match from_config.dims.get(k) {
-            Some(c) if c == v => {}
-            other => out.push(format!("{k}: INSTANCES.toml {v}, config.json {other:?}")),
-        }
-    }
-    out
 }
 
 fn check_shape(inst: &Instance) -> Result<()> {
@@ -190,6 +78,12 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
     let plan_args = match &args.action {
         CircuitAction::Show(p) => p.clone(),
         CircuitAction::Display(d) => d.plan.clone(),
+        CircuitAction::Diff(_) => {
+            let CircuitAction::Diff(d) = args.action else {
+                unreachable!("matched above")
+            };
+            return tokio::task::block_in_place(|| super::circuit_diff::run_diff(*d));
+        }
     };
     let inst = instance(&plan_args.recipe)?;
     let rows = rows_of(&inst, &plan_args)?;
@@ -203,6 +97,7 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
     eprintln!("rules: FUSIONS.toml sha256 {}", loaded.rules_digest);
     let text = match args.action {
         CircuitAction::Show(_) => metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows)?,
+        CircuitAction::Diff(_) => unreachable!("returned above"),
         CircuitAction::Display(d) => {
             let tty = std::io::stdout().is_terminal();
             let width = if tty {

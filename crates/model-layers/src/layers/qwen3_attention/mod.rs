@@ -12,6 +12,7 @@
 // (`attn_ncol`); both multi-seq routes, strided QKV and contiguous o_proj, read
 // that field.
 mod attn_ncol_gemv;
+mod circuit;
 // 2026-09-25: The log-once route lines of the `METRALE_ATTN_M16_TC` tier, one
 // for the strided QKV call site and one for the o_proj call site.
 pub(crate) mod attn_m16_tc_route;

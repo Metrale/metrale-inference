@@ -434,3 +434,4 @@ impl LayerWriteOnAccept for NemotronMoeLayer {}
 impl LayerGraphHooks for NemotronMoeLayer {}
 impl LayerAuxState for NemotronMoeLayer {}
 impl LayerSplitPrefill for NemotronMoeLayer {}
+impl metrale_model_layers::circuit_exec::CircuitBindings for NemotronMoeLayer {}

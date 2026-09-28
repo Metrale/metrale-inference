@@ -160,3 +160,50 @@ fn serve_resolved_never_reaches_check_record() {
     );
     assert_eq!(verdict, check_record(&failing_without, &baseline));
 }
+
+fn live(forward: &str, digest: Option<&str>) -> super::LiveForward {
+    super::LiveForward {
+        forward: forward.to_string(),
+        plan_digest: digest.map(str::to_string),
+    }
+}
+
+#[test]
+fn a_legacy_forward_adds_no_keys_and_a_circuit_adds_its_digest() {
+    let mut m = disclosure(None, false, false, false, None);
+    let before = m.clone();
+    super::merge_live_forward(&mut m, "legacy", &live("legacy", None)).unwrap();
+    assert_eq!(m, before);
+    super::merge_live_forward(&mut m, "circuit", &live("circuit", Some("abc"))).unwrap();
+    assert_eq!(m.get(super::FORWARD).map(String::as_str), Some("circuit"));
+    assert_eq!(m.get(super::PLAN_DIGEST).map(String::as_str), Some("abc"));
+}
+
+#[test]
+fn a_live_forward_that_contradicts_the_request_is_refused() {
+    let mut m = BTreeMap::new();
+    let cases = [
+        ("circuit", live("legacy", None), "asked for `circuit`"),
+        ("legacy", live("circuit", Some("abc")), "asked for `legacy`"),
+        ("circuit", live("circuit", None), "no plan digest"),
+        ("legacy", live("legacy", Some("abc")), "reports plan digest"),
+    ];
+    for (requested, l, want) in cases {
+        let err = super::merge_live_forward(&mut m, requested, &l).unwrap_err();
+        assert!(err.contains(want), "{err} lacks `{want}`");
+        assert!(
+            m.is_empty(),
+            "a refused merge leaves the disclosure untouched"
+        );
+    }
+}
+
+#[test]
+fn the_live_forward_report_round_trips_and_tolerates_a_missing_digest() {
+    let l = live("circuit", Some("d"));
+    let back: super::LiveForward =
+        serde_json::from_str(&serde_json::to_string(&l).unwrap()).unwrap();
+    assert_eq!(back, l);
+    let bare: super::LiveForward = serde_json::from_str(r#"{"forward":"legacy"}"#).unwrap();
+    assert_eq!(bare, live("legacy", None));
+}

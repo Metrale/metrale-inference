@@ -229,4 +229,5 @@ impl ModelEp for PreemptStubModel {}
 
 impl ModelStreams for PreemptStubModel {}
 
+impl metrale_model_engine::traits::ModelCircuit for PreemptStubModel {}
 impl ModelDeviceFeed for PreemptStubModel {}

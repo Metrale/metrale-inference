@@ -232,6 +232,12 @@ pub async fn serve_config() -> Response {
     }
 }
 
+/// 2026-09-28: GET /forward: the model's forward and its decode plan digest
+/// (`LiveForward`), which a gate record discloses.
+pub async fn forward(CurrentModel(state): CurrentModel) -> Response {
+    Json(state.forward.clone()).into_response()
+}
+
 /// 2026-09-26: POST /tokenize: token IDs and count for `prompt` text or for
 /// `messages` rendered through the chat template.
 pub async fn tokenize(

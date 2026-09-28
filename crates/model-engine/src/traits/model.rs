@@ -58,6 +58,7 @@ pub fn padded_batch_n(n: usize) -> usize {
 }
 
 mod adapters;
+mod circuit;
 mod device_feed;
 mod draft;
 mod ep;
@@ -70,6 +71,7 @@ mod verify;
 mod vision;
 
 pub use adapters::ModelAdapters;
+pub use circuit::{ForwardDisclosure, ForwardSelect, ModelCircuit};
 pub use device_feed::ModelDeviceFeed;
 pub use draft::ModelDraft;
 pub use ep::ModelEp;
@@ -97,6 +99,7 @@ pub trait Model:
     + ModelEp
     + ModelStreams
     + ModelDeviceFeed
+    + ModelCircuit
 {
 }
 

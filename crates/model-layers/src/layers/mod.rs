@@ -210,6 +210,23 @@ pub enum FfnComponent {
 }
 
 impl FfnComponent {
+    /// 2026-09-28: Add the FFN's weights to a circuit binding; a MoE or absent FFN is reported
+    /// as unmodelled (the executor binds dense FFNs so far).
+    pub(crate) fn circuit_bind(
+        &self,
+        weights: &mut std::collections::BTreeMap<
+            crate::circuit_exec::WeightSlot,
+            crate::circuit_exec::BoundWeight,
+        >,
+        unmodelled: &mut Vec<String>,
+    ) {
+        match self {
+            Self::Dense(d) => d.circuit_bind(weights, unmodelled),
+            Self::Moe(_) => unmodelled.push("a MoE FFN (not bound yet)".to_string()),
+            Self::None => unmodelled.push("no FFN".to_string()),
+        }
+    }
+
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }

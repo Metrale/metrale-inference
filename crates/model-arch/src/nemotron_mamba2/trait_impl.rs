@@ -238,3 +238,4 @@ impl LayerWriteOnAccept for NemotronMamba2Layer {}
 impl LayerGraphHooks for NemotronMamba2Layer {}
 impl LayerAuxState for NemotronMamba2Layer {}
 impl LayerSplitPrefill for NemotronMamba2Layer {}
+impl metrale_model_layers::circuit_exec::CircuitBindings for NemotronMamba2Layer {}

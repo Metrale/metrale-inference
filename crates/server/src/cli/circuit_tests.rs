@@ -10,6 +10,7 @@ use clap::Parser;
 
 use super::*;
 use crate::cli::{Cli, Command};
+use metrale_model_layers::circuit_exec::sources::{BLOCKS, CIRCUITS, INSTANCES, lookup};
 
 fn parse(args: &[&str]) -> CircuitArgs {
     let mut argv = vec!["met", "circuit"];
@@ -24,6 +25,7 @@ fn plan_args(args: &[&str]) -> CircuitPlanArgs {
     match parse(args).action {
         CircuitAction::Show(p) => p,
         CircuitAction::Display(d) => d.plan,
+        CircuitAction::Diff(_) => panic!("parsed diff"),
     }
 }
 
@@ -102,7 +104,7 @@ fn display_flags_parse_and_conflict() {
             assert!(d.ascii && !d.all_layers);
             assert_eq!(d.color, crate::cli::ColorChoice::Never);
         }
-        CircuitAction::Show(_) => panic!("parsed show"),
+        other => panic!("parsed {other:?}"),
     }
     let both = Cli::try_parse_from([
         "met",
@@ -154,4 +156,41 @@ fn the_config_adapter_matches_the_instance_and_names_drift() {
     );
     stated.layer_kinds.pop();
     assert_eq!(shape_drift(&stated, &from_config).len(), 1);
+}
+
+#[test]
+fn diff_takes_its_counts_explicitly_and_the_serve_flags_after_them() {
+    let d = match parse(&[
+        "diff",
+        "--steps",
+        "64",
+        "--prompts",
+        "4",
+        "--out",
+        "r.json",
+        "m/x",
+    ])
+    .action
+    {
+        CircuitAction::Diff(d) => d,
+        other => panic!("parsed {other:?}"),
+    };
+    assert_eq!((d.steps, d.prompts), (64, 4));
+    assert_eq!(d.serve.model.as_deref(), Some("m/x"));
+    for missing in ["--steps", "--prompts", "--out"] {
+        let mut argv = vec![
+            "met",
+            "circuit",
+            "diff",
+            "--steps",
+            "64",
+            "--prompts",
+            "4",
+            "--out",
+            "r",
+        ];
+        let at = argv.iter().position(|a| *a == missing).unwrap();
+        argv.drain(at..at + 2);
+        assert!(Cli::try_parse_from(argv).is_err(), "{missing} is required");
+    }
 }

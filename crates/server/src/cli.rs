@@ -22,6 +22,7 @@ pub mod bench_run;
 mod bench_selfstart;
 mod bench_serve_plan;
 pub(crate) mod circuit;
+mod circuit_diff;
 mod circuit_paint;
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
@@ -109,6 +110,27 @@ pub enum CircuitAction {
     /// Draw the architecture for a terminal: the layer strip, one diagram per distinct layer
     /// plan with fused groups framed, and the per-step totals.
     Display(CircuitDisplayArgs),
+    /// Load a model as `met serve` would and compare its decode logits, byte for byte, under
+    /// the legacy forward and the circuit forward (reference rules only, then every rule).
+    /// Set METRALE_DEBUG_NO_GRAPH=1 for the eager comparison; without it decode is graphed.
+    Diff(Box<CircuitDiffArgs>),
+}
+
+/// `met circuit diff` options.
+#[derive(clap::Args, Debug)]
+pub struct CircuitDiffArgs {
+    /// Decode steps compared per prompt.
+    #[arg(long)]
+    pub steps: usize,
+    /// Prompts: synthetic token sequences from a fixed generator, each a different length.
+    #[arg(long)]
+    pub prompts: usize,
+    /// Where to write the JSON report.
+    #[arg(long)]
+    pub out: std::path::PathBuf,
+    /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 /// Which plan to show.

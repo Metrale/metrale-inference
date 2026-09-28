@@ -64,6 +64,7 @@ pub trait TransformerLayer:
     + LayerGraphHooks
     + LayerAuxState
     + LayerSplitPrefill
+    + crate::circuit_exec::CircuitBindings
 {
     /// 2026-09-25: Decode one token through this layer, updating `hidden` in place.
     ///

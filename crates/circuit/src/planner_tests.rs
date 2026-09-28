@@ -5,7 +5,7 @@
 //! Owner: metrale-circuit.
 //! Invariants: none beyond the types.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 use crate::fuser::{AvailableKernels, Policy, fuse};
@@ -189,4 +189,143 @@ fn sizes_follow_the_row_expression_at_the_sized_rows() {
         let slot = b.slots.iter().find(|s| s.edge == gu).unwrap();
         assert_eq!(slot.bytes, rows * 256 * 2);
     }
+}
+
+fn toy(layers: usize) -> (Circuit, FusionPlan) {
+    let c = crate::test_toy::circuit(layers);
+    let r = crate::test_toy::rules("");
+    let p = crate::test_toy::plan(&c, &r, &crate::test_toy::policy(), 8);
+    (c, p)
+}
+
+fn slot(b: &BufferPlan, e: EdgeIdx) -> Slot {
+    *b.slots.iter().find(|s| s.edge == e).unwrap()
+}
+
+#[test]
+fn the_default_layout_places_exactly_what_plan_buffers_does() {
+    let (c, p) = toy(3);
+    assert_eq!(
+        plan_buffers(&c, &p, 8).unwrap(),
+        plan_buffers_with(&c, &p, 8, &Layout::default()).unwrap()
+    );
+}
+
+#[test]
+fn an_external_edge_is_not_placed() {
+    let (c, p) = toy(2);
+    let logits = c.edge("head.logits").unwrap();
+    let layout = Layout {
+        external: BTreeSet::from([logits]),
+        ..Layout::default()
+    };
+    let with = plan_buffers_with(&c, &p, 8, &layout).unwrap();
+    let without = plan_buffers(&c, &p, 8).unwrap();
+    assert!(with.slots.iter().all(|s| s.edge != logits));
+    assert_eq!(with.slots.len() + 1, without.slots.len());
+    assert!(with.arena_bytes <= without.arena_bytes);
+}
+
+#[test]
+fn an_alias_shares_the_input_bytes_and_holds_them_over_both_ranges() {
+    let (c, p) = toy(1);
+    let xn = c.edge("l0.ffn.xn").unwrap();
+    let d = c.edge("l0.ffn.d").unwrap();
+    let layout = Layout {
+        aliases: vec![(d, xn)],
+        ..Layout::default()
+    };
+    let b = plan_buffers_with(&c, &p, 8, &layout).unwrap();
+    let (sx, sd) = (slot(&b, xn), slot(&b, d));
+    assert_eq!(sx.offset, sd.offset);
+    let ranges = live_ranges(&c, &p);
+    let union = (
+        ranges[&xn].0.min(ranges[&d].0),
+        ranges[&xn].1.max(ranges[&d].1),
+    );
+    assert_eq!((sx.start, sx.end), union);
+    for s in b.slots.iter().filter(|s| s.edge != xn && s.edge != d) {
+        let live_together = s.start <= union.1 && union.0 <= s.end;
+        let bytes_overlap = s.offset < sx.offset + sx.bytes && sx.offset < s.offset + s.bytes;
+        assert!(
+            !(live_together && bytes_overlap),
+            "`{}` sits on the alias class while it is live",
+            c.edges[s.edge].id
+        );
+    }
+}
+
+#[test]
+fn a_pack_lays_its_edges_back_to_back_in_order() {
+    let (c, p) = toy(1);
+    let gu = c.edge("l0.ffn.gu").unwrap();
+    let a = c.edge("l0.ffn.a").unwrap();
+    for pack in [vec![gu, a], vec![a, gu]] {
+        let layout = Layout {
+            packs: vec![pack.clone()],
+            ..Layout::default()
+        };
+        let b = plan_buffers_with(&c, &p, 8, &layout).unwrap();
+        let (first, second) = (slot(&b, pack[0]), slot(&b, pack[1]));
+        assert_eq!(first.offset % ALIGN, 0);
+        assert_eq!(second.offset, first.offset + first.bytes);
+        assert_eq!((first.start, first.end), (second.start, second.end));
+    }
+}
+
+#[test]
+fn layouts_the_plan_cannot_honour_are_refused() {
+    let (c, p) = toy(1);
+    let e = |id: &str| c.edge(id).unwrap();
+    let refused = |layout: Layout, want: &str| {
+        let err = plan_buffers_with(&c, &p, 8, &layout)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(want), "{err} lacks `{want}`");
+    };
+    refused(
+        Layout {
+            aliases: vec![(e("l0.ffn.a"), e("l0.ffn.gu"))],
+            ..Layout::default()
+        },
+        "sizes differ",
+    );
+    refused(
+        Layout {
+            external: BTreeSet::from([e("head.logits")]),
+            aliases: vec![(e("head.logits"), e("head.xn"))],
+            ..Layout::default()
+        },
+        "external",
+    );
+    refused(
+        Layout {
+            external: BTreeSet::from([e("l0.ffn.gu")]),
+            packs: vec![vec![e("l0.ffn.gu"), e("l0.ffn.a")]],
+            ..Layout::default()
+        },
+        "external",
+    );
+    refused(
+        Layout {
+            packs: vec![vec![e("l0.ffn.gu")], vec![e("l0.ffn.gu"), e("l0.ffn.a")]],
+            ..Layout::default()
+        },
+        "packed twice",
+    );
+    let up_act = r#"{ op = "linear", role = "gate_up" }, { op = "silu_mul" }"#;
+    let fused_rules = crate::test_toy::rules(&crate::test_toy::fused("up_act", up_act, 10));
+    let fp = crate::test_toy::plan(&c, &fused_rules, &crate::test_toy::policy(), 8);
+    let err = plan_buffers_with(
+        &c,
+        &fp,
+        8,
+        &Layout {
+            external: BTreeSet::from([e("l0.ffn.gu")]),
+            ..Layout::default()
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("not materialised"), "{err}");
 }

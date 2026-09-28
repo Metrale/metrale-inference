@@ -388,6 +388,7 @@ impl LayerAuxState for Glm5NextLayer {
 }
 
 impl LayerSplitPrefill for Glm5NextLayer {}
+impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {}
 
 #[cfg(test)]
 mod tests;

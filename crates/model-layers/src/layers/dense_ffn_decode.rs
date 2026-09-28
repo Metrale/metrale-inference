@@ -11,6 +11,11 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::{DenseFfnLayer, FfnActivation, fp8_down};
+
+/// 2026-09-28: The FFN's circuit binding (`circuit_bind`); a child of this module so it reads
+/// the layer's private fields without growing `dense_ffn.rs`.
+#[path = "dense_ffn_circuit.rs"]
+mod circuit;
 use crate::layer::ForwardContext;
 use crate::layers::ops;
 use crate::weight_map::QuantizedWeight;

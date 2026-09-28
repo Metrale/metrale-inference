@@ -198,6 +198,7 @@ impl ModelEp for StubModel {}
 
 impl ModelStreams for StubModel {}
 
+impl metrale_model_engine::traits::ModelCircuit for StubModel {}
 impl ModelDeviceFeed for StubModel {}
 
 type RespRx = tokio::sync::oneshot::Receiver<Result<InferenceResponse>>;

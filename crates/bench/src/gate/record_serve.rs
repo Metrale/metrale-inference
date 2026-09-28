@@ -83,6 +83,50 @@ pub fn disclosure(
     m
 }
 
+/// 2026-09-28: Key for `--forward`, present only for a forward other than `legacy`.
+pub const FORWARD: &str = "forward";
+/// 2026-09-28: Key for the live decode plan's digest (`metrale_circuit::digest::plan_digest`),
+/// present only when the server runs a circuit forward.
+pub const PLAN_DIGEST: &str = "plan_digest";
+
+/// 2026-09-28: What a server reports about its forward (`GET /forward`): the server fills it
+/// from its model, the harness reads it into the record.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LiveForward {
+    /// 2026-09-28: `legacy`, `circuit` or `circuit-reference`.
+    pub forward: String,
+    /// 2026-09-28: The decode plan's digest; `None` under `legacy`.
+    #[serde(default)]
+    pub plan_digest: Option<String>,
+}
+
+/// 2026-09-28: Add the live forward to `resolved`: [`FORWARD`] when it is not `legacy`, and
+/// [`PLAN_DIGEST`]. `requested` is the forward the rendered serve asked for; a server running
+/// another one, or a circuit without a digest, or legacy with one, is refused: the record would
+/// state a configuration the measurement did not run.
+pub fn merge_live_forward(
+    resolved: &mut BTreeMap<String, String>,
+    requested: &str,
+    live: &LiveForward,
+) -> Result<(), String> {
+    if live.forward != requested {
+        return Err(format!(
+            "the server runs forward `{}`, the rendered serve asked for `{requested}`",
+            live.forward
+        ));
+    }
+    match (live.forward.as_str(), &live.plan_digest) {
+        ("legacy", None) => {}
+        ("legacy", Some(d)) => return Err(format!("a legacy forward reports plan digest {d}")),
+        (other, Some(d)) => {
+            resolved.insert(FORWARD.to_string(), other.to_string());
+            resolved.insert(PLAN_DIGEST.to_string(), d.clone());
+        }
+        (other, None) => return Err(format!("forward `{other}` reports no plan digest")),
+    }
+    Ok(())
+}
+
 impl GateRecord {
     /// 2026-09-26: Attach what the gate's serve resolved; see [`disclosure`].
     #[must_use]
