@@ -38,7 +38,7 @@ pub(crate) struct KernelFlagPlan {
     /// 2026-09-26: Only ever on together with `w4a4_downcast`.
     pub w4a4_downcast_wide: bool,
     /// 2026-09-27: Always published: no environment fallback exists.
-    pub moe_nvfp4_experts: bool,
+    pub expert_quantization: metrale_model_layers::layers::ExpertQuantization,
     pub prefill_codispatch: Option<bool>,
     pub prefill_varlen: Option<bool>,
     pub ssm_tail_midchunk: Option<bool>,
@@ -72,7 +72,7 @@ impl KernelFlagPlan {
             gdn,
             w4a4_downcast: args.w4a4_downcast,
             w4a4_downcast_wide: args.w4a4_downcast && args.w4a4_downcast_wide,
-            moe_nvfp4_experts: args.moe_nvfp4_experts,
+            expert_quantization: args.expert_quantization.0,
             prefill_codispatch: args.prefill_codispatch.then_some(true),
             prefill_varlen: args.prefill_varlen_batch.then_some(true),
             ssm_tail_midchunk: args.no_ssm_tail_midchunk.then_some(false),

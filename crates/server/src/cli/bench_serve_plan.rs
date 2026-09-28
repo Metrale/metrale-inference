@@ -96,7 +96,8 @@ pub(crate) fn disclosed_from(args: &crate::cli::ServeArgs) -> BTreeMap<String, S
         args.speculative,
         args.prefill_codispatch,
         args.w4a4_downcast,
-        args.moe_nvfp4_experts,
+        (args.expert_quantization.0 != metrale_model_layers::layers::ExpertQuantization::Fp8)
+            .then(|| args.expert_quantization.0.name()),
     )
 }
 

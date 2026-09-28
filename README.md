@@ -527,18 +527,25 @@ requires MTP K=4; the gate serves `num_drafts=1`), so the manifest itself
 scores no pair; the ratios read a gate record against the one-shot, rung by
 rung.
 
-`--moe-nvfp4-experts` is an opt-in and not part of the certified
-configuration. It adds an NVFP4 copy of the routed experts at load and
-decodes with it, so a decode step reads half the routed-expert bytes, and
-the model's answers change. Its help text in
+`--expert-quantization` picks the precision the routed MoE experts decode
+at; only its default, `fp8`, is part of the certified configuration. The two
+NVFP4 tiers add a 4-bit copy of routed-expert projections at load and decode
+with it, so a decode step reads fewer expert bytes, and the model's answers
+change: `nvfp4-gate-up` lowers the gate and up projections (down, the shared
+expert and prefill stay FP8), `nvfp4` lowers every routed projection. The
+flag's help text in
 [`crates/server/src/cli/serve_args.rs`](crates/server/src/cli/serve_args.rs)
-and the recipe
-[`recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-nvfp4experts.yaml`](recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-nvfp4experts.yaml)
-state what was measured (2026-09-27, GB10, canonical tiers): on one BFCL
-echolp shard (N=253), overall/normalized 86.56/88.86 against 85.38/87.72
-with FP8 experts; `agentic-webserver` passed 10/10 but took 168 turns and
-774 s of summed wall against 128 turns and 545 s, over that gate's 700 s
-ceiling. No gate record measures it, so this README gives no speed for it.
+and the recipes
+[`recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4-gate-up.yaml`](recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4-gate-up.yaml)
+and
+[`recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4.yaml`](recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4.yaml)
+state what was measured (2026-09-27, GB10, canonical tiers). On the BFCL
+echolp full draw (N=1004), overall/normalized: `fp8` 84.96/86.03,
+`nvfp4-gate-up` 84.86/85.33, `nvfp4` 85.46/86.57. `agentic-webserver`: `fp8`
+passes (535-546 s summed wall), `nvfp4-gate-up` passed 3/3 (504-533 s),
+`nvfp4` scored 10/10 but took 168 turns and 774 s, over that gate's 700 s
+ceiling. No gate record measures the NVFP4 tiers, so this README gives no
+speed for them.
 
 ### The single-stream decode floor
 

@@ -112,15 +112,25 @@ fn the_w4a4_downcast_flag_is_disclosed_off_the_rendered_serve() {
     );
 }
 
-/// 2026-09-27: `--moe-nvfp4-experts` is disclosed when on; off discloses nothing.
+/// 2026-09-27: `--expert-quantization` is disclosed by tier name for the NVFP4 tiers; `fp8`
+/// (the default, given or not) discloses nothing.
 #[test]
-fn the_moe_nvfp4_experts_flag_is_disclosed_off_the_rendered_serve() {
+fn the_expert_quantization_tier_is_disclosed_off_the_rendered_serve() {
+    for tier in ["nvfp4-gate-up", "nvfp4"] {
+        assert_eq!(
+            disclosed(
+                "  max_batch_size: \"8\"\n",
+                &[("expert_quantization", tier)]
+            ),
+            pairs(&[("expert_quantization", tier), ("speculative", "false")])
+        );
+    }
     assert_eq!(
         disclosed(
             "  max_batch_size: \"8\"\n",
-            &[("moe_nvfp4_experts", "true")]
+            &[("expert_quantization", "fp8")]
         ),
-        pairs(&[("moe_nvfp4_experts", "true"), ("speculative", "false")])
+        pairs(&[("speculative", "false")])
     );
     assert_eq!(
         disclosed("  max_batch_size: \"8\"\n", &[]),
