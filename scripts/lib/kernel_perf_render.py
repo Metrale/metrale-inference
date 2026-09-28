@@ -25,6 +25,11 @@ def _cell(s: str) -> str:
     return s.replace("|", "\\|").replace("\n", " ")
 
 
+def _md(s: str) -> str:
+    """Plain text safe in Markdown: `<` would open an HTML tag, `*` an emphasis run."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace("*", "\\*")
+
+
 def _compress(names: list[str]) -> str:
     names = sorted(set(names))
     if len(names) == 1:
@@ -250,8 +255,8 @@ class Renderer:
             out += [f'<a id="to-{_slug(f)}"></a>', "", f"### [{f}](../../{f})", ""]
             for scope, t in by_file[f]:
                 prs = " ".join(f"[#{p}]({REPO}/pull/{p})" for p in t.get("prs", []))
-                out.append(f"- *{scope}*: {t['text'].strip()}" + (f" ({prs})" if prs else "") +
-                           f" — source: {t.get('source', '')}")
+                out.append(f"- *{scope}*: {_md(t['text'].strip())}" + (f" ({prs})" if prs else "") +
+                           f" — source: {_md(t.get('source', ''))}")
             out.append("")
         return "\n".join(out).rstrip() + "\n"
 

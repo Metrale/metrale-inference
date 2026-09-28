@@ -4,6 +4,12 @@
 
 Known trade-offs, limits and dated measurements per kernel source, curated in [`tradeoffs.toml`](tradeoffs.toml) and linked from every table of [KERNEL-PERF.md](../../KERNEL-PERF.md). *whole file* entries apply to every entry point the file defines or compiles.
 
+<a id="to-kernels-b200-kimi-k3-bf16-dense-f32io-cu"></a>
+
+### [kernels/b200/kimi-k3/bf16/dense_f32io.cu](../../kernels/b200/kimi-k3/bf16/dense_f32io.cu)
+
+- *whole file*: Single kernel handles resident FP32 or BF16 weights via a per-element runtime dtype branch (k3_load_weight) rather than two specialized kernels, keeping activations FP32 throughout; one warp per output row with a shfl_down reduction, no K tiling. — source: kernels/b200/kimi-k3/bf16/dense_f32io.cu:3
+
 <a id="to-kernels-b300-common-dsa-indexer-cu"></a>
 
 ### [kernels/b300/common/dsa_indexer.cu](../../kernels/b300/common/dsa_indexer.cu)
@@ -14,8 +20,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/b300/common/moe_shared_expert_fused.cu](../../kernels/b300/common/moe_shared_expert_fused.cu)
 
-- *whole file*: Diverges from the gb10 file: the hardcoded routed-expert activation clamp is removed, so routed and shared experts use plain silu(gate) * up; outputs differ from gb10's wherever the clamp would bind. — source: kernels/b300/README.md
-- *whole file*: The b300 fork applies no clamp in SiLU(gate)*up, so routed and shared experts get the same activation; the gb10 copy caps the routed gate at 10 and routed up at +-10. MoE outputs are therefore not comparable bit-for-bit across the two hardware classes. — source: kernels/b300/common/moe_shared_expert_fused.cu:267
+- *whole file*: Diverges from the gb10 file: the hardcoded routed-expert activation clamp is removed, so routed and shared experts use plain silu(gate) \* up; outputs differ from gb10's wherever the clamp would bind. — source: kernels/b300/README.md
+- *whole file*: The b300 fork applies no clamp in SiLU(gate)\*up, so routed and shared experts get the same activation; the gb10 copy caps the routed gate at 10 and routed up at +-10. MoE outputs are therefore not comparable bit-for-bit across the two hardware classes. — source: kernels/b300/common/moe_shared_expert_fused.cu:267
 
 <a id="to-kernels-b300-common-w8a16-gemv-batch4-cu"></a>
 
@@ -27,7 +33,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/argmax_bf16.cu](../../kernels/gb10/common/argmax_bf16.cu)
 
-- *whole file*: One block (1024 threads, 1024-entry shared arrays, halving tree) reduces a whole vocab row, so a single-row argmax occupies one SM; blockDim.x must be a power of two <= 1024. A tie goes to the lower thread, not the lower vocab index: each thread keeps the first strict max of its strided subset. — source: kernels/gb10/common/argmax_bf16.cu:3
+- *whole file*: One block (1024 threads, 1024-entry shared arrays, halving tree) reduces a whole vocab row, so a single-row argmax occupies one SM; blockDim.x must be a power of two &lt;= 1024. A tie goes to the lower thread, not the lower vocab index: each thread keeps the first strict max of its strided subset. — source: kernels/gb10/common/argmax_bf16.cu:3
 - *argmax_bf16_batch_lp*: Adds log p(argmax) via an online softmax in the same pass, using the fast __expf/__logf intrinsics, so the log-probability is approximate; it feeds the D-Cut verify-depth ranking only. Costs a third 1024-float shared array (12288 B smem, 19 regs on sm_121f vs 16 for argmax_bf16_batch, no spills). — source: kernels/gb10/common/argmax_bf16.cu:113; kernels/b200/deepseek-v4-flash/PTXAS_RESOURCES.md:8
 - *argmax_fp32*: FP32-logits twin, selected only when use_fp32_logits is set and the pointer is the FP32 logits buffer; otherwise the BF16 kernel runs on BF16 logits. Same single-block reduction and lower-thread tie rule. — source: kernels/gb10/common/argmax_bf16.cu:193; crates/model-engine/src/model/trait_impl/meta_argmax.rs:46
 
@@ -42,7 +48,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/attn_prefill.cu](../../kernels/gb10/common/attn_prefill.cu)
 
 - *whole file*: Shared memory at HDIM 256/BC 32 is 68.75 KB for the BR=32 kernel (K double-buffered, V separate so its load overlaps QK^T) and 88 KB for attn_prefill_64. head_dim must equal the compile-time HDIM and BR must stay 32: the warp mapping splits a 32-row tile across two warp pairs. — source: kernels/gb10/common/attn_prefill.cu:7
-- *whole file*: Under __SCALE__ (AMD builds) smem_K is single-buffered and BR64 drops to 32, giving up the K[i+1] prefetch that otherwise overlaps P*V in exchange for fitting the smaller shared-memory budget. — source: kernels/gb10/common/attn_prefill.cu:61
+- *whole file*: Under __SCALE__ (AMD builds) smem_K is single-buffered and BR64 drops to 32, giving up the K[i+1] prefetch that otherwise overlaps P\*V in exchange for fitting the smaller shared-memory budget. — source: kernels/gb10/common/attn_prefill.cu:61
 - *attn_prefill_512tc*: HDIM 512 instantiation for Gemma-4 global layers: at BC 32 attn_prefill needs 135,936 B of shared memory, above the 101,376 B a GB10 block can have, so it is built at BC 16 (84,992 B) and attn_prefill_64 (120,064 B at this shape) is left out via METRALE_SKIP_PREFILL_64. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/attn_prefill_512tc.cu:9; kernels/gb10/common/attn_prefill.cu:34
 
 <a id="to-kernels-gb10-common-attn-prefill-fp8kv-cu"></a>
@@ -74,7 +80,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu)
 
 - *whole file*: Decode conv windows are kept FP32 per channel (weights BF16). The fused _l2norm variants hard-code 256 threads and head_dim 128 (two heads per block) and need qk_channels to be a multiple of 256 so no block mixes normalized Q/K and plain V channels. — source: kernels/gb10/common/causal_conv1d.cu:311
-- *causal_conv1d_update_l2norm_f32_strided*: Takes separate input/output row strides so multi-sequence decode reads QKVZ rows qkvz_size apart without repacking, but conv_state keeps the (b*dim+ch)*d_conv layout, so the sequences' pool slots must be contiguous; otherwise the caller falls back to a per-sequence loop. — source: kernels/gb10/common/causal_conv1d.cu:474
+- *causal_conv1d_update_l2norm_f32_strided*: Takes separate input/output row strides so multi-sequence decode reads QKVZ rows qkvz_size apart without repacking, but conv_state keeps the (b\*dim+ch)\*d_conv layout, so the sequences' pool slots must be contiguous; otherwise the caller falls back to a per-sequence loop. — source: kernels/gb10/common/causal_conv1d.cu:474
 - *causal_conv1d_update_prefill*: Serial form: one thread per channel walks every token with the window in registers (s[0..3]), so d_conv must be 4 and parallelism is limited to dim threads; used when the token-parallel handle is 0 or METRALE_CONV1D_TP=0. — source: kernels/gb10/common/causal_conv1d.cu:173
 - *causal_conv1d_update_prefill_tp*: Token-parallel conv prefill took conv1d from 30.4 to 8.8 ms of the 35B NVFP4 cold prefill (dgx1, 2026-08-21). — source: measurement note 2026-08-21 (GDN spine gap)
 - *causal_conv1d_update_prefill_tp*: Token-parallel prefill conv, legal because output t depends only on inputs t-3..t: each thread computes 8 tokens with a rolling window (11 input reads for 8 outputs) and a warp spans 32 channels so loads coalesce. d_conv must be 4; METRALE_CONV1D_TP=0 falls back to the serial per-channel walk. — source: kernels/gb10/common/causal_conv1d.cu:559
@@ -90,18 +96,26 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *dense_gemm_bf16_router*: Register-blocked BF16 GEMM that keeps the scalar kernel's accumulation order (one FP32 accumulator in ascending k, exact BF16->FP32 staging, --fmad=false) so the MoE router gate is bit-identical to dense_gemm_bf16; only blocking and vectorisation differ. Falls back to dense_gemm_bf16 when absent. — source: kernels/gb10/common/dense_gemm_bf16.cu:171
 - *dense_gemm_bf16_router*: Measured 2026-08-12: routing the BF16 router gate GEMM to the tensor-core dense_gemm_bf16_pipelined moved BFCL on the FP8 MoE flagship from 86.55 to 84.76, because a reordered reduction flips near-tied expert selections after the BF16 store; hence the router keeps the scalar accumulation order. — source: crates/model-layers/src/layers/moe/helpers_c.rs:235
 
+<a id="to-kernels-gb10-common-dense-gemm-splitk-cu"></a>
+
+### [kernels/gb10/common/dense_gemm_splitk.cu](../../kernels/gb10/common/dense_gemm_splitk.cu)
+
+- *whole file*: Split-K BF16 GEMM is two kernels: dense_gemm_splitk_partial writes an FP32 C_partial[K_splits, M, N] per K chunk, then dense_gemm_splitk_reduce sums the K_splits partials into BF16. Trades an extra full-size FP32 scratch buffer and a second launch for exposing K as a parallel dimension. — source: kernels/gb10/common/dense_gemm_splitk.cu:3
+
 <a id="to-kernels-gb10-common-dense-gemm-tc-cu"></a>
 
 ### [kernels/gb10/common/dense_gemm_tc.cu](../../kernels/gb10/common/dense_gemm_tc.cu)
 
 - *whole file*: 64x64 CTA tile, K_STEP=64 double-buffered, 128 threads: +15-19% over K_STEP=16 (2026-02-23). A-fragment register order (a[1]/a[2] = rowG+8/Klo vs rowG/Khi) is load-bearing: the swapped order gave 80-100% error. — source: docs/METRALE_KERNELS.md
-- *dense_gemm_tc_scaled_acc*: The LoRA fold rounds the product to BF16 before computing bf16(f32(C) + scale * that), matching dense_gemm_tc + bf16_scaled_add exactly; folding the FP32 accumulator directly would save a rounding but give different results. — source: kernels/gb10/common/dense_gemm_tc.cu:173
+- *dense_gemm_tc_scaled_acc*: The LoRA fold rounds the product to BF16 before computing bf16(f32(C) + scale \* that), matching dense_gemm_tc + bf16_scaled_add exactly; folding the FP32 accumulator directly would save a rounding but give different results. — source: kernels/gb10/common/dense_gemm_tc.cu:173
 
 <a id="to-kernels-gb10-common-dense-gemv-bf16-cu"></a>
 
 ### [kernels/gb10/common/dense_gemv_bf16.cu](../../kernels/gb10/common/dense_gemv_bf16.cu)
 
 - *whole file*: Near its bandwidth floor (engram wkv 25600x6144 bf16 read at 245 GB/s), so the lever is format, not kernel: the DS41 bf16-resident LM head took 5.5 ms/token vs 2.68 ms as Q6_K (2026-09, one GB10). — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md
+- *whole file*: Assumes K % 8 == 0 for the vectorized uint4 (8xBF16) loads to land 16-byte aligned at each row's start byte 2\*n\*K; the scalar tail only covers the K % 8 leftover elements; it does not restore alignment if K itself is not a multiple of 8, so a non-multiple-of-8 K is unsafe, not just slower. — source: kernels/gb10/common/dense_gemv_bf16.cu:9
+- *whole file*: An FP32-accumulator twin of this kernel keeps identical arithmetic but skips the final round-to-BF16 store; the glm5next DSA layer and MLP resolve it via try_kernel and fall back to the tile GEMM when that FP32-output twin is absent, trading kernel-set completeness for precision on that path. — source: kernels/gb10/common/dense_gemv_bf16.cu:109
 
 <a id="to-kernels-gb10-common-dense-gemv-bf16-batch2-cu"></a>
 
@@ -114,7 +128,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/dense_gemv_bf16_batchm.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm.cu)
 
 - *whole file*: Serves the bf16 LM head up to 8 rows on gb10 (16 on hopper); wider batches take the tile GEMM, which reassociates the reduction, so this band decides a decode's output bits at each width (2026-09-25). — source: kernels/gb10/HARDWARE.toml [defaults] lm_head_batchm_max
-- *whole file*: M rows per weight pass, each bit-identical to dense_gemv_bf16 for every M up to the compile-time MAX_M cap (independent FP32 chain per row); the cap bounds As at MAX_M * 64 * 16 B = 16 KB of smem. 2026-09-27: gridDim.y > 1 splits rows over block rows. — source: kernels/gb10/common/dense_gemv_bf16_batchm.cu:65
+- *whole file*: M rows per weight pass, each bit-identical to dense_gemv_bf16 for every M up to the compile-time MAX_M cap (independent FP32 chain per row); the cap bounds As at MAX_M \* 64 \* 16 B = 16 KB of smem. 2026-09-27: gridDim.y > 1 splits rows over block rows. — source: kernels/gb10/common/dense_gemv_bf16_batchm.cu:65
 
 <a id="to-kernels-gb10-common-dense-gemv-bf16-tc-cu"></a>
 
@@ -142,6 +156,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/dequant_fp8_blockscaled_bf16.cu](../../kernels/gb10/common/dequant_fp8_blockscaled_bf16.cu)
 
 - *whole file*: Also serves per-row FP8 with block_n=1, block_k=K, sk=1 (index becomes scale[n]). The rowwise-FP8 path dequantizes once to bf16: dense 27B prefill 507 to 585 tok/s (+15.5%) with the dropped-colour probe restored, paid for with a bf16 copy (~+19 GB) (2026-08-15). — source: docs/fp8-rowwise-mixed-precision.md
+- *whole file*: Generic block-scale dequant reused for per-row (block_n,block_k)=(1,K) and per-tensor (N,K) scale layouts by parameterizing the block shape rather than specializing; scale_inv can be FP32 or BF16 selected by a flag, trading scale precision for half the scale-read bandwidth. — source: kernels/gb10/common/dequant_fp8_blockscaled_bf16.cu:7
+- *whole file*: The E4M3 decode LUT maps both NaN codes (0x7F and 0xFF) to 0 rather than propagating NaN, matching metrale_core's FP8_E4M3_LUT so the GPU dequant and the CPU reference agree on that edge case. — source: kernels/gb10/common/dequant_fp8_blockscaled_bf16.cu:13
 
 <a id="to-kernels-gb10-common-dequant-gguf-bf16-cu"></a>
 
@@ -149,13 +165,19 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Each GGUF dequant kernel evaluates the same f32 expression in the same order as its CPU twin (model-weights gguf/dequant_cpu/blocks.rs) and the build passes --fmad=false, so GPU and CPU dequant agree bit-for-bit at the cost of unfused multiply-adds. — source: kernels/gb10/common/dequant_gguf_bf16.cu:13
 
+<a id="to-kernels-gb10-common-dequant-nvfp4-bf16-cu"></a>
+
+### [kernels/gb10/common/dequant_nvfp4_bf16.cu](../../kernels/gb10/common/dequant_nvfp4_bf16.cu)
+
+- *whole file*: combined_global is a single multiplier slot reused for two different checkpoint conventions: callers pass 1/weight_global_scale for compressed-tensors checkpoints but weight_scale_2 directly for others, so the kernel cannot tell which convention produced its input. — source: kernels/gb10/common/dequant_nvfp4_bf16.cu:10
+
 <a id="to-kernels-gb10-common-dflash2-cu"></a>
 
 ### [kernels/gb10/common/dflash2.cu](../../kernels/gb10/common/dflash2.cu)
 
 - *dflash2_conv2*: kernel_size is fixed at 2 (host-checked); the second tap is dropped on the first row of each gamma band so no row convolves with another sequence. out must not alias x. — source: kernels/gb10/common/dflash2.cu:15
-- *dflash2_selector_walk*: Chain walk is serial over rows within a band (each chosen token is the next row's predecessor); 512 threads, one warp per candidate. rank must be <= 256 (s_gate) but the host only checks rank > 0. — source: kernels/gb10/common/dflash2.cu:116
-- *dflash2_topk16*: Top-16 by 16 sequential block-argmax passes per row: output comes out sorted, at the cost of 16 full reductions. Destructive (selected logits overwritten with -1e30); the tree reduction needs a power-of-two blockDim <= 1024 (host launches 1024). — source: kernels/gb10/common/dflash2.cu:68
+- *dflash2_selector_walk*: Chain walk is serial over rows within a band (each chosen token is the next row's predecessor); 512 threads, one warp per candidate. rank must be &lt;= 256 (s_gate) but the host only checks rank > 0. — source: kernels/gb10/common/dflash2.cu:116
+- *dflash2_topk16*: Top-16 by 16 sequential block-argmax passes per row: output comes out sorted, at the cost of 16 full reductions. Destructive (selected logits overwritten with -1e30); the tree reduction needs a power-of-two blockDim &lt;= 1024 (host launches 1024). — source: kernels/gb10/common/dflash2.cu:68
 
 <a id="to-kernels-gb10-common-dsa-indexer-cu"></a>
 
@@ -163,9 +185,9 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Replay-safe geometry: under CUDA-graph capture the selector kernels read S, pool counts, select_k and the top-k tile from a device geom vector, and the grid is fixed at the context ceiling with blocks past the live pool count returning at once (idle blocks traded for graph replay). — source: kernels/gb10/common/dsa_indexer.cu:53
 - *dsa_expand_selection*: Clamps select_k per row so each row's tail slot matches a single-row pass: glm5next_dsa_mla_decode_fp8 merges NUM_WARPS = 8 slices of the row, and measured 2026-09-06 without the clamp, 14 of 18 configurations where a tail token crossed a slice boundary differed by up to 2 BF16 ulp. — source: kernels/gb10/common/dsa_indexer.cu:413
-- *dsa_kpool_compress*: Pool size KP must be <= 8 (per-channel lg[8] slot array); config validation refuses a larger index_kpool. A trailing partial pool is never valid. — source: kernels/gb10/common/dsa_indexer.cu:44
+- *dsa_kpool_compress*: Pool size KP must be &lt;= 8 (per-channel lg[8] slot array); config validation refuses a larger index_kpool. A trailing partial pool is never valid. — source: kernels/gb10/common/dsa_indexer.cu:44
 - *dsa_mla_masked_attn*: Test-oracle dense path, not on the serve path: the score row is S floats of dynamic shared memory, so at 49,152 B S is capped at 12,288 keys. Scores are parallel over keys and the value sum over dims to avoid a barrier per key. — source: kernels/gb10/common/dsa_indexer.cu:509
-- *dsa_topk_pools*: Tiled bitonic select with a running best list in 16 * NP2 bytes of shared memory whatever the context (NP2 <= 2048 fits 49,152 B); the score-desc / index-asc total order makes the result independent of tiling. select_k must be <= NP2. — source: kernels/gb10/common/dsa_indexer.cu:267; kernels/b300/common/dsa_indexer.cu:248
+- *dsa_topk_pools*: Tiled bitonic select with a running best list in 16 \* NP2 bytes of shared memory whatever the context (NP2 &lt;= 2048 fits 49,152 B); the score-desc / index-asc total order makes the result independent of tiling. select_k must be &lt;= NP2. — source: kernels/gb10/common/dsa_indexer.cu:267; kernels/b300/common/dsa_indexer.cu:248
 
 <a id="to-kernels-gb10-common-e2m1-branchless-cu"></a>
 
@@ -177,35 +199,41 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/embed_from_argmax.cu](../../kernels/gb10/common/embed_from_argmax.cu)
 
-- *whole file*: Token ids are not range-checked (caller must pass ids < vocab). embed_from_argmax(_f32) index the table with a 32-bit token_id * hidden_size product, while batched_embed* widen to 64-bit, so only the batched gathers are safe for tables with vocab * hidden_size past the 32-bit range. — source: kernels/gb10/common/embed_from_argmax.cu:8
+- *whole file*: Token ids are not range-checked (caller must pass ids &lt; vocab). embed_from_argmax(_f32) index the table with a 32-bit token_id \* hidden_size product, while batched_embed\* widen to 64-bit, so only the batched gathers are safe for tables with vocab \* hidden_size past the 32-bit range. — source: kernels/gb10/common/embed_from_argmax.cu:8
 - *batched_embed_fp8*: Gathers from an FP8 E4M3 table with a per-row f32 scale, decoding each byte in software bit-math (NaN code -> 0) and rounding to BF16: half the table bytes of batched_embed, but lossy against a BF16 table. Used by the n-gram embedding layer. — source: kernels/gb10/common/embed_from_argmax.cu:91
 
 <a id="to-kernels-gb10-common-fp8-gemm-t-blockscaled-cu"></a>
 
 ### [kernels/gb10/common/fp8_gemm_t_blockscaled.cu](../../kernels/gb10/common/fp8_gemm_t_blockscaled.cu)
 
-- *whole file*: W8A8 (this GEMM + per-token FP8 quant) vs W8A16 crossover, measured 2026-09-11 on GB10 at 27B dims: gate/up (N=17408, K=5120) at M~64-128, down (N=5120, K=17408) at M~384-512. gb10 caps W8A8 prefill at 64 / 384 rows; hopper has no cap. — source: kernels/gb10/HARDWARE.toml [defaults] w8a8_prefill_max_m_*
+- *whole file*: W8A8 (this GEMM + per-token FP8 quant) vs W8A16 crossover, measured 2026-09-11 on GB10 at 27B dims: gate/up (N=17408, K=5120) at M~64-128, down (N=5120, K=17408) at M~384-512. gb10 caps W8A8 prefill at 64 / 384 rows; hopper has no cap. — source: kernels/gb10/HARDWARE.toml [defaults] w8a8_prefill_max_m_\*
 - *whole file*: 1915 ms (13.2%) of the 35B MoE 32k cold prefill (dgx3, 2026-09-27). A pipelined twin with the same k32 MMA order and per-128-K scale fold is bit-identical (local branch, not in the tree). ptxas sm_100a: 168 regs, 0 spill. — source: high-ISL campaign notes 2026-09-27; docs/perf/b200_ptx_gate_deepseek-v4-flash_2026-09-19.md
-- *whole file*: W8A8 block-scaled GEMM with two-level FP32 accumulation: four unscaled MMAs sum into inner_acc over each 128-K group, then fold into outer_acc with a_scale * b_scale. Requires K % 128 == 0; each warp's rows r0 and r0+8 carry separate a_scale. — source: kernels/gb10/common/fp8_gemm_t_blockscaled.cu:15
+- *whole file*: W8A8 block-scaled GEMM with two-level FP32 accumulation: four unscaled MMAs sum into inner_acc over each 128-K group, then fold into outer_acc with a_scale \* b_scale. Requires K % 128 == 0; each warp's rows r0 and r0+8 carry separate a_scale. — source: kernels/gb10/common/fp8_gemm_t_blockscaled.cu:15
 
 <a id="to-kernels-gb10-common-fp8-gemv-rt-cu"></a>
 
 ### [kernels/gb10/common/fp8_gemv_rt.cu](../../kernels/gb10/common/fp8_gemv_rt.cu)
 
-- *whole file*: Register-tiled batched FP8 GEMV for the DFlash drafter has no bit-order contract: products are fused with fmaf into one accumulator and row_scale is applied at write-out. K % 16 == 0 and M <= 8 or 16; no __launch_bounds__ pinned. METRALE_NO_DFLASH_FP8_RT=1 falls back to tile GEMMs. — source: kernels/gb10/common/fp8_gemv_rt.cu:14
+- *whole file*: Register-tiled batched FP8 GEMV for the DFlash drafter has no bit-order contract: products are fused with fmaf into one accumulator and row_scale is applied at write-out. K % 16 == 0 and M &lt;= 8 or 16; no __launch_bounds__ pinned. METRALE_NO_DFLASH_FP8_RT=1 falls back to tile GEMMs. — source: kernels/gb10/common/fp8_gemv_rt.cu:14
+
+<a id="to-kernels-gb10-common-fp8-scale-transpose-cu"></a>
+
+### [kernels/gb10/common/fp8_scale_transpose.cu](../../kernels/gb10/common/fp8_scale_transpose.cu)
+
+- *whole file*: Grid covers M_pad (not M) and writes 0.0f into the pad rows so a padded downstream cuBLASLt read never sees stale scratch; this trades extra thread work on the pad region for not having to zero-init the destination buffer beforehand. — source: kernels/gb10/common/fp8_scale_transpose.cu:10
 
 <a id="to-kernels-gb10-common-fused-k-norm-rope-cache-cu"></a>
 
 ### [kernels/gb10/common/fused_k_norm_rope_cache.cu](../../kernels/gb10/common/fused_k_norm_rope_cache.cu)
 
-- *whole file*: Keeps K in FP32 from the BF16 load through RMSNorm and RoPE to a single rounding into the cache dtype, so its bytes differ from the unfused norm -> rope -> cache chain by design. head_dim <= 256 (smem arrays), one thread per element. — source: kernels/gb10/common/fused_k_norm_rope_cache.cu:3
+- *whole file*: Keeps K in FP32 from the BF16 load through RMSNorm and RoPE to a single rounding into the cache dtype, so its bytes differ from the unfused norm -> rope -> cache chain by design. head_dim &lt;= 256 (smem arrays), one thread per element. — source: kernels/gb10/common/fused_k_norm_rope_cache.cu:3
 
 <a id="to-kernels-gb10-common-gated-delta-rule-cu"></a>
 
 ### [kernels/gb10/common/gated_delta_rule.cu](../../kernels/gb10/common/gated_delta_rule.cu)
 
 - *whole file*: Only the single-token decode kernels apply the SSM_STATE_MAX_NORM (1000) Frobenius clamp and the [1e-6, 1-1e-6] decay clamp; chunk2, chunk3 and prefill apply neither, and the clamped step's output uses the pre-clamp state. Decode and multi-token paths therefore diverge once a head exceeds the norm. — source: kernels/gb10/common/gated_delta_rule.cu:53
-- *whole file*: Needs k_dim <= 128 and k_dim % 4 == 0 (shared q/k arrays hold 128 floats; loops step j by 4) and v_dim <= blockDim.x. Thread tid owns state column tid so every FP32 state access is coalesced across the warp. — source: kernels/gb10/common/gated_delta_rule.cu:12
+- *whole file*: Needs k_dim &lt;= 128 and k_dim % 4 == 0 (shared q/k arrays hold 128 floats; loops step j by 4) and v_dim &lt;= blockDim.x. Thread tid owns state column tid so every FP32 state access is coalesced across the warp. — source: kernels/gb10/common/gated_delta_rule.cu:12
 - *gated_delta_rule_chunk2*: Two-token step stores H_1 to h_state_intermediate so a rejected draft can roll back; three passes over H (the WY kernels do two) and no decay or state-norm clamp, unlike decode. — source: kernels/gb10/common/gated_delta_rule.cu:998
 - *gated_delta_rule_decode_f32_conv_norm*: Fuses conv1d+SiLU+L2, recurrence, state clamp and gated RMS norm in one launch, but only for k_dim == v_dim == 128 and head_repeat == 2 (256 threads, eight-warp warp_sums); a block owns a k-head so it is the sole conv_state writer. Other shapes take the unfused path. — source: kernels/gb10/common/gated_delta_rule.cu:522
 - *gated_delta_rule_decode_f32_norm*: Fuses the gated RMS norm without an FP32 row in global memory, but z_gate and output are indexed by head only, so it is correct only at batch_size 1 (every caller passes 1). — source: kernels/gb10/common/gated_delta_rule.cu:348
@@ -242,7 +270,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *gated_delta_rule_chunk_delta_h_vfused*: Default scalar state spine (SPLIT 2, 256 threads, 49,412 B smem). Latency-bound: grid [nv, batch] (48 CTAs at nv=48), no MMAs, a 64-deep dependent FMA chain per token and 128 FP32 registers of live state; ~54 us per chunk flat in T, 5.8x its one-SM floor (H100 attribution). — source: docs/perf/hopper/GDN-PREFILL-ATTRIBUTION.md
 - *gated_delta_rule_chunk_delta_h_vtile*: SPLIT 4, 512 threads, opt-in via METRALE_GDN_VTILE=1. Not the default: a SPLIT=4 spine read cos=1.0000 against the scalar path yet cost 1.4 BFCL points, so spine changes need the ssm-poisoning tripwire, not cosine alone. — source: docs/perf/hopper/GDN-PREFILL-ATTRIBUTION.md
 - *gated_delta_rule_chunk_fwd_o*: mma_gram is fenced to 4 of 16 warps and tril(kq)·uc is a scalar dependent FMA chain; 104 regs at 512 threads = 1 CTA/SM (sm_90a). Tiling mma_gram over 16 warps measured 0.77x though bit-identical: each N-group reloads the same A fragments (2026-08-22). — source: docs/perf/hopper/GDN-PREFILL-ATTRIBUTION.md; measurement note 2026-08-22
-- *gated_delta_rule_chunk_fwd_o*: mma_gram runs on warps 0-3 and the triangular tril(kq)*uc sum is scalar on 128 of 512 threads, so 12 of 16 warps only stage shared memory; 104 registers at 512 threads gives 1 CTA/SM (ptxas sm_90a). o1 is rounded to BF16. — source: docs/perf/hopper/GDN-PREFILL-ATTRIBUTION.md
+- *gated_delta_rule_chunk_fwd_o*: mma_gram runs on warps 0-3 and the triangular tril(kq)\*uc sum is scalar on 128 of 512 threads, so 12 of 16 warps only stage shared memory; 104 registers at 512 threads gives 1 CTA/SM (ptxas sm_90a). o1 is rounded to BF16. — source: docs/perf/hopper/GDN-PREFILL-ATTRIBUTION.md
 - *gated_delta_rule_recompute_wu*: Right-looking blocked substitution: 1.95x isolated, 2.20x in-serve (87.5 to 39.7 ms). Moving the 256-byte acc[] to smem loses (0.92x at nt=64: +64 KB takes 3 CTAs/SM to 1). Measure at nt=16 and nt=64 only: nt=1 underfills 48 SMs and read 1.60x for a 0.92x change (2026-08-22). — source: measurement note 2026-08-22 (GDN spine negatives); kernels/gb10/common/gated_delta_rule_fla.cu:205
 - *gated_delta_rule_recompute_wu*: acc[64] indexed by a runtime row lands in local memory (512 B stack frame at sm_90a); 87 regs at 256 threads gives 2 CTAs/SM. The two forward substitutions are ~half the MACs but 79-85% of the time (2026-08-22 probe). An explicit triangular inverse cuts total FMAs 4x but not per-thread work. — source: docs/perf/hopper/GDN-PREFILL-ATTRIBUTION.md; measurement note 2026-08-22
 - *gated_delta_rule_recompute_wu*: Right-looking forward substitution in blocks of RL_BLK = 16 held in registers: measured 2026-08-22 1.95x the left-looking form at nt=64; a 64 KB shared-memory accumulator measured 0.92x, so acc[] is not moved to shared memory. r must stay a compile-time bound or xb goes to local memory. — source: kernels/gb10/common/gated_delta_rule_fla.cu:205
@@ -346,20 +374,20 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/gated_delta_rule_wyn.cu](../../kernels/gb10/common/gated_delta_rule_wyn.cu)
 
-- *whole file*: One template instance per K = 5..16; static smem for sk/sq grows as 2*K*128 floats (16 KiB at K = 16). The contiguous form is launched only at batch_size 1; cross-sequence verify uses the pointer-table twins. With an FP32 h-state a missing handle falls back to the per-token path. — source: kernels/gb10/common/gated_delta_rule_wyn.cu:14
-- *whole file*: FP16 twins exist only up to K = 16; an FP32 kernel over an FP16 state gives wrong output without error, so DFlash gamma is clamped to keep the verify width <= 16. Measured 2026-08-29 (DFlash2, block 8): gamma 10 was fastest, 63.0 vs 56.2 tok/s at gamma 8. — source: crates/model-layers/src/layers/qwen3_ssm/gdn_flags.rs:96
+- *whole file*: One template instance per K = 5..16; static smem for sk/sq grows as 2\*K\*128 floats (16 KiB at K = 16). The contiguous form is launched only at batch_size 1; cross-sequence verify uses the pointer-table twins. With an FP32 h-state a missing handle falls back to the per-token path. — source: kernels/gb10/common/gated_delta_rule_wyn.cu:14
+- *whole file*: FP16 twins exist only up to K = 16; an FP32 kernel over an FP16 state gives wrong output without error, so DFlash gamma is clamped to keep the verify width &lt;= 16. Measured 2026-08-29 (DFlash2, block 8): gamma 10 was fastest, 63.0 vs 56.2 tok/s at gamma 8. — source: crates/model-layers/src/layers/qwen3_ssm/gdn_flags.rs:96
 
 <a id="to-kernels-gb10-common-gdn-verify-fused-conv-kn-cu"></a>
 
 ### [kernels/gb10/common/gdn_verify_fused_conv_kn.cu](../../kernels/gb10/common/gdn_verify_fused_conv_kn.cu)
 
-- *whole file*: One launch for all verify positions with the window in registers, writing each position's rollback snapshot; byte-identical to per-token causal_conv1d_update_l2norm under --fmad=false, and the last snapshot is the committed window, so no copy. d_conv <= 8; 256 threads, head_dim 128. — source: kernels/gb10/common/gdn_verify_fused_conv_kn.cu:6
+- *whole file*: One launch for all verify positions with the window in registers, writing each position's rollback snapshot; byte-identical to per-token causal_conv1d_update_l2norm under --fmad=false, and the last snapshot is the committed window, so no copy. d_conv &lt;= 8; 256 threads, head_dim 128. — source: kernels/gb10/common/gdn_verify_fused_conv_kn.cu:6
 
 <a id="to-kernels-gb10-common-gdn-verify-fused-k2-cu"></a>
 
 ### [kernels/gb10/common/gdn_verify_fused_k2.cu](../../kernels/gb10/common/gdn_verify_fused_k2.cu)
 
-- *whole file*: Fuses both K=2 verify positions' conv+L2 and gated norm, but is validated only to cos >= 0.99999 against the per-token path, not bitwise, so it is opt-in (METRALE_GDN_FUSED_VERIFY=1). hidden_size must be a multiple of 4 and <= 16 * blockDim. — source: crates/model-layers/src/layers/qwen3_ssm/trait_decode_batched_conv_gdn.rs:55
+- *whole file*: Fuses both K=2 verify positions' conv+L2 and gated norm, but is validated only to cos >= 0.99999 against the per-token path, not bitwise, so it is opt-in (METRALE_GDN_FUSED_VERIFY=1). hidden_size must be a multiple of 4 and &lt;= 16 \* blockDim. — source: crates/model-layers/src/layers/qwen3_ssm/trait_decode_batched_conv_gdn.rs:55
 
 <a id="to-kernels-gb10-common-glm5next-ffn-cu"></a>
 
@@ -371,23 +399,23 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/glm5next_mhc.cu](../../kernels/gb10/common/glm5next_mhc.cu)
 
-- *whole file*: Ends the Sinkhorn on its last (sum + hc_eps) column normalisation and deliberately omits the exact column projection the DeepSeek-V4 hc_pre adds. Every kernel assumes blockDim == 256 and hc_mult <= 4. — source: kernels/gb10/common/glm5next_mhc.cu:8
+- *whole file*: Ends the Sinkhorn on its last (sum + hc_eps) column normalisation and deliberately omits the exact column projection the DeepSeek-V4 hc_pre adds. Every kernel assumes blockDim == 256 and hc_mult &lt;= 4. — source: kernels/gb10/common/glm5next_mhc.cu:8
 - *whole file*: The mix + finish split reproduces the fused glm5next_hc_pre byte for byte: every mix block recomputes the token's RMS in the fused order (redundant work, no cross-block dependency), sums run in the fused order starting from hc_eps, and divisions are never replaced by reciprocal multiplies. — source: kernels/gb10/common/glm5next_mhc.cu:199; kernels/gb10/common/glm5next_mhc.cu:390
 - *glm5next_hc_mix_bf16*: Reads hc_fn as BF16 (half the weight bytes of the FP32 path); widening BF16 to FP32 is exact, so the products and accumulation order equal glm5next_hc_mix on the widened weights. — source: kernels/gb10/common/glm5next_mhc.cu:284
-- *glm5next_hc_post*: Loops run to the compile-time GLM_HC_MAX_MULT with an i < hc guard so the residual values stay in registers, and comb lives in shared memory because a runtime-indexed local array would spill to local memory; arithmetic order matches glm5next_hc_post_ref. — source: kernels/gb10/common/glm5next_mhc.cu:538; kernels/gb10/common/glm5next_mhc.cu:381
+- *glm5next_hc_post*: Loops run to the compile-time GLM_HC_MAX_MULT with an i &lt; hc guard so the residual values stay in registers, and comb lives in shared memory because a runtime-indexed local array would spill to local memory; arithmetic order matches glm5next_hc_post_ref. — source: kernels/gb10/common/glm5next_mhc.cu:538; kernels/gb10/common/glm5next_mhc.cu:381
 
 <a id="to-kernels-gb10-common-kda-chunk-cu"></a>
 
 ### [kernels/gb10/common/kda_chunk.cu](../../kernels/gb10/common/kda_chunk.cu)
 
-- *whole file*: Shared memory is prepare (C*D + C*C + C)*4 and scan (2*C*D + C*C)*4 bytes; the host refuses chunks over the 49,152 B ceiling (D = 128, C = 32 scan needs 36,864 B). The scan is one block per head walking chunks serially. — source: kernels/gb10/common/kda_chunk.cu:37
+- *whole file*: Shared memory is prepare (C\*D + C\*C + C)\*4 and scan (2\*C\*D + C\*C)\*4 bytes; the host refuses chunks over the 49,152 B ceiling (D = 128, C = 32 scan needs 36,864 B). The scan is one block per head walking chunks serially. — source: kernels/gb10/common/kda_chunk.cu:37
 - *kda_chunk_prepare*: Pad positions are read as zero regardless of buffer contents: a non-zero gate there would move gc[C-1] and decay the whole carried state while this prefill's own outputs stayed correct. — source: kernels/gb10/common/kda_chunk.cu:118
 
 <a id="to-kernels-gb10-common-kda-layer-ops-cu"></a>
 
 ### [kernels/gb10/common/kda_layer_ops.cu](../../kernels/gb10/common/kda_layer_ops.cu)
 
-- *kda_pack_qkv_bf16*: Extra interleave pass because q, k and v are separate GEMMs: dense_gemm_bf16 has no output stride, so aiming it inside one [T, 3*qkv] buffer would overwrite rows for T > 1 (and a T = 1 decode test would not see it). — source: kernels/gb10/common/kda_layer_ops.cu:126
+- *kda_pack_qkv_bf16*: Extra interleave pass because q, k and v are separate GEMMs: dense_gemm_bf16 has no output stride, so aiming it inside one [T, 3\*qkv] buffer would overwrite rows for T > 1 (and a T = 1 decode test would not see it). — source: kernels/gb10/common/kda_layer_ops.cu:126
 
 <a id="to-kernels-gb10-common-kda-recurrent-cu"></a>
 
@@ -407,20 +435,20 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/mamba2_ssd_chunk.cu](../../kernels/gb10/common/mamba2_ssd_chunk.cu)
 
 - *whole file*: Scan smem grows linearly in state_size: 91,392 B at 96 fits, 115,968 B at 128 exceeds MAX_DYNAMIC_SMEM (101,376 B), and the launch then errors rather than falling back, so prefill checks ssd_scan_fits and otherwise runs the persistent or plain sequential scan. — source: crates/model-arch/src/nemotron_mamba2/prefill.rs:110
-- *mamba2_ssd_scan*: Running state h0 stays in shared memory for the whole prefill (no per-chunk state tensor); streaming tiles are cp.async double-buffered, so x, B and C rows must be 16-byte aligned. Warp tiling needs N/8 <= 16; SSD_L = SSD_PT = 64 must match ops/ssm_ssd.rs. — source: kernels/gb10/common/mamba2_ssd_chunk.cu:188
+- *mamba2_ssd_scan*: Running state h0 stays in shared memory for the whole prefill (no per-chunk state tensor); streaming tiles are cp.async double-buffered, so x, B and C rows must be 16-byte aligned. Warp tiling needs N/8 &lt;= 16; SSD_L = SSD_PT = 64 must match ops/ssm_ssd.rs. — source: kernels/gb10/common/mamba2_ssd_chunk.cu:188
 
 <a id="to-kernels-gb10-common-mamba2-ssm-decode-cu"></a>
 
 ### [kernels/gb10/common/mamba2_ssm_decode.cu](../../kernels/gb10/common/mamba2_ssm_decode.cu)
 
-- *whole file*: Decode clamps every updated H value to [-200, 200]; the prefill kernels do not, so decode and prefill are not interchangeable. decode/prefill need state_size a multiple of 32 and <= 128, and head_dim <= state_size. — source: kernels/gb10/common/mamba2_ssm_decode.cu:11
+- *whole file*: Decode clamps every updated H value to [-200, 200]; the prefill kernels do not, so decode and prefill are not interchangeable. decode/prefill need state_size a multiple of 32 and &lt;= 128, and head_dim &lt;= state_size. — source: kernels/gb10/common/mamba2_ssm_decode.cu:11
 - *mamba2_ssm_prefill_persistent*: Keeps the block's H slice in shared memory for the whole token loop with SUB = 4 threads per head_dim row; state update matches mamba2_ssm_prefill but y is summed in a different order (not bit-identical). METRALE_NO_SSM_PERSISTENT disables. — source: kernels/gb10/common/mamba2_ssm_decode.cu:253
 
 <a id="to-kernels-gb10-common-metadata-fill-cu"></a>
 
 ### [kernels/gb10/common/metadata_fill.cu](../../kernels/gb10/common/metadata_fill.cu)
 
-- *whole file*: One thread per slot computing block_table[p / block_size] * block_size + p % block_size; slots at or past count are not written. — source: kernels/gb10/common/metadata_fill.cu:3
+- *whole file*: One thread per slot computing block_table[p / block_size] \* block_size + p % block_size; slots at or past count are not written. — source: kernels/gb10/common/metadata_fill.cu:3
 
 <a id="to-kernels-gb10-common-moe-bf16-grouped-gemm-cu"></a>
 
@@ -436,6 +464,19 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *whole file*: Routed down-projection results are accumulated with FP32 atomicAdd into routed_accum per (token, hidden), so the sum order over experts is not fixed and outputs are not run-to-run bit-reproducible; a separate finalize kernel rounds the accumulator. — source: kernels/gb10/common/moe_decode_atomic_c4.cu:164
 - *whole file*: Opt-in (METRALE_MOE_ATOMIC_C4_DECODE=1) and only for exactly 4 tokens with NVFP4 non-transposed experts and a shared expert; otherwise forward_batched runs. No LoRA fold, and zero-expert routing is refused. — source: crates/model-layers/src/layers/moe/forward_atomic_c4.rs:12
 
+<a id="to-kernels-gb10-common-moe-expert-gemv-cu"></a>
+
+### [kernels/gb10/common/moe_expert_gemv.cu](../../kernels/gb10/common/moe_expert_gemv.cu)
+
+- *whole file*: SCALE and HIP-platform builds decode E4M3 group scales with a software bit-manipulation routine instead of the native FP8 conversion path, so the two build configurations run different code for the same scale byte. — source: kernels/gb10/common/moe_expert_gemv.cu:30
+- *whole file*: moe_expert_gemv requires K a multiple of 8 with no scalar tail loop (each step reads 8 activations and 4 packed weight bytes unconditionally) — unlike dense_gemv_bf16.cu's vectorized-plus-scalar-tail split, a non-multiple-of-8 K here reads out of bounds rather than being handled slowly. — source: kernels/gb10/common/moe_expert_gemv.cu:17
+
+<a id="to-kernels-gb10-common-moe-expert-gemv-fused-cu"></a>
+
+### [kernels/gb10/common/moe_expert_gemv_fused.cu](../../kernels/gb10/common/moe_expert_gemv_fused.cu)
+
+- *whole file*: Fused gate/up and silu/down expert GEMVs come in base, _2x and _wide variants producing 4, 8 and 16 outputs per block (one warp, half-warp, or 8-thread group per output), trading per-output parallelism for wider block coverage at large N; K must still be a multiple of 8 with no tail loop. — source: kernels/gb10/common/moe_expert_gemv_fused.cu:9
+
 <a id="to-kernels-gb10-common-moe-expert-relu2-down-shared-cu"></a>
 
 ### [kernels/gb10/common/moe_expert_relu2_down_shared.cu](../../kernels/gb10/common/moe_expert_relu2_down_shared.cu)
@@ -447,6 +488,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/moe_fp8_grouped_blend.cu](../../kernels/gb10/common/moe_fp8_grouped_blend.cu)
 
 - *whole file*: Introduced in #4: final weighted-sum/blend stage of the grouped FP8 MoE decode, which shipped opt-in (METRALE_FP8_MOE_GROUPED_DECODE=1) at #4 because the grouped path changed summation order. ([#4](https://github.com/Metrale/metrale-inference/pull/4)) — source: PR #4
+- *whole file*: moe_weighted_sum_blend_fp8_grouped deliberately matches the slot summation order and single final BF16 rounding of moe_weighted_sum_blend (moe_expert_gemv.cu) so the two grouped/non-grouped MoE blend paths stay bit-identical; changing the accumulation order here would break that. — source: kernels/gb10/common/moe_fp8_grouped_blend.cu:13
 
 <a id="to-kernels-gb10-common-moe-fp8-grouped-gemm-cu"></a>
 
@@ -461,13 +503,13 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Introduced in #34: a single launch sorts rows by expert and builds the active-expert list for the grouped FP8 decode. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34
 - *whole file*: Sort and active-expert list in one launch, replacing moe_sort_by_expert plus a single-thread compact over 256 experts (about 6 + 6.6 us per layer); bit-identical including tie rows at E=256 and 512, M=2..64 (2026-09-27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS round 4)
-- *whole file*: 2026-09-27: fuses the expert sort with a block-parallel active-expert prefix sum, replacing the single-thread moe_fp8_grouped_compact. Slot order within an expert follows shared-memory atomics, so it is nondeterministic; the grouped kernels' sums do not depend on it. num_experts <= PMS_BLOCK * PMS_PER_THREAD. — source: kernels/gb10/common/moe_fp8_grouped_sort.cu:3
+- *whole file*: 2026-09-27: fuses the expert sort with a block-parallel active-expert prefix sum, replacing the single-thread moe_fp8_grouped_compact. Slot order within an expert follows shared-memory atomics, so it is nondeterministic; the grouped kernels' sums do not depend on it. num_experts &lt;= PMS_BLOCK \* PMS_PER_THREAD. — source: kernels/gb10/common/moe_fp8_grouped_sort.cu:3
 
 <a id="to-kernels-gb10-common-moe-gate-topk-cu"></a>
 
 ### [kernels/gb10/common/moe_gate_topk.cu](../../kernels/gb10/common/moe_gate_topk.cu)
 
-- *whole file*: Whole router in one block (NVFP4 gate GEMV with one expert per thread, repeated block-wide max): single-CTA design limits it to MAX_EXPERTS (256) experts and top_k <= MAX_TOP_K (32). — source: kernels/gb10/common/moe_gate_topk.cu:9
+- *whole file*: Whole router in one block (NVFP4 gate GEMV with one expert per thread, repeated block-wide max): single-CTA design limits it to MAX_EXPERTS (256) experts and top_k &lt;= MAX_TOP_K (32). — source: kernels/gb10/common/moe_gate_topk.cu:9
 
 <a id="to-kernels-gb10-common-moe-hash-route-cu"></a>
 
@@ -495,7 +537,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *whole file*: Measured (#34, GB10, force MTP gate, canonical): with --moe-nvfp4-experts 85.5/141.2/220.2/318.1/433.5 tok/s at C=1/2/4/8/16, J/token 0.178 at C=16 vs 0.227 without. Row bits stay batch-width invariant, so canonical invariance holds with the flag on. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34
 - *whole file*: Precision-lowering opt-in (FP8 routed experts requantized to NVFP4): dgx1 C16 385.7 vs 307.3 tok/s canonical FP8, BFCL full draw 85.46/86.57 vs 84.96/86.03, but 20-40% more turns on the long-horizon web-server task gate (774 s > 700 s ceiling). Holds FP8 and NVFP4 experts: 98.4 of 103.4 GB (2026-09-27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (COORD)
 - *whole file*: Row-invariant at every M, so canonical-tier invariance holds with it on. An earlier probe grouping NVFP4 experts over all verify rows through the prefill path won from 16 rows but lost to per-row at 4-8 rows (C4 162.3 vs 169.3 tok/s; C16 305.6 vs 218.4) (2026-09-26). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (EXPERIMENTS round 2 probes, COORD)
-- *whole file*: 2026-09-27: one block per active expert decodes each weight row once per pass for every row routed to it; per-row sums use a fixed K walk, fixed groups of four products and a fixed shuffle tree, so a row's bits do not depend on how many rows share the launch. NG_* constants must match the Rust launcher. — source: kernels/gb10/common/moe_nvfp4_grouped.cu:15
+- *whole file*: 2026-09-27: one block per active expert decodes each weight row once per pass for every row routed to it; per-row sums use a fixed K walk, fixed groups of four products and a fixed shuffle tree, so a row's bits do not depend on how many rows share the launch. NG_\* constants must match the Rust launcher. — source: kernels/gb10/common/moe_nvfp4_grouped.cu:15
 
 <a id="to-kernels-gb10-common-moe-permute-cu"></a>
 
@@ -507,15 +549,15 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/moe_prefill.cu](../../kernels/gb10/common/moe_prefill.cu)
 
-- *whole file*: Per-(token, slot) GEMV blocks read expert weights once per routed row (no cross-token reuse); the down kernel requires K <= 1024 unchecked, and every blend block recomputes its token's shared-expert gate dot product. — source: kernels/gb10/common/moe_prefill.cu:288
+- *whole file*: Per-(token, slot) GEMV blocks read expert weights once per routed row (no cross-token reuse); the down kernel requires K &lt;= 1024 unchecked, and every blend block recomputes its token's shared-expert gate dot product. — source: kernels/gb10/common/moe_prefill.cu:288
 
 <a id="to-kernels-gb10-common-moe-router-gemm-cu"></a>
 
 ### [kernels/gb10/common/moe_router_gemm.cu](../../kernels/gb10/common/moe_router_gemm.cu)
 
 - *whole file*: Introduced in #34: part of the one-launch per-row router of the grouped FP8 MoE decode; the exact routings were checked byte for byte against the routers they replace (E=256 and 512, tie rows). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34
-- *whole file*: Same bits as dense_gemm_bf16 (microtest M=1..64) and 4x faster at M<=4: 35B MoE C1 79.2 to 85.8 tok/s, neutral at C8/C16 (2026-09-26). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (EXPERIMENTS #5)
-- *whole file*: 2026-09-26: bit-identical to dense_gemm_bf16 at small M (same ascending-k FP32 chain, --fmad=false) but stages 512-wide K slices in smem; dense_gemm_bf16 at the router shape (N = 256, K = 2048, M <= 16) runs 16 blocks for ~70 us. K % 16 == 0 required: zero-padding a K tile turns a -0 sum into +0. — source: kernels/gb10/common/moe_router_gemm.cu:3
+- *whole file*: Same bits as dense_gemm_bf16 (microtest M=1..64) and 4x faster at M&lt;=4: 35B MoE C1 79.2 to 85.8 tok/s, neutral at C8/C16 (2026-09-26). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (EXPERIMENTS #5)
+- *whole file*: 2026-09-26: bit-identical to dense_gemm_bf16 at small M (same ascending-k FP32 chain, --fmad=false) but stages 512-wide K slices in smem; dense_gemm_bf16 at the router shape (N = 256, K = 2048, M &lt;= 16) runs 16 blocks for ~70 us. K % 16 == 0 required: zero-padding a K tile turns a -0 sum into +0. — source: kernels/gb10/common/moe_router_gemm.cu:3
 
 <a id="to-kernels-gb10-common-moe-shared-expert-fused-cu"></a>
 
@@ -530,11 +572,35 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Block width is a tuning switch: 256 threads (two warps per output pair, joined through smem) when hidden_size >= 3072, else 128 (one warp per pair, shuffle only). K must be a multiple of 8; inputs past the last multiple of 8 are silently not read. — source: crates/model-layers/src/layers/moe/forward_k2/forward_k2_helpers.rs:8
 
+<a id="to-kernels-gb10-common-moe-shared-expert-fused-batch2-t-cu"></a>
+
+### [kernels/gb10/common/moe_shared_expert_fused_batch2_t.cu](../../kernels/gb10/common/moe_shared_expert_fused_batch2_t.cu)
+
+- *whole file*: Two-token NVFP4 shared-expert GEMV on the transposed [K/2,N]/[K/16,N] layout: one thread computes an output column (BLOCK_SIZE 32, no warp-shuffle) vs the non-transposed batch2/3 kernels' warp-per-output design; K must be a multiple of 16 (vs 8 for that family), and down needs K\*4 bytes of dynamic shared memory. — source: kernels/gb10/common/moe_shared_expert_fused_batch2_t.cu:8
+
+<a id="to-kernels-gb10-common-moe-shared-expert-fused-batch3-cu"></a>
+
+### [kernels/gb10/common/moe_shared_expert_fused_batch3.cu](../../kernels/gb10/common/moe_shared_expert_fused_batch3.cu)
+
+- *whole file*: Three-token non-transposed NVFP4 shared-expert GEMV requires K a multiple of 8 (inputs past the last multiple of 8 are not read), looser than the K%16 the transposed batch2_t/batch3_t twins require for their [K/2, N]-layout weight reads. — source: kernels/gb10/common/moe_shared_expert_fused_batch3.cu:12
+
+<a id="to-kernels-gb10-common-moe-shared-expert-fused-batch3-t-cu"></a>
+
+### [kernels/gb10/common/moe_shared_expert_fused_batch3_t.cu](../../kernels/gb10/common/moe_shared_expert_fused_batch3_t.cu)
+
+- *whole file*: Three-token twin of moe_shared_expert_fused_batch2_t.cu: same transposed-layout invariants (K a multiple of 16, 32 threads/block, a null weight pointer zeroed), just with blockIdx.y ranges widened to 3\*top_k routed slots plus 3 shared-expert rows. — source: kernels/gb10/common/moe_shared_expert_fused_batch3_t.cu:4
+
 <a id="to-kernels-gb10-common-moe-shared-expert-fused-bf16-cu"></a>
 
 ### [kernels/gb10/common/moe_shared_expert_fused_bf16.cu](../../kernels/gb10/common/moe_shared_expert_fused_bf16.cu)
 
-- *whole file*: Down kernel stages SiLU(gate)*up in a fixed s_act, so K must be at most 2048 and the kernel does not check it; the bf16_batch2 twin limits K to 1024 (s_act holds 2048 floats for two tokens), also unchecked. — source: kernels/gb10/common/moe_shared_expert_fused_bf16.cu:198
+- *whole file*: Down kernel stages SiLU(gate)\*up in a fixed s_act, so K must be at most 2048 and the kernel does not check it; the bf16_batch2 twin limits K to 1024 (s_act holds 2048 floats for two tokens), also unchecked. — source: kernels/gb10/common/moe_shared_expert_fused_bf16.cu:198
+
+<a id="to-kernels-gb10-common-moe-shared-expert-fused-bf16-batch2-cu"></a>
+
+### [kernels/gb10/common/moe_shared_expert_fused_bf16_batch2.cu](../../kernels/gb10/common/moe_shared_expert_fused_bf16_batch2.cu)
+
+- *whole file*: Two-token BF16 shared-expert GEMV requires K a multiple of 8 and at most 1024 in the down stage (s_act holds 2048 floats, the shared block stores 2K of them), unchecked; one block reads the shared expert's weight once and computes both tokens' shared output together rather than repeating the read per token. — source: kernels/gb10/common/moe_shared_expert_fused_bf16_batch2.cu:11
 
 <a id="to-kernels-gb10-common-moe-shared-expert-fused-fp8-cu"></a>
 
@@ -547,7 +613,26 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/moe_shared_expert_fused_fp8_batch2.cu](../../kernels/gb10/common/moe_shared_expert_fused_fp8_batch2.cu)
 
-- *whole file*: The pairwise path walks even R two rows at a time for 4 <= R < 16, so each pair re-reads its ~14 experts (4.0 ms of a 31.5 ms C=4 step); its batch2 router plus top-k tie-break differs from the rows kernel (28 tie cases in the microtest), so it is not interchangeable with the grouped path (2026-09-26). — source: MoE C=16 campaign notes 2026-09-26 (INSIGHTS L7)
+- *whole file*: The pairwise path walks even R two rows at a time for 4 &lt;= R &lt; 16, so each pair re-reads its ~14 experts (4.0 ms of a 31.5 ms C=4 step); its batch2 router plus top-k tie-break differs from the rows kernel (28 tie cases in the microtest), so it is not interchangeable with the grouped path (2026-09-26). — source: MoE C=16 campaign notes 2026-09-26 (INSIGHTS L7)
+- *whole file*: Two-token FP8 shared-expert GEMV keeps row-major [N, K] E4M3 weights with per-128x128-block FP32 scales, a coarser scale granularity than the NVFP4 shared-expert variants' per-16-element E4M3 scale; K must be a multiple of 8 and at most 1024 in down (s_act size), unchecked. — source: kernels/gb10/common/moe_shared_expert_fused_fp8_batch2.cu:11
+
+<a id="to-kernels-gb10-common-moe-shared-expert-fused-fp8-batch2-t-cu"></a>
+
+### [kernels/gb10/common/moe_shared_expert_fused_fp8_batch2_t.cu](../../kernels/gb10/common/moe_shared_expert_fused_fp8_batch2_t.cu)
+
+- *whole file*: Two-token transposed-layout twin of moe_shared_expert_fused_fp8_t.cu, sharing that kernel's [K,N]-major weight and block-scale layout and fixed 32-thread block; blockIdx.y = 2\*top_k + t addresses token t's shared expert, vs fp8_t's single-token blockIdx.y == top_k check. — source: kernels/gb10/common/moe_shared_expert_fused_fp8_batch2_t.cu:3
+
+<a id="to-kernels-gb10-common-moe-shared-expert-fused-fp8-batch3-cu"></a>
+
+### [kernels/gb10/common/moe_shared_expert_fused_fp8_batch3.cu](../../kernels/gb10/common/moe_shared_expert_fused_fp8_batch3.cu)
+
+- *whole file*: Three-token twin of moe_shared_expert_fused_fp8_batch2.cu: same row-major [N, K] E4M3 weights with per-128x128 FP32 block scales, K a multiple of 8 and capped at 1024 in the down stage's s_act buffer, unchecked. — source: kernels/gb10/common/moe_shared_expert_fused_fp8_batch3.cu:11
+
+<a id="to-kernels-gb10-common-moe-shared-expert-fused-fp8-batch3-t-cu"></a>
+
+### [kernels/gb10/common/moe_shared_expert_fused_fp8_batch3_t.cu](../../kernels/gb10/common/moe_shared_expert_fused_fp8_batch3_t.cu)
+
+- *whole file*: Three-token transposed-layout twin of moe_shared_expert_fused_fp8_t.cu: same [K,N]-major weights, FP32 block scales and 32-thread block, with blockIdx.y = 3\*top_k + t indexing token t's shared expert instead of fp8_t's single shared slot at blockIdx.y == top_k. — source: kernels/gb10/common/moe_shared_expert_fused_fp8_batch3_t.cu:3
 
 <a id="to-kernels-gb10-common-moe-shared-expert-fused-fp8-grouped-cu"></a>
 
@@ -560,12 +645,18 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *whole file*: Byte parity with the per-row FP8 kernels pins only: lane-to-K-chunk map, 4-product sums in order, the 5-step shuffle tree, one bf16 round at the end, an exact E4M3 decode, and SiLU on bf16-rounded g/u. Block ownership, rows per pass, pipelining and gate/up fusion are free (2026-09-26). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (INSIGHTS v1 section 4)
 - *whole file*: At 1 row/expert gate+up streams ~236 GB/s against a 237-247 GB/s GB10 stream-read ceiling (down ~200 GB/s), but past ~2 rows/expert it is compute-bound: fixed per-row FP32 FMUL+FADD work under --fmad=false. Whole-kernel M=16/32/48/64: 214/207/204/198 GB/s (2026-09-26). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (PROFILE, EXPERIMENTS)
 - *whole file*: Rejected by microtest 2026-09-26/27: 4 column pairs per warp (127 regs, slower); down 8 cols/warp 4 rows/pass (164 regs, no gain); gate+up launch_bounds 6/8 (spills); splitting heavy experts over blocks (no gain); E4M3 decode by bit placement instead of the smem LUT (bit-identical, within 1%, regs 120 to 128). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS)
-- *whole file*: FP8_GROUPED_DECODE_MAX_ROWS = 64: wider verify rows fall to the prefill FP8 grouped GEMM, a different, non-bit-identical path. Raising it also scales the down kernel's GROUP_ROWS*K*4 smem and the [te] scratch linearly (2026-09-26). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (INSIGHTS L2, do-not-try list)
-- *whole file*: 2026-09-26: per row, output equals the per-token moe_shared_expert_fused_fp8 kernels bit for bit (same 16-input chunks, four-product sums, BF16 rounding of gate/up); the grid is sized by cap = min(tokens * top_k, experts), independent of routing, so a captured graph stays valid. — source: kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu:17
-- *whole file*: The grouped path is exact given the same routing, but the batched gate GEMM plus moe_topk_*_batched may pick differently from the per-row router on a near-tie; the PerRow/PerToken exact routings (default on) repeat the replaced path's router so the whole MoE output is byte-identical. Admits at most 64 rows. — source: crates/model-layers/src/layers/moe/forward_fp8_grouped_router.rs:6
-- *moe_expert_down_act_fp8_grouped*: 4 rows/pass with launch_bounds(256,3) (<= 85 regs) keeps 3 blocks/SM to overlap 16 KB weight streams: force-gate C16 +3.3%. DOWN_CG=4 column groups per block cut M=32 672 to 549 us and M=64 1100 to 888 us; DOWN_CG=8 regressed M=3 (94 to 103 us) (2026-09-26/27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS); kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu:325
+- *whole file*: FP8_GROUPED_DECODE_MAX_ROWS = 64: wider verify rows fall to the prefill FP8 grouped GEMM, a different, non-bit-identical path. Raising it also scales the down kernel's GROUP_ROWS\*K\*4 smem and the [te] scratch linearly (2026-09-26). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (INSIGHTS L2, do-not-try list)
+- *whole file*: 2026-09-26: per row, output equals the per-token moe_shared_expert_fused_fp8 kernels bit for bit (same 16-input chunks, four-product sums, BF16 rounding of gate/up); the grid is sized by cap = min(tokens \* top_k, experts), independent of routing, so a captured graph stays valid. — source: kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu:17
+- *whole file*: The grouped path is exact given the same routing, but the batched gate GEMM plus moe_topk_\*_batched may pick differently from the per-row router on a near-tie; the PerRow/PerToken exact routings (default on) repeat the replaced path's router so the whole MoE output is byte-identical. Admits at most 64 rows. — source: crates/model-layers/src/layers/moe/forward_fp8_grouped_router.rs:6
+- *moe_expert_down_act_fp8_grouped*: 4 rows/pass with launch_bounds(256,3) (&lt;= 85 regs) keeps 3 blocks/SM to overlap 16 KB weight streams: force-gate C16 +3.3%. DOWN_CG=4 column groups per block cut M=32 672 to 549 us and M=64 1100 to 888 us; DOWN_CG=8 regressed M=3 (94 to 103 us) (2026-09-26/27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS); kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu:325
 - *moe_expert_down_act_fp8_grouped*: Down kernel keeps three blocks resident per SM (at most 85 registers, 4 rows per pass) to overlap weight streams. 2026-09-27: running DOWN_CG column groups per block took the M = 32..64 down launches 18% lower on GB10, since row lookups, pointer loads and table fill are paid once per 64 KB. — source: kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu:325
 - *moe_expert_gate_up_act_fp8_grouped*: Gate and up fused in one block writing the FP32 SiLU product, so down reads it directly without smem staging or a 64x SiLU recompute: byte-identical M=2..64, force-gate C16 214.6-215.5 to 228.8 tok/s and J/tok .314 to .275 (2026-09-26). The shared expert is dispatched first to avoid a 4-8x tail. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (EXPERIMENTS 2b, 3)
+
+<a id="to-kernels-gb10-common-moe-shared-expert-fused-fp8-t-cu"></a>
+
+### [kernels/gb10/common/moe_shared_expert_fused_fp8_t.cu](../../kernels/gb10/common/moe_shared_expert_fused_fp8_t.cu)
+
+- *whole file*: Single-token FP8 shared-expert GEMV, transposed [K,N] layout: FP32 block scales are [ceil(K/128),ceil(N/128)], axes swapped from fp8_batch2/3's [ceil(N/128),ceil(K/128)]; down sizes shared memory dynamically at K\*4 bytes, not the fixed s_act[2048]/K&lt;=1024 cap non-transposed kernels use -- fp8_batch2_t/3_t inherit this. — source: kernels/gb10/common/moe_shared_expert_fused_fp8_t.cu:6
 
 <a id="to-kernels-gb10-common-moe-shared-expert-fused-t-cu"></a>
 
@@ -577,7 +668,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/moe_silu_mul.cu](../../kernels/gb10/common/moe_silu_mul.cu)
 
-- *silu_mul_quant_fp8*: Fused SiLU*up + per-128-group FP8 quant writes the same bytes as the unfused pair: it rounds the product to BF16 before the group max and copies the quantizer's reduction structure. Limits: K % 128 == 0 and K/128 <= 16 groups; the deepseek-v4-flash and step3p7-flash trees lack it and run the pair. — source: kernels/gb10/common/moe_silu_mul.cu:54
+- *silu_mul_quant_fp8*: Fused SiLU\*up + per-128-group FP8 quant writes the same bytes as the unfused pair: it rounds the product to BF16 before the group max and copies the quantizer's reduction structure. Limits: K % 128 == 0 and K/128 &lt;= 16 groups; the deepseek-v4-flash and step3p7-flash trees lack it and run the pair. — source: kernels/gb10/common/moe_silu_mul.cu:54
 
 <a id="to-kernels-gb10-common-moe-sorted-prefill-cu"></a>
 
@@ -589,7 +680,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/moe_topk.cu](../../kernels/gb10/common/moe_topk.cu)
 
-- *whole file*: Only the first MAX_EXPERTS logits are read; blockDim.x == 256 and top_k <= MAX_TOP_K are assumed and not checked in the kernel (MoeLayer::new_with_hash refuses top_k above 32). moe_topk_softmax_f32 exists for the FP32 gate/routing levers so near-tied logits are not collapsed by BF16. — source: kernels/gb10/common/moe_topk.cu:7
+- *whole file*: Only the first MAX_EXPERTS logits are read; blockDim.x == 256 and top_k &lt;= MAX_TOP_K are assumed and not checked in the kernel (MoeLayer::new_with_hash refuses top_k above 32). moe_topk_softmax_f32 exists for the FP32 gate/routing levers so near-tied logits are not collapsed by BF16. — source: kernels/gb10/common/moe_topk.cu:7
 - *moe_topk_softmax_batched*: Warp and cross-warp steps keep the lower lane's or warp's candidate on an equal logit, which need not be the lower expert index the single-token kernel picks, so batched and per-token routing can differ on exact ties; moe_topk_softmax_rows (2026-09-26) runs the single-token body per row to avoid that. — source: kernels/gb10/common/moe_topk.cu:339
 - *moe_topk_softmax_rows*: Added in #34 for the per-row router: runs moe_topk_softmax's body per row, so indices, weights and the lower-index tie-break equal a single-row launch (unlike moe_topk_softmax_batched); checked byte for byte at E=256 and 512 with tie rows. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34; kernels/gb10/common/moe_topk.cu:193
 
@@ -603,13 +694,19 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/moe_topk_softmax_bias.cu](../../kernels/gb10/common/moe_topk_softmax_bias.cu)
 
-- *whole file*: Identity (zero-computation) experts are rewritten as slot (expert 0, weight 0) and their weight folded into zero_accum, so the expert GEMMs still process a no-op slot and a separate moe_zero_expert_add pass adds zero_accum * input. — source: kernels/gb10/common/moe_topk_softmax_bias.cu:11
+- *whole file*: Identity (zero-computation) experts are rewritten as slot (expert 0, weight 0) and their weight folded into zero_accum, so the expert GEMMs still process a no-op slot and a separate moe_zero_expert_add pass adds zero_accum \* input. — source: kernels/gb10/common/moe_topk_softmax_bias.cu:11
 
 <a id="to-kernels-gb10-common-moe-topk-sqrtsoftplus-cu"></a>
 
 ### [kernels/gb10/common/moe_topk_sqrtsoftplus.cu](../../kernels/gb10/common/moe_topk_sqrtsoftplus.cu)
 
-- *whole file*: Tie-break is not by expert index: warp and cross-warp steps keep the lower lane's or warp's candidate on an equal value. blockDim.x == 256 and top_k <= MAX_TOP_K are assumed, unchecked. — source: kernels/gb10/common/moe_topk_sqrtsoftplus.cu:8
+- *whole file*: Tie-break is not by expert index: warp and cross-warp steps keep the lower lane's or warp's candidate on an equal value. blockDim.x == 256 and top_k &lt;= MAX_TOP_K are assumed, unchecked. — source: kernels/gb10/common/moe_topk_sqrtsoftplus.cu:8
+
+<a id="to-kernels-gb10-common-moe-transpose-batched-cu"></a>
+
+### [kernels/gb10/common/moe_transpose_batched.cu](../../kernels/gb10/common/moe_transpose_batched.cu)
+
+- *whole file*: Batches transpose_u8.cu's exact tiled-transpose code across experts via a grid-z per-expert loop, but an expert whose src or dst pointer is NULL is skipped and its destination buffer is left unwritten rather than zeroed, unlike moe_expert_gemv.cu's convention of writing zero outputs for a missing expert. — source: kernels/gb10/common/moe_transpose_batched.cu:7
 
 <a id="to-kernels-gb10-common-moe-w4a16-grouped-gemm-cu"></a>
 
@@ -617,8 +714,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Chosen design: one 3D-grid launch (N tiles, M tiles, experts) with early exit. It beat a 48-CTA persistent atomic queue (14.42 vs 5.56 ms) and K_STEP=64 double buffering (7.09 ms, dequant cost occupancy) at 800x1024x2048 over 256 experts, yet reached only 54 GB/s, 20% of 273 (2026-02-23). — source: docs/METRALE_KERNELS.md
 - *whole file*: Built for prefill (M per expert >> 1). At decode widths per-expert M is ~1 and sort/permute/pointer-table overhead dominates: SSM decode step ~140 ms vs ~88 ms for a per-token loop at N=4 (122B NVFP4, EP=2, 2026-05-29), so batched decode declines this path. — source: docs/adr/0011-ep-batched-decode-optimization.md
-- *whole file*: Tile-geometry variants stage lut * (e4m3 * scale2) where the base kernel computes (lut * e4m3) * scale2, so variant output is not guaranteed bit-identical to the base. A grid sized for a larger M or N tile silently drops rows or leaves columns unwritten. — source: kernels/gb10/common/moe_w4a16_grouped_gemm.cu:601
-- *whole file*: Grid y is sized for the worst case (all n * top_k rows in one expert), launching many empty CTAs; exact tiles need a D2H copy of expert offsets (not under graph capture) and are on by default only for NVFP4 experts. A load-factor cap can silently drop an overloaded expert's rows. — source: crates/model-layers/src/layers/moe/forward_prefill_routed.rs:48
+- *whole file*: Tile-geometry variants stage lut \* (e4m3 \* scale2) where the base kernel computes (lut \* e4m3) \* scale2, so variant output is not guaranteed bit-identical to the base. A grid sized for a larger M or N tile silently drops rows or leaves columns unwritten. — source: kernels/gb10/common/moe_w4a16_grouped_gemm.cu:601
+- *whole file*: Grid y is sized for the worst case (all n \* top_k rows in one expert), launching many empty CTAs; exact tiles need a D2H copy of expert offsets (not under graph capture) and are on by default only for NVFP4 experts. A load-factor cap can silently drop an overloaded expert's rows. — source: crates/model-layers/src/layers/moe/forward_prefill_routed.rs:48
 - *moe_w4a16_grouped_stream_probe*: Bandwidth reference, not a GEMM: reads each expert's packed weights and scales with coalesced uint4 loads and no dequant/smem/MMA, giving the ceiling the grouped GEMMs are measured against; a trailing partial 16 bytes is not read. — source: kernels/gb10/common/moe_w4a16_grouped_gemm.cu:964
 
 <a id="to-kernels-gb10-common-moe-w8a8-grouped-gemm-cu"></a>
@@ -642,7 +739,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: The served runtime loads only the BF16-section kernels (projections on dense_gemm_bf16_pipelined, decode on nllb_gemv_bf16, argmax on argmax_bf16); the FP32 section, including the naive one-output-per-thread nllb_linear, is not loaded by it. — source: crates/model-engine/src/model/nllb/kernels.rs:49; kernels/gb10/common/nllb_encoder.cu:3
 - *nllb_attn_kv_bf16*: One block per (query, head) with blockDim.x == head_dim (a power of two): every key costs a log2(D)-step shared-memory tree with a barrier per step, the softmax runs serially on thread 0, and dynamic shared memory of tk + D floats grows with key length. — source: kernels/gb10/common/nllb_encoder.cu:102
-- *nllb_beam_topk*: blockDim.x <= 128 and K <= NLLB_TOPK_MAX (32, unchecked); per-thread local top-K plus streaming logsumexp, then thread 0 serially extracts the top K from nt * K candidates (lower token id first on ties). — source: kernels/gb10/common/nllb_encoder.cu:512
+- *nllb_beam_topk*: blockDim.x &lt;= 128 and K &lt;= NLLB_TOPK_MAX (32, unchecked); per-thread local top-K plus streaming logsumexp, then thread 0 serially extracts the top K from nt \* K candidates (lower token id first on ties). — source: kernels/gb10/common/nllb_encoder.cu:512
 
 <a id="to-kernels-gb10-common-paged-decode-attn-cu"></a>
 
@@ -706,8 +803,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/paged_decode_attn_fp8_gqa.cu](../../kernels/gb10/common/paged_decode_attn_fp8_gqa.cu)
 
-- *whole file*: Packing cuts CTAs 6-fold (num_kv_heads * num_seqs): with 4 KV heads on gb10's 48 SMs the grid covers the SMs only from num_seqs = 12. Not used under split-K, since packing would change the split count and the merge tree. — source: crates/kernels/src/attn_splitk.rs:188; crates/kernels/src/attn_splitk.rs:266
-- *whole file*: __launch_bounds__(256, 1) gives each thread the full register budget for q_reg/o_reg (PD_GQA * VEC_BF16 floats each). Heads merge one at a time through one smem buffer because PD_GQA copies of smem_o (8 KB each) plus m/l exceed the 48 KB static limit. Byte-identical to paged_decode_attn_fp8 only under --fmad=false. — source: kernels/gb10/common/paged_decode_attn_fp8_gqa.cu:107; kernels/gb10/common/paged_decode_attn_fp8_gqa.cu:334
+- *whole file*: Packing cuts CTAs 6-fold (num_kv_heads \* num_seqs): with 4 KV heads on gb10's 48 SMs the grid covers the SMs only from num_seqs = 12. Not used under split-K, since packing would change the split count and the merge tree. — source: crates/kernels/src/attn_splitk.rs:188; crates/kernels/src/attn_splitk.rs:266
+- *whole file*: __launch_bounds__(256, 1) gives each thread the full register budget for q_reg/o_reg (PD_GQA \* VEC_BF16 floats each). Heads merge one at a time through one smem buffer because PD_GQA copies of smem_o (8 KB each) plus m/l exceed the 48 KB static limit. Byte-identical to paged_decode_attn_fp8 only under --fmad=false. — source: kernels/gb10/common/paged_decode_attn_fp8_gqa.cu:107; kernels/gb10/common/paged_decode_attn_fp8_gqa.cu:334
 
 <a id="to-kernels-gb10-common-paged-decode-attn-fp8k-turbo2v-cu"></a>
 
@@ -749,7 +846,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/paged_decode_attn_nvfp4.cu](../../kernels/gb10/common/paged_decode_attn_nvfp4.cu)
 
-- *whole file*: NVFP4 KV: E2M1 codes with one E4M3 scale per 16 elements and no k/v scale argument or second-level scale; the kernels take no sliding window. Split y covers [y * ceil(seq_len / num_splits), next start), and the reduce seeds from split 0 and skips l <= 0. — source: kernels/gb10/common/paged_decode_attn_nvfp4.cu:3
+- *whole file*: NVFP4 KV: E2M1 codes with one E4M3 scale per 16 elements and no k/v scale argument or second-level scale; the kernels take no sliding window. Split y covers [y \* ceil(seq_len / num_splits), next start), and the reduce seeds from split 0 and skips l &lt;= 0. — source: kernels/gb10/common/paged_decode_attn_nvfp4.cu:3
 
 <a id="to-kernels-gb10-common-paged-decode-attn-turbo2-cu"></a>
 
@@ -858,13 +955,14 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/per_token_group_quant_fp8.cu](../../kernels/gb10/common/per_token_group_quant_fp8.cu)
 
 - *whole file*: One 128-thread CTA per 128-element group, one bf16 per thread, 19 regs: memory-level-parallelism bound at ~19% of H100 HBM (633-641 GB/s at M=4576), 10.36% of a 4593-token prefill; it also reads A twice and round-trips the scale through smem behind two __syncthreads (2026-09-11). — source: docs/perf/hopper/FP8-ACT-QUANT-ATTRIBUTION.md
+- *whole file*: SCALE and HIP builds encode E4M3 in software (NaN forced to 0x7F, saturation to magnitude 0x7E/448, mantissa rounded half up) instead of the native converter used by other builds, so the quantized byte for a tie or out-of-range value can differ between build configurations. — source: kernels/gb10/common/per_token_group_quant_fp8.cu:23
 
 <a id="to-kernels-gb10-common-prefill-paged-compute-cuh"></a>
 
 ### [kernels/gb10/common/prefill_paged_compute.cuh](../../kernels/gb10/common/prefill_paged_compute.cuh)
 
 - *whole file*: The BR=64 variants declare 70-90 KiB of static shared memory: nvcc --ptx accepts them, but ptxas rejects them for sm_121f (48 KiB static ceiling; sm_121a allows 99 KiB), 22 modules on 2026-09-05. Under SCALE (strix) BR64 is compiled as 32 rows to fit gfx1151 shared memory. — source: docs/HARDWARE.md; kernels/strix/HARDWARE.toml
-- *whole file*: P*V runs as an FP16 MMA (probabilities keep 10 mantissa bits in FP16 vs 7 in BF16) with smem V converted BF16->FP16 per MMA pair; QK^T stays BF16. -DMETRALE_DISABLE_FP16_PV builds a BF16 P*V instead, a different rounding of the same math. — source: kernels/gb10/common/prefill_paged_compute.cuh:36
+- *whole file*: P\*V runs as an FP16 MMA (probabilities keep 10 mantissa bits in FP16 vs 7 in BF16) with smem V converted BF16->FP16 per MMA pair; QK^T stays BF16. -DMETRALE_DISABLE_FP16_PV builds a BF16 P\*V instead, a different rounding of the same math. — source: kernels/gb10/common/prefill_paged_compute.cuh:36
 - *whole file*: -DMETRALE_FAST_SOFTMAX_EXP replaces __expf with a degree-3 polynomial for 2^tf whose relative error reaches 0.56% as tf approaches 1 (computed 2026-09-25); off by default. — source: kernels/gb10/common/prefill_paged_compute.cuh:84
 - *whole file*: SCALE builds keep one smem_K buffer: at HDIM 256 the BR=32 kernel's static shared memory drops from 70,400 B to 53,504 B to fit gfx1151's 64 KB. The _64 kernel runs BR64 = 32 there, and the host grid (prefill_attn_main_a/b.rs) must use the same row count. — source: kernels/gb10/common/prefill_paged_compute.cuh:145
 - *whole file*: Under VARLEN, q_len is the batch maximum, so every load is bounded by the stream's own q_len_eff; bounding by q_len would read the next stream's rows and past the packed Q on the last stream. — source: kernels/gb10/common/prefill_paged_compute.cuh:773
@@ -879,8 +977,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/prefill_paged_compute_512.cuh](../../kernels/gb10/common/prefill_paged_compute_512.cuh)
 
 - *whole file*: HDIM=512 chunked prefill supports only BF16 KV: with fp8 KV, prefix-cache partial hits fail (46 serve errors), so Gemma-4 cannot use prefix caching and pays full cold prefill per request. Fix is bf16 KV (memory) or fp8 support in this path (2026-08-21). — source: kernels/gb10/gemma-4-26b-a4b/BENCH.toml (ttft-cold-gate note)
-- *whole file*: The generic layout at HDIM 512 would need 135,936 B of shared memory against GB10's 101,376 B per SM, so this body takes 101,120 B dynamic with no row padding on Q/K/V and a single K buffer: the next K tile loads after P*V on all 256 threads instead of overlapping it. — source: kernels/gb10/common/prefill_paged_compute_512.cuh:7
-- *whole file*: Only warps 0-1 compute QK^T and the softmax (16 rows each) while warps 2-7 load V; P*V runs on all 8 warps. The launch must pass shared_mem(101_120) and relies on the registry raising the dynamic shared-memory limit above 48 KB. — source: kernels/gb10/common/prefill_paged_compute_512.cuh:16
+- *whole file*: The generic layout at HDIM 512 would need 135,936 B of shared memory against GB10's 101,376 B per SM, so this body takes 101,120 B dynamic with no row padding on Q/K/V and a single K buffer: the next K tile loads after P\*V on all 256 threads instead of overlapping it. — source: kernels/gb10/common/prefill_paged_compute_512.cuh:7
+- *whole file*: Only warps 0-1 compute QK^T and the softmax (16 rows each) while warps 2-7 load V; P\*V runs on all 8 warps. The launch must pass shared_mem(101_120) and relies on the registry raising the dynamic shared-memory limit above 48 KB. — source: kernels/gb10/common/prefill_paged_compute_512.cuh:16
 
 <a id="to-kernels-gb10-common-prefill-paged-compute-asym-cuh"></a>
 
@@ -893,20 +991,34 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/q2_0_gemv.cu](../../kernels/gb10/common/q2_0_gemv.cu)
 
-- *whole file*: Baseline only: launched solely by the q2_0_gemv_microtest example as the reference for q2_0_gemv_vec.cu; q2_0_gemv_batchm needs M <= 8 and does not check it. — source: kernels/gb10/common/q2_0_gemv.cu:11
+- *whole file*: Baseline only: launched solely by the q2_0_gemv_microtest example as the reference for q2_0_gemv_vec.cu; q2_0_gemv_batchm needs M &lt;= 8 and does not check it. — source: kernels/gb10/common/q2_0_gemv.cu:11
 
 <a id="to-kernels-gb10-common-q2-0-gemv-vec-cu"></a>
 
 ### [kernels/gb10/common/q2_0_gemv_vec.cu](../../kernels/gb10/common/q2_0_gemv_vec.cu)
 
-- *whole file*: Same per-element formula as q2_0_gemv.cu summed in a different order, so not bit-identical to it. Codes are byte-assembled because a block's codes start after a 2-byte scale and are only 2-byte aligned; batchm needs M <= 8 (launcher chunks larger batches). — source: kernels/gb10/common/q2_0_gemv_vec.cu:6
+- *whole file*: Same per-element formula as q2_0_gemv.cu summed in a different order, so not bit-identical to it. Codes are byte-assembled because a block's codes start after a 2-byte scale and are only 2-byte aligned; batchm needs M &lt;= 8 (launcher chunks larger batches). — source: kernels/gb10/common/q2_0_gemv_vec.cu:6
+
+<a id="to-kernels-gb10-common-quant-rowwise-fp8-cu"></a>
+
+### [kernels/gb10/common/quant_rowwise_fp8.cu](../../kernels/gb10/common/quant_rowwise_fp8.cu)
+
+- *whole file*: The software E4M3 encoder used by SCALE and HIP builds rounds mantissa ties away from zero, while the CUDA hardware path (__nv_cvt_float_to_fp8) rounds ties to even, so per-row quantized weights/activations are not bit-identical across build configurations at a tie value. — source: kernels/gb10/common/quant_rowwise_fp8.cu:25
+
+<a id="to-kernels-gb10-common-quantize-bf16-to-fp8-blockscaled-cu"></a>
+
+### [kernels/gb10/common/quantize_bf16_to_fp8_blockscaled.cu](../../kernels/gb10/common/quantize_bf16_to_fp8_blockscaled.cu)
+
+- *whole file*: Edge tiles of its 128x128 grid are partial, so N and K need not be multiples of 128, unlike quantize_bf16_to_nvfp4.cu's group-16 kernels; its __SCALE__/HIP software E4M3 encoder shares quant_rowwise_fp8.cu's away-from-zero tie rounding, diverging from the CUDA round-to-even path. — source: kernels/gb10/common/quantize_bf16_to_fp8_blockscaled.cu:10
 
 <a id="to-kernels-gb10-common-quantize-bf16-to-nvfp4-cu"></a>
 
 ### [kernels/gb10/common/quantize_bf16_to_nvfp4.cu](../../kernels/gb10/common/quantize_bf16_to_nvfp4.cu)
 
+- *f32_to_bf16_trunc*: Converts FP32 to BF16 by truncating (keeping the high 16 bits), i.e. rounding toward zero rather than round-to-nearest, trading conversion simplicity/speed for a small truncation bias versus a rounded conversion. — source: kernels/gb10/common/quantize_bf16_to_nvfp4.cu:26
 - *quantize_bf16_to_nvfp4_mse*: Used only by opt-in --moe-nvfp4-experts to requantize FP8 experts at load, choosing each block scale by squared error among five neighbouring E4M3 bytes; the flag lowers expert precision and costs accuracy, so it is off by default. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34; kernels/gb10/common/quantize_bf16_to_nvfp4.cu:9; crates/model-arch/src/weight_loader/qwen35/load_layers.rs:85
 - *quantize_bf16_to_nvfp4_mse*: Error-chosen NVFP4 block scales for the expert requant, with prefill and the shared expert kept FP8: BFCL shard 1/4 83.40/83.21 to 86.56/88.86, at a C16 speed cost (dgx2 433.5 to 368.8 tok/s, that build also carried other changes) (2026-09-27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (COORD)
+- *quantize_bf16_to_nvfp4_mse*: Added 2026-09-27 as an alternative to quantize_bf16_to_nvfp4's single absmax-derived block scale: it searches five neighbouring E4M3 scale byte candidates and picks the one with lowest squared quantization error, trading extra per-block compute for lower NVFP4 quantization error at the same packed layout. — source: kernels/gb10/common/quantize_bf16_to_nvfp4.cu:9
 
 <a id="to-kernels-gb10-common-relu-squared-cu"></a>
 
@@ -947,7 +1059,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: rms_norm, rms_norm_strided, rms_norm_f32, rms_norm_residual, residual_add_rms_norm(_gatef32) scale by (1 + w); _vanilla, _abs and the gated norms scale by w. Models that ship plain weights shadow this file with a fork (gemma-4, minimax-m2, nemotron-labs-3-puzzle, qwen3-vl) rather than branching. — source: kernels/gb10/common/rms_norm.cu:5; kernels/FORKS.md
 - *whole file*: Two-pass per row: the output pass re-reads the input row from global memory instead of caching it (only the gated norms cache). Rows are read through 32/64-bit views, so an odd row length misaligns every row after row 0; gated kernels also need a multiple of 4. — source: kernels/gb10/common/rms_norm.cu:12
-- *gated_rms_norm*: x is cached in x_cache[16] registers between the two passes, so hidden_size <= 16 * blockDim.x and only hidden_size / 4 quads are processed (a tail is ignored). The FP32-input twin re-reads x instead. ptxas 2026-09-19: 40 regs on sm_121f, no spills. — source: kernels/gb10/common/rms_norm.cu:1000; kernels/b200/deepseek-v4-flash/PTXAS_RESOURCES.md:97
+- *gated_rms_norm*: x is cached in x_cache[16] registers between the two passes, so hidden_size &lt;= 16 \* blockDim.x and only hidden_size / 4 quads are processed (a tail is ignored). The FP32-input twin re-reads x instead. ptxas 2026-09-19: 40 regs on sm_121f, no spills. — source: kernels/gb10/common/rms_norm.cu:1000; kernels/b200/deepseek-v4-flash/PTXAS_RESOURCES.md:97
 - *gated_rms_norm_f32_input_strided*: Optional (looked up with try_kernel): a zero handle makes the batched GDN decode run the gated norm once per sequence instead of one strided launch. — source: kernels/gb10/common/KERNEL.toml:17
 - *residual_add_rms_norm*: The sum of squares uses the FP32 sums before their BF16 rounding, while the normalization reads the rounded values back, so the output is not exactly rms_norm of the stored hidden row. — source: kernels/gb10/common/rms_norm.cu:379
 - *residual_add_rms_norm_gatef32*: Also writes the normed row before BF16 rounding to an FP32 buffer so the MoE router GEMM reads unrounded values when fp32_routing_active holds; costs an extra 4 bytes per element of writes. — source: kernels/gb10/common/rms_norm.cu:512
@@ -956,7 +1068,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/rms_norm_vanilla.cu](../../kernels/gb10/common/rms_norm_vanilla.cu)
 
-- *rms_norm_vanilla_warp_row*: One warp per row, 8 rows per block: shuffle-only reduction with no shared memory or barriers, for many short rows (prefill per-head q/k norms). Gate: even hidden_size <= 256 and >= 1024 rows. Reduction order differs from rms_norm_vanilla, so results are not bit-identical to it; METRALE_RMS_NORM_WARP_ROW=0 disables. — source: kernels/gb10/common/rms_norm_vanilla.cu:112; crates/model-layers/src/layers/ops/norm.rs:107
+- *rms_norm_vanilla_warp_row*: One warp per row, 8 rows per block: shuffle-only reduction with no shared memory or barriers, for many short rows (prefill per-head q/k norms). Gate: even hidden_size &lt;= 256 and >= 1024 rows. Reduction order differs from rms_norm_vanilla, so results are not bit-identical to it; METRALE_RMS_NORM_WARP_ROW=0 disables. — source: kernels/gb10/common/rms_norm_vanilla.cu:112; crates/model-layers/src/layers/ops/norm.rs:107
 
 <a id="to-kernels-gb10-common-rope-cu"></a>
 
@@ -1023,8 +1135,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/w4a16_gemv.cu](../../kernels/gb10/common/w4a16_gemv.cu)
 
 - *whole file*: The M = 1 partials read E2M1 values from a shared-memory copy of the table because a data-dependent nibble index serialises __constant__ reads across a warp; SCALE and HIP builds (METRALE_WARP_LUT_STAGED 0) stage nothing in the one-warp-per-output kernels and use the __constant__ table. — source: kernels/gb10/common/w4a16_gemv.cu:53
-- *glm5next_moe_row_union*: Builds the union of experts selected by several rows so w4a16_gemv_sw_moe_batchm reads each union expert's weights once for all rows that chose it (per-row arithmetic unchanged); one block of rows * top_k threads, so the path is taken only while rows * top_k <= 64. — source: kernels/gb10/common/w4a16_gemv.cu:2171
-- *w4a16_gemv*: The FP32-output twin walks K differently (chunk lane + 64j into one accumulator, scale multiplied into each weight), so its sums are not bit-identical to w4a16_gemv; the qg/qkvz/dual kernels use yet another 8-value K walk (acc += a * (lut * scale)). — source: kernels/gb10/common/w4a16_gemv.cu:357
+- *glm5next_moe_row_union*: Builds the union of experts selected by several rows so w4a16_gemv_sw_moe_batchm reads each union expert's weights once for all rows that chose it (per-row arithmetic unchanged); one block of rows \* top_k threads, so the path is taken only while rows \* top_k &lt;= 64. — source: kernels/gb10/common/w4a16_gemv.cu:2171
+- *w4a16_gemv*: The FP32-output twin walks K differently (chunk lane + 64j into one accumulator, scale multiplied into each weight), so its sums are not bit-identical to w4a16_gemv; the qg/qkvz/dual kernels use yet another 8-value K walk (acc += a \* (lut \* scale)). — source: kernels/gb10/common/w4a16_gemv.cu:357
 - *w4a16_gemv_batch4*: CUDA-core W4A16 GEMV at M=4 draws ~79 W on GB10, versus 32-40 W for the FP4 block-scale MMA GEMV reading the same weights (2026-09-23): the MAC datatype, not only bytes streamed, sets GPU-rail energy. — source: measurement note 2026-09-23 (bf16 MMA power)
 - *w4a16_gemv_batch8*: Measured 2026-08-17: batch8 is 1.489x slower than batch4 for the identical weight sweep on the dense 27B; the MTP K-ladder step-down keeps n=2 verify on batch4, which took C=2 from 30.15 to 38.95 tok/s. — source: measurement note 2026-08-17 (dense 27B concurrency ladder)
 - *w4a16_gemv_batch8*: batchm tiers read the weight once for up to MAX_M rows and each row is bit-identical to w4a16_gemv (remapped chunk walk, same FMA chain and shuffle tree). MAX_M sizes accumulators and the unrolled code, so M=5 on the 8-wide tier carries three dead rows' instructions; exact-M tiers 5/6/7 exist for that. — source: kernels/gb10/common/w4a16_gemv.cu:450
@@ -1037,7 +1149,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/w4a16_gemv_fused.cu](../../kernels/gb10/common/w4a16_gemv_fused.cu)
 
 - *whole file*: Single-warp-per-output _sw twins equal the 64-thread base kernels bit for bit (lane l does lanes l and l+32's work in the same order) and need no block barrier; w4a16_gemv_silu_input returns for n >= N before two __syncthreads, so N must be a multiple of 4. — source: kernels/gb10/common/w4a16_gemv_fused.cu:304
-- *w4a16_gemv_silu_input*: The fused silu-input GEMV recomputes silu(gate)*up for every output row, so decode defaults to split SiLU (stage the activation once with act_mul, then plain GEMV; METRALE_NO_DECODE_SPLIT_SILU reverts). A LoRA adapter forces the split path because the down delta needs the materialised activation. — source: crates/model-layers/src/layers/dense_ffn_decode.rs:345
+- *w4a16_gemv_silu_input*: The fused silu-input GEMV recomputes silu(gate)\*up for every output row, so decode defaults to split SiLU (stage the activation once with act_mul, then plain GEMV; METRALE_NO_DECODE_SPLIT_SILU reverts). A LoRA adapter forces the split path because the down delta needs the materialised activation. — source: crates/model-layers/src/layers/dense_ffn_decode.rs:345
 
 <a id="to-kernels-gb10-common-w4a16-gemv-tc-cu"></a>
 
@@ -1046,7 +1158,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *whole file*: Introduced in #1: tensor-core small-M NVFP4 GEMV, on by default. ([#1](https://github.com/Metrale/metrale-inference/pull/1)) — source: PR #1
 - *whole file*: bf16 tensor-core GEMV power scales with live rows, not padded rows: tc8 46/51/59 W at 1/4/8 live rows, tc16 63-75 W at 9..16 (GB10, 2026-09-23). Widening the bf16 GEMV edge to 16 rows gave +5.5% tok/s but +19% J/token at C=4 (it displaced the W4A4 path), so it ships opt-in. — source: measurement note 2026-09-23 (bf16 MMA power)
 - *whole file*: Tensor-core NVFP4 GEMV for 1..16 rows: work per weight byte is independent of M. Measured 2026-09-23 on GB10: CUDA-core tiers drew 72-86 W on the GPU rail against about 50 W for tensor-core paths streaming the same bytes. Needs K % 128 == 0; not bit-identical to CUDA-core tiers (order/grouping of FP32 sums). — source: kernels/gb10/common/w4a16_gemv_tc.cu:19
-- *whole file*: Dequant is exact via bit placement (E2M1 at BF16 bits as e2m1 * 2^-126, scale as BF16 * 2^100, product * 2^-26 fits BF16), with scale2 * 2^26 in the epilogue, and a K permutation avoids repacking the checkpoint. Narrow arms cover 8 rows by default; METRALE_W4A16_TC_WIDE raises the edge to 16. — source: kernels/gb10/common/w4a16_gemv_tc.cu:23
+- *whole file*: Dequant is exact via bit placement (E2M1 at BF16 bits as e2m1 \* 2^-126, scale as BF16 \* 2^100, product \* 2^-26 fits BF16), with scale2 \* 2^26 in the epilogue, and a K permutation avoids repacking the checkpoint. Narrow arms cover 8 rows by default; METRALE_W4A16_TC_WIDE raises the edge to 16. — source: kernels/gb10/common/w4a16_gemv_tc.cu:23
 
 <a id="to-kernels-gb10-common-w4a4-gemv-mx-cu"></a>
 
@@ -1060,7 +1172,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *whole file*: Measured 2026-09-24 on GB10 (ISL 128/OSL 1024): the _ps entries recover the twins' C=16 speed loss (213 -> 218 tok/s; base 219) and cut J/token 2.5% at C=8 and C=16 versus the twins. C=32 is untouched by them. ([#18](https://github.com/Metrale/metrale-inference/pull/18)) — source: PR #18
 - *whole file*: Each one-tile CTA owns 16 weight rows and re-reads the whole activation matrix from L2. Measured 2026-09-24 (dgx1, dense 27B gate 17408x5120, M=32): 146 MB of L2 traffic for 50 MB of weights; mx16/mx32 were 72%/64% of GPU time at C8/C16. — source: measurement note 2026-09-24 (W4A4 GEMV energy)
 - *whole file*: Registers set CTAs/SM and power: a generalized NT=1 template compiled to 126 regs (2 CTAs/SM vs 133 regs, 1 CTA/SM for the historical mx32) and ran slower and hotter (57-59 W vs 51-53 W microbench), so mx8/16/32 keep the historical body. Check ptxas -v after any edit (2026-09-24). — source: measurement note 2026-09-24 (W4A4 GEMV energy); kernels/gb10/common/w4a4_gemv_mx.cu:203
-- *whole file*: Precision trade: activations are quantized to E2M1, which flips temperature-0 text; a decode-floor run fell under its completion vacuity floor (658 < 750). Ships behind default-off --w4a4-downcast. GPU-rail J/token vs W4A16 (dgx3, 2026-09-23): -25/-32/-18/-13/-7% at C1/2/4/8/16, C1 about -5% tok/s. — source: measurement note 2026-09-23 (bf16 MMA power); owner decision 2026-09-23
+- *whole file*: Precision trade: activations are quantized to E2M1, which flips temperature-0 text; a decode-floor run fell under its completion vacuity floor (658 &lt; 750). Ships behind default-off --w4a4-downcast. GPU-rail J/token vs W4A16 (dgx3, 2026-09-23): -25/-32/-18/-13/-7% at C1/2/4/8/16, C1 about -5% tok/s. — source: measurement note 2026-09-23 (bf16 MMA power); owner decision 2026-09-23
 - *whole file*: FP4 block-scale MMA (m16n8k64, ue4m3 scales) streams ~200-220 GB/s at 32-40 W, 22-34% fewer mJ per launch than the bf16 tensor-core GEMV. A first version with 4-byte loads was LSU-bound at 137 GB/s; 16-byte loads plus one shfl_xor per row per MMA fixed it (2026-09-23). — source: measurement note 2026-09-23 (bf16 MMA power)
 - *whole file*: Weight-stream floor is about 0.165 nJ/B (M=1). At C8 (M=16) ~80% of projection energy is that floor, so kernel work cannot close C8; the M-dependent share at M=32 is ~36%. SM-count caps (persistent grids of 48/40/32/24 CTAs) are a null energy lever (2026-09-24). — source: measurement note 2026-09-24 (W4A4 GEMV energy)
 - *whole file*: W4A4 GEMV on the FP4 block-scale MMA: weights are never dequantized, but activations are quantized per row to NVFP4 (per-row FP32 global scale, E4M3 group scales, E2M1 RNE), an accuracy change, so it is opt-in (--w4a4-downcast: 1..32 rows; --w4a4-downcast-wide: 33..64). Absent on hopper and b200. — source: kernels/gb10/common/w4a4_gemv_mx.cu:12
@@ -1076,34 +1188,74 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *w4a4_gemv_mx64_nt2*: Runs the 33..=64-row verify projections (GDN qkvz/out_proj, attention q/k/v/o) only under opt-in --w4a4-downcast-wide (default false, ignored without --w4a4-downcast), replacing the W4A8 dequant tile. Changes C=32 text; measured -4.0% J/tok and +5.0% tok/s at C=32. ([#18](https://github.com/Metrale/metrale-inference/pull/18)) — source: PR #18
 - *w4a4_quant_rows*: Activation quantiser shares one scratch and last-quantisation record per backend: two projections launched on different streams at once would race on it. The dense-FFN W4A4 path reuses gate's quantisation for up. — source: crates/model-layers/src/layers/ops/w4a4_proj.rs:16
 
+<a id="to-kernels-gb10-common-w8a16-gemm-cu"></a>
+
+### [kernels/gb10/common/w8a16_gemm.cu](../../kernels/gb10/common/w8a16_gemm.cu)
+
+- *whole file*: W8A16 tile GEMM assumes K % 128 == 0 (block_scale is read at a row pitch of K/128 rounded down, no tail handling); a 64x64 M/N tile with 128 threads is the baseline this file's cp.async-pipelined and 32-row-tile twins build on. — source: kernels/gb10/common/w8a16_gemm.cu:9
+
+<a id="to-kernels-gb10-common-w8a16-gemm-pipelined-cu"></a>
+
+### [kernels/gb10/common/w8a16_gemm_pipelined.cu](../../kernels/gb10/common/w8a16_gemm_pipelined.cu)
+
+- *whole file*: Two-level FP32 accumulation: inner_acc sums one 128-wide K block's MMAs, folded into outer_acc += inner_acc\*scale, so the scale multiplies an FP32 sum, not a rounded BF16 value. Measured 2026-09-25 (nvcc 13.0.88, sm_121f, --fmad=false): 55 registers, 0 spill, 27,904 B shared memory, 2-deep cp.async pipeline. — source: kernels/gb10/common/w8a16_gemm_pipelined.cu:17
+
 <a id="to-kernels-gb10-common-w8a16-gemm-pipelined-m32-cu"></a>
 
 ### [kernels/gb10/common/w8a16_gemm_pipelined_m32.cu](../../kernels/gb10/common/w8a16_gemm_pipelined_m32.cu)
 
 - *whole file*: Introduced in #4: M32 tile. For GDN projections it is byte-identical and on by default; as the attention M32 tile it is opt-in (METRALE_FP8_ATTN_M32=1) because that use changes summation order. ([#4](https://github.com/Metrale/metrale-inference/pull/4)) — source: PR #4
 - *whole file*: Part of the canonical row tiers (default for FP8 MoE only; dense checkpoints keep row-count tiers): a row gets the same summation order at every row count. --no-canonical-tiers opts out; METRALE_CANONICAL_TIERS turns it on for any checkpoint. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34
-- *whole file*: Since #34, 1..=16 rows with K <= 5120 run the pm16 skinny body with the canonical tile's bits (byte for byte vs the 32/64/128-row tiles at M=1..16, 17, 24, 32, every E4M3 code incl. NaN). This removes canonical tiers' C1/C2 loss. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34; kernels/gb10/common/w8a16_gemm_pipelined_m32.cu:30
+- *whole file*: Since #34, 1..=16 rows with K &lt;= 5120 run the pm16 skinny body with the canonical tile's bits (byte for byte vs the 32/64/128-row tiles at M=1..16, 17, 24, 32, every E4M3 code incl. NaN). This removes canonical tiers' C1/C2 loss. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34; kernels/gb10/common/w8a16_gemm_pipelined_m32.cu:30
 - *whole file*: Cost of keeping the scalar GEMV order vs this tensor-core tile (isolated, 2026-09-27): GDN qkvz 12288x2048 R=32 390 vs 137 us, R=64 808 vs 171 us; at R=1 the scalar GEMV wins (89 vs 106 us). Tile and GEMV accumulate differently, so the tier picked by row count sets output bits. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS round 3)
-- *w8a16_gemm_pipelined_m32*: Skinny body (1..16 rows, K <= 5120), byte-identical to the canonical tile: LDG.128 to registers to STS beat a cp.async ring (112 vs 128 us, ~225 vs ~195 GB/s on 35B qkvz M=2); weights straight to registers reached only 150-165 GB/s and was rejected (2026-09-27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS round 4)
+- *whole file*: Dynamic shared memory totals 44,032 B (A tile 17,408 + dequantized B 17,408 + raw B 8,192 + LUT 1,024), under the 48 KiB static limit; both A and B padded strides are 68 words (68 mod 32 = 4) so the eight group_id rows of an MMA fragment land on banks 0,4,...,28 without conflicts. — source: kernels/gb10/common/w8a16_gemm_pipelined_m32.cu:35
+- *w8a16_gemm_pipelined_m32*: Skinny body (1..16 rows, K &lt;= 5120), byte-identical to the canonical tile: LDG.128 to registers to STS beat a cp.async ring (112 vs 128 us, ~225 vs ~195 GB/s on 35B qkvz M=2); weights straight to registers reached only 150-165 GB/s and was rejected (2026-09-27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS round 4)
+- *w8a16_gemm_pipelined_m32*: 32-row M-tile twin of w8a16_gemm_pipelined, bit-identical by construction (same m16n8k16 sub-MMAs and K order; native_fp8_gdn_proj_m32_microtest checks byte for byte) since the 128-row tile is >=75% zero rows at M&lt;=32. Measured 2026-09-22/23 on GB10, M=32: 296us at N=12288/K=2048, 166us at N=2048/K=4096. — source: kernels/gb10/common/w8a16_gemm_pipelined_m32.cu:22
 - *w8a16_gemm_pipelined_m64*: Byte-identical to the 128-row tile for 33..64-row GDN projections: 35B qkvz M=64 264 to 170 us, out_proj 151 to 86 us (2026-09-26). On attention Q/K/V/O it is not bit-identical to the scalar GEMV and stays behind default-off METRALE_FP8_ATTN_M32 (+3.8% tok/s C16). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-26 (COORD, EXPERIMENTS)
+
+<a id="to-kernels-gb10-common-w8a16-gemm-t-cu"></a>
+
+### [kernels/gb10/common/w8a16_gemm_t.cu](../../kernels/gb10/common/w8a16_gemm_t.cu)
+
+- *whole file*: Weight is transposed to B_t [K, N] at load time so rows are read along the contiguous N axis instead of K, at the cost of the transpose_fp8/transpose_block_scale pass; like w8a16_gemm_pipelined, the block scale is applied to the FP32 sum of one 128-wide K block, not to a BF16 value. — source: kernels/gb10/common/w8a16_gemm_t.cu:3
+
+<a id="to-kernels-gb10-common-w8a16-gemm-t-m128-cu"></a>
+
+### [kernels/gb10/common/w8a16_gemm_t_m128.cu](../../kernels/gb10/common/w8a16_gemm_t_m128.cu)
+
+- *whole file*: 128x128 prefill tile of the transposed W8A16 GEMM: __launch_bounds__(256, 2) caps it at 128 registers and 2 CTAs/SM. Measured 2026-09-25 (nvcc 13.0.88, sm_121f, --fmad=false): the cap is hit, costing 496 bytes of register spill, alongside 47,104 B of static shared memory. — source: kernels/gb10/common/w8a16_gemm_t_m128.cu:20
 
 <a id="to-kernels-gb10-common-w8a16-gemv-cu"></a>
 
 ### [kernels/gb10/common/w8a16_gemv.cu](../../kernels/gb10/common/w8a16_gemv.cu)
 
 - *whole file*: Block-scaled only (block_scale[n/128, k/128]): a per-row [N,1] FP8 scale would silently apply another row's multiplier (in bounds, no fault). There is no per-row FP8 decode GEMV, so per-channel FP8 checkpoint modules decode through an NVFP4 requant (2026-08-15). — source: docs/fp8-rowwise-mixed-precision.md
+- *whole file*: K is consumed in 16-value chunks with no tail loop: the final K % 16 activation/weight values are silently not read, so a K not a multiple of 16 loses those elements from the dot product rather than erroring. N is likewise assumed a multiple of 4. — source: kernels/gb10/common/w8a16_gemv.cu:9
 
 <a id="to-kernels-gb10-common-w8a16-gemv-batch4-cu"></a>
 
 ### [kernels/gb10/common/w8a16_gemv_batch4.cu](../../kernels/gb10/common/w8a16_gemv_batch4.cu)
 
+- *whole file*: batch4/batch16 (and _strided twins) sum each row's K in the same per-element order and shfl-tree/two-warp reduction as w8a16_gemv; w8a16_batch_bitparity_microtest checks the contiguous entry points byte for byte against it at [10304x2688]/[2688x4096] over three seeds. K past the last multiple of 16 is not read. — source: kernels/gb10/common/w8a16_gemv_batch4.cu:9
 - *w8a16_gemv_batch16*: Issue-bound at 16 rows (122-146 GB/s). An exact scalar-order GEMV cannot reach the byte floor above ~16 rows (row-group batch64 1232 us vs 419 us chunked at M=32), so wide rows need tensor-core tiles. A 2-column activation-reuse variant was byte-exact, speed-neutral, 2-6% lower J/tok, not committed (2026-09-26). — source: MoE C=16 campaign notes 2026-09-26 (PROFILE, EXPERIMENTS #7)
+
+<a id="to-kernels-gb10-common-w8a16-gemv-fused-cu"></a>
+
+### [kernels/gb10/common/w8a16_gemv_fused.cu](../../kernels/gb10/common/w8a16_gemv_fused.cu)
+
+- *w8a16_gemv_silu_input*: Computes silu(gate_out) \* up_out in FP32 and feeds that directly into the GEMV without rounding the intermediate to BF16, so its result can differ from running a separate BF16 silu-mul kernel followed by plain w8a16_gemv. — source: kernels/gb10/common/w8a16_gemv_fused.cu:11
 
 <a id="to-kernels-gb10-common-wht-bf16-cu"></a>
 
 ### [kernels/gb10/common/wht_bf16.cu](../../kernels/gb10/common/wht_bf16.cu)
 
-- *whole file*: One warp per head; head_dim must be 128, 256 or 512 and nothing checks it (>= 512 transforms only the first 512, >= 256 the first 256). With TQ_PLUS_SIGNS (set for gb10/common) the inverse applies the signs in reverse, since S2*H*S1 applied twice is not the identity. — source: kernels/gb10/common/wht_bf16.cu:7; kernels/gb10/common/wht_bf16.cu:48; kernels/gb10/common/KERNEL.toml:2
+- *whole file*: One warp per head; head_dim must be 128, 256 or 512 and nothing checks it (>= 512 transforms only the first 512, >= 256 the first 256). With TQ_PLUS_SIGNS (set for gb10/common) the inverse applies the signs in reverse, since S2\*H\*S1 applied twice is not the identity. — source: kernels/gb10/common/wht_bf16.cu:7; kernels/gb10/common/wht_bf16.cu:48; kernels/gb10/common/KERNEL.toml:2
+
+<a id="to-kernels-gb10-common-widen-block-scale-f32-cu"></a>
+
+### [kernels/gb10/common/widen_block_scale_f32.cu](../../kernels/gb10/common/widen_block_scale_f32.cu)
+
+- *whole file*: Widening an E8M0 (input_dtype 2) scale byte to FP32 has to special-case exponent 0, since E8M0 has no zero encoding: exponent 0 becomes the FP32 subnormal 2^-127 (0x00400000) rather than 0.0, while the NaN encoding (255) is the one code mapped to 0.0f. — source: kernels/gb10/common/widen_block_scale_f32.cu:34
 
 <a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-attn-prefill-512-cu"></a>
 
@@ -1120,13 +1272,13 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *attn_v41_gemv_f32_staged*: Same products and k order as attn_v41_gemm_f32 (bit-equal under --fmad=false) but one output per block with thread 0 summing staged products. Measured 2026-09-19 with nsys on GB10: 144 us a launch for a 10 MB weight in attn_v41_gemm_f32, 67 us in this form. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:227
 - *attn_v41_index_score*: At ihd 128 a thread keeps its key row in registers (16 uint4) with the same products, order and roundings as the generic loop and no load on the add chain; the generic loop measured 122 us a launch (nsys, GB10, 2026-09-19). — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:318
 - *attn_v41_sparse_attn*: 64 blocks on 48 SMs. Splitting each (token, head) across gridDim.z blocks that each recompute scores and softmax and write their own hd slice keeps the bytes identical: split 2 gave +5.4%/+5.0% tok/s, split 4 was worse (2026-09, phase 6). — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md (phase 6 M4a)
-- *attn_v41_sparse_attn*: METRALE_DS41_SPARSE_SPLIT (1 to 8, default 2) splits hd across blocks that each recompute the scores and softmax, so bytes are identical for any split; split 2 measured +5.4% / +5.0% decode tok/s, split 4 was lower. Scores live in shared memory, topk <= 2048. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:384; docs/perf/DS41_DECODE_RETUNE_2026-09.md:475
+- *attn_v41_sparse_attn*: METRALE_DS41_SPARSE_SPLIT (1 to 8, default 2) splits hd across blocks that each recompute the scores and softmax, so bytes are identical for any split; split 2 measured +5.4% / +5.0% decode tok/s, split 4 was lower. Scores live in shared memory, topk &lt;= 2048. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:384; docs/perf/DS41_DECODE_RETUNE_2026-09.md:475
 
 <a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-csa-compress-cu"></a>
 
 ### [kernels/gb10/deepseek-v4-flash/nvfp4/csa_compress.cu](../../kernels/gb10/deepseek-v4-flash/nvfp4/csa_compress.cu)
 
-- *whole file*: One block per compressed window with an online softmax per output dim over 2 * ratio (CSA) or ratio (HCA) slots; tokens after the last whole window are not read. The RMS norm and RoPE of the output are separate launches in the callers. — source: kernels/gb10/deepseek-v4-flash/nvfp4/csa_compress.cu:7
+- *whole file*: One block per compressed window with an online softmax per output dim over 2 \* ratio (CSA) or ratio (HCA) slots; tokens after the last whole window are not read. The RMS norm and RoPE of the output are separate launches in the callers. — source: kernels/gb10/deepseek-v4-flash/nvfp4/csa_compress.cu:7
 
 <a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-engram-v41-cu"></a>
 
@@ -1148,14 +1300,14 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/deepseek-v4-flash/nvfp4/hc_v41.cu](../../kernels/gb10/deepseek-v4-flash/nvfp4/hc_v41.cu)
 
 - *whole file*: Measured (DS41 decode retune, phase 3): the per-site Sinkhorn finish on one thread cost 19.3 us a launch at 80 sites a token; hcv_finish_lanes spreads it over 16 lanes with shuffles in the serial order and keeps the serial bits, 4.5 us a launch. The one-thread finish is kept but uncalled. — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md:366; kernels/gb10/deepseek-v4-flash/nvfp4/hc_v41.cu:144
-- *whole file*: Delayed-mix form splits mixes from the collapse that uses them. Measured: the HC chain went from 7.41 ms / 320 launches to 2.75 ms / 240 a token by moving to mixes_dot (one block per (token, mix), each recomputing the token RMS) + finish_collapse + post_wide. hc_mult <= 4, unchecked. — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md:106; kernels/gb10/deepseek-v4-flash/nvfp4/hc_v41.cu:4
+- *whole file*: Delayed-mix form splits mixes from the collapse that uses them. Measured: the HC chain went from 7.41 ms / 320 launches to 2.75 ms / 240 a token by moving to mixes_dot (one block per (token, mix), each recomputing the token RMS) + finish_collapse + post_wide. hc_mult &lt;= 4, unchecked. — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md:106; kernels/gb10/deepseek-v4-flash/nvfp4/hc_v41.cu:4
 - *hc_v41_finish_collapse*: The Sinkhorn finish ran on one thread (17-19.3 us per call, 80 sites per token); one element per each of 16 lanes, with row and column sums gathered by shuffles in the serial order, keeps the bits: 19.3 to 4.5 us per launch (2026-09). — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md (phase 3 L5)
 
 <a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-hyper-connection-cu"></a>
 
 ### [kernels/gb10/deepseek-v4-flash/nvfp4/hyper_connection.cu](../../kernels/gb10/deepseek-v4-flash/nvfp4/hyper_connection.cu)
 
-- *whole file*: One 256-thread block per token; hc_mult <= 4 is unchecked (arrays sized for it). ptxas 2026-09-19 on sm_121f: hc_pre and hc_head 48 regs, hc_post 40, no spills. — source: kernels/gb10/deepseek-v4-flash/nvfp4/hyper_connection.cu:9; kernels/b200/deepseek-v4-flash/PTXAS_RESOURCES.md:53
+- *whole file*: One 256-thread block per token; hc_mult &lt;= 4 is unchecked (arrays sized for it). ptxas 2026-09-19 on sm_121f: hc_pre and hc_head 48 regs, hc_post 40, no spills. — source: kernels/gb10/deepseek-v4-flash/nvfp4/hyper_connection.cu:9; kernels/b200/deepseek-v4-flash/PTXAS_RESOURCES.md:53
 - *hc_pre*: Adds an eps-free column normalisation after the Sinkhorn that the reference lacks, so each output stream is a convex combination of residual streams. Measured 2026-07-05: dropping it cut coherent output length from about 150 to about 90 tokens. — source: kernels/gb10/deepseek-v4-flash/nvfp4/hyper_connection.cu:157
 
 <a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-kquant-moe-cu"></a>
@@ -1174,7 +1326,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/deepseek-v4-flash/nvfp4/mla_absorbed.cu](../../kernels/gb10/deepseek-v4-flash/nvfp4/mla_absorbed.cu)
 
-- *whole file*: The per-head batched GEMV reads inputs four values per 8-byte load, so the K % 4 trailing values are skipped and input_stride must keep every head row 8-byte aligned. mla_q_rope_scatter launches a single 256-thread block over all nq * rope values. — source: kernels/gb10/deepseek-v4-flash/nvfp4/mla_absorbed.cu:24; kernels/gb10/deepseek-v4-flash/nvfp4/mla_absorbed.cu:133
+- *whole file*: The per-head batched GEMV reads inputs four values per 8-byte load, so the K % 4 trailing values are skipped and input_stride must keep every head row 8-byte aligned. mla_q_rope_scatter launches a single 256-thread block over all nq \* rope values. — source: kernels/gb10/deepseek-v4-flash/nvfp4/mla_absorbed.cu:24; kernels/gb10/deepseek-v4-flash/nvfp4/mla_absorbed.cu:133
 
 <a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-mla-cache-assemble-fp8-cu"></a>
 
@@ -1218,7 +1370,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Single-token path uses moe_v41_sum_rows (rows added one at a time in row order, matching n_rows accumulate launches) because scatter_add's distinct-rows condition fails when every expert row lands in one token row. Device route selection falls back via a miss flag, pointing absent experts at slot 0. — source: kernels/gb10/deepseek-v4-flash/nvfp4/moe_v41.cu:68
 - *moe_v41_router_gemv_f32out_products*: The router's strict 5,120-step sequential chain on 2 lanes took 64.7 us for a 4 MB weight; writing exact bf16 x bf16 products to smem and adding them in k order from registers gives 41.2 us, bit-identical. The order is pinned so device routing matches the host (2026-09). — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md (phase 3 L6)
-- *moe_v41_router_gemv_f32out_products*: Router logits computed three ways with one FP32 k-order chain (the order dense_gemm_bf16_f32out uses): this variant writes exact BF16xBF16 products to smem and thread 0 adds them serially, trading parallel reduction for bit-exact order; used at m <= 8 unless METRALE_DS41_ROUTER_STAGED=0. — source: kernels/gb10/deepseek-v4-flash/nvfp4/moe_v41.cu:203
+- *moe_v41_router_gemv_f32out_products*: Router logits computed three ways with one FP32 k-order chain (the order dense_gemm_bf16_f32out uses): this variant writes exact BF16xBF16 products to smem and thread 0 adds them serially, trading parallel reduction for bit-exact order; used at m &lt;= 8 unless METRALE_DS41_ROUTER_STAGED=0. — source: kernels/gb10/deepseek-v4-flash/nvfp4/moe_v41.cu:203
 
 <a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-moe-w4a16-grouped-gemm-cu"></a>
 
@@ -1273,7 +1425,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu)
 
-- *whole file*: State clamps differ by kernel: single-stream prefill scales to norm 50 when seq_len <= 1, the four fused/strided FP32 decodes clamp at SSM_STATE_MAX_NORM (1000), the rest not at all. chunk2/chunk3 write no intermediates. Also compiled for qwen3.5-35b-a3b and qwen3.5-397b-a17b. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu:10
+- *whole file*: State clamps differ by kernel: single-stream prefill scales to norm 50 when seq_len &lt;= 1, the four fused/strided FP32 decodes clamp at SSM_STATE_MAX_NORM (1000), the rest not at all. chunk2/chunk3 write no intermediates. Also compiled for qwen3.5-35b-a3b and qwen3.5-397b-a17b. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu:10
 
 <a id="to-kernels-gb10-gemma-4-26b-a4b-nvfp4-gelu-cu"></a>
 
@@ -1287,11 +1439,29 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Fork of the gemma-4-31b softcap that keeps only the BF16 in-place kernel (the unused FP32 twin is dropped); same arithmetic. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/logit_softcap.cu:2; kernels/FORKS.md
 
+<a id="to-kernels-gb10-gemma-4-26b-a4b-nvfp4-moe-shared-expert-fused-cu"></a>
+
+### [kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused.cu](../../kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused.cu)
+
+- *whole file*: Despite kernel names matching the SiLU-based common kernel it forks from (moe_expert_gate_up_shared/moe_expert_silu_down_shared), this Gemma variant computes down(GELU_tanh(gate)\*up), i.e. GeGLU not SwiGLU; K must be a multiple of 16 vs the common kernel's K%8, unchecked. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused.cu:4
+
 <a id="to-kernels-gb10-gemma-4-26b-a4b-nvfp4-moe-shared-expert-fused-batch2-cu"></a>
 
 ### [kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch2.cu](../../kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch2.cu)
 
 - *whole file*: Each block reads only its own token's input, so a weight row is read once per token (no weight reuse across the two tokens); computes GeGLU (GELU_tanh) despite the silu name, and shared-expert pointers are read without a null check. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch2.cu:4
+
+<a id="to-kernels-gb10-gemma-4-26b-a4b-nvfp4-moe-shared-expert-fused-batch3-cu"></a>
+
+### [kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch3.cu](../../kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch3.cu)
+
+- *whole file*: Three-token Gemma fork also computes down(GELU_tanh(gate)\*up) (GeGLU) under the shared \*_silu_down_shared\* names; unlike the single-token Gemma variant it keeps K%8 (not K%16), and skips a null check on the shared expert's weight pointers that the routed-expert path does perform. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch3.cu:8
+
+<a id="to-kernels-gb10-gemma-4-26b-a4b-nvfp4-moe-w4a16-grouped-gemm-cu"></a>
+
+### [kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu](../../kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu)
+
+- *whole file*: moe_w4a16_grouped_gemm_ptrtable dequantizes NVFP4 to BF16 for BF16 MMAs; every _t variant dequantizes to E4M3 and runs m16n8k32 E4M3 MMAs (A converted to E4M3 inline, except _ptrtable_t whose A arrives as E4M3) - not bit-identical. Fused gate/up kernels split the grid at N; N must be a multiple of 128, unchecked. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu:4
 
 <a id="to-kernels-gb10-gemma-4-26b-a4b-nvfp4-paged-decode-attn-512-cu"></a>
 
@@ -1309,13 +1479,13 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/gemma-4-26b-a4b/nvfp4/rms_norm.cu](../../kernels/gb10/gemma-4-26b-a4b/nvfp4/rms_norm.cu)
 
-- *whole file*: Fork of common/rms_norm.cu with plain-w scaling (common uses 1 + w); identical in content to the gemma-4-31b fork. gated_rms_norm keeps x in registers (<= 16 values per thread), so hidden_size <= 16 * blockDim.x and a multiple of 4. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/rms_norm.cu:4
+- *whole file*: Fork of common/rms_norm.cu with plain-w scaling (common uses 1 + w); identical in content to the gemma-4-31b fork. gated_rms_norm keeps x in registers (&lt;= 16 values per thread), so hidden_size &lt;= 16 \* blockDim.x and a multiple of 4. — source: kernels/gb10/gemma-4-26b-a4b/nvfp4/rms_norm.cu:4
 
 <a id="to-kernels-gb10-gemma-4-31b-nvfp4-attn-prefill-512-cu"></a>
 
 ### [kernels/gb10/gemma-4-31b/nvfp4/attn_prefill_512.cu](../../kernels/gb10/gemma-4-31b/nvfp4/attn_prefill_512.cu)
 
-- *whole file*: Scalar HDIM 512 prefill (8 lanes x 64 dims per row, FP32 online softmax, 16 rows per 128-thread block); sliding_window is ignored. It is the fallback when attn_prefill_512tc is absent or METRALE_ATTN_512_TC=0, and assumes 448 < head_dim <= 512 without checking. — source: kernels/gb10/gemma-4-31b/nvfp4/attn_prefill_512.cu:3; crates/model-layers/src/layers/qwen3_attention/init_prefill_kernels.rs:146
+- *whole file*: Scalar HDIM 512 prefill (8 lanes x 64 dims per row, FP32 online softmax, 16 rows per 128-thread block); sliding_window is ignored. It is the fallback when attn_prefill_512tc is absent or METRALE_ATTN_512_TC=0, and assumes 448 &lt; head_dim &lt;= 512 without checking. — source: kernels/gb10/gemma-4-31b/nvfp4/attn_prefill_512.cu:3; crates/model-layers/src/layers/qwen3_attention/init_prefill_kernels.rs:146
 
 <a id="to-kernels-gb10-gemma-4-31b-nvfp4-embed-scale-cu"></a>
 
@@ -1327,13 +1497,13 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/gemma-4-31b/nvfp4/logit_softcap.cu](../../kernels/gb10/gemma-4-31b/nvfp4/logit_softcap.cu)
 
-- *whole file*: Softcap runs as a separate in-place pass over BF16 logits (cap * tanh(x / cap) in FP32, rounded back to BF16). The FP32 twin logit_softcap_fp32 is never loaded: its handle is always 0. — source: kernels/gb10/gemma-4-31b/nvfp4/logit_softcap.cu:2
+- *whole file*: Softcap runs as a separate in-place pass over BF16 logits (cap \* tanh(x / cap) in FP32, rounded back to BF16). The FP32 twin logit_softcap_fp32 is never loaded: its handle is always 0. — source: kernels/gb10/gemma-4-31b/nvfp4/logit_softcap.cu:2
 
 <a id="to-kernels-gb10-gemma-4-31b-nvfp4-rms-norm-cu"></a>
 
 ### [kernels/gb10/gemma-4-31b/nvfp4/rms_norm.cu](../../kernels/gb10/gemma-4-31b/nvfp4/rms_norm.cu)
 
-- *whole file*: Fork of common/rms_norm.cu that scales every weighted norm by the stored w instead of (1 + w). The gemma-4-26b-a4b copy is content-identical. The FP32-residual kernels (rms_norm_f32, *_f32_abs, f32_residual_add, ...) are compiled but never looked up. — source: kernels/gb10/gemma-4-31b/nvfp4/rms_norm.cu:4
+- *whole file*: Fork of common/rms_norm.cu that scales every weighted norm by the stored w instead of (1 + w). The gemma-4-26b-a4b copy is content-identical. The FP32-residual kernels (rms_norm_f32, \*_f32_abs, f32_residual_add, ...) are compiled but never looked up. — source: kernels/gb10/gemma-4-31b/nvfp4/rms_norm.cu:4
 
 <a id="to-kernels-gb10-glm-5-3-flash-nvfp4-glm5next-dsa-mla-decode-cu"></a>
 
@@ -1345,14 +1515,14 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu](../../kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu)
 
-- *whole file*: Separate from common fused_k_norm_rope_cache because GLM's norm is x * rms * w (no 1 +) with no rope arm. One block per token with blockDim.x == kv_lora_dim (at most 1024), so the two-stage reduction has no tail loop. — source: kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu:6
+- *whole file*: Separate from common fused_k_norm_rope_cache because GLM's norm is x \* rms \* w (no 1 +) with no rope arm. One block per token with blockDim.x == kv_lora_dim (at most 1024), so the two-stage reduction has no tail loop. — source: kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu:6
 
 <a id="to-kernels-gb10-glm-5-3-flash-nvfp4-glm-vit-cu"></a>
 
 ### [kernels/gb10/glm-5.3-flash/nvfp4/glm_vit.cu](../../kernels/gb10/glm-5.3-flash/nvfp4/glm_vit.cu)
 
-- *whole file*: Attention runs as GEMMs (dense_gemm_bf16_f32out for raw scores, dense_gemm_bf16_pipelined for PV) around glm_vit_softmax_rows, which rounds P to BF16; V is written transposed [H, D, seq] so the A * B^T GEMM needs no second transpose. The pipelined GEMM has no bias epilogue, hence glm_vit_add_bias. — source: kernels/gb10/glm-5.3-flash/nvfp4/glm_vit.cu:8; kernels/gb10/glm-5.3-flash/nvfp4/glm_vit.cu:167
-- *glm_vit_qknorm_rope_deint*: One block per (token, head) with blockDim.x == head_dim and (2 * D + ceil(D / 32)) floats of shared memory; the per-head QK-RMSNorm and 2D RoPE are fused into the de-interleave. — source: kernels/gb10/glm-5.3-flash/nvfp4/glm_vit.cu:159
+- *whole file*: Attention runs as GEMMs (dense_gemm_bf16_f32out for raw scores, dense_gemm_bf16_pipelined for PV) around glm_vit_softmax_rows, which rounds P to BF16; V is written transposed [H, D, seq] so the A \* B^T GEMM needs no second transpose. The pipelined GEMM has no bias epilogue, hence glm_vit_add_bias. — source: kernels/gb10/glm-5.3-flash/nvfp4/glm_vit.cu:8; kernels/gb10/glm-5.3-flash/nvfp4/glm_vit.cu:167
+- *glm_vit_qknorm_rope_deint*: One block per (token, head) with blockDim.x == head_dim and (2 \* D + ceil(D / 32)) floats of shared memory; the per-head QK-RMSNorm and 2D RoPE are fused into the de-interleave. — source: kernels/gb10/glm-5.3-flash/nvfp4/glm_vit.cu:159
 
 <a id="to-kernels-gb10-holo-3-1-0-8b-nvfp4-fp4-mma-microtest-cu"></a>
 
@@ -1364,7 +1534,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/kimi-k3/bf16/kda_decode.cu](../../kernels/gb10/kimi-k3/bf16/kda_decode.cu)
 
-- *whole file*: Written for parity with a CPU oracle, not speed: threads walk K in the oracle's order and the L2 norm uses 1/sqrtf rather than rsqrtf to match it; one block per head with 3*D floats of shared memory. — source: kernels/gb10/kimi-k3/bf16/kda_decode.cu:51
+- *whole file*: Written for parity with a CPU oracle, not speed: threads walk K in the oracle's order and the L2 norm uses 1/sqrtf rather than rsqrtf to match it; one block per head with 3\*D floats of shared memory. — source: kernels/gb10/kimi-k3/bf16/kda_decode.cu:51
 
 <a id="to-kernels-gb10-kimi-k3-bf16-mla-decode-cu"></a>
 
@@ -1382,8 +1552,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/minimax-m2-229b/nvfp4/rms_norm.cu](../../kernels/gb10/minimax-m2-229b/nvfp4/rms_norm.cu)
 
-- *whole file*: Plain-w fork of common/rms_norm.cu, also compiled for step3p7-flash, longcat-flash-lite, nemotron-3-nano-30b-a3b and mistral-small-4 via [sources] use. Row kernels need blockDim.x a multiple of 32 and <= 1024. — source: kernels/gb10/minimax-m2-229b/nvfp4/rms_norm.cu:3
-- *gated_rms_norm*: Different semantics from common: gate first, then a per-group norm (temp = x * silu(g), normalised per group_size slice). Assumes group_size % 128 == 0 so a warp never spans two groups, at most 8 groups and 16 warps per group. The SiLU uses the fast __expf, unlike common's expf. — source: kernels/gb10/minimax-m2-229b/nvfp4/rms_norm.cu:279
+- *whole file*: Plain-w fork of common/rms_norm.cu, also compiled for step3p7-flash, longcat-flash-lite, nemotron-3-nano-30b-a3b and mistral-small-4 via [sources] use. Row kernels need blockDim.x a multiple of 32 and &lt;= 1024. — source: kernels/gb10/minimax-m2-229b/nvfp4/rms_norm.cu:3
+- *gated_rms_norm*: Different semantics from common: gate first, then a per-group norm (temp = x \* silu(g), normalised per group_size slice). Assumes group_size % 128 == 0 so a warp never spans two groups, at most 8 groups and 16 warps per group. The SiLU uses the fast __expf, unlike common's expf. — source: kernels/gb10/minimax-m2-229b/nvfp4/rms_norm.cu:279
 
 <a id="to-kernels-gb10-minimax-m2-229b-nvfp4-w4a16-gemm-v2-cu"></a>
 
@@ -1407,7 +1577,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/mistral-small-4/nvfp4/mla_fused_prefill.cu](../../kernels/gb10/mistral-small-4/nvfp4/mla_fused_prefill.cu)
 
-- *whole file*: Fork (79 of 213 lines differ) with fixed shared arrays and one thread per output: kv_lora <= 256, kv_lora + rope_dim <= 320, v_dim <= 256. The optional cache-row write covers only positions below blockDim.x (256). — source: kernels/gb10/mistral-small-4/nvfp4/mla_fused_prefill.cu:9; kernels/gb10/mistral-small-4/nvfp4/mla_fused_prefill.cu:90
+- *whole file*: Fork (79 of 213 lines differ) with fixed shared arrays and one thread per output: kv_lora &lt;= 256, kv_lora + rope_dim &lt;= 320, v_dim &lt;= 256. The optional cache-row write covers only positions below blockDim.x (256). — source: kernels/gb10/mistral-small-4/nvfp4/mla_fused_prefill.cu:9; kernels/gb10/mistral-small-4/nvfp4/mla_fused_prefill.cu:90
 
 <a id="to-kernels-gb10-mistral-small-4-nvfp4-mla-prefill-attn-cu"></a>
 
@@ -1450,8 +1620,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/rms_norm.cu](../../kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/rms_norm.cu)
 
-- *whole file*: Plain-w fork of common/rms_norm.cu (every weighted kernel scales by w, not 1 + w); sums of squares in FP32 with one partial per warp, blockDim.x <= 1024. — source: kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/rms_norm.cu:4
-- *gated_rms_norm*: Grouped gate-then-norm: hidden_size / group_size <= 8, group_size % 128 == 0, hidden_size <= 16 * blockDim.x. Each (group, warp) partial has its own slot summed in ascending warp order, so the result is deterministic regardless of warp scheduling. SiLU via __expf. — source: kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/rms_norm.cu:294
+- *whole file*: Plain-w fork of common/rms_norm.cu (every weighted kernel scales by w, not 1 + w); sums of squares in FP32 with one partial per warp, blockDim.x &lt;= 1024. — source: kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/rms_norm.cu:4
+- *gated_rms_norm*: Grouped gate-then-norm: hidden_size / group_size &lt;= 8, group_size % 128 == 0, hidden_size &lt;= 16 \* blockDim.x. Each (group, warp) partial has its own slot summed in ascending warp order, so the result is deterministic regardless of warp scheduling. SiLU via __expf. — source: kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/rms_norm.cu:294
 
 <a id="to-kernels-gb10-nemotron-labs-3-puzzle-75b-a9b-nvfp4-w4a16-gemm-cu"></a>
 
@@ -1470,7 +1640,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu)
 
-- *whole file*: Differs from common in numerics: decode and decode_f32 take FP32 q/k/v and have no state-norm clamp, chunk2/chunk3 clamp the gate, and the prefill clamps to norm 100 only at seq_len <= 1. Also compiled for qwen3.5-27b. — source: kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu:595
+- *whole file*: Differs from common in numerics: decode and decode_f32 take FP32 q/k/v and have no state-norm clamp, chunk2/chunk3 clamp the gate, and the prefill clamps to norm 100 only at seq_len &lt;= 1. Also compiled for qwen3.5-27b. — source: kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu:595
 
 <a id="to-kernels-gb10-qwen3-vl-30b-a3b-nvfp4-rms-norm-cu"></a>
 
@@ -1495,12 +1665,12 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu)
 
-- *whole file*: Shadows gb10/common/gated_delta_rule.cu by stem, so a kernel defined only in common does not exist for this target. Assumes k_dim <= 128 unchecked; the single-stream prefill clamps H to Frobenius norm 100 only when seq_len <= 1, while decode uses SSM_STATE_MAX_NORM 1000. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:12
-- *gated_delta_rule_decode_f16_strided_norm_half*: FP16 rather than BF16 h-state: g*h rounds back to h when 1-g is below half an ulp, and FP16's 10 mantissa bits put that threshold 3 bits lower. Stores saturate to +-65504 so an overflow cannot become inf and poison the next hk_dot. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:2081
+- *whole file*: Shadows gb10/common/gated_delta_rule.cu by stem, so a kernel defined only in common does not exist for this target. Assumes k_dim &lt;= 128 unchecked; the single-stream prefill clamps H to Frobenius norm 100 only when seq_len &lt;= 1, while decode uses SSM_STATE_MAX_NORM 1000. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:12
+- *gated_delta_rule_decode_f16_strided_norm_half*: FP16 rather than BF16 h-state: g\*h rounds back to h when 1-g is below half an ulp, and FP16's 10 mantissa bits put that threshold 3 bits lower. Stores saturate to +-65504 so an overflow cannot become inf and poison the next hk_dot. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:2081
 - *gated_delta_rule_decode_f16_strided_norm_half*: Under --ssm-h-dtype f16 the pool stays FP32-sized and each slot holds its FP16 state in the first half, so the slot pitch is twice the dense FP16 size: FP16 halves state traffic but not pool memory unless f16-pool is used. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:2154
 - *gated_delta_rule_decode_f32_strided_norm_half*: Keeps rows 0..63 (GDN_HALF_KD = 64) of each H column in registers so the update pass re-reads only rows 64..127; every hreg index must be compile-time or hreg falls into local memory. j ascends across both loops so sums match the non-half kernel's order. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:1645
 - *gated_delta_rule_decode_f32_strided_norm_smem*: Stages rows 64..127 in 32 KB of shared memory instead of re-reading H; bit-identical to the _half kernel (gdn_strided_norm_microtest). Opt-in METRALE_GDN_SMEM_STAGE (presence check, 0 turns it on); k_dim == v_dim == 128. — source: crates/model-layers/src/layers/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:231
-- *gated_delta_rule_prefill_split4*: Splits v_dim over four 32-thread blocks per head (4x the CTAs of the plain prefill), each thread still holding all 128 rows of its column and loading 4 of the k/q values; drops the plain prefill's seq_len <= 1 norm clamp. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:319
+- *gated_delta_rule_prefill_split4*: Splits v_dim over four 32-thread blocks per head (4x the CTAs of the plain prefill), each thread still holding all 128 rows of its column and loading 4 of the k/q values; drops the plain prefill's seq_len &lt;= 1 norm clamp. — source: kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:319
 
 <a id="to-kernels-gb10-qwen3-6-27b-nvfp4-gated-delta-rule-snap-cu"></a>
 
@@ -1513,7 +1683,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/qwen3.6-27b/nvfp4/gdn_verify_fused_conv_kn_f32.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/gdn_verify_fused_conv_kn_f32.cu)
 
-- *whole file*: FP32-output twin with no BF16 rounding, byte-identical to causal_conv1d_update_l2norm_f32 for exact verify. d_conv <= 8 and head_dim 128 / 256 threads are assumed but unchecked; falls back to per-token conv plus state copy when the conv intermediates are not contiguous. — source: kernels/gb10/qwen3.6-27b/nvfp4/gdn_verify_fused_conv_kn_f32.cu:3
+- *whole file*: FP32-output twin with no BF16 rounding, byte-identical to causal_conv1d_update_l2norm_f32 for exact verify. d_conv &lt;= 8 and head_dim 128 / 256 threads are assumed but unchecked; falls back to per-token conv plus state copy when the conv intermediates are not contiguous. — source: kernels/gb10/qwen3.6-27b/nvfp4/gdn_verify_fused_conv_kn_f32.cu:3
 
 <a id="to-kernels-gb10-qwen3-6-27b-nvfp4-moe-w4a16-grouped-gemm-cu"></a>
 
@@ -1527,8 +1697,8 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: The vendored MMQ (q4k_vendor/, mmq_x 128) runs the dense-FFN W4A4 prefill at ~86 TFLOPS: 14.2 s (31.1%) of the dense 27B 32k cold prefill (dgx2, 2026-09-27). A pipelined twin, bit-identical to mmq128 on 5 shapes, measured 2.5-2.8x standalone (local branch, not in the tree). — source: high-ISL campaign notes 2026-09-27 (RESULTS, COORD)
 - *whole file*: Default dense-FFN NVFP4 prefill (W4A4 on the vendored MMQ): weights are repacked (bit shuffle, no requant) but activations are quantized to E2M1 with UE4M3 scales searched over the estimate and +-1, +-2 codes; the MMQ drops the per-tensor scale2, so callers fold it after. Needs CC 12.x, else W4A16. — source: kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu:3
-- *whole file*: Each M tile re-reads the whole weight and a 128 tile issues MMAs for all 128 columns whatever M is, hence the 16/32/64 small tiles and the M <= mmq_x rule. The repack's 16-byte row alignment needs K % 256 == 0, unchecked. A LoRA adapter turns this arm off. — source: kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu:78
-- *metrale_nvfp4_silu_mul_quant*: SiLU*up with scale2 folds quantized straight to block_fp4_mmq for the down GEMM, so no BF16 [M, inter] intermediate is written; no swiglu clamp, like the common moe_silu_mul. — source: kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu:233
+- *whole file*: Each M tile re-reads the whole weight and a 128 tile issues MMAs for all 128 columns whatever M is, hence the 16/32/64 small tiles and the M &lt;= mmq_x rule. The repack's 16-byte row alignment needs K % 256 == 0, unchecked. A LoRA adapter turns this arm off. — source: kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu:78
+- *metrale_nvfp4_silu_mul_quant*: SiLU\*up with scale2 folds quantized straight to block_fp4_mmq for the down GEMM, so no BF16 [M, inter] intermediate is written; no swiglu clamp, like the common moe_silu_mul. — source: kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu:233
 
 <a id="to-kernels-gb10-qwen3-6-27b-nvfp4-q2-0-mmq-cu"></a>
 
@@ -1553,15 +1723,15 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu)
 
 - *whole file*: The software E4M3 encoder used on SCALE and HIP builds maps |v| >= 496 to +-448 but rounds |v| in [464, 496) to mantissa 7 at the top exponent, which is the NaN code, and the decoder maps NaN codes to 0; NVIDIA builds use cvt.rn.satfinite, which saturates. Near-max values therefore differ by build. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:15
-- *whole file*: Under __SCALE__, metrale_mma_e4m3 emulates one m16n8k32 E4M3 MMA with fragment shuffles into BF16 and two m16n8k16 BF16 MMAs, halving MMA throughput there; several double-buffered int8 variants (int8_gemm_faith* pipelined, K-tile 256) are not built under __SCALE__ at all. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:70
+- *whole file*: Under __SCALE__, metrale_mma_e4m3 emulates one m16n8k32 E4M3 MMA with fragment shuffles into BF16 and two m16n8k16 BF16 MMAs, halving MMA throughput there; several double-buffered int8 variants (int8_gemm_faith\* pipelined, K-tile 256) are not built under __SCALE__ at all. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:70
 - *fp8_gemm_t_m128*: 2.85 s of the dense 27B 32k cold prefill (dgx2, 2026-09-27). Routing the NVFP4-checkpoint GDN out_proj prefill through cast + ldmab instead is bit-identical to this kernel and took dense 32k cold 33.9 to 31.9 s (uncommitted, 2026-09-28). — source: high-ISL campaign notes 2026-09-28 (COORD)
 - *fp8_gemm_t_row_scaled_m16*: Single-warp CTA with a 16-row M tile: M must be at most 16 and the grid is (ceil(N/128), 1), so parallelism comes only from N; each step issues 16 m16n8k32 MMAs across the 128-column tile. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:7211
 - *fp8_gemm_t_row_scaled_p4*: Four-stage cp.async ring keeps up to three later K steps in flight instead of draining per step; K steps and MMA order match fp8_gemm_t_row_scaled so output is identical. Costs 20,480 + 16,384 bytes of static smem. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:6952
 - *int8_gemm_faith*: Opt-in int8 dense-FFN prefill (METRALE_INT8_PREFILL): NVFP4 weights and BF16 activations are requantized to int8 with one FP32 scale per 32 values (max|v|/127, round-to-nearest, clamp +-127), adding a requant pass and a second rounding of W; K must be a multiple of 128. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:4544
-- *int8_gemm_splitk*: Split-K over gridDim.z writes FP32 partials to Cp [ksplits, M, N] and needs a second int8_splitk_reduce pass: more parallelism for small M at the cost of ksplits x M x N FP32 of extra traffic. K must be a multiple of 32 * ksplits. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:3260
+- *int8_gemm_splitk*: Split-K over gridDim.z writes FP32 partials to Cp [ksplits, M, N] and needs a second int8_splitk_reduce pass: more parallelism for small M at the cost of ksplits x M x N FP32 of extra traffic. K must be a multiple of 32 \* ksplits. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:3260
 - *w4a16_gemm_t*: Despite the W4A16 name, NVIDIA builds dequantize W to E4M3 and convert A to E4M3 in registers (saturating, unscaled) for m16n8k32 E4M3 MMAs: activations lose precision and clip at +-448. Under __SCALE__ W goes to BF16 and A stays BF16, so outputs differ by build. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:344
 - *w4a16_gemm_t_k64_n64_p3*: 64-wide N tile doubles the grid for more CTAs on small-N shapes while each output keeps the same dequantized E4M3 bytes, K order and MMA operands as w4a16_gemm_t_k64_p3, so results are bit-identical. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:1629
-- *w4a16_gemm_t_k64_p3*: Only the weight tiles are tripled (A[i&1] is free once MMA(i) passes its barrier), which keeps static shared memory at 44,288 bytes, just under the 48 KiB static limit; a deeper pipeline or tripled A would need dynamic smem. K % 64 == 0; bit-identical to w4a16_gemm_t_k64. Opt-out: METRALE_NO_K64_PIPELINE3. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:1571
+- *w4a16_gemm_t_k64_p3*: Only the weight tiles are tripled (A[i&amp;1] is free once MMA(i) passes its barrier), which keeps static shared memory at 44,288 bytes, just under the 48 KiB static limit; a deeper pipeline or tripled A would need dynamic smem. K % 64 == 0; bit-identical to w4a16_gemm_t_k64. Opt-out: METRALE_NO_K64_PIPELINE3. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:1571
 - *w4a16_gemm_t_m128_bf16*: BF16-MMA twin of w4a16_gemm_t_m128: W is dequantized to BF16 and multiplied in m16n8k16 BF16 MMAs on every build, so neither W nor A is rounded to E4M3. Keeps activation precision where the E4M3 variants round A; not bit-identical to them. The dense FFN uses it for prefill only under METRALE_BF16_TC_PREFILL. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:2116
 - *w4a16_gemm_t_m128_bf16_v2*: Unpadded XOR-swizzled A rows plus a 2-BF16 pad on B rows (17 words) make warp dequant stores and A-fragment reads hit 32 distinct banks, cutting static smem to 30,336 bytes; MMA values and order are unchanged, so output equals w4a16_gemm_t_m128_bf16 for ldb = N. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:2320
 - *w4a16_gemm_t_p3*: Weight tiles triple-buffered (step i+2 loads stay in flight across the dequant of step i+1), A stays double-buffered. Requires K % 32 == 0; MMAs and order match w4a16_gemm_t, so it is bit-identical. tgemm_kernel prefers it unless METRALE_NO_TGEMM_PIPELINE3 is set. — source: kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:571
@@ -1584,7 +1754,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu](../../kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu)
 
 - *whole file*: chunk2 and chunk3 keep the state in registers across tokens and store only the final state: h_state_intermediate/h_state_inter0/1 are neither read nor written, so unlike common chunk2/chunk3 they give no rollback point. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:1069
-- *whole file*: Only decode_f32_strided_norm and decode_f32_conv_norm apply the SSM_STATE_MAX_NORM (1000) clamp; plain decode does not (unlike common), and the single-stream prefill clamps to 50 only when seq_len <= 1. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:24
+- *whole file*: Only decode_f32_strided_norm and decode_f32_conv_norm apply the SSM_STATE_MAX_NORM (1000) clamp; plain decode does not (unlike common), and the single-stream prefill clamps to 50 only when seq_len &lt;= 1. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:24
 - *gated_delta_rule_decode*: Loads each thread's state column into H_reg once, runs both passes from registers and stores once, instead of reading H from global memory in each pass. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:633
 
 <a id="to-kernels-gb10-qwen3-6-35b-a3b-nvfp4-gated-delta-rule-wy17-cu"></a>
@@ -1603,7 +1773,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *moe_fp8_grouped_gemm_ptrtable_t*: A arrives pre-quantized to E4M3 (lever moe_prefill_fp8_down, after bf16_to_fp8), so no in-loop conversion and a 2 KB A tile per stage instead of 5 KB padded BF16, at the cost of an extra conversion pass. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu:1505
 - *moe_w4a16_fused_gate_up_t*: Gate and up in one launch split at column N, so N must be a multiple of 128 for no tile to straddle both projections. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu:1007
 - *moe_w4a16_fused_gate_up_t_k64_fp4*: W4A4 variant (off by default, METRALE_HOLO_MOE_GATEUP_FP4): one block-scaled FP4 MMA per 64-K step instead of two E4M3 MMAs, but A is quantized per 16 values (max_abs/6 as UE4M3) and the K-major B tile must be byte-transposed to N-major in smem every step. Compiled out where ptxas rejects the instructions. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu:1738
-- *moe_w4a16_grouped_gemm_ptrtable_k32*: Opt-in (METRALE_MOE_GROUPED_K32=1). Not bit-identical to the base: it stages lut * (e4m3 * scale2) and can round differently when the E2M1 value is +-1.5, +-3 or +-6. Measured 2026-08-27 on GB10 (28K prefill): +1.0% over the base, inside run-to-run noise. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu:172
+- *moe_w4a16_grouped_gemm_ptrtable_k32*: Opt-in (METRALE_MOE_GROUPED_K32=1). Not bit-identical to the base: it stages lut \* (e4m3 \* scale2) and can round differently when the E2M1 value is +-1.5, +-3 or +-6. Measured 2026-08-27 on GB10 (28K prefill): +1.0% over the base, inside run-to-run noise. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu:172
 - *moe_w4a16_grouped_gemm_ptrtable_m256*: 256-row M tile on 512 threads reads expert weights once per 256 rows instead of 64. Opt-in (METRALE_MOE_GROUPED_M256=1): measured 2026-08-27 on GB10 at +1.4% end to end (noise), yet 31.30 ms per call against 26.17 ms for the base kernel. — source: crates/model-layers/src/layers/moe/helpers_b.rs:183
 - *moe_w4a16_grouped_gemm_ptrtable_t*: Dequantizes B to E4M3 in smem and rounds A to E4M3 in registers for m16n8k32 E4M3 MMAs (activations lose precision vs the BF16-MMA ptrtable kernel). 36-byte B rows make dequant stores conflict-free but leave 3 conflicting pairs on MMA reads (16 with 32-byte rows). Static smem 20,352 B. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu:349
 - *moe_w4a16_grouped_gemm_ptrtable_t_k64*: K step 64 with four scale groups per step: 80-byte B_fp8 rows make MMA fragment reads conflict-free (64-byte rows give 4-way conflicts) at 39,360 B static smem; A fragments a4..a7 are converted only after the first-half MMAs to keep four A registers live. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu:759
@@ -1614,7 +1784,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Default ViT SDPA is GEMM-based (raw QK^T to FP32 S[seq, seq] per head, vit_softmax_rows, PV GEMM): same math as vision_attention_rope except P is rounded to BF16 before the PV GEMM, and the FP32 score matrix is quadratic in seq. METRALE_VISION_ATTN_LEGACY restores the per-warp kernel. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/vision_encoder.cu:275
 - *vision_layer_norm*: Same code as the qwen3-vl-30b-a3b vision_layer_norm, including its second-stage reduction that is correct only for 32 full warps (blockDim 1024); only the qwen3-vl copy documents the limit. — source: kernels/gb10/qwen3-vl-30b-a3b/nvfp4/vision_encoder.cu:65; kernels/gb10/qwen3.6-35b-a3b/nvfp4/vision_encoder.cu:83
-- *vit_softmax_rows*: Three passes (max, sum of exp, normalise) with an 8-slot reduction array, so blockDim.x <= 256; rsqrt(D) is applied here because the score GEMM emits raw QK^T. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/vision_encoder.cu:338
+- *vit_softmax_rows*: Three passes (max, sum of exp, normalise) with an 8-slot reduction array, so blockDim.x &lt;= 256; rsqrt(D) is applied here because the score GEMM emits raw QK^T. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/vision_encoder.cu:338
 
 <a id="to-kernels-gb10-qwen3-6-35b-a3b-nvfp4-w4a16-gemm-cu"></a>
 
@@ -1622,10 +1792,10 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: The NVFP4 LM head tile GEMM is one of the canonical-row-tier ops (default for FP8 MoE checkpoints, --no-canonical-tiers opts out): a row's bits do not depend on how many rows share the launch. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34
 - *whole file*: qkvz through this W4A16 family is the other real gap to a W4A4 FP4 reference: -35.5 ms cold TTFT when swapped (35B NVFP4, 2026-08-21), while the dense-GEMM path already matches and attn-kv/attn-o are 1.3/1.4 ms faster here. Closing it means accepting FP4 activations. — source: measurement note 2026-08-21 (precision gap)
-- *w4a16_gemm_t*: 35B NVFP4 LM head, M <= 16: a skinny arm gives every warp rows 0..15 and a quarter of the N tiles instead of wasting padded rows, with the same MMAs in the same K order, so bits match the canonical tile (checked M=1..16). Removes canonical tiers' C1/C2 loss. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34; kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:359
-- *w4a16_gemm_t*: LM-head skinny arm: at M<=16 every warp takes rows 0..15 and a quarter of the N tiles (same MMAs per output), byte-identical to the M=17 slab layout; cold 1.45-1.51 ms vs 1.61 ms slab, still above the GEMV tier's 1.16-1.25 ms (2026-09-27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS round 4)
+- *w4a16_gemm_t*: 35B NVFP4 LM head, M &lt;= 16: a skinny arm gives every warp rows 0..15 and a quarter of the N tiles instead of wasting padded rows, with the same MMAs in the same K order, so bits match the canonical tile (checked M=1..16). Removes canonical tiers' C1/C2 loss. ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: PR #34; kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:359
+- *w4a16_gemm_t*: LM-head skinny arm: at M&lt;=16 every warp takes rows 0..15 and a quarter of the N tiles (same MMAs per output), byte-identical to the M=17 slab layout; cold 1.45-1.51 ms vs 1.61 ms slab, still above the GEMV tier's 1.16-1.25 ms (2026-09-27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS round 4)
 - *w4a16_gemm_t*: NVIDIA builds dequantize B to E4M3 and cast A to E4M3 in registers for one m16n8k32 E4M3 MMA per 8-column N tile; __SCALE__ builds use BF16 B and two m16n8k16 BF16 MMAs per K step, so the two builds are not bit-identical. Static smem 19,584 B. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:297
-- *w4a16_gemm_t*: 2026-09-27: at M <= 16 rows 16..63 of the 64-row tile are padding, so every warp takes rows 0..15 and a quarter of the N tiles instead of idling; same MMAs in the same K order, bits unchanged. That path stages tiles LDG->STS through two register sets instead of cp.async. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:359
+- *w4a16_gemm_t*: 2026-09-27: at M &lt;= 16 rows 16..63 of the 64-row tile are padding, so every warp takes rows 0..15 and a quarter of the N tiles instead of idling; same MMAs in the same K order, bits unchanged. That path stages tiles LDG->STS through two register sets instead of cp.async. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:359
 - *w4a16_gemm_t_k64*: K step 64 (two m16n8k32 MMAs per N tile) halves outer iterations (K = 2048: 32 instead of 64) but doubles static smem to 39,104 B; B strided by N (no ldb), K % 64 == 0. __SCALE__ keeps the E4M3 path through software encode and emulated MMA. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:916
 - *w4a16_gemm_t_m128*: Two 64-row M chunks per CTA share one dequantized B tile, halving dequant work per row at the cost of 29,824 B smem and two accumulator sets; __launch_bounds__(128, 3). No ldb, so the padded lm_head stride cannot use it. — source: kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:1173
 
@@ -1633,21 +1803,21 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/qwen3.8-flash-next/nvfp4/gated_norm_sigmoid.cu](../../kernels/gb10/qwen3.8-flash-next/nvfp4/gated_norm_sigmoid.cu)
 
-- *whole file*: Sigmoid-gated twins of common's SiLU-gated norms (plain w, multiple-of-4 rows, x cached in 16 registers per thread so hidden_size <= 16 * blockDim.x). No strided twin exists, so the batched decode path runs the norm once per sequence. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/gated_norm_sigmoid.cu:13
+- *whole file*: Sigmoid-gated twins of common's SiLU-gated norms (plain w, multiple-of-4 rows, x cached in 16 registers per thread so hidden_size &lt;= 16 \* blockDim.x). No strided twin exists, so the batched decode path runs the norm once per sequence. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/gated_norm_sigmoid.cu:13
 
 <a id="to-kernels-gb10-qwen3-8-flash-next-nvfp4-hyper-connection-cu"></a>
 
 ### [kernels/gb10/qwen3.8-flash-next/nvfp4/hyper_connection.cu](../../kernels/gb10/qwen3.8-flash-next/nvfp4/hyper_connection.cu)
 
-- *whole file*: Three collapse paths: the fused FP32 kernel (one 1024-thread block per token, a single block at T = 1), cuBLASLt GEMMs at T <= 64, dense_gemm_bf16_pipelined above. The GEMM paths round normed to BF16; parity tests allow 12% of reference RMS for the cuBLASLt path vs 5% for fused/split. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/hyper_connection.cu:476; crates/model-layers/src/layers/ops/hyper_connection_lowrank_tests.rs:141
-- *whole file*: hc <= 8 and rank <= 512 (QHC_MAX_MULT, QHC_MAX_RANK); the fused kernel stages normed plus the low-rank vector in (hc*H + rank) * 4 bytes of dynamic shared memory. The three-launch split path is opt-in (METRALE_HC_DECODE_SPLIT=1, scratch for 64 rows). Sigmoid/SiLU use __expf. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/hyper_connection.cu:34; crates/model-layers/src/layers/ops/hyper_connection_lowrank.rs:12
+- *whole file*: Three collapse paths: the fused FP32 kernel (one 1024-thread block per token, a single block at T = 1), cuBLASLt GEMMs at T &lt;= 64, dense_gemm_bf16_pipelined above. The GEMM paths round normed to BF16; parity tests allow 12% of reference RMS for the cuBLASLt path vs 5% for fused/split. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/hyper_connection.cu:476; crates/model-layers/src/layers/ops/hyper_connection_lowrank_tests.rs:141
+- *whole file*: hc &lt;= 8 and rank &lt;= 512 (QHC_MAX_MULT, QHC_MAX_RANK); the fused kernel stages normed plus the low-rank vector in (hc\*H + rank) \* 4 bytes of dynamic shared memory. The three-launch split path is opt-in (METRALE_HC_DECODE_SPLIT=1, scratch for 64 rows). Sigmoid/SiLU use __expf. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/hyper_connection.cu:34; crates/model-layers/src/layers/ops/hyper_connection_lowrank.rs:12
 
 <a id="to-kernels-gb10-qwen3-8-flash-next-nvfp4-ple-cu"></a>
 
 ### [kernels/gb10/qwen3.8-flash-next/nvfp4/ple.cu](../../kernels/gb10/qwen3.8-flash-next/nvfp4/ple.cu)
 
-- *whole file*: Every intermediate stays FP32 because PLE output is added to the FP32 highway; only the key/value projection outputs and weights are BF16. ple_gate needs blockDim == 256 and hc <= 8. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/ple.cu:35
-- *ple_conv*: Own dilated depthwise conv because common causal_conv1d takes no dilation. One thread per channel loops over the tokens serially (coalesced over channels), so prefill cost is serial in T; (K - 1) * dilation <= 16 for the register carry. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/ple.cu:23; kernels/gb10/qwen3.8-flash-next/nvfp4/ple.cu:181
+- *whole file*: Every intermediate stays FP32 because PLE output is added to the FP32 highway; only the key/value projection outputs and weights are BF16. ple_gate needs blockDim == 256 and hc &lt;= 8. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/ple.cu:35
+- *ple_conv*: Own dilated depthwise conv because common causal_conv1d takes no dilation. One thread per channel loops over the tokens serially (coalesced over channels), so prefill cost is serial in T; (K - 1) \* dilation &lt;= 16 for the register carry. — source: kernels/gb10/qwen3.8-flash-next/nvfp4/ple.cu:23; kernels/gb10/qwen3.8-flash-next/nvfp4/ple.cu:181
 
 <a id="to-kernels-gb10-qwen3-8-flash-next-nvfp4-qsa-indexer-cu"></a>
 
@@ -1668,12 +1838,14 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/hopper/common/dense_gemm_m16_bf16.cu](../../kernels/hopper/common/dense_gemm_m16_bf16.cu)
 
 - *whole file*: The MMA reassociates the K reduction, so LM-head logits at 5..16 rows are not bit-identical to the GEMV tiers and a near-tie argmax can change; default on for hopper only (METRALE_LM_HEAD_M16_TC=0 keeps the GEMV tiers). — source: kernels/hopper/HARDWARE.toml [defaults] lm_head_m16_tc
+- *whole file*: Tensor-core MMA reassociates K, so this M&lt;=16 decode GEMM isn't bit-identical to dense_gemv_bf16/_batchm; gated on within_m16_tc_budget (&lt;=2 ordinal BF16 ULP or an absolute floor). N_TILE 64 halves the grid at double the staged weight columns vs. 32; both fit the 48 KB shared-memory limit (27,648/46,080 B). — source: kernels/hopper/common/dense_gemm_m16_bf16.cu:19
 
 <a id="to-kernels-hopper-common-fp8-act-quant-hopper-cu"></a>
 
 ### [kernels/hopper/common/fp8_act_quant_hopper.cu](../../kernels/hopper/common/fp8_act_quant_hopper.cu)
 
 - *whole file*: 8 groups per CTA, 16 threads per group, 40 regs: bit-identical, 3.30-3.59x at M=1168/4576 (59.3-68.4% of HBM) but 0.76-0.95x at decode widths M=16..25 for K=5120/6144 (8x fewer CTAs). It runs only when its grid has >= 2 x sm_count = 264 CTAs (H100 microtest, round 16). — source: docs/perf/hopper/FP8-ACT-QUANT-ATTRIBUTION.md
+- *whole file*: Trades the shared kernel's 128-thread-CTA-per-group design (256B/CTA, A read twice, smem+syncthreads) for 16 threads/group, 8 groups/CTA loading 2KB via uint4, reducing group-max through a register-only shfl_xor butterfly reading A once; checked byte-identical by its microtest. FP8-ACT-QUANT-ATTRIBUTION.md. — source: kernels/hopper/common/fp8_act_quant_hopper.cu:22
 
 <a id="to-kernels-hopper-common-gated-delta-rule-chunk-tc-cu"></a>
 
@@ -1705,16 +1877,16 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/hopper/common/moe_bucket_builder.cu](../../kernels/hopper/common/moe_bucket_builder.cu)
 
-- *whole file*: Introduced in #25: builds the M16 (<= 16 rows) and M128 expert lists for short prefill. Sparse M16 buckets fold back into M128 because a one-warp bucket pays its long-K latency without enough CTAs to hide it. ([#25](https://github.com/Metrale/metrale-inference/pull/25)) — source: PR #25; kernels/hopper/common/moe_bucket_builder.cu:17
-- *whole file*: Splits experts into exact ordered M128 / M16 lists on device (E <= 256), folding every small expert back into M128 (preserving list order) when the M16 bucket is too sparse: a sparse one-warp bucket pays its long-K latency without enough CTAs to hide it. — source: kernels/hopper/common/moe_bucket_builder.cu:16
+- *whole file*: Introduced in #25: builds the M16 (&lt;= 16 rows) and M128 expert lists for short prefill. Sparse M16 buckets fold back into M128 because a one-warp bucket pays its long-K latency without enough CTAs to hide it. ([#25](https://github.com/Metrale/metrale-inference/pull/25)) — source: PR #25; kernels/hopper/common/moe_bucket_builder.cu:17
+- *whole file*: Splits experts into exact ordered M128 / M16 lists on device (E &lt;= 256), folding every small expert back into M128 (preserving list order) when the M16 bucket is too sparse: a sparse one-warp bucket pays its long-K latency without enough CTAs to hide it. — source: kernels/hopper/common/moe_bucket_builder.cu:16
 
 <a id="to-kernels-hopper-common-moe-w8a8-m16-cu"></a>
 
 ### [kernels/hopper/common/moe_w8a8_m16.cu](../../kernels/hopper/common/moe_w8a8_m16.cu)
 
-- *whole file*: Introduced in #25: M16 tile of the M128 W8A8 expert kernel for 65..128-token prefill of 256-expert top-8 layers (experts with <= 16 rows). Same BF16 MMA, K order and scale folding as M128; the non-bit-identical native-input M16/M64/M128 tiles were deliberately left out. ([#25](https://github.com/Metrale/metrale-inference/pull/25)) — source: PR #25
+- *whole file*: Introduced in #25: M16 tile of the M128 W8A8 expert kernel for 65..128-token prefill of 256-expert top-8 layers (experts with &lt;= 16 rows). Same BF16 MMA, K order and scale folding as M128; the non-bit-identical native-input M16/M64/M128 tiles were deliberately left out. ([#25](https://github.com/Metrale/metrale-inference/pull/25)) — source: PR #25
 - *whole file*: The K=2048 gate/up M16 and M128 buckets run on two streams. H100 C1 TTFT p50 fell from 49.58-50.04 ms to about 41.8-42.0 ms, but those builds also held native-input tiles not in this code, so the numbers must be re-measured before being quoted for it. ([#25](https://github.com/Metrale/metrale-inference/pull/25)) — source: PR #25
-- *whole file*: Small-expert (<= 16 rows) geometry of the PM4 W8A8 body (M tile 16, 32 threads) with identical MMA order and scale folds; sparse M16 buckets fall back to M128 because a lone warp cannot hide long-K latency. — source: kernels/hopper/common/moe_w8a8_m16.cu:3
+- *whole file*: Small-expert (&lt;= 16 rows) geometry of the PM4 W8A8 body (M tile 16, 32 threads) with identical MMA order and scale folds; sparse M16 buckets fall back to M128 because a lone warp cannot hide long-K latency. — source: kernels/hopper/common/moe_w8a8_m16.cu:3
 
 <a id="to-kernels-hopper-common-paged-decode-bf16-splitk-hopper-cu"></a>
 
@@ -1728,15 +1900,15 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/hopper/common/paged_decode_fp8_splitk_hopper.cu](../../kernels/hopper/common/paged_decode_fp8_splitk_hopper.cu)
 
 - *whole file*: C=1 H100: 11 splits (grid 24x11), 32.70 us/launch = 303.7 GB/s vs 231.51 us non-split (7.08x); 4096x512 C=1 +21.4% tok/s. At n=16 the non-split kernel is already 15-31% of HBM: splits buy 0-7% and lose at L=1335 (0.90x). Split count is fixed by (sm_count, heads) for determinism (H100, round 15). — source: docs/perf/hopper/ATTN-DECODE-SPLITK-ATTRIBUTION.md
-- *whole file*: Split count is clamp(ceil(2 * sm_count / num_q_heads), 1, 16) (11 on H100 at 24 heads) and a split owns at least 256 positions, so short sequences leave high splits empty. Measured: 32.70 us/launch = 303.7 GB/s vs 231.51 us for the non-split kernel (7.08x); C=1 4096x512 tok/s +21.4%. — source: docs/perf/hopper/ATTN-DECODE-SPLITK-ATTRIBUTION.md:36; docs/perf/hopper/ATTN-DECODE-SPLITK-ATTRIBUTION.md:117
+- *whole file*: Split count is clamp(ceil(2 \* sm_count / num_q_heads), 1, 16) (11 on H100 at 24 heads) and a split owns at least 256 positions, so short sequences leave high splits empty. Measured: 32.70 us/launch = 303.7 GB/s vs 231.51 us for the non-split kernel (7.08x); C=1 4096x512 tok/s +21.4%. — source: docs/perf/hopper/ATTN-DECODE-SPLITK-ATTRIBUTION.md:36; docs/perf/hopper/ATTN-DECODE-SPLITK-ATTRIBUTION.md:117
 - *whole file*: Co-batch invariance forecloses a C=16 win: at n=16 splits buy 0-7% and at L=1335 splitting was a loss (0.90x); C=16 short-shape throughput measured -1.6%. The policy cannot back off because it must not read the co-batched count. Cross-split outputs differ (worst rel_rms 9.417e-5). — source: docs/perf/hopper/ATTN-DECODE-SPLITK-ATTRIBUTION.md:127
 
 <a id="to-kernels-hopper-common-silu-mul-strided-cu"></a>
 
 ### [kernels/hopper/common/silu_mul_strided.cu](../../kernels/hopper/common/silu_mul_strided.cu)
 
-- *whole file*: Exists only to consume fused [gate | up] rows at stride 2*inter for the one-GEMM gate+up decode (5..16 rows, byte-equal to two GEMMs); since only the hopper tree holds it, ffn_gateup_fused is inert on gb10/b200. Predicted -1476 us of a 19.887 ms n=16 H100 step, not measured. — source: docs/perf/hopper/FFN-GATEUP-FUSION-ATTRIBUTION.md; kernels/gb10/HARDWARE.toml
-- *whole file*: Exists only on hopper, where ffn_gateup_fused runs one FP8 GEMM over the fused gate+up weight (N = 2 * intermediate) for 5..=16 decode rows; this consumer takes row strides because the fused output is [m, 2 * inter]. gb10, b200 and b300 declare the fusion false. — source: kernels/hopper/common/silu_mul_strided.cu:14; kernels/hopper/HARDWARE.toml:316
+- *whole file*: Exists only to consume fused [gate | up] rows at stride 2\*inter for the one-GEMM gate+up decode (5..16 rows, byte-equal to two GEMMs); since only the hopper tree holds it, ffn_gateup_fused is inert on gb10/b200. Predicted -1476 us of a 19.887 ms n=16 H100 step, not measured. — source: docs/perf/hopper/FFN-GATEUP-FUSION-ATTRIBUTION.md; kernels/gb10/HARDWARE.toml
+- *whole file*: Exists only on hopper, where ffn_gateup_fused runs one FP8 GEMM over the fused gate+up weight (N = 2 \* intermediate) for 5..=16 decode rows; this consumer takes row strides because the fused output is [m, 2 \* inter]. gb10, b200 and b300 declare the fusion false. — source: kernels/hopper/common/silu_mul_strided.cu:14; kernels/hopper/HARDWARE.toml:316
 
 <a id="to-kernels-hopper-common-ssm-ba-gates-hopper-cu"></a>
 
@@ -1745,6 +1917,36 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *whole file*: A register tile of 8 outputs cuts row reads 96 to 12 per token: 64 regs (4 CTAs/SM vs the parent's 8), 4.19 inst/MAC, bit-identical, 371.56 vs 545.20 us at M=4576 but 3x slower at M=17 (6.17 vs 20.04 us), hence a 264-token floor. BAH_GROUPS=12 spills (H100, round 15). — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
 - *whole file*: BAH_GROUPS = 8 output groups per row read: 12 activation-row reads per token instead of 96, 4.19 vs 5.47 inst/MAC, 64 registers and no spill; occupancy halves vs the parent. 4 groups: 47 regs/4.69; 12 spills; 16: 80 regs, 3 CTAs/SM. Parent's reduction order kept, so bit-identical. — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
 - *whole file*: Measured on H100: 371.56 us vs the parent's 545.20 us at M=4576 (0.67x), TTFT -8.5 ms at 4096x512. Below the token guard (2 x SM count tokens, 264 on H100) it loses 3x (M=17: 6.17 -> 20.04 us), so decode stays on the parent. — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
+
+<a id="to-kernels-hopper-common-w8a16-gemm-m16-cu"></a>
+
+### [kernels/hopper/common/w8a16_gemm_m16.cu](../../kernels/hopper/common/w8a16_gemm_m16.cu)
+
+- *whole file*: Dequant uses cvt.rn.f16x2.e4m3x2 (sm_89+) instead of the E4M3_LUT table; every finite E4M3 byte round-trips identically through FP16->FP32->BF16, but the two NaN codes (0x7F, 0xFF) differ: the LUT maps them to +0/-0 while cvt produces NaN. — source: kernels/hopper/common/w8a16_gemm_m16.cu:38
+- *whole file*: Two-level FP32 accumulation (unscaled MMA products summed into inner, scale folded into outer once per 128-K block) reassociates the reduction, so results are not bit-identical to w8a16_gemv/_batch{4,16}'s strict K-order accumulator; held to the same ULP/error contract as dense_gemm_m16_bf16. — source: kernels/hopper/common/w8a16_gemm_m16.cu:22
+- *whole file*: N_TILE (32 default, 64 via METRALE_FFN_M16_TC_NTILE=64) must divide the 128-wide FP8 scale block so one scale serves the CTA; ffn_m16_tc gates dense-FFN decode use (false by default), attn_m16_tc gates QKV/o_proj use (true), each overridable via METRALE_M16_TC. — source: kernels/hopper/common/w8a16_gemm_m16.cu:29
+
+<a id="to-kernels-hopper-common-w8a16-gemv-cu"></a>
+
+### [kernels/hopper/common/w8a16_gemv.cu](../../kernels/hopper/common/w8a16_gemv.cu)
+
+- *whole file*: __launch_bounds__(256,4) caps ptxas at 64 registers/thread for 4 resident blocks/SM. Measured 2026-09-25 (nvcc 13.0.88, sm_90a, --fmad=false): 64 registers/0 spill at 4 blocks/SM; the same code at 5/6/8 blocks/SM needs 48/40/32 registers, 0 spill each - occupancy trades cleanly against registers with no spill. — source: kernels/hopper/common/w8a16_gemv.cu:31
+- *whole file*: Its accumulation order matches gb10/common/w8a16_gemv.cu (see w8a16_gemv_hopper.cuh) except for cvt.rn.f16x2.e4m3x2 dequant, whose NaN codes 0x7F/0xFF decode to NaN versus +-0 in the gb10 LUT; built with --fmad=false so acc += a\*w never fuses. — source: kernels/hopper/common/w8a16_gemv_hopper.cuh:15
+- *whole file*: The gb10 w8a16_gemv this replaces on hopper measured 2026-09-11 (nsys, 1x H100 SXM5, Qwen/Qwen3.8-27B-FP8, C=1 decode) at 7.39 ms of an 18.5 ms step, 1.84 TB/s against the 3.35 TB/s hopper peak -- the bandwidth gap this fork exists to close. — source: kernels/hopper/common/w8a16_gemv_hopper.cuh:33
+
+<a id="to-kernels-hopper-common-w8a16-gemv-fused-cu"></a>
+
+### [kernels/hopper/common/w8a16_gemv_fused.cu](../../kernels/hopper/common/w8a16_gemv_fused.cu)
+
+- *w8a16_gemv_silu_input*: Deliberately reproduces the gb10 kernel's silu(gate)\*up formula exactly (g/(1+__expf(-g))\*u on FP32 widenings, same approximate __expf), keeping the hopper fork numerically aligned with gb10/common/w8a16_gemv_fused.cu's silu_input even though everything else in the file was rewritten for the target. — source: kernels/hopper/common/w8a16_gemv_fused.cu:39
+- *w8a16_gemv_silu_input*: Keeps only 2 chunks in flight rather than the full HOPPER_GEMV_UNROLL, since SiLU decode needs more live registers under the 64-register __launch_bounds__(BLOCK_SIZE,4) cap. Measured 2026-09-25, nvcc 13.0.88, sm_90a: unroll 2 gives 63 registers/0 spill; full unroll costs 64 registers plus 60 B of spill. — source: kernels/hopper/common/w8a16_gemv_fused.cu:111
+
+<a id="to-kernels-hopper-common-w8a16-gemv-ncol-cu"></a>
+
+### [kernels/hopper/common/w8a16_gemv_ncol.cu](../../kernels/hopper/common/w8a16_gemv_ncol.cu)
+
+- *whole file*: Each thread owns N_COLS (2 or 4) adjacent output columns so one activation load/convert serves them all; native_fp8_attn_decode_batch_microtest requires every ncol route to equal the scalar w8a16_gemv loop bit for bit -- bit-exact, not an approximation. Refuses M outside 1..=16 and K not a multiple of 16. — source: kernels/hopper/common/w8a16_gemv_ncol.cu:9
+- *whole file*: attn_ncol_gemv selects the 2-column (METRALE_ATTN_NCOL_WIDTH unset) or 4-column kernel (=4); METRALE_NO_ATTN_DECODE_BATCH forces it off entirely, and it defaults to false, whichever width is set. — source: kernels/hopper/HARDWARE.toml:attn_ncol_gemv
 
 <a id="to-kernels-metal-common-add-rms-norm-metal"></a>
 
@@ -1768,43 +1970,43 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/metal/common/attention_decode_bf16k_turbov.metal](../../kernels/metal/common/attention_decode_bf16k_turbov.metal)
 
-- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) <= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_bf16k_turbov.metal:21
+- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) &lt;= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_bf16k_turbov.metal:21
 
 <a id="to-kernels-metal-common-attention-decode-turbo2-metal"></a>
 
 ### [kernels/metal/common/attention_decode_turbo2.metal](../../kernels/metal/common/attention_decode_turbo2.metal)
 
-- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) <= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_turbo2.metal:24
+- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) &lt;= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_turbo2.metal:24
 
 <a id="to-kernels-metal-common-attention-decode-turbo3-metal"></a>
 
 ### [kernels/metal/common/attention_decode_turbo3.metal](../../kernels/metal/common/attention_decode_turbo3.metal)
 
-- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) <= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_turbo3.metal:22
+- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) &lt;= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_turbo3.metal:22
 
 <a id="to-kernels-metal-common-attention-decode-turbo4-metal"></a>
 
 ### [kernels/metal/common/attention_decode_turbo4.metal](../../kernels/metal/common/attention_decode_turbo4.metal)
 
-- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) <= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_turbo4.metal:23
+- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) &lt;= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_turbo4.metal:23
 
 <a id="to-kernels-metal-common-attention-decode-turbo8-metal"></a>
 
 ### [kernels/metal/common/attention_decode_turbo8.metal](../../kernels/metal/common/attention_decode_turbo8.metal)
 
-- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) <= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_turbo8.metal:24
+- *whole file*: Scores are held in threadgroup memory, so only cache positions below min(seq_len, 4096) are attended, and the max and exp-sum run serially on thread 0. Positions with exp(score - max) &lt;= sparse_v_threshold are left out of the V sum; nothing is un-rotated, so out stays in V's stored basis. — source: kernels/metal/common/attention_decode_turbo8.metal:24
 
 <a id="to-kernels-metal-common-attention-full-metal"></a>
 
 ### [kernels/metal/common/attention_full.metal](../../kernels/metal/common/attention_full.metal)
 
-- *whole file*: Assumes seq_len <= 4096 (MAX_SEQ_FULL): the score loop stops at the cap but the softmax and V loops index the threadgroup score array up to seq_len, so a longer sequence reads past it. — source: kernels/metal/common/attention_full.metal:13
+- *whole file*: Assumes seq_len &lt;= 4096 (MAX_SEQ_FULL): the score loop stops at the cap but the softmax and V loops index the threadgroup score array up to seq_len, so a longer sequence reads past it. — source: kernels/metal/common/attention_full.metal:13
 
 <a id="to-kernels-metal-common-attention-prefill-metal"></a>
 
 ### [kernels/metal/common/attention_prefill.metal](../../kernels/metal/common/attention_prefill.metal)
 
-- *whole file*: One threadgroup per (token, head) materialising full score rows; assumes seq_len <= 4096 (MAX_SEQ_PREFILL): the score loop stops at the cap but the softmax and V loops index scores up to seq_len. — source: kernels/metal/common/attention_prefill.metal:18
+- *whole file*: One threadgroup per (token, head) materialising full score rows; assumes seq_len &lt;= 4096 (MAX_SEQ_PREFILL): the score loop stops at the cap but the softmax and V loops index scores up to seq_len. — source: kernels/metal/common/attention_prefill.metal:18
 
 <a id="to-kernels-metal-common-causal-conv1d-decode-metal"></a>
 
@@ -1816,13 +2018,25 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/metal/common/causal_conv1d_update_l2norm.metal](../../kernels/metal/common/causal_conv1d_update_l2norm.metal)
 
-- *whole file*: FP32 conv_state, no bias. Requires tg_size a multiple of head_dim, head_dim a multiple of 32, tg_size <= min(4*head_dim, 512), and qk_channels a multiple of tg_size so no head straddles a threadgroup. — source: kernels/metal/common/causal_conv1d_update_l2norm.metal:21
+- *whole file*: FP32 conv_state, no bias. Requires tg_size a multiple of head_dim, head_dim a multiple of 32, tg_size &lt;= min(4\*head_dim, 512), and qk_channels a multiple of tg_size so no head straddles a threadgroup. — source: kernels/metal/common/causal_conv1d_update_l2norm.metal:21
 
 <a id="to-kernels-metal-common-conv3d-patch-embed-metal"></a>
 
 ### [kernels/metal/common/conv3d_patch_embed.metal](../../kernels/metal/common/conv3d_patch_embed.metal)
 
-- *whole file*: Direct convolution, one thread per output cell computing the full kT * kH * kW * in_channels dot product with no tiling or shared-memory staging; stride equals the kernel size. — source: kernels/metal/common/conv3d_patch_embed.metal:3
+- *whole file*: Direct convolution, one thread per output cell computing the full kT \* kH \* kW \* in_channels dot product with no tiling or shared-memory staging; stride equals the kernel size. — source: kernels/metal/common/conv3d_patch_embed.metal:3
+
+<a id="to-kernels-metal-common-dense-gemm-bf16-metal"></a>
+
+### [kernels/metal/common/dense_gemm_bf16.metal](../../kernels/metal/common/dense_gemm_bf16.metal)
+
+- *whole file*: Naive one-thread-per-(m,n) BF16 GEMM with FP32 accumulation and no K-tiling or threadgroup memory reuse, so every output thread re-reads its own K-length row of x and w from device memory independently. — source: kernels/metal/common/dense_gemm_bf16.metal:3
+
+<a id="to-kernels-metal-common-dense-gemv-bf16-metal"></a>
+
+### [kernels/metal/common/dense_gemv_bf16.metal](../../kernels/metal/common/dense_gemv_bf16.metal)
+
+- *whole file*: One threadgroup per output row with a two-level simd_sum reduction (per-simdgroup, then simdgroup 0 over the partials); the partial buffer is fixed at MAX_SIMDGROUPS=32, capping the threadgroup at 32 simdgroups (1024 threads). Carries no bias term by design — a caller with one must add it separately. — source: kernels/metal/common/dense_gemv_bf16.metal:9
 
 <a id="to-kernels-metal-common-embed-lookup-metal"></a>
 
@@ -1834,7 +2048,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/metal/common/gated_delta_rule_decode.metal](../../kernels/metal/common/gated_delta_rule_decode.metal)
 
-- *whole file*: Same update, gate clamp and state-norm clamp as the gb10 decode (output taken before the clamp); requires threadgroup size == v_dim <= 128 and k_dim <= 128 with k_dim a multiple of 4. — source: kernels/metal/common/gated_delta_rule_decode.metal:12
+- *whole file*: Same update, gate clamp and state-norm clamp as the gb10 decode (output taken before the clamp); requires threadgroup size == v_dim &lt;= 128 and k_dim &lt;= 128 with k_dim a multiple of 4. — source: kernels/metal/common/gated_delta_rule_decode.metal:12
 
 <a id="to-kernels-metal-common-kv-cache-append-bf16k-turbov-metal"></a>
 
@@ -1872,18 +2086,49 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Variance is the biased variance computed around the mean in a second pass (two reads of the row) rather than a one-pass sum of squares; all reductions FP32, at most 32 simdgroups. — source: kernels/metal/common/layer_norm.metal:7
 
+<a id="to-kernels-metal-common-lora-bgmv-metal"></a>
+
+### [kernels/metal/common/lora_bgmv.metal](../../kernels/metal/common/lora_bgmv.metal)
+
+- *whole file*: Per-request LoRA routing (bgmv) has no Metal implementation: both entry points are empty `_stub` kernels, so a lookup of the CUDA names (lora_bgmv_shrink, lora_bgmv_expand_fold from kernels/gb10/common/lora_bgmv.cu) does not find them on this target. — source: kernels/metal/common/lora_bgmv.metal:3
+
+<a id="to-kernels-metal-common-mlx-int8-gemm-metal"></a>
+
+### [kernels/metal/common/mlx_int8_gemm.metal](../../kernels/metal/common/mlx_int8_gemm.metal)
+
+- *whole file*: Dequantizes MLX 8-bit weights inline per (m,n,k) inside the GEMM's K loop instead of materializing a dequantized BF16 copy via mlx_int8_dequant.metal first, trading M-fold repeated per-element scale/bias application for skipping a full weight-sized dequant write and read. — source: kernels/metal/common/mlx_int8_gemm.metal:3
+
+<a id="to-kernels-metal-common-mlx-int8-gemv-metal"></a>
+
+### [kernels/metal/common/mlx_int8_gemv.metal](../../kernels/metal/common/mlx_int8_gemv.metal)
+
+- *whole file*: Assumes K % 4 == 0 and group_size % 4 == 0 so the 4 packed bytes of one uint32 word always share a single scale/bias pair, and requires x 8-byte aligned for the bfloat4 vector reads; none of this is checked at the call site. — source: kernels/metal/common/mlx_int8_gemv.metal:20
+
+<a id="to-kernels-metal-common-mlx-int8-gemv-gate-up-metal"></a>
+
+### [kernels/metal/common/mlx_int8_gemv_gate_up.metal](../../kernels/metal/common/mlx_int8_gemv_gate_up.metal)
+
+- *whole file*: Fuses the gate and up GEMVs into one launch so the activation x is read from device memory once and reused for both projections instead of twice; requires gate and up to share the same (N, K, group_size) plus the same K%4==0/group_size%4==0/8-byte-alignment restrictions as mlx_int8_gemv.metal. — source: kernels/metal/common/mlx_int8_gemv_gate_up.metal:26
+
+<a id="to-kernels-metal-common-mlx-int8-gemv-silu-gate-metal"></a>
+
+### [kernels/metal/common/mlx_int8_gemv_silu_gate.metal](../../kernels/metal/common/mlx_int8_gemv_silu_gate.metal)
+
+- *whole file*: Computes silu(gate) \* up in FP32 per element inline, with no intermediate activation buffer written to device memory, trading an extra buffer round-trip for doing the activation math per-element inside the GEMV; same K%4==0/group_size%4==0/8-byte-alignment restrictions as mlx_int8_gemv.metal apply to gate and up. — source: kernels/metal/common/mlx_int8_gemv_silu_gate.metal:19
+- *mlx_int8_gemv_silu_gate_resid*: Adds the residual in FP32 before the single BF16 rounding at the end, rather than rounding the GEMV result and the residual separately and then adding in BF16. — source: kernels/metal/common/mlx_int8_gemv_silu_gate.metal:95
+
 <a id="to-kernels-metal-common-nllb-encoder-metal"></a>
 
 ### [kernels/metal/common/nllb_encoder.metal](../../kernels/metal/common/nllb_encoder.metal)
 
-- *whole file*: Attention kernels use a static 256-float threadgroup scratch holding scores[tk] then red[D], so tk + D <= 256 (the host's dynamic shared-memory size is not used); nllb_layernorm strides by a hard-coded 256 threads. — source: kernels/metal/common/nllb_encoder.metal:160
+- *whole file*: Attention kernels use a static 256-float threadgroup scratch holding scores[tk] then red[D], so tk + D &lt;= 256 (the host's dynamic shared-memory size is not used); nllb_layernorm strides by a hard-coded 256 threads. — source: kernels/metal/common/nllb_encoder.metal:160
 - *nllb_topk_lse_bf16*: Top-K is fixed at K = 10 with 2560-entry threadgroup arrays (256 threads x 10), so at most 256 threads; the file has no nllb_beam_topk, the kernel the CUDA runtime loads for the same step. — source: kernels/metal/common/nllb_encoder.metal:892
 
 <a id="to-kernels-metal-common-rms-norm-metal"></a>
 
 ### [kernels/metal/common/rms_norm.metal](../../kernels/metal/common/rms_norm.metal)
 
-- *whole file*: Scales by plain weight (x / rms * w), matching the rms_norm_vanilla convention rather than gb10 common rms_norm's (1 + w). FP32 accumulation; at most 32 simdgroups per threadgroup. — source: kernels/metal/common/rms_norm.metal:3
+- *whole file*: Scales by plain weight (x / rms \* w), matching the rms_norm_vanilla convention rather than gb10 common rms_norm's (1 + w). FP32 accumulation; at most 32 simdgroups per threadgroup. — source: kernels/metal/common/rms_norm.metal:3
 
 <a id="to-kernels-metal-common-selective-scan-decode-metal"></a>
 
@@ -1926,3 +2171,67 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/strix-hip/common/attn_prefill_v47.cu](../../kernels/strix-hip/common/attn_prefill_v47.cu)
 
 - *whole file*: gfx1151 fork: softmax staged through shared memory and exp computed by sw_exp_v47 (2^t with a cubic polynomial for the fractional part) instead of a hardware exp; 32-row q blocks in reverse order. No crate looks this kernel up. — source: kernels/strix-hip/common/attn_prefill_v47.cu:5
+
+<a id="to-kernels-strix-hip-common-dense-gemm-bf16-cu"></a>
+
+### [kernels/strix-hip/common/dense_gemm_bf16.cu](../../kernels/strix-hip/common/dense_gemm_bf16.cu)
+
+- *whole file*: Ships both a naive 16x16 shared-memory-tile FP32-accumulate GEMM (dense_gemm_bf16, dense_gemm_bf16_f32out, dense_gemm_f32in_f32out, one thread per output) and dense_gemm_bf16_pipelined on AMD WMMA; the fork diverges from its gb10/common origin on 452 of 629 lines (71%), a heavier rewrite than most gb10-origin forks. — source: kernels/strix-hip/common/dense_gemm_bf16.cu:2
+- *dense_gemm_bf16_pipelined*: Keeps the origin gb10 kernel's name and signature but not its body: gb10's inline PTX (cp.async, mma.sync) does not compile under HIP, so this fork recomputes the same GEMM with __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32 instead, at 17,536 bytes LDS per block (two double-buffered smem_A/smem_B tiles). — source: kernels/strix-hip/common/dense_gemm_bf16.cu:168
+
+<a id="to-kernels-strix-hip-common-dense-gemm-tc-cu"></a>
+
+### [kernels/strix-hip/common/dense_gemm_tc.cu](../../kernels/strix-hip/common/dense_gemm_tc.cu)
+
+- *whole file*: AMD WMMA 16x16x16 (wave32) tiling: one 128-thread (4-wave) block covers a 16x64 C tile, each wave one 16x16 WMMA tile, K consumed 16 at a time through shared memory; the wide 64-column N tile against a fixed 16-row M tile trades M-direction parallelism for fewer blocks per N-tile of weight reuse. — source: kernels/strix-hip/common/dense_gemm_tc.cu:8
+
+<a id="to-kernels-strix-hip-common-moe-fp8-grouped-gemm-cu"></a>
+
+### [kernels/strix-hip/common/moe_fp8_grouped_gemm.cu](../../kernels/strix-hip/common/moe_fp8_grouped_gemm.cu)
+
+- *whole file*: Same two-level FP32 accumulation as the gb10/hopper W8A16 GEMMs (block scale folded into an FP32 outer accumulator once per 128-K block, rounded to BF16 only at the final store) but on AMD WMMA 16x16x16 instead of NVIDIA MMA; total LDS is 14,464 bytes for the 128x64 tile across double-buffered A/B plus the E4M3 LUT. — source: kernels/strix-hip/common/moe_fp8_grouped_gemm.cu:17
+- *whole file*: 128x64 tile, 512 threads (16 waves), double-buffered shared memory (14,464 B LDS: doubled A/B tiles plus a 256-entry FP32 E4M3 LUT) that loads the next K-step into registers during the current tile's WMMA. Forked from gb10/common/moe_fp8_grouped_gemm.cu with 652 of 524 lines differing (124%), larger than its origin. — source: kernels/strix-hip/common/moe_fp8_grouped_gemm.cu:22
+- *moe_fp8_grouped_gemm_v2*: Compiled stub with the same argument list as moe_fp8_grouped_gemm minus the work-list pointer; the body is empty and nothing looks it up, so it is dead code for performance purposes. — source: kernels/strix-hip/common/moe_fp8_grouped_gemm.cu:392
+
+<a id="to-kernels-strix-hip-common-w8a16-gemm-cu"></a>
+
+### [kernels/strix-hip/common/w8a16_gemm.cu](../../kernels/strix-hip/common/w8a16_gemm.cu)
+
+- *whole file*: Unlike the gb10/hopper W8A16 GEMMs' two-level FP32 accumulation (scale applied once per 128-K block to an FP32 partial), this gfx1151 twin dequantizes E4M3 to BF16 while staging and folds the block scale in there, before the BF16 WMMA accumulates - the scale multiplies a BF16 value, not an FP32 block sum. — source: kernels/strix-hip/common/w8a16_gemm.cu:4
+- *whole file*: 256x128 (M_TILE x N_TILE) tile with 512 threads (16 warps of 16 rows) dequantizes FP8 E4M3 to BF16 while staging into shared memory, then runs a BF16 WMMA 16x16x16 GEMM rather than an FP4/FP8 tensor-core path; the E4M3 decode table maps both NaN codes (0x7F, 0xFF) to 0. — source: kernels/strix-hip/common/w8a16_gemm.cu:9
+- *w8a16_gemm*: Register-staged double buffering costs 26,752 B LDS (smem_A[2][256][18] BF16 = 18,432 B + smem_B[2][16][130] BF16 = 8,320 B) for one __syncthreads() per K step: each iteration loads tile kt into registers, WMMAs the already-shared tile kt-1, then stores kt before the barrier publishes it. — source: kernels/strix-hip/common/w8a16_gemm.cu:152
+
+<a id="to-kernels-strix-hip-common-w8a16-gemm-t-cu"></a>
+
+### [kernels/strix-hip/common/w8a16_gemm_t.cu](../../kernels/strix-hip/common/w8a16_gemm_t.cu)
+
+- *whole file*: The transposed-weight (B_t[K,N]) twin of w8a16_gemm.cu uses a much smaller 64x64 tile with 128 threads (4 warps of 16 rows) versus the non-transposed kernel's 256x128 tile and 512 threads, trading grid-level parallelism for the transposed, N-contiguous access pattern. — source: kernels/strix-hip/common/w8a16_gemm_t.cu:10
+- *whole file*: Like w8a16_gemm.cu on this target, the transposed W8A16 GEMM dequantizes E4M3 to BF16 while staging and folds the block scale in at that point rather than keeping an FP32 block-sum until the scale is applied, unlike the gb10/hopper two-level-FP32-accumulation form of the same transposed GEMM. — source: kernels/strix-hip/common/w8a16_gemm_t.cu:5
+- *whole file*: Operates only on a pre-transposed weight (B_t[K,N] and block_scale_t[K/128,N/128]); transpose_fp8 and transpose_block_scale must run first as separate one-element-per-thread passes over the full weight and its scales, trading that extra memory traffic for a contiguous-N read inside the GEMM. — source: kernels/strix-hip/common/w8a16_gemm_t.cu:4
+
+<a id="to-kernels-strix-hip-qwen3-6-27b-nvfp4-moe-w4a16-grouped-gemm-cu"></a>
+
+### [kernels/strix-hip/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu](../../kernels/strix-hip/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu)
+
+- *whole file*: On gfx1151 every NVFP4 expert GEMM runs as a single BF16 WMMA 16x16x16 after dequantizing weights to BF16 in shared memory; there is no separate E4M3-MMA form the way the gb10/gemma NVFP4 grouped GEMM has (moe_w4a16_grouped_gemm_ptrtable_t there dequantizes to E4M3 instead), since gfx1151 has no such tensor-core path. — source: kernels/strix-hip/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu:4
+- *whole file*: Unlike dense w4a16_gemm.cu, which qwen3.6-27b and qwen3.6-35b-a3b each get a near-duplicate copy of, this MoE grouped-GEMM file is one shared source both targets compile. Forked from gb10/common/moe_w4a16_grouped_gemm.cu with 1632 of 1031 lines differing (158%), a near-total rewrite for HIP/WMMA. — source: kernels/strix-hip/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu:5
+- *whole file*: N_TILE=64 moe_w4a16_grouped_gemm_ptrtable loads/dequantizes into one shared buffer per K_STEP=16 step, no overlap; the N_TILE=128 twins (_t, _t_k64) double-buffer packed B/scales into a separate smem_B_bf16, trading extra buffers for load-compute overlap at 2x-4x the K step. — source: kernels/strix-hip/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu:59
+- *moe_w4a16_fused_gate_up_t*: Gate and up share one kernel launch and one CTA grid: CTAs with blockIdx.x \* 128 &lt; N write C_gate and the rest write C_up, trading a per-CTA branch on which output/weight pointers to use for avoiding a second grouped-GEMM launch. moe_w4a16_fused_gate_up_t_k64 is the same split at K step 64 instead of 32. — source: kernels/strix-hip/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu:507
+
+<a id="to-kernels-strix-hip-qwen3-6-27b-nvfp4-w4a16-gemm-cu"></a>
+
+### [kernels/strix-hip/qwen3.6-27b/nvfp4/w4a16_gemm.cu](../../kernels/strix-hip/qwen3.6-27b/nvfp4/w4a16_gemm.cu)
+
+- *whole file*: gfx1151 dense W4A16/FP8 GEMMs all run as BF16 WMMA 16x16x16: NVFP4 weights are dequantized to BF16 in shared memory and FP8 operands are decoded to BF16 per lane before the multiply, so there is no on-chip E4M3-precision MMA path available on this target the way there is on gb10/hopper. — source: kernels/strix-hip/qwen3.6-27b/nvfp4/w4a16_gemm.cu:4
+- *w4a16_gemm_t*: Takes an explicit ldb for the transposed B's row stride, which may exceed N (B loads are bounded by ldb, C stores by N); lets a caller pass a weight tensor padded or laid out wider than N without a copy. w4a16_gemm_t_k64 drops this parameter and assumes B rows are exactly N apart. — source: kernels/strix-hip/qwen3.6-27b/nvfp4/w4a16_gemm.cu:174
+- *w4a16_gemm_t_k64*: Requires K to be a multiple of 64 because the scale-row loads have no K bound; the 32-wide w4a16_gemm_t sibling has no such restriction since its scale groups fit one K step exactly. — source: kernels/strix-hip/qwen3.6-27b/nvfp4/w4a16_gemm.cu:562
+- *w4a16_gemm_t_m128*: Two consecutive 64-row M chunks per CTA share one dequantized B tile (doubling accumulator registers to acc0/acc1 instead of re-dequantizing B), under __launch_bounds__(128, 3) targeting 3 CTAs/SM at 128 threads. — source: kernels/strix-hip/qwen3.6-27b/nvfp4/w4a16_gemm.cu:720
+
+<a id="to-kernels-strix-hip-qwen3-6-35b-a3b-nvfp4-w4a16-gemm-cu"></a>
+
+### [kernels/strix-hip/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu](../../kernels/strix-hip/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu)
+
+- *whole file*: Same gfx1151 constraint as the qwen3.6-27b w4a16_gemm.cu built alongside it: every GEMM here is a BF16 WMMA 16x16x16, with NVFP4 weights dequantized to BF16 in shared memory and FP8 operands decoded to BF16 per lane, since this target has no E4M3-precision tensor-core path. — source: kernels/strix-hip/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:4
+- *whole file*: Byte-for-byte identical to kernels/strix-hip/qwen3.6-27b/nvfp4/w4a16_gemm.cu apart from the header comment naming its target model and one blank line: two per-model directories carry a functionally duplicate copy of the same W4A16/FP8 HIP GEMM file rather than sharing one common source. — source: kernels/strix-hip/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:7
+- *w4a16_gemm_t_k64*: Requires K to be a multiple of 64 because the scale-row loads have no K bound; the 32-wide w4a16_gemm_t sibling has no such restriction since its scale groups fit one K step exactly. — source: kernels/strix-hip/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:561
+- *w4a16_gemm_t_m128*: Two consecutive 64-row M chunks per CTA share one dequantized B tile (doubling accumulator registers to acc0/acc1 instead of re-dequantizing B), under __launch_bounds__(128, 3) targeting 3 CTAs/SM at 128 threads. — source: kernels/strix-hip/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:719
