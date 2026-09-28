@@ -281,6 +281,11 @@ impl Benchmark for TtftGate {
     }
 
     fn parameters(&self) -> Vec<ParamSpec> {
+        let (repeats, median_limit, p90_limit) = if self.fixture {
+            long_prompt::one_shot_defaults(self.mode)
+        } else {
+            (12, 3.0, 5.0)
+        };
         let source = if self.fixture {
             long_prompt::source_parameters()
         } else {
@@ -301,7 +306,7 @@ impl Benchmark for TtftGate {
                 "Samples per length",
                 "More samples narrow the median; each costs one request (two in warm mode).",
                 ParamKind::Int { min: 1, max: 200 },
-                ParamValue::Int(12),
+                ParamValue::Int(repeats),
             ),
             ParamSpec::new(
                 "median_limit_pct",
@@ -311,7 +316,7 @@ impl Benchmark for TtftGate {
                     min: 0.0,
                     max: 100.0,
                 },
-                ParamValue::Float(3.0),
+                ParamValue::Float(median_limit),
             ),
             ParamSpec::new(
                 "p90_limit_pct",
@@ -321,7 +326,7 @@ impl Benchmark for TtftGate {
                     min: 0.0,
                     max: 100.0,
                 },
-                ParamValue::Float(5.0),
+                ParamValue::Float(p90_limit),
             ),
             ParamSpec::new(
                 "update_baseline",
@@ -375,6 +380,7 @@ impl Benchmark for TtftGate {
             if total == 0 {
                 bail!("no prompt lengths to measure");
             }
+            self.warm_up().await?;
             return Ok(BenchmarkResult::running("probe", self.elapsed())
                 .with_progress(0, total)
                 .log_line(LogLine::info(format!(

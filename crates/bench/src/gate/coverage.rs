@@ -214,6 +214,12 @@ pub const TEST_ONLY_RUST_MODULES: &[TestOnlyRustModule] = &[
         name: "concurrency_moe_tests",
         declared_path: Some("concurrency_moe_tests.rs"),
     },
+    TestOnlyRustModule {
+        path: "crates/bench/src/benchmarks/ttft/long_prompt_tests.rs",
+        parent: "crates/bench/src/benchmarks/ttft/long_prompt.rs",
+        name: "tests",
+        declared_path: Some("long_prompt_tests.rs"),
+    },
 ];
 
 fn is_test_only_rust_module(path: &str) -> bool {
@@ -809,7 +815,7 @@ const VISION_EXCLUDES: &[Exclusion] = &[
 
 /// 2026-09-26: The gates whose records must pass, and what each one ignores. `REQUIRED_GATES`
 /// in mod.rs is built from these ids (`required_gates_is_derived_from_the_coverage_table`).
-pub const REQUIRED: [GateCoverage; 13] = [
+pub const REQUIRED: [GateCoverage; 17] = [
     GateCoverage {
         id: "agentic-webserver",
         excludes: AGENTIC_EXCLUDES,
@@ -863,6 +869,25 @@ pub const REQUIRED: [GateCoverage; 13] = [
     GateCoverage {
         id: "concurrency-sweep-moe",
         excludes: CONCURRENCY_EXCLUDES,
+    },
+    // 2026-09-27: The high-ISL pairs run the TTFT driver over the committed 32k prompt
+    // (`benchmarks/ttft/long_prompt.rs`), so they ignore what the synthetic TTFT gates ignore.
+    // The unsuffixed pair measures the dense flagship, the -moe pair the 35B MoE.
+    GateCoverage {
+        id: "high-isl-ttft-cold",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-warm",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-cold-moe",
+        excludes: TTFT_EXCLUDES,
+    },
+    GateCoverage {
+        id: "high-isl-ttft-warm-moe",
+        excludes: TTFT_EXCLUDES,
     },
 ];
 

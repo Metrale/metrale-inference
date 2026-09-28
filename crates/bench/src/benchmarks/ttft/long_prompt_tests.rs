@@ -106,11 +106,13 @@ async fn endpoint(prompt_tokens: Option<u64>) -> (TargetEndpoint, Arc<Mutex<Vec<
 }
 
 /// 2026-09-27: The gate as the registry would build it, through its
-/// descriptor's `ctor`, loaded against `target`.
+/// descriptor's `ctor`, loaded against `target`. `repeats` overrides the
+/// default when given.
 async fn gate(
     descriptor: &'static BenchmarkDescriptor,
     target: TargetEndpoint,
     root: &str,
+    repeats: Option<i64>,
 ) -> (Box<dyn DynBenchmark>, ArtifactStore) {
     let mut g = descriptor.build();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -119,9 +121,9 @@ async fn gate(
     let _ = std::fs::remove_dir_all(&dir);
     let store = ArtifactStore::with_root(dir);
     let mut values = ParamValues::defaults(&g.parameters());
-    // 2026-09-27: Three samples exercise the per-sample tag and check; the
-    // default twelve would only repeat them.
-    values.set("repeats", ParamValue::Int(3));
+    if let Some(n) = repeats {
+        values.set("repeats", ParamValue::Int(n));
+    }
     g.configure(&values).expect("defaults configure");
     let handle = PluginHandle::new(
         1,
@@ -141,6 +143,27 @@ async fn run(g: &mut Box<dyn DynBenchmark>) -> Result<BenchmarkResult> {
             return Ok(frame);
         }
     }
+}
+
+/// 2026-09-27: The user messages sent, after checking that the first is the
+/// run's one unmeasured warm-up and that no other request carries its tag.
+fn measured_contents(bodies: &Mutex<Vec<Value>>) -> Vec<String> {
+    let sent = contents(bodies);
+    let (first, rest) = sent.split_first().expect("a warm-up request");
+    assert!(
+        first.starts_with(&format!("[{WARM_UP_TAG_PREFIX}")),
+        "{first}"
+    );
+    assert!(
+        first.len() < 1024,
+        "the warm-up is short: {} bytes",
+        first.len()
+    );
+    assert!(
+        rest.iter().all(|c| !c.contains(WARM_UP_TAG_PREFIX)),
+        "a measured request carried the warm-up tag"
+    );
+    rest.to_vec()
 }
 
 fn contents(bodies: &Mutex<Vec<Value>>) -> Vec<String> {
@@ -222,13 +245,15 @@ fn the_metric_is_the_smallest_count_seen() {
 #[tokio::test]
 async fn warm_resends_one_byte_identical_prompt_and_records_the_servers_count() {
     let (target, bodies) = endpoint(Some(32_768)).await;
-    let (mut g, _) = gate(&HIGH_ISL_WARM_MOE_DESCRIPTOR, target, "warm").await;
+    // 2026-09-27: Three samples exercise the per-sample tag and check; the
+    // one-shot default would not repeat them.
+    let (mut g, _) = gate(&HIGH_ISL_WARM_MOE_DESCRIPTOR, target, "warm", Some(3)).await;
     let done = run(&mut g).await.expect("the run completes");
     assert_eq!(done.status, RunStatus::Completed);
     assert_eq!(done.metrics["prompt_tokens"], 32_768.0);
     assert_eq!(done.metrics["samples"], 3.0);
 
-    let sent = contents(&bodies);
+    let sent = measured_contents(&bodies);
     // 2026-09-27: A priming request and a measured one per sample.
     assert_eq!(sent.len(), 6);
     let expected = content(LONG_32K_TEXT, WARM_TAG);
@@ -245,11 +270,11 @@ async fn warm_resends_one_byte_identical_prompt_and_records_the_servers_count() 
 #[tokio::test]
 async fn cold_sends_a_new_tag_at_the_start_of_every_sample() {
     let (target, bodies) = endpoint(Some(32_768)).await;
-    let (mut g, _) = gate(&HIGH_ISL_COLD_DESCRIPTOR, target, "cold").await;
+    let (mut g, _) = gate(&HIGH_ISL_COLD_DESCRIPTOR, target, "cold", Some(3)).await;
     let done = run(&mut g).await.expect("the run completes");
     assert_eq!(done.status, RunStatus::Completed);
 
-    let sent = contents(&bodies);
+    let sent = measured_contents(&bodies);
     assert_eq!(sent.len(), 3);
     let unique: std::collections::BTreeSet<_> = sent.iter().collect();
     assert_eq!(unique.len(), 3, "a cold tag repeated");
@@ -263,7 +288,7 @@ async fn cold_sends_a_new_tag_at_the_start_of_every_sample() {
 #[tokio::test]
 async fn a_short_server_count_makes_the_run_invalid_not_a_pass() {
     let (target, _) = endpoint(Some(32_767)).await;
-    let (mut g, store) = gate(&HIGH_ISL_COLD_MOE_DESCRIPTOR, target, "short").await;
+    let (mut g, store) = gate(&HIGH_ISL_COLD_MOE_DESCRIPTOR, target, "short", None).await;
     let err = run(&mut g)
         .await
         .expect_err("a short prompt is not a measurement");
@@ -281,7 +306,7 @@ async fn a_short_server_count_makes_the_run_invalid_not_a_pass() {
 #[tokio::test]
 async fn a_response_without_usage_is_an_error() {
     let (target, _) = endpoint(None).await;
-    let (mut g, store) = gate(&HIGH_ISL_WARM_DESCRIPTOR, target, "nousage").await;
+    let (mut g, store) = gate(&HIGH_ISL_WARM_DESCRIPTOR, target, "nousage", None).await;
     let err = run(&mut g)
         .await
         .expect_err("an unverified prompt size is not a measurement");
@@ -310,7 +335,7 @@ fn each_high_isl_gate_has_its_own_id_and_the_long_prompt_parameters() {
         values.validate_against(&specs).expect("defaults validate");
         assert_eq!(values.text("prompt").unwrap(), LONG_32K);
         assert_eq!(values.usize("min_prompt_tokens").unwrap(), LONG_32K_TOKENS);
-        assert_eq!(values.usize("repeats").unwrap(), 12);
+        assert_eq!(values.usize("repeats").unwrap(), 1, "{}", d.id);
         assert!(!specs.iter().any(|s| s.key == "prompt_lengths"), "{}", d.id);
         d.id
     })
@@ -329,5 +354,77 @@ fn each_high_isl_gate_has_its_own_id_and_the_long_prompt_parameters() {
         let specs = d.build().parameters();
         assert!(specs.iter().any(|s| s.key == "prompt_lengths"), "{}", d.id);
         assert!(!specs.iter().any(|s| s.key == "prompt"), "{}", d.id);
+        let values = ParamValues::defaults(&specs);
+        assert_eq!(values.usize("repeats").unwrap(), 12, "{}", d.id);
+        assert_eq!(values.float("median_limit_pct").unwrap(), 3.0, "{}", d.id);
+        assert_eq!(values.float("p90_limit_pct").unwrap(), 5.0, "{}", d.id);
     }
+}
+
+/// 2026-09-27: The owner's one-shot instrument at the defaults: a warm-up,
+/// then exactly one fresh cold request; its TTFT is both statistics.
+#[tokio::test]
+async fn cold_one_shot_is_a_warm_up_then_one_fresh_request() {
+    let (target, bodies) = endpoint(Some(32_772)).await;
+    let (mut g, store) = gate(&HIGH_ISL_COLD_MOE_DESCRIPTOR, target, "oneshot-cold", None).await;
+    let done = run(&mut g).await.expect("the run completes");
+    assert_eq!(done.status, RunStatus::Completed);
+    assert_eq!(done.metrics["samples"], 1.0);
+    assert_eq!(done.metrics["median_ms"], done.metrics["p90_ms"]);
+    assert_eq!(done.metrics["prompt_tokens"], 32_772.0);
+    let sent = measured_contents(&bodies);
+    assert_eq!(sent.len(), 1);
+    assert!(
+        sent[0].starts_with(&format!("[{COLD_TAG_PREFIX}")),
+        "{}",
+        sent[0]
+    );
+    // 2026-09-27: The first run on a box has no baseline and stores this one.
+    let stored = baseline::load_for(&store, HIGH_ISL_COLD_MOE_DESCRIPTOR.id, Some("test-model"))
+        .expect("the first run is stored as the baseline");
+    assert_eq!(stored.get("samples"), Some(1.0));
+}
+
+/// 2026-09-27: Warm at the defaults: a warm-up, then one priming request and
+/// one measured byte-identical re-send.
+#[tokio::test]
+async fn warm_one_shot_is_a_warm_up_a_prime_and_one_measured_resend() {
+    let (target, bodies) = endpoint(Some(32_772)).await;
+    let (mut g, _) = gate(&HIGH_ISL_WARM_DESCRIPTOR, target, "oneshot-warm", None).await;
+    let done = run(&mut g).await.expect("the run completes");
+    assert_eq!(done.metrics["samples"], 1.0);
+    let sent = measured_contents(&bodies);
+    assert_eq!(sent, vec![content(LONG_32K_TEXT, WARM_TAG); 2]);
+}
+
+/// 2026-09-27: Each mode's one-shot limits: one sample makes the median and the
+/// p90 one number, so both limits are equal.
+#[test]
+fn one_shot_limits_are_one_bound_per_mode() {
+    for (d, limit) in [
+        (&HIGH_ISL_COLD_DESCRIPTOR, 5.0),
+        (&HIGH_ISL_COLD_MOE_DESCRIPTOR, 5.0),
+        (&HIGH_ISL_WARM_DESCRIPTOR, 25.0),
+        (&HIGH_ISL_WARM_MOE_DESCRIPTOR, 25.0),
+    ] {
+        let values = ParamValues::defaults(&d.build().parameters());
+        assert_eq!(values.float("median_limit_pct").unwrap(), limit, "{}", d.id);
+        assert_eq!(values.float("p90_limit_pct").unwrap(), limit, "{}", d.id);
+    }
+}
+
+#[test]
+fn a_warm_up_tag_has_the_measured_tags_shape_and_prefixes_no_measured_prompt() {
+    let long = LongPrompt {
+        text: LONG_32K_TEXT,
+        min_prompt_tokens: LONG_32K_TOKENS,
+        salt: 42,
+        prompt_tokens: None,
+    };
+    let warm_up = warm_up_content(42);
+    assert!(warm_up.starts_with(&format!("[{WARM_UP_TAG_PREFIX}0000000000000042] ")));
+    for mode in [Mode::Cold, Mode::Warm] {
+        assert!(!long.prompt(mode, 0).starts_with(&warm_up[..12]));
+    }
+    assert_ne!(warm_up_content(1), warm_up_content(2));
 }

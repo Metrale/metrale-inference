@@ -10,6 +10,11 @@
 //!   warm tag's prefix, then `NONCE_DIGITS` decimal digits. The Qwen tokenizers
 //!   split digits one token each, so every sample of either gate renders to the
 //!   same token count (`scripts/make_long_prompt.py` asserts it).
+//! - 2026-09-27: One-shot (owner, 2026-09-27): before the first measured
+//!   sample the gate sends one unmeasured short request with its own tag, so
+//!   neither engine's first-request, JIT or allocator cost lands in a sample;
+//!   `repeats` defaults to 1, so cold measures one fresh request and warm one
+//!   primed, byte-identical re-send.
 //! - A measured sample whose response carries no `usage.prompt_tokens`, or
 //!   fewer than `min_prompt_tokens`, ends the run with an error, so no record
 //!   and no baseline come from a truncated or refused prompt.
@@ -19,11 +24,12 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use super::{Mode, TtftGate};
 use crate::benchmark::BenchmarkDescriptor;
+use crate::benchmarks::stats::{self, PromptMode};
 use crate::metadata::PluginMetadata;
 use crate::params::{ParamKind, ParamSpec, ParamValue, ParamValues};
 
@@ -32,9 +38,10 @@ pub(crate) const LONG_32K: &str = "long-32k";
 /// 2026-09-27: Every `prompt` choice, in the order the parameter lists them.
 const PROMPT_CHOICES: &[&str] = &[LONG_32K];
 const LONG_32K_TEXT: &str = include_str!("prompts/long-32k.txt");
-/// 2026-09-27: The token count `prompts/long-32k.txt` was cut to, through the
-/// Qwen3.6-35B-A3B tokenizer and the chat template this engine serves it with
-/// (`prompts/NOTICE.md`); the default `min_prompt_tokens`.
+/// 2026-09-27: The token count `prompts/long-32k.txt` was cut to, counted
+/// offline through the Qwen3.6-35B-A3B tokenizer and this engine's template
+/// override; the default `min_prompt_tokens`. Served, both engines report
+/// 32,772 on both subjects (`prompts/NOTICE.md`).
 pub(crate) const LONG_32K_TOKENS: usize = 32_768;
 
 /// 2026-09-27: The instruction after the text; the reply is capped at 8 tokens,
@@ -49,6 +56,34 @@ pub(crate) const NONCE_DIGITS: usize = 16;
 /// spec caps it at 200) can never collide with another within a run.
 const SAMPLE_DIGITS: usize = 3;
 const SALT_MODULUS: u64 = 10u64.pow((NONCE_DIGITS - SAMPLE_DIGITS) as u32);
+
+/// 2026-09-27: The unmeasured warm-up request: filler of this many tokens
+/// behind `WARM_UP_TAG_PREFIX`, which no measured prompt starts with.
+const WARM_UP_TOKENS: usize = 64;
+pub(crate) const WARM_UP_TAG_PREFIX: &str = "warm-up-";
+
+/// 2026-09-27: A high-ISL gate's `repeats`, `median_limit_pct` and
+/// `p90_limit_pct` defaults, per mode. One sample makes the median and the p90
+/// the same number, so both limits are one bound. It is set above the spread of
+/// single 32k samples on one box and server measured 2026-09-27: cold within
+/// 0.4% (MoE 14250/14305 ms, dense 45453/45400 ms), warm MoE 139-164 ms. The
+/// absolute bound is the BENCH.toml `max`, vLLM's TTFT on the same fixture.
+pub(crate) fn one_shot_defaults(mode: Mode) -> (i64, f64, f64) {
+    match mode {
+        Mode::Cold => (1, 5.0, 5.0),
+        Mode::Warm => (1, 25.0, 25.0),
+    }
+}
+
+/// 2026-09-27: The warm-up request's user message for a run's `salt`.
+pub(crate) fn warm_up_content(salt: u64) -> String {
+    let tag = format!(
+        "{WARM_UP_TAG_PREFIX}{:0width$}",
+        salt % 10u64.pow(NONCE_DIGITS as u32),
+        width = NONCE_DIGITS
+    );
+    stats::make_prompt(WARM_UP_TOKENS, PromptMode::Natural, &tag)
+}
 
 /// 2026-09-27: The fixture text for a `prompt` choice, matched case-insensitively
 /// as `ParamKind::Choice` matches.
@@ -109,6 +144,23 @@ impl TtftGate {
         metadata: &'static PluginMetadata,
     ) -> Self {
         Self::build(mode, descriptor, metadata, true)
+    }
+
+    /// 2026-09-27: Send the unmeasured warm-up request of a high-ISL gate; a
+    /// synthetic gate sends none. A warm-up that fails or emits no token ends
+    /// the run: the server cannot be measured.
+    pub(super) async fn warm_up(&self) -> Result<()> {
+        let Some(long) = &self.long else {
+            return Ok(());
+        };
+        let outcome = self
+            .measure(&warm_up_content(long.salt))
+            .await
+            .context("the unmeasured warm-up request failed")?;
+        if outcome.ttft_ms.is_none() {
+            bail!("the unmeasured warm-up request emitted no token");
+        }
+        Ok(())
     }
 
     /// 2026-09-27: The smallest server-reported prompt size so far; `None` for

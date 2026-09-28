@@ -17,9 +17,10 @@ Writes `crates/bench/src/benchmarks/ttft/prompts/long-32k.txt` byte for byte
 3. Cut at the last word boundary where the request the high-ISL gates send
    (a cold tag, the text, the task line; `ttft/long_prompt.rs`) renders to
    exactly `LONG_32K_TOKENS` tokens through the Qwen3.6-35B-A3B tokenizer and
-   the chat template this engine serves that checkpoint with
-   (`jinja-templates/qwen3_5_moe.jinja`, thinking disabled). Among cuts with
-   that count, the last one that ends a sentence wins.
+   this engine's MoE override template (`jinja-templates/qwen3_5_moe.jinja`,
+   thinking disabled). Among cuts with that count, the last one that ends a
+   sentence wins. That offline count is only the cut target: served, the
+   request is 32,772 tokens on both engines and both checkpoints (`NOTICE.md`).
 
 The tag, task line and target come from `long_prompt.rs`, which is their only
 definition. Needs `tokenizers`, `jinja2` and the tokenizers in the local

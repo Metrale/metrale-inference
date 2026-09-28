@@ -2195,3 +2195,95 @@ max = 0.0
 [benchmarks.metrics.empty_replies]
 # 2026-09-25: compare already fails a wholly empty cell; this bound also fails a partly empty one.
 max = 0.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "high-isl-ttft-cold"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
+default = true
+status = "measured"
+note = """\
+High-ISL cold-TTFT gate, one-shot (owner 2026-09-27): one unmeasured warm-up request, then one \
+measured request with a fresh tag at the start of the committed 32k-token prompt \
+(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Ceiling = vLLM 0.27.1 \
+(vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, \
+vLLM commit 6e448d0e) steady one-shot TTFT on GB10 (dgx2 = spark-43fa, 2026-09-27), same \
+fixture, same request body — parity is the pass bar (owner 2026-09-27). The value is the mean \
+of the two cold samples, 24448.9 and 23781.5 ms; neither was the first 32k request after a \
+boot. bench/baselines/qwen38-27b/ttft/published.json holds every pair with its source records. \
+Metrale Engine read 45452.8 and 45400.0 ms on the same box that day: vLLM 1.9x faster. \
+median_ms and p90_ms carry one bound because a single sample is both statistics. The run's own \
+comparison with the stored same-box baseline (ttft/long_prompt.rs one_shot_defaults) is a \
+separate regression guard; it records `info` on a box with no baseline yet, so each box is \
+seeded with two runs before its first campaign. Recipe: the dense default single-stream recipe \
+decode-floor uses, as served for the Phase 1 comparison (bf16 KV; vLLM's published dense \
+config uses fp8 KV).\
+"""
+
+[benchmarks.serve_overrides]
+# 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
+# 32768 refuses the prompt.
+max_model_len = "40960"
+# 2026-09-27: The GB10 util ceiling; the 2026-09-27 comparison serves booted at it.
+gpu_memory_utilization = "0.85"
+# 2026-09-27: Pinned although the recipe sets it: the warm gate measures a prefix-cache hit, and
+# the record then states it.
+enable_prefix_caching = "true"
+
+[benchmarks.metrics.median_ms]
+# 2026-09-27: The ceiling of 24115.2 ms, vLLM's steady one-shot TTFT (note above).
+max = 24115.2
+
+[benchmarks.metrics.p90_ms]
+# 2026-09-27: The ceiling of 24115.2 ms: one sample, so p90 equals the median.
+max = 24115.2
+
+[benchmarks.metrics.prompt_tokens]
+# 2026-09-27: The fixture's floor; both engines render it to 32,772 on both subjects.
+min = 32768.0
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "high-isl-ttft-warm"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
+default = true
+status = "measured"
+note = """\
+High-ISL warm-TTFT gate, one-shot (owner 2026-09-27): one unmeasured warm-up request, then one \
+priming request and one measured byte-identical re-send of the committed 32k-token prompt \
+(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Ceiling = vLLM 0.27.1 \
+(vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, \
+vLLM commit 6e448d0e) steady one-shot TTFT on GB10 (dgx2 = spark-43fa, 2026-09-27), same \
+fixture, same request body — parity is the pass bar (owner 2026-09-27). The value is the mean \
+of the two warm samples, 2135.3 and 2129.3 ms. bench/baselines/qwen38-27b/ttft/published.json \
+holds every pair with its source records. Metrale Engine read 12519.0 and 12451.3 ms on the \
+same box that day, vLLM 5.9x faster: the warm request restored the SSM checkpoint at token \
+24577, not the tail, and replayed 8195 tokens. median_ms and p90_ms carry one bound because a \
+single sample is both statistics. The run's own comparison with the stored same-box baseline \
+(ttft/long_prompt.rs one_shot_defaults) is a separate regression guard; it records `info` on a \
+box with no baseline yet, so each box is seeded with two runs before its first campaign.\
+"""
+
+[benchmarks.serve_overrides]
+# 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
+# 32768 refuses the prompt.
+max_model_len = "40960"
+# 2026-09-27: The GB10 util ceiling; the 2026-09-27 comparison serves booted at it.
+gpu_memory_utilization = "0.85"
+# 2026-09-27: Pinned although the recipe sets it: the warm gate measures a prefix-cache hit, and
+# the record then states it.
+enable_prefix_caching = "true"
+
+[benchmarks.metrics.median_ms]
+# 2026-09-27: The ceiling of 2132.3 ms, vLLM's steady one-shot TTFT (note above).
+max = 2132.3
+
+[benchmarks.metrics.p90_ms]
+# 2026-09-27: The ceiling of 2132.3 ms: one sample, so p90 equals the median.
+max = 2132.3
+
+[benchmarks.metrics.prompt_tokens]
+# 2026-09-27: The fixture's floor; both engines render it to 32,772 on both subjects.
+min = 32768.0

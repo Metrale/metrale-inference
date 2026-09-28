@@ -3,8 +3,11 @@
 ## `long-32k.txt`
 
 The opening of Herman Melville's *Moby-Dick; or, The Whale* (1851), cut so that
-the request the high-ISL TTFT gates send is exactly 32,768 prompt tokens on the
-Qwen3.6-35B-A3B MoE as this engine serves it.
+the request the high-ISL TTFT gates send rendered to exactly 32,768 prompt
+tokens through the Qwen3.6-35B-A3B tokenizer and this engine's
+`qwen3_5_moe.jinja` override, counted offline when the file was cut. Served, the
+request is 32,772 prompt tokens on both engines and both checkpoints (see
+[Token counts](#token-counts)).
 
 ### Source
 
@@ -69,12 +72,22 @@ the server's own `usage.prompt_tokens` on every sample.
 
 | Checkpoint (tokenizer.json sha256) | Rendering | Prompt tokens |
 |---|---|---|
-| Qwen/Qwen3.6-35B-A3B-FP8 (`5f9e4d49…`) | this engine: `qwen3_5_moe.jinja` override, `enable_thinking: false` | **32,768** |
+| Qwen/Qwen3.6-35B-A3B-FP8 (`5f9e4d49…`) | `qwen3_5_moe.jinja` override, `enable_thinking: false` (the cut target) | **32,768** |
 | Qwen/Qwen3.6-35B-A3B-FP8 | vLLM: the checkpoint's own template, `enable_thinking: false` (adds the empty think block) | 32,772 |
 | unsloth/Qwen3.8-27B-NVFP4 (`06b95093…`) | this engine and vLLM: the checkpoint's own template, `enable_thinking: false` | 32,772 |
 | either tokenizer | the user message alone, no template | 32,725 |
 
 Both engines receive the same bytes. The 4-token difference is the
 `<think>\n\n</think>\n\n` block that the checkpoint templates add and the
-engine's MoE override does not, so every rendering is at least the gates'
-default `min_prompt_tokens` of 32,768.
+`qwen3_5_moe.jinja` override does not.
+
+Served, both engines render the empty think block on both checkpoints. Measured
+on 2026-09-27, `usage.prompt_tokens` of the gate request:
+
+| Checkpoint | This engine | vLLM 0.27.1 |
+|---|---|---|
+| Qwen/Qwen3.6-35B-A3B-FP8 | 32,772 | 32,772 |
+| unsloth/Qwen3.8-27B-NVFP4 | 32,772 | 32,772 |
+
+The gates' default `min_prompt_tokens` of 32,768 is unaffected: every rendering,
+offline or served, is at least that.

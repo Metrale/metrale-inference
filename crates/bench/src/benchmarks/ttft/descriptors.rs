@@ -86,20 +86,21 @@ const MOE: ModelExpectation = ModelExpectation {
            the suffix measures the dense Qwen3.8-27B flagship.",
 };
 
-/// 2026-09-27: `expected_secs` below are estimates until a first run is
-/// measured: 12 samples of one 32k-token prompt, a full prefill per cold
-/// sample, and a priming request before each warm one.
+/// 2026-09-27: `expected_secs` below are one-shot runs (owner, 2026-09-27) at
+/// the 2026-09-27 measurements: one 32k-token prefill per cold run (MoE 14 s,
+/// dense 45 s), plus a priming prefill before the warm one.
 pub const HIGH_ISL_COLD_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
     id: "high-isl-ttft-cold",
     name: "High-ISL Cold TTFT Gate",
     summary: HIGH_ISL_COLD_SUMMARY,
-    detail: "Time-to-first-token on a committed 32,768-token prompt (Moby-Dick, see \
-             ttft/prompts/NOTICE.md) with a unique tag at the start of every sample, so \
-             each request pays the whole prefill. The server's usage.prompt_tokens is \
-             checked on every sample: a missing count or one below min_prompt_tokens \
-             makes the run invalid. Compared with a same-box baseline like ttft-cold-gate.",
-    duration_hint: "~3–6 min",
-    expected_secs: 300,
+    detail: "Time-to-first-token on a committed 32k-token prompt (Moby-Dick, see \
+             ttft/prompts/NOTICE.md), one-shot: an unmeasured short warm-up request, then \
+             one request with a unique tag at the start, so it pays the whole prefill. The \
+             server's usage.prompt_tokens is checked: a missing count or one below \
+             min_prompt_tokens makes the run invalid. Compared with a same-box baseline like \
+             ttft-cold-gate; the BENCH.toml ceiling is vLLM's TTFT on the same prompt and box.",
+    duration_hint: "~1–2 min",
+    expected_secs: 70,
     updated: "2026-09-27",
     needs_confirmation: false,
     intended_for: Some(DENSE),
@@ -119,12 +120,12 @@ pub const HIGH_ISL_WARM_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
     id: "high-isl-ttft-warm",
     name: "High-ISL Warm TTFT Gate",
     summary: HIGH_ISL_WARM_SUMMARY,
-    detail: "Time-to-first-token on the committed 32,768-token prompt with one fixed tag: \
-             each sample is primed, then re-sent byte for byte, so the prefix cache holds \
-             the whole prompt. The server's usage.prompt_tokens is checked on every \
-             sample, as in high-isl-ttft-cold.",
-    duration_hint: "~2–4 min",
-    expected_secs: 120,
+    detail: "Time-to-first-token on the committed 32k-token prompt with one fixed tag, \
+             one-shot: an unmeasured short warm-up request, then the prompt is primed and \
+             re-sent byte for byte, so the prefix cache holds the whole prompt. The server's \
+             usage.prompt_tokens is checked, as in high-isl-ttft-cold.",
+    duration_hint: "~1–2 min",
+    expected_secs: 80,
     updated: "2026-09-27",
     needs_confirmation: false,
     intended_for: Some(DENSE),
@@ -146,8 +147,8 @@ pub const HIGH_ISL_COLD_MOE_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescripto
     detail: "high-isl-ttft-cold on the Qwen3.6-35B-A3B MoE: the same prompt and the same \
              checks, with its own id so its baseline and bounds are read against its own \
              history only.",
-    duration_hint: "~2–4 min",
-    expected_secs: 150,
+    duration_hint: "~1 min",
+    expected_secs: 30,
     updated: "2026-09-27",
     needs_confirmation: false,
     intended_for: Some(MOE),
@@ -169,8 +170,8 @@ pub const HIGH_ISL_WARM_MOE_DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescripto
     detail: "high-isl-ttft-warm on the Qwen3.6-35B-A3B MoE: the same prompt and the same \
              checks, with its own id so its baseline and bounds are read against its own \
              history only.",
-    duration_hint: "~1–3 min",
-    expected_secs: 90,
+    duration_hint: "~1 min",
+    expected_secs: 30,
     updated: "2026-09-27",
     needs_confirmation: false,
     intended_for: Some(MOE),

@@ -149,7 +149,7 @@ def certificate(authors, **kw):
         + '  <text x="64" y="156" font-size="38" fill="#E4C070" font-weight="800" letter-spacing="4">CERTIFIED MERGE</text>\n'
         + '  <line x1="64" y1="172" x2="474" y2="172" stroke="#E4C070" stroke-width="1" opacity="0.5"/>\n'
         + '  <text x="64" y="204" font-size="13.5" fill="#D9D9DE">Verified, stamped, sealed by a codeowner, and merged to main &#8212;</text>\n'
-        + '  <text x="64" y="224" font-size="13.5" fill="#D9D9DE">with <tspan fill="#E4C070" font-weight="650">all eleven benchmark gates certified</tspan> on GB10 hardware.</text>\n'
+        + '  <text x="64" y="224" font-size="13.5" fill="#D9D9DE">with <tspan fill="#E4C070" font-weight="650">all required benchmark gates certified</tspan> on GB10 hardware.</text>\n'
         + '  <text x="64" y="274" font-size="10" fill="#8A8F99" font-weight="600" letter-spacing="2">AUTHORED BY</text>\n'
         + author_slots(authors, 64, 300, 44, 32, "cert-clip-a", 808)
         + '  <text x="64" y="436" font-size="10" fill="#8A8F99" font-weight="600" letter-spacing="2">PULL REQUEST</text>\n'
@@ -217,7 +217,7 @@ def certificate_square(authors, **kw):
         + '  <text x="600" y="252" font-size="44" fill="#E4C070" font-weight="800" letter-spacing="5" text-anchor="middle">CERTIFIED MERGE</text>\n'
         + '  <line x1="380" y1="272" x2="820" y2="272" stroke="#E4C070" stroke-width="1" opacity="0.5"/>\n'
         + '  <text x="600" y="320" font-size="14.5" fill="#D9D9DE" text-anchor="middle">Verified, stamped, sealed by a codeowner, and merged to main &#8212;</text>\n'
-        + '  <text x="600" y="342" font-size="14.5" fill="#D9D9DE" text-anchor="middle">with <tspan fill="#E4C070" font-weight="650">all eleven benchmark gates certified</tspan> on GB10 hardware.</text>\n'
+        + '  <text x="600" y="342" font-size="14.5" fill="#D9D9DE" text-anchor="middle">with <tspan fill="#E4C070" font-weight="650">all required benchmark gates certified</tspan> on GB10 hardware.</text>\n'
         + '  <text x="600" y="438" font-size="10.5" fill="#8A8F99" font-weight="600" letter-spacing="2.5" text-anchor="middle">AUTHORED BY</text>\n'
         + slots
         + '  <text x="600" y="652" font-size="18" text-anchor="middle" clip-path="url(#certsq-clip-prline)">'
