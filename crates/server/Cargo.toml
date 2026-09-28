@@ -25,6 +25,7 @@ metrale-bench = { path = "../bench" }
 metrale-cache = { path = "../cache", default-features = false }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
+metrale-circuit = { path = "../circuit" }
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
 metrale-grammar = { path = "../grammar" }

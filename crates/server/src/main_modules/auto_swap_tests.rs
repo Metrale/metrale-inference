@@ -107,7 +107,8 @@ mod policy {
             cli::Command::Benchmark(_)
             | cli::Command::DumpServeOptions
             | cli::Command::SyncRecipes
-            | cli::Command::Doctor => unreachable!(),
+            | cli::Command::Doctor
+            | cli::Command::Circuit(_) => unreachable!(),
         }
     }
 

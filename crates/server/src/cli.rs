@@ -21,6 +21,7 @@ mod bench_resolve;
 pub mod bench_run;
 mod bench_selfstart;
 mod bench_serve_plan;
+pub(crate) mod circuit;
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;
@@ -84,6 +85,58 @@ pub enum Command {
     /// Exits non-zero when anything is wrong, so a provisioning script can gate
     /// on it.
     Doctor,
+    /// Show a recipe's architecture circuit and the fused kernel plan the engine runs.
+    ///
+    /// The circuits, precision tables and fusion rules are the ones this binary was built
+    /// with (kernels/circuits/, kernels/<hw>/common/FUSIONS.toml).
+    Circuit(CircuitArgs),
+}
+
+/// `met circuit`: inspect an architecture circuit.
+#[derive(clap::Args, Debug)]
+pub struct CircuitArgs {
+    #[command(subcommand)]
+    pub action: CircuitAction,
+}
+
+/// The `met circuit` views.
+#[derive(clap::Subcommand, Debug)]
+pub enum CircuitAction {
+    /// Print the plan as stable text, one kernel group per line (the format of the checked-in
+    /// plans under kernels/circuits/plans/).
+    Show(CircuitPlanArgs),
+}
+
+/// Which plan to show.
+#[derive(clap::Args, Debug, Clone)]
+pub struct CircuitPlanArgs {
+    /// Recipe id, e.g. qwen3.8/qwen3.8-27b-nvfp4-unsloth.
+    #[arg(long)]
+    pub recipe: String,
+    /// The forward to plan.
+    #[arg(long, value_enum, default_value_t = CircuitMode::Decode)]
+    pub mode: CircuitMode,
+    /// Padded rows: the batch rung for multi_seq, K for verify. Required for those two
+    /// modes; decode and draft plan one row.
+    #[arg(long)]
+    pub rows: Option<u64>,
+}
+
+/// A forward `met circuit` can plan.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CircuitMode {
+    /// One sequence, one row.
+    #[value(name = "decode")]
+    Decode,
+    /// Many sequences, one row each, padded to the batch ladder.
+    #[value(name = "multi_seq")]
+    MultiSeq,
+    /// K draft rows of one sequence.
+    #[value(name = "verify")]
+    Verify,
+    /// The MTP draft head.
+    #[value(name = "draft")]
+    Draft,
 }
 
 #[cfg(test)]
