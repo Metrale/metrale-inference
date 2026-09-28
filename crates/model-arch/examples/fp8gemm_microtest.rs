@@ -231,9 +231,7 @@ fn main() -> Result<()> {
                 flop / secs / 1e12
             );
         }
-        for p in [a8_ptr] {
-            gpu.free(p).ok();
-        }
+        gpu.free(a8_ptr).ok();
     }
 
     let handle = gpu.kernel("w4a16", "fp8_gemm_t")?;
