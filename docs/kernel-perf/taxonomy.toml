@@ -1,0 +1,589 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Curated half of KERNEL-PERF.md: the architecture families, the architectural components, the
+# rules that give each kernel entry point its primary component, and the Rust call-site paths
+# that attribute a launch to a component or a family. The generator (scripts/kernel_perf.py)
+# derives everything else from the tree and REFUSES to render while a kernel matches no rule, a
+# rule matches no kernel, or a model directory belongs to no family, so this file cannot drift
+# silently from kernels/ and crates/.
+#
+# Matching: `files` are fnmatch globs over the repo-relative path of the file that defines the
+# entry point; `names` are fnmatch globs over the entry-point name. A rule matches when every
+# list it has matches. Rules are tried in order; the first match wins, so specific rules come
+# before broad ones.
+
+# ------------------------------------------------------------------------------------------------
+# Architecture families. `label` is the short name the tables use. `models` are kernels/<hw>/<model> directory names (the same name on every
+# hardware tree). `components` are the architecture-specific components the family's layers have;
+# generic components (generic = true below) apply to every family with shared_engine = true.
+# shared_engine = false: the family's forward pass does not go through the shared transformer
+# path, so it uses only kernels launched from its own call-site paths.
+# ------------------------------------------------------------------------------------------------
+
+[[family]]
+id = "qwen-gdn-dense"
+label = "Qwen-GDN"
+name = "Qwen3.x GDN hybrid, dense FFN"
+models = ["qwen3.5-27b", "qwen3.6-27b", "qwen3.8-27b", "holo-3.1-0.8b", "holo-3.1-4b", "ornith-1.0-9b", "qwen3-5-4b-vlm-mlx-int8"]
+components = ["gdn", "short-conv", "dense-ffn", "vision"]
+shared_engine = true
+
+[[family]]
+id = "qwen-gdn-moe"
+label = "Qwen-GDN-MoE"
+name = "Qwen3.x GDN hybrid, MoE (incl. Qwen3-Next)"
+models = ["qwen3.5-35b-a3b", "qwen3.5-122b-a10b", "qwen3.5-397b-a17b", "qwen3.6-35b-a3b", "holo-3.1-35b-a3b", "qwen3-next-80b-a3b"]
+components = ["gdn", "short-conv", "moe", "dense-ffn", "vision"]
+shared_engine = true
+
+[[family]]
+id = "qwen38-flash-next"
+label = "Qwen3.8-FN"
+name = "Qwen3.8-Flash-Next (GDN + QSA sparse attention + mHC + PLE + MoE)"
+models = ["qwen3.8-flash-next"]
+components = ["gdn", "short-conv", "sparse-attn", "mhc", "ngram-mem", "moe", "dense-ffn", "vision"]
+shared_engine = true
+
+[[family]]
+id = "qwen3-vl-moe"
+label = "Qwen3-VL"
+name = "Qwen3-VL MoE (full attention)"
+models = ["qwen3-vl-30b-a3b"]
+components = ["moe", "vision"]
+shared_engine = true
+
+[[family]]
+id = "gemma4"
+label = "Gemma4"
+name = "Gemma 4 (sliding/full attention, dense and MoE)"
+models = ["gemma-4-26b-a4b", "gemma-4-31b"]
+components = ["moe", "dense-ffn", "vision"]
+shared_engine = true
+
+[[family]]
+id = "nemotron-h"
+label = "Nemotron-H"
+name = "Nemotron-H (Mamba2 hybrid + MoE)"
+models = ["nemotron-3-nano-30b-a3b", "nemotron-super-120b-a12b", "nemotron-labs-3-puzzle-75b-a9b"]
+components = ["mamba2", "short-conv", "moe", "dense-ffn"]
+shared_engine = true
+
+[[family]]
+id = "deepseek-v4"
+label = "DeepSeek-V4"
+name = "DeepSeek-V4 (MLA + CSA/HCA + mHC + MoE + Engram)"
+models = ["deepseek-v4-flash", "deepseek-v4.1-flash"]
+components = ["mla", "sparse-attn", "mhc", "ngram-mem", "moe", "dense-ffn"]
+shared_engine = true
+
+[[family]]
+id = "mistral-small-4"
+label = "Mistral4"
+name = "Mistral Small 4 (MLA + MoE)"
+models = ["mistral-small-4"]
+components = ["mla", "moe", "dense-ffn"]
+shared_engine = true
+
+[[family]]
+id = "glm53"
+label = "GLM-5.3"
+name = "GLM-5.3-Flash (KDA + DSA sparse MLA + mHC + MoE)"
+models = ["glm-5.3-flash"]
+components = ["kda", "short-conv", "mla", "sparse-attn", "mhc", "moe", "dense-ffn", "vision"]
+shared_engine = true
+
+[[family]]
+id = "kimi-k3"
+label = "Kimi-K3"
+name = "Kimi K3 (KDA + gated MLA + LatentMoE)"
+models = ["kimi-k3"]
+components = ["kda", "short-conv", "mla", "moe", "dense-ffn"]
+shared_engine = true
+
+[[family]]
+id = "laguna"
+label = "Laguna"
+name = "Laguna (full/sliding attention + MoE)"
+models = ["laguna-s-2.1", "laguna-xs-2.1"]
+components = ["moe", "dense-ffn"]
+shared_engine = true
+
+[[family]]
+id = "minimax-m2"
+label = "MiniMax-M2"
+name = "MiniMax-M2 (full attention + sigmoid MoE)"
+models = ["minimax-m2-229b"]
+components = ["moe", "dense-ffn"]
+shared_engine = true
+
+[[family]]
+id = "step37"
+label = "Step-3.7"
+name = "Step-3.7-Flash (full/sliding attention + sigmoid MoE)"
+models = ["step3p7-flash"]
+components = ["moe", "dense-ffn", "vision"]
+shared_engine = true
+
+[[family]]
+id = "longcat"
+label = "LongCat"
+name = "LongCat-Flash-Lite (MLA + MoE + n-gram embeddings)"
+models = ["longcat-flash-lite"]
+components = ["mla", "moe", "ngram-mem", "dense-ffn"]
+shared_engine = true
+
+[[family]]
+id = "nllb"
+label = "NLLB"
+name = "NLLB-200 (encoder-decoder translation)"
+models = ["nllb-200-3.3b"]
+components = ["nllb"]
+shared_engine = false
+
+# ------------------------------------------------------------------------------------------------
+# Components. generic = true: every shared-engine family has it (attention, projections, norms,
+# ...). generic = false: only the families that list it. `sites` are path prefixes of Rust call
+# sites whose launches belong to this component (a kernel launched from there is "used by" the
+# component even when its primary component is another one, e.g. a GEMV launched by the GDN layer).
+# ------------------------------------------------------------------------------------------------
+
+[[component]]
+id = "attention"
+name = "Attention (GQA/MHA: paged decode, split-K, prefill/flash)"
+generic = true
+sites = ["crates/model-layers/src/layers/qwen3_attention/"]
+
+[[component]]
+id = "mla"
+name = "MLA (multi-head latent attention)"
+generic = false
+sites = ["crates/model-arch/src/kimi_k3/mla_cuda.rs"]
+
+[[component]]
+id = "sparse-attn"
+name = "Sparse / compressed attention (DSA, CSA/HCA, QSA)"
+generic = false
+sites = ["crates/model-arch/src/glm5next_dsa/", "crates/model-arch/src/attn_v41", "crates/model-layers/src/layers/qsa"]
+
+[[component]]
+id = "gdn"
+name = "GDN (gated delta rule linear attention)"
+generic = false
+sites = ["crates/model-layers/src/layers/qwen3_ssm/", "crates/model-engine/src/model/gdn_carry", "crates/model-engine/src/model/ssm_", "crates/model-layers/src/forward/qwen3_5/"]
+
+[[component]]
+id = "kda"
+name = "KDA (Kimi delta attention, linear attention)"
+generic = false
+sites = ["crates/model-arch/src/glm5next_kda/", "crates/model-arch/src/kimi_k3/kda_cuda.rs"]
+
+[[component]]
+id = "mamba2"
+name = "Mamba2 (selective state-space scan)"
+generic = false
+sites = ["crates/model-arch/src/nemotron_mamba2"]
+
+[[component]]
+id = "short-conv"
+name = "Causal conv1d (short convolution of GDN/KDA/Mamba2)"
+generic = false
+sites = []
+
+[[component]]
+id = "moe"
+name = "MoE (routing, dispatch, expert GEMM/GEMV, combine)"
+generic = false
+sites = ["crates/model-layers/src/layers/moe", "crates/model-layers/src/layers/ep_dispatch.rs", "crates/model-arch/src/moe_v41", "crates/model-arch/src/nemotron_moe", "crates/model-arch/src/glm5next_mlp/", "crates/model-arch/src/kimi_k3/moe_cuda.rs"]
+
+[[component]]
+id = "dense-ffn"
+name = "Dense FFN (gate/up/down projections of non-MoE layers)"
+generic = false
+sites = ["crates/model-layers/src/layers/dense_ffn", "crates/model-arch/src/kimi_k3/dense_cuda.rs"]
+
+[[component]]
+id = "gemm-bf16"
+name = "Projection GEMM/GEMV — BF16/F32"
+generic = true
+sites = []
+
+[[component]]
+id = "gemm-fp8"
+name = "Projection GEMM/GEMV — FP8 (W8A16, W8A8, block-scaled)"
+generic = true
+sites = []
+
+[[component]]
+id = "gemm-nvfp4"
+name = "Projection GEMM/GEMV — NVFP4 W4A16"
+generic = true
+sites = ["crates/model-layers/src/layers/w4a16_gemv_tiers.rs", "crates/model-layers/src/layers/gemv_tier.rs"]
+
+[[component]]
+id = "gemm-w4a4"
+name = "Projection GEMM/GEMV — W4A4 (FP4 activations)"
+generic = true
+sites = []
+
+[[component]]
+id = "gemm-intq"
+name = "Projection GEMM/GEMV — integer / K-quant (Q2_0, Q2_K..Q6_K, INT8, MLX INT8)"
+generic = true
+sites = ["crates/gpu-runtime/src/mlx_int8.rs"]
+
+[[component]]
+id = "norm"
+name = "Normalization (RMSNorm, LayerNorm, L2, gated norms)"
+generic = true
+sites = []
+
+[[component]]
+id = "elementwise"
+name = "Activations and elementwise (SiLU/GELU/ReLU², residual, gates, scale)"
+generic = true
+sites = []
+
+[[component]]
+id = "rope"
+name = "Positional encoding (RoPE, YaRN, MRoPE)"
+generic = true
+sites = []
+
+[[component]]
+id = "kv-cache"
+name = "KV cache (write, quantize, TurboQuant rotation, slot metadata)"
+generic = true
+sites = []
+
+[[component]]
+id = "quant"
+name = "Quantization and format conversion"
+generic = true
+sites = []
+
+[[component]]
+id = "embed-head"
+name = "Embedding and LM head (lookup, overlays, softcap, scale)"
+generic = true
+sites = ["crates/model-engine/src/model/impl_a3_lm_head.rs", "crates/model-engine/src/model/impl_a3_embed.rs", "crates/model-engine/src/model/lm_head", "crates/model-engine/src/model/trait_impl/lm_head", "crates/model-engine/src/factory/lm_head_setup.rs", "crates/model-engine/src/model/token_overlay"]
+
+[[component]]
+id = "sampling"
+name = "Sampling (argmax, top-p, feed-forward of the chosen token)"
+generic = true
+sites = ["crates/sampling/"]
+
+[[component]]
+id = "spec"
+name = "Speculative decoding (MTP heads, DFlash drafter, verify helpers)"
+generic = true
+sites = ["crates/model-layers/src/layers/mtp_head", "crates/model-layers/src/layers/mtp_", "crates/model-arch/src/deepseek_v4_mtp", "crates/model-arch/src/glm5next_mtp_head", "crates/model-arch/src/dflash_head", "crates/speculative/"]
+
+[[component]]
+id = "mhc"
+name = "Hyper-connections (mHC)"
+generic = false
+sites = ["crates/model-arch/src/glm5next_mhc"]
+
+[[component]]
+id = "ngram-mem"
+name = "N-gram and memory embeddings (Engram, PLE, n-gram tables)"
+generic = false
+sites = ["crates/model-arch/src/engram_v41", "crates/model-layers/src/layers/ple", "crates/model-layers/src/layers/ngram_embed"]
+
+[[component]]
+id = "vision"
+name = "Vision encoder (ViT towers)"
+generic = false
+sites = ["crates/model-layers/src/layers/vision_encoder", "crates/model-layers/src/layers/glm_vit"]
+
+[[component]]
+id = "nllb"
+name = "Encoder-decoder translation (NLLB, self-contained kernel set)"
+generic = false
+sites = ["crates/model-engine/src/model/nllb"]
+
+[[component]]
+id = "lora"
+name = "LoRA adapters (BGMV shrink/expand)"
+generic = true
+sites = ["crates/model-layers/src/lora/"]
+
+[[component]]
+id = "load"
+name = "Weight load and repack (one-time, not per token)"
+generic = true
+sites = ["crates/model-arch/src/weight_loader/", "crates/model-layers/src/weight_map/", "crates/model-weights/"]
+
+[[component]]
+id = "diag"
+name = "Diagnostics and microtests (no serving path)"
+generic = true
+sites = []
+
+# ------------------------------------------------------------------------------------------------
+# Family-exclusive call-site paths: a kernel whose every engine call site lies under these paths is
+# used by these families only (whatever else compiles it).
+# ------------------------------------------------------------------------------------------------
+
+[[family_site]]
+paths = ["crates/model-arch/src/attn_v41", "crates/model-arch/src/deepseek_v4", "crates/model-arch/src/engram_v41", "crates/model-arch/src/moe_v41", "crates/model-arch/src/weight_loader/deepseek_v4"]
+families = ["deepseek-v4"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/glm5next", "crates/model-arch/src/weight_loader/glm5_next", "crates/model-layers/src/layers/glm_vit"]
+families = ["glm53"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/kimi_k3", "crates/model-weights/src/kimi_k3_host", "crates/model-engine/src/kimi_k3_loader"]
+families = ["kimi-k3"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/mistral_loader"]
+families = ["mistral-small-4"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/nemotron_mamba2", "crates/model-arch/src/nemotron_moe", "crates/model-arch/src/weight_loader/nemotron"]
+families = ["nemotron-h"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/weight_loader/gemma4"]
+families = ["gemma4"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/weight_loader/laguna"]
+families = ["laguna"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/weight_loader/longcat", "crates/model-layers/src/layers/ngram_embed"]
+families = ["longcat"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/weight_loader/minimax"]
+families = ["minimax-m2"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/weight_loader/step3p7"]
+families = ["step37"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/weight_loader/qwen4_exp", "crates/model-layers/src/layers/qsa", "crates/model-layers/src/layers/ple"]
+families = ["qwen38-flash-next"]
+
+[[family_site]]
+paths = ["crates/model-engine/src/model/nllb"]
+families = ["nllb"]
+
+[[family_site]]
+paths = ["crates/gpu-runtime/src/mlx_int8.rs"]
+families = ["qwen-gdn-dense"]
+
+# ------------------------------------------------------------------------------------------------
+# Primary component of each entry point (first match wins). `kind` is a short sub-class shown in
+# the tables.
+# ------------------------------------------------------------------------------------------------
+
+# --- self-contained sets first -------------------------------------------------------------------
+[[rule]]
+component = "nllb"
+kind = "NLLB encoder/decoder op"
+names = ["nllb_*"]
+
+[[rule]]
+component = "diag"
+kind = "microtest / smoke"
+names = ["fp4_microtest_*", "noop_smoke", "moe_w4a16_grouped_stream_probe", "lora_bgmv_*_stub"]
+
+[[rule]]
+component = "vision"
+kind = "ViT op"
+names = ["vision_*", "vit_*", "glm_vit_*", "conv3d_patch_embed"]
+
+[[rule]]
+component = "lora"
+kind = "BGMV shrink/expand"
+names = ["lora_bgmv_*", "moe_lora_*"]
+
+# --- speculative decoding ---------------------------------------------------------------------------
+[[rule]]
+component = "spec"
+kind = "DFlash drafter"
+names = ["dflash2_*"]
+
+# --- attention family -------------------------------------------------------------------------------
+[[rule]]
+component = "sparse-attn"
+kind = "DSA indexer / sparse MLA"
+names = ["dsa_*", "glm5next_dsa_*"]
+
+[[rule]]
+component = "sparse-attn"
+kind = "CSA/HCA compressed attention"
+names = ["csa_*", "attn_v41_*", "prefill_attn_compressed"]
+
+[[rule]]
+component = "sparse-attn"
+kind = "QSA sparse attention"
+names = ["qsa_*"]
+
+[[rule]]
+component = "mla"
+kind = "MLA decode/prefill"
+files = ["*mla*"]
+
+[[rule]]
+component = "kv-cache"
+kind = "cache write"
+names = ["reshape_and_cache*", "kv_cache_append*", "fused_k_norm_rope_*cache*", "fill_slots_from_block_table", "bf16_absmax*"]
+
+[[rule]]
+component = "kv-cache"
+kind = "TurboQuant rotation"
+names = ["wht_bf16_*", "tq_plus_innerq_apply_*"]
+
+[[rule]]
+component = "attention"
+kind = "paged decode"
+names = ["paged_decode_attn*", "attention_decode*"]
+
+[[rule]]
+component = "attention"
+kind = "prefill (flash)"
+names = ["attn_prefill*", "attention_prefill", "attention_full"]
+
+[[rule]]
+component = "rope"
+kind = "rotary"
+names = ["rope_*"]
+
+# --- linear attention / SSM -------------------------------------------------------------------------
+[[rule]]
+component = "short-conv"
+kind = "causal conv1d"
+names = ["causal_conv1d_*", "k3_kda_conv_*"]
+
+[[rule]]
+component = "kda"
+kind = "KDA op"
+names = ["kda_*", "k3_kda_*"]
+
+[[rule]]
+component = "mamba2"
+kind = "SSD / selective scan"
+names = ["mamba2_*", "selective_scan_*"]
+
+[[rule]]
+component = "gdn"
+kind = "delta-rule recurrence"
+names = ["gated_delta_rule_*", "gdn_*"]
+
+[[rule]]
+component = "gdn"
+kind = "GDN pre/post-processing"
+files = ["*/ssm_preprocess.cu", "*/ssm_state_norm.cu", "*/ssm_h_dtype.cu", "*/ssm_ba_gates_hopper.cu"]
+
+[[rule]]
+component = "gdn"
+kind = "GDN helper"
+names = ["qwen35_qkv_split", "bf16_mul", "sigmoid_bf16_to_f32", "silu_apply"]
+files = ["kernels/metal/*"]
+
+# --- MoE ---------------------------------------------------------------------------------------------
+[[rule]]
+component = "moe"
+kind = "routing / top-k"
+names = ["moe_topk*", "moe_gate_topk*", "moe_hash_route*", "moe_router_*", "moe_v41_route_*", "moe_v41_router_*", "glm5next_router_topk", "nemotron_moe_topk_*", "dense_gemm_bf16_router"]
+
+[[rule]]
+component = "moe"
+kind = "dispatch / combine"
+names = ["moe_permute_*", "moe_unpermute_*", "moe_sort_*", "moe_count_*", "moe_build_tile_*", "moe_batched_blend", "moe_weighted_sum*", "moe_zero_expert_add", "moe_fp8_grouped_sort", "moe_transpose_*", "moe_v41_*", "glm5next_moe_*", "moe_decode_atomic_c4_finalize", "bucket_builder", "nemotron_moe_weighted_sum_*"]
+
+[[rule]]
+component = "moe"
+kind = "expert activation"
+names = ["moe_silu_mul", "moe_v41_swiglu", "glm5next_swiglu_*"]
+
+[[rule]]
+component = "moe"
+kind = "expert GEMM/GEMV"
+names = ["moe_*", "nemotron_moe_*", "kquant_mmvq_*_experts*", "kquant_mmvq_*_groups_*", "kquant_mmvq_*_pair_*", "pm4_m16", "k3_moe_*"]
+
+# --- hyper-connections, n-gram memory -----------------------------------------------------------
+[[rule]]
+component = "mhc"
+kind = "hyper-connection mix"
+names = ["hc_*", "glm5next_hc_*"]
+
+[[rule]]
+component = "ngram-mem"
+kind = "memory embedding"
+names = ["engram_*", "ple_*"]
+
+[[rule]]
+component = "quant"
+kind = "dequant / repack / transpose"
+names = ["w8a16_dequant", "w4a16_dequant"]
+
+# --- projection GEMM/GEMV by format -------------------------------------------------------------------
+[[rule]]
+component = "gemm-w4a4"
+kind = "W4A4 GEMM/GEMV"
+names = ["w4a4_*", "metrale_nvfp4_mmq*"]
+
+[[rule]]
+component = "gemm-intq"
+kind = "integer / K-quant GEMM/GEMV"
+names = ["int8_*", "q2_0_*", "metrale_q*_mmq*", "kquant_mmvq_*", "mlx_int8_*", "requant_*"]
+
+[[rule]]
+component = "gemm-fp8"
+kind = "FP8 GEMM/GEMV"
+names = ["w8a16_gemm*", "w8a16_gemv*", "fp8_gemm*", "fp8_fp8_gemm*", "fp8_gemv*", "dense_gemv_fp8w*", "w4a16_gemm_t_m128_v*", "fp8_gemm_t_blockscaled"]
+
+[[rule]]
+component = "gemm-nvfp4"
+kind = "NVFP4 W4A16 GEMM/GEMV"
+names = ["w4a16_*"]
+
+[[rule]]
+component = "gemm-bf16"
+kind = "BF16/F32 GEMM/GEMV"
+names = ["dense_gemm*", "dense_gemv_bf16*", "dense_gemv*", "k3_dense_*", "attn_v41_gemm*", "attn_v41_gemv*"]
+
+# --- quantization and conversion ------------------------------------------------------------------------
+[[rule]]
+component = "quant"
+kind = "activation quantize"
+names = ["quantize_*", "per_token_group_quant_*", "quant_rowwise_fp8", "e2m1_*", "silu_mul_quant_fp8", "kquant_q8_1_*", "kquant_swiglu_q8_1_*", "metrale_q8_1_quantize_*", "metrale_nvfp4_quantize_*", "q4k_quantize", "nvfp4_global_absmax", "bf16_to_fp8", "w4a4_quant_rows"]
+
+[[rule]]
+component = "quant"
+kind = "dequant / repack / transpose"
+names = ["dequant_*", "predequant_*", "widen_block_scale_*", "transpose_*", "fp8_act_scale_to_kmajor", "metrale_nvfp4_repack", "metrale_nvfp4_scale_bf16", "ssm_h_state_*"]
+
+[[rule]]
+component = "quant"
+kind = "dtype conversion"
+names = ["f32_to_bf16*", "convert_f32_to_bf16", "bf16_to_f32"]
+
+# --- norms, rope, embeddings, sampling, elementwise -----------------------------------------------------
+[[rule]]
+component = "norm"
+kind = "normalization"
+names = ["*rms_norm*", "l2_norm*", "layer_norm", "add_rms_norm"]
+
+[[rule]]
+component = "embed-head"
+kind = "embedding / LM head"
+names = ["embed_*", "batched_embed*", "lmhead_*", "logit_softcap*", "bf16_scale_inplace", "f32_scale_inplace"]
+
+[[rule]]
+component = "sampling"
+kind = "argmax / top-p"
+names = ["argmax_*", "softmax_topp", "feed_resolve"]
+
+[[rule]]
+component = "elementwise"
+kind = "activation / gate / residual"
+names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "vector_add", "bf16_residual_add", "f32_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]

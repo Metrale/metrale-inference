@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Measured per-kernel time against the roofline floor (schema: KERNEL-PERF.md "Methodology").
+# One [[m]] row per (kernel, hardware, model, regime). Written by the measurement procedure;
+# scripts/kernel_perf.py validates every row against the tree and re-derives pct_of_floor.
