@@ -115,7 +115,7 @@ re-running them on your own hardware, and the vLLM side too.
   - [The single-stream decode floor](#the-single-stream-decode-floor)
   - [Verify the signed records](#verify-the-signed-records)
   - [The vLLM baseline on the same box](#the-vllm-baseline-on-the-same-box)
-  - [Advanced: the full 13-gate certification](#advanced-the-full-13-gate-certification)
+  - [Advanced: the full 17-gate certification](#advanced-the-full-17-gate-certification)
 - <img src="docs/readme/icons/layers.svg" width="16" height="16" alt="Layers icon"> [Architecture at a glance](#architecture-at-a-glance)
 - <img src="docs/readme/icons/shield.svg" width="16" height="16" alt="Shield icon"> [Accuracy and correctness gates](#accuracy-and-correctness-gates)
 - <img src="docs/readme/icons/lock.svg" width="16" height="16" alt="Lock icon"> [Security](#security)
@@ -720,7 +720,7 @@ target/release/met bench serve-release
 port in `serve-lease.json` under `~/.metrale` (or `$METRALE_HOME`);
 `serve-release` stops it.
 
-### Advanced: the full 13-gate certification
+### Advanced: the full 17-gate certification
 
 `met bench certify` runs every required gate the current commit does not yet
 have a passing record for, then applies the same check CI applies.
@@ -735,7 +735,7 @@ target/release/met bench certify --hardware gb10 --no-guard --yes
 - **What it runs.** The gates listed under
   [Accuracy and correctness gates](#accuracy-and-correctness-gates) that
   have no passing record at this commit yet; the ones you ran in step 6
-  onwards are skipped. Four checkpoints (88.22 GB) cover all 13. The two
+  onwards are skipped. Four checkpoints (88.22 GB) cover all 17. The two
   BFCL groups run their whole draw on one box, or split into shards across
   several with `--with-nodes`.
   `--yes` confirms `agentic-webserver`, which executes model-authored shell
@@ -793,7 +793,7 @@ NVFP4, MTP, SSM layers and attention.
 <a id="accuracy-and-correctness-gates"></a>
 ## <img src="docs/readme/icons/shield.svg" width="20" height="20" alt="Shield icon"> Accuracy and correctness gates
 
-A merge needs a passing record for each of these 13 gates, the `REQUIRED`
+A merge needs a passing record for each of these 17 gates, the `REQUIRED`
 list in [`crates/bench/src/gate/coverage.rs`](crates/bench/src/gate/coverage.rs).
 A record stays valid until a change touches that gate's invalidation paths.
 Results are from the 2026-09-27 records at `aa5d059438`.
@@ -813,11 +813,21 @@ Results are from the 2026-09-27 records at `aa5d059438`.
 | `concurrency-sweep-dflash2` | The same at C=1 to 16 with the DFlash2 drafter | Qwen3.8-27B-NVFP4 + `incoai/Qwen3.8-27B-DFlash2` | all 5 rungs above floor, peak 72.1 tok/s |
 | `kat-equality-gate` | The same sample must get the same answer whatever ran before it (hermetic serve) | Qwen3.8-27B-NVFP4 | 257 samples byte-identical across 2 request orders |
 | `concurrency-sweep-moe` | Aggregate throughput floors at C=1 to 16 on the MoE, published instrument | Qwen3.6-35B-A3B-FP8 | all 5 rungs above floor, peak 311.2 tok/s |
+| `high-isl-ttft-cold` | Uncached 32k-token prefill TTFT on the dense flagship | Qwen3.8-27B-NVFP4 | added after this certification; ceiling 24115.2 ms |
+| `high-isl-ttft-warm` | Cached 32k-token prefix TTFT on the dense flagship | Qwen3.8-27B-NVFP4 | added after this certification; ceiling 2132.3 ms |
+| `high-isl-ttft-cold-moe` | Uncached 32k-token prefill TTFT on the 35B MoE | Qwen3.6-35B-A3B-FP8 | added after this certification; ceiling 9231.9 ms |
+| `high-isl-ttft-warm-moe` | Cached 32k-token prefix TTFT on the 35B MoE | Qwen3.6-35B-A3B-FP8 | added after this certification; ceiling 579.4 ms |
 
 The BFCL figures are the aggregate over six shard records, as
 `met benchmark aggregate bfcl-subset --sha aa5d059438` prints them; every
 other row is the record's `verdict_reason`. The descriptions follow
-`met benchmark list`.
+`met benchmark list`. The four high-ISL gates were added after `aa5d059438`
+was certified. Their ceilings are vLLM 0.27.1's time to first token on the
+same prompt and box, so a pass means at least as fast as vLLM;
+[`bench/baselines/qwen36-35b-a3b/ttft/published.json`](bench/baselines/qwen36-35b-a3b/ttft/published.json)
+and
+[`bench/baselines/qwen38-27b/ttft/published.json`](bench/baselines/qwen38-27b/ttft/published.json)
+hold the measurements.
 
 <a id="security"></a>
 ## <img src="docs/readme/icons/lock.svg" width="20" height="20" alt="Lock icon"> Security

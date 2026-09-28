@@ -1,0 +1,239 @@
+{
+  "schema": 1,
+  "status": "measured 2026-09-27",
+  "title": "unsloth/Qwen3.8-27B-NVFP4 TTFT: vLLM baseline on the Metrale TTFT instruments",
+  "subtitle": "vLLM 0.27.1 + MTP on the Metrale TTFT instruments; no Metrale Engine series in this manifest",
+  "aggregate": "series: median over 3 runs of each run's median_ms / p90_ms (36 samples pooled at 256/1024/4096); gate_ceilings: from the steady one-shot pairs",
+  "results_doc": "bench/baselines/qwen38-27b/ttft/published.json",
+  "sources_note": "Every `sources` key, and every file in oneshot.sources, is a path relative to this manifest's directory; the value is its sha256. The files are the vLLM gate records and one-shot lines exactly as written on the box, copied byte for byte. The one-shot file is JSON Lines named .ndjson because .gitignore drops bench/**/*.jsonl as harness output.",
+  "gate_ceilings": {
+    "rule": "owner 2026-09-27: parity with vLLM is the pass bar. The engine's BENCH.toml uses the value below as `max` for both median_ms and p90_ms of the gate. It is vLLM's STEADY one-shot TTFT on the 32k fixture: first-request-after-boot pairs are excluded. Mean of the 2 pairs (both steady; an even count, so the mean, which here equals the median).",
+    "high-isl-ttft-cold": {
+      "median_ms": 24115.2,
+      "p90_ms": 24115.2,
+      "statistic": "mean of the steady one-shot cold TTFTs [24448.9, 23781.5]",
+      "pairs": [
+        "cold-32k-6734399028689353",
+        "cold-32k-3776200547070046"
+      ]
+    },
+    "high-isl-ttft-warm": {
+      "median_ms": 2132.3,
+      "p90_ms": 2132.3,
+      "statistic": "mean of the steady one-shot warm TTFTs [2135.3, 2129.3]",
+      "pairs": [
+        "cold-32k-6734399028689353",
+        "cold-32k-3776200547070046"
+      ]
+    },
+    "excluded": []
+  },
+  "workload": {
+    "checkpoint": "unsloth/Qwen3.8-27B-NVFP4",
+    "kv_cache_dtype": "fp8",
+    "thinking": "32k: disabled via chat_template_kwargs; synthetic: engine default",
+    "harness": "met benchmark run <gate> --url http://127.0.0.1:8000 --model <id> --format json --no-save --no-fail-on-verdict (Metrale bench client, same binary as the Metrale legs)"
+  },
+  "box": {
+    "name": "dgx2 (spark-43fa)",
+    "gpu": "NVIDIA GB10",
+    "driver": "580.126.09",
+    "note": "one box per subject; the Metrale legs of the comparison ran on the same box the same evening (2026-09-27, 21:19-22:39 UTC)"
+  },
+  "harness_note": "Gate records: `met` built from branch bench/high-isl-ttft plus one local, never-pushed commit that only registers the four high-ISL descriptors; every record carries metrale_version 1.0.0-beta-preview and serve_overrides {} (vLLM is not launched by the harness).",
+  "series": [
+    {
+      "id": "vllm-mtp-ttft-cold-gate",
+      "label": "vLLM + MTP",
+      "role": "baseline",
+      "engine": "vLLM 0.27.1",
+      "build": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 (image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, label vllm/vllm-openai:v0.27.1, vLLM commit 6e448d0ea9bf3d88d898b65449ca6dc2aec170ac)",
+      "env": "HF_HUB_OFFLINE=1",
+      "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model unsloth/Qwen3.8-27B-NVFP4 --served-model-name unsloth/Qwen3.8-27B-NVFP4 --host 127.0.0.1 --port 8000 --max-model-len 40960 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype fp8 --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+      "cli_note": "bench/ladder38/published.json series vllm-mtp (recorded there as the in-container `vllm serve` command) with --max-model-len 40960 (was 2048), --host 127.0.0.1 --port 8000 (was 0.0.0.0:8001), and the docker wrapper written out with the image pinned by digest (the same digest that series' build records). --enable-prefix-caching was already set. Every vLLM argument otherwise verbatim.",
+      "instrument": {
+        "gate": "ttft-cold-gate",
+        "mode": "cold",
+        "osl": 8,
+        "reps": 12,
+        "temperature": 0.0,
+        "stream": true,
+        "max_model_len": 40960,
+        "prompt": "stats::make_prompt natural filler, unique prefix tag per cold sample",
+        "prompt_lengths": [
+          256,
+          1024,
+          4096
+        ],
+        "note": "median/p90 pooled over the 36 samples"
+      },
+      "median_ms": {
+        "median_of_runs": 625.6,
+        "min": 620.8,
+        "max": 632.9,
+        "runs": [
+          620.8,
+          632.9,
+          625.6
+        ]
+      },
+      "p90_ms": {
+        "median_of_runs": 2674.7,
+        "min": 2671.2,
+        "max": 2674.9,
+        "runs": [
+          2671.2,
+          2674.7,
+          2674.9
+        ]
+      },
+      "sources": {
+        "vllm__ttft-cold-gate__r1.json": "21515276c79edd5e341c9f65df6fae4dd0f91f67741a132136762f45cd77a3bb",
+        "vllm__ttft-cold-gate__r2.json": "f24ff111c61fecc876f8cc5d04b2745ab08e7426e45dfef8a2db65c7015760fa",
+        "vllm__ttft-cold-gate__r3.json": "2608bfb2305c766bdd3f182281b06ef0641f9ba5f7e25b3e4646c170249db09d"
+      },
+      "per_length_median_ms": {
+        "256": 337.6,
+        "1024": 625.6,
+        "4096": 2670.5
+      },
+      "per_length_p90_ms": {
+        "256": 349.9,
+        "1024": 635.2,
+        "4096": 2704.8
+      },
+      "build_note": "Read from `docker image inspect` on the measuring box on 2026-09-27; the container logs these non-default args at startup, matching `cli` (port 8000 is vLLM's default).",
+      "box_state": "The harness post-check marked r2, r3 INVALID: a thermal-throttle counter advanced during the run (throttled 0.90% and 1.88% of the run; the record's own words: \"this speed number is not comparable\"). Kept as the only vLLM measurement at this instrument on this box; not used for any gate ceiling."
+    },
+    {
+      "id": "vllm-mtp-ttft-warm-gate",
+      "label": "vLLM + MTP",
+      "role": "baseline",
+      "engine": "vLLM 0.27.1",
+      "build": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 (image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, label vllm/vllm-openai:v0.27.1, vLLM commit 6e448d0ea9bf3d88d898b65449ca6dc2aec170ac)",
+      "env": "HF_HUB_OFFLINE=1",
+      "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model unsloth/Qwen3.8-27B-NVFP4 --served-model-name unsloth/Qwen3.8-27B-NVFP4 --host 127.0.0.1 --port 8000 --max-model-len 40960 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype fp8 --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+      "cli_note": "bench/ladder38/published.json series vllm-mtp (recorded there as the in-container `vllm serve` command) with --max-model-len 40960 (was 2048), --host 127.0.0.1 --port 8000 (was 0.0.0.0:8001), and the docker wrapper written out with the image pinned by digest (the same digest that series' build records). --enable-prefix-caching was already set. Every vLLM argument otherwise verbatim.",
+      "instrument": {
+        "gate": "ttft-warm-gate",
+        "mode": "warm",
+        "osl": 8,
+        "reps": 12,
+        "temperature": 0.0,
+        "stream": true,
+        "max_model_len": 40960,
+        "prompt": "stats::make_prompt natural filler, unique prefix tag per cold sample",
+        "prompt_lengths": [
+          256,
+          1024,
+          4096
+        ],
+        "note": "median/p90 pooled over the 36 samples"
+      },
+      "median_ms": {
+        "median_of_runs": 620.1,
+        "min": 619.7,
+        "max": 622.8,
+        "runs": [
+          622.8,
+          620.1,
+          619.7
+        ]
+      },
+      "p90_ms": {
+        "median_of_runs": 1709.1,
+        "min": 1708.4,
+        "max": 1710.0,
+        "runs": [
+          1709.1,
+          1708.4,
+          1710.0
+        ]
+      },
+      "sources": {
+        "vllm__ttft-warm-gate__r1.json": "4b85d0c22def166475b1c0049fbf92a8ebb9d2515c1101f4726141333e40b773",
+        "vllm__ttft-warm-gate__r2.json": "77dfa9616428a2a8eb82a92db7bd1ae883afeb8853c950e60e422ec88b701163",
+        "vllm__ttft-warm-gate__r3.json": "971589189ba59e42fc7eec4df33ce7bc730570cb44b877defc0d7f30d315b5de"
+      },
+      "per_length_median_ms": {
+        "256": 344.7,
+        "1024": 620.1,
+        "4096": 1707.0
+      },
+      "per_length_p90_ms": {
+        "256": 347.4,
+        "1024": 679.0,
+        "4096": 1715.3
+      },
+      "build_note": "Read from `docker image inspect` on the measuring box on 2026-09-27; the container logs these non-default args at startup, matching `cli` (port 8000 is vLLM's default).",
+      "box_state": "The harness post-check marked r1, r2, r3 INVALID: a thermal-throttle counter advanced during the run (throttled 0.08%, 0.02% and 0.21% of the run; the record's own words: \"this speed number is not comparable\"). Kept as the only vLLM measurement at this instrument on this box; not used for any gate ceiling."
+    }
+  ],
+  "series_note": "No vLLM series at the 32k gate instrument for this subject: its only run (high-isl-ttft-cold r1) was cancelled at 2026-09-27T22:27:29Z, before any sample was recorded, when the method changed to one-shot pairs; its record is status Failed, verdict cancelled, no metrics. It is not cited. The 32k baseline for this subject is `oneshot`.",
+  "oneshot": {
+    "method": "owner 2026-09-27: per pair, one request with a fresh cold-32k-<16 digits> tag (cold), then the byte-identical request again (warm); gate request body (stream, include_usage, max_tokens 8, temperature 0, enable_thinking false); client hisl_client.py (sha256 5faacadb1345f0ac703243988ef9764cc0c37df2c28820fec5d894caaa5f1838, not in this repo)",
+    "instrument": {
+      "prompt": "crates/bench/src/benchmarks/ttft/prompts/long-32k.txt",
+      "prompt_sha256": "4f961eabd9433e18166e795052b59239760d4e3cc7fa78c258d0bd1b623a1993",
+      "prompt_tokens": 32772,
+      "min_prompt_tokens": 32768,
+      "osl": 8,
+      "temperature": 0.0,
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      },
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "max_model_len": 40960,
+      "ttft": "client-side: time to the first non-empty content/reasoning delta"
+    },
+    "build": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 (image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, label vllm/vllm-openai:v0.27.1, vLLM commit 6e448d0ea9bf3d88d898b65449ca6dc2aec170ac)",
+    "env": "HF_HUB_OFFLINE=1",
+    "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model unsloth/Qwen3.8-27B-NVFP4 --served-model-name unsloth/Qwen3.8-27B-NVFP4 --host 127.0.0.1 --port 8000 --max-model-len 40960 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype fp8 --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+    "cli_note": "bench/ladder38/published.json series vllm-mtp (recorded there as the in-container `vllm serve` command) with --max-model-len 40960 (was 2048), --host 127.0.0.1 --port 8000 (was 0.0.0.0:8001), and the docker wrapper written out with the image pinned by digest (the same digest that series' build records). --enable-prefix-caching was already set. Every vLLM argument otherwise verbatim.",
+    "box": "dgx2 (spark-43fa)",
+    "boots": [
+      {
+        "boot": 1,
+        "started_utc": "2026-09-27T22:12:56Z",
+        "note": "not fresh: before pair 1 it served the ttft-*-gate runs (22:20-22:27Z) and the one 32k request of the cancelled high-isl-ttft-cold run, whose prefill vLLM's log shows completing at 22:27:36-46Z, after that client was cancelled at 22:27:29Z; so both pairs are steady"
+      }
+    ],
+    "note": "The FIRST 32k request after a fresh vLLM boot pays one-time JIT/autotune (MoE: 41976.1 and 39349.3 ms cold on the two boots vs 9214.7-9265.4 ms steady). A one-shot reference must discard that request or it measures vLLM start-up, not prefill. `utc` is when the result was recorded (response complete), from the client host's clock. `pair_in_boot` is the record's `pair`.",
+    "sources": {
+      "vllm_oneshot.ndjson": "74575f8e2c3ff55d3a34e70cc00242df3848cd7604ae62310a3a5ee86d40a473"
+    },
+    "pairs": [
+      {
+        "tag": "cold-32k-6734399028689353",
+        "utc": "2026-09-27T22:28:18Z",
+        "host": "spark-43fa",
+        "cold_ms": 24448.9,
+        "warm_ms": 2135.3,
+        "prompt_tokens": [
+          32772
+        ],
+        "cold_output": "The passage is an excerpt from Herman Mel",
+        "boot": 1,
+        "pair_in_boot": 1,
+        "steady": true
+      },
+      {
+        "tag": "cold-32k-3776200547070046",
+        "utc": "2026-09-27T22:28:45Z",
+        "host": "spark-43fa",
+        "cold_ms": 23781.5,
+        "warm_ms": 2129.3,
+        "prompt_tokens": [
+          32772
+        ],
+        "cold_output": "The passage is a sermon delivered by Father",
+        "boot": 1,
+        "pair_in_boot": 2,
+        "steady": true
+      }
+    ]
+  }
+}

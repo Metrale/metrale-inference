@@ -80,7 +80,7 @@ fn the_real_taxonomy_is_valid() {
             "correctness/sampling=bfcl-subset-echolp,agentic-webserver",
             "performance=agentic-webserver",
             "performance/decode=bfcl-subset,ttft-warm-gate,decode-floor",
-            "performance/prefill=ttft-cold-gate,ttft-warm-gate",
+            "performance/prefill=ttft-cold-gate,ttft-warm-gate,high-isl-ttft-cold,high-isl-ttft-cold-moe",
             "performance/kernel-dispatch=bfcl-subset,decode-floor",
             "performance/memory-traffic=bfcl-subset,ttft-warm-gate,decode-floor",
             "performance/scheduling=ttft-warm-gate,concurrency-sweep",

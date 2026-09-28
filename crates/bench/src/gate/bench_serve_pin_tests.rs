@@ -243,6 +243,60 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
     }
 }
 
+/// 2026-09-27: The high-ISL TTFT gates: each subject's default entry pins the context that holds
+/// the 32k prompt, the util ceiling and prefix caching; its ceilings are vLLM's steady one-shot
+/// TTFT on the same fixture (both statistics one bound), and the fixture's token floor.
+#[test]
+fn the_high_isl_gates_pin_their_serve_and_vllm_ceilings() {
+    let root = repo_root();
+    for (id, checkpoint, recipe, ceiling) in [
+        (
+            "high-isl-ttft-cold",
+            "unsloth/Qwen3.8-27B-NVFP4",
+            "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
+            24115.2,
+        ),
+        (
+            "high-isl-ttft-warm",
+            "unsloth/Qwen3.8-27B-NVFP4",
+            "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
+            2132.3,
+        ),
+        (
+            "high-isl-ttft-cold-moe",
+            "Qwen/Qwen3.6-35B-A3B-FP8",
+            "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head",
+            9231.9,
+        ),
+        (
+            "high-isl-ttft-warm-moe",
+            "Qwen/Qwen3.6-35B-A3B-FP8",
+            "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head",
+            579.4,
+        ),
+    ] {
+        let b = baseline_for(&root, id).unwrap();
+        let (resolved, entry) = b.resolve("gb10", None).unwrap();
+        assert_eq!(resolved, checkpoint, "{id}");
+        assert_eq!(entry.recipe.as_deref(), Some(recipe), "{id}");
+        assert_eq!(
+            entry.serve_overrides,
+            std::collections::BTreeMap::from([
+                ("enable_prefix_caching".to_string(), "true".to_string()),
+                (
+                    "gpu_memory_utilization".to_string(),
+                    GB10_UTIL_CEILING.to_string()
+                ),
+                ("max_model_len".to_string(), "40960".to_string()),
+            ]),
+            "{id}"
+        );
+        assert_eq!(entry.metrics["median_ms"].max, Some(ceiling), "{id}");
+        assert_eq!(entry.metrics["p90_ms"].max, Some(ceiling), "{id}");
+        assert_eq!(entry.metrics["prompt_tokens"].min, Some(32768.0), "{id}");
+    }
+}
+
 /// 2026-09-26: The `gpu_memory_utilization` every 35B FP8 entry on GB10 pins
 /// (qwen3.6-35b-a3b/BENCH.toml).
 const GB10_UTIL_CEILING: &str = "0.85";
@@ -276,6 +330,8 @@ fn every_gb10_fp8_moe_entry_pins_the_util_ceiling() {
             "agentic-webserver",
             "bfcl-subset-echolp",
             "concurrency-sweep-moe",
+            "high-isl-ttft-cold-moe",
+            "high-isl-ttft-warm-moe",
             "mlperf-agentic-subset",
             "ssm-state-poisoning-gate",
             "ttft-cold-gate",

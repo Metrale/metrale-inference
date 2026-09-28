@@ -29,6 +29,12 @@ const ALL: &[&BenchmarkDescriptor] = &[
     &concurrency::MOE_DESCRIPTOR,
     &ttft::WARM_DESCRIPTOR,
     &ttft::COLD_DESCRIPTOR,
+    // 2026-09-27: Listed in `gate::coverage::REQUIRED`: the 32k-prompt pair on
+    // the dense flagship, then on the 35B MoE.
+    &ttft::HIGH_ISL_COLD_DESCRIPTOR,
+    &ttft::HIGH_ISL_WARM_DESCRIPTOR,
+    &ttft::HIGH_ISL_COLD_MOE_DESCRIPTOR,
+    &ttft::HIGH_ISL_WARM_MOE_DESCRIPTOR,
     &contamination::DESCRIPTOR,
     // 2026-09-26: Listed in `gate::coverage::REQUIRED`. Coverage has no
     // per-model dimension: the checkpoints it measures are the BENCH.toml

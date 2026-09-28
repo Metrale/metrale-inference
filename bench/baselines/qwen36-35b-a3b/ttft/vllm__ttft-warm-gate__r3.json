@@ -1,0 +1,343 @@
+{
+  "schema": 1,
+  "run_id": "",
+  "benchmark_id": "ttft-warm-gate",
+  "benchmark_name": "Warm TTFT Regression Gate",
+  "recorded_at": 1790545525,
+  "target_url": "http://127.0.0.1:8000",
+  "target_model": "Qwen/Qwen3.6-35B-A3B-FP8",
+  "params": {
+    "median_limit_pct": "3",
+    "p90_limit_pct": "5",
+    "prompt_lengths": "256, 1024, 4096",
+    "repeats": "12",
+    "request_timeout_s": "300",
+    "update_baseline": "true"
+  },
+  "serve_overrides": {},
+  "source": "cli",
+  "metrale_version": "1.0.0-beta-preview",
+  "frame": {
+    "status": "Completed",
+    "phase": "done",
+    "progress": [
+      3,
+      3
+    ],
+    "summary": [
+      {
+        "label": "Median TTFT",
+        "value": "331.0",
+        "unit": "ms",
+        "style": "Accent"
+      },
+      {
+        "label": "p90 TTFT",
+        "value": "361.0",
+        "unit": "ms",
+        "style": "Neutral"
+      },
+      {
+        "label": "vs baseline",
+        "value": "+0.1",
+        "unit": "% median · just now",
+        "style": "Neutral"
+      }
+    ],
+    "table": {
+      "title": "WARM TTFT",
+      "columns": [
+        {
+          "title": "Prompt tok",
+          "align": "Right",
+          "width": 11
+        },
+        {
+          "title": "n",
+          "align": "Right",
+          "width": 4
+        },
+        {
+          "title": "median",
+          "align": "Right",
+          "width": 9
+        },
+        {
+          "title": "p90",
+          "align": "Right",
+          "width": 9
+        },
+        {
+          "title": "p99",
+          "align": "Right",
+          "width": 9
+        },
+        {
+          "title": "cached tok",
+          "align": "Right",
+          "width": 11
+        }
+      ],
+      "rows": [
+        [
+          {
+            "text": "256",
+            "style": "Neutral"
+          },
+          {
+            "text": "12",
+            "style": "Neutral"
+          },
+          {
+            "text": "208.9",
+            "style": "Accent"
+          },
+          {
+            "text": "212.9",
+            "style": "Neutral"
+          },
+          {
+            "text": "212.9",
+            "style": "Neutral"
+          },
+          {
+            "text": "0",
+            "style": "Bad"
+          }
+        ],
+        [
+          {
+            "text": "1024",
+            "style": "Neutral"
+          },
+          {
+            "text": "12",
+            "style": "Neutral"
+          },
+          {
+            "text": "331.0",
+            "style": "Accent"
+          },
+          {
+            "text": "340.9",
+            "style": "Neutral"
+          },
+          {
+            "text": "340.9",
+            "style": "Neutral"
+          },
+          {
+            "text": "0",
+            "style": "Bad"
+          }
+        ],
+        [
+          {
+            "text": "4096",
+            "style": "Neutral"
+          },
+          {
+            "text": "12",
+            "style": "Neutral"
+          },
+          {
+            "text": "360.4",
+            "style": "Accent"
+          },
+          {
+            "text": "364.6",
+            "style": "Neutral"
+          },
+          {
+            "text": "364.6",
+            "style": "Neutral"
+          },
+          {
+            "text": "0",
+            "style": "Bad"
+          }
+        ]
+      ]
+    },
+    "verdict": {
+      "kind": "Pass",
+      "reason": "median +0.1% (limit +3.0%) · p90 +0.2% (limit +5.0%)"
+    },
+    "metrics": {
+      "median_ms": 331.021382,
+      "p90_ms": 360.981448,
+      "samples": 36.0
+    },
+    "log": [],
+    "elapsed": {
+      "secs": 28,
+      "nanos": 420838104
+    },
+    "hardware_state": {
+      "sensitivity": "speed",
+      "before": {
+        "captured_at": 1790545496,
+        "machine": {
+          "hostname": "spark-28c2",
+          "machine_id": "7af66f30966a49b6886e00e2fce4b42f",
+          "gpu": "NVIDIA GB10",
+          "driver": "580.159.03"
+        },
+        "gpu_temp_c": 66.0,
+        "chassis_temps_c": [
+          {
+            "name": "acpitz",
+            "temp_c": 76.1
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 66.2
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 67.8
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 66.9
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 74.0
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 76.1
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 69.5
+          }
+        ],
+        "sm_clock_mhz": 2444.0,
+        "sm_clock_max_mhz": 3003.0,
+        "throttle_counters": {
+          "sw_power_cap_us": 73584128697,
+          "sw_thermal_us": 0,
+          "hw_thermal_us": 0,
+          "hw_power_brake_us": 0,
+          "sync_boost_us": 0
+        },
+        "throttle_active": {
+          "sw_power_cap": false,
+          "sw_thermal": false,
+          "hw_thermal": false,
+          "hw_power_brake": false
+        },
+        "mem_available_kb": 11088388,
+        "mem_total_kb": 127600752,
+        "page_cache_kb": 9976352,
+        "gpu_compute_apps": [
+          {
+            "pid": 59217,
+            "name": "VLLM::EngineCore",
+            "used_mib": 102279
+          }
+        ],
+        "cpu_governor": "performance",
+        "persistence_mode": true,
+        "sources": [
+          "nvidia-smi",
+          "procfs",
+          "sysfs"
+        ]
+      },
+      "after": {
+        "captured_at": 1790545524,
+        "machine": {
+          "hostname": "spark-28c2",
+          "machine_id": "7af66f30966a49b6886e00e2fce4b42f",
+          "gpu": "NVIDIA GB10",
+          "driver": "580.159.03"
+        },
+        "gpu_temp_c": 70.0,
+        "chassis_temps_c": [
+          {
+            "name": "acpitz",
+            "temp_c": 80.1
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 67.7
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 69.7
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 68.4
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 77.7
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 80.1
+          },
+          {
+            "name": "acpitz",
+            "temp_c": 71.4
+          }
+        ],
+        "sm_clock_mhz": 2463.0,
+        "sm_clock_max_mhz": 3003.0,
+        "throttle_counters": {
+          "sw_power_cap_us": 73584128697,
+          "sw_thermal_us": 0,
+          "hw_thermal_us": 0,
+          "hw_power_brake_us": 0,
+          "sync_boost_us": 0
+        },
+        "throttle_active": {
+          "sw_power_cap": false,
+          "sw_thermal": false,
+          "hw_thermal": false,
+          "hw_power_brake": false
+        },
+        "mem_available_kb": 11348548,
+        "mem_total_kb": 127600752,
+        "page_cache_kb": 9976388,
+        "gpu_compute_apps": [
+          {
+            "pid": 59217,
+            "name": "VLLM::EngineCore",
+            "used_mib": 102279
+          }
+        ],
+        "cpu_governor": "performance",
+        "persistence_mode": true,
+        "sources": [
+          "nvidia-smi",
+          "procfs",
+          "sysfs"
+        ]
+      },
+      "delta": {
+        "elapsed_s": 28,
+        "sw_power_cap_us": 0,
+        "sw_thermal_us": 0,
+        "hw_thermal_us": 0,
+        "hw_power_brake_us": 0,
+        "gpu_temp_delta_c": 4.0,
+        "hottest_chassis_delta_c": 4.0
+      },
+      "precheck": {
+        "decision": "proceed"
+      },
+      "postcheck": {
+        "validity": "valid",
+        "concerns": [
+          "hottest chassis zone moved +4 °C"
+        ]
+      },
+      "perf_class": "gb10@spark-28c2"
+    }
+  }
+}
