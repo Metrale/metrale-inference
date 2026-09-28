@@ -282,11 +282,13 @@ impl MoeLayer {
 
         let expert_gate_out = ctx.buffers.expert_gate_out();
         let expert_up_out = ctx.buffers.expert_up_out();
-        // 2026-09-25: Zero the expert buffers before the grouped GEMMs, on every
-        // path. The work-list builder skips an expert whose weight pointer is
-        // NULL, so its sorted rows are never written, and the unpermute still
-        // reads every sorted row.
-        {
+        // 2026-09-25: Zero the expert buffers before the grouped GEMMs. The work-list
+        // builder skips an expert whose weight pointer is NULL, so its sorted rows are
+        // never written, and the unpermute still reads every sorted row.
+        // 2026-09-28: Only then: with every weight pointer present each sorted row of
+        // all three buffers is written by a GEMM first, and the memsets (about 400 MB
+        // per layer at an 8k-token chunk) change nothing.
+        if !(gp.all_present && up.all_present && dp.all_present) {
             let gu_bytes = te * inter as usize * 2;
             ctx.gpu.memset_async(expert_gate_out, 0, gu_bytes, stream)?;
             ctx.gpu.memset_async(expert_up_out, 0, gu_bytes, stream)?;
