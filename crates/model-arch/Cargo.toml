@@ -361,6 +361,10 @@ name = "w8a16_batch_bitparity_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "w8a16_gemm_pipe128_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "w8a16_gemv_batch4_microtest"
 required-features = ["cuda", "gpu-examples"]
 
