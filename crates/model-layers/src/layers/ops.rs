@@ -146,6 +146,8 @@ mod prefill_attn_a;
 mod prefill_attn_b;
 #[path = "ops/prefill_attn_batched.rs"]
 mod prefill_attn_batched;
+#[path = "ops/prefill_attn_fa128.rs"]
+mod prefill_attn_fa128;
 #[path = "ops/prefill_attn_fp8k.rs"]
 mod prefill_attn_fp8k;
 #[path = "ops/prefill_attn_main_a.rs"]
@@ -253,6 +255,7 @@ pub use ple::*;
 pub use prefill_attn_a::*;
 pub use prefill_attn_b::*;
 pub use prefill_attn_batched::*;
+pub use prefill_attn_fa128::AttnFa128Kernels;
 pub use prefill_attn_fp8k::*;
 pub use prefill_attn_main_a::*;
 pub use prefill_attn_main_b::*;
