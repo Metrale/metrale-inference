@@ -195,7 +195,7 @@ fn build(fusions: Fusions, edit: impl Fn(&mut Vec<CircuitLayer>)) -> anyhow::Res
     let fixed = fixed(attn);
     let gpu = MockGpuBackend::new();
     let cfg = config();
-    let table = KernelTable::resolve(&gpu);
+    let table = KernelTable::resolve(&gpu, &AvailableKernels::all_named_by(&loaded.rules));
     let program = compile::compile(
         &loaded.circuit,
         &plan,
@@ -415,4 +415,38 @@ fn a_binding_the_plan_does_not_describe_is_refused() {
         .unwrap_err()
         .to_string();
     assert!(e.contains("layer 5 has no circuit binding"), "{e}");
+}
+
+#[test]
+fn ptx_availability_reads_entry_points_not_names() {
+    let ptx: &[u8] =
+        b".visible .entry rope_forward(\n.param .u64 a\n)\n// rope_forward_strided is a comment\n";
+    assert!(super::kernels::ptx_defines(ptx, "rope_forward"));
+    assert!(!super::kernels::ptx_defines(ptx, "rope_forward_strided"));
+    assert!(!super::kernels::ptx_defines(ptx, "rope"));
+    let inst = sources::instance(RECIPE).unwrap();
+    let rules = metrale_circuit::load(&inst, sources::sources(&inst).unwrap())
+        .unwrap()
+        .rules;
+    let avail = super::kernels::available_in(&rules, &[("rope", ptx)]).unwrap();
+    assert!(
+        avail
+            .kernels
+            .iter()
+            .all(|k| k.module == "rope" && k.func == "rope_forward")
+    );
+    let gpu = MockGpuBackend::new();
+    let table = KernelTable::resolve(&gpu, &avail);
+    assert!(
+        gpu.kernel_lookups_snapshot().is_empty(),
+        "no lookup is issued for a kernel the target does not define"
+    );
+    assert!(
+        table
+            .handle(&metrale_circuit::KernelId {
+                module: "norm".into(),
+                func: "rms_norm".into()
+            })
+            .is_err()
+    );
 }

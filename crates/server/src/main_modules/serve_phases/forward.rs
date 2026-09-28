@@ -9,7 +9,7 @@
 
 use anyhow::{Context, Result};
 use metrale_model_engine::traits::ForwardSelect;
-use metrale_model_layers::circuit_exec::{Fusions, sources};
+use metrale_model_layers::circuit_exec::{Fusions, TargetModules, sources};
 
 use crate::cli::{self, flag_values::ForwardArg};
 
@@ -25,7 +25,7 @@ pub(crate) fn circuit_target(t: &metrale_core::target::KernelTarget) -> Result<S
 /// 2026-09-28: The selection `--forward` asks for.
 pub(crate) fn forward_select(
     args: &cli::ServeArgs,
-    target: &metrale_core::target::KernelTarget,
+    ptx_set: &metrale_kernels::TargetPtxSet,
 ) -> Result<ForwardSelect> {
     let fusions = match args.forward {
         ForwardArg::Legacy => return Ok(ForwardSelect::Legacy),
@@ -36,9 +36,10 @@ pub(crate) fn forward_select(
         .model
         .as_deref()
         .context("--forward circuit needs the checkpoint id as the model argument")?;
-    let instance = sources::instance_for(checkpoint, &circuit_target(target)?)?;
+    let instance = sources::instance_for(checkpoint, &circuit_target(&ptx_set.target)?)?;
     Ok(ForwardSelect::Circuit {
         instance: Box::new(instance),
         fusions,
+        modules: TargetModules(ptx_set.modules.clone()),
     })
 }

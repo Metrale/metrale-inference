@@ -11,7 +11,7 @@
 
 use anyhow::{Result, bail};
 use metrale_circuit::Instance;
-use metrale_model_layers::circuit_exec::Fusions;
+use metrale_model_layers::circuit_exec::{Fusions, TargetModules};
 
 /// 2026-09-28: The forward a model's decode runs.
 #[derive(Debug, Clone)]
@@ -24,6 +24,8 @@ pub enum ForwardSelect {
         instance: Box<Instance>,
         /// 2026-09-28: Which rules the plan may select.
         fusions: Fusions,
+        /// 2026-09-28: The served target's compiled modules: which kernels exist.
+        modules: TargetModules,
     },
 }
 

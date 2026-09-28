@@ -14,7 +14,8 @@
 use anyhow::{Context, Result, bail, ensure};
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::circuit_exec::{
-    BoundWeight, CircuitExec, Fixed, Fusions, GdnState, HeadBinding, MixerFacts, StepEnv, policy,
+    BoundWeight, CircuitExec, Fixed, Fusions, GdnState, HeadBinding, MixerFacts, StepEnv,
+    TargetModules, policy,
 };
 use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, SsmLayerState};
 
@@ -62,6 +63,10 @@ impl TransformerModel {
             (self.config.kv_lora_rank > 0, "latent attention"),
             (kv_swap, "high-speed swap"),
             (self.profile, "profiling"),
+            (
+                metrale_model_layers::ships_vanilla_norm_weights(&self.config),
+                "vanilla RMSNorm weights (the rules launch the 1 + w kernels)",
+            ),
         ]
         .into_iter()
         .filter(|(present, _)| *present)
@@ -110,6 +115,7 @@ impl TransformerModel {
         &self,
         instance: &metrale_circuit::Instance,
         fusions: Fusions,
+        modules: &TargetModules,
     ) -> Result<CircuitExec> {
         let unmodelled = self.circuit_unmodelled();
         if !unmodelled.is_empty() {
@@ -159,6 +165,7 @@ impl TransformerModel {
             head,
             fixed,
             fusions,
+            modules,
         })
     }
 
@@ -203,9 +210,11 @@ impl ModelCircuit for TransformerModel {
     fn set_forward(&self, sel: &ForwardSelect) -> Result<()> {
         let next = match sel {
             ForwardSelect::Legacy => None,
-            ForwardSelect::Circuit { instance, fusions } => {
-                Some(self.build_circuit(instance, *fusions)?)
-            }
+            ForwardSelect::Circuit {
+                instance,
+                fusions,
+                modules,
+            } => Some(self.build_circuit(instance, *fusions, modules)?),
         };
         self.destroy_lora_decode_graphs();
         let prev = std::mem::replace(&mut *self.circuit.write(), next);

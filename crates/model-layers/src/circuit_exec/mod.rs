@@ -46,6 +46,17 @@ pub enum Fusions {
     ReferenceOnly,
 }
 
+/// 2026-09-28: The compiled kernel modules of the served target, `(module, PTX)`: the fuser's
+/// view of which kernels exist ([`kernels::available_in`]).
+#[derive(Clone)]
+pub struct TargetModules(pub Vec<(&'static str, &'static [u8])>);
+
+impl std::fmt::Debug for TargetModules {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TargetModules({} modules)", self.0.len())
+    }
+}
+
 /// 2026-09-28: What a build reads.
 pub struct Boot<'a> {
     pub gpu: &'a dyn GpuBackend,
@@ -58,6 +69,7 @@ pub struct Boot<'a> {
     pub head: HeadBinding,
     pub fixed: Fixed,
     pub fusions: Fusions,
+    pub modules: &'a TargetModules,
 }
 
 /// 2026-09-28: A built executor: the decode program and the workspace it runs in.
@@ -94,7 +106,8 @@ impl CircuitExec {
             );
         }
         let layers = compile::check_bindings(&loaded.circuit, &b.layers, &b.head)?;
-        let mut available = kernels::probe_available(b.gpu, &loaded.rules)?;
+        let present = kernels::available_in(&loaded.rules, &b.modules.0)?;
+        let mut available = present.clone();
         if b.fusions == Fusions::ReferenceOnly {
             for r in &loaded.rules {
                 if matches!(r.numerics, Numerics::BitIdentical { .. }) {
@@ -114,7 +127,7 @@ impl CircuitExec {
         )?;
         let layout = compile::layout(&loaded.circuit, &plan)?;
         let buffers = plan_buffers_with(&loaded.circuit, &plan, 1, &layout)?;
-        let table = kernels::KernelTable::resolve(b.gpu);
+        let table = kernels::KernelTable::resolve(b.gpu, &present);
         let workspace_bytes = buffers.arena_bytes.max(1);
         let workspace = b
             .gpu

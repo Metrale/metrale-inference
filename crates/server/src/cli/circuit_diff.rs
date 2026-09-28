@@ -246,9 +246,11 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     let model = engine.model.as_ref();
     model.bind_gpu_to_thread()?;
     let instance = sources::instance_for(&checkpoint, &circuit_target(&engine.ptx_set.target)?)?;
+    let modules = metrale_model_layers::circuit_exec::TargetModules(engine.ptx_set.modules.clone());
     let circuit = |fusions| ForwardSelect::Circuit {
         instance: Box::new(instance.clone()),
         fusions,
+        modules: modules.clone(),
     };
     let forwards = [
         ("legacy-repeat", ForwardSelect::Legacy),

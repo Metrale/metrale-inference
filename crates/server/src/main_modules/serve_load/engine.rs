@@ -212,7 +212,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     )?;
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
-    model.set_forward(&serve_phases::forward_select(&args, &ptx_set.target)?)?;
+    model.set_forward(&serve_phases::forward_select(&args, &ptx_set)?)?;
     let forward = model.forward_disclosure();
 
     // 2026-09-26: Kernel load audit and the boot gate (`kernel_gate`). Under
