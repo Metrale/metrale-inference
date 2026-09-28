@@ -309,6 +309,7 @@ impl Qwen3AttentionLayer {
             prefill_attn_paged_nvfp4_k: pre.prefill_attn_paged_nvfp4_k,
             prefill_attn_paged_turbo4_k: pre.prefill_attn_paged_turbo4_k,
             prefill_attn_paged_64_k: pre.prefill_attn_paged_64_k,
+            prefill_attn_fa128: pre.prefill_attn_fa128,
             prefill_attn_paged_fp8_64_k: pre.prefill_attn_paged_fp8_64_k,
             prefill_attn_paged_nvfp4_64_k: pre.prefill_attn_paged_nvfp4_64_k,
             prefill_attn_paged_turbo2_64_k: pre.prefill_attn_paged_turbo2_64_k,
