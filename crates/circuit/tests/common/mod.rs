@@ -48,17 +48,28 @@ pub fn instances() -> Vec<Instance> {
     metrale_circuit::parse_instances(&read("kernels/circuits/INSTANCES.toml")).expect("instances")
 }
 
-/// 2026-09-28: The instance's circuit, precision and rule texts.
+/// 2026-09-28: The instance's circuit, block library, precision and rule texts.
 pub struct Texts {
     pub circuit: String,
+    pub blocks: Vec<(String, String)>,
     pub precision: String,
     pub rules: String,
 }
 
 impl Texts {
     pub fn of(instance: &Instance) -> Self {
+        let circuit = read(&format!("kernels/circuits/{}.toml", instance.arch));
+        let blocks = metrale_circuit::includes_of(&circuit)
+            .expect("circuit parses")
+            .into_iter()
+            .map(|n| {
+                let text = read(&format!("kernels/circuits/blocks/{n}.toml"));
+                (n, text)
+            })
+            .collect();
         Texts {
-            circuit: read(&format!("kernels/circuits/{}.toml", instance.arch)),
+            circuit,
+            blocks,
             precision: read(&format!(
                 "kernels/circuits/precision/{}.toml",
                 instance.precision
@@ -66,19 +77,29 @@ impl Texts {
             rules: read(&fusions_rel(instance)),
         }
     }
+}
 
-    pub fn sources(&self) -> Sources<'_> {
+/// 2026-09-28: Load `t` for `instance`.
+pub fn load_texts(instance: &Instance, t: &Texts) -> Result<Loaded, metrale_circuit::LoadError> {
+    let blocks: Vec<(&str, &str)> = t
+        .blocks
+        .iter()
+        .map(|(n, s)| (n.as_str(), s.as_str()))
+        .collect();
+    metrale_circuit::load(
+        instance,
         Sources {
-            circuit: &self.circuit,
-            precision: &self.precision,
-            rules: &self.rules,
-        }
-    }
+            circuit: &t.circuit,
+            blocks: &blocks,
+            precision: &t.precision,
+            rules: &t.rules,
+        },
+    )
 }
 
 /// 2026-09-28: Load an instance from the repo.
 pub fn load(instance: &Instance) -> Loaded {
-    metrale_circuit::load(instance, Texts::of(instance).sources())
+    load_texts(instance, &Texts::of(instance))
         .unwrap_or_else(|e| panic!("{}: {e}", instance.recipe))
 }
 

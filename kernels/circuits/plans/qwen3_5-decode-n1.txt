@@ -4,7 +4,7 @@
 # target: gb10/qwen3.8-27b/nvfp4
 # settings: decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 row_tiers=by_rows ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
-digest: 3fcd17bea74f8c2f5a6f5c9977c7f74f31640bbaf3f4e18d71ea8a2c519ab281
+digest: 91f099ae22fd6a3cb309bfb26baa0aa9fc58c90850f9cca53fc927c81cd0ac62
 groups: 819  launches: 818  edges: 112 fused, 963 materialized
 == embed
 g0000 embed [embed] (copy) reference rule=embed_row_copy writes={h:bf16}

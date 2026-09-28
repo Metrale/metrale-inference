@@ -38,6 +38,8 @@ tracing = "0.1"
 [dev-dependencies]
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 base64 = "0.22"
+# 2026-09-28: `padded_ladder` checks the batch ladder against the circuit instances' plans.
+metrale-circuit = { path = "../circuit" }
 
 [lints]
 workspace = true

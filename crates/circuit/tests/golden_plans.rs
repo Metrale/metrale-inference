@@ -40,7 +40,9 @@ fn golden_plans_match() {
 }
 
 /// 2026-09-28: The first differing line of the plan body, or a note that only the digest line
-/// moved (a rule or the policy changed, and this plan did not).
+/// moved. The digest covers only what the plan runs, so that means a field the text does not
+/// print changed (an edge's shape expression) or `DIGEST_SCHEMA` was bumped; an edit to an
+/// unselected rule moves neither.
 fn describe(name: &str, on_disk: &str, want: &str) -> String {
     let body = |t: &str| -> Vec<String> {
         t.lines()
@@ -56,7 +58,10 @@ fn describe(name: &str, on_disk: &str, want: &str) -> String {
             a.get(i).map_or("<end>", String::as_str),
             b.get(i).map_or("<end>", String::as_str)
         ),
-        None => format!("{name}: digest only (the plan is unchanged)"),
+        None => format!(
+            "{name}: digest line only: the plan changed in a field the text does not print, \
+             or DIGEST_SCHEMA was bumped"
+        ),
     }
 }
 

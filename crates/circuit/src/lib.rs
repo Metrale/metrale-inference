@@ -27,7 +27,7 @@ pub mod rules;
 #[cfg(test)]
 mod test_toy;
 
-pub use circuit_toml::CircuitError;
+pub use circuit_toml::{CircuitError, includes_of};
 pub use format::{Format, Scale};
 pub use fuser::{AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse};
 pub use instances::{Instance, InstanceError, parse_instances};
@@ -76,6 +76,9 @@ pub struct Sources<'a> {
     pub precision: &'a str,
     /// 2026-09-28: `kernels/<hw>/common/FUSIONS.toml`.
     pub rules: &'a str,
+    /// 2026-09-28: The block libraries the circuit includes, by name:
+    /// `kernels/circuits/blocks/<name>.toml`.
+    pub blocks: &'a [(&'a str, &'a str)],
 }
 
 /// 2026-09-28: An instance's circuit and rules, ready to fuse.
@@ -85,6 +88,8 @@ pub struct Loaded {
     pub circuit: Circuit,
     /// 2026-09-28: The rules, in file order.
     pub rules: Vec<Rule>,
+    /// 2026-09-28: SHA-256 of the FUSIONS.toml text ([`digest::rules_digest`]).
+    pub rules_digest: String,
 }
 
 /// 2026-09-28: Parse and instantiate `instance` from `src`.
@@ -96,9 +101,13 @@ pub fn load(instance: &Instance, src: Sources<'_>) -> Result<Loaded, LoadError> 
             instance: instance.checkpoint.clone(),
         });
     }
-    let circuit = instantiate(src.circuit, &instance.shape, &table)?;
+    let circuit = instantiate(src.circuit, src.blocks, &instance.shape, &table)?;
     let rules = parse_rules(src.rules)?;
-    Ok(Loaded { circuit, rules })
+    Ok(Loaded {
+        circuit,
+        rules,
+        rules_digest: digest::rules_digest(src.rules),
+    })
 }
 
 /// 2026-09-28: The header lines a rendering of `instance` carries.

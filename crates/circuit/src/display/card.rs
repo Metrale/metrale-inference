@@ -77,8 +77,11 @@ fn role(op: &OpKind) -> String {
 }
 
 /// 2026-09-28: `role W4A16 nvfp4` facts: what each weight-reading role runs at in the plan's
-/// section, roles with one format merged.
-pub(super) fn precision(circuit: &Circuit, plan: &FusionPlan) -> Vec<(String, Style)> {
+/// section, roles with one format merged. `A` counts the bits of the activation the kernel
+/// reads when it is a 16-bit or quantized format; a projection that reads an FP32 activation
+/// (the MoE down projections read the FP32 SiLU product) says so instead of claiming an A32
+/// tier: `W8 fp8 · f32 act in`.
+pub(super) fn precision(circuit: &Circuit, plan: &FusionPlan, g: &Set) -> Vec<(String, Style)> {
     let section = section_of(plan.mode);
     let mut by_format: BTreeMap<(u32, u32, &'static str), Vec<String>> = BTreeMap::new();
     let mut seen: BTreeMap<String, (u32, u32, &'static str)> = BTreeMap::new();
@@ -99,7 +102,14 @@ pub(super) fn precision(circuit: &Circuit, plan: &FusionPlan) -> Vec<(String, St
         by_format.into_iter().map(|(k, v)| (v, k)).collect();
     out.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(a.1.cmp(&b.1)));
     out.into_iter()
-        .map(|(roles, (w, a, fam))| (format!("{} W{w}A{a} {fam}", roles.join("/")), Style::Format))
+        .map(|(roles, (w, a, fam))| {
+            let label = if a == 32 {
+                format!("{} W{w} {fam}{}f32 act in", roles.join("/"), g.dot)
+            } else {
+                format!("{} W{w}A{a} {fam}", roles.join("/"))
+            };
+            (label, Style::Format)
+        })
         .collect()
 }
 
@@ -174,7 +184,7 @@ pub(super) fn header(
         ],
         vec![(circuit.description.clone(), Style::Dim)],
         dims_facts(circuit, g),
-        precision(circuit, plan),
+        precision(circuit, plan, g),
         vec![
             (format!("mode {}", plan.mode.name()), Style::Accent),
             (

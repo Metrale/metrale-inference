@@ -130,6 +130,15 @@ pub enum CircuitError {
     /// layout does not describe.
     #[error("layout: {0}")]
     Layout(String),
+    /// 2026-09-28: An included block file that was not supplied, does not parse, or defines a
+    /// block another file also defines.
+    #[error("include `{name}`: {detail}")]
+    Include {
+        /// 2026-09-28: The include's name.
+        name: String,
+        /// 2026-09-28: What was wrong.
+        detail: String,
+    },
     /// 2026-09-28: A dim the circuit requires that the arch shape does not give, or one it
     /// gives that the circuit does not declare.
     #[error("arch shape: {0}")]
@@ -143,6 +152,7 @@ pub(crate) struct CircuitFile {
     pub arch: String,
     pub description: String,
     pub layer_module: String,
+    pub include: Vec<String>,
     pub dims: Vec<String>,
     pub layout: LayoutFile,
     pub prologue: Vec<String>,
@@ -207,13 +217,62 @@ pub enum LayoutRule {
     List,
 }
 
-pub(crate) fn parse_file(text: &str) -> Result<CircuitFile, CircuitError> {
+/// 2026-09-28: A block library: `kernels/circuits/blocks/<name>.toml`, holding only block
+/// templates that several circuits share.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlocksFile {
+    schema: u32,
+    #[allow(dead_code)]
+    description: String,
+    block: BTreeMap<String, BlockFile>,
+}
+
+/// 2026-09-28: The block libraries a circuit TOML includes, in its order, so the caller knows
+/// which files to read.
+pub fn includes_of(text: &str) -> Result<Vec<String>, CircuitError> {
+    Ok(parse_one(text)?.include)
+}
+
+fn parse_one(text: &str) -> Result<CircuitFile, CircuitError> {
     let file: CircuitFile = toml::from_str(text).map_err(|e| CircuitError::Parse(e.to_string()))?;
     if file.schema != 1 {
         return Err(CircuitError::Parse(format!(
             "schema {} (this build reads 1)",
             file.schema
         )));
+    }
+    Ok(file)
+}
+
+/// 2026-09-28: Parse a circuit and merge in its includes. `includes` maps an include name to
+/// its text; one not supplied, a library that does not parse, and a block defined twice are
+/// errors, never an override.
+pub(crate) fn parse_file(
+    text: &str,
+    includes: &[(&str, &str)],
+) -> Result<CircuitFile, CircuitError> {
+    let mut file = parse_one(text)?;
+    for name in file.include.clone() {
+        let err = |detail: String| CircuitError::Include {
+            name: name.clone(),
+            detail,
+        };
+        let lib_text = includes
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, t)| *t)
+            .ok_or_else(|| err("not supplied".into()))?;
+        let lib: BlocksFile = toml::from_str(lib_text).map_err(|e| err(e.to_string()))?;
+        if lib.schema != 1 {
+            return Err(err(format!("schema {} (this build reads 1)", lib.schema)));
+        }
+        for (block, tpl) in lib.block {
+            if file.block.contains_key(&block) {
+                return Err(err(format!("block `{block}` is defined twice")));
+            }
+            file.block.insert(block, tpl);
+        }
     }
     Ok(file)
 }

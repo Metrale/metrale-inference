@@ -22,14 +22,16 @@ use crate::format::Format;
 use crate::ir::{ArchShape, BlockInstance, Circuit, Edge, LayerKind, Node, OpKind, Section};
 use crate::precision::{EdgePrecision, LinearFormats};
 
-/// 2026-09-28: Parse `text` and instantiate it for `shape`, asking `precision` for every
-/// weight-reading node's formats.
+/// 2026-09-28: Parse `text`, merge the block libraries it includes (`includes`: name to
+/// text), and instantiate it for `shape`, asking `precision` for every weight-reading node's
+/// formats.
 pub fn instantiate(
     text: &str,
+    includes: &[(&str, &str)],
     shape: &ArchShape,
     precision: &dyn EdgePrecision,
 ) -> Result<Circuit, CircuitError> {
-    let file = parse_file(text)?;
+    let file = parse_file(text, includes)?;
     let rule = layout_rule(&file.layout)?;
     check_dims(&file, shape)?;
     let sequence = block_sequence(&file, &rule, &shape.layer_kinds)?;

@@ -157,20 +157,6 @@ fn moe_circuit_has_the_checkpoint_layers_formats_and_experts() {
 }
 
 #[test]
-fn shared_blocks_are_identical_in_both_circuits() {
-    let dense: toml::Table =
-        toml::from_str(&common::read("kernels/circuits/qwen3_5.toml")).unwrap();
-    let moe: toml::Table =
-        toml::from_str(&common::read("kernels/circuits/qwen3_6_moe.toml")).unwrap();
-    for name in ["embed", "gdn", "attn", "head", "mtp_in", "mtp_out"] {
-        assert_eq!(
-            dense["block"][name], moe["block"][name],
-            "block `{name}` drifted between the circuits"
-        );
-    }
-}
-
-#[test]
 fn every_rule_kernel_is_compiled_by_a_golden_target() {
     let mut modules = Vec::new();
     let mut rules = Vec::new();

@@ -12,8 +12,8 @@
 //! - Every node of the mode's section ends in exactly one group, or `fuse` returns
 //!   [`FuseError::Uncovered`]; no node is left to an implicit kernel.
 //! - A policy must state every setting any rule reads ([`FuseError::PolicyMissing`]).
-//! - The plan is a pure function of its inputs; [`FusionPlan::digest`] changes when the plan,
-//!   any rule or the policy changes.
+//! - The plan is a pure function of its inputs; [`FusionPlan::digest`] changes exactly when
+//!   what the plan runs changes (see [`crate::digest`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -267,7 +267,7 @@ pub fn fuse(
         edge_formats,
         digest: String::new(),
     };
-    plan.digest = crate::digest::plan_digest(circuit, &plan, rules, policy);
+    plan.digest = crate::digest::plan_digest(circuit, &plan);
     Ok(plan)
 }
 

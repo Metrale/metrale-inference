@@ -1715,6 +1715,7 @@ dependencies = [
  "base64 0.22.1",
  "half",
  "metrale-cache",
+ "metrale-circuit",
  "metrale-comm",
  "metrale-config",
  "metrale-core",

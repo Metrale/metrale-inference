@@ -144,6 +144,16 @@ impl Pen<'_> {
                     self.connector(doc, frame, e, "");
                 }
             }
+            (Row::Pair(a, b), Row::FanIn) => {
+                // 2026-09-28: Both paths carry their result down into the join.
+                let mut cols = Vec::new();
+                for (col, n) in [(WIRE, a), (self.geo.right_col() + WIRE, b)] {
+                    if let Some(&e) = n.and_then(|n| self.c.nodes[n].outputs.first()) {
+                        cols.push((col, Some(edge_label(self.c, self.plan, e, self.g))));
+                    }
+                }
+                self.wires(doc, frame, &cols);
+            }
             (Row::FanOut, _) | (_, Row::FanIn) | (Row::FanIn, _) => {}
             (_, Row::Single(n)) => match feeds(*n) {
                 Some(e) => self.connector(doc, frame, e, ""),
@@ -424,12 +434,6 @@ impl Pen<'_> {
                 frame,
                 &[(WIRE, Some(routed)), (right, Some("shared expert".into()))],
             );
-        } else {
-            let mut l = self.open(frame);
-            l.push(" ".repeat(WIRE), Style::Plain);
-            l.push(format!("{} ", self.g.arrow), style);
-            l.push("blend", Style::Dim);
-            self.close(doc, l, frame);
         }
     }
 }

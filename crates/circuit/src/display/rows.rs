@@ -38,11 +38,12 @@ impl Row {
     }
 }
 
+/// 2026-09-28: A node of the shared expert's side path. The scalar shared-expert gate is not:
+/// it reads the FFN input and feeds only the blend, so it is drawn on the main path just
+/// above the blend, and the side path joins back after the shared down projection.
 fn is_shared(c: &Circuit, n: NodeIdx) -> bool {
     match c.nodes[n].op {
-        OpKind::Linear(
-            LinearRole::SharedGateUp | LinearRole::SharedDown | LinearRole::SharedGate,
-        ) => true,
+        OpKind::Linear(LinearRole::SharedGateUp | LinearRole::SharedDown) => true,
         OpKind::SiluMul => c.nodes[n].inputs.iter().any(|&e| {
             c.edges[e]
                 .producer

@@ -34,6 +34,10 @@ fn every_instance_source_is_embedded_and_loads() {
     for inst in &all {
         let src = sources(inst).unwrap_or_else(|e| panic!("{}: {e}", inst.recipe));
         metrale_circuit::load(inst, src).unwrap_or_else(|e| panic!("{}: {e}", inst.recipe));
+        let circuit = lookup(&CIRCUITS, &inst.arch, "circuit").unwrap();
+        for name in metrale_circuit::includes_of(circuit).unwrap() {
+            lookup(&BLOCKS, &name, "block library").unwrap();
+        }
     }
 }
 

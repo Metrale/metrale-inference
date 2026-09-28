@@ -70,7 +70,7 @@ cite = "test"
 
 fn random_circuit(rng: &mut Lcg, nodes: usize) -> String {
     let mut s = String::from(
-        "schema = 1\narch = \"rand\"\ndescription = \"r\"\nlayer_module = \"l.{i}\"\n\
+        "schema = 1\narch = \"rand\"\ndescription = \"r\"\nlayer_module = \"l.{i}\"\ninclude = []\n\
          dims = [\"w\"]\nprologue = []\nepilogue = []\ndraft = []\n\
          [layout]\nkind = \"list\"\n[layout.blocks]\nlinear_attention = [\"b\"]\n[block.b]\n",
     );
@@ -120,7 +120,7 @@ fn live_edges_never_share_bytes_over_random_dags() {
     for case in 0..200 {
         let nodes = 2 + rng.next(40) as usize;
         let text = random_circuit(&mut rng, nodes);
-        let c = crate::instantiate(&text, &shape, &table)
+        let c = crate::instantiate(&text, &[], &shape, &table)
             .unwrap_or_else(|e| panic!("case {case}: {e}"));
         let avail = AvailableKernels::all_named_by(&rules);
         let plan = fuse(&c, &rules, &avail, &Policy::default(), Mode::Decode, 4).unwrap();

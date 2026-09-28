@@ -22,7 +22,8 @@ use super::{CircuitAction, CircuitArgs, CircuitMode, CircuitPlanArgs, circuit_pa
 /// 2026-09-28: kernels/circuits/INSTANCES.toml as built.
 const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
 
-/// 2026-09-28: Every circuit, precision table and FUSIONS.toml an instance can name, as built.
+/// 2026-09-28: Every circuit, block library, precision table and FUSIONS.toml an instance can
+/// name, as built.
 /// `every_instance_source_is_embedded_and_loads` fails when INSTANCES.toml names one missing here.
 const CIRCUITS: [(&str, &str); 2] = [
     (
@@ -44,6 +45,10 @@ const PRECISION: [(&str, &str); 2] = [
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
     ),
 ];
+const BLOCKS: [(&str, &str); 1] = [(
+    "qwen3_hybrid",
+    include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
+)];
 const FUSIONS: [(&str, &str); 1] = [(
     "gb10",
     include_str!("../../../../kernels/gb10/common/FUSIONS.toml"),
@@ -64,6 +69,7 @@ pub(crate) fn sources(instance: &Instance) -> Result<Sources<'static>> {
         circuit: lookup(&CIRCUITS, &instance.arch, "circuit")?,
         precision: lookup(&PRECISION, &instance.precision, "precision table")?,
         rules: lookup(&FUSIONS, hw, "FUSIONS.toml for hardware")?,
+        blocks: &BLOCKS,
     })
 }
 
@@ -192,6 +198,9 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
     let loaded = metrale_circuit::load(&inst, sources(&inst)?)?;
     // 2026-09-28: Offline, no target is probed: every kernel a rule names counts as built.
     let avail = AvailableKernels::all_named_by(&loaded.rules);
+    // 2026-09-28: The plan digest covers what the plan runs; the rule set it was chosen from
+    // is attested separately (and by the closure hash).
+    eprintln!("rules: FUSIONS.toml sha256 {}", loaded.rules_digest);
     let text = match args.action {
         CircuitAction::Show(_) => metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows)?,
         CircuitAction::Display(d) => {

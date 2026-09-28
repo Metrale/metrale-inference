@@ -3,9 +3,9 @@
 │ MoE hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, 256-expert top-8 MoE with a shared expert, MT… │
 │ 40 layers · hidden 2048 · attn 16q/2kv×256 · GDN 16k/32v×128 · 256 experts top-8 (ffn 512) · vocab 248320            │
 │ qkvz/gdn_out/experts.gate_up/shared_gate_up/q/k/v/o W8A16 fp8 · ba/router/shared_gate/lm_head W16A16 bf16            │
-│ experts.down/shared_down W8A32 fp8                                                                                   │
+│ experts.down/shared_down W8 fp8 · f32 act in                                                                         │
 │ mode decode · 1 row · 612 launches/step · 613 kernel groups                                                          │
-│ 180 fused edges · 813 materialized · plan 300d3cb12fc3                                                               │
+│ 180 fused edges · 813 materialized · plan d20a87af6733                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 Layers
@@ -98,13 +98,13 @@ Layers
   ┃ ║ experts_down                   ║                        ║ shared_down · linear           ║                       ┃
   ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
+       │ ▼ bf16 · 8n×2048  DRAM                                  │ ▼ bf16 · n×2048  DRAM
+       ├─────────────────────────────────────────────────────────┘
   ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
-  ┃                                                           ╔════════════════════════════════╗                       ┃
-  ┃    ┊                                                      ║ shared_gate · linear           ║                       ┃
-  ┃                                                           ╚════════════════════════════════╝                       ┃
-  ┃    ├─────────────────────────────────────────────────────────┘                                                     ┃
-  ┃    ▼ blend                                                                                                         ┃
+  ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
+  ┃ ║ shared_gate · linear           ║  weight bf16                                                                    ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃    ┊ ▼ bf16 · n×1  on-chip                                                                                         ┃
   ┃ ╭────────────────────────────────╮  ◂ edown, topk_w, sdown                                                         ┃
   ┃ │ blend                          │                                                                                 ┃
   ┃ ╰────────────────────────────────╯                                                                                 ┃
@@ -200,13 +200,13 @@ Layers
   ┃ ║ experts_down                   ║                        ║ shared_down · linear           ║                       ┃
   ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
+       │ ▼ bf16 · 8n×2048  DRAM                                  │ ▼ bf16 · n×2048  DRAM
+       ├─────────────────────────────────────────────────────────┘
   ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
-  ┃                                                           ╔════════════════════════════════╗                       ┃
-  ┃    ┊                                                      ║ shared_gate · linear           ║                       ┃
-  ┃                                                           ╚════════════════════════════════╝                       ┃
-  ┃    ├─────────────────────────────────────────────────────────┘                                                     ┃
-  ┃    ▼ blend                                                                                                         ┃
+  ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
+  ┃ ║ shared_gate · linear           ║  weight bf16                                                                    ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃    ┊ ▼ bf16 · n×1  on-chip                                                                                         ┃
   ┃ ╭────────────────────────────────╮  ◂ edown, topk_w, sdown                                                         ┃
   ┃ │ blend                          │                                                                                 ┃
   ┃ ╰────────────────────────────────╯                                                                                 ┃

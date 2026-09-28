@@ -18,6 +18,7 @@ schema = 1
 arch = "toy"
 description = "toy"
 layer_module = "layers.{i}"
+include = []
 dims = ["hidden", "inter", "vocab"]
 prologue = ["embed"]
 epilogue = ["head"]
@@ -166,7 +167,7 @@ pub fn shape(layers: usize) -> ArchShape {
 
 pub fn circuit(layers: usize) -> Circuit {
     let table = PrecisionTable::parse(PRECISION).unwrap();
-    crate::instantiate(CIRCUIT, &shape(layers), &table).unwrap_or_else(|e| panic!("toy: {e}"))
+    crate::instantiate(CIRCUIT, &[], &shape(layers), &table).unwrap_or_else(|e| panic!("toy: {e}"))
 }
 
 pub fn policy() -> Policy {

@@ -285,7 +285,7 @@ fn per_row_and_chunked_rules_count_their_launches() {
 }
 
 #[test]
-fn the_digest_is_stable_and_moves_with_every_rule_and_policy_field() {
+fn the_digest_moves_exactly_when_what_the_plan_runs_moves() {
     let c = circuit(2);
     let base_text = fused("a_act_down", ACT_DOWN, 100);
     let r = rules(&base_text);
@@ -293,38 +293,74 @@ fn the_digest_is_stable_and_moves_with_every_rule_and_policy_field() {
     assert_eq!(d0, plan(&c, &rules(&base_text), &policy(), 1).digest);
     assert_eq!(d0.len(), 64);
 
-    let edits = [
-        ("priority = 100", "priority = 99"),
-        ("rows = [1, 128]", "rows = [1, 127]"),
+    let digest_of = |text: &str, policy: &Policy| {
+        let edited = rules(text);
+        let mut avail = AvailableKernels::all_named_by(&edited);
+        avail
+            .kernels
+            .extend(AvailableKernels::all_named_by(&r).kernels);
+        fuse(&c, &edited, &avail, policy, Mode::Decode, 1)
+            .unwrap()
+            .digest
+    };
+    // 2026-09-28: Each edit changes a kernel, emitter, repetition or numerics the plan runs,
+    // or makes the rule stop applying at one row.
+    for (from, to) in [
         ("emitter = \"a_act_down\"", "emitter = \"other\""),
         ("repeat = \"once\"", "repeat = \"per_row\""),
         ("func = \"a_act_down\"", "func = \"a_act_down2\""),
+        ("rows = [1, 128]", "rows = [2, 128]"),
         (
             "modes = [\"decode\", \"multi_seq\", \"verify\"]",
-            "modes = [\"decode\"]",
+            "modes = [\"verify\"]",
         ),
         (
             "numerics = \"reference\"",
             "numerics = \"bit_identical\"\nmicrotest = \"t\"",
         ),
-    ];
-    for (from, to) in edits {
-        let edited = rules(&base_text.replacen(from, to, 1));
-        let mut avail = AvailableKernels::all_named_by(&edited);
-        avail
-            .kernels
-            .extend(AvailableKernels::all_named_by(&r).kernels);
-        let p = fuse(&c, &edited, &avail, &policy(), Mode::Decode, 1).unwrap();
-        assert_ne!(p.digest, d0, "{to}");
+    ] {
+        let d = digest_of(&base_text.replacen(from, to, 1), &policy());
+        assert_ne!(d, d0, "{to}");
     }
-    let cite_only = rules(&base_text.replacen("cite = \"test\"", "cite = \"elsewhere:1\"", 1));
-    assert_eq!(plan(&c, &cite_only, &policy(), 1).digest, d0);
-
+    // 2026-09-28: Each edit leaves the plan as it was: a lower priority that still wins, a
+    // range that still holds one row, a moved citation, a renamed rule, a rule that never
+    // applies, an unread setting and an unused lever.
+    for (from, to) in [
+        ("priority = 100", "priority = 99"),
+        ("rows = [1, 128]", "rows = [1, 127]"),
+        ("cite = \"test\"", "cite = \"elsewhere:1\""),
+        ("id = \"a_act_down\"", "id = \"renamed\""),
+    ] {
+        assert_eq!(
+            digest_of(&base_text.replacen(from, to, 1), &policy()),
+            d0,
+            "{to}"
+        );
+    }
+    let unused = base_text.clone()
+        + &fused_with(
+            "z_never",
+            ACT_DOWN,
+            300,
+            (64, 128),
+            "numerics = \"reference\"",
+        );
+    assert_eq!(digest_of(&unused, &policy()), d0);
     let mut other = policy();
-    other.settings.insert("kv".into(), "fp8".into());
-    assert_ne!(plan(&c, &r, &other, 1).digest, d0);
-    let mut lever = policy();
-    lever.opt_in_levers.insert("x".into());
-    assert_ne!(plan(&c, &r, &lever, 1).digest, d0);
-    assert_ne!(plan(&c, &r, &policy(), 2).digest, d0);
+    other.settings.insert("unread".into(), "x".into());
+    other.opt_in_levers.insert("unused".into());
+    assert_eq!(digest_of(&base_text, &other), d0);
+    assert_ne!(
+        plan(&c, &r, &policy(), 2).digest,
+        d0,
+        "rows are part of a plan"
+    );
+}
+
+#[test]
+fn the_rules_digest_covers_the_whole_file() {
+    let a = crate::digest::rules_digest("schema = 1\n");
+    assert_eq!(a, crate::digest::rules_digest("schema = 1\n"));
+    assert_ne!(a, crate::digest::rules_digest("schema = 1\n# a comment\n"));
+    assert_eq!(a.len(), 64);
 }

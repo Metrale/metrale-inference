@@ -12,7 +12,7 @@ use crate::test_toy::{CIRCUIT, PRECISION, circuit, shape};
 
 fn load(text: &str) -> Result<Circuit, CircuitError> {
     let table = crate::precision::PrecisionTable::parse(PRECISION).unwrap();
-    instantiate(text, &shape(2), &table)
+    instantiate(text, &[], &shape(2), &table)
 }
 
 fn edit(from: &str, to: &str) -> Result<Circuit, CircuitError> {
@@ -188,7 +188,7 @@ fn bad_shapes_and_unknown_dims_are_refused() {
     missing.dims.remove("inter");
     let table = crate::precision::PrecisionTable::parse(PRECISION).unwrap();
     assert!(matches!(
-        instantiate(CIRCUIT, &missing, &table),
+        instantiate(CIRCUIT, &[], &missing, &table),
         Err(E::ShapeMismatch(_))
     ));
 }
@@ -244,7 +244,7 @@ fn layout_errors_are_refused() {
     ));
     let table = crate::precision::PrecisionTable::parse(PRECISION).unwrap();
     assert!(matches!(
-        instantiate(CIRCUIT, &shape(0), &table),
+        instantiate(CIRCUIT, &[], &shape(0), &table),
         Err(E::Layout(_))
     ));
     assert!(matches!(edit("schema = 1", "schema = 2"), Err(E::Parse(_))));
@@ -257,22 +257,68 @@ fn an_interval_layout_checks_every_layer_kind() {
     let mut s = shape(8);
     s.layer_kinds[3] = LayerKind::FullAttention;
     s.layer_kinds[7] = LayerKind::FullAttention;
-    let from_interval = instantiate(&interval, &s, &table).unwrap();
-    let from_list = instantiate(CIRCUIT, &s, &table).unwrap();
+    let from_interval = instantiate(&interval, &[], &s, &table).unwrap();
+    let from_list = instantiate(CIRCUIT, &[], &s, &table).unwrap();
     assert_eq!(from_interval.nodes, from_list.nodes);
     assert_eq!(from_interval.edges, from_list.edges);
 
     s.layer_kinds[3] = LayerKind::LinearAttention;
     s.layer_kinds[2] = LayerKind::FullAttention;
     assert_eq!(
-        instantiate(&interval, &s, &table),
+        instantiate(&interval, &[], &s, &table),
         Err(E::Layout(
             "layer 2 is full_attention but the interval-4 layout puts linear_attention there"
                 .into()
         ))
     );
     assert!(
-        instantiate(CIRCUIT, &s, &table).is_ok(),
+        instantiate(CIRCUIT, &[], &s, &table).is_ok(),
         "a list layout takes any kinds it maps"
+    );
+}
+
+#[test]
+fn an_included_library_supplies_blocks_and_every_include_fault_is_refused() {
+    let table = crate::precision::PrecisionTable::parse(PRECISION).unwrap();
+    // 2026-09-28: Move the `head` block into a library the circuit includes.
+    let at = CIRCUIT.find("[block.head]").unwrap();
+    let lib = format!("schema = 1\ndescription = \"head\"\n{}", &CIRCUIT[at..]);
+    let main = CIRCUIT[..at].replacen("include = []", "include = [\"lib\"]", 1);
+    let with = instantiate(&main, &[("lib", &lib)], &shape(2), &table).unwrap();
+    assert_eq!(
+        with,
+        circuit(2),
+        "an included block instantiates as if written inline"
+    );
+    assert_eq!(crate::includes_of(&main).unwrap(), ["lib"]);
+
+    let err = |r: Result<Circuit, CircuitError>| match r {
+        Err(E::Include { name, detail }) => (name, detail),
+        other => panic!("expected an include error, got {other:?}"),
+    };
+    assert_eq!(
+        err(instantiate(&main, &[], &shape(2), &table)),
+        ("lib".into(), "not supplied".into())
+    );
+    let (_, twice) = err(instantiate(
+        &format!("{main}{}", &CIRCUIT[at..]),
+        &[("lib", &lib)],
+        &shape(2),
+        &table,
+    ));
+    assert_eq!(twice, "block `head` is defined twice");
+    let bad = lib.replace("schema = 1", "schema = 2");
+    assert!(
+        err(instantiate(&main, &[("lib", &bad)], &shape(2), &table))
+            .1
+            .contains("schema 2")
+    );
+    let stray = lib.replace(
+        "description = \"head\"",
+        "description = \"head\"\nlayout = 1",
+    );
+    assert_eq!(
+        err(instantiate(&main, &[("lib", &stray)], &shape(2), &table)).0,
+        "lib"
     );
 }

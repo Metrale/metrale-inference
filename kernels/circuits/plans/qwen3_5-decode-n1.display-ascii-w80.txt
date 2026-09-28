@@ -5,7 +5,7 @@
 | vocab 248320                                                                 |
 | qkvz/gdn_out/gate_up/down/q/k/v/o W4A16 nvfp4 . ba/lm_head W16A16 bf16       |
 | mode decode . 1 row . 818 launches/step . 819 kernel groups                  |
-| 112 fused edges . 963 materialized . plan 3fcd17bea74f                       |
+| 112 fused edges . 963 materialized . plan 91f099ae22fd                       |
 +------------------------------------------------------------------------------+
 
 Layers
