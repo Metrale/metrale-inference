@@ -26,6 +26,7 @@
   },
   "harness_shas": {
     "41e242c072": "vLLM MoE leg, the only leg in this manifest. This was the sha256 of the copy committed at bench/ladder38/harness_w55_conc_ladder.py (md5 4aa694d8aabe404edc8f1e3eb2acbf31) when it ran; that file's comments have been edited since, so gen-ladder.mjs's harness_repo_sha256 (the tree copy) no longer equals it. The dense ladder's raw files carry earlier revisions of this same file (6412b12d4d, 1c77e1d8e9, 1f10d4887b); the deck prints the recorded and the repo hash side by side.",
+    "55a5963e4b": "The ENERGY leg (vllm-mtp-energy), 2026-09-28. harness_w56_conc_ladder.py -- the w55 harness plus power_window.py, which records gpu_rail_energy_j per rep; w55 has no power sampling, which is why vllm-mtp carries no joules. This is the sha256 of the copy committed at bench/ladder38/harness_w56_conc_ladder.py at 7cd54d45 and the one copied to dgx2 for the run: the raw file's driver_sha256 equals it (the harness hashes itself at startup). The dense ladder's energy leg ran an earlier revision of the same file (664302439b); the two differ in comments and in the new detection of in-band SSE error frames and truncated streams (both turn a would-be silent success into a counted error), not in the request body; power_window.py, which does the integral, differs only in comments.",
     "equivalence": "One revision, one leg. The copy on dgx2 (/home/claude/ladder38-pinned/) was a DIFFERENT, older revision and was replaced with the repo copy before measuring; the driver_sha256 in the raw file is the proof of which copy ran, and the generator refuses any raw file whose driver sha is not listed here."
   },
   "series": [
@@ -77,6 +78,50 @@
         "reason": "The ladder stops at C=16 because of memory, not because of time. GB10 carries 121.7 GB of UNIFIED memory shared between CPU and GPU -- there is no separate VRAM to fall back on. At C >= 32 the vLLM + MTP working set (per-sequence KV cache plus MTP's speculative draft state) outgrows what that shared pool can carry alongside the host, and because the pool is shared, exhausting it takes the whole machine down rather than failing a single allocation: three physical powercycles in one day, at the safe util 0.85 and with --max-num-seqs already capped. We did not isolate it further because every attempt costs the box. These rungs were deliberately not run. They have no value here: not zero, not interpolated, and the generator refuses a raw file that contains them."
       },
       "source_note": "One-shot: measured once, on 2026-09-19 on dgx2, and never re-run. Every rung comes from the single raw file vllm_moe_c1_16.json (sha256 7788d19a16bb32466a53f72fc13c70c8f9352fb888b758f786a54c1a6b7ad648, byte-identical to dgx2:/home/claude/ladder-moe-baseline/). Two earlier attempts the same evening produced no numbers and are not here: one died in DeepGEMM at weight load (kernel_override), one ran the ladder against a serve whose harness preflight had failed (no first token; TypeError on ttft_p50_ms). Zero request errors at every rung."
+    },
+    {
+      "id": "vllm-mtp-energy",
+      "label": "vLLM + MTP (energy)",
+      "role": "baseline",
+      "parity": "matched",
+      "engine": "vLLM 0.27.1",
+      "build": "vllm/vllm-openai:latest @ sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967",
+      "build_note": "Read from `docker image inspect vllm/vllm-openai:latest` on dgx2 on 2026-09-28 immediately before the run: image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, repo digest vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, label ai.vllm.image.tag=vllm/vllm-openai:v0.27.1 -- the same image vllm-mtp ran, and the same one the dense ladder's energy leg ran.",
+      "env": "HF_HUB_OFFLINE=1 VLLM_USE_DEEP_GEMM=0 VLLM_TEST_FORCE_FP8_MARLIN=1",
+      "env_note": "The same kernel override as vllm-mtp (see its kernel_override): DeepGEMM crashes at weight load on GB10, so Marlin FP8 MoE is forced.",
+      "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 -e VLLM_USE_DEEP_GEMM=0 -e VLLM_TEST_FORCE_FP8_MARLIN=1 vllm/vllm-openai:latest --model Qwen/Qwen3.6-35B-A3B-FP8 --served-model-name Qwen/Qwen3.6-35B-A3B-FP8 --host 127.0.0.1 --port 8001 --max-model-len 2048 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype auto --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+      "cli_note": "vllm-mtp's command, verbatim, except that the container was started detached and named (`docker run -d --name vllm-moe-energy ...`) so it could be stopped by name afterwards. Neither flag reaches vLLM.",
+      "speculation": "vLLM's own MTP drafter, K=4 (--speculative-config method=mtp, num_speculative_tokens=3)",
+      "instrument": {
+        "isl": 128,
+        "osl": 1024,
+        "prompt_mode": "essay",
+        "max_model_len": 2048,
+        "max_batch_size": 128,
+        "kv_cache_dtype": "bf16",
+        "reps": 3,
+        "warmup": 1,
+        "temperature": 0.0,
+        "seed": 42
+      },
+      "instrument_note": "Measured 2026-09-28 on spark-43fa (dgx2) to give the Cost tab a MoE vLLM leg that carries JOULES; vllm-mtp is throughput-only. Same engine (vLLM 0.27.1), same image, same checkpoint, same command and same instrument as vllm-mtp. Throughput landed within 1.6% of it on every rung (52.92/92.10/145.65/222.64/329.97 vs 52.11/93.16/145.94/222.08/329.93 tok/s; +1.6/-1.1/-0.2/+0.3/+0.0%), on the same box on a different day, which is the agreement that makes the energy quotable. Energy is GPU RAIL ONLY: nvidia-smi power.draw.average at 250 ms, integrated over each rep's own window -- the same source and cadence the Metrale Engine gate sampler integrates -- so Grace and LPDDR5X are outside it for both engines. An NVML cumulative-energy-counter sidecar ran beside it as a cross-check and read 1.2-3.7% lower per rung (higher gap at higher load), the known bias of integrating power.draw.average; ratios between two engines measured the same way hold. kv_cache_dtype is bf16 although the command says `--kv-cache-dtype auto`: auto takes the model dtype and `--dtype bfloat16` is set; spelled `bf16` because that is how a Metrale Engine gate record writes serve_overrides.kv_cache_dtype. prompt_mode essay: the pinned harness defaults to it (PROMPT_MODE = os.environ.get(\"W55_PROMPT_MODE\", \"essay\")) and neither the run's environment nor the box's shell profile sets W55_PROMPT_MODE. parity is `matched` because every instrument axis equals vllm-mtp's; this manifest has no subject series, so no published ratio is computed against either leg.",
+      "unmeasured": {
+        "rungs": [
+          32,
+          64,
+          128
+        ],
+        "reason": "not driven -- the owner has paused every vLLM measurement at C >= 32 on GB10: vLLM + MTP has taken a GB10 box down at the wide rungs (three physical powercycles in one day, at util 0.85 and with --max-num-seqs capped), so the serve keeps the published cap of 128 while only C=1..16 were driven. These rungs have no value: not zero and not interpolated."
+      },
+      "sources": {
+        "1": "vllm_moe_energy_c1_16.json",
+        "2": "vllm_moe_energy_c1_16.json",
+        "4": "vllm_moe_energy_c1_16.json",
+        "8": "vllm_moe_energy_c1_16.json",
+        "16": "vllm_moe_energy_c1_16.json"
+      },
+      "source_note": "One run, 2026-09-28 08:48-08:59 UTC on dgx2, nothing else on the box. Every rung comes from the single raw file vllm_moe_energy_c1_16.json (sha256 eb4f73b0c9ca76d8c6a6e0982050897c94a501417f04c5a8718bba64353d2eb4). Zero request errors, every rep gpu_rail_trustworthy with 98-100% sample coverage, no HW power brake; GPU die 58-77 C across the ladder.",
+      "scope": "cost"
     }
   ]
 }
