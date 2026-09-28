@@ -54,8 +54,7 @@ __device__ __forceinline__ void mma_bf16(float* c, const unsigned* a, unsigned b
                    "f"(c[0]), "f"(c[1]), "f"(c[2]), "f"(c[3]));
 }
 
-}  // namespace w8p
-
+}
 extern "C" __global__ void __launch_bounds__(256, 1) w8a16_gemm_pipe128(
     const __nv_bfloat16* __restrict__ A,
     const unsigned char* __restrict__ B,

@@ -351,8 +351,7 @@ __device__ __forceinline__ void body(const __nv_bfloat16* __restrict__ Q, __nv_b
     }
 }
 
-}  // namespace fa128
-
+}
 // 2026-09-27: Twin of attn_prefill_paged_64 at HDIM 256 with causal masking and no sliding window.
 extern "C" __global__ void __launch_bounds__(256, 1) attn_prefill_fa128_paged(
     const __nv_bfloat16* __restrict__ Q,

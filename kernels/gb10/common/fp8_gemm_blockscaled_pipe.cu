@@ -51,8 +51,7 @@ __device__ __forceinline__ void dense_body(
     tile_store<BM, BN, WARPS_M, WARPS_N>(C, N, cta_m, rows_valid, cta_n, outer);
 }
 
-}  // namespace e4m3g
-
+}
 #define FP8P_PARAMS                                                                                    \
     const unsigned char* __restrict__ A_fp8, const float* __restrict__ a_scale,                        \
         const unsigned char* __restrict__ B_fp8, const float* __restrict__ b_scale,                    \

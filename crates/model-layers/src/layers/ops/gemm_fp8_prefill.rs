@@ -95,7 +95,7 @@ pub const W4A16_VIA_FP8_MIN_M: u32 = 1024;
 /// 2026-09-28: `w4a16_gemm_t_m128`'s product on the multistage FP8 GEMM: the transposed
 /// NVFP4 weight (`[K/2, N]` codes, `[K/16, N]` E4M3 scales, scalar `weight_scale_2`) is
 /// dequantized to E4M3 `[N, K]` with that kernel's arithmetic (`fp8_predequant_nvfp4_t`),
-/// then [`fp8_act_ldmab_gemm`] runs. Bit-identical to `w4a16_gemm_t_m128` (kbench
+/// then `fp8_act_ldmab_gemm` runs. Bit-identical to `w4a16_gemm_t_m128` (kbench
 /// `w4a16_bench.cu`, nine shapes). `k` must be a multiple of 32.
 #[allow(clippy::too_many_arguments)]
 pub fn w4a16_t_via_fp8_ldmab(

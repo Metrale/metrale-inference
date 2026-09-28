@@ -77,19 +77,22 @@ __device__ __forceinline__ void grouped_body(
     }
 }
 
-}  // namespace e4m3g
-
-// 2026-09-27: The entry points' shared parameter list and forwarding list.
-#define E4M3G_PARAMS                                                                                   \
-    const unsigned char* __restrict__ A_fp8,              /* [total_tokens, K] FP8 E4M3 */             \
-    const float* __restrict__ a_scale,                    /* [total_tokens, K / 128] F32 */            \
-    const unsigned long long* __restrict__ B_weight_ptrs, /* [num_experts] -> [N, K] FP8 */            \
-    const unsigned long long* __restrict__ B_scale_ptrs,  /* [num_experts] -> [N / 128, K / 128] F32 */\
-    __nv_bfloat16* __restrict__ C,                        /* [total_expanded, N] BF16 */               \
-    const int* __restrict__ expert_offsets,               /* [num_experts + 1] */                      \
-    const int* __restrict__ sorted_token_ids,             /* [total_expanded] or NULL */               \
-    unsigned int N, unsigned int K,                                                                    \
-    const unsigned int* __restrict__ worklist,            /* [*total_tiles * 2] */                     \
+}
+// 2026-09-27: The entry points' shared parameter list and forwarding list. Shapes: A_fp8
+// [total_tokens, K] FP8 E4M3; a_scale [total_tokens, K / 128] F32; B_weight_ptrs [num_experts] ->
+// [N, K] FP8; B_scale_ptrs [num_experts] -> [N / 128, K / 128] F32; C [total_expanded, N] BF16;
+// expert_offsets [num_experts + 1]; sorted_token_ids [total_expanded] or NULL; worklist
+// [*total_tiles * 2].
+#define E4M3G_PARAMS                                                                               \
+    const unsigned char* __restrict__ A_fp8,                                                       \
+    const float* __restrict__ a_scale,                                                             \
+    const unsigned long long* __restrict__ B_weight_ptrs,                                          \
+    const unsigned long long* __restrict__ B_scale_ptrs,                                           \
+    __nv_bfloat16* __restrict__ C,                                                                 \
+    const int* __restrict__ expert_offsets,                                                        \
+    const int* __restrict__ sorted_token_ids,                                                      \
+    unsigned int N, unsigned int K,                                                                \
+    const unsigned int* __restrict__ worklist,                                                     \
     const int* __restrict__ total_tiles
 #define E4M3G_ARGS A_fp8, a_scale, B_weight_ptrs, B_scale_ptrs, C, expert_offsets, sorted_token_ids, N, K, worklist, total_tiles
 
@@ -228,8 +231,7 @@ __device__ __forceinline__ void gateup_silu_body(
     }
 }
 
-}  // namespace e4m3g
-
+}
 // 2026-09-28: Gate/up + SiLU + E4M3 quant (see gateup_silu_body): 64 x 128 items (work-list m_tile 64, n_tiles
 // N / 128), 256 threads, dynamic shared memory SmemBytes<64, 128, 3> (37.8 KiB) plus 1 KiB static. `_w2` runs two CTAs
 // per SM (128 registers), faster from a few thousand tokens; `_w1` one CTA per SM, faster below.

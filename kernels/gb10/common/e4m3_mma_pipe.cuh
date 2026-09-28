@@ -181,11 +181,11 @@ __device__ __forceinline__ void tile_mma(
                     const unsigned ch = 2 * ks + (lmat >> 1);
                     ldsm_x4(a_base + swz(arow, ch), af[0], af[1], af[2], af[3]);
                     if (SPLIT16) {
-                        const unsigned alo[4] = {af[0], af[1], 0u, 0u}, ahi[4] = {0u, 0u, af[2], af[3]};
+                        const unsigned a_lo[4] = {af[0], af[1], 0u, 0u}, a_hi[4] = {0u, 0u, af[2], af[3]};
                         #pragma unroll
                         for (int ni = 0; ni < NI; ni++) {
-                            mma_e4m3(inner[mi][ni], alo, bf[ni][0], 0u);
-                            mma_e4m3(inner[mi][ni], ahi, 0u, bf[ni][1]);
+                            mma_e4m3(inner[mi][ni], a_lo, bf[ni][0], 0u);
+                            mma_e4m3(inner[mi][ni], a_hi, 0u, bf[ni][1]);
                         }
                     } else {
                         #pragma unroll
@@ -245,4 +245,4 @@ __device__ __forceinline__ void tile_store(
     }
 }
 
-}  // namespace e4m3g
+}

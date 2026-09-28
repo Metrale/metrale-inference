@@ -90,8 +90,7 @@ __device__ __forceinline__ void gram8(const unsigned char* sA, const unsigned ch
         }
     }
 }
-}  // namespace gdnx
-
+}
 // 2026-09-28: Shared memory: sq, sk (each 64 x 256 B), kq (64 x 64 FP32), uc (64 x 256 B),
 // S (128 x 256 B, natural [k][v] layout), gc, egc: 16K + 16K + 16K + 16K + 32K + 512 = 98,816 B (same as the original).
 extern "C" __global__ void __launch_bounds__(512, 1) gated_delta_rule_chunk_fwd_o_mma8(

@@ -529,7 +529,7 @@ names = ["w8a16_dequant", "w4a16_dequant"]
 [[rule]]
 component = "gemm-w4a4"
 kind = "W4A4 GEMM/GEMV"
-names = ["w4a4_*", "metrale_nvfp4_mmq*"]
+names = ["w4a4_*", "metrale_nvfp4_mmq*", "metrale_nvfp4_gemm_pipe*"]
 
 [[rule]]
 component = "gemm-intq"
@@ -560,7 +560,7 @@ names = ["quantize_*", "per_token_group_quant_*", "quant_rowwise_fp8", "e2m1_*",
 [[rule]]
 component = "quant"
 kind = "dequant / repack / transpose"
-names = ["dequant_*", "predequant_*", "widen_block_scale_*", "transpose_*", "fp8_act_scale_to_kmajor", "metrale_nvfp4_repack", "metrale_nvfp4_scale_bf16", "ssm_h_state_*"]
+names = ["dequant_*", "predequant_*", "fp8_predequant_*", "widen_block_scale_*", "transpose_*", "fp8_act_scale_to_kmajor", "metrale_nvfp4_repack", "metrale_nvfp4_scale_bf16", "ssm_h_state_*"]
 
 [[rule]]
 component = "quant"
