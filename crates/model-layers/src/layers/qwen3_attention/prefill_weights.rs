@@ -79,6 +79,13 @@ impl Qwen3AttentionLayer {
                 k,
                 stream,
             )
+        } else if !cfg!(metrale_scale)
+            && m >= crate::layers::ops::W4A16_VIA_FP8_MIN_M
+            && k.is_multiple_of(32)
+        {
+            // 2026-09-28: The same product as `w4a16_gemm_t_m128` bit for bit, on the
+            // multistage FP8 GEMM (`ops::w4a16_t_via_fp8_ldmab`).
+            crate::layers::ops::w4a16_t_via_fp8_ldmab(gpu, input, weight, output, m, n, k, stream)
         } else {
             crate::layers::ops::w4a16_gemm_n128_m128(
                 gpu,

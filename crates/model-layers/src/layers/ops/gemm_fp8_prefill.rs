@@ -38,28 +38,7 @@ pub fn fp8_gemm_n128(
     stream: u64,
 ) -> Result<()> {
     if k.is_multiple_of(32) && std::env::var("METRALE_FP8_LDMAB").as_deref() != Ok("0") {
-        // 2026-09-25: The handles and the scratch come from the backend's op
-        // cache, not from statics: they belong to this backend's modules and
-        // allocations, which a process-wide cache would outlive.
-        let cache = gpu.op_cache();
-        let qk = cache.kernel(gpu, "w4a16", "bf16_to_fp8")?;
-        let lk = cache.kernel(gpu, "w4a16_fp8_ldmab", "fp8_fp8_gemm_ldmab")?;
-        let need = (m as usize) * (k as usize);
-        let a8 = cache.scratch(gpu, "fp8_prefill_activation", need)?;
-        bf16_to_fp8(gpu, qk, input, a8, m * k, stream)?;
-        // 2026-09-28: 1-D grid of 128x256 tiles (the kernel orders them in groups of 8 M
-        // tiles), 256 threads, two 48 KiB stages of dynamic shared memory.
-        return KernelLaunch::new(gpu, lk)
-            .grid([div_ceil(m, 128) * div_ceil(n, 256), 1, 1])
-            .block([256, 1, 1])
-            .shared_mem(2 * (128 + 256) * 128)
-            .arg_ptr(a8)
-            .arg_ptr(b_fp8)
-            .arg_ptr(output)
-            .arg_u32(m)
-            .arg_u32(n)
-            .arg_u32(k)
-            .launch(stream);
+        return fp8_act_ldmab_gemm(gpu, input, b_fp8, output, m, n, k, stream);
     }
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 128), div_ceil(m, 64), 1])
@@ -71,6 +50,82 @@ pub fn fp8_gemm_n128(
         .arg_u32(n)
         .arg_u32(k)
         .launch(stream)
+}
+
+/// 2026-09-28: `C = e4m3(A) @ B_fp8^T` through `bf16_to_fp8` and `fp8_fp8_gemm_ldmab`
+/// (module `w4a16_fp8_ldmab`). The handles and the activation scratch come from the
+/// backend's op cache, not from statics: they belong to this backend's modules and
+/// allocations, which a process-wide cache would outlive. `k` must be a multiple of 32.
+#[allow(clippy::too_many_arguments)]
+fn fp8_act_ldmab_gemm(
+    gpu: &dyn GpuBackend,
+    input: DevicePtr,
+    b_fp8: DevicePtr,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    let cache = gpu.op_cache();
+    let qk = cache.kernel(gpu, "w4a16", "bf16_to_fp8")?;
+    let lk = cache.kernel(gpu, "w4a16_fp8_ldmab", "fp8_fp8_gemm_ldmab")?;
+    let a8 = cache.scratch(gpu, "fp8_prefill_activation", (m as usize) * (k as usize))?;
+    bf16_to_fp8(gpu, qk, input, a8, m * k, stream)?;
+    // 2026-09-28: 1-D grid of 128x256 tiles (the kernel orders them in groups of 8 M
+    // tiles), 256 threads, two 48 KiB stages of dynamic shared memory.
+    KernelLaunch::new(gpu, lk)
+        .grid([div_ceil(m, 128) * div_ceil(n, 256), 1, 1])
+        .block([256, 1, 1])
+        .shared_mem(2 * (128 + 256) * 128)
+        .arg_ptr(a8)
+        .arg_ptr(b_fp8)
+        .arg_ptr(output)
+        .arg_u32(m)
+        .arg_u32(n)
+        .arg_u32(k)
+        .launch(stream)
+}
+
+/// 2026-09-28: Rows at or above which [`w4a16_t_via_fp8_ldmab`] beats
+/// `w4a16_gemm_t_m128` on the dense 27B attention projections (dgx2: x1.23-1.35 at 1024
+/// rows, x0.69 at 300, x2.15 at 8192): below it the per-call weight dequant dominates.
+pub const W4A16_VIA_FP8_MIN_M: u32 = 1024;
+
+/// 2026-09-28: `w4a16_gemm_t_m128`'s product on the multistage FP8 GEMM: the transposed
+/// NVFP4 weight (`[K/2, N]` codes, `[K/16, N]` E4M3 scales, scalar `weight_scale_2`) is
+/// dequantized to E4M3 `[N, K]` with that kernel's arithmetic (`fp8_predequant_nvfp4_t`),
+/// then [`fp8_act_ldmab_gemm`] runs. Bit-identical to `w4a16_gemm_t_m128` (kbench
+/// `w4a16_bench.cu`, nine shapes). `k` must be a multiple of 32.
+#[allow(clippy::too_many_arguments)]
+pub fn w4a16_t_via_fp8_ldmab(
+    gpu: &dyn GpuBackend,
+    input: DevicePtr,
+    weight: &QuantizedWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    debug_assert!(
+        k.is_multiple_of(32),
+        "w4a16_t_via_fp8_ldmab needs K % 32 == 0"
+    );
+    let cache = gpu.op_cache();
+    let pk = cache.kernel(gpu, "w4a16_fp8_ldmab", "fp8_predequant_nvfp4_t")?;
+    let b8 = cache.scratch(gpu, "w4a16_t_fp8_weight", (n as usize) * (k as usize))?;
+    KernelLaunch::new(gpu, pk)
+        .grid([div_ceil(n, 256), k / 16, 1])
+        .block([256, 1, 1])
+        .arg_ptr(weight.weight)
+        .arg_ptr(weight.weight_scale)
+        .arg_f32(weight.weight_scale_2)
+        .arg_ptr(b8)
+        .arg_u32(n)
+        .arg_u32(k)
+        .launch(stream)?;
+    fp8_act_ldmab_gemm(gpu, input, b8, output, m, n, k, stream)
 }
 
 #[allow(clippy::too_many_arguments)]

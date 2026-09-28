@@ -171,3 +171,42 @@ extern "C" __global__ void __launch_bounds__(LDMAB_THREADS, 1) fp8_fp8_gemm_ldma
         }
     }
 }
+
+// 2026-09-28: fp8_predequant_nvfp4_t: the transposed NVFP4 weight that w4a16_gemm_t_m128 reads (B_packed [K/2][N],
+// byte (kp, n) = k 2kp in the low nibble and 2kp+1 in the high one; B_scale [K/16][N] E4M3) to E4M3 B_fp8 [N][K],
+// with that kernel's dequant arithmetic: e2m1 value * (float(e4m3 scale) * scale2), rounded by
+// cvt.rn.satfinite.e4m3x2.f32. Casting A with bf16_to_fp8 and running fp8_fp8_gemm_ldmab on the result then gives
+// w4a16_gemm_t_m128's output bit for bit. One thread per (n, 16-wide k group); consecutive threads take consecutive
+// n, so the packed and scale reads coalesce. Grid (ceil(N / 256), K / 16), block 256. K % 16 == 0.
+__device__ __constant__ float ldmab_e2m1_lut[16] = {
+    0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f,
+    -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f
+};
+
+extern "C" __global__ void fp8_predequant_nvfp4_t(
+    const unsigned char* __restrict__ B_packed,
+    const unsigned char* __restrict__ B_scale,
+    const float scale2,
+    unsigned char* __restrict__ B_fp8,
+    unsigned int N, unsigned int K
+) {
+    const unsigned int n = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int q = blockIdx.y;
+    if (n >= N) return;
+    __nv_fp8_e4m3 f;
+    *(unsigned char*)&f = B_scale[(unsigned long long)q * N + n];
+    const float sv = (float)f * scale2;
+    unsigned int w[4];
+#pragma unroll
+    for (int j = 0; j < 4; j++) {
+        const unsigned char p0 = B_packed[(unsigned long long)(q * 8 + 2 * j) * N + n];
+        const unsigned char p1 = B_packed[(unsigned long long)(q * 8 + 2 * j + 1) * N + n];
+        unsigned short h0, h1;
+        asm("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;" : "=h"(h0)
+            : "f"(ldmab_e2m1_lut[p0 >> 4] * sv), "f"(ldmab_e2m1_lut[p0 & 0xF] * sv));
+        asm("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;" : "=h"(h1)
+            : "f"(ldmab_e2m1_lut[p1 >> 4] * sv), "f"(ldmab_e2m1_lut[p1 & 0xF] * sv));
+        w[j] = (unsigned int)h0 | ((unsigned int)h1 << 16);
+    }
+    *(uint4*)&B_fp8[(unsigned long long)n * K + q * 16] = make_uint4(w[0], w[1], w[2], w[3]);
+}
