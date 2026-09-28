@@ -74,9 +74,10 @@ lm_head_batchm_max = 8
 
 
 ssm_batched_recurrent = false
-# 2026-09-25: The kernels behind gdn_prefill_tc, ssm_ba_gates_hopper,
-# fp8_act_quant_hopper and ffn_gateup_fused are sources in kernels/hopper/common,
-# which this target's source set does not include.
+# 2026-09-25: The kernels behind gdn_prefill_tc, fp8_act_quant_hopper and
+# ffn_gateup_fused are sources in kernels/hopper/common, which this target's source
+# set does not include. 2026-09-28: the ssm_ba_gates_hopper twin moved to
+# gb10/common and is inherited here, but stays off for want of a B200 receipt.
 
 
 gdn_prefill_tc = false

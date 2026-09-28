@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: The Hopper BA-gates twin `dense_gemm_ba_gates_prefill_hopper`
-//! (`kernels/hopper/common/ssm_ba_gates_hopper.cu`): its launcher, the choice
+//! (`kernels/gb10/common/ssm_ba_gates_hopper.cu`): its launcher, the choice
 //! between it and the gb10 parent `dense_gemm_ba_gates_prefill`
 //! (`ssm_preprocess.cu`), the log of that choice, and the index mappings both
 //! kernels must share.
@@ -17,10 +17,10 @@
 //! `native_ssm_ba_gates_hopper_microtest` checks its gate and beta output
 //! bytes against the parent's.
 //!
-//! Only `kernels/hopper` ships the twin, so elsewhere its handle is
-//! `KernelHandle(0)` and [`ba_gates_pick`] keeps the parent even when the lever
-//! is on. The lever is declared on in `kernels/hopper/HARDWARE.toml` and off in
-//! the gb10, b200 and b300 ones.
+//! 2026-09-28: gb10's common/ ships the twin (and hopper and b200 inherit it); a
+//! target without it has handle `KernelHandle(0)` and [`ba_gates_pick`] keeps the
+//! parent even when the lever is on. The lever is declared on in the gb10 and
+//! hopper `HARDWARE.toml`s and off in the b200 and b300 ones.
 //!
 //! One block per token makes the grid the token count, and the parent's
 //! callers include the batched decode (`qwen3_ssm/trait_decode_batched.rs`).
