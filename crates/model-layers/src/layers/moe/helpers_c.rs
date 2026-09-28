@@ -253,6 +253,22 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        if self.moe_router_rt_k.0 != 0
+            && num_tokens >= ops::MOE_ROUTER_RT_MIN_ROWS
+            && hidden_size.is_multiple_of(16)
+        {
+            return ops::moe_router_gemm_rt(
+                ctx.gpu,
+                self.moe_router_rt_k,
+                router_in,
+                &self.weights.gate,
+                gate_logits,
+                num_tokens,
+                num_experts,
+                hidden_size,
+                stream,
+            );
+        }
         if self.dense_gemm_router.0 != 0 {
             return ops::dense_gemm_router(
                 ctx.gpu,

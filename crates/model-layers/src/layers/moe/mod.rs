@@ -46,6 +46,10 @@ pub struct MoeLayer {
     /// 2026-09-25: `dense_gemm_bf16_router`, read only by `router_gate_gemm_dense`,
     /// which uses `dense_gemm` instead when this handle is 0.
     dense_gemm_router: KernelHandle,
+    /// 2026-09-28: `moe_router_gemm_rt`, the same bits as `dense_gemm_router` on a register
+    /// tile, taken from `MOE_ROUTER_RT_MIN_ROWS` rows; 0 when the target lacks it or
+    /// `METRALE_NO_MOE_ROUTER_RT` is set.
+    moe_router_rt_k: KernelHandle,
     // 2026-09-26: `moe_router_gemm_bf16` (`router_gemm_bf16`); 0 on targets that
     // do not ship it.
     moe_router_gemm_k: KernelHandle,

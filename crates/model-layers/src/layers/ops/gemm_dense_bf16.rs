@@ -206,6 +206,41 @@ pub fn dense_gemm_router(
         .launch(stream)
 }
 
+/// 2026-09-28: Fewest rows for which [`moe_router_gemm_rt`] beats [`dense_gemm_router`] on
+/// GB10 (measured: 0.82x at 300 rows, 2.5x at 1000, 3.0-3.5x at 4k-32k).
+pub const MOE_ROUTER_RT_MIN_ROWS: u32 = 1024;
+
+/// 2026-09-28: [`dense_gemm_router`] on 64x128 tiles with a 4x8 register tile per thread
+/// (kernel `moe_router_gemm_rt`, `kernels/gb10/common/moe_router_gemm_prefill.cu`): the
+/// same per-output FP32 accumulation in ascending k, so the same bits. Needs `k % 16 == 0`.
+#[allow(clippy::too_many_arguments)]
+pub fn moe_router_gemm_rt(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: &DenseWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        k.is_multiple_of(16),
+        "moe_router_gemm_rt: K={k} is not a multiple of 16"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([div_ceil(n, 128), div_ceil(m, 64), 1])
+        .block([256, 1, 1])
+        .arg_ptr(input)
+        .arg_ptr(weight.weight)
+        .arg_ptr(output)
+        .arg_u32(m)
+        .arg_u32(n)
+        .arg_u32(k)
+        .launch(stream)
+}
+
 /// 2026-09-25: Tensor-core BF16 GEMM (kernel `dense_gemm_bf16_pipelined`):
 /// m16n8k16 MMAs fed by a 2-stage `cp.async` pipeline on a 128x128 tile, with
 /// the inputs and output layout of [`dense_gemm`].

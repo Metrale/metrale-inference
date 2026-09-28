@@ -84,6 +84,11 @@ impl MoeLayer {
             w4a16_gemm: gpu.kernel("w4a16", "w4a16_gemm")?,
             dense_gemm: gpu.kernel("gemm", "dense_gemm_bf16")?,
             dense_gemm_router: super::super::try_kernel(gpu, "gemm", "dense_gemm_bf16_router"),
+            moe_router_rt_k: if std::env::var_os("METRALE_NO_MOE_ROUTER_RT").is_some() {
+                KernelHandle(0)
+            } else {
+                try_target_kernel(gpu, "moe_router_gemm_prefill", "moe_router_gemm_rt")
+            },
             moe_router_gemm_k: super::super::try_kernel(
                 gpu,
                 "moe_router_gemm",

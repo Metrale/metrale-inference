@@ -220,6 +220,10 @@ name = "moe_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "moe_router_gemm_rt_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "moe_shared_microtest"
 required-features = ["cuda", "gpu-examples"]
 
