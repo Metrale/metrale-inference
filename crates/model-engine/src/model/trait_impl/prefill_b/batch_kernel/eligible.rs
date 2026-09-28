@@ -76,8 +76,8 @@ impl TransformerModel {
             self.buffers.scratch_bytes(),
             self.config.num_experts_per_tok,
             self.config.mrope_interleaved,
-            // 2026-09-25: Chunk 0 is admitted with codispatch or varlen on.
-            metrale_model_layers::layers::ops::prefill_batched_first_chunk_enabled() || varlen,
+            // 2026-09-28: Chunk 0 is admitted by the rule the attention layer routes by.
+            metrale_model_layers::layers::ops::prefill_batched_chunk_zero_admitted(),
             varlen,
         )
     }

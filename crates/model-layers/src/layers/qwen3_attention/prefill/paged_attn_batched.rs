@@ -88,8 +88,7 @@ impl Qwen3AttentionLayer {
         // `kernel_batched_eligible` passes (first-chunk lever or varlen). A
         // batch admitted there and refused here fails after its streams were
         // changed.
-        let allow_first_chunk = crate::layers::ops::prefill_batched_first_chunk_enabled()
-            || crate::layers::ops::prefill_varlen_enabled();
+        let allow_first_chunk = crate::layers::ops::prefill_batched_chunk_zero_admitted();
         if seq_len_start == 0 && !allow_first_chunk {
             anyhow::bail!(
                 "prefill_attention_paged_attn_batched: seq_len_start=0 not supported \

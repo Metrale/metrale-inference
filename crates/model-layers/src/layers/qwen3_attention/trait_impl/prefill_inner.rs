@@ -6,7 +6,7 @@
 //! Invariants:
 //! - A batched call (`batched_meta` is `Some`) never takes the contiguous
 //!   first-chunk attention: at `seq_len_start == 0` it returns an error unless
-//!   `prefill_batched_first_chunk_enabled()` (always, on the mHC body).
+//!   `ops::batched_chunk_zero_admitted` (always, on the mHC body).
 //! - A batched call on a layer with high-speed swap engaged returns an error.
 
 use anyhow::Result;
@@ -129,18 +129,22 @@ impl Qwen3AttentionLayer {
             );
         }
 
-        // 2026-09-25: Batched mode runs the paged path; at a first chunk
-        // (`seq_len_start == 0`) it is refused unless
-        // `prefill_batched_first_chunk_enabled()`.
-        let allow_batched_first_chunk =
-            batched_meta.is_some() && crate::layers::ops::prefill_batched_first_chunk_enabled();
-        if batched_meta.is_some() && seq_len_start == 0 && !allow_batched_first_chunk {
+        // 2026-09-28: Batched mode runs the paged path; a batched first chunk
+        // (`seq_len_start == 0`) is refused unless the wave's admission allowed it
+        // (`attention_route`).
+        let route = attention_route(
+            batched_meta.is_some(),
+            seq_len_start,
+            crate::layers::ops::prefill_batched_first_chunk_enabled(),
+            crate::layers::ops::prefill_varlen_enabled(),
+        );
+        if route == AttnRoute::Refuse {
             anyhow::bail!(
                 "prefill_inner: batched mode requires seq_len_start > 0 (paged path); \
                  got seq_len_start=0. Caller must fall back to per-stream for this chunk."
             );
         }
-        let attn_out = if seq_len_start == 0 && !allow_batched_first_chunk {
+        let attn_out = if route == AttnRoute::Contiguous {
             // 2026-09-25: First chunk of a single stream: attention over this
             // chunk's contiguous Q/K/V, writing K/V to the cache from
             // `kv_write_start`.
@@ -396,3 +400,38 @@ impl Qwen3AttentionLayer {
         Ok(())
     }
 }
+
+/// 2026-09-28: Where a prefill call's attention runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AttnRoute {
+    /// 2026-09-28: A single stream's first chunk: contiguous attention over this chunk.
+    Contiguous,
+    /// 2026-09-28: Paged attention over the cache (later chunks, admitted batched first chunks).
+    Paged,
+    /// 2026-09-28: A batched first chunk the admission rule does not allow.
+    Refuse,
+}
+
+/// 2026-09-28: The route for a call with `batched` metadata at `seq_len_start`. A batched
+/// first chunk takes the paged path exactly when the model engine's admission rule
+/// (`ops::batched_chunk_zero_admitted`) would have admitted its wave.
+pub(crate) fn attention_route(
+    batched: bool,
+    seq_len_start: usize,
+    first_chunk_lever: bool,
+    varlen: bool,
+) -> AttnRoute {
+    if seq_len_start != 0 {
+        AttnRoute::Paged
+    } else if !batched {
+        AttnRoute::Contiguous
+    } else if crate::layers::ops::batched_chunk_zero_admitted(first_chunk_lever, varlen) {
+        AttnRoute::Paged
+    } else {
+        AttnRoute::Refuse
+    }
+}
+
+#[cfg(test)]
+#[path = "prefill_inner_route_tests.rs"]
+mod route_tests;

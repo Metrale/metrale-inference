@@ -62,6 +62,24 @@ fn prefill_batched_first_chunk_from_parts(codispatch: bool, q12: Option<&str>) -
     codispatch || bool_value_enabled(q12)
 }
 
+/// 2026-09-28: Whether a batched prefill wave may carry chunk-zero streams: the
+/// first-chunk lever ([`prefill_batched_first_chunk_enabled`]) or varlen batching
+/// ([`prefill_varlen_enabled`]). The single rule for the model engine's admission
+/// (`kernel_batched_eligible`), its paged metadata upload, and the attention layer's
+/// routing; before 2026-09-28 the layer read the lever alone and refused a
+/// varlen-admitted chunk-zero wave after admission, which failed every stream in it.
+pub fn prefill_batched_chunk_zero_admitted() -> bool {
+    batched_chunk_zero_admitted(
+        prefill_batched_first_chunk_enabled(),
+        prefill_varlen_enabled(),
+    )
+}
+
+/// 2026-09-28: The pure rule behind [`prefill_batched_chunk_zero_admitted`].
+pub fn batched_chunk_zero_admitted(first_chunk_lever: bool, varlen: bool) -> bool {
+    first_chunk_lever || varlen
+}
+
 /// 2026-09-25: The resolved varlen decision, set once so it cannot change
 /// mid-serve.
 static PREFILL_VARLEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
