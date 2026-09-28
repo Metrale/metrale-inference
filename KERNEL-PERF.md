@@ -148,6 +148,10 @@ pct_of_floor = floor_us / time_us * 100        (100 % = at the roofline floor)
   math requires), at the precision the tensor cores execute.
 - `bound` names the term that sets the floor. The peaks are the ones in
   [Peaks](#peaks) below.
+- **Above 100 %** means the kernel beat the modelled floor: the byte model counts traffic the
+  hardware served from L2 (data reused across back-to-back calls), or the kernel streams faster
+  than the peak in use. Treat it as a prompt to re-check that row's byte model, not as headroom
+  below zero.
 - **"not measured"** means no row exists for that kernel yet. It is never estimated, interpolated
   or copied from another kernel, and a kernel measured in one regime only shows that regime.
 
