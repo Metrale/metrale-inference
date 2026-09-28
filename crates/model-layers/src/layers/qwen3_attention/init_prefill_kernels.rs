@@ -60,6 +60,7 @@ pub(super) struct PrefillKernels {
     pub(super) prefill_attn_paged_nvfp4_k: KernelHandle,
     pub(super) prefill_attn_paged_turbo4_k: KernelHandle,
     pub(super) prefill_attn_paged_64_k: KernelHandle,
+    pub(super) prefill_attn_fa128: crate::layers::ops::AttnFa128Kernels,
     pub(super) prefill_attn_paged_fp8_64_k: KernelHandle,
     pub(super) prefill_attn_paged_nvfp4_64_k: KernelHandle,
     pub(super) prefill_attn_paged_turbo2_64_k: KernelHandle,
@@ -180,6 +181,7 @@ impl PrefillKernels {
                 "attn_prefill_paged_turbo4",
             ),
             prefill_attn_paged_64_k: gpu.kernel("prefill_paged", "attn_prefill_paged_64")?,
+            prefill_attn_fa128: crate::layers::ops::AttnFa128Kernels::resolve(gpu),
             prefill_attn_paged_fp8_64_k: gpu
                 .kernel("prefill_paged_fp8", "attn_prefill_paged_fp8_64")?,
             prefill_attn_paged_nvfp4_64_k: gpu

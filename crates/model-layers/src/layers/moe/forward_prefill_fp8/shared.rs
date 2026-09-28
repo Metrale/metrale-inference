@@ -9,6 +9,29 @@
 
 use super::*;
 
+/// 2026-09-28: Where the MoE input is quantized once for both the shared and the routed
+/// W8A8 GEMMs: after the shared expert's down input (`n * shared_inter` bytes and its
+/// scales at the region starts), 256-byte aligned; None when the slab is too small.
+pub(super) fn input_q_slot(
+    scratch: &MoeFp8Scratch,
+    n: u32,
+    h: u32,
+    shared_inter: u32,
+) -> Option<(DevicePtr, DevicePtr)> {
+    let align = |b: u64| b.div_ceil(256) * 256;
+    let (n, h, si) = (n as u64, h as u64, shared_inter as u64);
+    let act_off = align(n * si);
+    let scale_off = align(n * si.div_ceil(128) * 4);
+    let act_cap = scratch.scales.0 - scratch.activation.0;
+    let scale_cap = scratch.worklist.0 - scratch.scales.0;
+    (act_off + n * h <= act_cap && scale_off + n * h.div_ceil(128) * 4 <= scale_cap).then(|| {
+        (
+            scratch.activation.offset(act_off as usize),
+            scratch.scales.offset(scale_off as usize),
+        )
+    })
+}
+
 impl MoeLayer {
     /// 2026-09-26: W8A8 shared expert: `input` quantised to FP8 per row and 128-column
     /// group, then `fp8_gemm_t_blockscaled` for gate, up and down. Every launch goes to
@@ -16,6 +39,7 @@ impl MoeLayer {
     pub(super) fn fp8_prefill_shared_w8a8(
         &self,
         input: DevicePtr,
+        input_q: Option<(DevicePtr, DevicePtr)>,
         sh: &Fp8ExpertWeight,
         n: u32,
         h: u32,
@@ -33,8 +57,10 @@ impl MoeLayer {
         }
         let shared_gate_out = ctx.buffers.ssm_deinterleaved();
         let shared_up_out = ctx.buffers.ssm_qkvz();
-        let input_fp8 = fp8_scratch.activation;
-        let input_scale = fp8_scratch.scales;
+        // 2026-09-28: `input_q`, when given, is where the routed gate/up read the same
+        // quantized input later.
+        let (input_fp8, input_scale) =
+            input_q.unwrap_or((fp8_scratch.activation, fp8_scratch.scales));
         ops::per_token_group_quant_fp8(
             ctx.gpu,
             self.per_token_group_quant_fp8_k,

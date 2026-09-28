@@ -46,6 +46,10 @@ pub struct MoeLayer {
     /// 2026-09-25: `dense_gemm_bf16_router`, read only by `router_gate_gemm_dense`,
     /// which uses `dense_gemm` instead when this handle is 0.
     dense_gemm_router: KernelHandle,
+    /// 2026-09-28: `moe_router_gemm_rt`, the same bits as `dense_gemm_router` on a register
+    /// tile, taken from `MOE_ROUTER_RT_MIN_ROWS` rows; 0 when the target lacks it or
+    /// `METRALE_NO_MOE_ROUTER_RT` is set.
+    moe_router_rt_k: KernelHandle,
     // 2026-09-26: `moe_router_gemm_bf16` (`router_gemm_bf16`); 0 on targets that
     // do not ship it.
     moe_router_gemm_k: KernelHandle,
@@ -268,6 +272,12 @@ pub struct MoeLayer {
     // `moe_build_tile_worklist_k` are non-zero; otherwise the W8A8 path runs
     // `moe_w8a8_grouped_gemm_k`.
     moe_w8a8_grouped_gemm_pm4_k: KernelHandle,
+    // 2026-09-27: The PM4 computation on the native e4m3 MMA (`forward_prefill_fp8/e4m3.rs`),
+    // preferred over PM4 for non-decode prefill.
+    moe_e4m3: forward_prefill_fp8::E4m3Kernels,
+    // 2026-09-28: `moe_unpermute_blend` (unpermute + shared blend in one launch, same bits);
+    // 0 when absent or under `METRALE_NO_MOE_UNPERMUTE_BLEND`.
+    moe_unpermute_blend_k: KernelHandle,
     per_token_group_quant_fp8_k: ops::Fp8ActQuant,
     /// 2026-09-25: Fused SiLU·mul + per-token-group FP8 quant for the W8A8 prefill
     /// down inputs. When `fused_silu_quant_ok` is false (handle 0, GeGLU, or an

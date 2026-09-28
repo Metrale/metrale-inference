@@ -94,6 +94,22 @@ pub fn w8a16_gemm_pipelined(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    if let Some(twin) = w8a16_pipe128_kernel(gpu, m, n, k)? {
+        // 2026-09-28: `w8a16_gemm_pipe128`: 128 x 128 tiles, 256 threads, 54,272 B of dynamic
+        // shared memory (3 x (8 KiB A + 4 KiB weight bytes) + 2 x 8 KiB decoded + 1 KiB LUT).
+        return KernelLaunch::new(gpu, twin)
+            .grid([n / 128, div_ceil(m, 128), 1])
+            .block([256, 1, 1])
+            .shared_mem(3 * (8192 + 4096) + 2 * 8192 + 1024)
+            .arg_ptr(input)
+            .arg_ptr(weight)
+            .arg_ptr(block_scale)
+            .arg_ptr(output)
+            .arg_u32(m)
+            .arg_u32(n)
+            .arg_u32(k)
+            .launch(stream);
+    }
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 32), div_ceil(m, 128), 1])
         .block([256, 1, 1])
@@ -105,6 +121,42 @@ pub fn w8a16_gemm_pipelined(
         .arg_u32(n)
         .arg_u32(k)
         .launch(stream)
+}
+
+/// 2026-09-28: Fewest rows for which [`w8a16_gemm_pipelined`] launches its 128x128 twin;
+/// decode batches (at most 64 rows at the concurrency the MoE ladder runs) keep the original.
+pub const W8A16_PIPE128_MIN_ROWS: u32 = 256;
+
+/// 2026-09-28: `w8a16_gemm_pipe128` (`kernels/gb10/common/w8a16_gemm_pipe128.cu`), the
+/// bit-identical 128x128-tile twin of `w8a16_gemm_pipelined` (same LUT decode, same BF16 MMAs
+/// in the same K order, same per-128-K scale fold; microtest `w8a16_gemm_pipe128_microtest`),
+/// 1.5-1.9x faster on GB10: when the backend carries it, `m >= W8A16_PIPE128_MIN_ROWS`, N and
+/// K are multiples of 128 and `METRALE_NO_W8A16_PIPE128` is absent. Memoized in the
+/// backend's `OpCache`.
+fn w8a16_pipe128_kernel(
+    gpu: &dyn GpuBackend,
+    m: u32,
+    n: u32,
+    k: u32,
+) -> Result<Option<KernelHandle>> {
+    const MODULE: &str = "w8a16_gemm_pipe128";
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let off = *OFF.get_or_init(|| std::env::var_os("METRALE_NO_W8A16_PIPE128").is_some());
+    if off
+        || m < W8A16_PIPE128_MIN_ROWS
+        || n == 0
+        || !n.is_multiple_of(128)
+        || k == 0
+        || !k.is_multiple_of(128)
+        || !gpu.has_module(MODULE)
+    {
+        return Ok(None);
+    }
+    Ok(Some(gpu.op_cache().kernel(
+        gpu,
+        MODULE,
+        "w8a16_gemm_pipe128",
+    )?))
 }
 
 /// 2026-09-25: Transposed W8A16 GEMM: `C[M,N] = A[M,K] @ dequant(B_t[K,N])`, with the

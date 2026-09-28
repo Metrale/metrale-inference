@@ -30,15 +30,60 @@ pub const GDN_TC_SPINE_ENTRY: &str = "gated_delta_rule_chunk_delta_h_tcfuse_x2";
 pub const GDN_TC_SPINE_MODULE: &str = "gated_delta_rule_chunk_tc";
 
 /// 2026-09-25: The scalar spine entries `init_kernels::fused_spine_kernel`
-/// binds: this one under `METRALE_GDN_PIPE=1`, the next under
-/// `METRALE_GDN_VTILE=1`, the last by default. The init route line and the
+/// binds, as [`gdn_scalar_spine`] picks them. The init route line and the
 /// handle are built from the same strings.
+/// 2026-09-28: The default: `_vfused`'s arithmetic with W, K and U double-buffered
+/// through cp.async (bit-identical to `_vfused`, 1.4x faster on GB10 at 1.6k-8k
+/// tokens per chunk).
 pub const GDN_SCALAR_SPINE_PIPE: &str = "gated_delta_rule_chunk_delta_h_pipe";
 /// 2026-09-25: SPLIT=4, 512 threads. Not the default; `fused_spine_kernel`'s
 /// doc says why.
 pub const GDN_SCALAR_SPINE_VTILE: &str = "gated_delta_rule_chunk_delta_h_vtile";
-/// 2026-09-25: SPLIT=2, 256 threads: the default scalar spine.
+/// 2026-09-25: SPLIT=2, 256 threads, single-buffered; `METRALE_GDN_PIPE=0`.
 pub const GDN_SCALAR_SPINE_VFUSED: &str = "gated_delta_rule_chunk_delta_h_vfused";
+
+/// 2026-09-28: The scalar spine a process binds (`init_kernels::fused_spine_kernel`) and
+/// launches (`ops::gdn_prefill_fla`, whose block size and shared memory depend on it). Both
+/// read it through [`gdn_scalar_spine`], so they cannot disagree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GdnScalarSpine {
+    Pipe,
+    Vtile,
+    Vfused,
+}
+
+impl GdnScalarSpine {
+    pub fn entry(self) -> &'static str {
+        match self {
+            Self::Pipe => GDN_SCALAR_SPINE_PIPE,
+            Self::Vtile => GDN_SCALAR_SPINE_VTILE,
+            Self::Vfused => GDN_SCALAR_SPINE_VFUSED,
+        }
+    }
+}
+
+/// 2026-09-28: From the values of `METRALE_GDN_PIPE` and `METRALE_GDN_VTILE`: `PIPE=1`
+/// picks the pipe spine (as before), else `VTILE=1` the vtile spine, else `PIPE=0` the
+/// vfused spine, else the pipe spine.
+pub fn gdn_scalar_spine_from(pipe: Option<&str>, vtile: Option<&str>) -> GdnScalarSpine {
+    match (pipe, vtile) {
+        (Some("1"), _) => GdnScalarSpine::Pipe,
+        (_, Some("1")) => GdnScalarSpine::Vtile,
+        (Some("0"), _) => GdnScalarSpine::Vfused,
+        _ => GdnScalarSpine::Pipe,
+    }
+}
+
+/// 2026-09-28: [`gdn_scalar_spine_from`] of this process's environment, read once.
+pub fn gdn_scalar_spine() -> GdnScalarSpine {
+    static SPINE: std::sync::OnceLock<GdnScalarSpine> = std::sync::OnceLock::new();
+    *SPINE.get_or_init(|| {
+        gdn_scalar_spine_from(
+            std::env::var("METRALE_GDN_PIPE").ok().as_deref(),
+            std::env::var("METRALE_GDN_VTILE").ok().as_deref(),
+        )
+    })
+}
 
 /// 2026-09-25: `GDN state spine: …`, the line `qwen3_ssm::init` prints for
 /// each layer as it binds the handles, before any prefill has run.
@@ -84,8 +129,36 @@ pub fn gdn_tc_spine_route_line(num_v_heads: u32, batch_size: u32, smem_bytes: u3
 mod tests {
     use super::{
         GDN_SCALAR_SPINE_PIPE, GDN_SCALAR_SPINE_VFUSED, GDN_SCALAR_SPINE_VTILE, GDN_TC_SPINE_ENTRY,
-        gdn_init_spine_line, gdn_tc_spine_route_line,
+        GdnScalarSpine, gdn_init_spine_line, gdn_scalar_spine_from, gdn_tc_spine_route_line,
     };
+
+    /// 2026-09-28: The pipe spine by default and under `PIPE=1` (which also wins over
+    /// `VTILE=1`, as before), vtile under `VTILE=1`, vfused only under `PIPE=0`; any other
+    /// value is the default.
+    #[test]
+    fn scalar_spine_choice() {
+        use GdnScalarSpine::*;
+        for (pipe, vtile, want) in [
+            (None, None, Pipe),
+            (Some("1"), None, Pipe),
+            (Some("1"), Some("1"), Pipe),
+            (None, Some("1"), Vtile),
+            (Some("0"), Some("1"), Vtile),
+            (Some("0"), None, Vfused),
+            (Some("0"), Some("0"), Vfused),
+            (Some("yes"), None, Pipe),
+            (None, Some("0"), Pipe),
+        ] {
+            assert_eq!(
+                gdn_scalar_spine_from(pipe, vtile),
+                want,
+                "{pipe:?} {vtile:?}"
+            );
+        }
+        assert_eq!(Pipe.entry(), GDN_SCALAR_SPINE_PIPE);
+        assert_eq!(Vtile.entry(), GDN_SCALAR_SPINE_VTILE);
+        assert_eq!(Vfused.entry(), GDN_SCALAR_SPINE_VFUSED);
+    }
 
     /// 2026-09-25: The line names the `_x2` entry, never the bare family name
     /// (`…_tcfuse` followed by a space).

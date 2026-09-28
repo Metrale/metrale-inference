@@ -129,5 +129,6 @@ pub(crate) fn build_fp8_ptr_table(
     Ok(Fp8ExpertPtrTable {
         weight_ptrs,
         scale_ptrs,
+        all_present: experts.iter().all(|e| !proj(e).weight.is_null()),
     })
 }

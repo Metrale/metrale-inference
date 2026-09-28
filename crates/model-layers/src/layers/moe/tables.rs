@@ -30,6 +30,9 @@ pub(crate) struct Fp8ExpertPtrTable {
     pub(crate) weight_ptrs: DevicePtr,
     /// 2026-09-25: u64 device pointer to each expert's `row_scale` (block scales).
     pub(crate) scale_ptrs: DevicePtr,
+    /// 2026-09-28: Every expert's weight pointer is non-NULL, so the grouped GEMMs,
+    /// which skip only NULL-weight experts, write every sorted row.
+    pub(crate) all_present: bool,
 }
 
 /// 2026-09-25: BF16 shared-expert weights, installed independently of the routed
