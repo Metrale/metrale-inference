@@ -26,16 +26,18 @@ use metrale_model_layers::layers::ops::{self, AttnFa128Kernels};
 use std::time::Instant;
 
 const HD: usize = 256;
-const BS: usize = 16;
 const SENTINEL: u8 = 0x5a;
-/// 2026-09-27: (q_len, q_offset, num_q_heads, num_kv_heads).
-const CASES: [(usize, usize, usize, usize); 6] = [
-    (8200, 0, 16, 2),
-    (8200, 16392, 16, 2),
-    (1000, 0, 24, 4),
-    (777, 5000, 24, 4),
-    (300, 0, 16, 2),
-    (65, 130, 16, 2),
+/// 2026-09-28: (q_len, q_offset, num_q_heads, num_kv_heads, cache block size). The served block
+/// size is 16; 32 and 24 cover the twin's other power-of-two and its non-power-of-two paths.
+const CASES: [(usize, usize, usize, usize, usize); 8] = [
+    (8200, 0, 16, 2, 16),
+    (8200, 16392, 16, 2, 16),
+    (1000, 0, 24, 4, 16),
+    (777, 5000, 24, 4, 16),
+    (300, 0, 16, 2, 16),
+    (65, 130, 16, 2, 16),
+    (777, 5000, 16, 2, 32),
+    (777, 5000, 16, 2, 24),
 ];
 
 struct Rng(u64);
@@ -106,16 +108,16 @@ fn main() -> Result<()> {
     let contig64 = gpu.kernel("attn_prefill", "attn_prefill_64")?;
     let mut rng = Rng(0x6661_3132_2026_0927);
     let isd = 1.0 / (HD as f32).sqrt();
-    for (q_len, q_off, nq, nkv) in CASES {
+    for (q_len, q_off, nq, nkv, bs) in CASES {
         let kv_len = q_off + q_len;
-        let pages = kv_len.div_ceil(BS);
+        let pages = kv_len.div_ceil(bs);
         // 2026-09-27: Block table: a pseudo-random permutation of the pages.
         let mut table: Vec<i32> = (0..pages as i32).collect();
         for i in (1..pages).rev() {
             table.swap(i, rng.next() as usize % (i + 1));
         }
         let bt: Vec<u8> = table.iter().flat_map(|x| x.to_le_bytes()).collect();
-        let cache_elems = pages * BS * nkv * HD;
+        let cache_elems = pages * bs * nkv * HD;
         let q = upload(&gpu, &rng.bf16_bytes(q_len * nq * HD, 3.0))?;
         let kc = upload(&gpu, &rng.bf16_bytes(cache_elems, 1.0))?;
         let vc = upload(&gpu, &rng.bf16_bytes(cache_elems, 1.0))?;
@@ -127,21 +129,22 @@ fn main() -> Result<()> {
         for &o in &outs {
             gpu.memset(o, SENTINEL, bytes)?;
         }
-        let (ql, kl, qo, h, g) = (
+        let (ql, kl, qo, h, g, b) = (
             q_len as u32,
             kv_len as u32,
             q_off as u32,
             nq as u32,
             nkv as u32,
+            bs as u32,
         );
         let run_paged_old = || {
             ops::prefill_attention_paged_64(
-                &gpu, paged64, q, kc, vc, outs[0], bt_d, ql, kl, qo, h, g, 256, 16, 0, isd, 0,
+                &gpu, paged64, q, kc, vc, outs[0], bt_d, ql, kl, qo, h, g, 256, b, 0, isd, 0,
             )
         };
         let run_paged_new = || -> Result<()> {
             let ran = twins.paged(
-                &gpu, q, kc, vc, outs[1], bt_d, ql, kl, qo, h, g, 256, 16, 0, isd, 0,
+                &gpu, q, kc, vc, outs[1], bt_d, ql, kl, qo, h, g, 256, b, 0, isd, 0,
             )?;
             ensure!(ran, "attn_prefill_fa128_paged did not apply");
             Ok(())
@@ -162,7 +165,7 @@ fn main() -> Result<()> {
         run_contig_old()?;
         run_contig_new()?;
         gpu.synchronize(0)?;
-        let case = format!("q_len {q_len} q_offset {q_off} heads {nq}/{nkv}");
+        let case = format!("q_len {q_len} q_offset {q_off} heads {nq}/{nkv} block {bs}");
         compare(&gpu, outs[0], outs[1], bytes, &format!("paged, {case}"))?;
         compare(
             &gpu,
