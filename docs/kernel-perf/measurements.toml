@@ -1,0 +1,2996 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# Measured per-kernel time against the roofline floor (schema and method: KERNEL-PERF.md,
+# "Methodology" section 6). One [[m]] row per (kernel, hardware, model, regime[, shape]).
+# scripts/kernel_perf.py validates every row against the tree and re-derives pct_of_floor.
+#
+# floor_us = max(bytes / 249.0 GB/s, flops / PEAK[class]) with the GB10 peaks of KERNEL-PERF.md.
+# When one kernel runs at several shapes in one regime, each shape is its own row and `regime`
+# carries a suffix " · <shape>"; the text before " · " is the regime. `notes` starts with the
+# shape, the call count and the row's share of the regime's GPU kernel time.
+# `kernel` is "<model directory>::<function>" as captured; the join key is `file` + function.
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_gate_up_act_fp8_grouped"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 147.776
+bytes = 32558848
+flops = 75497472
+bound = "memory"
+floor_us = 130.758
+pct_of_floor = 88.48
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "grouped gate+up+SiLU rows=2; n=5960 calls, 30.2% of regime kernel time; peak class bf16; distinct experts 14.5 (logged mean at R=2) + shared expert; W8A16 on CUDA-core FP32 (LUT dequant, non-fused mul+add); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32"
+file = "kernels/gb10/common/w8a16_gemm_pipelined_m32.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1) · GDN in_proj qkvz M=2 N=12288 K=2048"
+time_us = 106.432
+bytes = 25229312
+flops = 100663296
+bound = "memory"
+floor_us = 101.323
+pct_of_floor = 95.20
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj qkvz M=2 N=12288 K=2048; n=4470 calls, 16.3% of regime kernel time; peak class bf16; skinny (M<=16); W8A16 E4M3 block-scaled weight, BF16 act; memory-bound (weight dominates); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_down_act_fp8_grouped"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 67.840
+bytes = 16367488
+flops = 37748736
+bound = "memory"
+floor_us = 65.733
+pct_of_floor = 96.89
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "grouped down rows=2; n=5960 calls, 14.1% of regime kernel time; peak class bf16; distinct experts 14.5 (logged mean at R=2) + shared expert; CUDA-core FP32; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32"
+file = "kernels/gb10/common/w8a16_gemm_pipelined_m32.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1) · GDN out_proj / attn o_proj M=2 N=2048 K=4096"
+time_us = 42.976
+bytes = 8415232
+flops = 33554432
+bound = "memory"
+floor_us = 33.796
+pct_of_floor = 78.64
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN out_proj / attn o_proj M=2 N=2048 K=4096; n=5960 calls, 8.7% of regime kernel time; peak class bf16; skinny (M<=16); W8A16 E4M3 block-scaled weight, BF16 act; memory-bound (weight dominates); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w4a16_gemm_t"
+file = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 1330.720
+bytes = 286777112
+flops = 2032189440
+bound = "memory"
+floor_us = 1151.715
+pct_of_floor = 86.55
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "lm_head NVFP4 M=2 N=248070 K=2048; n=149 calls, 6.8% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, activations to E4M3 (W4A8 numerics), m16n8k32 e4m3; memory-bound; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32"
+file = "kernels/gb10/common/w8a16_gemm_pipelined_m32.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1) · attn q_proj (gated) M=2 N=8192 K=2048"
+time_us = 74.016
+bytes = 16822272
+flops = 67108864
+bound = "memory"
+floor_us = 67.559
+pct_of_floor = 91.28
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn q_proj (gated) M=2 N=8192 K=2048; n=1490 calls, 3.8% of regime kernel time; peak class bf16; skinny (M<=16); W8A16 E4M3 block-scaled weight, BF16 act; memory-bound (weight dominates); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_delta_rule_wy2"
+file = "kernels/gb10/common/gated_delta_rule_wy.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 20.960
+bytes = 4259840
+flops = 8388608
+bound = "memory"
+floor_us = 17.108
+pct_of_floor = 81.62
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN decode/verify recurrence seqs=1 rows=2; n=4470 calls, 3.2% of regime kernel time; peak class fp32; floor = read + write each sequence's recurrent state once (4 B/elem) + q,k,v in, o out; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w4a16_gemv_sw"
+file = "kernels/gb10/common/w4a16_gemv.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 469.408
+bytes = 115404096
+flops = 409600000
+bound = "memory"
+floor_us = 463.470
+pct_of_floor = 98.74
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MTP draft head (100k vocab) M=1 N=100000 K=2048; n=150 calls, 2.4% of regime kernel time; peak class bf16; NVFP4 weight GEMV, FFMA; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::paged_decode_attn"
+file = "kernels/gb10/common/paged_decode_attn.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 45.424
+bytes = 1230848
+flops = 19169280
+bound = "memory"
+floor_us = 4.943
+pct_of_floor = 10.88
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "decode attention rows=2 seqs=1 kv_len~585; n=1490 calls, 2.3% of regime kernel time; peak class bf16; floor = each sequence's K,V read once (kv_len estimated from tokens generated at capture time) + q in, o out; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemv_bf16_batchm"
+file = "kernels/gb10/common/dense_gemv_bf16_batchm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 8.480
+bytes = 1058816
+flops = 2097152
+bound = "memory"
+floor_us = 4.252
+pct_of_floor = 50.14
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MoE router M=2; n=5960 calls, 1.9% of regime kernel time; peak class bf16; exact-order FP32 on CUDA cores; latency-bound at small M; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::argmax_bf16"
+file = "kernels/gb10/common/argmax_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 91.040
+bytes = 496140
+flops = 0
+bound = "memory"
+floor_us = 1.993
+pct_of_floor = 2.19
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "argmax 1 row; n=448 calls, 1.1% of regime kernel time; peak class mem; single CTA (1 SM); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_topk_softmax_rows"
+file = "kernels/gb10/common/moe_topk.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 5.088
+bytes = 1152
+flops = 0
+bound = "memory"
+floor_us = 0.005
+pct_of_floor = 0.10
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "top-8 per row rows=2; n=5960 calls, 1.0% of regime kernel time; peak class mem; serial argmax rounds; latency-bound; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::causal_conv1d_update_l2norm"
+file = "kernels/gb10/common/causal_conv1d.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 2.784
+bytes = 229376
+flops = 0
+bound = "memory"
+floor_us = 0.921
+pct_of_floor = 33.08
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN conv1d+l2norm seqs=1; n=8940 calls, 0.8% of regime kernel time; peak class mem; latency-bound at decode size; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32"
+file = "kernels/gb10/common/w8a16_gemm_pipelined_m32.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1) · attn k/v_proj M=2 N=512 K=2048"
+time_us = 7.712
+bytes = 1059072
+flops = 4194304
+bound = "memory"
+floor_us = 4.253
+pct_of_floor = 55.15
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn k/v_proj M=2 N=512 K=2048; n=2980 calls, 0.8% of regime kernel time; peak class bf16; skinny (M<=16); W8A16 E4M3 block-scaled weight, BF16 act; memory-bound (weight dominates); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemv_bf16"
+file = "kernels/gb10/common/dense_gemv_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1) · drafter fc M=1 N=2048 K=4096"
+time_us = 71.168
+bytes = 16789504
+flops = 16777216
+bound = "memory"
+floor_us = 67.428
+pct_of_floor = 94.74
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter fc M=1 N=2048 K=4096; n=300 calls, 0.8% of regime kernel time; peak class bf16; BF16 GEMV on CUDA cores; memory-bound; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemv_bf16"
+file = "kernels/gb10/common/dense_gemv_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048"
+time_us = 137.760
+bytes = 33574912
+flops = 33554432
+bound = "memory"
+floor_us = 134.839
+pct_of_floor = 97.88
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter q M=1 N=8192 K=2048; n=150 calls, 0.7% of regime kernel time; peak class bf16; BF16 GEMV on CUDA cores; memory-bound; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::residual_add_rms_norm"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 2.304
+bytes = 32768
+flops = 0
+bound = "memory"
+floor_us = 0.132
+pct_of_floor = 5.73
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "residual add + RMSNorm T=2; n=5960 calls, 0.5% of regime kernel time; peak class mem; read x,res; write res,normed; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::deinterleave_qg"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 8.512
+bytes = 65536
+flops = 0
+bound = "memory"
+floor_us = 0.263
+pct_of_floor = 3.09
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "deinterleave q|gate rows=2; n=1640 calls, 0.5% of regime kernel time; peak class mem; ; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::rms_norm_residual"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 2.240
+bytes = 24576
+flops = 0
+bound = "memory"
+floor_us = 0.099
+pct_of_floor = 4.42
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "RMSNorm (+res) T=2; n=5960 calls, 0.5% of regime kernel time; peak class mem; ; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_weighted_sum_blend_fp8_grouped"
+file = "kernels/gb10/common/moe_fp8_grouped_blend.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 2.208
+bytes = 90112
+flops = 0
+bound = "memory"
+floor_us = 0.362
+pct_of_floor = 16.39
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MoE blend rows=2; n=5960 calls, 0.5% of regime kernel time; peak class mem; 8 routed + shared + residual in, out; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_gate_up_shared_fp8"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 89.696
+bytes = 18892288
+flops = 37748736
+bound = "memory"
+floor_us = 75.873
+pct_of_floor = 84.59
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "per-row expert gate+up rows=1; n=150 calls, 0.5% of regime kernel time; peak class bf16; per-row: 8 routed + shared; CUDA-core FP32; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_ba_gates_prefill"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 2.816
+bytes = 270848
+flops = 524288
+bound = "memory"
+floor_us = 1.088
+pct_of_floor = 38.64
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj_ba+gates M=2 N=64 K=2048; n=4470 calls, 0.5% of regime kernel time; peak class bf16; BF16 GEMV-shaped projection with fused sigmoid/softplus; activation row re-read ceil(N/4) times by the kernel; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_fp8_grouped_sort"
+file = "kernels/gb10/common/moe_fp8_grouped_sort.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=1 (R=2, MTP k=1)"
+time_us = 1.632
+bytes = 2184
+flops = 0
+bound = "memory"
+floor_us = 0.009
+pct_of_floor = 0.55
+source = "nsys kernel-perf/prof/moe-dec-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "grouped sort/compact rows=2; n=5960 calls, 0.3% of regime kernel time; peak class mem; single CTA; latency-bound; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); nsys --cuda-graph-trace=node; step 20.6 ms under nsys vs ~20.1 ms unprofiled (certified c1 85.0 tok/s at accept 1.71): ~3% profiler inflation"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_gate_up_act_fp8_grouped"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1) · grouped gate+up+SiLU rows=32"
+time_us = 1178.784
+bytes = 257684736
+flops = 1207959552
+bound = "memory"
+floor_us = 1034.878
+pct_of_floor = 87.79
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "grouped gate+up+SiLU rows=32; n=1227 calls, 49.4% of regime kernel time; peak class bf16; distinct experts 121.5 (logged mean at R=32) + shared expert; W8A16 on CUDA-core FP32 (LUT dequant, non-fused mul+add); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_down_act_fp8_grouped"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1) · grouped down rows=32"
+time_us = 585.376
+bytes = 130251392
+flops = 603979776
+bound = "memory"
+floor_us = 523.098
+pct_of_floor = 89.36
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "grouped down rows=32; n=1227 calls, 24.5% of regime kernel time; peak class bf16; distinct experts 121.5 (logged mean at R=32) + shared expert; CUDA-core FP32; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gdn_carry_wy2_lazy"
+file = "kernels/gb10/common/gated_delta_rule_carry.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 271.968
+bytes = 34603008
+flops = 134217728
+bound = "memory"
+floor_us = 138.968
+pct_of_floor = 51.10
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN verify recurrence seqs=16 rows=32; n=921 calls, 8.4% of regime kernel time; peak class fp32; floor = read each sequence's recurrent state once (4 B/elem) + q,k,v in, o out; the lazy kernel defers the state write-back (gdn_carry_flush), so no write is charged; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32"
+file = "kernels/gb10/common/w8a16_gemm_pipelined_m32.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1) · GDN in_proj qkvz M=32 N=12288 K=2048"
+time_us = 137.088
+bytes = 26089472
+flops = 1610612736
+bound = "memory"
+floor_us = 104.777
+pct_of_floor = 76.43
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj qkvz M=32 N=12288 K=2048; n=921 calls, 4.3% of regime kernel time; peak class bf16; 32x32x128 tile; W8A16 E4M3 block-scaled weight, BF16 act; memory-bound (weight dominates); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32"
+file = "kernels/gb10/common/w8a16_gemm_pipelined_m32.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1) · GDN out_proj / attn o_proj M=32 N=2048 K=4096"
+time_us = 65.952
+bytes = 8783872
+flops = 536870912
+bound = "memory"
+floor_us = 35.277
+pct_of_floor = 53.49
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN out_proj / attn o_proj M=32 N=2048 K=4096; n=1227 calls, 2.8% of regime kernel time; peak class bf16; 32x32x128 tile; W8A16 E4M3 block-scaled weight, BF16 act; memory-bound (weight dominates); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w4a16_gemm_t"
+file = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 1652.304
+bytes = 301784192
+flops = 32515031040
+bound = "memory"
+floor_us = 1211.985
+pct_of_floor = 73.35
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "lm_head NVFP4 M=32 N=248070 K=2048; n=30 calls, 1.7% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, activations to E4M3 (W4A8 numerics), m16n8k32 e4m3; memory-bound; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemv_bf16_batchm"
+file = "kernels/gb10/common/dense_gemv_bf16_batchm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 30.112
+bytes = 1212416
+flops = 33554432
+bound = "memory"
+floor_us = 4.869
+pct_of_floor = 16.17
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MoE router M=32; n=1227 calls, 1.3% of regime kernel time; peak class bf16; exact-order FP32 on CUDA cores; latency-bound at small M; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gdn_carry_conv"
+file = "kernels/gb10/common/gated_delta_rule_carry.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 33.056
+bytes = 2686976
+flops = 0
+bound = "memory"
+floor_us = 10.791
+pct_of_floor = 32.64
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN conv carry seqs=16; n=921 calls, 1.0% of regime kernel time; peak class mem; conv state (3 taps fp32) read + qkv in/out; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32"
+file = "kernels/gb10/common/w8a16_gemm_pipelined_m32.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1) · attn q_proj (gated) M=32 N=8192 K=2048"
+time_us = 99.136
+bytes = 17436672
+flops = 1073741824
+bound = "memory"
+floor_us = 70.027
+pct_of_floor = 70.64
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn q_proj (gated) M=32 N=8192 K=2048; n=306 calls, 1.0% of regime kernel time; peak class bf16; 32x32x128 tile; W8A16 E4M3 block-scaled weight, BF16 act; memory-bound (weight dominates); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::paged_decode_attn"
+file = "kernels/gb10/common/paged_decode_attn.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 87.376
+bytes = 9469952
+flops = 143130624
+bound = "memory"
+floor_us = 38.032
+pct_of_floor = 43.53
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "decode attention rows=32 seqs=16 kv_len~273; n=306 calls, 0.9% of regime kernel time; peak class bf16; floor = each sequence's K,V read once (kv_len estimated from tokens generated at capture time) + q in, o out; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_gate_up_act_fp8_grouped"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1) · grouped gate+up+SiLU rows=16"
+time_us = 697.120
+bytes = 153489920
+flops = 603979776
+bound = "memory"
+floor_us = 616.425
+pct_of_floor = 88.42
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "grouped gate+up+SiLU rows=16; n=31 calls, 0.7% of regime kernel time; peak class bf16; distinct experts 72.0 (logged mean at R=16) + shared expert; W8A16 on CUDA-core FP32 (LUT dequant, non-fused mul+add); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w4a16_gemv_tc16"
+file = "kernels/gb10/common/w4a16_gemv_tc.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 517.760
+bytes = 118465536
+flops = 6553600000
+bound = "memory"
+floor_us = 475.765
+pct_of_floor = 91.89
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MTP draft head (100k vocab) M=16 N=100000 K=2048; n=31 calls, 0.5% of regime kernel time; peak class bf16; tensor-core GEMV (m16n8k16 bf16), weight read once; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32"
+file = "kernels/gb10/common/w8a16_gemm_pipelined_m32.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1) · attn k/v_proj M=32 N=512 K=2048"
+time_us = 24.528
+bytes = 1212672
+flops = 67108864
+bound = "memory"
+floor_us = 4.870
+pct_of_floor = 19.85
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn k/v_proj M=32 N=512 K=2048; n=612 calls, 0.5% of regime kernel time; peak class bf16; 32x32x128 tile; W8A16 E4M3 block-scaled weight, BF16 act; memory-bound (weight dominates); concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_down_act_fp8_grouped"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1) · grouped down rows=16"
+time_us = 348.960
+bytes = 77449472
+flops = 301989888
+bound = "memory"
+floor_us = 311.042
+pct_of_floor = 89.13
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "grouped down rows=16; n=31 calls, 0.4% of regime kernel time; peak class bf16; distinct experts 72.0 (logged mean at R=16) + shared expert; CUDA-core FP32; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_weighted_sum_blend_fp8_grouped"
+file = "kernels/gb10/common/moe_fp8_grouped_blend.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 7.488
+bytes = 1441792
+flops = 0
+bound = "memory"
+floor_us = 5.790
+pct_of_floor = 77.32
+source = "nsys kernel-perf/prof/moe-dec-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MoE blend rows=32; n=1226 calls, 0.3% of regime kernel time; peak class mem; 8 routed + shared + residual in, out; concurrency-sweep-moe serve flags (nvfp4 lm_head, bf16 KV, fifo, num-drafts 1, --mtp-gate force); window clean: all 16 sequences decoding (grouped gridY 264 = R 32); step 101 ms under nsys vs ~85-90 ms unprofiled (certified c16 311 tok/s at accept 1.65; this run client-side 293 tok/s): kernel times inflated up to ~12-19%, so pct_of_floor here may be understated by that much"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_w8a8_grouped_gemm_pm4"
+file = "kernels/gb10/common/moe_w8a8_grouped_gemm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · routed gate or up tokens=8192 slots=65536 N=512 K=2048 (all 256 experts)"
+time_us = 8065.936
+bytes = 352911360
+flops = 137438953472
+bound = "memory"
+floor_us = 1417.315
+pct_of_floor = 17.57
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "routed gate or up tokens=8192 slots=65536 N=512 K=2048 (all 256 experts) (time = median over 320 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=320 calls, 18.9% of regime kernel time; peak class fp8; W8A8 grouped GEMM over all 256 experts (every expert routed at this length); kernel decodes E4M3->BF16 in software and runs m16n8k16 bf16; floor at FP8 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · GDN in_proj qkvz M=8192 N=12288 K=2048"
+time_us = 12344.496
+bytes = 243800064
+flops = 412316860416
+bound = "compute"
+floor_us = 1692.598
+pct_of_floor = 13.71
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN in_proj qkvz M=8192 N=12288 K=2048 (time = median over 120 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 10.7% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_w8a8_grouped_gemm_pm4"
+file = "kernels/gb10/common/moe_w8a8_grouped_gemm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · routed down tokens=8192 slots=65536 N=2048 K=512 (all 256 experts)"
+time_us = 8426.224
+bytes = 571539456
+flops = 137438953472
+bound = "memory"
+floor_us = 2295.339
+pct_of_floor = 27.24
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "routed down tokens=8192 slots=65536 N=2048 K=512 (all 256 experts) (time = median over 160 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=160 calls, 9.8% of regime kernel time; peak class fp8; W8A8 grouped GEMM over all 256 experts (every expert routed at this length); kernel decodes E4M3->BF16 in software and runs m16n8k16 bf16; floor at FP8 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::attn_prefill_paged_64"
+file = "kernels/gb10/common/prefill_paged_compute.cuh"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · paged chunk T=8168 prefix P=24584"
+time_us = 127199.536
+bytes = 200900608
+flops = 3836548022272
+bound = "compute"
+floor_us = 31014.940
+pct_of_floor = 24.38
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "paged chunk T=8168 prefix P=24584; n=10 calls, 9.2% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::attn_prefill_paged_64"
+file = "kernels/gb10/common/prefill_paged_compute.cuh"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · paged chunk T=8192 prefix P=16392"
+time_us = 91836.896
+bytes = 184565760
+flops = 2749919920128
+bound = "compute"
+floor_us = 22230.557
+pct_of_floor = 24.21
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "paged chunk T=8192 prefix P=16392; n=10 calls, 6.6% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_delta_rule_chunk_delta_h_vfused"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 6101.376
+bytes = 374341632
+flops = 17179869184
+bound = "memory"
+floor_us = 1503.380
+pct_of_floor = 24.64
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN chunk state recurrence T=8192 (time = median over 120 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 5.4% of regime kernel time; peak class bf16; reads W,U,k,gcum; writes per-chunk states S_c (BF16) and uc; serial over chunks, nv CTAs"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined"
+file = "kernels/gb10/common/w8a16_gemm_pipelined.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · GDN out_proj M=8192 N=2048 K=4096"
+time_us = 4595.776
+bytes = 109053952
+flops = 137438953472
+bound = "compute"
+floor_us = 1111.067
+pct_of_floor = 24.18
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN out_proj M=8192 N=2048 K=4096 (time = median over 120 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 4.1% of regime kernel time; peak class bf16; W8A16: E4M3 block-scaled weight decoded to BF16, BF16 act, m16n8k16 bf16"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::attn_prefill_paged_64"
+file = "kernels/gb10/common/prefill_paged_compute.cuh"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · paged chunk T=8192 prefix P=8200"
+time_us = 55017.776
+bytes = 167788544
+flops = 1650408292352
+bound = "compute"
+floor_us = 13342.023
+pct_of_floor = 24.25
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "paged chunk T=8192 prefix P=8200; n=10 calls, 4.0% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_delta_rule_chunk_fwd_o"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 4062.352
+bytes = 336592896
+flops = 17179869184
+bound = "memory"
+floor_us = 1351.779
+pct_of_floor = 33.28
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN chunk output T=8192 (time = median over 120 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 3.7% of regime kernel time; peak class bf16; reads q,k,S_c,uc,gcum; writes o"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_bf16_router"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 2820.512
+bytes = 38797312
+flops = 8589934592
+bound = "memory"
+floor_us = 155.812
+pct_of_floor = 5.52
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "MoE router M=8192 N=256 K=2048 (time = median over 160 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=160 calls, 3.3% of regime kernel time; peak class bf16; BF16 router GEMM kept in strict k-order FP32 (bit-exact routing) on CUDA cores; floor uses BF16 MMA peak, which the exact order forbids"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · MTP drafter fc M=512 N=2048 K=4096"
+time_us = 6042.752
+bytes = 23068672
+flops = 8589934592
+bound = "memory"
+floor_us = 92.645
+pct_of_floor = 1.53
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "MTP drafter fc M=512 N=2048 K=4096; n=64 calls, 2.8% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_delta_rule_recompute_wu"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 2367.584
+bytes = 238026752
+flops = 8589934592
+bound = "memory"
+floor_us = 955.931
+pct_of_floor = 40.38
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN recompute W,U T=8192 (time = median over 120 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 2.1% of regime kernel time; peak class bf16; reads k,v,g,beta; writes W,U (BF16), gcum (fp32)"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_unpermute_reduce_indexed"
+file = "kernels/gb10/common/moe_permute.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1399.792
+bytes = 302514176
+flops = 0
+bound = "memory"
+floor_us = 1214.916
+pct_of_floor = 86.79
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "unpermute+reduce T=8192 (time = median over 160 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=160 calls, 1.6% of regime kernel time; peak class mem; reads 8 expert outputs per token"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::attn_prefill_64"
+file = "kernels/gb10/common/attn_prefill.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 16441.744
+bytes = 151142400
+flops = 550897254400
+bound = "compute"
+floor_us = 4453.494
+pct_of_floor = 27.09
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "first chunk T=8200 prefix P=0; n=10 calls, 1.2% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_build_tile_worklist"
+file = "kernels/gb10/common/moe_permute.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 695.936
+bytes = 12304
+flops = 0
+bound = "memory"
+floor_us = 0.049
+pct_of_floor = 0.01
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "tile worklist slots=65536 (time = median over 319 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=319 calls, 1.2% of regime kernel time; peak class mem; single thread builds the tile list; floor model has no latency term"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::per_token_group_quant_fp8"
+file = "kernels/gb10/common/per_token_group_quant_fp8.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 252.640
+bytes = 50855936
+flops = 0
+bound = "memory"
+floor_us = 204.241
+pct_of_floor = 80.84
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "per-token-group E4M3 quant M=8192 K=2048 (time = median over 530 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=530 calls, 1.0% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::causal_conv1d_update_prefill_tp"
+file = "kernels/gb10/common/causal_conv1d.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1145.584
+bytes = 268500992
+flops = 0
+bound = "memory"
+floor_us = 1078.317
+pct_of_floor = 94.13
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN causal conv1d T=8192 ch=8192 (time = median over 120 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 1.0% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · attn q_proj (gated) M=8192 N=8192 K=2048"
+time_us = 4510.928
+bytes = 168300544
+flops = 274877906944
+bound = "compute"
+floor_us = 1128.399
+pct_of_floor = 25.01
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "attn q_proj (gated) M=8192 N=8192 K=2048; n=30 calls, 1.0% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_ba_gates_prefill"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1125.968
+bytes = 35913728
+flops = 2147483648
+bound = "memory"
+floor_us = 144.232
+pct_of_floor = 12.81
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN in_proj_ba+gates M=8192 N=64 K=2048 (time = median over 120 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 1.0% of regime kernel time; peak class bf16; BF16 GEMV-shaped projection with fused sigmoid/softplus; activation row re-read ceil(N/4) times by the kernel"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · attn k/v_proj or shared-expert gate/up M=8192 N=512 K=2048"
+time_us = 324.528
+bytes = 26738944
+flops = 17179869184
+bound = "memory"
+floor_us = 107.385
+pct_of_floor = 33.09
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "attn k/v_proj or shared-expert gate/up M=8192 N=512 K=2048 (time = median over 380 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=380 calls, 1.0% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::silu_mul_quant_fp8"
+file = "kernels/gb10/common/moe_silu_mul.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 399.104
+bytes = 21102592
+flops = 0
+bound = "memory"
+floor_us = 84.749
+pct_of_floor = 21.23
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "SiLU*up -> E4M3 rows=8192 (time = median over 320 calls at 6 chunk lengths; bytes/FLOPs of the most common); n=320 calls, 0.9% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::residual_add_rms_norm"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 684.256
+bytes = 134217728
+flops = 0
+bound = "memory"
+floor_us = 539.027
+pct_of_floor = 78.78
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "residual add + RMSNorm T=8192 (time = median over 160 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=160 calls, 0.8% of regime kernel time; peak class mem; read x,res; write res,normed"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_rms_norm_prefill"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 881.424
+bytes = 201326592
+flops = 0
+bound = "memory"
+floor_us = 808.541
+pct_of_floor = 91.73
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN gated RMSNorm T=8192 (time = median over 120 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 0.8% of regime kernel time; peak class mem; read x,z; write out"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · MTP drafter k/v M=512 N=512 K=2048"
+time_us = 780.608
+bytes = 4718592
+flops = 1073741824
+bound = "memory"
+floor_us = 18.950
+pct_of_floor = 2.43
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "MTP drafter k/v M=512 N=512 K=2048; n=128 calls, 0.7% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · attn o_proj M=8192 N=2048 K=4096"
+time_us = 2394.656
+bytes = 76548096
+flops = 137438953472
+bound = "compute"
+floor_us = 564.199
+pct_of_floor = 23.56
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "attn o_proj M=8192 N=2048 K=4096 (time = median over 40 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=40 calls, 0.7% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined"
+file = "kernels/gb10/common/w8a16_gemm_pipelined.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · attn q_proj (gated) M=8200 N=8192 K=2048"
+time_us = 9811.632
+bytes = 184717312
+flops = 275146342400
+bound = "compute"
+floor_us = 2224.303
+pct_of_floor = 22.67
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "attn q_proj (gated) M=8200 N=8192 K=2048; n=10 calls, 0.7% of regime kernel time; peak class bf16; W8A16: E4M3 block-scaled weight decoded to BF16, BF16 act, m16n8k16 bf16"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_batched_blend"
+file = "kernels/gb10/common/moe_permute.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 558.080
+bytes = 134217728
+flops = 0
+bound = "memory"
+floor_us = 539.027
+pct_of_floor = 96.59
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "blend T=8192 (time = median over 160 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=160 calls, 0.7% of regime kernel time; peak class mem; routed sum + shared out + gate + write"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::rms_norm_residual"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 452.496
+bytes = 100663296
+flops = 0
+bound = "memory"
+floor_us = 404.270
+pct_of_floor = 89.34
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "RMSNorm (+res) T=8192 (time = median over 160 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=160 calls, 0.6% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::l2_norm_bf16"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 612.192
+bytes = 134217728
+flops = 0
+bound = "memory"
+floor_us = 539.027
+pct_of_floor = 88.05
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN q/k L2 norm T=8192 (time = median over 120 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=120 calls, 0.5% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::bf16_residual_add"
+file = "kernels/gb10/common/residual_add.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 410.016
+bytes = 100663296
+flops = 0
+bound = "memory"
+floor_us = 404.270
+pct_of_floor = 98.60
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "bf16 residual add T=8192 (time = median over 160 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=160 calls, 0.5% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok) · shared-expert down M=8192 N=2048 K=512"
+time_us = 391.376
+bytes = 38928640
+flops = 17179869184
+bound = "memory"
+floor_us = 156.340
+pct_of_floor = 39.95
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "shared-expert down M=8192 N=2048 K=512 (time = median over 160 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=160 calls, 0.5% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::rope_forward_mrope_interleaved"
+file = "kernels/gb10/common/rope_mrope_interleaved.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 2634.704
+bytes = 37748736
+flops = 0
+bound = "memory"
+floor_us = 151.601
+pct_of_floor = 5.75
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "RoPE q+k T~8192; n=20 calls, 0.4% of regime kernel time; peak class mem; only the 64 rotary dims of each 256-dim head are read/written in the floor"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::deinterleave_qg_split_qnorm"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1224.192
+bytes = 268435456
+flops = 0
+bound = "memory"
+floor_us = 1078.054
+pct_of_floor = 88.06
+source = "nsys high-isl/prof/moe/prof-cold.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "deinterleave q|gate + q-norm T=8192 (time = median over 40 calls at 3 chunk lengths; bytes/FLOPs of the most common); n=40 calls, 0.4% of regime kernel time; peak class mem; read interleaved q|gate, write q and gate"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_w8a8_grouped_gemm_pm4"
+file = "kernels/gb10/common/moe_w8a8_grouped_gemm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · routed gate or up tokens=4528 slots=36224 N=512 K=2048 (all 256 experts)"
+time_us = 5425.888
+bytes = 315157504
+flops = 75967234048
+bound = "memory"
+floor_us = 1265.693
+pct_of_floor = 23.33
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "routed gate or up tokens=4528 slots=36224 N=512 K=2048 (all 256 experts); n=80 calls, 25.1% of regime kernel time; peak class fp8; W8A8 grouped GEMM over all 256 experts (every expert routed at this length); kernel decodes E4M3->BF16 in software and runs m16n8k16 bf16; floor at FP8 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_w8a8_grouped_gemm_pm4"
+file = "kernels/gb10/common/moe_w8a8_grouped_gemm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · routed down tokens=4528 slots=36224 N=2048 K=512 (all 256 experts)"
+time_us = 5439.744
+bytes = 436000768
+flops = 75967234048
+bound = "memory"
+floor_us = 1751.007
+pct_of_floor = 32.19
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "routed down tokens=4528 slots=36224 N=2048 K=512 (all 256 experts); n=40 calls, 12.6% of regime kernel time; peak class fp8; W8A8 grouped GEMM over all 256 experts (every expert routed at this length); kernel decodes E4M3->BF16 in software and runs m16n8k16 bf16; floor at FP8 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · GDN in_proj qkvz M=4528 N=12288 K=2048"
+time_us = 6491.216
+bytes = 146015232
+flops = 227901702144
+bound = "compute"
+floor_us = 935.557
+pct_of_floor = 14.41
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN in_proj qkvz M=4528 N=12288 K=2048; n=30 calls, 11.4% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_delta_rule_chunk_delta_h_vfused"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 3343.392
+bytes = 209049600
+flops = 9529458688
+bound = "memory"
+floor_us = 839.557
+pct_of_floor = 25.11
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN chunk state recurrence T=4528; n=30 calls, 6.0% of regime kernel time; peak class bf16; reads W,U,k,gcum; writes per-chunk states S_c (BF16) and uc; serial over chunks, nv CTAs"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined"
+file = "kernels/gb10/common/w8a16_gemm_pipelined.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · GDN out_proj M=4528 N=2048 K=4096"
+time_us = 2560.672
+bytes = 64030720
+flops = 75967234048
+bound = "compute"
+floor_us = 614.125
+pct_of_floor = 23.98
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN out_proj M=4528 N=2048 K=4096; n=30 calls, 4.6% of regime kernel time; peak class bf16; W8A16: E4M3 block-scaled weight decoded to BF16, BF16 act, m16n8k16 bf16"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_delta_rule_chunk_fwd_o"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 2257.744
+bytes = 186308608
+flops = 9529458688
+bound = "memory"
+floor_us = 748.227
+pct_of_floor = 33.14
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN chunk output T=4528; n=30 calls, 4.0% of regime kernel time; peak class bf16; reads q,k,S_c,uc,gcum; writes o"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_bf16_router"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 1570.944
+bytes = 21913600
+flops = 4747952128
+bound = "memory"
+floor_us = 88.006
+pct_of_floor = 5.60
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "MoE router M=4528 N=256 K=2048; n=40 calls, 3.6% of regime kernel time; peak class bf16; BF16 router GEMM kept in strict k-order FP32 (bit-exact routing) on CUDA cores; floor uses BF16 MMA peak, which the exact order forbids"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_pipelined"
+file = "kernels/gb10/common/w8a16_gemm_pipelined.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · attn q_proj (gated) M=4528 N=8192 K=2048"
+time_us = 5240.912
+bytes = 109514752
+flops = 151934468096
+bound = "compute"
+floor_us = 1228.250
+pct_of_floor = 23.44
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "attn q_proj (gated) M=4528 N=8192 K=2048; n=10 calls, 3.1% of regime kernel time; peak class bf16; W8A16: E4M3 block-scaled weight decoded to BF16, BF16 act, m16n8k16 bf16"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::attn_prefill_64"
+file = "kernels/gb10/common/attn_prefill.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 5035.888
+bytes = 83460096
+flops = 167995899904
+bound = "compute"
+floor_us = 1358.091
+pct_of_floor = 26.97
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "first chunk T=4528 prefix P=0; n=10 calls, 2.9% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · MTP drafter fc M=512 N=2048 K=4096"
+time_us = 5967.680
+bytes = 23068672
+flops = 8589934592
+bound = "memory"
+floor_us = 92.645
+pct_of_floor = 1.55
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "MTP drafter fc M=512 N=2048 K=4096; n=8 calls, 2.8% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_delta_rule_recompute_wu"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 1333.968
+bytes = 131565568
+flops = 4764729344
+bound = "memory"
+floor_us = 528.376
+pct_of_floor = 39.61
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN recompute W,U T=4528; n=30 calls, 2.4% of regime kernel time; peak class bf16; reads k,v,g,beta; writes W,U (BF16), gcum (fp32)"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_gate_up_act_fp8_grouped"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 803.280
+bytes = 194338591
+flops = 792723456
+bound = "memory"
+floor_us = 780.476
+pct_of_floor = 97.16
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "grouped gate+up+SiLU rows=21; n=40 calls, 1.8% of regime kernel time; peak class bf16; distinct experts 91.4 (log-interpolated between logged R=16 and R=32 decode means; prompt-tail routing not logged, uncertain) + shared expert; W8A16 on CUDA-core FP32 (LUT dequant, non-fused mul+add)"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_unpermute_reduce_indexed"
+file = "kernels/gb10/common/moe_permute.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 763.376
+bytes = 167209984
+flops = 0
+bound = "memory"
+floor_us = 671.526
+pct_of_floor = 87.97
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "unpermute+reduce T=4528; n=40 calls, 1.8% of regime kernel time; peak class mem; reads 8 expert outputs per token"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_build_tile_worklist"
+file = "kernels/gb10/common/moe_permute.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 472.704
+bytes = 8640
+flops = 0
+bound = "memory"
+floor_us = 0.035
+pct_of_floor = 0.01
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "tile worklist slots=36224; n=79 calls, 1.6% of regime kernel time; peak class mem; single thread builds the tile list; floor model has no latency term"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::causal_conv1d_update_prefill_tp"
+file = "kernels/gb10/common/causal_conv1d.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 623.824
+bytes = 148439040
+flops = 0
+bound = "memory"
+floor_us = 596.141
+pct_of_floor = 95.56
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN causal conv1d T=4528 ch=8192; n=30 calls, 1.1% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_ba_gates_prefill"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 618.592
+bytes = 19968000
+flops = 1186988032
+bound = "memory"
+floor_us = 80.193
+pct_of_floor = 12.96
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN in_proj_ba+gates M=4528 N=64 K=2048; n=30 calls, 1.1% of regime kernel time; peak class bf16; BF16 GEMV-shaped projection with fused sigmoid/softplus; activation row re-read ceil(N/4) times by the kernel"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::per_token_group_quant_fp8"
+file = "kernels/gb10/common/per_token_group_quant_fp8.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 135.488
+bytes = 28109824
+flops = 0
+bound = "memory"
+floor_us = 112.891
+pct_of_floor = 83.32
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "per-token-group E4M3 quant M=4528 K=2048; n=110 calls, 0.9% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_expert_down_act_fp8_grouped"
+file = "kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 387.504
+bytes = 98093967
+flops = 396361728
+bound = "memory"
+floor_us = 393.952
+pct_of_floor = 101.66
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "grouped down rows=21; n=40 calls, 0.9% of regime kernel time; peak class bf16; distinct experts 91.4 (log-interpolated between logged R=16 and R=32 decode means; prompt-tail routing not logged, uncertain) + shared expert; CUDA-core FP32; ABOVE 100%: operands partly L2-resident (24 MB L2) or the byte model overstates the traffic"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::silu_mul_quant_fp8"
+file = "kernels/gb10/common/moe_silu_mul.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 199.360
+bytes = 11664128
+flops = 0
+bound = "memory"
+floor_us = 46.844
+pct_of_floor = 23.50
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "SiLU*up -> E4M3 rows=4528 (time = median over 80 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=80 calls, 0.9% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::residual_add_rms_norm"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 370.352
+bytes = 74186752
+flops = 0
+bound = "memory"
+floor_us = 297.939
+pct_of_floor = 80.45
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "residual add + RMSNorm T=4528; n=40 calls, 0.9% of regime kernel time; peak class mem; read x,res; write res,normed"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::gated_rms_norm_prefill"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 474.080
+bytes = 111280128
+flops = 0
+bound = "memory"
+floor_us = 446.908
+pct_of_floor = 94.27
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN gated RMSNorm T=4528; n=30 calls, 0.8% of regime kernel time; peak class mem; read x,z; write out"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · attn o_proj M=4528 N=2048 K=4096"
+time_us = 1288.160
+bytes = 46063616
+flops = 75967234048
+bound = "compute"
+floor_us = 311.852
+pct_of_floor = 24.21
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "attn o_proj M=4528 N=2048 K=4096; n=10 calls, 0.8% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · attn k/v_proj or shared-expert gate/up M=4528 N=512 K=2048"
+time_us = 162.400
+bytes = 15248640
+flops = 9495904256
+bound = "memory"
+floor_us = 61.240
+pct_of_floor = 37.71
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "attn k/v_proj or shared-expert gate/up M=4528 N=512 K=2048; n=80 calls, 0.8% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · MTP drafter k/v M=512 N=512 K=2048"
+time_us = 770.304
+bytes = 4718592
+flops = 1073741824
+bound = "memory"
+floor_us = 18.950
+pct_of_floor = 2.46
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "MTP drafter k/v M=512 N=512 K=2048; n=16 calls, 0.7% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::moe_batched_blend"
+file = "kernels/gb10/common/moe_permute.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 299.440
+bytes = 74186752
+flops = 0
+bound = "memory"
+floor_us = 297.939
+pct_of_floor = 99.50
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "blend T=4528; n=40 calls, 0.7% of regime kernel time; peak class mem; routed sum + shared out + gate + write"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::l2_norm_bf16"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 332.880
+bytes = 74186752
+flops = 0
+bound = "memory"
+floor_us = 297.939
+pct_of_floor = 89.50
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN q/k L2 norm T=4528; n=30 calls, 0.6% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::rms_norm_residual"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 246.976
+bytes = 55640064
+flops = 0
+bound = "memory"
+floor_us = 223.454
+pct_of_floor = 90.48
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "RMSNorm (+res) T=4528; n=40 calls, 0.6% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · shared-expert down M=4528 N=2048 K=512"
+time_us = 216.560
+bytes = 21986304
+flops = 9495904256
+bound = "memory"
+floor_us = 88.298
+pct_of_floor = 40.77
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "shared-expert down M=4528 N=2048 K=512; n=40 calls, 0.5% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::bf16_residual_add"
+file = "kernels/gb10/common/residual_add.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 222.688
+bytes = 55640064
+flops = 0
+bound = "memory"
+floor_us = 223.454
+pct_of_floor = 100.34
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "bf16 residual add T=4528; n=40 calls, 0.5% of regime kernel time; peak class mem; ; ABOVE 100%: operands partly L2-resident (24 MB L2) or the byte model overstates the traffic"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemv_bf16"
+file = "kernels/gb10/common/dense_gemv_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 4103.360
+bytes = 1016594956
+flops = 1016094720
+bound = "memory"
+floor_us = 4082.711
+pct_of_floor = 99.50
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "lm_head (BF16) M=1 N=248070 K=2048; n=2 calls, 0.5% of regime kernel time; peak class bf16; BF16 GEMV on CUDA cores; memory-bound"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::w8a16_gemm_t_m128"
+file = "kernels/gb10/common/w8a16_gemm_t_m128.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 344.160
+bytes = 24232192
+flops = 9495904256
+bound = "memory"
+floor_us = 97.318
+pct_of_floor = 28.28
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "attn k/v_proj M=4528 N=512 K=2048; n=20 calls, 0.4% of regime kernel time; peak class bf16; W8A16 transposed weight, m16n8k16 bf16"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::deinterleave_qg_split_qnorm"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 660.592
+bytes = 148373504
+flops = 0
+bound = "memory"
+floor_us = 595.878
+pct_of_floor = 90.20
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "deinterleave q|gate + q-norm T=4528; n=10 calls, 0.4% of regime kernel time; peak class mem; read interleaved q|gate, write q and gate"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::fp8_gemm_t_blockscaled"
+file = "kernels/gb10/common/fp8_gemm_t_blockscaled.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · GDN in_proj qkvz M=21 N=12288 K=2048"
+time_us = 210.832
+bytes = 25732416
+flops = 1056964608
+bound = "memory"
+floor_us = 103.343
+pct_of_floor = 49.02
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "GDN in_proj qkvz M=21 N=12288 K=2048; n=30 calls, 0.4% of regime kernel time; peak class fp8; W8A8: E4M3 act with fp32 per-1x128 scales, E4M3 weight with 128x128 scales, m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok) · MTP drafter fc M=464 N=2048 K=4096"
+time_us = 5401.408
+bytes = 22478848
+flops = 7784628224
+bound = "memory"
+floor_us = 90.276
+pct_of_floor = 1.67
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "MTP drafter fc M=464 N=2048 K=4096; n=1 calls, 0.3% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak"
+
+[[m]]
+kernel = "qwen3.6-35b-a3b::bf16_concat"
+file = "kernels/gb10/common/residual_add.cu"
+hardware = "gb10"
+model = "Qwen/Qwen3.6-35B-A3B-FP8"
+regime = "prefill 4k (cold, 4549 tok)"
+time_us = 1.088
+bytes = 12288
+flops = 0
+bound = "memory"
+floor_us = 0.049
+pct_of_floor = 4.50
+source = "nsys high-isl/prof/moe/prof-short-cold.sqlite (first 4096-prompt request) @ f1fa41f4 (kernels as e37e3cb2), dgx3, 2026-09-27"
+notes = "drafter per-row concat; n=4548 calls, 0.3% of regime kernel time; peak class mem; launched once per prompt row; launch-latency bound"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemv_tc8"
+file = "kernels/gb10/common/w4a16_gemv_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · FFN gate or up M=4 N=17408 K=5120"
+time_us = 227.072
+bytes = 50315264
+flops = 713031680
+bound = "memory"
+floor_us = 202.069
+pct_of_floor = 88.99
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "FFN gate or up M=4 N=17408 K=5120; n=3840 calls, 30.3% of regime kernel time; peak class bf16; NVFP4 weight decoded to BF16, m16n8k16 bf16 tensor-core GEMV padded to 8 rows; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemv_tc8"
+file = "kernels/gb10/common/w4a16_gemv_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · FFN down (K chosen by call duration) M=4 N=5120 K=17408"
+time_us = 238.560
+bytes = 50315264
+flops = 713031680
+bound = "memory"
+floor_us = 202.069
+pct_of_floor = 84.70
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "FFN down (K chosen by call duration) M=4 N=5120 K=17408; n=1976 calls, 16.2% of regime kernel time; peak class bf16; NVFP4 weight decoded to BF16, m16n8k16 bf16 tensor-core GEMV padded to 8 rows; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16_batchm"
+file = "kernels/gb10/common/dense_gemv_bf16_batchm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3)"
+time_us = 11130.656
+bytes = 2542334056
+flops = 10161233920
+bound = "memory"
+floor_us = 10210.177
+pct_of_floor = 91.73
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "lm_head (BF16) M=4 N=248077 K=5120; n=30 calls, 11.5% of regime kernel time; peak class bf16; BF16 GEMV on CUDA cores; memory-bound; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemv_tc8"
+file = "kernels/gb10/common/w4a16_gemv_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · GDN in_proj qkvz M=4 N=16384 K=5120"
+time_us = 212.496
+bytes = 47357952
+flops = 671088640
+bound = "memory"
+floor_us = 190.193
+pct_of_floor = 89.50
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj qkvz M=4 N=16384 K=5120; n=1440 calls, 10.7% of regime kernel time; peak class bf16; NVFP4 weight decoded to BF16, m16n8k16 bf16 tensor-core GEMV padded to 8 rows; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemv_tc8"
+file = "kernels/gb10/common/w4a16_gemv_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · attn o_proj / GDN out_proj (K chosen by call duration) M=4 N=5120 K=6144"
+time_us = 121.984
+bytes = 17784832
+flops = 251658240
+bound = "memory"
+floor_us = 71.425
+pct_of_floor = 58.55
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn o_proj / GDN out_proj (K chosen by call duration) M=4 N=5120 K=6144; n=1864 calls, 7.2% of regime kernel time; peak class bf16; NVFP4 weight decoded to BF16, m16n8k16 bf16 tensor-core GEMV padded to 8 rows; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16"
+file = "kernels/gb10/common/dense_gemv_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120"
+time_us = 747.808
+bytes = 178302976
+flops = 178257920
+bound = "memory"
+floor_us = 716.076
+pct_of_floor = 95.76
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter gate/up M=1 N=17408 K=5120; n=180 calls, 4.6% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemv_sw"
+file = "kernels/gb10/common/w4a16_gemv.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3)"
+time_us = 1201.184
+bytes = 288210240
+flops = 1024000000
+bound = "memory"
+floor_us = 1157.471
+pct_of_floor = 96.36
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MTP draft head (100k vocab) M=1 N=100000 K=5120; n=90 calls, 3.7% of regime kernel time; peak class bf16; NVFP4 weight GEMV, FFMA; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemv_tc8"
+file = "kernels/gb10/common/w4a16_gemv_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · attn q_proj (gated) M=4 N=12288 K=5120"
+time_us = 160.320
+bytes = 35528704
+flops = 503316480
+bound = "memory"
+floor_us = 142.686
+pct_of_floor = 89.00
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn q_proj (gated) M=4 N=12288 K=5120; n=480 calls, 2.7% of regime kernel time; peak class bf16; NVFP4 weight decoded to BF16, m16n8k16 bf16 tensor-core GEMV padded to 8 rows; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16"
+file = "kernels/gb10/common/dense_gemv_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · drafter down (K chosen by call duration) M=1 N=5120 K=17408"
+time_us = 760.512
+bytes = 178302976
+flops = 178257920
+bound = "memory"
+floor_us = 716.076
+pct_of_floor = 94.16
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter down (K chosen by call duration) M=1 N=5120 K=17408; n=90 calls, 2.3% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_delta_rule_wy4"
+file = "kernels/gb10/common/gated_delta_rule_wy4.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3)"
+time_us = 44.384
+bytes = 6455296
+flops = 25165824
+bound = "memory"
+floor_us = 25.925
+pct_of_floor = 58.41
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN decode/verify recurrence seqs=1 rows=4; n=1440 calls, 2.3% of regime kernel time; peak class fp32; floor = read + write each sequence's recurrent state once (4 B/elem) + q,k,v in, o out; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16"
+file = "kernels/gb10/common/dense_gemv_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · drafter q M=1 N=12288 K=5120"
+time_us = 529.312
+bytes = 125863936
+flops = 125829120
+bound = "memory"
+floor_us = 505.478
+pct_of_floor = 95.50
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter q M=1 N=12288 K=5120; n=90 calls, 1.6% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16"
+file = "kernels/gb10/common/dense_gemv_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · drafter fc (K chosen by call duration) M=1 N=5120 K=10240"
+time_us = 441.648
+bytes = 104888320
+flops = 104857600
+bound = "memory"
+floor_us = 421.238
+pct_of_floor = 95.38
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter fc (K chosen by call duration) M=1 N=5120 K=10240; n=90 calls, 1.4% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16"
+file = "kernels/gb10/common/dense_gemv_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · drafter o_proj (K chosen by call duration) M=1 N=5120 K=6144"
+time_us = 256.496
+bytes = 62937088
+flops = 62914560
+bound = "memory"
+floor_us = 252.759
+pct_of_floor = 98.54
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter o_proj (K chosen by call duration) M=1 N=5120 K=6144; n=90 calls, 0.8% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemv_tc8"
+file = "kernels/gb10/common/w4a16_gemv_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3) · attn k/v_proj M=4 N=1024 K=5120"
+time_us = 18.496
+bytes = 2998272
+flops = 41943040
+bound = "memory"
+floor_us = 12.041
+pct_of_floor = 65.10
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn k/v_proj M=4 N=1024 K=5120; n=960 calls, 0.6% of regime kernel time; peak class bf16; NVFP4 weight decoded to BF16, m16n8k16 bf16 tensor-core GEMV padded to 8 rows; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::argmax_bf16"
+file = "kernels/gb10/common/argmax_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3)"
+time_us = 103.008
+bytes = 496154
+flops = 0
+bound = "memory"
+floor_us = 1.993
+pct_of_floor = 1.93
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "argmax 1 row; n=210 calls, 0.6% of regime kernel time; peak class mem; single CTA (1 SM); decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemm_ba_gates_prefill"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3)"
+time_us = 9.632
+bytes = 1025536
+flops = 3932160
+bound = "memory"
+floor_us = 4.119
+pct_of_floor = 42.76
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj_ba+gates M=4 N=96 K=5120; n=1440 calls, 0.5% of regime kernel time; peak class bf16; BF16 GEMV-shaped projection with fused sigmoid/softplus; activation row re-read ceil(N/4) times by the kernel; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::causal_conv1d_update_l2norm"
+file = "kernels/gb10/common/causal_conv1d.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3)"
+time_us = 2.112
+bytes = 286720
+flops = 0
+bound = "memory"
+floor_us = 1.151
+pct_of_floor = 54.50
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN conv1d+l2norm seqs=1; n=5760 calls, 0.5% of regime kernel time; peak class mem; latency-bound at decode size; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::paged_decode_attn"
+file = "kernels/gb10/common/paged_decode_attn.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3)"
+time_us = 25.072
+bytes = 1101824
+flops = 24084480
+bound = "memory"
+floor_us = 4.425
+pct_of_floor = 17.65
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "decode attention rows=4 seqs=1 kv_len~245; n=480 calls, 0.4% of regime kernel time; peak class bf16; floor = each sequence's K,V read once (kv_len estimated from tokens generated at capture time) + q in, o out; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::residual_add_rms_norm"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=1 (R=4, MTP k=3)"
+time_us = 4.352
+bytes = 163840
+flops = 0
+bound = "memory"
+floor_us = 0.658
+pct_of_floor = 15.12
+source = "nsys kernel-perf/prof/dense-ag-c1.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "residual add + RMSNorm T=4; n=1920 calls, 0.3% of regime kernel time; peak class mem; read x,res; write res,normed; decode-floor recipe flags (qwen3.8-27b-nvfp4-unsloth: bf16 KV, bf16 lm_head, num-drafts 3, slai, max-batch-size 1); step 101.9 ms under nsys vs ~98.6 ms unprofiled (decode-floor 27.6 tok/s at accept 2.72): ~3% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_mmq32_nc"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · FFN gate or up M=32 N=17408 K=5120"
+time_us = 240.928
+bytes = 51341312
+flops = 5704253440
+bound = "memory"
+floor_us = 206.190
+pct_of_floor = 85.58
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "FFN gate or up M=32 N=17408 K=5120; n=2980 calls, 27.6% of regime kernel time; peak class fp4; W4A4 NVFP4 kind::mxf4nvf4 m16n8k64, 32-row tile; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_delta_rule_wy2_resident_f16"
+file = "kernels/gb10/common/gated_delta_rule_wy2_resident_f16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 359.808
+bytes = 51642368
+flops = 201326592
+bound = "memory"
+floor_us = 207.399
+pct_of_floor = 57.64
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN decode/verify recurrence seqs=16 rows=32; n=1118 calls, 15.4% of regime kernel time; peak class fp32; floor = read + write each sequence's recurrent state once (2 B/elem) + q,k,v in, o out; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_mmq32_nc"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · FFN down M=32 N=5120 K=17408"
+time_us = 249.952
+bytes = 50776064
+flops = 5704253440
+bound = "memory"
+floor_us = 203.920
+pct_of_floor = 81.58
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "FFN down M=32 N=5120 K=17408; n=1490 calls, 14.3% of regime kernel time; peak class fp4; W4A4 NVFP4 kind::mxf4nvf4 m16n8k64, 32-row tile; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_p3"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · GDN in_proj qkvz M=32 N=16384 K=5120"
+time_us = 260.160
+bytes = 48562176
+flops = 5368709120
+bound = "memory"
+floor_us = 195.029
+pct_of_floor = 74.97
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj qkvz M=32 N=16384 K=5120; n=1118 calls, 11.3% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, activations to E4M3 in registers (W4A8), m16n8k32 e4m3; 64-row M tile; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_k64_n64_p3"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 137.168
+bytes = 18415616
+flops = 2013265920
+bound = "memory"
+floor_us = 73.958
+pct_of_floor = 53.92
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn o_proj / GDN out_proj M=32 N=5120 K=6144; n=1490 calls, 7.8% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, activations to E4M3 in registers (W4A8), m16n8k32 e4m3; 64-row M tile; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_p3"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · attn k/v_proj M=32 N=1024 K=5120"
+time_us = 166.240
+bytes = 3342336
+flops = 335544320
+bound = "memory"
+floor_us = 13.423
+pct_of_floor = 8.07
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn k/v_proj M=32 N=1024 K=5120; n=744 calls, 4.9% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, activations to E4M3 in registers (W4A8), m16n8k32 e4m3; 64-row M tile; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_p3"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · lm_head M=32 N=248077 K=5120"
+time_us = 3742.240
+bytes = 730666368
+flops = 81289871360
+bound = "memory"
+floor_us = 2934.403
+pct_of_floor = 78.41
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "lm_head M=32 N=248077 K=5120; n=23 calls, 3.3% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, activations to E4M3 in registers (W4A8), m16n8k32 e4m3; 64-row M tile; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_p3"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · attn q_proj (gated) M=32 N=12288 K=5120"
+time_us = 218.848
+bytes = 36503552
+flops = 4026531840
+bound = "memory"
+floor_us = 146.601
+pct_of_floor = 66.99
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn q_proj (gated) M=32 N=12288 K=5120; n=372 calls, 3.2% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, activations to E4M3 in registers (W4A8), m16n8k32 e4m3; 64-row M tile; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::gdn_verify_fused_conv_kn_batched"
+file = "kernels/gb10/common/gdn_verify_fused_conv_kn.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 38.496
+bytes = 3358720
+flops = 0
+bound = "memory"
+floor_us = 13.489
+pct_of_floor = 35.04
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN verify conv seqs=16 rows=32; n=1118 calls, 1.7% of regime kernel time; peak class mem; conv state (3 taps) read + qkv rows in/out; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::paged_decode_attn_fp8"
+file = "kernels/gb10/common/paged_decode_attn_fp8.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 97.040
+bytes = 10878976
+flops = 242221056
+bound = "memory"
+floor_us = 43.691
+pct_of_floor = 45.02
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "decode attention rows=32 seqs=16 kv_len~308; n=372 calls, 1.4% of regime kernel time; peak class bf16; floor = each sequence's K,V read once (kv_len estimated from tokens generated at capture time) + q in, o out; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16_tc16"
+file = "kernels/gb10/common/dense_gemv_bf16_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · drafter gate/up M=16 N=17408 K=5120"
+time_us = 755.456
+bytes = 178978816
+flops = 2852126720
+bound = "memory"
+floor_us = 718.790
+pct_of_floor = 95.15
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter gate/up M=16 N=17408 K=5120; n=48 calls, 1.4% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemv_tc16"
+file = "kernels/gb10/common/w4a16_gemv_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 1361.648
+bytes = 291363840
+flops = 16384000000
+bound = "memory"
+floor_us = 1170.136
+pct_of_floor = 85.94
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MTP draft head (100k vocab) M=16 N=100000 K=5120; n=24 calls, 1.3% of regime kernel time; peak class bf16; tensor-core GEMV (m16n8k16 bf16), weight read once; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_silu_mul_quant"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 17.920
+bytes = 2541568
+flops = 0
+bound = "memory"
+floor_us = 10.207
+pct_of_floor = 56.96
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "SiLU*up -> NVFP4 rows=32; n=1490 calls, 1.0% of regime kernel time; peak class mem; ; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemm_ba_gates_prefill"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 21.728
+bytes = 1323008
+flops = 31457280
+bound = "memory"
+floor_us = 5.313
+pct_of_floor = 24.45
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj_ba+gates M=32 N=96 K=5120; n=1118 calls, 0.9% of regime kernel time; peak class bf16; BF16 GEMV-shaped projection with fused sigmoid/softplus; activation row re-read ceil(N/4) times by the kernel; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16_tc16"
+file = "kernels/gb10/common/dense_gemv_bf16_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · drafter down (K chosen by call duration) M=16 N=5120 K=17408"
+time_us = 776.640
+bytes = 178978816
+flops = 2852126720
+bound = "memory"
+floor_us = 718.790
+pct_of_floor = 92.55
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter down (K chosen by call duration) M=16 N=5120 K=17408; n=24 calls, 0.7% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16_tc16"
+file = "kernels/gb10/common/dense_gemv_bf16_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · drafter q M=16 N=12288 K=5120"
+time_us = 535.856
+bytes = 126386176
+flops = 2013265920
+bound = "memory"
+floor_us = 507.575
+pct_of_floor = 94.72
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter q M=16 N=12288 K=5120; n=24 calls, 0.5% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemv_bf16_tc16"
+file = "kernels/gb10/common/dense_gemv_bf16_tc.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1) · drafter fc (K chosen by call duration) M=16 N=5120 K=10240"
+time_us = 493.264
+bytes = 105349120
+flops = 1677721600
+bound = "memory"
+floor_us = 423.089
+pct_of_floor = 85.77
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "drafter fc (K chosen by call duration) M=16 N=5120 K=10240; n=24 calls, 0.5% of regime kernel time; peak class bf16; BF16 MTP-drafter projection (GEMV); concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::deinterleave_qg"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 12.640
+bytes = 1572864
+flops = 0
+bound = "memory"
+floor_us = 6.317
+pct_of_floor = 49.98
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "deinterleave q|gate rows=32; n=756 calls, 0.4% of regime kernel time; peak class mem; ; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_quantize_bf16"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 5.952
+bytes = 419840
+flops = 0
+bound = "memory"
+floor_us = 1.686
+pct_of_floor = 28.33
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "BF16 -> NVFP4 act quant rows=32; n=1490 calls, 0.4% of regime kernel time; peak class mem; ; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_rms_norm_prefill"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "decode C=16 (R=32, MTP k=1)"
+time_us = 6.912
+bytes = 1179648
+flops = 0
+bound = "memory"
+floor_us = 4.738
+pct_of_floor = 68.55
+source = "nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN gated RMSNorm T=32; n=1118 calls, 0.3% of regime kernel time; peak class mem; read x,z; write out; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation"
+
+[[m]]
+kernel = "qwen3.8-27b::fp8_fp8_gemm_ldmab"
+file = "kernels/gb10/common/w4a16_fp8_ldmab.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 51516.624
+bytes = 394264576
+flops = 1374389534720
+bound = "compute"
+floor_us = 5641.993
+pct_of_floor = 10.95
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "GDN in_proj qkvz M=8192 N=16384 K=5120 (time = median over 192 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=192 calls, 22.1% of regime kernel time; peak class fp8; unscaled E4M3 x E4M3 (act cast by bf16_to_fp8), m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_mmq128_nc"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · FFN gate or up M=8192 N=17408 K=5120"
+time_us = 16598.240
+bytes = 358940672
+flops = 1460288880640
+bound = "compute"
+floor_us = 2975.324
+pct_of_floor = 17.93
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "FFN gate or up M=8192 N=17408 K=5120 (time = median over 512 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=512 calls, 18.9% of regime kernel time; peak class fp4; W4A4 NVFP4 x NVFP4, kind::mxf4nvf4 m16n8k64; output unscaled BF16 (scale2 applied by a separate pass)"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_mmq128_nc"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · FFN down M=8192 N=5120 K=17408"
+time_us = 17565.520
+bytes = 214237184
+flops = 1460288880640
+bound = "compute"
+floor_us = 2975.324
+pct_of_floor = 16.94
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "FFN down M=8192 N=5120 K=17408 (time = median over 256 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=256 calls, 9.9% of regime kernel time; peak class fp4; W4A4 NVFP4 x NVFP4, kind::mxf4nvf4 m16n8k64; output unscaled BF16 (scale2 applied by a separate pass)"
+
+[[m]]
+kernel = "qwen3.8-27b::attn_prefill_paged_64"
+file = "kernels/gb10/common/prefill_paged_compute.cuh"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · paged chunk T=8192 prefix P=24577"
+time_us = 198655.776
+bytes = 335548416
+flops = 5772738035712
+bound = "compute"
+floor_us = 46667.244
+pct_of_floor = 23.49
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "paged chunk T=8192 prefix P=24577; n=16 calls, 7.0% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.8-27b::fp8_gemm_t_m128"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 14888.400
+bytes = 216006656
+flops = 515396075520
+bound = "compute"
+floor_us = 2115.747
+pct_of_floor = 14.21
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "GDN out_proj M=8192 N=5120 K=6144 (time = median over 192 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=192 calls, 6.3% of regime kernel time; peak class fp8; BF16 act cast to E4M3 inside the kernel per N tile; m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · MTP drafter fc M=512 N=5120 K=10240"
+time_us = 36984.592
+bytes = 120586240
+flops = 53687091200
+bound = "memory"
+floor_us = 484.282
+pct_of_floor = 1.31
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "MTP drafter fc M=512 N=5120 K=10240; n=64 calls, 5.2% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak"
+
+[[m]]
+kernel = "qwen3.8-27b::attn_prefill_paged_64"
+file = "kernels/gb10/common/prefill_paged_compute.cuh"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · paged chunk T=8192 prefix P=16385"
+time_us = 142222.464
+bytes = 301993984
+flops = 4123470594048
+bound = "compute"
+floor_us = 33334.443
+pct_of_floor = 23.44
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "paged chunk T=8192 prefix P=16385; n=16 calls, 5.0% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.8-27b::attn_prefill_paged_64"
+file = "kernels/gb10/common/prefill_paged_compute.cuh"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · paged chunk T=8192 prefix P=8193"
+time_us = 84257.536
+bytes = 268439552
+flops = 2474203152384
+bound = "compute"
+floor_us = 20001.642
+pct_of_floor = 23.74
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "paged chunk T=8192 prefix P=8193; n=16 calls, 3.0% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_delta_rule_chunk_delta_h_vfused"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 6086.160
+bytes = 544735232
+flops = 25769803776
+bound = "memory"
+floor_us = 2187.692
+pct_of_floor = 35.95
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "GDN chunk state recurrence T=8192 (time = median over 192 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=192 calls, 2.6% of regime kernel time; peak class bf16; reads W,U,k,gcum; writes per-chunk states S_c (BF16) and uc; serial over chunks, nv CTAs"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_delta_rule_chunk_fwd_o"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 5966.256
+bytes = 471334912
+flops = 25769803776
+bound = "memory"
+floor_us = 1892.911
+pct_of_floor = 31.73
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "GDN chunk output T=8192 (time = median over 192 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=192 calls, 2.6% of regime kernel time; peak class bf16; reads q,k,S_c,uc,gcum; writes o"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_m128"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · attn q_proj (gated) M=8192 N=12288 K=5120"
+time_us = 15278.576
+bytes = 320602112
+flops = 1030792151040
+bound = "compute"
+floor_us = 4231.495
+pct_of_floor = 27.70
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "attn q_proj (gated) M=8192 N=12288 K=5120 (time = median over 64 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=64 calls, 2.2% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, BF16 act converted to E4M3 in registers (W4A8 numerics), m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemm_ba_gates_prefill"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 4647.568
+bytes = 88014848
+flops = 8053063680
+bound = "memory"
+floor_us = 353.473
+pct_of_floor = 7.61
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "GDN in_proj_ba+gates M=8192 N=96 K=5120 (time = median over 192 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=192 calls, 2.0% of regime kernel time; peak class bf16; BF16 GEMV-shaped projection with fused sigmoid/softplus; activation row re-read ceil(N/4) times by the kernel"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_silu_mul_quant"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 3001.168
+bytes = 650641408
+flops = 0
+bound = "memory"
+floor_us = 2613.018
+pct_of_floor = 87.07
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "SiLU*up -> NVFP4 rows=8192 (time = median over 256 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=256 calls, 1.7% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.8-27b::gated_delta_rule_recompute_wu"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 3961.936
+bytes = 340262912
+flops = 12884901888
+bound = "memory"
+floor_us = 1366.518
+pct_of_floor = 34.49
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "GDN recompute W,U T=8192 (time = median over 192 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=192 calls, 1.7% of regime kernel time; peak class bf16; reads k,v,g,beta; writes W,U (BF16), gcum (fp32)"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · MTP drafter k/v M=512 N=1024 K=5120"
+time_us = 3675.072
+bytes = 16777216
+flops = 5368709120
+bound = "memory"
+floor_us = 67.378
+pct_of_floor = 1.83
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "MTP drafter k/v M=512 N=1024 K=5120; n=128 calls, 1.0% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak"
+
+[[m]]
+kernel = "qwen3.8-27b::residual_add_rms_norm"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1735.280
+bytes = 335544320
+flops = 0
+bound = "memory"
+floor_us = 1347.568
+pct_of_floor = 77.66
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "residual add + RMSNorm T=8192 (time = median over 256 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=256 calls, 1.0% of regime kernel time; peak class mem; read x,res; write res,normed"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_m128"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · attn o_proj M=8192 N=5120 K=6144"
+time_us = 6565.248
+bytes = 202244096
+flops = 515396075520
+bound = "compute"
+floor_us = 2115.747
+pct_of_floor = 32.23
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "attn o_proj M=8192 N=5120 K=6144 (time = median over 64 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=64 calls, 1.0% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, BF16 act converted to E4M3 in registers (W4A8 numerics), m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.8-27b::attn_prefill_64"
+file = "kernels/gb10/common/attn_prefill.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 24751.952
+bytes = 234909696
+flops = 824935735296
+bound = "compute"
+floor_us = 6668.842
+pct_of_floor = 26.94
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "first chunk T=8193 prefix P=0; n=16 calls, 0.9% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV"
+
+[[m]]
+kernel = "qwen3.8-27b::rms_norm_residual"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1173.360
+bytes = 251658240
+flops = 0
+bound = "memory"
+floor_us = 1010.676
+pct_of_floor = 86.14
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "RMSNorm (+res) T=8192 (time = median over 256 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=256 calls, 0.7% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.8-27b::causal_conv1d_update_prefill_tp"
+file = "kernels/gb10/common/causal_conv1d.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1428.848
+bytes = 335626240
+flops = 0
+bound = "memory"
+floor_us = 1347.897
+pct_of_floor = 94.33
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "GDN causal conv1d T=8192 ch=10240 (time = median over 192 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=192 calls, 0.6% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.8-27b::bf16_residual_add"
+file = "kernels/gb10/common/residual_add.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1039.712
+bytes = 251658240
+flops = 0
+bound = "memory"
+floor_us = 1010.676
+pct_of_floor = 97.21
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "bf16 residual add T=8192 (time = median over 256 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=256 calls, 0.6% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.8-27b::gated_rms_norm_prefill"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 1273.312
+bytes = 301989888
+flops = 0
+bound = "memory"
+floor_us = 1212.811
+pct_of_floor = 95.25
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "GDN gated RMSNorm T=8192 (time = median over 192 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=192 calls, 0.6% of regime kernel time; peak class mem; read x,z; write out"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_quantize_bf16"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 795.632
+bytes = 107479040
+flops = 0
+bound = "memory"
+floor_us = 431.643
+pct_of_floor = 54.25
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "BF16 -> NVFP4 act quant rows=8192 (time = median over 256 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=256 calls, 0.5% of regime kernel time; peak class mem; "
+
+[[m]]
+kernel = "qwen3.8-27b::rope_forward_mrope_interleaved"
+file = "kernels/gb10/common/rope_mrope_interleaved.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 4081.344
+bytes = 58720256
+flops = 0
+bound = "memory"
+floor_us = 235.824
+pct_of_floor = 5.78
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "RoPE q+k T~8192; n=48 calls, 0.4% of regime kernel time; peak class mem; only the 64 rotary dims of each 256-dim head are read/written in the floor"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_scale_bf16"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok)"
+time_us = 679.936
+bytes = 167772160
+flops = 0
+bound = "memory"
+floor_us = 673.784
+pct_of_floor = 99.10
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "x*scale2 in place rows=8192 (time = median over 256 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=256 calls, 0.4% of regime kernel time; peak class mem; exists only because the MMQ epilogue skips scale2"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_m128"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 32k (cold, 32772 tok) · attn k/v_proj M=8192 N=1024 K=5120"
+time_us = 1346.208
+bytes = 103612416
+flops = 85899345920
+bound = "memory"
+floor_us = 416.114
+pct_of_floor = 30.91
+source = "nsys high-isl/prof/dense/prof-cold.sqlite @ f1fa41f4 (kernels as e37e3cb2), dgx2, 2026-09-27"
+notes = "attn k/v_proj M=8192 N=1024 K=5120 (time = median over 128 calls at 2 chunk lengths; bytes/FLOPs of the most common); n=128 calls, 0.4% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, BF16 act converted to E4M3 in registers (W4A8 numerics), m16n8k32 e4m3"
+
+[[m]]
+kernel = "qwen3.8-27b::fp8_fp8_gemm_ldmab"
+file = "kernels/gb10/common/w4a16_fp8_ldmab.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · GDN in_proj qkvz M=4080 N=16384 K=5120"
+time_us = 25144.064
+bytes = 238469120
+flops = 684510412800
+bound = "compute"
+floor_us = 2809.977
+pct_of_floor = 11.18
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj qkvz M=4080 N=16384 K=5120; n=48 calls, 24.7% of regime kernel time; peak class fp8; unscaled E4M3 x E4M3 (act cast by bf16_to_fp8), m16n8k32 e4m3; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_mmq128_nc"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · FFN gate or up M=4080 N=17408 K=5120"
+time_us = 8367.808
+bytes = 203934720
+flops = 727292313600
+bound = "compute"
+floor_us = 1481.851
+pct_of_floor = 17.71
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "FFN gate or up M=4080 N=17408 K=5120; n=128 calls, 22.0% of regime kernel time; peak class fp4; W4A4 NVFP4 x NVFP4, kind::mxf4nvf4 m16n8k64; output unscaled BF16 (scale2 applied by a separate pass); decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_mmq128_nc"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · FFN down M=4080 N=5120 K=17408"
+time_us = 8893.552
+bytes = 131865600
+flops = 727292313600
+bound = "compute"
+floor_us = 1481.851
+pct_of_floor = 16.66
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "FFN down M=4080 N=5120 K=17408; n=64 calls, 11.7% of regime kernel time; peak class fp4; W4A4 NVFP4 x NVFP4, kind::mxf4nvf4 m16n8k64; output unscaled BF16 (scale2 applied by a separate pass); decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::fp8_gemm_t_m128"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 6357.680
+bytes = 123371520
+flops = 256691404800
+bound = "compute"
+floor_us = 1053.741
+pct_of_floor = 16.57
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN out_proj M=4080 N=5120 K=6144; n=48 calls, 6.4% of regime kernel time; peak class fp8; BF16 act cast to E4M3 inside the kernel per N tile; m16n8k32 e4m3; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · MTP drafter fc M=512 N=5120 K=10240"
+time_us = 37039.120
+bytes = 120586240
+flops = 53687091200
+bound = "memory"
+floor_us = 484.282
+pct_of_floor = 1.31
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MTP drafter fc M=512 N=5120 K=10240; n=8 calls, 6.0% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_delta_rule_chunk_delta_h_vfused"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 3067.536
+bytes = 274854912
+flops = 12884901888
+bound = "memory"
+floor_us = 1103.835
+pct_of_floor = 35.98
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN chunk state recurrence T=4080; n=48 calls, 3.1% of regime kernel time; peak class bf16; reads W,U,k,gcum; writes per-chunk states S_c (BF16) and uc; serial over chunks, nv CTAs; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_delta_rule_chunk_fwd_o"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 2975.216
+bytes = 235140096
+flops = 12884901888
+bound = "memory"
+floor_us = 944.338
+pct_of_floor = 31.74
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN chunk output T=4080; n=48 calls, 3.0% of regime kernel time; peak class bf16; reads q,k,S_c,uc,gcum; writes o; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_m128"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · attn q_proj (gated) M=4080 N=12288 K=5120"
+time_us = 7650.192
+bytes = 177438720
+flops = 513382809600
+bound = "compute"
+floor_us = 2107.483
+pct_of_floor = 27.55
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn q_proj (gated) M=4080 N=12288 K=5120; n=16 calls, 2.6% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, BF16 act converted to E4M3 in registers (W4A8 numerics), m16n8k32 e4m3; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemm_ba_gates_prefill"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 2314.336
+bytes = 44328960
+flops = 4010803200
+bound = "memory"
+floor_us = 178.028
+pct_of_floor = 7.69
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj_ba+gates M=4080 N=96 K=5120; n=48 calls, 2.3% of regime kernel time; peak class bf16; BF16 GEMV-shaped projection with fused sigmoid/softplus; activation row re-read ceil(N/4) times by the kernel; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_silu_mul_quant"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 1514.560
+bytes = 324049920
+flops = 0
+bound = "memory"
+floor_us = 1301.405
+pct_of_floor = 85.93
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "SiLU*up -> NVFP4 rows=4080; n=64 calls, 2.1% of regime kernel time; peak class mem; ; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::attn_prefill_64"
+file = "kernels/gb10/common/attn_prefill.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 6113.008
+bytes = 116981760
+flops = 204601098240
+bound = "compute"
+floor_us = 1654.010
+pct_of_floor = 27.06
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "first chunk T=4080 prefix P=0; n=16 calls, 2.0% of regime kernel time; peak class bf16; causal FLOPs 4*hd*nq*(T*P+T(T+1)/2); bytes Q+O+KV once; BF16 KV; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_delta_rule_recompute_wu"
+file = "kernels/gb10/common/gated_delta_rule_fla.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 1846.992
+bytes = 169466880
+flops = 6442450944
+bound = "memory"
+floor_us = 680.590
+pct_of_floor = 36.85
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN recompute W,U T=4080; n=48 calls, 1.9% of regime kernel time; peak class bf16; reads k,v,g,beta; writes W,U (BF16), gcum (fp32); decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::dense_gemm_bf16"
+file = "kernels/gb10/common/dense_gemm_bf16.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · MTP drafter k/v M=512 N=1024 K=5120"
+time_us = 3681.888
+bytes = 16777216
+flops = 5368709120
+bound = "memory"
+floor_us = 67.378
+pct_of_floor = 1.83
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "MTP drafter k/v M=512 N=1024 K=5120; n=16 calls, 1.2% of regime kernel time; peak class bf16; MTP drafter context prefill, 512-row chunks; BF16 operands on CUDA-core FP32 (non-fused mul+add); floor uses BF16 MMA peak; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::residual_add_rms_norm"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 853.712
+bytes = 167116800
+flops = 0
+bound = "memory"
+floor_us = 671.152
+pct_of_floor = 78.62
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "residual add + RMSNorm T=4080; n=64 calls, 1.1% of regime kernel time; peak class mem; read x,res; write res,normed; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_m128"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · attn o_proj M=4080 N=5120 K=6144"
+time_us = 3249.488
+bytes = 109608960
+flops = 256691404800
+bound = "compute"
+floor_us = 1053.741
+pct_of_floor = 32.43
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn o_proj M=4080 N=5120 K=6144; n=16 calls, 1.1% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, BF16 act converted to E4M3 in registers (W4A8 numerics), m16n8k32 e4m3; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::fp8_fp8_gemm_ldmab"
+file = "kernels/gb10/common/w4a16_fp8_ldmab.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · GDN in_proj qkvz M=23 N=16384 K=5120"
+time_us = 793.680
+bytes = 84757504
+flops = 3858759680
+bound = "memory"
+floor_us = 340.392
+pct_of_floor = 42.89
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN in_proj qkvz M=23 N=16384 K=5120; n=48 calls, 0.8% of regime kernel time; peak class fp8; unscaled E4M3 x E4M3 (act cast by bf16_to_fp8), m16n8k32 e4m3; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::rms_norm_residual"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 586.320
+bytes = 125337600
+flops = 0
+bound = "memory"
+floor_us = 503.364
+pct_of_floor = 85.85
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "RMSNorm (+res) T=4080; n=64 calls, 0.8% of regime kernel time; peak class mem; ; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::causal_conv1d_update_prefill_tp"
+file = "kernels/gb10/common/causal_conv1d.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 705.104
+bytes = 167198720
+flops = 0
+bound = "memory"
+floor_us = 671.481
+pct_of_floor = 95.23
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN causal conv1d T=4080 ch=10240; n=48 calls, 0.7% of regime kernel time; peak class mem; ; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::bf16_residual_add"
+file = "kernels/gb10/common/residual_add.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 518.832
+bytes = 125337600
+flops = 0
+bound = "memory"
+floor_us = 503.364
+pct_of_floor = 97.02
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "bf16 residual add T=4080; n=64 calls, 0.7% of regime kernel time; peak class mem; ; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::gated_rms_norm_prefill"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 627.840
+bytes = 150405120
+flops = 0
+bound = "memory"
+floor_us = 604.037
+pct_of_floor = 96.21
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN gated RMSNorm T=4080; n=48 calls, 0.6% of regime kernel time; peak class mem; read x,z; write out; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_mmq32_nc"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · FFN gate or up M=23 N=17408 K=5120"
+time_us = 236.176
+bytes = 51002048
+flops = 4099932160
+bound = "memory"
+floor_us = 204.828
+pct_of_floor = 86.73
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "FFN gate or up M=23 N=17408 K=5120; n=128 calls, 0.6% of regime kernel time; peak class fp4; W4A4 NVFP4 kind::mxf4nvf4 m16n8k64, 32-row tile; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_quantize_bf16"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 401.280
+bytes = 53529600
+flops = 0
+bound = "memory"
+floor_us = 214.978
+pct_of_floor = 53.57
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "BF16 -> NVFP4 act quant rows=4080; n=64 calls, 0.5% of regime kernel time; peak class mem; ; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::w4a16_gemm_t_m128"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · attn k/v_proj M=4080 N=1024 K=5120"
+time_us = 693.072
+bytes = 53084160
+flops = 42781900800
+bound = "memory"
+floor_us = 213.189
+pct_of_floor = 30.76
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "attn k/v_proj M=4080 N=1024 K=5120; n=32 calls, 0.5% of regime kernel time; peak class fp8; NVFP4 weight dequantized to E4M3, BF16 act converted to E4M3 in registers (W4A8 numerics), m16n8k32 e4m3; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_scale_bf16"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 324.784
+bytes = 83558400
+flops = 0
+bound = "memory"
+floor_us = 335.576
+pct_of_floor = 103.32
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "x*scale2 in place rows=4080; n=64 calls, 0.4% of regime kernel time; peak class mem; exists only because the MMQ epilogue skips scale2; ABOVE 100%: operands partly L2-resident (24 MB L2) or the byte model overstates the traffic; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::fp8_fp8_gemm_ldmab"
+file = "kernels/gb10/common/w4a16_fp8_ldmab.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · GDN out_proj M=23 N=5120 K=6144"
+time_us = 360.512
+bytes = 31834112
+flops = 1447034880
+bound = "memory"
+floor_us = 127.848
+pct_of_floor = 35.46
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN out_proj M=23 N=5120 K=6144; n=48 calls, 0.4% of regime kernel time; peak class fp8; unscaled E4M3 x E4M3 (act cast by bf16_to_fp8), m16n8k32 e4m3; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::l2_norm_bf16"
+file = "kernels/gb10/common/rms_norm.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 331.952
+bytes = 66846720
+flops = 0
+bound = "memory"
+floor_us = 268.461
+pct_of_floor = 80.87
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "GDN q/k L2 norm T=4080; n=48 calls, 0.3% of regime kernel time; peak class mem; ; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::metrale_nvfp4_mmq32_nc"
+file = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok) · FFN down M=23 N=5120 K=17408"
+time_us = 248.736
+bytes = 50595776
+flops = 4099932160
+bound = "memory"
+floor_us = 203.196
+pct_of_floor = 81.69
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "FFN down M=23 N=5120 K=17408; n=64 calls, 0.3% of regime kernel time; peak class fp4; W4A4 NVFP4 kind::mxf4nvf4 m16n8k64, 32-row tile; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
+
+[[m]]
+kernel = "qwen3.8-27b::deinterleave_qg_split_qnorm"
+file = "kernels/gb10/common/ssm_preprocess.cu"
+hardware = "gb10"
+model = "unsloth/Qwen3.8-27B-NVFP4"
+regime = "prefill 4k (cold, 4103 tok)"
+time_us = 918.800
+bytes = 200540160
+flops = 0
+bound = "memory"
+floor_us = 805.382
+pct_of_floor = 87.66
+source = "nsys kernel-perf/prof/dense-4k-p2710a.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28"
+notes = "deinterleave q|gate + q-norm T=4080; n=16 calls, 0.3% of regime kernel time; peak class mem; read interleaved q|gate, write q and gate; decode-floor recipe flags, --max-seq-len 32768; capture = the whole max_tokens=1 request"
