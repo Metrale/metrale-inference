@@ -321,6 +321,33 @@ pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
     ));
 }
 
+/// 2026-09-28: Publish whether the MoE experts decode W8A8 (`set_moe_expert_fp8_act`) before the
+/// model is built. The cell is process-wide, so it holds FP8 only when the
+/// `--weight-quantization` policy asks for FP8 activations on every layer's experts; a dense
+/// model, the `nvfp4` tier, or a checkpoint that declares 16-bit activations keeps W8A16.
+pub(super) fn publish_moe_expert_act(config: &ModelConfig) {
+    use metrale_config::weight_quantization::ActFormat;
+    let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
+        metrale_model_layers::layers::weight_quantization(),
+        config.quantization_config.as_ref(),
+        metrale_model_layers::layers::kernel_caps(),
+    );
+    let fp8 = config.num_experts > 0
+        && (0..config.num_hidden_layers).all(|i| {
+            let module = format!("{}.mlp.experts.0.gate_proj", config.layer_prefix(i));
+            policy.fp8_decode_act(&module) == Some(ActFormat::Fp8)
+        });
+    let published = metrale_model_layers::layers::set_moe_expert_fp8_act(fp8);
+    if published != fp8 {
+        tracing::warn!(
+            "MoE expert decode activations were fixed before the serve published them: \
+             FP8 = {published}, the policy asks for FP8 = {fp8}"
+        );
+    } else if fp8 {
+        tracing::info!("MoE experts: W8A8 decode (declared FP8 weights and activations)");
+    }
+}
+
 pub(super) fn resolve_behavior(
     ptx_set: &metrale_kernels::TargetPtxSet,
     args: &cli::ServeArgs,

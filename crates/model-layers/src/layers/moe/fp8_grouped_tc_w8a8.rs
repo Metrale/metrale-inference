@@ -7,8 +7,8 @@
 //!
 //! WHEN it runs is the weight-quantization policy's call, not this module's: the serve publishes
 //! whether the experts decode with FP8 activations ([`set_moe_expert_fp8_act`], the
-//! `--weight-quantization` policy's `fp8_decode_act` for the expert modules); nothing publishes
-//! it by default, so the experts stay W8A16. This module says whether it CAN
+//! `--weight-quantization` policy's `fp8_decode_act` for the expert modules, published at serve
+//! setup); unpublished, the experts stay W8A16. This module says whether it CAN
 //! ([`MoeLayer::fp8_grouped_tc_w8a8_on`]: the tensor-core path is on, the three W8A8 kernels
 //! resolved and the shapes fit). Its output differs from the W8A16 kernels' by the activation
 //! rounding; a row's bits still do not depend on the other rows.
