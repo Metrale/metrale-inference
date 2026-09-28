@@ -61,6 +61,10 @@ of 20, and `sum_wall_s` <= 700 is satisfied by 5 iterations. Neither is the gate
 threshold, it does not relax one -- the recorded runs all carry iterations 10."""
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 gpu_memory_utilization = "0.85"
 
@@ -205,6 +209,10 @@ the next receipt that beats them (a better SINGLE prompt is measurement-definiti
 and gets its own campaign)."""
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 gpu_memory_utilization = "0.85"
 ssm_cache_slots = "256"
@@ -268,6 +276,10 @@ these committed values are the only ABSOLUTE bound and must be re-cut whenever t
 materially faster."""
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 gpu_memory_utilization = "0.85"
 
@@ -314,6 +326,12 @@ note = """\
 Cold-TTFT guard for the NVFP4 MoE checkpoint — the path fast-MoE default-on \
 actually changes, and which no gate exercised before this entry. Ceilings = \
 dgx1 baseline 442.3 ms median x +3%, 1314.3 ms p90 x +5%."""
+
+[benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 [benchmarks.metrics.median_ms]
 max = 455.57
@@ -363,6 +381,10 @@ previous one at +3%/+5%; these committed values are the only ABSOLUTE bound and 
 whenever the path gets materially faster."""
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 gpu_memory_utilization = "0.85"
 
@@ -386,6 +408,12 @@ status = "measured"
 note = """\
 Warm-TTFT guard for the NVFP4 MoE checkpoint. Ceilings = dgx1 baseline \
 439.6 ms median x +3%, 1291.1 ms p90 x +5%."""
+
+[benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 [benchmarks.metrics.median_ms]
 max = 452.79
@@ -418,6 +446,10 @@ box with no baseline yet, so each box is seeded with two runs before its first c
 """
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -464,6 +496,10 @@ box with no baseline yet, so each box is seeded with two runs before its first c
 """
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -575,6 +611,10 @@ review it deserves.\
 """
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 # 2026-09-25: 2048 holds isl 128 plus the chat template and osl 1024.
 
 
@@ -811,6 +851,10 @@ from replayed history anyway.\
 """
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 gpu_memory_utilization = "0.85"
 disable_thinking = "true"
@@ -993,6 +1037,10 @@ px before the resolver fix as well; clamped to the encoder's 16384-patch ceiling
 the boot log says so rather than silently ignoring the checkpoint."""
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 gpu_memory_utilization = "0.85"
 
@@ -1059,6 +1107,10 @@ correct on one geometry. `default = false`: qwen3.8-27b owns this gate's default
 serve."""
 
 [benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 gpu_memory_utilization = "0.85"
 
