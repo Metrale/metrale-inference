@@ -31,6 +31,7 @@
     "1c77e1d8e9": "Metrale Engine legs (rounds 7-11). Adds explicit presence_penalty/frequency_penalty = 0.0.",
     "1f10d4887b": "The 2026-08-18 C=2 hardening pair (c2_metrale_dgx2_20260818.json and c2_vllm_mtp_dgx2_20260818.json). Both raw files carry this one driver sha, which is what makes them a pair: same harness revision, same day, same box.",
   "664302439b": "The ENERGY leg (vllm-mtp-energy), 2026-09-21. harness_w56_conc_ladder.py -- the w55 harness plus power_window.py, which is the half that records gpu_rail_energy_j; w55 has no power sampling at all, which is why the throughput-only legs above carry no joules. This is the sha256 of the copy committed at bench/ladder38/harness_w56_conc_ladder.py and asserted equal to the raw file's driver_sha256 at the time it was added, so the two are checkable against each other -- and gen-ladder.mjs re-hashes that file at every build as harness_repo_sha256.",
+    "55a5963e4b": "The ENERGY leg's wide rungs (vllm-mtp-energy C=32/64/128), 2026-09-28: the same harness_w56_conc_ladder.py at a later revision, the copy committed at bench/ladder38/harness_w56_conc_ladder.py since 7cd54d45. Each raw file's driver_sha256 equals it (the harness hashes itself at startup). It differs from 664302439b in comments and in detecting in-band SSE error frames and truncated streams (both turn a would-be silent success into a counted error), not in the request body; power_window.py, which does the integral, differs only in comments.",
     "equivalence": "The only difference is those two keys. vLLM already defaults both to 0.0, so its sampling is byte-identical either way; the keys exist to stop Metrale Engine's non_thinking preset injecting presence_penalty=1.5. Both engines therefore ran identical sampling."
   },
 
@@ -129,21 +130,17 @@
     "temperature": 0.0,
     "seed": 42
    },
-   "instrument_note": "Measured 2026-09-21 on spark-43fa to give the Cost tab a vLLM leg that carries JOULES; the existing vllm-mtp legs are throughput-only. Same engine (vLLM 0.27.1), same checkpoint, same instrument as vllm-mtp -- the CLI above is that leg's, verbatim. Throughput landed at 94-98% of it on every rung (18.99/36.26/68.21/117.20/189.70 vs 19.72/37.11/71.61/124.48/197.03), a different day and box, which is the agreement that makes the energy quotable rather than the point of the run. prompt_mode essay: the pinned harness defaults to it (harness_w56_conc_ladder.py, PROMPT_MODE = os.environ.get(\"W55_PROMPT_MODE\", \"essay\")) and the run's env did not set it. Driver 664302439b is harness_w56, the energy harness; w55 is the one without power_window. parity is `matched` because the instrument IS matched -- every axis equals vllm-mtp's. It is not the published ratio's reference all the same: ladder-build.mjs picks that from the FULL-LADDER baselines only, and this leg is C=1..16. `unmatched` would have been the wrong label twice over: it means 'differs on these named axes' and requires parity_deltas, which this leg has none of.",
-   "unmeasured": {
-    "rungs": [
-     32,
-     64,
-     128
-    ],
-    "reason": "not driven -- vLLM+MTP has taken a GB10 down at the widest rungs (powercycles recorded), so the serve keeps the published cap of 128 while only the rungs the Metrale Engine gate's ladder shares with it were driven"
-   },
+   "instrument_note": "Measured 2026-09-21 on spark-43fa to give the Cost tab a vLLM leg that carries JOULES; the existing vllm-mtp legs are throughput-only. Same engine (vLLM 0.27.1), same checkpoint, same instrument as vllm-mtp -- the CLI above is that leg's, verbatim. Throughput landed at 94-98% of it on every rung (18.99/36.26/68.21/117.20/189.70 vs 19.72/37.11/71.61/124.48/197.03), a different day and box, which is the agreement that makes the energy quotable rather than the point of the run. prompt_mode essay: the pinned harness defaults to it (harness_w56_conc_ladder.py, PROMPT_MODE = os.environ.get(\"W55_PROMPT_MODE\", \"essay\")) and the run's env did not set it. Driver 664302439b is harness_w56, the energy harness; w55 is the one without power_window. parity is `matched` because the instrument IS matched -- every axis equals vllm-mtp's. It is not the published ratio's reference all the same: it is scoped `cost`, and a cost-scoped leg never votes in the throughput table, even now that it covers C=1..128 (see wide_note). `unmatched` would have been the wrong label twice over: it means 'differs on these named axes' and requires parity_deltas, which this leg has none of.",
+   "wide_note": "C=32/64/128 measured 2026-09-28 on spark-43fa (dgx2), the box of the C=1..16 rungs, with nothing else on it. They were driven one rung per FRESH container because vLLM+MTP has taken a GB10 down at these widths before: C=32 18:59-19:08, C=64 19:16-19:29, C=128 19:38-20:03 UTC. The command above is verbatim; the only additions were `docker run -d --name vllm-wide-dense-c<C>`. The image was checked before each launch: id 2c211a1273b4, repo digest 0a51ea5b4ae2, label v0.27.1. A stall probe beside the harness watched vLLM's /metrics and host memory; it never fired, and the box stayed up throughout. Zero request errors. Every rep is gpu_rail_trustworthy with 99.7-100% sample coverage and no HW power brake; the GPU die peaked at 80-85 C. Throughput is 95-96% of vllm-mtp at each rung (269.74/347.68/342.20 vs 283.48/361.39/358.57 tok/s), the same agreement the C=1..16 rungs showed. vLLM sized its KV cache at 174,441-176,730 tokens, i.e. 85-86 requests of the 2048-token context, so at C=128 it holds about 111 streams and queues the rest (/metrics read 111 running, 17 waiting). That is vLLM at its published config, not a limit this run imposed. Raw files: vllm_mtp_energy_38_c32.json (sha256 e47cf35eebf557bb4ab8833d116a3abfe77afbb36bece2e676b10be01cb9eace), vllm_mtp_energy_38_c64.json (sha256 1fccdd098c92a090f989e117280e3efedb2546605faebbbbc3602853832b64e1), vllm_mtp_energy_38_c128.json (sha256 f0bbcd444f851d41bf2912f5f73ff25d9ce350d9a127db383e8ccb94608b62e5).",
    "sources": {
     "1": "vllm_mtp_energy_38.json",
     "2": "vllm_mtp_energy_38.json",
     "4": "vllm_mtp_energy_38.json",
     "8": "vllm_mtp_energy_38.json",
-    "16": "vllm_mtp_energy_38.json"
+    "16": "vllm_mtp_energy_38.json",
+    "32": "vllm_mtp_energy_38_c32.json",
+    "64": "vllm_mtp_energy_38_c64.json",
+    "128": "vllm_mtp_energy_38_c128.json"
    },
    "scope": "cost"
   }
