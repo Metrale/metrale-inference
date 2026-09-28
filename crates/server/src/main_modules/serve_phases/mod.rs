@@ -8,6 +8,7 @@
 
 mod build;
 mod config;
+pub(crate) mod fp8_kv_scale_source;
 mod kernel_gate;
 pub(crate) mod kv_cache;
 mod preflight;

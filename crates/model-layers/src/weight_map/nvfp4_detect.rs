@@ -321,7 +321,7 @@ pub(crate) fn load_attention_qwen35(
     gpu: &dyn GpuBackend,
 ) -> Result<AttentionWeights> {
     let p = format!("{layer_prefix}.self_attn");
-    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
     Ok(AttentionWeights {
         q_proj: dense(store, &format!("{p}.q_proj.weight_packed"))?,
         k_proj: dense(store, &format!("{p}.k_proj.weight_packed"))?,

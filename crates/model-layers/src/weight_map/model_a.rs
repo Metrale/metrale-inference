@@ -45,46 +45,79 @@ pub(crate) fn scalar_f32(store: &WeightStore, name: &str, gpu: &dyn GpuBackend) 
     Ok(f32::from_le_bytes(buf))
 }
 
-/// 2026-09-25: Read the FP8 KV-cache scales `{attn_prefix}.k_proj.k_scale` and
-/// `{attn_prefix}.v_proj.v_scale`. Each is 1.0 when absent (debug log) or
-/// unreadable (warning).
-pub fn load_kv_scales(store: &WeightStore, attn_prefix: &str, gpu: &dyn GpuBackend) -> (f32, f32) {
-    let k_key = format!("{attn_prefix}.k_proj.k_scale");
-    let v_key = format!("{attn_prefix}.v_proj.v_scale");
-
-    let k_scale = if store.contains(&k_key) {
-        match scalar_f32(store, &k_key, gpu) {
-            Ok(v) => {
-                tracing::debug!("Loaded k_scale={v:.6} from {k_key}");
-                v
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load {k_key}: {e:#}, using 1.0");
-                1.0
-            }
+/// 2026-09-28: Read a one-element BF16 or FP32 tensor to the host as f32; any
+/// other dtype or element count is an error. Checkpoints ship FP8 KV scales in
+/// both widths (unsloth: BF16 `[1]`; ModelOpt: FP32 `[]`), and an F16 export is
+/// already BF16 in the store.
+pub fn scalar_bf16_or_f32(store: &WeightStore, name: &str, gpu: &dyn GpuBackend) -> Result<f32> {
+    let w = store.get(name)?;
+    ensure!(
+        w.num_elements() == 1,
+        "Expected a scalar for {name}, got shape {:?}",
+        w.shape
+    );
+    match w.dtype {
+        WeightDtype::BF16 => {
+            let mut buf = [0u8; 2];
+            gpu.copy_d2h(w.ptr, &mut buf)?;
+            Ok(f32::from_bits(u32::from(u16::from_le_bytes(buf)) << 16))
         }
-    } else {
-        tracing::debug!("No {k_key} in checkpoint, using k_scale=1.0");
-        1.0
-    };
-
-    let v_scale = if store.contains(&v_key) {
-        match scalar_f32(store, &v_key, gpu) {
-            Ok(v) => {
-                tracing::debug!("Loaded v_scale={v:.6} from {v_key}");
-                v
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load {v_key}: {e:#}, using 1.0");
-                1.0
-            }
+        WeightDtype::FP32 => {
+            let mut buf = [0u8; 4];
+            gpu.copy_d2h(w.ptr, &mut buf)?;
+            Ok(f32::from_le_bytes(buf))
         }
-    } else {
-        tracing::debug!("No {v_key} in checkpoint, using v_scale=1.0");
-        1.0
-    };
+        other => bail!("Expected BF16 or FP32 for {name}, got {other:?}"),
+    }
+}
 
-    (k_scale, v_scale)
+/// 2026-09-28: The checkpoint's FP8 KV-cache scales `(k_scale, v_scale)` for the
+/// attention layer at `attn_prefix`, or `None` when it ships none. The keys come
+/// from `WeightStore::kv_scale_keys`, the resolver serve's census also uses.
+///
+/// Each scale is the dequant multiplier (`amax / 448`): the KV write divides by
+/// it and the FP8 attention kernels multiply by it. A scale that is not a
+/// finite positive number is an error, since the write computes `1 / scale`.
+pub fn load_checkpoint_kv_scales(
+    store: &WeightStore,
+    attn_prefix: &str,
+    gpu: &dyn GpuBackend,
+) -> Result<Option<(f32, f32)>> {
+    let Some(keys) = store.kv_scale_keys(attn_prefix)? else {
+        return Ok(None);
+    };
+    let read = |key: &str| -> Result<f32> {
+        let v = scalar_bf16_or_f32(store, key, gpu)
+            .with_context(|| format!("FP8 KV scale {key} ({:?})", keys.spelling))?;
+        ensure!(
+            v.is_finite() && v > 0.0,
+            "FP8 KV scale {key} is {v}; it must be finite and positive"
+        );
+        Ok(v)
+    };
+    let (k, v) = (read(&keys.k)?, read(&keys.v)?);
+    tracing::debug!(
+        "Loaded k_scale={k:.6} from {}, v_scale={v:.6} from {}",
+        keys.k,
+        keys.v
+    );
+    Ok(Some((k, v)))
+}
+
+/// 2026-09-28: [`load_checkpoint_kv_scales`], with `(1.0, 1.0)` for a layer the
+/// checkpoint ships no scales for. Serve logs how many layers that is
+/// (`resolve_kv_cache_config`), from the same resolver.
+pub fn load_kv_scales(
+    store: &WeightStore,
+    attn_prefix: &str,
+    gpu: &dyn GpuBackend,
+) -> Result<(f32, f32)> {
+    Ok(
+        load_checkpoint_kv_scales(store, attn_prefix, gpu)?.unwrap_or_else(|| {
+            tracing::debug!("No FP8 KV scales for {attn_prefix} in the checkpoint, using 1.0");
+            (1.0, 1.0)
+        }),
+    )
 }
 
 /// 2026-09-25: Build a `QuantizedWeight` from ModelOpt NVFP4 keys: `weight`,
@@ -306,3 +339,7 @@ pub fn dense_f32_as_bf16(
     gpu.copy_h2d(&bf16_buf, ptr)?;
     Ok(DenseWeight { weight: ptr })
 }
+
+#[cfg(test)]
+#[path = "kv_scales_tests.rs"]
+mod kv_scales_tests;

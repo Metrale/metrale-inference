@@ -389,7 +389,7 @@ fn load_attention_layer(
     offset_norm_weights_plus_one(&q_norm, config.head_dim, gpu)?;
     offset_norm_weights_plus_one(&k_norm, config.head_dim, gpu)?;
 
-    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
 
     let attn = AttentionWeights {
         q_proj,

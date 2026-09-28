@@ -166,7 +166,7 @@ pub(crate) fn load_model(
         &args,
         &config,
         ptx_set.behavior.default_kv_dtype,
-        store.fp8_kv_scale_count(),
+        &store.kv_scale_census()?,
     )?;
 
     load_phases::validate_kv_kernels(gpu.as_ref(), kv_dtype, &layer_dtypes, &config)?;
