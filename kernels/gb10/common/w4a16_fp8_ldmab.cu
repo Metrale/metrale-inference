@@ -152,22 +152,29 @@ extern "C" __global__ void __launch_bounds__(LDMAB_THREADS, 1) fp8_fp8_gemm_ldma
     }
     asm volatile("cp.async.wait_group 0;\n" ::);
 
+    // 2026-09-28: The BF16 tile goes through shared memory (the free pipeline buffers) so every thread writes whole
+    // 16-byte row segments; the values and their rounding are those of a direct per-lane store.
+    __syncthreads();
     const int g = lane >> 2, t4 = lane & 3;
+    constexpr int SP = LDMAB_BN + 8;
+    __nv_bfloat16* so = reinterpret_cast<__nv_bfloat16*>(ldmab_smem);
 #pragma unroll
-    for (int mt = 0; mt < MT; mt++) {
+    for (int mt = 0; mt < MT; mt++)
 #pragma unroll
         for (int nt = 0; nt < NT; nt++) {
-            const unsigned int c0 = n0 + wn * LDMAB_WN + nt * 8 + t4 * 2;
-            const unsigned int r0 = m0 + wm * LDMAB_WM + mt * 16 + g, r1 = r0 + 8;
-            if (c0 + 1 < N && (N & 1u) == 0u) {
-                if (r0 < M) *(__nv_bfloat162*)&C[(unsigned long long)r0 * N + c0] = __floats2bfloat162_rn(acc[mt][nt][0], acc[mt][nt][1]);
-                if (r1 < M) *(__nv_bfloat162*)&C[(unsigned long long)r1 * N + c0] = __floats2bfloat162_rn(acc[mt][nt][2], acc[mt][nt][3]);
-            } else {
-                if (r0 < M && c0 < N) C[(unsigned long long)r0 * N + c0] = __float2bfloat16(acc[mt][nt][0]);
-                if (r0 < M && c0 + 1 < N) C[(unsigned long long)r0 * N + c0 + 1] = __float2bfloat16(acc[mt][nt][1]);
-                if (r1 < M && c0 < N) C[(unsigned long long)r1 * N + c0] = __float2bfloat16(acc[mt][nt][2]);
-                if (r1 < M && c0 + 1 < N) C[(unsigned long long)r1 * N + c0 + 1] = __float2bfloat16(acc[mt][nt][3]);
-            }
+            const int cl = wn * LDMAB_WN + nt * 8 + t4 * 2, rl = wm * LDMAB_WM + mt * 16 + g;
+            *(__nv_bfloat162*)&so[rl * SP + cl] = __floats2bfloat162_rn(acc[mt][nt][0], acc[mt][nt][1]);
+            *(__nv_bfloat162*)&so[(rl + 8) * SP + cl] = __floats2bfloat162_rn(acc[mt][nt][2], acc[mt][nt][3]);
+        }
+    __syncthreads();
+    for (int c = tid; c < LDMAB_BM * (LDMAB_BN / 8); c += LDMAB_THREADS) {
+        const int rl = c / (LDMAB_BN / 8), cc = (c % (LDMAB_BN / 8)) * 8;
+        const unsigned int r = m0 + rl, col = n0 + cc;
+        if (r >= M) continue;
+        if (col + 8 <= N && (N & 7u) == 0u) {
+            *(uint4*)&C[(unsigned long long)r * N + col] = *(const uint4*)&so[rl * SP + cc];
+        } else {
+            for (int e = 0; e < 8 && col + e < N; e++) C[(unsigned long long)r * N + col + e] = so[rl * SP + cc + e];
         }
     }
 }

@@ -375,6 +375,7 @@ extern "C" __global__ void __launch_bounds__(NVP_THREADS, 1) metrale_nvfp4_gemm_
         for (int j = 0; j < NT; j++) sum[i][j][0] = sum[i][j][1] = sum[i][j][2] = sum[i][j][3] = 0.f;
 
     auto load = [&](int kt, int st) {
+#pragma unroll
         for (int c = tid; c < NVP_BCH * 9; c += NVP_THREADS) {
             const int r = c / 9, q = c % 9, ch = ch0 + r;
             const bool ok = ch < N;
@@ -382,6 +383,7 @@ extern "C" __global__ void __launch_bounds__(NVP_THREADS, 1) metrale_nvfp4_gemm_
             const uint8_t* src = q < 8 ? row + (size_t)kt * 128 + q * 16 : row + (size_t)bpr * 32 + (size_t)kt * 16;
             nvp_cp16(sX + (st * NVP_BCH + r) * NVP_ROWB + (q < 8 ? q * 16 : 128), src, ok);
         }
+#pragma unroll
         for (int c = tid; c < NVP_BTK * 9; c += NVP_THREADS) {
             const int r = c / 9, q = c % 9, tk = tk0 + r;
             const bool ok = tk < M;
@@ -441,22 +443,33 @@ extern "C" __global__ void __launch_bounds__(NVP_THREADS, 1) metrale_nvfp4_gemm_
     }
     asm volatile("cp.async.wait_group 0;\n" ::);
 
+    // 2026-09-28: The BF16 tile goes through shared memory (the free pipeline buffers) so every warp writes whole
+    // 16-byte row segments; the values and their rounding are those of a direct per-lane store.
+    __syncthreads();
     const int g = lane >> 2, t4 = lane & 3;
+    constexpr int SP = NVP_BCH + 8;
+    __nv_bfloat16* so = reinterpret_cast<__nv_bfloat16*>(nvp_smem);
 #pragma unroll
     for (int mt = 0; mt < MT; mt++)
 #pragma unroll
         for (int nt = 0; nt < NT; nt++) {
-            const int ch = ch0 + wc * NVP_WCH + mt * 16 + g;
-            const int tk = tk0 + wt * NVP_WTK + nt * 8 + t4 * 2;
-            if (tk < M) {
-                if (ch < N) D[(size_t)tk * N + ch] = __float2bfloat16(sum[mt][nt][0]);
-                if (ch + 8 < N) D[(size_t)tk * N + ch + 8] = __float2bfloat16(sum[mt][nt][2]);
-            }
-            if (tk + 1 < M) {
-                if (ch < N) D[(size_t)(tk + 1) * N + ch] = __float2bfloat16(sum[mt][nt][1]);
-                if (ch + 8 < N) D[(size_t)(tk + 1) * N + ch + 8] = __float2bfloat16(sum[mt][nt][3]);
-            }
+            const int cl = wc * NVP_WCH + mt * 16 + g, tl = wt * NVP_WTK + nt * 8 + t4 * 2;
+            so[tl * SP + cl] = __float2bfloat16(sum[mt][nt][0]);
+            so[tl * SP + cl + 8] = __float2bfloat16(sum[mt][nt][2]);
+            so[(tl + 1) * SP + cl] = __float2bfloat16(sum[mt][nt][1]);
+            so[(tl + 1) * SP + cl + 8] = __float2bfloat16(sum[mt][nt][3]);
         }
+    __syncthreads();
+    for (int c = tid; c < NVP_BTK * (NVP_BCH / 8); c += NVP_THREADS) {
+        const int tl = c / (NVP_BCH / 8), cc = (c % (NVP_BCH / 8)) * 8;
+        const int tk = tk0 + tl, ch = ch0 + cc;
+        if (tk >= M) continue;
+        if (ch + 8 <= N && (N & 7) == 0) {
+            *(uint4*)&D[(size_t)tk * N + ch] = *(const uint4*)&so[tl * SP + cc];
+        } else {
+            for (int e = 0; e < 8 && ch + e < N; e++) D[(size_t)tk * N + ch + e] = so[tl * SP + cc + e];
+        }
+    }
 }
 
 #endif // Metrale Engine optional module
