@@ -131,4 +131,4 @@ __device__ __forceinline__ void mma_gemv(const typename F::Args& a, __nv_bfloat1
     }
 }
 
-}  // namespace wxay
+}

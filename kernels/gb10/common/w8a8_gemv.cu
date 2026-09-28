@@ -154,7 +154,7 @@ struct W8A8 {
     }
 };
 
-}  // namespace w8a8
+}
 
 #define W8A8_TPL(NAME, BLK, LAZY, MB, KU)                                                                          \
     extern "C" __global__ __launch_bounds__(256) void NAME(                                                        \

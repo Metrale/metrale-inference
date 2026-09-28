@@ -37,7 +37,7 @@ namespace w8a8q {
 
 constexpr int QT = 256;
 constexpr float E4M3_MAX = 448.0f;
-constexpr int REGS = 9;  // uint4 (8 values) per thread held in registers: K <= QT * 8 * REGS = 18432 in one read.
+constexpr int REGS = 9;  // 2026-09-28: uint4 (8 values) per thread held in registers: K <= QT * 8 * REGS = 18432 in one read.
 
 __device__ __forceinline__ uint32_t enc2(float a, float b) {
     a = fmaxf(fminf(a, E4M3_MAX), -E4M3_MAX);
@@ -147,7 +147,7 @@ __device__ __forceinline__ void quant_g128(const In& in, uint2* q, float* scale,
     }
 }
 
-}  // namespace w8a8q
+}
 
 #define W8A8Q_PLAIN(NAME, BODY)                                                                                   \
     extern "C" __global__ void __launch_bounds__(w8a8q::QT)                                                       \
