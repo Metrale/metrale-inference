@@ -117,6 +117,11 @@ pub(super) fn closure_attestation(
         return "{}".into();
     };
     let mut map = serde_json::Map::new();
+    // 2026-09-28: The circuit TOMLs are read here and nowhere else in the build, so a file
+    // added under kernels/circuits/ has to rerun the script for its hash to be attested.
+    for dir in metrale_closure::circuit_dirs(workspace_root) {
+        println!("cargo:rerun-if-changed={}", dir.display());
+    }
     for target in targets {
         let sources = target.layout.sources();
         if sources.is_empty() {
@@ -132,7 +137,12 @@ pub(super) fn closure_attestation(
         ];
         configs.extend(target.layout.configs());
         configs.push(target.layout.model_dir.join("MODEL.toml"));
+        // 2026-09-28: The circuits and FUSIONS.toml choose which kernel runs for which op.
+        configs.extend(metrale_closure::circuit_configs(workspace_root, &target.hw));
         let configs: Vec<PathBuf> = configs.into_iter().filter(|p| p.is_file()).collect();
+        for c in &configs {
+            println!("cargo:rerun-if-changed={}", c.display());
+        }
 
         let inputs = metrale_closure::ClosureInputs {
             sources,

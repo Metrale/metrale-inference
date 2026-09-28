@@ -404,3 +404,33 @@ fn spans_are_reported_per_node_level() {
         .into()
     );
 }
+
+/// 2026-09-28: Every target hashes the circuit files, so a change under `kernels/circuits/`
+/// affects all of them, and the real tree's configs list them.
+#[test]
+fn a_circuit_change_affects_every_target_and_is_a_config() {
+    let root = fixture("affected-circuits");
+    let all: BTreeSet<Target> = walk(&root).into_iter().collect();
+    assert_eq!(all.len(), 2);
+    let hit = affected(&root, &["kernels/circuits/qwen3_5.toml".to_string()]);
+    assert_eq!(hit, all);
+    assert!(affected(&root, &["kernels/circuitsx/qwen3_5.toml".to_string()]).is_empty());
+
+    let real = repo_root();
+    let target = Target {
+        hardware: "gb10".into(),
+        model: "qwen3.6-35b-a3b".into(),
+        quant: "nvfp4".into(),
+    };
+    let configs = configs(&real, &target);
+    for want in [
+        "kernels/circuits/qwen3_6_moe.toml",
+        "kernels/circuits/INSTANCES.toml",
+        "kernels/gb10/common/FUSIONS.toml",
+    ] {
+        assert!(
+            configs.contains(&real.join(want)),
+            "{want} is not hashed: {configs:?}"
+        );
+    }
+}
