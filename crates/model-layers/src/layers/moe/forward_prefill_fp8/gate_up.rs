@@ -16,6 +16,7 @@ impl MoeLayer {
     pub(super) fn fp8_prefill_gate_up_w8a8(
         &self,
         input: DevicePtr,
+        input_q: Option<(DevicePtr, DevicePtr)>,
         gp: &Fp8ExpertPtrTable,
         up: &Fp8ExpertPtrTable,
         expert_gate_out: DevicePtr,
@@ -40,20 +41,23 @@ impl MoeLayer {
                 mprof_step!(*mt, ctx, stream, n, $label)
             };
         }
-        // 2026-09-25: One quantised input serves both gate and up.
+        // 2026-09-25: One quantised input serves both gate and up. 2026-09-28: `input_q` is
+        // the shared expert's quantization of the same input, already on this stream.
         let m = num_tokens;
-        let input_fp8 = fp8_scratch.activation;
-        let input_a_scale = fp8_scratch.scales;
-        ops::per_token_group_quant_fp8(
-            ctx.gpu,
-            self.per_token_group_quant_fp8_k,
-            input,
-            input_fp8,
-            input_a_scale,
-            m as u32,
-            h,
-            stream,
-        )?;
+        let (input_fp8, input_a_scale) =
+            input_q.unwrap_or((fp8_scratch.activation, fp8_scratch.scales));
+        if input_q.is_none() {
+            ops::per_token_group_quant_fp8(
+                ctx.gpu,
+                self.per_token_group_quant_fp8_k,
+                input,
+                input_fp8,
+                input_a_scale,
+                m as u32,
+                h,
+                stream,
+            )?;
+        }
         if self.try_adaptive_fp8(
             input_fp8,
             input_a_scale,

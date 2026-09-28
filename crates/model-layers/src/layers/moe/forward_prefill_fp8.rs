@@ -122,6 +122,17 @@ impl MoeLayer {
                 ctx,
                 stream,
             )?;
+        // 2026-09-25: W8A8 when `fp8_blockscaled_prefill` and its kernels
+        // resolved: activations quantised to FP8 per row and 128-column group
+        // with FP32 scales.
+        let force_w8a8 = ctx.dispatch.fp8_blockscaled_prefill
+            && self.moe_w8a8_grouped_gemm_k.0 != 0
+            && self.per_token_group_quant_fp8_k.available();
+        // 2026-09-28: When both the shared and the routed experts run W8A8, the input is
+        // quantized once, into a slot the shared expert's later writes do not touch.
+        let input_q = (!bf16_shared && has_shared && force_w8a8_sh && force_w8a8)
+            .then(|| shared::input_q_slot(&fp8_scratch, n, h, shared_inter))
+            .flatten();
         // 2026-09-25: Held across the router so shared W8A8 can leave the main stream.
         // Dropped after sort, before routed quant reuses `fp8_scratch`.
         let mut shared_join: Option<super::adaptive_fp8::SideJoin<'_>> = None;
@@ -137,6 +148,7 @@ impl MoeLayer {
                 };
             self.fp8_prefill_shared_w8a8(
                 input,
+                input_q,
                 sh,
                 n,
                 h,
@@ -299,17 +311,11 @@ impl MoeLayer {
                 stream,
             )?;
         }
-        // 2026-09-25: W8A8 when `fp8_blockscaled_prefill` and its kernels
-        // resolved: activations quantised to FP8 per row and 128-column group
-        // with FP32 scales.
-        let force_w8a8 = ctx.dispatch.fp8_blockscaled_prefill
-            && self.moe_w8a8_grouped_gemm_k.0 != 0
-            && self.per_token_group_quant_fp8_k.available();
-
         let mut down_in = None;
         if force_w8a8 && max_m_tiles > 0 {
             down_in = self.fp8_prefill_gate_up_w8a8(
                 input,
+                input_q,
                 gp,
                 up,
                 expert_gate_out,
