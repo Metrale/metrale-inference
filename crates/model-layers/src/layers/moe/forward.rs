@@ -28,8 +28,8 @@ impl MoeLayer {
         if !single_seq_decode {
             self.reject_decode_lora(ctx, "forward")?;
         }
-        // 2026-09-27: `--moe-nvfp4-experts`: the grouped NVFP4 decode, whose rows do not
-        // depend on how many share the call.
+        // 2026-09-27: An NVFP4 `--expert-quantization` tier: the grouped decode, whose rows do
+        // not depend on how many share the call.
         if self.nvfp4_grouped_decode_ok(1, ctx) {
             return self
                 .forward_nvfp4_grouped_decode(input, 1, ctx, stream)

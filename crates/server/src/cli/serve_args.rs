@@ -6,7 +6,10 @@
 //! Invariants: none beyond the types. The `///` text on `ServeArgs` and its fields is
 //! the `--help` output and carries no date.
 use clap::Parser;
+use metrale_model_layers::layers::ExpertQuantization;
 use std::path::PathBuf;
+
+use super::flag_values::ExpertQuantizationArg;
 
 mod scheduling;
 mod service;
@@ -265,26 +268,26 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = false)]
     pub w4a4_downcast_wide: bool,
 
-    /// Add an NVFP4 copy of a native-FP8 checkpoint's routed MoE experts at load, and run MoE
-    /// decode through the grouped NVFP4 kernels (default: false). This lowers routed-expert
-    /// precision from FP8 to 4 bits, so the model's answers change and accuracy can move.
+    /// Precision of a native-FP8 checkpoint's routed MoE experts in decode (default: fp8).
     ///
-    /// The routed experts are requantized to NVFP4 (E2M1 with E4M3 block scales of 16, each
-    /// scale chosen by squared error) when the model loads, which halves the routed-expert bytes
-    /// a decode step reads. Every MoE decode of 1 to 64 rows (single-sequence decode,
-    /// multi-sequence decode, MTP verify) then runs the grouped NVFP4 W4A16 kernels, whose
-    /// output for a row does not depend on how many rows share the launch; the shared expert
-    /// and prefill keep the FP8 weights. Off unless a recipe asks for it. No environment
-    /// fallback.
-    //
-    // 2026-09-27: Measured on Qwen3.6-35B-A3B-FP8 with canonical tiers, BFCL echolp shard 1/4
-    // (N=253), overall/normalized: FP8 experts 85.38/87.72; this flag 86.56/88.86; the first
-    // version of this flag (NVFP4 shared expert and prefill, absmax scales) 83.40/83.21.
-    // agentic-webserver with this flag: 10/10 webserver_ok and followed_directions, but 168
-    // turns and 774 s summed wall against 128 turns and 545 s with FP8 experts (the gate's
-    // ceiling is 700 s).
-    #[arg(long, default_value_t = false)]
-    pub moe_nvfp4_experts: bool,
+    /// `fp8` decodes the checkpoint's FP8 experts: most stable, still fast. The NVFP4 tiers add a
+    /// 4-bit NVFP4 copy of routed-expert projections at load (E2M1 with E4M3 block scales of 16,
+    /// each scale chosen by squared error) and run every MoE decode of 1 to 64 rows through
+    /// grouped kernels whose output for a row does not depend on how many rows share the
+    /// launch; the shared expert and prefill keep the FP8 weights under both. `nvfp4-gate-up`
+    /// lowers the routed gate and up projections only (the stable speed lever); `nvfp4` lowers
+    /// every routed projection (dangerous but fast). They lower expert precision from FP8 to 4
+    /// bits, so the model's answers change. No environment fallback.
+    ///
+    /// Measured on GB10, Qwen3.6-35B-A3B-FP8, canonical tiers: BFCL echolp full draw
+    /// (N=1004) overall/normalized fp8 84.96/86.03, nvfp4-gate-up 84.86/85.33, nvfp4
+    /// 85.46/86.57; agentic-webserver fp8 pass (535-546 s summed wall), nvfp4-gate-up pass 3/3
+    /// (504-533 s), nvfp4 fails the gate's 700 s ceiling (168 turns, 774 s); C16 tok/s and J/tok
+    /// with `--mtp-gate force`: fp8 315.5/0.227, nvfp4-gate-up 359.6/0.211, nvfp4 383.1/0.201.
+    /// The NVFP4 copies stay resident beside the FP8 experts, so the KV cache shrinks: weights
+    /// before KV fp8 38.4 GB, nvfp4-gate-up 49.6 GB, nvfp4 55.2 GB.
+    #[arg(long, value_enum, default_value_t = ExpertQuantizationArg(ExpertQuantization::Fp8))]
+    pub expert_quantization: ExpertQuantizationArg,
 
     /// Sequential-decode-exact GDN/SSM verify chain, opt-in (default: off).
     ///

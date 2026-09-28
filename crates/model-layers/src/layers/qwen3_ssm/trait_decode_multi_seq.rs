@@ -139,8 +139,8 @@ impl Qwen3SsmLayer {
 
         let normed_base = ctx.buffers.norm_output();
         match n {
-            // 2026-09-27: `--moe-nvfp4-experts` takes the grouped NVFP4 decode at every row
-            // count.
+            // 2026-09-27: An NVFP4 `--expert-quantization` tier takes the grouped decode at
+            // every row count.
             n if self.ffn.nvfp4_grouped_ok(n, ctx) => {
                 self.ffn
                     .forward_nvfp4_grouped(normed_base, n, ctx, stream)?;

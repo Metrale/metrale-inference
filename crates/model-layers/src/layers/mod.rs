@@ -179,8 +179,10 @@ pub fn k64_n64_wins(m: u32, n: u32) -> bool {
 mod moe_grouped_decode;
 pub use moe_grouped_decode::*;
 
-mod moe_nvfp4_experts;
-pub use moe_nvfp4_experts::{moe_nvfp4_experts_enabled, set_moe_nvfp4_experts_from_cli};
+mod expert_quantization;
+pub use expert_quantization::{
+    ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
+};
 
 mod row_tiers;
 pub use row_tiers::{

@@ -67,11 +67,38 @@ pub fn load_ssm_qwen35(
     })
 }
 
+/// 2026-09-27: Which NVFP4 copies `load_moe_qwen35` builds. A projection it does not build is
+/// NULL (`QuantizedWeight::null()`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Nvfp4MoeCopies {
+    /// 2026-09-27: The routed experts' gate and up projections.
+    pub routed_gate_up: bool,
+    /// 2026-09-27: The routed experts' down projections.
+    pub routed_down: bool,
+    /// 2026-09-27: The shared expert.
+    pub shared: bool,
+}
+
+impl Nvfp4MoeCopies {
+    /// 2026-09-27: Every projection.
+    pub const ALL: Self = Self {
+        routed_gate_up: true,
+        routed_down: true,
+        shared: true,
+    };
+    /// 2026-09-27: The shared expert only; every routed expert is `ExpertWeight::null()`.
+    pub const SHARED_ONLY: Self = Self {
+        routed_gate_up: false,
+        routed_down: false,
+        shared: true,
+    };
+}
+
 /// 2026-09-25: Load a Qwen3.5 MoE block (`{layer_prefix}.mlp`) as NVFP4.
 ///
-/// Routed experts that this rank does not hold, and all routed experts when
-/// `skip_routed_experts` is set, are `ExpertWeight::null()`. The shared expert
-/// is always loaded.
+/// 2026-09-27: `copies` names the projections to build; routed experts that this rank does not
+/// hold are `ExpertWeight::null()`. The fused layout builds every projection (it errors on
+/// anything but `Nvfp4MoeCopies::ALL`).
 pub fn load_moe_qwen35(
     store: &WeightStore,
     layer_prefix: &str,
@@ -82,7 +109,7 @@ pub fn load_moe_qwen35(
     absmax_k: metrale_gpu_runtime::gpu::KernelHandle,
     quantize_k: metrale_gpu_runtime::gpu::KernelHandle,
     stream: u64,
-    skip_routed_experts: bool,
+    copies: Nvfp4MoeCopies,
 ) -> Result<MoeWeights> {
     let p = format!("{layer_prefix}.mlp");
 
@@ -106,6 +133,10 @@ pub fn load_moe_qwen35(
     // is first dequantized to BF16 with its `{key}_scale_inv` block scales
     // `[E, sn, sk]`. The dtype decides, not `variant`.
     let is_fused = store.contains(&fused_gate_up_key) && store.contains(&fused_down_key);
+    anyhow::ensure!(
+        !is_fused || copies == Nvfp4MoeCopies::ALL,
+        "load_moe_qwen35: the fused expert layout builds every NVFP4 projection ({copies:?} asked)"
+    );
     let fused_is_fp8 = is_fused
         && store
             .get(&fused_gate_up_key)
@@ -197,48 +228,40 @@ pub fn load_moe_qwen35(
 
     // 2026-09-25: `quantized_any` picks the format per key, so a BF16 expert in
     // an FP8 or NVFP4 checkpoint still loads.
-    let load_expert = |prefix: &str| -> Result<ExpertWeight> {
+    let load_expert = |prefix: &str, gate_up: bool, down: bool| -> Result<ExpertWeight> {
+        let proj = |name: &str, n: usize, k: usize, on: bool| -> Result<QuantizedWeight> {
+            if on {
+                quantized_any(store, &format!("{prefix}.{name}"), n, k, gpu, variant, qctx)
+            } else {
+                Ok(QuantizedWeight::null())
+            }
+        };
         Ok(ExpertWeight {
-            gate_proj: quantized_any(
-                store,
-                &format!("{prefix}.gate_proj"),
-                inter,
-                h,
-                gpu,
-                variant,
-                qctx,
-            )?,
-            up_proj: quantized_any(
-                store,
-                &format!("{prefix}.up_proj"),
-                inter,
-                h,
-                gpu,
-                variant,
-                qctx,
-            )?,
-            down_proj: quantized_any(
-                store,
-                &format!("{prefix}.down_proj"),
-                h,
-                inter,
-                gpu,
-                variant,
-                qctx,
-            )?,
+            gate_proj: proj("gate_proj", inter, h, gate_up)?,
+            up_proj: proj("up_proj", inter, h, gate_up)?,
+            down_proj: proj("down_proj", h, inter, down)?,
         })
     };
 
-    let shared_expert = load_expert(&format!("{p}.shared_expert"))?;
+    let shared_expert = if copies.shared {
+        load_expert(&format!("{p}.shared_expert"), true, true)?
+    } else {
+        ExpertWeight::null()
+    };
+    let routed_any = copies.routed_gate_up || copies.routed_down;
 
     let mut experts = Vec::with_capacity(num_experts);
     for e in 0..num_experts {
-        if skip_routed_experts || !config.is_local_expert(e) {
+        if !routed_any || !config.is_local_expert(e) {
             experts.push(ExpertWeight::null());
         } else if is_fused {
             experts.push(load_expert_fused(e)?);
         } else {
-            experts.push(load_expert(&format!("{p}.experts.{e}"))?);
+            experts.push(load_expert(
+                &format!("{p}.experts.{e}"),
+                copies.routed_gate_up,
+                copies.routed_down,
+            )?);
         }
     }
 

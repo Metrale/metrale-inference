@@ -1,0 +1,47 @@
+recipe_version: "2"
+model: Qwen/Qwen3.6-35B-A3B-FP8
+runtime: metrale
+container: metrale/metrale-inference-gb10:latest
+max_nodes: 1
+
+metadata:
+  description: |
+    Qwen3.6-35B-A3B (qwen3_5_moe) native FP8 on Metrale Engine with an NVFP4 lm-head
+    and the routed experts' gate and up projections decoded as NVFP4
+    (--expert-quantization nvfp4-gate-up): the faster sibling of
+    qwen3.6-35b-a3b-fp8-nvfp4head that still passes agentic-webserver. Every other
+    setting is that recipe's, except gpu_memory_utilization at the GB10 ceiling of 0.85.
+
+    TIER nvfp4-gate-up, "the stable speed lever": the routed gate and up projections
+    are requantized from FP8 to 4-bit NVFP4 at load and decode reads them; the routed
+    down projections, the shared expert and prefill stay FP8. The model's answers
+    change. Measured 2026-09-27 on GB10 with canonical tiers: BFCL echolp full draw
+    (N=1004) overall/normalized 84.86/85.33 (fp8 experts 84.96/86.03); agentic-webserver
+    passed 3/3 (10/10 correct, 125-129 turns, 504-533 s summed wall; fp8: 128 turns,
+    535-546 s); C16 359.6 tok/s at 0.211 J/tok (fp8 315.5, 0.227).
+    Use qwen3.6-35b-a3b-fp8-nvfp4head where accuracy matters most.
+  maintainer: metrale
+  category: agent
+  model_params: 35B
+  model_dtype: fp8
+  quantization: fp8
+  kv_dtype: bf16
+
+defaults:
+  port: 8888
+  host: 0.0.0.0
+  max_model_len: 32768
+  kv_cache_dtype: bf16
+  gpu_memory_utilization: 0.85
+  scheduler: slai
+  speculative: true
+  mtp_quantization: bf16
+  enable_prefix_caching: true
+  # NVFP4 lm-head: 4-bit-packed 248K-vocab projection, in-register E2M1-LUT
+  # dequant. ~1/4 the bf16 head's per-token read. Verified 10/10 on this model;
+  # quality-gate per-model before reuse (see metadata warning).
+  lm_head_dtype: nvfp4
+  kv_high_precision_layers: auto
+  # Expert tier nvfp4-gate-up: routed gate/up NVFP4 in decode, down FP8 (see the
+  # metadata for the measured trade-off).
+  expert_quantization: nvfp4-gate-up

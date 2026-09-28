@@ -64,15 +64,16 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
     if args.w4a4_downcast_wide && !wide {
         tracing::warn!("--w4a4-downcast-wide needs --w4a4-downcast; it did NOT take effect");
     }
-    // 2026-09-27: `--moe-nvfp4-experts` is always published: it has no environment
+    // 2026-09-27: `--expert-quantization` is always published: it has no environment
     // fallback, and the model load reads it (`qwen35/load_layers.rs`).
-    let nvfp4_moe =
-        metrale_model_layers::layers::set_moe_nvfp4_experts_from_cli(plan.moe_nvfp4_experts);
-    if nvfp4_moe != plan.moe_nvfp4_experts {
+    let tier =
+        metrale_model_layers::layers::set_expert_quantization_from_cli(plan.expert_quantization);
+    if tier != plan.expert_quantization {
         tracing::warn!(
-            "moe-nvfp4-experts was already resolved ({nvfp4_moe}); the command line's ({}) \
-             did NOT take effect",
-            plan.moe_nvfp4_experts
+            "expert-quantization was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            tier.name(),
+            plan.expert_quantization.name()
         );
     }
     // 2026-09-26: Published only when given; otherwise

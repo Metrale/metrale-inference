@@ -38,7 +38,7 @@ pub(super) fn build_moe(
         absmax_k,
         quantize_k,
         stream,
-        false,
+        metrale_model_layers::weight_map::Nvfp4MoeCopies::ALL,
     )
     .with_context(|| format!("qwen4_exp: MoE block at {lp}"))?;
 
