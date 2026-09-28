@@ -43,7 +43,10 @@ fn golden_plans_match() {
 /// moved (a rule or the policy changed, and this plan did not).
 fn describe(name: &str, on_disk: &str, want: &str) -> String {
     let body = |t: &str| -> Vec<String> {
-        t.lines().filter(|l| !l.starts_with("digest: ")).map(str::to_string).collect()
+        t.lines()
+            .filter(|l| !l.starts_with("digest: "))
+            .map(str::to_string)
+            .collect()
     };
     let (a, b) = (body(on_disk), body(want));
     match (0..a.len().max(b.len())).find(|&i| a.get(i) != b.get(i)) {

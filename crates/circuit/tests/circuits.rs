@@ -312,3 +312,31 @@ fn every_cited_path_exists_and_holds_the_cited_line() {
         "only {checked} citations parsed; the cite parser is not seeing them"
     );
 }
+
+#[test]
+fn the_routing_audit_lists_every_rule_with_its_class_and_citation() {
+    let audit = common::read("kernels/circuits/ROUTING-AUDIT.md");
+    let rules = common::load(&common::instances()[0]).rules;
+    for r in &rules {
+        let class = match &r.numerics {
+            Numerics::Differs { lever } => format!("differs ({lever})"),
+            other => other.class().to_string(),
+        };
+        let row = format!("| `{}` | {class} | {} |", r.id, r.cite);
+        assert!(
+            audit.contains(&row),
+            "ROUTING-AUDIT.md lacks, or has a stale row for:\n{row}"
+        );
+    }
+    let listed = audit
+        .lines()
+        .skip_while(|l| !l.starts_with("| Rule | Numerics |"))
+        .skip(2)
+        .take_while(|l| l.starts_with('|'))
+        .count();
+    assert_eq!(
+        listed,
+        rules.len(),
+        "the audit lists a rule FUSIONS.toml does not have"
+    );
+}

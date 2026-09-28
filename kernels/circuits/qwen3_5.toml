@@ -15,7 +15,7 @@
 
 schema = 1
 arch = "qwen3_5"
-description = "Dense hybrid: 3x GatedDeltaNet + 1x gated full attention, SwiGLU FFN, MTP draft head"
+description = "Dense hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, SwiGLU FFN, MTP draft head"
 layer_module = "model.language_model.layers.{i}"
 draft_module = "mtp.layers.0"
 dims = [
