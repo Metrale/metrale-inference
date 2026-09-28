@@ -93,8 +93,18 @@ struct PagedKv {
     const int* block_table;
     unsigned block_size, num_kv_heads;
     __device__ __forceinline__ unsigned long long row(unsigned pos, unsigned kvh) const {
-        const unsigned long long page = (unsigned long long)(unsigned)block_table[pos / block_size];
-        return (page * block_size + pos % block_size) * num_kv_heads * HD + (unsigned long long)kvh * HD;
+        // 2026-09-28: A power-of-two block size (the served one) takes a shift and a mask instead of a runtime
+        // divide and modulo, which cost ~4% of the kernel at 32k context; any other size divides.
+        unsigned blk, in_blk;
+        if ((block_size & (block_size - 1)) == 0) {
+            blk = pos >> (__ffs(block_size) - 1);
+            in_blk = pos & (block_size - 1);
+        } else {
+            blk = pos / block_size;
+            in_blk = pos % block_size;
+        }
+        const unsigned long long page = (unsigned long long)(unsigned)block_table[blk];
+        return (page * block_size + in_blk) * num_kv_heads * HD + (unsigned long long)kvh * HD;
     }
 };
 struct ContigKv {
