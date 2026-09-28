@@ -17,7 +17,7 @@
 //! - A refused pick is the parent's handle, block size and shared memory,
 //!   unchanged.
 
-use metrale_gpu_runtime::gpu::KernelHandle;
+use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
 /// 2026-09-25: Compile-time tile of both twins: `GDNH_K_DIM == GDNH_V_DIM` in
 /// `kernels/hopper/common/gdn_prefill_hopper.cuh`.
@@ -180,6 +180,33 @@ pub(crate) fn gdn_hopper_remnants(
     gdn_hopper_remnant_log("recompute_wu", &wu, requested);
     gdn_hopper_remnant_log("chunk_fwd_o", &fo, requested);
     (wu, fo)
+}
+
+/// 2026-09-28: Kernel 3's pick with `gated_delta_rule_chunk_fwd_o_mma8`
+/// (`kernels/gb10/common/gdn_chunk_fwd_o_mma8.cu`) in place of the parent when the parent
+/// was picked, the head dims are 128, the backend carries the module and
+/// `METRALE_NO_GDN_FWD_O_MMA8` is absent. Same arguments, grid, block and shared memory;
+/// the output is bit-identical (per (token, column) the parent's MMA chains, decay and
+/// sequential sum), 2.5x faster on GB10. Memoized in the backend's `OpCache`.
+pub(crate) fn gdn_fwd_o_mma8(
+    gpu: &dyn GpuBackend,
+    fo: RemnantPick,
+    parent: KernelHandle,
+    k_dim: u32,
+    v_dim: u32,
+) -> anyhow::Result<RemnantPick> {
+    const MODULE: &str = "gdn_chunk_fwd_o_mma8";
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let off = *OFF.get_or_init(|| std::env::var_os("METRALE_NO_GDN_FWD_O_MMA8").is_some());
+    if off || fo.kernel.0 != parent.0 || k_dim != 128 || v_dim != 128 || !gpu.has_module(MODULE) {
+        return Ok(fo);
+    }
+    Ok(RemnantPick {
+        kernel: gpu
+            .op_cache()
+            .kernel(gpu, MODULE, "gated_delta_rule_chunk_fwd_o_mma8")?,
+        ..fo
+    })
 }
 
 /// 2026-09-25: `METRALE_NO_GDN_PREFILL_TC_REMNANTS=1` pins both remnants to

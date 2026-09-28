@@ -115,7 +115,7 @@ re-running them on your own hardware, and the vLLM side too.
   - [The single-stream decode floor](#the-single-stream-decode-floor)
   - [Verify the signed records](#verify-the-signed-records)
   - [The vLLM baseline on the same box](#the-vllm-baseline-on-the-same-box)
-  - [Advanced: the full 13-gate certification](#advanced-the-full-13-gate-certification)
+  - [Advanced: the full 17-gate certification](#advanced-the-full-17-gate-certification)
 - <img src="docs/readme/icons/layers.svg" width="16" height="16" alt="Layers icon"> [Architecture at a glance](#architecture-at-a-glance)
 - <img src="docs/readme/icons/shield.svg" width="16" height="16" alt="Shield icon"> [Accuracy and correctness gates](#accuracy-and-correctness-gates)
 - <img src="docs/readme/icons/lock.svg" width="16" height="16" alt="Lock icon"> [Security](#security)
@@ -527,18 +527,25 @@ requires MTP K=4; the gate serves `num_drafts=1`), so the manifest itself
 scores no pair; the ratios read a gate record against the one-shot, rung by
 rung.
 
-`--moe-nvfp4-experts` is an opt-in and not part of the certified
-configuration. It adds an NVFP4 copy of the routed experts at load and
-decodes with it, so a decode step reads half the routed-expert bytes, and
-the model's answers change. Its help text in
+`--expert-quantization` picks the precision the routed MoE experts decode
+at; only its default, `fp8`, is part of the certified configuration. The two
+NVFP4 tiers add a 4-bit copy of routed-expert projections at load and decode
+with it, so a decode step reads fewer expert bytes, and the model's answers
+change: `nvfp4-gate-up` lowers the gate and up projections (down, the shared
+expert and prefill stay FP8), `nvfp4` lowers every routed projection. The
+flag's help text in
 [`crates/server/src/cli/serve_args.rs`](crates/server/src/cli/serve_args.rs)
-and the recipe
-[`recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-nvfp4experts.yaml`](recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-nvfp4experts.yaml)
-state what was measured (2026-09-27, GB10, canonical tiers): on one BFCL
-echolp shard (N=253), overall/normalized 86.56/88.86 against 85.38/87.72
-with FP8 experts; `agentic-webserver` passed 10/10 but took 168 turns and
-774 s of summed wall against 128 turns and 545 s, over that gate's 700 s
-ceiling. No gate record measures it, so this README gives no speed for it.
+and the recipes
+[`recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4-gate-up.yaml`](recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4-gate-up.yaml)
+and
+[`recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4.yaml`](recipes/qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4.yaml)
+state what was measured (2026-09-27, GB10, canonical tiers). On the BFCL
+echolp full draw (N=1004), overall/normalized: `fp8` 84.96/86.03,
+`nvfp4-gate-up` 84.86/85.33, `nvfp4` 85.46/86.57. `agentic-webserver`: `fp8`
+passes (535-546 s summed wall), `nvfp4-gate-up` passed 3/3 (504-533 s),
+`nvfp4` scored 10/10 but took 168 turns and 774 s, over that gate's 700 s
+ceiling. No gate record measures the NVFP4 tiers, so this README gives no
+speed for them.
 
 ### The single-stream decode floor
 
@@ -713,7 +720,7 @@ target/release/met bench serve-release
 port in `serve-lease.json` under `~/.metrale` (or `$METRALE_HOME`);
 `serve-release` stops it.
 
-### Advanced: the full 13-gate certification
+### Advanced: the full 17-gate certification
 
 `met bench certify` runs every required gate the current commit does not yet
 have a passing record for, then applies the same check CI applies.
@@ -728,7 +735,7 @@ target/release/met bench certify --hardware gb10 --no-guard --yes
 - **What it runs.** The gates listed under
   [Accuracy and correctness gates](#accuracy-and-correctness-gates) that
   have no passing record at this commit yet; the ones you ran in step 6
-  onwards are skipped. Four checkpoints (88.22 GB) cover all 13. The two
+  onwards are skipped. Four checkpoints (88.22 GB) cover all 17. The two
   BFCL groups run their whole draw on one box, or split into shards across
   several with `--with-nodes`.
   `--yes` confirms `agentic-webserver`, which executes model-authored shell
@@ -786,7 +793,7 @@ NVFP4, MTP, SSM layers and attention.
 <a id="accuracy-and-correctness-gates"></a>
 ## <img src="docs/readme/icons/shield.svg" width="20" height="20" alt="Shield icon"> Accuracy and correctness gates
 
-A merge needs a passing record for each of these 13 gates, the `REQUIRED`
+A merge needs a passing record for each of these 17 gates, the `REQUIRED`
 list in [`crates/bench/src/gate/coverage.rs`](crates/bench/src/gate/coverage.rs).
 A record stays valid until a change touches that gate's invalidation paths.
 Results are from the 2026-09-27 records at `aa5d059438`.
@@ -806,11 +813,21 @@ Results are from the 2026-09-27 records at `aa5d059438`.
 | `concurrency-sweep-dflash2` | The same at C=1 to 16 with the DFlash2 drafter | Qwen3.8-27B-NVFP4 + `incoai/Qwen3.8-27B-DFlash2` | all 5 rungs above floor, peak 72.1 tok/s |
 | `kat-equality-gate` | The same sample must get the same answer whatever ran before it (hermetic serve) | Qwen3.8-27B-NVFP4 | 257 samples byte-identical across 2 request orders |
 | `concurrency-sweep-moe` | Aggregate throughput floors at C=1 to 16 on the MoE, published instrument | Qwen3.6-35B-A3B-FP8 | all 5 rungs above floor, peak 311.2 tok/s |
+| `high-isl-ttft-cold` | Uncached 32k-token prefill TTFT on the dense flagship | Qwen3.8-27B-NVFP4 | added after this certification; ceiling 24115.2 ms |
+| `high-isl-ttft-warm` | Cached 32k-token prefix TTFT on the dense flagship | Qwen3.8-27B-NVFP4 | added after this certification; ceiling 2132.3 ms |
+| `high-isl-ttft-cold-moe` | Uncached 32k-token prefill TTFT on the 35B MoE | Qwen3.6-35B-A3B-FP8 | added after this certification; ceiling 9231.9 ms |
+| `high-isl-ttft-warm-moe` | Cached 32k-token prefix TTFT on the 35B MoE | Qwen3.6-35B-A3B-FP8 | added after this certification; ceiling 579.4 ms |
 
 The BFCL figures are the aggregate over six shard records, as
 `met benchmark aggregate bfcl-subset --sha aa5d059438` prints them; every
 other row is the record's `verdict_reason`. The descriptions follow
-`met benchmark list`.
+`met benchmark list`. The four high-ISL gates were added after `aa5d059438`
+was certified. Their ceilings are vLLM 0.27.1's time to first token on the
+same prompt and box, so a pass means at least as fast as vLLM;
+[`bench/baselines/qwen36-35b-a3b/ttft/published.json`](bench/baselines/qwen36-35b-a3b/ttft/published.json)
+and
+[`bench/baselines/qwen38-27b/ttft/published.json`](bench/baselines/qwen38-27b/ttft/published.json)
+hold the measurements.
 
 <a id="security"></a>
 ## <img src="docs/readme/icons/lock.svg" width="20" height="20" alt="Lock icon"> Security

@@ -163,6 +163,32 @@ pub fn spec_for(benchmark_id: &str) -> CardSpec {
                 None,
             ],
         },
+        // 2026-09-27: One-shot gates: the one sample is the median and the p90, so the card
+        // shows it once, beside the prompt size the server counted.
+        "high-isl-ttft-cold" | "high-isl-ttft-cold-moe" => CardSpec {
+            hero_label: "TTFT, 32k prompt",
+            hero_key: "median_ms",
+            hero_note: "cold, one fresh request",
+            hero_fmt: Fmt::Ms,
+            slots: [
+                slot("Prompt tokens", "prompt_tokens", Fmt::Int),
+                slot("Samples", "samples", Fmt::Int),
+                None,
+                None,
+            ],
+        },
+        "high-isl-ttft-warm" | "high-isl-ttft-warm-moe" => CardSpec {
+            hero_label: "TTFT, 32k prompt",
+            hero_key: "median_ms",
+            hero_note: "warm, the same request re-sent",
+            hero_fmt: Fmt::Ms,
+            slots: [
+                slot("Prompt tokens", "prompt_tokens", Fmt::Int),
+                slot("Samples", "samples", Fmt::Int),
+                None,
+                None,
+            ],
+        },
         "vision-fidelity" => CardSpec {
             hero_label: "Geometry cells matched",
             hero_key: "geometry_matched",

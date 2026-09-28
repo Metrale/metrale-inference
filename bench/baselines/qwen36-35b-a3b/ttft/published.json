@@ -1,0 +1,413 @@
+{
+  "schema": 1,
+  "status": "measured 2026-09-27",
+  "title": "Qwen/Qwen3.6-35B-A3B-FP8 TTFT: vLLM baseline on the Metrale TTFT instruments",
+  "subtitle": "vLLM 0.27.1 + MTP on the Metrale TTFT instruments; no Metrale Engine series in this manifest",
+  "aggregate": "series: median over 3 runs of each run's median_ms / p90_ms (12 samples per run at 32k; 36 pooled at 256/1024/4096); gate_ceilings: from the steady one-shot pairs",
+  "results_doc": "bench/baselines/qwen36-35b-a3b/ttft/published.json",
+  "sources_note": "Every `sources` key, and every file in oneshot.sources, is a path relative to this manifest's directory; the value is its sha256. The files are the vLLM gate records and one-shot lines exactly as written on the box, copied byte for byte. The one-shot file is JSON Lines named .ndjson because .gitignore drops bench/**/*.jsonl as harness output.",
+  "gate_ceilings": {
+    "rule": "owner 2026-09-27: parity with vLLM is the pass bar. The engine's BENCH.toml uses the value below as `max` for both median_ms and p90_ms of the gate. It is vLLM's STEADY one-shot TTFT on the 32k fixture: first-request-after-boot pairs are excluded. Median of the 3 steady pairs over 2 fresh boots.",
+    "high-isl-ttft-cold-moe": {
+      "median_ms": 9231.9,
+      "p90_ms": 9231.9,
+      "statistic": "median of the steady one-shot cold TTFTs [9265.4, 9214.7, 9231.9]",
+      "pairs": [
+        "cold-32k-7390950502150758",
+        "cold-32k-2906684677571291",
+        "cold-32k-7566031352168657"
+      ]
+    },
+    "high-isl-ttft-warm-moe": {
+      "median_ms": 579.4,
+      "p90_ms": 579.4,
+      "statistic": "median of the steady one-shot warm TTFTs [579.4, 581.8, 566.0]",
+      "pairs": [
+        "cold-32k-7390950502150758",
+        "cold-32k-2906684677571291",
+        "cold-32k-7566031352168657"
+      ]
+    },
+    "excluded": [
+      {
+        "tag": "cold-32k-4862039615042406",
+        "cold_ms": 41976.1,
+        "warm_ms": 1972.2,
+        "reason": "first request after a fresh vLLM boot (boot 1): one-time JIT/autotune, not prefill"
+      },
+      {
+        "tag": "cold-32k-2480792078420424",
+        "cold_ms": 39349.3,
+        "warm_ms": 1713.3,
+        "reason": "first request after a fresh vLLM boot (boot 2): one-time JIT/autotune, not prefill"
+      }
+    ]
+  },
+  "workload": {
+    "checkpoint": "Qwen/Qwen3.6-35B-A3B-FP8",
+    "kv_cache_dtype": "bf16",
+    "thinking": "32k: disabled via chat_template_kwargs; synthetic: engine default",
+    "harness": "met benchmark run <gate> --url http://127.0.0.1:8000 --model <id> --format json --no-save --no-fail-on-verdict (Metrale bench client, same binary as the Metrale legs)"
+  },
+  "box": {
+    "name": "dgx3 (spark-28c2)",
+    "gpu": "NVIDIA GB10",
+    "driver": "580.159.03",
+    "note": "one box per subject; the Metrale legs of the comparison ran on the same box the same evening (2026-09-27, 21:19-23:00 UTC)"
+  },
+  "harness_note": "Gate records: `met` built from branch bench/high-isl-ttft plus one local, never-pushed commit that only registers the four high-ISL descriptors; every record carries metrale_version 1.0.0-beta-preview and serve_overrides {} (vLLM is not launched by the harness).",
+  "series": [
+    {
+      "id": "vllm-mtp-high-isl-ttft-cold-moe",
+      "label": "vLLM + MTP",
+      "role": "baseline",
+      "engine": "vLLM 0.27.1",
+      "build": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 (image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, label vllm/vllm-openai:v0.27.1, vLLM commit 6e448d0ea9bf3d88d898b65449ca6dc2aec170ac)",
+      "env": "HF_HUB_OFFLINE=1 VLLM_USE_DEEP_GEMM=0 VLLM_TEST_FORCE_FP8_MARLIN=1",
+      "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 -e VLLM_USE_DEEP_GEMM=0 -e VLLM_TEST_FORCE_FP8_MARLIN=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model Qwen/Qwen3.6-35B-A3B-FP8 --served-model-name Qwen/Qwen3.6-35B-A3B-FP8 --host 127.0.0.1 --port 8000 --max-model-len 40960 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype auto --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+      "cli_note": "bench/baselines/qwen36-35b-a3b/published.json series vllm-mtp with --max-model-len 40960 (was 2048), --port 8000 (was 8001), and the image pinned by digest instead of `:latest` (the same digest that series' build records). --enable-prefix-caching was already set. Everything else verbatim.",
+      "instrument": {
+        "gate": "high-isl-ttft-cold-moe",
+        "mode": "cold",
+        "osl": 8,
+        "reps": 12,
+        "temperature": 0.0,
+        "stream": true,
+        "max_model_len": 40960,
+        "prompt": "crates/bench/src/benchmarks/ttft/prompts/long-32k.txt",
+        "prompt_sha256": "4f961eabd9433e18166e795052b59239760d4e3cc7fa78c258d0bd1b623a1993",
+        "prompt_tokens": 32772,
+        "min_prompt_tokens": 32768,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "stream_options": {
+          "include_usage": true
+        }
+      },
+      "median_ms": {
+        "median_of_runs": 9303.1,
+        "min": 9299.0,
+        "max": 9308.0,
+        "runs": [
+          9303.1,
+          9308.0,
+          9299.0
+        ]
+      },
+      "p90_ms": {
+        "median_of_runs": 9317.7,
+        "min": 9317.6,
+        "max": 10135.9,
+        "runs": [
+          10135.9,
+          9317.7,
+          9317.6
+        ]
+      },
+      "sources": {
+        "vllm__high-isl-ttft-cold-moe__r1.json": "696e68aef56baf1cbef98282f5012361608d586137b25de0805d1b831eeeb5be",
+        "vllm__high-isl-ttft-cold-moe__r2.json": "a6d82fb4adaf1f4be3327521d8338aa0d9d4ddd521b110264a07fc4a12ef5405",
+        "vllm__high-isl-ttft-cold-moe__r3.json": "4101a1eb5b36a7a803ef3e7b63c18d045a5e0f0d2826735e385a82f08d3e9365"
+      },
+      "build_note": "Read from `docker image inspect` on the measuring box on 2026-09-27; the container logs these non-default args at startup, matching `cli` (port 8000 is vLLM's default).",
+      "box_state": "harness post-check: valid on all 3 runs"
+    },
+    {
+      "id": "vllm-mtp-high-isl-ttft-warm-moe",
+      "label": "vLLM + MTP",
+      "role": "baseline",
+      "engine": "vLLM 0.27.1",
+      "build": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 (image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, label vllm/vllm-openai:v0.27.1, vLLM commit 6e448d0ea9bf3d88d898b65449ca6dc2aec170ac)",
+      "env": "HF_HUB_OFFLINE=1 VLLM_USE_DEEP_GEMM=0 VLLM_TEST_FORCE_FP8_MARLIN=1",
+      "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 -e VLLM_USE_DEEP_GEMM=0 -e VLLM_TEST_FORCE_FP8_MARLIN=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model Qwen/Qwen3.6-35B-A3B-FP8 --served-model-name Qwen/Qwen3.6-35B-A3B-FP8 --host 127.0.0.1 --port 8000 --max-model-len 40960 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype auto --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+      "cli_note": "bench/baselines/qwen36-35b-a3b/published.json series vllm-mtp with --max-model-len 40960 (was 2048), --port 8000 (was 8001), and the image pinned by digest instead of `:latest` (the same digest that series' build records). --enable-prefix-caching was already set. Everything else verbatim.",
+      "instrument": {
+        "gate": "high-isl-ttft-warm-moe",
+        "mode": "warm",
+        "osl": 8,
+        "reps": 12,
+        "temperature": 0.0,
+        "stream": true,
+        "max_model_len": 40960,
+        "prompt": "crates/bench/src/benchmarks/ttft/prompts/long-32k.txt",
+        "prompt_sha256": "4f961eabd9433e18166e795052b59239760d4e3cc7fa78c258d0bd1b623a1993",
+        "prompt_tokens": 32772,
+        "min_prompt_tokens": 32768,
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        },
+        "stream_options": {
+          "include_usage": true
+        }
+      },
+      "median_ms": {
+        "median_of_runs": 583.7,
+        "min": 576.7,
+        "max": 584.1,
+        "runs": [
+          584.1,
+          576.7,
+          583.7
+        ]
+      },
+      "p90_ms": {
+        "median_of_runs": 592.1,
+        "min": 582.1,
+        "max": 592.4,
+        "runs": [
+          592.1,
+          582.1,
+          592.4
+        ]
+      },
+      "sources": {
+        "vllm__high-isl-ttft-warm-moe__r1.json": "664f6ecf032a491866aae589f54a5dc76c1d738ed6f9a0de6a114b1272c98a21",
+        "vllm__high-isl-ttft-warm-moe__r2.json": "8e5627d2117b9974d2ad95a4ad0ec878a5fd6b16994fede6369a9efaed8c2b5e",
+        "vllm__high-isl-ttft-warm-moe__r3.json": "59b8103fc1a34f73ac277cb757c64d95223966621883911c61347e0fe94e1294"
+      },
+      "build_note": "Read from `docker image inspect` on the measuring box on 2026-09-27; the container logs these non-default args at startup, matching `cli` (port 8000 is vLLM's default).",
+      "box_state": "harness post-check: valid on all 3 runs"
+    },
+    {
+      "id": "vllm-mtp-ttft-cold-gate",
+      "label": "vLLM + MTP",
+      "role": "baseline",
+      "engine": "vLLM 0.27.1",
+      "build": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 (image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, label vllm/vllm-openai:v0.27.1, vLLM commit 6e448d0ea9bf3d88d898b65449ca6dc2aec170ac)",
+      "env": "HF_HUB_OFFLINE=1 VLLM_USE_DEEP_GEMM=0 VLLM_TEST_FORCE_FP8_MARLIN=1",
+      "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 -e VLLM_USE_DEEP_GEMM=0 -e VLLM_TEST_FORCE_FP8_MARLIN=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model Qwen/Qwen3.6-35B-A3B-FP8 --served-model-name Qwen/Qwen3.6-35B-A3B-FP8 --host 127.0.0.1 --port 8000 --max-model-len 40960 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype auto --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+      "cli_note": "bench/baselines/qwen36-35b-a3b/published.json series vllm-mtp with --max-model-len 40960 (was 2048), --port 8000 (was 8001), and the image pinned by digest instead of `:latest` (the same digest that series' build records). --enable-prefix-caching was already set. Everything else verbatim.",
+      "instrument": {
+        "gate": "ttft-cold-gate",
+        "mode": "cold",
+        "osl": 8,
+        "reps": 12,
+        "temperature": 0.0,
+        "stream": true,
+        "max_model_len": 40960,
+        "prompt": "stats::make_prompt natural filler, unique prefix tag per cold sample",
+        "prompt_lengths": [
+          256,
+          1024,
+          4096
+        ],
+        "note": "median/p90 pooled over the 36 samples"
+      },
+      "median_ms": {
+        "median_of_runs": 318.1,
+        "min": 317.8,
+        "max": 319.2,
+        "runs": [
+          318.1,
+          319.2,
+          317.8
+        ]
+      },
+      "p90_ms": {
+        "median_of_runs": 1100.5,
+        "min": 1098.4,
+        "max": 1101.2,
+        "runs": [
+          1101.2,
+          1100.5,
+          1098.4
+        ]
+      },
+      "sources": {
+        "vllm__ttft-cold-gate__r1.json": "0017e9f9eb51d0314aa86a416ed408e9901eea3b0534d91ce8b2be1ea19bb1b7",
+        "vllm__ttft-cold-gate__r2.json": "b365c0687511b6a0ede5762701fa61d5870b960f4ab373656505a974ba076418",
+        "vllm__ttft-cold-gate__r3.json": "d90cb23acfea7ec6ab26afa97cb0b979b085cf96d83eb694aaeb016b78b6ac12"
+      },
+      "per_length_median_ms": {
+        "256": 214.4,
+        "1024": 317.8,
+        "4096": 1096.0
+      },
+      "per_length_p90_ms": {
+        "256": 221.2,
+        "1024": 333.8,
+        "4096": 1113.9
+      },
+      "build_note": "Read from `docker image inspect` on the measuring box on 2026-09-27; the container logs these non-default args at startup, matching `cli` (port 8000 is vLLM's default).",
+      "box_state": "harness post-check: valid on all 3 runs"
+    },
+    {
+      "id": "vllm-mtp-ttft-warm-gate",
+      "label": "vLLM + MTP",
+      "role": "baseline",
+      "engine": "vLLM 0.27.1",
+      "build": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 (image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, label vllm/vllm-openai:v0.27.1, vLLM commit 6e448d0ea9bf3d88d898b65449ca6dc2aec170ac)",
+      "env": "HF_HUB_OFFLINE=1 VLLM_USE_DEEP_GEMM=0 VLLM_TEST_FORCE_FP8_MARLIN=1",
+      "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 -e VLLM_USE_DEEP_GEMM=0 -e VLLM_TEST_FORCE_FP8_MARLIN=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model Qwen/Qwen3.6-35B-A3B-FP8 --served-model-name Qwen/Qwen3.6-35B-A3B-FP8 --host 127.0.0.1 --port 8000 --max-model-len 40960 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype auto --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+      "cli_note": "bench/baselines/qwen36-35b-a3b/published.json series vllm-mtp with --max-model-len 40960 (was 2048), --port 8000 (was 8001), and the image pinned by digest instead of `:latest` (the same digest that series' build records). --enable-prefix-caching was already set. Everything else verbatim.",
+      "instrument": {
+        "gate": "ttft-warm-gate",
+        "mode": "warm",
+        "osl": 8,
+        "reps": 12,
+        "temperature": 0.0,
+        "stream": true,
+        "max_model_len": 40960,
+        "prompt": "stats::make_prompt natural filler, unique prefix tag per cold sample",
+        "prompt_lengths": [
+          256,
+          1024,
+          4096
+        ],
+        "note": "median/p90 pooled over the 36 samples"
+      },
+      "median_ms": {
+        "median_of_runs": 330.7,
+        "min": 330.6,
+        "max": 331.0,
+        "runs": [
+          330.7,
+          330.6,
+          331.0
+        ]
+      },
+      "p90_ms": {
+        "median_of_runs": 360.5,
+        "min": 360.4,
+        "max": 361.0,
+        "runs": [
+          360.5,
+          360.4,
+          361.0
+        ]
+      },
+      "sources": {
+        "vllm__ttft-warm-gate__r1.json": "2e8c77995431a081e4d3396e60ad66f33de350d4432dda7e5d88b080326f924f",
+        "vllm__ttft-warm-gate__r2.json": "83666de941d706832c8076e7a5d42ab121e70099e71cd83a78b704e10218ba24",
+        "vllm__ttft-warm-gate__r3.json": "a26b2b52be1790b9111bf212889bac670dd05a8e7d08b778696dbbc66055466e"
+      },
+      "per_length_median_ms": {
+        "256": 208.8,
+        "1024": 330.7,
+        "4096": 360.1
+      },
+      "per_length_p90_ms": {
+        "256": 211.6,
+        "1024": 339.2,
+        "4096": 361.6
+      },
+      "build_note": "Read from `docker image inspect` on the measuring box on 2026-09-27; the container logs these non-default args at startup, matching `cli` (port 8000 is vLLM's default).",
+      "box_state": "harness post-check: valid on all 3 runs"
+    }
+  ],
+  "series_note": "The 32k series' cold median (9303.1 ms) is not the gate ceiling: the ceiling is the steady one-shot cold TTFT (gate_ceilings), per the owner's method.",
+  "oneshot": {
+    "method": "owner 2026-09-27: per pair, one request with a fresh cold-32k-<16 digits> tag (cold), then the byte-identical request again (warm); gate request body (stream, include_usage, max_tokens 8, temperature 0, enable_thinking false); client hisl_client.py (sha256 5faacadb1345f0ac703243988ef9764cc0c37df2c28820fec5d894caaa5f1838, not in this repo)",
+    "instrument": {
+      "prompt": "crates/bench/src/benchmarks/ttft/prompts/long-32k.txt",
+      "prompt_sha256": "4f961eabd9433e18166e795052b59239760d4e3cc7fa78c258d0bd1b623a1993",
+      "prompt_tokens": 32772,
+      "min_prompt_tokens": 32768,
+      "osl": 8,
+      "temperature": 0.0,
+      "stream": true,
+      "stream_options": {
+        "include_usage": true
+      },
+      "chat_template_kwargs": {
+        "enable_thinking": false
+      },
+      "max_model_len": 40960,
+      "ttft": "client-side: time to the first non-empty content/reasoning delta"
+    },
+    "build": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 (image id sha256:2c211a1273b48e8929f893b267aeb1509e6b84654cdbde1bad56d79e3964224d, label vllm/vllm-openai:v0.27.1, vLLM commit 6e448d0ea9bf3d88d898b65449ca6dc2aec170ac)",
+    "env": "HF_HUB_OFFLINE=1 VLLM_USE_DEEP_GEMM=0 VLLM_TEST_FORCE_FP8_MARLIN=1",
+    "cli": "docker run --network host --gpus all --ipc=host -v /home/claude/.cache/huggingface:/root/.cache/huggingface -e HF_HUB_OFFLINE=1 -e VLLM_USE_DEEP_GEMM=0 -e VLLM_TEST_FORCE_FP8_MARLIN=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model Qwen/Qwen3.6-35B-A3B-FP8 --served-model-name Qwen/Qwen3.6-35B-A3B-FP8 --host 127.0.0.1 --port 8000 --max-model-len 40960 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype auto --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+    "cli_note": "bench/baselines/qwen36-35b-a3b/published.json series vllm-mtp with --max-model-len 40960 (was 2048), --port 8000 (was 8001), and the image pinned by digest instead of `:latest` (the same digest that series' build records). --enable-prefix-caching was already set. Everything else verbatim.",
+    "box": "dgx3 (spark-28c2)",
+    "boots": [
+      {
+        "boot": 1,
+        "started_utc": "2026-09-27T22:40:29Z",
+        "note": "fresh container 22:40:29Z; readiness polled with GET /v1/models only, then pair 1 was its first request"
+      },
+      {
+        "boot": 2,
+        "started_utc": "2026-09-27T22:51:01Z",
+        "note": "fresh container 22:51:01Z; readiness polled with GET /v1/models only, then pair 1 was its first request"
+      }
+    ],
+    "note": "The FIRST 32k request after a fresh vLLM boot pays one-time JIT/autotune (MoE: 41976.1 and 39349.3 ms cold on the two boots vs 9214.7-9265.4 ms steady). A one-shot reference must discard that request or it measures vLLM start-up, not prefill. `utc` is when the result was recorded (response complete), from the client host's clock. `pair_in_boot` is the record's `pair`.",
+    "sources": {
+      "vllm_oneshot.ndjson": "85e35d3576af02b963fcc38175f3a8c44bbe39e0b1a0fecddef7ee996f9d83ab"
+    },
+    "pairs": [
+      {
+        "tag": "cold-32k-4862039615042406",
+        "utc": "2026-09-27T22:50:18Z",
+        "host": "spark-28c2",
+        "cold_ms": 41976.1,
+        "warm_ms": 1972.2,
+        "prompt_tokens": [
+          32772
+        ],
+        "cold_output": "The passage is a sermon by Father M",
+        "boot": 1,
+        "pair_in_boot": 1,
+        "steady": false
+      },
+      {
+        "tag": "cold-32k-7390950502150758",
+        "utc": "2026-09-27T22:50:30Z",
+        "host": "spark-28c2",
+        "cold_ms": 9265.4,
+        "warm_ms": 579.4,
+        "prompt_tokens": [
+          32772
+        ],
+        "cold_output": "The passage is a sermon by Father M",
+        "boot": 1,
+        "pair_in_boot": 2,
+        "steady": true
+      },
+      {
+        "tag": "cold-32k-2480792078420424",
+        "utc": "2026-09-27T22:59:53Z",
+        "host": "spark-28c2",
+        "cold_ms": 39349.3,
+        "warm_ms": 1713.3,
+        "prompt_tokens": [
+          32772
+        ],
+        "cold_output": "The passage is a sermon by Father M",
+        "boot": 2,
+        "pair_in_boot": 1,
+        "steady": false
+      },
+      {
+        "tag": "cold-32k-2906684677571291",
+        "utc": "2026-09-27T23:00:05Z",
+        "host": "spark-28c2",
+        "cold_ms": 9214.7,
+        "warm_ms": 581.8,
+        "prompt_tokens": [
+          32772
+        ],
+        "cold_output": "The passage is a summary of Father M",
+        "boot": 2,
+        "pair_in_boot": 2,
+        "steady": true
+      },
+      {
+        "tag": "cold-32k-7566031352168657",
+        "utc": "2026-09-27T23:00:15Z",
+        "host": "spark-28c2",
+        "cold_ms": 9231.9,
+        "warm_ms": 566.0,
+        "prompt_tokens": [
+          32772
+        ],
+        "cold_output": "The passage is a summary of Father M",
+        "boot": 2,
+        "pair_in_boot": 3,
+        "steady": true
+      }
+    ]
+  }
+}

@@ -178,6 +178,9 @@ pub fn gdn_prefill_fla(
         C,
     );
 
+    // 2026-09-28: Kernel 3 without a Hopper twin: the bit-identical 8-warp twin when present.
+    let fo = super::gdn_fwd_o_mma8(gpu, fo, k_chunk_fwd_o, kd, vd)?;
+
     // 2026-09-25: Kernel 1: recompute_wu, or its Hopper twin.
     KernelLaunch::new(gpu, wu.kernel)
         .grid([num_chunks, num_v_heads, batch_size])
@@ -209,12 +212,13 @@ pub fn gdn_prefill_fla(
     // 2026-09-25: Kernel 2, the state spine. The non-TMA candidates take the
     // same arguments; grid y, block size and shared memory differ. In order of
     // precedence: TMA and the tensor-core spine (both below); the fused spine
-    // that `init_kernels::fused_spine_kernel` loaded (`_vfused` by default,
-    // `_vtile` under `METRALE_GDN_VTILE=1`, `_pipe` under `METRALE_GDN_PIPE=1`),
-    // unless its handle is 0 or `METRALE_GDN_VTILE=0`; `_tc_vblock` under
-    // `METRALE_GDN_TC_VBLOCK=1`; else `_ksplit`. The fused spine folds the two
-    // per-chunk passes into one, so at kd = vd = 128 its shared memory is
-    // 49,412 B against ksplit's 99,336 B.
+    // that `init_kernels::fused_spine_kernel` loaded (`gdn_scalar_spine`:
+    // 2026-09-28 `_pipe` by default, `_vtile` under `METRALE_GDN_VTILE=1`,
+    // `_vfused` under `METRALE_GDN_PIPE=0`), unless its handle is 0 or
+    // `METRALE_GDN_VTILE=0`; `_tc_vblock` under `METRALE_GDN_TC_VBLOCK=1`; else
+    // `_ksplit`. The fused spine folds the two per-chunk passes into one, so at
+    // kd = vd = 128 `_vfused` / `_vtile` take 49,412 B against ksplit's 99,336 B
+    // (`_pipe` double-buffers, so it takes ksplit's).
     let use_fused = k_chunk_delta_h_fused.0 != 0
         && std::env::var("METRALE_GDN_VTILE").ok().as_deref() != Some("0");
     let use_tcvb = !use_fused
@@ -235,15 +239,17 @@ pub fn gdn_prefill_fla(
     // `smem_dh`, the ksplit footprint. The env reads here must select the same
     // build that `init_kernels::fused_spine_kernel` loaded, or the second buffer
     // is read out of bounds.
-    let pipe = std::env::var("METRALE_GDN_PIPE").ok().as_deref() == Some("1");
+    let spine = super::gdn_scalar_spine();
+    let pipe = spine == super::GdnScalarSpine::Pipe;
     let smem_fused = if pipe {
         smem_dh
     } else {
         C * kd * 2 + C * kd * 2 + C * vd * 2 + (C + 1) * 4
     };
-    let fused_block = match std::env::var("METRALE_GDN_VTILE").ok().as_deref() {
-        Some("1") if !pipe => 512u32,
-        _ => 256u32,
+    let fused_block = if spine == super::GdnScalarSpine::Vtile {
+        512u32
+    } else {
+        256u32
     };
     // 2026-09-25: The tensor-core spine puts both per-chunk products on
     // `mma.sync.m16n8k16`: bf16 operands (S_c and duc as two bf16 limbs each

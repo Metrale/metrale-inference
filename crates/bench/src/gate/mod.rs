@@ -55,7 +55,7 @@ pub use record::{
 
 /// 2026-09-26: The ids of `coverage::REQUIRED`, in its order: the gates [`check_gates`]
 /// judges. A test in `registry.rs` looks up each id as a registered benchmark.
-pub const REQUIRED_GATES: [&str; 13] = [
+pub const REQUIRED_GATES: [&str; 17] = [
     coverage::REQUIRED[0].id,
     coverage::REQUIRED[1].id,
     coverage::REQUIRED[2].id,
@@ -69,6 +69,10 @@ pub const REQUIRED_GATES: [&str; 13] = [
     coverage::REQUIRED[10].id,
     coverage::REQUIRED[11].id,
     coverage::REQUIRED[12].id,
+    coverage::REQUIRED[13].id,
+    coverage::REQUIRED[14].id,
+    coverage::REQUIRED[15].id,
+    coverage::REQUIRED[16].id,
 ];
 
 /// 2026-09-26: The timeout for the endpoint's `/hardware` fetch when a gate record is

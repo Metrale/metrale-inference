@@ -9,7 +9,10 @@
 //! runs no attention: embedding gather, norms, concat, fc, input_layernorm,
 //! k/v projections, k_norm, RoPE and `reshape_and_cache`, over chunks of
 //! [`PREFILL_CHUNK`] rows. Drafter row i pairs `embed(t_{i+1})` with
-//! `hidden_i` at RoPE position `i + 1` (pair key i).
+//! `hidden_i` at RoPE position `i + 1` (pair key i). 2026-09-27: each chunk
+//! gathers its embeddings in one launch, concatenates with two pitched copies,
+//! and runs fc/k/v on the tensor-core GEMM (`prefill_gemm`); at 32k prompt
+//! tokens the scalar GEMM alone was 2.84 s of TTFT.
 //!
 //! Owner: model-layers (MTP head).
 //! Invariants:
@@ -25,6 +28,7 @@ use super::{MtpHead, MtpProposerState, ProjectionWeight};
 use crate::layer::ForwardContext;
 use crate::layers::ops;
 use crate::speculative::ProposerState;
+use crate::weight_map::DenseWeight;
 
 /// 2026-09-25: Rows per batched pass, and the row count of the
 /// `MtpPrefillScratch` buffers.
@@ -144,12 +148,33 @@ impl MtpHead {
         while done < rows_total {
             let c = (rows_total - done).min(PREFILL_CHUNK);
 
+            // 2026-09-27: One `batched_embed` gather per chunk. The token ids go through
+            // `pos_dev` (`c` u32), which the RoPE positions below overwrite later on the
+            // same stream; the chunk-end synchronize keeps `ids` alive for the copy.
+            let ids: Vec<u32> = prompt_tokens[done + 1..done + 1 + c].to_vec();
             phase!(t_embed, {
-                for r in 0..c {
-                    let tok = prompt_tokens[done + r + 1] as usize;
-                    self_copy_embed_row(self, ctx, tok, scratch.embed, r, h, stream)?;
+                if self.batched_embed_k.0 != 0 {
+                    // 2026-09-27: SAFETY: `ids` holds `c` initialised u32s, so the span is
+                    // exactly its buffer; shared borrow only.
+                    let id_bytes =
+                        unsafe { std::slice::from_raw_parts(ids.as_ptr() as *const u8, c * 4) };
+                    ctx.gpu.copy_h2d_async(id_bytes, scratch.pos_dev, stream)?;
+                    ops::batched_embed(
+                        ctx.gpu,
+                        self.batched_embed_k,
+                        scratch.pos_dev,
+                        self.embed_tokens.weight,
+                        scratch.embed,
+                        c as u32,
+                        h as u32,
+                        stream,
+                    )
+                } else {
+                    for (r, &tok) in ids.iter().enumerate() {
+                        self_copy_embed_row(self, ctx, tok as usize, scratch.embed, r, h, stream)?;
+                    }
+                    Ok(())
                 }
-                Ok(())
             });
 
             ops::rms_norm(
@@ -185,25 +210,33 @@ impl MtpHead {
                 stream,
             )?;
 
+            // 2026-09-27: Row r of `concat` is `[normed_embed[r] | normed_hidden[r]]`: two
+            // pitched copies per chunk instead of one `bf16_concat` launch per row.
             phase!(t_concat, {
-                for r in 0..c {
-                    ops::bf16_concat(
-                        ctx.gpu,
-                        self.bf16_concat_k,
-                        scratch.normed_embed.offset(r * h * bf16),
-                        scratch.normed_hidden.offset(r * h * bf16),
-                        scratch.concat.offset(r * 2 * h * bf16),
-                        h as u32,
-                        stream,
-                    )?;
-                }
-                Ok(())
+                let row = h * bf16;
+                ctx.gpu.copy_d2d_2d_async(
+                    scratch.normed_embed,
+                    row,
+                    scratch.concat,
+                    2 * row,
+                    row,
+                    c,
+                    stream,
+                )?;
+                ctx.gpu.copy_d2d_2d_async(
+                    scratch.normed_hidden,
+                    row,
+                    scratch.concat.offset(row),
+                    2 * row,
+                    row,
+                    c,
+                    stream,
+                )
             });
 
             phase!(t_fc, {
-                ops::dense_gemm(
-                    ctx.gpu,
-                    self.dense_gemm_k,
+                self.prefill_gemm(
+                    ctx,
                     scratch.concat,
                     fc_w,
                     scratch.fc_out,
@@ -227,9 +260,8 @@ impl MtpHead {
 
             // 2026-09-25: No Q projection: the pass runs no attention.
             phase!(t_kv, {
-                ops::dense_gemm(
-                    ctx.gpu,
-                    self.dense_gemm_k,
+                self.prefill_gemm(
+                    ctx,
                     scratch.normed2,
                     k_w,
                     scratch.k_out,
@@ -238,9 +270,8 @@ impl MtpHead {
                     h as u32,
                     stream,
                 )?;
-                ops::dense_gemm(
-                    ctx.gpu,
-                    self.dense_gemm_k,
+                self.prefill_gemm(
+                    ctx,
                     scratch.normed2,
                     v_w,
                     scratch.v_out,
@@ -349,6 +380,41 @@ impl MtpHead {
             );
         }
         Ok(rows_total)
+    }
+}
+
+impl MtpHead {
+    /// 2026-09-27: One `[m, k] x [n, k]^T` projection of the drafter prefill: the
+    /// tensor-core `dense_gemm_bf16_pipelined` when it resolved and `k` is a multiple of 8
+    /// (its 16-byte loads), else the scalar `dense_gemm_bf16`. Both take BF16 in and
+    /// accumulate in FP32; the pipelined kernel was 2.84 s -> tens of ms at 32k rows.
+    #[allow(clippy::too_many_arguments)]
+    fn prefill_gemm(
+        &self,
+        ctx: &ForwardContext,
+        a: DevicePtr,
+        w: &DenseWeight,
+        c: DevicePtr,
+        m: u32,
+        n: u32,
+        k: u32,
+        stream: u64,
+    ) -> Result<()> {
+        if self.dense_gemm_pipelined_k.0 != 0 && k.is_multiple_of(8) {
+            ops::dense_gemm_bf16_pipelined(
+                ctx.gpu,
+                self.dense_gemm_pipelined_k,
+                a,
+                w,
+                c,
+                m,
+                n,
+                k,
+                stream,
+            )
+        } else {
+            ops::dense_gemm(ctx.gpu, self.dense_gemm_k, a, w, c, m, n, k, stream)
+        }
     }
 }
 

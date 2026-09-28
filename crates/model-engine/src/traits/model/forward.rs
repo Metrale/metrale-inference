@@ -194,4 +194,12 @@ pub trait ModelForward: ModelStreams {
     fn kv_block_size(&self) -> Option<usize> {
         None
     }
+
+    /// 2026-09-27: The token at which the prefill of `tokens` is split so that an SSM
+    /// snapshot lands at `prefill_plan::tail_split_point`, or `None` when this model does
+    /// not split it. The scheduler ends a non-last chunk there
+    /// (`prefill_plan::plan_chunk_len`). Default `None`.
+    fn prefill_tail_split(&self, _tokens: &[u32]) -> Option<usize> {
+        None
+    }
 }

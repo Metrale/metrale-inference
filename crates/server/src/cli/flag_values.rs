@@ -18,6 +18,8 @@
 //! Owner: server CLI (`met serve`).
 //! Invariants: none beyond the types.
 
+use metrale_model_layers::layers::ExpertQuantization;
+
 /// 2026-09-26: What `--kv-high-precision-layers auto` resolves to. The flag's
 /// help text states the same number as "recommended".
 pub(crate) const AUTO_KV_HIGH_PRECISION_LAYERS: usize = 2;
@@ -127,6 +129,47 @@ pub(crate) const TOOL_CALL_PARSERS: &[&str] = &[
     "poolside_v1",
 ];
 
+/// 2026-09-27: `--expert-quantization`: a clap value enum over the model layer's tiers
+/// (`metrale_model_layers::layers::ExpertQuantization`), which own the names. Unlike the string
+/// sets above, clap parses and refuses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpertQuantizationArg(pub ExpertQuantization);
+
+impl clap::ValueEnum for ExpertQuantizationArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [ExpertQuantizationArg; 3] = [
+            ExpertQuantizationArg(ExpertQuantization::ALL[0]),
+            ExpertQuantizationArg(ExpertQuantization::ALL[1]),
+            ExpertQuantizationArg(ExpertQuantization::ALL[2]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        // 2026-09-27: GB10, Qwen3.6-35B-A3B-FP8, canonical tiers, `--mtp-gate force`; the
+        // same numbers as at `ExpertQuantization`.
+        let help = match self.0 {
+            ExpertQuantization::Fp8 => {
+                "the checkpoint's FP8 experts (most stable, still fast). BFCL echolp N=1004 \
+                 84.96/86.03 overall/normalized; agentic-webserver pass (535-546 s); C16 \
+                 315.5 tok/s, 0.227 J/tok"
+            }
+            ExpertQuantization::Nvfp4GateUp => {
+                "lowers the routed experts' gate and up projections to NVFP4 in decode; down, \
+                 the shared expert and prefill stay FP8 (the stable speed lever). BFCL \
+                 84.86/85.33; agentic-webserver pass 3/3 (504-533 s); C16 359.6 tok/s, \
+                 0.211 J/tok"
+            }
+            ExpertQuantization::Nvfp4 => {
+                "lowers every routed-expert projection to NVFP4 in decode; the shared expert and \
+                 prefill stay FP8 (dangerous but fast). BFCL 85.46/86.57; agentic-webserver \
+                 FAILS its 700 s ceiling (168 turns, 774 s); C16 383.1 tok/s, 0.201 J/tok"
+            }
+        };
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
 /// 2026-09-26: The closed value set for a `met serve` flag, by its long name,
 /// or `None` for a free-form flag. For `--kv-cache-dtype` it lists each
 /// dtype's canonical name only; parse aliases such as `fp8k2v` for
@@ -145,6 +188,12 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
         "ssm-batched-recurrent" | "content-loop-watchdog" | "tool-grammar" => {
             Some(owned(TRISTATES))
         }
+        "expert-quantization" => Some(
+            ExpertQuantization::ALL
+                .iter()
+                .map(|q| q.name().to_string())
+                .collect(),
+        ),
         "kv-cache-dtype" => Some(
             metrale_cache::kv_cache::KvCacheDtype::ALL
                 .iter()

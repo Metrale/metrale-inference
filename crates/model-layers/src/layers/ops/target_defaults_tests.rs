@@ -15,7 +15,7 @@ use super::*;
 use metrale_kernels::TargetDefaults;
 
 /// 2026-09-25: A copy of `kernels/gb10/HARDWARE.toml` `[defaults]`. Apart from
-/// the two `w8a8_prefill_max_m_*` rows it equals `build_defaults::baseline`,
+/// `ssm_ba_gates_hopper` (on since 2026-09-28) and the two `w8a8_prefill_max_m_*` rows it equals `build_defaults::baseline`,
 /// which `gb10_declares_the_baseline_apart_from_the_measured_w8a8_ceiling`
 /// (`crates/kernels/tests/target_defaults.rs`) checks on the real file.
 const GB10: TargetDefaults = TargetDefaults {
@@ -23,7 +23,7 @@ const GB10: TargetDefaults = TargetDefaults {
     lm_head_batchm_max: 8,
     ssm_batched_recurrent: false,
     gdn_prefill_tc: false,
-    ssm_ba_gates_hopper: false,
+    ssm_ba_gates_hopper: true,
     fp8_act_quant_hopper: false,
     decode_split_silu: true,
     attn_decode_splitk: "legacy",
@@ -124,9 +124,9 @@ fn gb10_with_an_empty_environment_is_todays_behaviour() {
          transfer by argument and this row waits for a GB10 A/B"
     );
     assert!(
-        !l.ssm_ba_gates_hopper.value,
-        "GB10 does not compile the twin at all — the row is declared so the \
-         lever list is one list, not to change anything"
+        l.ssm_ba_gates_hopper.value,
+        "2026-09-28: GB10 builds the BA-gates twin and runs it: bit-identical to \
+         its parent, 2.5x at 8192 tokens"
     );
     assert!(l.decode_split_silu.value);
     // 2026-09-25: The two rows where gb10 differs from the baseline.

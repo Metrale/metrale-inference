@@ -10,10 +10,13 @@ use super::*;
 
 impl MoeLayer {
     /// 2026-09-26: W8A8 gate/up, taken when `fp8_blockscaled_prefill` and its kernels
-    /// resolved and `max_m_tiles > 0`.
+    /// resolved and `max_m_tiles > 0`. 2026-09-28: Returns the quantized down input and its
+    /// scales when the fused gate/up + SiLU + quant kernel ran (`try_e4m3_gateup_silu`),
+    /// else None (the BF16 gate/up rows are in `expert_gate_out` / `expert_up_out`).
     pub(super) fn fp8_prefill_gate_up_w8a8(
         &self,
         input: DevicePtr,
+        input_q: Option<(DevicePtr, DevicePtr)>,
         gp: &Fp8ExpertPtrTable,
         up: &Fp8ExpertPtrTable,
         expert_gate_out: DevicePtr,
@@ -32,26 +35,29 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
         mt: &mut Option<std::time::Instant>,
-    ) -> Result<()> {
+    ) -> Result<Option<(DevicePtr, DevicePtr)>> {
         macro_rules! mprof {
             ($label:expr) => {
                 mprof_step!(*mt, ctx, stream, n, $label)
             };
         }
-        // 2026-09-25: One quantised input serves both gate and up.
+        // 2026-09-25: One quantised input serves both gate and up. 2026-09-28: `input_q` is
+        // the shared expert's quantization of the same input, already on this stream.
         let m = num_tokens;
-        let input_fp8 = fp8_scratch.activation;
-        let input_a_scale = fp8_scratch.scales;
-        ops::per_token_group_quant_fp8(
-            ctx.gpu,
-            self.per_token_group_quant_fp8_k,
-            input,
-            input_fp8,
-            input_a_scale,
-            m as u32,
-            h,
-            stream,
-        )?;
+        let (input_fp8, input_a_scale) =
+            input_q.unwrap_or((fp8_scratch.activation, fp8_scratch.scales));
+        if input_q.is_none() {
+            ops::per_token_group_quant_fp8(
+                ctx.gpu,
+                self.per_token_group_quant_fp8_k,
+                input,
+                input_fp8,
+                input_a_scale,
+                m as u32,
+                h,
+                stream,
+            )?;
+        }
         if self.try_adaptive_fp8(
             input_fp8,
             input_a_scale,
@@ -65,6 +71,41 @@ impl MoeLayer {
             stream,
         )? {
             mprof!("grouped_gemm_w8a8_adaptive");
+        } else if let Some(down_in) = self.try_e4m3_gateup_silu(
+            input_fp8,
+            input_a_scale,
+            gp,
+            up,
+            expert_gate_out,
+            expert_up_out,
+            expert_offsets,
+            sorted_token_ids,
+            num_experts,
+            inter,
+            h,
+            num_tokens,
+            fp8_scratch,
+            ctx,
+            stream,
+        )? {
+            mprof!("gateup_silu_e4m3");
+            return Ok(Some(down_in));
+        } else if self.try_e4m3_grouped(
+            super::E4m3Proj::GateUp,
+            input_fp8,
+            input_a_scale,
+            &[(gp, expert_gate_out), (up, expert_up_out)],
+            expert_offsets,
+            sorted_token_ids,
+            num_experts,
+            inter,
+            h,
+            te,
+            fp8_scratch,
+            ctx,
+            stream,
+        )? {
+            mprof!("grouped_gemm_w8a8_e4m3");
         } else if self.moe_w8a8_grouped_gemm_pm4_k.0 != 0 && self.moe_build_tile_worklist_k.0 != 0 {
             // 2026-09-25: PM4 W8A8 over the compacted work-list. One work-list
             // serves gate and up (same expert_offsets, weight NULL-ness and
@@ -161,7 +202,7 @@ impl MoeLayer {
             )?;
             mprof!("grouped_gemm_w8a8");
         }
-        Ok(())
+        Ok(None)
     }
 
     /// 2026-09-26: FP8 (W8A16) gate/up, taken otherwise when `max_m_tiles > 0`.

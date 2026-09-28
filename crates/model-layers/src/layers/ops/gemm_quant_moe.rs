@@ -230,6 +230,134 @@ pub fn moe_w8a8_grouped_gemm_pm4(
         .launch(stream)
 }
 
+/// 2026-09-27: One entry point of `kernels/gb10/common/moe_w8a8_grouped_gemm_e4m3.cu`: its work-list
+/// item shape (`m_tile` rows by `n_tile` columns, so the builder takes `n_tiles = N / n_tile`), its
+/// dynamic shared memory and how many of its 256-thread CTAs fit on one SM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MoeE4m3Tile {
+    pub m_tile: u32,
+    pub n_tile: u32,
+    pub smem_bytes: u32,
+    pub ctas_per_sm: u32,
+}
+
+impl MoeE4m3Tile {
+    /// 2026-09-27: `STAGES * (BM + BN) * 64 + STAGES * BM * 4 + BM * 4` for a 3-stage ring.
+    const fn new(m_tile: u32, n_tile: u32) -> Self {
+        Self {
+            m_tile,
+            n_tile,
+            smem_bytes: 3 * (m_tile + n_tile) * 64 + 3 * m_tile * 4 + m_tile * 4,
+            ctas_per_sm: 2,
+        }
+    }
+
+    /// 2026-09-27: Whether an `[N, K]` projection fits: whole items in N, one b_scale row per
+    /// item (n_tile divides 128), whole 128-K scale blocks.
+    pub fn fits(&self, n: u32, k: u32) -> bool {
+        n > 0 && k > 0 && n.is_multiple_of(self.n_tile) && k.is_multiple_of(128)
+    }
+}
+
+/// 2026-09-27: `moe_w8a8_grouped_gemm_e4m3_gu` (gate/up: N = inter, K = hidden).
+pub const MOE_E4M3_GU: MoeE4m3Tile = MoeE4m3Tile::new(64, 128);
+/// 2026-09-27: `moe_w8a8_grouped_gemm_e4m3_dn` (down: N = hidden, K = inter).
+pub const MOE_E4M3_DN: MoeE4m3Tile = MoeE4m3Tile::new(128, 64);
+
+/// 2026-09-27: [`moe_w8a8_grouped_gemm_pm4`] on the native e4m3 tensor-core MMA (the `_gu` or
+/// `_dn` entry, described by `tile`): same operands and output, bit-identical, over a work-list
+/// that [`moe_build_tile_worklist`] built on the same `stream` with `tile.m_tile` and
+/// `n / tile.n_tile`. `grid_ctas` (clamped to `1..=16384`) CTAs stride over the items.
+#[allow(clippy::too_many_arguments)]
+pub fn moe_w8a8_grouped_gemm_e4m3(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    tile: MoeE4m3Tile,
+    a_fp8: DevicePtr,
+    a_scale: DevicePtr,
+    weight_ptrs: DevicePtr,
+    scale_ptrs: DevicePtr,
+    output: DevicePtr,
+    expert_offsets: DevicePtr,
+    sorted_token_ids: DevicePtr,
+    n: u32,
+    k: u32,
+    worklist: DevicePtr,
+    total_tiles: DevicePtr,
+    grid_ctas: u32,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        tile.fits(n, k),
+        "moe_w8a8_grouped_gemm_e4m3: N={n} K={k} does not fit {tile:?}"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([grid_ctas.clamp(1, 16384), 1, 1])
+        .block([256, 1, 1])
+        .shared_mem(tile.smem_bytes)
+        .arg_ptr(a_fp8)
+        .arg_ptr(a_scale)
+        .arg_ptr(weight_ptrs)
+        .arg_ptr(scale_ptrs)
+        .arg_ptr(output)
+        .arg_ptr(expert_offsets)
+        .arg_ptr(sorted_token_ids)
+        .arg_u32(n)
+        .arg_u32(k)
+        .arg_ptr(worklist)
+        .arg_ptr(total_tiles)
+        .launch(stream)
+}
+
+/// 2026-09-28: `moe_w8a8_gateup_silu_e4m3_w1` / `_w2`: the gate and up grouped GEMMs of one
+/// work-list item (the `_gu` shape, `MOE_E4M3_GU`) followed by SiLU(gate) * up quantized to
+/// E4M3 per 128-column group, bit-identical to the two `_gu` launches plus
+/// `silu_mul_quant_fp8`. Writes `out_fp8` `[total_expanded, n]` and `out_scale`
+/// `[total_expanded, n / 128]`. The work-list is built with `MOE_E4M3_GU`'s shape.
+#[allow(clippy::too_many_arguments)]
+pub fn moe_w8a8_gateup_silu_e4m3(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    a_fp8: DevicePtr,
+    a_scale: DevicePtr,
+    gate: (DevicePtr, DevicePtr),
+    up: (DevicePtr, DevicePtr),
+    out_fp8: DevicePtr,
+    out_scale: DevicePtr,
+    expert_offsets: DevicePtr,
+    sorted_token_ids: DevicePtr,
+    n: u32,
+    k: u32,
+    worklist: DevicePtr,
+    total_tiles: DevicePtr,
+    grid_ctas: u32,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        MOE_E4M3_GU.fits(n, k),
+        "moe_w8a8_gateup_silu_e4m3: N={n} K={k} does not fit {MOE_E4M3_GU:?}"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([grid_ctas.clamp(1, 16384), 1, 1])
+        .block([256, 1, 1])
+        .shared_mem(MOE_E4M3_GU.smem_bytes)
+        .arg_ptr(a_fp8)
+        .arg_ptr(a_scale)
+        .arg_ptr(gate.0)
+        .arg_ptr(gate.1)
+        .arg_ptr(up.0)
+        .arg_ptr(up.1)
+        .arg_ptr(out_fp8)
+        .arg_ptr(out_scale)
+        .arg_ptr(expert_offsets)
+        .arg_ptr(sorted_token_ids)
+        .arg_u32(n)
+        .arg_u32(k)
+        .arg_ptr(worklist)
+        .arg_ptr(total_tiles)
+        .launch(stream)
+}
+
 /// 2026-09-25: BF16 grouped GEMM for sorted MoE prefill, without scales:
 /// `input` `[total_tokens, K]` BF16, `weight_ptrs[e]` → `[N, K]` BF16,
 /// `output` `[total_expanded, N]` BF16, `sorted_token_ids` `[total_expanded]`

@@ -32,9 +32,13 @@ macro_rules! mprof_step {
 const PM4_N_TILE: u32 = 64;
 const PM4_M_TILE: u32 = 128;
 
+mod combine;
 mod down;
+mod e4m3;
 mod gate_up;
 mod shared;
+
+pub(super) use e4m3::{E4m3Kernels, E4m3Proj};
 
 impl MoeLayer {
     /// 2026-09-25: Whether `silu_mul_quant_fp8` replaces the `silu_mul` then
@@ -119,6 +123,17 @@ impl MoeLayer {
                 ctx,
                 stream,
             )?;
+        // 2026-09-25: W8A8 when `fp8_blockscaled_prefill` and its kernels
+        // resolved: activations quantised to FP8 per row and 128-column group
+        // with FP32 scales.
+        let force_w8a8 = ctx.dispatch.fp8_blockscaled_prefill
+            && self.moe_w8a8_grouped_gemm_k.0 != 0
+            && self.per_token_group_quant_fp8_k.available();
+        // 2026-09-28: When both the shared and the routed experts run W8A8, the input is
+        // quantized once, into a slot the shared expert's later writes do not touch.
+        let input_q = (!bf16_shared && has_shared && force_w8a8_sh && force_w8a8)
+            .then(|| shared::input_q_slot(&fp8_scratch, n, h, shared_inter))
+            .flatten();
         // 2026-09-25: Held across the router so shared W8A8 can leave the main stream.
         // Dropped after sort, before routed quant reuses `fp8_scratch`.
         let mut shared_join: Option<super::adaptive_fp8::SideJoin<'_>> = None;
@@ -134,6 +149,7 @@ impl MoeLayer {
                 };
             self.fp8_prefill_shared_w8a8(
                 input,
+                input_q,
                 sh,
                 n,
                 h,
@@ -279,11 +295,13 @@ impl MoeLayer {
 
         let expert_gate_out = ctx.buffers.expert_gate_out();
         let expert_up_out = ctx.buffers.expert_up_out();
-        // 2026-09-25: Zero the expert buffers before the grouped GEMMs, on every
-        // path. The work-list builder skips an expert whose weight pointer is
-        // NULL, so its sorted rows are never written, and the unpermute still
-        // reads every sorted row.
-        {
+        // 2026-09-25: Zero the expert buffers before the grouped GEMMs. The work-list
+        // builder skips an expert whose weight pointer is NULL, so its sorted rows are
+        // never written, and the unpermute still reads every sorted row.
+        // 2026-09-28: Only then: with every weight pointer present each sorted row of
+        // all three buffers is written by a GEMM first, and the memsets (about 400 MB
+        // per layer at an 8k-token chunk) change nothing.
+        if !(gp.all_present && up.all_present && dp.all_present) {
             let gu_bytes = te * inter as usize * 2;
             ctx.gpu.memset_async(expert_gate_out, 0, gu_bytes, stream)?;
             ctx.gpu.memset_async(expert_up_out, 0, gu_bytes, stream)?;
@@ -294,16 +312,11 @@ impl MoeLayer {
                 stream,
             )?;
         }
-        // 2026-09-25: W8A8 when `fp8_blockscaled_prefill` and its kernels
-        // resolved: activations quantised to FP8 per row and 128-column group
-        // with FP32 scales.
-        let force_w8a8 = ctx.dispatch.fp8_blockscaled_prefill
-            && self.moe_w8a8_grouped_gemm_k.0 != 0
-            && self.per_token_group_quant_fp8_k.available();
-
+        let mut down_in = None;
         if force_w8a8 && max_m_tiles > 0 {
-            self.fp8_prefill_gate_up_w8a8(
+            down_in = self.fp8_prefill_gate_up_w8a8(
                 input,
+                input_q,
                 gp,
                 up,
                 expert_gate_out,
@@ -364,6 +377,7 @@ impl MoeLayer {
         let expert_down_out = ctx.buffers.expert_down_out();
         if force_w8a8 && max_m_tiles > 0 {
             self.fp8_prefill_down_w8a8(
+                down_in,
                 dp,
                 expert_gate_out,
                 expert_up_out,
@@ -416,53 +430,18 @@ impl MoeLayer {
         )?;
 
         let output = ctx.buffers.moe_output();
-        ops::moe_unpermute_reduce_indexed(
-            ctx.gpu,
-            self.moe_unpermute_reduce,
+        self.fp8_prefill_combine(
+            input,
             expert_down_out,
             output,
             token_to_perm,
             weights_dev,
-            h,
-            n,
-            top_k,
+            has_shared,
+            num_tokens,
+            ctx,
             stream,
+            &mut mt,
         )?;
-        mprof!("unpermute_reduce");
-
-        // 2026-09-25: With EP, the all-reduce covers only the routed output; the
-        // shared blend below runs after it.
-        if let Some(comm) = ctx.comm
-            && ctx.config.ep_world_size > 1
-        {
-            comm.all_reduce_async(output.0, num_tokens * h as usize * 2, stream)?;
-        }
-
-        if has_shared {
-            let shared_down_out = ctx.buffers.attn_output();
-            super::dump::dump_routed_only(ctx.gpu, stream, output, n, h)?;
-            super::dump::dump_shared_out(ctx.gpu, stream, shared_down_out, n, h)?;
-            super::dump::dump_shared_gate(
-                ctx.gpu,
-                stream,
-                input,
-                self.weights.shared_expert_gate.weight,
-                n,
-                h,
-            )?;
-            ops::moe_batched_blend(
-                ctx.gpu,
-                self.moe_batched_blend,
-                output,
-                shared_down_out,
-                input,
-                self.weights.shared_expert_gate.weight,
-                h,
-                n,
-                stream,
-            )?;
-            mprof!("blend");
-        }
 
         super::dump::dump_moe_out(ctx.gpu, stream, output, n, h)?;
 

@@ -8,6 +8,7 @@
 use super::{GdnPlan, KernelFlagPlan};
 use crate::cli::{Cli, Command, validate_serve_args};
 use clap::Parser;
+use metrale_model_layers::layers::ExpertQuantization;
 
 fn plan(flags: &[&str]) -> KernelFlagPlan {
     let mut argv = vec!["met", "serve", "org/model"];
@@ -29,7 +30,7 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
             gdn: None,
             w4a4_downcast: false,
             w4a4_downcast_wide: false,
-            moe_nvfp4_experts: false,
+            expert_quantization: ExpertQuantization::Fp8,
             prefill_codispatch: None,
             prefill_varlen: None,
             ssm_tail_midchunk: None,
@@ -107,7 +108,30 @@ fn the_wide_downcast_needs_the_downcast() {
 }
 
 #[test]
-fn the_nvfp4_moe_flag_is_carried_and_off_by_default() {
-    assert!(!plan(&[]).moe_nvfp4_experts);
-    assert!(plan(&["--moe-nvfp4-experts"]).moe_nvfp4_experts);
+fn the_expert_quantization_tier_is_carried_and_fp8_by_default() {
+    assert_eq!(plan(&[]).expert_quantization, ExpertQuantization::Fp8);
+    for q in ExpertQuantization::ALL {
+        assert_eq!(
+            plan(&["--expert-quantization", q.name()]).expert_quantization,
+            q
+        );
+    }
+}
+
+/// 2026-09-27: A value outside the tiers, and the removed presence flag, are refused by clap.
+#[test]
+fn a_bad_expert_quantization_value_is_refused() {
+    for argv in [
+        vec![
+            "met",
+            "serve",
+            "org/model",
+            "--expert-quantization",
+            "nvfp8",
+        ],
+        vec!["met", "serve", "org/model", "--expert-quantization"],
+        vec!["met", "serve", "org/model", "--moe-nvfp4-experts"],
+    ] {
+        assert!(Cli::try_parse_from(&argv).is_err(), "{argv:?} parsed");
+    }
 }

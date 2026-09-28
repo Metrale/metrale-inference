@@ -231,7 +231,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-moe-permute-cu-moe-build-tile-worklist"></a>
 
-### `moe_build_tile_worklist` — [kernels/gb10/common/moe_permute.cu](../../kernels/gb10/common/moe_permute.cu#L273)
+### `moe_build_tile_worklist` — [kernels/gb10/common/moe_permute.cu](../../kernels/gb10/common/moe_permute.cu#L276)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -455,7 +455,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-w4a16-fp8-ldmab-cu-fp8-fp8-gemm-ldmab"></a>
 
-### `fp8_fp8_gemm_ldmab` — [kernels/gb10/common/w4a16_fp8_ldmab.cu](../../kernels/gb10/common/w4a16_fp8_ldmab.cu#L53)
+### `fp8_fp8_gemm_ldmab` — [kernels/gb10/common/w4a16_fp8_ldmab.cu](../../kernels/gb10/common/w4a16_fp8_ldmab.cu#L65)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|

@@ -31,18 +31,17 @@ impl TransformerModel {
         let bs = kv_cache.block_size();
         let end_token = chunk_start + chunk_len;
         let end_block = end_token / bs;
-        // 2026-09-25: A chunk end at `tail` (the last block boundary below the prompt
-        // end) or at `tail - bs` is a prompt-tail checkpoint: a warm next turn's
-        // block-floored match lands at or one block below `tail` (`ssm_tail_boundary`).
-        // `prefill_chunk_dispatch` ends a chunk at `tail - bs`.
-        let tail = (tokens.len().saturating_sub(1) / bs) * bs;
-        let is_prompt_tail = end_token == tail || (tail >= bs && end_token == tail - bs);
-        // 2026-09-25: `--ssm-checkpoint-interval` filters chunk ends; it does not create
-        // them. This runs only at a chunk end, so interval checkpoints are spaced by the
-        // chunk size, at chunk ends whose block index is an interval multiple.
-        let on_interval = self.ssm_checkpoint_interval > 0
-            && end_block.is_multiple_of(self.ssm_checkpoint_interval);
-        if end_block == 0 || !(is_prompt_tail || on_interval) {
+        // 2026-09-27: A prompt-tail end (the last block boundary below the prompt end, or
+        // one block below it) or an interval end saves (`prefill_plan`). The planner ends
+        // a chunk at `prefill_plan::tail_split_point`. `--ssm-checkpoint-interval` filters
+        // chunk ends; it does not create them.
+        let is_prompt_tail = crate::prefill_plan::is_prompt_tail_end(end_token, tokens.len(), bs);
+        if !crate::prefill_plan::is_checkpoint_chunk_end(
+            end_token,
+            tokens.len(),
+            bs,
+            self.ssm_checkpoint_interval,
+        ) {
             return Ok(());
         }
         // 2026-09-25: Skip the checkpoint when a block below `end_block` lies past

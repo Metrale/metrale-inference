@@ -94,26 +94,16 @@ pub(super) fn gdn_prefill_tc_kernel(gpu: &dyn GpuBackend) -> KernelHandle {
 }
 
 /// 2026-09-25: The scalar fused GDN state-spine handle from
-/// `gated_delta_rule_fla`: `GDN_SCALAR_SPINE_PIPE` when `METRALE_GDN_PIPE=1`,
-/// else `GDN_SCALAR_SPINE_VTILE` when `METRALE_GDN_VTILE=1`, else
-/// `GDN_SCALAR_SPINE_VFUSED`. `ops::gdn_prefill_fla` derives the launch's block
-/// size from the same two variables.
+/// `gated_delta_rule_fla`, the entry `ops::gdn_scalar_spine` picks (2026-09-28: the pipe
+/// spine unless `METRALE_GDN_PIPE=0` or `METRALE_GDN_VTILE=1`). `ops::gdn_prefill_fla`
+/// derives the launch's block size and shared memory from the same choice.
 ///
 /// Logs one route line (`gdn_init_spine_line`): the tensor-core entry when
 /// `tc_spine` (the handle [`gdn_prefill_tc_kernel`] returned) is non-zero,
 /// else this scalar entry.
 pub(super) fn fused_spine_kernel(gpu: &dyn GpuBackend, tc_spine: KernelHandle) -> KernelHandle {
-    use crate::layers::ops::{
-        GDN_SCALAR_SPINE_PIPE, GDN_SCALAR_SPINE_VFUSED, GDN_SCALAR_SPINE_VTILE, gdn_init_spine_line,
-    };
-    let scalar = match (
-        std::env::var("METRALE_GDN_PIPE").ok().as_deref(),
-        std::env::var("METRALE_GDN_VTILE").ok().as_deref(),
-    ) {
-        (Some("1"), _) => GDN_SCALAR_SPINE_PIPE,
-        (_, Some("1")) => GDN_SCALAR_SPINE_VTILE,
-        _ => GDN_SCALAR_SPINE_VFUSED,
-    };
+    use crate::layers::ops::{gdn_init_spine_line, gdn_scalar_spine};
+    let scalar = gdn_scalar_spine().entry();
     tracing::info!("{}", gdn_init_spine_line(tc_spine.0 != 0, scalar));
     crate::layers::try_kernel(gpu, "gated_delta_rule_fla", scalar)
 }

@@ -137,9 +137,11 @@ ssm_batched_recurrent = false
 
 
 gdn_prefill_tc = false
-# 2026-09-25: Selects `dense_gemm_ba_gates_prefill_hopper` (kernels/hopper/common/ssm_ba_gates_hopper.cu) over
-# the gb10 `dense_gemm_ba_gates_prefill`. That source is not in this tree, so the handle is `KernelHandle(0)`
-# and the gb10 kernel runs (model-layers ops/ssm_ba_gates_hopper.rs). `METRALE_SSM_BA_GATES_HOPPER` overrides.
+# 2026-09-25: Selects `dense_gemm_ba_gates_prefill_hopper` (kernels/gb10/common/ssm_ba_gates_hopper.cu) over
+# the gb10 `dense_gemm_ba_gates_prefill` (model-layers ops/ssm_ba_gates_hopper.rs). `METRALE_SSM_BA_GATES_HOPPER`
+# overrides. 2026-09-28: ON. The twin is bit-identical to its parent (it keeps the parent's reduction order) and on
+# GB10 at the Qwen3.8-27B shape (N 96, K 5120) runs 4.70 -> 1.89 ms at 8192 tokens; the launcher keeps the parent
+# below 2 * 48 tokens, where the twin is slower.
 
 
 
@@ -148,7 +150,7 @@ gdn_prefill_tc = false
 
 
 
-ssm_ba_gates_hopper = false
+ssm_ba_gates_hopper = true
 # 2026-09-25: Selects `per_token_group_quant_fp8_hopper` (kernels/hopper/common/fp8_act_quant_hopper.cu) over
 # `per_token_group_quant_fp8`. That source is not in this tree, so its handle is 0 and the gb10 quantizer runs
 # (model-layers ops/fp8_act_quant.rs). `METRALE_FP8_ACT_QUANT_HOPPER` overrides.

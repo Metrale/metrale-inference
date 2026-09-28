@@ -303,7 +303,8 @@ impl Qwen3SsmLayer {
                 crate::layers::moe::GroupedRouting::PerRow,
                 ctx,
             );
-        // 2026-09-27: `--moe-nvfp4-experts` takes the grouped NVFP4 decode at every row count.
+        // 2026-09-27: An NVFP4 `--expert-quantization` tier takes the grouped decode at every
+        // row count.
         let nvfp4_moe = self.ffn.nvfp4_grouped_ok(num_tokens, ctx);
         if row_invariant_moe || nvfp4_moe {
             if nvfp4_moe {

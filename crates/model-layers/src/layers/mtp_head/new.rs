@@ -413,6 +413,7 @@ impl MtpHead {
             // 2026-09-25: 0 when absent; the drafter prefill then writes no
             // rows.
             dense_gemm_k: crate::layers::try_kernel(gpu, "gemm", "dense_gemm_bf16"),
+            batched_embed_k: crate::layers::try_kernel(gpu, "embed_from_argmax", "batched_embed"),
             dense_gemm_pipelined_k: crate::layers::try_kernel(
                 gpu,
                 "gemm",

@@ -50,7 +50,7 @@
   "performance": {
     "_benches": ["agentic-webserver"],
     "decode": { "_benches": ["bfcl-subset", "ttft-warm-gate", "decode-floor"] },
-    "prefill": { "_benches": ["ttft-cold-gate", "ttft-warm-gate"] },
+    "prefill": { "_benches": ["ttft-cold-gate", "ttft-warm-gate", "high-isl-ttft-cold", "high-isl-ttft-cold-moe"] },
     "kernel-dispatch": { "_benches": ["bfcl-subset", "decode-floor"] },
     "memory-traffic": { "_benches": ["bfcl-subset", "ttft-warm-gate", "decode-floor"] },
     "scheduling": { "_benches": ["ttft-warm-gate", "concurrency-sweep"] },

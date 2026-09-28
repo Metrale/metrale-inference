@@ -101,7 +101,8 @@ impl Qwen3AttentionLayer {
             && self
                 .ffn
                 .fp8_grouped_routing_ok(n, crate::layers::moe::GroupedRouting::PerRow, fwd);
-        // 2026-09-27: `--moe-nvfp4-experts` takes the grouped NVFP4 decode at every row count.
+        // 2026-09-27: An NVFP4 `--expert-quantization` tier takes the grouped decode at every
+        // row count.
         let nvfp4_moe = !force_seq_ffn && self.ffn.nvfp4_grouped_ok(n, fwd);
         if row_invariant_moe || nvfp4_moe {
             let normed2 = fwd.buffers.norm_output();

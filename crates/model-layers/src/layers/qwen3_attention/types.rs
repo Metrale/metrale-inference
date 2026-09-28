@@ -351,6 +351,9 @@ pub struct Qwen3AttentionLayer {
     pub(super) prefill_attn_paged_nvfp4_k: KernelHandle,
     pub(super) prefill_attn_paged_turbo4_k: KernelHandle,
     pub(super) prefill_attn_paged_64_k: KernelHandle,
+    /// 2026-09-27: Bit-identical 128-row twins of `prefill_attn_paged_64_k` and
+    /// `prefill_attn_64_k`, preferred where they apply (`ops::AttnFa128Kernels`).
+    pub(super) prefill_attn_fa128: crate::layers::ops::AttnFa128Kernels,
     pub(super) prefill_attn_paged_fp8_64_k: KernelHandle,
     pub(super) prefill_attn_paged_nvfp4_64_k: KernelHandle,
     pub(super) prefill_attn_paged_turbo2_64_k: KernelHandle,

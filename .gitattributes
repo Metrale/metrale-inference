@@ -13,6 +13,10 @@
 crates/bench/assets/video/*.mp4 -filter -diff -merge -text
 tests/fixtures/videos/*.mp4 -filter -diff -merge -text
 
+# 2026-09-27: The high-ISL TTFT prompt is `include_str!`d and its sha256 is pinned
+# (`ttft/long_prompt_tests.rs`), so a checkout must never rewrite its line endings.
+crates/bench/src/benchmarks/ttft/prompts/*.txt text eol=lf
+
 # Append-style files that every feature PR touches (changelog entry, model-support
 # row). Without this, each merge to main conflicts the other open PRs on these files.
 # `merge=union` keeps both sides' added lines instead of emitting a conflict.

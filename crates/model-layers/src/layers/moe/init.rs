@@ -68,6 +68,7 @@ impl MoeLayer {
         let rms_norm_k = gpu.kernel("norm", "rms_norm")?;
         let grouped = super::forward_fp8_grouped_decode::GroupedKernels::resolve(gpu);
         let nvfp4_grouped = super::forward_nvfp4_grouped_decode::Nvfp4GroupedKernels::resolve(gpu);
+        let moe_e4m3 = super::forward_prefill_fp8::E4m3Kernels::resolve(gpu)?;
         Ok(Self {
             weights,
             // 2026-09-25: NVFP4 until a loader says otherwise; the DeepSeek-V4
@@ -83,6 +84,11 @@ impl MoeLayer {
             w4a16_gemm: gpu.kernel("w4a16", "w4a16_gemm")?,
             dense_gemm: gpu.kernel("gemm", "dense_gemm_bf16")?,
             dense_gemm_router: super::super::try_kernel(gpu, "gemm", "dense_gemm_bf16_router"),
+            moe_router_rt_k: if std::env::var_os("METRALE_NO_MOE_ROUTER_RT").is_some() {
+                KernelHandle(0)
+            } else {
+                try_target_kernel(gpu, "moe_router_gemm_prefill", "moe_router_gemm_rt")
+            },
             moe_router_gemm_k: super::super::try_kernel(
                 gpu,
                 "moe_router_gemm",
@@ -228,6 +234,12 @@ impl MoeLayer {
                 "moe_w8a8_grouped_gemm",
                 "moe_w8a8_grouped_gemm_pm4",
             ),
+            moe_e4m3,
+            moe_unpermute_blend_k: if std::env::var_os("METRALE_NO_MOE_UNPERMUTE_BLEND").is_some() {
+                KernelHandle(0)
+            } else {
+                try_target_kernel(gpu, "moe_unpermute_blend", "moe_unpermute_blend")
+            },
             per_token_group_quant_fp8_k: ops::Fp8ActQuant::resolve(gpu),
             // 2026-09-25: 0 when the model's moe_silu_mul module lacks this entry;
             // the unfused pair runs then.

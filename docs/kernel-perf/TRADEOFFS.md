@@ -1084,6 +1084,14 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Reads no mrope_section: pair i takes stream i % 3, which equals [11, 11, 10] only at rotary_dim 64. rotary_dim above 256 makes pos_per_block 0 and the kernel writes nothing. With equal t/h/w positions it is bit-identical to rope_forward. — source: kernels/gb10/common/rope_mrope_interleaved.cu:12
 
+<a id="to-kernels-gb10-common-ssm-ba-gates-hopper-cu"></a>
+
+### [kernels/gb10/common/ssm_ba_gates_hopper.cu](../../kernels/gb10/common/ssm_ba_gates_hopper.cu)
+
+- *whole file*: A register tile of 8 outputs cuts row reads 96 to 12 per token: 64 regs (4 CTAs/SM vs the parent's 8), 4.19 inst/MAC, bit-identical, 371.56 vs 545.20 us at M=4576 but 3x slower at M=17 (6.17 vs 20.04 us), hence a 264-token floor. BAH_GROUPS=12 spills (H100, round 15). — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
+- *whole file*: BAH_GROUPS = 8 output groups per row read: 12 activation-row reads per token instead of 96, 4.19 vs 5.47 inst/MAC, 64 registers and no spill; occupancy halves vs the parent. 4 groups: 47 regs/4.69; 12 spills; 16: 80 regs, 3 CTAs/SM. Parent's reduction order kept, so bit-identical. — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
+- *whole file*: Measured on H100: 371.56 us vs the parent's 545.20 us at M=4576 (0.67x), TTFT -8.5 ms at 4096x512. Below the token guard (2 x SM count tokens, 264 on H100) it loses 3x (M=17: 6.17 -> 20.04 us), so decode stays on the parent. — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
+
 <a id="to-kernels-gb10-common-ssm-h-dtype-cu"></a>
 
 ### [kernels/gb10/common/ssm_h_dtype.cu](../../kernels/gb10/common/ssm_h_dtype.cu)
@@ -1909,14 +1917,6 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 - *whole file*: Exists only to consume fused [gate | up] rows at stride 2\*inter for the one-GEMM gate+up decode (5..16 rows, byte-equal to two GEMMs); since only the hopper tree holds it, ffn_gateup_fused is inert on gb10/b200. Predicted -1476 us of a 19.887 ms n=16 H100 step, not measured. — source: docs/perf/hopper/FFN-GATEUP-FUSION-ATTRIBUTION.md; kernels/gb10/HARDWARE.toml
 - *whole file*: Exists only on hopper, where ffn_gateup_fused runs one FP8 GEMM over the fused gate+up weight (N = 2 \* intermediate) for 5..=16 decode rows; this consumer takes row strides because the fused output is [m, 2 \* inter]. gb10, b200 and b300 declare the fusion false. — source: kernels/hopper/common/silu_mul_strided.cu:14; kernels/hopper/HARDWARE.toml:316
-
-<a id="to-kernels-hopper-common-ssm-ba-gates-hopper-cu"></a>
-
-### [kernels/hopper/common/ssm_ba_gates_hopper.cu](../../kernels/hopper/common/ssm_ba_gates_hopper.cu)
-
-- *whole file*: A register tile of 8 outputs cuts row reads 96 to 12 per token: 64 regs (4 CTAs/SM vs the parent's 8), 4.19 inst/MAC, bit-identical, 371.56 vs 545.20 us at M=4576 but 3x slower at M=17 (6.17 vs 20.04 us), hence a 264-token floor. BAH_GROUPS=12 spills (H100, round 15). — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
-- *whole file*: BAH_GROUPS = 8 output groups per row read: 12 activation-row reads per token instead of 96, 4.19 vs 5.47 inst/MAC, 64 registers and no spill; occupancy halves vs the parent. 4 groups: 47 regs/4.69; 12 spills; 16: 80 regs, 3 CTAs/SM. Parent's reduction order kept, so bit-identical. — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
-- *whole file*: Measured on H100: 371.56 us vs the parent's 545.20 us at M=4576 (0.67x), TTFT -8.5 ms at 4096x512. Below the token guard (2 x SM count tokens, 264 on H100) it loses 3x (M=17: 6.17 -> 20.04 us), so decode stays on the parent. — source: docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md
 
 <a id="to-kernels-hopper-common-w8a16-gemm-m16-cu"></a>
 

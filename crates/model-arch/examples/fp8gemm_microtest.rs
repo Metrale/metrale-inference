@@ -133,8 +133,9 @@ fn main() -> Result<()> {
             let h = gpu.kernel("w4a16_fp8_ldmab", "fp8_fp8_gemm_ldmab")?;
             let launch = |s| {
                 KernelLaunch::new(gpu, h)
-                    .grid([div_ceil(n as u32, 128), div_ceil(m as u32, 128), 1])
+                    .grid([div_ceil(m as u32, 128) * div_ceil(n as u32, 256), 1, 1])
                     .block([256, 1, 1])
+                    .shared_mem(2 * (128 + 256) * 128)
                     .arg_ptr(a8_ptr)
                     .arg_ptr(b_ptr)
                     .arg_ptr(c_ptr)

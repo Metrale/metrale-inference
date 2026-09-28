@@ -197,4 +197,8 @@ extend-exclude = [
     # Campaign raw artifacts: verbatim model output (logit dumps whose top-k
     # entries include subword fragments like ` summar`, ` repet`). Data, not prose.
     "docs/campaigns/*/raw/",
+    # 2026-09-27: Public-domain prompt text kept verbatim (Melville's 1851 spellings such as
+    # `againe` and `catched`); `bench/` above already matches it, but only by accident of the
+    # crate's name.
+    "crates/bench/src/benchmarks/ttft/prompts/*.txt",
 ]

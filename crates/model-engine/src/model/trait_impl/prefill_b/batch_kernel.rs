@@ -129,11 +129,11 @@ impl TransformerModel {
         // metadata goes to its own scratch slice; the stacked
         // `BatchedAttnMetadata` is staged after all of them.
         let mut per_stream: Vec<PerStreamMeta> = Vec::with_capacity(n);
-        // 2026-09-25: Chunk-0 batches are admitted with codispatch or varlen, so
+        // 2026-09-25: Chunk-0 batches are admitted by `prefill_batched_chunk_zero_admitted`, so
         // the paged upload fires on the same condition; otherwise a chunk-0
         // stream's `block_table_dev` would stay NULL.
         let force_paged_first_chunk = streams[0].chunk_start == 0
-            && (metrale_model_layers::layers::ops::prefill_batched_first_chunk_enabled() || varlen);
+            && metrale_model_layers::layers::ops::prefill_batched_chunk_zero_admitted();
 
         let mut use_mrope: Option<bool> = None;
         let mut needs_paged: Option<bool> = None;

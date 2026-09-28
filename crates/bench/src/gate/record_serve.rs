@@ -28,9 +28,10 @@ pub const PREFILL_CODISPATCH: &str = "prefill_codispatch";
 /// flag defaults to false and has no environment fallback, so an absent key
 /// means off.
 pub const W4A4_DOWNCAST: &str = "w4a4_downcast";
-/// 2026-09-27: Key for `--moe-nvfp4-experts`, present (`true`) only when on. Like
-/// `--w4a4-downcast` it defaults to false with no environment fallback.
-pub const MOE_NVFP4_EXPERTS: &str = "moe_nvfp4_experts";
+/// 2026-09-27: Key for `--expert-quantization`, present only for a tier other than the default
+/// `fp8`, with the tier's name as the value (`nvfp4-gate-up`, `nvfp4`). The flag has no
+/// environment fallback, so an absent key means `fp8`.
+pub const EXPERT_QUANTIZATION: &str = "expert_quantization";
 
 /// 2026-09-26: The disclosure for a server whose rendered flags resolved to
 /// these values.
@@ -43,12 +44,14 @@ pub const MOE_NVFP4_EXPERTS: &str = "moe_nvfp4_experts";
 /// `prefill_codispatch` writes `true` when the flag was given and no key
 /// otherwise; the server's `METRALE_PREFILL_CODISPATCH` then decides, and
 /// `serve_env` discloses it when the recipe declares it.
+///
+/// `expert_quantization` is the tier's name when it is not the default `fp8`, else `None`.
 pub fn disclosure(
     mtp_gate_force: Option<bool>,
     speculative: bool,
     prefill_codispatch: bool,
     w4a4_downcast: bool,
-    moe_nvfp4_experts: bool,
+    expert_quantization: Option<&str>,
 ) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     m.insert(SPECULATIVE.to_string(), speculative.to_string());
@@ -64,8 +67,8 @@ pub fn disclosure(
     if w4a4_downcast {
         m.insert(W4A4_DOWNCAST.to_string(), "true".to_string());
     }
-    if moe_nvfp4_experts {
-        m.insert(MOE_NVFP4_EXPERTS.to_string(), "true".to_string());
+    if let Some(tier) = expert_quantization {
+        m.insert(EXPERT_QUANTIZATION.to_string(), tier.to_string());
     }
     m
 }

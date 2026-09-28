@@ -3374,19 +3374,19 @@ prs = []
 source = "kernels/hopper/common/silu_mul_strided.cu:14; kernels/hopper/HARDWARE.toml:316"
 
 [[t]]
-match = "kernels/hopper/common/ssm_ba_gates_hopper.cu"
+match = "kernels/gb10/common/ssm_ba_gates_hopper.cu"
 text = "A register tile of 8 outputs cuts row reads 96 to 12 per token: 64 regs (4 CTAs/SM vs the parent's 8), 4.19 inst/MAC, bit-identical, 371.56 vs 545.20 us at M=4576 but 3x slower at M=17 (6.17 vs 20.04 us), hence a 264-token floor. BAH_GROUPS=12 spills (H100, round 15)."
 prs = []
 source = "docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md"
 
 [[t]]
-match = "kernels/hopper/common/ssm_ba_gates_hopper.cu"
+match = "kernels/gb10/common/ssm_ba_gates_hopper.cu"
 text = "BAH_GROUPS = 8 output groups per row read: 12 activation-row reads per token instead of 96, 4.19 vs 5.47 inst/MAC, 64 registers and no spill; occupancy halves vs the parent. 4 groups: 47 regs/4.69; 12 spills; 16: 80 regs, 3 CTAs/SM. Parent's reduction order kept, so bit-identical."
 prs = []
 source = "docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md"
 
 [[t]]
-match = "kernels/hopper/common/ssm_ba_gates_hopper.cu"
+match = "kernels/gb10/common/ssm_ba_gates_hopper.cu"
 text = "Measured on H100: 371.56 us vs the parent's 545.20 us at M=4576 (0.67x), TTFT -8.5 ms at 4096x512. Below the token guard (2 x SM count tokens, 264 on H100) it loses 3x (M=17: 6.17 -> 20.04 us), so decode stays on the parent."
 prs = []
 source = "docs/perf/hopper/SSM-BA-GATES-ATTRIBUTION.md"

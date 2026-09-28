@@ -112,9 +112,9 @@ impl Qwen3AttentionLayer {
                 );
             }
             let tp2 = std::time::Instant::now();
-            ops::prefill_attention_64(
+            // 2026-09-27: The bit-identical 128-row twin where it applies.
+            let twin = self.prefill_attn_fa128.contiguous(
                 ctx.gpu,
-                self.prefill_attn_64_k,
                 q_contiguous,
                 k_contiguous,
                 v_contiguous,
@@ -128,10 +128,29 @@ impl Qwen3AttentionLayer {
                 true,
                 self.sliding_window.unwrap_or(0),
                 stream,
-            )
-            .map_err(|e| {
-                anyhow::anyhow!("flash_attn_64 failed: n={n} nq={nq} nkv={nkv} hd={hd}: {e}")
-            })?;
+            )?;
+            if !twin {
+                ops::prefill_attention_64(
+                    ctx.gpu,
+                    self.prefill_attn_64_k,
+                    q_contiguous,
+                    k_contiguous,
+                    v_contiguous,
+                    attn_out,
+                    flash_seq_len,
+                    flash_batch,
+                    nq,
+                    nkv,
+                    hd,
+                    inv_sqrt_d,
+                    true,
+                    self.sliding_window.unwrap_or(0),
+                    stream,
+                )
+                .map_err(|e| {
+                    anyhow::anyhow!("flash_attn_64 failed: n={n} nq={nq} nkv={nkv} hd={hd}: {e}")
+                })?;
+            }
             crate::layers::qwen3_attention::add_attn_phase_us(2, tp2.elapsed().as_micros() as u64);
         }
 
