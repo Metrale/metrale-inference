@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# 2026-09-28: The formats each linear module of unsloth/Qwen3.8-27B-NVFP4 runs at under the
+# recipe qwen3.8/qwen3.8-27b-nvfp4-unsloth on main: the engine's `nvfp4` weight tier.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - These are the formats that run, not the ones the checkpoint declares. The checkpoint
+#   declares FP8 W8A8 (per-channel weights, per-token activations) for attention q/k/v/o,
+#   linear_attn in_proj_qkv/in_proj_z/out_proj, lm_head and the MLP of layers 56-63, and
+#   NVFP4 W4A4 for the other MLPs. At decode every one of those runs as NVFP4 weights with
+#   BF16 activations: per-channel FP8 fails the native-FP8 arm and is requantized to NVFP4
+#   at load (crates/model-arch/src/weight_loader/qwen35_dense.rs:81-103,
+#   qwen35_dense/attn_arms.rs:127-145, fp8_lut.rs:281-285). An adapter over the declared
+#   precision plan replaces this table once the weight-quantization tiers are on main.
+# - `mtp.lm_head` names the draft head's runtime NVFP4 copy of the BF16 lm_head
+#   (crates/model-engine/src/factory/lm_head_setup.rs:116-133).
+
+schema = 1
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+tier = "nvfp4"
+
+[[linear]]
+match = "model.language_model.layers.*.linear_attn.in_proj_b"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "model.language_model.layers.*.linear_attn.in_proj_a"
+weight = "bf16"
+activation = "bf16"
+
+# 2026-09-28: `--lm-head-dtype bf16` keeps the head BF16 (model_setup.rs:36-38).
+[[linear]]
+match = "lm_head"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "mtp.lm_head"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+# 2026-09-28: `--mtp-quantization bf16`: every draft projection is BF16 (mtp_head.rs:330-339).
+[[linear]]
+match = "mtp.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*"
+weight = "nvfp4/g16"
+activation = "bf16"

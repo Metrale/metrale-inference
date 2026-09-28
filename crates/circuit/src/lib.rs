@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-28: Architecture circuits. A model is a graph of ops (`kernels/circuits/<arch>.toml`)
+//! whose edges the fuser marks fused or materialised by applying the hardware's fusion rules
+//! (`kernels/<hw>/common/FUSIONS.toml`) for one mode and row count.
+//!
+//! Owner: metrale-circuit.
+//! Invariants:
+//! - Pure: no GPU, no file I/O, no environment, no clock and no randomness. Callers read the
+//!   TOMLs and pass their text in ([`load`]).
+//! - A plan is deterministic, and its digest is recorded beside the closure hash.
+
+pub mod circuit_toml;
+pub mod digest;
+pub mod dims;
+pub mod format;
+pub mod fuser;
+pub mod instances;
+pub mod instantiate;
+pub mod ir;
+pub mod planner;
+pub mod precision;
+pub mod render;
+pub mod rules;
+
+#[cfg(test)]
+mod test_toy;
+
+pub use circuit_toml::CircuitError;
+pub use format::{Format, Scale};
+pub use fuser::{AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse};
+pub use instances::{Instance, InstanceError, parse_instances};
+pub use instantiate::instantiate;
+pub use ir::{ArchShape, Circuit, LayerKind, LinearRole, OpKind, Section};
+pub use precision::{EdgePrecision, LinearFormats, PrecisionError, PrecisionTable};
+pub use rules::{KernelId, Mode, Numerics, Rule, RuleError, parse_rules};
+
+/// 2026-09-28: Any failure between the TOML texts and a rendered plan.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum LoadError {
+    /// 2026-09-28: The circuit.
+    #[error(transparent)]
+    Circuit(#[from] CircuitError),
+    /// 2026-09-28: FUSIONS.toml.
+    #[error(transparent)]
+    Rules(#[from] RuleError),
+    /// 2026-09-28: The precision table.
+    #[error(transparent)]
+    Precision(#[from] PrecisionError),
+    /// 2026-09-28: Fusion.
+    #[error(transparent)]
+    Fuse(#[from] FuseError),
+    /// 2026-09-28: The precision table describes another checkpoint.
+    #[error("precision table is for `{table}`, the instance serves `{instance}`")]
+    CheckpointMismatch {
+        /// 2026-09-28: The table's checkpoint.
+        table: String,
+        /// 2026-09-28: The instance's checkpoint.
+        instance: String,
+    },
+}
+
+/// 2026-09-28: The texts one instance is built from.
+#[derive(Debug, Clone, Copy)]
+pub struct Sources<'a> {
+    /// 2026-09-28: `kernels/circuits/<arch>.toml`.
+    pub circuit: &'a str,
+    /// 2026-09-28: `kernels/circuits/precision/<name>.toml`.
+    pub precision: &'a str,
+    /// 2026-09-28: `kernels/<hw>/common/FUSIONS.toml`.
+    pub rules: &'a str,
+}
+
+/// 2026-09-28: An instance's circuit and rules, ready to fuse.
+#[derive(Debug, Clone)]
+pub struct Loaded {
+    /// 2026-09-28: The instantiated circuit.
+    pub circuit: Circuit,
+    /// 2026-09-28: The rules, in file order.
+    pub rules: Vec<Rule>,
+}
+
+/// 2026-09-28: Parse and instantiate `instance` from `src`.
+pub fn load(instance: &Instance, src: Sources<'_>) -> Result<Loaded, LoadError> {
+    let table = PrecisionTable::parse(src.precision)?;
+    if table.checkpoint != instance.checkpoint {
+        return Err(LoadError::CheckpointMismatch {
+            table: table.checkpoint,
+            instance: instance.checkpoint.clone(),
+        });
+    }
+    let circuit = instantiate(src.circuit, &instance.shape, &table)?;
+    let rules = parse_rules(src.rules)?;
+    Ok(Loaded { circuit, rules })
+}
+
+/// 2026-09-28: The header lines a rendering of `instance` carries.
+pub fn header(instance: &Instance) -> render::Header {
+    let mut h = vec![
+        ("recipe".to_string(), instance.recipe.clone()),
+        ("checkpoint".to_string(), instance.checkpoint.clone()),
+        ("target".to_string(), instance.target.clone()),
+    ];
+    let settings: Vec<String> = instance
+        .policy
+        .settings
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect();
+    h.push(("settings".to_string(), settings.join(" ")));
+    let levers: Vec<&str> = instance
+        .policy
+        .opt_in_levers
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let levers = if levers.is_empty() {
+        "none".to_string()
+    } else {
+        levers.join(" ")
+    };
+    h.push(("opt-in levers".to_string(), levers));
+    h
+}
+
+/// 2026-09-28: Fuse and render one plan of `instance`.
+pub fn render_plan(
+    instance: &Instance,
+    loaded: &Loaded,
+    available: &AvailableKernels,
+    mode: Mode,
+    rows: u64,
+) -> Result<String, LoadError> {
+    let plan = fuse(
+        &loaded.circuit,
+        &loaded.rules,
+        available,
+        &instance.policy,
+        mode,
+        rows,
+    )?;
+    Ok(render::render(&loaded.circuit, &plan, &header(instance)))
+}

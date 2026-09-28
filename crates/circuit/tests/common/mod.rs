@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-28: The file side of the golden-plan tests: reading the repo's circuit TOMLs, and
+//! the kernels each instance's target compiles. The crate under test does no I/O; this module
+//! is its caller.
+//!
+//! Owner: metrale-circuit tests.
+//! Invariants:
+//! - Paths are relative to the workspace root, found from `CARGO_MANIFEST_DIR`.
+//! - A kernel is available to a target when its module (the source stem after the target's
+//!   KERNEL.toml `[modules]` renames, applied least specific first as the kernels build does)
+//!   is one of the target's sources and that source names the function as a whole word.
+
+#![allow(dead_code)]
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use metrale_circuit::{AvailableKernels, Instance, KernelId, Loaded, Rule, Sources};
+
+/// 2026-09-28: The workspace root.
+pub fn root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root")
+}
+
+/// 2026-09-28: Read a repo-relative file.
+pub fn read(rel: &str) -> String {
+    let p = root().join(rel);
+    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// 2026-09-28: The plans directory.
+pub fn plans_dir() -> PathBuf {
+    root().join("kernels/circuits/plans")
+}
+
+/// 2026-09-28: FUSIONS.toml of the instance's hardware.
+pub fn fusions_rel(instance: &Instance) -> String {
+    let hw = instance.target.split('/').next().expect("target hw");
+    format!("kernels/{hw}/common/FUSIONS.toml")
+}
+
+/// 2026-09-28: All instances.
+pub fn instances() -> Vec<Instance> {
+    metrale_circuit::parse_instances(&read("kernels/circuits/INSTANCES.toml")).expect("instances")
+}
+
+/// 2026-09-28: The instance's circuit, precision and rule texts.
+pub struct Texts {
+    pub circuit: String,
+    pub precision: String,
+    pub rules: String,
+}
+
+impl Texts {
+    pub fn of(instance: &Instance) -> Self {
+        Texts {
+            circuit: read(&format!("kernels/circuits/{}.toml", instance.arch)),
+            precision: read(&format!(
+                "kernels/circuits/precision/{}.toml",
+                instance.precision
+            )),
+            rules: read(&fusions_rel(instance)),
+        }
+    }
+
+    pub fn sources(&self) -> Sources<'_> {
+        Sources {
+            circuit: &self.circuit,
+            precision: &self.precision,
+            rules: &self.rules,
+        }
+    }
+}
+
+/// 2026-09-28: Load an instance from the repo.
+pub fn load(instance: &Instance) -> Loaded {
+    metrale_circuit::load(instance, Texts::of(instance).sources())
+        .unwrap_or_else(|e| panic!("{}: {e}", instance.recipe))
+}
+
+/// 2026-09-28: Module name -> source text, for the instance's target.
+pub fn target_modules(instance: &Instance) -> BTreeMap<String, String> {
+    let mut parts = instance.target.split('/');
+    let target = metrale_closure::layout::Target {
+        hardware: parts.next().expect("hw").to_string(),
+        model: parts.next().expect("model").to_string(),
+        quant: parts.next().expect("quant").to_string(),
+    };
+    let layout = metrale_closure::layout::discover(&root(), &target)
+        .unwrap_or_else(|e| panic!("{}: {e:?}", instance.target));
+    let mut renames: BTreeMap<String, String> = BTreeMap::new();
+    for manifest in layout.configs() {
+        let value: toml::Table =
+            toml::from_str(&std::fs::read_to_string(&manifest).expect("KERNEL.toml"))
+                .expect("KERNEL.toml parses");
+        if let Some(t) = value.get("modules").and_then(|m| m.as_table()) {
+            for (stem, name) in t {
+                renames.insert(
+                    stem.clone(),
+                    name.as_str().expect("module name").to_string(),
+                );
+            }
+        }
+    }
+    layout
+        .modules()
+        .into_iter()
+        .map(|(stem, entry)| {
+            let name = renames.get(&stem).cloned().unwrap_or(stem);
+            let text = std::fs::read_to_string(&entry.source).expect("kernel source");
+            (name, text)
+        })
+        .collect()
+}
+
+fn names_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        let ok = |c: Option<char>| c.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        ok(text[..at].chars().next_back()) && ok(text[at + word.len()..].chars().next())
+    })
+}
+
+/// 2026-09-28: Whether `k` is compiled into a target whose modules are `modules`.
+pub fn present(modules: &BTreeMap<String, String>, k: &KernelId) -> bool {
+    modules
+        .get(&k.module)
+        .is_some_and(|t| names_word(t, &k.func))
+}
+
+/// 2026-09-28: The kernels of `rules` the instance's target compiles.
+pub fn available(instance: &Instance, rules: &[Rule]) -> AvailableKernels {
+    let modules = target_modules(instance);
+    let mut out = AvailableKernels::default();
+    for r in rules {
+        for k in &r.kernels {
+            if present(&modules, k) {
+                out.kernels.insert(k.clone());
+            }
+        }
+        out.caps.extend(r.requires.iter().cloned());
+    }
+    out
+}
+
+/// 2026-09-28: Every golden plan: (file name, rendered text).
+pub fn golden_plans() -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for inst in instances().iter().filter(|i| i.golden) {
+        let loaded = load(inst);
+        let avail = available(inst, &loaded.rules);
+        for (&mode, rows) in &inst.plans {
+            for &n in rows {
+                let text = metrale_circuit::render_plan(inst, &loaded, &avail, mode, n)
+                    .unwrap_or_else(|e| panic!("{} {} n={n}: {e}", inst.recipe, mode.name()));
+                out.push((inst.plan_file(mode, n), text));
+            }
+        }
+    }
+    out
+}

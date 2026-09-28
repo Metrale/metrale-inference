@@ -1,0 +1,388 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# 2026-09-28: The Qwen3.6 MoE circuit (Qwen3.6-35B-A3B, `qwen3_5_moe_text`): the GatedDeltaNet
+# and gated full-attention blocks of `qwen3_5.toml`, a 256-expert top-8 MoE FFN with a gated
+# shared expert on every layer, the final norm and lm_head, and the one-layer MTP draft head
+# whose FFN is the same MoE.
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants: as in qwen3_5.toml. The `gdn`, `attn`, `embed`, `head`, `mtp_in` and `mtp_out`
+# blocks are copies of that file's; the TOML schema has no include, so an edit to one is made
+# to both (crates/circuit/tests/golden_plans.rs checks they stay identical).
+
+schema = 1
+arch = "qwen3_6_moe"
+description = "MoE hybrid: 3x GatedDeltaNet + 1x gated full attention, 256-expert top-8 MoE + shared expert, MTP draft head"
+layer_module = "model.language_model.layers.{i}"
+draft_module = "mtp.layers.0"
+dims = [
+  "hidden", "vocab", "q_heads", "kv_heads", "head_dim",
+  "lin_k_heads", "lin_k_dim", "lin_v_heads", "lin_v_dim",
+  "experts", "top_k", "moe_inter", "shared_inter",
+]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = ["mtp_in", "attn", "moe_ffn", "mtp_out"]
+
+[layout]
+kind = "interval"
+period = 4
+
+[layout.blocks]
+linear_attention = ["gdn", "moe_ffn"]
+full_attention = ["attn", "moe_ffn"]
+
+[block.embed]
+stream_out = "h"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["model.language_model.embed_tokens"]
+
+[block.gdn]
+stream_in = "x"
+stream_out = "y"
+
+[[block.gdn.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+
+[[block.gdn.node]]
+id = "qkvz"
+op = "linear"
+role = "qkvz"
+in = ["xn"]
+out = [{ edge = "qkvz", format = "bf16", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim*2" }]
+binding = ["{L}.linear_attn.in_proj_qkv", "{L}.linear_attn.in_proj_z"]
+
+[[block.gdn.node]]
+id = "ba"
+op = "linear"
+role = "ba"
+in = ["xn"]
+out = [{ edge = "ba", format = "bf16", shape = "n x lin_v_heads*2" }]
+binding = ["{L}.linear_attn.in_proj_b", "{L}.linear_attn.in_proj_a"]
+
+[[block.gdn.node]]
+id = "gates"
+op = "gdn_gates"
+in = ["ba"]
+out = [
+  { edge = "decay", format = "f32", shape = "n x lin_v_heads" },
+  { edge = "beta", format = "f32", shape = "n x lin_v_heads" },
+]
+binding = ["{L}.linear_attn.A_log", "{L}.linear_attn.dt_bias"]
+
+[[block.gdn.node]]
+id = "conv"
+op = "conv1d_update"
+in = ["qkvz"]
+out = [{ edge = "conv", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
+binding = ["{L}.linear_attn.conv1d"]
+
+[[block.gdn.node]]
+id = "l2"
+op = "l2_norm"
+in = ["conv"]
+out = [{ edge = "qkv", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
+
+[[block.gdn.node]]
+id = "recur"
+op = "gdn_recurrence"
+in = ["qkv", "decay", "beta"]
+out = [{ edge = "core", format = "f32", shape = "n x lin_v_heads*lin_v_dim" }]
+
+[[block.gdn.node]]
+id = "out_norm"
+op = "gated_rms_norm"
+in = ["core", "qkvz"]
+out = [{ edge = "gated", format = "bf16", shape = "n x lin_v_heads*lin_v_dim" }]
+binding = ["{L}.linear_attn.norm"]
+
+[[block.gdn.node]]
+id = "out"
+op = "linear"
+role = "gdn_out"
+in = ["gated"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.linear_attn.out_proj"]
+
+[[block.gdn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.attn]
+stream_in = "x"
+stream_out = "y"
+
+[[block.attn.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+
+[[block.attn.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "qg", format = "bf16", shape = "n x q_heads*head_dim*2" }]
+binding = ["{L}.self_attn.q_proj"]
+
+[[block.attn.node]]
+id = "q_split"
+op = "split"
+in = ["qg"]
+out = [
+  { edge = "q", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "gate", format = "bf16", shape = "n x q_heads*head_dim" },
+]
+
+[[block.attn.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+
+[[block.attn.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.v_proj"]
+
+[[block.attn.node]]
+id = "q_norm"
+op = "qk_norm"
+in = ["q"]
+out = [{ edge = "qn", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_norm"]
+
+[[block.attn.node]]
+id = "k_norm"
+op = "qk_norm"
+in = ["k"]
+out = [{ edge = "kn", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_norm"]
+
+[[block.attn.node]]
+id = "rope"
+op = "rope"
+in = ["qn", "kn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kr", format = "bf16", shape = "n x kv_heads*head_dim" },
+]
+
+[[block.attn.node]]
+id = "kv_write"
+op = "kv_write"
+in = ["kr", "v"]
+out = []
+
+[[block.attn.node]]
+id = "attend"
+op = "paged_attention"
+in = ["qr", "kr", "v"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+
+[[block.attn.node]]
+id = "gate_mul"
+op = "sigmoid_gate_mul"
+in = ["a", "gate"]
+out = [{ edge = "ag", format = "bf16", shape = "n x q_heads*head_dim" }]
+
+[[block.attn.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["ag"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.attn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.moe_ffn]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe_ffn.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+
+[[block.moe_ffn.node]]
+id = "router"
+op = "router"
+in = ["xn"]
+out = [{ edge = "router_logits", format = "bf16", shape = "n x experts" }]
+binding = ["{L}.mlp.gate"]
+
+[[block.moe_ffn.node]]
+id = "top_k"
+op = "top_k"
+in = ["router_logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+params = { top_k = "8", scoring = "softmax" }
+
+[[block.moe_ffn.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.mlp.experts.*.gate_proj", "{L}.mlp.experts.*.up_proj"]
+
+[[block.moe_ffn.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egu"]
+out = [{ edge = "eact", format = "f32", shape = "n*top_k x moe_inter" }]
+
+[[block.moe_ffn.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.mlp.experts.*.down_proj"]
+
+[[block.moe_ffn.node]]
+id = "shared_gate_up"
+op = "linear"
+role = "shared_gate_up"
+in = ["xn"]
+out = [{ edge = "sgu", format = "bf16", shape = "n x shared_inter*2" }]
+binding = ["{L}.mlp.shared_expert.gate_proj", "{L}.mlp.shared_expert.up_proj"]
+
+[[block.moe_ffn.node]]
+id = "shared_act"
+op = "silu_mul"
+in = ["sgu"]
+out = [{ edge = "sact", format = "f32", shape = "n x shared_inter" }]
+
+[[block.moe_ffn.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.shared_expert.down_proj"]
+
+[[block.moe_ffn.node]]
+id = "shared_gate"
+op = "linear"
+role = "shared_gate"
+in = ["xn"]
+out = [{ edge = "sg", format = "bf16", shape = "n x 1" }]
+binding = ["{L}.mlp.shared_expert_gate"]
+
+[[block.moe_ffn.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown", "sg"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+
+[[block.moe_ffn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.head]
+stream_in = "x"
+outputs = ["logits"]
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["model.language_model.norm"]
+
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["lm_head"]
+
+[block.mtp_in]
+stream_in = "hidden"
+stream_out = "h0"
+
+[[block.mtp_in.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "e", format = "bf16", shape = "n x hidden" }]
+binding = ["model.language_model.embed_tokens"]
+
+[[block.mtp_in.node]]
+id = "embed_norm"
+op = "rms_norm"
+in = ["e"]
+out = [{ edge = "en", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.pre_fc_norm_embedding"]
+
+[[block.mtp_in.node]]
+id = "hidden_norm"
+op = "rms_norm"
+in = ["hidden"]
+out = [{ edge = "hn", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.pre_fc_norm_hidden"]
+
+[[block.mtp_in.node]]
+id = "concat"
+op = "concat"
+in = ["en", "hn"]
+out = [{ edge = "cat", format = "bf16", shape = "n x hidden*2" }]
+
+[[block.mtp_in.node]]
+id = "fc"
+op = "linear"
+role = "mtp_fc"
+in = ["cat"]
+out = [{ edge = "h0", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.fc"]
+
+[block.mtp_out]
+stream_in = "x"
+outputs = ["token"]
+
+[[block.mtp_out.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.norm"]
+
+[[block.mtp_out.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["mtp.lm_head"]
+
+[[block.mtp_out.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]

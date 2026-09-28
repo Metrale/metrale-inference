@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/config",
     "crates/closure",
+    "crates/circuit",
     "crates/governance",
     "crates/kernels",
     "crates/gpu-sys",

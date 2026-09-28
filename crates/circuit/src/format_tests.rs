@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-28: Format spellings and byte sizes.
+//!
+//! Owner: metrale-circuit.
+//! Invariants: none beyond the types.
+
+use super::*;
+
+#[test]
+fn every_spelling_round_trips() {
+    for s in [
+        "bf16",
+        "f32",
+        "i32",
+        "fp8/token",
+        "fp8/tensor",
+        "fp8/channel",
+        "fp8/g128",
+        "fp8/block128x128",
+        "nvfp4/g16",
+    ] {
+        let f = Format::parse(s).unwrap_or_else(|e| panic!("{s}: {e}"));
+        assert_eq!(f.name(), s);
+    }
+}
+
+#[test]
+fn malformed_spellings_are_refused() {
+    for s in [
+        "",
+        "BF16",
+        "fp8",
+        "fp8/",
+        "fp8/g0",
+        "fp8/block128",
+        "fp8/block0x128",
+        "nvfp4/16",
+        "nvfp4/g",
+        "fp16",
+        "fp8/token ",
+    ] {
+        assert_eq!(Format::parse(s), Err(FormatError(s.to_string())), "{s:?}");
+    }
+}
+
+#[test]
+fn weight_layouts_are_not_edge_formats() {
+    assert!(!Format::parse("fp8/channel").unwrap().is_edge_format());
+    assert!(!Format::parse("fp8/block128x128").unwrap().is_edge_format());
+    assert!(Format::parse("fp8/token").unwrap().is_edge_format());
+    assert!(Format::parse("nvfp4/g16").unwrap().is_edge_format());
+}
+
+#[test]
+fn byte_sizes_count_values_and_scales() {
+    assert_eq!(Format::Bf16.bytes(3, 5120), Some(3 * 5120 * 2));
+    assert_eq!(Format::F32.bytes(2, 7), Some(56));
+    // 2026-09-28: 2560 packed bytes, 320 group scales, one F32 global.
+    assert_eq!(
+        Format::Nvfp4 { group: 16 }.bytes(1, 5120),
+        Some(2560 + 320 + 4)
+    );
+    let tok = Format::Fp8E4m3 {
+        scale: Scale::PerToken,
+    };
+    assert_eq!(tok.bytes(4, 256), Some(4 * 256 + 4 * 4));
+    let g = Format::Fp8E4m3 {
+        scale: Scale::Group(128),
+    };
+    assert_eq!(g.bytes(2, 256), Some(2 * 256 + 2 * 2 * 4));
+}
+
+#[test]
+fn a_dim_off_the_scale_group_has_no_size() {
+    assert_eq!(Format::Nvfp4 { group: 16 }.bytes(1, 24), None);
+    assert_eq!(
+        Format::Fp8E4m3 {
+            scale: Scale::Group(128)
+        }
+        .bytes(1, 200),
+        None
+    );
+    assert_eq!(Format::Bf16.bytes(u64::MAX, 2), None);
+}

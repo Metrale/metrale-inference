@@ -1,0 +1,239 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-28: The `kernels/circuits/<arch>.toml` schema: block templates, the layout rule
+//! that maps a model's layer kinds to templates, and the typed load errors.
+//!
+//! Owner: metrale-circuit.
+//! Invariants:
+//! - Every edge states its format and its shape (`"n x hidden"`); nothing defaults.
+//! - Loading is fail-fast: the first unknown op, dangling or duplicate edge, format no
+//!   consumer accepts, or template/layout mismatch is returned as a [`CircuitError`].
+
+use std::collections::BTreeMap;
+
+use serde::Deserialize;
+
+use crate::dims::DimError;
+use crate::format::FormatError;
+use crate::ir::OpParseError;
+
+/// 2026-09-28: Why a circuit did not load or instantiate.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CircuitError {
+    /// 2026-09-28: Not valid TOML, or not the schema.
+    #[error("circuit TOML: {0}")]
+    Parse(String),
+    /// 2026-09-28: An op the vocabulary does not have, or a bad role or format qualifier.
+    #[error("block `{block}` node `{node}`: {source}")]
+    Op {
+        /// 2026-09-28: Template.
+        block: String,
+        /// 2026-09-28: Node id.
+        node: String,
+        /// 2026-09-28: The op error.
+        source: OpParseError,
+    },
+    /// 2026-09-28: A format spelling no format matches.
+    #[error("block `{block}` edge `{edge}`: {source}")]
+    Format {
+        /// 2026-09-28: Template.
+        block: String,
+        /// 2026-09-28: Edge.
+        edge: String,
+        /// 2026-09-28: The format error.
+        source: FormatError,
+    },
+    /// 2026-09-28: A weight-only scale layout (`channel`, `block`) on an edge.
+    #[error("block `{block}` edge `{edge}`: `{format}` is a weight layout, not an edge format")]
+    WeightFormatOnEdge {
+        /// 2026-09-28: Template.
+        block: String,
+        /// 2026-09-28: Edge.
+        edge: String,
+        /// 2026-09-28: The format.
+        format: String,
+    },
+    /// 2026-09-28: A shape that is not `<rows> x <dim>`, or a bad expression in it.
+    #[error("block `{block}` edge `{edge}`: {detail}")]
+    Shape {
+        /// 2026-09-28: Template.
+        block: String,
+        /// 2026-09-28: Edge.
+        edge: String,
+        /// 2026-09-28: What was wrong.
+        detail: String,
+    },
+    /// 2026-09-28: A dimension the arch shape does not define, or an overflow.
+    #[error("block `{block}`: {source}")]
+    Dim {
+        /// 2026-09-28: Template.
+        block: String,
+        /// 2026-09-28: The dimension error.
+        source: DimError,
+    },
+    /// 2026-09-28: A node reads an edge nothing produced.
+    #[error("block `{block}` node `{node}` reads `{edge}`, which no earlier node produces")]
+    DanglingInput {
+        /// 2026-09-28: Template.
+        block: String,
+        /// 2026-09-28: Node id.
+        node: String,
+        /// 2026-09-28: Edge.
+        edge: String,
+    },
+    /// 2026-09-28: An edge nothing reads that is not a declared output.
+    #[error("edge `{0}` is produced but never read, and is not a declared output")]
+    DanglingOutput(String),
+    /// 2026-09-28: Two producers of one edge, or two nodes with one id.
+    #[error("block `{block}`: `{name}` is defined twice")]
+    Duplicate {
+        /// 2026-09-28: Template.
+        block: String,
+        /// 2026-09-28: Edge or node id.
+        name: String,
+    },
+    /// 2026-09-28: An edge whose format a reader does not accept.
+    #[error(
+        "node `{node}` ({op}) does not accept `{edge}` as {format}{}",
+        expected.as_ref().map(|e| format!(" (expects {e})")).unwrap_or_default()
+    )]
+    FormatMismatch {
+        /// 2026-09-28: The reading node.
+        node: String,
+        /// 2026-09-28: Its op.
+        op: String,
+        /// 2026-09-28: The edge.
+        edge: String,
+        /// 2026-09-28: The edge's format.
+        format: String,
+        /// 2026-09-28: What the reader expects, when it is one format.
+        expected: Option<String>,
+    },
+    /// 2026-09-28: The modules of one node resolve to different formats.
+    #[error("node `{node}`: bound modules resolve to different formats ({detail})")]
+    MixedPrecision {
+        /// 2026-09-28: Node id.
+        node: String,
+        /// 2026-09-28: The two resolutions.
+        detail: String,
+    },
+    /// 2026-09-28: A weight-reading node without a binding, or a binding on a node that
+    /// reads no weight but is not a norm.
+    #[error("node `{node}`: {detail}")]
+    Binding {
+        /// 2026-09-28: Node id.
+        node: String,
+        /// 2026-09-28: What was wrong.
+        detail: String,
+    },
+    /// 2026-09-28: A layout that names a missing template, or a model whose layers the
+    /// layout does not describe.
+    #[error("layout: {0}")]
+    Layout(String),
+    /// 2026-09-28: A dim the circuit requires that the arch shape does not give, or one it
+    /// gives that the circuit does not declare.
+    #[error("arch shape: {0}")]
+    ShapeMismatch(String),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CircuitFile {
+    pub schema: u32,
+    pub arch: String,
+    pub description: String,
+    pub layer_module: String,
+    pub dims: Vec<String>,
+    pub layout: LayoutFile,
+    pub prologue: Vec<String>,
+    pub epilogue: Vec<String>,
+    pub draft: Vec<String>,
+    pub draft_module: Option<String>,
+    pub block: BTreeMap<String, BlockFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LayoutFile {
+    pub kind: String,
+    pub period: Option<usize>,
+    pub blocks: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BlockFile {
+    pub stream_in: Option<String>,
+    pub stream_out: Option<String>,
+    #[serde(default)]
+    pub outputs: Vec<String>,
+    pub node: Vec<NodeFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NodeFile {
+    pub id: String,
+    pub op: String,
+    pub role: Option<String>,
+    pub format: Option<String>,
+    #[serde(default, rename = "in")]
+    pub inputs: Vec<String>,
+    pub out: Vec<EdgeFile>,
+    #[serde(default)]
+    pub binding: Vec<String>,
+    #[serde(default)]
+    pub params: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EdgeFile {
+    pub edge: String,
+    pub format: String,
+    pub shape: String,
+}
+
+/// 2026-09-28: The layer-kind rule a circuit declares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutRule {
+    /// 2026-09-28: `full_attention` on every layer `i` with `(i + 1) % period == 0`,
+    /// `linear_attention` elsewhere; the HF `full_attention_interval` convention.
+    Interval {
+        /// 2026-09-28: The interval.
+        period: usize,
+    },
+    /// 2026-09-28: Any sequence of the kinds `blocks` maps.
+    List,
+}
+
+pub(crate) fn parse_file(text: &str) -> Result<CircuitFile, CircuitError> {
+    let file: CircuitFile = toml::from_str(text).map_err(|e| CircuitError::Parse(e.to_string()))?;
+    if file.schema != 1 {
+        return Err(CircuitError::Parse(format!(
+            "schema {} (this build reads 1)",
+            file.schema
+        )));
+    }
+    Ok(file)
+}
+
+pub(crate) fn layout_rule(l: &LayoutFile) -> Result<LayoutRule, CircuitError> {
+    match (l.kind.as_str(), l.period) {
+        ("interval", Some(p)) if p > 0 => Ok(LayoutRule::Interval { period: p }),
+        ("interval", _) => Err(CircuitError::Layout(
+            "`interval` needs a `period` of at least 1".into(),
+        )),
+        ("list", None) => Ok(LayoutRule::List),
+        ("list", Some(_)) => Err(CircuitError::Layout("`list` takes no `period`".into())),
+        (other, _) => Err(CircuitError::Layout(format!(
+            "unknown layout kind `{other}` (interval | list)"
+        ))),
+    }
+}
+
+/// 2026-09-28: Split `"<rows> x <dim>"`.
+pub(crate) fn split_shape(s: &str) -> Option<(&str, &str)> {
+    let (rows, dim) = s.split_once(" x ")?;
+    Some((rows.trim(), dim.trim()))
+}
