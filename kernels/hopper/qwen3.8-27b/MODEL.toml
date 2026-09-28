@@ -267,3 +267,4 @@ metrale_nvfp4_repack = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE w
 metrale_nvfp4_scale_bf16 = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
 metrale_nvfp4_silu_mul_scaled = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
 metrale_nvfp4_silu_mul_quant = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+metrale_nvfp4_gemm_pipe = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."

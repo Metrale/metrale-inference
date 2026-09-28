@@ -45,7 +45,7 @@ fn every_mmq_export_is_inside_the_vendor_capability_guard() {
             .trim_end()
             .ends_with("#endif // Metrale Engine optional module")
     );
-    assert_eq!(exports(inside).len(), 13);
+    assert_eq!(exports(inside).len(), 14);
     // 2026-09-25: quantize_mmq_nvfp4_worker and the vendored MMA path use the
     // same macro. Its range, 1200 up to 1300, leaves out B200's sm_100.
     let vendor =
@@ -63,7 +63,7 @@ fn every_mmq_export_is_inside_the_vendor_capability_guard() {
 #[test]
 fn hopper_audit_explains_every_removed_export_and_gb10_keeps_them() {
     let functions = exports(&source());
-    assert_eq!(functions.len(), 13);
+    assert_eq!(functions.len(), 14);
     for hw in ["hopper", "gb10"] {
         for model in ["qwen3.6-27b", "qwen3.8-27b"] {
             let path = root().join(hw).join(model).join("MODEL.toml");
