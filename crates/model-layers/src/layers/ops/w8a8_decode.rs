@@ -170,7 +170,7 @@ impl W8a8Weight {
 }
 
 /// 2026-09-28: The quantizers and the ten GEMV entry points (2 scale layouts
-/// x [`ENTRIES`]). A handle is 0 when its module is not compiled.
+/// x the five row entries, `mb1_ku8` to `mb16`). A handle is 0 when its module is not compiled.
 #[derive(Clone, Copy, Debug)]
 pub struct W8a8Kernels {
     quant_row: KernelHandle,

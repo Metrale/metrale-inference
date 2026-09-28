@@ -160,7 +160,7 @@ impl W4a16BatchmTiers {
         }
     }
 
-    /// 2026-09-28: [`Self::edge_of`] for `w`.
+    /// 2026-09-28: The row edge for `w`, from its activation stamp (`edge_of`).
     pub fn edge(&self, w: &crate::weight_map::QuantizedWeight) -> u32 {
         self.edge_of(w.act)
     }
