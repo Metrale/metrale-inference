@@ -2,9 +2,10 @@
 
 // 2026-09-25: Hopper twin of `dense_gemm_ba_gates_prefill`
 // (kernels/gb10/common/ssm_preprocess.cu): the SSM BA projection and the GDN
-// gate transforms, one CTA per token.
+// gate transforms, one CTA per token. 2026-09-28: moved from kernels/hopper/common so that GB10 builds it too
+// (hopper inherits gb10); on GB10 it is 2.5x the parent at 8192 tokens, output bit-identical.
 //
-// Owner: hopper kernels.
+// Owner: gb10 kernels.
 // Invariants:
 // - The outputs are bit-identical to the parent's, because the parent's
 //   reduction order is kept:

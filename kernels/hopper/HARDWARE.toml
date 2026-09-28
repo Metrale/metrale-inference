@@ -145,7 +145,7 @@ ssm_batched_recurrent = true
 
 gdn_prefill_tc = true
 # 2026-09-25: Selects `dense_gemm_ba_gates_prefill_hopper`
-# (kernels/hopper/common/ssm_ba_gates_hopper.cu), one CTA per token, over the
+# (kernels/gb10/common/ssm_ba_gates_hopper.cu, inherited), one CTA per token, over the
 # gb10 parent `dense_gemm_ba_gates_prefill` and its `ceil(N/4)` CTAs per token.
 # `native_ssm_ba_gates_hopper_microtest` requires the twin's `gate` and `beta`
 # to be byte-equal to the parent's. The launcher keeps the parent below
@@ -383,7 +383,6 @@ w8a8_prefill_max_m_narrowing = 4294967295
 #   gdn_fwd_o_hopper.cu,
 #   gdn_prefill_hopper.cuh               GDN prefill `recompute_wu` and
 #                                        `chunk_fwd_o` twins: `gdn_prefill_tc`
-#   ssm_ba_gates_hopper.cu               `ssm_ba_gates_hopper`
 #   fp8_act_quant_hopper.cu              `fp8_act_quant_hopper`
 #   dense_gemm_m16_bf16.cu               `lm_head_m16_tc`
 #   w8a16_gemm_m16.cu                    `ffn_m16_tc`, `attn_m16_tc`

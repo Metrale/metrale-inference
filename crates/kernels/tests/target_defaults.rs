@@ -115,10 +115,16 @@ fn gb10_declares_the_baseline_apart_from_the_measured_w8a8_ceiling() {
     assert_eq!(baseline("gb10").w8a8_prefill_max_m_widening, u32::MAX);
     assert_eq!(baseline("gb10").w8a8_prefill_max_m_narrowing, u32::MAX);
 
+    // 2026-09-28: The BA-gates twin is ON on GB10 (measured 2.5x at 8192 tokens,
+    // bit-identical output); the baseline keeps it off for the other targets.
+    assert!(d.ssm_ba_gates_hopper);
+    assert!(!baseline("gb10").ssm_ba_gates_hopper);
+
     // 2026-09-25: Every other field equals the baseline.
     let normalised = Defaults {
         w8a8_prefill_max_m_widening: u32::MAX,
         w8a8_prefill_max_m_narrowing: u32::MAX,
+        ssm_ba_gates_hopper: false,
         ..d
     };
     assert_eq!(
@@ -154,8 +160,8 @@ fn b200_declares_the_conservative_table_not_hoppers() {
     );
     assert!(
         !d.ssm_ba_gates_hopper && declared("hopper").ssm_ba_gates_hopper,
-        "the BA-gates twin is Hopper-only source; B200's common/ does not link \
-         it, so the row is inert here and must read false"
+        "the BA-gates twin is ON for GB10 and Hopper on their own receipts and \
+         OFF here for want of one"
     );
     assert!(
         !d.fp8_act_quant_hopper && declared("hopper").fp8_act_quant_hopper,

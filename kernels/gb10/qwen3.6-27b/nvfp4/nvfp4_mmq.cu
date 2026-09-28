@@ -316,6 +316,9 @@ extern "C" __global__ void metrale_nvfp4_silu_mul_quant(
 #endif
 }
 
+// 2026-09-28: The pipelined kernels issue the warp-level block-scaled MMA directly, so they sit behind the define the
+// hopper, b200 and b300 builds pass (crates/kernels/tests/blockscale_mma_guard.rs).
+#ifndef METRALE_NO_WARP_BLOCKSCALE_MMA
 // 2026-09-28: metrale_nvfp4_gemm_pipe: the M-tile-128 GEMM of this file (dst[m, n] = y[m, :] . x[n, :], no scale2)
 // as a two-stage cp.async pipeline, bit-identical to metrale_nvfp4_mmq128_*: every k64 block-scaled MMA starts from
 // zero and is added to the FP32 sum in increasing k, then rounded once with __float2bfloat16, exactly as
@@ -483,5 +486,6 @@ extern "C" __global__ void __launch_bounds__(NVP_THREADS, 1) metrale_nvfp4_gemm_
         }
     }
 }
+#endif  // METRALE_NO_WARP_BLOCKSCALE_MMA
 
 #endif // Metrale Engine optional module
