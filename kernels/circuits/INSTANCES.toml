@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # 2026-09-28: The recipes that have a circuit, with the arch shape, precision table, policy and
 # plan matrix each one is rendered and checked under (schema: crates/circuit/src/instances.rs).
 #

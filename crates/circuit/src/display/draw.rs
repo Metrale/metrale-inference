@@ -174,6 +174,19 @@ impl Pen<'_> {
         }
     }
 
+    /// 2026-09-28: The cut between two layers inside a frame that spans them: a dashed line
+    /// naming the layer each side belongs to.
+    pub(super) fn layer_cut(&self, doc: &mut Document, frame: Option<usize>, a: usize, b: usize) {
+        let mut l = self.open(frame);
+        let label = format!(" layer {a} {} layer {b} ", self.g.boundary);
+        let spare = self.geo.content.saturating_sub(label.chars().count());
+        let dash = self.g.cut.to_string();
+        l.push(dash.repeat(spare / 2), Style::Dim);
+        l.push(label, Style::FusedFrame);
+        l.push(dash.repeat(spare - spare / 2), Style::Dim);
+        self.close(doc, l, frame);
+    }
+
     /// 2026-09-28: A fused group's top edge, titled with its kernels and numerics badge.
     pub(super) fn frame_top(&self, doc: &mut Document, grp: usize) {
         let f = self.g.fused;

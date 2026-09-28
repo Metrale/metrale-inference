@@ -4,8 +4,8 @@
 # target: gb10/qwen3.6-35b-a3b/nvfp4
 # settings: decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 row_tiers=canonical ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
-digest: 9935175b3d329a43bf3195ed958bfac98cf81dc06b245768ba148f346e3810e8
-groups: 453  launches: 16292  edges: 460 fused, 533 materialized
+digest: 195a56f9e38a55bcfef47c5024645be9ec196621340944de87861afb2e99e42c
+groups: 414  launches: 16253  edges: 460 fused, 533 materialized
 == embed
 g0000 embed [embed] (copy) reference rule=embed_row_copy writes={h:bf16}
 == layer 0 (linear_attention)
@@ -18,486 +18,447 @@ g0006 l0.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_o
 g0007 l0.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
 g0008 l0.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
 g0009 l0.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0010 l0.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0010 l0.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 1 (linear_attention)
-g0011 l1.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0012 l1.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0013 l1.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0014 l1.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0015 l1.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0016 l1.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0017 l1.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0018 l1.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0019 l1.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0020 l1.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0011 l1.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0012 l1.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0013 l1.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0014 l1.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0015 l1.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0016 l1.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0017 l1.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0018 l1.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0019 l1.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 2 (linear_attention)
-g0021 l2.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0022 l2.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0023 l2.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0024 l2.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0025 l2.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0026 l2.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0027 l2.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0028 l2.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0029 l2.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0030 l2.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0020 l2.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0021 l2.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0022 l2.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0023 l2.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0024 l2.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0025 l2.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0026 l2.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0027 l2.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0028 l2.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 3 (full_attention)
-g0031 l3.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0032 l3.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0033 l3.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0034 l3.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0035 l3.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0036 l3.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0037 l3.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0038 l3.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0039 l3.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0040 l3.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0041 l3.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0042 l3.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0043 l3.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0044 l3.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0045 l3.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0029 l3.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0030 l3.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0031 l3.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0032 l3.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0033 l3.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0034 l3.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0035 l3.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0036 l3.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0037 l3.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0038 l3.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0039 l3.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0040 l3.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0041 l3.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0042 l3.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 4 (linear_attention)
-g0046 l4.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0047 l4.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0048 l4.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0049 l4.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0050 l4.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0051 l4.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0052 l4.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0053 l4.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0054 l4.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0055 l4.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0043 l4.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0044 l4.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0045 l4.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0046 l4.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0047 l4.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0048 l4.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0049 l4.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0050 l4.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0051 l4.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 5 (linear_attention)
-g0056 l5.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0057 l5.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0058 l5.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0059 l5.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0060 l5.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0061 l5.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0062 l5.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0063 l5.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0064 l5.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0065 l5.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0052 l5.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0053 l5.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0054 l5.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0055 l5.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0056 l5.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0057 l5.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0058 l5.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0059 l5.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0060 l5.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 6 (linear_attention)
-g0066 l6.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0067 l6.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0068 l6.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0069 l6.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0070 l6.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0071 l6.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0072 l6.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0073 l6.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0074 l6.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0075 l6.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0061 l6.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0062 l6.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0063 l6.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0064 l6.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0065 l6.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0066 l6.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0067 l6.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0068 l6.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0069 l6.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 7 (full_attention)
-g0076 l7.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0077 l7.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0078 l7.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0079 l7.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0080 l7.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0081 l7.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0082 l7.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0083 l7.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0084 l7.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0085 l7.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0086 l7.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0087 l7.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0088 l7.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0089 l7.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0090 l7.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0070 l7.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0071 l7.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0072 l7.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0073 l7.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0074 l7.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0075 l7.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0076 l7.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0077 l7.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0078 l7.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0079 l7.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0080 l7.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0081 l7.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0082 l7.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0083 l7.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 8 (linear_attention)
-g0091 l8.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0092 l8.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0093 l8.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0094 l8.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0095 l8.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0096 l8.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0097 l8.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0098 l8.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0099 l8.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0100 l8.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0084 l8.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0085 l8.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0086 l8.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0087 l8.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0088 l8.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0089 l8.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0090 l8.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0091 l8.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0092 l8.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 9 (linear_attention)
-g0101 l9.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0102 l9.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0103 l9.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0104 l9.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0105 l9.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0106 l9.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0107 l9.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0108 l9.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0109 l9.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0110 l9.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0093 l9.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0094 l9.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0095 l9.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0096 l9.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0097 l9.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0098 l9.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0099 l9.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0100 l9.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0101 l9.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 10 (linear_attention)
-g0111 l10.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0112 l10.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0113 l10.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0114 l10.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0115 l10.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0116 l10.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0117 l10.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0118 l10.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0119 l10.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0120 l10.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0102 l10.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0103 l10.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0104 l10.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0105 l10.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0106 l10.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0107 l10.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0108 l10.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0109 l10.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0110 l10.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 11 (full_attention)
-g0121 l11.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0122 l11.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0123 l11.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0124 l11.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0125 l11.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0126 l11.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0127 l11.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0128 l11.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0129 l11.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0130 l11.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0131 l11.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0132 l11.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0133 l11.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0134 l11.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0135 l11.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0111 l11.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0112 l11.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0113 l11.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0114 l11.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0115 l11.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0116 l11.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0117 l11.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0118 l11.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0119 l11.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0120 l11.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0121 l11.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0122 l11.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0123 l11.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0124 l11.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 12 (linear_attention)
-g0136 l12.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0137 l12.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0138 l12.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0139 l12.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0140 l12.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0141 l12.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0142 l12.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0143 l12.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0144 l12.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0145 l12.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0125 l12.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0126 l12.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0127 l12.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0128 l12.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0129 l12.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0130 l12.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0131 l12.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0132 l12.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0133 l12.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 13 (linear_attention)
-g0146 l13.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0147 l13.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0148 l13.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0149 l13.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0150 l13.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0151 l13.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0152 l13.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0153 l13.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0154 l13.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0155 l13.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0134 l13.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0135 l13.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0136 l13.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0137 l13.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0138 l13.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0139 l13.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0140 l13.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0141 l13.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0142 l13.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 14 (linear_attention)
-g0156 l14.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0157 l14.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0158 l14.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0159 l14.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0160 l14.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0161 l14.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0162 l14.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0163 l14.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0164 l14.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0165 l14.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0143 l14.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0144 l14.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0145 l14.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0146 l14.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0147 l14.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0148 l14.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0149 l14.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0150 l14.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0151 l14.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 15 (full_attention)
-g0166 l15.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0167 l15.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0168 l15.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0169 l15.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0170 l15.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0171 l15.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0172 l15.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0173 l15.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0174 l15.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0175 l15.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0176 l15.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0177 l15.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0178 l15.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0179 l15.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0180 l15.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0152 l15.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0153 l15.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0154 l15.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0155 l15.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0156 l15.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0157 l15.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0158 l15.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0159 l15.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0160 l15.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0161 l15.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0162 l15.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0163 l15.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0164 l15.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0165 l15.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 16 (linear_attention)
-g0181 l16.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0182 l16.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0183 l16.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0184 l16.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0185 l16.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0186 l16.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0187 l16.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0188 l16.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0189 l16.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0190 l16.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0166 l16.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0167 l16.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0168 l16.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0169 l16.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0170 l16.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0171 l16.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0172 l16.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0173 l16.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0174 l16.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 17 (linear_attention)
-g0191 l17.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0192 l17.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0193 l17.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0194 l17.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0195 l17.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0196 l17.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0197 l17.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0198 l17.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0199 l17.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0200 l17.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0175 l17.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0176 l17.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0177 l17.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0178 l17.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0179 l17.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0180 l17.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0181 l17.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0182 l17.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0183 l17.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 18 (linear_attention)
-g0201 l18.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0202 l18.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0203 l18.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0204 l18.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0205 l18.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0206 l18.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0207 l18.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0208 l18.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0209 l18.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0210 l18.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0184 l18.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0185 l18.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0186 l18.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0187 l18.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0188 l18.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0189 l18.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0190 l18.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0191 l18.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0192 l18.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 19 (full_attention)
-g0211 l19.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0212 l19.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0213 l19.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0214 l19.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0215 l19.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0216 l19.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0217 l19.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0218 l19.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0219 l19.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0220 l19.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0221 l19.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0222 l19.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0223 l19.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0224 l19.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0225 l19.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0193 l19.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0194 l19.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0195 l19.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0196 l19.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0197 l19.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0198 l19.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0199 l19.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0200 l19.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0201 l19.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0202 l19.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0203 l19.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0204 l19.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0205 l19.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0206 l19.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 20 (linear_attention)
-g0226 l20.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0227 l20.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0228 l20.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0229 l20.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0230 l20.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0231 l20.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0232 l20.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0233 l20.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0234 l20.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0235 l20.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0207 l20.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0208 l20.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0209 l20.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0210 l20.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0211 l20.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0212 l20.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0213 l20.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0214 l20.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0215 l20.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 21 (linear_attention)
-g0236 l21.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0237 l21.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0238 l21.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0239 l21.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0240 l21.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0241 l21.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0242 l21.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0243 l21.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0244 l21.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0245 l21.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0216 l21.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0217 l21.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0218 l21.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0219 l21.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0220 l21.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0221 l21.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0222 l21.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0223 l21.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0224 l21.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 22 (linear_attention)
-g0246 l22.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0247 l22.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0248 l22.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0249 l22.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0250 l22.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0251 l22.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0252 l22.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0253 l22.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0254 l22.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0255 l22.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0225 l22.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0226 l22.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0227 l22.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0228 l22.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0229 l22.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0230 l22.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0231 l22.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0232 l22.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0233 l22.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 23 (full_attention)
-g0256 l23.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0257 l23.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0258 l23.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0259 l23.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0260 l23.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0261 l23.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0262 l23.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0263 l23.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0264 l23.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0265 l23.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0266 l23.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0267 l23.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0268 l23.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0269 l23.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0270 l23.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0234 l23.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0235 l23.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0236 l23.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0237 l23.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0238 l23.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0239 l23.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0240 l23.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0241 l23.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0242 l23.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0243 l23.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0244 l23.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0245 l23.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0246 l23.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0247 l23.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 24 (linear_attention)
-g0271 l24.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0272 l24.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0273 l24.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0274 l24.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0275 l24.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0276 l24.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0277 l24.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0278 l24.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0279 l24.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0280 l24.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0248 l24.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0249 l24.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0250 l24.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0251 l24.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0252 l24.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0253 l24.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0254 l24.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0255 l24.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0256 l24.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 25 (linear_attention)
-g0281 l25.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0282 l25.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0283 l25.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0284 l25.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0285 l25.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0286 l25.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0287 l25.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0288 l25.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0289 l25.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0290 l25.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0257 l25.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0258 l25.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0259 l25.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0260 l25.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0261 l25.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0262 l25.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0263 l25.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0264 l25.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0265 l25.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 26 (linear_attention)
-g0291 l26.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0292 l26.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0293 l26.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0294 l26.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0295 l26.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0296 l26.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0297 l26.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0298 l26.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0299 l26.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0300 l26.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0266 l26.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0267 l26.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0268 l26.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0269 l26.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0270 l26.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0271 l26.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0272 l26.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0273 l26.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0274 l26.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 27 (full_attention)
-g0301 l27.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0302 l27.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0303 l27.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0304 l27.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0305 l27.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0306 l27.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0307 l27.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0308 l27.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0309 l27.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0310 l27.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0311 l27.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0312 l27.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0313 l27.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0314 l27.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0315 l27.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0275 l27.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0276 l27.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0277 l27.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0278 l27.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0279 l27.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0280 l27.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0281 l27.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0282 l27.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0283 l27.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0284 l27.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0285 l27.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0286 l27.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0287 l27.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0288 l27.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 28 (linear_attention)
-g0316 l28.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0317 l28.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0318 l28.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0319 l28.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0320 l28.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0321 l28.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0322 l28.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0323 l28.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0324 l28.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0325 l28.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0289 l28.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0290 l28.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0291 l28.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0292 l28.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0293 l28.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0294 l28.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0295 l28.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0296 l28.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0297 l28.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 29 (linear_attention)
-g0326 l29.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0327 l29.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0328 l29.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0329 l29.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0330 l29.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0331 l29.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0332 l29.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0333 l29.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0334 l29.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0335 l29.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0298 l29.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0299 l29.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0300 l29.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0301 l29.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0302 l29.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0303 l29.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0304 l29.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0305 l29.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0306 l29.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 30 (linear_attention)
-g0336 l30.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0337 l30.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0338 l30.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0339 l30.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0340 l30.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0341 l30.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0342 l30.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0343 l30.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0344 l30.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0345 l30.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0307 l30.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0308 l30.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0309 l30.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0310 l30.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0311 l30.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0312 l30.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0313 l30.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0314 l30.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0315 l30.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 31 (full_attention)
-g0346 l31.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0347 l31.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0348 l31.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0349 l31.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0350 l31.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0351 l31.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0352 l31.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0353 l31.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0354 l31.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0355 l31.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0356 l31.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0357 l31.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0358 l31.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0359 l31.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0360 l31.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0316 l31.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0317 l31.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0318 l31.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0319 l31.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0320 l31.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0321 l31.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0322 l31.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0323 l31.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0324 l31.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0325 l31.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0326 l31.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0327 l31.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0328 l31.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0329 l31.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 32 (linear_attention)
-g0361 l32.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0362 l32.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0363 l32.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0364 l32.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0365 l32.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0366 l32.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0367 l32.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0368 l32.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0369 l32.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0370 l32.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0330 l32.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0331 l32.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0332 l32.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0333 l32.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0334 l32.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0335 l32.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0336 l32.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0337 l32.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0338 l32.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 33 (linear_attention)
-g0371 l33.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0372 l33.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0373 l33.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0374 l33.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0375 l33.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0376 l33.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0377 l33.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0378 l33.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0379 l33.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0380 l33.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0339 l33.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0340 l33.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0341 l33.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0342 l33.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0343 l33.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0344 l33.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0345 l33.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0346 l33.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0347 l33.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 34 (linear_attention)
-g0381 l34.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0382 l34.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0383 l34.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0384 l34.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0385 l34.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0386 l34.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0387 l34.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0388 l34.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0389 l34.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0390 l34.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0348 l34.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0349 l34.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0350 l34.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0351 l34.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0352 l34.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0353 l34.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0354 l34.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0355 l34.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0356 l34.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 35 (full_attention)
-g0391 l35.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0392 l35.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0393 l35.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0394 l35.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0395 l35.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0396 l35.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0397 l35.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0398 l35.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0399 l35.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0400 l35.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0401 l35.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0402 l35.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0403 l35.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0404 l35.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0405 l35.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0357 l35.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0358 l35.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0359 l35.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0360 l35.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0361 l35.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0362 l35.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0363 l35.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0364 l35.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0365 l35.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0366 l35.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0367 l35.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0368 l35.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0369 l35.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0370 l35.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 36 (linear_attention)
-g0406 l36.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0407 l36.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0408 l36.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0409 l36.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0410 l36.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0411 l36.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0412 l36.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0413 l36.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0414 l36.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0415 l36.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0371 l36.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0372 l36.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0373 l36.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0374 l36.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0375 l36.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0376 l36.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0377 l36.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0378 l36.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0379 l36.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 37 (linear_attention)
-g0416 l37.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0417 l37.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0418 l37.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0419 l37.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0420 l37.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0421 l37.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0422 l37.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0423 l37.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0424 l37.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0425 l37.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0380 l37.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0381 l37.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0382 l37.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0383 l37.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0384 l37.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0385 l37.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0386 l37.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0387 l37.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0388 l37.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 38 (linear_attention)
-g0426 l38.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0427 l38.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
-g0428 l38.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0429 l38.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
-g0430 l38.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
-g0431 l38.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
-g0432 l38.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
-g0433 l38.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0434 l38.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0435 l38.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0389 l38.gdn [qkvz] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={qkvz:bf16}
+g0390 l38.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x128 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
+g0391 l38.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x128 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0392 l38.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x128 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
+g0393 l38.gdn [out_norm] norm::gated_rms_norm_f32_input x128 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
+g0394 l38.gdn [out] w8a16_gemm_pipelined::w8a16_gemm_pipelined reference rule=w8a16_full_gdn_wide writes={o:bf16}
+g0395 l38.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0396 l38.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0397 l38.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_norm_exact bit_identical(residual_add_rms_norm_exact_microtest) rule=cross_layer_add_norm writes={y:bf16,xn:bf16}
 == layer 39 (full_attention)
-g0436 l39.attn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
-g0437 l39.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
-g0438 l39.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
-g0439 l39.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
-g0440 l39.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
-g0441 l39.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
-g0442 l39.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
-g0443 l39.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
-g0444 l39.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
-g0445 l39.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
-g0446 l39.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
-g0447 l39.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
-g0448 l39.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
-g0449 l39.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
-g0450 l39.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0398 l39.attn [q] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={qg:bf16}
+g0399 l39.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0400 l39.attn [k] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={k:bf16}
+g0401 l39.attn [v] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={v:bf16}
+g0402 l39.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0403 l39.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0404 l39.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0405 l39.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0406 l39.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0407 l39.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0408 l39.attn [o] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 x2 reference rule=w8a16_m64_attn_chunked writes={o:bf16}
+g0409 l39.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0410 l39.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_gate_up,shared_act,shared_down,shared_gate,blend] per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend reference rule=moe_prefill_fp8_w8a8_wide fuses={router_logits,topk_w,topk_id,egu,eact,edown,sgu,sact,sdown,sg} writes={f:bf16}
+g0411 l39.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
 == head
-g0451 head [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16}
-g0452 head [lm_head] gemm::dense_gemm_bf16 reference rule=lm_head_bf16_gemm writes={logits:bf16}
+g0412 head [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16}
+g0413 head [lm_head] gemm::dense_gemm_bf16 reference rule=lm_head_bf16_gemm writes={logits:bf16}

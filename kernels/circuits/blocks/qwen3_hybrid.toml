@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # 2026-09-28: Block templates shared by the Qwen3.5/3.6 hybrid circuits (qwen3_5.toml,
 # qwen3_6_moe.toml): the embedding, the GatedDeltaNet and gated full-attention mixers, the
 # head, and the MTP draft head's input and output blocks. A circuit takes them with

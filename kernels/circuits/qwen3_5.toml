@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # 2026-09-28: The dense Qwen3.5-architecture circuit (Qwen3.8-27B, `qwen3_5_text`): the shared
 # GatedDeltaNet and full-attention blocks (blocks/qwen3_hybrid.toml), a dense SwiGLU FFN on
 # every layer, the final norm and lm_head, and the one-layer MTP draft head.

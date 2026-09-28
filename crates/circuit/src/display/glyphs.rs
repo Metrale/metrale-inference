@@ -61,6 +61,10 @@ pub(crate) struct Set {
     pub times: &'static str,
     /// 2026-09-28: Kernel sequence arrow.
     pub then: &'static str,
+    /// 2026-09-28: The layer-boundary title glyph, and the dash of the cut line inside a frame
+    /// that spans two layers.
+    pub boundary: char,
+    pub cut: char,
     /// 2026-09-28: Marks an input read from a node other than the one above.
     pub reads: &'static str,
 }
@@ -104,6 +108,8 @@ impl Glyphs {
                 times: "×",
                 then: " → ",
                 reads: "◂ ",
+                boundary: '╪',
+                cut: '╌',
             },
             Glyphs::Ascii => Set {
                 light: Frame {
@@ -141,6 +147,8 @@ impl Glyphs {
                 times: "x",
                 then: " -> ",
                 reads: "< ",
+                boundary: '|',
+                cut: '~',
             },
         }
     }

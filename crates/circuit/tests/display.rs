@@ -179,21 +179,29 @@ fn the_dedup_badge_counts_the_layers_of_each_kind() {
         };
         let gdn = count("gdn");
         let attn = count("attn");
-        assert!(
-            text.contains(&format!("GatedDeltaNet layer  × {gdn} layers")),
-            "{text}"
-        );
-        assert!(text.contains(&format!("Full-attention layer  × {attn} layers")));
+        // 2026-09-28: Each diagram title covers `× N` layers, or one when it names a single
+        // layer; the titles of one kind add up to that kind's layers, and the boundary
+        // diagrams to one fewer than all layers.
+        let covered = |prefix: &str| -> usize {
+            text.lines()
+                .filter(|l| l.starts_with(prefix))
+                .map(|l| {
+                    l.split(" × ")
+                        .nth(1)
+                        .and_then(|t| t.split_whitespace().next())
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(1)
+                })
+                .sum()
+        };
+        assert_eq!(covered("▰ GatedDeltaNet layer"), gdn, "{text}");
+        assert_eq!(covered("◆ Full-attention layer"), attn);
+        assert_eq!(covered("╪ Layer boundary"), gdn + attn - 1);
         let titles = |t: &str| text.lines().filter(|l| l.starts_with(t)).count();
-        assert_eq!(
-            titles("▰ GatedDeltaNet layer"),
-            1,
-            "one diagram per distinct plan"
-        );
-        assert_eq!(
-            titles("◆ Full-attention layer"),
-            1,
-            "one diagram per distinct plan"
+        assert!(
+            titles("▰ GatedDeltaNet layer") <= 2 && titles("◆ Full-attention layer") <= 2,
+            "layers with one plan share one diagram (the first and last layer differ at the \
+             boundary they do not have)"
         );
         let strip = text
             .lines()
@@ -274,4 +282,28 @@ fn bad_requests_are_typed_errors() {
         draw(&inst, &loaded, Mode::Decode, 1, opts(39, Glyphs::Ascii)).unwrap_err(),
         LoadError::Display(DisplayError::TooNarrow(39))
     );
+}
+
+#[test]
+fn a_bit_identical_frame_spans_the_layer_boundary() {
+    for (inst, loaded) in golden() {
+        let doc = draw(&inst, &loaded, Mode::Decode, 1, opts(120, Glyphs::Unicode)).unwrap();
+        let frames = frames(&doc);
+        let (title, body) = frames
+            .iter()
+            .find(|(t, _)| t.contains("residual_add_rms_norm_exact"))
+            .unwrap_or_else(|| panic!("{}: no cross-layer frame", inst.arch));
+        assert!(title.contains("✓ bit-identical"), "{title}");
+        let body: Vec<String> = body.iter().map(|l| l.plain()).collect();
+        let at = |needle: &str| body.iter().position(|l| l.contains(needle));
+        let (add, cut, norm) = (
+            at("add · residual_add").expect("add inside the frame"),
+            at("╪ layer").expect("a layer cut inside the frame"),
+            at("input_norm · rms_norm").expect("input_norm inside the frame"),
+        );
+        assert!(
+            add < cut && cut < norm,
+            "the cut sits between the two layers' ops: {body:?}"
+        );
+    }
 }

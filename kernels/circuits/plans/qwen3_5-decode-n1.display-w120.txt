@@ -3,8 +3,8 @@
 │ Dense hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, SwiGLU FFN, MTP draft head                   │
 │ 64 layers · hidden 5120 · ffn 17408 · attn 24q/4kv×256 · GDN 16k/48v×128 · vocab 248320                              │
 │ qkvz/gdn_out/gate_up/down/q/k/v/o W4A16 nvfp4 · ba/lm_head W16A16 bf16                                               │
-│ mode decode · 1 row · 818 launches/step · 819 kernel groups                                                          │
-│ 112 fused edges · 963 materialized · plan 91f099ae22fd                                                               │
+│ mode decode · 1 row · 755 launches/step · 756 kernel groups                                                          │
+│ 112 fused edges · 963 materialized · plan c923e87f4f4e                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 Layers
@@ -20,7 +20,7 @@ Layers
     ╰────────────────────────────────╯
        │ ▼ bf16 · n×5120  DRAM  stream out
 
-▰ GatedDeltaNet layer  × 48 layers  0-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-26, 28-30, 32-34, 36-38, 40-42, 44-46, 48-5…
+▰ GatedDeltaNet layer  layer 0
        │ ▼ bf16 · n×5120  DRAM  stream in
     ╭────────────────────────────────╮
     │ input_norm · rms_norm          │  norm::rms_norm_residual · ≈ reference
@@ -83,18 +83,172 @@ Layers
     ╔════════════════════════════════╗  weight nvfp4 g16
     ║ down · linear                  ║  w4a16_gemv::w4a16_gemv_sw · ≈ reference
     ╚════════════════════════════════╝
-       │ ▼ bf16 · n×5120  DRAM
-    ╭────────────────────────────────╮  ◂ y
-    │ add · residual_add             │  residual_add::bf16_residual_add · ≈ reference
-    ╰────────────────────────────────╯
-       │ ▼ bf16 · n×5120  DRAM  stream out
+       │ ▼ bf16 · n×5120  DRAM  into the layer boundary
 
-◆ Full-attention layer  × 16 layers  3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55, 59, 63
-       │ ▼ bf16 · n×5120  DRAM  stream in
-    ╭────────────────────────────────╮
-    │ input_norm · rms_norm          │  norm::rms_norm_residual · ≈ reference
+╪ Layer boundary  × 47 boundaries  into layers 1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-26, 28-30, 32-34, 36-38, 40-42, …
+       │ ▼ bf16 · n×5120  DRAM  from the previous layer
+  ┏━ residual_add_rms_norm_exact::residual_add_rms_norm_exact ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ✓ bit-identical ━┓
+  ┃ ╭────────────────────────────────╮  ◂ y                                                                            ┃
+  ┃ │ add · residual_add             │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃    ┊ ▼ bf16 · n×5120  on-chip                                                                                      ┃
+  ┃ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ layer 0 ╪ layer 1 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ ┃
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ input_norm · rms_norm          │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · n×5120  DRAM  into the next layer
+
+▰ GatedDeltaNet layer  × 47 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-26, 28-30, 32-34, 36-38, 40-42, 44-46, 48-5…
+       │ ▼ bf16 · n×5120  DRAM  from the layer boundary
+    ╔════════════════════════════════╗  weight nvfp4 g16
+    ║ qkvz · linear                  ║  w4a16_gemv::w4a16_gemv_sw · ≈ reference
+    ╚════════════════════════════════╝
+
+  ┏━ ssm_preprocess::dense_gemv_ba_gates ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
+  ┃ ║ ba · linear                    ║  weight bf16                                                                    ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃    ┊ ▼ bf16 · n×96  on-chip                                                                                        ┃
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ gates · gdn_gates              │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┗━ writes decay, beta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ causal_conv1d::causal_conv1d_update_l2norm_f32 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮  ◂ qkvz                                                                         ┃
+  ┃ │ conv · conv1d_update           │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃    ┊ ▼ f32 · n×10240  on-chip                                                                                      ┃
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ l2 · l2_norm                   │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┗━ writes qkv ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ f32 · n×10240  DRAM
+    ╔════════════════════════════════╗  ◂ decay, beta
+    ║ recur · gdn_recurrence         ║  gated_delta_rule::gated_delta_rule_decode_f32 · ≈ reference
+    ╚════════════════════════════════╝
+       │ ▼ f32 · n×6144  DRAM
+    ╭────────────────────────────────╮  ◂ qkvz
+    │ out_norm · gated_rms_norm      │  norm::gated_rms_norm_f32_input · ≈ reference
     ╰────────────────────────────────╯
+       │ ▼ bf16 · n×6144  DRAM
+    ╔════════════════════════════════╗  weight nvfp4 g16
+    ║ out · linear                   ║  w4a16_gemv::w4a16_gemv_sw · ≈ reference
+    ╚════════════════════════════════╝
        │ ▼ bf16 · n×5120  DRAM
+  ┏━ norm::residual_add_rms_norm ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮  ◂ stream in                                                                    ┃
+  ┃ │ add · residual_add             │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃    ┊ ▼ bf16 · n×5120  on-chip                                                                                      ┃
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ post_norm · rms_norm           │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · n×5120  DRAM
+    ╔════════════════════════════════╗  weight nvfp4 g16
+    ║ gate_up · linear               ║  w4a16_gemv_fused::w4a16_gemv_dual_sw · ≈ reference
+    ╚════════════════════════════════╝
+       │ ▼ bf16 · n×34816  DRAM
+    ╭────────────────────────────────╮
+    │ act · silu_mul                 │  moe_silu_mul::moe_silu_mul · ≈ reference
+    ╰────────────────────────────────╯
+       │ ▼ bf16 · n×17408  DRAM
+    ╔════════════════════════════════╗  weight nvfp4 g16
+    ║ down · linear                  ║  w4a16_gemv::w4a16_gemv_sw · ≈ reference
+    ╚════════════════════════════════╝
+       │ ▼ bf16 · n×5120  DRAM  into the layer boundary
+
+╪ Layer boundary  × 16 boundaries  into layers 3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55, 59, 63
+       │ ▼ bf16 · n×5120  DRAM  from the previous layer
+  ┏━ residual_add_rms_norm_exact::residual_add_rms_norm_exact ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ✓ bit-identical ━┓
+  ┃ ╭────────────────────────────────╮  ◂ y                                                                            ┃
+  ┃ │ add · residual_add             │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃    ┊ ▼ bf16 · n×5120  on-chip                                                                                      ┃
+  ┃ ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ layer 2 ╪ layer 3 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ ┃
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ input_norm · rms_norm          │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · n×5120  DRAM  into the next layer
+
+◆ Full-attention layer  × 15 layers  3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55, 59
+       │ ▼ bf16 · n×5120  DRAM  from the layer boundary
+  ┏━ w4a16_gemv::w4a16_gemv_qg ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╔════════════════════════════════╗                                                                                 ┃
+  ┃ ║ q · linear                     ║  weight nvfp4 g16                                                               ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃    ┊ ▼ bf16 · n×12288  on-chip                                                                                     ┃
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ q_split · split                │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┗━ writes q, gate ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ w4a16_gemv_fused::w4a16_gemv_dual ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
+  ┃ ║ k · linear                     ║  weight nvfp4 g16                                                               ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃                                                                                                                    ┃
+  ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
+  ┃ ║ v · linear                     ║  weight nvfp4 g16                                                               ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┗━ writes k, v ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+    ╭────────────────────────────────╮  ◂ q
+    │ q_norm · qk_norm               │  norm::rms_norm · ≈ reference
+    ╰────────────────────────────────╯
+
+    ╭────────────────────────────────╮  ◂ k
+    │ k_norm · qk_norm               │  norm::rms_norm · ≈ reference
+    ╰────────────────────────────────╯
+       │ ▼ bf16 · n×1024  DRAM
+    ╭────────────────────────────────╮  ◂ qn
+    │ rope                           │  rope_mrope_interleaved::rope_forward_mrope_interleaved · ≈ reference
+    ╰────────────────────────────────╯
+       │ ▼ bf16 · n×1024  DRAM
+    ╭────────────────────────────────╮  ◂ v
+    │ kv_write                       │  reshape_and_cache::reshape_and_cache_flash · ≈ reference
+    ╰────────────────────────────────╯
+
+    ╔════════════════════════════════╗  ◂ qr, kr, v
+    ║ attend · paged_attention       ║  paged_decode::paged_decode_attn · ≈ reference
+    ╚════════════════════════════════╝
+       │ ▼ bf16 · n×6144  DRAM
+    ╭────────────────────────────────╮  ◂ gate
+    │ gate_mul · sigmoid_gate_mul    │  residual_add::sigmoid_gate_mul · ≈ reference
+    ╰────────────────────────────────╯
+       │ ▼ bf16 · n×6144  DRAM
+    ╔════════════════════════════════╗  weight nvfp4 g16
+    ║ o · linear                     ║  w4a16_gemv::w4a16_gemv_sw · ≈ reference
+    ╚════════════════════════════════╝
+       │ ▼ bf16 · n×5120  DRAM
+  ┏━ norm::residual_add_rms_norm ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮  ◂ stream in                                                                    ┃
+  ┃ │ add · residual_add             │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃    ┊ ▼ bf16 · n×5120  on-chip                                                                                      ┃
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ post_norm · rms_norm           │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · n×5120  DRAM
+    ╔════════════════════════════════╗  weight nvfp4 g16
+    ║ gate_up · linear               ║  w4a16_gemv_fused::w4a16_gemv_dual_sw · ≈ reference
+    ╚════════════════════════════════╝
+       │ ▼ bf16 · n×34816  DRAM
+    ╭────────────────────────────────╮
+    │ act · silu_mul                 │  moe_silu_mul::moe_silu_mul · ≈ reference
+    ╰────────────────────────────────╯
+       │ ▼ bf16 · n×17408  DRAM
+    ╔════════════════════════════════╗  weight nvfp4 g16
+    ║ down · linear                  ║  w4a16_gemv::w4a16_gemv_sw · ≈ reference
+    ╚════════════════════════════════╝
+       │ ▼ bf16 · n×5120  DRAM  into the layer boundary
+
+◆ Full-attention layer  layer 63
+       │ ▼ bf16 · n×5120  DRAM  from the layer boundary
   ┏━ w4a16_gemv::w4a16_gemv_qg ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
   ┃ ╔════════════════════════════════╗                                                                                 ┃
   ┃ ║ q · linear                     ║  weight nvfp4 g16                                                               ┃
@@ -181,5 +335,5 @@ Layers
     ╚════════════════════════════════╝
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-818 launches/step · 819 groups · 112 fused · 963 materialized edges · 16.9 MiB written/step · arena 0.5 MiB
+755 launches/step · 756 groups · 112 fused · 963 materialized edges · 16.9 MiB written/step · arena 0.5 MiB
 ╔═╗ heavy op · ╭─╮ light op · ┏━┓ fused kernel · │▼ DRAM · ┊▼ on-chip · ✓ bit-identical · ≈ reference · ⚠ differs

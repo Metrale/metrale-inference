@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # 2026-09-28: The Qwen3.6 MoE circuit (Qwen3.6-35B-A3B, `qwen3_5_moe_text`): the shared
 # GatedDeltaNet and gated full-attention blocks, a 256-expert top-8 MoE FFN with a gated
 # shared expert on every layer, the final norm and lm_head, and the one-layer MTP draft head

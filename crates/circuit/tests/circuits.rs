@@ -187,8 +187,46 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
                 .collect::<Vec<_>>()
         })
         .collect();
+    // 2026-09-28: The legacy plans: every golden instance, mode and row count fused with the
+    // bit-identical kernels removed. A reference rule a bit-identical fusion supersedes (the
+    // per-row GDN residual add at a layer end) is still today's routing and the fallback when
+    // the fused kernel is absent, so it must be selected there.
+    let mut legacy_used = BTreeSet::new();
+    for inst in common::instances().iter().filter(|i| i.golden) {
+        let loaded = common::load(inst);
+        let mut avail = common::available(inst, &loaded.rules);
+        for r in &loaded.rules {
+            if matches!(r.numerics, Numerics::BitIdentical { .. }) {
+                for k in &r.kernels {
+                    avail.kernels.remove(k);
+                }
+            }
+        }
+        for (&mode, rows) in &inst.plans {
+            for &n in rows {
+                let plan = metrale_circuit::fuse(
+                    &loaded.circuit,
+                    &loaded.rules,
+                    &avail,
+                    &inst.policy,
+                    mode,
+                    n,
+                )
+                .expect("legacy plan");
+                legacy_used.extend(plan.groups.into_iter().map(|g| g.rule));
+            }
+        }
+    }
     let inst = &common::instances()[0];
     let rules = common::load(inst).rules;
+    // 2026-09-28: Ops some golden circuit has. A bit-identical rule may wait for a circuit
+    // that needs it (an RmsNorm -> ActQuant fusion before any circuit quantizes activations),
+    // but only when one of its ops is absent everywhere; otherwise it is dead.
+    let ops: BTreeSet<metrale_circuit::OpKind> = common::instances()
+        .iter()
+        .filter(|i| i.golden)
+        .flat_map(|i| common::load(i).circuit.nodes.into_iter().map(|n| n.op))
+        .collect();
     for r in &rules {
         match &r.numerics {
             Numerics::Differs { .. } => assert!(
@@ -196,9 +234,16 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
                 "`{}` selected without its lever",
                 r.id
             ),
+            Numerics::BitIdentical { .. } if !used.contains(&r.id) => assert!(
+                r.pattern
+                    .iter()
+                    .any(|p| !ops.contains(&p.op) && p.roles.is_empty()),
+                "bit-identical rule `{}` matches circuit ops but no golden plan selects it",
+                r.id
+            ),
             _ => assert!(
-                used.contains(&r.id),
-                "rule `{}` is used by no golden plan",
+                used.contains(&r.id) || legacy_used.contains(&r.id),
+                "rule `{}` is used by no golden plan and no legacy plan",
                 r.id
             ),
         }
@@ -325,4 +370,37 @@ fn the_routing_audit_lists_every_rule_with_its_class_and_citation() {
         rules.len(),
         "the audit lists a rule FUSIONS.toml does not have"
     );
+}
+
+#[test]
+fn every_bit_identical_rule_names_a_registered_microtest() {
+    let manifest: toml::Table =
+        toml::from_str(&common::read("crates/model-arch/Cargo.toml")).expect("model-arch manifest");
+    let examples: BTreeSet<String> = manifest["example"]
+        .as_array()
+        .expect("[[example]] entries")
+        .iter()
+        .filter_map(|e| e.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .collect();
+    let rules = common::load(&common::instances()[0]).rules;
+    let mut named = 0;
+    for r in &rules {
+        let Numerics::BitIdentical { microtest } = &r.numerics else {
+            continue;
+        };
+        let path = common::root().join(format!("crates/model-arch/examples/{microtest}.rs"));
+        assert!(
+            path.is_file(),
+            "rule `{}`: {} does not exist",
+            r.id,
+            path.display()
+        );
+        assert!(
+            examples.contains(microtest),
+            "rule `{}`: example `{microtest}` is not registered in crates/model-arch/Cargo.toml",
+            r.id
+        );
+        named += 1;
+    }
+    assert!(named >= 4, "only {named} bit-identical rules");
 }

@@ -14,9 +14,10 @@ use super::draw::Pen;
 use super::glyphs::Set;
 use super::labels::Geo;
 use super::rows::{Row, frames, rows};
+use super::segments::{SegKind, Segment, segments};
 use super::{DisplayOpts, Document, Expand, Line, Style, clip};
-use crate::fuser::{EdgeState, FusionPlan, section_of};
-use crate::ir::{Circuit, EdgeIdx, LayerKind, NodeIdx};
+use crate::fuser::{EdgeState, FusionPlan};
+use crate::ir::{Circuit, LayerKind};
 
 /// 2026-09-28: Layer indices with nodes in the plan, ascending.
 pub(super) fn layers_in_plan(c: &Circuit, plan: &FusionPlan) -> Vec<usize> {
@@ -27,41 +28,6 @@ pub(super) fn layers_in_plan(c: &Circuit, plan: &FusionPlan) -> Vec<usize> {
         .collect();
     out.sort_unstable();
     out.dedup();
-    out
-}
-
-/// 2026-09-28: A run of nodes drawn as one diagram: a layer, or consecutive blocks outside the
-/// layers (the embedding, the head, the draft head).
-struct Segment {
-    title: String,
-    layer: Option<usize>,
-    nodes: Vec<NodeIdx>,
-    stream_in: Option<EdgeIdx>,
-    stream_out: Option<EdgeIdx>,
-}
-
-fn segments(c: &Circuit, plan: &FusionPlan) -> Vec<Segment> {
-    let section = section_of(plan.mode);
-    let mut out: Vec<Segment> = Vec::new();
-    for b in c.blocks.iter().filter(|b| b.section == section) {
-        let nodes = b.first..b.end;
-        match out.last_mut() {
-            Some(s) if s.layer == b.layer => {
-                if b.layer.is_none() {
-                    s.title = format!("{} / {}", s.title, b.template);
-                }
-                s.nodes.extend(nodes);
-                s.stream_out = b.stream_out.or(s.stream_out);
-            }
-            _ => out.push(Segment {
-                title: b.template.clone(),
-                layer: b.layer,
-                nodes: nodes.collect(),
-                stream_in: b.stream_in,
-                stream_out: b.stream_out,
-            }),
-        }
-    }
     out
 }
 
@@ -121,7 +87,7 @@ pub(super) fn diagrams(
             order.push(sig);
             (i, Vec::new())
         });
-        if let Some(l) = s.layer {
+        if let Some(l) = s.key_layer() {
             entry.1.push(l);
         }
     }
@@ -142,7 +108,7 @@ pub(super) fn diagrams(
         }
         Expand::AllLayers => {
             for s in &segs {
-                draw_segment(doc, &pen, s, &s.layer.into_iter().collect::<Vec<_>>());
+                draw_segment(doc, &pen, s, &s.key_layer().into_iter().collect::<Vec<_>>());
             }
         }
         Expand::Layer(n) => {
@@ -150,8 +116,8 @@ pub(super) fn diagrams(
                 bindings: true,
                 ..pen
             };
-            if let Some(s) = segs.iter().find(|s| s.layer == Some(n)) {
-                draw_segment(doc, &pen, s, &[n]);
+            for s in segs.iter().filter(|s| s.touches(n)) {
+                draw_segment(doc, &pen, s, &s.key_layer().into_iter().collect::<Vec<_>>());
             }
         }
     }
@@ -161,30 +127,46 @@ fn draw_segment(doc: &mut Document, pen: &Pen<'_>, s: &Segment, layers: &[usize]
     let (c, g, geo) = (pen.c, pen.g, pen.geo);
     doc.lines.push(Line::default());
     let mut title = Line::default();
-    match s.layer {
-        Some(l) => {
+    let count = |one: &str, many: &str| -> String {
+        if layers.len() > 1 {
+            format!("  {} {} {many}", g.times, layers.len())
+        } else {
+            let _ = one;
+            String::new()
+        }
+    };
+    match s.kind {
+        SegKind::Layer(l) => {
             let (glyph, style, name) = match c.layer_kinds[l] {
                 LayerKind::LinearAttention => (g.layer[0], Style::LayerGdn, "GatedDeltaNet layer"),
                 LayerKind::FullAttention => (g.layer[1], Style::LayerAttn, "Full-attention layer"),
             };
             title.push(format!("{glyph} "), style);
             title.push(name, Style::Heading);
-            if layers.len() > 1 {
-                title.push(
-                    format!("  {} {} layers", g.times, layers.len()),
-                    Style::Accent,
-                );
-            }
-            let room = geo.width.saturating_sub(title.width() + 2);
+            title.push(count("layer", "layers"), Style::Accent);
             let list = if layers.len() > 1 {
                 ranges(layers)
             } else {
                 format!("layer {l}")
             };
+            let room = geo.width.saturating_sub(title.width() + 2);
             title.push("  ", Style::Plain);
             title.push(clip(&list, room, g), Style::Dim);
         }
-        None => {
+        SegKind::Boundary(a, b) => {
+            title.push(format!("{} ", g.boundary), Style::FusedFrame);
+            title.push("Layer boundary", Style::Heading);
+            title.push(count("boundary", "boundaries"), Style::Accent);
+            let list = if layers.len() > 1 {
+                format!("into layers {}", ranges(layers))
+            } else {
+                format!("layer {a} into {b}")
+            };
+            let room = geo.width.saturating_sub(title.width() + 2);
+            title.push("  ", Style::Plain);
+            title.push(clip(&list, room, g), Style::Dim);
+        }
+        SegKind::Other => {
             title.push(format!("{} ", g.layer[2]), Style::Dim);
             title.push(s.title.clone(), Style::Heading);
         }
@@ -192,8 +174,8 @@ fn draw_segment(doc: &mut Document, pen: &Pen<'_>, s: &Segment, layers: &[usize]
     doc.lines.push(title);
     let rows = rows(c, &s.nodes);
     let frame_of = frames(&rows, pen.plan, pen.group_of);
-    if let Some(e) = s.stream_in {
-        pen.connector(doc, None, e, "stream in");
+    if let Some((e, note)) = &s.enter {
+        pen.connector(doc, None, *e, note);
     }
     let mut prev: Option<&Row> = None;
     for (i, row) in rows.iter().enumerate() {
@@ -201,7 +183,13 @@ fn draw_segment(doc: &mut Document, pen: &Pen<'_>, s: &Segment, layers: &[usize]
         let opens = frame.is_some() && (i == 0 || frame_of[i - 1] != frame);
         if let Some(p) = prev {
             let inside = frame.is_some() && frame_of[i - 1] == frame;
-            pen.link(doc, p, row, if inside { frame } else { None });
+            let inside = if inside { frame } else { None };
+            pen.link(doc, p, row, inside);
+            if let (Some(a), Some(b)) = (row_layer(c, p), row_layer(c, row))
+                && a != b
+            {
+                pen.layer_cut(doc, inside, a, b);
+            }
         }
         if opens {
             pen.frame_top(doc, frame.unwrap_or_default());
@@ -213,11 +201,17 @@ fn draw_segment(doc: &mut Document, pen: &Pen<'_>, s: &Segment, layers: &[usize]
         }
         prev = Some(row);
     }
-    if let Some(e) = s.stream_out {
-        let label = match pen.plan.edge_states[e] {
-            Some(EdgeState::Fused(_)) => "stream out, fused into the next layer",
-            _ => "stream out",
+    if let Some((e, note)) = &s.exit {
+        let fused = matches!(pen.plan.edge_states[*e], Some(EdgeState::Fused(_)));
+        let note = if fused {
+            format!("{note}, fused")
+        } else {
+            note.clone()
         };
-        pen.connector(doc, None, e, label);
+        pen.connector(doc, None, *e, &note);
     }
+}
+
+fn row_layer(c: &Circuit, r: &Row) -> Option<usize> {
+    r.nodes().first().and_then(|&n| c.nodes[n].layer)
 }

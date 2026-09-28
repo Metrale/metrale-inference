@@ -21,6 +21,7 @@ mod draw;
 pub mod glyphs;
 mod labels;
 mod rows;
+mod segments;
 mod strip;
 
 pub use glyphs::Glyphs;

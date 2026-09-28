@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # 2026-09-28: The formats each linear module of Qwen/Qwen3.6-35B-A3B-FP8 runs at under the
 # recipe qwen3.6/qwen3.6-35b-a3b-fp8-bf16head on main.
 #

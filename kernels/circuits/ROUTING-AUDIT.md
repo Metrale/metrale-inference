@@ -140,6 +140,29 @@ class and exact citation.
 | `draft_concat` | reference | ml/mtp_head/forward.rs:101-109 |
 | `draft_dense_gemv_bf16` | reference | ml/mtp_head/forward.rs:123,171-183,209-212,309; ml/mtp_head.rs:330-339 (mtp_quantization bf16: every projection is ProjectionWeight::Bf16) |
 | `draft_dense_gate_up_bf16` | reference | ml/mtp_head/moe_forward.rs:30-64 (dense_ffn_forward_generic: gate and up are two GEMVs) |
+| `cross_layer_add_norm` | bit_identical | k/residual_add_rms_norm_exact.cu (new); replaces the layer-end ffn_residual_add (bf16_residual_add) and the next layer's input_norm_residual (rms_norm_residual), whose dispatch sites those rules cite |
+| `rms_norm_quant_fp8_row` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then quant_rowwise_fp8 (k/quant_rowwise_fp8.cu, ml/ops/dispatch_proj_rowwise.rs) |
+| `rms_norm_quant_fp8_g128` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then per_token_group_quant_fp8 (k/per_token_group_quant_fp8.cu, ml/ops/fp8_act_quant.rs) |
+| `rms_norm_quant_nvfp4` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then w4a4_quant_rows (k/w4a4_gemv_mx.cu, ml/ops/w4a4_proj.rs) |
+
+## Bit-identical fusions
+
+These rules are not today's routing. They are new kernels, each proven byte-identical to the
+chain it replaces by the model-arch example its rule names. The chains run rows 1..=128 at
+hidden 5120 and 2048, on both circuit targets, with random, denormal, overflowing,
+all-equal, one-hot, mixed-magnitude and all-zero rows.
+
+- **`cross_layer_add_norm` fuses across a layer boundary.** It joins layer i's FFN residual
+  add (`bf16_residual_add`) with layer i+1's input norm (`rms_norm_residual`) in one launch.
+  The default plans select it, removing one launch per layer boundary: 63 on the dense model,
+  39 on the MoE. At the 2- and 3-row multi_seq rungs a GDN layer's per-row adds also collapse
+  into the one launch.
+- **`rms_norm_quant_*` is RMSNorm with an activation-quantizer epilogue.** It covers per-token
+  FP8, g128 FP8 and NVFP4 g16. No circuit quantizes activations yet, so no golden plan selects
+  them; they wait for the W8A8/W4A4 circuits.
+- **The fused kernel reproduces `rms_norm`, not the residual variants.** The norm is plain
+  `rms_norm`. The input and post-attention norms, which run `rms_norm_residual` and
+  `residual_add_rms_norm`, need their own quantizing twins.
 
 ## What the audit found in today's routing
 

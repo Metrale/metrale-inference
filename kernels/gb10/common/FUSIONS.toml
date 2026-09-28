@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # 2026-09-28: GB10 fusion rules: which kernel covers which op chain, per mode and padded row
 # count. These rules encode the decode, multi-sequence, verify and draft routing the engine
 # makes today for the dense Qwen3.8-27B and the Qwen3.6-35B-A3B MoE, so the golden plans in
@@ -1261,3 +1261,62 @@ modes = ["draft"]
 numerics = "reference"
 priority = 10
 cite = "ml/mtp_head/moe_forward.rs:30-64 (dense_ffn_forward_generic: gate and up are two GEMVs)"
+
+# 2026-09-28: Bit-identical fusions. Each names the model-arch example that byte-compares the
+# fused kernel with the unfused chain (rows 1..=128, hidden 5120 and 2048, adversarial
+# magnitudes); crates/circuit/tests/circuits.rs checks the example exists and is registered.
+
+[[rule]]
+id = "cross_layer_add_norm"
+pattern = [
+  { op = "residual_add", local = "add", keep = true },
+  { op = "rms_norm", local = "input_norm" },
+]
+kernels = [{ module = "residual_add_rms_norm_exact", func = "residual_add_rms_norm_exact" }]
+repeat = "once"
+emitter = "residual_add_rms_norm_exact"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "bit_identical"
+microtest = "residual_add_rms_norm_exact_microtest"
+priority = 100
+cite = "k/residual_add_rms_norm_exact.cu (new); replaces the layer-end ffn_residual_add (bf16_residual_add) and the next layer's input_norm_residual (rms_norm_residual), whose dispatch sites those rules cite"
+
+[[rule]]
+id = "rms_norm_quant_fp8_row"
+pattern = [{ op = "rms_norm" }, { op = "act_quant", format = "fp8/token" }]
+kernels = [{ module = "rms_norm_act_quant", func = "rms_norm_quant_fp8_row" }]
+repeat = "once"
+emitter = "rms_norm_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "bit_identical"
+microtest = "rms_norm_act_quant_microtest"
+priority = 100
+cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then quant_rowwise_fp8 (k/quant_rowwise_fp8.cu, ml/ops/dispatch_proj_rowwise.rs)"
+
+[[rule]]
+id = "rms_norm_quant_fp8_g128"
+pattern = [{ op = "rms_norm" }, { op = "act_quant", format = "fp8/g128" }]
+kernels = [{ module = "rms_norm_act_quant", func = "rms_norm_quant_fp8_g128" }]
+repeat = "once"
+emitter = "rms_norm_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "bit_identical"
+microtest = "rms_norm_act_quant_microtest"
+priority = 100
+cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then per_token_group_quant_fp8 (k/per_token_group_quant_fp8.cu, ml/ops/fp8_act_quant.rs)"
+
+[[rule]]
+id = "rms_norm_quant_nvfp4"
+pattern = [{ op = "rms_norm" }, { op = "act_quant", format = "nvfp4/g16" }]
+kernels = [{ module = "rms_norm_act_quant", func = "rms_norm_quant_nvfp4" }]
+repeat = "once"
+emitter = "rms_norm_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "bit_identical"
+microtest = "rms_norm_act_quant_microtest"
+priority = 100
+cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then w4a4_quant_rows (k/w4a4_gemv_mx.cu, ml/ops/w4a4_proj.rs)"

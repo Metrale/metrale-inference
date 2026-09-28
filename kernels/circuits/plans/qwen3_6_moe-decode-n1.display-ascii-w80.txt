@@ -6,8 +6,8 @@
 | qkvz/gdn_out/experts.gate_up/shared_gate_up/q/k/v/o W8A16 fp8                |
 | ba/router/shared_gate/lm_head W16A16 bf16                                    |
 | experts.down/shared_down W8 fp8 . f32 act in                                 |
-| mode decode . 1 row . 612 launches/step . 613 kernel groups                  |
-| 180 fused edges . 813 materialized . plan d20a87af6733                       |
+| mode decode . 1 row . 573 launches/step . 574 kernel groups                  |
+| 180 fused edges . 813 materialized . plan 5ca4996b5998                       |
 +------------------------------------------------------------------------------+
 
 Layers
@@ -23,7 +23,7 @@ d embed
     +---------------------------+
        | v bf16 . nx2048  DRAM  stream out
 
-G GatedDeltaNet layer  x 30 layers  0-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
+G GatedDeltaNet layer  layer 0
        | v bf16 . nx2048  DRAM  stream in
     +---------------------------+
     | input_norm . rms_norm     |  norm::rms_norm_residual . [~] reference
@@ -111,18 +111,218 @@ G GatedDeltaNet layer  x 30 layers  0-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
   # | blend                     |                                              #
   # +---------------------------+                                              #
   ## writes f ##################################################################
-       | v bf16 . nx2048  DRAM
-    +---------------------------+  < y
-    | add . residual_add        |  residual_add::bf16_residual_add
-    +---------------------------+  [~] reference
-       | v bf16 . nx2048  DRAM  stream out
+       | v bf16 . nx2048  DRAM  into the layer boundary
 
-A Full-attention layer  x 10 layers  3, 7, 11, 15, 19, 23, 27, 31, 35, 39
-       | v bf16 . nx2048  DRAM  stream in
-    +---------------------------+
-    | input_norm . rms_norm     |  norm::rms_norm_residual . [~] reference
-    +---------------------------+
+| Layer boundary  x 29 boundaries  into layers 1-2, 4-6, 8-10, 12-14, 16-18, ...
+       | v bf16 . nx2048  DRAM  from the previous layer
+  ## residual_add_rms_norm_exact::residual_add_rms_no... # [ok] bit-identical ##
+  # +---------------------------+  < y                                         #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #    : v bf16 . nx2048  on-chip                                              #
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~ layer 0 | layer 1 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+  # +---------------------------+                                              #
+  # | input_norm . rms_norm     |                                              #
+  # +---------------------------+                                              #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx2048  DRAM  into the next layer
+
+G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
+       | v bf16 . nx2048  DRAM  from the layer boundary
+    #===========================#  weight fp8 e4m3/128x128 blk
+    H qkvz . linear             H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  [~] reference
+
+  ## ssm_preprocess::dense_gemv_ba_gates ###################### [~] reference ##
+  # #===========================#  < xn                                        #
+  # H ba . linear               H  weight bf16                                 #
+  # #===========================#                                              #
+  #    : v bf16 . nx64  on-chip                                                #
+  # +---------------------------+                                              #
+  # | gates . gdn_gates         |                                              #
+  # +---------------------------+                                              #
+  ## writes decay, beta ########################################################
+
+  ## causal_conv1d::causal_conv1d_update_l2norm_f32 ########### [~] reference ##
+  # +---------------------------+  < qkvz                                      #
+  # | conv . conv1d_update      |                                              #
+  # +---------------------------+                                              #
+  #    : v f32 . nx8192  on-chip                                               #
+  # +---------------------------+                                              #
+  # | l2 . l2_norm              |                                              #
+  # +---------------------------+                                              #
+  ## writes qkv ################################################################
+       | v f32 . nx8192  DRAM
+    #===========================#  < decay, beta
+    H recur . gdn_recurrence    H  gated_delta_rule::gated_delta_rule_decod...
+    #===========================#  [~] reference
+       | v f32 . nx4096  DRAM
+    +---------------------------+  < qkvz
+    | out_norm . gated_rms_norm |  norm::gated_rms_norm_f32_input
+    +---------------------------+  [~] reference
+       | v bf16 . nx4096  DRAM
+    #===========================#  weight fp8 e4m3/128x128 blk
+    H out . linear              H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  [~] reference
        | v bf16 . nx2048  DRAM
+  ## norm::residual_add_rms_norm ############################## [~] reference ##
+  # +---------------------------+  < stream in                                 #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #    : v bf16 . nx2048  on-chip                                              #
+  # +---------------------------+                                              #
+  # | post_norm . rms_norm      |                                              #
+  # +---------------------------+                                              #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx2048  DRAM
+    #===========================#  weight bf16
+    H router                    H  gemv::dense_gemv_bf16 . [~] reference
+    #===========================#
+       | v bf16 . nx256  DRAM
+    +---------------------------+
+    | top_k                     |  moe_topk::moe_topk_softmax . [~] reference
+    +---------------------------+
+       | v i32 . nx8  DRAM
+       +-------------------------------------+
+       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
+  ## moe_shared_expert_fused_fp8::moe_expert_gate_up_share... # [~] reference ##
+  # #===========================#         #===========================#        #
+  # H experts_gate_up           H         H shared_gate_up . linear   H        #
+  # #===========================#         #===========================#        #
+  ## writes egu, sgu ###########################################################
+       | v bf16 . 8nx1024  DRAM              | v bf16 . nx1024  DRAM
+  ## moe_shared_expert_fused_fp8::moe_expert_silu_down_sha... # [~] reference ##
+  # +---------------------------+         +---------------------------+        #
+  # | experts_act . silu_mul    |         | shared_act . silu_mul     |        #
+  # +---------------------------+         +---------------------------+        #
+  #    : v f32 . 8nx512  on-chip             : v f32 . nx512  on-chip          #
+  # #===========================#         #===========================#        #
+  # H experts_down              H         H shared_down . linear      H        #
+  # #===========================#         #===========================#        #
+  ## writes edown, sdown #######################################################
+       | v bf16 . 8nx2048  DRAM              | v bf16 . nx2048  DRAM
+       +-------------------------------------+
+  ## moe_expert_gemv::moe_weighted_sum_blend ################## [~] reference ##
+  # #===========================#  < xn                                        #
+  # H shared_gate . linear      H  weight bf16                                 #
+  # #===========================#                                              #
+  #    : v bf16 . nx1  on-chip                                                 #
+  # +---------------------------+  < edown, topk_w, sdown                      #
+  # | blend                     |                                              #
+  # +---------------------------+                                              #
+  ## writes f ##################################################################
+       | v bf16 . nx2048  DRAM  into the layer boundary
+
+| Layer boundary  x 10 boundaries  into layers 3, 7, 11, 15, 19, 23, 27, 31, ...
+       | v bf16 . nx2048  DRAM  from the previous layer
+  ## residual_add_rms_norm_exact::residual_add_rms_no... # [ok] bit-identical ##
+  # +---------------------------+  < y                                         #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #    : v bf16 . nx2048  on-chip                                              #
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~ layer 2 | layer 3 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+  # +---------------------------+                                              #
+  # | input_norm . rms_norm     |                                              #
+  # +---------------------------+                                              #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx2048  DRAM  into the next layer
+
+A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
+       | v bf16 . nx2048  DRAM  from the layer boundary
+    #===========================#  weight fp8 e4m3/128x128 blk
+    H q . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  [~] reference
+       | v bf16 . nx8192  DRAM
+    +---------------------------+
+    | q_split . split           |  ssm_preprocess::deinterleave_qg
+    +---------------------------+  [~] reference
+
+    #===========================#  < xn . weight fp8 e4m3/128x128 blk
+    H k . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  [~] reference
+
+    #===========================#  < xn . weight fp8 e4m3/128x128 blk
+    H v . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  [~] reference
+
+    +---------------------------+  < q
+    | q_norm . qk_norm          |  norm::rms_norm . [~] reference
+    +---------------------------+
+
+    +---------------------------+  < k
+    | k_norm . qk_norm          |  norm::rms_norm . [~] reference
+    +---------------------------+
+       | v bf16 . nx512  DRAM
+    +---------------------------+  < qn
+    | rope                      |  rope_mrope_interleaved::rope_forward_mro...
+    +---------------------------+  [~] reference
+       | v bf16 . nx512  DRAM
+    +---------------------------+  < v
+    | kv_write                  |  reshape_and_cache::reshape_and_cache_flash
+    +---------------------------+  [~] reference
+
+    #===========================#  < qr, kr, v
+    H attend . paged_attention  H  paged_decode::paged_decode_attn
+    #===========================#  [~] reference
+       | v bf16 . nx4096  DRAM
+    +---------------------------+  < gate
+    | gate_mul . sigmoid_gat... |  residual_add::sigmoid_gate_mul
+    +---------------------------+  [~] reference
+       | v bf16 . nx4096  DRAM
+    #===========================#  weight fp8 e4m3/128x128 blk
+    H o . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  [~] reference
+       | v bf16 . nx2048  DRAM
+  ## norm::residual_add_rms_norm ############################## [~] reference ##
+  # +---------------------------+  < stream in                                 #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #    : v bf16 . nx2048  on-chip                                              #
+  # +---------------------------+                                              #
+  # | post_norm . rms_norm      |                                              #
+  # +---------------------------+                                              #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx2048  DRAM
+    #===========================#  weight bf16
+    H router                    H  gemv::dense_gemv_bf16 . [~] reference
+    #===========================#
+       | v bf16 . nx256  DRAM
+    +---------------------------+
+    | top_k                     |  moe_topk::moe_topk_softmax . [~] reference
+    +---------------------------+
+       | v i32 . nx8  DRAM
+       +-------------------------------------+
+       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
+  ## moe_shared_expert_fused_fp8::moe_expert_gate_up_share... # [~] reference ##
+  # #===========================#         #===========================#        #
+  # H experts_gate_up           H         H shared_gate_up . linear   H        #
+  # #===========================#         #===========================#        #
+  ## writes egu, sgu ###########################################################
+       | v bf16 . 8nx1024  DRAM              | v bf16 . nx1024  DRAM
+  ## moe_shared_expert_fused_fp8::moe_expert_silu_down_sha... # [~] reference ##
+  # +---------------------------+         +---------------------------+        #
+  # | experts_act . silu_mul    |         | shared_act . silu_mul     |        #
+  # +---------------------------+         +---------------------------+        #
+  #    : v f32 . 8nx512  on-chip             : v f32 . nx512  on-chip          #
+  # #===========================#         #===========================#        #
+  # H experts_down              H         H shared_down . linear      H        #
+  # #===========================#         #===========================#        #
+  ## writes edown, sdown #######################################################
+       | v bf16 . 8nx2048  DRAM              | v bf16 . nx2048  DRAM
+       +-------------------------------------+
+  ## moe_expert_gemv::moe_weighted_sum_blend ################## [~] reference ##
+  # #===========================#  < xn                                        #
+  # H shared_gate . linear      H  weight bf16                                 #
+  # #===========================#                                              #
+  #    : v bf16 . nx1  on-chip                                                 #
+  # +---------------------------+  < edown, topk_w, sdown                      #
+  # | blend                     |                                              #
+  # +---------------------------+                                              #
+  ## writes f ##################################################################
+       | v bf16 . nx2048  DRAM  into the layer boundary
+
+A Full-attention layer  layer 39
+       | v bf16 . nx2048  DRAM  from the layer boundary
     #===========================#  weight fp8 e4m3/128x128 blk
     H q . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
     #===========================#  [~] reference
@@ -230,7 +430,7 @@ d head
     #===========================#
 
 --------------------------------------------------------------------------------
-612 launches/step . 613 groups . 180 fused . 813 materialized edges
+573 launches/step . 574 groups . 180 fused . 813 materialized edges
 6.6 MiB written/step . arena 0.5 MiB
 #=# heavy op . +-+ light op . ### fused kernel . |v DRAM . :v on-chip
 [ok] bit-identical . [~] reference . [!] differs
