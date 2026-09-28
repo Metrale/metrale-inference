@@ -235,6 +235,11 @@ impl MoeLayer {
                 "moe_w8a8_grouped_gemm_pm4",
             ),
             moe_e4m3,
+            moe_unpermute_blend_k: if std::env::var_os("METRALE_NO_MOE_UNPERMUTE_BLEND").is_some() {
+                KernelHandle(0)
+            } else {
+                try_target_kernel(gpu, "moe_unpermute_blend", "moe_unpermute_blend")
+            },
             per_token_group_quant_fp8_k: ops::Fp8ActQuant::resolve(gpu),
             // 2026-09-25: 0 when the model's moe_silu_mul module lacks this entry;
             // the unfused pair runs then.

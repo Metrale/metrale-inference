@@ -274,6 +274,9 @@ pub struct MoeLayer {
     // 2026-09-27: The PM4 computation on the native e4m3 MMA (`forward_prefill_fp8/e4m3.rs`),
     // preferred over PM4 for non-decode prefill.
     moe_e4m3: forward_prefill_fp8::E4m3Kernels,
+    // 2026-09-28: `moe_unpermute_blend` (unpermute + shared blend in one launch, same bits);
+    // 0 when absent or under `METRALE_NO_MOE_UNPERMUTE_BLEND`.
+    moe_unpermute_blend_k: KernelHandle,
     per_token_group_quant_fp8_k: ops::Fp8ActQuant,
     /// 2026-09-25: Fused SiLU·mul + per-token-group FP8 quant for the W8A8 prefill
     /// down inputs. When `fused_silu_quant_ok` is false (handle 0, GeGLU, or an

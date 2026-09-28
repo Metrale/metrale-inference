@@ -131,6 +131,10 @@ name = "moe_gateup_silu_e4m3_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "moe_unpermute_blend_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "nvfp4_moe_grouped_microtest"
 required-features = ["cuda", "gpu-examples"]
 

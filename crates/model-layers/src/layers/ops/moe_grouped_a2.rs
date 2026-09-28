@@ -153,6 +153,45 @@ pub fn moe_unpermute_reduce_indexed(
         .launch(stream)
 }
 
+/// 2026-09-28: [`moe_unpermute_reduce_indexed`] then [`moe_batched_blend`] in one launch
+/// (kernel `moe_unpermute_blend`, `kernels/gb10/common/moe_unpermute_blend.cu`), with the same
+/// output bits; one 256-thread block per token. Needs `hidden_size % 8 == 0`.
+#[allow(clippy::too_many_arguments)]
+pub fn moe_unpermute_blend(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    expert_output: DevicePtr,
+    output: DevicePtr,
+    token_to_perm: DevicePtr,
+    topk_weights: DevicePtr,
+    shared_out: DevicePtr,
+    normed: DevicePtr,
+    gate_weight: DevicePtr,
+    hidden_size: u32,
+    num_tokens: u32,
+    topk: u32,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        hidden_size.is_multiple_of(8),
+        "moe_unpermute_blend: hidden {hidden_size} is not a multiple of 8"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([num_tokens, 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(expert_output)
+        .arg_ptr(output)
+        .arg_ptr(token_to_perm)
+        .arg_ptr(topk_weights)
+        .arg_ptr(shared_out)
+        .arg_ptr(normed)
+        .arg_ptr(gate_weight)
+        .arg_u32(hidden_size)
+        .arg_u32(num_tokens)
+        .arg_u32(topk)
+        .launch(stream)
+}
+
 /// 2026-09-25: `output[t] += sigmoid(dot(normed[t], gate_weight)) * shared_out[t]`, one block per
 /// token. A null `gate_weight` blends at weight 1.
 pub fn moe_batched_blend(

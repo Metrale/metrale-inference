@@ -32,6 +32,7 @@ macro_rules! mprof_step {
 const PM4_N_TILE: u32 = 64;
 const PM4_M_TILE: u32 = 128;
 
+mod combine;
 mod down;
 mod e4m3;
 mod gate_up;
@@ -429,53 +430,18 @@ impl MoeLayer {
         )?;
 
         let output = ctx.buffers.moe_output();
-        ops::moe_unpermute_reduce_indexed(
-            ctx.gpu,
-            self.moe_unpermute_reduce,
+        self.fp8_prefill_combine(
+            input,
             expert_down_out,
             output,
             token_to_perm,
             weights_dev,
-            h,
-            n,
-            top_k,
+            has_shared,
+            num_tokens,
+            ctx,
             stream,
+            &mut mt,
         )?;
-        mprof!("unpermute_reduce");
-
-        // 2026-09-25: With EP, the all-reduce covers only the routed output; the
-        // shared blend below runs after it.
-        if let Some(comm) = ctx.comm
-            && ctx.config.ep_world_size > 1
-        {
-            comm.all_reduce_async(output.0, num_tokens * h as usize * 2, stream)?;
-        }
-
-        if has_shared {
-            let shared_down_out = ctx.buffers.attn_output();
-            super::dump::dump_routed_only(ctx.gpu, stream, output, n, h)?;
-            super::dump::dump_shared_out(ctx.gpu, stream, shared_down_out, n, h)?;
-            super::dump::dump_shared_gate(
-                ctx.gpu,
-                stream,
-                input,
-                self.weights.shared_expert_gate.weight,
-                n,
-                h,
-            )?;
-            ops::moe_batched_blend(
-                ctx.gpu,
-                self.moe_batched_blend,
-                output,
-                shared_down_out,
-                input,
-                self.weights.shared_expert_gate.weight,
-                h,
-                n,
-                stream,
-            )?;
-            mprof!("blend");
-        }
 
         super::dump::dump_moe_out(ctx.gpu, stream, output, n, h)?;
 
