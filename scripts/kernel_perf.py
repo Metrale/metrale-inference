@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Generate the kernel performance map, KERNEL-PERF.md, from the tree (SSOT).
 
-    python3 scripts/kernel_perf.py            # rewrite the generated block of KERNEL-PERF.md
+    python3 scripts/kernel_perf.py            # rewrite the generated block of KERNEL-PERF.md,
+                                              # docs/kernel-perf/TRADEOFFS.md and MEASUREMENTS.md
     python3 scripts/kernel_perf.py --check    # exit 1 if the committed block is stale or a
                                               # curated input no longer matches the tree
     python3 scripts/kernel_perf.py --json     # the joined inventory as JSON, for tooling
@@ -105,9 +106,13 @@ def main(argv: list[str]) -> int:
         print()
         return 0
     r = render.Renderer(m)
-    doc_path, reg_path = root / "KERNEL-PERF.md", root / render.REGISTER
+    doc_path = root / "KERNEL-PERF.md"
     doc = doc_path.read_text()
-    want = {doc_path: splice(doc, r.render()), reg_path: r.render_register()}
+    want = {
+        doc_path: splice(doc, r.render()),
+        root / render.REGISTER: r.render_register(),
+        root / render.MEASUREMENTS: r.render_measurements(),
+    }
     have = {p: (p.read_text() if p.is_file() else None) for p in want}
     stale = [p for p in want if want[p] != have[p]]
     if args.check:
@@ -116,7 +121,8 @@ def main(argv: list[str]) -> int:
                   file=sys.stderr)
         if stale:
             return 1
-        print(f"kernel_perf: KERNEL-PERF.md and {render.REGISTER} are current ({len(m.rows)} entry points)")
+        print(f"kernel_perf: KERNEL-PERF.md, {render.REGISTER} and {render.MEASUREMENTS} are current "
+              f"({len(m.rows)} entry points)")
         return 0
     for p in stale:
         p.write_text(want[p])
