@@ -321,16 +321,17 @@ extern "C" __global__ void metrale_nvfp4_silu_mul_quant(
 // zero and is added to the FP32 sum in increasing k, then rounded once with __float2bfloat16, exactly as
 // vec_dot_fp4_fp4_mma and mmq_write_back_mma do. Operands are the raw words of the same layouts (x rows from
 // metrale_nvfp4_repack, y blocks of block_fp4_mmq), fed through ldmatrix.x4 in the MMA's register order.
-// Tile 128 channels x 128 tokens on 8 warps (4 x 2, 32 x 64 each); a stage is one 256-wide k block: 144 bytes per x
+// Tile 128 channels x 192 tokens on 8 warps (2 x 4, 64 x 48 each; 2026-09-28, was 128 x 128 on 32 x 64 warps); a stage
+// is one 256-wide k block: 144 bytes per x
 // row (128 of E2M1, 16 of scales) and per y row (the whole block), so the smem rows are 16-byte aligned and an
 // ldmatrix phase is conflict-free. K must be a multiple of 256. Grid (ceil(M/128) * ceil(N/128)), in groups of 8 M
-// tiles; block 256; dynamic shared memory NVP_STAGES * 256 * 144 = 73,728 bytes. With apply_scale != 0 each output
+// tiles; block 256; dynamic shared memory NVP_STAGES * (128 + 192) * 144 = 92,160 bytes. With apply_scale != 0 each output
 // is then multiplied by out_scale exactly as metrale_nvfp4_scale_bf16 does in place (2026-09-28). On the dense 27B FFN shapes
-// (8192 x 17408 x 5120, 8192 x 5120 x 17408) it runs at 216-233 TFLOPS against the MMQ's 84 (dgx2, standalone).
+// (8192 x 17408 x 5120, 8192 x 5120 x 17408) it runs at 272-276 TFLOPS against the MMQ's 84 (dgx2, standalone).
 #define NVP_BCH 128
-#define NVP_BTK 128
-#define NVP_WCH 32
-#define NVP_WTK 64
+#define NVP_BTK 192
+#define NVP_WCH 64
+#define NVP_WTK 48
 #define NVP_STAGES 2
 #define NVP_GROUP 8
 #define NVP_ROWB 144
@@ -408,7 +409,9 @@ extern "C" __global__ void __launch_bounds__(NVP_THREADS, 1) metrale_nvfp4_gemm_
         }
         const int st = kt % NVP_STAGES;
         const unsigned int tX = sX + st * NVP_BCH * NVP_ROWB, tY = sY + st * NVP_BTK * NVP_ROWB;
-#pragma unroll
+        // 2026-09-28: Not unrolled: an unrolled f loop hoists every fragment of the stage and spills at 255
+        // registers; one fragment set at a time runs the 64x48 warp tile at ~270 TFLOPS.
+#pragma unroll 1
         for (int f = 0; f < 4; f++) {
             uint32_t a[MT][4], sa[MT], b[NT][2], sb[NT];
 #pragma unroll

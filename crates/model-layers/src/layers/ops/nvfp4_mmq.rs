@@ -211,12 +211,12 @@ pub fn nvfp4_mmq_gemm_tiled(
     Ok(false)
 }
 /// 2026-09-28: Dynamic shared memory of `metrale_nvfp4_gemm_pipe`: two stages of
-/// 128 weight rows and 128 activation rows, 144 bytes each.
-pub const NVFP4_PIPE_SMEM: u32 = 2 * (128 + 128) * 144;
+/// 128 weight rows and 192 activation rows, 144 bytes each.
+pub const NVFP4_PIPE_SMEM: u32 = 2 * (128 + 192) * 144;
 
 /// 2026-09-28: `C[m, n] = A[m, k] x W[n, k]` in BF16, without `weight_scale_2`, through
 /// `metrale_nvfp4_gemm_pipe` (same operands and output as [`nvfp4_mmq_gemm`], bit-identical).
-/// `k` must be a multiple of 256. Grid of 128x128 tiles, 256 threads. With `out_scale`,
+/// `k` must be a multiple of 256. Grid of 128-channel x 192-token tiles, 256 threads. With `out_scale`,
 /// each output is multiplied by it as [`nvfp4_scale_bf16`] does in place, bit for bit.
 #[allow(clippy::too_many_arguments)]
 pub fn nvfp4_pipe_gemm(
@@ -233,7 +233,7 @@ pub fn nvfp4_pipe_gemm(
 ) -> Result<()> {
     debug_assert!(k.is_multiple_of(256), "nvfp4_pipe_gemm needs K % 256 == 0");
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(m, 128) * div_ceil(n, 128), 1, 1])
+        .grid([div_ceil(m, 192) * div_ceil(n, 128), 1, 1])
         .block([256, 1, 1])
         .shared_mem(NVFP4_PIPE_SMEM)
         .arg_ptr(w_nvfp4)
