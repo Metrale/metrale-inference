@@ -3,7 +3,8 @@
 //! 2026-09-28: The FP8 E4M3 LM head (per-row F32 scales, `lm_head_fp8`) at any row count, in
 //! as few weight passes as the kernels allow:
 //! - declared W8A8 (`set_lm_head_w8a8`, installed when the checkpoint declares the head FP8
-//!   W8A8): `ops::w8a8_proj` for 1..=64 rows, one pass, row-invariant;
+//!   W8A8): `ops::w8a8_proj` at every row count, in `ops::W8A8_MAX_ROWS`-row calls (one weight
+//!   pass per 128 rows), never per row; a row's logits do not depend on the row count;
 //! - otherwise W8A16: `dense_gemv_fp8w` for 1 row, `dense_gemv_fp8w_batch2` for 2, and the
 //!   register-tiled `fp8_gemv_rowscale_batch{8,16}_rt2` for 3..=16 and in 16-row chunks above.
 //!   Before this, every row count but 2 ran one GEMV per row, reading the 1.27 GB head once
@@ -95,9 +96,19 @@ impl TransformerModel {
         };
         let gpu = self.gpu.as_ref();
         let (h, v) = (self.config.hidden_size, self.config.vocab_size);
-        if let Some((ref ctx, ref w)) = self.lm_head_fp8_rows.w8a8
-            && ctx.proj(gpu, w, hidden, h as u32, rows, logits, v as u32, stream)?
-        {
+        if let Some((ref ctx, ref w)) = self.lm_head_fp8_rows.w8a8 {
+            // 2026-09-28: Any row count: `W8A8_MAX_ROWS`-row calls (the scratch's capacity); the
+            // quantization is per row, so chunking does not change any row's bits.
+            let mut done = 0;
+            while done < rows {
+                let m = (rows - done).min(ops::W8A8_MAX_ROWS);
+                let (x, out) = (hidden.offset(done * h * 2), logits.offset(done * v * 2));
+                ensure!(
+                    ctx.proj(gpu, w, x, h as u32, m, out, v as u32, stream)?,
+                    "W8A8 lm_head: {m} rows not servable"
+                );
+                done += m;
+            }
             return Ok(true);
         }
         let k = &self.lm_head_fp8_rows;
