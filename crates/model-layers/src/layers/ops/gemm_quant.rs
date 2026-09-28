@@ -172,6 +172,23 @@ pub fn fp8_gemm_t_blockscaled(
     stream: u64,
 ) -> Result<()> {
     super::log_gemm_shape(gpu, "fp8_gemm_t_blockscaled", m, n, k);
+    if let Some(pipe) = fp8_gemm_pipe_kernel(gpu, m, n, k)? {
+        // 2026-09-27: `fp8_gemm_blockscaled_pipe_128x64`: 128 x 64 tiles, 256 threads, SmemBytes<128, 64, 3>.
+        const PIPE_SMEM: u32 = 3 * (128 + 64) * 64 + 3 * 128 * 4 + 128 * 4;
+        return KernelLaunch::new(gpu, pipe)
+            .grid([n / 64, div_ceil(m, 128), 1])
+            .block([256, 1, 1])
+            .shared_mem(PIPE_SMEM)
+            .arg_ptr(a_fp8)
+            .arg_ptr(a_scale)
+            .arg_ptr(b_fp8)
+            .arg_ptr(b_scale)
+            .arg_ptr(output)
+            .arg_u32(m)
+            .arg_u32(n)
+            .arg_u32(k)
+            .launch(stream);
+    }
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 128), div_ceil(m, 64), 1])
         .block([128, 1, 1])
@@ -184,6 +201,38 @@ pub fn fp8_gemm_t_blockscaled(
         .arg_u32(n)
         .arg_u32(k)
         .launch(stream)
+}
+
+/// 2026-09-27: The pipelined twin of `fp8_gemm_t_blockscaled`
+/// (`kernels/gb10/common/fp8_gemm_blockscaled_pipe.cu`), when the backend carries it, the
+/// shape fits (N a multiple of its 64-wide tile, K of 128) and `METRALE_NO_FP8_GEMM_PIPE`
+/// is absent. It performs the same MMAs and scale folds in the same order per output
+/// element, so its output is bit-identical (microbench: 0 differing values at every
+/// 35B projection shape, over every non-NaN E4M3 code), 1.7-3.2x faster on GB10. The
+/// handle is memoized in the backend's `OpCache`.
+fn fp8_gemm_pipe_kernel(
+    gpu: &dyn GpuBackend,
+    m: u32,
+    n: u32,
+    k: u32,
+) -> Result<Option<KernelHandle>> {
+    const MODULE: &str = "fp8_gemm_blockscaled_pipe";
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let off = *OFF.get_or_init(|| std::env::var_os("METRALE_NO_FP8_GEMM_PIPE").is_some());
+    if off
+        || m == 0
+        || n == 0
+        || !n.is_multiple_of(64)
+        || !k.is_multiple_of(128)
+        || !gpu.has_module(MODULE)
+    {
+        return Ok(None);
+    }
+    Ok(Some(gpu.op_cache().kernel(
+        gpu,
+        MODULE,
+        "fp8_gemm_blockscaled_pipe_128x64",
+    )?))
 }
 
 /// 2026-09-25: Transpose an FP8 weight on the GPU: `B[N, K]` to `B_t[K, N]`.
