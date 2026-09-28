@@ -227,6 +227,7 @@ mod gdn_dequant;
 mod gdn_layer;
 mod load_cx;
 mod prune;
+mod w8a8_install;
 
 use fp8_residency::{DerivedResidency, RouteEnv};
 use load_cx::{Flow, LayerIn, LoadCx};
@@ -382,6 +383,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             }
         }
 
+        w8a8_install::install_declared(store, config, gpu, &layer_types, &mut layers)?;
         tracing::info!(
             "Qwen3.5 dense weight loader: {} layers ({} attention, {} SSM, dense FFN)",
             layers.len(),

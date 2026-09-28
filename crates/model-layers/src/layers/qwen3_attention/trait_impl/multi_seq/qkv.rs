@@ -62,7 +62,19 @@ impl Qwen3AttentionLayer {
             ..
         } = *c;
 
-        if n == 3
+        if self.w8a8_qkv(
+            fwd,
+            normed,
+            n,
+            qkv_buf,
+            (per_seq_qkv / bf16) as u32,
+            nq,
+            hd,
+            stream,
+        )? {
+            // 2026-09-28: The declared-W8A8 arm (`w8a8_decode_arm.rs`), gated deinterleave
+            // included.
+        } else if n == 3
             && self.q_weight.as_ref().and_then(|w| w.as_nvfp4()).is_some()
             && self.k_weight.as_ref().and_then(|w| w.as_nvfp4()).is_some()
             && self.v_weight.as_ref().and_then(|w| w.as_nvfp4()).is_some()

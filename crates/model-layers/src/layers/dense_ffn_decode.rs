@@ -28,6 +28,10 @@ impl DenseFfnLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<DevicePtr> {
+        // 2026-09-28: The declared-W8A8 arm first (`dense_ffn_w8a8.rs`).
+        if self.forward_w8a8(input, 1, ctx, stream)? {
+            return Ok(ctx.buffers.moe_output());
+        }
         let h = ctx.config.hidden_size as u32;
         let inter = ctx.config.intermediate_size as u32;
 

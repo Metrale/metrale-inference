@@ -55,6 +55,10 @@ pub struct Qwen3SsmLayer {
     /// wrong values without faulting.
     pub(super) qkvz_fp8w_rowwise: Option<Fp8Weight>,
     pub(super) out_proj_fp8w_rowwise: Option<Fp8Weight>,
+    /// 2026-09-28: W8A8 QKV|Z and out_proj (`set_w8a8_decode_weights`), for a
+    /// checkpoint that declares them FP8 W8A8; run ahead of every other decode
+    /// arm at 1..=64 rows (`w8a8_decode.rs`).
+    pub(crate) w8a8: Option<crate::layers::W8a8Mixer>,
     /// 2026-09-25: Addresses of this layer's two slices of the arena slab
     /// `ssm_rowwise_w_bf16`, 0 until the first row-wise prefill carves them
     /// (`rowwise_bf16.rs`).

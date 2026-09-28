@@ -36,7 +36,7 @@ pub fn weight_quantization() -> WeightQuantTier {
 /// for the layers it serves.
 pub fn kernel_caps() -> metrale_config::weight_quantization::KernelCaps {
     metrale_config::weight_quantization::KernelCaps {
-        w8a8_decode: false,
+        w8a8_decode: true,
         w8a8_moe_decode: false,
     }
 }

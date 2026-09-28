@@ -16,6 +16,7 @@ mod load_cx;
 mod moe_experts;
 mod selectors;
 mod tq_plus_weight_rotation;
+mod w8a8_adopt;
 
 use anyhow::Result;
 use metrale_cache::kv_cache::KvCacheDtype;
@@ -463,6 +464,7 @@ pub(super) fn load_layers(
         }
     }
 
+    w8a8_adopt::adopt_declared(&mut layers, config, gpu)?;
     tracing::info!(
         "Qwen3.5 weight loader: {} layers ({} attention, {} linear_attn)",
         layers.len(),

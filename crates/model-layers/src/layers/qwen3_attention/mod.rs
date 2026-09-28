@@ -38,6 +38,7 @@ mod prefill_weights;
 mod trait_impl;
 pub mod types;
 mod types_weights;
+mod w8a8_decode_arm;
 
 #[cfg(feature = "cuda")]
 pub use innerq_driver::InnerQDriver;

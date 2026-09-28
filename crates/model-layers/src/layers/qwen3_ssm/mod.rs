@@ -53,6 +53,7 @@ mod trait_prefill_phase1;
 mod trait_prefill_phase3;
 mod trait_prefill_proj;
 mod trait_prefill_recur;
+mod w8a8_decode;
 mod woa;
 
 pub use gdn_flags::{

@@ -30,6 +30,11 @@ impl Qwen3AttentionLayer {
         h: u32,
         stream: u64,
     ) -> Result<()> {
+        // 2026-09-28: The declared-W8A8 arm writes Q|K|V in one launch (`w8a8_decode_arm.rs`);
+        // `attention_forward_kv` then launches nothing.
+        if self.w8a8_qkv_m1(ctx, normed, q_out, nq, hd, stream)? {
+            return Ok(());
+        }
         if self.gated {
             // 2026-09-25: Q+gate projection, then deinterleave to `[Q_all | Gate_all]`.
             if let Some(q2) = self.q_weight.as_ref().and_then(|w| w.as_packed_q2()) {

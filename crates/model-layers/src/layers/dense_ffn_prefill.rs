@@ -129,6 +129,11 @@ impl DenseFfnLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        // 2026-09-28: The declared-W8A8 arm for up to `ops::W8A8_MAX_ROWS` rows
+        // (`dense_ffn_w8a8.rs`): the wide decode batches that land here, and short prefill tails.
+        if self.forward_w8a8(input, num_tokens, ctx, stream)? {
+            return Ok(());
+        }
         let h = ctx.config.hidden_size as u32;
         let inter = ctx.config.intermediate_size as u32;
         let m = num_tokens as u32;

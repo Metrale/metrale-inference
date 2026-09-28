@@ -28,28 +28,7 @@ mod weights;
 pub use weights::{
     DenseFfnWeights, DenseFfnWeightsBf16, DenseFfnWeightsFp8, DenseFfnWeightsQ2, FfnActivation,
 };
-
-/// 2026-09-25: Int8 copy of one NVFP4 projection for the `int8_gemm_faith2` prefill arms: `w_i8`
-/// is `[N, K]` int8 and `w_scale` is `[N, K/32]` F32. Built once by `ensure_int8_weight`.
-#[derive(Debug, Clone, Copy)]
-struct Int8Weight {
-    w_i8: DevicePtr,
-    w_scale: DevicePtr,
-}
-
-/// 2026-09-25: GGML `block_q4_K` copy of one NVFP4 projection for the `METRALE_FFN_MMQ` prefill
-/// arm, built once by `ensure_q4k_weight`.
-#[derive(Debug, Clone, Copy)]
-struct Q4kWeight {
-    w_q4k: DevicePtr,
-}
-
-/// 2026-09-25: `block_nvfp4` repack of one NVFP4 projection for the NVFP4 MMQ prefill arm, built
-/// once by `ensure_nvfp4_mmq_weight`.
-#[derive(Debug, Clone, Copy)]
-struct Fp4MmqWeight {
-    w: DevicePtr,
-}
+use weights::{Fp4MmqWeight, Int8Weight, Q4kWeight};
 
 pub struct DenseFfnLayer {
     pub weights: DenseFfnWeights,
@@ -162,6 +141,9 @@ pub struct DenseFfnLayer {
     /// path runs FP8 kernels: `forward_k2`, `forward_k3` and `forward_km` hand the layer to
     /// `forward_prefill`.
     fp8_weights: Option<DenseFfnWeightsFp8>,
+    /// 2026-09-28: W8A8 gate, up and down (`set_w8a8_decode_weights`), for a checkpoint that
+    /// declares them FP8 W8A8; run ahead of every other arm at 1..=64 decode rows.
+    pub(crate) w8a8: Option<crate::layers::W8a8Ffn>,
     w8a16_gemv_k: KernelHandle,
     w8a16_gemm_k: KernelHandle,
     w8a16_gemv_batch4_k: KernelHandle,
@@ -427,6 +409,8 @@ pub mod gateup_fused;
 /// 2026-09-26: `new_with_activation`, which resolves every kernel handle.
 #[path = "dense_ffn_init.rs"]
 mod init;
+#[path = "dense_ffn_w8a8.rs"]
+mod w8a8;
 
 /// 2026-09-26: The `ensure_*_weight` builders and the steps of the `finalize_*_load` functions.
 #[path = "dense_ffn_load.rs"]

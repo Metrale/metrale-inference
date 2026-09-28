@@ -195,6 +195,9 @@ pub use row_tiers::{
 mod kernel_probe;
 pub use kernel_probe::{try_kernel, try_target_kernel};
 
+mod w8a8_layer;
+pub use w8a8_layer::{W8a8Ctx, W8a8Ffn, W8a8Mixer};
+
 /// 2026-09-25: A layer's FFN: MoE, dense, or none.
 #[allow(clippy::large_enum_variant)]
 pub enum FfnComponent {

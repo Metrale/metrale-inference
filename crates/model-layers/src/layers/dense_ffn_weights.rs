@@ -7,6 +7,8 @@
 //! Invariants:
 //! - Every field is the loader's device allocation; nothing here frees it.
 
+use metrale_gpu_runtime::gpu::DevicePtr;
+
 use crate::weight_map::{DenseWeight, Fp8Weight, PackedQ2Weight, QuantizedWeight};
 
 pub struct DenseFfnWeights {
@@ -53,4 +55,26 @@ pub struct DenseFfnWeightsQ2 {
 pub enum FfnActivation {
     SiLU,
     GeLU,
+}
+
+/// 2026-09-25: Int8 copy of one NVFP4 projection for the `int8_gemm_faith2` prefill arms: `w_i8`
+/// is `[N, K]` int8 and `w_scale` is `[N, K/32]` F32. Built once by `ensure_int8_weight`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Int8Weight {
+    pub(super) w_i8: DevicePtr,
+    pub(super) w_scale: DevicePtr,
+}
+
+/// 2026-09-25: GGML `block_q4_K` copy of one NVFP4 projection for the `METRALE_FFN_MMQ` prefill
+/// arm, built once by `ensure_q4k_weight`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Q4kWeight {
+    pub(super) w_q4k: DevicePtr,
+}
+
+/// 2026-09-25: `block_nvfp4` repack of one NVFP4 projection for the NVFP4 MMQ prefill arm, built
+/// once by `ensure_nvfp4_mmq_weight`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Fp4MmqWeight {
+    pub(super) w: DevicePtr,
 }

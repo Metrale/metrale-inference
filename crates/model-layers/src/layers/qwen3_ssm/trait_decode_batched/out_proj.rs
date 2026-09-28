@@ -29,7 +29,17 @@ impl Qwen3SsmLayer {
             stream,
             ..
         } = *d;
-        if let Some(ref dense_out) = self.out_proj_dense {
+        if self.w8a8_out(
+            ctx,
+            normed_out_buf,
+            value_dim as u32,
+            num_tokens,
+            out_proj_buf,
+            h as u32,
+            stream,
+        )? {
+            // 2026-09-28: The declared-W8A8 arm (`w8a8_decode.rs`).
+        } else if let Some(ref dense_out) = self.out_proj_dense {
             ops::dense_gemm(
                 ctx.gpu,
                 self.dense_gemm_k,

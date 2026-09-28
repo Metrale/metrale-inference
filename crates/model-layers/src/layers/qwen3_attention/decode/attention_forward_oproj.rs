@@ -27,7 +27,9 @@ impl Qwen3AttentionLayer {
         stream: u64,
     ) -> Result<DevicePtr> {
         let o_out = ctx.buffers.norm_output();
-        if let Some(ref mla) = self.mla {
+        if self.w8a8_o(ctx, attn_out, 1, o_out, stream)? {
+            // 2026-09-28: The declared-W8A8 arm (`w8a8_decode_arm.rs`).
+        } else if let Some(ref mla) = self.mla {
             if let Some(ref wo_nvfp4) = mla.wo_nvfp4 {
                 self.nvfp4_decode_gemv(
                     ctx.gpu,

@@ -30,7 +30,17 @@ impl Qwen3SsmLayer {
             stream,
             ..
         } = *d;
-        if let Some(ref q2) = self.qkvz_q2 {
+        if self.w8a8_qkvz(
+            ctx,
+            normed,
+            h as u32,
+            num_tokens,
+            proj_dst,
+            qkvz_size as u32,
+            stream,
+        )? {
+            // 2026-09-28: The declared-W8A8 arm (`w8a8_decode.rs`).
+        } else if let Some(ref q2) = self.qkvz_q2 {
             // 2026-09-25: Packed Q2_0 QKVZ: one `q2_0_gemv_vec` per row, the kernel the
             // single-token decode runs (`ssm_forward`).
             for t in 0..num_tokens {

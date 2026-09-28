@@ -53,6 +53,8 @@ mod fp8_moe_grouped;
 mod nvfp4_moe_grouped;
 // 2026-09-25: The 32-row M-tile twin of `w8a16_gemm_pipelined` and its by-M selector.
 mod w8a16_gemm_pipelined_m32;
+#[path = "ops/w8a8_decode.rs"]
+mod w8a8_decode;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
@@ -280,6 +282,7 @@ pub use ssm_gdn_wyn::*;
 pub use ssm_mamba::*;
 pub use ssm_preproc::*;
 pub use ssm_ssd::*;
+pub use w8a8_decode::*;
 pub use w8a16_gemm_m16::*;
 pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;

@@ -123,6 +123,7 @@ impl Qwen3AttentionLayer {
             attn,
             post_attn_norm,
             ffn,
+            w8a8: None,
             attn_layer_idx,
             lora: None,
             gated,

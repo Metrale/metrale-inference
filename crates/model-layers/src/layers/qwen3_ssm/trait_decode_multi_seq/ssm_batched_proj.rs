@@ -86,6 +86,18 @@ impl Qwen3SsmLayer {
             use_batch4,
             fp4_gemv_batch_k,
         } = *tier;
+        // 2026-09-28: The declared-W8A8 arm first (`w8a8_decode.rs`).
+        if self.w8a8_qkvz(
+            ctx,
+            normed_base,
+            h as u32,
+            n,
+            deinterleaved,
+            qkvz_size as u32,
+            stream,
+        )? {
+            return Ok(());
+        }
         if let Some(ref fp8) = self.qkvz_fp8w {
             // 2026-09-25: cuBLASLt W8A8 when `try_ssm_decode_w8a8` accepts
             // (5..=16 rows, `DECODE_W8A8_ROWS`); otherwise the arms below.
@@ -230,6 +242,18 @@ impl Qwen3SsmLayer {
             use_batch4,
             fp4_gemv_batch_k,
         } = *tier;
+        // 2026-09-28: The declared-W8A8 arm first (`w8a8_decode.rs`).
+        if self.w8a8_out(
+            ctx,
+            normed_out_base,
+            value_dim as u32,
+            n,
+            ssm_out_base,
+            h as u32,
+            stream,
+        )? {
+            return Ok(());
+        }
         if let Some(ref fp8) = self.out_proj_fp8w {
             // 2026-09-25: cuBLASLt W8A8 when `try_ssm_decode_w8a8` accepts;
             // otherwise the arms below. 2026-09-27: A row-invariant tier policy
