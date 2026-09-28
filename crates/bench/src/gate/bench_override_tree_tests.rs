@@ -205,12 +205,12 @@ fn the_moe_concurrency_entry_is_the_published_instrument_with_its_bootstrap_floo
     assert_eq!(
         floors,
         [
-            ("c1_aggregate_tok_s", (Some(69.47), None)),
-            ("c2_aggregate_tok_s", (Some(80.88), None)),
-            ("c4_aggregate_tok_s", (Some(92.72), None)),
-            ("c8_aggregate_tok_s", (Some(101.71), None)),
-            ("c16_aggregate_tok_s", (Some(102.63), None)),
-            ("peak_aggregate_tok_s", (Some(102.63), None)),
+            ("c1_aggregate_tok_s", (Some(78.0), None)),
+            ("c2_aggregate_tok_s", (Some(110.0), None)),
+            ("c4_aggregate_tok_s", (Some(170.0), None)),
+            ("c8_aggregate_tok_s", (Some(240.0), None)),
+            ("c16_aggregate_tok_s", (Some(330.0), None)),
+            ("peak_aggregate_tok_s", (Some(330.0), None)),
             ("min_completion_tokens", (Some(820.0), None)),
             ("vacuous_cells", (None, Some(0.0))),
         ]

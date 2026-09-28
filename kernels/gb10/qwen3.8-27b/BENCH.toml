@@ -419,10 +419,16 @@ weight_quantization = "nvfp4"
 
 
 
-# 2026-09-25: Median-of-3 server decode rate, tok/s. The floor of 25.5 with noise 0.5 passes a
-# record at 25.0 or above (gate::scoring). Under the gate the driver's own verdict uses the
-# same 25.0: min_tok_s is filled as min - noise (bench_resolve::apply_threshold_params).
-min = 25.5
+# 2026-09-28: Median-of-3 server decode rate, tok/s. The floor of 26.5 with noise 0.5 passes a
+# record at 26.0 or above (gate::scoring). Under the gate the driver's own verdict uses the
+# same 26.0: min_tok_s is filled as min - noise (bench_resolve::apply_threshold_params).
+# RE-CUT 2026-09-28 from 25.5: the latest committed record (2026-09-28-c4e6fde56c, spark-43fa)
+# reads 27.06, x 0.975 rounded down to a 0.5 step is 26.0. The regime (every committed record
+# since 2026-09-24, 27.06-28.32 on spark-43fa and spark-28c2, plus spark-256a at 26.8 and 26.8
+# on the W8A8 branch's nvfp4 tier and 26.9 on the batch binary, 2026-09-28) has its slowest run
+# at 26.8, which clears 26.0 by 3.1%. EXCLUDED, with the reason: 26.3 on spark-256a at 22:01
+# UTC under a concurrent all-core build (load average 17), which clears 26.0 by only 1.1%.
+min = 26.5
 noise = 0.5
 [benchmarks.metrics.output_tokens]
 

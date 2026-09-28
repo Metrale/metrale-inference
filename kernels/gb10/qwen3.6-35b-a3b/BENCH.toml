@@ -237,7 +237,19 @@ recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
 default = true
 status = "measured"
 note = """\
-Gate C cold-TTFT guard. RE-CUT 2026-09-20: median 950 ms is the owner's stated ceiling; p90 \
+Gate C cold-TTFT guard. RE-CUT 2026-09-28 (batch/2026-09-28): median 390 ms and p90 900 ms, \
+by the speed-bound policy below from the latest committed record \
+.benchmarks/ttft-cold-gate/2026-09-28-c4e6fde56c.json (spark-43fa = dgx2), 366.88 / 852.88 ms, \
+x 1.05 rounded UP to a 10 ms step. The level stepped at #39 (c4e6fde56c): every committed \
+record before it reads median 764-905 ms and p90 1869-2043 ms. GUARD: the regime since the \
+step, n=8 across all three boxes (#39's TTFT seeding runs of 2026-09-28 04:29-05:05 UTC on \
+spark-28c2, spark-43fa and spark-256a, the committed record, and the batch binary on \
+spark-256a at 22:14 UTC), reads median 363.5-371.7 ms and p90 843.5-859.1 ms; the ceilings \
+clear the slowest of each by 4.9% and 4.8%. EXCLUDED, with the reason: the batch binary on \
+spark-256a at 22:03 UTC, measured under a concurrent all-core build (load average 17), read \
+p90 956.5 ms. Cold p90 is sensitive to host CPU contention; a certifying box must be \
+build-free. The rest of this note is the 2026-09-20 re-cut, kept for its history. \
+RE-CUT 2026-09-20: median 950 ms is the owner's stated ceiling; p90 \
 2150 ms is the coordinator's, under delegated authority (see below). Latest committed record: \
 .benchmarks/ttft-cold-gate/2026-09-20-43a3c9b202.json (spark-28c2 = dgx3, 2026-09-20 12:06 \
 UTC, prompt_lengths 256/1024/4096 x 12 repeats = 36 samples) reads median 908.07 ms and p90 \
@@ -284,16 +296,14 @@ weight_quantization = "nvfp4"
 gpu_memory_utilization = "0.85"
 
 [benchmarks.metrics.median_ms]
-# 2026-09-25: The ceiling of 950 is the owner's bound (2026-09-20). The committed records of
-# 2026-09-24 read 899.3, 900.1 and 904.6 ms.
-max = 950.0
+# 2026-09-28: The ceiling of 390 is 366.88 ms (2026-09-28-c4e6fde56c) x 1.05, rounded up to a
+# 10 ms step; the regime since #39 reads 363.5-371.7 ms (the note has the runs).
+max = 390.0
 
 [benchmarks.metrics.p90_ms]
-# 2026-09-25: The ceiling of 2150. The committed records of 2026-09-24 read 2021.5, 2022.7 and
-# 2042.6 ms.
-
-
-max = 2150.0
+# 2026-09-28: The ceiling of 900 is 852.88 ms (2026-09-28-c4e6fde56c) x 1.05, rounded up to a
+# 10 ms step; the regime since #39 reads 843.5-859.1 ms (the note has the runs).
+max = 900.0
 
 # 2026-09-25: The NVFP4 checkpoint's cold-TTFT entry: a variant of the FP8 default above (no
 # `default` key), so its record filenames carry the checkpoint slug (gate/record_path.rs).
@@ -349,7 +359,18 @@ recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
 default = true
 status = "measured"
 note = """\
-Gate C warm-TTFT guard. RE-CUT 2026-09-20 to the owner's stated ceilings, median 210 ms and \
+Gate C warm-TTFT guard. RE-CUT 2026-09-28 (batch/2026-09-28): median 92.5 ms and p90 110 ms. \
+The policy on the latest committed record, .benchmarks/ttft-warm-gate/2026-09-28-c4e6fde56c.json \
+(spark-43fa = dgx2), 87.56 / 95.75 ms, reads 92.0 / 110 (x 1.05 rounded UP: a 0.5 ms step \
+below 100, 10 ms above). The GUARD moves the median to 92.5: the regime since #39 \
+(c4e6fde56c), n=8 across all three boxes (#39's TTFT seeding runs of 2026-09-28 04:30-05:05 UTC \
+on spark-28c2, spark-43fa and spark-256a, the committed record, and the batch binary on \
+spark-256a at 22:15 UTC), reads median 87.56-89.98 ms and p90 94.97-100.73 ms, and 92.0 would \
+clear the slowest median by 2.2%, under the policy's 2.5%; 92.5 clears it by 2.8%, and 110 \
+clears the slowest p90 by 9.2%. The record of 2026-09-27 (aa5d059438, spark-28c2, 92.46 / \
+100.21) predates #39, which moved this path again (spark-28c2 reads 88.5-89.1 on #39). The \
+rest of this note is the 2026-09-20 re-cut, kept for its history. \
+RE-CUT 2026-09-20 to the owner's stated ceilings, median 210 ms and \
 p90 230 ms, against the latest committed record: \
 .benchmarks/ttft-warm-gate/2026-09-20-43a3c9b202.json (spark-28c2 = dgx3, 2026-09-20 12:06 \
 UTC, 36 samples) reads median 192.92 ms and p90 212.14 ms, so the ceilings sit 8.9% and 8.4% \
@@ -389,14 +410,15 @@ weight_quantization = "nvfp4"
 gpu_memory_utilization = "0.85"
 
 [benchmarks.metrics.median_ms]
-# 2026-09-25: The ceiling of 210 is the owner's bound (2026-09-20). The committed records of
-# 2026-09-24 read 190.4, 192.0 and 192.0 ms.
-max = 210.0
+# 2026-09-28: The ceiling of 92.5 is the regime's slowest median, 89.98 ms (spark-256a), x 1.025
+# rounded up to a 0.5 ms step, because 87.56 x 1.05 rounded up (92.0) clears it by less than
+# 2.5%.
+max = 92.5
 
 [benchmarks.metrics.p90_ms]
-# 2026-09-25: The ceiling of 230 is the owner's bound (2026-09-20). The committed records of
-# 2026-09-24 read 210.2, 210.8 and 212.1 ms.
-max = 230.0
+# 2026-09-28: The ceiling of 110 is 95.75 ms (2026-09-28-c4e6fde56c) x 1.05, rounded up to a
+# 10 ms step; the regime since #39 reads 94.97-100.73 ms.
+max = 110.0
 
 # 2026-09-25: The NVFP4 checkpoint's warm-TTFT variant; its baseline is in the comment above the cold variant.
 [[benchmarks]]
@@ -602,9 +624,10 @@ vLLM one-shot (published.json, 2026-09-19, dgx2) reads C=1/2/4/8/16 \
 52.11/93.16/145.94/222.08/329.93 tok/s. The certified record of 2026-09-27 \
 (.benchmarks/concurrency-sweep-moe/2026-09-27-aa5d059438.json) reads Metrale Engine at \
 85.0/127.1/180.2/235.8/311.2 tok/s: it wins C=1 through C=8 (1.63x at C=1, 1.06x at \
-C=8) and loses C=16, where vLLM is 1.06x faster. The bars below are Metrale Engine's \
-own measured curve of 2026-09-23 minus its noise band; clearing them says the MoE \
-engine has not regressed from that curve, and says nothing about vLLM. \
+C=8) and loses C=16, where vLLM is 1.06x faster. The bars below are cut from the \
+batch/2026-09-28 engine's own measured curve (re-cut 2026-09-28, the comment above the \
+floors); clearing them says the MoE engine has not regressed from that curve, and says \
+nothing about vLLM. \
 bench_override_tree_tests pins this entry BY VALUE — the instrument pins, \
 the status and every floor — so a re-cut must edit that test, which is the \
 review it deserves.\
@@ -677,39 +700,50 @@ isls = "128"
 osl = "1024"
 prompt_mode = "essay"
 
-# 2026-09-25: Floors from the three reps of 2026-09-23 recorded in the note (dgx1):
-# per rung, mean - max(3 * sigma, 5% of mean), sample sigma, to the
-# hundredth. 5% is the wider band at every rung, so each floor sits 5% under its rung's
-# mean. No `noise` key: the band is already in the floor.
+# 2026-09-28: RE-CUT from the batch/2026-09-28 engine's curve, not from main's. Its MoE W8A16
+# tensor-core decode (on by default) runs C1-C4 2-7% slower than the certified main record
+# (.benchmarks/concurrency-sweep-moe/2026-09-28-c4e6fde56c.json, spark-43fa:
+# 86.03/132.62/188.58/249.18/333.83 at C1/2/4/8/16) and C8-C16 at or above it, so a bar cut
+# from main would fail the code it certifies. Per rung the bar is the slowest valid run of
+# that code x 0.975, rounded down to a clean step (0.5 below 100, 10 from 100). The runs of
+# the batch code, C1/2/4/8/16 aggregate tok/s:
+# - spark-43fa (dgx2), the perf/moe-energy kernels, 2026-09-28, two reps:
+#   80.90/123.28/178.33/252.14/342.90 and 80.31/123.13/177.35/248.61/345.20;
+# - spark-256a (dgx1), the batch binary, 2026-09-28 22:07 UTC: 80.3/122.7/177.8/249.6/342.5.
+# EXCLUDED, with the reason: spark-256a at 21:55 UTC, measured under a concurrent all-core build
+# (load average 17), 78.3/119.8/174.3/246.9/342.2; every bar below still clears it.
+# spark-28c2 (dgx3) has no run of the batch code; on the nvfp4 tier of main it reads within 1%
+# of spark-43fa (2026-09-28: 85.7/131.9/187.4/251.3/334.3). No `noise` key: the 2.5% band is
+# already in each bar.
 
 
 [benchmarks.metrics.c1_aggregate_tok_s]
 
-min = 69.47
+min = 78.0
 
 [benchmarks.metrics.c2_aggregate_tok_s]
 
-min = 80.88
+min = 110.0
 
 [benchmarks.metrics.c4_aggregate_tok_s]
 
-min = 92.72
+min = 170.0
 
 [benchmarks.metrics.c8_aggregate_tok_s]
 
-min = 101.71
+min = 240.0
 
 [benchmarks.metrics.c16_aggregate_tok_s]
 
 
 
-min = 102.63
+min = 330.0
 
 [benchmarks.metrics.peak_aggregate_tok_s]
-# 2026-09-25: The peak landed at C=16 in all three reps (107.69 / 107.86 / 108.55), so the floor of
-# 102.63 is the C=16 bar.
+# 2026-09-28: The peak lands at C=16 in every run of the batch code, so the floor of 330 is the
+# C=16 bar.
 
-min = 102.63
+min = 330.0
 
 [benchmarks.metrics.min_completion_tokens]
 # 2026-09-25: The floor of 820 is 846 x 0.975 rounded down to a multiple of 10; 846 is the lowest
