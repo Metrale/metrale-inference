@@ -324,7 +324,8 @@ extern "C" __global__ void metrale_nvfp4_silu_mul_quant(
 // Tile 128 channels x 128 tokens on 8 warps (4 x 2, 32 x 64 each); a stage is one 256-wide k block: 144 bytes per x
 // row (128 of E2M1, 16 of scales) and per y row (the whole block), so the smem rows are 16-byte aligned and an
 // ldmatrix phase is conflict-free. K must be a multiple of 256. Grid (ceil(M/128) * ceil(N/128)), in groups of 8 M
-// tiles; block 256; dynamic shared memory NVP_STAGES * 256 * 144 = 73,728 bytes. On the dense 27B FFN shapes
+// tiles; block 256; dynamic shared memory NVP_STAGES * 256 * 144 = 73,728 bytes. With apply_scale != 0 each output
+// is then multiplied by out_scale exactly as metrale_nvfp4_scale_bf16 does in place (2026-09-28). On the dense 27B FFN shapes
 // (8192 x 17408 x 5120, 8192 x 5120 x 17408) it runs at 216-233 TFLOPS against the MMQ's 84 (dgx2, standalone).
 #define NVP_BCH 128
 #define NVP_BTK 128
@@ -350,7 +351,7 @@ __device__ __forceinline__ uint32_t nvp_lds32(unsigned int addr) {
 
 extern "C" __global__ void __launch_bounds__(NVP_THREADS, 1) metrale_nvfp4_gemm_pipe(
         const uint8_t* __restrict__ X, const uint8_t* __restrict__ Y, __nv_bfloat16* __restrict__ D,
-        int N, int M, int K) {
+        int N, int M, int K, float out_scale, int apply_scale) {
     constexpr int NWT = NVP_BTK / NVP_WTK;
     constexpr int MT = NVP_WCH / 16, NT = NVP_WTK / 8;
     extern __shared__ __align__(128) uint8_t nvp_smem[];
@@ -454,10 +455,18 @@ extern "C" __global__ void __launch_bounds__(NVP_THREADS, 1) metrale_nvfp4_gemm_
 #pragma unroll
         for (int nt = 0; nt < NT; nt++) {
             const int cl = wc * NVP_WCH + mt * 16 + g, tl = wt * NVP_WTK + nt * 8 + t4 * 2;
-            so[tl * SP + cl] = __float2bfloat16(sum[mt][nt][0]);
-            so[tl * SP + cl + 8] = __float2bfloat16(sum[mt][nt][2]);
-            so[(tl + 1) * SP + cl] = __float2bfloat16(sum[mt][nt][1]);
-            so[(tl + 1) * SP + cl + 8] = __float2bfloat16(sum[mt][nt][3]);
+            // 2026-09-28: With apply_scale, metrale_nvfp4_scale_bf16's in-place arithmetic on the stored value.
+            const float v[4] = {sum[mt][nt][0], sum[mt][nt][2], sum[mt][nt][1], sum[mt][nt][3]};
+            __nv_bfloat16 o[4];
+#pragma unroll
+            for (int e = 0; e < 4; e++) {
+                o[e] = __float2bfloat16(v[e]);
+                if (apply_scale) o[e] = __float2bfloat16(__bfloat162float(o[e]) * out_scale);
+            }
+            so[tl * SP + cl] = o[0];
+            so[tl * SP + cl + 8] = o[1];
+            so[(tl + 1) * SP + cl] = o[2];
+            so[(tl + 1) * SP + cl + 8] = o[3];
         }
     __syncthreads();
     for (int c = tid; c < NVP_BTK * (NVP_BCH / 8); c += NVP_THREADS) {

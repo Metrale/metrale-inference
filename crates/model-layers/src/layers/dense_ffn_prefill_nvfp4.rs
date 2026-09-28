@@ -55,8 +55,11 @@ impl DenseFfnLayer {
             bf16_tc_prefill,
         } = self.nvfp4_prefill_plan(ctx);
 
+        // 2026-09-28: Set when the down GEMM's NVFP4 kernel already applied down's
+        // `weight_scale_2` in its store (`ops::nvfp4_mmq_gemm_tiled`).
+        let mut down_scale_applied = false;
         macro_rules! w4_gemm {
-            ($w:expr, $wt:expr, $cell:expr, $qcell:expr, $fp4cell:expr, $allow_fp4:expr, $in:expr, $out:expr, $n:expr, $k:expr, $allow_q4k:expr) => {
+            ($w:expr, $wt:expr, $cell:expr, $qcell:expr, $fp4cell:expr, $allow_fp4:expr, $in:expr, $out:expr, $n:expr, $k:expr, $allow_q4k:expr, $out_scale:expr) => {
                 match $wt {
                     // 2026-09-25: NVFP4 MMQ. `$allow_fp4` is `fp4mmq_prefill` for gate/up and
                     // `fp4mmq_down` for down. The caller has quantized the activation into `fp4_y`
@@ -86,9 +89,12 @@ impl DenseFfnLayer {
                         } else {
                             (self.nvfp4_mmq_nc_k, self.nvfp4_mmq_wc_k, 128u32)
                         };
-                        ops::nvfp4_mmq_gemm_tiled(
-                            ctx.gpu, tk_nc, tk_wc, tile, fp4_y, qw.w, $out, m, $n, $k, stream,
-                        )?;
+                        if ops::nvfp4_mmq_gemm_tiled(
+                            ctx.gpu, tk_nc, tk_wc, tile, fp4_y, qw.w, $out, m, $n, $k, $out_scale,
+                            stream,
+                        )? {
+                            down_scale_applied = true;
+                        }
                     }
                     // 2026-09-25: Q4_K MMQ, gate and up only (`$allow_q4k` is false for down). The
                     // caller has quantized the activation into `q4k_a`.
@@ -281,7 +287,8 @@ impl DenseFfnLayer {
             gate_out,
             inter,
             h,
-            true
+            true,
+            None
         );
         ffn_step!("gate_proj", t_ffn);
         w4_gemm!(
@@ -295,7 +302,8 @@ impl DenseFfnLayer {
             up_out,
             inter,
             h,
-            true
+            true,
+            None
         );
         ffn_step!("up_proj", t_ffn);
 
@@ -392,11 +400,12 @@ impl DenseFfnLayer {
             output,
             h,
             inter,
-            false
+            false,
+            Some(self.weights.down_proj.weight_scale_2)
         );
         ffn_step!("down_proj", t_ffn);
         // 2026-09-25: Apply down's `weight_scale_2` to the NVFP4 MMQ output.
-        if fp4mmq_down {
+        if fp4mmq_down && !down_scale_applied {
             ops::nvfp4_scale_bf16(
                 ctx.gpu,
                 self.nvfp4_scale_k,
