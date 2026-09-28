@@ -165,6 +165,15 @@ pub fn nvfp4_mmq_gemm_tiled(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    // 2026-09-28: The 128-wide tile runs on `metrale_nvfp4_gemm_pipe`, bit-identical to
+    // `metrale_nvfp4_mmq128_*` and 2.5-2.8x faster on the dense FFN prefill shapes. It is
+    // exported by the same module, so it resolves wherever the MMQ family does.
+    if mmq_x == 128 && k.is_multiple_of(256) {
+        let pipe = gpu
+            .op_cache()
+            .kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_gemm_pipe")?;
+        return nvfp4_pipe_gemm(gpu, pipe, a_fp4, w_nvfp4, out_bf16, m, n, k, stream);
+    }
     debug_assert!(
         matches!(mmq_x, 16 | 32 | 64 | 128),
         "mmq_x must be an instantiated tile"
@@ -193,6 +202,39 @@ pub fn nvfp4_mmq_gemm_tiled(
         .arg_u32(n)
         .launch(stream)
 }
+/// 2026-09-28: Dynamic shared memory of `metrale_nvfp4_gemm_pipe`: two stages of
+/// 128 weight rows and 128 activation rows, 144 bytes each.
+pub const NVFP4_PIPE_SMEM: u32 = 2 * (128 + 128) * 144;
+
+/// 2026-09-28: `C[m, n] = A[m, k] x W[n, k]` in BF16, without `weight_scale_2`, through
+/// `metrale_nvfp4_gemm_pipe` (same operands and output as [`nvfp4_mmq_gemm`], bit-identical).
+/// `k` must be a multiple of 256. Grid of 128x128 tiles, 256 threads.
+#[allow(clippy::too_many_arguments)]
+pub fn nvfp4_pipe_gemm(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    a_fp4: DevicePtr,
+    w_nvfp4: DevicePtr,
+    out_bf16: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    debug_assert!(k.is_multiple_of(256), "nvfp4_pipe_gemm needs K % 256 == 0");
+    KernelLaunch::new(gpu, kernel)
+        .grid([div_ceil(m, 128) * div_ceil(n, 128), 1, 1])
+        .block([256, 1, 1])
+        .shared_mem(NVFP4_PIPE_SMEM)
+        .arg_ptr(w_nvfp4)
+        .arg_ptr(a_fp4)
+        .arg_ptr(out_bf16)
+        .arg_u32(n)
+        .arg_u32(m)
+        .arg_u32(k)
+        .launch(stream)
+}
+
 /// 2026-09-25: `silu(gate * gate_scale) * (up * up_scale)` quantized straight to
 /// `block_fp4_mmq` in `out_y` for the down GEMM, without writing a BF16
 /// intermediate. `k` is the intermediate width, padded to 256. The kernel

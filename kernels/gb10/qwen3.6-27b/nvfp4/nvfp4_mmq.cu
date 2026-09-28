@@ -316,4 +316,147 @@ extern "C" __global__ void metrale_nvfp4_silu_mul_quant(
 #endif
 }
 
+// 2026-09-28: metrale_nvfp4_gemm_pipe: the M-tile-128 GEMM of this file (dst[m, n] = y[m, :] . x[n, :], no scale2)
+// as a two-stage cp.async pipeline, bit-identical to metrale_nvfp4_mmq128_*: every k64 block-scaled MMA starts from
+// zero and is added to the FP32 sum in increasing k, then rounded once with __float2bfloat16, exactly as
+// vec_dot_fp4_fp4_mma and mmq_write_back_mma do. Operands are the raw words of the same layouts (x rows from
+// metrale_nvfp4_repack, y blocks of block_fp4_mmq), fed through ldmatrix.x4 in the MMA's register order.
+// Tile 128 channels x 128 tokens on 8 warps (4 x 2, 32 x 64 each); a stage is one 256-wide k block: 144 bytes per x
+// row (128 of E2M1, 16 of scales) and per y row (the whole block), so the smem rows are 16-byte aligned and an
+// ldmatrix phase is conflict-free. K must be a multiple of 256. Grid (ceil(M/128) * ceil(N/128)), in groups of 8 M
+// tiles; block 256; dynamic shared memory NVP_STAGES * 256 * 144 = 73,728 bytes. On the dense 27B FFN shapes
+// (8192 x 17408 x 5120, 8192 x 5120 x 17408) it runs at 216-233 TFLOPS against the MMQ's 84 (dgx2, standalone).
+#define NVP_BCH 128
+#define NVP_BTK 128
+#define NVP_WCH 32
+#define NVP_WTK 64
+#define NVP_STAGES 2
+#define NVP_GROUP 8
+#define NVP_ROWB 144
+#define NVP_THREADS ((NVP_BCH / NVP_WCH) * (NVP_BTK / NVP_WTK) * 32)
+
+__device__ __forceinline__ void nvp_cp16(unsigned int dst, const void* src, bool pred) {
+    asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" ::"r"(dst), "l"(src), "r"(pred ? 16 : 0));
+}
+__device__ __forceinline__ void nvp_ldsm_x4(unsigned int addr, uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3) {
+    asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0,%1,%2,%3},[%4];\n"
+                 : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr));
+}
+__device__ __forceinline__ uint32_t nvp_lds32(unsigned int addr) {
+    uint32_t v;
+    asm volatile("ld.shared.b32 %0, [%1];\n" : "=r"(v) : "r"(addr));
+    return v;
+}
+
+extern "C" __global__ void __launch_bounds__(NVP_THREADS, 1) metrale_nvfp4_gemm_pipe(
+        const uint8_t* __restrict__ X, const uint8_t* __restrict__ Y, __nv_bfloat16* __restrict__ D,
+        int N, int M, int K) {
+    constexpr int NWT = NVP_BTK / NVP_WTK;
+    constexpr int MT = NVP_WCH / 16, NT = NVP_WTK / 8;
+    extern __shared__ __align__(128) uint8_t nvp_smem[];
+    const unsigned int sX = (unsigned int)__cvta_generic_to_shared(nvp_smem);
+    const unsigned int sY = sX + NVP_STAGES * NVP_BCH * NVP_ROWB;
+
+    const int gtok = (M + NVP_BTK - 1) / NVP_BTK, gch = (N + NVP_BCH - 1) / NVP_BCH;
+    const int in_group = NVP_GROUP * gch;
+    const int first = (blockIdx.x / in_group) * NVP_GROUP;
+    const int gsz = min(gtok - first, NVP_GROUP);
+    const int tk0 = (first + (blockIdx.x % in_group) % gsz) * NVP_BTK;
+    const int ch0 = ((blockIdx.x % in_group) / gsz) * NVP_BCH;
+
+    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    const int wc = warp / NWT, wt = warp % NWT;
+    const int bpr = K / 64, ktiles = K / 256;
+
+    float sum[MT][NT][4];
+#pragma unroll
+    for (int i = 0; i < MT; i++)
+#pragma unroll
+        for (int j = 0; j < NT; j++) sum[i][j][0] = sum[i][j][1] = sum[i][j][2] = sum[i][j][3] = 0.f;
+
+    auto load = [&](int kt, int st) {
+        for (int c = tid; c < NVP_BCH * 9; c += NVP_THREADS) {
+            const int r = c / 9, q = c % 9, ch = ch0 + r;
+            const bool ok = ch < N;
+            const uint8_t* row = X + (size_t)(ok ? ch : 0) * bpr * 36;
+            const uint8_t* src = q < 8 ? row + (size_t)kt * 128 + q * 16 : row + (size_t)bpr * 32 + (size_t)kt * 16;
+            nvp_cp16(sX + (st * NVP_BCH + r) * NVP_ROWB + (q < 8 ? q * 16 : 128), src, ok);
+        }
+        for (int c = tid; c < NVP_BTK * 9; c += NVP_THREADS) {
+            const int r = c / 9, q = c % 9, tk = tk0 + r;
+            const bool ok = tk < M;
+            nvp_cp16(sY + (st * NVP_BTK + r) * NVP_ROWB + q * 16,
+                     Y + ((size_t)kt * M + (ok ? tk : 0)) * NVP_ROWB + q * 16, ok);
+        }
+    };
+
+#pragma unroll
+    for (int s = 0; s < NVP_STAGES - 1; s++) {
+        if (s < ktiles) load(s, s);
+        asm volatile("cp.async.commit_group;\n" ::);
+    }
+    for (int kt = 0; kt < ktiles; kt++) {
+        asm volatile("cp.async.wait_group %0;\n" ::"n"(NVP_STAGES - 2));
+        __syncthreads();   // 2026-09-28: stage kt is resident, and every read of the stage refilled below has ended.
+        {
+            const int nk = kt + NVP_STAGES - 1;
+            if (nk < ktiles) load(nk, nk % NVP_STAGES);
+            asm volatile("cp.async.commit_group;\n" ::);
+        }
+        const int st = kt % NVP_STAGES;
+        const unsigned int tX = sX + st * NVP_BCH * NVP_ROWB, tY = sY + st * NVP_BTK * NVP_ROWB;
+#pragma unroll
+        for (int f = 0; f < 4; f++) {
+            uint32_t a[MT][4], sa[MT], b[NT][2], sb[NT];
+#pragma unroll
+            for (int mt = 0; mt < MT; mt++) {
+                const int rb = wc * NVP_WCH + mt * 16;
+                nvp_ldsm_x4(tX + (rb + (lane & 15)) * NVP_ROWB + f * 32 + (lane >> 4) * 16,
+                            a[mt][0], a[mt][1], a[mt][2], a[mt][3]);
+                // 2026-09-28: the scale-A register of lane l belongs to row l/4 + (l%2)*8 (vec_dot_fp4_fp4_mma's tidx_A).
+                sa[mt] = nvp_lds32(tX + (rb + (lane >> 2) + (lane & 1) * 8) * NVP_ROWB + 128 + f * 4);
+            }
+#pragma unroll
+            for (int p = 0; p < NT / 2; p++) {
+                const int row = wt * NVP_WTK + p * 16 + ((lane >> 4) << 3) + (lane & 7);
+                nvp_ldsm_x4(tY + row * NVP_ROWB + 16 + f * 32 + ((lane >> 3) & 1) * 16,
+                            b[2 * p][0], b[2 * p][1], b[2 * p + 1][0], b[2 * p + 1][1]);
+            }
+#pragma unroll
+            for (int nt = 0; nt < NT; nt++) sb[nt] = nvp_lds32(tY + (wt * NVP_WTK + nt * 8 + (lane >> 2)) * NVP_ROWB + f * 4);
+#pragma unroll
+            for (int mt = 0; mt < MT; mt++)
+#pragma unroll
+                for (int nt = 0; nt < NT; nt++) {
+                    float c0, c1, c2, c3;
+                    asm volatile(
+                        "mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64.row.col.f32.e2m1.e2m1.f32.ue4m3 "
+                        "{%0,%1,%2,%3},{%4,%5,%6,%7},{%8,%9},{%10,%10,%10,%10},%11,{0,0},%12,{0,0};\n"
+                        : "=f"(c0), "=f"(c1), "=f"(c2), "=f"(c3)
+                        : "r"(a[mt][0]), "r"(a[mt][1]), "r"(a[mt][2]), "r"(a[mt][3]), "r"(b[nt][0]), "r"(b[nt][1]),
+                          "f"(0.0f), "r"(sa[mt]), "r"(sb[nt]));
+                    sum[mt][nt][0] += c0; sum[mt][nt][1] += c1; sum[mt][nt][2] += c2; sum[mt][nt][3] += c3;
+                }
+        }
+    }
+    asm volatile("cp.async.wait_group 0;\n" ::);
+
+    const int g = lane >> 2, t4 = lane & 3;
+#pragma unroll
+    for (int mt = 0; mt < MT; mt++)
+#pragma unroll
+        for (int nt = 0; nt < NT; nt++) {
+            const int ch = ch0 + wc * NVP_WCH + mt * 16 + g;
+            const int tk = tk0 + wt * NVP_WTK + nt * 8 + t4 * 2;
+            if (tk < M) {
+                if (ch < N) D[(size_t)tk * N + ch] = __float2bfloat16(sum[mt][nt][0]);
+                if (ch + 8 < N) D[(size_t)tk * N + ch + 8] = __float2bfloat16(sum[mt][nt][2]);
+            }
+            if (tk + 1 < M) {
+                if (ch < N) D[(size_t)(tk + 1) * N + ch] = __float2bfloat16(sum[mt][nt][1]);
+                if (ch + 8 < N) D[(size_t)(tk + 1) * N + ch + 8] = __float2bfloat16(sum[mt][nt][3]);
+            }
+        }
+}
+
 #endif // Metrale Engine optional module
