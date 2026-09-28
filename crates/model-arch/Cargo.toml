@@ -99,6 +99,10 @@ name = "gdn_conv_kn_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "gdn_prefill_twins_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "gdn_recompute_wu_gateb"
 required-features = ["cuda", "gpu-examples"]
 
