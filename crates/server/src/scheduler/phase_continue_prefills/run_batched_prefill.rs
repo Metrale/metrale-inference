@@ -56,11 +56,16 @@ pub(super) fn run_batched_prefill_step(
             .all(|p| p.prompt_tokens.len() == prefilling[0].prompt_tokens.len())
     {
         let total = prefilling[0].prompt_tokens.len();
-        let mut cl = total.min(max_prefill_tokens);
+        // 2026-09-27: Non-last chunk ends as in `run_standard_chunk_loop`
+        // (`prefill_plan::plan_chunk_len`); equal lengths give equal plans.
+        let cl = metrale_model_engine::prefill_plan::plan_chunk_len(
+            0,
+            total,
+            total.min(max_prefill_tokens),
+            model.kv_block_size(),
+            model.prefill_tail_split(&prefilling[0].prompt_tokens),
+        );
         let is_last = cl >= total;
-        if !is_last && cl >= 4 {
-            cl = (cl / 4) * 4;
-        }
         Some((cl, is_last))
     } else {
         None
@@ -77,11 +82,14 @@ pub(super) fn run_batched_prefill_step(
             } else {
                 max_prefill_tokens
             };
-            let mut chunk_len = remaining.min(effective_max);
+            let chunk_len = metrale_model_engine::prefill_plan::plan_chunk_len(
+                p.chunk_offset,
+                p.prompt_tokens.len(),
+                remaining.min(effective_max),
+                model.kv_block_size(),
+                model.prefill_tail_split(&p.prompt_tokens),
+            );
             let is_last = p.chunk_offset + chunk_len >= p.prompt_tokens.len();
-            if !is_last && chunk_len >= 4 {
-                chunk_len = (chunk_len / 4) * 4;
-            }
             (chunk_len, is_last)
         };
         chunk_lens.push(chunk_len);

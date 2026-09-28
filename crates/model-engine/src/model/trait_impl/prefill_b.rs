@@ -47,6 +47,22 @@ mod upload_meta;
 mod upload_paged;
 
 impl TransformerModel {
+    /// 2026-09-27: The token at which this prompt's prefill is split so that an SSM
+    /// snapshot lands at `prefill_plan::tail_split_point`: `Some` for an SSM model with
+    /// snapshots and prefix caching on and no vision pads in the prompt.
+    /// `METRALE_NO_TAIL_SPLIT=1` turns the split off.
+    pub(in crate::model) fn prefill_tail_split_dispatch(&self, tokens: &[u32]) -> Option<usize> {
+        if self.config.num_ssm_layers() == 0
+            || !self.ssm_snapshots.is_enabled()
+            || !self.prefix_cache.is_active()
+            || std::env::var("METRALE_NO_TAIL_SPLIT").as_deref() == Ok("1")
+            || self.tokens_have_vision_pad(tokens)
+        {
+            return None;
+        }
+        crate::prefill_plan::tail_split_point(tokens.len(), self.kv_cache.lock().block_size())
+    }
+
     pub(super) fn prefill_chunk_dispatch(
         &self,
         tokens: &[u32],
@@ -64,36 +80,26 @@ impl TransformerModel {
 
         // 2026-09-25: Tail-checkpoint split. A later turn's prefix match is
         // block-aligned, and a snapshot deeper than the match cannot be
-        // restored. On the last chunk of an SSM model with snapshots and prefix
-        // caching on, the prefill is split once at `cut`, one block below the
-        // last block boundary under `total`, so `prefill_b_save_checkpoint`
-        // saves a snapshot there (save_checkpoint.rs treats `cut` as a prompt
-        // tail, whatever `--ssm-checkpoint-interval` is). The split does not
-        // depend on radix contents, so a prompt is processed in the same passes
-        // cold and warm, and on every rank. `METRALE_NO_TAIL_SPLIT=1` turns the
-        // split off. Prompts with vision pads are not split.
+        // restored. A last chunk that spans the split point
+        // (`prefill_tail_split_dispatch`) is split there once, so
+        // `prefill_b_save_checkpoint` saves a snapshot at it. 2026-09-27: the
+        // scheduler ends a non-last chunk at the same point
+        // (`prefill_plan::plan_chunk_len`), so only a last chunk can span it
+        // here. The split does not depend on radix contents, so a prompt is
+        // processed in the same passes cold and warm, and on every rank.
         if is_last_chunk
-            && self.config.num_ssm_layers() > 0
-            && self.ssm_snapshots.is_enabled()
-            && self.prefix_cache.is_active()
-            && !self.tokens_have_vision_pad(tokens)
+            && let Some(cut) = self.prefill_tail_split_dispatch(tokens)
+            && cut > chunk_start
         {
-            let bs = self.kv_cache.lock().block_size();
-            // 2026-09-25: One block below the last block boundary strictly under
-            // `total`.
-            let cut = ((total.saturating_sub(1) / bs) * bs).saturating_sub(bs);
-            let split_disabled = std::env::var("METRALE_NO_TAIL_SPLIT").as_deref() == Ok("1");
-            if !split_disabled && cut > chunk_start && cut < total {
-                self.prefill_chunk_dispatch(
-                    tokens,
-                    seq,
-                    chunk_start,
-                    cut - chunk_start,
-                    false,
-                    stream,
-                )?;
-                return self.prefill_chunk_dispatch(tokens, seq, cut, total - cut, true, stream);
-            }
+            self.prefill_chunk_dispatch(
+                tokens,
+                seq,
+                chunk_start,
+                cut - chunk_start,
+                false,
+                stream,
+            )?;
+            return self.prefill_chunk_dispatch(tokens, seq, cut, total - cut, true, stream);
         }
 
         let arena_cap = self.buffers.max_batch_tokens();

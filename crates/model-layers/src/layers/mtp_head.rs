@@ -232,6 +232,9 @@ pub struct MtpHead {
     moe_weighted_sum_blend_k: Option<KernelHandle>,
     /// 2026-09-25: Batched BF16 GEMM for the drafter prefill; 0 when absent.
     dense_gemm_k: KernelHandle,
+    /// 2026-09-27: `batched_embed`, the drafter prefill's embedding gather; 0 when
+    /// absent, and then the prefill copies one row per token.
+    batched_embed_k: KernelHandle,
     /// 2026-09-25: `dense_gemm_bf16_pipelined` for the batched propose; 0 when absent,
     /// and then the batched propose is out of scope.
     dense_gemm_pipelined_k: KernelHandle,

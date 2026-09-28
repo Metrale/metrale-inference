@@ -205,7 +205,11 @@ impl Qwen3SsmLayer {
                 stream,
             )
         } else if let Some(fp8) = self.out_proj_fp8 {
-            if k > 128 {
+            // 2026-09-28: `fp8_gemm_n128` serves every M when `value_dim % 32 == 0`: its
+            // `bf16_to_fp8` cast plus the multistage `fp8_fp8_gemm_ldmab` compute the same E4M3
+            // activations and the same k-ordered MMAs as `fp8_gemm_t_m128`, so the output is
+            // bit-identical, and ~4x faster at M = 8192.
+            if k > 128 && !value_dim.is_multiple_of(32) {
                 ops::fp8_gemm_n128_m128(
                     ctx.gpu,
                     self.fp8_gemm_t_m128_k,

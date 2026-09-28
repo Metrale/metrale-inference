@@ -145,7 +145,10 @@ pub fn nvfp4_mmq_gemm(
         .launch(stream)
 }
 
-/// 2026-09-25: [`nvfp4_mmq_gemm`] with the M tile `mmq_x` chosen by the caller;
+/// 2026-09-25: [`nvfp4_mmq_gemm`] with the M tile `mmq_x` chosen by the caller.
+/// 2026-09-28: With `out_scale`, the pipelined 128-row tile applies it in its store and
+/// the call returns `true`; otherwise the caller still owes [`nvfp4_scale_bf16`].
+/// The tile choice:
 /// the kernels must be that tile's entries. `nvfp4_mmq.cu` instantiates 16, 32,
 /// 64 and 128. A 128-wide tile issues MMAs for all 128 columns whatever `m` is,
 /// so a small `m` wants a small tile. `grid.y = ceil(m / mmq_x)`, and each M tile
@@ -163,8 +166,21 @@ pub fn nvfp4_mmq_gemm_tiled(
     m: u32,
     n: u32,
     k: u32,
+    out_scale: Option<f32>,
     stream: u64,
-) -> Result<()> {
+) -> Result<bool> {
+    // 2026-09-28: The 128-wide tile runs on `metrale_nvfp4_gemm_pipe`, bit-identical to
+    // `metrale_nvfp4_mmq128_*` and 2.5-2.8x faster on the dense FFN prefill shapes. It is
+    // exported by the same module, so it resolves wherever the MMQ family does.
+    if mmq_x == 128 && k.is_multiple_of(256) {
+        let pipe = gpu
+            .op_cache()
+            .kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_gemm_pipe")?;
+        nvfp4_pipe_gemm(
+            gpu, pipe, a_fp4, w_nvfp4, out_bf16, m, n, k, out_scale, stream,
+        )?;
+        return Ok(out_scale.is_some());
+    }
     debug_assert!(
         matches!(mmq_x, 16 | 32 | 64 | 128),
         "mmq_x must be an instantiated tile"
@@ -191,8 +207,46 @@ pub fn nvfp4_mmq_gemm_tiled(
         .arg_u32(k / QK_NVFP4)
         .arg_u32(m)
         .arg_u32(n)
+        .launch(stream)?;
+    Ok(false)
+}
+/// 2026-09-28: Dynamic shared memory of `metrale_nvfp4_gemm_pipe`: two stages of
+/// 128 weight rows and 192 activation rows, 144 bytes each.
+pub const NVFP4_PIPE_SMEM: u32 = 2 * (128 + 192) * 144;
+
+/// 2026-09-28: `C[m, n] = A[m, k] x W[n, k]` in BF16, without `weight_scale_2`, through
+/// `metrale_nvfp4_gemm_pipe` (same operands and output as [`nvfp4_mmq_gemm`], bit-identical).
+/// `k` must be a multiple of 256. Grid of 128-channel x 192-token tiles, 256 threads. With `out_scale`,
+/// each output is multiplied by it as [`nvfp4_scale_bf16`] does in place, bit for bit.
+#[allow(clippy::too_many_arguments)]
+pub fn nvfp4_pipe_gemm(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    a_fp4: DevicePtr,
+    w_nvfp4: DevicePtr,
+    out_bf16: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    out_scale: Option<f32>,
+    stream: u64,
+) -> Result<()> {
+    debug_assert!(k.is_multiple_of(256), "nvfp4_pipe_gemm needs K % 256 == 0");
+    KernelLaunch::new(gpu, kernel)
+        .grid([div_ceil(m, 192) * div_ceil(n, 128), 1, 1])
+        .block([256, 1, 1])
+        .shared_mem(NVFP4_PIPE_SMEM)
+        .arg_ptr(w_nvfp4)
+        .arg_ptr(a_fp4)
+        .arg_ptr(out_bf16)
+        .arg_u32(n)
+        .arg_u32(m)
+        .arg_u32(k)
+        .arg_f32(out_scale.unwrap_or(1.0))
+        .arg_u32(u32::from(out_scale.is_some()))
         .launch(stream)
 }
+
 /// 2026-09-25: `silu(gate * gate_scale) * (up * up_scale)` quantized straight to
 /// `block_fp4_mmq` in `out_y` for the down GEMM, without writing a BF16
 /// intermediate. `k` is the intermediate width, padded to 256. The kernel

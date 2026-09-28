@@ -66,10 +66,16 @@ pub(super) fn run_batched_mixed_step(
         {
             chunk_len = tb - p.chunk_offset;
         }
+        // 2026-09-27: Non-last chunk ends as in `run_standard_chunk_loop`
+        // (`prefill_plan::plan_chunk_len`).
+        let chunk_len = metrale_model_engine::prefill_plan::plan_chunk_len(
+            p.chunk_offset,
+            p.prompt_tokens.len(),
+            chunk_len,
+            model.kv_block_size(),
+            model.prefill_tail_split(&p.prompt_tokens),
+        );
         let is_last = p.chunk_offset + chunk_len >= p.prompt_tokens.len();
-        if !is_last && chunk_len >= 4 {
-            chunk_len = (chunk_len / 4) * 4;
-        }
         chunk_lens.push(chunk_len);
         is_last_flags.push(is_last);
     }
