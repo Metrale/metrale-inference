@@ -1,0 +1,236 @@
+╭─ Qwen/Qwen3.6-35B-A3B-FP8 ───────────────────────────────────────────────────╮
+│ arch qwen3_6_moe · recipe qwen3.6/qwen3.6-35b-a3b-fp8-bf16head               │
+│ MoE hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, 256-e… │
+│ 40 layers · hidden 2048 · attn 16q/2kv×256 · GDN 16k/32v×128                 │
+│ 256 experts top-8 (ffn 512) · vocab 248320                                   │
+│ qkvz/gdn_out/experts.gate_up/shared_gate_up/q/k/v/o W8A16 fp8                │
+│ ba/router/shared_gate/lm_head W16A16 bf16                                    │
+│ experts.down/shared_down W8A32 fp8                                           │
+│ mode decode · 1 row · 612 launches/step · 613 kernel groups                  │
+│ 180 fused edges · 813 materialized · plan 300d3cb12fc3                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Layers
+  0       8       16      24      32
+  ▰▰▰◆▰▰▰◆▰▰▰◆▰▰▰◆▰▰▰◆▰▰▰◆▰▰▰◆▰▰▰◆▰▰▰◆▰▰▰◆
+  ✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱✱
+  (3× GDN → 1× Attention) × 10 · MoE FFN on every layer
+  ▰ GDN ◆ attention ▪ dense FFN ✱ MoE FFN
+
+▪ embed
+    ╭───────────────────────────╮
+    │ embed                     │  d2d copy · ≈ reference
+    ╰───────────────────────────╯
+       │ ▼ bf16 · n×2048  DRAM  stream out
+
+▰ GatedDeltaNet layer  × 30 layers  0-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-26,…
+       │ ▼ bf16 · n×2048  DRAM  stream in
+    ╭───────────────────────────╮
+    │ input_norm · rms_norm     │  norm::rms_norm_residual · ≈ reference
+    ╰───────────────────────────╯
+       │ ▼ bf16 · n×2048  DRAM
+    ╔═══════════════════════════╗  weight fp8 e4m3/128×128 blk
+    ║ qkvz · linear             ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipel…
+    ╚═══════════════════════════╝  ≈ reference
+
+  ┏━ ssm_preprocess::dense_gemv_ba_gates ━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╔═══════════════════════════╗  ◂ xn                                        ┃
+  ┃ ║ ba · linear               ║  weight bf16                                 ┃
+  ┃ ╚═══════════════════════════╝                                              ┃
+  ┃    ┊ ▼ bf16 · n×64  on-chip                                                ┃
+  ┃ ╭───────────────────────────╮                                              ┃
+  ┃ │ gates · gdn_gates         │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┗━ writes decay, beta ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ causal_conv1d::causal_conv1d_update_l2norm_f32 ━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╭───────────────────────────╮  ◂ qkvz                                      ┃
+  ┃ │ conv · conv1d_update      │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┃    ┊ ▼ f32 · n×8192  on-chip                                               ┃
+  ┃ ╭───────────────────────────╮                                              ┃
+  ┃ │ l2 · l2_norm              │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┗━ writes qkv ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ f32 · n×8192  DRAM
+    ╔═══════════════════════════╗  ◂ decay, beta
+    ║ recur · gdn_recurrence    ║  gated_delta_rule::gated_delta_rule_decode_…
+    ╚═══════════════════════════╝  ≈ reference
+       │ ▼ f32 · n×4096  DRAM
+    ╭───────────────────────────╮  ◂ qkvz
+    │ out_norm · gated_rms_norm │  norm::gated_rms_norm_f32_input
+    ╰───────────────────────────╯  ≈ reference
+       │ ▼ bf16 · n×4096  DRAM
+    ╔═══════════════════════════╗  weight fp8 e4m3/128×128 blk
+    ║ out · linear              ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipel…
+    ╚═══════════════════════════╝  ≈ reference
+       │ ▼ bf16 · n×2048  DRAM
+  ┏━ norm::residual_add_rms_norm ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╭───────────────────────────╮  ◂ stream in                                 ┃
+  ┃ │ add · residual_add        │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┃    ┊ ▼ bf16 · n×2048  on-chip                                              ┃
+  ┃ ╭───────────────────────────╮                                              ┃
+  ┃ │ post_norm · rms_norm      │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · n×2048  DRAM
+    ╔═══════════════════════════╗  weight bf16
+    ║ router                    ║  gemv::dense_gemv_bf16 · ≈ reference
+    ╚═══════════════════════════╝
+       │ ▼ bf16 · n×256  DRAM
+    ╭───────────────────────────╮
+    │ top_k                     │  moe_topk::moe_topk_softmax · ≈ reference
+    ╰───────────────────────────╯
+       │ ▼ i32 · n×8  DRAM
+       ├─────────────────────────────────────┐
+       │ ▼ routed: top-8 of 256 expert…      │ ▼ shared expert  DRAM
+  ┏━ moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 ━ ≈ reference ━┓
+  ┃ ╔═══════════════════════════╗         ╔═══════════════════════════╗        ┃
+  ┃ ║ experts_gate_up           ║         ║ shared_gate_up · linear   ║        ┃
+  ┃ ╚═══════════════════════════╝         ╚═══════════════════════════╝        ┃
+  ┗━ writes egu, sgu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · 8n×1024  DRAM              │ ▼ bf16 · n×1024  DRAM
+  ┏━ moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_… ━ ≈ reference ━┓
+  ┃ ╭───────────────────────────╮         ╭───────────────────────────╮        ┃
+  ┃ │ experts_act · silu_mul    │         │ shared_act · silu_mul     │        ┃
+  ┃ ╰───────────────────────────╯         ╰───────────────────────────╯        ┃
+  ┃    ┊ ▼ f32 · 8n×512  on-chip             ┊ ▼ f32 · n×512  on-chip          ┃
+  ┃ ╔═══════════════════════════╗         ╔═══════════════════════════╗        ┃
+  ┃ ║ experts_down              ║         ║ shared_down · linear      ║        ┃
+  ┃ ╚═══════════════════════════╝         ╚═══════════════════════════╝        ┃
+  ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃                                       ╔═══════════════════════════╗        ┃
+  ┃    ┊                                  ║ shared_gate · linear      ║        ┃
+  ┃                                       ╚═══════════════════════════╝        ┃
+  ┃    ├─────────────────────────────────────┘                                 ┃
+  ┃    ▼ blend                                                                 ┃
+  ┃ ╭───────────────────────────╮  ◂ edown, topk_w, sdown                      ┃
+  ┃ │ blend                     │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┗━ writes f ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · n×2048  DRAM
+    ╭───────────────────────────╮  ◂ y
+    │ add · residual_add        │  residual_add::bf16_residual_add
+    ╰───────────────────────────╯  ≈ reference
+       │ ▼ bf16 · n×2048  DRAM  stream out
+
+◆ Full-attention layer  × 10 layers  3, 7, 11, 15, 19, 23, 27, 31, 35, 39
+       │ ▼ bf16 · n×2048  DRAM  stream in
+    ╭───────────────────────────╮
+    │ input_norm · rms_norm     │  norm::rms_norm_residual · ≈ reference
+    ╰───────────────────────────╯
+       │ ▼ bf16 · n×2048  DRAM
+    ╔═══════════════════════════╗  weight fp8 e4m3/128×128 blk
+    ║ q · linear                ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipel…
+    ╚═══════════════════════════╝  ≈ reference
+       │ ▼ bf16 · n×8192  DRAM
+    ╭───────────────────────────╮
+    │ q_split · split           │  ssm_preprocess::deinterleave_qg
+    ╰───────────────────────────╯  ≈ reference
+
+    ╔═══════════════════════════╗  ◂ xn · weight fp8 e4m3/128×128 blk
+    ║ k · linear                ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipel…
+    ╚═══════════════════════════╝  ≈ reference
+
+    ╔═══════════════════════════╗  ◂ xn · weight fp8 e4m3/128×128 blk
+    ║ v · linear                ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipel…
+    ╚═══════════════════════════╝  ≈ reference
+
+    ╭───────────────────────────╮  ◂ q
+    │ q_norm · qk_norm          │  norm::rms_norm · ≈ reference
+    ╰───────────────────────────╯
+
+    ╭───────────────────────────╮  ◂ k
+    │ k_norm · qk_norm          │  norm::rms_norm · ≈ reference
+    ╰───────────────────────────╯
+       │ ▼ bf16 · n×512  DRAM
+    ╭───────────────────────────╮  ◂ qn
+    │ rope                      │  rope_mrope_interleaved::rope_forward_mrope…
+    ╰───────────────────────────╯  ≈ reference
+       │ ▼ bf16 · n×512  DRAM
+    ╭───────────────────────────╮  ◂ v
+    │ kv_write                  │  reshape_and_cache::reshape_and_cache_flash
+    ╰───────────────────────────╯  ≈ reference
+
+    ╔═══════════════════════════╗  ◂ qr, kr, v
+    ║ attend · paged_attention  ║  paged_decode::paged_decode_attn
+    ╚═══════════════════════════╝  ≈ reference
+       │ ▼ bf16 · n×4096  DRAM
+    ╭───────────────────────────╮  ◂ gate
+    │ gate_mul · sigmoid_gate_… │  residual_add::sigmoid_gate_mul
+    ╰───────────────────────────╯  ≈ reference
+       │ ▼ bf16 · n×4096  DRAM
+    ╔═══════════════════════════╗  weight fp8 e4m3/128×128 blk
+    ║ o · linear                ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipel…
+    ╚═══════════════════════════╝  ≈ reference
+       │ ▼ bf16 · n×2048  DRAM
+  ┏━ norm::residual_add_rms_norm ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╭───────────────────────────╮  ◂ stream in                                 ┃
+  ┃ │ add · residual_add        │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┃    ┊ ▼ bf16 · n×2048  on-chip                                              ┃
+  ┃ ╭───────────────────────────╮                                              ┃
+  ┃ │ post_norm · rms_norm      │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · n×2048  DRAM
+    ╔═══════════════════════════╗  weight bf16
+    ║ router                    ║  gemv::dense_gemv_bf16 · ≈ reference
+    ╚═══════════════════════════╝
+       │ ▼ bf16 · n×256  DRAM
+    ╭───────────────────────────╮
+    │ top_k                     │  moe_topk::moe_topk_softmax · ≈ reference
+    ╰───────────────────────────╯
+       │ ▼ i32 · n×8  DRAM
+       ├─────────────────────────────────────┐
+       │ ▼ routed: top-8 of 256 expert…      │ ▼ shared expert  DRAM
+  ┏━ moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 ━ ≈ reference ━┓
+  ┃ ╔═══════════════════════════╗         ╔═══════════════════════════╗        ┃
+  ┃ ║ experts_gate_up           ║         ║ shared_gate_up · linear   ║        ┃
+  ┃ ╚═══════════════════════════╝         ╚═══════════════════════════╝        ┃
+  ┗━ writes egu, sgu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · 8n×1024  DRAM              │ ▼ bf16 · n×1024  DRAM
+  ┏━ moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_… ━ ≈ reference ━┓
+  ┃ ╭───────────────────────────╮         ╭───────────────────────────╮        ┃
+  ┃ │ experts_act · silu_mul    │         │ shared_act · silu_mul     │        ┃
+  ┃ ╰───────────────────────────╯         ╰───────────────────────────╯        ┃
+  ┃    ┊ ▼ f32 · 8n×512  on-chip             ┊ ▼ f32 · n×512  on-chip          ┃
+  ┃ ╔═══════════════════════════╗         ╔═══════════════════════════╗        ┃
+  ┃ ║ experts_down              ║         ║ shared_down · linear      ║        ┃
+  ┃ ╚═══════════════════════════╝         ╚═══════════════════════════╝        ┃
+  ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃                                       ╔═══════════════════════════╗        ┃
+  ┃    ┊                                  ║ shared_gate · linear      ║        ┃
+  ┃                                       ╚═══════════════════════════╝        ┃
+  ┃    ├─────────────────────────────────────┘                                 ┃
+  ┃    ▼ blend                                                                 ┃
+  ┃ ╭───────────────────────────╮  ◂ edown, topk_w, sdown                      ┃
+  ┃ │ blend                     │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┗━ writes f ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · n×2048  DRAM
+    ╭───────────────────────────╮  ◂ y
+    │ add · residual_add        │  residual_add::bf16_residual_add
+    ╰───────────────────────────╯  ≈ reference
+       │ ▼ bf16 · n×2048  DRAM  stream out
+
+▪ head
+       │ ▼ bf16 · n×2048  DRAM  stream in
+    ╭───────────────────────────╮
+    │ final_norm                │  norm::rms_norm · ≈ reference
+    ╰───────────────────────────╯
+       │ ▼ bf16 · n×2048  DRAM
+    ╔═══════════════════════════╗  weight bf16
+    ║ lm_head                   ║  gemv::dense_gemv_bf16 · ≈ reference
+    ╚═══════════════════════════╝
+
+────────────────────────────────────────────────────────────────────────────────
+612 launches/step · 613 groups · 180 fused · 813 materialized edges
+6.6 MiB written/step · arena 0.5 MiB
+╔═╗ heavy op · ╭─╮ light op · ┏━┓ fused kernel · │▼ DRAM · ┊▼ on-chip
+✓ bit-identical · ≈ reference · ⚠ differs

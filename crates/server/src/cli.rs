@@ -22,6 +22,7 @@ pub mod bench_run;
 mod bench_selfstart;
 mod bench_serve_plan;
 pub(crate) mod circuit;
+mod circuit_paint;
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;
@@ -105,6 +106,9 @@ pub enum CircuitAction {
     /// Print the plan as stable text, one kernel group per line (the format of the checked-in
     /// plans under kernels/circuits/plans/).
     Show(CircuitPlanArgs),
+    /// Draw the architecture for a terminal: the layer strip, one diagram per distinct layer
+    /// plan with fused groups framed, and the per-step totals.
+    Display(CircuitDisplayArgs),
 }
 
 /// Which plan to show.
@@ -122,6 +126,25 @@ pub struct CircuitPlanArgs {
     pub rows: Option<u64>,
 }
 
+/// `met circuit display` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct CircuitDisplayArgs {
+    #[command(flatten)]
+    pub plan: CircuitPlanArgs,
+    /// Expand one layer, with its module bindings.
+    #[arg(long, conflicts_with = "all_layers")]
+    pub layer: Option<usize>,
+    /// Draw every layer instead of one diagram per distinct layer plan.
+    #[arg(long)]
+    pub all_layers: bool,
+    /// Draw with 7-bit ASCII only.
+    #[arg(long)]
+    pub ascii: bool,
+    /// When to colour: auto colours a terminal only; NO_COLOR always wins.
+    #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
+    pub color: ColorChoice,
+}
+
 /// A forward `met circuit` can plan.
 #[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CircuitMode {
@@ -137,6 +160,17 @@ pub enum CircuitMode {
     /// The MTP draft head.
     #[value(name = "draft")]
     Draft,
+}
+
+/// `--color`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorChoice {
+    /// Colour when stdout is a terminal.
+    Auto,
+    /// Colour even when piped.
+    Always,
+    /// Never colour.
+    Never,
 }
 
 #[cfg(test)]

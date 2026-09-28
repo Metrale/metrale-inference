@@ -146,6 +146,36 @@ pub fn available(instance: &Instance, rules: &[Rule]) -> AvailableKernels {
     out
 }
 
+/// 2026-09-28: The display snapshots: decode n1 of every golden instance, Unicode at 80 and
+/// 120 columns and ASCII at 80.
+pub const DISPLAY_SNAPSHOTS: [(&str, metrale_circuit::display::Glyphs, usize); 3] = [
+    ("display-w80", metrale_circuit::display::Glyphs::Unicode, 80),
+    (
+        "display-w120",
+        metrale_circuit::display::Glyphs::Unicode,
+        120,
+    ),
+    (
+        "display-ascii-w80",
+        metrale_circuit::display::Glyphs::Ascii,
+        80,
+    ),
+];
+
+/// 2026-09-28: Draw one plan of `inst` as plain text.
+pub fn display_text(
+    inst: &Instance,
+    loaded: &Loaded,
+    mode: metrale_circuit::Mode,
+    rows: u64,
+    opts: metrale_circuit::display::DisplayOpts,
+) -> String {
+    let avail = available(inst, &loaded.rules);
+    metrale_circuit::display_plan(inst, loaded, &avail, mode, rows, &opts)
+        .unwrap_or_else(|e| panic!("{} display: {e}", inst.recipe))
+        .plain()
+}
+
 /// 2026-09-28: Every golden plan: (file name, rendered text).
 pub fn golden_plans() -> Vec<(String, String)> {
     let mut out = Vec::new();
@@ -158,6 +188,15 @@ pub fn golden_plans() -> Vec<(String, String)> {
                     .unwrap_or_else(|e| panic!("{} {} n={n}: {e}", inst.recipe, mode.name()));
                 out.push((inst.plan_file(mode, n), text));
             }
+        }
+        for (tag, glyphs, width) in DISPLAY_SNAPSHOTS {
+            let opts = metrale_circuit::display::DisplayOpts {
+                width,
+                glyphs,
+                expand: metrale_circuit::display::Expand::Summary,
+            };
+            let text = display_text(inst, &loaded, metrale_circuit::Mode::Decode, 1, opts);
+            out.push((format!("{}-decode-n1.{tag}.txt", inst.arch), text));
         }
     }
     out

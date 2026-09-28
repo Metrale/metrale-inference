@@ -13,6 +13,7 @@
 pub mod circuit_toml;
 pub mod digest;
 pub mod dims;
+pub mod display;
 pub mod format;
 pub mod fuser;
 pub mod instances;
@@ -50,6 +51,12 @@ pub enum LoadError {
     /// 2026-09-28: Fusion.
     #[error(transparent)]
     Fuse(#[from] FuseError),
+    /// 2026-09-28: The display renderer.
+    #[error(transparent)]
+    Display(#[from] display::DisplayError),
+    /// 2026-09-28: The buffer planner.
+    #[error(transparent)]
+    Plan(#[from] planner::PlanError),
     /// 2026-09-28: The precision table describes another checkpoint.
     #[error("precision table is for `{table}`, the instance serves `{instance}`")]
     CheckpointMismatch {
@@ -140,4 +147,31 @@ pub fn render_plan(
         rows,
     )?;
     Ok(render::render(&loaded.circuit, &plan, &header(instance)))
+}
+
+/// 2026-09-28: Fuse, lay out and draw one plan of `instance`: the view `met circuit display`
+/// prints, over the same plan [`render_plan`] renders.
+pub fn display_plan(
+    instance: &Instance,
+    loaded: &Loaded,
+    available: &AvailableKernels,
+    mode: Mode,
+    rows: u64,
+    opts: &display::DisplayOpts,
+) -> Result<display::Document, LoadError> {
+    let plan = fuse(
+        &loaded.circuit,
+        &loaded.rules,
+        available,
+        &instance.policy,
+        mode,
+        rows,
+    )?;
+    let buffers = planner::plan_buffers(&loaded.circuit, &plan, rows)?;
+    let info = display::DisplayInfo {
+        checkpoint: instance.checkpoint.clone(),
+        recipe: instance.recipe.clone(),
+        bytes: Some((buffers.materialized_bytes, buffers.arena_bytes)),
+    };
+    Ok(display::display(&loaded.circuit, &plan, &info, opts)?)
 }

@@ -7,6 +7,7 @@
 bench/
 crates/bench/
 crates/cache/
+crates/circuit/
 crates/closure/
 crates/comm/
 crates/config/

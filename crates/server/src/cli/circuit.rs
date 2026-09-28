@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-28: `met circuit show`. The I/O side of metrale-circuit: the circuit TOMLs,
+//! 2026-09-28: `met circuit show|display`. The I/O side of metrale-circuit: the circuit TOMLs,
 //! precision tables and FUSIONS.toml this binary was built from (embedded, so the view matches
 //! the kernels compiled in), the recipe's instance, and, when the checkpoint is in the local
 //! cache, a check of the instance's shape against its `config.json`.
@@ -11,12 +11,13 @@
 //! - An unknown recipe, mode rows the instance cannot give, and a cached checkpoint whose
 //!   shape disagrees with INSTANCES.toml are errors, never a silent fallback.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use anyhow::{Context, Result, anyhow, bail};
+use metrale_circuit::display::{DisplayOpts, Expand, Glyphs};
 use metrale_circuit::{ArchShape, AvailableKernels, Instance, LayerKind, Mode, Sources};
 
-use super::{CircuitAction, CircuitArgs, CircuitMode, CircuitPlanArgs};
+use super::{CircuitAction, CircuitArgs, CircuitMode, CircuitPlanArgs, circuit_paint};
 
 /// 2026-09-28: kernels/circuits/INSTANCES.toml as built.
 const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
@@ -180,17 +181,57 @@ fn check_shape(inst: &Instance) -> Result<()> {
 
 /// 2026-09-28: Run `met circuit`.
 pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
-    let CircuitAction::Show(plan_args) = &args.action;
+    let plan_args = match &args.action {
+        CircuitAction::Show(p) => p.clone(),
+        CircuitAction::Display(d) => d.plan.clone(),
+    };
     let inst = instance(&plan_args.recipe)?;
-    let rows = rows_of(&inst, plan_args)?;
+    let rows = rows_of(&inst, &plan_args)?;
     let mode = mode_of(plan_args.mode);
     check_shape(&inst)?;
     let loaded = metrale_circuit::load(&inst, sources(&inst)?)?;
     // 2026-09-28: Offline, no target is probed: every kernel a rule names counts as built.
     let avail = AvailableKernels::all_named_by(&loaded.rules);
-    let text = metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows)?;
-    std::io::stdout().lock().write_all(text.as_bytes())?;
-    Ok(())
+    let text = match args.action {
+        CircuitAction::Show(_) => metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows)?,
+        CircuitAction::Display(d) => {
+            let tty = std::io::stdout().is_terminal();
+            let width = if tty {
+                crossterm::terminal::size().map_or(100, |(w, _)| w as usize)
+            } else {
+                100
+            };
+            let expand = match (d.layer, d.all_layers) {
+                (Some(n), _) => Expand::Layer(n),
+                (None, true) => Expand::AllLayers,
+                (None, false) => Expand::Summary,
+            };
+            let glyphs = if d.ascii {
+                Glyphs::Ascii
+            } else {
+                Glyphs::Unicode
+            };
+            let opts = DisplayOpts {
+                width,
+                glyphs,
+                expand,
+            };
+            let doc = metrale_circuit::display_plan(&inst, &loaded, &avail, mode, rows, &opts)?;
+            let depth = circuit_paint::resolve_depth(
+                d.color,
+                tty,
+                std::env::var("NO_COLOR").ok().as_deref(),
+                std::env::var("COLORTERM").ok().as_deref(),
+            );
+            circuit_paint::paint(&doc, depth)
+        }
+    };
+    // 2026-09-28: A reader that closes early (`| head`) has what it asked for; that is not
+    // a failure of the command.
+    match std::io::stdout().lock().write_all(text.as_bytes()) {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => Ok(other?),
+    }
 }
 
 #[cfg(test)]

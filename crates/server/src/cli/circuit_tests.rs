@@ -21,8 +21,10 @@ fn parse(args: &[&str]) -> CircuitArgs {
 }
 
 fn plan_args(args: &[&str]) -> CircuitPlanArgs {
-    let CircuitAction::Show(p) = parse(args).action;
-    p
+    match parse(args).action {
+        CircuitAction::Show(p) => p,
+        CircuitAction::Display(d) => d.plan,
+    }
 }
 
 #[test]
@@ -72,7 +74,7 @@ fn rows_default_only_where_one_row_is_the_plan() {
     assert_eq!(
         rows_of(
             &inst,
-            &plan_args(&["show", r, "--mode", "multi_seq", "--rows", "96"])
+            &plan_args(&["display", r, "--mode", "multi_seq", "--rows", "96"])
         )
         .unwrap(),
         96
@@ -88,8 +90,29 @@ fn rows_default_only_where_one_row_is_the_plan() {
 }
 
 #[test]
-fn an_unknown_mode_is_refused_by_the_parser() {
+fn display_flags_parse_and_conflict() {
     let r = "--recipe=qwen3.6/qwen3.6-35b-a3b-fp8-bf16head";
+    match parse(&["display", r, "--layer", "7", "--ascii", "--color", "never"]).action {
+        CircuitAction::Display(d) => {
+            assert_eq!(d.layer, Some(7));
+            assert!(d.ascii && !d.all_layers);
+            assert_eq!(d.color, crate::cli::ColorChoice::Never);
+        }
+        CircuitAction::Show(_) => panic!("parsed show"),
+    }
+    let both = Cli::try_parse_from([
+        "met",
+        "circuit",
+        "display",
+        r,
+        "--layer",
+        "1",
+        "--all-layers",
+    ]);
+    assert!(
+        both.is_err(),
+        "--layer and --all-layers together must be refused"
+    );
     assert!(Cli::try_parse_from(["met", "circuit", "show", r, "--mode", "prefill"]).is_err());
 }
 
