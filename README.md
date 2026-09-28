@@ -538,14 +538,12 @@ rung.
   Where a layer declares FP4 activations (the MLP of layers 0-55 of
   `unsloth/Qwen3.8-27B-NVFP4`), decode and prefill run it W4A4. Where it declares
   NVFP4 weights only (`nvidia/Qwen3.6-27B-NVFP4`'s MLP), it runs W4A16, with no FP4
-  MMQ prefill. `--lm-head-dtype default` takes the head format the checkpoint
-  declares, except an FP8 head: that waits for the batched FP8 head kernel, and
-  the engine's default head runs until then. Two gaps remain until the W8A8
-  decode kernels land:
-  - FP8-declared layers run 16-bit activations, above the declared precision.
-  - The dense loader still requantizes per-channel FP8 attention, GDN and MLP
-    projections to NVFP4, below the declared weight precision. They run with
-    16-bit activations.
+  MMQ prefill. Where it declares FP8 weights and activations with per-channel
+  scales (the attention, GDN, MLP 56-63 and lm_head of `unsloth/Qwen3.8-27B-NVFP4`),
+  decode runs W8A8, and `--lm-head-dtype default` takes the checkpoint's declared
+  head format. On `Qwen/Qwen3.6-35B-A3B-FP8` the experts and the 128x128
+  block-scaled attention/GDN still decode W8A16, above the declared activations,
+  until their W8A8 paths pass a full BFCL draw; the load log says so.
 - **`nvfp4`** is the engine as it ran before the flag existed. FP8-declared
   projections are requantized to NVFP4 at load. Decode runs 16-bit activations
   unless `--w4a4-downcast` is given, a lever that exists only under this tier.

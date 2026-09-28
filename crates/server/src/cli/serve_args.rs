@@ -272,13 +272,13 @@ pub struct ServeArgs {
     /// the declared precision of an FP8 checkpoint's experts, and its NVFP4 tiers go below it
     /// under either value of this flag.
     ///
-    /// Measured cost of `declared` against `nvfp4` on GB10 (one box, same binary). On
-    /// unsloth/Qwen3.8-27B-NVFP4: decode-floor recipe 26.2 vs 27.2 tok/s and 1.65 vs 1.89 J/tok;
-    /// throughput recipe at C1/C16/C128 with the default (NVFP4) head 24.8/200.0/457.6 tok/s and
-    /// 1.65/0.268/0.137 J/tok, against 25.0/216.6/457.0 tok/s and 1.43/0.211/0.133 J/tok. With
-    /// `--lm-head-dtype fp8` (W8A16, one launch per row) `declared` falls to 20.0/88.9 tok/s and
-    /// C128 does not finish. On Qwen3.6-35B-A3B-FP8 the tiers produce identical output and
-    /// speed: nothing there is requantized or declares FP4 activations.
+    /// Measured cost of `declared` against `nvfp4` on GB10 (dgx1, one binary). On
+    /// unsloth/Qwen3.8-27B-NVFP4, `declared` runs W8A8 on the FP8-declared layers and the
+    /// checkpoint's FP8 head (W8A8, batched): decode-floor recipe 24.2 tok/s at 1.52-1.69 J/tok
+    /// against 26.8 tok/s at 1.93-2.15 J/tok; throughput recipe C1/C16/C128 20.4-20.7 /
+    /// 192.0-192.8 / 449.2-451.0 tok/s against 24.7/212.9/447.7. On Qwen3.6-35B-A3B-FP8 the
+    /// tiers produce identical output and speed until its W8A8 families are validated: its
+    /// experts and block-scaled attention/GDN decode W8A16 under both.
     #[arg(long, value_enum, default_value_t = WeightQuantizationArg(metrale_config::WeightQuantization::Declared))]
     pub weight_quantization: WeightQuantizationArg,
 

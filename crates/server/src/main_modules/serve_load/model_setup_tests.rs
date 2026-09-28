@@ -88,3 +88,25 @@ fn an_explicit_head_overrides_every_choice() {
         assert!(lm_head_flags("fp4", c).is_err(), "{c:?}");
     }
 }
+
+/// 2026-09-28: The production caps (`kernel_caps()`) carry the batched FP8 head, so under
+/// `declared` `default` takes the checkpoint's FP8 head; under `nvfp4` the engine's head stays.
+#[test]
+fn the_shipped_caps_take_the_declared_fp8_head() {
+    let qc = unsloth();
+    let caps = metrale_model_layers::layers::kernel_caps();
+    let pick = |tier| {
+        WeightQuantPolicy::for_checkpoint(
+            WeightQuantTier::new(tier, W4a4Downcast::Off).expect("tier"),
+            Some(&qc),
+            caps,
+        )
+        .lm_head()
+    };
+    let declared = pick(WeightQuantization::Declared);
+    assert_eq!(declared, LmHeadChoice::Declared(LmHeadFormat::Fp8));
+    assert_eq!(lm_head_flags("default", declared).unwrap(), FP8);
+    let nvfp4 = pick(WeightQuantization::Nvfp4);
+    assert_eq!(nvfp4, LmHeadChoice::EngineDefault);
+    assert_eq!(lm_head_flags("default", nvfp4).unwrap(), ENGINE_DEFAULT);
+}
