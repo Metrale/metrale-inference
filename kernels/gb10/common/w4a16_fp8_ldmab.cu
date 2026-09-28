@@ -4,122 +4,170 @@
 // (mma m16n8k32 e4m3) and a BF16 C; no scale is applied.
 //
 // Owner: gb10 kernels.
-// Invariants: none beyond the types.
+// Invariants:
+// - K is a multiple of 32 (the launcher checks it).
+// - Each output accumulates its m16n8k32 MMAs in increasing k from 0.0f, one per 32-wide k
+//   slice, then rounds once to BF16. The tile shape, the pipeline and the grid order do not
+//   change that sequence, so the output is bit-identical to the 2026-09-25 single-stage kernel.
 //
 // ops::fp8_gemm_n128 (model-layers gemm_fp8_prefill.rs) launches it when K is a multiple of
 // 32 and METRALE_FP8_LDMAB is not 0, after casting A to E4M3 with bf16_to_fp8; B is the
-// pre-dequantized E4M3 weight. Grid (ceil(N/128), ceil(M/128)), block 256: eight warps of
-// 16 rows, a 128x128 tile per CTA, K steps of 32 double-buffered through cp.async, and
-// ldmatrix.x4 fragments for both A and B.
+// pre-dequantized E4M3 weight.
+//
+// 2026-09-28: A 128x256 CTA tile on 8 warps (2 x 4, 64x64 each), K stages of 128 bytes
+// double-buffered through cp.async.cg into XOR-swizzled shared memory (98,304 B dynamic),
+// ldmatrix.x4 fragments, and a 1-D grid in groups of 8 M tiles so a wave's A and B tiles stay
+// in L2. The 128x128 single-stage kernel it replaces ran the dense 27B's GDN qkvz projection
+// (8192 x 16384 x 5120) at 27.8 TFLOPS; this runs it at 172 (standalone, dgx2).
 //
 // It is a module of its own (w4a16_fp8_ldmab), not part of w4a16_gemm.cu, because a model's
 // own w4a16_gemm.cu replaces the common one whole (crates/kernels/build.rs,
 // shadowed_dropped_pairs), which would drop this kernel for that model.
 
-
-
-
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
 
+#define LDMAB_BM 128
+#define LDMAB_BN 256
+#define LDMAB_WM 64
+#define LDMAB_WN 64
+#define LDMAB_BK 128
+#define LDMAB_STAGES 2
+#define LDMAB_GROUP_M 8
+#define LDMAB_THREADS ((LDMAB_BM / LDMAB_WM) * (LDMAB_BN / LDMAB_WN) * 32)
 
-__device__ __forceinline__ void cp_async_pred_16(void* dst_smem, const void* src_gmem, bool pred) {
-    unsigned int dst = __cvta_generic_to_shared(dst_smem);
-    unsigned int src_bytes = pred ? 16 : 0;
-    asm volatile("cp.async.ca.shared.global [%0], [%1], 16, %2;"
-                 :: "r"(dst), "l"(src_gmem), "r"(src_bytes));
+// 2026-09-28: 16-byte cp.async.cg; `pred` false zero-fills the destination and reads nothing.
+__device__ __forceinline__ void ldmab_cp16(unsigned int dst, const void* src, bool pred) {
+    asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;\n" ::"r"(dst), "l"(src), "r"(pred ? 16 : 0));
 }
 
-__device__ __forceinline__ void cp_async_commit() {
-    asm volatile("cp.async.commit_group;");
+// 2026-09-28: A tile row is LDMAB_BK = 128 bytes, eight 16-byte chunks; chunk c of row r is stored at chunk
+// (c ^ (r & 7)), so the eight rows one ldmatrix phase reads at a logical chunk land in eight bank groups.
+__device__ __forceinline__ unsigned int ldmab_swz(int row, int chunk) {
+    return row * LDMAB_BK + ((chunk ^ (row & 7)) << 4);
 }
 
-__device__ __forceinline__ void cp_async_wait_all() {
-    asm volatile("cp.async.wait_group 0;");
+__device__ __forceinline__ void ldmab_ldsm_x4(unsigned int addr, unsigned int& r0, unsigned int& r1,
+                                              unsigned int& r2, unsigned int& r3) {
+    asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0,%1,%2,%3},[%4];\n"
+                 : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr));
 }
 
+__device__ __forceinline__ void ldmab_mma(float* d, const unsigned int* a, unsigned int b0, unsigned int b1) {
+    asm volatile("mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 "
+                 "{%0,%1,%2,%3},{%4,%5,%6,%7},{%8,%9},{%0,%1,%2,%3};\n"
+                 : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
+                 : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
+}
 
-
-
-
-
-#define METRALE_MMA_E4M3F(d, a0,a1,a2,a3, b0,b1) \
-    asm volatile("mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 " \
-        "{%0,%1,%2,%3},{%4,%5,%6,%7},{%8,%9},{%10,%11,%12,%13};" \
-        : "=f"((d)[0]),"=f"((d)[1]),"=f"((d)[2]),"=f"((d)[3]) \
-        : "r"(a0),"r"(a1),"r"(a2),"r"(a3),"r"(b0),"r"(b1), \
-          "f"((d)[0]),"f"((d)[1]),"f"((d)[2]),"f"((d)[3]))
-
-extern "C" __global__
-__launch_bounds__(256, 2)
-void fp8_fp8_gemm_ldmab(
-    const unsigned char* __restrict__ A_fp8,
-    const unsigned char* __restrict__ B_fp8,
+// 2026-09-28: Grid (ceil(M/128) * ceil(N/256), 1, 1), block 256, dynamic shared memory
+// LDMAB_STAGES * (LDMAB_BM + LDMAB_BN) * LDMAB_BK bytes.
+extern "C" __global__ void __launch_bounds__(LDMAB_THREADS, 1) fp8_fp8_gemm_ldmab(
+    const unsigned char* __restrict__ A,
+    const unsigned char* __restrict__ B,
     __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K
 ) {
-    const unsigned int cta_m = blockIdx.y * 128;
-    const unsigned int cta_n = blockIdx.x * 128;
-    if (cta_m >= M) return;
-    const unsigned int t = threadIdx.x;
-    const unsigned int warp_id = t >> 5;
-    const unsigned int lane = t & 31;
-    const unsigned int group_id = lane >> 2;
-    const unsigned int t4 = lane & 3;
-    const unsigned int wrow = warp_id * 16;
+    constexpr int NWN = LDMAB_BN / LDMAB_WN;
+    constexpr int MT = LDMAB_WM / 16, NT = LDMAB_WN / 8;
+    extern __shared__ __align__(128) unsigned char ldmab_smem[];
+    const unsigned int s_a = (unsigned int)__cvta_generic_to_shared(ldmab_smem);
+    const unsigned int s_b = s_a + LDMAB_STAGES * LDMAB_BM * LDMAB_BK;
 
-    __shared__ unsigned char smem_Ai[2][128][32];
-    __shared__ unsigned char smem_Bi[2][128][32];
+    // 2026-09-28: Grouped order: consecutive CTAs walk LDMAB_GROUP_M M tiles before the next N tile.
+    const unsigned int grid_m = (M + LDMAB_BM - 1) / LDMAB_BM, grid_n = (N + LDMAB_BN - 1) / LDMAB_BN;
+    const unsigned int in_group = LDMAB_GROUP_M * grid_n;
+    const unsigned int first_m = (blockIdx.x / in_group) * LDMAB_GROUP_M;
+    const unsigned int gsz = min(grid_m - first_m, (unsigned int)LDMAB_GROUP_M);
+    const unsigned int m0 = (first_m + (blockIdx.x % in_group) % gsz) * LDMAB_BM;
+    const unsigned int n0 = ((blockIdx.x % in_group) / gsz) * LDMAB_BN;
 
-    float acc[16][4];
-    #pragma unroll
-    for (int i = 0; i < 16; i++) { acc[i][0]=0.f; acc[i][1]=0.f; acc[i][2]=0.f; acc[i][3]=0.f; }
+    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    const int wm = warp / NWN, wn = warp % NWN;
 
-    #define LABF_LOADS(buf, kb) do { \
-        { unsigned ar = t >> 1; unsigned ac = (t & 1) << 4; unsigned gc = (kb) + ac; unsigned gr = cta_m + ar; \
-          cp_async_pred_16(&smem_Ai[(buf)][ar][ac], &A_fp8[(unsigned long long)gr*K+gc], (gr<M)&&(gc+15<K)); } \
-        { unsigned an = t >> 1; unsigned ac = (t & 1) << 4; unsigned gc = (kb) + ac; unsigned gn = cta_n + an; \
-          cp_async_pred_16(&smem_Bi[(buf)][an][ac], &B_fp8[(unsigned long long)gn*K+gc], (gn<N)&&(gc+15<K)); } \
-    } while(0)
+    float acc[MT][NT][4];
+#pragma unroll
+    for (int i = 0; i < MT; i++)
+#pragma unroll
+        for (int j = 0; j < NT; j++) acc[i][j][0] = acc[i][j][1] = acc[i][j][2] = acc[i][j][3] = 0.f;
 
-    #define LABF_COMPUTE(buf) do { \
-        unsigned a0,a1,a2,a3; \
-        const int* xs = (const int*)&smem_Ai[(buf)][wrow][0] + (lane % 16)*8 + (lane / 16)*4; \
-        asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0,%1,%2,%3},[%4];" \
-            : "=r"(a0),"=r"(a1),"=r"(a2),"=r"(a3) : "l"(xs)); \
-        _Pragma("unroll") for (int p = 0; p < 8; p++) { \
-            unsigned nt0 = 2*p, nt1 = 2*p+1; \
-            unsigned brow = ((lane<16)?nt0:nt1)*8 + (lane&7); \
-            const void* bxs = &smem_Bi[(buf)][brow][((lane>>3)&1)*16]; \
-            unsigned q0,q1,q2,q3; \
-            asm volatile("ldmatrix.sync.aligned.m8n8.x4.b16 {%0,%1,%2,%3},[%4];" \
-                : "=r"(q0),"=r"(q1),"=r"(q2),"=r"(q3) : "l"(bxs)); \
-            METRALE_MMA_E4M3F(acc[nt0], a0,a1,a2,a3, q0,q1); \
-            METRALE_MMA_E4M3F(acc[nt1], a0,a1,a2,a3, q2,q3); \
-        } \
-    } while(0)
+    const unsigned int ktiles = (K + LDMAB_BK - 1) / LDMAB_BK;
+    auto load = [&](unsigned int kt, int stage) {
+        const unsigned int k0 = kt * LDMAB_BK;
+#pragma unroll
+        for (int c = tid; c < LDMAB_BM * 8; c += LDMAB_THREADS) {
+            const int r = c >> 3, ch = c & 7;
+            const unsigned int gr = m0 + r, gk = k0 + ch * 16;
+            const bool ok = gr < M && gk < K;
+            ldmab_cp16(s_a + stage * LDMAB_BM * LDMAB_BK + ldmab_swz(r, ch),
+                       ok ? (const void*)(A + (unsigned long long)gr * K + gk) : (const void*)A, ok);
+        }
+#pragma unroll
+        for (int c = tid; c < LDMAB_BN * 8; c += LDMAB_THREADS) {
+            const int r = c >> 3, ch = c & 7;
+            const unsigned int gn = n0 + r, gk = k0 + ch * 16;
+            const bool ok = gn < N && gk < K;
+            ldmab_cp16(s_b + stage * LDMAB_BN * LDMAB_BK + ldmab_swz(r, ch),
+                       ok ? (const void*)(B + (unsigned long long)gn * K + gk) : (const void*)B, ok);
+        }
+    };
 
-    LABF_LOADS(0, 0); cp_async_commit(); cp_async_wait_all(); __syncthreads();
-    int cur = 0;
-    for (unsigned int kb = 32; kb < K; kb += 32) {
-        int nxt = 1 - cur;
-        LABF_LOADS(nxt, kb); cp_async_commit();
-        LABF_COMPUTE(cur);
-        cp_async_wait_all(); __syncthreads();
-        cur = nxt;
+#pragma unroll
+    for (int s = 0; s < LDMAB_STAGES - 1; s++) {
+        if ((unsigned int)s < ktiles) load(s, s);
+        asm volatile("cp.async.commit_group;\n" ::);
     }
-    LABF_COMPUTE(cur);
-    #undef LABF_LOADS
-    #undef LABF_COMPUTE
+    for (unsigned int kt = 0; kt < ktiles; kt++) {
+        asm volatile("cp.async.wait_group %0;\n" ::"n"(LDMAB_STAGES - 2));
+        __syncthreads();   // 2026-09-28: stage kt is resident, and every read of the stage refilled below has ended.
+        {
+            const unsigned int nk = kt + LDMAB_STAGES - 1;
+            if (nk < ktiles) load(nk, nk % LDMAB_STAGES);
+            asm volatile("cp.async.commit_group;\n" ::);
+        }
+        const int st = kt % LDMAB_STAGES;
+        const unsigned int t_a = s_a + st * LDMAB_BM * LDMAB_BK, t_b = s_b + st * LDMAB_BN * LDMAB_BK;
+#pragma unroll
+        for (int ks = 0; ks < LDMAB_BK / 32; ks++) {
+            if (kt * LDMAB_BK + ks * 32 >= K) break;
+            unsigned int a[MT][4], b[NT][2];
+#pragma unroll
+            for (int mt = 0; mt < MT; mt++) {
+                // 2026-09-28: lanes 0-15 rows 0-15 at bytes 0-15 of the k slice, lanes 16-31 at bytes 16-31.
+                const int row = wm * LDMAB_WM + mt * 16 + (lane & 15);
+                ldmab_ldsm_x4(t_a + ldmab_swz(row, ks * 2 + (lane >> 4)), a[mt][0], a[mt][1], a[mt][2], a[mt][3]);
+            }
+#pragma unroll
+            for (int p = 0; p < NT / 2; p++) {
+                // 2026-09-28: lanes 0-7 / 8-15: n tile 2p at k bytes 0-15 / 16-31; lanes 16-31: n tile 2p+1.
+                const int row = wn * LDMAB_WN + p * 16 + ((lane >> 4) << 3) + (lane & 7);
+                ldmab_ldsm_x4(t_b + ldmab_swz(row, ks * 2 + ((lane >> 3) & 1)),
+                              b[2 * p][0], b[2 * p][1], b[2 * p + 1][0], b[2 * p + 1][1]);
+            }
+#pragma unroll
+            for (int mt = 0; mt < MT; mt++)
+#pragma unroll
+                for (int nt = 0; nt < NT; nt++) ldmab_mma(acc[mt][nt], a[mt], b[nt][0], b[nt][1]);
+        }
+    }
+    asm volatile("cp.async.wait_group 0;\n" ::);
 
-    #pragma unroll
-    for (int nt = 0; nt < 16; nt++) {
-        unsigned c0 = cta_n + nt*8 + t4*2, c1 = c0 + 1;
-        unsigned r0 = cta_m + wrow + group_id, r1 = r0 + 8;
-        if (r0<M&&c0<N) C[r0*N+c0]=__float2bfloat16(acc[nt][0]);
-        if (r0<M&&c1<N) C[r0*N+c1]=__float2bfloat16(acc[nt][1]);
-        if (r1<M&&c0<N) C[r1*N+c0]=__float2bfloat16(acc[nt][2]);
-        if (r1<M&&c1<N) C[r1*N+c1]=__float2bfloat16(acc[nt][3]);
+    const int g = lane >> 2, t4 = lane & 3;
+#pragma unroll
+    for (int mt = 0; mt < MT; mt++) {
+#pragma unroll
+        for (int nt = 0; nt < NT; nt++) {
+            const unsigned int c0 = n0 + wn * LDMAB_WN + nt * 8 + t4 * 2;
+            const unsigned int r0 = m0 + wm * LDMAB_WM + mt * 16 + g, r1 = r0 + 8;
+            if (c0 + 1 < N && (N & 1u) == 0u) {
+                if (r0 < M) *(__nv_bfloat162*)&C[(unsigned long long)r0 * N + c0] = __floats2bfloat162_rn(acc[mt][nt][0], acc[mt][nt][1]);
+                if (r1 < M) *(__nv_bfloat162*)&C[(unsigned long long)r1 * N + c0] = __floats2bfloat162_rn(acc[mt][nt][2], acc[mt][nt][3]);
+            } else {
+                if (r0 < M && c0 < N) C[(unsigned long long)r0 * N + c0] = __float2bfloat16(acc[mt][nt][0]);
+                if (r0 < M && c0 + 1 < N) C[(unsigned long long)r0 * N + c0 + 1] = __float2bfloat16(acc[mt][nt][1]);
+                if (r1 < M && c0 < N) C[(unsigned long long)r1 * N + c0] = __float2bfloat16(acc[mt][nt][2]);
+                if (r1 < M && c0 + 1 < N) C[(unsigned long long)r1 * N + c0 + 1] = __float2bfloat16(acc[mt][nt][3]);
+            }
+        }
     }
 }
-#undef METRALE_MMA_E4M3F

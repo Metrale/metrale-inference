@@ -23,8 +23,8 @@ use super::*;
 ///
 /// When `k` is a multiple of 32 and `METRALE_FP8_LDMAB` is not `0`, it casts A
 /// to FP8 into a scratch buffer ([`bf16_to_fp8`]) and launches
-/// `fp8_fp8_gemm_ldmab` (module `w4a16_fp8_ldmab`, K step 32) instead of
-/// `kernel`.
+/// `fp8_fp8_gemm_ldmab` (module `w4a16_fp8_ldmab`, 128x256 tiles, two 128-byte K
+/// stages) instead of `kernel`.
 #[allow(clippy::too_many_arguments)]
 pub fn fp8_gemm_n128(
     gpu: &dyn GpuBackend,
@@ -47,9 +47,12 @@ pub fn fp8_gemm_n128(
         let need = (m as usize) * (k as usize);
         let a8 = cache.scratch(gpu, "fp8_prefill_activation", need)?;
         bf16_to_fp8(gpu, qk, input, a8, m * k, stream)?;
+        // 2026-09-28: 1-D grid of 128x256 tiles (the kernel orders them in groups of 8 M
+        // tiles), 256 threads, two 48 KiB stages of dynamic shared memory.
         return KernelLaunch::new(gpu, lk)
-            .grid([div_ceil(n, 128), div_ceil(m, 128), 1])
+            .grid([div_ceil(m, 128) * div_ceil(n, 256), 1, 1])
             .block([256, 1, 1])
+            .shared_mem(2 * (128 + 256) * 128)
             .arg_ptr(a8)
             .arg_ptr(b_fp8)
             .arg_ptr(output)
