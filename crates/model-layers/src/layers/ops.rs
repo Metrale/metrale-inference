@@ -49,12 +49,16 @@ mod fp8_moe_batch_a;
 #[path = "ops/fp8_moe_batch_b.rs"]
 mod fp8_moe_batch_b;
 mod fp8_moe_grouped;
+// 2026-09-28: The opt-in W8A8 twin of the tensor-core grouped FP8 MoE decode.
+mod fp8_moe_grouped_tc_w8a8;
 // 2026-09-27: The grouped NVFP4 MoE decode kernels (`moe/forward_nvfp4_grouped_decode.rs`).
 mod nvfp4_moe_grouped;
 // 2026-09-25: The 32-row M-tile twin of `w8a16_gemm_pipelined` and its by-M selector.
 mod w8a16_gemm_pipelined_m32;
 #[path = "ops/w8a8_decode.rs"]
 mod w8a8_decode;
+// 2026-09-28: The tensor-core row-tile W8A16 projection (`w8a16_tc_rows.cu`).
+mod w8a16_tc_rows;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
@@ -222,6 +226,7 @@ pub use fp8_moe::*;
 pub use fp8_moe_batch_a::*;
 pub use fp8_moe_batch_b::*;
 pub use fp8_moe_grouped::*;
+pub use fp8_moe_grouped_tc_w8a8::*;
 pub use gemm_dense::*;
 pub use gemm_dense_int8::*;
 pub use gemm_fp4::*;
@@ -286,4 +291,5 @@ pub use w8a8_decode::*;
 pub use w8a16_gemm_m16::*;
 pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;
+pub use w8a16_tc_rows::*;
 pub use wide_prefill::*;

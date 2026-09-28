@@ -190,6 +190,7 @@ fn run_grouped(
     ops::moe_expert_gate_up_act_fp8_grouped(
         gpu,
         h.g_gate_up,
+        ops::FP8_GROUPED_GATE_UP_SCALAR,
         input,
         x.gate_w,
         x.gate_s,
@@ -212,6 +213,7 @@ fn run_grouped(
     ops::moe_expert_down_act_fp8_grouped(
         gpu,
         h.g_silu_down,
+        ops::FP8_GROUPED_DOWN_SCALAR,
         s.act,
         x.down_w,
         x.down_s,

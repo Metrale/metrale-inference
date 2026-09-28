@@ -468,6 +468,7 @@ impl MoeLayer {
             moe_topk_softmax_rows_k: grouped.topk_rows,
             router_gemv_batchm_k: grouped.router_gemv,
             nvfp4_grouped,
+            fp8_grouped_tc: super::fp8_grouped_tc::Fp8GroupedTcKernels::resolve(gpu),
             fp8_gate_weight_ptrs: None,
             fp8_up_weight_ptrs: None,
             fp8_down_weight_ptrs: None,

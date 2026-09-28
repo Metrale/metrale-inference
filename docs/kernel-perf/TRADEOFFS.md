@@ -505,6 +505,19 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 - *whole file*: Sort and active-expert list in one launch, replacing moe_sort_by_expert plus a single-thread compact over 256 experts (about 6 + 6.6 us per layer); bit-identical including tie rows at E=256 and 512, M=2..64 (2026-09-27). ([#34](https://github.com/Metrale/metrale-inference/pull/34)) — source: MoE C=16 campaign notes 2026-09-27 (EXPERIMENTS round 4)
 - *whole file*: 2026-09-27: fuses the expert sort with a block-parallel active-expert prefix sum, replacing the single-thread moe_fp8_grouped_compact. Slot order within an expert follows shared-memory atomics, so it is nondeterministic; the grouped kernels' sums do not depend on it. num_experts &lt;= PMS_BLOCK \* PMS_PER_THREAD. — source: kernels/gb10/common/moe_fp8_grouped_sort.cu:3
 
+<a id="to-kernels-gb10-common-moe-fp8-grouped-tc-cu"></a>
+
+### [kernels/gb10/common/moe_fp8_grouped_tc.cu](../../kernels/gb10/common/moe_fp8_grouped_tc.cu)
+
+- *whole file*: Tensor-core twin of the grouped FP8 decode (default; METRALE_NO_MOE_FP8_TC keeps the scalar kernels): E4M3 bytes become BF16 \* 2^-120 in registers, rows are the MMA N columns, the FP32 SiLU product enters the down MMAs as BF16 hi + lo. 30-45% fewer GPU-rail joules per layer at 35B shapes, bytes/s within 1-5%. Output within 2e-4 relative of the scalar kernels (order only); row-invariant. — source: kernels/gb10/common/moe_fp8_grouped_tc.cu:3
+- *whole file*: Measured 2026-09-28 (dgx2, MoE ladder, auto MTP gate, 2 reps): C1..C16 J/tok 0.585/0.417/0.322/0.263/0.210 -> 0.539/0.361/0.260/0.198/0.147, tok/s -2.6/-1.8/-2.4/-0.4/+2.2%. The per-row work per warp is 8x the scalar kernel's, so 1..8-row launches lose 2-5% to tail effects. — source: MoE energy campaign notes 2026-09-28 (dgx2 A/B vs origin/main 88e14520)
+
+<a id="to-kernels-gb10-common-moe-fp8-grouped-tc-w8a8-cu"></a>
+
+### [kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu](../../kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu)
+
+- *whole file*: W8A8 twin of moe_fp8_grouped_tc.cu, selected by the weight-quantization policy: input and SiLU product quantized to E4M3 per (row, 128 group), the checkpoint's declared dynamic activation scheme, and FP8 weights into E4M3 MMAs undecoded. 7-10% fewer GPU-rail joules per layer than W8A16 at the same bytes/s; relative L2 4e-2 vs 3e-3 on random activations. Row-invariant. — source: kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu:3
+
 <a id="to-kernels-gb10-common-moe-gate-topk-cu"></a>
 
 ### [kernels/gb10/common/moe_gate_topk.cu](../../kernels/gb10/common/moe_gate_topk.cu)
@@ -1252,6 +1265,12 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 ### [kernels/gb10/common/w8a16_gemv_fused.cu](../../kernels/gb10/common/w8a16_gemv_fused.cu)
 
 - *w8a16_gemv_silu_input*: Computes silu(gate_out) \* up_out in FP32 and feeds that directly into the GEMV without rounding the intermediate to BF16, so its result can differ from running a separate BF16 silu-mul kernel followed by plain w8a16_gemv. — source: kernels/gb10/common/w8a16_gemv_fused.cu:11
+
+<a id="to-kernels-gb10-common-w8a16-tc-rows-cu"></a>
+
+### [kernels/gb10/common/w8a16_tc_rows.cu](../../kernels/gb10/common/w8a16_tc_rows.cu)
+
+- *whole file*: Row-tile W8A16 projection, 1..=64 decode rows (default under canonical tiers; METRALE_NO_W8A16_TC_ROWS keeps the tiles): weights decoded in registers, activations staged per block, rows as MMA N columns. At 35B shapes: 30-50% fewer GPU-rail joules per launch; faster from 16 rows, up to 5% slower on 12288 x 2048 at 1..8 rows. Output bits differ from w8a16_gemm_pipelined_m32; row-invariant. — source: kernels/gb10/common/w8a16_tc_rows.cu:3
 
 <a id="to-kernels-gb10-common-wht-bf16-cu"></a>
 

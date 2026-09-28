@@ -121,6 +121,22 @@ pub fn w8a16_gemm_pipelined_m32_strided(
         "w8a16_gemm_pipelined_m32: a_row_stride={a_row_stride} must keep rows \
          16B-aligned (cp.async A tile)"
     );
+    // 2026-09-28: The row-tile kernel under the canonical tiers (`w8a16_tc_rows.rs`).
+    if super::w8a16_tc_rows_launch(
+        gpu,
+        input,
+        weight,
+        block_scale,
+        output,
+        m,
+        n,
+        k,
+        a_row_stride,
+        c_row_stride,
+        stream,
+    )? {
+        return Ok(());
+    }
     // 2026-09-27: 1..=16 rows (K <= 5120) run the kernel's skinny body.
     let (grid, block, smem) = if m <= W8A16_M16_MAX_ROWS && k <= W8A16_M16_MAX_K {
         ([div_ceil(n, 8), 1, 1], [256, 1, 1], w8a16_m16_smem_bytes(k))
@@ -227,6 +243,21 @@ pub fn w8a16_gemm_pipelined_m64_strided(
         "w8a16_gemm_pipelined_m64: row pitches (a={a_row_stride}, c={c_row_stride}) must \
          cover k={k} / n={n}, and a must keep rows 16B-aligned"
     );
+    if super::w8a16_tc_rows_launch(
+        gpu,
+        input,
+        weight,
+        block_scale,
+        output,
+        m,
+        n,
+        k,
+        a_row_stride,
+        c_row_stride,
+        stream,
+    )? {
+        return Ok(());
+    }
     KernelLaunch::new(gpu, kernel)
         .grid([
             div_ceil(n, W8A16_M32_TILE_COLS),
