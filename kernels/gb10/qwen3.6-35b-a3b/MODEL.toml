@@ -306,7 +306,9 @@ mtp_max_seqs = 128
 # Evidence (dgx2, PR #51): with the SiLU product at E4M3 and the block-scaled attention/GDN
 # W8A8 on, the ssm-state-poisoning gate's reference round failed 3/3 on a greedy tie at
 # turn 3 (" a" and " computed" both at logprob -0.979); the same binary with the product at
-# FP32 precision passed 2/2.
+# FP32 precision passed 2/2. With this key and both W8A8 families on (dgx2, 2026-09-29): the
+# gate 3/3, agentic-webserver 2/2, BFCL echolp full draw 84.26/85.69 (N=1004, hermetic), and
+# C1/16/64/128 83.9/358.9/623.1/742.0 tok/s at 0.452/0.130/0.086/0.0757 J/tok.
 expert_down_w8a16 = true
 
 [[model_types]]

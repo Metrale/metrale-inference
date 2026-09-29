@@ -33,20 +33,19 @@ pub fn weight_quantization() -> WeightQuantTier {
 /// family (`ops::w8a8_decode`). 2026-09-29: On as well, validated on Qwen3.6-35B-A3B-FP8 by the
 /// full BFCL draw and agentic-webserver (`declared` against `nvfp4`, one binary, dgx3): the MoE
 /// expert W8A8 family (`moe/fp8_grouped_tc_w8a8.rs`). The block-scaled attention/GDN W8A8
-/// adoption (`qwen35/load_layers/w8a8_adopt.rs`) is off again (2026-09-29, see below). Also on: the batched FP8 lm_head (`model/lm_head_fp8_rows.rs`, one weight pass per 128 rows
+/// adoption (`qwen35/load_layers/w8a8_adopt.rs`) is on again (2026-09-29, see below). Also on: the batched FP8 lm_head (`model/lm_head_fp8_rows.rs`, one weight pass per 128 rows
 /// at every row count), so `declared` takes a checkpoint's declared FP8 head. Each W8A8
 /// family still checks at run time that its kernels resolved and the shapes fit.
 pub fn kernel_caps() -> metrale_config::weight_quantization::KernelCaps {
     metrale_config::weight_quantization::KernelCaps {
         w8a8_decode: true,
         w8a8_moe_decode: true,
-        // 2026-09-29: Off again. With the expert and the block-scaled attention/GDN W8A8 both on,
-        // Qwen3.6-35B-A3B-FP8 failed the ssm-state-poisoning-gate reference round (dgx2, PR #51):
-        // a greedy tie at turn 3 (" a" and " computed" both at logprob -0.979) went to the reply
-        // that drops Section 4's field list. With either family alone the gate passes (2/2
-        // each). The owner kept the experts; the attention/GDN projections decode W8A16 until
-        // this path is re-validated.
-        w8a8_block_scaled_decode: false,
+        // 2026-09-29: With the expert and the block-scaled attention/GDN W8A8 both on and the
+        // SiLU product at E4M3, Qwen3.6-35B-A3B-FP8 failed the ssm-state-poisoning-gate
+        // reference round (dgx2, PR #51) on a greedy tie at turn 3 (" a" and " computed" both
+        // at logprob -0.979). On again: that model keeps its SiLU product at FP32 precision
+        // (MODEL.toml `[behavior] expert_down_w8a16`), with which the gate passes.
+        w8a8_block_scaled_decode: true,
         fp8_lm_head_batched: true,
     }
 }
