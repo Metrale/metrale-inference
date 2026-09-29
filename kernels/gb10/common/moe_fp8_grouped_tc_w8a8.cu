@@ -76,7 +76,10 @@ extern "C" __global__ void __launch_bounds__(128) moe_act_quant_e4m3(
 // 2026-09-28: One warp's MT output tiles (GATE_UP: MT gate then MT up tiles of the same columns)
 // over rows [begin, end), W8A8. GATE_UP writes E4M3(SiLU(bf16(g)) * bf16(u) / s) with s from the
 // block's 128 columns; otherwise the BF16 projection.
-template <bool GATE_UP, int MT>
+// 2026-09-29: RG row groups of TC_ROWS share each weight fragment (one weight pass per
+// TC_ROWS * RG rows). Group q is its own MMA column block with the K order, block scaling and
+// quantization of RG = 1, so a row's bits do not depend on RG or on the other rows.
+template <bool GATE_UP, int MT, int RG>
 __device__ __forceinline__ void tc8_warp(
     const unsigned char* __restrict__ Xq, const float* __restrict__ Xs,
     const int* __restrict__ sorted_token_ids, bool by_pos, unsigned int begin, unsigned int end,
@@ -101,21 +104,31 @@ __device__ __forceinline__ void tc8_warp(
         sr[m] = (second ? S1 : S0) + (col / 128) * kblocks;
     }
 
-    for (unsigned int row0 = begin; row0 < end; row0 += TC_ROWS) {
-        const unsigned int cnt = min((unsigned int)TC_ROWS, end - row0);
-        const bool live = g < cnt;
-        auto row_of = [&](unsigned int r) {
-            return by_pos ? row0 + r : (unsigned int)sorted_token_ids[row0 + r];
-        };
-        const unsigned int xrow = live ? row_of(g) : 0u;
+    for (unsigned int row0 = begin; row0 < end; row0 += TC_ROWS * RG) {
+        unsigned int cnt[RG], srow0[RG], srow1[RG];
+        bool live[RG];
+        const uint4* xp[RG];
         const unsigned int r0 = 2 * t, r1 = 2 * t + 1;
-        const unsigned int srow0 = r0 < cnt ? row_of(r0) : 0u, srow1 = r1 < cnt ? row_of(r1) : 0u;
-        const uint4* xp = (const uint4*)(Xq + (unsigned long long)xrow * K + t * 16);
-        float acc[TILES][4], tmp[TILES][4];
         #pragma unroll
-        for (int m = 0; m < TILES; m++)
+        for (int q = 0; q < RG; q++) {
+            const unsigned int base = row0 + q * TC_ROWS;
+            cnt[q] = base < end ? min((unsigned int)TC_ROWS, end - base) : 0u;
+            live[q] = g < cnt[q];
+            auto row_of = [&](unsigned int r) {
+                return by_pos ? base + r : (unsigned int)sorted_token_ids[base + r];
+            };
+            const unsigned int xrow = live[q] ? row_of(g) : 0u;
+            srow0[q] = r0 < cnt[q] ? row_of(r0) : 0u;
+            srow1[q] = r1 < cnt[q] ? row_of(r1) : 0u;
+            xp[q] = (const uint4*)(Xq + (unsigned long long)xrow * K + t * 16);
+        }
+        float acc[RG][TILES][4], tmp[RG][TILES][4];
+        #pragma unroll
+        for (int q = 0; q < RG; q++)
             #pragma unroll
-            for (int e = 0; e < 4; e++) acc[m][e] = tmp[m][e] = 0.f;
+            for (int m = 0; m < TILES; m++)
+                #pragma unroll
+                for (int e = 0; e < 4; e++) acc[q][m][e] = tmp[q][m][e] = 0.f;
         uint4 wn[TC8_G][TILES][2];
         #pragma unroll
         for (int c = 0; c < TC8_G; c++)
@@ -142,79 +155,110 @@ __device__ __forceinline__ void tc8_warp(
             #pragma unroll
             for (int c = 0; c < TC8_G; c++) {
                 const unsigned int chunk = gi * TC8_G + c;
-                const uint4 xa = live ? xp[chunk * 4] : make_uint4(0u, 0u, 0u, 0u);
                 #pragma unroll
-                for (int m = 0; m < TILES; m++) {
-                    tc8_mma_e4m3(tmp[m], w[c][m][0].x, w[c][m][1].x, w[c][m][0].y, w[c][m][1].y, xa.x, xa.y);
-                    tc8_mma_e4m3(tmp[m], w[c][m][0].z, w[c][m][1].z, w[c][m][0].w, w[c][m][1].w, xa.z, xa.w);
+                for (int q = 0; q < RG; q++) {
+                    const uint4 xa = live[q] ? xp[q][chunk * 4] : make_uint4(0u, 0u, 0u, 0u);
+                    #pragma unroll
+                    for (int m = 0; m < TILES; m++) {
+                        tc8_mma_e4m3(tmp[q][m], w[c][m][0].x, w[c][m][1].x, w[c][m][0].y, w[c][m][1].y, xa.x, xa.y);
+                        tc8_mma_e4m3(tmp[q][m], w[c][m][0].z, w[c][m][1].z, w[c][m][0].w, w[c][m][1].w, xa.z, xa.w);
+                    }
                 }
                 // 2026-09-28: Chunks 2kb and 2kb + 1 make 128-K block kb.
                 if (chunk & 1) {
                     const unsigned int kb = chunk >> 1;
-                    const float as0 = r0 < cnt ? Xs[(unsigned long long)srow0 * kblocks + kb] : 0.f;
-                    const float as1 = r1 < cnt ? Xs[(unsigned long long)srow1 * kblocks + kb] : 0.f;
                     #pragma unroll
-                    for (int m = 0; m < TILES; m++) {
-                        const float s = sr[m][kb];
-                        acc[m][0] += tmp[m][0] * (s * as0);
-                        acc[m][1] += tmp[m][1] * (s * as1);
-                        acc[m][2] += tmp[m][2] * (s * as0);
-                        acc[m][3] += tmp[m][3] * (s * as1);
+                    for (int q = 0; q < RG; q++) {
+                        const float as0 = r0 < cnt[q] ? Xs[(unsigned long long)srow0[q] * kblocks + kb] : 0.f;
+                        const float as1 = r1 < cnt[q] ? Xs[(unsigned long long)srow1[q] * kblocks + kb] : 0.f;
                         #pragma unroll
-                        for (int e = 0; e < 4; e++) tmp[m][e] = 0.f;
+                        for (int m = 0; m < TILES; m++) {
+                            const float s = sr[m][kb];
+                            acc[q][m][0] += tmp[q][m][0] * (s * as0);
+                            acc[q][m][1] += tmp[q][m][1] * (s * as1);
+                            acc[q][m][2] += tmp[q][m][2] * (s * as0);
+                            acc[q][m][3] += tmp[q][m][3] * (s * as1);
+                            #pragma unroll
+                            for (int e = 0; e < 4; e++) tmp[q][m][e] = 0.f;
+                        }
                     }
                 }
             }
         }
-        // 2026-09-28: acc[m][e]: column f0 + 16 (m % MT) + g (+ 8 for e >= 2) of row 2t + (e & 1).
-        if (GATE_UP) {
-            float h[MT][4];
-            float am[2] = {0.f, 0.f};
-            #pragma unroll
-            for (int m = 0; m < MT; m++)
-                #pragma unroll
-                for (int e = 0; e < 4; e++) {
-                    const float gv = __bfloat162float(__float2bfloat16(acc[m][e]));
-                    const float uv = __bfloat162float(__float2bfloat16(acc[m + MT][e]));
-                    h[m][e] = (gv / (1.0f + __expf(-gv))) * uv;
-                    am[e & 1] = fmaxf(am[e & 1], fabsf(h[m][e]));
-                }
-            #pragma unroll
-            for (int q = 0; q < 2; q++)
-                #pragma unroll
-                for (int o = 4; o < 32; o <<= 1) am[q] = fmaxf(am[q], __shfl_xor_sync(0xffffffffu, am[q], o));
-            __syncthreads();
-            if (g == 0) { s_amax[warp][r0] = am[0]; s_amax[warp][r1] = am[1]; }
-            __syncthreads();
-            #pragma unroll
-            for (int q = 0; q < 2; q++) {
-                const unsigned int r = 2 * t + q;
-                float bm = 0.f;
-                #pragma unroll
-                for (int w8 = 0; w8 < TC8_WARPS; w8++) bm = fmaxf(bm, s_amax[w8][r]);
-                if (r >= cnt) continue;
-                const unsigned long long pos = row0 + r;
-                const float s = fmaxf(bm / 448.0f, 1e-12f);
+        // 2026-09-28: acc[q][m][e]: column f0 + 16 (m % MT) + g (+ 8 for e >= 2) of row 2t + (e & 1)
+        // of group q. The GATE_UP epilogue's block-wide amax runs once per group, on every warp
+        // (the CTA's warps share row0 and end), so its barriers are uniform.
+        #pragma unroll
+        for (int q = 0; q < RG; q++) {
+            const unsigned int rbase = row0 + q * TC_ROWS;
+            if (GATE_UP) {
+                float h[MT][4];
+                float am[2] = {0.f, 0.f};
                 #pragma unroll
                 for (int m = 0; m < MT; m++)
                     #pragma unroll
-                    for (int hh = 0; hh < 2; hh++)
-                        out_q[pos * N + f0 + 16 * m + g + 8 * hh] =
-                            (unsigned char)__nv_cvt_float_to_fp8(h[m][2 * hh + q] / s, __NV_SATFINITE, __NV_E4M3);
-                if (warp == 0 && g == 0) out_s[pos * (N / 128) + blockIdx.x] = s;
-            }
-        } else {
-            #pragma unroll
-            for (int e = 0; e < 4; e++) {
-                const unsigned int r = 2 * t + (e & 1);
-                if (r >= cnt) continue;
+                    for (int e = 0; e < 4; e++) {
+                        const float gv = __bfloat162float(__float2bfloat16(acc[q][m][e]));
+                        const float uv = __bfloat162float(__float2bfloat16(acc[q][m + MT][e]));
+                        h[m][e] = (gv / (1.0f + __expf(-gv))) * uv;
+                        am[e & 1] = fmaxf(am[e & 1], fabsf(h[m][e]));
+                    }
                 #pragma unroll
-                for (int m = 0; m < TILES; m++)
-                    out[(unsigned long long)(row0 + r) * N + f0 + 16 * m + g + ((e >> 1) ? 8 : 0)] =
-                        __float2bfloat16(acc[m][e]);
+                for (int qq = 0; qq < 2; qq++)
+                    #pragma unroll
+                    for (int o = 4; o < 32; o <<= 1) am[qq] = fmaxf(am[qq], __shfl_xor_sync(0xffffffffu, am[qq], o));
+                __syncthreads();
+                if (g == 0) { s_amax[warp][r0] = am[0]; s_amax[warp][r1] = am[1]; }
+                __syncthreads();
+                #pragma unroll
+                for (int qq = 0; qq < 2; qq++) {
+                    const unsigned int r = 2 * t + qq;
+                    float bm = 0.f;
+                    #pragma unroll
+                    for (int w8 = 0; w8 < TC8_WARPS; w8++) bm = fmaxf(bm, s_amax[w8][r]);
+                    if (r >= cnt[q]) continue;
+                    const unsigned long long pos = rbase + r;
+                    const float s = fmaxf(bm / 448.0f, 1e-12f);
+                    #pragma unroll
+                    for (int m = 0; m < MT; m++)
+                        #pragma unroll
+                        for (int hh = 0; hh < 2; hh++)
+                            out_q[pos * N + f0 + 16 * m + g + 8 * hh] =
+                                (unsigned char)__nv_cvt_float_to_fp8(h[m][2 * hh + qq] / s, __NV_SATFINITE, __NV_E4M3);
+                    if (warp == 0 && g == 0) out_s[pos * (N / 128) + blockIdx.x] = s;
+                }
+            } else {
+                #pragma unroll
+                for (int e = 0; e < 4; e++) {
+                    const unsigned int r = 2 * t + (e & 1);
+                    if (r >= cnt[q]) continue;
+                    #pragma unroll
+                    for (int m = 0; m < TILES; m++)
+                        out[(unsigned long long)(rbase + r) * N + f0 + 16 * m + g + ((e >> 1) ? 8 : 0)] =
+                            __float2bfloat16(acc[q][m][e]);
+                }
             }
         }
     }
+}
+
+// 2026-09-29: tc8_warp for a routed expert's rows: RG = 2 (one weight pass per 16 rows) when the
+// expert has more than TC_ROWS rows, else RG = 1. Every warp of the CTA takes the same branch.
+template <bool GATE_UP, int MT>
+__device__ __forceinline__ void tc8_warp_routed(
+    const unsigned char* __restrict__ Xq, const float* __restrict__ Xs,
+    const int* __restrict__ sorted_token_ids, bool by_pos, unsigned int begin, unsigned int end,
+    const unsigned char* __restrict__ W0, const float* __restrict__ S0,
+    const unsigned char* __restrict__ W1, const float* __restrict__ S1,
+    __nv_bfloat16* __restrict__ out, unsigned char* __restrict__ out_q, float* __restrict__ out_s,
+    unsigned int N, unsigned int K, unsigned int f0
+) {
+    if (end - begin > TC_ROWS)
+        tc8_warp<GATE_UP, MT, 2>(Xq, Xs, sorted_token_ids, by_pos, begin, end, W0, S0, W1, S1, out, out_q,
+                                 out_s, N, K, f0);
+    else
+        tc8_warp<GATE_UP, MT, 1>(Xq, Xs, sorted_token_ids, by_pos, begin, end, W0, S0, W1, S1, out, out_q,
+                                 out_s, N, K, f0);
 }
 
 // 2026-09-28: Gate+up and SiLU of the routed experts and the shared expert from the quantized
@@ -240,7 +284,7 @@ extern "C" __global__ void __launch_bounds__(TC8_THREADS) moe_expert_gate_up_act
                        &is_shared, &expert, &begin, &end)) return;
     const unsigned int f0 = blockIdx.x * TC8_GU_COLS + (threadIdx.x >> 5) * 16 * TC8_GU_MT;
     if (is_shared) {
-        tc8_warp<true, TC8_GU_MT>(Xq, Xs, sorted_token_ids, true, begin, end, sh_gate_weight,
+        tc8_warp<true, TC8_GU_MT, 1>(Xq, Xs, sorted_token_ids, true, begin, end, sh_gate_weight,
                                   sh_gate_block_scale, sh_up_weight, sh_up_block_scale, nullptr, sh_q, sh_s,
                                   N, K, f0);
         return;
@@ -255,7 +299,7 @@ extern "C" __global__ void __launch_bounds__(TC8_THREADS) moe_expert_gate_up_act
         }
         return;
     }
-    tc8_warp<true, TC8_GU_MT>(Xq, Xs, sorted_token_ids, false, begin, end, Wg,
+    tc8_warp_routed<true, TC8_GU_MT>(Xq, Xs, sorted_token_ids, false, begin, end, Wg,
                               (const float*)gate_block_scale_ptrs[expert], Wu,
                               (const float*)up_block_scale_ptrs[expert], nullptr, act_q, act_s, N, K, f0);
 }
@@ -280,7 +324,7 @@ extern "C" __global__ void __launch_bounds__(TC8_THREADS) moe_expert_down_act_fp
                        &is_shared, &expert, &begin, &end)) return;
     const unsigned int f0 = blockIdx.x * TC8_DOWN_COLS + (threadIdx.x >> 5) * 16 * TC8_DOWN_MT;
     if (is_shared) {
-        tc8_warp<false, TC8_DOWN_MT>(sh_q, sh_s, nullptr, true, begin, end, sh_down_weight, sh_down_block_scale,
+        tc8_warp<false, TC8_DOWN_MT, 1>(sh_q, sh_s, nullptr, true, begin, end, sh_down_weight, sh_down_block_scale,
                                      nullptr, nullptr, sh_down_out, nullptr, nullptr, N, K, f0);
         return;
     }
@@ -291,6 +335,6 @@ extern "C" __global__ void __launch_bounds__(TC8_THREADS) moe_expert_down_act_fp
                 C[(unsigned long long)pos * N + blockIdx.x * TC8_DOWN_COLS + i] = __float2bfloat16(0.0f);
         return;
     }
-    tc8_warp<false, TC8_DOWN_MT>(act_q, act_s, nullptr, true, begin, end, W, (const float*)block_scale_ptrs[expert],
+    tc8_warp_routed<false, TC8_DOWN_MT>(act_q, act_s, nullptr, true, begin, end, W, (const float*)block_scale_ptrs[expert],
                                  nullptr, nullptr, C, nullptr, nullptr, N, K, f0);
 }
