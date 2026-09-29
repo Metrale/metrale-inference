@@ -35,6 +35,8 @@ mod prefill;
 mod prefill_qkv_w8a8;
 mod prefill_w8a8;
 mod prefill_weights;
+#[cfg(test)]
+mod rope_site_fixture;
 mod trait_impl;
 pub mod types;
 mod types_weights;

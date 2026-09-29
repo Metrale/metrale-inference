@@ -7,7 +7,7 @@
 
 #![allow(unused_imports)]
 
-use super::{LayerType, ModelConfig};
+use super::{AttnPositionEncoding, LayerType, ModelConfig};
 
 impl ModelConfig {
     /// 2026-09-26: Every configured stop-token id, primary first; `[eos_token_id]` when
@@ -117,8 +117,13 @@ impl ModelConfig {
         self.num_experts > 0
     }
 
+    /// 2026-09-29: Dims of Q/K that RoPE rotates; 0 when attention has no positional
+    /// encoding, so a RoPE launch that skipped the `attn_position_encoding` check trips the
+    /// `rotary_dim > 0` assert in `ops::rope` instead of rotating silently.
     pub fn rotary_dim(&self) -> usize {
-        if self.rotary_dim > 0 {
+        if self.attn_position_encoding == Some(AttnPositionEncoding::None) {
+            0
+        } else if self.rotary_dim > 0 {
             self.rotary_dim
         } else {
             (self.partial_rotary_factor * self.head_dim as f64) as usize
@@ -258,8 +263,19 @@ impl ModelConfig {
         self.mamba2_d_inner() + self.mamba2_d_xbc() + self.mamba_num_heads
     }
 
+    /// 2026-09-29: Whether the SSM geometry is Mamba-2 (`mamba_*` heads) rather than
+    /// GatedDeltaNet (`linear_*` heads).
+    fn mamba2_geometry(&self) -> bool {
+        self.mamba_num_heads > 0 && self.mamba_head_dim > 0
+    }
+
+    /// 2026-09-29: Whether the model has Mamba-2 SSM layers (Nemotron-H).
+    pub fn has_mamba2_layers(&self) -> bool {
+        self.num_ssm_layers() > 0 && self.mamba2_geometry()
+    }
+
     pub fn ssm_h_state_bytes(&self) -> usize {
-        if self.mamba_num_heads > 0 && self.mamba_head_dim > 0 {
+        if self.mamba2_geometry() {
             self.mamba_num_heads * self.mamba_head_dim * self.ssm_state_size * 4
         } else {
             self.linear_num_value_heads * self.linear_value_head_dim * self.linear_key_head_dim * 4
@@ -268,7 +284,7 @@ impl ModelConfig {
 
     pub fn ssm_conv_state_bytes(&self) -> usize {
         let d_conv = self.linear_conv_kernel_dim;
-        if self.mamba_num_heads > 0 && self.mamba_head_dim > 0 {
+        if self.mamba2_geometry() {
             self.mamba2_d_xbc() * d_conv * 4
         } else {
             let conv_dim = self.linear_num_key_heads * self.linear_key_head_dim * 2

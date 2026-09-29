@@ -425,3 +425,11 @@ impl std::ops::DerefMut for ServeSchedulingArgs {
         &mut self.service
     }
 }
+
+impl ServeSchedulingArgs {
+    /// 2026-09-29: Whether any speculative proposer is on: MTP (`--speculative`),
+    /// `--self-speculative`, `--ngram-speculative` or `--dflash`.
+    pub fn speculative_proposer_requested(&self) -> bool {
+        self.speculative || self.self_speculative || self.ngram_speculative || self.dflash
+    }
+}

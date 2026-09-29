@@ -107,6 +107,7 @@ impl Qwen3AttentionLayer {
         // so it leaves no failed row in the boot audit. See `init_arch_gates`.
         let probes = ArchProbes::from_config(config);
         let mrope_interleaved = config.mrope_interleaved;
+        let position_encoding = config.attn_position_encoding()?;
         let proj = super::init_proj_kernels::ProjKernels::resolve(
             gpu,
             config,
@@ -128,6 +129,7 @@ impl Qwen3AttentionLayer {
             lora: None,
             gated,
             mrope_interleaved,
+            position_encoding,
             kv_dtype,
             head_dim_override: None,
             num_q_heads_override: None,

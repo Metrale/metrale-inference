@@ -244,7 +244,9 @@ impl Qwen3AttentionLayer {
         stream: u64,
     ) -> Result<()> {
         // 2026-09-25: RoPE on Q and K.
-        if self.mla.is_some() {
+        if !self.rotates_qk() {
+            // 2026-09-29: No positional encoding; the op dumps below still run.
+        } else if self.mla.is_some() {
             // 2026-09-25: Not reached: MLA layers returned above.
         } else if q_rope_fused {
             ops::rope_mrope_interleaved_k_only(
@@ -348,3 +350,7 @@ impl Qwen3AttentionLayer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "cache_skip_norm_rope_tests.rs"]
+mod tests;

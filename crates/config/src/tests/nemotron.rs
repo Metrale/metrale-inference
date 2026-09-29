@@ -57,7 +57,12 @@ fn nemotron_h_fixture_maps_mamba_moe_and_weight_layout() {
     assert_eq!(cfg.layer_type(1), LayerType::Moe);
     assert_eq!(cfg.layer_type(5), LayerType::FullAttention);
     assert_eq!(cfg.gqa_ratio(), 16);
-    assert_eq!(cfg.rotary_dim(), 128);
+    // 2026-09-29: No RoPE: the config's rope_theta / partial_rotary_factor are inert.
+    assert_eq!(
+        cfg.attn_position_encoding().unwrap(),
+        AttnPositionEncoding::None
+    );
+    assert_eq!(cfg.rotary_dim(), 0);
     assert_eq!(cfg.routed_scaling_factor, 2.5);
     assert!(cfg.norm_topk_prob);
     assert_eq!(cfg.weight_prefix, "backbone");

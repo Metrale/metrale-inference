@@ -145,6 +145,7 @@ impl ModelConfig {
             num_mtp_modules: 0,
             mtp_transformer_layers: 0,
             rotary_dim: 0,
+            attn_position_encoding: Some(super::AttnPositionEncoding::Rope),
             dflash_capture_layers: Vec::new(),
             dflash_gamma: None,
             adapter_max_rank: 0,

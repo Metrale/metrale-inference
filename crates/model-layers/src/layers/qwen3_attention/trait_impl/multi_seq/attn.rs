@@ -30,8 +30,12 @@ fn batch_cache_write_enabled() -> bool {
 }
 
 impl Qwen3AttentionLayer {
-    /// 2026-09-25: RoPE on each sequence's Q and K row, at that sequence's position.
+    /// 2026-09-29: RoPE on each sequence's Q and K row, at that sequence's position; nothing
+    /// when the layer has no positional encoding.
     pub(super) fn ms_phase_rope(&self, c: &MultiSeqCtx<'_>, meta: AttnMetadataDev) -> Result<()> {
+        if !self.rotates_qk() {
+            return Ok(());
+        }
         let MultiSeqCtx {
             fwd,
             n,
@@ -318,3 +322,7 @@ impl Qwen3AttentionLayer {
 }
 
 mod o_proj;
+
+#[cfg(test)]
+#[path = "attn/rope_tests.rs"]
+mod rope_tests;

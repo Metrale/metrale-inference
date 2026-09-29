@@ -124,11 +124,12 @@ impl Qwen3AttentionLayer {
         )
     }
 
-    /// 2026-09-25: Whether this layer's single-token decode may take the fused k_norm + RoPE + FP8
+    /// 2026-09-29: Whether this layer's single-token decode may take the fused k_norm + RoPE + FP8
     /// write kernel instead of the unfused chain. The kernel checks none of these itself; when this
     /// is false the caller runs the unfused chain.
     ///
     /// - FP8 KV.
+    /// - The layer rotates Q/K (`rotates_qk`): the kernel always applies RoPE to K.
     /// - The handle is loaded. `reshape_and_cache_fused_k_fp8.cu` is in the gb10 tree, which the
     ///   hopper and b200 targets inherit; b300 leaves it out, and metal, strix and strix-hip have
     ///   their own trees.
@@ -149,6 +150,7 @@ impl Qwen3AttentionLayer {
         rotary_dim: u32,
     ) -> bool {
         self.kv_dtype == KvCacheDtype::Fp8
+            && self.rotates_qk()
             && self.fused_k_norm_rope_cache_write_fp8_kv_k.0 != 0
             && self.mla.is_none()
             && self.yarn_inv_freq.is_null()
