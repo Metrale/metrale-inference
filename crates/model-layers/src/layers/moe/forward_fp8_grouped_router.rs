@@ -39,6 +39,18 @@ pub enum GroupedRouting {
 /// (`dense_gemv_batchm_split`); at most `DENSE_GEMV_BATCHM_MAX_M`.
 const ROUTER_ROWS_PER_BLOCK: u32 = 4;
 
+/// 2026-09-29: Block rows of the per-row router GEMV for `n` rows: `ROUTER_ROWS_PER_BLOCK` rows
+/// each up to 16 rows (4 block rows, 256 CTAs), then as many rows per block row as keep 4 block
+/// rows, up to `DENSE_GEMV_BATCHM_MAX_M`. Every block row reads the whole 1 MB router, so at a
+/// 256-row verify 64 block rows read it 64 times (7.8 ms per step on dgx2). A row's result does
+/// not depend on how rows are grouped (`dense_gemv_bf16_batchm.cu`).
+fn router_block_rows(n: u32) -> u32 {
+    let per_block = n
+        .div_ceil(4)
+        .clamp(ROUTER_ROWS_PER_BLOCK, ops::DENSE_GEMV_BATCHM_MAX_M);
+    n.div_ceil(per_block)
+}
+
 impl MoeLayer {
     /// 2026-09-26: Whether the grouped decode serves `m` rows with `routing`.
     /// `Batched` is [`Self::fp8_grouped_decode_ok`]. The exact routings also need
@@ -102,7 +114,7 @@ impl MoeLayer {
                     &self.weights.gate,
                     gate_logits,
                     n,
-                    n.div_ceil(ROUTER_ROWS_PER_BLOCK),
+                    router_block_rows(n),
                     num_experts,
                     h,
                     num_experts,
@@ -196,6 +208,31 @@ impl MoeLayer {
                 n,
                 stream,
             )
+        }
+    }
+}
+
+#[cfg(test)]
+mod router_block_rows_tests {
+    use super::router_block_rows;
+
+    /// 2026-09-29: Up to 16 rows the grouping is the previous one (4 rows per block row); wider
+    /// batches keep 4 block rows until a block row holds 16, and no block row exceeds 16.
+    #[test]
+    fn narrow_batches_keep_four_rows_per_block_and_wide_ones_cap_at_sixteen() {
+        for n in 1..=16u32 {
+            assert_eq!(router_block_rows(n), n.div_ceil(4), "n={n}");
+        }
+        assert_eq!(router_block_rows(64), 4);
+        assert_eq!(router_block_rows(128), 8);
+        assert_eq!(router_block_rows(256), 16);
+        for n in 1..=512u32 {
+            let y = router_block_rows(n);
+            assert!(
+                n.div_ceil(y) <= 16,
+                "n={n}: {} rows per block row",
+                n.div_ceil(y)
+            );
         }
     }
 }

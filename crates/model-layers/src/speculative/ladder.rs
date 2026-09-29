@@ -87,9 +87,66 @@ pub fn mtp_ladder_drafts(n_active: usize, num_drafts: usize) -> usize {
     ladder_drafts_from_steps(mtp_ladder_steps(), n_active, num_drafts)
 }
 
-/// 2026-09-25: The multi-sequence MTP width cap: `METRALE_MTP_MAX_SEQS`,
-/// value-parsed. Unset or unparseable gives 32, or 4 when
-/// `METRALE_NO_MTP_K_LADDER` is present. Read once per process.
+/// 2026-09-29: Engine default of the multi-sequence MTP dispatch cap, when neither
+/// `--mtp-max-seqs` nor MODEL.toml `[behavior] mtp_max_seqs` gives one. 4 when
+/// `METRALE_NO_MTP_K_LADDER` is present.
+pub const DEFAULT_MTP_MAX_SEQS: usize = 32;
+
+/// 2026-09-29: The widest cap a serve accepts: one batched verify's sequence width
+/// (`layer::VERIFY_WY_TABLE_SEQS`), which is also the serve's widest batch.
+pub const MAX_MTP_MAX_SEQS: usize = crate::layer::VERIFY_WY_TABLE_SEQS;
+
+/// 2026-09-29: Where the serve's dispatch cap came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MtpMaxSeqsSource {
+    Cli,
+    ModelDefault,
+    EngineDefault,
+}
+
+/// 2026-09-29: Resolve the multi-sequence MTP dispatch cap: `--mtp-max-seqs` when given, else
+/// MODEL.toml `[behavior] mtp_max_seqs` when above 0, else the engine default
+/// ([`DEFAULT_MTP_MAX_SEQS`], 4 under `METRALE_NO_MTP_K_LADDER`). A cap outside
+/// `1..=MAX_MTP_MAX_SEQS` is refused, from either source.
+pub fn resolve_mtp_max_seqs(
+    cli: Option<usize>,
+    model_default: u32,
+    ladder_disabled: bool,
+) -> anyhow::Result<(usize, MtpMaxSeqsSource)> {
+    let (n, source) = match (cli, model_default) {
+        (Some(n), _) => (n, MtpMaxSeqsSource::Cli),
+        (None, m) if m > 0 => (m as usize, MtpMaxSeqsSource::ModelDefault),
+        (None, _) => (
+            if ladder_disabled {
+                4
+            } else {
+                DEFAULT_MTP_MAX_SEQS
+            },
+            MtpMaxSeqsSource::EngineDefault,
+        ),
+    };
+    anyhow::ensure!(
+        (1..=MAX_MTP_MAX_SEQS).contains(&n),
+        "MTP dispatch cap {n} ({source:?}) is outside 1..={MAX_MTP_MAX_SEQS}"
+    );
+    Ok((n, source))
+}
+
+static PUBLISHED_MTP_MAX_SEQS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+/// 2026-09-29: Publish the serve's dispatch cap once, before the model sizes its verify pools
+/// and the scheduler reads its levers. A second publication of a different value is refused.
+pub fn set_mtp_max_seqs(n: usize) -> anyhow::Result<()> {
+    let got = *PUBLISHED_MTP_MAX_SEQS.get_or_init(|| n);
+    anyhow::ensure!(
+        got == n,
+        "MTP dispatch cap already published as {got}, refusing {n}"
+    );
+    Ok(())
+}
+
+/// 2026-09-29: The multi-sequence MTP dispatch cap the serve published
+/// ([`set_mtp_max_seqs`]); before publication (unit tests, tools) the engine default.
 ///
 /// The scheduler runs a speculative step only while the active count is at
 /// most this (`SchedLevers::mtp_max_seqs`, checked in `lane_decode.rs`), and
@@ -97,13 +154,14 @@ pub fn mtp_ladder_drafts(n_active: usize, num_drafts: usize) -> usize {
 /// from the same value (`ssm_reserve::mtp_state_slots`,
 /// `speculative::mtp_multi_seq_mode`).
 pub fn mtp_max_seqs() -> usize {
-    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *N.get_or_init(|| {
-        std::env::var("METRALE_MTP_MAX_SEQS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(if mtp_ladder_disabled() { 4 } else { 32 })
-    })
+    PUBLISHED_MTP_MAX_SEQS
+        .get()
+        .copied()
+        .unwrap_or(if mtp_ladder_disabled() {
+            4
+        } else {
+            DEFAULT_MTP_MAX_SEQS
+        })
 }
 
 #[cfg(test)]
@@ -134,6 +192,34 @@ mod tests {
         assert_eq!(ladder_drafts_from_steps(&steps, 24, 3), 2);
         assert_eq!(ladder_drafts_from_steps(&steps, 25, 3), 2);
         assert_eq!(ladder_drafts_from_steps(&steps, 32, 3), 2);
+    }
+
+    /// 2026-09-29: The flag beats MODEL.toml, MODEL.toml beats the engine default, 0 in
+    /// MODEL.toml means unset, and a cap outside 1..=128 is refused from either source.
+    #[test]
+    fn mtp_max_seqs_resolution_order_and_bounds() {
+        use MtpMaxSeqsSource::*;
+        assert_eq!(resolve_mtp_max_seqs(Some(8), 128, false).unwrap(), (8, Cli));
+        assert_eq!(
+            resolve_mtp_max_seqs(None, 128, false).unwrap(),
+            (128, ModelDefault)
+        );
+        assert_eq!(
+            resolve_mtp_max_seqs(None, 0, false).unwrap(),
+            (32, EngineDefault)
+        );
+        assert_eq!(
+            resolve_mtp_max_seqs(None, 0, true).unwrap(),
+            (4, EngineDefault)
+        );
+        assert_eq!(
+            resolve_mtp_max_seqs(Some(32), 128, false).unwrap(),
+            (32, Cli)
+        );
+        assert!(resolve_mtp_max_seqs(Some(0), 128, false).is_err());
+        assert!(resolve_mtp_max_seqs(Some(129), 0, false).is_err());
+        assert!(resolve_mtp_max_seqs(None, 129, false).is_err());
+        assert_eq!(MAX_MTP_MAX_SEQS, 128);
     }
 
     #[test]

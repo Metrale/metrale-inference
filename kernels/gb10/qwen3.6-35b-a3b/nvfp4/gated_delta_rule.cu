@@ -20,6 +20,10 @@
 #include <cuda_bf16.h>
 
 #define K_DIM 128
+// 2026-09-29: The state's row stride in gated_delta_rule_decode_f32 and _f32_strided: their
+// block is 128 threads, one value column each, so v_dim is 128 there. A run-time stride made
+// the compiler hold 128 row addresses next to H_reg (255 registers, spills).
+#define V_DIM_DECODE 128
 
 // 2026-09-25: State-norm clamp, the same definition as common/gated_delta_rule.cu. Here only
 // gated_delta_rule_decode_f32_strided_norm and gated_delta_rule_decode_f32_conv_norm
@@ -768,7 +772,7 @@ gated_delta_rule_decode_f32(
     const unsigned int head_repeat = num_v_heads / num_k_heads;
     const unsigned int kh = vh / head_repeat;
 
-    float* H_global = h_state + ((unsigned long long)(b * num_v_heads + vh) * K_DIM * v_dim);
+    float* H_global = h_state + ((unsigned long long)(b * num_v_heads + vh) * K_DIM * V_DIM_DECODE);
 
     __shared__ float smem_k[K_DIM];
     __shared__ float smem_q[K_DIM];
@@ -781,7 +785,7 @@ gated_delta_rule_decode_f32(
     float H_reg[K_DIM];
     #pragma unroll
     for (int j = 0; j < K_DIM; j++) {
-        H_reg[j] = H_global[j * v_dim + tid];
+        H_reg[j] = H_global[j * V_DIM_DECODE + tid];
     }
 
     float v_i = value[(b * num_v_heads + vh) * v_dim + tid];
@@ -801,20 +805,25 @@ gated_delta_rule_decode_f32(
     float v_new = (v_i - g * hk_dot) * bt;
 
     float qd0 = 0.0f, qd1 = 0.0f, qd2 = 0.0f, qd3 = 0.0f;
+    // 2026-09-29: k and q re-read from shared memory through volatile pointers: otherwise the
+    // compiler keeps the first loop's 128 k values live next to H_reg and spills (255
+    // registers, 1.4 KB of local memory per thread). Same values, same order.
+    const volatile float* vk = smem_k;
+    const volatile float* vq = smem_q;
     #pragma unroll
     for (int j = 0; j < K_DIM; j += 4) {
-        float h0 = g * H_reg[j]     + smem_k[j]     * v_new;
-        float h1 = g * H_reg[j + 1] + smem_k[j + 1] * v_new;
-        float h2 = g * H_reg[j + 2] + smem_k[j + 2] * v_new;
-        float h3 = g * H_reg[j + 3] + smem_k[j + 3] * v_new;
+        float h0 = g * H_reg[j]     + vk[j]     * v_new;
+        float h1 = g * H_reg[j + 1] + vk[j + 1] * v_new;
+        float h2 = g * H_reg[j + 2] + vk[j + 2] * v_new;
+        float h3 = g * H_reg[j + 3] + vk[j + 3] * v_new;
         H_reg[j]     = h0;
         H_reg[j + 1] = h1;
         H_reg[j + 2] = h2;
         H_reg[j + 3] = h3;
-        qd0 += h0 * smem_q[j];
-        qd1 += h1 * smem_q[j + 1];
-        qd2 += h2 * smem_q[j + 2];
-        qd3 += h3 * smem_q[j + 3];
+        qd0 += h0 * vq[j];
+        qd1 += h1 * vq[j + 1];
+        qd2 += h2 * vq[j + 2];
+        qd3 += h3 * vq[j + 3];
     }
     float q_dot = (qd0 + qd1) + (qd2 + qd3);
 
@@ -823,7 +832,7 @@ gated_delta_rule_decode_f32(
 
     #pragma unroll
     for (int j = 0; j < K_DIM; j++) {
-        H_global[j * v_dim + tid] = H_reg[j];
+        H_global[j * V_DIM_DECODE + tid] = H_reg[j];
     }
 }
 
@@ -1004,7 +1013,7 @@ gated_delta_rule_decode_f32_strided(
     const unsigned int head_repeat = num_v_heads / num_k_heads;
     const unsigned int kh = vh / head_repeat;
 
-    float* H_global = h_state + ((unsigned long long)(b * num_v_heads + vh) * K_DIM * v_dim);
+    float* H_global = h_state + ((unsigned long long)(b * num_v_heads + vh) * K_DIM * V_DIM_DECODE);
 
     __shared__ float smem_k[K_DIM];
     __shared__ float smem_q[K_DIM];
@@ -1017,7 +1026,7 @@ gated_delta_rule_decode_f32_strided(
     float H_reg[K_DIM];
     #pragma unroll
     for (int j = 0; j < K_DIM; j++) {
-        H_reg[j] = H_global[j * v_dim + tid];
+        H_reg[j] = H_global[j * V_DIM_DECODE + tid];
     }
 
     const float v_i = value[(unsigned long long)b * v_stride + vh * v_dim + tid];
@@ -1040,20 +1049,25 @@ gated_delta_rule_decode_f32_strided(
     const float v_new = (v_i - g * hk_dot) * bt;
 
     float qd0 = 0.0f, qd1 = 0.0f, qd2 = 0.0f, qd3 = 0.0f;
+    // 2026-09-29: k and q re-read from shared memory through volatile pointers: otherwise the
+    // compiler keeps the first loop's 128 k values live next to H_reg and spills (255
+    // registers, 1.4 KB of local memory per thread). Same values, same order.
+    const volatile float* vk = smem_k;
+    const volatile float* vq = smem_q;
     #pragma unroll
     for (int j = 0; j < K_DIM; j += 4) {
-        float h0 = g * H_reg[j]     + smem_k[j]     * v_new;
-        float h1 = g * H_reg[j + 1] + smem_k[j + 1] * v_new;
-        float h2 = g * H_reg[j + 2] + smem_k[j + 2] * v_new;
-        float h3 = g * H_reg[j + 3] + smem_k[j + 3] * v_new;
+        float h0 = g * H_reg[j]     + vk[j]     * v_new;
+        float h1 = g * H_reg[j + 1] + vk[j + 1] * v_new;
+        float h2 = g * H_reg[j + 2] + vk[j + 2] * v_new;
+        float h3 = g * H_reg[j + 3] + vk[j + 3] * v_new;
         H_reg[j]     = h0;
         H_reg[j + 1] = h1;
         H_reg[j + 2] = h2;
         H_reg[j + 3] = h3;
-        qd0 += h0 * smem_q[j];
-        qd1 += h1 * smem_q[j + 1];
-        qd2 += h2 * smem_q[j + 2];
-        qd3 += h3 * smem_q[j + 3];
+        qd0 += h0 * vq[j];
+        qd1 += h1 * vq[j + 1];
+        qd2 += h2 * vq[j + 2];
+        qd3 += h3 * vq[j + 3];
     }
     const float q_dot = (qd0 + qd1) + (qd2 + qd3);
 
@@ -1062,7 +1076,7 @@ gated_delta_rule_decode_f32_strided(
 
     #pragma unroll
     for (int j = 0; j < K_DIM; j++) {
-        H_global[j * v_dim + tid] = H_reg[j];
+        H_global[j * V_DIM_DECODE + tid] = H_reg[j];
     }
 }
 

@@ -180,7 +180,7 @@ pub struct SchedLevers {
     pub mtp_accept_fold_at_16: bool,
     /// 2026-09-25: `METRALE_MTP_ACCEPT_DEBUG`: the accept-telemetry log lines.
     pub mtp_accept_debug: bool,
-    /// 2026-09-25: `METRALE_MTP_MAX_SEQS`: the speculation width cap, as
+    /// 2026-09-25: `--mtp-max-seqs` / MODEL.toml `mtp_max_seqs`: the speculation width cap, as
     /// the model layer resolved it (the model factory sizes the MTP KV pool
     /// with the same value).
     pub mtp_max_seqs: usize,

@@ -38,9 +38,13 @@ pub use write_on_accept::{GdnCarryBinding, LayerWriteOnAccept};
 /// other entry zero. The strides do not depend on k.
 ///
 /// This constant is the most sequences one batched verify holds: it sizes the tables and
-/// the verify hidden and catch-up stashes (`impl_a1.rs`), and `can_batch_verify_dispatch`
-/// (`verify_e.rs`) admits at most this many.
-pub const VERIFY_WY_TABLE_SEQS: usize = 32;
+/// the verify hidden and catch-up stashes (`impl_a1/spec_buffers.rs`), the GDN carry and
+/// write-on-accept tables, and `can_batch_verify_dispatch` (`verify_e.rs`) admits at most
+/// this many. 2026-09-29: 128, the serve's widest batch (`DECODE_META_MAX_ROWS`), so one
+/// verify forward covers every speculating sequence: a verify split in chunks reads the MoE
+/// expert weights once per chunk. The tables cost 3,840 B per sequence; the SSM verify pools
+/// are sized by the dispatch cap, not by this (`ssm_reserve::mtp_state_slots`).
+pub const VERIFY_WY_TABLE_SEQS: usize = 128;
 /// 2026-09-25: Catch-up stash rows per sequence (`ModelLevers::mtp_kv_exact`). The batched
 /// verify step stashes at most this many accepted drafts per sequence
 /// (`verify_k4_batch_step.rs`).

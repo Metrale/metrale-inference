@@ -5,7 +5,7 @@
 //!
 //! Owner: scheduler.
 //! Invariants:
-//! - `step_mtp` calls this only when `METRALE_MTP_MAX_SEQS` is above 1, the
+//! - `step_mtp` calls this only when the MTP dispatch cap (`--mtp-max-seqs`) is above 1, the
 //!   serve has no DFlash drafter, `mtp_batch_verify` is on, and the chunk
 //!   holds at least 2 grammarless sequences that `model.can_batch_verify`
 //!   accepts.
@@ -49,7 +49,7 @@ pub(super) fn step_verify_k4_batched(
     let r_total = acc;
     off.push(r_total);
     debug_assert!(
-        (2..=32).contains(&n)
+        (2..=crate::scheduler::mtp_dcut::WIDTH_CAP).contains(&n)
             && ks.iter().all(|k| (2..=4).contains(k))
             && r_total <= crate::scheduler::mtp_dcut::VERIFY_ROW_BUDGET
     );

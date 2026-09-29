@@ -115,7 +115,11 @@ mem_spread = 0.05
 lm_head_batchm_max = 8
 # 2026-09-25: One strided GDN recurrent launch for a multi-sequence decode step whose SSM states are contiguous
 # (qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs). `METRALE_SSM_BATCHED_RECURRENT` overrides.
-ssm_batched_recurrent = false
+# 2026-09-29: ON. Without --gdn-fused-norm the batched arm's kernels are stride twins of the per-sequence
+# ones, byte-identical output and state (gdn_decode_strided_microtest); with the occupancy cap of
+# ops::gdn_decode_f32_strided it is faster from 4 sequences and ties at 2, per layer: 32 value heads B=4
+# 34 vs 51 us, B=128 2641 vs 3541 us; 48 value heads B=4 68 vs 96 us, B=128 3902 vs 4766 us (dgx2).
+ssm_batched_recurrent = true
 # 2026-09-25: The tensor-core GDN chunked-prefill family (model-layers ops/ssm_gdn_a3.rs). Its kernels are in
 # kernels/hopper/common only, which a gb10 build does not compile, so their handles are `KernelHandle(0)`
 # and the gb10 kernels run whatever this row says. `METRALE_GDN_PREFILL_TC` overrides.

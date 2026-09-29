@@ -350,8 +350,9 @@ pub(super) fn publish_moe_expert_act(config: &ModelConfig) {
         });
     if !fp8 && declared_a8 {
         tracing::info!(
-            "--weight-quantization declared: the checkpoint declares FP8 activations for its MoE \
-             experts; they decode W8A16 until the MoE W8A8 path is validated"
+            "--weight-quantization declared: the checkpoint declares FP8 activations for some of \
+             its MoE experts; they decode W8A16, as the MoE W8A8 decode is process-wide and needs \
+             every layer's experts at FP8 activations (or its kernel cap)"
         );
     }
     if published != fp8 {

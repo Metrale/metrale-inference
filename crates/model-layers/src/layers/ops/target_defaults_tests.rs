@@ -15,13 +15,14 @@ use super::*;
 use metrale_kernels::TargetDefaults;
 
 /// 2026-09-25: A copy of `kernels/gb10/HARDWARE.toml` `[defaults]`. Apart from
-/// `ssm_ba_gates_hopper` (on since 2026-09-28) and the two `w8a8_prefill_max_m_*` rows it equals `build_defaults::baseline`,
+/// `ssm_ba_gates_hopper` (on since 2026-09-28), `ssm_batched_recurrent` (on since 2026-09-29)
+/// and the two `w8a8_prefill_max_m_*` rows it equals `build_defaults::baseline`,
 /// which `gb10_declares_the_baseline_apart_from_the_measured_w8a8_ceiling`
 /// (`crates/kernels/tests/target_defaults.rs`) checks on the real file.
 const GB10: TargetDefaults = TargetDefaults {
     hw: "gb10",
     lm_head_batchm_max: 8,
-    ssm_batched_recurrent: false,
+    ssm_batched_recurrent: true,
     gdn_prefill_tc: false,
     ssm_ba_gates_hopper: true,
     fp8_act_quant_hopper: false,
@@ -115,7 +116,9 @@ fn hopper_resolves_its_recipe_from_an_empty_environment() {
 fn gb10_with_an_empty_environment_is_todays_behaviour() {
     let l = empty(&GB10);
     assert_eq!(l.lm_head_batchm_max.value, DENSE_GEMV_BATCHM_DECODE_MAX_M);
-    assert!(!l.ssm_batched_recurrent.value);
+    // 2026-09-29: On since then: byte-identical to the per-sequence launches and faster from
+    // 4 sequences (kernels/gb10/HARDWARE.toml).
+    assert!(l.ssm_batched_recurrent.value);
     assert!(
         !l.gdn_prefill_tc.value,
         "the scalar GDN prefill spine stays GB10's default. Round 13 promoted \

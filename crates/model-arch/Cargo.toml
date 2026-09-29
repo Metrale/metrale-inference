@@ -123,6 +123,10 @@ name = "gdn_strided_norm_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "gdn_decode_strided_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "gdn_verify_fused_microtest"
 required-features = ["cuda", "gpu-examples"]
 

@@ -31,10 +31,10 @@ metadata:
   kv_dtype: bf16
 
 defaults:
-  # The --weight-quantization tier this recipe was measured under: FP8-declared layers
-  # requantized to NVFP4, the engine as it ran before the tiers. `declared` (the
-  # engine default) is not measured on this recipe.
-  weight_quantization: nvfp4
+  # The --weight-quantization tier: `declared`, the checkpoint's own W8A8 (experts and
+  # block-scaled attention/GDN decode). Owner decision 2026-09-29 on the full BFCL draw
+  # (declared 84.56/86.40 vs nvfp4 85.16/86.15, N=1004 hermetic) and agentic 2/2.
+  weight_quantization: declared
   port: 8888
   host: 0.0.0.0
   # 256K with bf16 KV fits next to the FP8 weights on one GB10: the KV

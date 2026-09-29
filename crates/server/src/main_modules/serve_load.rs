@@ -72,6 +72,7 @@ pub(crate) fn load_model(
     // 2026-09-26: After this call `args.num_drafts` is `Some`, so
     // `args.resolved_num_drafts()` is valid.
     serve_phases::apply_model_default_num_drafts(&mut args, &ptx_set);
+    serve_phases::publish_mtp_max_seqs(&args, &ptx_set)?;
 
     let (gpu, free_mem) = serve_phases::init_gpu_backend(&args, &ptx_set)?;
 

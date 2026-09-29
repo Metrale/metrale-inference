@@ -309,6 +309,29 @@ pub fn gdn_decode_f32_conv_norm(
         .launch(stream)
 }
 
+/// 2026-09-29: Dynamic shared memory each [`gdn_decode_f32_strided`] CTA reserves and does
+/// not use, from [`GDN_DECODE_STRIDED_SMEM_CAP_MIN_BATCH`] sequences: it caps the CTAs resident
+/// per SM (3 on GB10's 100 KB), so a CTA's 64 KB head state is still in L2 when its update
+/// pass re-reads it; uncapped, the second pass of a wide launch misses L2. Measured
+/// 2026-09-29 on dgx2 (`gdn_decode_strided_microtest`, per layer, uncapped / capped /
+/// per-sequence launches), 32 value heads: B=16 365 / 362 / 428 us, B=64 1904 / 1362 / 1740,
+/// B=128 3857 / 2641 / 3541; 48 value heads: B=16 672 / 507 / 589, B=128 5737 / 3902 / 4766.
+/// The output and state bits do not depend on it.
+pub const GDN_DECODE_STRIDED_SMEM_CAP_BYTES: u32 = 32 << 10;
+
+/// 2026-09-29: Smallest batch that takes the cap. Below it the cap costs more than the L2 it
+/// saves (32 value heads, B=4: 34.1 us uncapped, 43.7 us capped).
+pub const GDN_DECODE_STRIDED_SMEM_CAP_MIN_BATCH: u32 = 16;
+
+/// 2026-09-29: The dynamic shared memory [`gdn_decode_f32_strided`] reserves for `batch_size`.
+pub fn gdn_decode_strided_smem(batch_size: u32) -> u32 {
+    if batch_size >= GDN_DECODE_STRIDED_SMEM_CAP_MIN_BATCH {
+        GDN_DECODE_STRIDED_SMEM_CAP_BYTES
+    } else {
+        0
+    }
+}
+
 /// 2026-09-25: Strided FP32 GDN decode for several sequences in one launch:
 /// Q/K/V, gate/beta and the output are rows `qk_stride`, `v_stride`,
 /// `gb_stride` and `out_stride` apart per sequence.
@@ -337,6 +360,7 @@ pub fn gdn_decode_f32_strided(
     KernelLaunch::new(gpu, kernel)
         .grid([num_v_heads, batch_size, 1])
         .block([128, 1, 1])
+        .shared_mem(gdn_decode_strided_smem(batch_size))
         .arg_ptr(h_state)
         .arg_ptr(query)
         .arg_ptr(key)

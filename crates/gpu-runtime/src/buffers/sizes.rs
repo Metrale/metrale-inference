@@ -13,6 +13,7 @@ use metrale_config::ModelConfig;
 use metrale_kernels::attn_splitk;
 
 mod regions;
+mod total;
 
 /// 2026-09-25: The widest `M` the fused dense-FFN gate+up decode GEMM serves, and so
 /// the row extent of `ffn_gate_up_fused`. Declared here because the arena is sized
@@ -20,6 +21,13 @@ mod regions;
 /// metrale-model-layers) reads it for its `5..=GATEUP_FUSED_MAX_M` band, so the band
 /// and the buffer cannot disagree.
 pub const GATEUP_FUSED_MAX_M: usize = 16;
+
+/// 2026-09-29: Most rows (`R = Σ ks`) one batched MTP verify scores: 128 sequences at one
+/// draft (the serve's widest batch, `DECODE_META_MAX_ROWS`). It sizes the verify block-table
+/// rows (`sizes/regions.rs`) and the logits floor here; model-engine's `VERIFY_ROW_CAP` and
+/// the scheduler's `VERIFY_ROW_BUDGET` are this value. Was 160 (32 sequences at up to five
+/// rows).
+pub const VERIFY_ROW_CAP: usize = 256;
 
 /// 2026-09-25: Byte size of each arena buffer. `M` is `max_batch_tokens` and
 /// `ceil16(M)` is M rounded up to a multiple of 16.
@@ -202,11 +210,11 @@ impl BufferSizes {
             k_max * h * bf16
         };
 
-        // 2026-09-25: Logit rows: min(M, max(160, decode rows + 1)). 160 is
-        // `VERIFY_ROW_CAP`, the most rows a batched MTP verify scores. The mixed
+        // 2026-09-25: Logit rows: min(M, max(VERIFY_ROW_CAP, decode rows + 1)):
+        // `VERIFY_ROW_CAP` is the most rows a batched MTP verify scores. The mixed
         // decode step (`decode_b2.rs`) writes a prefill row after its `padded_n`
         // decode rows, and `padded_n` can reach `decode_meta.rows()`, hence + 1.
-        let logits_tokens = m.min(160.max(decode_meta.rows() + 1));
+        let logits_tokens = m.min(VERIFY_ROW_CAP.max(decode_meta.rows() + 1));
 
         // 2026-09-25: Mamba-2 d_inner may exceed hidden_size; norm_output and
         // attn_output hold rows of either.
@@ -350,6 +358,10 @@ impl BufferSizes {
                 } else {
                     0
                 })
+                // 2026-09-29: The MTP batched propose's `[n, 2 * hidden]` concat, for a propose
+                // as wide as the serve's widest batch (`DECODE_META_MAX_ROWS`, at most M): below
+                // that the propose splits into groups, each reading the drafter's experts again.
+                .max(m.min(super::DECODE_META_MAX_ROWS) * 2 * h * bf16)
                 .max(256),
             // 2026-09-25: `ceil16(M)` rows as in `ssm_qkvz`: on a
             // `sequential_qkvz` model the QKVZ projection writes here.
@@ -363,7 +375,11 @@ impl BufferSizes {
                     0
                 })
                 .max(256),
-            ssm_gates: (m * config.linear_num_value_heads * 2 * 4).max(256),
+            // 2026-09-29: Also the MTP batched propose's normed hidden rows `[n, hidden]` BF16,
+            // n up to `DECODE_META_MAX_ROWS`, at most M (see `ssm_ba`).
+            ssm_gates: (m * config.linear_num_value_heads * 2 * 4)
+                .max(m.min(super::DECODE_META_MAX_ROWS) * h * bf16)
+                .max(256),
             // 2026-09-25: FP32 conv1d output, bounded by the QKVZ width. MLA also
             // uses it for its Q rope rows [M, q_heads * qk_rope_head_dim] BF16.
             ssm_conv_out_f32: (m * config.ssm_qkvz_size() * 4)
@@ -441,54 +457,5 @@ impl BufferSizes {
             q2_act_q8,
             ssm_rowwise_w_bf16,
         }
-    }
-
-    /// 2026-09-25: The sum of the sizes, which preflight reserves for the arena.
-    /// `o_latent` and `norm_unit_w` are not in it.
-    pub fn total_bytes(&self) -> usize {
-        self.hidden_states
-            + self.residual
-            + self.norm_output
-            + self.qkv_output
-            + self.attn_output
-            + self.gate_logits
-            + self.gate_logits_f32
-            + self.moe_router_in_f32
-            + self.moe_output
-            + self.logits
-            + self.ssm_qkvz
-            + self.ssm_ba
-            + self.ssm_deinterleaved
-            + self.ssm_gates
-            + self.ssm_conv_out_f32
-            + self.scratch
-            + self.expert_gate_out
-            + self.expert_up_out
-            + self.hc_lowrank_scratch
-            + self.qsa_select_scratch
-            + self.expert_down_out
-            + self.splitk_workspace
-            + self.gdn_fla_scratch
-            + self.ssd_scratch
-            + self.hc_streams
-            + self.hc_post
-            + self.hc_comb
-            + self.token_ids
-            + self.ffn_act_q8
-            + self.ffn_act_a
-            + self.ffn_gate_up_fused
-            + self.ffn_act_scale
-            + self.ffn_act_scale_kmajor
-            + self.fp8_act
-            + self.moe_fp8_scratch
-            + self.fp8_act_scale
-            + self.fp8_act_scale_kmajor
-            + self.lora_xa
-            + self.lora_delta
-            + self.lora_hact
-            + self.lora_seq_slot
-            + self.q2_dequant_scratch
-            + self.q2_act_q8
-            + self.ssm_rowwise_w_bf16
     }
 }

@@ -12,11 +12,11 @@
 use anyhow::{Context, Result};
 
 use super::{
-    LayerType, ModelConfig, default_conv_kernel, default_partial_rotary, default_rms_eps,
-    default_rope_theta, finalize_config, parse_deepseek_v4, parse_gemma4_params, parse_glm5_next,
-    parse_kimi_k3, parse_laguna, parse_longcat_ngram, parse_minimax_m2, parse_mistral_params,
-    parse_quantization_config, parse_qwen4_exp, parse_step3p7, parse_vision_config,
-    sanitize_kimi_k3_eos, validate_config,
+    AttnPositionEncoding, LayerType, ModelConfig, default_conv_kernel, default_partial_rotary,
+    default_rms_eps, default_rope_theta, finalize_config, parse_deepseek_v4, parse_gemma4_params,
+    parse_glm5_next, parse_kimi_k3, parse_laguna, parse_longcat_ngram, parse_minimax_m2,
+    parse_mistral_params, parse_quantization_config, parse_qwen4_exp, parse_step3p7,
+    parse_vision_config, resolve_attn_position_encoding, sanitize_kimi_k3_eos, validate_config,
 };
 
 fn required_u64(raw: &serde_json::Value, key: &str, model_type: &str) -> Result<u64> {
@@ -46,6 +46,7 @@ fn required_u32(raw: &serde_json::Value, key: &str, model_type: &str) -> Result<
 /// `eos_token_ids` from every declared stop id, then the Kimi-K3 stop-set clean-up.
 pub fn parse_config(json: &str) -> Result<ModelConfig> {
     let mut config = parse_config_dispatch(json)?;
+    resolve_attn_position_encoding(&mut config)?;
     populate_eos_token_ids(&mut config, json);
     sanitize_kimi_k3_eos(&mut config);
     Ok(config)
@@ -229,6 +230,11 @@ fn parse_config_dispatch(json: &str) -> Result<ModelConfig> {
                 config.shared_expert_intermediate_size = config.moe_shared_expert_intermediate_size;
             }
             config.attn_gated = false;
+            // 2026-09-29: Nemotron-H attention applies no rotary embedding (HF
+            // `NemotronHAttention.forward`, the checkpoint's own modelling code and vLLM's
+            // `nemotron_h.py` all feed the projected Q/K straight into attention). The
+            // config's `rope_theta` / `partial_rotary_factor` are inert HF defaults.
+            config.attn_position_encoding = Some(AttnPositionEncoding::None);
             config.weight_prefix = "backbone".to_string();
             if !config.hybrid_override_pattern.is_empty() && config.layer_types.is_empty() {
                 config.layer_types = config

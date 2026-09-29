@@ -170,6 +170,7 @@ pub(super) fn generate_target_ptx_rs(
              \x20               fp8_kv_calibration_tokens: {},\n\
              \x20               default_kv_dtype: \"{}\",\n\
              \x20               default_num_drafts: {},\n\
+             \x20               mtp_max_seqs: {},\n\
              \x20               disable_tool_steering: {},\n\
              \x20               disable_cwd_hint_injection: {},\n\
              \x20               use_sampling_presets_for_core: {},\n\
@@ -213,6 +214,7 @@ pub(super) fn generate_target_ptx_rs(
             target.behavior_fp8_kv_calibration_tokens,
             target.behavior_default_kv_dtype,
             target.behavior_default_num_drafts,
+            target.behavior_mtp_max_seqs,
             target.behavior_disable_tool_steering,
             target.behavior_disable_cwd_hint_injection,
             target.behavior_use_sampling_presets_for_core,

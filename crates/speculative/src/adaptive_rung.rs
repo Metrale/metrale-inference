@@ -314,7 +314,7 @@ impl AdaptiveRung {
         } else {
             tracing::info!(
                 "speculation DISENGAGED at width n={n_active} > dispatch cap {cap}: this width \
-                 plain-decodes (METRALE_MTP_MAX_SEQS raises the cap; the verify pools grow with it) \
+                 plain-decodes (--mtp-max-seqs or MODEL.toml mtp_max_seqs raises the cap; the verify pools grow with it) \
                  — flips={flips}"
             );
         }

@@ -28,6 +28,8 @@ pub(crate) struct ParsedBehavior {
     pub fp8_kv_calibration_tokens: usize,
     pub default_kv_dtype: String,
     pub default_num_drafts: u32,
+    /// 2026-09-29: See `ModelBehavior::mtp_max_seqs`.
+    pub mtp_max_seqs: u32,
     pub disable_tool_steering: bool,
     pub disable_cwd_hint_injection: bool,
     pub use_sampling_presets_for_core: bool,
@@ -79,6 +81,7 @@ impl Default for ParsedBehavior {
             fp8_kv_calibration_tokens: 0,
             default_kv_dtype: String::new(),
             default_num_drafts: 0,
+            mtp_max_seqs: 0,
             disable_tool_steering: false,
             disable_cwd_hint_injection: false,
             use_sampling_presets_for_core: false,
@@ -150,6 +153,11 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         .to_string();
     let default_num_drafts = b
         .and_then(|v| v.get("default_num_drafts"))
+        .and_then(|v| v.as_integer())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+    let mtp_max_seqs = b
+        .and_then(|v| v.get("mtp_max_seqs"))
         .and_then(|v| v.as_integer())
         .map(|v| v as u32)
         .unwrap_or(0);
@@ -268,6 +276,7 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         fp8_kv_calibration_tokens,
         default_kv_dtype,
         default_num_drafts,
+        mtp_max_seqs,
         disable_tool_steering,
         disable_cwd_hint_injection,
         use_sampling_presets_for_core,

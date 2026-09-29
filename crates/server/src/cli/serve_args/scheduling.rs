@@ -151,6 +151,14 @@ pub struct ServeSchedulingArgs {
     #[arg(long)]
     pub num_drafts: Option<usize>,
 
+    /// Widest batch that speculates (the multi-sequence MTP dispatch cap): above
+    /// this many active sequences a step plain-decodes. Precedence (highest wins):
+    /// this flag → MODEL.toml `[behavior].mtp_max_seqs` → 32 (4 under
+    /// `METRALE_NO_MTP_K_LADDER`). 1..=128. The SSM verify pools cover this many
+    /// sequences, about 138 MB each on Qwen3.6-35B-A3B.
+    #[arg(long)]
+    pub mtp_max_seqs: Option<usize>,
+
     /// Maximum concurrent sequences batched into one GPU decode step.
     #[arg(long, default_value_t = 8)]
     pub max_batch_size: usize,
@@ -415,5 +423,13 @@ impl std::ops::Deref for ServeSchedulingArgs {
 impl std::ops::DerefMut for ServeSchedulingArgs {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.service
+    }
+}
+
+impl ServeSchedulingArgs {
+    /// 2026-09-29: Whether any speculative proposer is on: MTP (`--speculative`),
+    /// `--self-speculative`, `--ngram-speculative` or `--dflash`.
+    pub fn speculative_proposer_requested(&self) -> bool {
+        self.speculative || self.self_speculative || self.ngram_speculative || self.dflash
     }
 }

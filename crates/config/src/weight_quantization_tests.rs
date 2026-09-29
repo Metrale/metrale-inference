@@ -214,10 +214,11 @@ fn fp8_block_moe_under_declared() {
 }
 
 /// 2026-09-28: The block-scaled and MoE W8A8 caps on Qwen/Qwen3.6-35B-A3B-FP8 under `declared`.
-/// Path A: with the dense bit on and both others off (the shipped caps), the experts and the
-/// block-scaled attention/GDN decode BF16 (W8A16) while still declaring FP8 activations.
-/// Path B: with both on, FP8. Path C: the dense per-channel checkpoint answers FP8 with the
-/// block-scaled bit off, so it is unaffected; the `nvfp4` tier asks for nothing.
+/// Path A: with the dense bit on and both others off (the caps shipped until 2026-09-29), the
+/// experts and the block-scaled attention/GDN decode BF16 (W8A16) while still declaring FP8
+/// activations. Path B: with all three on (shipped since), FP8. Path C: the dense per-channel
+/// checkpoint answers FP8 with the block-scaled bit off, so it is unaffected; the `nvfp4` tier
+/// asks for nothing.
 #[test]
 fn block_scaled_and_moe_w8a8_wait_for_their_own_caps() {
     let p = plan("fp8_moe");

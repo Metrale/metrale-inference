@@ -5,7 +5,10 @@
 //! Owner: model-layers (MoE).
 //! Invariants: none beyond the types.
 
-use super::{FP8_GROUPED_DECODE_MAX_ROWS, fp8_grouped_decode_shape_ok, grouped_decode_buffer_need};
+use super::{
+    FP8_GROUPED_DECODE_MAX_ROWS, FP8_GROUPED_DECODE_TC_MAX_ROWS, fp8_grouped_decode_rows_ok,
+    fp8_grouped_decode_shape_ok, grouped_decode_buffer_need,
+};
 
 /// 2026-09-25: Qwen3.6-35B-A3B-FP8: hidden 2048, moe_intermediate 512, 256 experts, top-8.
 const H: u32 = 2048;
@@ -26,6 +29,29 @@ fn row_envelope_is_2_to_max() {
         H,
         INTER
     ));
+}
+
+/// 2026-09-29: The tensor-core kernels take one row and every width up to one 128-sequence
+/// verify at one draft; the scalar kernels keep 2..=64, so the kill switch restores the old
+/// envelope exactly.
+#[test]
+fn tensor_core_rows_reach_a_128_sequence_verify() {
+    assert_eq!(FP8_GROUPED_DECODE_TC_MAX_ROWS, 2 * 128);
+    for m in [1usize, 2, 64, 65, 96, 128, 129, 192, 256] {
+        assert!(fp8_grouped_decode_rows_ok(m, true), "tc m={m}");
+    }
+    assert!(!fp8_grouped_decode_rows_ok(0, true));
+    assert!(!fp8_grouped_decode_rows_ok(257, true));
+    for m in [1usize, 65, 128, 256] {
+        assert!(!fp8_grouped_decode_rows_ok(m, false), "scalar m={m}");
+    }
+    for m in 2..=FP8_GROUPED_DECODE_MAX_ROWS {
+        assert_eq!(
+            fp8_grouped_decode_rows_ok(m, false),
+            fp8_grouped_decode_shape_ok(m, H, INTER),
+            "m={m}"
+        );
+    }
 }
 
 #[test]
@@ -70,4 +96,10 @@ fn buffer_need_matches_the_launch_layout() {
     // still dominate the sort scratch (3*512*4 + 257*4 + 257*4 = 8200 B).
     let n64 = grouped_decode_buffer_need(64, 2048, 512, 256, 8);
     assert_eq!(n64.gate_logits, 32768);
+    // 2026-09-29: A 256-row verify: te = 2048, the routed FP32 SiLU rows are 4 MiB and the
+    // sorted down rows 8 MiB, inside the arena's `max_batch_tokens`-row expert buffers.
+    let n256 = grouped_decode_buffer_need(256, 2048, 512, 256, 8);
+    assert_eq!(n256.expert_gate_out, 2048 * 512 * 4);
+    assert_eq!(n256.expert_down_out, 2048 * 2048 * 2);
+    assert_eq!(n256.gate_logits, 256 * 256 * 2);
 }

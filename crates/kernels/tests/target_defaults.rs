@@ -119,12 +119,17 @@ fn gb10_declares_the_baseline_apart_from_the_measured_w8a8_ceiling() {
     // bit-identical output); the baseline keeps it off for the other targets.
     assert!(d.ssm_ba_gates_hopper);
     assert!(!baseline("gb10").ssm_ba_gates_hopper);
+    // 2026-09-29: The batched GDN recurrence is ON on GB10 (byte-identical to the
+    // per-sequence launches, faster from 4 sequences; kernels/gb10/HARDWARE.toml).
+    assert!(d.ssm_batched_recurrent);
+    assert!(!baseline("gb10").ssm_batched_recurrent);
 
     // 2026-09-25: Every other field equals the baseline.
     let normalised = Defaults {
         w8a8_prefill_max_m_widening: u32::MAX,
         w8a8_prefill_max_m_narrowing: u32::MAX,
         ssm_ba_gates_hopper: false,
+        ssm_batched_recurrent: false,
         ..d
     };
     assert_eq!(

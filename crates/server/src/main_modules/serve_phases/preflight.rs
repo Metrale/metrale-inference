@@ -19,6 +19,7 @@ use crate::cli;
 mod decode_ring;
 mod gpu_backend;
 mod headroom;
+mod mamba2_spec;
 mod per_sequence_state;
 mod post_load_audit;
 mod refusal;
@@ -27,7 +28,10 @@ mod ssm_h_fp16;
 pub(crate) use gpu_backend::init_gpu_backend;
 pub(crate) use headroom::PostLoadInputs;
 pub(crate) use post_load_audit::post_load_memory_audit;
-use {per_sequence_state::per_sequence_reserve, ssm_h_fp16::ssm_h_fp16_preconditions};
+use {
+    mamba2_spec::refuse_speculation_over_mamba2, per_sequence_state::per_sequence_reserve,
+    ssm_h_fp16::ssm_h_fp16_preconditions,
+};
 
 pub(crate) struct ReservePreflight {
     pub(crate) inference_reserve: usize,
@@ -51,8 +55,8 @@ pub(crate) fn preflight_reserve(
     // 2026-09-26: `args.dflash` counts as speculative here because
     // `TransformerModel::new` allocates the SSM rollback pools whenever DFlash
     // capture layers exist (`has_mtp` includes `dflash_kgamma > 0`).
-    let spec_on_pool =
-        args.speculative || args.self_speculative || args.ngram_speculative || args.dflash;
+    let spec_on_pool = args.speculative_proposer_requested();
+    refuse_speculation_over_mamba2(args, config)?;
     ssm_h_fp16_preconditions(args, config)?;
     // 2026-09-26: Verify slots are `ssm_reserve::mtp_state_slots`, the count
     // `SsmStatePool::new` also allocates. `METRALE_MTP_POOL_FULL_WIDTH`

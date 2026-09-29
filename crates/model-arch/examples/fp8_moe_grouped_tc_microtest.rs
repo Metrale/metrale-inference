@@ -38,7 +38,8 @@ use fixture::{
 const H: usize = 2048;
 const INTER: usize = 512;
 const TOP_K: usize = 8;
-const MAX_M: usize = 64;
+/// 2026-09-29: One 128-sequence verify at one draft (`FP8_GROUPED_DECODE_TC_MAX_ROWS`).
+const MAX_M: usize = 256;
 const GUARD: usize = 64;
 /// 2026-09-28: The tensor-core leg sums in another order (its FP32 SiLU product enters the
 /// down MMAs as two BF16 terms); both legs round their outputs to BF16, so 1e-2 from the
@@ -392,7 +393,9 @@ fn main() -> Result<()> {
     }
 
     let mut first = true;
-    for m in [1usize, 2, 3, 4, 7, 8, 9, 16, 17, 32, 48, 64] {
+    for m in [
+        1usize, 2, 3, 4, 7, 8, 9, 16, 17, 32, 48, 64, 65, 96, 128, 129, 192, 256,
+    ] {
         dispatch(
             &gpu,
             &k,
@@ -406,7 +409,7 @@ fn main() -> Result<()> {
             Leg::Scalar,
         )?;
         let scalar = read(m)?;
-        let mut line = format!("M={m:2}");
+        let mut line = format!("M={m:3}");
         for (i, (leg, bound)) in [(Leg::Tc, MAX_REL_L2), (Leg::TcW8a8, MAX_REL_L2_W8A8)]
             .into_iter()
             .enumerate()
@@ -447,7 +450,7 @@ fn main() -> Result<()> {
     }
     println!(
         "ALL PASS: tensor-core grouped FP8 MoE decode (W8A16, W8A8) is row-invariant and within \
-         {MAX_REL_L2:.0e} / {MAX_REL_L2_W8A8:.0e} of the scalar kernels, M=1..64"
+         {MAX_REL_L2:.0e} / {MAX_REL_L2_W8A8:.0e} of the scalar kernels, M=1..{MAX_M}"
     );
     Ok(())
 }

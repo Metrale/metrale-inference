@@ -159,40 +159,28 @@ impl MtpHead {
         self.gemm_rows(gpu, normed, k_w, k_out, n, kv_dim as u32, h as u32, stream)?;
         self.gemm_rows(gpu, normed, v_w, v_out, n, kv_dim as u32, h as u32, stream)?;
 
-        // 2026-09-25: Per-row Q/gate deinterleave, with `forward_one`'s
-        // arguments.
+        // 2026-09-25: Q/gate deinterleave with `forward_one`'s arguments. 2026-09-29: One
+        // launch over the n rows, `qg_dim` apart (one block per row either way).
         let deint_k = self.deinterleave_qg_k.unwrap();
-        for i in 0..n {
-            ops::deinterleave_qg(
-                gpu,
-                deint_k,
-                q_out.offset(i * qg_dim * bf16),
-                1,
-                nq,
-                hd,
-                nq * hd * 2,
-                stream,
-            )?;
-        }
-        // 2026-09-25: The Q norm runs once per sequence. After the deinterleave
-        // each row is [q (q_dim) | gate (q_dim)] at stride qg_dim, so one
-        // packed n*nq-row launch would normalize sequence 0's gate as Q heads
-        // and never reach the later sequences' Q. K is packed [n, kv_dim] and
-        // takes one launch.
-        for i in 0..n {
-            let q_row = q_out.offset(i * qg_dim * bf16);
-            ops::rms_norm(
-                gpu,
-                self.rms_norm_k,
-                q_row,
-                &self.q_norm,
-                q_row,
-                nq,
-                hd,
-                eps,
-                stream,
-            )?;
-        }
+        ops::deinterleave_qg(gpu, deint_k, q_out, n as u32, nq, hd, nq * hd * 2, stream)?;
+        // 2026-09-25: The Q norm runs per sequence: after the deinterleave each row is
+        // [q (q_dim) | gate (q_dim)] at stride qg_dim, so a packed n*nq-row launch would
+        // normalize sequence 0's gate as Q heads. 2026-09-29: `rms_norm_strided` takes the nq
+        // heads of all n rows in one launch, `rms_norm`'s per-row body at each row's base. K is
+        // packed [n, kv_dim] and takes one launch.
+        ops::rms_norm_strided(
+            gpu,
+            self.rms_norm_strided_k,
+            q_out,
+            &self.q_norm,
+            q_out,
+            nq,
+            n as u32,
+            hd,
+            eps,
+            qg_dim as u32,
+            stream,
+        )?;
         ops::rms_norm(
             gpu,
             self.rms_norm_k,
@@ -205,101 +193,112 @@ impl MtpHead {
             stream,
         )?;
 
-        // 2026-09-25: 7. Per sequence: attention metadata, RoPE, KV write,
-        // paged attention and the sigmoid gate.
+        // 2026-09-25: 7. Attention metadata, RoPE, KV write, paged attention and the sigmoid
+        // gate. 2026-09-29: One metadata upload and one launch of each kernel for all n rows
+        // (it was a loop of four launches and an upload per sequence: 129 paged-attention
+        // launches of one sequence's heads each per 128-wide propose). Each kernel computes a
+        // row as it did alone.
         let mut kv_cache = self.kv_cache.lock();
         let bs = kv_cache.block_size();
         let scratch = ctx.buffers.scratch();
         let attn_out = ctx.buffers.attn_output();
         let inv_sqrt_d = 1.0f32 / (hd as f32).sqrt();
         let kv_stride = nkv * hd;
+        let mut slots = Vec::with_capacity(n);
+        let mut seq_lens = Vec::with_capacity(n);
+        let mut pos_u32 = Vec::with_capacity(n);
         for i in 0..n {
             let state = &mut *states[i];
             let blocks_needed = (state.seq_len / bs) + 1;
             while state.block_table.len() < blocks_needed {
                 state.block_table.push(kv_cache.alloc_block()?);
             }
-            let meta_base = self.propose_meta.offset(i * self.propose_meta_stride);
             let block_idx = state.block_table[state.seq_len / bs];
-            let global_slot = (block_idx as i64) * (bs as i64) + ((state.seq_len % bs) as i64);
-            // 2026-09-25: The region is one `propose_meta_stride`, sized at
-            // construction from `max_seq_len`
-            // (`batch_caps::propose_meta_stride_env`). `pack_mtp_attn_meta`
-            // refuses a block table that does not fit, with an error text that
-            // `mtp_bootstrap_step.rs` matches (see `mtp_meta.rs`).
-            let meta_buf = pack_mtp_attn_meta(
-                positions[i] as u32,
-                global_slot,
-                (state.seq_len + 1) as i32,
-                &state.block_table,
-                self.propose_meta_stride,
-            )?;
-            gpu.copy_h2d_async(&meta_buf, meta_base, stream)?;
-
-            let q_row = q_out.offset(i * qg_dim * bf16);
-            let k_row = k_out.offset(i * kv_dim * bf16);
-            let v_row = v_out.offset(i * kv_dim * bf16);
-            ops::rope(
-                gpu,
-                self.rope_k,
-                q_row,
-                k_row,
-                meta_base,
-                1,
-                nq,
-                nkv,
-                hd,
-                ctx.config.rotary_dim() as u32,
-                ctx.config.rope_theta as f32,
-                stream,
-            )?;
-            ops::reshape_and_cache(
-                gpu,
-                self.reshape_cache_k,
-                k_row,
-                v_row,
-                kv_cache.k_pool_ptr(self.attn_layer_idx),
-                kv_cache.v_pool_ptr(self.attn_layer_idx),
-                meta_base.offset(8),
-                1,
-                nkv,
-                hd,
-                bs as u32,
-                kv_stride,
-                kv_stride,
-                kv_cache.cache_stride() as u64,
-                stream,
-            )?;
-            ops::paged_decode_attn_bf16(
-                gpu,
-                self.paged_decode_k,
-                q_row,
-                kv_cache.k_pool_ptr(self.attn_layer_idx),
-                kv_cache.v_pool_ptr(self.attn_layer_idx),
-                attn_out.offset(i * q_dim * bf16),
-                meta_base.offset(256),
-                meta_base.offset(16),
-                state.block_table.len() as u32,
-                1,
-                nq,
-                nkv,
-                hd,
-                bs as u32,
-                inv_sqrt_d,
-                nq * hd,
-                0,
-                stream,
-            )?;
-            ops::sigmoid_gate_mul(
-                gpu,
-                self.sigmoid_gate_mul_k,
-                attn_out.offset(i * q_dim * bf16),
-                q_row.offset(q_dim * bf16),
-                attn_out.offset(i * q_dim * bf16),
-                nq * hd,
-                stream,
-            )?;
+            slots.push((block_idx as i64) * (bs as i64) + ((state.seq_len % bs) as i64));
+            seq_lens.push((state.seq_len + 1) as i32);
+            pos_u32.push(positions[i] as u32);
         }
+        let max_blocks = states
+            .iter()
+            .map(|s| s.block_table.len())
+            .max()
+            .unwrap_or(1);
+        let tables: Vec<&[u32]> = states.iter().map(|s| s.block_table.as_slice()).collect();
+        // 2026-09-29: The whole `propose_meta` allocation: `PROPOSE_META_SEQS` strides.
+        let (meta_buf, meta) = crate::layers::mtp_meta::pack_mtp_attn_meta_batch(
+            &pos_u32,
+            &slots,
+            &seq_lens,
+            &tables,
+            max_blocks,
+            super::super::batch_caps::PROPOSE_META_SEQS * self.propose_meta_stride,
+        )?;
+        let meta_base = self.propose_meta;
+        gpu.copy_h2d_async(&meta_buf, meta_base, stream)?;
+        ops::rope_strided(
+            gpu,
+            self.rope_strided_k,
+            q_out,
+            k_out,
+            meta_base.offset(meta.positions),
+            n as u32,
+            nq,
+            nkv,
+            hd,
+            ctx.config.rotary_dim() as u32,
+            ctx.config.rope_theta as f32,
+            qg_dim as u32,
+            kv_dim as u32,
+            stream,
+        )?;
+        ops::reshape_and_cache(
+            gpu,
+            self.reshape_cache_k,
+            k_out,
+            v_out,
+            kv_cache.k_pool_ptr(self.attn_layer_idx),
+            kv_cache.v_pool_ptr(self.attn_layer_idx),
+            meta_base.offset(meta.slots),
+            n as u32,
+            nkv,
+            hd,
+            bs as u32,
+            kv_stride,
+            kv_stride,
+            kv_cache.cache_stride() as u64,
+            stream,
+        )?;
+        ops::paged_decode_attn_bf16(
+            gpu,
+            self.paged_decode_k,
+            q_out,
+            kv_cache.k_pool_ptr(self.attn_layer_idx),
+            kv_cache.v_pool_ptr(self.attn_layer_idx),
+            attn_out,
+            meta_base.offset(meta.block_tables),
+            meta_base.offset(meta.seq_lens),
+            max_blocks as u32,
+            n as u32,
+            nq,
+            nkv,
+            hd,
+            bs as u32,
+            inv_sqrt_d,
+            qg_dim as u32,
+            0,
+            stream,
+        )?;
+        ops::sigmoid_gate_mul_batched(
+            gpu,
+            self.sigmoid_gate_mul_batched_k,
+            attn_out,
+            q_out.offset(q_dim * bf16),
+            attn_out,
+            q_dim as u32,
+            qg_dim as u32,
+            n as u32,
+            stream,
+        )?;
         drop(kv_cache);
 
         // 2026-09-25: 8. O projection [n, q_dim] -> [n, h], then residual add

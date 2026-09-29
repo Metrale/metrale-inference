@@ -66,7 +66,7 @@ fn tiered_pool_bytes_f16(bs: usize, spec_on: bool) -> usize {
 fn cap_identity_at_or_below_32_every_config() {
     // 2026-09-25: At bs<=32 the slot count is bs for every dispatch cap
     // (including the 4 of METRALE_NO_MTP_K_LADDER), because the floor is
-    // VERIFY_WY_TABLE_SEQS = 32.
+    // MTP_STATE_SLOTS_FLOOR = 32.
     for bs in 1..=32 {
         for cap in [1, 4, 16, 32, 64] {
             assert_eq!(
@@ -145,7 +145,7 @@ fn k_minus_1_shrink_and_kill_switch_shape() {
 fn cap_bites_above_32_and_kill_switch_restores() {
     // 2026-09-25: Dispatch cap 32: a 64-slot pool covers 32 verify slots.
     assert_eq!(mtp_state_slots_with(64, 32, false), 32);
-    // 2026-09-25: A dispatch cap of 48 (METRALE_MTP_MAX_SEQS=48) widens the
+    // 2026-09-25: A dispatch cap of 48 (--mtp-max-seqs 48) widens the
     // pools with it.
     assert_eq!(mtp_state_slots_with(64, 48, false), 48);
     // 2026-09-25: The cap of 4 under METRALE_NO_MTP_K_LADDER still floors at 32.

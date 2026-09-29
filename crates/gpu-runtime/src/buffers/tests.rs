@@ -38,16 +38,17 @@ fn test_buffer_sizes_qwen3() {
     // `ssm_deinterleaved` are sized for `m_pad` = ceil16(M) = 16 rows
     // (`sizes.rs`), the rows a cuBLASLt arm writes. qkv: 16 * (16*2 + 2*2)
     // * 256 * 2 (gated Q, K, V). ssm_qkvz: 16 * (16*128 + 16*128 + 32*128 +
-    // 32*128) * 2. `ssm_ba` and `ssm_gates` are at the 256-byte floor.
+    // 32*128) * 2. `ssm_ba` and `ssm_gates` hold one MTP propose row (2026-09-29):
+    // [1, 2 * 2048] and [1, 2048] BF16.
     assert_eq!(sizes.hidden_states, 4096);
     assert_eq!(sizes.qkv_output, 294912);
     assert_eq!(sizes.attn_output, 8192);
     assert_eq!(sizes.gate_logits, 1024);
     assert_eq!(sizes.logits, 303872);
     assert_eq!(sizes.ssm_qkvz, 393216);
-    assert_eq!(sizes.ssm_ba, 256);
+    assert_eq!(sizes.ssm_ba, 2 * 2048 * 2);
     assert_eq!(sizes.ssm_deinterleaved, 393216);
-    assert_eq!(sizes.ssm_gates, 256);
+    assert_eq!(sizes.ssm_gates, 2048 * 2);
 }
 
 #[test]
@@ -242,19 +243,21 @@ fn test_buffer_sizes_scale_with_batch() {
     let s1 = BufferSizes::from_config(&cfg, 1, 4096, 16, 32);
     let s128 = BufferSizes::from_config(&cfg, 128, 4096, 16, 32);
     assert_eq!(s128.hidden_states, s1.hidden_states * 128);
-    // 2026-09-25: Logits rows are `m.min(160.max(rows + 1))` (`sizes.rs`
+    // 2026-09-25: Logits rows are `m.min(VERIFY_ROW_CAP.max(rows + 1))` (`sizes.rs`
     // `logits_tokens`); at m = 128 that is 128.
     assert_eq!(s128.logits, 128 * cfg.vocab_size * 2);
 }
 
 /// 2026-09-25: Sizing does not change with `max_batch_size` while the
-/// decode-meta rows fit the 160-row verify envelope in `sizes.rs` (`bt_rows`
-/// for scratch, the 160-row floor of `logits_tokens`). Logits grow from
-/// bs = 160 (161 rows); at bs = 192 the decode-meta block
-/// (`DecodeMetaLayout::meta_bytes`) is larger than the verify block and
-/// scratch grows with it.
+/// decode-meta rows fit the `VERIFY_ROW_CAP`-row verify envelope in `sizes.rs`
+/// (`bt_rows` for scratch, the floor of `logits_tokens`). 2026-09-29: The cap is
+/// 256, so logits grow from bs = 256 (257 rows); past it the decode-meta block
+/// (`DecodeMetaLayout::meta_bytes`) is larger than the verify block and scratch
+/// grows with it.
 #[test]
 fn test_buffer_sizes_decode_meta_widening() {
+    use super::VERIFY_ROW_CAP;
+    assert_eq!(VERIFY_ROW_CAP, 256);
     let cfg = ModelConfig::qwen3_next_80b_nvfp4();
     let s32 = BufferSizes::from_config(&cfg, 8192, 4096, 16, 32);
     // 2026-09-25: Up to 32, the decode-meta rows are the 32-row floor.
@@ -264,19 +267,20 @@ fn test_buffer_sizes_decode_meta_widening() {
         assert_eq!(s.scratch, s32.scratch, "bs={bs}");
         assert_eq!(s.logits, s32.logits, "bs={bs}");
     }
-    // 2026-09-25: 33 to 159 rows stay inside the 160-row envelope.
-    for bs in [33usize, 64, 128, 159] {
+    assert_eq!(s32.logits, VERIFY_ROW_CAP * cfg.vocab_size * 2);
+    // 2026-09-29: 33 to 255 rows stay inside the 256-row envelope.
+    for bs in [33usize, 64, 128, 160, 255] {
         let s = BufferSizes::from_config(&cfg, 8192, 4096, 16, bs);
         assert_eq!(s.total_bytes(), s32.total_bytes(), "bs={bs}");
     }
-    let s160 = BufferSizes::from_config(&cfg, 8192, 4096, 16, 160);
-    assert_eq!(s160.logits, 161 * cfg.vocab_size * 2);
-    // 2026-09-25: Decode-meta block at R = 192: 24R + R * max_blocks * 4,
+    let s256 = BufferSizes::from_config(&cfg, 8192, 4096, 16, 256);
+    assert_eq!(s256.logits, 257 * cfg.vocab_size * 2);
+    // 2026-09-25: Decode-meta block at R = 320: 24R + R * max_blocks * 4,
     // after the 32768-byte fixed region.
-    let s192 = BufferSizes::from_config(&cfg, 8192, 4096, 16, 192);
-    assert_eq!(s192.logits, 193 * cfg.vocab_size * 2);
+    let s320 = BufferSizes::from_config(&cfg, 8192, 4096, 16, 320);
+    assert_eq!(s320.logits, 321 * cfg.vocab_size * 2);
     let max_blocks = 4096 / 16 + 1;
-    assert!(s192.scratch >= 32768 + 24 * 192 + 192 * max_blocks * 4);
+    assert!(s320.scratch >= 32768 + 24 * 320 + 320 * max_blocks * 4);
 }
 
 // 2026-09-25: The row-wise FP8 GDN prefill BF16-weight slab
@@ -355,4 +359,22 @@ fn rowwise_bf16_slab_is_counted_in_total_bytes() {
     // function that returned 0 could not make this pass.
     sizes.ssm_rowwise_w_bf16 = 4096;
     assert_eq!(sizes.total_bytes(), before + 4096);
+}
+
+/// 2026-09-29: `ssm_ba` and `ssm_gates` hold a batched MTP propose of every sequence the serve
+/// decodes (`DECODE_META_MAX_ROWS`), so `propose_batch_max` is not held below it by the arena:
+/// at M = 2176 the BA-sized buffers alone held 34 rows and a 128-sequence propose ran in four
+/// groups. At M below that width they hold M rows.
+#[test]
+fn ssm_ba_and_gates_hold_a_full_width_propose() {
+    let cfg = ModelConfig::qwen3_next_80b_nvfp4();
+    let h = cfg.hidden_size;
+    for m in [2176usize, 8192] {
+        let s = BufferSizes::from_config(&cfg, m, 4096, 16, 128);
+        assert!(s.ssm_ba >= super::DECODE_META_MAX_ROWS * 2 * h * 2, "m={m}");
+        assert!(s.ssm_gates >= super::DECODE_META_MAX_ROWS * h * 2, "m={m}");
+    }
+    let small = BufferSizes::from_config(&cfg, 16, 4096, 16, 128);
+    assert!(small.ssm_ba >= 16 * 2 * h * 2);
+    assert!(small.ssm_ba < super::DECODE_META_MAX_ROWS * 2 * h * 2);
 }

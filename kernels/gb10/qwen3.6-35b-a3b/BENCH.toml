@@ -61,10 +61,11 @@ of 20, and `sum_wall_s` <= 700 is satisfied by 5 iterations. Neither is the gate
 threshold, it does not relax one -- the recorded runs all carry iterations 10."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 
@@ -206,13 +207,20 @@ scoring shard c 87.60/87.49 to the hundredth of the pre-#1071 record. Duplicatin
 is not a solution; one tool prompt is the definition from here, and these floors are that \
 definition's ratchet. DO NOT recover them by re-adding the second prompt. They rise with \
 the next receipt that beats them (a better SINGLE prompt is measurement-definition work \
-and gets its own campaign)."""
+and gets its own campaign). ★ RE-CUT 2026-09-29 (owner allowance, with the switch of this \
+checkpoint's gates to `--weight-quantization declared`): overall 84.56 -> 83.8, about one \
+standard error below the declared tier's full draw. Declared (the checkpoint's own W8A8) \
+measured 84.56/86.40 on dgx3 2026-09-29 (N=1004, hermetic shards); the same-box nvfp4 \
+control measured 85.16/86.15; standard errors 0.74 overall / 0.54 normalized. A floor equal \
+to the measured score fails one bad draw in two; the owner allowed the noise margin on \
+overall only. Normalized stays 85.77 (declared 86.40)."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 ssm_cache_slots = "256"
@@ -222,7 +230,7 @@ min = 85.77
 noise = 0.4
 
 [benchmarks.metrics.overall_accuracy]
-min = 84.56
+min = 83.8
 noise = 0.4
 
 [benchmarks.metrics.samples]
@@ -288,10 +296,11 @@ these committed values are the only ABSOLUTE bound and must be re-cut whenever t
 materially faster."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 
@@ -402,10 +411,11 @@ previous one at +3%/+5%; these committed values are the only ABSOLUTE bound and 
 whenever the path gets materially faster."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 
@@ -468,10 +478,11 @@ box with no baseline yet, so each box is seeded with two runs before its first c
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -518,10 +529,11 @@ box with no baseline yet, so each box is seeded with two runs before its first c
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -631,13 +643,19 @@ nothing about vLLM. \
 bench_override_tree_tests pins this entry BY VALUE — the instrument pins, \
 the status and every floor — so a re-cut must edit that test, which is the \
 review it deserves.\
-"""
+ ★ DECLARED TIER 2026-09-29: the entry now serves `--weight-quantization declared` \
+(the checkpoint's own W8A8). Three runs of this instrument on dgx2 (branch perf/moe-wide, \
+2026-09-29) read C1 86.0/86.0/86.1, C2 126.4/131.7/131.1, C4 183.7/183.9/179.0, C8 \
+255.8/259.5/256.4, C16 368.7/369.6/364.8 tok/s, min completion 851, every rung above the \
+floors below; the floors are NOT raised on three runs (a ratchet needs a fresh n >= 10 set \
+and the history split at this change)."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 # 2026-09-25: 2048 holds isl 128 plus the chat template and osl 1024.
 
 
@@ -687,6 +705,11 @@ disable_thinking = "true"
 
 
 ssm_cache_slots = "32"
+# 2026-09-29: No serve-side request timeout. At the default 300 s the serve cuts streams of a
+# wide rung (finish_reason "timeout"): on 2026-09-28 dgx2 the certified command's C128 cell
+# delivered part of its budget and read vacuous at 290.7 tok/s. OSL 1024 at 1-2 tok/s per
+# stream needs 500-850 s. The dense recipe pins the same.
+request_timeout = "0"
 # 2026-09-25: lm_head_dtype is not pinned: the nvfp4head recipe chooses the head.
 
 
@@ -885,10 +908,11 @@ from replayed history anyway.\
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 disable_thinking = "true"
@@ -1071,10 +1095,11 @@ px before the resolver fix as well; clamped to the encoder's 16384-patch ceiling
 the boot log says so rather than silently ignoring the checkpoint."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 
@@ -1141,10 +1166,11 @@ correct on one geometry. `default = false`: qwen3.8-27b owns this gate's default
 serve."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 

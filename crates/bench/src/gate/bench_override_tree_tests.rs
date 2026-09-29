@@ -255,9 +255,11 @@ fn the_moe_concurrency_entry_is_the_published_instrument_with_its_bootstrap_floo
             ("max_batch_size", "128"),
             ("max_model_len", "2048"),
             ("num_drafts", "1"),
+            // 2026-09-29: No serve-side timeout, so wide rungs are not cut (BENCH.toml).
+            ("request_timeout", "0"),
             ("scheduler", "fifo"),
             ("ssm_cache_slots", "32"),
-            ("weight_quantization", "nvfp4"),
+            ("weight_quantization", "declared"),
         ])
     );
     assert!(

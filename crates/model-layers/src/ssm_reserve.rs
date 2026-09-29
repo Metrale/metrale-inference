@@ -35,7 +35,7 @@ pub use rollback::{
 /// `lane_decode.rs`). Retirement compacts survivors onto low slots, except
 /// under EP protocol v2 (`retire_finished_sequences`).
 ///
-/// It is `max_batch_size` when that is at most 32 (`layer::VERIFY_WY_TABLE_SEQS`,
+/// It is `max_batch_size` when that is at most 32 ([`MTP_STATE_SLOTS_FLOOR`],
 /// the floor) or when [`mtp_pool_full_width`] holds; otherwise
 /// `max(mtp_max_seqs(), 32)`, capped at `max_batch_size`. The scheduler never
 /// speculates with more than `mtp_max_seqs()` active sequences.
@@ -55,7 +55,12 @@ pub fn mtp_pool_full_width() -> bool {
         || matches!(std::env::var("METRALE_EP_PROTOCOL").as_deref(), Ok("v2"))
 }
 
-/// 2026-09-25: Env-free core of [`mtp_state_slots`]. The `VERIFY_WY_TABLE_SEQS` floor
+/// 2026-09-29: The fewest slots the verify pools cover (when `max_batch_size` allows): the
+/// verify table width before 2026-09-29, kept apart from it so a wider verify table does not
+/// grow every serve's pools (137.6 MB per slot on Qwen3.6-35B-A3B).
+pub const MTP_STATE_SLOTS_FLOOR: usize = 32;
+
+/// 2026-09-25: Env-free core of [`mtp_state_slots`]. The `MTP_STATE_SLOTS_FLOOR`
 /// (32) covers every slot when `max_batch_size` is at most 32, also when
 /// `METRALE_NO_MTP_K_LADDER` lowers the dispatch cap to 4.
 pub fn mtp_state_slots_with(
@@ -66,7 +71,7 @@ pub fn mtp_state_slots_with(
     if full_width {
         return max_batch_size;
     }
-    max_batch_size.min(spec_dispatch_cap.max(crate::layer::VERIFY_WY_TABLE_SEQS))
+    max_batch_size.min(spec_dispatch_cap.max(MTP_STATE_SLOTS_FLOOR))
 }
 
 /// 2026-09-25: Verify draft capacity of pool slot `slot_idx`: the largest count

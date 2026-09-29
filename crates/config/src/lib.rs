@@ -268,6 +268,7 @@ pub mod levers;
 mod methods;
 mod model_config;
 mod parsers;
+mod position_encoding;
 pub mod precision_plan;
 #[cfg(test)]
 mod tests;
@@ -286,6 +287,8 @@ pub(crate) use parsers::{
     parse_longcat_ngram, parse_minimax_m2, parse_qwen4_exp, parse_step3p7, parse_vision_config,
     sanitize_kimi_k3_eos,
 };
+pub use position_encoding::AttnPositionEncoding;
+pub(crate) use position_encoding::resolve_attn_position_encoding;
 pub use precision_plan::{DeclaredPrecisionPlan, LayerPrecision};
 pub use weight_quantization::{
     Nvfp4Act, W4a4Downcast, WeightQuantPolicy, WeightQuantTier, WeightQuantization,

@@ -48,6 +48,9 @@ pub struct Qwen3AttentionLayer {
     /// 2026-09-25: MRoPE-interleaved instead of scalar RoPE; from
     /// `config.mrope_interleaved`.
     pub(crate) mrope_interleaved: bool,
+    /// 2026-09-29: From `config.attn_position_encoding()`. `None` skips every RoPE launch on
+    /// the decode, batched-decode and both prefill paths (`rotates_qk`).
+    pub(crate) position_encoding: metrale_config::AttnPositionEncoding,
     /// 2026-09-25: Per-layer head_dim and head-count overrides
     /// (`set_dimension_overrides`); `None` uses the config value.
     pub(crate) head_dim_override: Option<usize>,

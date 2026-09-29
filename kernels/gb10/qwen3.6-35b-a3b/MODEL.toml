@@ -290,6 +290,14 @@ max_post_think_content_tokens = 8192
 # 117.8 tok/s, K=3 82.4 tok/s.
 
 default_num_drafts = 1
+# 2026-09-29: The multi-sequence MTP dispatch cap when --mtp-max-seqs is not given
+# (resolve_mtp_max_seqs in model-layers speculative/ladder.rs): every batch up to the serve's
+# 128 speculates, verified in one forward (VERIFY_WY_TABLE_SEQS). Above 32 a plain decode step
+# reads nearly every expert for one token per sequence; the verify reads them once for about
+# 1.7. Measured 2026-09-29 on dgx2 (MoE ladder harness, ISL 128 / OSL 1024, 2 reps):
+# C64 582.0 tok/s at 0.0982 J/tok, C128 692.7 at 0.0822, against vLLM+MTP 563.6 / 0.0922 and
+# 672.9 / 0.0783. The SSM verify pools grow to 128 slots (about 17.6 GB).
+mtp_max_seqs = 128
 
 [[model_types]]
 model_type = "qwen3_6_moe"

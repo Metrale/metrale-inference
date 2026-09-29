@@ -58,8 +58,10 @@ pub(super) fn adopt_declared(
         }) {
             tracing::info!(
                 "--weight-quantization declared: the checkpoint declares FP8 activations for \
-                 its block-scaled attention and GDN projections; they decode W8A16 until the \
-                 block-scaled W8A8 path is validated"
+                 its block-scaled attention and GDN projections; they decode W8A16 (above \
+                 declared) until the block-scaled W8A8 path is re-validated (its cap is off: \
+                 with it and the expert W8A8 both on, the ssm-state-poisoning gate failed on \
+                 a greedy tie, 2026-09-29)"
             );
         }
         return Ok((0, 0));

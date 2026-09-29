@@ -30,8 +30,11 @@ pub(crate) const PROPOSE_META_STRIDE_FLOOR: usize = 2048;
 pub(crate) const PROPOSE_META_HEADER: usize = 256;
 
 /// 2026-09-25: Sequences the `propose_meta` allocation holds, the same count as
-/// `VERIFY_WY_TABLE_SEQS`. The allocation is this many strides.
-pub(crate) const PROPOSE_META_SEQS: usize = 32;
+/// `VERIFY_WY_TABLE_SEQS`. The allocation is this many strides. 2026-09-29: Derived from it
+/// (was a separate 32), so one propose covers every sequence one verify holds: at 128
+/// sequences a 32-row cap ran four drafter forwards per draft, each reading the drafter's
+/// experts again.
+pub(crate) const PROPOSE_META_SEQS: usize = crate::layer::VERIFY_WY_TABLE_SEQS;
 
 /// 2026-09-25: Stride for a `max_seq_len`-token drafter sequence: the header plus one
 /// i32 block-table entry per KV block, 8-byte aligned and clamped to
@@ -135,6 +138,9 @@ impl MtpHead {
                 &self.o_proj,
             ],
         ) && self.propose_ffn_arm().is_some()
+            && self.rope_strided_k.0 != 0
+            && self.rms_norm_strided_k.0 != 0
+            && self.sigmoid_gate_mul_batched_k.0 != 0
             && self.dense_gemm_pipelined_k.0 != 0
             && self.dense_gemv_k.is_some()
             && self.deinterleave_qg_k.is_some()
@@ -164,8 +170,10 @@ impl MtpHead {
             .min(rows(sizes.residual, h * bf16))
             .min(rows(sizes.norm_output, h * bf16))
             .min(buffers.max_batch_tokens());
-        // 2026-09-25: Shrink to a width some resolved LM-head kernel covers.
-        while cap > 1 && self.lm_head_batch_kernel(cap).0 == 0 {
+        // 2026-09-25: Shrink to a width some resolved LM-head kernel covers. 2026-09-29: The
+        // tile GEMM on the transposed twin covers every width from 5 rows
+        // (`forward_batch_position` takes it there), the GEMV tiers the rest.
+        while cap > 1 && !self.lm_head_covers(cap) {
             cap -= 1;
         }
         // 2026-09-25: The native-FP8 MoE arm runs the grouped decode on the `n` rows,
@@ -178,6 +186,13 @@ impl MtpHead {
             }
         }
         cap.max(1)
+    }
+
+    /// 2026-09-29: Whether a resolved LM-head kernel serves an `n`-row batched propose: a
+    /// batched GEMV tier, or from 5 rows the tile GEMM on the transposed twin.
+    fn lm_head_covers(&self, n: usize) -> bool {
+        self.lm_head_batch_kernel(n).0 != 0
+            || (n >= 5 && self.w4a16_gemm_t_k.0 != 0 && self.lm_head_nvfp4_t.is_some())
     }
 
     /// 2026-09-25: Whether the batched propose can run for `n` sequences:
