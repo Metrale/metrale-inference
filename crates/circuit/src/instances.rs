@@ -11,7 +11,8 @@
 //! Invariants:
 //! - Every policy setting is stated; nothing is filled from an engine default.
 //! - `layer_kinds` spells one letter per layer: `G` a GatedDeltaNet (linear attention) layer,
-//!   `A` a full-attention layer; whitespace is ignored.
+//!   `A` a full-attention layer, `M` a Mamba2 layer, `E` a MoE-only layer (the Nemotron-H
+//!   hybrid-pattern letters); whitespace is ignored.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -180,7 +181,9 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
             layer_kinds.push(match c {
                 'G' => LayerKind::LinearAttention,
                 'A' => LayerKind::FullAttention,
-                other => return Err(field(format!("layer kind `{other}` is not G or A"))),
+                'M' => LayerKind::Mamba,
+                'E' => LayerKind::Moe,
+                other => return Err(field(format!("layer kind `{other}` is not G, A, M or E"))),
             });
         }
         let mut plans = BTreeMap::new();
