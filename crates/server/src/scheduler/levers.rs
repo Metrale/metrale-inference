@@ -436,6 +436,7 @@ impl SchedLevers {
             disable_watchdogs: self.disable_watchdogs,
             forced_token_fastpath: self.forced_token_fastpath,
             mtp_minp: self.mtp_minp,
+            think_ended_gpu_argmax: self.think_ended_gpu_argmax,
         }
     }
 
