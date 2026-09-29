@@ -21,8 +21,10 @@ docker/gb10/met-fastbin
 /book/output/
 /book/book/
 
-# Editor / agent scratch.
-.claude/
+# Editor / agent scratch, except the repo's agent skills (.claude/skills/), which carry the
+# engine's methods (e.g. .claude/skills/new-model/SKILL.md).
+.claude/*
+!.claude/skills/
 .agents/
 .gemini/
 .agent*/

@@ -16,7 +16,7 @@ use metrale_circuit::{ArchShape, Instance, LayerKind, PrecisionSpec, Sources};
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
-pub const CIRCUITS: [(&str, &str); 2] = [
+pub const CIRCUITS: [(&str, &str); 3] = [
     (
         "qwen3_5",
         include_str!("../../../../kernels/circuits/qwen3_5.toml"),
@@ -25,13 +25,25 @@ pub const CIRCUITS: [(&str, &str); 2] = [
         "qwen3_6_moe",
         include_str!("../../../../kernels/circuits/qwen3_6_moe.toml"),
     ),
+    (
+        "nemotron_h",
+        include_str!("../../../../kernels/circuits/nemotron_h.toml"),
+    ),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 1] = [(
-    "qwen3.6-35b-a3b-fp8-bf16head",
-    include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
-)];
+pub const PRECISION: [(&str, &str); 2] = [
+    (
+        "qwen3.6-35b-a3b-fp8-bf16head",
+        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
+    ),
+    (
+        "nemotron-3.5-lightning-30b-a3b-nvfp4",
+        include_str!(
+            "../../../../kernels/circuits/precision/nemotron-3.5-lightning-30b-a3b-nvfp4.toml"
+        ),
+    ),
+];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
 pub const CHECKPOINTS: [(&str, &str); 1] = [(

@@ -48,9 +48,15 @@ pub enum LinearRole {
     SharedGate,
     /// 2026-09-28: MTP head input projection (`fc`, embedding and hidden concatenated).
     MtpFc,
+    /// 2026-09-29: Mamba2 `in_proj`: z, x, B, C and dt in one projection.
+    MambaIn,
+    /// 2026-09-29: Mamba2 `out_proj`.
+    MambaOut,
+    /// 2026-09-29: An ungated MoE shared expert's up projection.
+    SharedUp,
 }
 
-const ROLES: [(LinearRole, &str); 13] = [
+const ROLES: [(LinearRole, &str); 16] = [
     (LinearRole::Q, "q"),
     (LinearRole::K, "k"),
     (LinearRole::V, "v"),
@@ -64,6 +70,9 @@ const ROLES: [(LinearRole, &str); 13] = [
     (LinearRole::SharedDown, "shared_down"),
     (LinearRole::SharedGate, "shared_gate"),
     (LinearRole::MtpFc, "mtp_fc"),
+    (LinearRole::MambaIn, "mamba_in"),
+    (LinearRole::MambaOut, "mamba_out"),
+    (LinearRole::SharedUp, "shared_up"),
 ];
 
 impl LinearRole {
@@ -103,6 +112,8 @@ pub enum OpKind {
     Linear(LinearRole),
     /// 2026-09-28: `silu(gate) * up` over a packed gate|up input.
     SiluMul,
+    /// 2026-09-29: `relu(x)^2` of an ungated up projection.
+    Relu2,
     /// 2026-09-28: Quantize activations to the given format.
     ActQuant(Format),
     /// 2026-09-28: Per-head RMSNorm of Q or K.
@@ -123,6 +134,9 @@ pub enum OpKind {
     L2Norm,
     /// 2026-09-28: The gated delta rule recurrence over the recurrent state.
     GdnRecurrence,
+    /// 2026-09-29: The Mamba2 selective state-space update: one step of the SSM state per row
+    /// (`dt` softplus, `A`, the grouped `B`/`C` projections and the `D` skip).
+    SsmUpdate,
     /// 2026-09-28: MoE router logits.
     Router,
     /// 2026-09-28: Top-k expert selection and weights.
@@ -147,7 +161,7 @@ pub enum OpKind {
     StateSnapshot,
 }
 
-const PLAIN_OPS: [(OpKind, &str); 27] = [
+const PLAIN_OPS: [(OpKind, &str); 29] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -156,6 +170,7 @@ const PLAIN_OPS: [(OpKind, &str); 27] = [
     (OpKind::Concat, "concat"),
     (OpKind::Split, "split"),
     (OpKind::SiluMul, "silu_mul"),
+    (OpKind::Relu2, "relu2"),
     (OpKind::QkNorm, "qk_norm"),
     (OpKind::Rope, "rope"),
     (OpKind::KvWrite, "kv_write"),
@@ -165,6 +180,7 @@ const PLAIN_OPS: [(OpKind, &str); 27] = [
     (OpKind::Conv1dUpdate, "conv1d_update"),
     (OpKind::L2Norm, "l2_norm"),
     (OpKind::GdnRecurrence, "gdn_recurrence"),
+    (OpKind::SsmUpdate, "ssm_update"),
     (OpKind::Router, "router"),
     (OpKind::TopK, "top_k"),
     (OpKind::ExpertGateUp, "expert_gate_up"),
@@ -237,6 +253,7 @@ impl OpKind {
             OpKind::Linear(_)
                 | OpKind::PagedAttention
                 | OpKind::GdnRecurrence
+                | OpKind::SsmUpdate
                 | OpKind::Router
                 | OpKind::ExpertGateUp
                 | OpKind::ExpertDown
@@ -336,6 +353,10 @@ pub enum LayerKind {
     LinearAttention,
     /// 2026-09-28: A softmax attention layer.
     FullAttention,
+    /// 2026-09-29: A Mamba2 layer (Nemotron-H `mamba`).
+    Mamba,
+    /// 2026-09-29: A layer whose only mixer is a MoE FFN (Nemotron-H `moe`).
+    Moe,
 }
 
 impl LayerKind {
@@ -344,6 +365,8 @@ impl LayerKind {
         match self {
             LayerKind::LinearAttention => "linear_attention",
             LayerKind::FullAttention => "full_attention",
+            LayerKind::Mamba => "mamba",
+            LayerKind::Moe => "moe",
         }
     }
 
@@ -352,6 +375,8 @@ impl LayerKind {
         match s {
             "linear_attention" => Some(LayerKind::LinearAttention),
             "full_attention" => Some(LayerKind::FullAttention),
+            "mamba" => Some(LayerKind::Mamba),
+            "moe" => Some(LayerKind::Moe),
             _ => None,
         }
     }

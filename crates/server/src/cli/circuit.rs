@@ -109,6 +109,12 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             };
             return tokio::task::block_in_place(|| super::circuit_diff::run_diff(*d));
         }
+        CircuitAction::Venn(_) => {
+            let CircuitAction::Venn(v) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_venn::run(*v);
+        }
     };
     let inst = instance(&plan_args.recipe)?;
     let rows = rows_of(&inst, &plan_args)?;
@@ -122,7 +128,7 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
     eprintln!("rules: FUSIONS.toml sha256 {}", loaded.rules_digest);
     let text = match args.action {
         CircuitAction::Show(_) => metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows)?,
-        CircuitAction::Diff(_) => unreachable!("returned above"),
+        CircuitAction::Diff(_) | CircuitAction::Venn(_) => unreachable!("returned above"),
         CircuitAction::Display(d) => {
             let tty = std::io::stdout().is_terminal();
             let width = if tty {
