@@ -21,6 +21,7 @@ pub mod instantiate;
 pub mod ir;
 pub mod planner;
 pub mod precision;
+pub mod precision_policy;
 pub mod render;
 pub mod rules;
 
@@ -30,7 +31,7 @@ mod test_toy;
 pub use circuit_toml::{CircuitError, includes_of};
 pub use format::{Format, Scale};
 pub use fuser::{AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse};
-pub use instances::{Instance, InstanceError, parse_instances};
+pub use instances::{Instance, InstanceError, PrecisionSpec, parse_instances};
 pub use instantiate::instantiate;
 pub use ir::{ArchShape, Circuit, LayerKind, LinearRole, OpKind, Section};
 pub use precision::{EdgePrecision, LinearFormats, PrecisionError, PrecisionTable};
@@ -72,7 +73,8 @@ pub enum LoadError {
 pub struct Sources<'a> {
     /// 2026-09-28: `kernels/circuits/<arch>.toml`.
     pub circuit: &'a str,
-    /// 2026-09-28: `kernels/circuits/precision/<name>.toml`.
+    /// 2026-09-28: The file the instance's [`PrecisionSpec`] names: a precision table or a
+    /// checkpoint plan fixture (`kernels/circuits/checkpoints/<name>.toml`).
     pub precision: &'a str,
     /// 2026-09-28: `kernels/<hw>/common/FUSIONS.toml`.
     pub rules: &'a str,
@@ -92,16 +94,50 @@ pub struct Loaded {
     pub rules_digest: String,
 }
 
-/// 2026-09-28: Parse and instantiate `instance` from `src`.
+/// 2026-09-28: Parse and instantiate `instance` from `src`, with the precision its spec names.
 pub fn load(instance: &Instance, src: Sources<'_>) -> Result<Loaded, LoadError> {
-    let table = PrecisionTable::parse(src.precision)?;
-    if table.checkpoint != instance.checkpoint {
-        return Err(LoadError::CheckpointMismatch {
-            table: table.checkpoint,
-            instance: instance.checkpoint.clone(),
-        });
+    let mismatch = |table: String| LoadError::CheckpointMismatch {
+        table,
+        instance: instance.checkpoint.clone(),
+    };
+    match &instance.precision {
+        PrecisionSpec::Table(_) => {
+            let table = PrecisionTable::parse(src.precision)?;
+            if table.checkpoint != instance.checkpoint {
+                return Err(mismatch(table.checkpoint));
+            }
+            load_with(instance, src, &table)
+        }
+        PrecisionSpec::Policy {
+            tier, caps, engine, ..
+        } => {
+            let plan = precision_policy::CheckpointPlan::parse(src.precision)?;
+            if plan.checkpoint != instance.checkpoint {
+                return Err(mismatch(plan.checkpoint));
+            }
+            let policy = metrale_config::WeightQuantPolicy::new(
+                precision_policy::tier_named(tier)?,
+                &plan.plan,
+                precision_policy::caps_named(caps)?,
+            );
+            load_with(
+                instance,
+                src,
+                &precision_policy::PolicyPrecision::new(policy, engine),
+            )
+        }
     }
-    let circuit = instantiate(src.circuit, src.blocks, &instance.shape, &table)?;
+}
+
+/// 2026-09-28: Parse and instantiate `instance` from `src` with `precision`: the executor
+/// passes the served model's own policy here, the checked-in fixture being only the offline
+/// copy of it.
+pub fn load_with(
+    instance: &Instance,
+    src: Sources<'_>,
+    precision: &dyn EdgePrecision,
+) -> Result<Loaded, LoadError> {
+    let circuit = instantiate(src.circuit, src.blocks, &instance.shape, precision)?;
     let rules = parse_rules(src.rules)?;
     Ok(Loaded {
         circuit,

@@ -91,7 +91,24 @@ impl CircuitExec {
     pub fn build(b: Boot<'_>) -> Result<Self> {
         let mut served = b.instance.clone();
         served.shape = sources::served_shape(&b.instance.shape, &sources::arch_shape(b.config)?)?;
-        let loaded = metrale_circuit::load(&served, sources::sources(&served)?)?;
+        let src = sources::sources(&served)?;
+        let loaded = match &served.precision {
+            // 2026-09-28: The served model's own policy: its parsed quantization_config under
+            // the published tier and kernel capabilities, with the instance's engine formats.
+            metrale_circuit::PrecisionSpec::Policy { engine, .. } => {
+                let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
+                    crate::layers::weight_quantization(),
+                    b.config.quantization_config.as_ref(),
+                    crate::layers::kernel_caps(),
+                );
+                metrale_circuit::load_with(
+                    &served,
+                    src,
+                    &metrale_circuit::precision_policy::PolicyPrecision::new(policy, engine),
+                )?
+            }
+            metrale_circuit::PrecisionSpec::Table(_) => metrale_circuit::load(&served, src)?,
+        };
         let unmodelled = policy::unmodelled_switches(b.levers);
         if !unmodelled.is_empty() {
             bail!(

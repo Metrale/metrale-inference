@@ -11,6 +11,10 @@ description = "Architecture circuits: an op graph per model, the fusion rules th
 # golden-plan tests are the two callers.
 
 [dependencies]
+# 2026-09-28: `DeclaredPrecisionPlan` and `WeightQuantPolicy`, the engine's precision answers the
+# circuit's `PolicyPrecision` adapter asks. Pure: no environment, no I/O.
+metrale-config = { path = "../config", default-features = false }
+serde_json = { workspace = true }
 sha2.workspace = true
 thiserror.workspace = true
 serde = { workspace = true }

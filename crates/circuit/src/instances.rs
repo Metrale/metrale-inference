@@ -17,8 +17,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
+use crate::format::Format;
 use crate::fuser::Policy;
 use crate::ir::{ArchShape, LayerKind};
+use crate::precision::LinearFormats;
 use crate::rules::Mode;
 
 /// 2026-09-28: One recipe's circuit instance.
@@ -30,8 +32,8 @@ pub struct Instance {
     pub checkpoint: String,
     /// 2026-09-28: Circuit arch: `kernels/circuits/<arch>.toml`.
     pub arch: String,
-    /// 2026-09-28: Precision table: `kernels/circuits/precision/<name>.toml`.
-    pub precision: String,
+    /// 2026-09-28: Where each linear module's formats come from.
+    pub precision: PrecisionSpec,
     /// 2026-09-28: Kernel target, `hw/model/quant`.
     pub target: String,
     /// 2026-09-28: Whether its plans are checked in under `kernels/circuits/plans/`.
@@ -48,6 +50,37 @@ impl Instance {
     /// 2026-09-28: The golden file name of one plan: `<arch>-<mode>-n<rows>.txt`.
     pub fn plan_file(&self, mode: Mode, rows: u64) -> String {
         format!("{}-{}-n{rows}.txt", self.arch, mode.name())
+    }
+}
+
+/// 2026-09-28: An instance's source of linear formats.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrecisionSpec {
+    /// 2026-09-28: A stated table, `kernels/circuits/precision/<name>.toml`.
+    Table(String),
+    /// 2026-09-28: The engine's policy over the checkpoint's declared plan
+    /// ([`crate::precision_policy::PolicyPrecision`]).
+    Policy {
+        /// 2026-09-28: The plan fixture, `kernels/circuits/checkpoints/<name>.toml`.
+        checkpoint_plan: String,
+        /// 2026-09-28: The `--weight-quantization` tier served.
+        tier: String,
+        /// 2026-09-28: The kernel capabilities present (`KernelCaps` field names).
+        caps: Vec<String>,
+        /// 2026-09-28: Formats the engine chooses itself, first match wins.
+        engine: Vec<(String, LinearFormats)>,
+    },
+}
+
+impl PrecisionSpec {
+    /// 2026-09-28: The name of the file the spec reads: the table or the plan fixture.
+    pub fn file_name(&self) -> &str {
+        match self {
+            PrecisionSpec::Table(n) => n,
+            PrecisionSpec::Policy {
+                checkpoint_plan, ..
+            } => checkpoint_plan,
+        }
     }
 }
 
@@ -80,13 +113,40 @@ struct InstanceFile {
     recipe: String,
     checkpoint: String,
     arch: String,
-    precision: String,
+    precision: PrecisionFile,
     target: String,
     golden: bool,
     layer_kinds: String,
     dims: BTreeMap<String, u64>,
     policy: PolicyFile,
     plans: BTreeMap<String, Vec<u64>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PrecisionFile {
+    Table(String),
+    Policy(PolicyPrecisionFile),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyPrecisionFile {
+    checkpoint_plan: String,
+    tier: String,
+    caps: Vec<String>,
+    engine: Vec<EngineFormatFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EngineFormatFile {
+    #[serde(rename = "match")]
+    pattern: String,
+    weight: String,
+    activation: String,
+    /// 2026-09-28: Why the engine, not the checkpoint, decides this module's format.
+    why: String,
 }
 
 #[derive(Deserialize)]
@@ -131,11 +191,40 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
             }
             plans.insert(mode, rows.clone());
         }
+        let precision = match f.precision {
+            PrecisionFile::Table(name) => PrecisionSpec::Table(name),
+            PrecisionFile::Policy(p) => {
+                let mut engine = Vec::with_capacity(p.engine.len());
+                for e in p.engine {
+                    if e.why.trim().is_empty() {
+                        return Err(field(format!(
+                            "engine format `{}` states no `why`",
+                            e.pattern
+                        )));
+                    }
+                    let fmt = |s: &str| {
+                        Format::parse(s)
+                            .map_err(|err| field(format!("engine format `{}`: {err}", e.pattern)))
+                    };
+                    let formats = LinearFormats {
+                        weight: fmt(&e.weight)?,
+                        activation: fmt(&e.activation)?,
+                    };
+                    engine.push((e.pattern, formats));
+                }
+                PrecisionSpec::Policy {
+                    checkpoint_plan: p.checkpoint_plan,
+                    tier: p.tier,
+                    caps: p.caps,
+                    engine,
+                }
+            }
+        };
         out.push(Instance {
             recipe: f.recipe.clone(),
             checkpoint: f.checkpoint,
             arch: f.arch,
-            precision: f.precision,
+            precision,
             target: f.target,
             golden: f.golden,
             shape: ArchShape {

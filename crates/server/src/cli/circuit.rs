@@ -62,6 +62,31 @@ fn check_shape(inst: &Instance) -> Result<()> {
     let text = std::fs::read_to_string(dir.join("config.json"))
         .with_context(|| format!("reading {}", dir.join("config.json").display()))?;
     let cfg = metrale_config::parse_config(&text)?;
+    if let metrale_circuit::PrecisionSpec::Policy {
+        checkpoint_plan, ..
+    } = &inst.precision
+    {
+        let cached: serde_json::Value = serde_json::from_str(&text)?;
+        let fixture = metrale_model_layers::circuit_exec::sources::lookup(
+            &metrale_model_layers::circuit_exec::sources::CHECKPOINTS,
+            checkpoint_plan,
+            "checkpoint plan",
+        )?;
+        let table: toml::Table = toml::from_str(fixture)?;
+        let stored: serde_json::Value = serde_json::from_str(
+            table
+                .get("quantization_config")
+                .and_then(|v| v.as_str())
+                .context("checkpoint plan has no quantization_config")?,
+        )?;
+        if cached.get("quantization_config") != Some(&stored) {
+            bail!(
+                "kernels/circuits/checkpoints/{checkpoint_plan}.toml's quantization_config differs \
+                 from {}'s config.json",
+                inst.checkpoint
+            );
+        }
+    }
     let drift = shape_drift(&inst.shape, &arch_shape(&cfg)?);
     if !drift.is_empty() {
         bail!(

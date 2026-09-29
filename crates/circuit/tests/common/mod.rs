@@ -70,10 +70,7 @@ impl Texts {
         Texts {
             circuit,
             blocks,
-            precision: read(&format!(
-                "kernels/circuits/precision/{}.toml",
-                instance.precision
-            )),
+            precision: read(&precision_rel(instance)),
             rules: read(&fusions_rel(instance)),
         }
     }
@@ -95,6 +92,16 @@ pub fn load_texts(instance: &Instance, t: &Texts) -> Result<Loaded, metrale_circ
             rules: &t.rules,
         },
     )
+}
+
+/// 2026-09-28: The repo path of the file an instance's precision spec reads.
+pub fn precision_rel(instance: &Instance) -> String {
+    match &instance.precision {
+        metrale_circuit::PrecisionSpec::Table(n) => format!("kernels/circuits/precision/{n}.toml"),
+        metrale_circuit::PrecisionSpec::Policy {
+            checkpoint_plan, ..
+        } => format!("kernels/circuits/checkpoints/{checkpoint_plan}.toml"),
+    }
 }
 
 /// 2026-09-28: Load an instance from the repo.

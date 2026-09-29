@@ -10,7 +10,7 @@
 //! - A lookup of a name the tables lack is an error, never a fallback to another entry.
 
 use anyhow::{Result, anyhow, bail};
-use metrale_circuit::{ArchShape, Instance, LayerKind, Sources};
+use metrale_circuit::{ArchShape, Instance, LayerKind, PrecisionSpec, Sources};
 
 /// 2026-09-28: kernels/circuits/INSTANCES.toml as built.
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
@@ -28,16 +28,16 @@ pub const CIRCUITS: [(&str, &str); 2] = [
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 2] = [
-    (
-        "qwen3.8-27b-nvfp4-unsloth",
-        include_str!("../../../../kernels/circuits/precision/qwen3.8-27b-nvfp4-unsloth.toml"),
-    ),
-    (
-        "qwen3.6-35b-a3b-fp8-bf16head",
-        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
-    ),
-];
+pub const PRECISION: [(&str, &str); 1] = [(
+    "qwen3.6-35b-a3b-fp8-bf16head",
+    include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
+)];
+
+/// 2026-09-28: Every checkpoint plan fixture an instance can name.
+pub const CHECKPOINTS: [(&str, &str); 1] = [(
+    "unsloth--Qwen3.8-27B-NVFP4",
+    include_str!("../../../../kernels/circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
+)];
 
 /// 2026-09-28: Every block library a circuit can include.
 pub const BLOCKS: [(&str, &str); 1] = [(
@@ -65,7 +65,12 @@ pub fn sources(instance: &Instance) -> Result<Sources<'static>> {
     let hw = instance.target.split('/').next().unwrap_or_default();
     Ok(Sources {
         circuit: lookup(&CIRCUITS, &instance.arch, "circuit")?,
-        precision: lookup(&PRECISION, &instance.precision, "precision table")?,
+        precision: match &instance.precision {
+            PrecisionSpec::Table(n) => lookup(&PRECISION, n, "precision table")?,
+            PrecisionSpec::Policy {
+                checkpoint_plan, ..
+            } => lookup(&CHECKPOINTS, checkpoint_plan, "checkpoint plan")?,
+        },
         rules: lookup(&FUSIONS, hw, "FUSIONS.toml for hardware")?,
         blocks: &BLOCKS,
     })
