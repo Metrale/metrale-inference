@@ -49,7 +49,7 @@ pub(super) fn step_verify_k4_batched(
     let r_total = acc;
     off.push(r_total);
     debug_assert!(
-        (2..=32).contains(&n)
+        (2..=crate::scheduler::mtp_dcut::WIDTH_CAP).contains(&n)
             && ks.iter().all(|k| (2..=4).contains(k))
             && r_total <= crate::scheduler::mtp_dcut::VERIFY_ROW_BUDGET
     );

@@ -79,27 +79,28 @@ fn chunk_ranges_reproduce_the_uniform_caps() {
 
 #[test]
 fn chunk_ranges_seq_cap_derives_from_the_row_budget() {
-    // 2026-09-25: Two bounds apply, and the chunk takes the smaller: the row
-    // budget (`VERIFY_ROW_BUDGET` = 160, giving 80 sequences at rows=2, 53 at
-    // rows=3, 40 at rows=4) and the verify stash width `W`
-    // (`VERIFY_WY_TABLE_SEQS` = 32).
+    // 2026-09-29: Two bounds apply, and the chunk takes the smaller: the row
+    // budget (`VERIFY_ROW_BUDGET` = 256, giving 128 sequences at rows=2, 85 at
+    // rows=3, 64 at rows=4, 32 at rows=8) and the verify stash width `W`
+    // (`VERIFY_WY_TABLE_SEQS` = 128).
     const W: usize = metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS;
-    // 2026-09-25: rows=3: the row budget would allow 53, the stash allows 32.
+    assert_eq!((VERIFY_ROW_BUDGET, W), (256, 128));
+    // 2026-09-29: rows=2: both bounds are 128, so a 128-sequence k=1 verify is ONE chunk
+    // (one forward, one read of the expert weights).
+    assert_eq!(chunk_ranges(&[2; 128]), vec![(0, 128)]);
+    assert_eq!(chunk_ranges(&[2; 129]), vec![(0, W), (W, 129)]);
+    // 2026-09-29: rows=3: the row budget (85) is the tighter bound.
     assert_eq!(chunk_ranges(&[3; 21]), vec![(0, 21)]);
-    assert_eq!(chunk_ranges(&[3; W]), vec![(0, W)]);
-    // 2026-09-25: Past the stash the chunker splits rather than emitting a chunk the
-    // model refuses.
-    assert_eq!(chunk_ranges(&[3; 33]), vec![(0, W), (W, 33)]);
-    assert_eq!(chunk_ranges(&[3; 53]), vec![(0, W), (W, 53)]);
-    // 2026-09-25: rows=4: row budget 40, stash 32.
+    assert_eq!(chunk_ranges(&[3; 85]), vec![(0, 85)]);
+    assert_eq!(chunk_ranges(&[3; 86]), vec![(0, 85), (85, 86)]);
+    // 2026-09-29: rows=4: row budget 64.
     assert_eq!(chunk_ranges(&[4; 9]), vec![(0, 9)]);
-    assert_eq!(chunk_ranges(&[4; 40]), vec![(0, W), (W, 40)]);
-    // 2026-09-25: rows=2: row budget 80, stash 32.
-    assert_eq!(chunk_ranges(&[2; 80]), vec![(0, W), (W, 64), (64, 80)]);
+    assert_eq!(chunk_ranges(&[4; 64]), vec![(0, 64)]);
+    assert_eq!(chunk_ranges(&[4; 80]), vec![(0, 64), (64, 80)]);
     assert_eq!(chunk_ranges(&[3; 10]), vec![(0, 10)]);
-    // 2026-09-25: At rows=8 the row budget is the tighter bound: 160/8 = 20 < 32.
-    assert_eq!(chunk_ranges(&[8; 20]), vec![(0, 20)]);
-    assert_eq!(chunk_ranges(&[8; 21]), vec![(0, 20), (20, 21)]);
+    // 2026-09-29: rows=8: 256/8 = 32.
+    assert_eq!(chunk_ranges(&[8; 32]), vec![(0, 32)]);
+    assert_eq!(chunk_ranges(&[8; 33]), vec![(0, 32), (32, 33)]);
 }
 
 #[test]
@@ -244,18 +245,18 @@ fn below_the_gate_the_pairing_is_legacy_but_the_pruning_is_kept() {
 }
 
 // 2026-09-25: Width bound. `can_batch_verify` refuses a batch wider than
-// `VERIFY_WY_TABLE_SEQS` (32), and `mtp_step` sends every sequence of a
-// refused chunk to the per-sequence verify loop. The row budget alone
-// (`VERIFY_ROW_BUDGET / ks[lo]`) would allow 80 (rows=2), 53 (rows=3) and
-// 40 (rows=4) sequences, so this checks the stash-width clamp.
+// `VERIFY_WY_TABLE_SEQS`, and `mtp_step` sends every sequence of a refused
+// chunk to the per-sequence verify loop. 2026-09-29: With 128 and a 256-row
+// budget the row budget binds first at every rows >= 2; this pins that no
+// chunk ever exceeds the width bound whichever binds.
 #[test]
 fn chunk_ranges_never_exceed_the_verify_width_bound() {
     // 2026-09-25: The width bound `can_batch_verify` enforces, read from the
     // model crate.
     const WIDTH_CAP: usize = metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS;
-    // 2026-09-25: Rows 2..=4, at widths past every row-derived cap (40/53/80).
+    // 2026-09-29: Rows 2..=4, at widths past every row-derived cap (64/85/128).
     for rows in 2..=4usize {
-        for n in 2..=96usize {
+        for n in 2..=300usize {
             let ks = vec![rows; n];
             for (lo, hi) in chunk_ranges(&ks) {
                 assert!(
@@ -277,10 +278,10 @@ fn chunk_ranges_never_exceed_the_verify_width_bound() {
 #[test]
 fn ragged_chunks_also_respect_the_width_bound() {
     // 2026-09-25: Deepest first, as `plan` returns it: 4 deep rows, then a long
-    // shallow tail. Without the stash clamp, seq_cap 160/4 = 40 would admit
-    // the tail past the 32-slot stash.
+    // shallow tail. 2026-09-29: seq_cap 256/4 = 64 admits a shallow tail; the
+    // width and row bounds must both hold on every chunk.
     let mut ks = vec![4usize; 4];
-    ks.extend(std::iter::repeat_n(2usize, 60));
+    ks.extend(std::iter::repeat_n(2usize, 200));
     for (lo, hi) in chunk_ranges(&ks) {
         assert!(
             hi - lo <= metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS,

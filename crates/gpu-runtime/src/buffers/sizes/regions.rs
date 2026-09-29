@@ -48,11 +48,10 @@ pub(super) fn scratch_bytes(
     let bt_end = bt_offset + max_blocks * 4;
     let sl_offset = (bt_end + 3) & !3;
     let prefill_meta = sl_offset + 4;
-    // 2026-09-25: `bt_rows` must be at least `VERIFY_ROW_CAP` (`verify_e2.rs`
-    // in metrale-model-engine), the row count of the verify layout, whose
-    // block table starts at 24R. The envelope is the larger of that layout
-    // and the decode layout.
-    let bt_rows = 160usize;
+    // 2026-09-25: `bt_rows` is `VERIFY_ROW_CAP`, the row count of the verify
+    // layout (`verify_e.rs` in metrale-model-engine), whose block table starts
+    // at 24R. The envelope is the larger of that layout and the decode layout.
+    let bt_rows = super::VERIFY_ROW_CAP;
     let bt_meta =
         32768 + (bt_rows * 24 + bt_rows * max_blocks * 4).max(decode_meta.meta_bytes(max_blocks));
     let scratch_min = 64 * 1024;

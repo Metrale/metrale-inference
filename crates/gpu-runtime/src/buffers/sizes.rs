@@ -21,6 +21,13 @@ mod regions;
 /// and the buffer cannot disagree.
 pub const GATEUP_FUSED_MAX_M: usize = 16;
 
+/// 2026-09-29: Most rows (`R = Σ ks`) one batched MTP verify scores: 128 sequences at one
+/// draft (the serve's widest batch, `DECODE_META_MAX_ROWS`). It sizes the verify block-table
+/// rows (`sizes/regions.rs`) and the logits floor here; model-engine's `VERIFY_ROW_CAP` and
+/// the scheduler's `VERIFY_ROW_BUDGET` are this value. Was 160 (32 sequences at up to five
+/// rows).
+pub const VERIFY_ROW_CAP: usize = 256;
+
 /// 2026-09-25: Byte size of each arena buffer. `M` is `max_batch_tokens` and
 /// `ceil16(M)` is M rounded up to a multiple of 16.
 #[derive(Debug, Clone)]
@@ -202,11 +209,11 @@ impl BufferSizes {
             k_max * h * bf16
         };
 
-        // 2026-09-25: Logit rows: min(M, max(160, decode rows + 1)). 160 is
-        // `VERIFY_ROW_CAP`, the most rows a batched MTP verify scores. The mixed
+        // 2026-09-25: Logit rows: min(M, max(VERIFY_ROW_CAP, decode rows + 1)):
+        // `VERIFY_ROW_CAP` is the most rows a batched MTP verify scores. The mixed
         // decode step (`decode_b2.rs`) writes a prefill row after its `padded_n`
         // decode rows, and `padded_n` can reach `decode_meta.rows()`, hence + 1.
-        let logits_tokens = m.min(160.max(decode_meta.rows() + 1));
+        let logits_tokens = m.min(VERIFY_ROW_CAP.max(decode_meta.rows() + 1));
 
         // 2026-09-25: Mamba-2 d_inner may exceed hidden_size; norm_output and
         // attn_output hold rows of either.

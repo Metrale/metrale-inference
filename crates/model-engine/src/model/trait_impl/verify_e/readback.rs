@@ -30,7 +30,7 @@ impl TransformerModel {
             // blob from `mapped_argmax_host_dev`, never freed. The
             // `ensure!(r_total <= VERIFY_ROW_CAP)` in
             // `decode_verify_batched_dispatch` bounds
-            // `r_total * 4 <= 640`. The blob is zeroed at allocation, the
+            // `r_total * 4 <= 4 * VERIFY_ROW_CAP` (1,024). The blob is zeroed at allocation, the
             // argmax wrote rows `0..r_total` through its device alias, and the
             // `synchronize` above ordered those writes before this read.
             let src = unsafe { std::slice::from_raw_parts(host, r_total * 4) };

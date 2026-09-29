@@ -27,12 +27,11 @@ use metrale_model_layers::layer::{
 pub(super) const VERIFY_BATCHED_GRAPH_CAP: usize = 32;
 
 /// 2026-09-25: Most rows (`R = Σ ks`) one batched verify may run. The
-/// `VMETA_*` metadata offsets in `verify_e.rs` are derived from it. Three
-/// other values repeat 160 and must change with it: `VERIFY_ROW_BUDGET` in
-/// the scheduler's `mtp_dcut.rs`, and `bt_rows` and the `logits_tokens` floor
-/// in `gpu-runtime`'s `sizes.rs`. The sequence count is bounded separately,
-/// by `VERIFY_WY_TABLE_SEQS`.
-pub(in crate::model) const VERIFY_ROW_CAP: usize = 160;
+/// `VMETA_*` metadata offsets in `verify_e.rs` are derived from it. 2026-09-29: It is
+/// gpu-runtime's `buffers::VERIFY_ROW_CAP`, which also sizes the verify block-table rows,
+/// the logits floor and the scheduler's `VERIFY_ROW_BUDGET`. The sequence count is bounded
+/// separately, by `VERIFY_WY_TABLE_SEQS`.
+pub(in crate::model) const VERIFY_ROW_CAP: usize = metrale_gpu_runtime::buffers::VERIFY_ROW_CAP;
 
 /// 2026-09-25: Batched-verify CUDA graphs are on unless
 /// `METRALE_NO_MTP_VERIFY_GRAPHS` is present, whatever its value. Read once

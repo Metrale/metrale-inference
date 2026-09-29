@@ -32,10 +32,9 @@ use super::types::ActiveSeq;
 /// 2026-09-25: The retention ratios `snap_ratio` rounds to.
 const BUCKETS: [f32; 4] = [0.25, 0.5, 0.75, 1.0];
 
-/// 2026-09-25: Verify row-buffer capacity. It must equal the model's
-/// `VERIFY_ROW_CAP` (verify_e2.rs), which `can_batch_verify` enforces as
-/// `Σ ks <= VERIFY_ROW_CAP`.
-pub(super) const VERIFY_ROW_BUDGET: usize = 160;
+/// 2026-09-25: Verify row-buffer capacity: the model's `VERIFY_ROW_CAP`, which
+/// `can_batch_verify` enforces as `Σ ks <= VERIFY_ROW_CAP`.
+pub(super) const VERIFY_ROW_BUDGET: usize = metrale_gpu_runtime::buffers::VERIFY_ROW_CAP;
 
 /// 2026-09-25: Widest verify batch, in sequences, that the model accepts:
 /// `can_batch_verify` requires `(2..=VERIFY_WY_TABLE_SEQS).contains(&n)`.
