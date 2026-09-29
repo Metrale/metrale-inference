@@ -76,7 +76,8 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
 
     let echolp = baseline_for(&root, "bfcl-subset-echolp").unwrap();
     let (echolp_checkpoint, e) = echolp.resolve("gb10", None).unwrap();
-    assert_eq!(e.metrics["overall_accuracy"].min, Some(84.56));
+    // 2026-09-29: 83.8, the owner's one-standard-error allowance under the declared tier.
+    assert_eq!(e.metrics["overall_accuracy"].min, Some(83.8));
     assert_eq!(e.metrics["normalized_single_turn_score"].min, Some(85.77));
     assert_eq!(e.metrics["samples"].min, Some(1004.0));
     assert_eq!(e.metrics["samples"].max, Some(1004.0));
