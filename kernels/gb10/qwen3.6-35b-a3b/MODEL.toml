@@ -298,6 +298,16 @@ default_num_drafts = 1
 # C64 582.0 tok/s at 0.0982 J/tok, C128 692.7 at 0.0822, against vLLM+MTP 563.6 / 0.0922 and
 # 672.9 / 0.0783. The SSM verify pools grow to 128 slots (about 17.6 GB).
 mtp_max_seqs = 128
+# 2026-09-29: An exception ABOVE the checkpoint's declared precision (--weight-quantization
+# declared; metrale_config AboveDeclared, stated in the load log). The checkpoint declares FP8
+# activations for every expert projection; gate and up take them, but the down projection's
+# input, the SiLU product, stays at FP32 precision (BF16 hi+lo into the W8A16 down kernel)
+# instead of E4M3 per 128 group. vLLM's Marlin FP8 MoE on GB10 keeps it BF16 as well.
+# Evidence (dgx2, PR #51): with the SiLU product at E4M3 and the block-scaled attention/GDN
+# W8A8 on, the ssm-state-poisoning gate's reference round failed 3/3 on a greedy tie at
+# turn 3 (" a" and " computed" both at logprob -0.979); the same binary with the product at
+# FP32 precision passed 2/2.
+expert_down_w8a16 = true
 
 [[model_types]]
 model_type = "qwen3_6_moe"

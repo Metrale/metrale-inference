@@ -208,6 +208,12 @@ pub struct ModelBehavior {
     /// `--mtp-max-seqs` is not given; 0 means the engine default
     /// (`metrale_model_layers::speculative::resolve_mtp_max_seqs`).
     pub mtp_max_seqs: u32,
+    /// 2026-09-29: Under `--weight-quantization declared`, the MoE expert down projections
+    /// decode W8A16 (the SiLU product at FP32 precision) where the checkpoint declares FP8
+    /// activations; gate and up keep them. An exception above the declared precision
+    /// (`metrale_config::weight_quantization::AboveDeclared`), stated in the load log. Default
+    /// false.
+    pub expert_down_w8a16: bool,
     /// 2026-09-25: Passed to the chat template as `disable_tool_steering`;
     /// `nemotron_h.jinja` then omits its `<tool_call>` generation-prompt
     /// prefix when tools are present. Default false.
@@ -336,6 +342,7 @@ impl Default for ModelBehavior {
             default_kv_dtype: "",
             default_num_drafts: 0,
             mtp_max_seqs: 0,
+            expert_down_w8a16: false,
             disable_tool_steering: false,
             disable_cwd_hint_injection: false,
             use_sampling_presets_for_core: false,

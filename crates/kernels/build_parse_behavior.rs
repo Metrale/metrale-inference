@@ -30,6 +30,8 @@ pub(crate) struct ParsedBehavior {
     pub default_num_drafts: u32,
     /// 2026-09-29: See `ModelBehavior::mtp_max_seqs`.
     pub mtp_max_seqs: u32,
+    /// 2026-09-29: See `ModelBehavior::expert_down_w8a16`.
+    pub expert_down_w8a16: bool,
     pub disable_tool_steering: bool,
     pub disable_cwd_hint_injection: bool,
     pub use_sampling_presets_for_core: bool,
@@ -82,6 +84,7 @@ impl Default for ParsedBehavior {
             default_kv_dtype: String::new(),
             default_num_drafts: 0,
             mtp_max_seqs: 0,
+            expert_down_w8a16: false,
             disable_tool_steering: false,
             disable_cwd_hint_injection: false,
             use_sampling_presets_for_core: false,
@@ -161,6 +164,10 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         .and_then(|v| v.as_integer())
         .map(|v| v as u32)
         .unwrap_or(0);
+    let expert_down_w8a16 = b
+        .and_then(|v| v.get("expert_down_w8a16"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let disable_tool_steering = b
         .and_then(|v| v.get("disable_tool_steering"))
         .and_then(|v| v.as_bool())
@@ -277,6 +284,7 @@ pub(crate) fn parse_behavior(model_dir: &std::path::Path) -> ParsedBehavior {
         default_kv_dtype,
         default_num_drafts,
         mtp_max_seqs,
+        expert_down_w8a16,
         disable_tool_steering,
         disable_cwd_hint_injection,
         use_sampling_presets_for_core,

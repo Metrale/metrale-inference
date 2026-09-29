@@ -22,12 +22,13 @@ use super::*;
 
 /// 2026-09-28: The tensor-core expert kernels, looked up with `try_kernel`; a zero handle
 /// keeps the scalar kernels.
-/// The three `_w8a8` handles are the opt-in W8A8 twin's (`fp8_grouped_tc_w8a8.rs`).
+/// The `_w8a8` handles are the opt-in W8A8 twin's (`fp8_grouped_tc_w8a8.rs`).
 pub(super) struct Fp8GroupedTcKernels {
     pub gate_up: KernelHandle,
     pub down: KernelHandle,
     pub quant_w8a8: KernelHandle,
     pub gate_up_w8a8: KernelHandle,
+    pub gate_up_w8a8_hilo: KernelHandle,
     pub down_w8a8: KernelHandle,
 }
 
@@ -42,6 +43,11 @@ impl Fp8GroupedTcKernels {
             down: try_kernel(gpu, MODULE, "moe_expert_down_act_fp8_grouped_tc"),
             quant_w8a8: try_kernel(gpu, W8A8, "moe_act_quant_e4m3"),
             gate_up_w8a8: try_kernel(gpu, W8A8, "moe_expert_gate_up_act_fp8_grouped_tc_w8a8"),
+            gate_up_w8a8_hilo: try_kernel(
+                gpu,
+                W8A8,
+                "moe_expert_gate_up_act_fp8_grouped_tc_w8a8_hilo",
+            ),
             down_w8a8: try_kernel(gpu, W8A8, "moe_expert_down_act_fp8_grouped_tc_w8a8"),
         }
     }
@@ -68,12 +74,12 @@ impl MoeLayer {
     /// kernels: not switched off, both kernels resolved, and gate+up (`inter` x `hidden`) and
     /// down (`hidden` x `inter`) fit their tiles.
     ///
-    /// 2026-09-28: Published FP8 expert activations (`super::moe_expert_fp8_act`) turn the
+    /// 2026-09-28: A published W8A8 expert decode (`super::moe_expert_decode`) turns the
     /// tensor-core path on too: the W8A8 step is part of it, and its one-row delegation keeps
     /// a row's bits independent of the row count.
     pub(super) fn fp8_grouped_tc_on(&self, hidden: usize, inter: usize) -> bool {
         let (h, i) = (hidden as u32, inter as u32);
-        (fp8_grouped_tc_enabled() || super::moe_expert_fp8_act())
+        (fp8_grouped_tc_enabled() || super::moe_expert_decode() != super::MoeExpertDecode::W8a16)
             && self.fp8_grouped_tc.gate_up.0 != 0
             && self.fp8_grouped_tc.down.0 != 0
             && ops::fp8_grouped_tc_shape_ok(i, h, ops::FP8_GROUPED_GATE_UP_TC)

@@ -239,6 +239,23 @@ pub fn is_expert_module(module: &str) -> bool {
         || module.contains(".shared_expert.")
 }
 
+/// 2026-09-29: Whether `module` is a MoE expert down projection (routed or shared), whose input
+/// is the SiLU product.
+pub fn is_expert_down_module(module: &str) -> bool {
+    is_expert_module(module) && module.ends_with("down_proj")
+}
+
+/// 2026-09-29: A model's standing exceptions ABOVE its checkpoint's declared precision, set in
+/// its MODEL.toml `[behavior]` with the evidence beside them and stated in the load log. Each
+/// only raises a layer's precision; none applies under `nvfp4` or where nothing is declared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct AboveDeclared {
+    /// 2026-09-29: `[behavior] expert_down_w8a16`: the expert down projections decode with
+    /// 16-bit activations (W8A16; the SiLU product at FP32 precision) where the checkpoint
+    /// declares FP8, while gate and up keep their declared FP8 activations.
+    pub expert_down_w8a16: bool,
+}
+
 /// 2026-09-28: The activation format a layer runs at in decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActFormat {
@@ -282,12 +299,25 @@ pub struct WeightQuantPolicy<'a> {
     tier: WeightQuantTier,
     plan: &'a DeclaredPrecisionPlan,
     caps: KernelCaps,
+    above: AboveDeclared,
 }
 
 impl<'a> WeightQuantPolicy<'a> {
     /// 2026-09-28: The policy for a model whose `quantization_config` parsed to `plan`.
     pub fn new(tier: WeightQuantTier, plan: &'a DeclaredPrecisionPlan, caps: KernelCaps) -> Self {
-        Self { tier, plan, caps }
+        Self {
+            tier,
+            plan,
+            caps,
+            above: AboveDeclared::default(),
+        }
+    }
+
+    /// 2026-09-29: This policy with the model's [`AboveDeclared`] exceptions. Without them it
+    /// answers the declared precision; only the expert down answers of
+    /// [`Self::fp8_decode_act`] depend on them.
+    pub fn with_above_declared(self, above: AboveDeclared) -> Self {
+        Self { above, ..self }
     }
 
     /// 2026-09-28: The policy for a checkpoint whose parsed `quantization_config` is `qc`;
@@ -344,6 +374,8 @@ impl<'a> WeightQuantPolicy<'a> {
     /// activations and the W8A8 decode kernels are present, BF16 otherwise (above declared,
     /// until those kernels land). This is WHEN; the W8A8 family says whether it CAN serve a
     /// given weight and row count.
+    /// 2026-09-29: BF16 as well for an expert down projection under
+    /// [`AboveDeclared::expert_down_w8a16`].
     pub fn fp8_decode_act(&self, module: &str) -> Option<ActFormat> {
         if !self.wants_fp8_weights(module) {
             return None;
@@ -358,7 +390,8 @@ impl<'a> WeightQuantPolicy<'a> {
         } else {
             self.caps.w8a8_decode
         };
-        Some(if kernels && a8 {
+        let above = self.above.expert_down_w8a16 && is_expert_down_module(module);
+        Some(if kernels && a8 && !above {
             ActFormat::Fp8
         } else {
             ActFormat::Bf16

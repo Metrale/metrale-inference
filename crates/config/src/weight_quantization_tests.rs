@@ -264,6 +264,68 @@ fn block_scaled_and_moe_w8a8_wait_for_their_own_caps() {
     assert!(!nv.declares_fp8_activations(&attn));
 }
 
+/// 2026-09-29: `[behavior] expert_down_w8a16` on Qwen/Qwen3.6-35B-A3B-FP8 under `declared`
+/// with every W8A8 cap on: the routed and shared expert down projections answer BF16 and still
+/// declare FP8 (so the load log can say they run above it); gate, up, attention and a dense
+/// model's non-expert down keep FP8; without the exception the down answers FP8; the `nvfp4`
+/// tier asks for nothing either way.
+#[test]
+fn expert_down_w8a16_raises_only_the_expert_down() {
+    let p = plan("fp8_moe");
+    let all = KernelCaps {
+        w8a8_decode: true,
+        w8a8_moe_decode: true,
+        w8a8_block_scaled_decode: true,
+        ..CAPS
+    };
+    let above = AboveDeclared {
+        expert_down_w8a16: true,
+    };
+    let pol = WeightQuantPolicy::new(declared(), &p, all).with_above_declared(above);
+    let plain = WeightQuantPolicy::new(declared(), &p, all);
+    for m in [
+        format!("{L}.0.mlp.experts.3.down_proj"),
+        format!("{L}.7.mlp.shared_expert.down_proj"),
+    ] {
+        assert!(is_expert_down_module(&m), "{m}");
+        assert_eq!(pol.fp8_decode_act(&m), Some(ActFormat::Bf16), "{m}");
+        assert_eq!(
+            pol.fp8_block_scaled_decode_act(&m),
+            Some(ActFormat::Bf16),
+            "{m}"
+        );
+        assert!(pol.declares_fp8_activations(&m), "{m}");
+        assert_eq!(plain.fp8_decode_act(&m), Some(ActFormat::Fp8), "{m}");
+    }
+    for m in [
+        format!("{L}.0.mlp.experts.3.gate_proj"),
+        format!("{L}.0.mlp.experts.3.up_proj"),
+        format!("{L}.7.mlp.shared_expert.gate_proj"),
+        format!("{L}.3.self_attn.o_proj"),
+    ] {
+        assert!(!is_expert_down_module(&m), "{m}");
+        assert_eq!(
+            pol.fp8_block_scaled_decode_act(&m),
+            Some(ActFormat::Fp8),
+            "{m}"
+        );
+    }
+    let dense = plan("unsloth");
+    let dense_down = format!("{L}.3.mlp.down_proj");
+    assert!(!is_expert_down_module(&dense_down));
+    assert_eq!(
+        WeightQuantPolicy::new(declared(), &dense, all)
+            .with_above_declared(above)
+            .fp8_decode_act(&format!("{L}.3.self_attn.q_proj")),
+        Some(ActFormat::Fp8)
+    );
+    let nv = WeightQuantPolicy::new(nvfp4(W4a4Downcast::Off), &p, all).with_above_declared(above);
+    assert_eq!(
+        nv.fp8_decode_act(&format!("{L}.0.mlp.experts.3.down_proj")),
+        None
+    );
+}
+
 /// 2026-09-28: A checkpoint without `quantization_config` declares nothing, so both tiers
 /// answer as before the plan existed.
 #[test]

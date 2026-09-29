@@ -4,9 +4,13 @@
 //! (`kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu`): the per-(row, 128) E4M3 activation
 //! quantization, gate+up with a re-quantized SiLU product, and down; plus where their
 //! quantized activations live inside the grouped decode's two SiLU buffers.
+//! 2026-09-29: And the `_hilo` gate+up, which keeps the SiLU product at FP32 precision for the
+//! W8A16 down kernel, with its quantized input in the down output buffer
+//! ([`Fp8GroupedW8a8HiloLayout`]).
 //!
 //! Owner: model-layers ops.
-//! Invariants: [`Fp8GroupedW8a8Layout::new`] refuses buffers that cannot hold the layout.
+//! Invariants: [`Fp8GroupedW8a8Layout::new`] and [`Fp8GroupedW8a8HiloLayout::new`] refuse
+//! buffers that cannot hold their layout.
 
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -82,6 +86,44 @@ impl Fp8GroupedW8a8Layout {
     }
 }
 
+/// 2026-09-29: Where the `_hilo` gate+up's quantized layer input lives: `[m, hidden]` E4M3 at
+/// the start of the down output buffer (`expert_down_out`, `[te, hidden]` BF16), its scales
+/// `[m, hidden / 128]` FP32 at `xs`. The down kernel writes that buffer only after gate+up has
+/// read them. The SiLU buffers hold the BF16 hi|lo products `[te, 2 inter]` and `[m, 2 inter]`,
+/// as under W8A16.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fp8GroupedW8a8HiloLayout {
+    pub xs: usize,
+}
+
+impl Fp8GroupedW8a8HiloLayout {
+    /// 2026-09-29: The layout for `m` rows, or an error when `hidden` or `inter` is not whole
+    /// 128 groups or a buffer is too small.
+    pub fn new(
+        m: usize,
+        top_k: usize,
+        hidden: usize,
+        inter: usize,
+        routed_bytes: usize,
+        shared_bytes: usize,
+        down_out_bytes: usize,
+    ) -> Result<Self> {
+        ensure!(
+            hidden.is_multiple_of(128) && inter.is_multiple_of(128),
+            "W8A8 hi|lo grouped decode: hidden {hidden} and inter {inter} must be whole 128 groups"
+        );
+        let xs = align16(m * hidden);
+        let down_end = xs + m * (hidden / 128) * 4;
+        let (routed_end, shared_end) = (m * top_k * inter * 4, m * inter * 4);
+        ensure!(
+            down_end <= down_out_bytes && routed_end <= routed_bytes && shared_end <= shared_bytes,
+            "W8A8 hi|lo grouped decode: needs {down_end} + {routed_end} + {shared_end} bytes, \
+             buffers hold {down_out_bytes} + {routed_bytes} + {shared_bytes}"
+        );
+        Ok(Self { xs })
+    }
+}
+
 /// 2026-09-28: E4M3 per (row, 128-K group) of `x` `[rows, k]` BF16 into `q` / `s`.
 #[allow(clippy::too_many_arguments)]
 pub fn moe_act_quant_e4m3(
@@ -117,6 +159,8 @@ pub struct Fp8GroupedW8a8Rows {
 
 /// 2026-09-28: W8A8 gate+up and SiLU: `(xq, xs)` the quantized layer input; writes the
 /// quantized products `(act_q, act_s)` by sorted position and `(sh_q, sh_s)` by token.
+/// 2026-09-29: With the `_hilo` kernel, `act.0` / `sh.0` receive the BF16 hi|lo products and
+/// `act.1` / `sh.1` are unused (pass null).
 #[allow(clippy::too_many_arguments)]
 pub fn moe_expert_gate_up_act_fp8_grouped_tc_w8a8(
     gpu: &dyn GpuBackend,

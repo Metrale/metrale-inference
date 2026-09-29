@@ -196,6 +196,7 @@ pub(super) fn resolve_targets(workspace_root: &std::path::Path) -> Vec<Target> {
                 behavior_default_kv_dtype: pb.default_kv_dtype,
                 behavior_default_num_drafts: pb.default_num_drafts,
                 behavior_mtp_max_seqs: pb.mtp_max_seqs,
+                behavior_expert_down_w8a16: pb.expert_down_w8a16,
                 behavior_disable_tool_steering: pb.disable_tool_steering,
                 behavior_disable_cwd_hint_injection: pb.disable_cwd_hint_injection,
                 behavior_use_sampling_presets_for_core: pb.use_sampling_presets_for_core,
