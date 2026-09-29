@@ -106,6 +106,7 @@ impl DenseFfnLayer {
             w4a16_gemm_t_k64_k: super::k64_kernel(gpu).unwrap_or(KernelHandle(0)),
             act_mul,
             bf16_weights: None,
+            w8a8: None,
             dense_gemv_bf16_k,
             dense_gemm_bf16_k,
             dense_gemm_tc_k,

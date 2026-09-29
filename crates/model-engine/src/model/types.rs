@@ -82,6 +82,8 @@ pub struct TransformerModel {
     /// Installed by `set_lm_head_q6k` when the store's `lm_head.weight` is
     /// Q6_K; `None` otherwise.
     pub(super) lm_head_q6k: Option<super::lm_head_q6k::LmHeadQ6k>,
+    /// 2026-09-28: Multi-row and W8A8 kernels of the FP8 head (`lm_head_fp8_rows.rs`).
+    pub(super) lm_head_fp8_rows: super::lm_head_fp8_rows::LmHeadFp8Rows,
     pub(super) layers: Vec<Box<dyn TransformerLayer>>,
     /// 2026-09-25: `true` when any layer's `decode_graph_unsupported()` is true,
     /// so decode stays eager. Computed once at construction from `layers`.

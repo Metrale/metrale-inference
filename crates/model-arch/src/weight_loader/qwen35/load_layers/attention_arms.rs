@@ -84,7 +84,7 @@ pub(crate) fn build_full_attention_nvfp4(
             let dummy = DenseWeight {
                 weight: metrale_gpu_runtime::gpu::DevicePtr::NULL,
             };
-            let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+            let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
             let attn = AttentionWeights {
                 q_proj: dummy,
                 k_proj: dummy,
@@ -159,7 +159,7 @@ pub(crate) fn build_full_attention_nvfp4(
                 gpu.free_memory()? as f64 / (1024.0 * 1024.0 * 1024.0)
             );
 
-            let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+            let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
 
             let attn = AttentionWeights {
                 q_proj: q_dense,

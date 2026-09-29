@@ -17,6 +17,7 @@ metrale-core = { path = "../core", default-features = false }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+regex = "1.13"
 
 [lints]
 workspace = true

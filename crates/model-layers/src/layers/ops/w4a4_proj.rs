@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Opt-in W4A4 small-M projection on FP4 tensor cores
-//! (`w4a4_gemv_mx.cu`, module `w4a4_gemv_mx`), under `--w4a4-downcast`.
+//! 2026-09-28: W4A4 small-M projection on FP4 tensor cores (`w4a4_gemv_mx.cu`, module
+//! `w4a4_gemv_mx`).
 //!
 //! The block-scale FP4 MMA (`kind::mxf4nvf4`) takes the checkpoint's NVFP4
 //! weight bytes and E4M3 group scales as operands, with no dequant. The
 //! activations are first quantised per row to NVFP4 with a per-row FP32 global
-//! scale (`w4a4_quant_rows`), so the numerics become W4A4. That is an accuracy
-//! change, which is why the path is opt-in.
+//! scale (`w4a4_quant_rows`), so the numerics are W4A4. Which projections take it
+//! is the `--weight-quantization` tier's answer (`WeightQuantTier::w4a4_rows`):
+//! under `declared`, a weight whose checkpoint declares FP4 activations (stamped
+//! `Nvfp4Act::A4`); under `nvfp4`, every NVFP4 weight when `--w4a4-downcast` is on.
+//! Every other NVFP4 weight stays W4A16.
 //!
 //! Scope: the projection sites that call [`nvfp4_proj_small_m`]: GDN
 //! qkvz/out_proj, attention q/k/v/o and dense-FFN gate/up/down, up to
-//! [`w4a4_max_m`] rows. The lm_head does not call it.
+//! [`max_rows`] rows. The lm_head does not call it.
 //!
 //! Scratch: the quantised activations need `[M, K/2] + [M, K/16] + [M] f32` of
 //! device memory. [`prepare`] allocates it once per backend at model build
@@ -22,6 +25,7 @@
 //! Owner: model-layers ops.
 //! Invariants:
 //! - Device scratch is allocated only in [`prepare`], never by a launch.
+//! - A projection reaches the FP4 kernels only when `WeightQuantTier::w4a4_rows` admits it.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -31,57 +35,13 @@ use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 
 use crate::weight_map::QuantizedWeight;
 
-/// 2026-09-25: Rows the narrow entries (`w4a4_gemv_mx32`) cover.
+/// 2026-09-25: Rows the narrow entries (`w4a4_gemv_mx32`) cover, and the widest
+/// W4A16 fallback (`w4a16_gemv_batch32`).
 pub const W4A4_MAX_M: u32 = 32;
-/// 2026-09-25: Rows the wide entries (`w4a4_gemv_mx64*`, `--w4a4-downcast-wide`)
-/// cover.
+/// 2026-09-25: Rows the wide entries (`w4a4_gemv_mx64*`) cover.
 pub const W4A4_WIDE_MAX_M: u32 = 64;
 /// 2026-09-25: Largest K the scratch is sized for.
 pub const W4A4_MAX_K: u32 = 32768;
-
-/// 2026-09-25: `--w4a4-downcast`, as published by the serve. It is read by this
-/// module's projection path and by `DenseFfn::forward_k2` / `forward_k3`, which
-/// under it take the batched `forward_km` arm. There is no environment
-/// fallback. The serve publishes it before the model is built; anything that
-/// reads it first (a test, an example) fixes it at false.
-static W4A4_DOWNCAST: OnceLock<bool> = OnceLock::new();
-
-/// 2026-09-25: Publish `--w4a4-downcast`. Returns the value in force: the first
-/// publication or read wins, and a caller that gets a different value should
-/// warn.
-pub fn set_w4a4_downcast_from_cli(on: bool) -> bool {
-    let _ = W4A4_DOWNCAST.set(on);
-    *W4A4_DOWNCAST.get().expect("just set")
-}
-
-/// 2026-09-25: `--w4a4-downcast` in force? False unless the serve published true.
-pub fn w4a4_downcast_enabled() -> bool {
-    *W4A4_DOWNCAST.get_or_init(|| false)
-}
-
-/// 2026-09-25: `--w4a4-downcast-wide`, as published by the serve. Same rules as
-/// [`W4A4_DOWNCAST`]; the serve publishes `downcast && wide`.
-static W4A4_WIDE: OnceLock<bool> = OnceLock::new();
-
-/// 2026-09-25: Publish `--w4a4-downcast-wide`. Returns the value in force.
-pub fn set_w4a4_wide_from_cli(on: bool) -> bool {
-    let _ = W4A4_WIDE.set(on);
-    *W4A4_WIDE.get().expect("just set")
-}
-
-/// 2026-09-25: `--w4a4-downcast-wide` in force (and `--w4a4-downcast` with it)?
-pub fn w4a4_wide_enabled() -> bool {
-    w4a4_downcast_enabled() && *W4A4_WIDE.get_or_init(|| false)
-}
-
-/// 2026-09-25: Widest row count the W4A4 projection path serves in this process.
-pub fn w4a4_max_m() -> u32 {
-    if w4a4_wide_enabled() {
-        W4A4_WIDE_MAX_M
-    } else {
-        W4A4_MAX_M
-    }
-}
 
 #[derive(Clone, Copy)]
 struct W4a4State {
@@ -99,10 +59,12 @@ struct W4a4State {
     mx32_ps: KernelHandle,
     /// 2026-09-25: Streaming multiprocessors: the persistent entries' grid.
     sms: u32,
-    /// 2026-09-25: 33..=64 rows under `--w4a4-downcast-wide` (zero handles
-    /// otherwise).
+    /// 2026-09-28: 33..=64 rows (zero handles when this target lacks them).
     mx64: KernelHandle,
     mx64_nt2: KernelHandle,
+    /// 2026-09-28: [`W4A4_WIDE_MAX_M`] when `mx64`/`mx64_nt2` resolved, else
+    /// [`W4A4_MAX_M`]; the scratch is sized for it.
+    max_m: u32,
     aq: DevicePtr,
     a_scale: DevicePtr,
     a_gs: DevicePtr,
@@ -141,12 +103,13 @@ fn key(gpu: &dyn GpuBackend) -> usize {
     gpu as *const dyn GpuBackend as *const () as usize
 }
 
-/// 2026-09-25: Resolve the kernels and allocate the scratch once per backend,
-/// when `--w4a4-downcast` is on. Call at model build, never inside a graph
-/// capture. When a kernel is missing it records `None` for the backend and
-/// logs a warning, and every projection stays W4A16.
+/// 2026-09-28: Resolve the kernels and allocate the scratch once per backend, when the
+/// published tier can take the W4A4 path (`WeightQuantTier::uses_w4a4_decode`). Call at
+/// model build, never inside a graph capture. When a kernel is missing it records `None`
+/// for the backend and logs, and every projection stays W4A16.
 pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
-    if !w4a4_downcast_enabled() {
+    let tier = crate::layers::weight_quantization();
+    if !tier.uses_w4a4_decode() {
         return Ok(());
     }
     let mut guard = cache().lock().unwrap_or_else(|p| p.into_inner());
@@ -167,22 +130,14 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
         .all(|k| k.0 != 0)
     {
         let sms = gpu.sm_count()?;
+        let (mx64, mx64_nt2, max_m) =
+            wide_entries(tier, h("w4a4_gemv_mx64"), h("w4a4_gemv_mx64_nt2"));
         tracing::info!(
-            "w4a4 projection: METRALE_W4A4_MX_NT={} METRALE_W4A4_MX_PS={} ({sms} SMs) wide={} (max rows {}, ffn {})",
+            "w4a4 projection ({tier:?}): METRALE_W4A4_MX_NT={} METRALE_W4A4_MX_PS={} ({sms} SMs), max rows {max_m}",
             mx_nt(),
             u8::from(mx_ps()),
-            w4a4_wide_enabled(),
-            w4a4_max_m(),
-            ffn_proj_max_rows()
         );
-        let (m, k) = (w4a4_max_m() as usize, W4A4_MAX_K as usize);
-        let wide = |f: &str| {
-            if w4a4_wide_enabled() {
-                h(f)
-            } else {
-                KernelHandle(0)
-            }
-        };
+        let (m, k) = (max_m as usize, W4A4_MAX_K as usize);
         Some(W4a4State {
             quant,
             mx8,
@@ -193,8 +148,9 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
             mx16_ps,
             mx32_ps,
             sms,
-            mx64: wide("w4a4_gemv_mx64"),
-            mx64_nt2: wide("w4a4_gemv_mx64_nt2"),
+            mx64,
+            mx64_nt2,
+            max_m,
             aq: gpu.alloc(m * k / 2)?,
             a_scale: gpu.alloc(m * k / 16)?,
             a_gs: gpu.alloc(m * 4)?,
@@ -205,13 +161,50 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
             },
         })
     } else {
-        tracing::warn!(
-            "--w4a4-downcast is on but the w4a4_gemv_mx kernels are not in this target; projections stay W4A16"
-        );
+        tracing::info!("w4a4_gemv_mx kernels are not in this target; NVFP4 projections run W4A16");
         None
     };
     guard.push((key(gpu), state));
     Ok(())
+}
+
+/// 2026-09-28: The 33..=64-row entries and the scratch's row count. Under `declared` they are
+/// used when this target has them. Under `nvfp4` they belong to `--w4a4-downcast-wide`, as
+/// before the tiers existed: without it they are not resolved and the scratch holds 32 rows.
+fn wide_entries(
+    tier: metrale_config::WeightQuantTier,
+    mx64: KernelHandle,
+    mx64_nt2: KernelHandle,
+) -> (KernelHandle, KernelHandle, u32) {
+    use metrale_config::{W4a4Downcast, WeightQuantization};
+    match (tier.tier(), tier.downcast()) {
+        (WeightQuantization::Declared, _) if mx64.0 != 0 && mx64_nt2.0 != 0 => {
+            (mx64, mx64_nt2, W4A4_WIDE_MAX_M)
+        }
+        (WeightQuantization::Nvfp4, W4a4Downcast::Wide) => (mx64, mx64_nt2, W4A4_WIDE_MAX_M),
+        _ => (KernelHandle(0), KernelHandle(0), W4A4_MAX_M),
+    }
+}
+
+/// 2026-09-28: The widest row count the W4A4 path serves for `weight` on `gpu` under the
+/// published tier (`WeightQuantTier::w4a4_rows`); 0 means W4A16.
+pub fn weight_rows(gpu: &dyn GpuBackend, weight: &QuantizedWeight) -> u32 {
+    rows_for(weight, max_rows(gpu))
+}
+
+fn rows_for(weight: &QuantizedWeight, kernel_rows: u32) -> u32 {
+    crate::layers::weight_quantization().w4a4_rows(
+        weight.act,
+        W4A4_MAX_M,
+        W4A4_WIDE_MAX_M,
+        kernel_rows,
+    )
+}
+
+/// 2026-09-28: Widest row count the W4A4 kernels serve on `gpu`: 64 or 32 once
+/// [`prepare`] found them, else 0.
+pub fn max_rows(gpu: &dyn GpuBackend) -> u32 {
+    state(gpu).map_or(0, |s| s.max_m)
 }
 
 fn state(gpu: &dyn GpuBackend) -> Option<W4a4State> {
@@ -222,35 +215,14 @@ fn state(gpu: &dyn GpuBackend) -> Option<W4a4State> {
         .and_then(|(_, s)| *s)
 }
 
-/// 2026-09-25: Row edge of the narrow projection arms (GDN qkvz/out_proj, the
-/// dense FFN through [`ffn_proj_max_rows`], and `W4a16BatchmTiers::kernel`):
-/// [`w4a4_max_m`] under `--w4a4-downcast`, else the W4A16 edge
-/// [`super::gemv_tc::narrow_gemv_max_rows`]. The lm_head reads
-/// `narrow_gemv_max_rows` directly.
-pub fn proj_max_rows() -> u32 {
-    if w4a4_downcast_enabled() {
-        w4a4_max_m()
-    } else {
-        super::gemv_tc::narrow_gemv_max_rows()
-    }
+/// 2026-09-28: Pure: may the W4A4 path serve this launch? `max_m` is [`max_rows`].
+pub fn w4a4_route(m: u32, n: u32, k: u32, max_m: u32) -> bool {
+    (1..=max_m).contains(&m) && n > 0 && k > 0 && k.is_multiple_of(64) && k <= W4A4_MAX_K
 }
 
-/// 2026-09-25: Row edge of the two dense-FFN narrow arms: [`proj_max_rows`],
-/// capped at [`W4A4_MAX_M`], so under `--w4a4-downcast-wide` the dense FFN's
-/// 33..=64-row steps do not take the narrow arm.
-pub fn ffn_proj_max_rows() -> u32 {
-    proj_max_rows().min(W4A4_MAX_M)
-}
-
-/// 2026-09-25: Pure: may the W4A4 path serve this launch? `wide` is
-/// `--w4a4-downcast-wide`.
-pub fn w4a4_route(m: u32, n: u32, k: u32, enabled: bool, wide: bool) -> bool {
-    let max_m = if wide { W4A4_WIDE_MAX_M } else { W4A4_MAX_M };
-    enabled && (1..=max_m).contains(&m) && n > 0 && k > 0 && k.is_multiple_of(64) && k <= W4A4_MAX_K
-}
-
-/// 2026-09-25: The projection launcher: the W4A4 FP4 MMA when opted in,
-/// prepared and [`w4a4_route`] admits the shape, else the W4A16
+/// 2026-09-28: The projection launcher: the W4A4 FP4 MMA when the tier admits the
+/// weight ([`weight_rows`]), the kernels are prepared and [`w4a4_route`] admits the
+/// shape, else the W4A16
 /// `w4a16_gemv_batchm` (which tries the tensor-core GEMV first). The W4A16
 /// fallback returns an error above [`W4A4_MAX_M`] rows.
 #[allow(clippy::too_many_arguments)]
@@ -335,8 +307,10 @@ fn proj(
     stream: u64,
     same_input: bool,
 ) -> Result<()> {
-    if w4a4_route(m, n, k, w4a4_downcast_enabled(), w4a4_wide_enabled())
+    let tier = crate::layers::weight_quantization();
+    if tier.uses_w4a4_decode()
         && let Some(s) = state(gpu)
+        && w4a4_route(m, n, k, rows_for(weight, s.max_m))
     {
         let want: QuantKey = (key(gpu), input.0, m, k, stream);
         let mut last = last_quant().lock().unwrap_or_else(|p| p.into_inner());
@@ -360,10 +334,7 @@ fn proj(
             } => (kernel, div_ceil(n, rows_per_cta), 0, None),
             MxLaunch::Persistent { kernel, sst, smem } => (kernel, s.sms, smem, Some(sst)),
         };
-        anyhow::ensure!(
-            mx.0 != 0,
-            "w4a4: no kernel for {m} rows (--w4a4-downcast-wide kernels missing)"
-        );
+        anyhow::ensure!(mx.0 != 0, "w4a4: no kernel for {m} rows");
         let launch = KernelLaunch::new(gpu, mx)
             .grid([grid, 1, 1])
             .block([256, 1, 1])
@@ -411,6 +382,12 @@ fn proj(
             )?;
         }
         return Ok(());
+    }
+    // 2026-09-28: Under `declared` the projections of one group (q/k/v, gate/up) may route
+    // differently. When the first takes W4A16 it quantizes nothing, so a later W4A4 member
+    // passing `same_input` must not match a key an earlier layer left: forget it.
+    if !same_input && tier.tier() == metrale_config::WeightQuantization::Declared {
+        *last_quant().lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
     anyhow::ensure!(
         m <= W4A4_MAX_M,

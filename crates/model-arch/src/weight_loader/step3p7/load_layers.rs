@@ -198,6 +198,7 @@ fn load_moe_ffn(
                         weight_scale_2,
                         input_scale,
                         weight_scale_2_vec: DevicePtr::NULL,
+                        act: metrale_config::Nvfp4Act::Unstamped,
                     })
                 };
                 let gate_proj = load_expert_proj("gate_proj")?;
@@ -389,7 +390,7 @@ fn load_attention_layer(
     offset_norm_weights_plus_one(&q_norm, config.head_dim, gpu)?;
     offset_norm_weights_plus_one(&k_norm, config.head_dim, gpu)?;
 
-    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
 
     let attn = AttentionWeights {
         q_proj,

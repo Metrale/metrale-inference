@@ -56,8 +56,12 @@ impl Qwen3SsmLayer {
 
         let deinterleaved = ctx.buffers.ssm_deinterleaved();
         let qkvz_size = ctx.config.ssm_qkvz_size() as u32;
+        // 2026-09-28: The declared-W8A8 arm first (`w8a8_decode.rs`).
+        let w8a8_qkvz = self.w8a8_qkvz(ctx, normed, h, 1, deinterleaved, qkvz_size, stream)?;
         prof!("qkvz", {
-            if let Some(ref fp8) = self.qkvz_fp8w {
+            if w8a8_qkvz {
+                Ok(())
+            } else if let Some(ref fp8) = self.qkvz_fp8w {
                 // 2026-09-25: `w8a16_gemv` reads `[N/128, K/128]` FP32 block
                 // scales (`kernels/gb10/common/w8a16_gemv.cu`); the assert panics
                 // on a per-row or single-scale weight.
@@ -383,7 +387,9 @@ impl Qwen3SsmLayer {
         }
 
         let out = ctx.buffers.moe_output();
-        if let Some(ref fp8) = self.out_proj_fp8w {
+        if self.w8a8_out(ctx, normed_out, value_dim as u32, 1, out, h, stream)? {
+            // 2026-09-28: The declared-W8A8 arm (`w8a8_decode.rs`).
+        } else if let Some(ref fp8) = self.out_proj_fp8w {
             fp8.scale_format.expect(
                 crate::weight_map::WeightQuantFormat::Fp8BlockScaled,
                 "ssm_forward::out_proj_fp8w → w8a16_gemv",

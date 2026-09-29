@@ -253,6 +253,8 @@ pub struct MoeLayer {
     // tiers); 0 on
     // targets that do not ship them.
     nvfp4_grouped: forward_nvfp4_grouped_decode::Nvfp4GroupedKernels,
+    // 2026-09-28: The grouped FP8 decode's tensor-core expert kernels (`fp8_grouped_tc.rs`).
+    fp8_grouped_tc: fp8_grouped_tc::Fp8GroupedTcKernels,
     // 2026-09-25: Routed-expert FP8 grouped GEMM over the tile work-list that
     // `moe_build_tile_worklist` builds; 0 on targets that do not ship it.
     moe_fp8_grouped_gemm_k: KernelHandle,
@@ -368,7 +370,10 @@ mod forward_batched;
 mod forward_batched_gate;
 mod forward_ep;
 mod forward_fp8_grouped_decode;
+mod fp8_grouped_tc;
+mod fp8_grouped_tc_w8a8;
 pub use forward_fp8_grouped_decode::fp8_grouped_decode_shape_ok;
+pub use fp8_grouped_tc_w8a8::{moe_expert_fp8_act, set_moe_expert_fp8_act};
 mod forward_fp8_grouped_router;
 pub use forward_fp8_grouped_router::GroupedRouting;
 mod forward_nvfp4_grouped_decode;

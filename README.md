@@ -369,7 +369,9 @@ What the runner applies from `BENCH.toml` without being asked:
 
 - **Serve overrides** on the `qwen3.8/qwen3.8-27b-nvfp4-throughput` recipe:
   `kv_cache_dtype=fp8`, `max_batch_size=128`, `max_model_len=2048`,
-  `prefill_codispatch=true`, `w4a4_downcast=true`, `w4a4_downcast_wide=true`.
+  `prefill_codispatch=true`, `w4a4_downcast=true`, `w4a4_downcast_wide=true`,
+  `weight_quantization=nvfp4` (the lever exists only under that tier; the recipe
+  pins the same tier).
 - **Request parameters:** concurrencies 1, 2, 4, 8, 16, 32, 64, 128; ISL
   128; OSL 1024; `prompt_mode=essay`, which sends the published ladder's
   request byte for byte.
@@ -526,6 +528,35 @@ has been run under the vLLM manifest's exact serve profile (its parity note
 requires MTP K=4; the gate serves `num_drafts=1`), so the manifest itself
 scores no pair; the ratios read a gate record against the one-shot, rung by
 rung.
+
+### Weight precision: `declared` and `nvfp4`
+
+`--weight-quantization` picks the precision each linear layer runs at.
+
+- **`declared`** (the default) runs each layer at the precision its checkpoint's
+  `quantization_config` declares, for the weights and for the input activations.
+  Where a layer declares FP4 activations (the MLP of layers 0-55 of
+  `unsloth/Qwen3.8-27B-NVFP4`), decode and prefill run it W4A4. Where it declares
+  NVFP4 weights only (`nvidia/Qwen3.6-27B-NVFP4`'s MLP), it runs W4A16, with no FP4
+  MMQ prefill. Where it declares FP8 weights and activations with per-channel
+  scales (the attention, GDN, MLP 56-63 and lm_head of `unsloth/Qwen3.8-27B-NVFP4`),
+  decode runs W8A8, and `--lm-head-dtype default` takes the checkpoint's declared
+  head format. On `Qwen/Qwen3.6-35B-A3B-FP8` the experts and the 128x128
+  block-scaled attention/GDN still decode W8A16, above the declared activations,
+  until their W8A8 paths pass a full BFCL draw; the load log says so.
+- **`nvfp4`** is the engine as it ran before the flag existed. FP8-declared
+  projections are requantized to NVFP4 at load. Decode runs 16-bit activations
+  unless `--w4a4-downcast` is given, a lever that exists only under this tier.
+  Prefill runs the FP4 MMQ arm on every NVFP4 FFN.
+
+Every recipe in `recipes/` pins `weight_quantization: nvfp4`, the tier its
+numbers were measured under, and gate records disclose the tier in
+`serve_resolved`. The measured cost of `declared` against `nvfp4` is in the
+flag's help text in
+[`crates/server/src/cli/serve_args.rs`](crates/server/src/cli/serve_args.rs).
+
+`--expert-quantization` is separate from it: it governs the routed experts of an
+FP8 MoE under either tier. Its `fp8` default is the experts' declared precision.
 
 `--expert-quantization` picks the precision the routed MoE experts decode
 at; only its default, `fp8`, is part of the certified configuration. The two

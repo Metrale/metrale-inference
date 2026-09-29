@@ -267,6 +267,7 @@ pub fn quantize_to_nvfp4(
         weight_scale_2: scale2,
         input_scale: DevicePtr::NULL,
         weight_scale_2_vec: DevicePtr::NULL,
+        act: metrale_config::Nvfp4Act::Unstamped,
     })
 }
 
@@ -280,7 +281,7 @@ pub fn load_attention(
     config: &metrale_config::ModelConfig,
 ) -> Result<AttentionWeights> {
     let p = format!("{layer_prefix}.self_attn");
-    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
     let h = config.hidden_size;
     let qkv_out = config.num_attention_heads * config.head_dim;
     // 2026-09-25: q/k/v are `DenseWeight`, so an NVFP4 `.weight_packed`

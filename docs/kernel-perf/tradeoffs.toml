@@ -968,6 +968,30 @@ prs = []
 source = "kernels/gb10/common/moe_lora_grouped_down.cu:12"
 
 [[t]]
+match = "kernels/gb10/common/moe_fp8_grouped_tc.cu"
+text = "Tensor-core twin of the grouped FP8 decode (default; METRALE_NO_MOE_FP8_TC keeps the scalar kernels): E4M3 bytes become BF16 * 2^-120 in registers, rows are the MMA N columns, the FP32 SiLU product enters the down MMAs as BF16 hi + lo. 30-45% fewer GPU-rail joules per layer at 35B shapes, bytes/s within 1-5%. Output within 2e-4 relative of the scalar kernels (order only); row-invariant."
+prs = []
+source = "kernels/gb10/common/moe_fp8_grouped_tc.cu:3"
+
+[[t]]
+match = "kernels/gb10/common/moe_fp8_grouped_tc.cu"
+text = "Measured 2026-09-28 (dgx2, MoE ladder, auto MTP gate, 2 reps): C1..C16 J/tok 0.585/0.417/0.322/0.263/0.210 -> 0.539/0.361/0.260/0.198/0.147, tok/s -2.6/-1.8/-2.4/-0.4/+2.2%. The per-row work per warp is 8x the scalar kernel's, so 1..8-row launches lose 2-5% to tail effects."
+prs = []
+source = "MoE energy campaign notes 2026-09-28 (dgx2 A/B vs origin/main 88e14520)"
+
+[[t]]
+match = "kernels/gb10/common/w8a16_tc_rows.cu"
+text = "Row-tile W8A16 projection, 1..=64 decode rows (default under canonical tiers; METRALE_NO_W8A16_TC_ROWS keeps the tiles): weights decoded in registers, activations staged per block, rows as MMA N columns. At 35B shapes: 30-50% fewer GPU-rail joules per launch; faster from 16 rows, up to 5% slower on 12288 x 2048 at 1..8 rows. Output bits differ from w8a16_gemm_pipelined_m32; row-invariant."
+prs = []
+source = "kernels/gb10/common/w8a16_tc_rows.cu:3"
+
+[[t]]
+match = "kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu"
+text = "W8A8 twin of moe_fp8_grouped_tc.cu, selected by the weight-quantization policy: input and SiLU product quantized to E4M3 per (row, 128 group), the checkpoint's declared dynamic activation scheme, and FP8 weights into E4M3 MMAs undecoded. 7-10% fewer GPU-rail joules per layer than W8A16 at the same bytes/s; relative L2 4e-2 vs 3e-3 on random activations. Row-invariant."
+prs = []
+source = "kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu:3"
+
+[[t]]
 match = "kernels/gb10/common/moe_nvfp4_grouped.cu"
 text = "Introduced in #34 for opt-in --moe-nvfp4-experts (default off): FP8 experts are requantized to NVFP4 at load, halving expert bytes per decode step, at an accuracy cost. BFCL overall shard 1/4 85.38 -> 83.40, shard 2/4 84.40 -> 86.40, both shards 84.89 either way."
 prs = [34]

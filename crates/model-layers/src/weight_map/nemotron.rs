@@ -189,7 +189,7 @@ pub fn load_nemotron_attention(
         (q, k, v, o, QuantizedWeight::null(), None, None, None)
     };
 
-    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
     let attn = AttentionWeights {
         q_proj: q_dense,
         k_proj: k_dense,

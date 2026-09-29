@@ -231,10 +231,13 @@ impl Qwen3AttentionLayer {
         // (`qwen35_dense.rs`) builds it only when q, k and v have bit-equal
         // `weight_scale_2`, the one scale the GEMM applies.
         let fused_n = q_proj_dim as usize + 2 * kv_dim_e;
-        // 2026-09-25: `n > 8` keeps the fused N off the batched-GEMV arm of
-        // `wide_verify_gemm` for m <= 8: that arm reads the base q weight, not
-        // `w_t`, and a fused N would read past it.
-        let use_fused = fused_qkv_enabled() && self.qkv_nvfp4_t.is_some() && n > 8;
+        // 2026-09-25: Rows above q's narrow-arm edge keep the fused N off the batched-GEMV
+        // arm of `wide_verify_gemm`: that arm reads the base q weight, not `w_t`, and a fused
+        // N would read past it. 2026-09-28: the edge (`W4a16BatchmTiers::edge`) is 8 by
+        // default and up to 64 for a W4A4 weight; `n > 8` held only for the first.
+        let use_fused = fused_qkv_enabled()
+            && self.qkv_nvfp4_t.is_some()
+            && n as u32 > self.w4a16_batchm.edge(q_nvfp4).max(8);
         if use_fused {
             // 2026-09-25: `per_seq_qkv == q_proj_bytes + 2 * kv_bytes == fused_n * 2`,
             // so the fused `[n, fused_n]` output is the `qkv_buf` layout, and it

@@ -46,3 +46,54 @@ fn unavailable_mmq_preserves_transposed_weights_without_repack_or_free() {
     assert!(layer.fp4mmq_up.get().is_none());
     assert!(layer.fp4mmq_down.get().is_none());
 }
+
+/// 2026-09-28: A layer with gate, up and down stamped `act`, each with its own transposed
+/// twin, on the mock (every kernel present).
+fn stamped_layer(gpu: &MockGpuBackend, acts: [metrale_config::Nvfp4Act; 3]) -> DenseFfnLayer {
+    let w = |act| {
+        let mut q = QuantizedWeight::null();
+        q.weight = gpu.alloc(64).unwrap();
+        q.weight_scale = gpu.alloc(8).unwrap();
+        q.act = act;
+        q
+    };
+    let (g, u, d) = (w(acts[0]), w(acts[1]), w(acts[2]));
+    let weights = DenseFfnWeights {
+        gate_proj: g,
+        up_proj: u,
+        down_proj: d,
+        gate_proj_t: Some(w(acts[0])),
+        up_proj_t: Some(w(acts[1])),
+        down_proj_t: Some(w(acts[2])),
+    };
+    DenseFfnLayer::new(weights, gpu).unwrap()
+}
+
+/// 2026-09-28: The FP4 MMQ prefill arm quantizes activations to FP4, so it follows the
+/// weight-quantization stamps. A `Wide` gate/up (the checkpoint declares wider activations)
+/// builds no repack and keeps every transposed twin for the W4A16 GEMMs; a `Wide` down keeps
+/// its own twin while an A4 gate/up takes the arm; unstamped weights (the `nvfp4` tier) take
+/// it as before the tiers.
+#[test]
+fn the_fp4_mmq_arm_follows_the_stamps() {
+    use metrale_config::Nvfp4Act::{A4, Unstamped, Wide};
+    let gpu = MockGpuBackend::new();
+    let mut wide = stamped_layer(&gpu, [Wide, Wide, Wide]);
+    assert!(!wide.mmq_gate_up_declared());
+    wide.finalize_nvfp4_mmq_load(&gpu, 64, 64, 0).unwrap();
+    assert!(wide.fp4mmq_gate.get().is_none() && wide.fp4mmq_down.get().is_none());
+    assert!(wide.weights.gate_proj_t.is_some() && wide.weights.up_proj_t.is_some());
+    assert!(wide.weights.down_proj_t.is_some());
+
+    let mut down_wide = stamped_layer(&gpu, [A4, A4, Wide]);
+    down_wide.finalize_nvfp4_mmq_load(&gpu, 64, 64, 0).unwrap();
+    assert!(down_wide.fp4mmq_gate.get().is_some() && down_wide.fp4mmq_up.get().is_some());
+    assert!(down_wide.fp4mmq_down.get().is_none());
+    assert!(down_wide.weights.gate_proj_t.is_none() && down_wide.weights.up_proj_t.is_none());
+    assert!(down_wide.weights.down_proj_t.is_some());
+
+    let mut legacy = stamped_layer(&gpu, [Unstamped, Unstamped, Unstamped]);
+    legacy.finalize_nvfp4_mmq_load(&gpu, 64, 64, 0).unwrap();
+    assert!(legacy.fp4mmq_down.get().is_some());
+    assert!(legacy.weights.down_proj_t.is_none() && legacy.weights.gate_proj_t.is_none());
+}

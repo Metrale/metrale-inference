@@ -15,23 +15,27 @@ use metrale_config::ModelConfig;
 
 use crate::cli;
 
-pub(crate) fn merge_sidecar_quant_config(model_dir: &Path, config: &mut ModelConfig) {
+/// 2026-09-28: A malformed precision declaration in the sidecar is an error, like one in
+/// config.json (`DeclaredPrecisionPlan`).
+pub(crate) fn merge_sidecar_quant_config(model_dir: &Path, config: &mut ModelConfig) -> Result<()> {
     if config.quantization_config.is_some() {
-        return;
+        return Ok(());
     }
     let hf_quant_path = model_dir.join("hf_quant_config.json");
     if !hf_quant_path.exists() {
-        return;
+        return Ok(());
     }
     match std::fs::read_to_string(&hf_quant_path) {
         Ok(raw_hq) => {
             let wrapped = format!(r#"{{"quantization_config":{raw_hq}}}"#);
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&wrapped) {
-                config.quantization_config = metrale_config::parse_quantization_config(&v);
+                config.quantization_config = metrale_config::parse_quantization_config(&v)
+                    .with_context(|| hf_quant_path.display().to_string())?;
             }
         }
         Err(e) => tracing::warn!("Failed to read sibling hf_quant_config.json: {e}"),
     }
+    Ok(())
 }
 
 pub(crate) fn load_model_config(model_dir: &Path) -> Result<(ModelConfig, String)> {

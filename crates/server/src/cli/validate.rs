@@ -42,6 +42,14 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
     if let Some(gate) = &args.mtp_gate {
         check_enum(&mut v, "--mtp-gate", gate, MTP_GATES);
     }
+    // 2026-09-28: The W4A4 lever belongs to the `nvfp4` tier.
+    if let Err(e) = args.weight_quant_tier() {
+        v.push(Violation::new(
+            "--w4a4-downcast with --weight-quantization declared",
+            e.to_string(),
+            "add --weight-quantization nvfp4, or drop --w4a4-downcast",
+        ));
+    }
     for (flag, value) in [
         ("--ssm-batched-recurrent", &args.ssm_batched_recurrent),
         ("--content-loop-watchdog", &args.content_loop_watchdog),

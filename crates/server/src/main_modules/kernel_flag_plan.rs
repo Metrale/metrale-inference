@@ -33,10 +33,9 @@ pub(crate) struct GdnPlan {
 pub(crate) struct KernelFlagPlan {
     /// 2026-09-26: `None` when no GDN flag was given.
     pub gdn: Option<GdnPlan>,
-    /// 2026-09-26: Always published: no environment fallback exists.
-    pub w4a4_downcast: bool,
-    /// 2026-09-26: Only ever on together with `w4a4_downcast`.
-    pub w4a4_downcast_wide: bool,
+    /// 2026-09-28: `--weight-quantization` and its `--w4a4-downcast` lever. Always published:
+    /// no environment fallback exists.
+    pub weight_quant: metrale_config::WeightQuantTier,
     /// 2026-09-27: Always published: no environment fallback exists.
     pub expert_quantization: metrale_model_layers::layers::ExpertQuantization,
     pub prefill_codispatch: Option<bool>,
@@ -70,8 +69,9 @@ impl KernelFlagPlan {
         });
         Self {
             gdn,
-            w4a4_downcast: args.w4a4_downcast,
-            w4a4_downcast_wide: args.w4a4_downcast && args.w4a4_downcast_wide,
+            weight_quant: args
+                .weight_quant_tier()
+                .expect("validated by validate_serve_args"),
             expert_quantization: args.expert_quantization.0,
             prefill_codispatch: args.prefill_codispatch.then_some(true),
             prefill_varlen: args.prefill_varlen_batch.then_some(true),

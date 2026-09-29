@@ -8,6 +8,7 @@
 use super::{GdnPlan, KernelFlagPlan};
 use crate::cli::{Cli, Command, validate_serve_args};
 use clap::Parser;
+use metrale_config::{W4a4Downcast, WeightQuantTier, WeightQuantization};
 use metrale_model_layers::layers::ExpertQuantization;
 
 fn plan(flags: &[&str]) -> KernelFlagPlan {
@@ -28,8 +29,7 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
         plan(&[]),
         KernelFlagPlan {
             gdn: None,
-            w4a4_downcast: false,
-            w4a4_downcast_wide: false,
+            weight_quant: WeightQuantTier::default(),
             expert_quantization: ExpertQuantization::Fp8,
             prefill_codispatch: None,
             prefill_varlen: None,
@@ -99,12 +99,62 @@ fn each_presence_flag_publishes_its_non_default_state_only() {
     assert!(p.hermetic);
 }
 
+/// 2026-09-28: `--weight-quantization` is `declared` by default and carries its lever under
+/// `nvfp4`; `-wide` alone does nothing, as it always has.
 #[test]
-fn the_wide_downcast_needs_the_downcast() {
-    let alone = plan(&["--w4a4-downcast-wide"]);
-    assert!(!alone.w4a4_downcast && !alone.w4a4_downcast_wide);
-    let both = plan(&["--w4a4-downcast", "--w4a4-downcast-wide"]);
-    assert!(both.w4a4_downcast && both.w4a4_downcast_wide);
+fn the_weight_quantization_tier_carries_its_lever() {
+    let tier = |t, d| WeightQuantTier::new(t, d).expect("tier");
+    assert_eq!(
+        plan(&[]).weight_quant,
+        tier(WeightQuantization::Declared, W4a4Downcast::Off)
+    );
+    let nv = |flags: &[&str]| {
+        let mut argv = vec!["--weight-quantization", "nvfp4"];
+        argv.extend_from_slice(flags);
+        plan(&argv).weight_quant
+    };
+    assert_eq!(nv(&[]), tier(WeightQuantization::Nvfp4, W4a4Downcast::Off));
+    assert_eq!(
+        nv(&["--w4a4-downcast-wide"]),
+        tier(WeightQuantization::Nvfp4, W4a4Downcast::Off)
+    );
+    assert_eq!(
+        nv(&["--w4a4-downcast"]),
+        tier(WeightQuantization::Nvfp4, W4a4Downcast::Narrow)
+    );
+    assert_eq!(
+        nv(&["--w4a4-downcast", "--w4a4-downcast-wide"]),
+        tier(WeightQuantization::Nvfp4, W4a4Downcast::Wide)
+    );
+    assert_eq!(
+        plan(&["--weight-quantization", "declared"]).weight_quant,
+        WeightQuantTier::default()
+    );
+}
+
+/// 2026-09-28: A value outside the tiers is refused by clap, and the W4A4 lever under
+/// `declared` (given or defaulted) by `validate_serve_args`.
+#[test]
+fn a_bad_weight_quantization_or_a_lever_under_declared_is_refused() {
+    for argv in [
+        vec!["met", "serve", "org/model", "--weight-quantization", "fp8"],
+        vec!["met", "serve", "org/model", "--weight-quantization"],
+    ] {
+        assert!(Cli::try_parse_from(&argv).is_err(), "{argv:?} parsed");
+    }
+    for extra in [
+        &["--w4a4-downcast"][..],
+        &["--w4a4-downcast", "--weight-quantization", "declared"][..],
+        &["--w4a4-downcast", "--w4a4-downcast-wide"][..],
+    ] {
+        let mut argv = vec!["met", "serve", "org/model"];
+        argv.extend_from_slice(extra);
+        let Command::Serve(args) = Cli::try_parse_from(&argv).expect("parses").command else {
+            unreachable!("a serve command")
+        };
+        let err = validate_serve_args(&args).expect_err("the lever under declared is refused");
+        assert!(err.contains("--weight-quantization nvfp4"), "{err}");
+    }
 }
 
 #[test]

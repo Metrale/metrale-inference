@@ -53,6 +53,8 @@ pub use dense_ffn::{DenseFfnLayer, DenseFfnWeights, FfnActivation};
 pub use glm_vit::{GlmVit, GlmVitBlock, GlmVitMerger};
 
 pub use moe::MoeLayer;
+// 2026-09-28: The MoE experts' decode activation cell (`moe/fp8_grouped_tc_w8a8.rs`).
+pub use moe::{moe_expert_fp8_act, set_moe_expert_fp8_act};
 pub use mtp_head::{MtpHead, MtpQuantization, mtp_drafter_prefill_enabled};
 
 pub use qwen3_attention::Qwen3AttentionLayer;
@@ -184,6 +186,9 @@ pub use expert_quantization::{
     ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
 };
 
+mod weight_quantization;
+pub use weight_quantization::{kernel_caps, set_weight_quantization_from_cli, weight_quantization};
+
 mod row_tiers;
 pub use row_tiers::{
     RowTiers, publish_row_tiers, resolve_row_tiers, row_invariant, row_tiers, row_tiers_from,
@@ -191,6 +196,9 @@ pub use row_tiers::{
 
 mod kernel_probe;
 pub use kernel_probe::{try_kernel, try_target_kernel};
+
+mod w8a8_layer;
+pub use w8a8_layer::{W8a8Ctx, W8a8Ffn, W8a8Mixer};
 
 /// 2026-09-25: A layer's FFN: MoE, dense, or none.
 #[allow(clippy::large_enum_variant)]
@@ -264,6 +272,16 @@ impl FfnComponent {
     /// asks before computing the pre-FFN norm.
     pub fn can_forward_km(&self, m: u32) -> bool {
         matches!(self, Self::Dense(d) if d.can_forward_km(m))
+    }
+
+    /// 2026-09-28: Row edge of a dense FFN's narrow decode arms (`DenseFfnLayer::narrow_rows`:
+    /// its W4A4 edge under the weight-quantization tier, capped at 32, else the W4A16 edge).
+    /// MoE and none answer the W4A16 edge; `can_forward_km` is false for them anyway.
+    pub fn narrow_rows(&self) -> u32 {
+        match self {
+            Self::Dense(d) => d.narrow_rows(),
+            _ => ops::gemv_tc::narrow_gemv_max_rows().min(ops::w4a4_proj::W4A4_MAX_M),
+        }
     }
 
     /// 2026-09-25: `DenseFfnLayer::forward_km` over `m` rows. Returns `Ok(false)`

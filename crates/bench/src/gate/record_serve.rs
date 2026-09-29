@@ -10,8 +10,8 @@
 //!
 //! Owner: bench gate (records).
 //! Invariants:
-//! - A [`disclosure`] always carries [`SPECULATIVE`]; every other key is
-//!   present only when resolved or on.
+//! - A [`disclosure`] always carries [`SPECULATIVE`] and [`WEIGHT_QUANTIZATION`]; every
+//!   other key is present only when resolved or on.
 
 use std::collections::BTreeMap;
 
@@ -28,6 +28,10 @@ pub const PREFILL_CODISPATCH: &str = "prefill_codispatch";
 /// flag defaults to false and has no environment fallback, so an absent key
 /// means off.
 pub const W4A4_DOWNCAST: &str = "w4a4_downcast";
+/// 2026-09-28: Key for `--weight-quantization`, always present on a record written since the
+/// flag exists, with the tier's name (`declared`, `nvfp4`). A record without it predates the
+/// flag, and its server ran what `nvfp4` names.
+pub const WEIGHT_QUANTIZATION: &str = "weight_quantization";
 /// 2026-09-27: Key for `--expert-quantization`, present only for a tier other than the default
 /// `fp8`, with the tier's name as the value (`nvfp4-gate-up`, `nvfp4`). The flag has no
 /// environment fallback, so an absent key means `fp8`.
@@ -46,15 +50,21 @@ pub const EXPERT_QUANTIZATION: &str = "expert_quantization";
 /// `serve_env` discloses it when the recipe declares it.
 ///
 /// `expert_quantization` is the tier's name when it is not the default `fp8`, else `None`.
+/// `weight_quantization` is the `--weight-quantization` tier's name, always written.
 pub fn disclosure(
     mtp_gate_force: Option<bool>,
     speculative: bool,
     prefill_codispatch: bool,
     w4a4_downcast: bool,
     expert_quantization: Option<&str>,
+    weight_quantization: &str,
 ) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     m.insert(SPECULATIVE.to_string(), speculative.to_string());
+    m.insert(
+        WEIGHT_QUANTIZATION.to_string(),
+        weight_quantization.to_string(),
+    );
     if let Some(force) = mtp_gate_force {
         m.insert(
             MTP_GATE.to_string(),

@@ -12,7 +12,7 @@ use anyhow::{Context, Result, ensure};
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_config::{LayerType, ModelConfig};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
-use metrale_model_weights::weights::{WeightDtype, WeightStore};
+use metrale_model_weights::weights::WeightStore;
 
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::layers::dense_ffn::DenseFfnWeights;
@@ -21,7 +21,7 @@ use metrale_model_layers::layers::{DenseFfnLayer, FfnComponent, MoeLayer, Qwen3A
 use metrale_model_layers::weight_map::quant_helpers::{dense_auto, quantized_v2};
 use metrale_model_layers::weight_map::{
     AttentionWeights, DenseWeight, ExpertWeight, MoeWeights, QuantizedWeight, dense,
-    quantize_to_nvfp4,
+    load_checkpoint_kv_scales, quantize_to_nvfp4,
 };
 
 pub(super) fn load_layers(
@@ -272,7 +272,7 @@ fn load_attention(
     let k_proj = dense_auto(store, &format!("{p}.k_proj.weight"), gpu)?;
     let v_proj = dense_auto(store, &format!("{p}.v_proj.weight"), gpu)?;
     let o_proj = dense_auto(store, &format!("{p}.o_proj.weight"), gpu)?;
-    let (k_scale, v_scale) = load_kv_scales(store, gpu, &p)?;
+    let (k_scale, v_scale) = load_required_kv_scales(store, gpu, &p)?;
     let attn = AttentionWeights {
         q_proj,
         k_proj,
@@ -335,32 +335,16 @@ fn validate_matrix(store: &WeightStore, key: &str, rows: usize, cols: usize) -> 
     Ok(())
 }
 
-fn load_kv_scales(store: &WeightStore, gpu: &dyn GpuBackend, prefix: &str) -> Result<(f32, f32)> {
-    Ok((
-        load_scalar(store, gpu, &format!("{prefix}.k_scale"))?,
-        load_scalar(store, gpu, &format!("{prefix}.v_scale"))?,
-    ))
-}
-
-fn load_scalar(store: &WeightStore, gpu: &dyn GpuBackend, key: &str) -> Result<f32> {
-    let tensor = store.get(key)?;
-    ensure!(
-        tensor.shape.iter().product::<usize>() == 1,
-        "{key} must be scalar"
-    );
-    match tensor.dtype {
-        WeightDtype::BF16 => {
-            let mut bytes = [0u8; 2];
-            gpu.copy_d2h(tensor.ptr, &mut bytes)?;
-            Ok(f32::from_bits((u16::from_le_bytes(bytes) as u32) << 16))
-        }
-        WeightDtype::FP32 => {
-            let mut bytes = [0u8; 4];
-            gpu.copy_d2h(tensor.ptr, &mut bytes)?;
-            Ok(f32::from_le_bytes(bytes))
-        }
-        dtype => anyhow::bail!("{key} must be BF16 or F32, got {dtype:?}"),
-    }
+/// 2026-09-28: Laguna requires checkpoint FP8 KV scales on every attention layer.
+/// They resolve through the shared resolver (so any known spelling is accepted,
+/// with the same ambiguity and half-pair errors); absence is an error here, not 1.0.
+fn load_required_kv_scales(
+    store: &WeightStore,
+    gpu: &dyn GpuBackend,
+    prefix: &str,
+) -> Result<(f32, f32)> {
+    load_checkpoint_kv_scales(store, prefix, gpu)?
+        .with_context(|| format!("Laguna requires FP8 KV scales for {prefix}; none found"))
 }
 
 fn compute_yarn_inv_freq(config: &ModelConfig, gpu: &dyn GpuBackend) -> Result<DevicePtr> {

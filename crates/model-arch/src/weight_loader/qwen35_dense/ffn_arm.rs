@@ -88,9 +88,23 @@ pub(super) fn build_dense_ffn(
     let plan = route_env.plan(ffn_fp8, false, false);
     let ffn_nvfp4 = !ffn_q2 && plan.ffn_nvfp4;
     let ffn_weights = if ffn_nvfp4 {
-        load_dense_ffn(
+        let mut w = load_dense_ffn(
             store, lp, gpu, variant, absmax_k, quantize_k, stream, config,
-        )?
+        )?;
+        // 2026-09-28: The policy's activation stamp for each projection, carried by the weight
+        // and its transposed twin (`QuantizedWeight::act`).
+        for (name, base, twin) in [
+            ("gate_proj", &mut w.gate_proj, &mut w.gate_proj_t),
+            ("up_proj", &mut w.up_proj, &mut w.up_proj_t),
+            ("down_proj", &mut w.down_proj, &mut w.down_proj_t),
+        ] {
+            let act = cx.nvfp4_act(&format!("{lp}.mlp.{name}"));
+            base.act = act;
+            if let Some(t) = twin.as_mut() {
+                t.act = act;
+            }
+        }
+        w
     } else {
         // 2026-09-25: No NVFP4 FFN weights: the layer runs from the Q2 weights (`ffn_q2`)
         // or the FP8 weights installed below (`plan.ffn_nvfp4` is false only when

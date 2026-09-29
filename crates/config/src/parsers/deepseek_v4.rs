@@ -131,7 +131,7 @@ pub fn parse_deepseek_v4(json: &str) -> Result<ModelConfig> {
     validate_dspark_contract(&config, &raw)?;
 
     if config.quantization_config.is_none() {
-        config.quantization_config = parse_quantization_config(&raw);
+        config.quantization_config = parse_quantization_config(&raw)?;
     }
 
     if let Some(ratios) = raw.get("compress_ratios").and_then(|v| v.as_array()) {

@@ -118,7 +118,7 @@ impl ModelWeightLoader for Qwen3VLWeightLoader {
             let dummy = DenseWeight {
                 weight: metrale_gpu_runtime::gpu::DevicePtr::NULL,
             };
-            let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+            let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
             let attn = AttentionWeights {
                 q_proj: dummy,
                 k_proj: dummy,

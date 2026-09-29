@@ -320,6 +320,7 @@ fn experts(
         ops::moe_expert_gate_up_act_fp8_grouped(
             g,
             k.fp8_gate_up,
+            ops::FP8_GROUPED_GATE_UP_SCALAR,
             b.input,
             null,
             null,
@@ -365,6 +366,7 @@ fn experts(
         return ops::moe_expert_down_act_fp8_grouped(
             g,
             k.fp8_down,
+            ops::FP8_GROUPED_DOWN_SCALAR,
             b.act,
             w.down8_t.0,
             w.down8_t.1,
@@ -386,6 +388,7 @@ fn experts(
         ops::moe_expert_down_act_fp8_grouped(
             g,
             k.fp8_down,
+            ops::FP8_GROUPED_DOWN_SCALAR,
             b.act,
             null,
             null,

@@ -33,6 +33,10 @@ pub struct Qwen3AttentionLayer {
     pub attn: AttentionWeights,
     pub(super) post_attn_norm: DenseWeight,
     pub(super) ffn: FfnComponent,
+    /// 2026-09-28: W8A8 Q|K|V and O (`set_w8a8_decode_weights`), for a
+    /// checkpoint that declares them FP8 W8A8; run ahead of every other decode
+    /// arm at 1..=64 rows (`w8a8_decode_arm.rs`).
+    pub(crate) w8a8: Option<crate::layers::W8a8Mixer>,
     pub(super) attn_layer_idx: usize,
     /// 2026-09-25: LoRA adapter weights for the attention projections, installed
     /// by `set_lora_weights`; `None` is base weights only.

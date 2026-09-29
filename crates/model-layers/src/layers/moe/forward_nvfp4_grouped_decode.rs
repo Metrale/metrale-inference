@@ -243,6 +243,7 @@ impl MoeLayer {
             ops::moe_expert_gate_up_act_fp8_grouped(
                 ctx.gpu,
                 self.moe_expert_gate_up_act_fp8_grouped_k,
+                ops::FP8_GROUPED_GATE_UP_SCALAR,
                 input,
                 DevicePtr::NULL,
                 DevicePtr::NULL,
@@ -267,6 +268,7 @@ impl MoeLayer {
             ops::moe_expert_down_act_fp8_grouped(
                 ctx.gpu,
                 self.moe_expert_down_act_fp8_grouped_k,
+                ops::FP8_GROUPED_DOWN_SCALAR,
                 act,
                 DevicePtr::NULL,
                 DevicePtr::NULL,
@@ -309,6 +311,7 @@ impl MoeLayer {
             ops::moe_expert_down_act_fp8_grouped(
                 ctx.gpu,
                 self.moe_expert_down_act_fp8_grouped_k,
+                ops::FP8_GROUPED_DOWN_SCALAR,
                 act,
                 dp.weight_ptrs,
                 dp.scale_ptrs,

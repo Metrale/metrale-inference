@@ -215,24 +215,13 @@ impl TransformerModel {
         normed: DevicePtr,
         padded_n: usize,
         h: usize,
-        bf16: usize,
+        _bf16: usize,
         stream: u64,
     ) -> Result<DevicePtr> {
         let logits = self.buffers.logits();
         let v = self.config.vocab_size;
-        if let Some(ref fp8) = self.lm_head_fp8 {
-            for i in 0..padded_n {
-                ops::dense_gemv_fp8w(
-                    self.gpu.as_ref(),
-                    self.dense_gemv_fp8w_kernel,
-                    normed.offset(i * h * bf16),
-                    fp8,
-                    logits.offset(i * v * bf16),
-                    v as u32,
-                    h as u32,
-                    stream,
-                )?;
-            }
+        if self.lm_head_fp8_run(normed, padded_n, logits, stream)? {
+            // 2026-09-28: FP8 E4M3 head, one weight pass per launch (`lm_head_fp8_rows.rs`).
         } else if let Some(ref nvfp4) = self.lm_head_nvfp4 {
             // 2026-09-25: At `padded_n >= 5` a tile GEMM over the padded transposed twin
             // (`lm_head_nvfp4_t`) serves the head; below that, or without it, the batched GEMV

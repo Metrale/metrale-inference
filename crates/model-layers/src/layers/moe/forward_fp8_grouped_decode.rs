@@ -141,7 +141,12 @@ impl MoeLayer {
         let inter = cfg.moe_intermediate_size;
         let need =
             grouped_decode_buffer_need(m, h, inter, cfg.num_experts, cfg.num_experts_per_tok);
-        fp8_grouped_decode_shape_ok(m, h as u32, inter as u32)
+        // 2026-09-28: One row too under the tensor-core expert kernels, whose row bits do not
+        // depend on the row count (`fp8_grouped_tc.rs`).
+        (fp8_grouped_decode_shape_ok(m, h as u32, inter as u32)
+            || (m == 1
+                && fp8_grouped_decode_shape_ok(2, h as u32, inter as u32)
+                && self.fp8_grouped_tc_on(h, inter)))
             && self.fp8_gate_weight_ptrs.is_some()
             && self.fp8_up_weight_ptrs.is_some()
             && self.fp8_down_weight_ptrs.is_some()
@@ -231,10 +236,15 @@ impl MoeLayer {
             GroupedRouting::PerToken => "log:moe_fp8_grouped_decode_per_token",
         };
         if ctx.stats.once(log_key) {
+            let family = if self.fp8_grouped_tc_on(h as usize, inter as usize) {
+                "tensor-core"
+            } else {
+                "scalar"
+            };
             tracing::info!(
                 "MoE FP8 grouped decode: cross-row batched routed+shared expert dispatch \
                  active (first use M={m}, top_k={top_k}, experts={num_experts}, \
-                 routing={routing:?}; one-time log)"
+                 routing={routing:?}, expert kernels {family}; one-time log)"
             );
         }
 
@@ -280,54 +290,77 @@ impl MoeLayer {
         super::dump::dump_grouped_active(ctx.gpu, stream, active_count, m, ctx.graph_capture)?;
         // 2026-09-26: The SiLU products are FP32: routed `[te, inter]` in
         // `expert_gate_out()`, shared `[m, inter]` in `logits()`
-        // (`grouped_decode_buffer_need`).
+        // (`grouped_decode_buffer_need`); the W8A8 step keeps its E4M3 products there too.
+        let experts = self.fp8_grouped_expert_kernels(h as usize, inter as usize);
         let act = ctx.buffers.expert_gate_out();
         let expert_down_out = ctx.buffers.expert_down_out();
         let shared_act = ctx.buffers.logits();
         let shared_out = ctx.buffers.attn_output();
         let output = ctx.buffers.moe_output();
 
-        ops::moe_expert_gate_up_act_fp8_grouped(
-            ctx.gpu,
-            self.moe_expert_gate_up_act_fp8_grouped_k,
-            input,
-            gp.weight_ptrs,
-            gp.scale_ptrs,
-            up.weight_ptrs,
-            up.scale_ptrs,
-            act,
-            expert_offsets,
-            sorted_token_ids,
-            active_experts,
-            active_count,
-            &sh.gate_proj,
-            &sh.up_proj,
-            shared_act,
-            inter,
-            h,
-            cap,
-            n,
-            stream,
-        )?;
-        ops::moe_expert_down_act_fp8_grouped(
-            ctx.gpu,
-            self.moe_expert_down_act_fp8_grouped_k,
-            act,
-            dp.weight_ptrs,
-            dp.scale_ptrs,
-            expert_down_out,
-            expert_offsets,
-            active_experts,
-            active_count,
-            shared_act,
-            &sh.down_proj,
-            shared_out,
-            h,
-            inter,
-            cap,
-            n,
-            stream,
-        )?;
+        // 2026-09-28: The opt-in W8A8 expert step (`fp8_grouped_tc_w8a8.rs`).
+        if self.fp8_grouped_tc_w8a8_on(h as usize, inter as usize) {
+            let io = super::fp8_grouped_tc_w8a8::GroupedExpertIo {
+                input,
+                act,
+                shared_act,
+                expert_down_out,
+                shared_out,
+                rows: ops::Fp8GroupedW8a8Rows {
+                    expert_offsets,
+                    sorted_token_ids,
+                    active_experts,
+                    active_count,
+                    cap,
+                    num_tokens: n,
+                },
+            };
+            self.run_fp8_grouped_w8a8(&io, ctx, stream)?;
+        } else {
+            ops::moe_expert_gate_up_act_fp8_grouped(
+                ctx.gpu,
+                experts.gate_up,
+                experts.gate_up_geometry,
+                input,
+                gp.weight_ptrs,
+                gp.scale_ptrs,
+                up.weight_ptrs,
+                up.scale_ptrs,
+                act,
+                expert_offsets,
+                sorted_token_ids,
+                active_experts,
+                active_count,
+                &sh.gate_proj,
+                &sh.up_proj,
+                shared_act,
+                inter,
+                h,
+                cap,
+                n,
+                stream,
+            )?;
+            ops::moe_expert_down_act_fp8_grouped(
+                ctx.gpu,
+                experts.down,
+                experts.down_geometry,
+                act,
+                dp.weight_ptrs,
+                dp.scale_ptrs,
+                expert_down_out,
+                expert_offsets,
+                active_experts,
+                active_count,
+                shared_act,
+                &sh.down_proj,
+                shared_out,
+                h,
+                inter,
+                cap,
+                n,
+                stream,
+            )?;
+        }
         ops::moe_weighted_sum_blend_fp8_grouped(
             ctx.gpu,
             self.moe_weighted_sum_blend_fp8_grouped_k,

@@ -113,6 +113,9 @@ pub struct QuantizationConfig {
     /// 2026-09-26: Module-path patterns from `ignore`, then those from `exclude_modules` not
     /// already listed.
     pub ignore_modules: Vec<String>,
+    /// 2026-09-28: What the block declares per linear layer, weights and activations: the
+    /// default precision every loader and kernel dispatch follows.
+    pub precision: precision_plan::DeclaredPrecisionPlan,
 }
 
 /// 2026-09-26: Whether GLM-5.3's vision tower is enabled for this process
@@ -265,8 +268,10 @@ pub mod levers;
 mod methods;
 mod model_config;
 mod parsers;
+pub mod precision_plan;
 #[cfg(test)]
 mod tests;
+pub mod weight_quantization;
 
 pub use dispatch::parse_config;
 pub use gguf::{GgufConfigInputs, GgufMeta, config_from_gguf};
@@ -281,10 +286,14 @@ pub(crate) use parsers::{
     parse_longcat_ngram, parse_minimax_m2, parse_qwen4_exp, parse_step3p7, parse_vision_config,
     sanitize_kimi_k3_eos,
 };
+pub use precision_plan::{DeclaredPrecisionPlan, LayerPrecision};
+pub use weight_quantization::{
+    Nvfp4Act, W4a4Downcast, WeightQuantPolicy, WeightQuantTier, WeightQuantization,
+};
 
 pub(crate) fn finalize_config(config: &mut ModelConfig, raw: &serde_json::Value) -> Result<()> {
     if config.quantization_config.is_none() {
-        config.quantization_config = parse_quantization_config(raw);
+        config.quantization_config = parse_quantization_config(raw)?;
     }
     validate_config(config)
 }

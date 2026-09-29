@@ -145,35 +145,8 @@ impl TransformerModel {
         {
             return Ok(logits);
         }
-        if let Some(ref fp8) = self.lm_head_fp8 {
-            // 2026-09-25: FP8 E4M3 head. Two rows use the dual GEMV; any other
-            // row count, or a missing dual kernel, runs one GEMV per row.
-            let bf16 = 2usize;
-            if num_tokens == 2 && self.dense_gemv_fp8w_batch2_kernel.0 != 0 {
-                ops::dense_gemv_fp8w_batch2(
-                    self.gpu.as_ref(),
-                    self.dense_gemv_fp8w_batch2_kernel,
-                    hidden,
-                    fp8,
-                    logits,
-                    v,
-                    h,
-                    stream,
-                )?;
-            } else {
-                for i in 0..num_tokens as usize {
-                    ops::dense_gemv_fp8w(
-                        self.gpu.as_ref(),
-                        self.dense_gemv_fp8w_kernel,
-                        hidden.offset(i * h as usize * bf16),
-                        fp8,
-                        logits.offset(i * v as usize * bf16),
-                        v,
-                        h,
-                        stream,
-                    )?;
-                }
-            }
+        if self.lm_head_fp8_run(hidden, num_tokens as usize, logits, stream)? {
+            // 2026-09-28: FP8 E4M3 head, one weight pass per launch (`lm_head_fp8_rows.rs`).
         } else if self.lm_head_nvfp4.is_none()
             && (2..=ops::DENSE_GEMV_BATCHM_DECODE_MAX_M).contains(&num_tokens)
             && self.dense_gemv_batchm_kernel.0 != 0
@@ -360,20 +333,11 @@ impl TransformerModel {
             self.lm_head_q6k_run(hidden, 1, logits, stream)?;
             return Ok(logits);
         }
-        if let Some(ref fp8) = self.lm_head_fp8 {
+        if self.lm_head_fp8.is_some() {
             // 2026-09-25: FP8 E4M3 head (`--lm-head-dtype fp8`). It has no
             // FP32-output variant; with `use_fp32_logits` false, `logits` is the
-            // BF16 buffer.
-            ops::dense_gemv_fp8w(
-                self.gpu.as_ref(),
-                self.dense_gemv_fp8w_kernel,
-                hidden,
-                fp8,
-                logits,
-                v,
-                h,
-                stream,
-            )?;
+            // BF16 buffer. 2026-09-28: W8A8 when declared (`lm_head_fp8_rows.rs`).
+            self.lm_head_fp8_run(hidden, 1, logits, stream)?;
         } else if let Some(ref nvfp4) = self.lm_head_nvfp4 {
             // 2026-09-25: The FP32-output variant when the destination is the
             // FP32 buffer, which does not happen while `use_fp32_logits` is false.

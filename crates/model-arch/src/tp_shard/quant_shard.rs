@@ -86,6 +86,7 @@ pub fn shard_quantized_nvfp4(
                 weight_scale_2: src.weight_scale_2,
                 input_scale: src.input_scale,
                 weight_scale_2_vec: src.weight_scale_2_vec,
+                act: src.act,
             })
         }
         TpShardKind::RowParallel => {
@@ -134,6 +135,7 @@ pub fn shard_quantized_nvfp4(
                 weight_scale_2: src.weight_scale_2,
                 input_scale: src.input_scale,
                 weight_scale_2_vec: src.weight_scale_2_vec,
+                act: src.act,
             })
         }
     }

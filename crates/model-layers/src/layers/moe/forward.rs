@@ -35,6 +35,10 @@ impl MoeLayer {
                 .forward_nvfp4_grouped_decode(input, 1, ctx, stream)
                 .map(|()| ctx.buffers.moe_output());
         }
+        // 2026-09-28: The tensor-core FP8 expert kernels' grouped decode (`fp8_grouped_tc.rs`).
+        if let Some(out) = self.forward_fp8_grouped_tc_one_row(input, ctx, stream) {
+            return out;
+        }
         // 2026-09-25: With one sequence, the router delta folds onto
         // `gate_logits` before top-k and the expert gate/up/down deltas onto
         // their intermediates; each fold's `moe_route_gate` still refuses a

@@ -192,8 +192,8 @@ pub fn w4a16_gemv_batchm(
     stream: u64,
 ) -> Result<()> {
     // 2026-09-25: A tier writes only its first `MAX_M` rows (`w4a16_gemv.cu`), and
-    // the widest, `w4a16_gemv_batch32`, stops at 32. Under
-    // `--w4a4-downcast-wide`, `W4a16BatchmTiers::kernel` returns that handle
+    // the widest, `w4a16_gemv_batch32`, stops at 32. For a weight that
+    // declares FP4 activations, `W4a16BatchmTiers::kernel_for` returns that handle
     // for 33..=64 rows as well, rows the W4A4 path is meant to serve, so a
     // launch here above 32 rows is refused instead of partly written.
     anyhow::ensure!(m <= 32, "w4a16_gemv_batchm caps at M=32 (batch32; m={m})");

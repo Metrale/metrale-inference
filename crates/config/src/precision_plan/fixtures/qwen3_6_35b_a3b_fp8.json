@@ -1,0 +1,19 @@
+{
+ "activation_scheme": "dynamic",
+ "fmt": "e4m3",
+ "quant_method": "fp8",
+ "modules_to_not_convert": [
+  "lm_head",
+  "model.embed_tokens",
+  "model.language_model.layers.0.input_layernorm",
+  "model.language_model.layers.0.mlp.shared_expert_gate",
+  "model.language_model.layers.0.post_attention_layernorm",
+  "model.language_model.layers.0.mlp.gate",
+  "model.visual.blocks.0.attn.proj",
+  "model.visual.blocks.0.attn.qkv"
+ ],
+ "weight_block_size": [
+  128,
+  128
+ ]
+}

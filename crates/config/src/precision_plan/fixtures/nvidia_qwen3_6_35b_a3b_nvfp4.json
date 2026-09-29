@@ -1,0 +1,119 @@
+{
+ "config_groups": {
+  "group_0": {
+   "input_activations": {
+    "dynamic": false,
+    "num_bits": 8,
+    "type": "float"
+   },
+   "weights": {
+    "dynamic": false,
+    "num_bits": 8,
+    "type": "float"
+   },
+   "targets": [
+    "model.language_model.layers.0.linear_attn.in_proj_qkv",
+    "model.language_model.layers.0.linear_attn.in_proj_z",
+    "model.language_model.layers.0.linear_attn.out_proj",
+    "model.language_model.layers.3.self_attn.k_proj",
+    "model.language_model.layers.3.self_attn.o_proj",
+    "model.language_model.layers.3.self_attn.q_proj",
+    "model.language_model.layers.3.self_attn.v_proj"
+   ]
+  },
+  "group_1": {
+   "input_activations": {
+    "dynamic": false,
+    "num_bits": 4,
+    "type": "float",
+    "group_size": 16
+   },
+   "weights": {
+    "dynamic": false,
+    "num_bits": 4,
+    "type": "float",
+    "group_size": 16
+   },
+   "targets": [
+    "lm_head",
+    "model.language_model.layers.0.mlp.experts",
+    "model.language_model.layers.0.mlp.shared_expert.down_proj",
+    "model.language_model.layers.0.mlp.shared_expert.gate_proj",
+    "model.language_model.layers.0.mlp.shared_expert.up_proj",
+    "model.language_model.layers.3.mlp.experts",
+    "model.language_model.layers.3.mlp.shared_expert.down_proj",
+    "model.language_model.layers.3.mlp.shared_expert.gate_proj",
+    "model.language_model.layers.3.mlp.shared_expert.up_proj"
+   ]
+  }
+ },
+ "quantized_layers": {
+  "model.language_model.layers.0.linear_attn.out_proj": {
+   "quant_algo": "FP8"
+  },
+  "model.language_model.layers.0.linear_attn.in_proj_qkv": {
+   "quant_algo": "FP8"
+  },
+  "model.language_model.layers.0.linear_attn.in_proj_z": {
+   "quant_algo": "FP8"
+  },
+  "model.language_model.layers.0.mlp.experts": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  },
+  "model.language_model.layers.0.mlp.shared_expert.gate_proj": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  },
+  "model.language_model.layers.0.mlp.shared_expert.up_proj": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  },
+  "model.language_model.layers.0.mlp.shared_expert.down_proj": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  },
+  "model.language_model.layers.3.self_attn.q_proj": {
+   "quant_algo": "FP8"
+  },
+  "model.language_model.layers.3.self_attn.k_proj": {
+   "quant_algo": "FP8"
+  },
+  "model.language_model.layers.3.self_attn.v_proj": {
+   "quant_algo": "FP8"
+  },
+  "model.language_model.layers.3.self_attn.o_proj": {
+   "quant_algo": "FP8"
+  },
+  "model.language_model.layers.3.mlp.experts": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  },
+  "model.language_model.layers.3.mlp.shared_expert.gate_proj": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  },
+  "model.language_model.layers.3.mlp.shared_expert.up_proj": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  },
+  "model.language_model.layers.3.mlp.shared_expert.down_proj": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  },
+  "lm_head": {
+   "quant_algo": "W4A16_NVFP4",
+   "group_size": 16
+  }
+ },
+ "ignore": [
+  "mtp.layers.0*",
+  "mtp*"
+ ],
+ "quant_algo": "MIXED_PRECISION",
+ "producer": {
+  "name": "modelopt",
+  "version": "0.37.0"
+ },
+ "quant_method": "modelopt"
+}

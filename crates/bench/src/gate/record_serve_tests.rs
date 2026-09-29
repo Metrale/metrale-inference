@@ -9,7 +9,8 @@
 use super::super::tests::{SHA, bfcl_baseline, hw, run_record};
 use super::super::{GateRecord, check_record, read_record, records_newest_first};
 use super::{
-    EXPERT_QUANTIZATION, MTP_GATE, PREFILL_CODISPATCH, SPECULATIVE, W4A4_DOWNCAST, disclosure,
+    EXPERT_QUANTIZATION, MTP_GATE, PREFILL_CODISPATCH, SPECULATIVE, W4A4_DOWNCAST,
+    WEIGHT_QUANTIZATION, disclosure,
 };
 use crate::result::Verdict;
 use std::collections::BTreeMap;
@@ -20,36 +21,44 @@ fn keys(m: &BTreeMap<String, String>) -> Vec<(&str, &str)> {
 
 #[test]
 fn disclosure_spells_the_regime_and_omits_what_was_not_resolved() {
+    let d = |g, s, c, w, e| disclosure(g, s, c, w, e, "nvfp4");
+    let wq = (WEIGHT_QUANTIZATION, "nvfp4");
     assert_eq!(
-        keys(&disclosure(Some(true), true, false, false, None)),
-        vec![(MTP_GATE, "force"), (SPECULATIVE, "true")]
+        keys(&d(Some(true), true, false, false, None)),
+        vec![(MTP_GATE, "force"), (SPECULATIVE, "true"), wq]
     );
     assert_eq!(
-        keys(&disclosure(Some(false), true, false, false, None)),
-        vec![(MTP_GATE, "auto"), (SPECULATIVE, "true")]
+        keys(&d(Some(false), true, false, false, None)),
+        vec![(MTP_GATE, "auto"), (SPECULATIVE, "true"), wq]
     );
     // 2026-09-26: No `--mtp-gate`: the key is absent, not `auto`.
     assert_eq!(
-        keys(&disclosure(None, false, false, false, None)),
-        vec![(SPECULATIVE, "false")]
+        keys(&d(None, false, false, false, None)),
+        vec![(SPECULATIVE, "false"), wq]
     );
     // 2026-09-26: `--prefill-codispatch` is disclosed only when given.
     assert_eq!(
-        keys(&disclosure(None, true, true, false, None)),
-        vec![(PREFILL_CODISPATCH, "true"), (SPECULATIVE, "true")]
+        keys(&d(None, true, true, false, None)),
+        vec![(PREFILL_CODISPATCH, "true"), (SPECULATIVE, "true"), wq]
     );
     // 2026-09-26: `--w4a4-downcast` is disclosed only when on.
     assert_eq!(
-        keys(&disclosure(None, true, false, true, None)),
-        vec![(SPECULATIVE, "true"), (W4A4_DOWNCAST, "true")]
+        keys(&d(None, true, false, true, None)),
+        vec![(SPECULATIVE, "true"), (W4A4_DOWNCAST, "true"), wq]
     );
     // 2026-09-27: `--expert-quantization` names a tier other than `fp8`.
     assert_eq!(
-        keys(&disclosure(None, true, false, false, Some("nvfp4-gate-up"))),
+        keys(&d(None, true, false, false, Some("nvfp4-gate-up"))),
         vec![
             (EXPERT_QUANTIZATION, "nvfp4-gate-up"),
-            (SPECULATIVE, "true")
+            (SPECULATIVE, "true"),
+            wq
         ]
+    );
+    // 2026-09-28: `--weight-quantization` is written for either tier, the default included.
+    assert_eq!(
+        keys(&disclosure(None, true, false, false, None, "declared")),
+        vec![(SPECULATIVE, "true"), (WEIGHT_QUANTIZATION, "declared")]
     );
 }
 
@@ -68,8 +77,14 @@ fn passing_record() -> GateRecord {
 
 #[test]
 fn serve_resolved_round_trips_and_older_records_simply_lack_it() {
-    let record =
-        passing_record().with_serve_resolved(disclosure(Some(true), true, false, false, None));
+    let record = passing_record().with_serve_resolved(disclosure(
+        Some(true),
+        true,
+        false,
+        false,
+        None,
+        "nvfp4",
+    ));
     let json = serde_json::to_value(&record).unwrap();
     assert_eq!(json["serve_resolved"][MTP_GATE], "force");
     assert_eq!(json["serve_resolved"][SPECULATIVE], "true");
@@ -112,8 +127,14 @@ fn serve_resolved_round_trips_and_older_records_simply_lack_it() {
 fn serve_resolved_never_reaches_check_record() {
     let baseline = bfcl_baseline();
     let without = passing_record();
-    let with =
-        passing_record().with_serve_resolved(disclosure(Some(false), true, false, false, None));
+    let with = passing_record().with_serve_resolved(disclosure(
+        Some(false),
+        true,
+        false,
+        false,
+        None,
+        "nvfp4",
+    ));
     assert_eq!(check_record(&with, &baseline), None);
     assert_eq!(
         check_record(&with, &baseline),
@@ -130,6 +151,7 @@ fn serve_resolved_never_reaches_check_record() {
         false,
         false,
         None,
+        "nvfp4",
     ));
     let verdict = check_record(&failing_with, &baseline);
     assert!(

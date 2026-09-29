@@ -69,7 +69,7 @@ pub(super) fn build_bf16_dense_attention(
     let v_bf16 = load_fp8_dense("v_proj")?;
     let o_bf16 = load_fp8_dense("o_proj")?;
 
-    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
     let dummy_qw = QuantizedWeight::null();
     let attn = AttentionWeights {
         q_proj: q_bf16,
@@ -159,7 +159,7 @@ pub(super) fn build_native_fp8_attention(
 
     // 2026-09-25: Q/K/V/O here are NULL placeholders; the projections run from the FP8
     // weights installed by `set_fp8_weights` below.
-    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
     let dummy = DenseWeight {
         weight: metrale_gpu_runtime::gpu::DevicePtr::NULL,
     };

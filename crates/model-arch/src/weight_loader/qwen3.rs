@@ -177,7 +177,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
                     };
                     let [q_fp8, k_fp8, v_fp8, o_fp8] = load_qkvo_tp(config, load_fp8)?;
 
-                    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+                    let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
                     let dummy = DenseWeight {
                         weight: metrale_gpu_runtime::gpu::DevicePtr::NULL,
                     };

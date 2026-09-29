@@ -8,40 +8,38 @@
 
 use super::*;
 
+/// 2026-09-28: A target with only the narrow entries serves 1..=32 rows.
 #[test]
 fn routes_every_27b_projection_shape_up_to_32_rows() {
     for k in [5120u32, 6144, 17408] {
         for m in 1..=32 {
-            assert!(w4a4_route(m, 5120, k, true, false), "m={m} k={k}");
+            assert!(w4a4_route(m, 5120, k, W4A4_MAX_M), "m={m} k={k}");
         }
-        assert!(!w4a4_route(33, 5120, k, true, false), "33 rows exceed mx32");
-        assert!(!w4a4_route(4, 5120, k, false, false), "opt-in");
+        assert!(!w4a4_route(33, 5120, k, W4A4_MAX_M), "33 rows exceed mx32");
+        assert!(!w4a4_route(4, 5120, k, 0), "kernels absent");
     }
 }
 
+/// 2026-09-28: With the mx64 entries the route reaches 64 rows and no further.
 #[test]
-fn wide_extends_the_route_to_64_rows_and_no_further() {
+fn wide_kernels_extend_the_route_to_64_rows_and_no_further() {
     for m in 1..=64 {
-        assert!(w4a4_route(m, 5120, 5120, true, true), "m={m}");
+        assert!(w4a4_route(m, 5120, 5120, W4A4_WIDE_MAX_M), "m={m}");
     }
     assert!(
-        !w4a4_route(65, 5120, 5120, true, true),
+        !w4a4_route(65, 5120, 5120, W4A4_WIDE_MAX_M),
         "65 rows exceed mx64"
-    );
-    assert!(
-        !w4a4_route(40, 5120, 5120, false, true),
-        "wide without downcast"
     );
 }
 
 #[test]
 fn declines_what_the_kernel_or_scratch_cannot_hold() {
-    assert!(!w4a4_route(4, 5120, 5120 + 32, true, false), "K % 64");
+    assert!(!w4a4_route(4, 5120, 5120 + 32, W4A4_MAX_M), "K % 64");
     assert!(
-        !w4a4_route(4, 5120, W4A4_MAX_K + 64, true, false),
+        !w4a4_route(4, 5120, W4A4_MAX_K + 64, W4A4_MAX_M),
         "scratch K"
     );
-    assert!(!w4a4_route(0, 5120, 5120, true, false));
+    assert!(!w4a4_route(0, 5120, 5120, W4A4_MAX_M));
 }
 
 /// 2026-09-25: Distinct fake handles, so a pick can be identified by value.
@@ -59,6 +57,7 @@ fn state() -> W4a4State {
         sms: 48,
         mx64: k(64),
         mx64_nt2: k(642),
+        max_m: W4A4_WIDE_MAX_M,
         aq: DevicePtr::NULL,
         a_scale: DevicePtr::NULL,
         a_gs: DevicePtr::NULL,

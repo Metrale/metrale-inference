@@ -109,6 +109,10 @@ metadata:
   updated: "2026-08-17"
 
 defaults:
+  # The --weight-quantization tier this recipe was measured under: FP8-declared layers
+  # requantized to NVFP4, the engine as it ran before the tiers. `declared` (the
+  # engine default) is not measured on this recipe.
+  weight_quantization: nvfp4
   host: 0.0.0.0
   port: 8888
   # The ladder's operating point. 1224 tokens (200 prompt + 1024 gen) is the

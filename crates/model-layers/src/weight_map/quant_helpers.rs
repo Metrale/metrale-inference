@@ -325,5 +325,6 @@ pub fn quantized_v2(
         // 2026-09-25: Weight-only checkpoints have no `input_global_scale`; then NULL.
         input_scale: ptr(store, &format!("{prefix}.input_global_scale")).unwrap_or(DevicePtr::NULL),
         weight_scale_2_vec: DevicePtr::NULL,
+        act: metrale_config::Nvfp4Act::Unstamped,
     })
 }

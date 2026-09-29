@@ -30,6 +30,7 @@ pub(crate) mod impl_lora;
 mod impl_lora_rotate;
 pub(crate) mod impl_lora_swap;
 mod impl_ngram;
+pub(crate) mod lm_head_fp8_rows;
 pub(crate) mod lm_head_q6k;
 pub(crate) mod pinned_pack;
 pub(crate) mod seq_memtrace;

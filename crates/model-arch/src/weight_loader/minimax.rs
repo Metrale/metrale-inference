@@ -186,7 +186,7 @@ impl ModelWeightLoader for MinimaxM2WeightLoader {
                 load_and_quant(name, full_n, full_k, kind)
             })?;
 
-            let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+            let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
 
             // 2026-09-25: Full-width q/k norm weights, sharded 1-D to match the
             // local Q/K outputs; `shard_dense_1d_bf16` returns the input pointer

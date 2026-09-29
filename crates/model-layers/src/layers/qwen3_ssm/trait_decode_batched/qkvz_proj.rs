@@ -30,7 +30,17 @@ impl Qwen3SsmLayer {
             stream,
             ..
         } = *d;
-        if let Some(ref q2) = self.qkvz_q2 {
+        if self.w8a8_qkvz(
+            ctx,
+            normed,
+            h as u32,
+            num_tokens,
+            proj_dst,
+            qkvz_size as u32,
+            stream,
+        )? {
+            // 2026-09-28: The declared-W8A8 arm (`w8a8_decode.rs`).
+        } else if let Some(ref q2) = self.qkvz_q2 {
             // 2026-09-25: Packed Q2_0 QKVZ: one `q2_0_gemv_vec` per row, the kernel the
             // single-token decode runs (`ssm_forward`).
             for t in 0..num_tokens {
@@ -91,15 +101,16 @@ impl Qwen3SsmLayer {
                     )?;
                 }
             }
-        } else if (5..=ops::w4a4_proj::proj_max_rows() as usize).contains(&num_tokens)
-            && self.w4a16_batchm.kernel(num_tokens as u32).0 != 0
-            && let Some(ref nvfp4) = self.qkvz_nvfp4
+        } else if let Some(ref nvfp4) = self.qkvz_nvfp4
+            && (5..=self.w4a16_batchm.edge(nvfp4) as usize).contains(&num_tokens)
+            && self.w4a16_batchm.kernel_for(num_tokens as u32, nvfp4).0 != 0
         {
-            // 2026-09-25: 5..=`proj_max_rows()` rows with an NVFP4 QKVZ:
-            // `nvfp4_proj_small_m` with the `w4a16_batchm` tier for this row count.
+            // 2026-09-25: 5..=edge rows with an NVFP4 QKVZ: `nvfp4_proj_small_m` with the
+            // `w4a16_batchm` tier for this row count (W4A4 when the checkpoint declares FP4
+            // activations).
             ops::w4a4_proj::nvfp4_proj_small_m(
                 ctx.gpu,
-                self.w4a16_batchm.kernel(num_tokens as u32),
+                self.w4a16_batchm.kernel_for(num_tokens as u32, nvfp4),
                 normed,
                 nvfp4,
                 proj_dst,

@@ -1,0 +1,40 @@
+{
+ "config_groups": {
+  "group_0": {
+   "input_activations": {
+    "dynamic": false,
+    "num_bits": 4,
+    "type": "float",
+    "group_size": 16
+   },
+   "weights": {
+    "dynamic": false,
+    "num_bits": 4,
+    "type": "float",
+    "group_size": 16
+   },
+   "targets": [
+    "Linear"
+   ]
+  }
+ },
+ "ignore": [
+  "lm_head",
+  "model.layers.0.linear_attn.conv1d",
+  "model.layers.0.linear_attn.in_proj_ba",
+  "model.layers.0.linear_attn.in_proj_qkvz",
+  "model.layers.0.mlp.gate",
+  "model.layers.0.mlp.shared_expert_gate"
+ ],
+ "quant_algo": "NVFP4",
+ "kv_cache_scheme": {
+  "dynamic": false,
+  "num_bits": 8,
+  "type": "float"
+ },
+ "producer": {
+  "name": "modelopt",
+  "version": "0.0.1.dev443+gc9e06886e.d20260206"
+ },
+ "quant_method": "modelopt"
+}

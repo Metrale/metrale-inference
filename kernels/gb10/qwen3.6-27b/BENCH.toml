@@ -51,6 +51,12 @@ The draw is PINNED at n=995: a score from a different draw is not comparable to 
 thresholds, and the sample count is the only thing that reveals it after the fact, so it is \
 gated exactly rather than merely recorded."""
 
+[benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
+
 [benchmarks.metrics.normalized_single_turn_score]
 min = 88.59
 noise = 0.4
@@ -264,6 +270,12 @@ checkpoint. With the fix it resolves 16.7M px, capacity clamps to 16384, and run
 reports 1400 where the fallback produced 920 -- the gate catching exactly the class of \
 defect it was built for, on a real model rather than in a unit test."""
 
+[benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
+
 [benchmarks.metrics.geometry_matched]
 min = 14.0
 
@@ -331,6 +343,12 @@ geometry, and this one decodes, groups and orders a clip identically. ★ THIS N
 TO END "`default = false`: qwen3.8-27b owns this gate's default serve", which stopped \
 being true on 2026-08-15: this target IS the gate's required subject and the key above \
 reads `default = true`. The reason for the flip is in the comment directly above it."""
+
+[benchmarks.serve_overrides]
+# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
+# the mirrored recipe index, which does not carry the key yet, and the serve default is
+# `declared`.
+weight_quantization = "nvfp4"
 
 [benchmarks.metrics.legs_passed]
 min = 13.0

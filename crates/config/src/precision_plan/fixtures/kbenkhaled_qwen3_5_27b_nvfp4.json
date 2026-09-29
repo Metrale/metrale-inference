@@ -1,0 +1,57 @@
+{
+ "config_groups": {
+  "group_0": {
+   "format": "nvfp4-pack-quantized",
+   "input_activations": {
+    "actorder": null,
+    "block_structure": null,
+    "dynamic": "local",
+    "group_size": 16,
+    "num_bits": 4,
+    "observer": "static_minmax",
+    "observer_kwargs": {},
+    "scale_dtype": "torch.float8_e4m3fn",
+    "strategy": "tensor_group",
+    "symmetric": true,
+    "type": "float",
+    "zp_dtype": null
+   },
+   "output_activations": null,
+   "targets": [
+    "Linear"
+   ],
+   "weights": {
+    "actorder": null,
+    "block_structure": null,
+    "dynamic": false,
+    "group_size": 16,
+    "num_bits": 4,
+    "observer": "memoryless_minmax",
+    "observer_kwargs": {},
+    "scale_dtype": "torch.float8_e4m3fn",
+    "strategy": "tensor_group",
+    "symmetric": true,
+    "type": "float",
+    "zp_dtype": null
+   }
+  }
+ },
+ "format": "nvfp4-pack-quantized",
+ "global_compression_ratio": null,
+ "ignore": [
+  "model.language_model.layers.0.linear_attn.in_proj_b",
+  "model.language_model.layers.0.linear_attn.in_proj_a",
+  "model.language_model.layers.1.linear_attn.in_proj_b",
+  "model.language_model.layers.1.linear_attn.in_proj_a",
+  "model.language_model.layers.2.linear_attn.in_proj_b",
+  "model.language_model.layers.2.linear_attn.in_proj_a",
+  "model.visual.blocks.0.attn.qkv",
+  "model.visual.blocks.0.attn.proj"
+ ],
+ "kv_cache_scheme": null,
+ "quant_method": "compressed-tensors",
+ "quantization_status": "compressed",
+ "sparsity_config": {},
+ "transform_config": {},
+ "version": "0.13.1.a20260225"
+}

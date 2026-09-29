@@ -263,7 +263,7 @@ pub(super) fn load_layers_impl(
         // o_proj dispatch takes before the NVFP4 weight.
         let o_nvfp4 = quantize_to_nvfp4(&o_dense, h, q_out_dim, gpu, absmax_k, quantize_k, stream)?;
 
-        let (k_scale, v_scale) = load_kv_scales(store, &p, gpu);
+        let (k_scale, v_scale) = load_kv_scales(store, &p, gpu)?;
 
         let attn = AttentionWeights {
             q_proj: q_dense,

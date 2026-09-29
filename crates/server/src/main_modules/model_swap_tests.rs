@@ -270,3 +270,26 @@ fn a_repeat_of_the_live_config_is_a_no_op_even_with_process_flags_set() {
         "and are equal after it, which is what makes the no-op fire"
     );
 }
+
+/// 2026-09-28: A swapped-in recipe's `--weight-quantization` is rewritten to the tier this
+/// process published (here the default, `declared`, as no test in this binary publishes one),
+/// lever included, so its argv states what runs; a recipe already on that tier is untouched.
+#[test]
+fn a_swap_takes_the_published_weight_quantization() {
+    let published = metrale_model_layers::layers::weight_quantization();
+    assert_eq!(published, metrale_config::WeightQuantTier::default());
+    let mut nvfp4 = args(&[
+        "--weight-quantization",
+        "nvfp4",
+        "--w4a4-downcast",
+        "--w4a4-downcast-wide",
+    ]);
+    pin_published_weight_quantization(&mut nvfp4);
+    assert_eq!(nvfp4.weight_quant_tier().expect("valid"), published);
+    assert!(!nvfp4.w4a4_downcast && !nvfp4.w4a4_downcast_wide);
+    assert!(cli::validate_serve_args(&nvfp4).is_ok());
+    let mut same = args(&[]);
+    let before = same.clone();
+    pin_published_weight_quantization(&mut same);
+    assert_eq!(same, before);
+}

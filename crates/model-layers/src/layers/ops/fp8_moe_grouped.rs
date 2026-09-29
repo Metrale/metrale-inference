@@ -33,6 +33,64 @@ pub const FP8_GROUPED_GATE_UP_ROWS_PER_PASS: u32 = 4;
 /// 2026-09-26: Rows per down pass. Must equal `GROUP_ROWS` in the `.cu`.
 pub const FP8_GROUPED_DOWN_ROWS_PER_PASS: u32 = 4;
 
+/// 2026-09-28: Rows per pass of the tensor-core kernels (`moe_fp8_grouped_tc.cu`,
+/// `TC_ROWS`), gate+up and down alike.
+pub const FP8_GROUPED_TC_ROWS_PER_PASS: u32 = 8;
+
+/// 2026-09-28: Output columns per tensor-core gate+up CTA (`TC_GU_COLS`).
+pub const FP8_GROUPED_TC_GATE_UP_COLS_PER_CTA: u32 = 64;
+
+/// 2026-09-28: Output columns per tensor-core down CTA (`TC_DOWN_COLS`).
+pub const FP8_GROUPED_TC_DOWN_COLS_PER_CTA: u32 = 128;
+
+/// 2026-09-28: The launch shape of a grouped gate+up or down kernel: output columns per
+/// CTA (`grid.x = ceil(n / cols_per_cta)`), rows per pass (the shared expert takes
+/// `ceil(num_tokens / rows_per_pass)` block rows) and threads per CTA.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fp8GroupedGeometry {
+    pub cols_per_cta: u32,
+    pub rows_per_pass: u32,
+    pub threads: u32,
+}
+
+/// 2026-09-28: `moe_expert_gate_up_act_fp8_grouped` (FP32 SiLU products).
+pub const FP8_GROUPED_GATE_UP_SCALAR: Fp8GroupedGeometry = Fp8GroupedGeometry {
+    cols_per_cta: FP8_GROUPED_GATE_UP_COLS_PER_CTA,
+    rows_per_pass: FP8_GROUPED_GATE_UP_ROWS_PER_PASS,
+    threads: 128,
+};
+
+/// 2026-09-28: `moe_expert_down_act_fp8_grouped` (reads FP32 SiLU products).
+pub const FP8_GROUPED_DOWN_SCALAR: Fp8GroupedGeometry = Fp8GroupedGeometry {
+    cols_per_cta: FP8_GROUPED_DOWN_COLS_PER_CTA,
+    rows_per_pass: FP8_GROUPED_DOWN_ROWS_PER_PASS,
+    threads: 256,
+};
+
+/// 2026-09-28: `moe_expert_gate_up_act_fp8_grouped_tc` (FP32 SiLU products).
+pub const FP8_GROUPED_GATE_UP_TC: Fp8GroupedGeometry = Fp8GroupedGeometry {
+    cols_per_cta: FP8_GROUPED_TC_GATE_UP_COLS_PER_CTA,
+    rows_per_pass: FP8_GROUPED_TC_ROWS_PER_PASS,
+    threads: 128,
+};
+
+/// 2026-09-28: `moe_expert_down_act_fp8_grouped_tc` (reads FP32 SiLU products as BF16 hi + lo).
+pub const FP8_GROUPED_DOWN_TC: Fp8GroupedGeometry = Fp8GroupedGeometry {
+    cols_per_cta: FP8_GROUPED_TC_DOWN_COLS_PER_CTA,
+    rows_per_pass: FP8_GROUPED_TC_ROWS_PER_PASS,
+    threads: 128,
+};
+
+/// 2026-09-28: Whether the tensor-core kernels take an `n`-column, `k`-deep projection:
+/// both in whole 128 blocks (the FP8 scale blocks) and `n` in whole CTAs of `geometry`.
+pub fn fp8_grouped_tc_shape_ok(n: u32, k: u32, geometry: Fp8GroupedGeometry) -> bool {
+    n > 0
+        && k > 0
+        && k.is_multiple_of(128)
+        && n.is_multiple_of(128)
+        && n.is_multiple_of(geometry.cols_per_cta)
+}
+
 /// 2026-09-25: Cap on active experts, which sizes the grouped grids' Y extent:
 /// `num_tokens * top_k` rows can reach at most that many distinct experts. It
 /// does not depend on the routing, so a captured graph stays valid for every
@@ -91,14 +149,16 @@ pub fn moe_fp8_grouped_sort(
 }
 
 /// 2026-09-26: Grouped FP8 gate+up and SiLU. `cap` is [`fp8_grouped_active_cap`];
-/// the first `ceil(num_tokens / FP8_GROUPED_GATE_UP_ROWS_PER_PASS)` block rows are
-/// the shared expert. Writes the FP32 product
-/// `silu(bf16(gate)) * bf16(up)`, `[positions, n]` for the routed experts into
-/// `act` and `[num_tokens, n]` for the shared expert into `sh_act`.
+/// the first `ceil(num_tokens / geometry.rows_per_pass)` block rows are the shared
+/// expert. Writes the product `silu(bf16(gate)) * bf16(up)`, `[positions, n]` for
+/// the routed experts into `act` and `[num_tokens, n]` for the shared expert into
+/// `sh_act`: FP32 from the scalar kernel ([`FP8_GROUPED_GATE_UP_SCALAR`]), BF16 from
+/// the tensor-core one ([`FP8_GROUPED_GATE_UP_TC`], 2026-09-28).
 #[allow(clippy::too_many_arguments)]
 pub fn moe_expert_gate_up_act_fp8_grouped(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    geometry: Fp8GroupedGeometry,
     input: DevicePtr,
     gp_w: DevicePtr,
     gp_s: DevicePtr,
@@ -120,11 +180,11 @@ pub fn moe_expert_gate_up_act_fp8_grouped(
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
         .grid([
-            div_ceil(n, FP8_GROUPED_GATE_UP_COLS_PER_CTA),
-            cap + div_ceil(num_tokens, FP8_GROUPED_GATE_UP_ROWS_PER_PASS),
+            div_ceil(n, geometry.cols_per_cta),
+            cap + div_ceil(num_tokens, geometry.rows_per_pass),
             1,
         ])
-        .block([128, 1, 1])
+        .block([geometry.threads, 1, 1])
         .arg_ptr(input)
         .arg_ptr(gp_w)
         .arg_ptr(gp_s)
@@ -147,13 +207,15 @@ pub fn moe_expert_gate_up_act_fp8_grouped(
         .launch(stream)
 }
 
-/// 2026-09-26: Grouped FP8 down over the SiLU product: 256 threads, 8 warps of 4
-/// output columns each. `k` is the intermediate width; rows of `act` and
-/// `output` are sorted positions, rows of `sh_act` and `sh_down_out` tokens.
+/// 2026-09-26: Grouped FP8 down over the SiLU product, launched with `geometry`
+/// ([`FP8_GROUPED_DOWN_SCALAR`] reads FP32 products, [`FP8_GROUPED_DOWN_TC`] BF16).
+/// `k` is the intermediate width; rows of `act` and `output` are sorted
+/// positions, rows of `sh_act` and `sh_down_out` tokens.
 #[allow(clippy::too_many_arguments)]
 pub fn moe_expert_down_act_fp8_grouped(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    geometry: Fp8GroupedGeometry,
     act: DevicePtr,
     down_w: DevicePtr,
     down_s: DevicePtr,
@@ -172,11 +234,11 @@ pub fn moe_expert_down_act_fp8_grouped(
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
         .grid([
-            div_ceil(n, FP8_GROUPED_DOWN_COLS_PER_CTA),
-            cap + div_ceil(num_tokens, FP8_GROUPED_DOWN_ROWS_PER_PASS),
+            div_ceil(n, geometry.cols_per_cta),
+            cap + div_ceil(num_tokens, geometry.rows_per_pass),
             1,
         ])
-        .block([256, 1, 1])
+        .block([geometry.threads, 1, 1])
         .arg_ptr(act)
         .arg_ptr(down_w)
         .arg_ptr(down_s)
@@ -230,3 +292,7 @@ pub fn moe_weighted_sum_blend_fp8_grouped(
         .arg_u32(k)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "fp8_moe_grouped_tests.rs"]
+mod tests;

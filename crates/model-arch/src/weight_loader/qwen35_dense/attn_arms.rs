@@ -53,7 +53,7 @@ pub(super) fn build_q2_attention(
         ffn,
         ..
     } = l;
-    let (k_scale, v_scale) = load_kv_scales(store, p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, p, gpu)?;
     let attn = AttentionWeights {
         q_proj: DenseWeight {
             weight: metrale_gpu_runtime::gpu::DevicePtr::NULL,
@@ -126,6 +126,14 @@ pub(super) fn compressed_tensors_arm(
                       kind: TpShardKind|
      -> Result<metrale_model_layers::weight_map::QuantizedWeight> {
         let prefix = format!("{p}.{name}");
+        // 2026-09-28: KNOWN DEVIATION under `--weight-quantization declared`. A checkpoint that
+        // declares this projection FP8 W8A8 with per-channel scales (unsloth/Qwen3.8-27B-NVFP4:
+        // attention q/k/v/o, GDN in_proj_qkv/in_proj_z/out_proj, MLP of layers 56-63) asks for its
+        // FP8 weights (`WeightQuantPolicy::wants_fp8_weights`), but no decode arm reads a per-row
+        // FP8 scale yet, so it is requantized to NVFP4 here: below the declared weight precision.
+        // The loader stamps the copy `Nvfp4Act::Wide`, so its activations stay 16-bit (no W4A4
+        // below the declared A8). Serving it as declared needs the per-row FP8 decode arms (the
+        // W8A8 decode branch); under `nvfp4` this requantization is the tier's definition.
         // 2026-09-25: A projection without `weight_packed` is loaded with
         // `dense_auto` and quantized to NVFP4 here, as in
         // `qwen35/load_layers/attention_arms.rs`.
@@ -157,7 +165,7 @@ pub(super) fn compressed_tensors_arm(
     let dummy = DenseWeight {
         weight: metrale_gpu_runtime::gpu::DevicePtr::NULL,
     };
-    let (k_scale, v_scale) = load_kv_scales(store, p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, p, gpu)?;
     let attn = AttentionWeights {
         q_proj: dummy,
         k_proj: dummy,
@@ -187,7 +195,7 @@ pub(super) fn nvfp4_skipped_arm(
     // 2026-09-25: `attn_nvfp4` is false: the FP8 overlay below replaces
     // q/k/v/o and `RouteEnv::attn_nvfp4` found no route that reads NVFP4
     // copies, so none are built.
-    let (k_scale, v_scale) = load_kv_scales(store, p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, p, gpu)?;
     let (nh, hd) = (config.num_attention_heads, config.head_dim);
     let (nkv, hh) = (config.num_key_value_heads, config.hidden_size);
     let q_n = nh * hd * if config.attn_gated { 2 } else { 1 };
@@ -282,7 +290,7 @@ pub(super) fn bf16_then_nvfp4_arm(
         (o_dense, o_nvfp4),
     ] = load_qkvo_tp(config, load_bf16_then_nvfp4)?;
 
-    let (k_scale, v_scale) = load_kv_scales(store, p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, p, gpu)?;
 
     // 2026-09-25: The BF16 q/k/v/o were only the quantizer's input and the
     // layer gets no BF16 attention weights, so they are freed. They are
@@ -346,7 +354,7 @@ pub(super) fn bf16_raw_arm(
         };
     let [q_dense, k_dense, v_dense, o_dense] = load_qkvo_tp(config, load_bf16_dense)?;
 
-    let (k_scale, v_scale) = load_kv_scales(store, p, gpu);
+    let (k_scale, v_scale) = load_kv_scales(store, p, gpu)?;
 
     let attn = AttentionWeights {
         q_proj: q_dense,

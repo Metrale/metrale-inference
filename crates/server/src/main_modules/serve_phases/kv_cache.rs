@@ -185,9 +185,9 @@ pub(crate) fn resolve_kv_cache_config(
     args: &cli::ServeArgs,
     config: &ModelConfig,
     behavior_default_kv_dtype: &str,
-    // 2026-09-26: Number of `*.k_scale` tensors in the checkpoint (0 when it
-    // ships no FP8 KV scales); only the FP8-KV log below reads it.
-    fp8_kv_scale_count: usize,
+    // 2026-09-28: The checkpoint's per-layer FP8 KV scales, from
+    // `WeightStore::kv_scale_census`; only the FP8-KV log below reads it.
+    kv_scale_census: &metrale_model_weights::weights::KvScaleCensus,
 ) -> Result<KvCacheConfig> {
     let (effective_kv_dtype_str, kv_dtype_source) =
         resolve_kv_dtype_str(args.kv_cache_dtype.as_deref(), behavior_default_kv_dtype);
@@ -209,44 +209,16 @@ pub(crate) fn resolve_kv_cache_config(
     }
     let kv_dtype: metrale_cache::kv_cache::KvCacheDtype = effective_kv_dtype_str.parse()?;
     if kv_dtype == metrale_cache::kv_cache::KvCacheDtype::Fp8 {
-        let has_ckpt_scales = fp8_kv_scale_count > 0;
-        if config.fp8_kv_calibration_tokens > 0 {
-            if has_ckpt_scales {
-                tracing::info!(
-                    "FP8 KV online calibration is ON, but this checkpoint already ships {} \
-                     per-layer k_scale/v_scale tensors (full-data calibrated, tighter than a \
-                     runtime estimate). Prefer --fp8-kv-calibration-tokens 0 to use them directly.",
-                    fp8_kv_scale_count,
-                );
-            } else {
-                // 2026-09-26: Each attention layer logs "FP8 KV scales frozen
-                // after N tokens (requested M)" when its window closes.
-                tracing::info!(
-                    "FP8 KV cache with online calibration (checkpoint ships no k/v scales): \
-                     accumulating per-tensor K/V amax over the first {} observed tokens \
-                     (across requests, readiness probe included) before freezing the scales.{}",
-                    config.fp8_kv_calibration_tokens,
-                    if args.fp8_kv_calibration_tokens.is_none() {
-                        " (auto-enabled from MODEL.toml)"
-                    } else {
-                        ""
-                    },
-                );
-            }
-        } else if has_ckpt_scales {
-            tracing::info!(
-                "FP8 KV cache using {} per-layer k_scale/v_scale tensors from the checkpoint — \
-                 no calibration needed.",
-                fp8_kv_scale_count,
-            );
-        } else {
-            tracing::warn!(
-                "FP8 KV cache selected but the checkpoint ships NO k_scale/v_scale tensors \
-                 (defaulting to 1.0, which silently clips BF16 into E4M3 range [-448, 448] and \
-                 destroys dynamic range). Enable --fp8-kv-calibration-tokens 256 for online \
-                 calibration, or use --kv-cache-dtype nvfp4/bf16."
-            );
-        }
+        let source = super::fp8_kv_scale_source::fp8_kv_scale_source(
+            config.fp8_kv_calibration_tokens,
+            kv_scale_census.len(),
+            config.num_attention_layers(),
+        );
+        super::fp8_kv_scale_source::log_fp8_kv_scale_source(
+            &source,
+            kv_scale_census,
+            args.fp8_kv_calibration_tokens.is_none(),
+        );
     }
     let num_attn_layers = config.num_attention_layers();
     // 2026-09-26: Parsed with `cli::flag_values::KvHighPrecisionLayers`, the

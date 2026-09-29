@@ -144,6 +144,10 @@ impl Qwen3AttentionLayer {
         }
 
         let o_out = fwd.buffers.moe_output();
+        // 2026-09-28: The declared-W8A8 arm first (`w8a8_decode_arm.rs`).
+        if self.w8a8_o(fwd, attn_out, n, o_out, stream)? {
+            return self.ms_o_proj_lora(c, attn_out, o_out);
+        }
         if let Some(q2) = self.o_weight.as_ref().and_then(|w| w.as_packed_q2()) {
             // 2026-09-25: Packed Q2_0 weight: one 2-bit GEMV per row.
             for i in 0..n {

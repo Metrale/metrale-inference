@@ -27,6 +27,10 @@ impl Qwen3AttentionLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        // 2026-09-28: The declared-W8A8 arm wrote K and V with Q (`attention_forward_q_proj`).
+        if self.w8a8_qkv_serves(1) {
+            return Ok(());
+        }
         if self.mla.is_some() {
             // 2026-09-25: Unreachable from `attention_forward`, which returns through the MLA path
             // before calling this.

@@ -139,12 +139,16 @@ impl WeightStore {
             .any(|w| matches!(w.dtype, WeightDtype::FP8E4M3))
     }
 
-    /// Number of per-layer FP8 KV-cache scale tensors (`*.k_scale`) the
-    /// checkpoint ships. `>0` means the model carries calibrated KV scales, so
-    /// FP8 KV needs no online calibration; `0` means the scales default to 1.0
-    /// (which clips BF16 into E4M3 range), so online calibration or a non-FP8 KV
-    /// dtype is required. Used to log the right guidance at serve time.
-    pub fn fp8_kv_scale_count(&self) -> usize {
-        self.names().filter(|n| n.ends_with(".k_scale")).count()
+    /// 2026-09-28: Every attention layer that ships FP8 KV scales, resolved
+    /// through [`super::resolve_kv_scale_keys`], the resolver the per-layer
+    /// loader uses; an ambiguous or half pair is an error.
+    pub fn kv_scale_census(&self) -> Result<super::KvScaleCensus> {
+        super::kv_scale_census(self.names(), |n| self.contains(n))
+    }
+
+    /// 2026-09-28: The FP8 KV scale keys of the attention layer at `attn_prefix`
+    /// (`None` when it ships none), from [`super::resolve_kv_scale_keys`].
+    pub fn kv_scale_keys(&self, attn_prefix: &str) -> Result<Option<super::KvScaleKeys>> {
+        super::resolve_kv_scale_keys(|n| self.contains(n), attn_prefix)
     }
 }

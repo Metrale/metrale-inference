@@ -48,6 +48,7 @@ impl MoeWeights {
             weight_scale_2: 1.0,
             input_scale: DevicePtr::NULL,
             weight_scale_2_vec: DevicePtr::NULL,
+            act: metrale_config::Nvfp4Act::Unstamped,
         };
         let null_expert = ExpertWeight {
             gate_proj: null_quant,

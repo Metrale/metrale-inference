@@ -62,8 +62,10 @@ pub fn parse_kimi_k3(json: &str) -> Result<ModelConfig> {
         0.0
     };
 
-    config.quantization_config =
-        parse_quantization_config(&text).or_else(|| parse_quantization_config(&raw));
+    config.quantization_config = match parse_quantization_config(&text)? {
+        Some(qc) => Some(qc),
+        None => parse_quantization_config(&raw)?,
+    };
 
     finalize_config(&mut config, &raw).context("kimi_k3: finalize_config")?;
     validate_kimi_k3(&config)?;
