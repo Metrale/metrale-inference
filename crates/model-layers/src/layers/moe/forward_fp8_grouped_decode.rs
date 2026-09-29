@@ -23,9 +23,16 @@
 
 use super::*;
 
-/// 2026-09-25: Widest row count this path admits. `forward_prefill` takes its FP8
-/// grouped GEMM above 64 rows when that kernel resolved.
+/// 2026-09-25: Widest row count the scalar expert kernels admit. Above it `forward_prefill`
+/// takes its FP8 grouped GEMM when that kernel resolved.
 pub const FP8_GROUPED_DECODE_MAX_ROWS: usize = 64;
+
+/// 2026-09-29: Widest row count the tensor-core expert kernels admit: one verify of 128
+/// sequences at one draft (`--max-batch-size 128`, k = 1). A row's bits do not depend on the
+/// row count there (`fp8_grouped_tc.rs`), so every decode and verify width up to it keeps the
+/// arithmetic of one row, where `forward_prefill` (W8A8) and the per-row verify loop took the
+/// rows above 64 before.
+pub const FP8_GROUPED_DECODE_TC_MAX_ROWS: usize = 256;
 
 /// 2026-09-25: The grouped decode's kernels, looked up with `try_kernel`. A zero
 /// handle among the first four declines the path in
@@ -73,18 +80,29 @@ fn fp8_grouped_decode_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_FP8_MOE_GROUPED_DECODE").is_none())
 }
 
-/// 2026-09-25: Shape admission for the grouped kernels, without a GPU.
-///
-/// * `m` in `2..=FP8_GROUPED_DECODE_MAX_ROWS`.
+/// 2026-09-25: Shape admission for the scalar grouped kernels, without a GPU:
+/// `fp8_grouped_decode_rows_ok(m, false)` and `fp8_grouped_decode_dims_ok`.
+pub fn fp8_grouped_decode_shape_ok(m: usize, hidden: u32, inter: u32) -> bool {
+    fp8_grouped_decode_rows_ok(m, false) && fp8_grouped_decode_dims_ok(hidden, inter)
+}
+
+/// 2026-09-29: The row envelope of the grouped decode: `2..=FP8_GROUPED_DECODE_MAX_ROWS` for
+/// the scalar expert kernels, `1..=FP8_GROUPED_DECODE_TC_MAX_ROWS` for the tensor-core ones
+/// (`tensor_core`), whose one-row bits equal the batched bits.
+pub fn fp8_grouped_decode_rows_ok(m: usize, tensor_core: bool) -> bool {
+    if tensor_core {
+        (1..=FP8_GROUPED_DECODE_TC_MAX_ROWS).contains(&m)
+    } else {
+        (2..=FP8_GROUPED_DECODE_MAX_ROWS).contains(&m)
+    }
+}
+
+/// 2026-09-29: The width terms of the grouped kernels:
 /// * `hidden % 16 == 0`: the gate/up kernel reads weights in 16-element chunks.
 /// * `inter % 8 == 0`: the down kernel reads weights in 8-element chunks and the
 ///   SiLU product rows as `float4`.
-pub fn fp8_grouped_decode_shape_ok(m: usize, hidden: u32, inter: u32) -> bool {
-    (2..=FP8_GROUPED_DECODE_MAX_ROWS).contains(&m)
-        && hidden >= 16
-        && hidden.is_multiple_of(16)
-        && inter >= 8
-        && inter.is_multiple_of(8)
+pub fn fp8_grouped_decode_dims_ok(hidden: u32, inter: u32) -> bool {
+    hidden >= 16 && hidden.is_multiple_of(16) && inter >= 8 && inter.is_multiple_of(8)
 }
 
 /// 2026-09-25: Bytes this path needs in each arena buffer it borrows, so a batch
@@ -142,11 +160,10 @@ impl MoeLayer {
         let need =
             grouped_decode_buffer_need(m, h, inter, cfg.num_experts, cfg.num_experts_per_tok);
         // 2026-09-28: One row too under the tensor-core expert kernels, whose row bits do not
-        // depend on the row count (`fp8_grouped_tc.rs`).
-        (fp8_grouped_decode_shape_ok(m, h as u32, inter as u32)
-            || (m == 1
-                && fp8_grouped_decode_shape_ok(2, h as u32, inter as u32)
-                && self.fp8_grouped_tc_on(h, inter)))
+        // depend on the row count (`fp8_grouped_tc.rs`). 2026-09-29: And up to
+        // `FP8_GROUPED_DECODE_TC_MAX_ROWS` rows.
+        fp8_grouped_decode_rows_ok(m, self.fp8_grouped_tc_on(h, inter))
+            && fp8_grouped_decode_dims_ok(h as u32, inter as u32)
             && self.fp8_gate_weight_ptrs.is_some()
             && self.fp8_up_weight_ptrs.is_some()
             && self.fp8_down_weight_ptrs.is_some()
