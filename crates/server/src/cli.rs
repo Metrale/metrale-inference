@@ -128,6 +128,10 @@ pub struct CircuitDiffArgs {
     /// Where to write the JSON report.
     #[arg(long)]
     pub out: std::path::PathBuf,
+    /// Batch widths (comma-separated): diff multi-sequence decode at each width instead of
+    /// single-sequence decode. `--prompts` is unused then; a width of `n` decodes `n` prompts.
+    #[arg(long, value_delimiter = ',')]
+    pub batch: Vec<usize>,
     /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
     #[command(flatten)]
     pub serve: ServeArgs,

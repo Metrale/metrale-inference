@@ -15,6 +15,9 @@
 //!   read or written outside the plan (its inputs from another section, and the declared
 //!   outputs) is live for the whole plan. An alias class is live over the union of its edges.
 //! - The edges of a pack are placed back to back, in pack order, with no padding between.
+//! - The edges of a row pack share every row: row `i` of member `j` sits at the pack's base
+//!   plus `i` pack rows plus the widths of members `0..j`; each member's `row_stride` is the
+//!   pack row. A row pack placed `over` an edge occupies exactly that edge's bytes.
 //! - Offsets of unpacked storage are aligned to [`ALIGN`] bytes; a pack's first edge is.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -38,6 +41,9 @@ pub struct Slot {
     pub start: usize,
     /// 2026-09-28: Last group index it is live in.
     pub end: usize,
+    /// 2026-09-28: Bytes from one row of the edge to the next: its own row width, or the
+    /// whole row of an interleaved pack it belongs to.
+    pub row_stride: u64,
 }
 
 /// 2026-09-28: The arena layout of one plan.
@@ -72,6 +78,20 @@ pub struct Layout {
     pub aliases: Vec<(EdgeIdx, EdgeIdx)>,
     /// 2026-09-28: Edges a kernel writes back to back, in this order, from one pointer.
     pub packs: Vec<Vec<EdgeIdx>>,
+    /// 2026-09-28: Edges a kernel writes side by side within each row.
+    pub row_packs: Vec<RowPack>,
+}
+
+/// 2026-09-28: Edges laid side by side within each row: row `i` holds row `i` of every member,
+/// in order. The members must have one row count. With `over`, the pack occupies that edge's
+/// bytes (a kernel rewrites the edge in place into the members), which must be exactly the
+/// pack's size.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RowPack {
+    /// 2026-09-28: The members, in row order.
+    pub members: Vec<EdgeIdx>,
+    /// 2026-09-28: The edge the pack is laid over, if any.
+    pub over: Option<EdgeIdx>,
 }
 
 /// 2026-09-28: Live range of every materialised edge in `plan`, keyed by edge.
@@ -157,12 +177,19 @@ pub fn plan_buffers_with(
         .iter()
         .chain(layout.aliases.iter().flat_map(|(a, b)| [a, b]))
         .chain(layout.packs.iter().flatten())
+        .chain(
+            layout
+                .row_packs
+                .iter()
+                .flat_map(|p| p.members.iter().chain(&p.over)),
+        )
     {
         if !ranges.contains_key(&e) {
             return Err(layout_err(format!("edge `{}` is not materialised", id(e))));
         }
     }
     let mut size = BTreeMap::new();
+    let mut rows_of = BTreeMap::new();
     let mut materialized_bytes = 0u64;
     for &e in ranges.keys() {
         let edge = &circuit.edges[e];
@@ -174,6 +201,7 @@ pub fn plan_buffers_with(
         materialized_bytes = materialized_bytes.checked_add(bytes).ok_or_else(size_err)?;
         if !layout.external.contains(&e) {
             size.insert(e, bytes);
+            rows_of.insert(e, rows.max(1));
         }
     }
     let mut parent: BTreeMap<EdgeIdx, EdgeIdx> = size.keys().map(|&e| (e, e)).collect();
@@ -207,6 +235,63 @@ pub fn plan_buffers_with(
     }
     let mut packed = BTreeSet::new();
     let mut items = Vec::new();
+    let mut stride_of: BTreeMap<EdgeIdx, u64> = BTreeMap::new();
+    for pack in &layout.row_packs {
+        let rows = pack
+            .members
+            .first()
+            .map_or(0, |e| rows_of.get(e).copied().unwrap_or(0));
+        let mut item = Item {
+            classes: Vec::new(),
+            bytes: 0,
+            start: usize::MAX,
+            end: 0,
+            key: EdgeIdx::MAX,
+        };
+        let mut row_bytes = 0u64;
+        for &e in pack.members.iter().chain(&pack.over) {
+            if layout.external.contains(&e) {
+                return Err(layout_err(format!(
+                    "row pack names external edge `{}`",
+                    id(e)
+                )));
+            }
+            if rows_of[&e] != rows {
+                return Err(layout_err(format!(
+                    "row-packed edge `{}` has another row count",
+                    id(e)
+                )));
+            }
+            let r = root(&mut parent, e);
+            if !packed.insert(r) {
+                return Err(layout_err(format!("edge `{}` is packed twice", id(e))));
+            }
+            let (s, t, k) = class_range[&r];
+            let within = if Some(e) == pack.over { 0 } else { row_bytes };
+            item.classes.push((r, within));
+            if Some(e) != pack.over {
+                row_bytes += size[&e] / rows;
+            }
+            item.start = item.start.min(s);
+            item.end = item.end.max(t);
+            item.key = item.key.min(k);
+        }
+        item.bytes = row_bytes * rows;
+        if let Some(o) = pack.over
+            && size[&o] != item.bytes
+        {
+            return Err(layout_err(format!(
+                "row pack over `{}` ({} B) holds {} B",
+                id(o),
+                size[&o],
+                item.bytes
+            )));
+        }
+        for &(r, _) in &item.classes {
+            stride_of.insert(r, row_bytes);
+        }
+        items.push(item);
+    }
     for pack in &layout.packs {
         let mut item = Item {
             classes: Vec::new(),
@@ -274,13 +359,15 @@ pub fn plan_buffers_with(
     }
     let mut slots = Vec::with_capacity(edges.len());
     for e in edges {
-        let (offset, start, end) = class_at[&root(&mut parent, e)];
+        let r = root(&mut parent, e);
+        let (offset, start, end) = class_at[&r];
         slots.push(Slot {
             edge: e,
             offset,
             bytes: size[&e],
             start,
             end,
+            row_stride: stride_of.get(&r).copied().unwrap_or(size[&e] / rows_of[&e]),
         });
     }
     Ok(BufferPlan {

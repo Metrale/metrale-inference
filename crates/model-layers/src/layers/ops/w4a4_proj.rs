@@ -285,6 +285,28 @@ pub fn nvfp4_proj_small_m_same_input(
     )
 }
 
+/// 2026-09-28: The prepared W4A4 kernels when [`nvfp4_proj_small_m`] takes the W4A4 path for
+/// this launch: the tier uses W4A4 decode, the kernels are prepared, and [`w4a4_route`] admits
+/// the shape at the weight's row edge.
+fn w4a4_state_for(
+    gpu: &dyn GpuBackend,
+    weight: &QuantizedWeight,
+    m: u32,
+    n: u32,
+    k: u32,
+) -> Option<W4a4State> {
+    if !crate::layers::weight_quantization().uses_w4a4_decode() {
+        return None;
+    }
+    state(gpu).filter(|s| w4a4_route(m, n, k, rows_for(weight, s.max_m)))
+}
+
+/// 2026-09-28: Whether [`nvfp4_proj_small_m`] launches the W4A4 kernels for this shape (and
+/// otherwise the W4A16 `w4a16_gemv_batchm`).
+pub fn routes_w4a4(gpu: &dyn GpuBackend, weight: &QuantizedWeight, m: u32, n: u32, k: u32) -> bool {
+    w4a4_state_for(gpu, weight, m, n, k).is_some()
+}
+
 /// 2026-09-25: What the scratch holds: (backend, input address, m, k, stream).
 type QuantKey = (usize, u64, u32, u32, u64);
 
@@ -308,10 +330,7 @@ fn proj(
     same_input: bool,
 ) -> Result<()> {
     let tier = crate::layers::weight_quantization();
-    if tier.uses_w4a4_decode()
-        && let Some(s) = state(gpu)
-        && w4a4_route(m, n, k, rows_for(weight, s.max_m))
-    {
+    if let Some(s) = w4a4_state_for(gpu, weight, m, n, k) {
         let want: QuantKey = (key(gpu), input.0, m, k, stream);
         let mut last = last_quant().lock().unwrap_or_else(|p| p.into_inner());
         if !(same_input && *last == Some(want)) {

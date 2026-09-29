@@ -12,7 +12,7 @@
 use anyhow::{Result, ensure};
 
 use super::super::compile::{Cx, OpEmitter};
-use super::{attn_facts, dense, dim, norm_slot, rows};
+use super::{attn_facts, dense, dim, norm_slot, per_row, rows};
 use crate::layers::ops;
 
 /// 2026-09-28: The group's stream input `(i, j)` and stream output `(i2, j2)` are one buffer.
@@ -124,7 +124,9 @@ impl OpEmitter for ResidualAddRmsNormExact {
     }
 }
 
-/// 2026-09-28: `residual_add`: the FFN's residual add where no norm follows in its launch.
+/// 2026-09-28: `residual_add`: the FFN's residual add where no norm follows in its launch; over
+/// all rows at once, or one launch per row (the GDN layers' 2- and 3-row FFN,
+/// `trait_decode_multi_seq.rs`).
 pub(crate) struct ResidualAdd;
 
 impl OpEmitter for ResidualAdd {
@@ -136,13 +138,22 @@ impl OpEmitter for ResidualAdd {
         cx.g.expect_ops(self.id(), &["residual_add"])?;
         in_place(cx, (0, 0), (0, 0))?;
         let k = cx.handle(0)?;
-        let x = cx.ptr(cx.g.input(0, 0)?)?;
-        let src = cx.ptr(cx.g.input(0, 1)?)?;
-        let count = rows(cx)? * dim(cx, "hidden")?;
-        cx.push(
-            0,
-            Box::new(move |e| ops::residual_add(e.gpu, k, x, src, count, e.stream)),
-        )
+        let h = dim(cx, "hidden")?;
+        let (reps, x_edge, src_edge) = (cx.reps(), cx.g.input(0, 0)?, cx.g.input(0, 1)?);
+        let count = if reps == 1 {
+            rows(cx)? * h
+        } else {
+            per_row(cx)?;
+            h
+        };
+        for i in 0..reps {
+            let (x, src) = (cx.row_ptr(x_edge, i)?, cx.row_ptr(src_edge, i)?);
+            cx.push(
+                0,
+                Box::new(move |e| ops::residual_add(e.gpu, k, x, src, count, e.stream)),
+            )?;
+        }
+        Ok(())
     }
 }
 

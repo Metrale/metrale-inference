@@ -274,6 +274,90 @@ fn a_pack_lays_its_edges_back_to_back_in_order() {
 }
 
 #[test]
+fn a_row_pack_interleaves_its_edges_within_each_row() {
+    let (c, p) = toy(1);
+    let gu = c.edge("l0.ffn.gu").unwrap();
+    let a = c.edge("l0.ffn.a").unwrap();
+    let rows = 8u64;
+    for pack in [vec![gu, a], vec![a, gu]] {
+        let layout = Layout {
+            row_packs: vec![RowPack {
+                members: pack.clone(),
+                over: None,
+            }],
+            ..Layout::default()
+        };
+        let b = plan_buffers_with(&c, &p, rows, &layout).unwrap();
+        let (first, second) = (slot(&b, pack[0]), slot(&b, pack[1]));
+        let row = |s: Slot| s.bytes / rows;
+        assert_eq!(first.offset % ALIGN, 0);
+        assert_eq!(second.offset, first.offset + row(first));
+        assert_eq!(first.row_stride, row(first) + row(second));
+        assert_eq!(second.row_stride, first.row_stride);
+        let (lo, hi) = (first.offset, first.offset + rows * first.row_stride);
+        for s in b.slots.iter().filter(|s| s.edge != gu && s.edge != a) {
+            let mut dims = c.dims.clone();
+            dims.insert("n".into(), rows);
+            let own_rows = c.edges[s.edge].rows.eval(&dims);
+            assert_eq!(s.row_stride * own_rows.unwrap().max(1), s.bytes);
+            let live_together = s.start <= first.end && first.start <= s.end;
+            let bytes_overlap = s.offset < hi && lo < s.offset + s.bytes;
+            assert!(
+                !(live_together && bytes_overlap),
+                "`{}` sits inside the row pack while it is live",
+                c.edges[s.edge].id
+            );
+        }
+    }
+}
+
+#[test]
+fn a_row_pack_over_an_edge_takes_its_bytes_and_an_alias_takes_its_stride() {
+    let (c, p) = toy(2);
+    let e = |id: &str| c.edge(id).unwrap();
+    let (gu, a0, a1, d0) = (e("l0.ffn.gu"), e("l0.ffn.a"), e("l1.ffn.a"), e("l0.ffn.d"));
+    let rows = 8u64;
+    let layout = Layout {
+        row_packs: vec![RowPack {
+            members: vec![a0, a1],
+            over: Some(gu),
+        }],
+        ..Layout::default()
+    };
+    let b = plan_buffers_with(&c, &p, rows, &layout).unwrap();
+    let (sg, s0, s1) = (slot(&b, gu), slot(&b, a0), slot(&b, a1));
+    assert_eq!(sg.offset, s0.offset);
+    assert_eq!(s1.offset, s0.offset + s0.bytes / rows);
+    assert_eq!(sg.row_stride, sg.bytes / rows);
+    assert_eq!(
+        (s0.row_stride, s1.row_stride),
+        (sg.row_stride, sg.row_stride)
+    );
+    let span = (sg.start.min(s1.start), sg.end.max(s1.end));
+    assert_eq!((sg.start, sg.end), span);
+    for s in b.slots.iter().filter(|s| ![gu, a0, a1].contains(&s.edge)) {
+        let live_together = s.start <= span.1 && span.0 <= s.end;
+        let bytes_overlap = s.offset < sg.offset + sg.bytes && sg.offset < s.offset + s.bytes;
+        assert!(
+            !(live_together && bytes_overlap),
+            "`{}`",
+            c.edges[s.edge].id
+        );
+    }
+    let with_alias = Layout {
+        aliases: vec![(d0, e("l0.ffn.xn"))],
+        row_packs: vec![RowPack {
+            members: vec![e("l0.ffn.xn"), a0],
+            over: None,
+        }],
+        ..Layout::default()
+    };
+    let b = plan_buffers_with(&c, &p, rows, &with_alias).unwrap();
+    assert_eq!(slot(&b, d0).offset, slot(&b, e("l0.ffn.xn")).offset);
+    assert_eq!(slot(&b, d0).row_stride, slot(&b, a0).row_stride);
+}
+
+#[test]
 fn layouts_the_plan_cannot_honour_are_refused() {
     let (c, p) = toy(1);
     let e = |id: &str| c.edge(id).unwrap();
@@ -312,6 +396,30 @@ fn layouts_the_plan_cannot_honour_are_refused() {
             ..Layout::default()
         },
         "packed twice",
+    );
+    let row_pack = |members: Vec<usize>, over: Option<usize>| RowPack { members, over };
+    refused(
+        Layout {
+            packs: vec![vec![e("l0.ffn.gu")]],
+            row_packs: vec![row_pack(vec![e("l0.ffn.gu"), e("l0.ffn.a")], None)],
+            ..Layout::default()
+        },
+        "packed twice",
+    );
+    refused(
+        Layout {
+            row_packs: vec![row_pack(vec![e("l0.ffn.a")], Some(e("l0.ffn.gu")))],
+            ..Layout::default()
+        },
+        "holds",
+    );
+    refused(
+        Layout {
+            external: BTreeSet::from([e("l0.ffn.a")]),
+            row_packs: vec![row_pack(vec![e("l0.ffn.gu"), e("l0.ffn.a")], None)],
+            ..Layout::default()
+        },
+        "external",
     );
     let up_act = r#"{ op = "linear", role = "gate_up" }, { op = "silu_mul" }"#;
     let fused_rules = crate::test_toy::rules(&crate::test_toy::fused("up_act", up_act, 10));

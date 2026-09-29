@@ -240,6 +240,12 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         .model
         .clone()
         .context("the diff needs the checkpoint id as the model argument")?;
+    // 2026-09-28: As `met serve` does before its load: validate the flags, then publish the
+    // kernel-path cells (`--weight-quantization` among them) the build reads.
+    if let Err(msg) = crate::cli::validate_serve_args(&args.serve) {
+        bail!("{msg}");
+    }
+    crate::main_modules::serve_flags::publish_kernel_flags(&args.serve);
     let Some(engine) = load_engine(args.serve)? else {
         bail!("this rank is an expert-parallel worker; run the diff on the head");
     };
@@ -257,6 +263,9 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         ("circuit-reference", circuit(Fusions::ReferenceOnly)),
         ("circuit", circuit(Fusions::All)),
     ];
+    if !args.batch.is_empty() {
+        return batch_report(model, &args.batch, args.steps, &forwards, &args.out);
+    }
     let mut variants = Vec::new();
     let mut per_prompt = Vec::new();
     let mut reports = Vec::new();
@@ -320,10 +329,64 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Serialize)]
+struct BatchReport {
+    graphs: &'static str,
+    steps: usize,
+    variants: Vec<Variant>,
+    widths: Vec<batch::WidthReport>,
+    verdict: &'static str,
+    reasons: Vec<String>,
+}
+
+/// 2026-09-28: The `--batch` diff: every width, then the verdict.
+fn batch_report(
+    model: &dyn Model,
+    widths: &[usize],
+    steps: usize,
+    forwards: &[(&'static str, ForwardSelect)],
+    out: &Path,
+) -> Result<()> {
+    let mut variants = Vec::new();
+    for (name, sel) in forwards {
+        model.set_forward(sel)?;
+        let d = model.forward_disclosure();
+        variants.push(Variant {
+            name,
+            plan_digest: d.plan_digest,
+            launches_per_step: d.launches_per_step,
+        });
+    }
+    let widths = batch::diff_widths(model, widths, steps, forwards)?;
+    let reasons = batch::batch_failures(&widths);
+    let report = BatchReport {
+        graphs: if std::env::var("METRALE_NO_DECODE_GRAPHS_MULTISEQ").as_deref() == Ok("1") {
+            "eager"
+        } else {
+            "graphed"
+        },
+        steps,
+        variants,
+        widths,
+        verdict: if reasons.is_empty() { "PASS" } else { "FAIL" },
+        reasons: reasons.clone(),
+    };
+    std::fs::write(out, serde_json::to_vec_pretty(&report)?)
+        .with_context(|| format!("writing {}", out.display()))?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !reasons.is_empty() {
+        bail!("circuit diff FAILED:\n  {}", reasons.join("\n  "));
+    }
+    Ok(())
+}
+
 fn write_report(path: &Path, report: &Report) -> Result<()> {
     std::fs::write(path, serde_json::to_vec_pretty(report)?)
         .with_context(|| format!("writing {}", path.display()))
 }
+
+#[path = "circuit_diff_batch.rs"]
+mod batch;
 
 #[cfg(test)]
 #[path = "circuit_diff_tests.rs"]

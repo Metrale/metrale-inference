@@ -91,3 +91,14 @@ pub fn plan_digest(circuit: &Circuit, plan: &FusionPlan) -> String {
 pub fn rules_digest(fusions_text: &str) -> String {
     hex(&Sha256::digest(fusions_text.as_bytes()))
 }
+
+/// 2026-09-28: Lower-case hex SHA-256 over several plan digests, each followed by a newline, in
+/// the given order: one value for a set of plans compiled together.
+pub fn plans_digest<'a>(digests: impl IntoIterator<Item = &'a str>) -> String {
+    let mut h = Sha256::new();
+    for d in digests {
+        h.update(d.as_bytes());
+        h.update(b"\n");
+    }
+    hex(&h.finalize())
+}

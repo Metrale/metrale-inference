@@ -16,9 +16,9 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use metrale_circuit::planner::{BufferPlan, Layout};
-use metrale_circuit::{Circuit, FusionPlan, Group};
+use metrale_circuit::{Circuit, FusionPlan, Group, Mode};
 use metrale_config::ModelConfig;
-use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use super::bindings::{BoundWeight, CircuitLayer, HeadBinding, WeightSlot};
 use super::emitters::emitter;
@@ -35,9 +35,15 @@ pub struct Fixed {
     pub residual: DevicePtr,
     /// 2026-09-28: The logits buffer the step returns.
     pub logits: DevicePtr,
-    /// 2026-09-28: The step's attention metadata, at its fixed upload address.
-    /// `max_blocks_per_seq` is ignored: a step supplies it.
+    /// 2026-09-28: The single-sequence step's attention metadata, at its fixed upload
+    /// address. `max_blocks_per_seq` is ignored: a step supplies it.
     pub meta: AttnMetadataDev,
+    /// 2026-09-28: The multi-sequence step's attention metadata (one row per sequence), at its
+    /// fixed upload address; `max_blocks_per_seq` is ignored.
+    pub batch_meta: AttnMetadataDev,
+    /// 2026-09-28: The quantized-activation scratch the NVFP4 MMQ GEMMs read
+    /// (`BufferArena::ffn_act_q8`), sized for the widest batch.
+    pub ffn_act_q8: DevicePtr,
     /// 2026-09-28: K pool per attention layer (`PagedKvCache::k_pool_ptr`).
     pub k_pools: Vec<DevicePtr>,
     /// 2026-09-28: V pool per attention layer.
@@ -100,25 +106,92 @@ impl<'a> GroupRef<'a> {
 /// 2026-09-28: What an emitter reads while compiling one group.
 pub(crate) struct Cx<'a> {
     pub g: GroupRef<'a>,
+    pub gpu: &'a dyn GpuBackend,
+    pub mode: Mode,
     pub rows: u64,
     pub config: &'a ModelConfig,
     pub fixed: &'a Fixed,
     pub layers: &'a [CircuitLayer],
     pub head: &'a HeadBinding,
     ptrs: &'a [Option<DevicePtr>],
+    strides: &'a [Option<u64>],
+    formats: &'a [metrale_circuit::Format],
     handles: Vec<KernelHandle>,
     launches: Vec<Launch>,
 }
 
 impl<'a> Cx<'a> {
-    /// 2026-09-28: The buffer of a materialised edge.
-    pub fn ptr(&self, edge: usize) -> Result<DevicePtr> {
+    fn buffer(&self, edge: usize) -> Result<DevicePtr> {
         self.ptrs[edge].with_context(|| {
             format!(
                 "edge `{}` has no buffer in this plan (fused away or outside the section)",
                 self.g.circuit.edges[edge].id
             )
         })
+    }
+
+    fn row_bytes(&self, edge: usize) -> Result<u64> {
+        let e = &self.g.circuit.edges[edge];
+        self.formats[edge]
+            .bytes(1, e.dim_value)
+            .with_context(|| format!("edge `{}` has no row size", e.id))
+    }
+
+    /// 2026-09-28: Bytes from one row of an edge to the next.
+    fn stride_bytes(&self, edge: usize) -> Result<u64> {
+        match self.strides[edge] {
+            Some(s) => Ok(s),
+            None => self.row_bytes(edge),
+        }
+    }
+
+    /// 2026-09-28: The buffer of a materialised edge whose rows are contiguous; an edge laid out
+    /// in a row pack is refused, since a kernel reading it here would step rows by its width.
+    pub fn ptr(&self, edge: usize) -> Result<DevicePtr> {
+        let p = self.buffer(edge)?;
+        ensure!(
+            self.rows <= 1 || self.stride_bytes(edge)? == self.row_bytes(edge)?,
+            "edge `{}` is laid out in a row pack; it must be read with its row stride",
+            self.g.circuit.edges[edge].id
+        );
+        Ok(p)
+    }
+
+    /// 2026-09-28: The buffer of a materialised edge and its row stride in elements, for a
+    /// kernel that takes the stride.
+    pub fn strided(&self, edge: usize) -> Result<(DevicePtr, u32)> {
+        let e = &self.g.circuit.edges[edge];
+        let (stride, row) = (self.stride_bytes(edge)?, self.row_bytes(edge)?);
+        ensure!(
+            e.dim_value > 0 && row % e.dim_value == 0 && stride % (row / e.dim_value) == 0,
+            "edge `{}`: a {stride}-byte row stride is not whole elements",
+            e.id
+        );
+        Ok((
+            self.buffer(edge)?,
+            u32::try_from(stride / (row / e.dim_value))?,
+        ))
+    }
+
+    /// 2026-09-28: Row `row` of a materialised edge: its buffer plus `row` row strides.
+    pub fn row_ptr(&self, edge: usize, row: usize) -> Result<DevicePtr> {
+        Ok(self
+            .buffer(edge)?
+            .offset(row * self.stride_bytes(edge)? as usize))
+    }
+
+    /// 2026-09-28: The attention metadata this plan's steps upload.
+    pub fn meta(&self) -> AttnMetadataDev {
+        if self.mode == Mode::Decode {
+            self.fixed.meta
+        } else {
+            self.fixed.batch_meta
+        }
+    }
+
+    /// 2026-09-28: Launches of each kernel this group makes: its repeat at the plan's rows.
+    pub fn reps(&self) -> usize {
+        self.g.group.repeat.count(self.rows) as usize
     }
 
     /// 2026-09-28: The group's `i`-th kernel.
@@ -222,6 +295,7 @@ pub fn layout(circuit: &Circuit, plan: &FusionPlan) -> Result<Layout> {
 
 /// 2026-09-28: Everything [`compile`] reads besides the plan.
 pub struct Inputs<'a> {
+    pub gpu: &'a dyn GpuBackend,
     pub config: &'a ModelConfig,
     pub kernels: &'a KernelTable,
     pub fixed: &'a Fixed,
@@ -239,8 +313,10 @@ pub fn compile(
     inp: &Inputs<'_>,
 ) -> Result<Program> {
     let mut ptrs: Vec<Option<DevicePtr>> = vec![None; circuit.edges.len()];
+    let mut strides: Vec<Option<u64>> = vec![None; circuit.edges.len()];
     for s in &buffers.slots {
         ptrs[s.edge] = Some(workspace.offset(s.offset as usize));
+        strides[s.edge] = Some(s.row_stride);
     }
     for &e in &layout.external {
         ptrs[e] = Some(if circuit.edges[e].is_output {
@@ -263,12 +339,16 @@ pub fn compile(
             .collect::<Result<Vec<_>>>()?;
         let mut cx = Cx {
             g,
+            gpu: inp.gpu,
+            mode: plan.mode,
             rows: plan.rows,
             config: inp.config,
             fixed: inp.fixed,
             layers: inp.layers,
             head: inp.head,
             ptrs: &ptrs,
+            strides: &strides,
+            formats: &plan.edge_formats,
             handles,
             launches: Vec::new(),
         };

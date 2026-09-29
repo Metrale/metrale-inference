@@ -34,7 +34,8 @@ pub enum ForwardSelect {
 pub struct ForwardDisclosure {
     /// 2026-09-28: `legacy`, `circuit`, or `circuit-reference` (no `bit_identical` fusions).
     pub forward: &'static str,
-    /// 2026-09-28: The decode plan's digest; `None` under legacy.
+    /// 2026-09-28: The digest over every compiled plan (decode, then each multi-sequence
+    /// width; `CircuitExec::plans_digest`); `None` under legacy.
     pub plan_digest: Option<String>,
     /// 2026-09-28: Launches per decode step of the plan; `None` under legacy.
     pub launches_per_step: Option<usize>,

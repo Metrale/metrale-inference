@@ -8,8 +8,10 @@
 //! Invariants:
 //! - Every arm of `decode_inner` / `attention_forward` other than the gated, per-head-norm,
 //!   interleaved-MRoPE one the rules encode is reported in `unmodelled`.
-//! - `paged_decode_plain` is the layer's own routing answer (`bf16_decode_is_plain`), never a
-//!   restatement of it.
+//! - `paged_decode_plain_rows` is the layer's own routing answer (`bf16_decode_is_plain`) at
+//!   each row count, never a restatement of it.
+//! - The transposed twins the multi-sequence tile GEMMs read are bound when the loader built
+//!   them; a fused `[q | k | v]` twin that the multi-sequence path would take is unmodelled.
 
 use std::collections::BTreeMap;
 
@@ -45,6 +47,16 @@ fn proj(
 }
 
 impl CircuitBindings for Qwen3AttentionLayer {
+    fn circuit_prepare(
+        &self,
+        gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+        config: &metrale_config::ModelConfig,
+        levers: &crate::layers::ops::ModelLevers,
+        stream: u64,
+    ) -> anyhow::Result<()> {
+        self.ffn.circuit_prepare(gpu, config, levers, stream)
+    }
+
     fn circuit_layer(
         &self,
         config: &metrale_config::ModelConfig,
@@ -85,6 +97,11 @@ impl CircuitBindings for Qwen3AttentionLayer {
             (
                 self.w8a8.is_some(),
                 "declared W8A8 attention projections (not bound yet)",
+            ),
+            (
+                self.qkv_nvfp4_t.is_some()
+                    && super::trait_impl::multi_seq::qkv::fused_qkv_enabled(),
+                "a fused [q | k | v] transposed twin",
             ),
         ];
         for (present, what) in arms {
@@ -130,7 +147,17 @@ impl CircuitBindings for Qwen3AttentionLayer {
             WeightSlot::Linear(LinearRole::O),
             BoundWeight::Nvfp4(self.attn.o_proj),
         );
-        self.ffn.circuit_bind(&mut weights, &mut unmodelled);
+        for (role, twin) in [
+            (LinearRole::Q, self.q_nvfp4_t),
+            (LinearRole::K, self.k_nvfp4_t),
+            (LinearRole::V, self.v_nvfp4_t),
+            (LinearRole::O, self.o_nvfp4_t),
+        ] {
+            if let Some(t) = twin {
+                weights.insert(WeightSlot::Transposed(role), BoundWeight::Nvfp4(t));
+            }
+        }
+        self.ffn.circuit_bind(levers, &mut weights, &mut unmodelled);
         let nq = self
             .num_q_heads_override
             .unwrap_or(config.num_attention_heads) as u32;
@@ -154,7 +181,9 @@ impl CircuitBindings for Qwen3AttentionLayer {
             },
             sliding_window: self.sliding_window.unwrap_or(0),
             softmax_scale: self.effective_attn_scale(hd),
-            paged_decode_plain: self.bf16_decode_is_plain(nq, nkv, hd, levers.max_decode_seqs),
+            paged_decode_plain_rows: (1..=128u32)
+                .filter(|&r| self.bf16_decode_is_plain(nq, nkv, hd, r, levers.max_decode_seqs))
+                .fold(0u128, |m, r| m | 1 << (r - 1)),
         };
         Some(CircuitLayer {
             mixer: MixerFacts::Attention(facts),

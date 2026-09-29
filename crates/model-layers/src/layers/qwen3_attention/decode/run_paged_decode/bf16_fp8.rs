@@ -187,16 +187,18 @@ impl Qwen3AttentionLayer {
         Bf16DecodeRoute::Plain(kernel, num_splits)
     }
 
-    /// 2026-09-28: Whether one-row BF16 decode takes the plain `paged_decode_k` kernel.
+    /// 2026-09-28: Whether BF16 decode of `num_seqs` rows takes the plain `paged_decode_k`
+    /// kernel.
     pub(in crate::layers::qwen3_attention) fn bf16_decode_is_plain(
         &self,
         num_q_heads: u32,
         num_kv_heads: u32,
         head_dim: u32,
+        num_seqs: u32,
         max_decode_seqs: u32,
     ) -> bool {
         matches!(
-            self.bf16_decode_route(num_q_heads, num_kv_heads, head_dim, 1, max_decode_seqs),
+            self.bf16_decode_route(num_q_heads, num_kv_heads, head_dim, num_seqs, max_decode_seqs),
             Bf16DecodeRoute::Plain(k, _) if k.0 == self.paged_decode_k.0
         )
     }

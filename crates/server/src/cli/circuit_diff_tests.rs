@@ -108,3 +108,42 @@ fn the_step_median_skips_the_capture_step() {
     assert_eq!(median_after_first(&[500.0, 3.0, 1.0, 2.0]), 2.0);
     assert!(median_after_first(&[500.0]).is_nan());
 }
+
+#[test]
+fn batch_prompts_put_rows_at_distinct_positions_and_the_batch_verdict_reads_every_width() {
+    let p = batch::batch_prompts(20, 1000);
+    assert_eq!(
+        p,
+        batch::batch_prompts(20, 1000),
+        "the generator is deterministic"
+    );
+    let lens: Vec<usize> = p.iter().map(Vec::len).collect();
+    assert_eq!(&lens[..3], &[12, 19, 26]);
+    assert_eq!(lens[16], 12, "lengths cycle every 16 rows");
+    assert!(p.iter().flatten().all(|&t| (64..1000 - 64).contains(&t)));
+    assert_ne!(p[0][..12], p[16][..12], "rows of one length differ");
+    let ok = |variant: &str, mismatched: usize| Comparison {
+        variant: variant.to_string(),
+        prefill_equal: true,
+        steps: 8,
+        mismatched_steps: mismatched,
+        first_mismatch: (mismatched > 0).then_some(4),
+        max_mismatched_bytes: mismatched,
+    };
+    let width = |rows, circuit: usize, control: usize| batch::WidthReport {
+        rows,
+        changed_row: rows / 2,
+        comparisons: vec![ok("circuit", circuit)],
+        prefill_rows_differ: vec![Vec::new(), Vec::new()],
+        timings: Vec::new(),
+        detection_control: ok("control", control),
+    };
+    assert!(batch::batch_failures(&[width(2, 0, 4), width(128, 0, 4)]).is_empty());
+    let bad = batch::batch_failures(&[width(2, 0, 4), width(128, 1, 4), width(16, 0, 0)]);
+    assert_eq!(bad.len(), 2, "{bad:?}");
+    assert!(bad[0].starts_with("128 rows, circuit"), "{bad:?}");
+    assert!(
+        bad[1].starts_with("16 rows: the detection control"),
+        "{bad:?}"
+    );
+}

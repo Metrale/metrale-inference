@@ -17,6 +17,8 @@ use std::collections::BTreeMap;
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_circuit::LinearRole;
 
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+
 use crate::weight_map::{DenseWeight, QuantizedWeight};
 
 /// 2026-09-28: Which weight of a layer a circuit node reads.
@@ -45,6 +47,14 @@ pub enum WeightSlot {
     GdnConv1d,
     /// 2026-09-28: GatedDeltaNet output norm.
     GdnNorm,
+    /// 2026-09-28: The transposed twin of a projection, which the tile GEMMs read.
+    Transposed(LinearRole),
+    /// 2026-09-28: The dense FFN's gate, repacked for the NVFP4 MMQ GEMM.
+    FfnGateMmq,
+    /// 2026-09-28: The dense FFN's up, repacked for the NVFP4 MMQ GEMM.
+    FfnUpMmq,
+    /// 2026-09-28: The dense FFN's down, repacked for the NVFP4 MMQ GEMM.
+    FfnDownMmq,
 }
 
 /// 2026-09-28: A bound weight and its storage format.
@@ -54,6 +64,9 @@ pub enum BoundWeight {
     Dense(DenseWeight),
     /// 2026-09-28: NVFP4, group 16.
     Nvfp4(QuantizedWeight),
+    /// 2026-09-28: NVFP4 repacked for the MMQ GEMM (`ops::nvfp4_mmq_repack`); its
+    /// `weight_scale_2` stays with the source weight.
+    Mmq(DevicePtr),
 }
 
 impl BoundWeight {
@@ -61,7 +74,7 @@ impl BoundWeight {
     pub fn family(&self) -> &'static str {
         match self {
             BoundWeight::Dense(_) => "bf16",
-            BoundWeight::Nvfp4(_) => "nvfp4",
+            BoundWeight::Nvfp4(_) | BoundWeight::Mmq(_) => "nvfp4",
         }
     }
 }
@@ -106,9 +119,17 @@ pub struct AttnFacts {
     pub sliding_window: u32,
     /// 2026-09-28: Softmax scale (`effective_attn_scale`).
     pub softmax_scale: f32,
-    /// 2026-09-28: The layer's own decode routing picks the plain non-split paged kernel
-    /// (`paged_decode_k`): no split-K pair, no GQA-packed kernel, no 512-wide head kernel.
-    pub paged_decode_plain: bool,
+    /// 2026-09-28: Bit `r - 1` is set when the layer's own decode routing at `r` rows picks
+    /// the plain non-split paged kernel (`paged_decode_k`): no split-K pair, no GQA-packed
+    /// kernel, no 512-wide head kernel.
+    pub paged_decode_plain_rows: u128,
+}
+
+impl AttnFacts {
+    /// 2026-09-28: The plain paged kernel serves `rows` rows (1..=128).
+    pub fn paged_decode_plain(&self, rows: u64) -> bool {
+        (1..=128).contains(&rows) && self.paged_decode_plain_rows >> (rows - 1) & 1 == 1
+    }
 }
 
 /// 2026-09-28: The mixer a layer runs.
@@ -133,6 +154,19 @@ pub struct CircuitLayer {
 
 /// 2026-09-28: A supertrait of `TransformerLayer`; see the module header.
 pub trait CircuitBindings {
+    /// 2026-09-28: Build the lazily built weights the bound kernels read (the MMQ repacks a
+    /// first wide batch would otherwise build), so a binding can hand them out. Queued on
+    /// `stream`.
+    fn circuit_prepare(
+        &self,
+        _gpu: &dyn GpuBackend,
+        _config: &metrale_config::ModelConfig,
+        _levers: &crate::layers::ops::ModelLevers,
+        _stream: u64,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// 2026-09-28: This layer for the circuit executor; `None` for a layer type it does not bind.
     /// `config` and `levers` are the model's, as its decode reads them.
     fn circuit_layer(
@@ -154,4 +188,7 @@ pub struct HeadBinding {
     /// 2026-09-28: Head features the circuit does not model (a logit overlay, softcapping,
     /// FP32 logits, a vocab-parallel head, ...).
     pub unmodelled: Vec<String>,
+    /// 2026-09-28: The widest padded batch the BF16 head serves with the batched GEMV
+    /// (`dense_gemv_bf16_batchm`); 0 when that arm is off. Wider batches take the GEMM.
+    pub batchm_max_rows: u32,
 }

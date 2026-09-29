@@ -10,6 +10,9 @@
 //!   default.
 //! - A switch that changes legacy decode but that no rule reads is reported by
 //!   [`unmodelled_switches`], never silently ignored.
+//! - The environment switches of the multi-sequence dispatch ([`MULTI_SEQ_ENV_SWITCHES`]) are
+//!   refused when present at all, whatever their value: over-refusal, never a misrun. Their
+//!   readers parse them; this list only names them.
 
 use std::collections::BTreeMap;
 
@@ -76,9 +79,58 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
     }
 }
 
+/// 2026-09-28: Environment switches of the multi-sequence decode dispatch whose defaults the
+/// rules' row bands encode, with the file that reads each.
+pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 12] = [
+    (
+        "METRALE_SSM_TC_PROJ",
+        "qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs",
+    ),
+    ("METRALE_NO_SSM_M128", "qwen3_ssm/gdn_flags.rs"),
+    (
+        "METRALE_SSM_FFN_PREFILL_MIN_N",
+        "qwen3_ssm/trait_decode_multi_seq.rs",
+    ),
+    (
+        "METRALE_NO_SSM_FFN_PREFILL",
+        "qwen3_ssm/trait_decode_multi_seq.rs",
+    ),
+    (
+        "METRALE_NO_QK_NORM_STRIDED",
+        "qwen3_attention/trait_impl/multi_seq/qkv.rs",
+    ),
+    (
+        "METRALE_NO_ROPE_STRIDED",
+        "qwen3_attention/trait_impl/multi_seq/attn.rs",
+    ),
+    (
+        "METRALE_NO_ATTN_BATCH_CACHE_WRITE",
+        "qwen3_attention/trait_impl/multi_seq/attn.rs",
+    ),
+    ("METRALE_W4A16_K64_MIN_K", "layers/mod.rs (w4a16_k64_min_k)"),
+    ("METRALE_NO_W4A16_K64", "layers/mod.rs (w4a16_k64_min_k)"),
+    ("METRALE_NO_MMQ_SMALL_TILE", "layers/dense_ffn.rs"),
+    ("METRALE_NO_MMQ_TILE64", "layers/dense_ffn.rs"),
+    ("METRALE_W4A16_TC_WIDE", "ops/gemv_tc.rs"),
+];
+
 /// 2026-09-28: Switches that change legacy decode which no rule reads, when they are set.
 pub fn unmodelled_switches(levers: &ModelLevers) -> Vec<String> {
-    let mut out = Vec::new();
+    let mut out: Vec<String> = MULTI_SEQ_ENV_SWITCHES
+        .iter()
+        .filter(|(var, _)| std::env::var_os(var).is_some())
+        .map(|(var, reader)| format!("{var} (read in {reader})"))
+        .collect();
+    if !levers.ffn_small_m {
+        out.push("the small-M projection GEMMs off (METRALE_FFN_SMALLM)".to_string());
+    }
+    if levers.ssm_ms_profile || levers.ssm_detail_profile || levers.ms_profile || levers.conc_hsd {
+        out.push(
+            "multi-sequence profiling or hidden dumps (METRALE_MS_PROFILE, METRALE_CONC_HSD, \
+             METRALE_SSM_*_PROFILE)"
+                .to_string(),
+        );
+    }
     if crate::layers::qwen3_ssm::gdn_fused_norm_enabled() {
         out.push("fused GDN output norm (METRALE_GDN_FUSED_NORM)".to_string());
     }

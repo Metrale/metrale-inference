@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 
 use super::super::bindings::WeightSlot;
 use super::super::compile::{Cx, OpEmitter};
-use super::{dense, dim, one_row, rows};
+use super::{dense, dim, per_row};
 use crate::layers::ops;
 
 /// 2026-09-28: The GDN dims every emitter here reads.
@@ -60,7 +60,7 @@ impl OpEmitter for DenseGemvBaGates {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["linear:ba", "gdn_gates"])?;
-        one_row(cx, "dense_gemv_ba_gates")?;
+        per_row(cx)?;
         let d = Dims::of(cx)?;
         let ba = dense(
             cx.weight(0, WeightSlot::Linear(metrale_circuit::LinearRole::Ba))?,
@@ -69,18 +69,21 @@ impl OpEmitter for DenseGemvBaGates {
         let a_log = dense(cx.weight(1, WeightSlot::GdnALog)?, "A_log")?.weight;
         let dt_bias = dense(cx.weight(1, WeightSlot::GdnDtBias)?, "dt_bias")?.weight;
         let ba_size = u32::try_from(cx.g.circuit.edges[cx.g.output(0, 0)?].dim_value)?;
-        let x = cx.ptr(cx.g.input(0, 0)?)?;
-        let decay = cx.ptr(cx.g.output(1, 0)?)?;
-        let beta = cx.ptr(cx.g.output(1, 1)?)?;
         let (k, h, vpg) = (cx.handle(0)?, dim(cx, "hidden")?, d.nv / d.nk);
-        cx.push(
-            0,
-            Box::new(move |e| {
-                ops::dense_gemv_ba_gates(
-                    e.gpu, k, x, &ba, a_log, dt_bias, decay, beta, ba_size, h, vpg, e.stream,
-                )
-            }),
-        )
+        for i in 0..cx.reps() {
+            let x = cx.row_ptr(cx.g.input(0, 0)?, i)?;
+            let decay = cx.row_ptr(cx.g.output(1, 0)?, i)?;
+            let beta = cx.row_ptr(cx.g.output(1, 1)?, i)?;
+            cx.push(
+                0,
+                Box::new(move |e| {
+                    ops::dense_gemv_ba_gates(
+                        e.gpu, k, x, &ba, a_log, dt_bias, decay, beta, ba_size, h, vpg, e.stream,
+                    )
+                }),
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -95,24 +98,28 @@ impl OpEmitter for Conv1dUpdateL2norm {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["conv1d_update", "l2_norm"])?;
-        one_row(cx, "a conv1d step over one sequence's state")?;
+        per_row(cx)?;
         let d = Dims::of(cx)?;
         let w = dense(cx.weight(0, WeightSlot::GdnConv1d)?, "conv1d")?;
         let layer = layer_index(cx, 0)?;
-        let qkvz = cx.ptr(cx.g.input(0, 0)?)?;
-        let out = cx.ptr(cx.g.output(1, 0)?)?;
         let conv_dim = (d.key() * 2 + d.value()) as u32;
         let d_conv = u32::try_from(cx.config.linear_conv_kernel_dim)?;
-        let (qk, kd, n, k) = ((d.key() * 2) as u32, d.kd, rows(cx)?, cx.handle(0)?);
-        cx.push(
-            0,
-            Box::new(move |e| {
-                let st = e.gdn_state(layer)?;
-                ops::conv1d_update_l2norm(
-                    e.gpu, k, st.conv, qkvz, &w, out, conv_dim, d_conv, n, qk, kd, 1e-6, e.stream,
-                )
-            }),
-        )
+        let (qk, kd, k) = ((d.key() * 2) as u32, d.kd, cx.handle(0)?);
+        for i in 0..cx.reps() {
+            let qkvz = cx.row_ptr(cx.g.input(0, 0)?, i)?;
+            let out = cx.row_ptr(cx.g.output(1, 0)?, i)?;
+            cx.push(
+                0,
+                Box::new(move |e| {
+                    let st = e.gdn_state(layer, i)?;
+                    ops::conv1d_update_l2norm(
+                        e.gpu, k, st.conv, qkvz, &w, out, conv_dim, d_conv, 1, qk, kd, 1e-6,
+                        e.stream,
+                    )
+                }),
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -126,25 +133,28 @@ impl OpEmitter for GdnDecode {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["gdn_recurrence"])?;
-        one_row(cx, "a recurrence over one sequence's state")?;
+        per_row(cx)?;
         let d = Dims::of(cx)?;
         let layer = layer_index(cx, 0)?;
-        let qkv = cx.ptr(cx.g.input(0, 0)?)?;
-        let (q, kk, v) = (qkv, qkv.offset(d.key() * 4), qkv.offset(d.key() * 2 * 4));
-        let decay = cx.ptr(cx.g.input(0, 1)?)?;
-        let beta = cx.ptr(cx.g.input(0, 2)?)?;
-        let out = cx.ptr(cx.g.output(0, 0)?)?;
-        let (k, n) = (cx.handle(0)?, rows(cx)?);
+        let k = cx.handle(0)?;
         let (nk, nv, kd, vd) = (d.nk, d.nv, d.kd, d.vd);
-        cx.push(
-            0,
-            Box::new(move |e| {
-                let st = e.gdn_state(layer)?;
-                ops::gdn_decode(
-                    e.gpu, k, st.h, q, kk, v, decay, beta, out, n, nk, nv, kd, vd, e.stream,
-                )
-            }),
-        )
+        for i in 0..cx.reps() {
+            let qkv = cx.row_ptr(cx.g.input(0, 0)?, i)?;
+            let (q, kk, v) = (qkv, qkv.offset(d.key() * 4), qkv.offset(d.key() * 2 * 4));
+            let decay = cx.row_ptr(cx.g.input(0, 1)?, i)?;
+            let beta = cx.row_ptr(cx.g.input(0, 2)?, i)?;
+            let out = cx.row_ptr(cx.g.output(0, 0)?, i)?;
+            cx.push(
+                0,
+                Box::new(move |e| {
+                    let st = e.gdn_state(layer, i)?;
+                    ops::gdn_decode(
+                        e.gpu, k, st.h, q, kk, v, decay, beta, out, 1, nk, nv, kd, vd, e.stream,
+                    )
+                }),
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -159,21 +169,24 @@ impl OpEmitter for GatedRmsNorm {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["gated_rms_norm"])?;
-        one_row(cx, "gated_rms_norm over one qkvz row")?;
+        per_row(cx)?;
         let d = Dims::of(cx)?;
         let w = dense(cx.weight(0, WeightSlot::GdnNorm)?, "gdn norm")?;
-        let core = cx.ptr(cx.g.input(0, 0)?)?;
-        let z = cx
-            .ptr(cx.g.input(0, 1)?)?
-            .offset((d.key() * 2 + d.value()) * 2);
-        let out = cx.ptr(cx.g.output(0, 0)?)?;
         let (k, nv, vd) = (cx.handle(0)?, d.nv, d.vd);
         let eps = cx.config.rms_norm_eps as f32;
-        cx.push(
-            0,
-            Box::new(move |e| {
-                ops::gated_rms_norm(e.gpu, k, core, z, &w, out, nv, vd, vd, eps, vd, e.stream)
-            }),
-        )
+        for i in 0..cx.reps() {
+            let core = cx.row_ptr(cx.g.input(0, 0)?, i)?;
+            let z = cx
+                .row_ptr(cx.g.input(0, 1)?, i)?
+                .offset((d.key() * 2 + d.value()) * 2);
+            let out = cx.row_ptr(cx.g.output(0, 0)?, i)?;
+            cx.push(
+                0,
+                Box::new(move |e| {
+                    ops::gated_rms_norm(e.gpu, k, core, z, &w, out, nv, vd, vd, eps, vd, e.stream)
+                }),
+            )?;
+        }
+        Ok(())
     }
 }

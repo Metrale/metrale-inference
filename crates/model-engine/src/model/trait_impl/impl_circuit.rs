@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-28: `impl ModelCircuit for TransformerModel`: build the circuit executor from the live
-//! layers and buffers, swap it in, and run its decode program in place of the layer loops
-//! (`decode_forward_body`). Also the one statement of the single-sequence decode metadata
-//! layout, which `decode_dispatch_with` uploads and the executor reads.
+//! layers and buffers, swap it in, and run its programs in place of the layer loops: decode
+//! (`decode_forward_body`) and multi-sequence decode (`decode_batch_compute_main_with`). Also
+//! the one statement of the single-sequence decode metadata layout, which
+//! `decode_dispatch_with` uploads and the executor reads.
 //!
 //! Owner: model-engine (decode).
 //! Invariants:
@@ -85,8 +86,10 @@ impl TransformerModel {
         } else {
             ("bf16", false)
         };
+        let (batchm_max_rows, m16_tc) = self.bf16_head_route();
         let unmodelled = [
             (quantized, "a quantized lm_head"),
+            (m16_tc, "the tensor-core BF16 head (lm_head_m16_tc)"),
             (self.use_fp32_logits, "FP32 logits"),
             (
                 self.logit_softcap_kernel.0 != 0 || self.logit_softcap_fp32_kernel.0 != 0,
@@ -106,6 +109,7 @@ impl TransformerModel {
             final_norm: self.final_norm,
             lm_head: BoundWeight::Dense(self.lm_head_weight),
             unmodelled,
+            batchm_max_rows,
         };
         (head, dtype)
     }
@@ -123,6 +127,10 @@ impl TransformerModel {
                 "the circuit does not model this model: {}",
                 unmodelled.join(", ")
             );
+        }
+        let stream = self.gpu.default_stream();
+        for l in &self.layers {
+            l.circuit_prepare(self.gpu.as_ref(), &self.config, &self.levers, stream)?;
         }
         let layers: Vec<_> = self
             .layers
@@ -149,6 +157,14 @@ impl TransformerModel {
                 residual: self.buffers.residual(),
                 logits: self.buffers.logits(),
                 meta: self.decode_meta(0, DevicePtr::NULL),
+                batch_meta: self.batch_meta_at(
+                    self.batch_meta_base(),
+                    0,
+                    0,
+                    DevicePtr::NULL,
+                    DevicePtr::NULL,
+                ),
+                ffn_act_q8: self.buffers.ffn_act_q8(),
                 k_pools: (0..n).map(|i| cache.k_pool_ptr(i)).collect(),
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),
                 block_size: u32::try_from(cache.block_size())?,
@@ -166,7 +182,19 @@ impl TransformerModel {
             fixed,
             fusions,
             modules,
+            multi_seq_rows: self.circuit_widths(),
         })
+    }
+
+    /// 2026-09-28: The padded widths the executor compiles: every rung of the decode ladder up
+    /// to the one the serve's widest batch pads to.
+    fn circuit_widths(&self) -> Vec<u64> {
+        let widest = crate::traits::padded_batch_n(self.levers.max_decode_seqs as usize);
+        crate::traits::DECODE_BATCH_LADDER
+            .iter()
+            .filter(|&&r| r <= widest)
+            .map(|&r| r as u64)
+            .collect()
     }
 
     /// 2026-09-28: Run `exec`'s decode program for `seq` in place of the layer loops, the final
@@ -189,12 +217,12 @@ impl TransformerModel {
                         !s.h_is_f16,
                         "layer {i}: FP16 h state under an FP32-state circuit plan"
                     );
-                    Some(GdnState {
+                    vec![GdnState {
                         h: s.h_state,
                         conv: s.conv_state,
-                    })
+                    }]
                 }
-                None => None,
+                None => Vec::new(),
             });
         }
         exec.decode.run(&StepEnv {
@@ -202,6 +230,49 @@ impl TransformerModel {
             stream,
             gdn: &gdn,
             max_blocks_per_seq: meta.max_blocks_per_seq,
+        })
+    }
+}
+
+impl TransformerModel {
+    /// 2026-09-28: Run `exec`'s program for `padded_n` rows in place of the layer loops, the
+    /// final norm and the lm_head of a multi-sequence step; row `i` is `states[i]`'s sequence,
+    /// padding rows included.
+    pub(super) fn circuit_multi_seq_body(
+        &self,
+        exec: &CircuitExec,
+        states: &[Vec<Box<dyn metrale_model_layers::layer::LayerState>>],
+        padded_n: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let program = exec
+            .multi_seq_program(padded_n as u64)
+            .with_context(|| format!("no circuit program was compiled for {padded_n} rows"))?;
+        ensure!(
+            states.len() == padded_n,
+            "{} states for {padded_n} rows",
+            states.len()
+        );
+        let mut gdn = vec![Vec::new(); self.layers.len()];
+        for (row, seq) in states.iter().enumerate() {
+            for (layer, st) in seq.iter().enumerate() {
+                if let Some(s) = st.as_any().downcast_ref::<SsmLayerState>() {
+                    ensure!(
+                        !s.h_is_f16,
+                        "row {row} layer {layer}: FP16 h state under an FP32-state circuit plan"
+                    );
+                    gdn[layer].push(GdnState {
+                        h: s.h_state,
+                        conv: s.conv_state,
+                    });
+                }
+            }
+        }
+        program.run(&StepEnv {
+            gpu: self.gpu.as_ref(),
+            stream,
+            gdn: &gdn,
+            max_blocks_per_seq: self.max_blocks_per_seq,
         })
     }
 }
@@ -232,7 +303,7 @@ impl ModelCircuit for TransformerModel {
                     Fusions::All => "circuit",
                     Fusions::ReferenceOnly => "circuit-reference",
                 },
-                plan_digest: Some(e.decode_plan.digest.clone()),
+                plan_digest: Some(e.plans_digest()),
                 launches_per_step: Some(e.decode.launches.len()),
             },
         }

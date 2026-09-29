@@ -186,6 +186,153 @@ impl KernelTable {
                     try_kernel(gpu, "gemv", "dense_gemv_bf16")
                 }),
             ),
+            (
+                "residual_add",
+                "sigmoid_gate_mul_batched",
+                look("residual_add", "sigmoid_gate_mul_batched", &|| {
+                    try_kernel(gpu, "residual_add", "sigmoid_gate_mul_batched")
+                }),
+            ),
+            (
+                "ssm_preprocess",
+                "deinterleave_qg",
+                look("ssm_preprocess", "deinterleave_qg", &|| {
+                    try_kernel(gpu, "ssm_preprocess", "deinterleave_qg")
+                }),
+            ),
+            (
+                "norm",
+                "rms_norm_strided",
+                look("norm", "rms_norm_strided", &|| {
+                    try_kernel(gpu, "norm", "rms_norm_strided")
+                }),
+            ),
+            (
+                "rope",
+                "rope_forward_strided",
+                look("rope", "rope_forward_strided", &|| {
+                    try_kernel(gpu, "rope", "rope_forward_strided")
+                }),
+            ),
+            (
+                "w4a16_gemv_tc",
+                "w4a16_gemv_tc8",
+                look("w4a16_gemv_tc", "w4a16_gemv_tc8", &|| {
+                    try_kernel(gpu, "w4a16_gemv_tc", "w4a16_gemv_tc8")
+                }),
+            ),
+            (
+                "w4a16_gemv",
+                "w4a16_gemv_batch2",
+                look("w4a16_gemv", "w4a16_gemv_batch2", &|| {
+                    try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_batch2")
+                }),
+            ),
+            (
+                "w4a16_gemv",
+                "w4a16_gemv_dual_batch2",
+                look("w4a16_gemv", "w4a16_gemv_dual_batch2", &|| {
+                    try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_dual_batch2")
+                }),
+            ),
+            (
+                "w4a16_gemv",
+                "w4a16_gemv_qg_batch2",
+                look("w4a16_gemv", "w4a16_gemv_qg_batch2", &|| {
+                    try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_qg_batch2")
+                }),
+            ),
+            (
+                "w4a16",
+                "w4a16_gemm_t_p3",
+                look("w4a16", "w4a16_gemm_t_p3", &|| {
+                    try_kernel(gpu, "w4a16", "w4a16_gemm_t_p3")
+                }),
+            ),
+            (
+                "w4a16",
+                "w4a16_gemm_t_k64_p3",
+                look("w4a16", "w4a16_gemm_t_k64_p3", &|| {
+                    try_kernel(gpu, "w4a16", "w4a16_gemm_t_k64_p3")
+                }),
+            ),
+            (
+                "w4a16",
+                "w4a16_gemm_t_k64_n64_p3",
+                look("w4a16", "w4a16_gemm_t_k64_n64_p3", &|| {
+                    try_kernel(gpu, "w4a16", "w4a16_gemm_t_k64_n64_p3")
+                }),
+            ),
+            (
+                "w4a16",
+                "w4a16_gemm_t_m128",
+                look("w4a16", "w4a16_gemm_t_m128", &|| {
+                    try_kernel(gpu, "w4a16", "w4a16_gemm_t_m128")
+                }),
+            ),
+            (
+                "nvfp4_mmq",
+                "metrale_nvfp4_quantize_bf16",
+                look("nvfp4_mmq", "metrale_nvfp4_quantize_bf16", &|| {
+                    try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_quantize_bf16")
+                }),
+            ),
+            (
+                "nvfp4_mmq",
+                "metrale_nvfp4_mmq16_nc",
+                look("nvfp4_mmq", "metrale_nvfp4_mmq16_nc", &|| {
+                    try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq16_nc")
+                }),
+            ),
+            (
+                "nvfp4_mmq",
+                "metrale_nvfp4_mmq32_nc",
+                look("nvfp4_mmq", "metrale_nvfp4_mmq32_nc", &|| {
+                    try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq32_nc")
+                }),
+            ),
+            (
+                "nvfp4_mmq",
+                "metrale_nvfp4_mmq64_nc",
+                look("nvfp4_mmq", "metrale_nvfp4_mmq64_nc", &|| {
+                    try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_mmq64_nc")
+                }),
+            ),
+            (
+                "nvfp4_mmq",
+                "metrale_nvfp4_gemm_pipe",
+                look("nvfp4_mmq", "metrale_nvfp4_gemm_pipe", &|| {
+                    try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_gemm_pipe")
+                }),
+            ),
+            (
+                "nvfp4_mmq",
+                "metrale_nvfp4_silu_mul_quant",
+                look("nvfp4_mmq", "metrale_nvfp4_silu_mul_quant", &|| {
+                    try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_silu_mul_quant")
+                }),
+            ),
+            (
+                "nvfp4_mmq",
+                "metrale_nvfp4_scale_bf16",
+                look("nvfp4_mmq", "metrale_nvfp4_scale_bf16", &|| {
+                    try_kernel(gpu, "nvfp4_mmq", "metrale_nvfp4_scale_bf16")
+                }),
+            ),
+            (
+                "dense_gemv_bf16_batchm",
+                "dense_gemv_bf16_batchm",
+                look("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm", &|| {
+                    try_kernel(gpu, "dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm")
+                }),
+            ),
+            (
+                "gemm",
+                "dense_gemm_bf16",
+                look("gemm", "dense_gemm_bf16", &|| {
+                    try_kernel(gpu, "gemm", "dense_gemm_bf16")
+                }),
+            ),
         ];
         let handles = entries
             .into_iter()

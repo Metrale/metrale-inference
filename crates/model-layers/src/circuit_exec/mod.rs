@@ -3,8 +3,9 @@
 //! 2026-09-28: The circuit executor: run a model's decode from its fused circuit plan instead of
 //! the hand-written layer loops. At boot it instantiates the model's circuit, fuses it under the
 //! live policy with the kernels the loaded modules contain, lays its buffers out in one
-//! workspace and compiles a straight-line [`program::Program`]; a decode step then runs that
-//! program between the legacy prologue (embedding, metadata upload) and the logits.
+//! workspace and compiles a straight-line [`program::Program`] for single-sequence decode and
+//! one per multi-sequence batch width; a decode step then runs the program for its width
+//! between the legacy prologue (embedding, metadata upload) and the logits.
 //!
 //! Owner: model-layers circuit executor.
 //! Invariants:
@@ -14,6 +15,8 @@
 //!   kernel no emitter launches) refuses the build; a decode never runs a plan that
 //!   misdescribes the model.
 //! - The workspace is allocated once, at build, and never moves, so captured graphs stay valid.
+//!   Every program lays its buffers out from the workspace base: programs run one at a time on
+//!   the model's stream, so they share it, and it is sized for the largest.
 
 pub mod bindings;
 pub mod compile;
@@ -70,6 +73,9 @@ pub struct Boot<'a> {
     pub fixed: Fixed,
     pub fusions: Fusions,
     pub modules: &'a TargetModules,
+    /// 2026-09-28: The padded multi-sequence batch widths to compile (the decode graph ladder
+    /// up to the serve's widest batch).
+    pub multi_seq_rows: Vec<u64>,
 }
 
 /// 2026-09-28: A built executor: the decode program and the workspace it runs in.
@@ -78,6 +84,9 @@ pub struct CircuitExec {
     pub decode: Program,
     /// 2026-09-28: The plan `decode` was compiled from.
     pub decode_plan: FusionPlan,
+    /// 2026-09-28: Multi-sequence decode, one program per padded width, ascending; each with
+    /// the plan it was compiled from.
+    pub multi_seq: Vec<(Program, FusionPlan)>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml the plan was chosen from.
     pub rules_digest: String,
     /// 2026-09-28: Which rules the build allowed.
@@ -128,59 +137,100 @@ impl CircuitExec {
                 }
             }
         }
-        let plan = fuse(
-            &loaded.circuit,
-            &loaded.rules,
-            &available,
-            &b.policy,
-            Mode::Decode,
-            1,
-        )?;
-        let layout = compile::layout(&loaded.circuit, &plan)?;
-        let buffers = plan_buffers_with(&loaded.circuit, &plan, 1, &layout)?;
         let table = kernels::KernelTable::resolve(b.gpu, &present);
-        let workspace_bytes = buffers.arena_bytes.max(1);
-        let workspace = b
-            .gpu
-            .alloc(workspace_bytes as usize)
-            .context("allocating the circuit workspace")?;
         let inputs = compile::Inputs {
+            gpu: b.gpu,
             config: b.config,
             kernels: &table,
             fixed: &b.fixed,
             layers: &layers,
             head: &b.head,
         };
-        let decode = match compile::compile(
-            &loaded.circuit,
-            &plan,
-            &layout,
-            &buffers,
-            workspace,
-            &inputs,
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                b.gpu.free(workspace).ok();
-                return Err(e);
+        let shapes = std::iter::once((Mode::Decode, 1))
+            .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)));
+        let mut laid = Vec::new();
+        for (mode, rows) in shapes {
+            let plan = fuse(
+                &loaded.circuit,
+                &loaded.rules,
+                &available,
+                &b.policy,
+                mode,
+                rows,
+            )
+            .with_context(|| format!("fusing {mode:?} at {rows} rows"))?;
+            let layout = compile::layout(&loaded.circuit, &plan)?;
+            let buffers = plan_buffers_with(&loaded.circuit, &plan, rows, &layout)?;
+            laid.push((plan, layout, buffers));
+        }
+        let workspace_bytes = laid
+            .iter()
+            .map(|(_, _, buf)| buf.arena_bytes)
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        let workspace = b
+            .gpu
+            .alloc(workspace_bytes as usize)
+            .context("allocating the circuit workspace")?;
+        let mut programs = Vec::with_capacity(laid.len());
+        for (plan, layout, buffers) in laid {
+            match compile::compile(
+                &loaded.circuit,
+                &plan,
+                &layout,
+                &buffers,
+                workspace,
+                &inputs,
+            ) {
+                Ok(p) => programs.push((p, plan)),
+                Err(e) => {
+                    b.gpu.free(workspace).ok();
+                    return Err(
+                        e.context(format!("compiling {:?} at {} rows", plan.mode, plan.rows))
+                    );
+                }
             }
-        };
+        }
+        let mut programs = programs.into_iter();
+        let (decode, plan) = programs.next().context("no decode program")?;
+        let multi_seq: Vec<_> = programs.collect();
         tracing::info!(
-            "circuit decode: {} launches/step, plan {} ({} rules, {:?}), workspace {} KiB",
+            "circuit decode: {} launches/step, plan {} ({} rules, {:?}), {} multi-seq widths, \
+             workspace {} KiB",
             decode.launches.len(),
             &plan.digest[..12],
             loaded.rules.len(),
             b.fusions,
+            multi_seq.len(),
             workspace_bytes / 1024
         );
         Ok(CircuitExec {
             decode,
             decode_plan: plan,
+            multi_seq,
             rules_digest: loaded.rules_digest,
             fusions: b.fusions,
             workspace,
             workspace_bytes,
         })
+    }
+
+    /// 2026-09-28: The multi-sequence program for `rows` padded rows, if one was compiled.
+    pub fn multi_seq_program(&self, rows: u64) -> Option<&Program> {
+        self.multi_seq
+            .iter()
+            .find(|(p, _)| p.rows == rows)
+            .map(|(p, _)| p)
+    }
+
+    /// 2026-09-28: One digest over every compiled plan, in order (decode, then the
+    /// multi-sequence widths ascending): what a record of this forward discloses.
+    pub fn plans_digest(&self) -> String {
+        metrale_circuit::digest::plans_digest(
+            std::iter::once(self.decode_plan.digest.as_str())
+                .chain(self.multi_seq.iter().map(|(_, p)| p.digest.as_str())),
+        )
     }
 
     /// 2026-09-28: Bytes of the workspace.
@@ -195,6 +245,12 @@ impl CircuitExec {
     }
 }
 
+#[cfg(test)]
+#[path = "exec_fixture.rs"]
+mod exec_fixture;
+#[cfg(test)]
+#[path = "exec_multi_tests.rs"]
+mod exec_multi_tests;
 #[cfg(test)]
 #[path = "exec_tests.rs"]
 mod exec_tests;

@@ -189,7 +189,9 @@ impl OpEmitter for SiluMul {
     }
 }
 
-/// 2026-09-28: `lm_head`: the BF16 vocabulary GEMV into the logits buffer.
+/// 2026-09-28: `lm_head`: the BF16 vocabulary projection into the logits buffer: the GEMV at
+/// one row, and at more rows the batched GEMV up to the head's band
+/// (`HeadBinding::batchm_max_rows`), else the GEMM (`lm_head_batched.rs`).
 pub(crate) struct LmHead;
 
 impl OpEmitter for LmHead {
@@ -199,19 +201,47 @@ impl OpEmitter for LmHead {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["lm_head"])?;
-        expect_kernel(cx, 0, "dense_gemv_bf16")?;
-        one_row(cx, "dense_gemv_bf16")?;
         let w = dense(cx.head.lm_head, "lm_head")?;
         let (inp, out) = (cx.g.input(0, 0)?, cx.g.output(0, 0)?);
         ensure!(
             cx.ptr(out)? == cx.fixed.logits,
             "logits must land in the logits buffer"
         );
-        let (v, h) = (width(cx, out)?, width(cx, inp)?);
+        let (v, h, m) = (width(cx, out)?, width(cx, inp)?, rows(cx)?);
         let (x, y, k) = (cx.ptr(inp)?, cx.fixed.logits, cx.handle(0)?);
-        cx.push(
-            0,
-            Box::new(move |e| ops::dense_gemv(e.gpu, k, x, &w, y, v, h, e.stream)),
-        )
+        let func = cx.g.group.kernels[0].func.as_str();
+        let batchm = m <= cx.head.batchm_max_rows && h.is_multiple_of(8);
+        match func {
+            "dense_gemv_bf16" => {
+                one_row(cx, "dense_gemv_bf16")?;
+                cx.push(
+                    0,
+                    Box::new(move |e| ops::dense_gemv(e.gpu, k, x, &w, y, v, h, e.stream)),
+                )
+            }
+            "dense_gemv_bf16_batchm" => {
+                ensure!(
+                    batchm,
+                    "the head serves {m} rows with the GEMM, not the batched GEMV"
+                );
+                cx.push(
+                    0,
+                    Box::new(move |e| {
+                        ops::dense_gemv_batchm(e.gpu, k, x, &w, y, m, v, h, v, e.stream)
+                    }),
+                )
+            }
+            "dense_gemm_bf16" => {
+                ensure!(
+                    !batchm,
+                    "the head serves {m} rows with the batched GEMV, not the GEMM"
+                );
+                cx.push(
+                    0,
+                    Box::new(move |e| ops::dense_gemm(e.gpu, k, x, &w, y, m, v, h, e.stream)),
+                )
+            }
+            other => anyhow::bail!("`lm_head` cannot launch `{other}`"),
+        }
     }
 }

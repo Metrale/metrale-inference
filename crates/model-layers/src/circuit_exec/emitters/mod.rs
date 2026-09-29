@@ -16,11 +16,13 @@ use super::bindings::{AttnFacts, MixerFacts, WeightSlot};
 use super::compile::{Cx, OpEmitter};
 
 mod attn;
+mod batched;
+mod ffn;
 mod gdn;
 mod linear;
 mod norm;
 
-static EMITTERS: [&dyn OpEmitter; 19] = [
+static EMITTERS: [&dyn OpEmitter; 31] = [
     &norm::EmbedCopy,
     &norm::RmsNormResidual,
     &norm::ResidualAddRmsNorm,
@@ -40,6 +42,18 @@ static EMITTERS: [&dyn OpEmitter; 19] = [
     &attn::KvWrite,
     &attn::PagedDecode,
     &attn::SigmoidGateMul,
+    &attn::DeinterleaveQg,
+    &attn::RmsNormStrided,
+    &attn::RopeStrided,
+    &batched::W4a16GemvBatchm,
+    &batched::W4a16GemvBatch,
+    &batched::W4a16GemvDualBatch,
+    &batched::W4a16GemvQgBatch,
+    &batched::W4a16GemmN128,
+    &batched::W4a16Gemm,
+    &batched::W4a16GemmN128M128,
+    &ffn::DenseFfnKm,
+    &ffn::DenseFfnMmq,
 ];
 
 /// 2026-09-28: The emitter named `id`.
@@ -146,6 +160,19 @@ pub(super) fn expect_kernel(cx: &Cx<'_>, k: usize, func: &str) -> Result<()> {
         got == func,
         "group {} launches `{got}`; this emitter launches `{func}`",
         cx.g.index
+    );
+    Ok(())
+}
+
+/// 2026-09-28: Refuse a group that is neither launched once per row nor a single row: the
+/// kernel serves one row (one sequence's state) per launch.
+pub(super) fn per_row(cx: &Cx<'_>) -> Result<()> {
+    ensure!(
+        cx.reps() == cx.rows as usize,
+        "group {} runs {} launches for {} rows; this kernel serves one row per launch",
+        cx.g.index,
+        cx.reps(),
+        cx.rows
     );
     Ok(())
 }

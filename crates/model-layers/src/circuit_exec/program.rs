@@ -6,7 +6,7 @@
 //!
 //! Owner: model-layers circuit executor.
 //! Invariants:
-//! - A step reads only [`StepEnv`]: the stream, the sequence's GDN state pointers and the
+//! - A step reads only [`StepEnv`]: the stream, each row's GDN state pointers and the
 //!   block-table width uploaded for the step. Everything else a launch uses was fixed when it
 //!   was compiled, so a CUDA-graph capture of [`Program::run`] replays correctly for any step
 //!   with the same state pointers (the graph caches key on the sequence's slot).
@@ -32,20 +32,21 @@ pub struct StepEnv<'a> {
     pub gpu: &'a dyn GpuBackend,
     /// 2026-09-28: The stream the step runs (and is captured) on.
     pub stream: u64,
-    /// 2026-09-28: Per layer, the sequence's GDN state; `None` for a layer without one.
-    pub gdn: &'a [Option<GdnState>],
+    /// 2026-09-28: Per layer, each row's GDN state (row `i` = sequence `i`, padding rows
+    /// included); empty for a layer without one.
+    pub gdn: &'a [Vec<GdnState>],
     /// 2026-09-28: `AttnMetadataDev::max_blocks_per_seq` of this step.
     pub max_blocks_per_seq: u32,
 }
 
 impl StepEnv<'_> {
-    /// 2026-09-28: Layer `layer`'s GDN state; an error when the sequence has none there.
-    pub fn gdn_state(&self, layer: usize) -> Result<GdnState> {
+    /// 2026-09-28: Row `row`'s GDN state in layer `layer`; an error when there is none.
+    pub fn gdn_state(&self, layer: usize, row: usize) -> Result<GdnState> {
         self.gdn
             .get(layer)
+            .and_then(|l| l.get(row))
             .copied()
-            .flatten()
-            .with_context(|| format!("layer {layer} has no GDN state for this sequence"))
+            .with_context(|| format!("layer {layer} has no GDN state for row {row}"))
     }
 }
 

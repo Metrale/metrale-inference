@@ -18,10 +18,20 @@ use crate::circuit_exec::{
 };
 
 impl CircuitBindings for Qwen3SsmLayer {
+    fn circuit_prepare(
+        &self,
+        gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+        config: &metrale_config::ModelConfig,
+        levers: &crate::layers::ops::ModelLevers,
+        stream: u64,
+    ) -> anyhow::Result<()> {
+        self.ffn.circuit_prepare(gpu, config, levers, stream)
+    }
+
     fn circuit_layer(
         &self,
         _config: &metrale_config::ModelConfig,
-        _levers: &crate::layers::ops::ModelLevers,
+        levers: &crate::layers::ops::ModelLevers,
     ) -> Option<CircuitLayer> {
         let mut unmodelled = Vec::new();
         let arms = [
@@ -34,6 +44,10 @@ impl CircuitBindings for Qwen3SsmLayer {
             (
                 self.w8a8.is_some(),
                 "declared W8A8 GDN projections (not bound yet)",
+            ),
+            (
+                levers.gdn_fused_conv,
+                "the fused GDN conv+norm kernel (METRALE_GDN_FUSED_CONV)",
             ),
             (
                 self.conv1d_l2norm_f32_k.0 == 0
@@ -74,7 +88,15 @@ impl CircuitBindings for Qwen3SsmLayer {
                 None => BoundWeight::Nvfp4(self.ssm.out_proj),
             },
         );
-        self.ffn.circuit_bind(&mut weights, &mut unmodelled);
+        for (role, twin) in [
+            (LinearRole::Qkvz, self.qkvz_nvfp4_t),
+            (LinearRole::GdnOut, self.out_proj_nvfp4_t),
+        ] {
+            if let Some(t) = twin {
+                weights.insert(WeightSlot::Transposed(role), BoundWeight::Nvfp4(t));
+            }
+        }
+        self.ffn.circuit_bind(levers, &mut weights, &mut unmodelled);
         Some(CircuitLayer {
             mixer: MixerFacts::Gdn(GdnFacts {
                 qkvz_deinterleaved: self.sequential_qkvz,
