@@ -70,7 +70,11 @@ __device__ __forceinline__ void tc_mma_bf16(float* c, const unsigned int* a, uns
 // unless by_pos: BF16 [.., K] for gate+up, the hi|lo SiLU rows [.., 2K] for down. GATE_UP
 // writes the hi|lo split of SiLU(g) * u * 2^60, g and u rounded to BF16 first (the FP8
 // kernels' rounding); otherwise the BF16 projection.
-template <bool GATE_UP, int MT>
+// 2026-09-29: RG row groups of TC_ROWS share each decoded weight fragment (one pass reads
+// the weights once for TC_ROWS * RG rows). Group q is its own MMA column block, so a row's
+// products, their K order and its 128-block scaling are those of RG = 1: its bits do not
+// depend on RG, on the other rows of its pass or on how many passes the expert takes.
+template <bool GATE_UP, int MT, int RG>
 __device__ __forceinline__ void tc_warp(
     const void* __restrict__ X, const int* __restrict__ sorted_token_ids, bool by_pos,
     unsigned int begin, unsigned int end,
@@ -95,19 +99,30 @@ __device__ __forceinline__ void tc_warp(
         sr[m] = (second ? S1 : S0) + (col / 128) * kblocks;
     }
 
-    for (unsigned int row0 = begin; row0 < end; row0 += TC_ROWS) {
-        const unsigned int cnt = min((unsigned int)TC_ROWS, end - row0);
-        const bool live = g < cnt;
-        const unsigned int xrow = live ? (by_pos ? row0 + g : (unsigned int)sorted_token_ids[row0 + g]) : 0u;
-        const uint4* xp = (const uint4*)((const __nv_bfloat16*)X + (unsigned long long)xrow * K + t * 16);
-        // 2026-09-28: The down input's hi and lo rows (already times 2^60).
-        const uint4* xh = (const uint4*)((const __nv_bfloat16*)X + (unsigned long long)xrow * 2 * K + t * 16);
-        const uint4* xlo = (const uint4*)((const __nv_bfloat16*)X + (unsigned long long)xrow * 2 * K + K + t * 16);
-        float acc[TILES][4], tmp[TILES][4];
+    for (unsigned int row0 = begin; row0 < end; row0 += TC_ROWS * RG) {
+        unsigned int cnt[RG];
+        bool live[RG];
+        const uint4* xp[RG];
+        const uint4* xh[RG];
+        const uint4* xlo[RG];
         #pragma unroll
-        for (int m = 0; m < TILES; m++)
+        for (int q = 0; q < RG; q++) {
+            const unsigned int r0 = row0 + q * TC_ROWS;
+            cnt[q] = r0 < end ? min((unsigned int)TC_ROWS, end - r0) : 0u;
+            live[q] = g < cnt[q];
+            const unsigned int xrow = live[q] ? (by_pos ? r0 + g : (unsigned int)sorted_token_ids[r0 + g]) : 0u;
+            xp[q] = (const uint4*)((const __nv_bfloat16*)X + (unsigned long long)xrow * K + t * 16);
+            // 2026-09-28: The down input's hi and lo rows (already times 2^60).
+            xh[q] = (const uint4*)((const __nv_bfloat16*)X + (unsigned long long)xrow * 2 * K + t * 16);
+            xlo[q] = (const uint4*)((const __nv_bfloat16*)X + (unsigned long long)xrow * 2 * K + K + t * 16);
+        }
+        float acc[RG][TILES][4], tmp[RG][TILES][4];
+        #pragma unroll
+        for (int q = 0; q < RG; q++)
             #pragma unroll
-            for (int e = 0; e < 4; e++) acc[m][e] = tmp[m][e] = 0.f;
+            for (int m = 0; m < TILES; m++)
+                #pragma unroll
+                for (int e = 0; e < 4; e++) acc[q][m][e] = tmp[q][m][e] = 0.f;
         uint4 wn[TC_G][TILES][2];
         #pragma unroll
         for (int c = 0; c < TC_G; c++)
@@ -136,24 +151,27 @@ __device__ __forceinline__ void tc_warp(
                 const unsigned int chunk = gi * TC_G + c;
                 // 2026-09-28: xw word i holds K = 16t + 2i, 2i + 1 (times 2^60); for the down
                 // input, xl holds the lo terms.
-                unsigned int xw[8], xl[8];
-                if (GATE_UP) {
-                    uint4 xa = make_uint4(0u, 0u, 0u, 0u), xb = make_uint4(0u, 0u, 0u, 0u);
-                    if (live) { xa = xp[chunk * 8]; xb = xp[chunk * 8 + 1]; }
-                    const unsigned int raw[8] = {xa.x, xa.y, xa.z, xa.w, xb.x, xb.y, xb.z, xb.w};
-                    #pragma unroll
-                    for (int i = 0; i < 8; i++) {
-                        __nv_bfloat162 v = *(const __nv_bfloat162*)&raw[i];
-                        v = __hmul2(v, two60x2);
-                        xw[i] = *(unsigned int*)&v;
+                unsigned int xw[RG][8], xl[RG][8];
+                #pragma unroll
+                for (int q = 0; q < RG; q++) {
+                    if (GATE_UP) {
+                        uint4 xa = make_uint4(0u, 0u, 0u, 0u), xb = make_uint4(0u, 0u, 0u, 0u);
+                        if (live[q]) { xa = xp[q][chunk * 8]; xb = xp[q][chunk * 8 + 1]; }
+                        const unsigned int raw[8] = {xa.x, xa.y, xa.z, xa.w, xb.x, xb.y, xb.z, xb.w};
+                        #pragma unroll
+                        for (int i = 0; i < 8; i++) {
+                            __nv_bfloat162 v = *(const __nv_bfloat162*)&raw[i];
+                            v = __hmul2(v, two60x2);
+                            xw[q][i] = *(unsigned int*)&v;
+                        }
+                    } else {
+                        uint4 ha = make_uint4(0u, 0u, 0u, 0u), hb = ha, la = ha, lb = ha;
+                        if (live[q]) { ha = xh[q][chunk * 8]; hb = xh[q][chunk * 8 + 1]; la = xlo[q][chunk * 8]; lb = xlo[q][chunk * 8 + 1]; }
+                        const unsigned int h8[8] = {ha.x, ha.y, ha.z, ha.w, hb.x, hb.y, hb.z, hb.w};
+                        const unsigned int l8[8] = {la.x, la.y, la.z, la.w, lb.x, lb.y, lb.z, lb.w};
+                        #pragma unroll
+                        for (int i = 0; i < 8; i++) { xw[q][i] = h8[i]; xl[q][i] = l8[i]; }
                     }
-                } else {
-                    uint4 ha = make_uint4(0u, 0u, 0u, 0u), hb = ha, la = ha, lb = ha;
-                    if (live) { ha = xh[chunk * 8]; hb = xh[chunk * 8 + 1]; la = xlo[chunk * 8]; lb = xlo[chunk * 8 + 1]; }
-                    const unsigned int h8[8] = {ha.x, ha.y, ha.z, ha.w, hb.x, hb.y, hb.z, hb.w};
-                    const unsigned int l8[8] = {la.x, la.y, la.z, la.w, lb.x, lb.y, lb.z, lb.w};
-                    #pragma unroll
-                    for (int i = 0; i < 8; i++) { xw[i] = h8[i]; xl[i] = l8[i]; }
                 }
                 #pragma unroll
                 for (int j = 0; j < 4; j++)
@@ -168,8 +186,11 @@ __device__ __forceinline__ void tc_warp(
                         a[1] = tc_e4m3_pair_bf16(wh, 0x1404u);
                         a[2] = tc_e4m3_pair_bf16(wg, 0x3424u);
                         a[3] = tc_e4m3_pair_bf16(wh, 0x3424u);
-                        tc_mma_bf16(tmp[m], a, xw[2 * j], xw[2 * j + 1]);
-                        if (!GATE_UP) tc_mma_bf16(tmp[m], a, xl[2 * j], xl[2 * j + 1]);
+                        #pragma unroll
+                        for (int q = 0; q < RG; q++) {
+                            tc_mma_bf16(tmp[q][m], a, xw[q][2 * j], xw[q][2 * j + 1]);
+                            if (!GATE_UP) tc_mma_bf16(tmp[q][m], a, xl[q][2 * j], xl[q][2 * j + 1]);
+                        }
                     }
                 // 2026-09-28: Chunks 2kb and 2kb + 1 make 128-K block kb: scale it once.
                 if (chunk & 1) {
@@ -178,33 +199,55 @@ __device__ __forceinline__ void tc_warp(
                     for (int m = 0; m < TILES; m++) {
                         const float s = sr[m][kb] * two60;
                         #pragma unroll
-                        for (int e = 0; e < 4; e++) { acc[m][e] += tmp[m][e] * s; tmp[m][e] = 0.f; }
+                        for (int q = 0; q < RG; q++)
+                            #pragma unroll
+                            for (int e = 0; e < 4; e++) { acc[q][m][e] += tmp[q][m][e] * s; tmp[q][m][e] = 0.f; }
                     }
                 }
             }
         }
-        // 2026-09-28: acc[m][e]: column f + g (+ 8 for e >= 2) of row 2t + (e & 1).
+        // 2026-09-28: acc[q][m][e]: column f + g (+ 8 for e >= 2) of row 2t + (e & 1) of group q.
         #pragma unroll
-        for (int e = 0; e < 4; e++) {
-            const unsigned int r = 2 * t + (e & 1);
-            if (r >= cnt) continue;
-            const unsigned long long o = (unsigned long long)(row0 + r) * N + f0 + g + ((e >> 1) ? 8 : 0);
+        for (int q = 0; q < RG; q++)
             #pragma unroll
-            for (int m = 0; m < MT; m++) {
-                if (GATE_UP) {
-                    const float gv = __bfloat162float(__float2bfloat16(acc[m][e]));
-                    const float uv = __bfloat162float(__float2bfloat16(acc[m + MT][e]));
-                    const float hv = (gv / (1.0f + __expf(-gv))) * uv * two60;
-                    const __nv_bfloat16 hi = __float2bfloat16(hv);
-                    const unsigned long long ro = (unsigned long long)(row0 + r) * 2 * N + f0 + g + ((e >> 1) ? 8 : 0);
-                    ((__nv_bfloat16*)out)[ro + 16 * m] = hi;
-                    ((__nv_bfloat16*)out)[ro + N + 16 * m] = __float2bfloat16(hv - __bfloat162float(hi));
-                } else {
-                    ((__nv_bfloat16*)out)[o + 16 * m] = __float2bfloat16(acc[m][e]);
+            for (int e = 0; e < 4; e++) {
+                const unsigned int r = 2 * t + (e & 1);
+                if (r >= cnt[q]) continue;
+                const unsigned int row = row0 + q * TC_ROWS + r;
+                const unsigned long long o = (unsigned long long)row * N + f0 + g + ((e >> 1) ? 8 : 0);
+                #pragma unroll
+                for (int m = 0; m < MT; m++) {
+                    if (GATE_UP) {
+                        const float gv = __bfloat162float(__float2bfloat16(acc[q][m][e]));
+                        const float uv = __bfloat162float(__float2bfloat16(acc[q][m + MT][e]));
+                        const float hv = (gv / (1.0f + __expf(-gv))) * uv * two60;
+                        const __nv_bfloat16 hi = __float2bfloat16(hv);
+                        const unsigned long long ro = (unsigned long long)row * 2 * N + f0 + g + ((e >> 1) ? 8 : 0);
+                        ((__nv_bfloat16*)out)[ro + 16 * m] = hi;
+                        ((__nv_bfloat16*)out)[ro + N + 16 * m] = __float2bfloat16(hv - __bfloat162float(hi));
+                    } else {
+                        ((__nv_bfloat16*)out)[o + 16 * m] = __float2bfloat16(acc[q][m][e]);
+                    }
                 }
             }
-        }
     }
+}
+
+// 2026-09-29: tc_warp for a routed expert's rows: RG = 2 (one weight pass per 16 rows) when the
+// expert has more than TC_ROWS rows, else RG = 1. The shared expert's block rows hold at most
+// TC_ROWS rows and keep RG = 1.
+template <bool GATE_UP, int MT>
+__device__ __forceinline__ void tc_warp_routed(
+    const void* __restrict__ X, const int* __restrict__ sorted_token_ids, bool by_pos,
+    unsigned int begin, unsigned int end,
+    const unsigned char* __restrict__ W0, const float* __restrict__ S0,
+    const unsigned char* __restrict__ W1, const float* __restrict__ S1,
+    void* __restrict__ out, unsigned int N, unsigned int K, unsigned int f0
+) {
+    if (end - begin > TC_ROWS)
+        tc_warp<GATE_UP, MT, 2>(X, sorted_token_ids, by_pos, begin, end, W0, S0, W1, S1, out, N, K, f0);
+    else
+        tc_warp<GATE_UP, MT, 1>(X, sorted_token_ids, by_pos, begin, end, W0, S0, W1, S1, out, N, K, f0);
 }
 
 // 2026-09-28: Gate+up and SiLU of the routed experts and the shared expert. A: [num_tokens, K]
@@ -235,7 +278,7 @@ extern "C" __global__ void __launch_bounds__(TC_THREADS) moe_expert_gate_up_act_
                        &is_shared, &expert, &begin, &end)) return;
     const unsigned int f0 = blockIdx.x * TC_GU_COLS + (threadIdx.x >> 5) * 16 * TC_GU_MT;
     if (is_shared) {
-        tc_warp<true, TC_GU_MT>(A, sorted_token_ids, true, begin, end, sh_gate_weight, sh_gate_block_scale,
+        tc_warp<true, TC_GU_MT, 1>(A, sorted_token_ids, true, begin, end, sh_gate_weight, sh_gate_block_scale,
                                 sh_up_weight, sh_up_block_scale, sh_act, N, K, f0);
         return;
     }
@@ -248,7 +291,7 @@ extern "C" __global__ void __launch_bounds__(TC_THREADS) moe_expert_gate_up_act_
                     act[(unsigned long long)pos * 2 * N + hl * N + blockIdx.x * TC_GU_COLS + i] = __float2bfloat16(0.0f);
         return;
     }
-    tc_warp<true, TC_GU_MT>(A, sorted_token_ids, false, begin, end, Wg,
+    tc_warp_routed<true, TC_GU_MT>(A, sorted_token_ids, false, begin, end, Wg,
                             (const float*)gate_block_scale_ptrs[expert], Wu,
                             (const float*)up_block_scale_ptrs[expert], act, N, K, f0);
 }
@@ -276,7 +319,7 @@ extern "C" __global__ void __launch_bounds__(TC_THREADS) moe_expert_down_act_fp8
                        &is_shared, &expert, &begin, &end)) return;
     const unsigned int f0 = blockIdx.x * TC_DOWN_COLS + (threadIdx.x >> 5) * 16 * TC_DOWN_MT;
     if (is_shared) {
-        tc_warp<false, TC_DOWN_MT>(sh_act, nullptr, true, begin, end, sh_down_weight, sh_down_block_scale,
+        tc_warp<false, TC_DOWN_MT, 1>(sh_act, nullptr, true, begin, end, sh_down_weight, sh_down_block_scale,
                                    nullptr, nullptr, sh_down_out, N, K, f0);
         return;
     }
@@ -287,6 +330,6 @@ extern "C" __global__ void __launch_bounds__(TC_THREADS) moe_expert_down_act_fp8
                 C[(unsigned long long)pos * N + blockIdx.x * TC_DOWN_COLS + i] = __float2bfloat16(0.0f);
         return;
     }
-    tc_warp<false, TC_DOWN_MT>(act, nullptr, true, begin, end, W, (const float*)block_scale_ptrs[expert],
+    tc_warp_routed<false, TC_DOWN_MT>(act, nullptr, true, begin, end, W, (const float*)block_scale_ptrs[expert],
                                nullptr, nullptr, C, N, K, f0);
 }
