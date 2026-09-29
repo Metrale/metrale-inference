@@ -7,15 +7,17 @@
 //!
 //! Owner: model-arch examples.
 //! Invariants:
-//! - Returns an error unless, for B = 1, 2, 64 and 128 sequences, the strided launch's output
+//! - Returns an error unless, for B = 1..=128 sequences (powers of two), the strided launch's output
 //!   and final state equal the per-sequence launches' byte for byte, with one head of one
-//!   sequence driven past the state-norm clamp (`SSM_STATE_MAX_NORM`) so the clamp branch is
+//!   sequence driven past the state-norm clamp (`SSM_state()_MAX_NORM`) so the clamp branch is
 //!   compared too.
 //! - Before the sweep, a flipped output bit must be refused by the same check.
 //!
 //! Prints the mean time of each form (20 launches) at every B, the strided one at several
 //! dynamic shared-memory reservations (the occupancy cap `GDN_DECODE_STRIDED_SMEM_CAP_BYTES`
 //! was chosen from this sweep).
+//!
+//! Argument: value heads, 32 (Qwen3.6-35B-A3B, default) or 48 (Qwen3.8-27B).
 //!
 //! Run (GB10):
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
@@ -27,11 +29,20 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 const NK: usize = 16;
-const NV: usize = 32;
 const KD: usize = 128;
 const VD: usize = 128;
-const STATE: usize = NV * KD * VD;
 const MAX_B: usize = 128;
+
+/// 2026-09-29: Value heads, the first argument: 32 (Qwen3.6-35B-A3B, the default) or 48
+/// (Qwen3.8-27B).
+fn nv() -> usize {
+    static NV: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *NV.get_or_init(|| std::env::args().nth(1).and_then(|a| a.parse().ok()).unwrap_or(32))
+}
+
+fn state() -> usize {
+    nv() * KD * VD
+}
 
 struct Lcg(u64);
 impl Lcg {
@@ -96,18 +107,18 @@ fn per_seq(
 ) -> Result<()> {
     for b in 0..b_count {
         KernelLaunch::new(g, kernel)
-            .grid([NV as u32, 1, 1])
+            .grid([nv() as u32, 1, 1])
             .block([VD as u32, 1, 1])
-            .arg_ptr(h.offset(b * STATE * 4))
+            .arg_ptr(h.offset(b * state() * 4))
             .arg_ptr(x.q.offset(b * NK * KD * 4))
             .arg_ptr(x.k.offset(b * NK * KD * 4))
-            .arg_ptr(x.v.offset(b * NV * VD * 4))
-            .arg_ptr(x.gate.offset(b * NV * 4))
-            .arg_ptr(x.beta.offset(b * NV * 4))
-            .arg_ptr(out.offset(b * NV * VD * 4))
+            .arg_ptr(x.v.offset(b * nv() * VD * 4))
+            .arg_ptr(x.gate.offset(b * nv() * 4))
+            .arg_ptr(x.beta.offset(b * nv() * 4))
+            .arg_ptr(out.offset(b * nv() * VD * 4))
             .arg_u32(1)
             .arg_u32(NK as u32)
-            .arg_u32(NV as u32)
+            .arg_u32(nv() as u32)
             .arg_u32(KD as u32)
             .arg_u32(VD as u32)
             .launch(0)?;
@@ -125,7 +136,7 @@ fn strided(
     smem: u32,
 ) -> Result<()> {
     KernelLaunch::new(g, kernel)
-        .grid([NV as u32, b_count as u32, 1])
+        .grid([nv() as u32, b_count as u32, 1])
         .block([VD as u32, 1, 1])
         .shared_mem(smem)
         .arg_ptr(h)
@@ -137,13 +148,13 @@ fn strided(
         .arg_ptr(out)
         .arg_u32(b_count as u32)
         .arg_u32(NK as u32)
-        .arg_u32(NV as u32)
+        .arg_u32(nv() as u32)
         .arg_u32(KD as u32)
         .arg_u32(VD as u32)
         .arg_u32((NK * KD) as u32)
-        .arg_u32((NV * VD) as u32)
-        .arg_u32(NV as u32)
-        .arg_u32((NV * VD) as u32)
+        .arg_u32((nv() * VD) as u32)
+        .arg_u32(nv() as u32)
+        .arg_u32((nv() * VD) as u32)
         .launch(0)
 }
 
@@ -153,28 +164,28 @@ fn main() -> Result<()> {
     let per_k = g.kernel("gated_delta_rule", "gated_delta_rule_decode_f32")?;
     let str_k = g.kernel("gated_delta_rule", "gated_delta_rule_decode_f32_strided")?;
     let mut rng = Lcg(0x6764_6e2d_7374);
-    let mut h0 = rng.v(MAX_B * STATE, -0.05, 0.05);
+    let mut h0 = rng.v(MAX_B * state(), -0.05, 0.05);
     // 2026-09-29: Head 5 of sequence 1 starts far past the clamp norm (1000): 16384 entries of
     // magnitude ~20 give a norm of ~2600.
-    for e in &mut h0[STATE + 5 * KD * VD..STATE + 6 * KD * VD] {
+    for e in &mut h0[state() + 5 * KD * VD..state() + 6 * KD * VD] {
         *e *= 400.0;
     }
     let x = Inputs {
         q: up(g, &rng.v(MAX_B * NK * KD, -0.1, 0.1))?,
         k: up(g, &rng.v(MAX_B * NK * KD, -0.1, 0.1))?,
-        v: up(g, &rng.v(MAX_B * NV * VD, -1.0, 1.0))?,
-        gate: up(g, &rng.v(MAX_B * NV, 0.6, 0.999))?,
-        beta: up(g, &rng.v(MAX_B * NV, 0.05, 0.95))?,
+        v: up(g, &rng.v(MAX_B * nv() * VD, -1.0, 1.0))?,
+        gate: up(g, &rng.v(MAX_B * nv(), 0.6, 0.999))?,
+        beta: up(g, &rng.v(MAX_B * nv(), 0.05, 0.95))?,
         h0,
     };
     let h_a = up(g, &x.h0)?;
     let h_b = up(g, &x.h0)?;
-    let out_a = up(g, &vec![0.0; MAX_B * NV * VD])?;
-    let out_b = up(g, &vec![0.0; MAX_B * NV * VD])?;
+    let out_a = up(g, &vec![0.0; MAX_B * nv() * VD])?;
+    let out_b = up(g, &vec![0.0; MAX_B * nv() * VD])?;
     let reset = |h: DevicePtr| g.copy_h2d(&bytes(&x.h0), h);
 
     let mut control_done = false;
-    for b_count in [1usize, 2, 64, 128] {
+    for b_count in [1usize, 2, 4, 8, 16, 32, 64, 128] {
         reset(h_a)?;
         reset(h_b)?;
         per_seq(g, per_k, &x, h_a, out_a, b_count)?;
@@ -190,22 +201,22 @@ fn main() -> Result<()> {
             out_b,
             b_count as u32,
             NK as u32,
-            NV as u32,
+            nv() as u32,
             KD as u32,
             VD as u32,
             (NK * KD) as u32,
-            (NV * VD) as u32,
-            NV as u32,
-            (NV * VD) as u32,
+            (nv() * VD) as u32,
+            nv() as u32,
+            (nv() * VD) as u32,
             0,
         )?;
         let (oa, ob) = (
-            down(g, out_a, b_count * NV * VD)?,
-            down(g, out_b, b_count * NV * VD)?,
+            down(g, out_a, b_count * nv() * VD)?,
+            down(g, out_b, b_count * nv() * VD)?,
         );
         let (sa, sb) = (
-            down(g, h_a, b_count * STATE)?,
-            down(g, h_b, b_count * STATE)?,
+            down(g, h_a, b_count * state())?,
+            down(g, h_b, b_count * state())?,
         );
         if !control_done {
             let mut bad = ob.clone();
@@ -245,7 +256,7 @@ fn main() -> Result<()> {
         same(&format!("B={b_count} output"), &oa, &ob)?;
         if b_count >= 2 {
             // 2026-09-29: The clamp fired on the driven head: its state norm is at most 1000.
-            let head = &sb[(STATE + 5 * KD * VD) * 4..(STATE + 6 * KD * VD) * 4];
+            let head = &sb[(state() + 5 * KD * VD) * 4..(state() + 6 * KD * VD) * 4];
             let norm: f64 = head
                 .chunks_exact(4)
                 .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64)
@@ -264,7 +275,7 @@ fn main() -> Result<()> {
             Ok(t.elapsed().as_secs_f64() * 1e6 / 20.0)
         };
         let us_a = time(&|| per_seq(g, per_k, &x, h_a, out_a, b_count))?;
-        let gbs = |us: f64| (b_count * STATE * 8) as f64 / us / 1e3;
+        let gbs = |us: f64| (b_count * state() * 8) as f64 / us / 1e3;
         let mut line = format!(
             "B={b_count:3} output+state bit-identical | per-seq {us_a:8.1}us ({:5.1} GB/s R+W)",
             gbs(us_a)
