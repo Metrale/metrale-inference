@@ -687,6 +687,11 @@ disable_thinking = "true"
 
 
 ssm_cache_slots = "32"
+# 2026-09-29: No serve-side request timeout. At the default 300 s the serve cuts streams of a
+# wide rung (finish_reason "timeout"): on 2026-09-28 dgx2 the certified command's C128 cell
+# delivered part of its budget and read vacuous at 290.7 tok/s. OSL 1024 at 1-2 tok/s per
+# stream needs 500-850 s. The dense recipe pins the same.
+request_timeout = "0"
 # 2026-09-25: lm_head_dtype is not pinned: the nvfp4head recipe chooses the head.
 
 
