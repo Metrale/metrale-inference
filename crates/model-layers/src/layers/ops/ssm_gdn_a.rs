@@ -309,6 +309,15 @@ pub fn gdn_decode_f32_conv_norm(
         .launch(stream)
 }
 
+/// 2026-09-29: Dynamic shared memory each [`gdn_decode_f32_strided`] CTA reserves and does
+/// not use: it caps the CTAs resident per SM (3 on GB10's 100 KB), so a CTA's 64 KB head
+/// state is still in L2 when its update pass re-reads it; uncapped, the second pass of a wide
+/// launch misses L2. Measured 2026-09-29 on dgx3
+/// (`gdn_decode_strided_rr_microtest`, Qwen3.6-35B-A3B GDN shapes, per layer): B=64 1885 us
+/// uncapped, 1303 us at 32 KB, 1805 us as 64 per-sequence launches; B=128 3824 / 2587 /
+/// 3578 us. The output and state bits do not depend on it.
+pub const GDN_DECODE_STRIDED_SMEM_CAP_BYTES: u32 = 32 << 10;
+
 /// 2026-09-25: Strided FP32 GDN decode for several sequences in one launch:
 /// Q/K/V, gate/beta and the output are rows `qk_stride`, `v_stride`,
 /// `gb_stride` and `out_stride` apart per sequence.
@@ -337,6 +346,7 @@ pub fn gdn_decode_f32_strided(
     KernelLaunch::new(gpu, kernel)
         .grid([num_v_heads, batch_size, 1])
         .block([128, 1, 1])
+        .shared_mem(GDN_DECODE_STRIDED_SMEM_CAP_BYTES)
         .arg_ptr(h_state)
         .arg_ptr(query)
         .arg_ptr(key)

@@ -1,0 +1,282 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-29: The batched GDN decode recurrence (`gated_delta_rule_decode_f32_strided`, launched
+//! by `ops::gdn_decode_f32_strided` with its occupancy cap) against the per-sequence kernel the
+//! multi-sequence decode launches once per sequence (`gated_delta_rule_decode_f32`), at
+//! Qwen3.6-35B-A3B GDN dimensions.
+//!
+//! Owner: model-arch examples.
+//! Invariants:
+//! - Returns an error unless, for B = 1, 2, 64 and 128 sequences, the strided launch's output
+//!   and final state equal the per-sequence launches' byte for byte, with one head of one
+//!   sequence driven past the state-norm clamp (`SSM_STATE_MAX_NORM`) so the clamp branch is
+//!   compared too.
+//! - Before the sweep, a flipped output bit must be refused by the same check.
+//!
+//! Prints the mean time of each form (20 launches) at every B, the strided one at several
+//! dynamic shared-memory reservations (the occupancy cap `GDN_DECODE_STRIDED_SMEM_CAP_BYTES`
+//! was chosen from this sweep).
+//!
+//! Run (GB10):
+//!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
+//!     --example gdn_decode_strided_microtest
+
+use anyhow::{Result, ensure};
+use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_gpu_runtime::kernel_args::KernelLaunch;
+
+const NK: usize = 16;
+const NV: usize = 32;
+const KD: usize = 128;
+const VD: usize = 128;
+const STATE: usize = NV * KD * VD;
+const MAX_B: usize = 128;
+
+struct Lcg(u64);
+impl Lcg {
+    fn r(&mut self, lo: f32, hi: f32) -> f32 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lo + (hi - lo) * ((((self.0 >> 11) as f64) / ((1u64 << 53) as f64)) as f32)
+    }
+    fn v(&mut self, n: usize, lo: f32, hi: f32) -> Vec<f32> {
+        (0..n).map(|_| self.r(lo, hi)).collect()
+    }
+}
+
+fn bytes(d: &[f32]) -> Vec<u8> {
+    d.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+fn up(g: &dyn GpuBackend, d: &[f32]) -> Result<DevicePtr> {
+    let b = bytes(d);
+    let p = g.alloc(b.len())?;
+    g.copy_h2d(&b, p)?;
+    Ok(p)
+}
+
+fn down(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u8>> {
+    g.synchronize(0)?;
+    let mut b = vec![0u8; n * 4];
+    g.copy_d2h(p, &mut b)?;
+    Ok(b)
+}
+
+/// 2026-09-29: The first differing byte, as an error.
+fn same(what: &str, a: &[u8], b: &[u8]) -> Result<()> {
+    ensure!(a.len() == b.len(), "{what}: length {} vs {}", a.len(), b.len());
+    if let Some(i) = a.iter().zip(b).position(|(x, y)| x != y) {
+        anyhow::bail!("{what}: byte {i} differs ({} vs {})", a[i], b[i]);
+    }
+    Ok(())
+}
+
+/// 2026-09-29: One sequence's inputs: q/k `[NK, KD]`, v `[NV, VD]`, gate and beta `[NV]`, all
+/// FP32, rows `b` apart by the strided kernel's strides.
+struct Inputs {
+    q: DevicePtr,
+    k: DevicePtr,
+    v: DevicePtr,
+    gate: DevicePtr,
+    beta: DevicePtr,
+    h0: Vec<f32>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn per_seq(
+    g: &dyn GpuBackend,
+    kernel: KernelHandle,
+    x: &Inputs,
+    h: DevicePtr,
+    out: DevicePtr,
+    b_count: usize,
+) -> Result<()> {
+    for b in 0..b_count {
+        KernelLaunch::new(g, kernel)
+            .grid([NV as u32, 1, 1])
+            .block([VD as u32, 1, 1])
+            .arg_ptr(h.offset(b * STATE * 4))
+            .arg_ptr(x.q.offset(b * NK * KD * 4))
+            .arg_ptr(x.k.offset(b * NK * KD * 4))
+            .arg_ptr(x.v.offset(b * NV * VD * 4))
+            .arg_ptr(x.gate.offset(b * NV * 4))
+            .arg_ptr(x.beta.offset(b * NV * 4))
+            .arg_ptr(out.offset(b * NV * VD * 4))
+            .arg_u32(1)
+            .arg_u32(NK as u32)
+            .arg_u32(NV as u32)
+            .arg_u32(KD as u32)
+            .arg_u32(VD as u32)
+            .launch(0)?;
+    }
+    Ok(())
+}
+
+fn strided(
+    g: &dyn GpuBackend,
+    kernel: KernelHandle,
+    x: &Inputs,
+    h: DevicePtr,
+    out: DevicePtr,
+    b_count: usize,
+    smem: u32,
+) -> Result<()> {
+    KernelLaunch::new(g, kernel)
+        .grid([NV as u32, b_count as u32, 1])
+        .block([VD as u32, 1, 1])
+        .shared_mem(smem)
+        .arg_ptr(h)
+        .arg_ptr(x.q)
+        .arg_ptr(x.k)
+        .arg_ptr(x.v)
+        .arg_ptr(x.gate)
+        .arg_ptr(x.beta)
+        .arg_ptr(out)
+        .arg_u32(b_count as u32)
+        .arg_u32(NK as u32)
+        .arg_u32(NV as u32)
+        .arg_u32(KD as u32)
+        .arg_u32(VD as u32)
+        .arg_u32((NK * KD) as u32)
+        .arg_u32((NV * VD) as u32)
+        .arg_u32(NV as u32)
+        .arg_u32((NV * VD) as u32)
+        .launch(0)
+}
+
+fn main() -> Result<()> {
+    let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
+    let g: &dyn GpuBackend = &gpu;
+    let per_k = g.kernel("gated_delta_rule", "gated_delta_rule_decode_f32")?;
+    let str_k = g.kernel("gated_delta_rule", "gated_delta_rule_decode_f32_strided")?;
+    let mut rng = Lcg(0x6764_6e2d_7374);
+    let mut h0 = rng.v(MAX_B * STATE, -0.05, 0.05);
+    // 2026-09-29: Head 5 of sequence 1 starts far past the clamp norm (1000): 16384 entries of
+    // magnitude ~20 give a norm of ~2600.
+    for e in &mut h0[STATE + 5 * KD * VD..STATE + 6 * KD * VD] {
+        *e *= 400.0;
+    }
+    let x = Inputs {
+        q: up(g, &rng.v(MAX_B * NK * KD, -0.1, 0.1))?,
+        k: up(g, &rng.v(MAX_B * NK * KD, -0.1, 0.1))?,
+        v: up(g, &rng.v(MAX_B * NV * VD, -1.0, 1.0))?,
+        gate: up(g, &rng.v(MAX_B * NV, 0.6, 0.999))?,
+        beta: up(g, &rng.v(MAX_B * NV, 0.05, 0.95))?,
+        h0,
+    };
+    let h_a = up(g, &x.h0)?;
+    let h_b = up(g, &x.h0)?;
+    let out_a = up(g, &vec![0.0; MAX_B * NV * VD])?;
+    let out_b = up(g, &vec![0.0; MAX_B * NV * VD])?;
+    let reset = |h: DevicePtr| g.copy_h2d(&bytes(&x.h0), h);
+
+    let mut control_done = false;
+    for b_count in [1usize, 2, 64, 128] {
+        reset(h_a)?;
+        reset(h_b)?;
+        per_seq(g, per_k, &x, h_a, out_a, b_count)?;
+        metrale_model_layers::layers::ops::gdn_decode_f32_strided(
+            g,
+            str_k,
+            h_b,
+            x.q,
+            x.k,
+            x.v,
+            x.gate,
+            x.beta,
+            out_b,
+            b_count as u32,
+            NK as u32,
+            NV as u32,
+            KD as u32,
+            VD as u32,
+            (NK * KD) as u32,
+            (NV * VD) as u32,
+            NV as u32,
+            (NV * VD) as u32,
+            0,
+        )?;
+        let (oa, ob) = (
+            down(g, out_a, b_count * NV * VD)?,
+            down(g, out_b, b_count * NV * VD)?,
+        );
+        let (sa, sb) = (
+            down(g, h_a, b_count * STATE)?,
+            down(g, h_b, b_count * STATE)?,
+        );
+        if !control_done {
+            let mut bad = ob.clone();
+            bad[7] ^= 1;
+            ensure!(
+                same("control", &oa, &bad).is_err(),
+                "a flipped bit was admitted"
+            );
+            println!("KNOWN_BAD flipped-bit: refused");
+            control_done = true;
+        }
+        let ulp = |a: &[u8], b: &[u8]| -> (usize, u32) {
+            let mut n = 0usize;
+            let mut worst = 0u32;
+            for (x, y) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+                let (x, y) = (
+                    u32::from_le_bytes([x[0], x[1], x[2], x[3]]),
+                    u32::from_le_bytes([y[0], y[1], y[2], y[3]]),
+                );
+                if x != y {
+                    n += 1;
+                    worst = worst.max((x as i64 - y as i64).unsigned_abs() as u32);
+                }
+            }
+            (n, worst)
+        };
+        let (so, uo) = ulp(&oa, &ob);
+        let (ss, us) = ulp(&sa, &sb);
+        println!("B={b_count}: output {so} words differ (max {uo} ulp), state {ss} differ (max {us} ulp)");
+        if so > 0 {
+            let f = |v: &[u8], i: usize| f32::from_le_bytes([v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3]]);
+            for i in [0usize, 1, 2, 3, 128, 4095] {
+                println!("  out[{i}] per-seq {:e} strided {:e} ratio {:.9}", f(&oa, i), f(&ob, i), f(&oa, i) as f64 / f(&ob, i) as f64);
+            }
+        }
+        same(&format!("B={b_count} state"), &sa, &sb)?;
+        same(&format!("B={b_count} output"), &oa, &ob)?;
+        if b_count >= 2 {
+            // 2026-09-29: The clamp fired on the driven head: its state norm is at most 1000.
+            let head = &sb[(STATE + 5 * KD * VD) * 4..(STATE + 6 * KD * VD) * 4];
+            let norm: f64 = head
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64)
+                .map(|v| v * v)
+                .sum::<f64>()
+                .sqrt();
+            ensure!(norm <= 1000.5, "clamp head norm {norm}");
+        }
+        let time = |f: &dyn Fn() -> Result<()>| -> Result<f64> {
+            g.synchronize(0)?;
+            let t = std::time::Instant::now();
+            for _ in 0..20 {
+                f()?;
+            }
+            g.synchronize(0)?;
+            Ok(t.elapsed().as_secs_f64() * 1e6 / 20.0)
+        };
+        let us_a = time(&|| per_seq(g, per_k, &x, h_a, out_a, b_count))?;
+        let gbs = |us: f64| (b_count * STATE * 8) as f64 / us / 1e3;
+        let mut line = format!(
+            "B={b_count:3} output+state bit-identical | per-seq {us_a:8.1}us ({:5.1} GB/s R+W)",
+            gbs(us_a)
+        );
+        // 2026-09-29: Dynamic shared memory per CTA caps the CTAs resident per SM, and with
+        // them the bytes of H in flight between a CTA's two passes over its state.
+        for smem in [0u32, 8 << 10, 12 << 10, 16 << 10, 24 << 10, 32 << 10, 44 << 10] {
+            let us_b = time(&|| strided(g, str_k, &x, h_b, out_b, b_count, smem))?;
+            line += &format!(" | smem {:2}K {us_b:7.1}us ({:5.1})", smem >> 10, gbs(us_b));
+        }
+        println!("{line}  PASS");
+    }
+    println!("ALL PASS: strided GDN decode == per-sequence decode, byte for byte");
+    Ok(())
+}
