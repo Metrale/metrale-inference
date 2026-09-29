@@ -135,6 +135,7 @@ fn batch_prompts_put_rows_at_distinct_positions_and_the_batch_verdict_reads_ever
         changed_row: rows / 2,
         comparisons: vec![ok("circuit", circuit)],
         prefill_rows_differ: vec![Vec::new(), Vec::new()],
+        prefill_row_deltas: Vec::new(),
         timings: Vec::new(),
         detection_control: ok("control", control),
     };
@@ -145,5 +146,43 @@ fn batch_prompts_put_rows_at_distinct_positions_and_the_batch_verdict_reads_ever
     assert!(
         bad[1].starts_with("16 rows: the detection control"),
         "{bad:?}"
+    );
+    let mut thin = width(16, 0, 4);
+    thin.prefill_rows_differ[0] = vec![1, 2, 3];
+    thin.prefill_rows_differ[1] = vec![8];
+    let bad = batch::batch_failures(&[thin]);
+    assert_eq!(bad.len(), 2, "{bad:?}");
+    assert!(bad[0].contains("3 rows left out"), "{bad:?}");
+    assert!(bad[1].contains("changed row 8 was left out"), "{bad:?}");
+}
+
+#[test]
+fn a_row_whose_prefill_differs_is_left_out_of_the_step_comparison() {
+    let row = |v: f32| [v, v + 1.0];
+    let cat = |rows: &[[f32; 2]]| rows.iter().flatten().copied().collect::<Vec<f32>>();
+    let reference = run_of(
+        &cat(&[row(1.0), row(2.0), row(3.0)]),
+        &[&cat(&[row(4.0), row(5.0), row(6.0)])],
+    );
+    let drifted = run_of(
+        &cat(&[row(1.0), row(2.5), row(3.0)]),
+        &[&cat(&[row(4.0), row(5.5), row(6.0)])],
+    );
+    let (c, skipped) = batch::compare_rows("circuit", &reference, &drifted, 4);
+    assert_eq!(skipped, vec![1]);
+    assert!(c.prefill_equal);
+    assert_eq!(c.mismatched_steps, 0);
+    let d = batch::row_deltas(&reference, &drifted, 4, &skipped);
+    assert_eq!((d[0].row, d[0].max_abs, d[0].argmax_equal), (1, 0.5, true));
+    assert!(d[0].bytes >= 1);
+    let also_step = run_of(
+        &cat(&[row(1.0), row(2.5), row(3.0)]),
+        &[&cat(&[row(4.0), row(5.5), row(6.5)])],
+    );
+    let (c, _) = batch::compare_rows("circuit", &reference, &also_step, 4);
+    assert_eq!(
+        (c.mismatched_steps, c.first_mismatch),
+        (1, Some(0)),
+        "row 2 still counts"
     );
 }

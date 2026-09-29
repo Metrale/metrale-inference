@@ -118,6 +118,44 @@ pub(crate) fn prefill_rows_differ(reference: &Run, run: &Run, row_bytes: usize) 
         .collect()
 }
 
+/// 2026-09-29: How one row's prefill logits differ from the reference's.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct RowDelta {
+    pub row: usize,
+    /// 2026-09-29: Bytes that differ.
+    pub bytes: usize,
+    /// 2026-09-29: Largest absolute difference of a logit.
+    pub max_abs: f32,
+    /// 2026-09-29: Both sides pick the same greedy token.
+    pub argmax_equal: bool,
+}
+
+/// 2026-09-29: [`RowDelta`] of every row in `rows`.
+pub(crate) fn row_deltas(
+    reference: &Run,
+    run: &Run,
+    row_bytes: usize,
+    rows: &[usize],
+) -> Vec<RowDelta> {
+    let val = |c: &[u8]| f32::from_bits(u32::from(u16::from_le_bytes([c[0], c[1]])) << 16);
+    rows.iter()
+        .map(|&i| {
+            let a = &reference.prefill[i * row_bytes..(i + 1) * row_bytes];
+            let b = &run.prefill[i * row_bytes..(i + 1) * row_bytes];
+            RowDelta {
+                row: i,
+                bytes: a.iter().zip(b).filter(|(x, y)| x != y).count(),
+                max_abs: a
+                    .chunks_exact(2)
+                    .zip(b.chunks_exact(2))
+                    .map(|(x, y)| (val(x) - val(y)).abs())
+                    .fold(0.0, f32::max),
+                argmax_equal: argmax_bf16(a) == argmax_bf16(b),
+            }
+        })
+        .collect()
+}
+
 /// 2026-09-29: `run` without the rows in `skip`, prefill and steps alike.
 fn without_rows(run: &Run, row_bytes: usize, skip: &[usize]) -> Run {
     let keep = |bytes: &[u8]| -> Vec<u8> {
@@ -163,6 +201,8 @@ pub(crate) struct WidthReport {
     pub comparisons: Vec<Comparison>,
     /// 2026-09-29: Per comparison, the rows left out because their prefill differs.
     pub prefill_rows_differ: Vec<Vec<usize>>,
+    /// 2026-09-29: Per comparison, how each of those rows differs.
+    pub prefill_row_deltas: Vec<Vec<RowDelta>>,
     pub timings: Vec<Timing>,
     pub detection_control: Comparison,
 }
@@ -183,11 +223,12 @@ pub(crate) fn diff_widths(
         model.set_forward(&ForwardSelect::Legacy)?;
         let (ref_tokens, reference) = run_batch(model, &prompts, steps, BatchFeed::Greedy)?;
         let (mut comparisons, mut timings) = (Vec::new(), vec![timing("legacy", &reference)]);
-        let mut prefill_rows = Vec::new();
+        let (mut prefill_rows, mut deltas) = (Vec::new(), Vec::new());
         for (name, sel) in forwards {
             model.set_forward(sel)?;
             let (_, r) = run_batch(model, &prompts, steps, BatchFeed::Forced(&ref_tokens))?;
             let (c, skipped) = compare_rows(name, &reference, &r, row_bytes);
+            deltas.push(row_deltas(&reference, &r, row_bytes, &skipped));
             prefill_rows.push(skipped);
             tracing::info!("circuit diff: {n} rows {name}: {c:?}");
             timings.push(timing(name, &r));
@@ -204,12 +245,14 @@ pub(crate) fn diff_widths(
             &r,
             row_bytes,
         );
+        deltas.push(row_deltas(&reference, &r, row_bytes, &control_skipped));
         prefill_rows.push(control_skipped);
         out.push(WidthReport {
             rows: n,
             changed_row: row,
             comparisons,
             prefill_rows_differ: prefill_rows,
+            prefill_row_deltas: deltas,
             timings,
             detection_control: control,
         });
