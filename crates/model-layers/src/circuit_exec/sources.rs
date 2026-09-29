@@ -163,3 +163,64 @@ pub fn shape_drift(stated: &ArchShape, from_config: &ArchShape) -> Vec<String> {
     }
     out
 }
+
+/// 2026-09-28: The shape a served model runs, checked against the instance's stated shape. Every
+/// dim must agree except `vocab`, which the server caps to the tokenizer's vocabulary
+/// (`cap_vocab_size_to_tokenizer`) and so may be smaller; the served value is the one the logits
+/// are sized by, so the plan is instantiated with it.
+pub fn served_shape(stated: &ArchShape, served: &ArchShape) -> Result<ArchShape> {
+    let capped = |k: &str| {
+        k == "vocab"
+            && matches!(
+                (stated.dims.get(k), served.dims.get(k)),
+                (Some(s), Some(v)) if v <= s
+            )
+    };
+    let drift: Vec<String> = shape_drift(stated, served)
+        .into_iter()
+        .filter(|line| !line.split(':').next().is_some_and(capped))
+        .collect();
+    if !drift.is_empty() {
+        bail!(
+            "kernels/circuits/INSTANCES.toml disagrees with the loaded model:\n  {}",
+            drift.join("\n  ")
+        );
+    }
+    Ok(served.clone())
+}
+
+#[cfg(test)]
+mod served_shape_tests {
+    use super::*;
+
+    fn shape(vocab: u64, hidden: u64) -> ArchShape {
+        ArchShape {
+            layer_kinds: vec![LayerKind::LinearAttention, LayerKind::FullAttention],
+            dims: [("vocab".to_string(), vocab), ("hidden".to_string(), hidden)].into(),
+        }
+    }
+
+    #[test]
+    fn a_vocab_capped_to_the_tokenizer_is_served_and_nothing_else_may_move() {
+        let stated = shape(248_320, 5120);
+        assert_eq!(
+            served_shape(&stated, &shape(248_077, 5120)).unwrap().dims["vocab"],
+            248_077
+        );
+        assert_eq!(served_shape(&stated, &stated).unwrap(), stated);
+        let wider = served_shape(&stated, &shape(248_321, 5120))
+            .unwrap_err()
+            .to_string();
+        assert!(wider.contains("vocab"), "{wider}");
+        let hidden = served_shape(&stated, &shape(248_077, 4096))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            hidden.contains("hidden") && !hidden.contains("vocab"),
+            "{hidden}"
+        );
+        let mut kinds = shape(248_320, 5120);
+        kinds.layer_kinds.pop();
+        assert!(served_shape(&stated, &kinds).is_err());
+    }
+}

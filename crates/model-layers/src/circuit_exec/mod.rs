@@ -89,15 +89,9 @@ pub struct CircuitExec {
 impl CircuitExec {
     /// 2026-09-28: Build the executor.
     pub fn build(b: Boot<'_>) -> Result<Self> {
-        let loaded = metrale_circuit::load(b.instance, sources::sources(b.instance)?)?;
-        let live = sources::arch_shape(b.config)?;
-        let drift = sources::shape_drift(&b.instance.shape, &live);
-        if !drift.is_empty() {
-            bail!(
-                "kernels/circuits/INSTANCES.toml disagrees with the loaded model:\n  {}",
-                drift.join("\n  ")
-            );
-        }
+        let mut served = b.instance.clone();
+        served.shape = sources::served_shape(&b.instance.shape, &sources::arch_shape(b.config)?)?;
+        let loaded = metrale_circuit::load(&served, sources::sources(&served)?)?;
         let unmodelled = policy::unmodelled_switches(b.levers);
         if !unmodelled.is_empty() {
             bail!(
