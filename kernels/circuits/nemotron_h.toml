@@ -460,7 +460,8 @@ out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
 
 [block.mtp_out]
 stream_in = "x"
-outputs = ["token"]
+# 2026-09-29: The draft logits are read outside the program (LIFECYCLE-DESIGN.md 3.4).
+outputs = ["logits", "token"]
 
 [[block.mtp_out.node]]
 id = "final_norm"

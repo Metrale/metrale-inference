@@ -1,7 +1,7 @@
 # The circuit over the whole model lifecycle: design
 
-Status: DRAFT for coordinator review, 2026-09-29. No M5-M7 code is written before this is
-reviewed. Owner: the circuit agent (branch `feat/circuit`).
+Status: REVIEWED 2026-09-29 (coordinator), approved with the changes recorded in section 0.
+Owner: the circuit agent (branch `feat/circuit`).
 
 Owner directive (2026-09-29): "Please make sure the circuit covers the whole lifecycle,
 including prefill. Ideally, the entire model can be built from this architectural method."
@@ -12,17 +12,36 @@ Path prefixes used below: `ml/` = `crates/model-layers/src`, `me/` = `crates/mod
 feat/circuit at 67ebc194. The three surveys behind this document are kept verbatim in
 `/workspace/claude-state/circuit/survey-{loader,state-config,prefill}.md`.
 
-## 0. Decisions asked of the reviewer
+## 0. Review decisions (coordinator, 2026-09-29)
 
-1. The architecture package (section 2) as the unit a model is built from.
-2. The IR extensions (section 3): the new modes, typed state edges with lifetimes, state ops as
-   nodes, and declared host-visible outputs.
-3. The prefill execution model (section 4): device metadata only, shape buckets, and prefill
-   eager by default, with capture per bucket allowed only after it is measured.
-4. The load plan (section 5): a transform vocabulary that reproduces today's loaders, plus a
-   documented list of today's accidental behaviours that the plan will not reproduce.
-5. The parity bar per phase (section 7), including the legacy nondeterminism exception.
-6. The milestone order and cost (sections 9-10).
+1. **Architecture package:** approved.
+2. **IR extensions:** approved (the `t`/`s` row symbols, typed state edges with lifetimes,
+   declared outputs, state ops as nodes). Addition: the state kinds cover Mamba2 too (section
+   3.6).
+3. **Prefill model:** approved:
+   - one program per (mode, bucket), with the bucket ladder derived from rule boundaries and
+     pinned by the goldens;
+   - lengths as runtime arguments;
+   - eager by default, with capture per bucket only after measurement;
+   - unmodelled route keys fall back to legacy and are disclosed on the record.
+4. **Load plan:** approved, including not reproducing the orphans, measuring and reporting the
+   resident-memory drop, and checking legacy-vs-legacy requant repeatability first.
+5. **Parity bar:** approved, on one condition. The legacy-nondeterminism row exclusion is
+   temporary: M6 step 0 localises the cause, and the cause is fixed, or proven benign with
+   evidence, before the M3 flip of any family. The exclusion rate stays pinned in the
+   instrument.
+6. **Milestones:** approved, with these changes:
+   - **The M8 pilot is Nemotron-3.5-Lightning** (`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`),
+     built with the circuit. Llama 3.x / Qwen3-dense follow as the second new family.
+   - **Nemotron-H is a first-class second family in M5-M7** (sections 3.6, 5.5, 6.1).
+   - **The HF reference tool (7.2) moves to right after M5.** Its first use is the Nano 30B RoPE
+     check: HF's NemotronHAttention applies no RoPE, while the engine applies it. That fix is a
+     standalone PR to main, not part of the circuit.
+7. **Section 8 corrected:** the dense high-ISL gate is green.
+
+Order: M1 step 2 timed leg; merge feat/circuit-venn (done, 6f9b8ba0); the W8A8 declared leg;
+M5 (incl. Mamba2); the HF reference tool, then the Nano RoPE proof and fix PR; M6a. MoE M1 waits
+for perf/moe-wide.
 
 ## 1. Where the circuit stands (M0-M1)
 
@@ -174,6 +193,60 @@ inputs and outputs, so the legacy copies become circuit nodes, not host code:
 
 The secondary stream and its event stay executor mechanics: a state program declares whether it
 may overlap the next compute program, and the executor places it.
+
+### 3.6 Nemotron-H: Mamba2 state (review decision 2)
+
+The survey of the legacy Nemotron-H code is in
+`/workspace/claude-state/circuit/survey-nemotron.md`.
+
+**Mamba2 state kinds:**
+
+| State | Format | Shape per slot and layer | Legacy |
+|---|---|---|---|
+| `mamba_h` | f32 | `mamba_heads x mamba_head_dim x ssm_state` (state fastest); 2 MiB per layer for Nano and Lightning | the shared `SsmStatePool` slot (`me/model/ssm_pool.rs:190`); 'M' layers are `LayerType::LinearAttention` (`cfg/dispatch.rs:237`) |
+| `mamba_conv` | f32 | `(mamba_heads*mamba_head_dim + 2*ssm_groups*ssm_state) x conv_kernel`, oldest first | same pool; sized by `ssm_conv_state_bytes` (`cfg/methods.rs:253-272`) |
+| `mamba_h_steps`, `mamba_conv_steps` | as above | K-1 / K per verify slot | **absent in legacy** (below) |
+
+**Shared state machinery.** Nemotron's state kinds reuse GDN's machinery (pool slots, the padding
+dummy, Marconi snapshots, the decode ring). Snapshots are opaque byte blobs, so they are already
+correct for Mamba2. The state schema makes that sharing explicit: a recurrent state is `(kind,
+shape expression, format)`, and the pool, snapshot and ring ops are generic over it. Legacy has
+one failure of exactly that genericity. The verify checkpoint and rollback size the conv copy
+with the GatedDeltaNet formula (`me/model/trait_impl/verify_a_ssm.rs:55-62,133-140`,
+`async_chkpt.rs:58,118,292`), which evaluates to **0 bytes** for Nemotron. One sizing function
+per state edge removes that class of bug.
+
+**Speculative decoding over Mamba2 does not exist in legacy:**
+
+- the MTP weights are never loaded (`ma/weight_loader/nemotron.rs:414-421`);
+- nothing writes Mamba2 per-row intermediates;
+- the conv copy is 0 bytes (above);
+- no guard refuses a proposer on this arch.
+
+Lightning's MTP pilot needs three new pieces:
+
+1. a multi-row Mamba2 update that writes the per-row h and conv snapshots (the `state_snapshot`
+   nodes already in `nemotron_h.toml`);
+2. the rollback and commit state ops over those edges;
+3. a refusal of any proposer on a Mamba2 model until (1) and (2) have parity.
+
+Because HF does not model MTP (`_keys_to_ignore_on_load_unexpected = ["mtp.*"]`), the draft
+head's reference is checked per op against the published reference code for the MTP head, and
+end to end by acceptance rate and the accuracy gates.
+
+**Legacy numerics that differ from HF**, each a declared policy in the package, never silent:
+
+| Legacy behaviour | Where |
+|---|---|
+| Mamba2 decode clamps every h element to +-200 | `k/mamba2_ssm_decode.cu:116`; the prefill kernels do not clamp |
+| Every 64 decode tokens, each head's state norm is rescaled to at most 200 | `me/model/trait_impl/decode_a3.rs:30-38` (the circuit executor already refuses it) |
+| dt is clamped to [1e-9, 1e9] | HF clamps dt >= `time_step_min` in its torch path and uses `time_step_limit = (0, inf)` in its kernel path |
+| The SSD chunk size is 64 | the config says 128. The SSD kernel does not fit shared memory at `ssm_state` 128 (`ml/ops/ssm_ssd.rs:95-119`), so Nano and Lightning prefill with the sequential Mamba2 kernels |
+| Router logits are BF16 | HF computes them in FP32 |
+
+The Lightning package states which of these it keeps. Its reference is HF, not legacy (it is a
+new family), so the default is HF's numerics. A clamp kept for stability is an opt-in policy
+with a measured accuracy result.
 
 ## 4. Prefill: dynamic lengths, chunk programs, graph policy
 
@@ -361,6 +434,35 @@ No weight hash exists today. The instrument is `met circuit diff --load`:
 differs, requantisation joins the prefill nondeterminism finding and is fixed before load parity
 is claimed.
 
+### 5.5 Nemotron-H load transforms
+
+The vocabulary in 5.2 covers Nemotron-H with one addition, `input_scale` as a bound tensor.
+
+- **Mamba2 in_proj / out_proj:** F8_E4M3 with a scalar `weight_scale` and an `input_scale [1]`.
+  - Legacy widens the scalar over a 128-block grid (`scale_widen`,
+    `ml/weight_map/loaders_fp8.rs:114-130`) and **never reads `input_scale`**. It runs W8A16.
+  - The circuit's declared plan is W8A8 with a static activation scale (`act_quant` nodes bound
+    to `input_scale`). That is a numerics change relative to legacy, which is why this family's
+    reference is HF, not legacy.
+- **Experts (routed and shared):** NVFP4 `U8` weights with FP8 `weight_scale` and `weight_scale_2`,
+  loaded as stored (`store` + `scale_fold`). They are ungated: `up_proj` and `down_proj` only.
+- **Attention and the MTP head:** BF16 (`store`).
+- **conv1d:** the weight is stored as is; the bias gets `cast` BF16->F32.
+- **`A_log`, `D`, `dt_bias`:** `cast` BF16->F32. Legacy recomputes `-exp(A_log)` in every
+  kernel; a precompute is a later fusion rule, not a load change.
+- **Norms: plain weights (`x * w`, not `x * (1 + w)`).**
+  - Legacy gets this right only by accident: the Nemotron kernel tree compiles another model's
+    `rms_norm.cu`, and `ships_vanilla_norm_weights` does not list `nemotron_h`
+    (`ml/lib.rs:57-60`).
+  - The circuit states it per node (`params = { weight_form = "plain" }`). The `rms_norm`
+    emitter refuses a node whose weight form it does not implement.
+- **Router:** the gate is F32 in the checkpoint; legacy casts it to BF16 (`ml/weight_map/
+  nemotron.rs:228-231`). The package keeps F32 (HF's numerics). `e_score_correction_bias` is F32.
+- **MTP head:** two modules. `mtp.layers.0` holds enorm, hnorm, `eh_proj`, the norm and the
+  attention; `mtp.layers.1` holds the MoE and `final_layernorm`. The binding schema needs
+  per-block module paths (a block-level `module` key), replacing today's single `draft_module`.
+  `nemotron_h.toml` works around this with explicit bindings.
+
 ## 6. Config mapping
 
 Today `cfg/dispatch.rs` maps `model_type` to a parser, `text_config` is required for the qwen3_5
@@ -421,6 +523,50 @@ ignorable = ["architectures", "torch_dtype", "transformers_version", "..."]
   "float32"` matches the engine's f32 h state. Any non-equivalent value is refused and listed in
   the package.
 
+### 6.1 Nemotron-H config mapping
+
+Legacy cannot parse the Lightning config:
+
+- **`moe_latent_size: null` is a parse error.** The field is a plain `usize` with
+  `#[serde(default)]` (`cfg/model_config.rs:168-169`), and serde rejects an explicit null.
+- **The layer schedule is missing.** Lightning declares `layers_block_type`, and the parser
+  reads that key only for `nemotron_h_puzzle` (`cfg/dispatch.rs:212,245,384-398`). The layers
+  stay empty, and the loader builds zero layers.
+- **`hybrid_override_pattern` panics on any character other than M/E/`*`** (`cfg/dispatch.rs:233-243`).
+
+The mapping for `nemotron_h`:
+
+- **Layer schedule:** `layers_block_type` (a list of `mamba`/`moe`/`attention`) or
+  `hybrid_override_pattern` (a string). Exactly one must be present; each is mapped by a table,
+  and an unknown value is refused.
+- **Dims:**
+  - `mamba_num_heads` -> `mamba_heads`, `mamba_head_dim`, `ssm_state_size` -> `ssm_state`,
+    `n_groups` -> `ssm_groups`, `conv_kernel`;
+  - `n_routed_experts` -> `experts`, `num_experts_per_tok` -> `top_k`, `moe_intermediate_size`,
+    `moe_shared_expert_intermediate_size` -> `shared_inter`;
+  - `head_dim`, `num_attention_heads`, `num_key_value_heads`.
+  - Checks legacy lacks: heads divisible by `n_groups` (the kernels assume it), and
+    `d_inner == heads * head_dim` (`expand` is informational).
+- **Epsilon:** `layer_norm_epsilon` (legacy reads only `norm_eps`, else a silent 1e-6; the HF
+  default is 1e-5). A config carrying both with different values is refused.
+- **Params:**
+  - `routed_scaling_factor`, `norm_topk_prob`;
+  - `n_group` / `topk_group`: refused unless 1;
+  - `time_step_limit` / `time_step_min` (the dt clamp policy);
+  - `mamba_ssm_cache_dtype` (must match the h state format);
+  - `use_conv_bias` (must be true);
+  - `mamba_proj_bias` / `attention_bias` / `mlp_bias`: refused unless false;
+  - `mlp_hidden_act` / `mamba_hidden_act`: must match the circuit's `relu2` / SiLU;
+  - `num_nextn_predict_layers` and `mtp_layers_block_type` (the draft head's block list).
+- **Attention: NoPE.** `rope_theta` and `partial_rotary_factor` appear in the config, but the
+  `nemotron_h` reference applies no rotary embedding. The mapping classifies both as ignorable
+  **for this arch**, with that reason, and the circuit has no `rope` node. Legacy reads them and
+  applies RoPE (the bug in 7.2 below; the config test `cfg/tests/nemotron.rs:60` asserts
+  `rotary_dim() == 128`).
+- **Ignorable with a reason:** `chunk_size` (a kernel tiling choice, not math),
+  `rescale_prenorm_residual` (initialisation only), `residual_in_fp32 = false` (it matches the
+  BF16 residual).
+
 ## 7. Parity instruments per phase
 
 ### 7.1 Legacy byte parity (existing families)
@@ -450,7 +596,10 @@ Every instrument follows the M1 pattern:
   (`/workspace/claude-state/circuit/legacy-prefill-nondeterminism.md`):
   - a row whose legacy-repeat differs from the reference is left out of the circuit comparison
     and reported, as `--batch` does today;
-  - a phase passes only if at most the documented rate of rows is left out.
+  - a phase passes only if at most the documented rate of rows is left out, and the
+    instrument pins that rate;
+  - the exclusion is temporary: the cause is fixed, or proven benign with evidence, before
+    any family's M3 flip (review decision 5).
 - **Step 0 of M6 localises that nondeterminism.** The prefill survey found every affected row in
   the recorded data has a prompt longer than 64 tokens. That is where the FLA chunk count, the
   MMQ tile and the small-M route all switch. Existing levers A/B each suspect cheaply
@@ -475,6 +624,23 @@ the same prompts:
   their own HF check before a new model is held to it.
 - **Then the accuracy gates.** The model must pass the accuracy gates of its class: BFCL, and
   agentic-webserver for precision-lowering choices (the W4A4 accuracy bar).
+- **First use: the Nemotron-3-Nano NoPE bug (a standalone PR to main).**
+  - **The bug.** Legacy builds Nemotron-H attention with `Qwen3AttentionLayer::new_ungated`
+    (`ma/weight_loader/nemotron.rs:336-351`) and applies full RoPE (`rotary_dim` 128, theta
+    10000) in decode, batched decode, verify and both prefill paths. HF's `NemotronHAttention`
+    applies none. No config value can switch it off: `rotary_dim = 0` hits
+    `assert!(rotary_dim > 0)`.
+  - **The proof.** HF logits vs the engine on Nano, on the same prompts: all six attention
+    layers are wrong from the first attention layer on, so the divergence shows up in the
+    last-position logits and in per-layer hidden rows via the hooks.
+  - **The fix.** A `no_rope` flag on the layer, set by the Nemotron loader. It skips only the
+    RoPE step in `attention_forward_rope`, `ms_phase_rope`, `cache_skip_rope` and
+    `prefill_paged_rope_cache_write`, keeping their KV writes. It excludes the fused FP8 KV
+    writer, and updates the config test.
+  - **The regression tests.** A mock-backend test asserts no rope launch in any attention path.
+    A loader test asserts every Nemotron attention layer has `no_rope`. The HF parity re-run
+    shows the logits within tolerance.
+
 
 ## 8. Keeping the TTFT and high-ISL gates green
 
@@ -540,12 +706,13 @@ and campaign pacing.
 | # | Milestone | Acceptance | Work estimate |
 |---|---|---|---|
 | M1 rest | MoE decode / multi_seq / verify (after perf/moe-wide); the W8A8 declared leg | byte parity eager + graphed; tok/s and J/tok within noise | 1.5 days |
-| M5 | State schema: state edges, lifetimes, state ops as nodes, one sizing function | `StatePlan` bytes == legacy allocation for both families; preflight == allocation; verify/draft parity unchanged, with the commit/rollback copies as nodes | 1.5 days |
+| M5 | State schema: state edges, lifetimes, state ops as nodes, one sizing function; GDN and Mamba2 kinds | `StatePlan` bytes == legacy allocation for the two Qwen families and Nemotron-3-Nano (the supported Nemotron-H checkpoint); preflight == allocation; verify/draft parity unchanged, with the commit/rollback copies as nodes | 1.5 days |
+| HF tool | `tools/circuit/hf_reference.py` (7.2), keyed by the package; first use: HF logits parity on Nemotron-3-Nano-30B to prove the NoPE attention bug, then a standalone fix PR to main with a regression test | the bug shown by HF parity, and fixed | 1 day |
 | M6a | Dense `prefill` + `prefill_chunk` + drafter prefill | prefill parity at every bucket's ends, plus the decode after it; TTFT A/B inside the gate bounds | 2-3 days |
 | M6b | `prefix_restore` + after-restore plans; `prefill_batch` | restore parity; warm TTFT A/B | 1.5 days |
 | M6c | `mixed`; MoE prefill | as above, both families | 2 days |
 | M7 | Load plan + config mapping; `met circuit diff --load` | every bound weight's pointee hash equal (or the requant nondeterminism documented and fixed first); config field-by-field equality | 3 days |
-| M8 | Pilot: a Llama 3.x dense GQA checkpoint built only from its package; then a dense Qwen3 | HF tolerance parity (7.2), then the accuracy gates; certifies | 2-3 days |
+| M8 | Pilot: Nemotron-3.5-Lightning built only from its package (Mamba2, ReLU² MoE with sigmoid routing, NoPE attention, FP8 per-tensor static-scale W8A8, MTP over Mamba2 rollback); then Llama 3.x / Qwen3-dense (G1) | HF tolerance parity (7.2), then the accuracy gates; certifies | 4-6 days |
 | M3 | Flip `--forward circuit` for the circuit-built families; delete their legacy forward, loader and dispatch code | full campaign green; code deleted | 1 day + campaign |
 | skill | `/new-model` adopted as the agent standard (a draft is on feat/circuit-venn) | the M8 pilot followed it end to end | with M8 |
 
@@ -557,7 +724,7 @@ Where parameterising is not advised, the kernel is split into composable pieces 
 recombine. Kernels outside the diagram are wired, measured and optimised one at a time, then
 fused.
 
-### 11.1 The tool (built on feat/circuit-venn, not yet merged into feat/circuit)
+### 11.1 The tool (from feat/circuit-venn, merged into feat/circuit at 6f9b8ba0)
 
 `met circuit venn --target <recipe|checkpoint|arch|checkpoint dir> --against <arch>[,<arch>]
 [--mode ...] [--rows ...]` instantiates both circuits and classifies every target node, per mode
@@ -649,7 +816,7 @@ no family, and on a citation that no longer holds.
 
 First application, after the MoE and dense energy wrap-up: Nemotron-3.5-Lightning vs
 Qwen3.6-35B-A3B, plus the dense 27B for the W4A16 GEMV and head. The first report is already
-generated on feat/circuit-venn (`kernels/circuits/venn/nemotron-3.5-lightning-vs-qwen3.6-35b-a3b.md`).
+generated (`kernels/circuits/venn/nemotron-3.5-lightning-vs-qwen3.6-35b-a3b.md`).
 It surfaces all five targets above, and its top flags are Lightning's MoE and Mamba2 layers,
 which run one row at a time in multi-sequence decode.
 
@@ -712,4 +879,6 @@ Consequences:
 | MoE row order within an expert after the sort is nondeterministic by design | MoE prefill parity only if the grouped sums are order-independent (claimed, not shown) | Legacy-repeat on the MoE prefill first; if it differs, the MoE prefill bar is the HF tolerance plus the gates, stated as an exception |
 | The loader rewrite touches every weight | A wrong transform ships a subtly wrong model | Pointee-hash parity per bound weight, plus a detection control; legacy loader kept until M3 |
 | The mapping refuses keys legacy ignored silently | A checkpoint that legacy serves no longer boots under the circuit | Intended: each refusal is a real divergence. Listed per family; an owner decision per key |
+| Mamba2 has no multi-row kernels (every Mamba2 and Nemotron-MoE launch is one row; verify and multi-sequence decode loop per row) | Lightning's MTP and C>1 decode are slow until written; the Venn report ranks them as the top two flags | New multi-row Mamba2 update + snapshot kernel, and a ReLU² grouped expert path via the TC-kernel parameterisation (11.5), each behind the stability gate |
+| Nemotron-H legacy bugs found by the survey (NoPE, the 0-byte conv rollback, unparseable Lightning config, a latent read/write race in `causal_conv1d_update_prefill_tp`) | Legacy is not a valid reference for this family | HF is the reference (7.2); the NoPE fix goes to main now; the others are recorded with file:line and fixed where they sit on a gated path |
 | Certification cost if landings are not batched | 5+ campaigns at ~5 GPU-hours each | Stacks per section 9; kernel-only package edits ride the closure-hash exemption where it applies |
