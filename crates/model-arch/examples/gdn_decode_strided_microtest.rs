@@ -17,7 +17,10 @@
 //! dynamic shared-memory reservations (the occupancy cap `GDN_DECODE_STRIDED_SMEM_CAP_BYTES`
 //! was chosen from this sweep).
 //!
-//! Argument: value heads, 32 (Qwen3.6-35B-A3B, default) or 48 (Qwen3.8-27B).
+//! Arguments: value heads, 32 (Qwen3.6-35B-A3B, default) or 48 (Qwen3.8-27B); optionally a
+//! model target (e.g. `qwen3.6-35b-a3b`) whose gated_delta_rule shadow to test. Or
+//! `--ab old.ptx,new.ptx`: two nvcc builds of one gated_delta_rule source pair (same flags),
+//! whose per-sequence and strided entries must agree byte for byte at B = 1 and 128.
 //!
 //! Run (GB10):
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
@@ -37,7 +40,12 @@ const MAX_B: usize = 128;
 /// (Qwen3.8-27B).
 fn nv() -> usize {
     static NV: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *NV.get_or_init(|| std::env::args().nth(1).and_then(|a| a.parse().ok()).unwrap_or(32))
+    *NV.get_or_init(|| {
+        std::env::args()
+            .nth(1)
+            .and_then(|a| a.parse().ok())
+            .unwrap_or(32)
+    })
 }
 
 fn state() -> usize {
@@ -78,7 +86,12 @@ fn down(g: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u8>> {
 
 /// 2026-09-29: The first differing byte, as an error.
 fn same(what: &str, a: &[u8], b: &[u8]) -> Result<()> {
-    ensure!(a.len() == b.len(), "{what}: length {} vs {}", a.len(), b.len());
+    ensure!(
+        a.len() == b.len(),
+        "{what}: length {} vs {}",
+        a.len(),
+        b.len()
+    );
     if let Some(i) = a.iter().zip(b).position(|(x, y)| x != y) {
         anyhow::bail!("{what}: byte {i} differs ({} vs {})", a[i], b[i]);
     }
@@ -158,8 +171,101 @@ fn strided(
         .launch(0)
 }
 
+/// 2026-09-29: Two PTX builds of gated_delta_rule (`old,new`): the per-sequence and strided
+/// entries of `new` must reproduce `old`'s output and state bytes at B = 1 and 128, with the
+/// state-norm clamp head driven as in the main sweep. A flipped bit is refused first.
+fn ab_ptx(pair: &str) -> Result<()> {
+    let (old, new) = pair
+        .split_once(',')
+        .ok_or_else(|| anyhow::anyhow!("--ab wants old.ptx,new.ptx"))?;
+    let leak =
+        |p: &str| -> Result<&'static [u8]> { Ok(Box::leak(std::fs::read(p)?.into_boxed_slice())) };
+    let modules = vec![("gdr_old", leak(old)?), ("gdr_new", leak(new)?)];
+    let gpu = MetraleCudaBackend::new(0, &modules)?;
+    let g: &dyn GpuBackend = &gpu;
+    let mut rng = Lcg(0x6764_6e2d_6162);
+    let mut h0 = rng.v(MAX_B * state(), -0.05, 0.05);
+    for e in &mut h0[state() + 5 * KD * VD..state() + 6 * KD * VD] {
+        *e *= 400.0;
+    }
+    let x = Inputs {
+        q: up(g, &rng.v(MAX_B * NK * KD, -0.1, 0.1))?,
+        k: up(g, &rng.v(MAX_B * NK * KD, -0.1, 0.1))?,
+        v: up(g, &rng.v(MAX_B * nv() * VD, -1.0, 1.0))?,
+        gate: up(g, &rng.v(MAX_B * nv(), 0.6, 0.999))?,
+        beta: up(g, &rng.v(MAX_B * nv(), 0.05, 0.95))?,
+        h0,
+    };
+    let (h_a, h_b) = (up(g, &x.h0)?, up(g, &x.h0)?);
+    let (out_a, out_b) = (
+        up(g, &vec![0.0; MAX_B * nv() * VD])?,
+        up(g, &vec![0.0; MAX_B * nv() * VD])?,
+    );
+    let mut control_done = false;
+    for entry in [
+        "gated_delta_rule_decode_f32",
+        "gated_delta_rule_decode_f32_strided",
+    ] {
+        let (ka, kb) = (g.kernel("gdr_old", entry)?, g.kernel("gdr_new", entry)?);
+        for b_count in [1usize, 128] {
+            g.copy_h2d(&bytes(&x.h0), h_a)?;
+            g.copy_h2d(&bytes(&x.h0), h_b)?;
+            if entry.ends_with("strided") {
+                strided(g, ka, &x, h_a, out_a, b_count, 0)?;
+                strided(g, kb, &x, h_b, out_b, b_count, 0)?;
+            } else {
+                per_seq(g, ka, &x, h_a, out_a, b_count)?;
+                per_seq(g, kb, &x, h_b, out_b, b_count)?;
+            }
+            let (oa, ob) = (
+                down(g, out_a, b_count * nv() * VD)?,
+                down(g, out_b, b_count * nv() * VD)?,
+            );
+            if !control_done {
+                let mut bad = ob.clone();
+                bad[7] ^= 1;
+                ensure!(
+                    same("control", &oa, &bad).is_err(),
+                    "a flipped bit was admitted"
+                );
+                println!("KNOWN_BAD flipped-bit: refused");
+                control_done = true;
+            }
+            same(&format!("{entry} B={b_count} output"), &oa, &ob)?;
+            let (sa, sb) = (
+                down(g, h_a, b_count * state())?,
+                down(g, h_b, b_count * state())?,
+            );
+            same(&format!("{entry} B={b_count} state"), &sa, &sb)?;
+            println!("{entry} B={b_count}: old == new, output and state byte for byte");
+        }
+    }
+    println!("ALL PASS: the two builds agree byte for byte");
+    Ok(())
+}
+
 fn main() -> Result<()> {
-    let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
+    // 2026-09-29: `--ab old.ptx,new.ptx`: compare two builds of a gated_delta_rule module
+    // (same nvcc flags, two sources) byte for byte and exit.
+    if std::env::args().nth(1).as_deref() == Some("--ab") {
+        let pair = std::env::args()
+            .nth(2)
+            .ok_or_else(|| anyhow::anyhow!("--ab wants old.ptx,new.ptx"))?;
+        return ab_ptx(&pair);
+    }
+    // 2026-09-29: The second argument names a model target (`kernels/gb10/<model>`), whose
+    // shadow of the gated_delta_rule module then runs; without it, the default target.
+    let modules = match std::env::args().nth(2) {
+        Some(model) => {
+            metrale_kernels::all_ptx_sets()
+                .into_iter()
+                .find(|s| s.target.model == model)
+                .ok_or_else(|| anyhow::anyhow!("no kernel target for model {model}"))?
+                .modules
+        }
+        None => metrale_kernels::ptx_modules(),
+    };
+    let gpu = MetraleCudaBackend::new(0, &modules)?;
     let g: &dyn GpuBackend = &gpu;
     let per_k = g.kernel("gated_delta_rule", "gated_delta_rule_decode_f32")?;
     let str_k = g.kernel("gated_delta_rule", "gated_delta_rule_decode_f32_strided")?;
@@ -245,16 +351,27 @@ fn main() -> Result<()> {
         };
         let (so, uo) = ulp(&oa, &ob);
         let (ss, us) = ulp(&sa, &sb);
-        println!("B={b_count}: output {so} words differ (max {uo} ulp), state {ss} differ (max {us} ulp)");
+        println!(
+            "B={b_count}: output {so} words differ (max {uo} ulp), state {ss} differ (max {us} ulp)"
+        );
         if so > 0 {
-            let f = |v: &[u8], i: usize| f32::from_le_bytes([v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3]]);
+            let f = |v: &[u8], i: usize| {
+                f32::from_le_bytes([v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3]])
+            };
             for i in [0usize, 1, 2, 3, 128, 4095] {
-                println!("  out[{i}] per-seq {:e} strided {:e} ratio {:.9}", f(&oa, i), f(&ob, i), f(&oa, i) as f64 / f(&ob, i) as f64);
+                println!(
+                    "  out[{i}] per-seq {:e} strided {:e} ratio {:.9}",
+                    f(&oa, i),
+                    f(&ob, i),
+                    f(&oa, i) as f64 / f(&ob, i) as f64
+                );
             }
         }
         same(&format!("B={b_count} state"), &sa, &sb)?;
         same(&format!("B={b_count} output"), &oa, &ob)?;
-        if b_count >= 2 {
+        // 2026-09-29: The common module clamps the state norm; a model shadow may not (the
+        // qwen3.6-35b-a3b decode kernels do not), and byte equality covers both.
+        if b_count >= 2 && std::env::args().nth(2).is_none() {
             // 2026-09-29: The clamp fired on the driven head: its state norm is at most 1000.
             let head = &sb[(state() + 5 * KD * VD) * 4..(state() + 6 * KD * VD) * 4];
             let norm: f64 = head
@@ -282,7 +399,15 @@ fn main() -> Result<()> {
         );
         // 2026-09-29: Dynamic shared memory per CTA caps the CTAs resident per SM, and with
         // them the bytes of H in flight between a CTA's two passes over its state.
-        for smem in [0u32, 8 << 10, 12 << 10, 16 << 10, 24 << 10, 32 << 10, 44 << 10] {
+        for smem in [
+            0u32,
+            8 << 10,
+            12 << 10,
+            16 << 10,
+            24 << 10,
+            32 << 10,
+            44 << 10,
+        ] {
             let us_b = time(&|| strided(g, str_k, &x, h_b, out_b, b_count, smem))?;
             line += &format!(" | smem {:2}K {us_b:7.1}us ({:5.1})", smem >> 10, gbs(us_b));
         }
