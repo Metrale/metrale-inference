@@ -9,7 +9,7 @@ use clap::Parser;
 use metrale_model_layers::layers::ExpertQuantization;
 use std::path::PathBuf;
 
-use super::flag_values::{ExpertQuantizationArg, ForwardArg, WeightQuantizationArg};
+use super::flag_values::{ExpertQuantizationArg, WeightQuantizationArg};
 
 mod scheduling;
 mod service;
@@ -325,14 +325,6 @@ pub struct ServeArgs {
     /// before KV fp8 38.4 GB, nvfp4-gate-up 49.6 GB, nvfp4 55.2 GB.
     #[arg(long, value_enum, default_value_t = ExpertQuantizationArg(ExpertQuantization::Fp8))]
     pub expert_quantization: ExpertQuantizationArg,
-
-    /// Which forward decode runs: `legacy`, the hand-written layer loops, or `circuit`, the
-    /// program compiled at boot from the model's circuit plan (`met circuit show`);
-    /// `circuit-reference` compiles the plan without its bit-identical fusions. The circuit
-    /// covers single-sequence decode so far; boot refuses a model, recipe or switch it does not
-    /// model. No environment fallback.
-    #[arg(long, value_enum, default_value_t = ForwardArg::Legacy)]
-    pub forward: ForwardArg,
 
     /// Sequential-decode-exact GDN/SSM verify chain, opt-in (default: off).
     ///
