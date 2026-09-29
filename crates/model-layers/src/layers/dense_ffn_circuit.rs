@@ -32,6 +32,14 @@ impl DenseFfnLayer {
                 self.activation != FfnActivation::SiLU,
                 "a non-SiLU FFN activation",
             ),
+            (
+                self.w8a8.is_some(),
+                "declared W8A8 FFN projections (not bound yet)",
+            ),
+            (
+                self.single_row_w4a4(),
+                "a declared-W4A4 single-row FFN (not bound yet)",
+            ),
         ];
         for (present, what) in arms {
             if present {

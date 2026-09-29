@@ -60,80 +60,80 @@ class and exact citation.
 | `residual_add_post_norm` | reference | k/rms_norm.cu:379-382 (FP32 sum of squares before the BF16 rounding: not the unfused chain); ml/qwen3_ssm/trait_decode.rs:117-129; ml/qwen3_attention/trait_impl/decode_inner.rs:241-253; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:247-261; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:131-143; ml/qwen3_ssm/trait_decode_batched.rs:284; ml/mtp_head/forward.rs:312-324 |
 | `ffn_residual_add` | reference | ml/qwen3_ssm/trait_decode.rs:143-150; ml/qwen3_attention/trait_impl/decode_inner.rs:384-391; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:147-154; ml/qwen3_ssm/trait_decode_multi_seq.rs:212,235 (after the prefill and km arms); ml/qwen3_ssm/trait_decode_batched.rs:323-334; ml/mtp_head/forward.rs:343 |
 | `ffn_residual_add_per_row_gdn_k2k3` | reference | ml/qwen3_ssm/trait_decode_multi_seq.rs:178-196 (the n == 2 | 3 arm adds each row's FFN output in a loop, :192) |
-| `final_norm` | reference | me/decode_a3.rs:102-105; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:346-356 |
-| `gdn_ba_gates_gemv_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:177-192; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (per-sequence loop when the batched recurrence is off, HARDWARE.toml:118) |
+| `final_norm` | reference | me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:346-356 |
+| `gdn_ba_gates_gemv_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (per-sequence loop when the batched recurrence is off, HARDWARE.toml:118) |
 | `gdn_ba_gates_gemm_verify` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:37-59 (kill switch METRALE_NO_BATCHED_BA_GATES) |
-| `gdn_conv_l2_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:209-229; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:99-113 |
+| `gdn_conv_l2_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:213-233; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:99-113 |
 | `gdn_conv_l2_bf16_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:105-110 (BF16 conv rows, not bitwise equal to decode's FP32 conv), :114-331 |
-| `gdn_recurrence_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:262,326-343; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:195-212 |
-| `gdn_recurrence_f32_fused_norm` | differs (gdn_fused_norm) | ml/qwen3_ssm/ssm_forward.rs:280-303 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:940-942,1051 (the fused kernel clamps the state norm, the unfused one does not) |
+| `gdn_recurrence_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:266,330-347; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:195-212 |
+| `gdn_recurrence_f32_fused_norm` | differs (gdn_fused_norm) | ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:940-942,1051 (the fused kernel clamps the state norm, the unfused one does not) |
 | `gdn_recurrence_wy2_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
 | `gdn_recurrence_wy3_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
 | `gdn_recurrence_wy4_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
 | `gdn_fused_conv_norm_k2_verify` | differs (gdn_fused_verify) | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:57-67 (METRALE_GDN_FUSED_VERIFY=1; checked at cos >= 0.99999, not bitwise) |
-| `gdn_out_norm_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:350-368; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:222-236 |
+| `gdn_out_norm_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:354-372; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:222-236 |
 | `gdn_out_norm_prefill_verify` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:138-157 (kill switch METRALE_NO_BATCHED_GDN_NORM) |
-| `deinterleave_qg` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:65-74; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:266-283; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:171-183 |
+| `deinterleave_qg` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:70-79; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-286; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:171-183 |
 | `qk_norm_rows` | reference | ml/qwen3_attention/decode/attention_forward.rs:140-151,174-186; ml/mtp_head/forward.rs:215-236 |
-| `qk_norm_strided` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:222-271 (bit-identical to rms_norm per row) |
+| `qk_norm_strided` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:234-283 (bit-identical to rms_norm per row) |
 | `rope_mrope_interleaved` | reference | ml/qwen3_attention/decode/attention_forward/rope.rs:70-88 |
 | `rope_strided` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn.rs:48-87 (plain RoPE; bit-identical to MRoPE while pos_t == pos_h == pos_w, k/rope_mrope_interleaved.cu:15-17) |
 | `rope_plain_draft` | reference | ml/mtp_head/forward.rs:264-277 |
 | `kv_write_bf16` | reference | ml/qwen3_attention/decode/write_kv_cache.rs:428-444; ml/qwen3_attention/trait_impl/multi_seq/attn.rs:159-176; ml/mtp_head/forward/attend.rs:36-73 (the draft KV is BF16 under mtp_quantization bf16, ml/mtp_head/new.rs:228-236) |
-| `paged_attention_bf16` | reference | ml/qwen3_attention/decode/run_paged_decode/bf16_fp8.rs:125-149; ml/qwen3_attention/decode/splitk_dispatch.rs:241-251 (no BF16 split-K pair on GB10); ml/qwen3_attention/trait_impl/multi_seq/attn.rs:231-306 |
+| `paged_attention_bf16` | reference | ml/qwen3_attention/decode/run_paged_decode/bf16_fp8.rs:182-201; ml/qwen3_attention/decode/splitk_dispatch.rs:241-251 (no BF16 split-K pair on GB10); ml/qwen3_attention/trait_impl/multi_seq/attn.rs:231-306 |
 | `sigmoid_gate_mul` | reference | ml/qwen3_attention/decode/attention_forward.rs:421-432; ml/mtp_head/forward.rs:298-306 |
 | `sigmoid_gate_mul_batched` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:59-81 |
-| `w4a16_gemv_sw_1row` | reference | ml/qwen3_ssm/ssm_forward.rs:86-101,386-416; ml/qwen3_attention/decode/attention_forward_oproj.rs:80-91; ml/dense_ffn_decode.rs:365-376 (gemv_sw on unless METRALE_NO_GEMV_SW=1, ml/ops/model_levers_resolve.rs:53; bit-identical to w4a16_gemv, k/w4a16_gemv_fused.cu:305-307) |
-| `w4a16_gemv_qg_1row` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:75-113 (K walk differs from w4a16_gemv, k/w4a16_gemv.cu:1447-1449) |
-| `w4a16_gemv_dual_kv_1row` | reference | ml/qwen3_attention/decode/attention_forward_kv.rs:76-93 (always the non-_sw dual) |
-| `w4a16_gemv_dual_sw_gate_up_1row` | reference | ml/dense_ffn_decode.rs:314-341 |
-| `silu_mul_split_1row` | reference | ml/dense_ffn_decode.rs:350-364 (decode_split_silu = true, kernels/gb10/HARDWARE.toml:164, kill switch METRALE_NO_DECODE_SPLIT_SILU) |
-| `silu_input_down_1row` | differs (decode_fused_silu) | ml/dense_ffn_decode.rs:386-412; ml/dense_ffn_fp8_down.rs:28-31 (keeps the SiLU product in FP32 where moe_silu_mul rounds it to BF16) |
-| `silu_mul_rows` | reference | ml/dense_ffn_decode_batch.rs:89-121,207-273 (forward_k2/k3/km); ml/mtp_head/moe_forward.rs:50-63 |
-| `w4a16_tc8_multi_seq` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:156-195,329-346; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:254-313; ml/dense_ffn_decode_batch.rs:207-273; ml/ops/quant_dispatch.rs:183-205; ml/ops/gemv_tc.rs:56-74,137-148 (tc8 rounds differently from the CUDA-core tiers, k/w4a16_gemv_tc.cu:26-29) |
-| `w4a16_tc8_verify_k4` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:94; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:91-107; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:266-313; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:326-362; ml/dense_ffn_decode_batch.rs:207-273 |
-| `w4a16_tc8_gate_up_km` | reference | ml/dense_ffn_decode_batch.rs:207-273 (try_forward_km: gate and up are two launches); arms: ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:178-208 (4..=ffn_proj_max_rows() = 8), ml/qwen3_ssm/trait_decode_multi_seq.rs:211-230, ml/qwen3_ssm/trait_decode_batched.rs:348-365 |
-| `w4a16_batch2_verify` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:240-251; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:191-201; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:337-362; ml/dense_ffn_decode_batch.rs:89-121 (bit-identical per row to w4a16_gemv, k/w4a16_gemv.cu:454) |
-| `w4a16_batch2_ms_o_down` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:337-362; ml/dense_ffn_decode_batch.rs:89-121 (forward_k2 down) |
-| `w4a16_batch3_verify` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:214-225; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:180-190; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:326-336; ml/dense_ffn_decode_batch.rs:123-184 |
-| `w4a16_dual_batch2_gate_up` | reference | ml/dense_ffn_decode_batch.rs:89-121 (forward_k2); arms ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:153-176, ml/qwen3_ssm/trait_decode_multi_seq.rs:178-196, ml/qwen3_ssm/trait_decode_batched.rs:337-347 |
-| `w4a16_dual_batch3_gate_up` | reference | ml/dense_ffn_decode_batch.rs:123-184 (forward_k3); arm ml/qwen3_ssm/trait_decode_batched.rs:326-336 |
+| `w4a16_gemv_sw_1row` | reference | ml/qwen3_ssm/ssm_forward.rs:90-105,389-422; ml/qwen3_attention/decode/attention_forward_oproj.rs:82-93; ml/dense_ffn_decode.rs:386-397 (gemv_sw on unless METRALE_NO_GEMV_SW=1, ml/ops/model_levers_resolve.rs:53; bit-identical to w4a16_gemv, k/w4a16_gemv_fused.cu:305-307) |
+| `w4a16_gemv_qg_1row` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:80-118 (K walk differs from w4a16_gemv, k/w4a16_gemv.cu:1447-1449) |
+| `w4a16_gemv_dual_kv_1row` | reference | ml/qwen3_attention/decode/attention_forward_kv.rs:80-97 (always the non-_sw dual) |
+| `w4a16_gemv_dual_sw_gate_up_1row` | reference | ml/dense_ffn_decode.rs:335-362 |
+| `silu_mul_split_1row` | reference | ml/dense_ffn_decode.rs:371-385 (decode_split_silu = true, kernels/gb10/HARDWARE.toml:164, kill switch METRALE_NO_DECODE_SPLIT_SILU) |
+| `silu_input_down_1row` | differs (decode_fused_silu) | ml/dense_ffn_decode.rs:407-433; ml/dense_ffn_fp8_down.rs:28-31 (keeps the SiLU product in FP32 where moe_silu_mul rounds it to BF16) |
+| `silu_mul_rows` | reference | ml/dense_ffn_decode_batch.rs:91-123,238-307 (forward_k2/k3/km); ml/mtp_head/moe_forward.rs:50-63 |
+| `w4a16_tc8_multi_seq` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207,353-370; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:257-316; ml/dense_ffn_decode_batch.rs:238-307; ml/ops/quant_dispatch.rs:183-205; ml/ops/gemv_tc.rs:56-74,137-148 (tc8 rounds differently from the CUDA-core tiers, k/w4a16_gemv_tc.cu:26-29) |
+| `w4a16_tc8_verify_k4` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307 |
+| `w4a16_tc8_gate_up_km` | reference | ml/dense_ffn_decode_batch.rs:238-307 (try_forward_km: gate and up are two launches); arms: ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:178-208 (4..=ffn_proj_max_rows() = 8), ml/qwen3_ssm/trait_decode_multi_seq.rs:211-230, ml/qwen3_ssm/trait_decode_batched.rs:348-365 |
+| `w4a16_batch2_verify` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:251-262; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:202-212; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/dense_ffn_decode_batch.rs:91-123 (bit-identical per row to w4a16_gemv, k/w4a16_gemv.cu:454) |
+| `w4a16_batch2_ms_o_down` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/dense_ffn_decode_batch.rs:91-123 (forward_k2 down) |
+| `w4a16_batch3_verify` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:225-236; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:191-201; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-340; ml/dense_ffn_decode_batch.rs:125-188 |
+| `w4a16_dual_batch2_gate_up` | reference | ml/dense_ffn_decode_batch.rs:91-123 (forward_k2); arms ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:153-176, ml/qwen3_ssm/trait_decode_multi_seq.rs:178-196, ml/qwen3_ssm/trait_decode_batched.rs:337-347 |
+| `w4a16_dual_batch3_gate_up` | reference | ml/dense_ffn_decode_batch.rs:125-188 (forward_k3); arm ml/qwen3_ssm/trait_decode_batched.rs:326-336 |
 | `w4a16_qg_batch2` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:44-159 (matches w4a16_gemv_qg bit for bit, k/w4a16_gemv.cu:1656-1658) |
 | `w4a16_qg_batch3` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:44-159 |
 | `w4a16_dual_batch2_kv` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:165-192 (w4a16_gemv_qg's K walk, not w4a16_gemv_dual's, k/w4a16_gemv.cu:1788; the copies into qkv_buf are D2D) |
 | `w4a16_dual_batch3_kv` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:165-192 |
-| `w4a16_gemm_t_p3_rows` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:156-195; ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:329-428; ml/qwen3_ssm/kernel_select.rs:29-97 (E4M3 activations, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:344-347) |
-| `w4a16_gemm_t_k64_n64_p3_rows` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:329-346; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:337-362; ml/mod.rs:140-177 (K = 6144 takes the k64 tile; 40 * ceil(m / 64) <= 64 picks n64) |
-| `w4a16_gemm_t_m128_rows` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:156-195 (m >= 65 unless METRALE_NO_SSM_M128); ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:329-428; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:337-362 |
-| `w4a16_gemm_t_k64_p3_gdn_out_wide` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:329-346; ml/qwen3_ssm/kernel_select.rs:80-97 (m128 refused: 40 CTAs < 48 SMs; same bits as k64_n64_p3, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:1629-1631) |
-| `w4a4_downcast_mx8` | differs (w4a4_downcast) | ml/ops/w4a4_proj.rs:58,225-247,338 (--w4a4-downcast, default off: crates/server/src/cli/serve_args.rs:250-260; an accuracy change, w4a4_proj.rs:6-10) |
+| `w4a16_gemm_t_p3_rows` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207; ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:340-441; ml/qwen3_ssm/kernel_select.rs:30-98 (E4M3 activations, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:344-347) |
+| `w4a16_gemm_t_k64_n64_p3_rows` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:353-370; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/mod.rs:142-179 (K = 6144 takes the k64 tile; 40 * ceil(m / 64) <= 64 picks n64) |
+| `w4a16_gemm_t_m128_rows` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207 (m >= 65 unless METRALE_NO_SSM_M128); ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:340-441; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366 |
+| `w4a16_gemm_t_k64_p3_gdn_out_wide` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:353-370; ml/qwen3_ssm/kernel_select.rs:81-98 (m128 refused: 40 CTAs < 48 SMs; same bits as k64_n64_p3, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:1629-1631) |
+| `w4a4_downcast_mx8` | differs (w4a4_downcast) | ml/ops/w4a4_proj.rs:40,191-231 (--w4a4-downcast under --weight-quantization nvfp4, default off: crates/server/src/cli/serve_args.rs:285-306; an accuracy change, w4a4_proj.rs:6-10) |
 | `ffn_mmq16_gate_up_gdn` | reference | ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (n >= METRALE_SSM_FFN_PREFILL_MIN_N, default 5, ahead of the km arm: :24-40); ml/dense_ffn_prefill_nvfp4.rs:51-55 |
 | `ffn_mmq16_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 (the tile path leaves the down scale to metrale_nvfp4_scale_bf16) |
 | `ffn_mmq16_gate_up` | reference | ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 (a dense FFN above the km band); ml/dense_ffn_prefill_nvfp4.rs:51-55 |
 | `ffn_mmq16_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
 | `ffn_mmq32_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:56-60 |
 | `ffn_mmq32_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:56-60,272-286,330-372 |
-| `ffn_mmq64_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:61-66 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:250-253) |
+| `ffn_mmq64_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:61-66 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:232-235) |
 | `ffn_mmq64_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:61-66,272-286,330-372 |
 | `ffn_mmq_pipe_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:67-68; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe) |
 | `ffn_mmq_pipe_act_down` | reference | ml/ops/nvfp4_mmq.rs:175-183 (the pipe applies the down scale in its store, so no metrale_nvfp4_scale_bf16) |
-| `w8a16_m32` | reference | ml/qwen3_ssm/row_tier_proj.rs:64-117; ml/qwen3_attention/decode/attention_forward/q_proj.rs:49-61; ml/qwen3_attention/decode/attention_forward_kv.rs:45-72; ml/ops/gemm_quant_w8a16.rs:272-274; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:231-244; ml/ops/w8a16_gemm_pipelined_m32.rs:287-313 |
-| `w8a16_m64` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212,253-258 (canonical chunk 64); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:231-244; ml/ops/w8a16_gemm_pipelined_m32.rs:314-326 |
-| `w8a16_m64_attn_chunked` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:253-285 (64-row chunks); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:231-244,275-300 (step 64) |
-| `w8a16_full_gdn_wide` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:89-155,233-299; ml/ops/w8a16_gemm_pipelined_m32.rs:287-340 (w8a16_gemm_pipelined_by_m above 64 rows) |
+| `w8a16_m32` | reference | ml/qwen3_ssm/row_tier_proj.rs:64-117; ml/qwen3_attention/decode/attention_forward/q_proj.rs:54-66; ml/qwen3_attention/decode/attention_forward_kv.rs:49-76; ml/ops/gemm_quant_w8a16.rs:272-274; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248; ml/ops/w8a16_gemm_pipelined_m32.rs:318-344 |
+| `w8a16_m64` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212,253-258 (canonical chunk 64); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248; ml/ops/w8a16_gemm_pipelined_m32.rs:345-357 |
+| `w8a16_m64_attn_chunked` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:253-285 (64-row chunks); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248,279-304 (step 64) |
+| `w8a16_full_gdn_wide` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:101-167,257-323; ml/ops/w8a16_gemm_pipelined_m32.rs:318-371 (w8a16_gemm_pipelined_by_m above 64 rows) |
 | `moe_router_gemv` | reference | ml/moe/forward/route.rs:36 |
 | `moe_topk_softmax` | reference | ml/moe/forward/route.rs:117-128 (ties go to the lower expert index) |
-| `moe_gate_up_shared_fp8` | reference | ml/moe/forward.rs:231-258 (grid y 0..7 routed experts, y = 8 the shared expert); ml/moe/init.rs:431-434 |
-| `moe_silu_down_shared_fp8` | reference | ml/moe/forward.rs:259-300; ml/moe/init.rs:435-438 |
-| `moe_weighted_sum_blend` | reference | ml/moe/forward.rs:442-472 (sum of w * out plus sigmoid(x . seg) * shared, rounded to BF16 once); the EP reduce is a no-op without EP, ml/moe/forward/ep_reduce.rs:12-50 |
+| `moe_gate_up_shared_fp8` | reference | ml/moe/forward.rs:235-262 (grid y 0..7 routed experts, y = 8 the shared expert); ml/moe/init.rs:431-434 |
+| `moe_silu_down_shared_fp8` | reference | ml/moe/forward.rs:263-304; ml/moe/init.rs:435-438 |
+| `moe_weighted_sum_blend` | reference | ml/moe/forward.rs:446-476 (sum of w * out plus sigmoid(x . seg) * shared, rounded to BF16 once); the EP reduce is a no-op without EP, ml/moe/forward/ep_reduce.rs:12-50 |
 | `moe_grouped_router_rows` | reference | ml/moe/forward_fp8_grouped_router.rs:95-137 (the per-row router repeats the one-row router's bits, :6-12); arms ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:94-130, ml/qwen3_ssm/trait_decode_multi_seq.rs:154-170, ml/qwen3_ssm/trait_decode_batched.rs:304-320 |
-| `moe_grouped_topk_sort` | reference | ml/moe/forward_fp8_grouped_decode.rs:258-289 (FP8_GROUPED_DECODE_MAX_ROWS = 64, :28) |
-| `moe_gate_up_act_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:290-311; k/moe_shared_expert_fused_fp8_grouped.cu:17-22 (writes the FP32 SiLU product; per row equal to moe_shared_expert_fused_fp8.cu bit for bit) |
-| `moe_down_act_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:312-330 |
-| `moe_blend_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:331-347 |
+| `moe_grouped_topk_sort` | reference | ml/moe/forward_fp8_grouped_decode.rs:268-300 (FP8_GROUPED_DECODE_MAX_ROWS = 64, :28) |
+| `moe_gate_up_act_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:300-321; k/moe_shared_expert_fused_fp8_grouped.cu:17-22 (writes the FP32 SiLU product; per row equal to moe_shared_expert_fused_fp8.cu bit for bit) |
+| `moe_down_act_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:322-340 |
+| `moe_blend_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:364-380 |
 | `moe_prefill_fp8_w8a8_wide` | reference | ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 and ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (forward_prefill above the grouped cap); ml/moe/forward_prefill_fp8.rs:113-165 (shared W8A8 first, input quantized once), :166-265 (router: dense_gemm_router below MOE_ROUTER_RT_MIN_ROWS = 1024, ml/moe/helpers_c.rs:246-283), :313-395; ml/moe/forward_prefill_fp8/gate_up.rs:57-160 and down.rs:40-140 (ctx.decode_step declines the adaptive and E4M3 arms, ml/moe/adaptive_fp8.rs:105-116); ml/moe/forward_prefill_fp8/combine.rs:40-60 (W8A8 activations: not row-invariant with paths A and B) |
-| `lm_head_bf16_gemv` | reference | mm/impl_a3_lm_head.rs:428-438 (use_fp32_logits is false, mm/impl_a1/kernels.rs:200) |
-| `lm_head_bf16_batchm` | reference | me/lm_head_batched.rs:133-162 (m <= lm_head_batchm_max = 8, kernels/gb10/HARDWARE.toml:115); mm/impl_a3_lm_head.rs:177-229 (verify); per row bit-identical to dense_gemv_bf16, k/dense_gemv_bf16_batchm.cu:16 |
+| `lm_head_bf16_gemv` | reference | mm/impl_a3_lm_head.rs:392-402 (use_fp32_logits is false, mm/impl_a1/kernels.rs:200) |
+| `lm_head_bf16_batchm` | reference | me/lm_head_batched.rs:133-162 (m <= lm_head_batchm_max = 8, kernels/gb10/HARDWARE.toml:115); mm/impl_a3_lm_head.rs:150-202 (verify); per row bit-identical to dense_gemv_bf16, k/dense_gemv_bf16_batchm.cu:16 |
 | `lm_head_bf16_gemm` | reference | me/lm_head_batched.rs:133-162 |
 | `draft_lm_head_nvfp4` | reference | ml/mtp_head/forward.rs:366-377 (the draft head is NVFP4 whatever the target head: a draft-only copy when the target head is BF16, mm/impl_a1/ssm_setup.rs:48-50) |
 | `draft_argmax` | reference | ml/mtp_head/forward.rs:437-455 |

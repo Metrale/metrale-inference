@@ -170,7 +170,7 @@ fn live(forward: &str, digest: Option<&str>) -> super::LiveForward {
 
 #[test]
 fn a_legacy_forward_adds_no_keys_and_a_circuit_adds_its_digest() {
-    let mut m = disclosure(None, false, false, false, None);
+    let mut m = disclosure(None, false, false, false, None, "nvfp4");
     let before = m.clone();
     super::merge_live_forward(&mut m, "legacy", &live("legacy", None)).unwrap();
     assert_eq!(m, before);

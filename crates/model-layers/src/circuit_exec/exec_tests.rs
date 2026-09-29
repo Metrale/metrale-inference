@@ -38,6 +38,7 @@ fn nvfp4(tag: u64) -> BoundWeight {
         weight_scale_2: 1.0,
         input_scale: DevicePtr::NULL,
         weight_scale_2_vec: DevicePtr::NULL,
+        act: Default::default(),
     })
 }
 

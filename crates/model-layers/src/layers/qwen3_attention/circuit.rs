@@ -82,6 +82,10 @@ impl CircuitBindings for Qwen3AttentionLayer {
                 "proportional RoPE",
             ),
             (self.o_dense_bf16.is_some(), "a BF16 output projection"),
+            (
+                self.w8a8.is_some(),
+                "declared W8A8 attention projections (not bound yet)",
+            ),
         ];
         for (present, what) in arms {
             if present {

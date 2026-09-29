@@ -32,6 +32,10 @@ impl CircuitBindings for Qwen3SsmLayer {
             (self.qkvz_q2.is_some(), "a packed-Q2 qkvz projection"),
             (self.out_proj_fp8w.is_some(), "an FP8 out_proj"),
             (
+                self.w8a8.is_some(),
+                "declared W8A8 GDN projections (not bound yet)",
+            ),
+            (
                 self.conv1d_l2norm_f32_k.0 == 0
                     || self.gdn_f32_k.0 == 0
                     || self.gated_rms_norm_f32_k.0 == 0,
