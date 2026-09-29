@@ -64,7 +64,7 @@ pub fn set_marconi_min_tokens(v: usize) -> bool {
 /// set it; [`crate::speculative::mtp_max_seqs`] caches its env read.
 ///
 /// The default cap is 32 (4 with `METRALE_NO_MTP_K_LADDER`), so `multi_seq` is
-/// true and the carry is off unless `METRALE_MTP_MAX_SEQS` is at most 1,
+/// true and the carry is off unless the dispatch cap (`--mtp-max-seqs`) is at most 1,
 /// whatever `cfg.carry` says. Report this, not `cfg.carry`, as the carry's state.
 pub fn carry_armed_with(cfg: crate::drafter_context::DrafterContext, multi_seq: bool) -> bool {
     cfg.carry && !multi_seq

@@ -5,7 +5,7 @@
 //!
 //! Owner: scheduler.
 //! Invariants:
-//! - `step_mtp` calls this only when `METRALE_MTP_MAX_SEQS` is above 1, the
+//! - `step_mtp` calls this only when the MTP dispatch cap (`--mtp-max-seqs`) is above 1, the
 //!   serve has no DFlash drafter, `mtp_batch_verify` is on, and the chunk
 //!   holds at least 2 grammarless sequences that `model.can_batch_verify`
 //!   accepts.

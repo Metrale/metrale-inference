@@ -11,7 +11,10 @@ pub mod ladder;
 pub mod tree_shape;
 pub mod verify_key;
 
-pub use ladder::{mtp_ladder_disabled, mtp_ladder_drafts, mtp_max_seqs};
+pub use ladder::{
+    DEFAULT_MTP_MAX_SEQS, MAX_MTP_MAX_SEQS, MtpMaxSeqsSource, mtp_ladder_disabled,
+    mtp_ladder_drafts, mtp_max_seqs, resolve_mtp_max_seqs, set_mtp_max_seqs,
+};
 mod knobs;
 pub use knobs::{
     EP_CMD_MTP_PROPOSE, draft_conf_tau, hidden_fingerprint, mtp_accept_debug, mtp_catchup_enabled,

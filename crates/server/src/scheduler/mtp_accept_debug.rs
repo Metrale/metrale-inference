@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// bucket; wider ones share the last.
 ///
 /// It must exceed the MTP dispatch cap
-/// ([`metrale_model_layers::speculative::mtp_max_seqs`], 32 by default), or
+/// ([`metrale_model_layers::speculative::mtp_max_seqs`], at most `MAX_MTP_MAX_SEQS`), or
 /// distinct widths share a bucket. A shared
 /// bucket mixes their statistics, and its flush carries the width of whichever
 /// caller tripped [`PERIOD`]; `AdaptiveRung::observe` ignores widths outside
@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 ///
 /// `METRALE_MTP_ACCEPT_FOLD_AT_16` (set, whatever its value) folds every width
 /// of 16 or more into bucket 16 instead.
-const MAX_N: usize = 33;
+const MAX_N: usize = metrale_model_layers::speculative::MAX_MTP_MAX_SEQS + 1;
 
 /// 2026-09-25: The bucket index for batch width `n`, used by
 /// [`AcceptBuckets::record`] and the aliasing test.
@@ -271,28 +271,23 @@ mod tests {
     #[test]
     fn bucket_table_covers_the_mtp_dispatch_cap() {
         assert_eq!(AcceptBuckets::new(false).buckets.len(), MAX_N);
-        // 2026-09-25: 32 is the default cap in `mtp_max_seqs`.
-        const { assert!(MAX_N > 32) };
-        // 2026-09-25: Checked against the live cap only when the override is unset.
-        if std::env::var_os("METRALE_MTP_MAX_SEQS").is_none() {
-            assert!(
-                MAX_N > metrale_model_layers::speculative::mtp_max_seqs(),
-                "MAX_N {MAX_N} does not cover dispatch cap {}",
-                metrale_model_layers::speculative::mtp_max_seqs()
-            );
-        }
+        // 2026-09-29: Every cap a serve accepts has its own bucket.
+        const { assert!(MAX_N > metrale_model_layers::speculative::MAX_MTP_MAX_SEQS) };
+        assert!(
+            MAX_N > metrale_model_layers::speculative::mtp_max_seqs(),
+            "MAX_N {MAX_N} does not cover dispatch cap {}",
+            metrale_model_layers::speculative::mtp_max_seqs()
+        );
     }
 
     // 2026-09-25: No two widths up to the dispatch cap share a bucket, checked
     // on `bucket_idx`. Skipped when either override is set.
     #[test]
     fn widths_up_to_the_cap_do_not_alias() {
-        if std::env::var_os("METRALE_MTP_ACCEPT_FOLD_AT_16").is_some()
-            || std::env::var_os("METRALE_MTP_MAX_SEQS").is_some()
-        {
+        if std::env::var_os("METRALE_MTP_ACCEPT_FOLD_AT_16").is_some() {
             return;
         }
-        for n in 0..=metrale_model_layers::speculative::mtp_max_seqs() {
+        for n in 0..=metrale_model_layers::speculative::MAX_MTP_MAX_SEQS {
             assert_eq!(
                 bucket_idx(n, false),
                 n,

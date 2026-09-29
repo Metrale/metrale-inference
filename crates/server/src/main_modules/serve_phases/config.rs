@@ -170,6 +170,25 @@ pub(crate) fn apply_model_default_num_drafts(
     args.num_drafts = Some(effective);
 }
 
+/// 2026-09-29: Resolve the multi-sequence MTP dispatch cap (`--mtp-max-seqs`, MODEL.toml
+/// `[behavior].mtp_max_seqs`, engine default) and publish it before the model sizes its
+/// verify pools. An out-of-range value refuses the serve.
+pub(crate) fn publish_mtp_max_seqs(
+    args: &cli::ServeArgs,
+    ptx_set: &metrale_kernels::TargetPtxSet,
+) -> anyhow::Result<()> {
+    use metrale_model_layers::speculative as spec;
+    let (n, source) = spec::resolve_mtp_max_seqs(
+        args.mtp_max_seqs,
+        ptx_set.behavior.mtp_max_seqs,
+        spec::mtp_ladder_disabled(),
+    )?;
+    if source != spec::MtpMaxSeqsSource::EngineDefault {
+        tracing::info!("MTP dispatch cap: {n} ({source:?})");
+    }
+    spec::set_mtp_max_seqs(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NumDraftsSource, resolve_num_drafts};

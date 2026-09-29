@@ -117,7 +117,7 @@ fn report(cfg: DrafterContext) {
         tracing::warn!(
             "MTP cross-turn carry is CONFIGURED ON but INERT: the MTP \
              dispatch cap is {} (>1), and the carry slot is single-sequence \
-             by design, so it is force-disabled. Set METRALE_MTP_MAX_SEQS=1 \
+             by design, so it is force-disabled. Pass --mtp-max-seqs 1 \
              to arm it; leave it unset to keep multi-sequence MTP.",
             crate::speculative::mtp_max_seqs(),
         );

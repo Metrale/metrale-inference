@@ -58,11 +58,9 @@ mod tests {
     /// width gate disagree: `2..=mtp_max_seqs()`.
     #[test]
     fn divergence_from_the_real_dispatch_gate_is_exactly_two_through_the_cap() {
-        // 2026-09-25: Either variable changes the cap, so the test checks
+        // 2026-09-25: The variable changes the cap, so the test checks
         // only the default.
-        if std::env::var_os("METRALE_MTP_MAX_SEQS").is_some()
-            || std::env::var_os("METRALE_NO_MTP_K_LADDER").is_some()
-        {
+        if std::env::var_os("METRALE_NO_MTP_K_LADDER").is_some() {
             return;
         }
         let cap = metrale_model_layers::speculative::mtp_max_seqs();

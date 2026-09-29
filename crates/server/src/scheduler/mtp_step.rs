@@ -106,7 +106,7 @@ pub fn step_mtp(
     }
 
     // 2026-09-25: Verify. MTP sequences are verified as a batch when at
-    // least two have drafts, `mtp_max_seqs > 1` (`METRALE_MTP_MAX_SEQS`) and
+    // least two have drafts, `mtp_max_seqs > 1` (`--mtp-max-seqs`) and
     // `METRALE_NO_MTP_BATCH_VERIFY` is not set. A sequence is batchable when
     // it has no grammar and at least `ladder_nd` drafts; drafts beyond
     // `ladder_nd` are truncated. The model decides per chunk through
