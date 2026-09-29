@@ -30,18 +30,17 @@ pub fn weight_quantization() -> WeightQuantTier {
 }
 
 /// 2026-09-28: Which decode families the policy may rely on. On: the dense per-channel W8A8
-/// family (`ops::w8a8_decode`). Held off until the full BFCL draw validates them on
-/// Qwen3.6-35B-A3B-FP8, whose score is sensitive to intermediate-activation precision: the MoE
+/// family (`ops::w8a8_decode`). 2026-09-29: On as well, validated on Qwen3.6-35B-A3B-FP8 by the
+/// full BFCL draw and agentic-webserver (`declared` against `nvfp4`, one binary, dgx3): the MoE
 /// expert W8A8 family (`moe/fp8_grouped_tc_w8a8.rs`) and the block-scaled attention/GDN W8A8
-/// adoption (`qwen35/load_layers/w8a8_adopt.rs`), which then decode W8A16 and say so at load.
-/// Also on: the batched FP8 lm_head (`model/lm_head_fp8_rows.rs`, one weight pass per 128 rows
+/// adoption (`qwen35/load_layers/w8a8_adopt.rs`). Also on: the batched FP8 lm_head (`model/lm_head_fp8_rows.rs`, one weight pass per 128 rows
 /// at every row count), so `declared` takes a checkpoint's declared FP8 head. Each W8A8
 /// family still checks at run time that its kernels resolved and the shapes fit.
 pub fn kernel_caps() -> metrale_config::weight_quantization::KernelCaps {
     metrale_config::weight_quantization::KernelCaps {
         w8a8_decode: true,
-        w8a8_moe_decode: false,
-        w8a8_block_scaled_decode: false,
+        w8a8_moe_decode: true,
+        w8a8_block_scaled_decode: true,
         fp8_lm_head_batched: true,
     }
 }

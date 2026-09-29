@@ -276,9 +276,12 @@ pub struct ServeArgs {
     /// unsloth/Qwen3.8-27B-NVFP4, `declared` runs W8A8 on the FP8-declared layers and the
     /// checkpoint's FP8 head (W8A8, batched): decode-floor recipe 24.2 tok/s at 1.52-1.69 J/tok
     /// against 26.8 tok/s at 1.93-2.15 J/tok; throughput recipe C1/C16/C128 20.4-20.7 /
-    /// 192.0-192.8 / 449.2-451.0 tok/s against 24.7/212.9/447.7. On Qwen3.6-35B-A3B-FP8 the
-    /// tiers produce identical output and speed until its W8A8 families are validated: its
-    /// experts and block-scaled attention/GDN decode W8A16 under both.
+    /// 192.0-192.8 / 449.2-451.0 tok/s against 24.7/212.9/447.7. On Qwen3.6-35B-A3B-FP8,
+    /// `declared` runs W8A8 on the routed and shared experts and on the block-scaled attention
+    /// and GDN projections (dgx3, one binary, MoE ladder C1/2/4/8/16): 80.8/123.3/170.3/249.7/
+    /// 345.2 tok/s at 0.403/0.270/0.202/0.147/0.116 J/tok against 76.3/117.7/173.7/245.8/342.6
+    /// at 0.453/0.305/0.217/0.161/0.124; BFCL echolp full draw 84.56/86.40 against 85.16/86.15
+    /// (within the 0.7/0.5 shard noise); agentic-webserver 2/2 against 1/2.
     #[arg(long, value_enum, default_value_t = WeightQuantizationArg(metrale_config::WeightQuantization::Declared))]
     pub weight_quantization: WeightQuantizationArg,
 
