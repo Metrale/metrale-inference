@@ -24,6 +24,7 @@ pub mod precision;
 pub mod precision_policy;
 pub mod render;
 pub mod rules;
+pub mod venn;
 
 #[cfg(test)]
 mod test_toy;
