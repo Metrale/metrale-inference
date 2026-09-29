@@ -357,6 +357,10 @@ impl BufferSizes {
                 } else {
                     0
                 })
+                // 2026-09-29: The MTP batched propose's `[n, 2 * hidden]` concat, for a propose
+                // as wide as the serve's widest batch (`DECODE_META_MAX_ROWS`, at most M): below
+                // that the propose splits into groups, each reading the drafter's experts again.
+                .max(m.min(super::DECODE_META_MAX_ROWS) * 2 * h * bf16)
                 .max(256),
             // 2026-09-25: `ceil16(M)` rows as in `ssm_qkvz`: on a
             // `sequential_qkvz` model the QKVZ projection writes here.
@@ -370,7 +374,11 @@ impl BufferSizes {
                     0
                 })
                 .max(256),
-            ssm_gates: (m * config.linear_num_value_heads * 2 * 4).max(256),
+            // 2026-09-29: Also the MTP batched propose's normed hidden rows `[n, hidden]` BF16,
+            // n up to `DECODE_META_MAX_ROWS`, at most M (see `ssm_ba`).
+            ssm_gates: (m * config.linear_num_value_heads * 2 * 4)
+                .max(m.min(super::DECODE_META_MAX_ROWS) * h * bf16)
+                .max(256),
             // 2026-09-25: FP32 conv1d output, bounded by the QKVZ width. MLA also
             // uses it for its Q rope rows [M, q_heads * qk_rope_head_dim] BF16.
             ssm_conv_out_f32: (m * config.ssm_qkvz_size() * 4)

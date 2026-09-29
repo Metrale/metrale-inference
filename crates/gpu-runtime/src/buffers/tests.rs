@@ -38,16 +38,17 @@ fn test_buffer_sizes_qwen3() {
     // `ssm_deinterleaved` are sized for `m_pad` = ceil16(M) = 16 rows
     // (`sizes.rs`), the rows a cuBLASLt arm writes. qkv: 16 * (16*2 + 2*2)
     // * 256 * 2 (gated Q, K, V). ssm_qkvz: 16 * (16*128 + 16*128 + 32*128 +
-    // 32*128) * 2. `ssm_ba` and `ssm_gates` are at the 256-byte floor.
+    // 32*128) * 2. `ssm_ba` and `ssm_gates` hold one MTP propose row (2026-09-29):
+    // [1, 2 * 2048] and [1, 2048] BF16.
     assert_eq!(sizes.hidden_states, 4096);
     assert_eq!(sizes.qkv_output, 294912);
     assert_eq!(sizes.attn_output, 8192);
     assert_eq!(sizes.gate_logits, 1024);
     assert_eq!(sizes.logits, 303872);
     assert_eq!(sizes.ssm_qkvz, 393216);
-    assert_eq!(sizes.ssm_ba, 256);
+    assert_eq!(sizes.ssm_ba, 2 * 2048 * 2);
     assert_eq!(sizes.ssm_deinterleaved, 393216);
-    assert_eq!(sizes.ssm_gates, 256);
+    assert_eq!(sizes.ssm_gates, 2048 * 2);
 }
 
 #[test]
@@ -358,4 +359,22 @@ fn rowwise_bf16_slab_is_counted_in_total_bytes() {
     // function that returned 0 could not make this pass.
     sizes.ssm_rowwise_w_bf16 = 4096;
     assert_eq!(sizes.total_bytes(), before + 4096);
+}
+
+/// 2026-09-29: `ssm_ba` and `ssm_gates` hold a batched MTP propose of every sequence the serve
+/// decodes (`DECODE_META_MAX_ROWS`), so `propose_batch_max` is not held below it by the arena:
+/// at M = 2176 the BA-sized buffers alone held 34 rows and a 128-sequence propose ran in four
+/// groups. At M below that width they hold M rows.
+#[test]
+fn ssm_ba_and_gates_hold_a_full_width_propose() {
+    let cfg = ModelConfig::qwen3_next_80b_nvfp4();
+    let h = cfg.hidden_size;
+    for m in [2176usize, 8192] {
+        let s = BufferSizes::from_config(&cfg, m, 4096, 16, 128);
+        assert!(s.ssm_ba >= super::DECODE_META_MAX_ROWS * 2 * h * 2, "m={m}");
+        assert!(s.ssm_gates >= super::DECODE_META_MAX_ROWS * h * 2, "m={m}");
+    }
+    let small = BufferSizes::from_config(&cfg, 16, 4096, 16, 128);
+    assert!(small.ssm_ba >= 16 * 2 * h * 2);
+    assert!(small.ssm_ba < super::DECODE_META_MAX_ROWS * 2 * h * 2);
 }
