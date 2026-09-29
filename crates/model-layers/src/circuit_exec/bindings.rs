@@ -12,10 +12,11 @@
 //! - A bound weight carries its storage format; the executor checks it against the format the
 //!   plan's node was resolved to.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use anyhow::{Result, anyhow, ensure};
 use metrale_cache::kv_cache::KvCacheDtype;
-use metrale_circuit::LinearRole;
+use metrale_circuit::{Circuit, LinearRole};
 
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
@@ -55,6 +56,14 @@ pub enum WeightSlot {
     FfnUpMmq,
     /// 2026-09-28: The dense FFN's down, repacked for the NVFP4 MMQ GEMM.
     FfnDownMmq,
+    /// 2026-09-29: The MTP draft head's norm of the token embedding (`pre_fc_norm_embedding`).
+    EmbedNorm,
+    /// 2026-09-29: The MTP draft head's norm of the target hidden (`pre_fc_norm_hidden`).
+    HiddenNorm,
+    /// 2026-09-29: The MTP draft head's final norm.
+    FinalNorm,
+    /// 2026-09-29: The MTP draft head's vocabulary projection.
+    LmHead,
 }
 
 /// 2026-09-28: A bound weight and its storage format.
@@ -178,6 +187,26 @@ pub trait CircuitBindings {
     }
 }
 
+/// 2026-09-29: The MTP draft head as the executor binds it: its one layer (weights by slot,
+/// the attention facts of its own KV cache) and that cache.
+#[derive(Debug, Clone)]
+pub struct DraftBinding {
+    /// 2026-09-29: Weights by slot, the draft attention's facts (`attn_layer_idx` is its
+    /// cache's layer), and what the circuit does not model.
+    pub layer: CircuitLayer,
+    /// 2026-09-29: The draft cache's K pool.
+    pub k_pool: DevicePtr,
+    /// 2026-09-29: The draft cache's V pool.
+    pub v_pool: DevicePtr,
+    /// 2026-09-29: Tokens per block of the draft cache.
+    pub block_size: u32,
+    /// 2026-09-29: `PagedKvCache::cache_stride` of the draft cache.
+    pub cache_stride: u64,
+    /// 2026-09-29: The vocabulary rows the draft lm_head scores and the argmax reads (the
+    /// first `mtp_vocab_size`, or all).
+    pub vocab: u32,
+}
+
 /// 2026-09-28: The model's own weights the head block reads, filled by the model.
 #[derive(Debug, Clone)]
 pub struct HeadBinding {
@@ -191,4 +220,49 @@ pub struct HeadBinding {
     /// 2026-09-28: The widest padded batch the BF16 head serves with the batched GEMV
     /// (`dense_gemv_bf16_batchm`); 0 when that arm is off. Wider batches take the GEMM.
     pub batchm_max_rows: u32,
+}
+
+/// 2026-09-28: Refuse a model the circuit misdescribes: an unbound layer, a layer or head
+/// feature no rule models, or a layer whose mixer is not the circuit's.
+pub fn check_bindings(
+    circuit: &Circuit,
+    layers: &[Option<CircuitLayer>],
+    head: &HeadBinding,
+) -> Result<Vec<CircuitLayer>> {
+    let mut problems = BTreeSet::new();
+    let mut out = Vec::with_capacity(layers.len());
+    for (i, l) in layers.iter().enumerate() {
+        let Some(l) = l else {
+            problems.insert(format!("layer {i} has no circuit binding"));
+            continue;
+        };
+        for u in &l.unmodelled {
+            problems.insert(format!("layer {i}: {u}"));
+        }
+        let want_gdn =
+            circuit.layer_kinds.get(i) == Some(&metrale_circuit::LayerKind::LinearAttention);
+        let is_gdn = matches!(l.mixer, MixerFacts::Gdn(_));
+        if want_gdn != is_gdn {
+            problems.insert(format!(
+                "layer {i}: the circuit and the model disagree on its kind"
+            ));
+        }
+        out.push(l.clone());
+    }
+    for u in &head.unmodelled {
+        problems.insert(format!("head: {u}"));
+    }
+    if !problems.is_empty() {
+        return Err(anyhow!(
+            "the circuit does not model this model:\n  {}",
+            problems.into_iter().collect::<Vec<_>>().join("\n  ")
+        ));
+    }
+    ensure!(
+        out.len() == circuit.layer_kinds.len(),
+        "the model has {} layers, the circuit {}",
+        out.len(),
+        circuit.layer_kinds.len()
+    );
+    Ok(out)
 }

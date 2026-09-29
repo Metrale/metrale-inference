@@ -104,3 +104,22 @@ impl Program {
         Ok(())
     }
 }
+
+/// 2026-09-29: A program another component runs in place of its own forward (the MTP draft
+/// head's single-row step), without GDN state.
+pub trait DraftRunner: Send + Sync {
+    /// 2026-09-29: Issue the program on `stream` for a step whose block table is
+    /// `max_blocks_per_seq` wide.
+    fn run_draft(&self, gpu: &dyn GpuBackend, stream: u64, max_blocks_per_seq: u32) -> Result<()>;
+}
+
+impl DraftRunner for Program {
+    fn run_draft(&self, gpu: &dyn GpuBackend, stream: u64, max_blocks_per_seq: u32) -> Result<()> {
+        self.run(&StepEnv {
+            gpu,
+            stream,
+            gdn: &[],
+            max_blocks_per_seq,
+        })
+    }
+}

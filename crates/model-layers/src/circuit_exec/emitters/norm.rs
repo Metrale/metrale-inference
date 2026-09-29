@@ -39,9 +39,16 @@ impl OpEmitter for EmbedCopy {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["embed"])?;
+        // 2026-09-29: The draft head's embedding is not the stream: `forward_one` copies it
+        // into the draft embedding buffer.
+        let want = if cx.mode == metrale_circuit::Mode::Draft {
+            cx.draft_fixed()?.embed
+        } else {
+            cx.fixed.hidden
+        };
         ensure!(
-            cx.ptr(cx.g.output(0, 0)?)? == cx.fixed.hidden,
-            "the embedding must land in the residual stream buffer"
+            cx.ptr(cx.g.output(0, 0)?)? == want,
+            "the embedding must land in the buffer the host copies it to"
         );
         Ok(())
     }
@@ -170,13 +177,27 @@ impl OpEmitter for RmsNorm {
         let k = cx.handle(0)?;
         let eps = cx.config.rms_norm_eps as f32;
         let (x, y) = (cx.ptr(cx.g.input(0, 0)?)?, cx.ptr(cx.g.output(0, 0)?)?);
-        let (w, norm_rows, cols) = if cx.g.node(0).op.name() == "final_norm" {
+        let op = cx.g.node(0).op.name();
+        let (w, norm_rows, cols) = if op == "final_norm" {
             cx.g.expect_ops(self.id(), &["final_norm"])?;
-            ensure!(
-                !cx.config.final_norm_identity,
-                "a checkpoint without a final norm copies instead"
-            );
-            (cx.head.final_norm, rows(cx)?, dim(cx, "hidden")?)
+            // 2026-09-29: The draft head's own final norm in a draft plan.
+            let w = if cx.mode == metrale_circuit::Mode::Draft {
+                dense(
+                    cx.weight(0, super::super::bindings::WeightSlot::FinalNorm)?,
+                    "final norm",
+                )?
+            } else {
+                ensure!(
+                    !cx.config.final_norm_identity,
+                    "a checkpoint without a final norm copies instead"
+                );
+                cx.head.final_norm
+            };
+            (w, rows(cx)?, dim(cx, "hidden")?)
+        } else if op == "rms_norm" {
+            // 2026-09-29: A plain row norm (the draft head's input norms).
+            let w = dense(cx.weight(0, norm_slot(cx, 0)?)?, "norm")?;
+            (w, rows(cx)?, dim(cx, "hidden")?)
         } else {
             cx.g.expect_ops(self.id(), &["qk_norm"])?;
             let a = attn_facts(cx, 0)?;

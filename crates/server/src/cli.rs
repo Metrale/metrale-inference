@@ -136,6 +136,10 @@ pub struct CircuitDiffArgs {
     /// K instead. Needs a serve with speculative decoding (the rollback slots).
     #[arg(long, value_delimiter = ',')]
     pub verify: Vec<usize>,
+    /// With --verify: the drafts come from the MTP draft head, as the speculative loop runs it,
+    /// and every run also runs the draft head and compares its logits and drafts.
+    #[arg(long, requires = "verify")]
+    pub mtp: bool,
     /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
     #[command(flatten)]
     pub serve: ServeArgs,

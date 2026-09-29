@@ -273,6 +273,10 @@ pub struct MtpHead {
     /// 2026-09-25: Drafter-row scratch; `None` unless the drafter prefill or the
     /// catch-up is enabled.
     prefill_scratch: Option<MtpPrefillScratch>,
+    /// 2026-09-29: The circuit executor's draft program, which `forward_one` runs in place of
+    /// its own step while installed (`--forward circuit`).
+    circuit_draft:
+        parking_lot::RwLock<Option<std::sync::Arc<dyn crate::circuit_exec::DraftRunner>>>,
 }
 
 impl MtpHead {
@@ -367,6 +371,7 @@ impl MtpHead {
 mod batch_caps;
 mod catchup_batch;
 mod chain_hidden;
+mod circuit;
 mod draft_proposer;
 mod forward;
 mod forward_batch;

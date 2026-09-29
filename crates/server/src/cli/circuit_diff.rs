@@ -130,6 +130,9 @@ pub(crate) struct Comparison {
     pub mismatched_steps: usize,
     pub first_mismatch: Option<usize>,
     pub max_mismatched_bytes: usize,
+    /// 2026-09-29: The first differing byte of the prefill bytes, which locates the part that
+    /// differs where they concatenate several (the verify diff's bootstrap).
+    pub prefill_first_diff: Option<usize>,
 }
 
 /// 2026-09-28: Compare `run` with `reference`, step by step.
@@ -150,6 +153,11 @@ fn compare(variant: &str, reference: &Run, run: &Run) -> Comparison {
         mismatched_steps: per_step.iter().filter(|&&d| d > 0).count(),
         first_mismatch: per_step.iter().position(|&d| d > 0),
         max_mismatched_bytes: per_step.iter().copied().max().unwrap_or(0),
+        prefill_first_diff: reference
+            .prefill
+            .iter()
+            .zip(&run.prefill)
+            .position(|(a, b)| a != b),
     }
 }
 
@@ -275,7 +283,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         return verify_report(
             model,
             prompt,
-            &args.verify,
+            (&args.verify, args.mtp),
             args.steps,
             &forwards,
             &args.out,
@@ -389,6 +397,7 @@ fn batch_report(
 #[derive(Debug, Serialize)]
 struct VerifyDiffReport {
     graphs: &'static str,
+    mtp: bool,
     steps: usize,
     variants: Vec<Variant>,
     verify: Vec<verify::VerifyReport>,
@@ -400,13 +409,13 @@ struct VerifyDiffReport {
 fn verify_report(
     model: &dyn Model,
     prompt: &[u32],
-    ks: &[usize],
+    (ks, mtp): (&[usize], bool),
     steps: usize,
     forwards: &[(&'static str, ForwardSelect)],
     out: &Path,
 ) -> Result<()> {
     let variants = disclosed(model, forwards)?;
-    let verify = verify::diff_verify(model, prompt, ks, steps, forwards)?;
+    let verify = verify::diff_verify(model, prompt, ks, steps, mtp, forwards)?;
     let reasons = verify::verify_failures(&verify);
     let report = VerifyDiffReport {
         graphs: if std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1") {
@@ -414,6 +423,7 @@ fn verify_report(
         } else {
             "graphed"
         },
+        mtp,
         steps,
         variants,
         verify,

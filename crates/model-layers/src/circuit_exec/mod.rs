@@ -33,11 +33,11 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 pub use bindings::{
-    AttnFacts, BoundWeight, CircuitBindings, CircuitLayer, GdnFacts, HeadBinding, MixerFacts,
-    RopeFacts, WeightSlot,
+    AttnFacts, BoundWeight, CircuitBindings, CircuitLayer, DraftBinding, GdnFacts, HeadBinding,
+    MixerFacts, RopeFacts, WeightSlot,
 };
-pub use compile::Fixed;
-pub use program::{GdnState, Program, StepEnv};
+pub use compile::{DraftFixed, Fixed};
+pub use program::{DraftRunner, GdnState, Program, StepEnv};
 
 /// 2026-09-28: Which rules a build may select.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +78,8 @@ pub struct Boot<'a> {
     pub multi_seq_rows: Vec<u64>,
     /// 2026-09-29: The MTP verify widths `K` to compile (none without speculative decode).
     pub verify_rows: Vec<u64>,
+    /// 2026-09-29: The MTP draft head, when one is loaded; its buffers are `fixed.draft`.
+    pub draft: Option<CircuitLayer>,
 }
 
 /// 2026-09-28: A built executor: the decode program and the workspace it runs in.
@@ -91,6 +93,9 @@ pub struct CircuitExec {
     pub multi_seq: Vec<(Program, FusionPlan)>,
     /// 2026-09-29: The single-sequence MTP verify, one program per `K`, ascending.
     pub verify: Vec<(Program, FusionPlan)>,
+    /// 2026-09-29: The MTP draft head's single-row step, which the head runs itself
+    /// (`DraftRunner`).
+    pub draft: Option<(std::sync::Arc<Program>, FusionPlan)>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml the plan was chosen from.
     pub rules_digest: String,
     /// 2026-09-28: Which rules the build allowed.
@@ -129,7 +134,16 @@ impl CircuitExec {
                 unmodelled.join(", ")
             );
         }
-        let layers = compile::check_bindings(&loaded.circuit, &b.layers, &b.head)?;
+        let layers = bindings::check_bindings(&loaded.circuit, &b.layers, &b.head)?;
+        if let Some(d) = &b.draft {
+            if !d.unmodelled.is_empty() {
+                bail!(
+                    "the circuit does not model this draft head: {}",
+                    d.unmodelled.join(", ")
+                );
+            }
+            anyhow::ensure!(b.fixed.draft.is_some(), "a draft head without its buffers");
+        }
         let present = kernels::available_in(&loaded.rules, &b.modules.0)?;
         let mut available = present.clone();
         if b.fusions == Fusions::ReferenceOnly {
@@ -149,10 +163,12 @@ impl CircuitExec {
             fixed: &b.fixed,
             layers: &layers,
             head: &b.head,
+            draft: b.draft.as_ref(),
         };
         let shapes = std::iter::once((Mode::Decode, 1))
             .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)))
-            .chain(b.verify_rows.iter().map(|&r| (Mode::Verify, r)));
+            .chain(b.verify_rows.iter().map(|&r| (Mode::Verify, r)))
+            .chain(b.draft.iter().map(|_| (Mode::Draft, 1)));
         let mut laid = Vec::new();
         for (mode, rows) in shapes {
             let plan = fuse(
@@ -199,8 +215,14 @@ impl CircuitExec {
         }
         let mut programs = programs.into_iter();
         let (decode, plan) = programs.next().context("no decode program")?;
-        let (multi_seq, verify): (Vec<_>, Vec<_>) =
-            programs.partition(|(p, _)| p.mode == Mode::MultiSeq);
+        let (draft, rest): (Vec<_>, Vec<_>) = programs.partition(|(p, _)| p.mode == Mode::Draft);
+        let (multi_seq, verify): (Vec<_>, Vec<_>) = rest
+            .into_iter()
+            .partition(|(p, _)| p.mode == Mode::MultiSeq);
+        let draft = draft
+            .into_iter()
+            .next()
+            .map(|(p, plan)| (std::sync::Arc::new(p), plan));
         tracing::info!(
             "circuit decode: {} launches/step, plan {} ({} rules, {:?}), {} multi-seq widths, \
              {} verify widths, workspace {} KiB",
@@ -217,6 +239,7 @@ impl CircuitExec {
             decode_plan: plan,
             multi_seq,
             verify,
+            draft,
             rules_digest: loaded.rules_digest,
             fusions: b.fusions,
             workspace,
@@ -230,6 +253,13 @@ impl CircuitExec {
             .iter()
             .find(|(p, _)| p.rows == rows)
             .map(|(p, _)| p)
+    }
+
+    /// 2026-09-29: The draft head's program, if one was compiled.
+    pub fn draft_runner(&self) -> Option<std::sync::Arc<dyn DraftRunner>> {
+        self.draft
+            .as_ref()
+            .map(|(p, _)| p.clone() as std::sync::Arc<dyn DraftRunner>)
     }
 
     /// 2026-09-29: The verify program for `k` rows, if one was compiled.
@@ -249,7 +279,8 @@ impl CircuitExec {
                 self.multi_seq
                     .iter()
                     .chain(&self.verify)
-                    .map(|(_, p)| p.digest.as_str()),
+                    .map(|(_, p)| p.digest.as_str())
+                    .chain(self.draft.iter().map(|(_, p)| p.digest.as_str())),
             ),
         )
     }
@@ -262,10 +293,19 @@ impl CircuitExec {
     /// 2026-09-28: Free the workspace. The caller must first destroy every graph that captured
     /// a program of this executor.
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
+        if let Some((p, _)) = &self.draft {
+            anyhow::ensure!(
+                std::sync::Arc::strong_count(p) == 1,
+                "the draft program is still installed; remove it before freeing the workspace"
+            );
+        }
         gpu.free(self.workspace)
     }
 }
 
+#[cfg(test)]
+#[path = "exec_draft_tests.rs"]
+mod exec_draft_tests;
 #[cfg(test)]
 #[path = "exec_fixture.rs"]
 mod exec_fixture;

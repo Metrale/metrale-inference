@@ -34,7 +34,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 10
-cite = "me/decode_a2.rs:241-254 (one D2D copy per row, padding rows memset); ml/mtp_head/forward.rs:67-68"
+cite = "me/decode_a2.rs:241-254 (one D2D copy per row, padding rows memset); ml/mtp_head/forward.rs:82-83"
 
 [[rule]]
 id = "input_norm_residual"
@@ -58,7 +58,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 5
-cite = "ml/mtp_head/forward.rs:71-81,88-98,137-147 (the residual copy is a D2D copy at :133)"
+cite = "ml/mtp_head/forward.rs:86-96,103-113,152-162 (the residual copy is a D2D copy at :148)"
 
 [[rule]]
 id = "residual_add_post_norm"
@@ -73,7 +73,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 100
-cite = "k/rms_norm.cu:379-382 (FP32 sum of squares before the BF16 rounding: not the unfused chain); ml/qwen3_ssm/trait_decode.rs:117-129; ml/qwen3_attention/trait_impl/decode_inner.rs:241-253; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:247-261; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:131-143; ml/qwen3_ssm/trait_decode_batched.rs:284; ml/mtp_head/forward.rs:312-324"
+cite = "k/rms_norm.cu:379-382 (FP32 sum of squares before the BF16 rounding: not the unfused chain); ml/qwen3_ssm/trait_decode.rs:117-129; ml/qwen3_attention/trait_impl/decode_inner.rs:241-253; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:247-261; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:131-143; ml/qwen3_ssm/trait_decode_batched.rs:284; ml/mtp_head/forward.rs:306-318"
 
 [[rule]]
 id = "ffn_residual_add"
@@ -85,7 +85,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_ssm/trait_decode.rs:143-150; ml/qwen3_attention/trait_impl/decode_inner.rs:384-391; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:147-154; ml/qwen3_ssm/trait_decode_multi_seq.rs:212,235 (after the prefill and km arms); ml/qwen3_ssm/trait_decode_batched.rs:323-334; ml/mtp_head/forward.rs:343"
+cite = "ml/qwen3_ssm/trait_decode.rs:143-150; ml/qwen3_attention/trait_impl/decode_inner.rs:384-391; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:147-154; ml/qwen3_ssm/trait_decode_multi_seq.rs:212,235 (after the prefill and km arms); ml/qwen3_ssm/trait_decode_batched.rs:323-334; ml/mtp_head/forward.rs:337"
 
 [[rule]]
 id = "ffn_residual_add_per_row_gdn_k2k3"
@@ -110,7 +110,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 10
-cite = "me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:346-356"
+cite = "me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:340-350"
 
 # 2026-09-28: GatedDeltaNet mixer.
 
@@ -294,7 +294,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 5
-cite = "ml/qwen3_attention/decode/attention_forward/q_proj.rs:70-79; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-286; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:171-183"
+cite = "ml/qwen3_attention/decode/attention_forward/q_proj.rs:70-79; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-286; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:186-198"
 
 [[rule]]
 id = "qk_norm_rows"
@@ -306,7 +306,7 @@ rows = [1, 1]
 modes = ["decode", "draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_attention/decode/attention_forward.rs:140-151,174-186; ml/mtp_head/forward.rs:215-236"
+cite = "ml/qwen3_attention/decode/attention_forward.rs:140-151,174-186; ml/mtp_head/forward.rs:230-251"
 
 [[rule]]
 id = "qk_norm_strided"
@@ -354,7 +354,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/mtp_head/forward.rs:264-277"
+cite = "ml/mtp_head/forward.rs:258-271"
 
 [[rule]]
 id = "kv_write_bf16"
@@ -392,7 +392,7 @@ rows = [1, 1]
 modes = ["decode", "draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_attention/decode/attention_forward.rs:421-432; ml/mtp_head/forward.rs:298-306"
+cite = "ml/qwen3_attention/decode/attention_forward.rs:421-432; ml/mtp_head/forward.rs:292-300"
 
 [[rule]]
 id = "sigmoid_gate_mul_batched"
@@ -1213,7 +1213,7 @@ modes = ["draft"]
 when = { gemv_sw = "on" }
 numerics = "reference"
 priority = 10
-cite = "ml/mtp_head/forward.rs:366-377 (the draft head is NVFP4 whatever the target head: a draft-only copy when the target head is BF16, mm/impl_a1/ssm_setup.rs:48-50)"
+cite = "ml/mtp_head/forward.rs:360-371 (the draft head is NVFP4 whatever the target head: a draft-only copy when the target head is BF16, mm/impl_a1/ssm_setup.rs:48-50)"
 
 [[rule]]
 id = "argmax_host"
@@ -1249,7 +1249,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/mtp_head/forward.rs:437-455"
+cite = "ml/mtp_head/forward.rs:419-421; ml/mtp_head/forward/draft_step.rs:53-77"
 
 # 2026-09-28: MTP draft head (BF16 projections).
 
@@ -1263,7 +1263,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/mtp_head/forward.rs:101-109"
+cite = "ml/mtp_head/forward.rs:116-124"
 
 [[rule]]
 id = "draft_dense_gemv_bf16"
@@ -1275,7 +1275,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/mtp_head/forward.rs:123,171-183,209-212,309; ml/mtp_head.rs:330-339 (mtp_quantization bf16: every projection is ProjectionWeight::Bf16)"
+cite = "ml/mtp_head/forward.rs:138,186-198,224-227,303; ml/mtp_head.rs:334-343 (mtp_quantization bf16: every projection is ProjectionWeight::Bf16)"
 
 [[rule]]
 id = "draft_dense_gate_up_bf16"

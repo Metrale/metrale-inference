@@ -17,13 +17,14 @@ use super::compile::{Cx, OpEmitter};
 
 mod attn;
 mod batched;
+mod draft;
 mod ffn;
 mod gdn;
 mod gdn_verify;
 mod linear;
 mod norm;
 
-static EMITTERS: [&dyn OpEmitter; 35] = [
+static EMITTERS: [&dyn OpEmitter; 38] = [
     &norm::EmbedCopy,
     &norm::RmsNormResidual,
     &norm::ResidualAddRmsNorm,
@@ -59,6 +60,9 @@ static EMITTERS: [&dyn OpEmitter; 35] = [
     &gdn_verify::GdnDecodeWy,
     &linear::Argmax,
     &linear::HostSampling,
+    &draft::Concat,
+    &draft::DenseGemv,
+    &draft::Rope,
 ];
 
 /// 2026-09-28: The emitter named `id`.
@@ -113,6 +117,8 @@ pub(super) fn norm_slot(cx: &Cx<'_>, i: usize) -> Result<WeightSlot> {
     Ok(match n.local.as_str() {
         "input_norm" => WeightSlot::InputNorm,
         "post_norm" => WeightSlot::PostNorm,
+        "embed_norm" => WeightSlot::EmbedNorm,
+        "hidden_norm" => WeightSlot::HiddenNorm,
         "q_norm" => WeightSlot::QNorm,
         "k_norm" => WeightSlot::KNorm,
         other => {

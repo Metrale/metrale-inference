@@ -78,6 +78,7 @@ fn the_verdict_needs_matching_circuits_and_a_control_that_saw_the_change() {
         mismatched_steps: 0,
         first_mismatch: None,
         max_mismatched_bytes: 0,
+        prefill_first_diff: None,
     };
     let seen = Comparison {
         mismatched_steps: 32,
@@ -129,6 +130,7 @@ fn batch_prompts_put_rows_at_distinct_positions_and_the_batch_verdict_reads_ever
         mismatched_steps: mismatched,
         first_mismatch: (mismatched > 0).then_some(4),
         max_mismatched_bytes: mismatched,
+        prefill_first_diff: None,
     };
     let width = |rows, circuit: usize, control: usize| batch::WidthReport {
         rows,
@@ -210,6 +212,7 @@ fn the_verify_verdict_needs_matching_steps_a_seen_control_and_both_commit_paths(
         mismatched_steps: mismatched,
         first_mismatch: (mismatched > 0).then_some(2),
         max_mismatched_bytes: mismatched,
+        prefill_first_diff: None,
     };
     let report = |accepted: Vec<usize>, circuit: usize, control: usize| verify::VerifyReport {
         k: 3,

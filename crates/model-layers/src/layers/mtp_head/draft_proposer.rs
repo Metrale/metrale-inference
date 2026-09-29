@@ -10,6 +10,21 @@
 use super::*;
 
 impl DraftProposer for MtpHead {
+    fn circuit_draft(
+        &self,
+        config: &metrale_config::ModelConfig,
+        levers: &crate::layers::ops::ModelLevers,
+    ) -> Option<crate::circuit_exec::DraftBinding> {
+        Some(self.circuit_binding(config, levers))
+    }
+
+    fn set_circuit_draft(
+        &self,
+        runner: Option<std::sync::Arc<dyn crate::circuit_exec::DraftRunner>>,
+    ) {
+        self.install_circuit(runner);
+    }
+
     fn alloc_state(&self, _gpu: &dyn GpuBackend) -> Result<Box<dyn ProposerState>> {
         Ok(Box::new(MtpProposerState {
             block_table: Vec::new(),

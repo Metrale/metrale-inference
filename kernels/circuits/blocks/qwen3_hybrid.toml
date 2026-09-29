@@ -273,7 +273,9 @@ binding = ["mtp.fc"]
 
 [block.mtp_out]
 stream_in = "x"
-outputs = ["token"]
+# 2026-09-29: The draft logits are an output: `forward_one` leaves them in the model's logits
+# buffer, where the host reads them (draft confidence, shadow top-k).
+outputs = ["logits", "token"]
 
 [[block.mtp_out.node]]
 id = "final_norm"

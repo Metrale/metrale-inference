@@ -15,7 +15,7 @@ use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend};
 use super::bindings::*;
 use super::exec_fixture::*;
 use super::kernels::KernelTable;
-use super::{Fusions, compile, sources};
+use super::{Fusions, sources};
 use crate::weight_map::DenseWeight;
 
 #[test]
@@ -151,12 +151,12 @@ fn a_binding_the_plan_does_not_describe_is_refused() {
         .unwrap()
         .unmodelled
         .push("an out_proj LoRA adapter".into());
-    let e = compile::check_bindings(&circuit, &layers, &head)
+    let e = check_bindings(&circuit, &layers, &head)
         .unwrap_err()
         .to_string();
     assert!(e.contains("layer 5: an out_proj LoRA adapter"), "{e}");
     layers[5] = None;
-    let e = compile::check_bindings(&circuit, &layers, &head)
+    let e = check_bindings(&circuit, &layers, &head)
         .unwrap_err()
         .to_string();
     assert!(e.contains("layer 5 has no circuit binding"), "{e}");
@@ -182,9 +182,10 @@ fn ptx_availability_reads_entry_points_not_names() {
     );
     let gpu = MockGpuBackend::new();
     let table = KernelTable::resolve(&gpu, &avail);
-    assert!(
-        gpu.kernel_lookups_snapshot().is_empty(),
-        "no lookup is issued for a kernel the target does not define"
+    assert_eq!(
+        gpu.kernel_lookups_snapshot(),
+        vec![("rope".to_string(), "rope_forward".to_string())],
+        "a lookup is issued only for the kernel the target defines"
     );
     assert!(
         table

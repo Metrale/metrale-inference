@@ -17,7 +17,7 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 
 use super::bindings::*;
-use super::compile::{self, Fixed, Inputs};
+use super::compile::{self, DraftFixed, Fixed, Inputs};
 use super::kernels::KernelTable;
 use super::program::{GdnState, Program, StepEnv};
 use super::{Fusions, sources};
@@ -47,6 +47,7 @@ pub(super) fn dense(tag: u64) -> BoundWeight {
 }
 
 pub(super) struct Fixture {
+    pub draft: Option<CircuitLayer>,
     pub circuit: Circuit,
     pub plan: FusionPlan,
     pub program: Program,
@@ -125,6 +126,53 @@ pub(super) fn layer_binding(circuit: &Circuit, i: usize, attn_idx: usize) -> Cir
     }
 }
 
+/// 2026-09-29: A BF16 MTP draft head: weight tags at layer 200.
+pub(super) fn draft_binding(circuit: &Circuit) -> CircuitLayer {
+    let d = |k: &str| circuit.dims[k] as u32;
+    let mut w: BTreeMap<WeightSlot, BoundWeight> = [
+        WeightSlot::EmbedNorm,
+        WeightSlot::HiddenNorm,
+        WeightSlot::InputNorm,
+        WeightSlot::PostNorm,
+        WeightSlot::FinalNorm,
+        WeightSlot::QNorm,
+        WeightSlot::KNorm,
+        WeightSlot::FfnGate,
+        WeightSlot::FfnUp,
+        WeightSlot::Linear(LinearRole::MtpFc),
+        WeightSlot::Linear(LinearRole::Q),
+        WeightSlot::Linear(LinearRole::K),
+        WeightSlot::Linear(LinearRole::V),
+        WeightSlot::Linear(LinearRole::O),
+        WeightSlot::Linear(LinearRole::Down),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, s)| (s, dense(tag(200, 1 + i as u64))))
+    .collect();
+    w.insert(WeightSlot::LmHead, nvfp4(tag(200, 30)));
+    CircuitLayer {
+        mixer: MixerFacts::Attention(AttnFacts {
+            attn_layer_idx: 0,
+            kv_dtype: metrale_cache::kv_cache::KvCacheDtype::Bf16,
+            num_q_heads: d("q_heads"),
+            num_kv_heads: d("kv_heads"),
+            head_dim: d("head_dim"),
+            gated: true,
+            rope: RopeFacts {
+                mrope_interleaved: false,
+                theta: 1.0e7,
+                rotary_dim: 64,
+            },
+            sliding_window: 0,
+            softmax_scale: 0.0625,
+            paged_decode_plain_rows: 1,
+        }),
+        weights: w,
+        unmodelled: Vec::new(),
+    }
+}
+
 pub(super) fn fixed(attn_layers: usize) -> Fixed {
     let meta = 0xA300_0000;
     Fixed {
@@ -163,6 +211,15 @@ pub(super) fn fixed(attn_layers: usize) -> Fixed {
         },
         ffn_act_q8: ptr(0xA400_0000),
         tokens: ptr(0xA500_0000),
+        draft: Some(DraftFixed {
+            embed: ptr(0xA600_0000),
+            meta: crate::layers::mtp_meta::mtp_attn_meta_dev(ptr(meta + 0x3_0000), 0),
+            k_pool: ptr(0xB800_0000),
+            v_pool: ptr(0xB880_0000),
+            block_size: 16,
+            cache_stride: 4096,
+            vocab: 100_000,
+        }),
         verify_meta: AttnMetadataDev {
             positions: ptr(meta + 0x2_0000),
             positions_h: ptr(meta + 0x2_0000),
@@ -245,6 +302,7 @@ pub(super) fn build_at(
         batchm_max_rows: 8,
     };
     edit_head(&mut head);
+    let draft = (mode == Mode::Draft).then(|| draft_binding(&loaded.circuit));
     let fixed = fixed(attn);
     let gpu = MockGpuBackend::new();
     let cfg = config();
@@ -262,9 +320,11 @@ pub(super) fn build_at(
             fixed: &fixed,
             layers: &layers,
             head: &head,
+            draft: draft.as_ref(),
         },
     )?;
     Ok(Fixture {
+        draft,
         circuit: loaded.circuit,
         plan,
         program,
@@ -336,7 +396,7 @@ pub(super) fn run_on(
 /// the step's metadata, one of `gdn`'s states, or in the workspace.
 pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched: &[MockLaunch]) {
     let mut known: BTreeSet<u64> = BTreeSet::new();
-    for l in &f.layers {
+    for l in f.layers.iter().chain(&f.draft) {
         for w in l.weights.values() {
             match w {
                 BoundWeight::Dense(d) => known.insert(d.weight.0),
@@ -350,6 +410,15 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched
         known.extend([m.positions.0, m.slot.0, m.seq_len.0, m.block_table.0]);
     }
     known.insert(f.fixed.ffn_act_q8.0);
+    if let Some(d) = &f.fixed.draft {
+        known.extend([d.embed.0, d.k_pool.0, d.v_pool.0]);
+        known.extend([
+            d.meta.positions.0,
+            d.meta.slot.0,
+            d.meta.seq_len.0,
+            d.meta.block_table.0,
+        ]);
+    }
     let row = |dim: &str| f.circuit.dims[dim] * 2;
     let rows_of = [
         (f.fixed.hidden.0, row("hidden")),

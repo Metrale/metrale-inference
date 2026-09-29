@@ -450,6 +450,7 @@ impl MtpHead {
             propose_meta: gpu.alloc(super::batch_caps::PROPOSE_META_SEQS * propose_meta_stride)?,
             propose_meta_stride,
             prefill_scratch,
+            circuit_draft: parking_lot::RwLock::new(None),
         })
     }
 }

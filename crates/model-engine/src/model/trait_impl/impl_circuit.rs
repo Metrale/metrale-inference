@@ -15,7 +15,8 @@
 use anyhow::{Context, Result, bail, ensure};
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::circuit_exec::{
-    BoundWeight, CircuitExec, Fixed, Fusions, HeadBinding, MixerFacts, TargetModules, policy,
+    BoundWeight, CircuitExec, DraftFixed, Fixed, Fusions, HeadBinding, MixerFacts, TargetModules,
+    policy,
 };
 use metrale_model_layers::layer::AttnMetadataDev;
 
@@ -148,6 +149,10 @@ impl TransformerModel {
             "attention layers use different KV-cache dtypes; the circuit states one"
         );
         let (head, lm_head_dtype) = self.circuit_head();
+        let draft = self
+            .proposer
+            .as_ref()
+            .and_then(|p| p.circuit_draft(&self.config, &self.levers));
         let fixed = {
             let cache = self.kv_cache.lock();
             let n = cache.num_layers();
@@ -165,6 +170,20 @@ impl TransformerModel {
                 ),
                 ffn_act_q8: self.buffers.ffn_act_q8(),
                 tokens: self.buffers.scratch(),
+                draft: draft.as_ref().map(|d| DraftFixed {
+                    embed: self.buffers.ssm_qkvz(),
+                    meta: metrale_model_layers::layers::mtp_meta::mtp_attn_meta_dev(
+                        self.buffers
+                            .scratch()
+                            .offset(metrale_model_layers::layers::mtp_meta::MTP_META_OFFSET),
+                        0,
+                    ),
+                    k_pool: d.k_pool,
+                    v_pool: d.v_pool,
+                    block_size: d.block_size,
+                    cache_stride: d.cache_stride,
+                    vocab: d.vocab,
+                }),
                 verify_meta: self.verify_meta(0, 0, DevicePtr::NULL),
                 k_pools: (0..n).map(|i| cache.k_pool_ptr(i)).collect(),
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),
@@ -186,6 +205,7 @@ impl TransformerModel {
             multi_seq_rows: self.circuit_widths(),
             // 2026-09-29: The MTP verify widths the scheduler runs one sequence at
             // (`serial_verify_plan`), when a drafter is loaded.
+            draft: draft.map(|d| d.layer),
             verify_rows: if self.proposer.is_some() {
                 vec![2, 3, 4]
             } else {
@@ -217,9 +237,18 @@ impl ModelCircuit for TransformerModel {
             } => Some(self.build_circuit(instance, *fusions, modules)?),
         };
         self.destroy_lora_decode_graphs();
+        // 2026-09-29: The draft head drops the previous executor's program before its
+        // workspace is freed, and takes the next one's after the swap.
+        let runner = next.as_ref().and_then(CircuitExec::draft_runner);
+        if let Some(p) = self.proposer.as_ref() {
+            p.set_circuit_draft(None);
+        }
         let prev = std::mem::replace(&mut *self.circuit.write(), next);
         if let Some(prev) = prev {
             prev.free(self.gpu.as_ref())?;
+        }
+        if let (Some(p), Some(r)) = (self.proposer.as_ref(), runner) {
+            p.set_circuit_draft(Some(r));
         }
         Ok(())
     }

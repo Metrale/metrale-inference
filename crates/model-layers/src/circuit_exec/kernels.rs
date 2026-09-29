@@ -403,6 +403,20 @@ impl KernelTable {
                     try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_qg_batch3")
                 }),
             ),
+            (
+                "rope",
+                "rope_forward",
+                look("rope", "rope_forward", &|| {
+                    try_kernel(gpu, "rope", "rope_forward")
+                }),
+            ),
+            (
+                "residual_add",
+                "bf16_concat",
+                look("residual_add", "bf16_concat", &|| {
+                    try_kernel(gpu, "residual_add", "bf16_concat")
+                }),
+            ),
         ];
         let handles = entries
             .into_iter()

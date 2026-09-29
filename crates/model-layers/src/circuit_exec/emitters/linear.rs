@@ -42,9 +42,26 @@ impl OpEmitter for W4a16DecodeGemv {
     }
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
-        cx.g.expect_ops(self.id(), &["linear"])?;
         expect_kernel(cx, 0, "w4a16_gemv_sw")?;
         one_row(cx, "w4a16_gemv_sw")?;
+        if cx.g.node(0).op == OpKind::LmHead {
+            // 2026-09-29: The MTP draft head's NVFP4 vocabulary projection
+            // (`forward_one`'s `w4a16_decode_gemv` with `gemv_sw`).
+            cx.g.expect_ops(self.id(), &["lm_head"])?;
+            let w = nvfp4(cx.weight(0, WeightSlot::LmHead)?, "draft lm_head")?;
+            let (inp, out) = (cx.g.input(0, 0)?, cx.g.output(0, 0)?);
+            let (n, k_dim) = (cx.draft_fixed()?.vocab, width(cx, inp)?);
+            ensure!(
+                n <= width(cx, out)?,
+                "the draft scores more rows than the logits hold"
+            );
+            let (x, y, k) = (cx.ptr(inp)?, cx.ptr(out)?, cx.handle(0)?);
+            return cx.push(
+                0,
+                Box::new(move |e| ops::w4a16_gemv_sw(e.gpu, k, x, &w, y, n, k_dim, e.stream)),
+            );
+        }
+        cx.g.expect_ops(self.id(), &["linear"])?;
         let r = role(cx, 0)?;
         if r == LinearRole::Qkvz {
             let MixerFacts::Gdn(f) = cx.layer(0)?.mixer else {
@@ -260,7 +277,13 @@ impl OpEmitter for Argmax {
         expect_kernel(cx, 0, "argmax_bf16")?;
         super::per_row(cx)?;
         let (inp, out) = (cx.g.input(0, 0)?, cx.g.output(0, 0)?);
-        let (v, k) = (width(cx, inp)?, cx.handle(0)?);
+        // 2026-09-29: The draft head's argmax reads the rows its lm_head scored.
+        let v = if cx.mode == metrale_circuit::Mode::Draft {
+            cx.draft_fixed()?.vocab
+        } else {
+            width(cx, inp)?
+        };
+        let k = cx.handle(0)?;
         for i in 0..cx.reps() {
             let (x, y) = (cx.row_ptr(inp, i)?, cx.row_ptr(out, i)?);
             cx.push(

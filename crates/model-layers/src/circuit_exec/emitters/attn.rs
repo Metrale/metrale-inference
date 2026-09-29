@@ -16,20 +16,17 @@
 
 use anyhow::{Context, Result, ensure};
 use metrale_cache::kv_cache::KvCacheDtype;
+use metrale_circuit::Mode;
 use metrale_circuit::planner::{Layout, RowPack};
+use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::super::compile::{Cx, GroupRef, OpEmitter};
 use super::{attn_facts, dense, dim, expect_kernel, norm_slot, one_row, rows};
 use crate::layers::ops;
 
-/// 2026-09-28: The KV pools of member `i`'s layer.
-fn pools(
-    cx: &Cx<'_>,
-    i: usize,
-) -> Result<(
-    metrale_gpu_runtime::gpu::DevicePtr,
-    metrale_gpu_runtime::gpu::DevicePtr,
-)> {
+/// 2026-09-28: The KV pools of member `i`'s layer, and (2026-09-29) their cache's block size
+/// and cache stride: the target cache's, or the draft head's own in a draft plan.
+fn pools(cx: &Cx<'_>, i: usize) -> Result<(DevicePtr, DevicePtr, u32, u64)> {
     let a = attn_facts(cx, i)?;
     ensure!(
         a.kv_dtype == KvCacheDtype::Bf16,
@@ -37,6 +34,10 @@ fn pools(
         cx.g.node(i).id,
         a.kv_dtype
     );
+    if cx.mode == Mode::Draft {
+        let d = cx.draft_fixed()?;
+        return Ok((d.k_pool, d.v_pool, d.block_size, d.cache_stride));
+    }
     let k = *cx
         .fixed
         .k_pools
@@ -47,7 +48,7 @@ fn pools(
         .v_pools
         .get(a.attn_layer_idx)
         .with_context(|| format!("no V pool for attention layer {}", a.attn_layer_idx))?;
-    Ok((k, v))
+    Ok((k, v, cx.fixed.block_size, cx.fixed.cache_stride))
 }
 
 /// 2026-09-28: The circuit's attention dims agree with the layer's, so every edge the plan
@@ -91,7 +92,7 @@ impl OpEmitter for RopeMrope {
             "the layer does not run interleaved MRoPE"
         );
         let (q, kk) = (cx.ptr(cx.g.input(0, 0)?)?, cx.ptr(cx.g.input(0, 1)?)?);
-        let m = cx.meta();
+        let m = cx.meta()?;
         let (k, n) = (cx.handle(0)?, rows(cx)?);
         let (nq, nkv, hd, rd, theta) = (
             a.num_q_heads,
@@ -136,10 +137,10 @@ impl OpEmitter for KvWrite {
         cx.g.expect_ops(self.id(), &["kv_write"])?;
         same_dims(cx, 0)?;
         let a = attn_facts(cx, 0)?;
-        let (kp, vp) = pools(cx, 0)?;
+        let (kp, vp, bs, stride) = pools(cx, 0)?;
         let (key, key_stride) = cx.strided(cx.g.input(0, 0)?)?;
         let (value, value_stride) = cx.strided(cx.g.input(0, 1)?)?;
-        let (slot, bs, stride) = (cx.meta().slot, cx.fixed.block_size, cx.fixed.cache_stride);
+        let slot = cx.meta()?.slot;
         let (k, n, nkv, hd) = (cx.handle(0)?, rows(cx)?, a.num_kv_heads, a.head_dim);
         cx.push(
             0,
@@ -184,11 +185,11 @@ impl OpEmitter for PagedDecode {
              packing or a 512-wide head); the plan does not model that",
             cx.rows
         );
-        let (kp, vp) = pools(cx, 0)?;
+        let (kp, vp, bs, _) = pools(cx, 0)?;
         let (q, q_stride) = cx.strided(cx.g.input(0, 0)?)?;
         let out = cx.ptr(cx.g.output(0, 0)?)?;
-        let m = cx.meta();
-        let (k, n, bs) = (cx.handle(0)?, rows(cx)?, cx.fixed.block_size);
+        let m = cx.meta()?;
+        let (k, n) = (cx.handle(0)?, rows(cx)?);
         let (nq, nkv, hd, scale, window) = (
             a.num_q_heads,
             a.num_kv_heads,
@@ -382,7 +383,7 @@ impl OpEmitter for RopeStrided {
         let (q, q_stride) = cx.strided(cx.g.input(0, 0)?)?;
         let (kk, k_stride) = cx.strided(cx.g.input(0, 1)?)?;
         ensure!(a.rope.rotary_dim > 0, "a zero rotary dim");
-        let positions = cx.meta().positions;
+        let positions = cx.meta()?.positions;
         let (k, n) = (cx.handle(0)?, rows(cx)?);
         let (nq, nkv, hd, rd, theta) = (
             a.num_q_heads,

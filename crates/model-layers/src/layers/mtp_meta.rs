@@ -40,6 +40,26 @@ fn mtp_meta_len(block_entries: usize) -> Result<usize> {
 /// bytes per entry. `region_bytes` is what the caller owns at the
 /// destination: the per-sequence stride for the batched propose, or
 /// `scratch_bytes - MTP_META_OFFSET` for the single-sequence callers.
+/// 2026-09-29: The attention metadata [`pack_mtp_attn_meta`] lays out at `base` (position @0,
+/// slot @8, sequence length @16, block table @[`MTP_META_HEADER_BYTES`]), for one row.
+pub fn mtp_attn_meta_dev(
+    base: metrale_gpu_runtime::gpu::DevicePtr,
+    max_blocks_per_seq: u32,
+) -> crate::layer::AttnMetadataDev {
+    crate::layer::AttnMetadataDev {
+        positions: base,
+        positions_h: base,
+        positions_w: base,
+        slot: base.offset(8),
+        seq_len: base.offset(16),
+        block_table: base.offset(MTP_META_HEADER_BYTES),
+        max_blocks_per_seq,
+        num_seqs: 1,
+        seq_slot: metrale_gpu_runtime::gpu::DevicePtr::NULL,
+        moe_row_adapter: metrale_gpu_runtime::gpu::DevicePtr::NULL,
+    }
+}
+
 pub fn pack_mtp_attn_meta(
     position: u32,
     global_slot: i64,

@@ -8,13 +8,12 @@
 //! Owner: model-layers circuit executor.
 //! Invariants:
 //! - Every stream edge (a block's `stream_in` or `stream_out`) is the model's `hidden` buffer,
-//!   updated in place, as the legacy layers update it; every declared output is `logits`.
+//!   updated in place, as the legacy layers update it; every declared output is the model
+//!   buffer its producer writes (`logits`, `tokens`).
 //! - The program has exactly `plan.launches()` launches; any other count is a compile error.
 //! - A group's weights are checked against the format its nodes were resolved to.
 
-use std::collections::BTreeSet;
-
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::planner::{BufferPlan, Layout};
 use metrale_circuit::{Circuit, FusionPlan, Group, Mode};
 use metrale_config::ModelConfig;
@@ -47,6 +46,8 @@ pub struct Fixed {
     /// 2026-09-29: The MTP verify step's attention metadata (one row per verified token), at
     /// its fixed upload address; `max_blocks_per_seq` is ignored.
     pub verify_meta: AttnMetadataDev,
+    /// 2026-09-29: The MTP draft head's buffers; `None` without a bound draft head.
+    pub draft: Option<DraftFixed>,
     /// 2026-09-28: The quantized-activation scratch the NVFP4 MMQ GEMMs read
     /// (`BufferArena::ffn_act_q8`), sized for the widest batch.
     pub ffn_act_q8: DevicePtr,
@@ -58,6 +59,24 @@ pub struct Fixed {
     pub block_size: u32,
     /// 2026-09-28: `PagedKvCache::cache_stride`.
     pub cache_stride: u64,
+}
+
+/// 2026-09-29: The MTP draft head's fixed buffers.
+#[derive(Clone)]
+pub struct DraftFixed {
+    /// 2026-09-29: Where the host puts the token's embedding row (`MtpHead::forward_one`'s
+    /// `ssm_qkvz`).
+    pub embed: DevicePtr,
+    /// 2026-09-29: The draft step's attention metadata (`mtp_meta::mtp_attn_meta_dev`);
+    /// `max_blocks_per_seq` is ignored.
+    pub meta: AttnMetadataDev,
+    /// 2026-09-29: The draft cache's pools and geometry.
+    pub k_pool: DevicePtr,
+    pub v_pool: DevicePtr,
+    pub block_size: u32,
+    pub cache_stride: u64,
+    /// 2026-09-29: The vocabulary rows the draft lm_head scores (`DraftBinding::vocab`).
+    pub vocab: u32,
 }
 
 /// 2026-09-28: A group of the plan being compiled.
@@ -119,6 +138,7 @@ pub(crate) struct Cx<'a> {
     pub fixed: &'a Fixed,
     pub layers: &'a [CircuitLayer],
     pub head: &'a HeadBinding,
+    pub draft: Option<&'a CircuitLayer>,
     ptrs: &'a [Option<DevicePtr>],
     strides: &'a [Option<u64>],
     formats: &'a [metrale_circuit::Format],
@@ -187,12 +207,21 @@ impl<'a> Cx<'a> {
     }
 
     /// 2026-09-28: The attention metadata this plan's steps upload.
-    pub fn meta(&self) -> AttnMetadataDev {
-        match self.mode {
-            Mode::Decode | Mode::Draft => self.fixed.meta,
+    pub fn meta(&self) -> Result<AttnMetadataDev> {
+        Ok(match self.mode {
+            Mode::Draft => self.draft_fixed()?.meta,
+            Mode::Decode => self.fixed.meta,
             Mode::MultiSeq => self.fixed.batch_meta,
             Mode::Verify => self.fixed.verify_meta,
-        }
+        })
+    }
+
+    /// 2026-09-29: The draft head's buffers; an error without a bound draft head.
+    pub fn draft_fixed(&self) -> Result<&'a DraftFixed> {
+        self.fixed
+            .draft
+            .as_ref()
+            .context("a draft plan without the draft head's buffers")
     }
 
     /// 2026-09-29: The GDN state row `row` reads: its own sequence's in a multi-sequence
@@ -217,6 +246,11 @@ impl<'a> Cx<'a> {
     /// 2026-09-28: The binding of the layer member `i` belongs to.
     pub fn layer(&self, i: usize) -> Result<&'a CircuitLayer> {
         let n = self.g.node(i);
+        if self.mode == Mode::Draft {
+            return self
+                .draft
+                .with_context(|| format!("`{}`: no draft head is bound", n.id));
+        }
         let l = n
             .layer
             .with_context(|| format!("`{}` is outside the layers", n.id))?;
@@ -307,7 +341,10 @@ pub fn layout(circuit: &Circuit, plan: &FusionPlan) -> Result<Layout> {
         }
     }
     for (e, edge) in circuit.edges.iter().enumerate() {
-        if edge.is_output && materialized(e) {
+        let embedding = edge
+            .producer
+            .is_some_and(|p| circuit.nodes[p].op == metrale_circuit::OpKind::Embed);
+        if (edge.is_output || embedding) && materialized(e) {
             layout.external.insert(e);
         }
     }
@@ -322,20 +359,27 @@ pub fn layout(circuit: &Circuit, plan: &FusionPlan) -> Result<Layout> {
     Ok(layout)
 }
 
-/// 2026-09-29: The model buffer an external edge is: the stream is `hidden`; a declared output
-/// is `logits` when the lm_head writes it and `tokens` when an argmax does.
+/// 2026-09-29: The model buffer an external edge is: a stream edge is `hidden`; otherwise, by
+/// its producer: the lm_head's output is `logits`, an argmax's `tokens`, and an embedding
+/// outside the stream (the draft head's) the draft embedding buffer.
 fn external_buffer(circuit: &Circuit, e: usize, fixed: &Fixed) -> Result<DevicePtr> {
     let edge = &circuit.edges[e];
-    if !edge.is_output {
+    let stream = circuit
+        .blocks
+        .iter()
+        .any(|b| b.stream_in == Some(e) || b.stream_out == Some(e));
+    if stream {
         return Ok(fixed.hidden);
     }
     match edge.producer.map(|p| circuit.nodes[p].op) {
         Some(metrale_circuit::OpKind::LmHead) => Ok(fixed.logits),
         Some(metrale_circuit::OpKind::Argmax) => Ok(fixed.tokens),
-        other => bail!(
-            "output `{}` has no model buffer (written by {other:?})",
-            edge.id
-        ),
+        Some(metrale_circuit::OpKind::Embed) => fixed
+            .draft
+            .as_ref()
+            .map(|d| d.embed)
+            .with_context(|| format!("`{}`: no draft embedding buffer", edge.id)),
+        other => bail!("`{}` has no model buffer (written by {other:?})", edge.id),
     }
 }
 
@@ -347,6 +391,7 @@ pub struct Inputs<'a> {
     pub fixed: &'a Fixed,
     pub layers: &'a [CircuitLayer],
     pub head: &'a HeadBinding,
+    pub draft: Option<&'a CircuitLayer>,
 }
 
 /// 2026-09-28: Compile `plan` with its buffers placed by `buffers` at `workspace`.
@@ -388,6 +433,7 @@ pub fn compile(
             fixed: inp.fixed,
             layers: inp.layers,
             head: inp.head,
+            draft: inp.draft,
             ptrs: &ptrs,
             strides: &strides,
             formats: &plan.edge_formats,
@@ -421,49 +467,4 @@ pub fn compile(
         plan_digest: plan.digest.clone(),
         launches,
     })
-}
-
-/// 2026-09-28: Refuse a model the circuit misdescribes: an unbound layer, a layer or head
-/// feature no rule models, or a layer whose mixer is not the circuit's.
-pub fn check_bindings(
-    circuit: &Circuit,
-    layers: &[Option<CircuitLayer>],
-    head: &HeadBinding,
-) -> Result<Vec<CircuitLayer>> {
-    let mut problems = BTreeSet::new();
-    let mut out = Vec::with_capacity(layers.len());
-    for (i, l) in layers.iter().enumerate() {
-        let Some(l) = l else {
-            problems.insert(format!("layer {i} has no circuit binding"));
-            continue;
-        };
-        for u in &l.unmodelled {
-            problems.insert(format!("layer {i}: {u}"));
-        }
-        let want_gdn =
-            circuit.layer_kinds.get(i) == Some(&metrale_circuit::LayerKind::LinearAttention);
-        let is_gdn = matches!(l.mixer, super::bindings::MixerFacts::Gdn(_));
-        if want_gdn != is_gdn {
-            problems.insert(format!(
-                "layer {i}: the circuit and the model disagree on its kind"
-            ));
-        }
-        out.push(l.clone());
-    }
-    for u in &head.unmodelled {
-        problems.insert(format!("head: {u}"));
-    }
-    if !problems.is_empty() {
-        return Err(anyhow!(
-            "the circuit does not model this model:\n  {}",
-            problems.into_iter().collect::<Vec<_>>().join("\n  ")
-        ));
-    }
-    ensure!(
-        out.len() == circuit.layer_kinds.len(),
-        "the model has {} layers, the circuit {}",
-        out.len(),
-        circuit.layer_kinds.len()
-    );
-    Ok(out)
 }

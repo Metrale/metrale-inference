@@ -54,13 +54,13 @@ class and exact citation.
 
 | Rule | Numerics | Dispatch site(s) |
 |---|---|---|
-| `embed_row_copy` | reference | me/decode_a2.rs:241-254 (one D2D copy per row, padding rows memset); ml/mtp_head/forward.rs:67-68 |
+| `embed_row_copy` | reference | me/decode_a2.rs:241-254 (one D2D copy per row, padding rows memset); ml/mtp_head/forward.rs:82-83 |
 | `input_norm_residual` | reference | ml/qwen3_ssm/trait_decode.rs:38-49; ml/qwen3_attention/trait_impl/decode_inner.rs:76-87; ml/qwen3_attention/trait_impl/multi_seq/mod.rs:58-69; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:170-183; ml/qwen3_ssm/trait_decode_batched.rs:193 |
-| `draft_rms_norm` | reference | ml/mtp_head/forward.rs:71-81,88-98,137-147 (the residual copy is a D2D copy at :133) |
-| `residual_add_post_norm` | reference | k/rms_norm.cu:379-382 (FP32 sum of squares before the BF16 rounding: not the unfused chain); ml/qwen3_ssm/trait_decode.rs:117-129; ml/qwen3_attention/trait_impl/decode_inner.rs:241-253; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:247-261; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:131-143; ml/qwen3_ssm/trait_decode_batched.rs:284; ml/mtp_head/forward.rs:312-324 |
-| `ffn_residual_add` | reference | ml/qwen3_ssm/trait_decode.rs:143-150; ml/qwen3_attention/trait_impl/decode_inner.rs:384-391; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:147-154; ml/qwen3_ssm/trait_decode_multi_seq.rs:212,235 (after the prefill and km arms); ml/qwen3_ssm/trait_decode_batched.rs:323-334; ml/mtp_head/forward.rs:343 |
+| `draft_rms_norm` | reference | ml/mtp_head/forward.rs:86-96,103-113,152-162 (the residual copy is a D2D copy at :148) |
+| `residual_add_post_norm` | reference | k/rms_norm.cu:379-382 (FP32 sum of squares before the BF16 rounding: not the unfused chain); ml/qwen3_ssm/trait_decode.rs:117-129; ml/qwen3_attention/trait_impl/decode_inner.rs:241-253; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:247-261; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:131-143; ml/qwen3_ssm/trait_decode_batched.rs:284; ml/mtp_head/forward.rs:306-318 |
+| `ffn_residual_add` | reference | ml/qwen3_ssm/trait_decode.rs:143-150; ml/qwen3_attention/trait_impl/decode_inner.rs:384-391; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:147-154; ml/qwen3_ssm/trait_decode_multi_seq.rs:212,235 (after the prefill and km arms); ml/qwen3_ssm/trait_decode_batched.rs:323-334; ml/mtp_head/forward.rs:337 |
 | `ffn_residual_add_per_row_gdn_k2k3` | reference | ml/qwen3_ssm/trait_decode_multi_seq.rs:178-196 (the n == 2 | 3 arm adds each row's FFN output in a loop, :192) |
-| `final_norm` | reference | me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:346-356 |
+| `final_norm` | reference | me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:340-350 |
 | `gdn_ba_gates_gemv_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (per-sequence loop when the batched recurrence is off, HARDWARE.toml:118) |
 | `gdn_ba_gates_gemm_verify` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:37-59 (kill switch METRALE_NO_BATCHED_BA_GATES) |
 | `gdn_conv_l2_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:213-233; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:99-113 |
@@ -73,15 +73,15 @@ class and exact citation.
 | `gdn_fused_conv_norm_k2_verify` | differs (gdn_fused_verify) | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:57-67 (METRALE_GDN_FUSED_VERIFY=1; checked at cos >= 0.99999, not bitwise) |
 | `gdn_out_norm_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:354-372; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:222-236 |
 | `gdn_out_norm_prefill_verify` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:138-157 (kill switch METRALE_NO_BATCHED_GDN_NORM) |
-| `deinterleave_qg` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:70-79; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-286; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:171-183 |
-| `qk_norm_rows` | reference | ml/qwen3_attention/decode/attention_forward.rs:140-151,174-186; ml/mtp_head/forward.rs:215-236 |
+| `deinterleave_qg` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:70-79; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-286; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:186-198 |
+| `qk_norm_rows` | reference | ml/qwen3_attention/decode/attention_forward.rs:140-151,174-186; ml/mtp_head/forward.rs:230-251 |
 | `qk_norm_strided` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:234-283 (bit-identical to rms_norm per row) |
 | `rope_mrope_interleaved` | reference | ml/qwen3_attention/decode/attention_forward/rope.rs:70-88 |
 | `rope_strided` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn.rs:48-87 (plain RoPE; bit-identical to MRoPE while pos_t == pos_h == pos_w, k/rope_mrope_interleaved.cu:15-17) |
-| `rope_plain_draft` | reference | ml/mtp_head/forward.rs:264-277 |
+| `rope_plain_draft` | reference | ml/mtp_head/forward.rs:258-271 |
 | `kv_write_bf16` | reference | ml/qwen3_attention/decode/write_kv_cache.rs:428-444; ml/qwen3_attention/trait_impl/multi_seq/attn.rs:159-176; ml/mtp_head/forward/attend.rs:36-73 (the draft KV is BF16 under mtp_quantization bf16, ml/mtp_head/new.rs:228-236) |
 | `paged_attention_bf16` | reference | ml/qwen3_attention/decode/run_paged_decode/bf16_fp8.rs:182-201; ml/qwen3_attention/decode/splitk_dispatch.rs:241-251 (no BF16 split-K pair on GB10); ml/qwen3_attention/trait_impl/multi_seq/attn.rs:231-306 |
-| `sigmoid_gate_mul` | reference | ml/qwen3_attention/decode/attention_forward.rs:421-432; ml/mtp_head/forward.rs:298-306 |
+| `sigmoid_gate_mul` | reference | ml/qwen3_attention/decode/attention_forward.rs:421-432; ml/mtp_head/forward.rs:292-300 |
 | `sigmoid_gate_mul_batched` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:59-81 |
 | `w4a16_gemv_sw_1row` | reference | ml/qwen3_ssm/ssm_forward.rs:90-105,389-422; ml/qwen3_attention/decode/attention_forward_oproj.rs:82-93; ml/dense_ffn_decode.rs:386-397 (gemv_sw on unless METRALE_NO_GEMV_SW=1, ml/ops/model_levers_resolve.rs:53; bit-identical to w4a16_gemv, k/w4a16_gemv_fused.cu:305-307) |
 | `w4a16_gemv_qg_1row` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:80-118 (K walk differs from w4a16_gemv, k/w4a16_gemv.cu:1447-1449) |
@@ -135,12 +135,12 @@ class and exact citation.
 | `lm_head_bf16_gemv` | reference | mm/impl_a3_lm_head.rs:392-402 (use_fp32_logits is false, mm/impl_a1/kernels.rs:200) |
 | `lm_head_bf16_batchm` | reference | me/lm_head_batched.rs:133-162 (m <= lm_head_batchm_max = 8, kernels/gb10/HARDWARE.toml:115); mm/impl_a3_lm_head.rs:150-202 (verify); per row bit-identical to dense_gemv_bf16, k/dense_gemv_bf16_batchm.cu:16 |
 | `lm_head_bf16_gemm` | reference | me/lm_head_batched.rs:133-162 |
-| `draft_lm_head_nvfp4` | reference | ml/mtp_head/forward.rs:366-377 (the draft head is NVFP4 whatever the target head: a draft-only copy when the target head is BF16, mm/impl_a1/ssm_setup.rs:48-50) |
+| `draft_lm_head_nvfp4` | reference | ml/mtp_head/forward.rs:360-371 (the draft head is NVFP4 whatever the target head: a draft-only copy when the target head is BF16, mm/impl_a1/ssm_setup.rs:48-50) |
 | `argmax_host` | reference | me/decode_a2.rs:489 (the step returns the logits; the caller samples on the host) |
 | `argmax_verify_rows` | reference | me/verify_b.rs:374-389; me/verify_c.rs:344-356; me/verify_c2.rs:363-375 (one argmax_bf16 per row into scratch + 4t, inside the graph) |
-| `draft_argmax` | reference | ml/mtp_head/forward.rs:437-455 |
-| `draft_concat` | reference | ml/mtp_head/forward.rs:101-109 |
-| `draft_dense_gemv_bf16` | reference | ml/mtp_head/forward.rs:123,171-183,209-212,309; ml/mtp_head.rs:330-339 (mtp_quantization bf16: every projection is ProjectionWeight::Bf16) |
+| `draft_argmax` | reference | ml/mtp_head/forward.rs:419-421; ml/mtp_head/forward/draft_step.rs:53-77 |
+| `draft_concat` | reference | ml/mtp_head/forward.rs:116-124 |
+| `draft_dense_gemv_bf16` | reference | ml/mtp_head/forward.rs:138,186-198,224-227,303; ml/mtp_head.rs:334-343 (mtp_quantization bf16: every projection is ProjectionWeight::Bf16) |
 | `draft_dense_gate_up_bf16` | reference | ml/mtp_head/moe_forward.rs:30-64 (dense_ffn_forward_generic: gate and up are two GEMVs) |
 | `cross_layer_add_norm` | bit_identical | k/residual_add_rms_norm_exact.cu (new); replaces the layer-end ffn_residual_add (bf16_residual_add) and the next layer's input_norm_residual (rms_norm_residual), whose dispatch sites those rules cite |
 | `rms_norm_quant_fp8_row` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then quant_rowwise_fp8 (k/quant_rowwise_fp8.cu, ml/ops/dispatch_proj_rowwise.rs) |
