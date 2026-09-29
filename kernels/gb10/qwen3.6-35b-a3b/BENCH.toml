@@ -61,10 +61,11 @@ of 20, and `sum_wall_s` <= 700 is satisfied by 5 iterations. Neither is the gate
 threshold, it does not relax one -- the recorded runs all carry iterations 10."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 
@@ -209,10 +210,11 @@ the next receipt that beats them (a better SINGLE prompt is measurement-definiti
 and gets its own campaign)."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 ssm_cache_slots = "256"
@@ -288,10 +290,11 @@ these committed values are the only ABSOLUTE bound and must be re-cut whenever t
 materially faster."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 
@@ -402,10 +405,11 @@ previous one at +3%/+5%; these committed values are the only ABSOLUTE bound and 
 whenever the path gets materially faster."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 
@@ -468,10 +472,11 @@ box with no baseline yet, so each box is seeded with two runs before its first c
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -518,10 +523,11 @@ box with no baseline yet, so each box is seeded with two runs before its first c
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -634,10 +640,11 @@ review it deserves.\
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 # 2026-09-25: 2048 holds isl 128 plus the chat template and osl 1024.
 
 
@@ -890,10 +897,11 @@ from replayed history anyway.\
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 disable_thinking = "true"
@@ -1076,10 +1084,11 @@ px before the resolver fix as well; clamped to the encoder's 16384-patch ceiling
 the boot log says so rather than silently ignoring the checkpoint."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 
@@ -1146,10 +1155,11 @@ correct on one geometry. `default = false`: qwen3.8-27b owns this gate's default
 serve."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
+# 2026-09-29: `--weight-quantization declared`, the checkpoint's own W8A8 (experts and
+# block-scaled attention/GDN decode): owner decision 2026-09-29 on the full BFCL draw
+# (declared 84.56/86.40 vs nvfp4 85.16/86.15, dgx3, N=1004 hermetic) and agentic 2/2. Pinned
+# because the gate serves the mirrored recipe index, which does not carry the key yet.
+weight_quantization = "declared"
 
 gpu_memory_utilization = "0.85"
 

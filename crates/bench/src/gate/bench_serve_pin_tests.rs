@@ -75,7 +75,7 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
     let root = repo_root();
 
     let echolp = baseline_for(&root, "bfcl-subset-echolp").unwrap();
-    let (_, e) = echolp.resolve("gb10", None).unwrap();
+    let (echolp_checkpoint, e) = echolp.resolve("gb10", None).unwrap();
     assert_eq!(e.metrics["overall_accuracy"].min, Some(84.56));
     assert_eq!(e.metrics["normalized_single_turn_score"].min, Some(85.77));
     assert_eq!(e.metrics["samples"].min, Some(1004.0));
@@ -94,7 +94,7 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
         e.serve_overrides
             .get("weight_quantization")
             .map(String::as_str),
-        Some("nvfp4")
+        Some(certified_tier(&echolp_checkpoint))
     );
     assert_eq!(e.serve_overrides.len(), 3, "{:?}", e.serve_overrides);
 
@@ -102,7 +102,7 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
     // (`ssm_cache_slots=256` in ssm_poison/driver.rs, `disable_thinking=true` in
     // ssm_poison/probe.rs) plus the GB10 util ceiling.
     let poison = baseline_for(&root, "ssm-state-poisoning-gate").unwrap();
-    let (_, p) = poison.resolve("gb10", None).unwrap();
+    let (poison_checkpoint, p) = poison.resolve("gb10", None).unwrap();
     assert_eq!(
         p.serve_overrides.get("ssm_cache_slots").map(String::as_str),
         Some("256")
@@ -123,7 +123,7 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
         p.serve_overrides
             .get("weight_quantization")
             .map(String::as_str),
-        Some("nvfp4")
+        Some(certified_tier(&poison_checkpoint))
     );
     assert_eq!(p.serve_overrides.len(), 4, "{:?}", p.serve_overrides);
 
@@ -258,7 +258,10 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
                     "gpu_memory_utilization".to_string(),
                     GB10_UTIL_CEILING.to_string()
                 ),
-                ("weight_quantization".to_string(), "nvfp4".to_string()),
+                (
+                    "weight_quantization".to_string(),
+                    certified_tier(&checkpoint).to_string()
+                ),
             ]),
             "{id} pins only the GB10 util ceiling and the recipe's tier"
         );
@@ -310,7 +313,10 @@ fn the_high_isl_gates_pin_their_serve_and_vllm_ceilings() {
                     GB10_UTIL_CEILING.to_string()
                 ),
                 ("max_model_len".to_string(), "40960".to_string()),
-                ("weight_quantization".to_string(), "nvfp4".to_string()),
+                (
+                    "weight_quantization".to_string(),
+                    certified_tier(checkpoint).to_string()
+                ),
             ]),
             "{id}"
         );
@@ -321,7 +327,8 @@ fn the_high_isl_gates_pin_their_serve_and_vllm_ceilings() {
 }
 
 /// 2026-09-28: Every measured GB10 entry of the three models whose gates the batch certifies
-/// pins `weight_quantization = "nvfp4"`, the tier its recipe declares. The gate serves the
+/// pins the tier its recipe declares ([`certified_tier`]: `declared` for the 35B FP8 checkpoint
+/// since 2026-09-29, `nvfp4` otherwise). The gate serves the
 /// mirrored recipe index, which does not carry the key yet, and the serve default is
 /// `declared`, so an entry without the pin would certify a different engine configuration
 /// from the one its recipe names. The gates seen are counted, so the test cannot pass on zero
@@ -342,7 +349,7 @@ fn every_measured_gb10_entry_pins_the_recipes_weight_quantization_tier() {
                 .serve_overrides
                 .get("weight_quantization")
                 .map(String::as_str),
-            Some("nvfp4"),
+            Some(certified_tier(&entry.checkpoint)),
             "{} / {} ({}) must pin its recipe's tier",
             target.model,
             entry.gate,
@@ -351,6 +358,17 @@ fn every_measured_gb10_entry_pins_the_recipes_weight_quantization_tier() {
         seen += 1;
     }
     assert_eq!(seen, 26, "the check must not pass vacuously");
+}
+
+/// 2026-09-29: The `--weight-quantization` tier a certified GB10 entry pins for `checkpoint`:
+/// `declared` for Qwen3.6-35B-A3B-FP8 (the checkpoint's own W8A8, owner decision 2026-09-29),
+/// `nvfp4` for every other checkpoint these tests cover.
+fn certified_tier(checkpoint: &str) -> &'static str {
+    if checkpoint == "Qwen/Qwen3.6-35B-A3B-FP8" {
+        "declared"
+    } else {
+        "nvfp4"
+    }
 }
 
 /// 2026-09-26: The `gpu_memory_utilization` every 35B FP8 entry on GB10 pins
