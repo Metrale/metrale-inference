@@ -486,10 +486,13 @@ The instruments:
   TTFT (`kernels/gb10/qwen3.8-27b/BENCH.toml:2280-2337`;
   `kernels/gb10/qwen3.6-35b-a3b/BENCH.toml:486-540`).
 
-**The dense high-ISL gate is red today, before any circuit work.** The 27B legacy engine
-measures 45.4 s cold against a 24.1 s vLLM ceiling (BENCH.toml:2246-2262). So "green" means
-"no worse than legacy" for M6, and the circuit's prefill fusions are the route to beating the
-ceiling afterwards.
+**Green means inside each gate's own bounds, as for every other gate.** The dense 27B passes
+high-isl-ttft-cold today: the banked records on origin/main are
+`.benchmarks/high-isl-ttft-cold/2026-09-28-c4e6fde56c.json` (median 17282 ms, PASS) and
+`2026-09-29-e55829e49b.json` (16799 ms, PASS), both under the 24.1 s vLLM ceiling. Campaigns
+#39 and #48 certified all 17 gates. TODO for a later PR: the BENCH.toml note text
+(`kernels/gb10/qwen3.8-27b/BENCH.toml:2246-2262`) still describes the 2026-09-27 Phase 1
+measurement (45.4 s) and needs refreshing.
 
 The rules:
 
