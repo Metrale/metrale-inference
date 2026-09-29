@@ -203,6 +203,13 @@ pub struct MtpHead {
     w4a16_gemv_qg_k: KernelHandle,
     w4a16_gemv_dual_k: KernelHandle,
     rope_k: KernelHandle,
+    /// 2026-09-29: `rope_forward_strided` and `sigmoid_gate_mul_batched`, for the batched
+    /// propose's one-launch attention block; 0 when the target lacks them, which declines
+    /// the batched propose (`propose_batch_scope_ok`).
+    rope_strided_k: KernelHandle,
+    sigmoid_gate_mul_batched_k: KernelHandle,
+    /// 2026-09-29: `rms_norm_strided`, the batched propose's one-launch Q head norm.
+    rms_norm_strided_k: KernelHandle,
     reshape_cache_k: KernelHandle,
     paged_decode_k: KernelHandle,
     /// 2026-09-25: KV cache dtype: BF16 for BF16 and FP8 heads, FP8 for NVFP4 heads.

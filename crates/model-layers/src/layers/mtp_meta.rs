@@ -69,9 +69,119 @@ pub fn pack_mtp_attn_meta(
     Ok(buf)
 }
 
+/// 2026-09-29: Byte offsets of the batched propose's attention metadata for `n` rows: `u32`
+/// positions, `i64` KV slots, `i32` sequence lengths, then `n` block tables of `max_blocks`
+/// entries each, row-major.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MtpBatchMetaLayout {
+    pub positions: usize,
+    pub slots: usize,
+    pub seq_lens: usize,
+    pub block_tables: usize,
+    pub len: usize,
+}
+
+impl MtpBatchMetaLayout {
+    pub(crate) fn new(n: usize, max_blocks: usize) -> Self {
+        let slots = (4 * n).next_multiple_of(8);
+        let seq_lens = slots + 8 * n;
+        let block_tables = (seq_lens + 4 * n).next_multiple_of(16);
+        Self {
+            positions: 0,
+            slots,
+            seq_lens,
+            block_tables,
+            len: block_tables + 4 * n * max_blocks,
+        }
+    }
+}
+
+/// 2026-09-29: Pack the attention metadata of `n` propose rows in [`MtpBatchMetaLayout`], for
+/// one upload and one launch per attention kernel. Row `i` has `positions[i]`, `slots[i]`,
+/// `seq_lens[i]` and `tables[i]`, zero-padded to `max_blocks` entries. Refused, with the phrase
+/// `mtp_bootstrap_step.rs` matches, when it would not fit `region_bytes` or a table is longer
+/// than `max_blocks`.
+pub(crate) fn pack_mtp_attn_meta_batch(
+    positions: &[u32],
+    slots: &[i64],
+    seq_lens: &[i32],
+    tables: &[&[u32]],
+    max_blocks: usize,
+    region_bytes: usize,
+) -> Result<(Vec<u8>, MtpBatchMetaLayout)> {
+    let n = positions.len();
+    ensure!(
+        slots.len() == n && seq_lens.len() == n && tables.len() == n,
+        "MTP batch metadata: row counts differ"
+    );
+    let layout = MtpBatchMetaLayout::new(n, max_blocks);
+    ensure!(
+        layout.len <= region_bytes && tables.iter().all(|t| t.len() <= max_blocks),
+        "MTP attention metadata exceeds meta stride: needs {} B for {n} rows of {max_blocks} \
+         block entries, have {region_bytes} B",
+        layout.len
+    );
+    let mut buf = vec![0u8; layout.len];
+    for i in 0..n {
+        let p = layout.positions + 4 * i;
+        buf[p..p + 4].copy_from_slice(&positions[i].to_le_bytes());
+        let s = layout.slots + 8 * i;
+        buf[s..s + 8].copy_from_slice(&slots[i].to_le_bytes());
+        let l = layout.seq_lens + 4 * i;
+        buf[l..l + 4].copy_from_slice(&seq_lens[i].to_le_bytes());
+        for (j, &block) in tables[i].iter().enumerate() {
+            let at = layout.block_tables + 4 * (i * max_blocks + j);
+            buf[at..at + 4].copy_from_slice(&block.to_le_bytes());
+        }
+    }
+    Ok((buf, layout))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-09-29: Two rows: every field lands at its layout offset, a short table is
+    /// zero-padded, and a table longer than `max_blocks` or a region too small is refused with
+    /// the matched phrase.
+    #[test]
+    fn packs_the_batched_layout() {
+        let (buf, l) =
+            pack_mtp_attn_meta_batch(&[7, 9], &[100, 2000], &[8, 10], &[&[3], &[4, 5]], 2, 4096)
+                .unwrap();
+        assert_eq!(
+            l,
+            MtpBatchMetaLayout {
+                positions: 0,
+                slots: 8,
+                seq_lens: 24,
+                block_tables: 32,
+                len: 48
+            }
+        );
+        let u32_at = |o: usize| u32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
+        let i64_at = |o: usize| i64::from_le_bytes(buf[o..o + 8].try_into().unwrap());
+        assert_eq!((u32_at(0), u32_at(4)), (7, 9));
+        assert_eq!((i64_at(8), i64_at(16)), (100, 2000));
+        assert_eq!((u32_at(24), u32_at(28)), (8, 10));
+        assert_eq!(
+            [u32_at(32), u32_at(36), u32_at(40), u32_at(44)],
+            [3, 0, 4, 5]
+        );
+        let long = pack_mtp_attn_meta_batch(&[1], &[1], &[1], &[&[1, 2, 3]], 2, 4096);
+        assert!(
+            long.unwrap_err()
+                .to_string()
+                .contains("exceeds meta stride")
+        );
+        let small = pack_mtp_attn_meta_batch(&[1], &[1], &[1], &[&[1]], 1, 16);
+        assert!(
+            small
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds meta stride")
+        );
+    }
 
     #[test]
     fn packs_the_documented_layout() {

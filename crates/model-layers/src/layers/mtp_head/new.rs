@@ -383,6 +383,13 @@ impl MtpHead {
             w4a16_gemv_qg_k: gpu.kernel("w4a16_gemv", "w4a16_gemv_qg")?,
             w4a16_gemv_dual_k: gpu.kernel("w4a16_gemv_fused", "w4a16_gemv_dual")?,
             rope_k: gpu.kernel("rope", "rope_forward")?,
+            rope_strided_k: crate::layers::try_kernel(gpu, "rope", "rope_forward_strided"),
+            rms_norm_strided_k: crate::layers::try_kernel(gpu, "norm", "rms_norm_strided"),
+            sigmoid_gate_mul_batched_k: crate::layers::try_kernel(
+                gpu,
+                "residual_add",
+                "sigmoid_gate_mul_batched",
+            ),
             reshape_cache_k: if kv_bf16 {
                 gpu.kernel("reshape_and_cache", "reshape_and_cache_flash")?
             } else {

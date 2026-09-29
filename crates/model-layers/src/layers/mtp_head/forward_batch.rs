@@ -21,13 +21,13 @@ use crate::layer::ForwardContext;
 use crate::layers::ops;
 use crate::weight_map::DenseWeight;
 
-use crate::layers::mtp_meta::pack_mtp_attn_meta;
 mod position;
 
 /// 2026-09-25: Byte offset in `scratch` of the per-row FP32 top-1
 /// log-probabilities. The n argmax ids occupy `scratch[0..n*4)`, and
-/// n <= `PROPOSE_META_SEQS` (32) keeps them below this offset.
-const LP_SCRATCH_OFF: usize = 256;
+/// n <= `PROPOSE_META_SEQS` keeps them below this offset (2026-09-29: derived; it was 256,
+/// which ids overwrite past 64 rows).
+const LP_SCRATCH_OFF: usize = 4 * super::batch_caps::PROPOSE_META_SEQS;
 
 impl MtpHead {
     /// 2026-09-25: n-row projection of a BF16 or weight-only NVFP4 weight.
