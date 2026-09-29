@@ -374,6 +374,11 @@ pub struct ModelConfig {
     /// `partial_rotary_factor * head_dim`.
     #[serde(default)]
     pub rotary_dim: usize,
+    /// 2026-09-29: Full attention's positional encoding. Never read from JSON: a family parser
+    /// whose attention has none declares it, and `resolve_attn_position_encoding` settles
+    /// every other config to RoPE. Read it through [`ModelConfig::attn_position_encoding`].
+    #[serde(skip)]
+    pub attn_position_encoding: Option<AttnPositionEncoding>,
 
     #[serde(default)]
     pub dflash_capture_layers: Vec<usize>,

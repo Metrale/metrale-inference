@@ -339,6 +339,7 @@ pub fn config_from_gguf(inputs: &GgufConfigInputs) -> Result<ModelConfig> {
     }
 
     finalize_config(&mut config, &raw)?;
+    super::resolve_attn_position_encoding(&mut config)?;
     Ok(config)
 }
 

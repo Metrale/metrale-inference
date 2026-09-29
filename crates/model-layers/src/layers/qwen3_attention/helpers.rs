@@ -84,12 +84,26 @@ impl Qwen3AttentionLayer {
         self.head_gate_activation = activation;
     }
 
+    /// 2026-09-29: Whether this layer rotates Q and K before attention; false when the
+    /// config declares no positional encoding (Nemotron-H).
+    pub(crate) fn rotates_qk(&self) -> bool {
+        self.position_encoding == metrale_config::AttnPositionEncoding::Rope
+    }
+
     pub fn set_yarn_rope(&mut self, inv_freq: DevicePtr, attention_factor: f32) {
+        assert!(
+            self.rotates_qk(),
+            "YaRN RoPE on a layer without positional encoding"
+        );
         self.yarn_inv_freq = inv_freq;
         self.yarn_attention_factor = attention_factor;
     }
 
     pub fn set_rope_overrides(&mut self, theta: f32, rotary_dim: u32) {
+        assert!(
+            self.rotates_qk(),
+            "RoPE overrides on a layer without positional encoding"
+        );
         self.rope_theta_override = Some(theta);
         self.rotary_dim_override = Some(rotary_dim);
     }
@@ -99,6 +113,10 @@ impl Qwen3AttentionLayer {
     /// mode reads as the number of rotated pairs (`ops::rope_proportional`).
     /// Both setters only store fields, so their order does not matter.
     pub fn set_rope_proportional(&mut self, enable: bool) {
+        assert!(
+            !enable || self.rotates_qk(),
+            "proportional RoPE on a layer without positional encoding"
+        );
         self.rope_proportional = enable;
     }
 

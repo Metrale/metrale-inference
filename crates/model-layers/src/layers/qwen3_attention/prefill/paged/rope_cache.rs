@@ -41,7 +41,9 @@ impl Qwen3AttentionLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        if self.mla.is_some() {
+        if !self.rotates_qk() {
+            // 2026-09-29: No positional encoding; the cache write below still runs.
+        } else if self.mla.is_some() {
             // 2026-09-25: Not reached: MLA layers returned above.
         } else if !self.yarn_inv_freq.is_null() {
             ops::rope_yarn_scaled(
@@ -180,6 +182,7 @@ impl Qwen3AttentionLayer {
             // The V side stays as written above.
             if let Some(raw_k) = raw_k_scratch
                 && !self.attn.k_norm.weight.is_null()
+                && self.rotates_qk()
             {
                 use metrale_cache::kv_cache::KvCacheDtype;
                 if kv_cache.dtype() == KvCacheDtype::Bf16 {
@@ -211,3 +214,7 @@ impl Qwen3AttentionLayer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "rope_cache_tests.rs"]
+mod tests;

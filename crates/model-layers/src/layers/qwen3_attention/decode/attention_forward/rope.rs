@@ -13,8 +13,9 @@ use crate::layer::{AttnMetadataDev, ForwardContext};
 use crate::layers::ops;
 
 impl Qwen3AttentionLayer {
-    /// 2026-09-26: The RoPE variant this layer was loaded with: YaRN-scaled, proportional,
-    /// interleaved MRoPE, or plain RoPE (Q only when `fused_k_fp8`, which rotates K itself).
+    /// 2026-09-29: The RoPE variant this layer was loaded with: YaRN-scaled, proportional,
+    /// interleaved MRoPE, or plain RoPE (Q only when `fused_k_fp8`, which rotates K itself);
+    /// nothing when the layer has no positional encoding.
     pub(super) fn attention_forward_rope(
         &self,
         ctx: &ForwardContext,
@@ -28,7 +29,9 @@ impl Qwen3AttentionLayer {
         fused_k_fp8: bool,
         stream: u64,
     ) -> Result<()> {
-        if self.mla.is_some() {
+        if !self.rotates_qk() {
+            // 2026-09-29: No positional encoding: Q and K stay as projected.
+        } else if self.mla.is_some() {
             // 2026-09-25: Unreachable: MLA layers returned above.
         } else if !self.yarn_inv_freq.is_null() {
             ops::rope_yarn_scaled(
@@ -108,3 +111,7 @@ impl Qwen3AttentionLayer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "rope_tests.rs"]
+mod tests;
