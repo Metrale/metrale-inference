@@ -24,6 +24,7 @@ mod bench_serve_plan;
 pub(crate) mod circuit;
 mod circuit_diff;
 mod circuit_paint;
+mod circuit_venn;
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;
@@ -114,6 +115,10 @@ pub enum CircuitAction {
     /// the legacy forward and the circuit forward (reference rules only, then every rule).
     /// Set METRALE_DEBUG_NO_GRAPH=1 for the eager comparison; without it decode is graphed.
     Diff(Box<CircuitDiffArgs>),
+    /// Classify a new model's ops against the kernel families of supported models (shared,
+    /// parameterization opportunity, policy variant, novel), ranked by estimated step share,
+    /// and write or check the Markdown report (kernels/circuits/venn/).
+    Venn(Box<CircuitVennArgs>),
 }
 
 /// `met circuit diff` options.
@@ -139,6 +144,39 @@ pub struct CircuitDiffArgs {
     /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+/// `met circuit venn` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct CircuitVennArgs {
+    /// The model being added: a recipe id, checkpoint id or arch from
+    /// kernels/circuits/INSTANCES.toml, or a checkpoint directory (its config.json and
+    /// hf_quant_config.json are checked against the instance).
+    #[arg(long)]
+    pub target: String,
+    /// Supported recipes (or checkpoint ids, or arches) to compare with, comma-separated.
+    #[arg(long, value_delimiter = ',', required = true)]
+    pub against: Vec<String>,
+    /// Forwards to classify, comma-separated.
+    #[arg(long, value_delimiter = ',', value_enum, default_values_t = [CircuitMode::Decode, CircuitMode::MultiSeq, CircuitMode::Verify, CircuitMode::Draft])]
+    pub mode: Vec<CircuitMode>,
+    /// Concurrency rungs: multi_seq plans every one above 1; decode and draft plan one row.
+    #[arg(long, value_delimiter = ',', default_values_t = [1u64, 16, 128])]
+    pub rows: Vec<u64>,
+    /// MTP verify widths K (1 + drafts), comma-separated.
+    #[arg(long, value_delimiter = ',', default_values_t = [2u64])]
+    pub verify_rows: Vec<u64>,
+    /// Report path, relative to the repository root
+    /// (kernels/circuits/venn/TARGET-vs-ARCH.md).
+    #[arg(long)]
+    pub out: String,
+    /// Verify the report at --out is what this command produces now; write nothing.
+    #[arg(long)]
+    pub check: bool,
+    /// Repository root; by default the nearest directory above the working directory that has
+    /// kernels/circuits/INSTANCES.toml.
+    #[arg(long)]
+    pub root: Option<std::path::PathBuf>,
 }
 
 /// Which plan to show.
