@@ -4,15 +4,15 @@
 # target: gb10/qwen3.6-35b-a3b/nvfp4
 # settings: decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 row_tiers=canonical ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
-digest: 690c5185423eb8d166a8e264cd11920be4786a77ef3584f16c3ec41ffa927212
-groups: 574  launches: 733  edges: 180 fused, 813 materialized
+digest: 256cbe7bdc6e416f2e5a7b83d4ad1b4770aba79ea8d04536a1ec0722a32a543a
+groups: 575  launches: 733  edges: 180 fused, 814 materialized
 == embed
-g0000 embed [embed] (copy) reference rule=embed_row_copy writes={h:bf16}
+g0000 embed [embed] (host) reference rule=embed_row_copy writes={h:bf16}
 == layer 0 (linear_attention)
 g0001 l0.gdn [input_norm] norm::rms_norm_residual reference rule=input_norm_residual writes={xn:bf16}
 g0002 l0.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0003 l0.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0004 l0.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0004 l0.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0005 l0.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0006 l0.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0007 l0.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -26,7 +26,7 @@ g0014 l0.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_
 == layer 1 (linear_attention)
 g0015 l1.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0016 l1.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0017 l1.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0017 l1.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0018 l1.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0019 l1.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0020 l1.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -40,7 +40,7 @@ g0027 l1.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_
 == layer 2 (linear_attention)
 g0028 l2.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0029 l2.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0030 l2.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0030 l2.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0031 l2.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0032 l2.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0033 l2.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -73,7 +73,7 @@ g0058 l3.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_
 == layer 4 (linear_attention)
 g0059 l4.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0060 l4.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0061 l4.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0061 l4.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0062 l4.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0063 l4.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0064 l4.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -87,7 +87,7 @@ g0071 l4.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_
 == layer 5 (linear_attention)
 g0072 l5.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0073 l5.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0074 l5.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0074 l5.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0075 l5.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0076 l5.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0077 l5.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -101,7 +101,7 @@ g0084 l5.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_
 == layer 6 (linear_attention)
 g0085 l6.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0086 l6.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0087 l6.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0087 l6.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0088 l6.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0089 l6.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0090 l6.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -134,7 +134,7 @@ g0115 l7.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_
 == layer 8 (linear_attention)
 g0116 l8.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0117 l8.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0118 l8.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0118 l8.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0119 l8.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0120 l8.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0121 l8.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -148,7 +148,7 @@ g0128 l8.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_
 == layer 9 (linear_attention)
 g0129 l9.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0130 l9.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0131 l9.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0131 l9.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0132 l9.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0133 l9.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0134 l9.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -162,7 +162,7 @@ g0141 l9.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms_
 == layer 10 (linear_attention)
 g0142 l10.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0143 l10.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0144 l10.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0144 l10.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0145 l10.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0146 l10.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0147 l10.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -195,7 +195,7 @@ g0172 l11.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 12 (linear_attention)
 g0173 l12.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0174 l12.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0175 l12.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0175 l12.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0176 l12.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0177 l12.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0178 l12.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -209,7 +209,7 @@ g0185 l12.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 13 (linear_attention)
 g0186 l13.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0187 l13.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0188 l13.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0188 l13.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0189 l13.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0190 l13.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0191 l13.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -223,7 +223,7 @@ g0198 l13.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 14 (linear_attention)
 g0199 l14.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0200 l14.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0201 l14.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0201 l14.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0202 l14.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0203 l14.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0204 l14.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -256,7 +256,7 @@ g0229 l15.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 16 (linear_attention)
 g0230 l16.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0231 l16.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0232 l16.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0232 l16.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0233 l16.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0234 l16.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0235 l16.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -270,7 +270,7 @@ g0242 l16.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 17 (linear_attention)
 g0243 l17.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0244 l17.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0245 l17.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0245 l17.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0246 l17.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0247 l17.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0248 l17.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -284,7 +284,7 @@ g0255 l17.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 18 (linear_attention)
 g0256 l18.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0257 l18.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0258 l18.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0258 l18.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0259 l18.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0260 l18.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0261 l18.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -317,7 +317,7 @@ g0286 l19.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 20 (linear_attention)
 g0287 l20.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0288 l20.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0289 l20.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0289 l20.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0290 l20.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0291 l20.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0292 l20.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -331,7 +331,7 @@ g0299 l20.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 21 (linear_attention)
 g0300 l21.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0301 l21.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0302 l21.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0302 l21.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0303 l21.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0304 l21.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0305 l21.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -345,7 +345,7 @@ g0312 l21.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 22 (linear_attention)
 g0313 l22.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0314 l22.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0315 l22.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0315 l22.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0316 l22.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0317 l22.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0318 l22.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -378,7 +378,7 @@ g0343 l23.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 24 (linear_attention)
 g0344 l24.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0345 l24.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0346 l24.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0346 l24.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0347 l24.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0348 l24.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0349 l24.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -392,7 +392,7 @@ g0356 l24.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 25 (linear_attention)
 g0357 l25.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0358 l25.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0359 l25.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0359 l25.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0360 l25.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0361 l25.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0362 l25.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -406,7 +406,7 @@ g0369 l25.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 26 (linear_attention)
 g0370 l26.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0371 l26.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0372 l26.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0372 l26.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0373 l26.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0374 l26.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0375 l26.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -439,7 +439,7 @@ g0400 l27.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 28 (linear_attention)
 g0401 l28.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0402 l28.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0403 l28.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0403 l28.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0404 l28.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0405 l28.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0406 l28.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -453,7 +453,7 @@ g0413 l28.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 29 (linear_attention)
 g0414 l29.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0415 l29.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0416 l29.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0416 l29.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0417 l29.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0418 l29.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0419 l29.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -467,7 +467,7 @@ g0426 l29.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 30 (linear_attention)
 g0427 l30.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0428 l30.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0429 l30.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0429 l30.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0430 l30.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0431 l30.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0432 l30.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -500,7 +500,7 @@ g0457 l31.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 32 (linear_attention)
 g0458 l32.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0459 l32.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0460 l32.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0460 l32.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0461 l32.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0462 l32.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0463 l32.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -514,7 +514,7 @@ g0470 l32.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 33 (linear_attention)
 g0471 l33.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0472 l33.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0473 l33.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0473 l33.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0474 l33.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0475 l33.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0476 l33.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -528,7 +528,7 @@ g0483 l33.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 34 (linear_attention)
 g0484 l34.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0485 l34.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0486 l34.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0486 l34.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0487 l34.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0488 l34.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0489 l34.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -561,7 +561,7 @@ g0514 l35.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 36 (linear_attention)
 g0515 l36.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0516 l36.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0517 l36.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0517 l36.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0518 l36.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0519 l36.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0520 l36.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -575,7 +575,7 @@ g0527 l36.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 37 (linear_attention)
 g0528 l37.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0529 l37.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0530 l37.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0530 l37.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0531 l37.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0532 l37.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0533 l37.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -589,7 +589,7 @@ g0540 l37.moe_ffn [add,input_norm] residual_add_rms_norm_exact::residual_add_rms
 == layer 38 (linear_attention)
 g0541 l38.gdn [qkvz] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={qkvz:bf16}
 g0542 l38.gdn [ba,gates] ssm_preprocess::dense_gemv_ba_gates x2 reference rule=gdn_ba_gates_gemv_per_row fuses={ba} writes={decay:f32,beta:f32}
-g0543 l38.gdn [conv,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
+g0543 l38.gdn [conv,conv_ckpt,l2] causal_conv1d::causal_conv1d_update_l2norm_f32 x2 reference rule=gdn_conv_l2_f32_per_row fuses={conv} writes={qkv:f32}
 g0544 l38.gdn [recur] gated_delta_rule::gated_delta_rule_decode_f32 x2 reference rule=gdn_recurrence_f32_per_row writes={core:f32}
 g0545 l38.gdn [out_norm] norm::gated_rms_norm_f32_input x2 reference rule=gdn_out_norm_f32_per_row writes={gated:bf16}
 g0546 l38.gdn [out] w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 reference rule=w8a16_m32 writes={o:bf16}
@@ -622,3 +622,4 @@ g0571 l39.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_resid
 == head
 g0572 head [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16}
 g0573 head [lm_head] dense_gemv_bf16_batchm::dense_gemv_bf16_batchm reference rule=lm_head_bf16_batchm writes={logits:bf16}
+g0574 head [argmax] (host) reference rule=argmax_host writes={token:i32}

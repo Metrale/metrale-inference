@@ -48,7 +48,7 @@ fn every_width_launches_what_its_plan_counts_and_reads_only_known_buffers() {
             let gdn = states_rows(&f, 0xD000_0000, rows as usize);
             let launched = run(&f, &gdn, 9);
             assert_eq!(launched.len(), f.program.launches.len(), "{rows}");
-            assert_pointers_known(&f, &gdn);
+            assert_pointers_known(&f, &gdn, &launched);
         }
     }
 }

@@ -23,7 +23,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 
 use super::super::bindings::{MixerFacts, WeightSlot};
 use super::super::compile::{Cx, GroupRef, OpEmitter};
-use super::{attn_facts, dim, expect_kernel, nvfp4, rows};
+use super::{attn_facts, dim, nvfp4, rows};
 use crate::layers::ops;
 use crate::weight_map::QuantizedWeight;
 
@@ -107,16 +107,28 @@ impl OpEmitter for W4a16GemvBatchm {
 }
 
 /// 2026-09-28: The fixed-M launchers take their CUDA-core kernel unless the opt-in wide rows
-/// reroute them (`gemv_tc::tc_fixed_m`).
-fn fixed_m_runs_own_kernel(what: &str) -> Result<()> {
+/// reroute them (`gemv_tc::tc_fixed_m`). 2026-09-29: Returns the plan's row count, which the
+/// kernel (`<stem>2` or `<stem>3`) must serve.
+fn fixed_m(cx: &Cx<'_>, stem: &str) -> Result<u32> {
+    let func = &cx.g.group.kernels[0].func;
+    let m = match func.strip_prefix(stem) {
+        Some("2") => 2,
+        Some("3") => 3,
+        _ => anyhow::bail!("`{func}` is not `{stem}2` or `{stem}3`"),
+    };
+    ensure!(
+        cx.rows == u64::from(m),
+        "`{func}` serves {m} rows, not {}",
+        cx.rows
+    );
     ensure!(
         !ops::gemv_tc::wide_rows_enabled(),
-        "{what}: METRALE_W4A16_TC_WIDE reroutes it to the tensor-core kernel"
+        "{func}: METRALE_W4A16_TC_WIDE reroutes it to the tensor-core kernel"
     );
-    Ok(())
+    Ok(m)
 }
 
-/// 2026-09-28: `w4a16_gemv_batch`: one projection of 2 rows (attention o, the FFN's down).
+/// 2026-09-28: `w4a16_gemv_batch`: one projection of 2 (or 3) rows.
 pub(crate) struct W4a16GemvBatch;
 
 impl OpEmitter for W4a16GemvBatch {
@@ -126,19 +138,19 @@ impl OpEmitter for W4a16GemvBatch {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["linear"])?;
-        expect_kernel(cx, 0, "w4a16_gemv_batch2")?;
-        ensure!(
-            cx.rows == 2,
-            "w4a16_gemv_batch2 serves 2 rows, not {}",
-            cx.rows
-        );
-        fixed_m_runs_own_kernel("w4a16_gemv_batch2")?;
+        let m = fixed_m(cx, "w4a16_gemv_batch")?;
         let w = weight(cx, 0, false)?;
         let (x, y, n, k_dim) = io(cx, 0)?;
         let k = cx.handle(0)?;
         cx.push(
             0,
-            Box::new(move |e| ops::w4a16_gemv_batch2(e.gpu, k, x, &w, y, n, k_dim, e.stream)),
+            Box::new(move |e| {
+                if m == 2 {
+                    ops::w4a16_gemv_batch2(e.gpu, k, x, &w, y, n, k_dim, e.stream)
+                } else {
+                    ops::w4a16_gemv_batch3(e.gpu, k, x, &w, y, n, k_dim, e.stream)
+                }
+            }),
         )
     }
 }
@@ -153,13 +165,7 @@ impl OpEmitter for W4a16GemvDualBatch {
     }
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
-        expect_kernel(cx, 0, "w4a16_gemv_dual_batch2")?;
-        ensure!(
-            cx.rows == 2,
-            "w4a16_gemv_dual_batch2 serves 2 rows, not {}",
-            cx.rows
-        );
-        fixed_m_runs_own_kernel("w4a16_gemv_dual_batch2")?;
+        let m = fixed_m(cx, "w4a16_gemv_dual_batch")?;
         let (k, h) = (cx.handle(0)?, dim(cx, "hidden")?);
         let (w1, y1, w2, y2, n) = if cx.g.group.nodes.len() == 1 {
             cx.g.expect_ops(self.id(), &["linear:gate_up"])?;
@@ -182,7 +188,11 @@ impl OpEmitter for W4a16GemvDualBatch {
         cx.push(
             0,
             Box::new(move |e| {
-                ops::w4a16_gemv_dual_batch2(e.gpu, k, x, &w1, y1, &w2, y2, n, h, e.stream)
+                if m == 2 {
+                    ops::w4a16_gemv_dual_batch2(e.gpu, k, x, &w1, y1, &w2, y2, n, h, e.stream)
+                } else {
+                    ops::w4a16_gemv_dual_batch3(e.gpu, k, x, &w1, y1, &w2, y2, n, h, e.stream)
+                }
             }),
         )
     }
@@ -207,12 +217,7 @@ impl OpEmitter for W4a16GemvQgBatch {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["linear:q", "split"])?;
-        expect_kernel(cx, 0, "w4a16_gemv_qg_batch2")?;
-        ensure!(
-            cx.rows == 2,
-            "w4a16_gemv_qg_batch2 serves 2 rows, not {}",
-            cx.rows
-        );
+        let m = fixed_m(cx, "w4a16_gemv_qg_batch")?;
         let a = attn_facts(cx, 0)?;
         ensure!(
             a.gated,
@@ -234,7 +239,11 @@ impl OpEmitter for W4a16GemvQgBatch {
         cx.push(
             0,
             Box::new(move |e| {
-                ops::w4a16_gemv_qg_batch2(e.gpu, k, x, &w, q, nq * hd * 2, h, nq, hd, e.stream)
+                if m == 2 {
+                    ops::w4a16_gemv_qg_batch2(e.gpu, k, x, &w, q, nq * hd * 2, h, nq, hd, e.stream)
+                } else {
+                    ops::w4a16_gemv_qg_batch3(e.gpu, k, x, &w, q, nq * hd * 2, h, nq, hd, e.stream)
+                }
             }),
         )
     }

@@ -135,6 +135,8 @@ pub enum Repeat {
     PerRow,
     /// 2026-09-28: Once per `n`-row chunk.
     Chunk(u64),
+    /// 2026-09-29: Once per row but the last.
+    PerRowButLast,
 }
 
 impl Repeat {
@@ -144,6 +146,7 @@ impl Repeat {
             Repeat::Once => 1,
             Repeat::PerRow => rows,
             Repeat::Chunk(c) => rows.div_ceil(c),
+            Repeat::PerRowButLast => rows.saturating_sub(1),
         }
     }
 
@@ -153,6 +156,7 @@ impl Repeat {
             Repeat::Once => "once".into(),
             Repeat::PerRow => "per_row".into(),
             Repeat::Chunk(c) => format!("chunk{c}"),
+            Repeat::PerRowButLast => "per_row_but_last".into(),
         }
     }
 
@@ -160,6 +164,7 @@ impl Repeat {
         match s {
             "once" => Some(Repeat::Once),
             "per_row" => Some(Repeat::PerRow),
+            "per_row_but_last" => Some(Repeat::PerRowButLast),
             _ => s
                 .strip_prefix("chunk")?
                 .parse::<u64>()
@@ -182,6 +187,9 @@ pub struct Rule {
     pub kernels: Vec<KernelId>,
     /// 2026-09-28: How often the kernels launch per step.
     pub repeat: Repeat,
+    /// 2026-09-29: Copy-engine transfers the emitter issues besides its kernels, and how
+    /// often; `None` for none (the verify conv's state snapshots are `per_row_but_last`).
+    pub copies: Option<Repeat>,
     /// 2026-09-28: The executor's emitter for this kernel.
     pub emitter: String,
     /// 2026-09-28: Inclusive row range.
@@ -255,6 +263,7 @@ struct RuleFile {
     pattern: Vec<PatternFile>,
     kernels: Vec<KernelFile>,
     repeat: String,
+    copies: Option<String>,
     emitter: String,
     rows: [u64; 2],
     modes: Vec<String>,
@@ -338,10 +347,21 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
     }
     let repeat = Repeat::parse(&r.repeat).ok_or_else(|| {
         shape(&format!(
-            "unknown repeat `{}` (once | per_row | chunk<n>)",
+            "unknown repeat `{}` (once | per_row | per_row_but_last | chunk<n>)",
             r.repeat
         ))
     })?;
+    let copies = r
+        .copies
+        .as_deref()
+        .map(|c| {
+            Repeat::parse(c).ok_or_else(|| {
+                shape(&format!(
+                    "unknown copies `{c}` (once | per_row | per_row_but_last | chunk<n>)"
+                ))
+            })
+        })
+        .transpose()?;
     if r.pattern[0].sibling {
         return Err(shape("the first pattern element cannot be a sibling"));
     }
@@ -361,6 +381,7 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
             })
             .collect(),
         repeat,
+        copies,
         emitter: r.emitter,
         rows: (r.rows[0], r.rows[1]),
         modes,

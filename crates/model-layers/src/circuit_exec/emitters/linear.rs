@@ -245,3 +245,48 @@ impl OpEmitter for LmHead {
         }
     }
 }
+
+/// 2026-09-29: `argmax`: each row's greedy token into the token output, one launch per row
+/// (`argmax_bf16`, as the verify and the draft head launch it).
+pub(crate) struct Argmax;
+
+impl OpEmitter for Argmax {
+    fn id(&self) -> &'static str {
+        "argmax"
+    }
+
+    fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
+        cx.g.expect_ops(self.id(), &["argmax"])?;
+        expect_kernel(cx, 0, "argmax_bf16")?;
+        super::per_row(cx)?;
+        let (inp, out) = (cx.g.input(0, 0)?, cx.g.output(0, 0)?);
+        let (v, k) = (width(cx, inp)?, cx.handle(0)?);
+        for i in 0..cx.reps() {
+            let (x, y) = (cx.row_ptr(inp, i)?, cx.row_ptr(out, i)?);
+            cx.push(
+                0,
+                Box::new(move |e| ops::argmax_bf16(e.gpu, k, x, y, v, e.stream)),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// 2026-09-29: `host_sampling`: the step returns the logits and the caller samples from them
+/// on the host, so the group launches nothing.
+pub(crate) struct HostSampling;
+
+impl OpEmitter for HostSampling {
+    fn id(&self) -> &'static str {
+        "host_sampling"
+    }
+
+    fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
+        cx.g.expect_ops(self.id(), &["argmax"])?;
+        ensure!(
+            cx.g.group.kernels.is_empty(),
+            "host sampling launches nothing"
+        );
+        Ok(())
+    }
+}

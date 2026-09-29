@@ -64,7 +64,7 @@ class and exact citation.
 | `gdn_ba_gates_gemv_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (per-sequence loop when the batched recurrence is off, HARDWARE.toml:118) |
 | `gdn_ba_gates_gemm_verify` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:37-59 (kill switch METRALE_NO_BATCHED_BA_GATES) |
 | `gdn_conv_l2_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:213-233; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:99-113 |
-| `gdn_conv_l2_bf16_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:105-110 (BF16 conv rows, not bitwise equal to decode's FP32 conv), :114-331 |
+| `gdn_conv_l2_bf16_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:105-110 (BF16 conv rows, not bitwise equal to decode's FP32 conv), :114-331 (the conv window copied to conv_state_intermediates[t] after each row but the last) |
 | `gdn_recurrence_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:266,330-347; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:195-212 |
 | `gdn_recurrence_f32_fused_norm` | differs (gdn_fused_norm) | ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:940-942,1051 (the fused kernel clamps the state norm, the unfused one does not) |
 | `gdn_recurrence_wy2_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
@@ -136,6 +136,8 @@ class and exact citation.
 | `lm_head_bf16_batchm` | reference | me/lm_head_batched.rs:133-162 (m <= lm_head_batchm_max = 8, kernels/gb10/HARDWARE.toml:115); mm/impl_a3_lm_head.rs:150-202 (verify); per row bit-identical to dense_gemv_bf16, k/dense_gemv_bf16_batchm.cu:16 |
 | `lm_head_bf16_gemm` | reference | me/lm_head_batched.rs:133-162 |
 | `draft_lm_head_nvfp4` | reference | ml/mtp_head/forward.rs:366-377 (the draft head is NVFP4 whatever the target head: a draft-only copy when the target head is BF16, mm/impl_a1/ssm_setup.rs:48-50) |
+| `argmax_host` | reference | me/decode_a2.rs:489 (the step returns the logits; the caller samples on the host) |
+| `argmax_verify_rows` | reference | me/verify_b.rs:374-389; me/verify_c.rs:344-356; me/verify_c2.rs:363-375 (one argmax_bf16 per row into scratch + 4t, inside the graph) |
 | `draft_argmax` | reference | ml/mtp_head/forward.rs:437-455 |
 | `draft_concat` | reference | ml/mtp_head/forward.rs:101-109 |
 | `draft_dense_gemv_bf16` | reference | ml/mtp_head/forward.rs:123,171-183,209-212,309; ml/mtp_head.rs:330-339 (mtp_quantization bf16: every projection is ProjectionWeight::Bf16) |

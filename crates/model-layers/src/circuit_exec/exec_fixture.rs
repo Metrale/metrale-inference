@@ -162,6 +162,19 @@ pub(super) fn fixed(attn_layers: usize) -> Fixed {
             moe_row_adapter: DevicePtr::NULL,
         },
         ffn_act_q8: ptr(0xA400_0000),
+        tokens: ptr(0xA500_0000),
+        verify_meta: AttnMetadataDev {
+            positions: ptr(meta + 0x2_0000),
+            positions_h: ptr(meta + 0x2_0000),
+            positions_w: ptr(meta + 0x2_0000),
+            slot: ptr(meta + 0x2_0000 + 256),
+            seq_len: ptr(meta + 0x2_0000 + 512),
+            block_table: ptr(meta + 0x2_0000 + 768),
+            max_blocks_per_seq: 0,
+            num_seqs: 4,
+            seq_slot: DevicePtr::NULL,
+            moe_row_adapter: DevicePtr::NULL,
+        },
         block_size: 16,
         cache_stride: 4096,
     }
@@ -278,6 +291,8 @@ pub(super) fn states_rows(f: &Fixture, base: u64, rows: usize) -> Vec<Vec<GdnSta
                     GdnState {
                         h: ptr(at),
                         conv: ptr(at + 0x8000),
+                        h_steps: [1, 2, 3].map(|t| ptr(at + 0x1000 * t)),
+                        conv_steps: [1, 2, 3].map(|t| ptr(at + 0x8000 + 0x1000 * t)),
                     }
                 })
                 .collect(),
@@ -286,11 +301,29 @@ pub(super) fn states_rows(f: &Fixture, base: u64, rows: usize) -> Vec<Vec<GdnSta
         .collect()
 }
 
+/// 2026-09-29: The program's kernel launches, in order: what the mock records (it does not
+/// record copies).
+pub(super) fn kernel_launches(f: &Fixture) -> impl Iterator<Item = &super::program::Launch> {
+    f.program
+        .launches
+        .iter()
+        .filter(|l| l.kind == super::program::LaunchKind::Kernel)
+}
+
 pub(super) fn run(f: &Fixture, gdn: &[Vec<GdnState>], max_blocks: u32) -> Vec<MockLaunch> {
-    let gpu = MockGpuBackend::new();
+    run_on(&MockGpuBackend::new(), f, gdn, max_blocks)
+}
+
+/// 2026-09-29: [`run`] on `gpu`, whose allocations the states may point into.
+pub(super) fn run_on(
+    gpu: &MockGpuBackend,
+    f: &Fixture,
+    gdn: &[Vec<GdnState>],
+    max_blocks: u32,
+) -> Vec<MockLaunch> {
     f.program
         .run(&StepEnv {
-            gpu: &gpu,
+            gpu,
             stream: 7,
             gdn,
             max_blocks_per_seq: max_blocks,
@@ -301,7 +334,7 @@ pub(super) fn run(f: &Fixture, gdn: &[Vec<GdnState>], max_blocks: u32) -> Vec<Mo
 
 /// 2026-09-28: Every buffer a launch of `f` reads is a bound weight, a row of a fixed buffer,
 /// the step's metadata, one of `gdn`'s states, or in the workspace.
-pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>]) {
+pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched: &[MockLaunch]) {
     let mut known: BTreeSet<u64> = BTreeSet::new();
     for l in &f.layers {
         for w in l.weights.values() {
@@ -313,7 +346,7 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>]) {
         }
     }
     known.extend([f.head.final_norm.weight.0, 0x9100_0000]);
-    for m in [f.fixed.meta, f.fixed.batch_meta] {
+    for m in [f.fixed.meta, f.fixed.batch_meta, f.fixed.verify_meta] {
         known.extend([m.positions.0, m.slot.0, m.seq_len.0, m.block_table.0]);
     }
     known.insert(f.fixed.ffn_act_q8.0);
@@ -322,6 +355,7 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>]) {
         (f.fixed.hidden.0, row("hidden")),
         (f.fixed.residual.0, row("hidden")),
         (f.fixed.logits.0, row("vocab")),
+        (f.fixed.tokens.0, 4),
     ];
     let in_fixed = |p: u64| {
         rows_of
@@ -329,15 +363,22 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>]) {
             .any(|&(base, w)| (0..f.plan.rows).any(|r| p == base + r * w))
     };
     known.extend(f.fixed.k_pools.iter().chain(&f.fixed.v_pools).map(|p| p.0));
-    known.extend(gdn.iter().flatten().flat_map(|s| [s.h.0, s.conv.0]));
-    for (i, l) in run(f, gdn, 9).iter().enumerate() {
+    known.extend(gdn.iter().flatten().flat_map(|s| {
+        [s.h, s.conv]
+            .into_iter()
+            .chain(s.h_steps)
+            .chain(s.conv_steps)
+            .map(|p| p.0)
+    }));
+    let kernels: Vec<&str> = kernel_launches(f).map(|l| l.kernel.as_str()).collect();
+    for (i, l) in launched.iter().enumerate() {
         for a in &l.args {
             if let MockArg::Buffer(p) = a {
                 let in_ws = (WORKSPACE..WORKSPACE + f.arena).contains(&p.0);
                 assert!(
                     in_ws || known.contains(&p.0) || in_fixed(p.0) || p.0 == 0,
                     "launch {i} ({}) reads {:#x}, which is neither bound nor placed",
-                    f.program.launches[i].kernel,
+                    kernels[i],
                     p.0
                 );
             }

@@ -159,6 +159,31 @@ impl TransformerModel {
         self.buffers.scratch().offset(32768)
     }
 
+    /// 2026-09-29: A single-sequence MTP verify's metadata at `scratch + 32768`, `k` rows:
+    /// positions @0, seq_slot @128, slots @256, seq_lens @512, block table @768 (the layout
+    /// the verify uploads, `verify_b.rs`/`verify_c.rs`/`verify_c2.rs`); what the circuit
+    /// executor's verify programs read.
+    pub(super) fn verify_meta(
+        &self,
+        max_blocks: u32,
+        k: u32,
+        seq_slot: DevicePtr,
+    ) -> AttnMetadataDev {
+        let meta_base = self.batch_meta_base();
+        AttnMetadataDev {
+            positions: meta_base,
+            positions_h: meta_base,
+            positions_w: meta_base,
+            slot: meta_base.offset(256),
+            seq_len: meta_base.offset(512),
+            block_table: meta_base.offset(768),
+            max_blocks_per_seq: max_blocks,
+            num_seqs: k,
+            seq_slot,
+            moe_row_adapter: DevicePtr::NULL,
+        }
+    }
+
     /// 2026-09-28: The batch metadata at `meta_base` in the `buffers.decode_meta()` layout.
     pub(super) fn batch_meta_at(
         &self,

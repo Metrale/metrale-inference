@@ -46,9 +46,13 @@ pub fn render(circuit: &Circuit, plan: &FusionPlan, header: &Header) -> String {
     let _ = writeln!(s, "digest: {}", plan.digest);
     let _ = writeln!(
         s,
-        "groups: {}  launches: {}  edges: {} fused, {} materialized",
+        "groups: {}  launches: {}{}  edges: {} fused, {} materialized",
         plan.groups.len(),
         plan.launches(),
+        match plan.copies() {
+            0 => String::new(),
+            c => format!("  copies: {c}"),
+        },
         fused,
         materialized
     );
@@ -85,8 +89,10 @@ pub fn render(circuit: &Circuit, plan: &FusionPlan, header: &Header) -> String {
 
 fn group_line(circuit: &Circuit, plan: &FusionPlan, g: usize) -> String {
     let grp = &plan.groups[g];
+    // 2026-09-29: A group with no kernels is work the host does outside the program: the
+    // prologue's embedding copy, or sampling from the logits.
     let kernels = if grp.kernels.is_empty() {
-        "(copy)".to_string()
+        "(host)".to_string()
     } else {
         grp.kernels
             .iter()
@@ -97,6 +103,10 @@ fn group_line(circuit: &Circuit, plan: &FusionPlan, g: usize) -> String {
     let repeat = match grp.repeat.count(plan.rows) {
         1 => String::new(),
         n => format!(" x{n}"),
+    };
+    let repeat = match grp.copies.map(|c| c.count(plan.rows)) {
+        Some(c) => format!("{repeat} + copy x{c}"),
+        None => repeat,
     };
     let numerics = match &grp.numerics {
         Numerics::Reference => "reference".to_string(),

@@ -8,7 +8,7 @@ digest: b05422cfb0783c32ae2102b8a65b649561a47719286abab7b7814889dc0b2466
 groups: 25  launches: 25  edges: 0 fused, 28 materialized
 inputs: l63.dense_ffn.y bf16
 == mtp_in
-g0000 draft.mtp_in [embed] (copy) reference rule=embed_row_copy writes={e:bf16}
+g0000 draft.mtp_in [embed] (host) reference rule=embed_row_copy writes={e:bf16}
 g0001 draft.mtp_in [embed_norm] norm::rms_norm reference rule=draft_rms_norm writes={en:bf16}
 g0002 draft.mtp_in [hidden_norm] norm::rms_norm reference rule=draft_rms_norm writes={hn:bf16}
 g0003 draft.mtp_in [concat] residual_add::bf16_concat reference rule=draft_concat writes={cat:bf16}

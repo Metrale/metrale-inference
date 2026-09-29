@@ -46,9 +46,12 @@ pub fn canonical(circuit: &Circuit, plan: &FusionPlan) -> String {
             .collect();
         let _ = writeln!(
             s,
-            "group {i} kernels=[{}] repeat={} emitter={} numerics={:?} nodes=[{}]",
+            "group {i} kernels=[{}] repeat={}{} emitter={} numerics={:?} nodes=[{}]",
             kernels.join(","),
             g.repeat.name(),
+            g.copies
+                .map(|c| format!(" copies={}", c.name()))
+                .unwrap_or_default(),
             g.emitter,
             g.numerics,
             nodes.join(",")

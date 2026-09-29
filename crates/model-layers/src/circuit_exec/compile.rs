@@ -23,7 +23,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use super::bindings::{BoundWeight, CircuitLayer, HeadBinding, WeightSlot};
 use super::emitters::emitter;
 use super::kernels::KernelTable;
-use super::program::{Launch, Program, RunFn};
+use super::program::{Launch, LaunchKind, Program, RunFn};
 use crate::layer::AttnMetadataDev;
 
 /// 2026-09-28: Device addresses that never move after boot.
@@ -35,12 +35,18 @@ pub struct Fixed {
     pub residual: DevicePtr,
     /// 2026-09-28: The logits buffer the step returns.
     pub logits: DevicePtr,
+    /// 2026-09-29: Where a verify's argmax writes each row's token (`i32` per row): the
+    /// scratch buffer's start, which the verify reads back.
+    pub tokens: DevicePtr,
     /// 2026-09-28: The single-sequence step's attention metadata, at its fixed upload
     /// address. `max_blocks_per_seq` is ignored: a step supplies it.
     pub meta: AttnMetadataDev,
     /// 2026-09-28: The multi-sequence step's attention metadata (one row per sequence), at its
     /// fixed upload address; `max_blocks_per_seq` is ignored.
     pub batch_meta: AttnMetadataDev,
+    /// 2026-09-29: The MTP verify step's attention metadata (one row per verified token), at
+    /// its fixed upload address; `max_blocks_per_seq` is ignored.
+    pub verify_meta: AttnMetadataDev,
     /// 2026-09-28: The quantized-activation scratch the NVFP4 MMQ GEMMs read
     /// (`BufferArena::ffn_act_q8`), sized for the widest batch.
     pub ffn_act_q8: DevicePtr,
@@ -182,11 +188,17 @@ impl<'a> Cx<'a> {
 
     /// 2026-09-28: The attention metadata this plan's steps upload.
     pub fn meta(&self) -> AttnMetadataDev {
-        if self.mode == Mode::Decode {
-            self.fixed.meta
-        } else {
-            self.fixed.batch_meta
+        match self.mode {
+            Mode::Decode | Mode::Draft => self.fixed.meta,
+            Mode::MultiSeq => self.fixed.batch_meta,
+            Mode::Verify => self.fixed.verify_meta,
         }
+    }
+
+    /// 2026-09-29: The GDN state row `row` reads: its own sequence's in a multi-sequence
+    /// step, the one sequence's in a verify or a decode.
+    pub fn state_row(&self, row: usize) -> usize {
+        if self.mode == Mode::MultiSeq { row } else { 0 }
     }
 
     /// 2026-09-28: Launches of each kernel this group makes: its repeat at the plan's rows.
@@ -245,6 +257,23 @@ impl<'a> Cx<'a> {
         self.launches.push(Launch {
             group: self.g.index,
             kernel: format!("{}::{}", kid.module, kid.func),
+            kind: LaunchKind::Kernel,
+            run,
+        });
+        Ok(())
+    }
+
+    /// 2026-09-29: Queue one copy-engine transfer of this group (its rule's `copies`).
+    pub fn push_copy(&mut self, run: RunFn) -> Result<()> {
+        ensure!(
+            self.g.group.copies.is_some(),
+            "group {} declares no copies",
+            self.g.index
+        );
+        self.launches.push(Launch {
+            group: self.g.index,
+            kernel: "copy".to_string(),
+            kind: LaunchKind::Copy,
             run,
         });
         Ok(())
@@ -293,6 +322,23 @@ pub fn layout(circuit: &Circuit, plan: &FusionPlan) -> Result<Layout> {
     Ok(layout)
 }
 
+/// 2026-09-29: The model buffer an external edge is: the stream is `hidden`; a declared output
+/// is `logits` when the lm_head writes it and `tokens` when an argmax does.
+fn external_buffer(circuit: &Circuit, e: usize, fixed: &Fixed) -> Result<DevicePtr> {
+    let edge = &circuit.edges[e];
+    if !edge.is_output {
+        return Ok(fixed.hidden);
+    }
+    match edge.producer.map(|p| circuit.nodes[p].op) {
+        Some(metrale_circuit::OpKind::LmHead) => Ok(fixed.logits),
+        Some(metrale_circuit::OpKind::Argmax) => Ok(fixed.tokens),
+        other => bail!(
+            "output `{}` has no model buffer (written by {other:?})",
+            edge.id
+        ),
+    }
+}
+
 /// 2026-09-28: Everything [`compile`] reads besides the plan.
 pub struct Inputs<'a> {
     pub gpu: &'a dyn GpuBackend,
@@ -319,11 +365,7 @@ pub fn compile(
         strides[s.edge] = Some(s.row_stride);
     }
     for &e in &layout.external {
-        ptrs[e] = Some(if circuit.edges[e].is_output {
-            inp.fixed.logits
-        } else {
-            inp.fixed.hidden
-        });
+        ptrs[e] = Some(external_buffer(circuit, e, inp.fixed)?);
     }
     let mut launches = Vec::with_capacity(plan.launches() as usize);
     for (index, group) in plan.groups.iter().enumerate() {
@@ -356,16 +398,23 @@ pub fn compile(
             .emit(&mut cx)
             .with_context(|| format!("group {index} (rule `{}`)", group.rule))?;
         let want = group.kernels.len() as u64 * group.repeat.count(plan.rows);
-        if cx.launches.len() as u64 != want {
+        let want_copies = group.copies.map_or(0, |c| c.count(plan.rows));
+        let copies = cx
+            .launches
+            .iter()
+            .filter(|l| l.kind == LaunchKind::Copy)
+            .count() as u64;
+        let kernels = cx.launches.len() as u64 - copies;
+        if (kernels, copies) != (want, want_copies) {
             bail!(
-                "emitter `{}` queued {} launches for group {index}; the plan counts {want}",
+                "emitter `{}` queued {kernels} launches and {copies} copies for group {index}; \
+                 the plan counts {want} and {want_copies}",
                 group.emitter,
-                cx.launches.len()
             );
         }
         launches.append(&mut cx.launches);
     }
-    ensure!(launches.len() as u64 == plan.launches());
+    ensure!(launches.len() as u64 == plan.launches() + plan.copies());
     Ok(Program {
         mode: plan.mode,
         rows: plan.rows,

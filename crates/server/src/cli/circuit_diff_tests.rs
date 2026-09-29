@@ -186,3 +186,46 @@ fn a_row_whose_prefill_differs_is_left_out_of_the_step_comparison() {
         "row 2 still counts"
     );
 }
+
+#[test]
+fn verify_drafts_corrupt_one_draft_on_odd_steps_and_accepts_count_the_leading_matches() {
+    let g = [10, 11, 12, 13, 14, 15];
+    assert_eq!(verify::drafts(&g, 1, 0, 4, 100), vec![12, 13, 14]);
+    assert_eq!(verify::drafts(&g, 1, 1, 4, 100), vec![12, 14, 14]);
+    assert_eq!(verify::drafts(&g, 1, 3, 4, 100), vec![13, 13, 14]);
+    assert_eq!(verify::drafts(&g, 0, 5, 4, 100), vec![11, 12, 14]);
+    assert_eq!(verify::drafts(&g, 4, 0, 4, 100), vec![15, 0, 0]);
+    assert_eq!(verify::drafts(&[99, 99], 0, 1, 2, 100), vec![0]);
+    assert_eq!(verify::accepted(&[1, 2, 3, 4], &[2, 3, 4, 9]), 3);
+    assert_eq!(verify::accepted(&[1, 2, 3, 4], &[2, 7, 4, 9]), 1);
+    assert_eq!(verify::accepted(&[1, 2], &[5, 9]), 0);
+}
+
+#[test]
+fn the_verify_verdict_needs_matching_steps_a_seen_control_and_both_commit_paths() {
+    let c = |variant: &str, mismatched: usize| Comparison {
+        variant: variant.to_string(),
+        prefill_equal: true,
+        steps: 4,
+        mismatched_steps: mismatched,
+        first_mismatch: (mismatched > 0).then_some(2),
+        max_mismatched_bytes: mismatched,
+    };
+    let report = |accepted: Vec<usize>, circuit: usize, control: usize| verify::VerifyReport {
+        k: 3,
+        accepted,
+        comparisons: vec![c("circuit", circuit)],
+        timings: Vec::new(),
+        detection_control: c("control", control),
+    };
+    assert!(verify::verify_failures(&[report(vec![2, 0, 2, 1], 0, 2)]).is_empty());
+    let bad = verify::verify_failures(&[
+        report(vec![2, 2, 2, 2], 0, 2),
+        report(vec![0, 1, 0, 1], 1, 0),
+    ]);
+    assert_eq!(bad.len(), 4, "{bad:?}");
+    assert!(bad[0].contains("needs both"), "{bad:?}");
+    assert!(bad[1].contains("K=3, circuit"), "{bad:?}");
+    assert!(bad[2].contains("detection control"), "{bad:?}");
+    assert!(bad[3].contains("needs both"), "{bad:?}");
+}

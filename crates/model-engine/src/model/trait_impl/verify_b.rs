@@ -159,18 +159,8 @@ impl TransformerModel {
         let seq_slot =
             self.upload_seq_slot_uniform(seq.adapter_slot, k, meta_base.offset(128), stream)?;
 
-        let metadata = AttnMetadataDev {
-            positions: meta_base,
-            positions_h: meta_base,
-            positions_w: meta_base,
-            slot: meta_base.offset(256),
-            seq_len: meta_base.offset(512),
-            block_table: meta_base.offset(768),
-            max_blocks_per_seq: max_blocks,
-            num_seqs: k as u32,
-            seq_slot,
-            moe_row_adapter: metrale_gpu_runtime::gpu::DevicePtr::NULL,
-        };
+        debug_assert_eq!(meta_base, self.batch_meta_base());
+        let metadata = self.verify_meta(max_blocks, k as u32, seq_slot);
 
         // 2026-09-25: `suppress_graphs` keeps FP8 KV calibration eager, because its host
         // syncs are illegal under capture. Once calibration is frozen this lifts the
@@ -285,15 +275,69 @@ impl TransformerModel {
                 self.gpu.begin_capture(stream)?;
             }
 
-            for (layer_idx, layer) in self.layers.iter().enumerate() {
-                let layer_type = self.config.layer_type(layer_idx);
+            // 2026-09-29: `--forward circuit`: the compiled verify program runs the layers, the
+            // final norm, the lm_head and the argmaxes. Its build refused every feature the legacy
+            // extras here serve (HSS, sliding-window layers, DFlash capture).
+            let circuit = self.circuit.read();
+            if let Some(exec) = circuit.as_ref() {
+                self.circuit_verify_body(exec, seq, k, stream)?;
+            } else {
+                for (layer_idx, layer) in self.layers.iter().enumerate() {
+                    let layer_type = self.config.layer_type(layer_idx);
 
-                if layer_type == LayerType::FullAttention {
-                    if hss_engaged {
-                        // 2026-09-25: Under HSS, HBM holds only `cache_blocks_per_seq` blocks and
-                        // older KV is on disk. `decode_multi_seq` reads HBM only; the
-                        // single-token `decode` also reads the disk tier, so `decode_batched`
-                        // runs the rows one at a time.
+                    if layer_type == LayerType::FullAttention {
+                        if hss_engaged {
+                            // 2026-09-25: Under HSS, HBM holds only `cache_blocks_per_seq` blocks and
+                            // older KV is on disk. `decode_multi_seq` reads HBM only; the
+                            // single-token `decode` also reads the disk tier, so `decode_batched`
+                            // runs the rows one at a time.
+                            layer.decode_batched(
+                                hidden,
+                                residual,
+                                k,
+                                seq.layer_states[layer_idx].as_mut(),
+                                &mut kv_cache,
+                                seq.seq_len,
+                                &mut seq.block_table,
+                                &mut seq.disk_block_ids,
+                                &mut seq.disk_last_offloaded_per_layer,
+                                &ctx,
+                                stream,
+                            )?;
+                        } else {
+                            // 2026-09-25: The K rows run as K sequences of one token through
+                            // `decode_multi_seq`, each with a throwaway attention layer state.
+                            let mut dummy_states: Vec<Box<dyn LayerState>> = (0..k)
+                                .map(|_| layer.alloc_state(self.gpu.as_ref()))
+                                .collect::<Result<_>>()?;
+                            let mut refs: Vec<&mut (dyn LayerState + 'static)> =
+                                dummy_states.iter_mut().map(|s| s.as_mut()).collect();
+                            layer.decode_multi_seq(
+                                hidden,
+                                residual,
+                                k,
+                                &mut refs,
+                                &mut kv_cache,
+                                &seq_lens_vec,
+                                &block_tables_vec,
+                                &ctx,
+                                stream,
+                            )?;
+                        }
+                    } else if layer_type == LayerType::SlidingAttention {
+                        // 2026-09-25: The default `decode_batched` would decode every row at the
+                        // same position; graphs are off for these models (above).
+                        self.verify_attention_per_token(
+                            layer.as_ref(),
+                            layer_idx,
+                            hidden,
+                            residual,
+                            k,
+                            seq,
+                            &mut kv_cache,
+                            stream,
+                        )?;
+                    } else {
                         layer.decode_batched(
                             hidden,
                             residual,
@@ -307,86 +351,41 @@ impl TransformerModel {
                             &ctx,
                             stream,
                         )?;
-                    } else {
-                        // 2026-09-25: The K rows run as K sequences of one token through
-                        // `decode_multi_seq`, each with a throwaway attention layer state.
-                        let mut dummy_states: Vec<Box<dyn LayerState>> = (0..k)
-                            .map(|_| layer.alloc_state(self.gpu.as_ref()))
-                            .collect::<Result<_>>()?;
-                        let mut refs: Vec<&mut (dyn LayerState + 'static)> =
-                            dummy_states.iter_mut().map(|s| s.as_mut()).collect();
-                        layer.decode_multi_seq(
-                            hidden,
-                            residual,
-                            k,
-                            &mut refs,
-                            &mut kv_cache,
-                            &seq_lens_vec,
-                            &block_tables_vec,
-                            &ctx,
-                            stream,
-                        )?;
                     }
-                } else if layer_type == LayerType::SlidingAttention {
-                    // 2026-09-25: The default `decode_batched` would decode every row at the
-                    // same position; graphs are off for these models (above).
-                    self.verify_attention_per_token(
-                        layer.as_ref(),
-                        layer_idx,
-                        hidden,
-                        residual,
-                        k,
-                        seq,
-                        &mut kv_cache,
-                        stream,
-                    )?;
-                } else {
-                    layer.decode_batched(
-                        hidden,
-                        residual,
-                        k,
-                        seq.layer_states[layer_idx].as_mut(),
-                        &mut kv_cache,
-                        seq.seq_len,
-                        &mut seq.block_table,
-                        &mut seq.disk_block_ids,
-                        &mut seq.disk_last_offloaded_per_layer,
-                        &ctx,
+                    // 2026-09-25: DFlash: capture this layer's hidden at the last row (K-1) into
+                    // `dflash_hidden_save` for the next propose. A no-op without DFlash.
+                    self.try_dflash_capture(layer_idx, k - 1, stream)?;
+                }
+
+                let normed = self.buffers.norm_output();
+                self.final_norm_apply(
+                    hidden,
+                    normed,
+                    k as u32,
+                    h as u32,
+                    self.config.rms_norm_eps as f32,
+                    stream,
+                )?;
+
+                self.lm_head_batched(normed, k as u32, self.buffers.logits(), stream)?;
+
+                // 2026-09-25: The argmax is part of the graph; it writes fixed scratch addresses.
+                let vocab = self.config.vocab_size;
+                let argmax_out = self.buffers.scratch();
+                for t in 0..k {
+                    let logits_t = self.buffers.logits().offset(t * vocab * bf16);
+                    let out_t = argmax_out.offset(t * 4);
+                    ops::argmax_bf16(
+                        self.gpu.as_ref(),
+                        self.argmax_kernel,
+                        logits_t,
+                        out_t,
+                        vocab as u32,
                         stream,
                     )?;
                 }
-                // 2026-09-25: DFlash: capture this layer's hidden at the last row (K-1) into
-                // `dflash_hidden_save` for the next propose. A no-op without DFlash.
-                self.try_dflash_capture(layer_idx, k - 1, stream)?;
             }
-
-            let normed = self.buffers.norm_output();
-            self.final_norm_apply(
-                hidden,
-                normed,
-                k as u32,
-                h as u32,
-                self.config.rms_norm_eps as f32,
-                stream,
-            )?;
-
-            self.lm_head_batched(normed, k as u32, self.buffers.logits(), stream)?;
-
-            // 2026-09-25: The argmax is part of the graph; it writes fixed scratch addresses.
-            let vocab = self.config.vocab_size;
-            let argmax_out = self.buffers.scratch();
-            for t in 0..k {
-                let logits_t = self.buffers.logits().offset(t * vocab * bf16);
-                let out_t = argmax_out.offset(t * 4);
-                ops::argmax_bf16(
-                    self.gpu.as_ref(),
-                    self.argmax_kernel,
-                    logits_t,
-                    out_t,
-                    vocab as u32,
-                    stream,
-                )?;
-            }
+            drop(circuit);
 
             if use_graphs {
                 let graph = self.gpu.end_capture(stream)?;

@@ -11,11 +11,16 @@
 //!   was compiled, so a CUDA-graph capture of [`Program::run`] replays correctly for any step
 //!   with the same state pointers (the graph caches key on the sequence's slot).
 //! - `run` issues no synchronize and no device-to-host copy, so it may be captured.
-//! - A program holds exactly `FusionPlan::launches` launches.
+//! - A program holds exactly `FusionPlan::launches` kernel launches and `FusionPlan::copies`
+//!   copies.
 
 use anyhow::{Context, Result};
 use metrale_circuit::Mode;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+
+/// 2026-09-29: The most rollback points an MTP verify writes: one per row but the last, at
+/// K = 4.
+pub const MAX_VERIFY_STEPS: usize = 3;
 
 /// 2026-09-28: One sequence's recurrent state in one GatedDeltaNet layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +29,11 @@ pub struct GdnState {
     pub h: DevicePtr,
     /// 2026-09-28: The conv1d window.
     pub conv: DevicePtr,
+    /// 2026-09-29: The h state after verify row `t` (`SsmLayerState::h_state_intermediates`);
+    /// NULL where the sequence has none. Only a verify reads them.
+    pub h_steps: [DevicePtr; MAX_VERIFY_STEPS],
+    /// 2026-09-29: The conv window after verify row `t`, indexed like `h_steps`.
+    pub conv_steps: [DevicePtr; MAX_VERIFY_STEPS],
 }
 
 /// 2026-09-28: What varies between two runs of one program.
@@ -53,12 +63,23 @@ impl StepEnv<'_> {
 /// 2026-09-28: The body of one launch.
 pub(crate) type RunFn = Box<dyn Fn(&StepEnv<'_>) -> Result<()> + Send + Sync>;
 
-/// 2026-09-28: One kernel launch.
+/// 2026-09-29: What a launch puts on the stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchKind {
+    /// 2026-09-29: A kernel.
+    Kernel,
+    /// 2026-09-29: A copy-engine transfer.
+    Copy,
+}
+
+/// 2026-09-28: One kernel launch or copy.
 pub struct Launch {
     /// 2026-09-28: Index of the plan group it belongs to.
     pub group: usize,
-    /// 2026-09-28: `module::func` it launches.
+    /// 2026-09-28: `module::func` it launches, or `copy` for a transfer.
     pub kernel: String,
+    /// 2026-09-29: Kernel or copy.
+    pub kind: LaunchKind,
     pub(crate) run: RunFn,
 }
 

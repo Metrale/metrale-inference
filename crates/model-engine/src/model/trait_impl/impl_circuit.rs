@@ -15,13 +15,12 @@
 use anyhow::{Context, Result, bail, ensure};
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::circuit_exec::{
-    BoundWeight, CircuitExec, Fixed, Fusions, GdnState, HeadBinding, MixerFacts, StepEnv,
-    TargetModules, policy,
+    BoundWeight, CircuitExec, Fixed, Fusions, HeadBinding, MixerFacts, TargetModules, policy,
 };
-use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, SsmLayerState};
+use metrale_model_layers::layer::AttnMetadataDev;
 
 use super::super::types::TransformerModel;
-use crate::traits::{ForwardDisclosure, ForwardSelect, ModelCircuit, SequenceState};
+use crate::traits::{ForwardDisclosure, ForwardSelect, ModelCircuit};
 
 /// 2026-09-28: Offset of the single-sequence decode metadata in the scratch buffer.
 const DECODE_META_OFFSET: usize = 32768;
@@ -165,6 +164,8 @@ impl TransformerModel {
                     DevicePtr::NULL,
                 ),
                 ffn_act_q8: self.buffers.ffn_act_q8(),
+                tokens: self.buffers.scratch(),
+                verify_meta: self.verify_meta(0, 0, DevicePtr::NULL),
                 k_pools: (0..n).map(|i| cache.k_pool_ptr(i)).collect(),
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),
                 block_size: u32::try_from(cache.block_size())?,
@@ -183,6 +184,13 @@ impl TransformerModel {
             fusions,
             modules,
             multi_seq_rows: self.circuit_widths(),
+            // 2026-09-29: The MTP verify widths the scheduler runs one sequence at
+            // (`serial_verify_plan`), when a drafter is loaded.
+            verify_rows: if self.proposer.is_some() {
+                vec![2, 3, 4]
+            } else {
+                Vec::new()
+            },
         })
     }
 
@@ -195,85 +203,6 @@ impl TransformerModel {
             .filter(|&&r| r <= widest)
             .map(|&r| r as u64)
             .collect()
-    }
-
-    /// 2026-09-28: Run `exec`'s decode program for `seq` in place of the layer loops, the final
-    /// norm and the lm_head.
-    pub(super) fn circuit_forward_body(
-        &self,
-        exec: &CircuitExec,
-        seq: &SequenceState,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        let meta = ctx
-            .attn_metadata
-            .context("circuit decode needs the step's attention metadata")?;
-        let mut gdn = Vec::with_capacity(seq.layer_states.len());
-        for (i, st) in seq.layer_states.iter().enumerate() {
-            gdn.push(match st.as_any().downcast_ref::<SsmLayerState>() {
-                Some(s) => {
-                    ensure!(
-                        !s.h_is_f16,
-                        "layer {i}: FP16 h state under an FP32-state circuit plan"
-                    );
-                    vec![GdnState {
-                        h: s.h_state,
-                        conv: s.conv_state,
-                    }]
-                }
-                None => Vec::new(),
-            });
-        }
-        exec.decode.run(&StepEnv {
-            gpu: self.gpu.as_ref(),
-            stream,
-            gdn: &gdn,
-            max_blocks_per_seq: meta.max_blocks_per_seq,
-        })
-    }
-}
-
-impl TransformerModel {
-    /// 2026-09-28: Run `exec`'s program for `padded_n` rows in place of the layer loops, the
-    /// final norm and the lm_head of a multi-sequence step; row `i` is `states[i]`'s sequence,
-    /// padding rows included.
-    pub(super) fn circuit_multi_seq_body(
-        &self,
-        exec: &CircuitExec,
-        states: &[Vec<Box<dyn metrale_model_layers::layer::LayerState>>],
-        padded_n: usize,
-        stream: u64,
-    ) -> Result<()> {
-        let program = exec
-            .multi_seq_program(padded_n as u64)
-            .with_context(|| format!("no circuit program was compiled for {padded_n} rows"))?;
-        ensure!(
-            states.len() == padded_n,
-            "{} states for {padded_n} rows",
-            states.len()
-        );
-        let mut gdn = vec![Vec::new(); self.layers.len()];
-        for (row, seq) in states.iter().enumerate() {
-            for (layer, st) in seq.iter().enumerate() {
-                if let Some(s) = st.as_any().downcast_ref::<SsmLayerState>() {
-                    ensure!(
-                        !s.h_is_f16,
-                        "row {row} layer {layer}: FP16 h state under an FP32-state circuit plan"
-                    );
-                    gdn[layer].push(GdnState {
-                        h: s.h_state,
-                        conv: s.conv_state,
-                    });
-                }
-            }
-        }
-        program.run(&StepEnv {
-            gpu: self.gpu.as_ref(),
-            stream,
-            gdn: &gdn,
-            max_blocks_per_seq: self.max_blocks_per_seq,
-        })
     }
 }
 

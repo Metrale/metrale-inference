@@ -40,7 +40,8 @@ fn a_program_launches_exactly_what_its_plan_counts() {
 fn every_pointer_a_launch_reads_is_bound_placed_or_the_steps() {
     let f = build(Fusions::All, |_| {}).unwrap();
     let gdn = states(&f, 0xD000_0000);
-    assert_pointers_known(&f, &gdn);
+    let launched = run(&f, &gdn, 9);
+    assert_pointers_known(&f, &gdn, &launched);
 }
 
 #[test]

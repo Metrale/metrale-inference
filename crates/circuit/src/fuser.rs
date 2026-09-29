@@ -78,6 +78,8 @@ pub struct Group {
     pub kernels: Vec<KernelId>,
     /// 2026-09-28: Launch repetition.
     pub repeat: Repeat,
+    /// 2026-09-29: Copy-engine transfers besides the kernels, and how often.
+    pub copies: Option<Repeat>,
     /// 2026-09-28: Emitter id.
     pub emitter: String,
     /// 2026-09-28: Numerics class of the rule.
@@ -111,6 +113,14 @@ impl FusionPlan {
         self.groups
             .iter()
             .map(|g| g.kernels.len() as u64 * g.repeat.count(self.rows))
+            .sum()
+    }
+
+    /// 2026-09-29: Copy-engine transfers per step, over every group.
+    pub fn copies(&self) -> u64 {
+        self.groups
+            .iter()
+            .filter_map(|g| g.copies.map(|c| c.count(self.rows)))
             .sum()
     }
 }
@@ -248,6 +258,7 @@ pub fn fuse(
                 rule: rule.id.clone(),
                 kernels: rule.kernels.clone(),
                 repeat: rule.repeat,
+                copies: rule.copies,
                 emitter: rule.emitter.clone(),
                 numerics: rule.numerics.clone(),
                 nodes: nodes.clone(),

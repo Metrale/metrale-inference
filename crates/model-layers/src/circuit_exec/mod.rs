@@ -76,6 +76,8 @@ pub struct Boot<'a> {
     /// 2026-09-28: The padded multi-sequence batch widths to compile (the decode graph ladder
     /// up to the serve's widest batch).
     pub multi_seq_rows: Vec<u64>,
+    /// 2026-09-29: The MTP verify widths `K` to compile (none without speculative decode).
+    pub verify_rows: Vec<u64>,
 }
 
 /// 2026-09-28: A built executor: the decode program and the workspace it runs in.
@@ -87,6 +89,8 @@ pub struct CircuitExec {
     /// 2026-09-28: Multi-sequence decode, one program per padded width, ascending; each with
     /// the plan it was compiled from.
     pub multi_seq: Vec<(Program, FusionPlan)>,
+    /// 2026-09-29: The single-sequence MTP verify, one program per `K`, ascending.
+    pub verify: Vec<(Program, FusionPlan)>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml the plan was chosen from.
     pub rules_digest: String,
     /// 2026-09-28: Which rules the build allowed.
@@ -147,7 +151,8 @@ impl CircuitExec {
             head: &b.head,
         };
         let shapes = std::iter::once((Mode::Decode, 1))
-            .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)));
+            .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)))
+            .chain(b.verify_rows.iter().map(|&r| (Mode::Verify, r)));
         let mut laid = Vec::new();
         for (mode, rows) in shapes {
             let plan = fuse(
@@ -194,21 +199,24 @@ impl CircuitExec {
         }
         let mut programs = programs.into_iter();
         let (decode, plan) = programs.next().context("no decode program")?;
-        let multi_seq: Vec<_> = programs.collect();
+        let (multi_seq, verify): (Vec<_>, Vec<_>) =
+            programs.partition(|(p, _)| p.mode == Mode::MultiSeq);
         tracing::info!(
             "circuit decode: {} launches/step, plan {} ({} rules, {:?}), {} multi-seq widths, \
-             workspace {} KiB",
+             {} verify widths, workspace {} KiB",
             decode.launches.len(),
             &plan.digest[..12],
             loaded.rules.len(),
             b.fusions,
             multi_seq.len(),
+            verify.len(),
             workspace_bytes / 1024
         );
         Ok(CircuitExec {
             decode,
             decode_plan: plan,
             multi_seq,
+            verify,
             rules_digest: loaded.rules_digest,
             fusions: b.fusions,
             workspace,
@@ -224,12 +232,25 @@ impl CircuitExec {
             .map(|(p, _)| p)
     }
 
+    /// 2026-09-29: The verify program for `k` rows, if one was compiled.
+    pub fn verify_program(&self, k: u64) -> Option<&Program> {
+        self.verify
+            .iter()
+            .find(|(p, _)| p.rows == k)
+            .map(|(p, _)| p)
+    }
+
     /// 2026-09-28: One digest over every compiled plan, in order (decode, then the
-    /// multi-sequence widths ascending): what a record of this forward discloses.
+    /// multi-sequence widths ascending, then the verify widths): what a record of this
+    /// forward discloses.
     pub fn plans_digest(&self) -> String {
         metrale_circuit::digest::plans_digest(
-            std::iter::once(self.decode_plan.digest.as_str())
-                .chain(self.multi_seq.iter().map(|(_, p)| p.digest.as_str())),
+            std::iter::once(self.decode_plan.digest.as_str()).chain(
+                self.multi_seq
+                    .iter()
+                    .chain(&self.verify)
+                    .map(|(_, p)| p.digest.as_str()),
+            ),
         )
     }
 
@@ -254,3 +275,6 @@ mod exec_multi_tests;
 #[cfg(test)]
 #[path = "exec_tests.rs"]
 mod exec_tests;
+#[cfg(test)]
+#[path = "exec_verify_tests.rs"]
+mod exec_verify_tests;

@@ -6,8 +6,8 @@
 | qkvz/gdn_out/experts.gate_up/shared_gate_up/q/k/v/o W8A16 fp8                |
 | ba/router/shared_gate/lm_head W16A16 bf16                                    |
 | experts.down/shared_down W8 fp8 . f32 act in                                 |
-| mode decode . 1 row . 573 launches/step . 574 kernel groups                  |
-| 180 fused edges . 813 materialized . plan 5ca4996b5998                       |
+| mode decode . 1 row . 573 launches/step . 575 kernel groups                  |
+| 180 fused edges . 814 materialized . plan 31d4c6b3314d                       |
 +------------------------------------------------------------------------------+
 
 Layers
@@ -49,6 +49,10 @@ G GatedDeltaNet layer  layer 0
   # +---------------------------+                                              #
   #    : v f32 . nx8192  on-chip                                               #
   # +---------------------------+                                              #
+  # | conv_ckpt . state_snap... |                                              #
+  # +---------------------------+                                              #
+  #                                                                            #
+  # +---------------------------+  < conv                                      #
   # | l2 . l2_norm              |                                              #
   # +---------------------------+                                              #
   ## writes qkv ################################################################
@@ -149,6 +153,10 @@ G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
   # +---------------------------+                                              #
   #    : v f32 . nx8192  on-chip                                               #
   # +---------------------------+                                              #
+  # | conv_ckpt . state_snap... |                                              #
+  # +---------------------------+                                              #
+  #                                                                            #
+  # +---------------------------+  < conv                                      #
   # | l2 . l2_norm              |                                              #
   # +---------------------------+                                              #
   ## writes qkv ################################################################
@@ -428,9 +436,13 @@ d head
     #===========================#  weight bf16
     H lm_head                   H  gemv::dense_gemv_bf16 . [~] reference
     #===========================#
+       | v bf16 . nx248320  DRAM
+    +---------------------------+
+    | argmax                    |  d2d copy . [~] reference
+    +---------------------------+
 
 --------------------------------------------------------------------------------
-573 launches/step . 574 groups . 180 fused . 813 materialized edges
+573 launches/step . 575 groups . 180 fused . 814 materialized edges
 6.6 MiB written/step . arena 0.5 MiB
 #=# heavy op . +-+ light op . ### fused kernel . |v DRAM . :v on-chip
 [ok] bit-identical . [~] reference . [!] differs

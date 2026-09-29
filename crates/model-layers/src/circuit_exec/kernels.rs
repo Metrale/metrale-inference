@@ -333,6 +333,76 @@ impl KernelTable {
                     try_kernel(gpu, "gemm", "dense_gemm_bf16")
                 }),
             ),
+            (
+                "argmax",
+                "argmax_bf16",
+                look("argmax", "argmax_bf16", &|| {
+                    try_kernel(gpu, "argmax", "argmax_bf16")
+                }),
+            ),
+            (
+                "causal_conv1d",
+                "causal_conv1d_update_l2norm",
+                look("causal_conv1d", "causal_conv1d_update_l2norm", &|| {
+                    try_kernel(gpu, "causal_conv1d", "causal_conv1d_update_l2norm")
+                }),
+            ),
+            (
+                "gated_delta_rule_wy",
+                "gated_delta_rule_wy2",
+                look("gated_delta_rule_wy", "gated_delta_rule_wy2", &|| {
+                    try_kernel(gpu, "gated_delta_rule_wy", "gated_delta_rule_wy2")
+                }),
+            ),
+            (
+                "gated_delta_rule_wy3",
+                "gated_delta_rule_wy3",
+                look("gated_delta_rule_wy3", "gated_delta_rule_wy3", &|| {
+                    try_kernel(gpu, "gated_delta_rule_wy3", "gated_delta_rule_wy3")
+                }),
+            ),
+            (
+                "gated_delta_rule_wy4",
+                "gated_delta_rule_wy4",
+                look("gated_delta_rule_wy4", "gated_delta_rule_wy4", &|| {
+                    try_kernel(gpu, "gated_delta_rule_wy4", "gated_delta_rule_wy4")
+                }),
+            ),
+            (
+                "norm",
+                "gated_rms_norm_prefill",
+                look("norm", "gated_rms_norm_prefill", &|| {
+                    try_kernel(gpu, "norm", "gated_rms_norm_prefill")
+                }),
+            ),
+            (
+                "ssm_preprocess",
+                "dense_gemm_ba_gates_prefill",
+                look("ssm_preprocess", "dense_gemm_ba_gates_prefill", &|| {
+                    try_kernel(gpu, "ssm_preprocess", "dense_gemm_ba_gates_prefill")
+                }),
+            ),
+            (
+                "w4a16_gemv",
+                "w4a16_gemv_batch3",
+                look("w4a16_gemv", "w4a16_gemv_batch3", &|| {
+                    try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_batch3")
+                }),
+            ),
+            (
+                "w4a16_gemv",
+                "w4a16_gemv_dual_batch3",
+                look("w4a16_gemv", "w4a16_gemv_dual_batch3", &|| {
+                    try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_dual_batch3")
+                }),
+            ),
+            (
+                "w4a16_gemv",
+                "w4a16_gemv_qg_batch3",
+                look("w4a16_gemv", "w4a16_gemv_qg_batch3", &|| {
+                    try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_qg_batch3")
+                }),
+            ),
         ];
         let handles = entries
             .into_iter()

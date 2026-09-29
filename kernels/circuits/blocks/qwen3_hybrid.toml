@@ -67,6 +67,14 @@ in = ["qkvz"]
 out = [{ edge = "conv", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
 binding = ["{L}.linear_attn.conv1d"]
 
+# 2026-09-29: The conv window after each row but the last, into the step's checkpoint slots:
+# the MTP verify's rollback points (the verify copies the state; other modes take none).
+[[block.gdn.node]]
+id = "conv_ckpt"
+op = "state_snapshot"
+in = ["conv"]
+out = []
+
 [[block.gdn.node]]
 id = "l2"
 op = "l2_norm"
@@ -201,7 +209,7 @@ out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
 
 [block.head]
 stream_in = "x"
-outputs = ["logits"]
+outputs = ["logits", "token"]
 
 [[block.head.node]]
 id = "final_norm"
@@ -216,6 +224,14 @@ op = "lm_head"
 in = ["xn"]
 out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
 binding = ["lm_head"]
+
+# 2026-09-29: Each row's greedy token: on the device in the MTP verify; the caller samples
+# from the logits on the host in the other modes.
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]
 
 [block.mtp_in]
 stream_in = "hidden"

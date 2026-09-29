@@ -6,8 +6,8 @@
 │ qkvz/gdn_out/experts.gate_up/shared_gate_up/q/k/v/o W8A16 fp8                │
 │ ba/router/shared_gate/lm_head W16A16 bf16                                    │
 │ experts.down/shared_down W8 fp8 · f32 act in                                 │
-│ mode decode · 1 row · 573 launches/step · 574 kernel groups                  │
-│ 180 fused edges · 813 materialized · plan 5ca4996b5998                       │
+│ mode decode · 1 row · 573 launches/step · 575 kernel groups                  │
+│ 180 fused edges · 814 materialized · plan 31d4c6b3314d                       │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 Layers
@@ -49,6 +49,10 @@ Layers
   ┃ ╰───────────────────────────╯                                              ┃
   ┃    ┊ ▼ f32 · n×8192  on-chip                                               ┃
   ┃ ╭───────────────────────────╮                                              ┃
+  ┃ │ conv_ckpt · state_snapsh… │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┃                                                                            ┃
+  ┃ ╭───────────────────────────╮  ◂ conv                                      ┃
   ┃ │ l2 · l2_norm              │                                              ┃
   ┃ ╰───────────────────────────╯                                              ┃
   ┗━ writes qkv ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
@@ -149,6 +153,10 @@ Layers
   ┃ ╰───────────────────────────╯                                              ┃
   ┃    ┊ ▼ f32 · n×8192  on-chip                                               ┃
   ┃ ╭───────────────────────────╮                                              ┃
+  ┃ │ conv_ckpt · state_snapsh… │                                              ┃
+  ┃ ╰───────────────────────────╯                                              ┃
+  ┃                                                                            ┃
+  ┃ ╭───────────────────────────╮  ◂ conv                                      ┃
   ┃ │ l2 · l2_norm              │                                              ┃
   ┃ ╰───────────────────────────╯                                              ┃
   ┗━ writes qkv ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
@@ -428,9 +436,13 @@ Layers
     ╔═══════════════════════════╗  weight bf16
     ║ lm_head                   ║  gemv::dense_gemv_bf16 · ≈ reference
     ╚═══════════════════════════╝
+       │ ▼ bf16 · n×248320  DRAM
+    ╭───────────────────────────╮
+    │ argmax                    │  d2d copy · ≈ reference
+    ╰───────────────────────────╯
 
 ────────────────────────────────────────────────────────────────────────────────
-573 launches/step · 574 groups · 180 fused · 813 materialized edges
+573 launches/step · 575 groups · 180 fused · 814 materialized edges
 6.6 MiB written/step · arena 0.5 MiB
 ╔═╗ heavy op · ╭─╮ light op · ┏━┓ fused kernel · │▼ DRAM · ┊▼ on-chip
 ✓ bit-identical · ≈ reference · ⚠ differs

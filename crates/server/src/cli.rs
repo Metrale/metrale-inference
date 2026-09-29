@@ -132,6 +132,10 @@ pub struct CircuitDiffArgs {
     /// single-sequence decode. `--prompts` is unused then; a width of `n` decodes `n` prompts.
     #[arg(long, value_delimiter = ',')]
     pub batch: Vec<usize>,
+    /// MTP verify widths K (comma-separated, 2..=4): diff the single-sequence verify at each
+    /// K instead. Needs a serve with speculative decoding (the rollback slots).
+    #[arg(long, value_delimiter = ',')]
+    pub verify: Vec<usize>,
     /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
     #[command(flatten)]
     pub serve: ServeArgs,

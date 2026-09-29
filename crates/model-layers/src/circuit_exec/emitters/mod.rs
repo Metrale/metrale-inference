@@ -19,10 +19,11 @@ mod attn;
 mod batched;
 mod ffn;
 mod gdn;
+mod gdn_verify;
 mod linear;
 mod norm;
 
-static EMITTERS: [&dyn OpEmitter; 31] = [
+static EMITTERS: [&dyn OpEmitter; 35] = [
     &norm::EmbedCopy,
     &norm::RmsNormResidual,
     &norm::ResidualAddRmsNorm,
@@ -54,6 +55,10 @@ static EMITTERS: [&dyn OpEmitter; 31] = [
     &batched::W4a16GemmN128M128,
     &ffn::DenseFfnKm,
     &ffn::DenseFfnMmq,
+    &gdn_verify::DenseGemmBaGates,
+    &gdn_verify::GdnDecodeWy,
+    &linear::Argmax,
+    &linear::HostSampling,
 ];
 
 /// 2026-09-28: The emitter named `id`.

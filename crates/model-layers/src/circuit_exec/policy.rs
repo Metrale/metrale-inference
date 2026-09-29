@@ -79,9 +79,22 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
     }
 }
 
-/// 2026-09-28: Environment switches of the multi-sequence decode dispatch whose defaults the
-/// rules' row bands encode, with the file that reads each.
-pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 12] = [
+/// 2026-09-28: Environment switches of the multi-sequence decode and (2026-09-29) MTP verify
+/// dispatch whose defaults the rules' row bands and arms encode, with the file that reads
+/// each.
+pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 15] = [
+    (
+        "METRALE_GDN_FUSED_VERIFY",
+        "qwen3_ssm/trait_decode_batched_conv_gdn.rs",
+    ),
+    (
+        "METRALE_NO_BATCHED_BA_GATES",
+        "qwen3_ssm/trait_decode_batched.rs",
+    ),
+    (
+        "METRALE_NO_BATCHED_GDN_NORM",
+        "qwen3_ssm/trait_decode_batched.rs",
+    ),
     (
         "METRALE_SSM_TC_PROJ",
         "qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs",
@@ -121,6 +134,9 @@ pub fn unmodelled_switches(levers: &ModelLevers) -> Vec<String> {
         .filter(|(var, _)| std::env::var_os(var).is_some())
         .map(|(var, reader)| format!("{var} (read in {reader})"))
         .collect();
+    if crate::layers::qwen3_ssm::verify_exact_enabled() {
+        out.push("the exact MTP verify chain (--exact-verify)".to_string());
+    }
     if !levers.ffn_small_m {
         out.push("the small-M projection GEMMs off (METRALE_FFN_SMALLM)".to_string());
     }

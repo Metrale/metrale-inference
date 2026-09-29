@@ -3,8 +3,8 @@
 │ Dense hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, SwiGLU FFN, MTP draft head                   │
 │ 64 layers · hidden 5120 · ffn 17408 · attn 24q/4kv×256 · GDN 16k/48v×128 · vocab 248320                              │
 │ qkvz/gdn_out/gate_up/down/q/k/v/o W4A16 nvfp4 · ba/lm_head W16A16 bf16                                               │
-│ mode decode · 1 row · 755 launches/step · 756 kernel groups                                                          │
-│ 112 fused edges · 963 materialized · plan c923e87f4f4e                                                               │
+│ mode decode · 1 row · 755 launches/step · 757 kernel groups                                                          │
+│ 112 fused edges · 964 materialized · plan 152bf34432db                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 Layers
@@ -46,6 +46,10 @@ Layers
   ┃ ╰────────────────────────────────╯                                                                                 ┃
   ┃    ┊ ▼ f32 · n×10240  on-chip                                                                                      ┃
   ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ conv_ckpt · state_snapshot     │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃                                                                                                                    ┃
+  ┃ ╭────────────────────────────────╮  ◂ conv                                                                         ┃
   ┃ │ l2 · l2_norm                   │                                                                                 ┃
   ┃ ╰────────────────────────────────╯                                                                                 ┃
   ┗━ writes qkv ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
@@ -121,6 +125,10 @@ Layers
   ┃ ╰────────────────────────────────╯                                                                                 ┃
   ┃    ┊ ▼ f32 · n×10240  on-chip                                                                                      ┃
   ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ conv_ckpt · state_snapshot     │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃                                                                                                                    ┃
+  ┃ ╭────────────────────────────────╮  ◂ conv                                                                         ┃
   ┃ │ l2 · l2_norm                   │                                                                                 ┃
   ┃ ╰────────────────────────────────╯                                                                                 ┃
   ┗━ writes qkv ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
@@ -333,7 +341,11 @@ Layers
     ╔════════════════════════════════╗  weight bf16
     ║ lm_head                        ║  gemv::dense_gemv_bf16 · ≈ reference
     ╚════════════════════════════════╝
+       │ ▼ bf16 · n×248320  DRAM
+    ╭────────────────────────────────╮
+    │ argmax                         │  d2d copy · ≈ reference
+    ╰────────────────────────────────╯
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-755 launches/step · 756 groups · 112 fused · 963 materialized edges · 16.9 MiB written/step · arena 0.5 MiB
+755 launches/step · 757 groups · 112 fused · 964 materialized edges · 16.9 MiB written/step · arena 0.5 MiB
 ╔═╗ heavy op · ╭─╮ light op · ┏━┓ fused kernel · │▼ DRAM · ┊▼ on-chip · ✓ bit-identical · ≈ reference · ⚠ differs

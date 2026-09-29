@@ -12,11 +12,13 @@
 //! - The recurrent and conv state are the sequence's, read from the step
 //!   ([`super::super::program::StepEnv::gdn_state`]), never baked at compile time.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
+use metrale_circuit::Mode;
 
 use super::super::bindings::WeightSlot;
 use super::super::compile::{Cx, OpEmitter};
-use super::{dense, dim, per_row};
+use super::super::program::MAX_VERIFY_STEPS;
+use super::{dense, dim, per_row, rows};
 use crate::layers::ops;
 
 /// 2026-09-28: The GDN dims every emitter here reads.
@@ -88,7 +90,9 @@ impl OpEmitter for DenseGemvBaGates {
 }
 
 /// 2026-09-28: `conv1d_update_l2norm`: the conv1d step with SiLU, then the per-head L2 norm of
-/// Q and K, into the FP32 conv output.
+/// Q and K, into the conv output (FP32 in decode, BF16 in the verify). 2026-09-29: A verify
+/// then copies the window after each row but the last into the step's rollback slots (the
+/// `state_snapshot` member); other modes take no snapshot.
 pub(crate) struct Conv1dUpdateL2norm;
 
 impl OpEmitter for Conv1dUpdateL2norm {
@@ -97,7 +101,7 @@ impl OpEmitter for Conv1dUpdateL2norm {
     }
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
-        cx.g.expect_ops(self.id(), &["conv1d_update", "l2_norm"])?;
+        cx.g.expect_ops(self.id(), &["conv1d_update", "state_snapshot", "l2_norm"])?;
         per_row(cx)?;
         let d = Dims::of(cx)?;
         let w = dense(cx.weight(0, WeightSlot::GdnConv1d)?, "conv1d")?;
@@ -105,19 +109,36 @@ impl OpEmitter for Conv1dUpdateL2norm {
         let conv_dim = (d.key() * 2 + d.value()) as u32;
         let d_conv = u32::try_from(cx.config.linear_conv_kernel_dim)?;
         let (qk, kd, k) = ((d.key() * 2) as u32, d.kd, cx.handle(0)?);
+        // 2026-09-29: The FP32 window `[conv_dim, d_conv]` (`SsmLayerState::conv_state`).
+        let window = conv_dim as usize * d_conv as usize * 4;
+        let snapshots = cx.g.group.copies.map_or(0, |c| c.count(cx.rows)) as usize;
+        ensure!(
+            snapshots == 0 || (cx.mode == Mode::Verify && snapshots < MAX_VERIFY_STEPS + 1),
+            "{snapshots} conv snapshots in a {:?} plan",
+            cx.mode
+        );
         for i in 0..cx.reps() {
             let qkvz = cx.row_ptr(cx.g.input(0, 0)?, i)?;
-            let out = cx.row_ptr(cx.g.output(1, 0)?, i)?;
+            let out = cx.row_ptr(cx.g.output(2, 0)?, i)?;
+            let s = cx.state_row(i);
             cx.push(
                 0,
                 Box::new(move |e| {
-                    let st = e.gdn_state(layer, i)?;
+                    let st = e.gdn_state(layer, s)?;
                     ops::conv1d_update_l2norm(
                         e.gpu, k, st.conv, qkvz, &w, out, conv_dim, d_conv, 1, qk, kd, 1e-6,
                         e.stream,
                     )
                 }),
             )?;
+            if i < snapshots {
+                cx.push_copy(Box::new(move |e| {
+                    let st = e.gdn_state(layer, s)?;
+                    let to = st.conv_steps[i];
+                    ensure!(!to.is_null(), "layer {layer} has no conv rollback slot {i}");
+                    e.gpu.copy_d2d_async(st.conv, to, window, e.stream)
+                }))?;
+            }
         }
         Ok(())
     }
@@ -144,10 +165,11 @@ impl OpEmitter for GdnDecode {
             let decay = cx.row_ptr(cx.g.input(0, 1)?, i)?;
             let beta = cx.row_ptr(cx.g.input(0, 2)?, i)?;
             let out = cx.row_ptr(cx.g.output(0, 0)?, i)?;
+            let s = cx.state_row(i);
             cx.push(
                 0,
                 Box::new(move |e| {
-                    let st = e.gdn_state(layer, i)?;
+                    let st = e.gdn_state(layer, s)?;
                     ops::gdn_decode(
                         e.gpu, k, st.h, q, kk, v, decay, beta, out, 1, nk, nv, kd, vd, e.stream,
                     )
@@ -169,16 +191,44 @@ impl OpEmitter for GatedRmsNorm {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["gated_rms_norm"])?;
-        per_row(cx)?;
         let d = Dims::of(cx)?;
         let w = dense(cx.weight(0, WeightSlot::GdnNorm)?, "gdn norm")?;
         let (k, nv, vd) = (cx.handle(0)?, d.nv, d.vd);
         let eps = cx.config.rms_norm_eps as f32;
+        let z_at = (d.key() * 2 + d.value()) * 2;
+        if cx.g.group.kernels[0].func == "gated_rms_norm_prefill" {
+            // 2026-09-29: Every (head, row) pair in one launch, rows at their strides
+            // (`trait_decode_batched/gates_norm.rs` `batched_gated_norm`).
+            let (core, in_stride) = cx.strided(cx.g.input(0, 0)?)?;
+            let (qkvz, gate_stride) = cx.strided(cx.g.input(0, 1)?)?;
+            let z = qkvz.offset(z_at);
+            let out = cx.ptr(cx.g.output(0, 0)?)?;
+            let n = rows(cx)?;
+            return cx.push(
+                0,
+                Box::new(move |e| {
+                    ops::gated_rms_norm_prefill(
+                        e.gpu,
+                        k,
+                        core,
+                        z,
+                        &w,
+                        out,
+                        nv,
+                        vd,
+                        eps,
+                        n,
+                        in_stride,
+                        gate_stride,
+                        e.stream,
+                    )
+                }),
+            );
+        }
+        per_row(cx)?;
         for i in 0..cx.reps() {
             let core = cx.row_ptr(cx.g.input(0, 0)?, i)?;
-            let z = cx
-                .row_ptr(cx.g.input(0, 1)?, i)?
-                .offset((d.key() * 2 + d.value()) * 2);
+            let z = cx.row_ptr(cx.g.input(0, 1)?, i)?.offset(z_at);
             let out = cx.row_ptr(cx.g.output(0, 0)?, i)?;
             cx.push(
                 0,

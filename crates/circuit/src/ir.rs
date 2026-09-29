@@ -141,9 +141,13 @@ pub enum OpKind {
     LmHead,
     /// 2026-09-28: Greedy token selection over the logits.
     Argmax,
+    /// 2026-09-29: A snapshot of the recurrent state its input's producer updates, taken after
+    /// each row but the last into the step's checkpoint slots (the verify's rollback points).
+    /// It has no output.
+    StateSnapshot,
 }
 
-const PLAIN_OPS: [(OpKind, &str); 26] = [
+const PLAIN_OPS: [(OpKind, &str); 27] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -170,6 +174,7 @@ const PLAIN_OPS: [(OpKind, &str); 26] = [
     (OpKind::FinalNorm, "final_norm"),
     (OpKind::LmHead, "lm_head"),
     (OpKind::Argmax, "argmax"),
+    (OpKind::StateSnapshot, "state_snapshot"),
 ];
 
 impl OpKind {
