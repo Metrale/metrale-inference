@@ -104,6 +104,19 @@ impl Format {
         }
     }
 
+    /// 2026-09-30: Bytes of a `[n, k]` weight in this format, scales included: as
+    /// [`Format::bytes`], except that an NVFP4 weight has one F32 global scale for the whole
+    /// tensor (`weight_scale_2`), where an activation has one per row.
+    pub fn weight_bytes(&self, n: u64, k: u64) -> Option<u64> {
+        match self {
+            Format::Nvfp4 { .. } => self
+                .bytes(n, k)?
+                .checked_sub(n.checked_mul(4)?)?
+                .checked_add(4),
+            _ => self.bytes(n, k),
+        }
+    }
+
     /// 2026-09-28: Bytes of a `rows x dim` tensor in this format, scales included. Used by
     /// the buffer planner. `None` when `dim` is not a multiple of the scale group.
     pub fn bytes(&self, rows: u64, dim: u64) -> Option<u64> {

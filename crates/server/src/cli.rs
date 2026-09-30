@@ -23,6 +23,8 @@ mod bench_selfstart;
 mod bench_serve_plan;
 pub(crate) mod circuit;
 mod circuit_diff;
+mod circuit_hw;
+mod circuit_hw_tree;
 mod circuit_paint;
 mod circuit_venn;
 pub(crate) mod doctor;
@@ -91,7 +93,7 @@ pub enum Command {
     /// Show a recipe's architecture circuit and the fused kernel plan the engine runs.
     ///
     /// The circuits, precision tables and fusion rules are the ones this binary was built
-    /// with (kernels/circuits/, kernels/<hw>/common/FUSIONS.toml).
+    /// with (`kernels/circuits/`, `kernels/<hw>/common/FUSIONS.toml`).
     Circuit(CircuitArgs),
 }
 
@@ -119,6 +121,76 @@ pub enum CircuitAction {
     /// parameterization opportunity, policy variant, novel), ranked by estimated step share,
     /// and write or check the Markdown report (kernels/circuits/venn/).
     Venn(Box<CircuitVennArgs>),
+    /// Plan a checkpoint on a target device (kernels/DEVICES.toml): the fused plan its kernel
+    /// class can run, the gap report against that class ranked by the device's roofline,
+    /// decode and prefill estimates, and the memory fit. `--matrix` writes or checks every
+    /// report of the roadmap matrix instead.
+    Plan(Box<CircuitHwArgs>),
+}
+
+/// `met circuit plan` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct CircuitHwArgs {
+    /// The model: a checkpoint id (org/name), a checkpoint directory, or a recipe id.
+    #[arg(long, required_unless_present = "matrix")]
+    pub checkpoint: Option<String>,
+    /// Target device id from kernels/DEVICES.toml (h100-sxm, h200-sxm, b200, gb300, gb10, ...).
+    #[arg(long, required_unless_present = "matrix")]
+    pub hardware: Option<String>,
+    /// Formats served: the recipe's pinned formats or the checkpoint's declared ones.
+    #[arg(long, value_enum, required_unless_present = "matrix")]
+    pub precision: Option<CircuitPrecision>,
+    /// What to print: the Markdown report, or one fused plan as stable text.
+    #[arg(long, value_enum, default_value_t = CircuitHwFormat::Report)]
+    pub format: CircuitHwFormat,
+    /// With `--format plan`: the forward.
+    #[arg(long, value_enum, default_value_t = CircuitMode::Decode)]
+    pub mode: CircuitMode,
+    /// With `--format plan`: padded rows (required for multi_seq and verify).
+    #[arg(long)]
+    pub rows: Option<u64>,
+    /// Write the output here (relative to the repository root) instead of stdout.
+    #[arg(long, conflicts_with = "matrix")]
+    pub out: Option<String>,
+    /// Write every report of the roadmap matrix into this directory (relative to the root).
+    #[arg(long)]
+    pub matrix: Option<String>,
+    /// With `--matrix`: also write the summary table to this path.
+    #[arg(long, requires = "matrix")]
+    pub summary: Option<std::path::PathBuf>,
+    /// Compare with the file(s) on disk instead of writing; a stale or missing one is an error.
+    #[arg(long)]
+    pub check: bool,
+    /// Fetch config.json / hf_quant_config.json from huggingface.co when the checkpoint is not
+    /// in the local cache (`curl -sfL .../resolve/main/<file>`).
+    #[arg(long)]
+    pub allow_network: bool,
+    /// Repository root; by default the nearest directory above the working directory that has
+    /// kernels/circuits/INSTANCES.toml.
+    #[arg(long)]
+    pub root: Option<std::path::PathBuf>,
+}
+
+/// `met circuit plan --precision`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CircuitPrecision {
+    /// The recipe's pinned formats (the golden plans').
+    #[value(name = "recipe")]
+    Recipe,
+    /// The checkpoint's declared formats.
+    #[value(name = "declared")]
+    Declared,
+}
+
+/// `met circuit plan --format`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CircuitHwFormat {
+    /// The Markdown report.
+    #[value(name = "report")]
+    Report,
+    /// One fused plan (`--mode`, `--rows`) as the stable text of `met circuit show`.
+    #[value(name = "plan")]
+    Plan,
 }
 
 /// `met circuit diff` options.
@@ -215,6 +287,11 @@ pub struct CircuitDisplayArgs {
     /// When to colour: auto colours a terminal only; NO_COLOR always wins.
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     pub color: ColorChoice,
+    /// Draw the plan for this device of kernels/DEVICES.toml (its class's rules and kernels;
+    /// ops no rule covers there are drawn as `novel` groups) instead of the recipe's own
+    /// hardware. Reads the repository from the working directory.
+    #[arg(long)]
+    pub hardware: Option<String>,
 }
 
 /// A forward `met circuit` can plan.

@@ -23,7 +23,7 @@ use super::{CircuitMode, CircuitVennArgs};
 
 /// 2026-09-29: The repository on disk.
 pub(crate) struct FsRepo {
-    root: PathBuf,
+    pub(crate) root: PathBuf,
 }
 
 impl Repo for FsRepo {
@@ -50,7 +50,7 @@ impl Repo for FsRepo {
     }
 }
 
-fn find_root(start: &Path) -> Result<PathBuf> {
+pub(crate) fn find_root(start: &Path) -> Result<PathBuf> {
     start
         .ancestors()
         .find(|d| d.join("kernels/circuits/INSTANCES.toml").is_file())

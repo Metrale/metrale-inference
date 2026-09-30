@@ -160,6 +160,29 @@ verify K), the report classifies it against the kernel families:
 The report is checked in with the architecture package and reviewed before any kernel
 work.
 
+### Step 3b: plan it on every target device
+
+`met circuit plan --checkpoint <hf-id|dir> --hardware <device> --precision declared` plans the
+checkpoint (its own config.json, at its declared formats) on any device of
+`kernels/DEVICES.toml` (h100-sxm, h200-sxm, b200, gb300, gb10, ...): the fused plan the
+device's kernel class compiles, the gap report against that class ranked by the device's
+roofline, decode (C1/C16/C128) and prefill (4k/32k) roofline estimates, and the memory fit
+with the TP degree it needs. Add `--allow-network` for a checkpoint that is not cached,
+`--format plan --mode multi_seq --rows 16` for one plan as text, and
+`met circuit display --recipe <r> --hardware <device>` to draw it.
+
+- A layer whose declared format the device cannot run natively is never upcast: Hopper runs
+  NVFP4 through the exact E2M1->E4M3 conversion on the FP8 MMA, and the report says so per
+  layer. A format no MMA of the device can run is "no path".
+- A class plans with its own `common/FUSIONS.toml` over the rules it inherits (`inherits`,
+  override by id, `remove`), and its kernels are what its build compiles: a kernel in a source
+  guard needs the instruction the guard stands for (`[[guard]]` in DEVICES.toml).
+- Only the class's own microbench records make a kernel "Shared"; on every other class it is
+  "Shared, unmeasured".
+- Add the model to the roadmap matrix (`MATRIX_MODELS` in `crates/server/src/cli/circuit_hw.rs`,
+  config fixture under `crates/circuit/tests/fixtures/checkpoints/`), then
+  `met circuit plan --matrix kernels/circuits/plans/hw` (the `--check` test holds the reports).
+
 ## Step 4: parameterize safely (maximize the intersection)
 
 **Choosing the mechanism:**

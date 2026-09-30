@@ -162,7 +162,7 @@ fn weight_bytes(n: &Node, out: f64, k: f64) -> Result<f64, CostError> {
     let Some(w) = n.weight else {
         return Ok(0.0);
     };
-    w.bytes(out as u64, k as u64)
+    w.weight_bytes(out as u64, k as u64)
         .map(|b| b as f64)
         .ok_or_else(|| CostError::Edge {
             node: n.id.clone(),

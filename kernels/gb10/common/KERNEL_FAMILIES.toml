@@ -295,7 +295,12 @@ files = ["kernels/gb10/common/causal_conv1d.cu"]
 [[family]]
 id = "causal_conv1d_l2norm"
 description = "Causal conv1d update + SiLU + L2 norm of the q/k heads (GDN)"
-kernels = ["causal_conv1d::causal_conv1d_update_l2norm_f32", "causal_conv1d::causal_conv1d_update_l2norm"]
+# 2026-09-30: The strided twin runs every sequence's row in one launch (Hopper's batched GDN arm,
+# kernels/hopper/common/FUSIONS.toml).
+kernels = [
+  "causal_conv1d::causal_conv1d_update_l2norm_f32", "causal_conv1d::causal_conv1d_update_l2norm",
+  "causal_conv1d::causal_conv1d_update_l2norm_f32_strided",
+]
 rows = [1, 4096]
 op = [
   { op = "conv1d_update", feeds = ["l2_norm"] },
@@ -341,6 +346,20 @@ point = {}
 rows = [4]
 measurement = "qwen3.8-27b::gated_delta_rule_wy4 @ decode C=1 (R=4, MTP k=3)"
 
+# 2026-09-30: The batched decode arm: every sequence's recurrence in one launch, states strided
+# by the pool slot pitch (ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:328-350).
+# Selected where [defaults] ssm_batched_recurrent is on (Hopper); no microbench yet.
+[[family]]
+id = "gdn_recurrence_strided"
+description = "Gated delta rule decode, all sequences in one launch (strided states)"
+kernels = ["gated_delta_rule::gated_delta_rule_decode_f32_strided"]
+rows = [1, 128]
+op = [{ op = "gdn_recurrence" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/gated_delta_rule.cu"]
+
 [[family]]
 id = "gdn_verify_fused_k2"
 description = "Opt-in fused GDN verify at K = 2: conv + L2 + recurrence + gated norm"
@@ -385,7 +404,11 @@ files = ["kernels/gb10/common/mamba2_ssm_decode.cu"]
 [[family]]
 id = "gated_rms_norm"
 description = "Gated RMSNorm: rmsnorm(x) * silu(z) (GDN output norm)"
-kernels = ["norm::gated_rms_norm_f32_input", "norm::gated_rms_norm_prefill"]
+# 2026-09-30: `_strided` is the one-launch multi-sequence twin (Hopper's batched GDN arm).
+kernels = [
+  "norm::gated_rms_norm_f32_input", "norm::gated_rms_norm_prefill",
+  "norm::gated_rms_norm_f32_input_strided",
+]
 rows = [1, 65536]
 op = [{ op = "gated_rms_norm" }]
 [[family.param]]

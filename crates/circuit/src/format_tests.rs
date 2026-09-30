@@ -71,6 +71,19 @@ fn byte_sizes_count_values_and_scales() {
     assert_eq!(g.bytes(2, 256), Some(2 * 256 + 2 * 2 * 4));
 }
 
+/// 2026-09-30: An NVFP4 activation carries one F32 global per row (`w4a4_quant_rows`), an NVFP4
+/// weight one for the tensor; the other formats size alike.
+#[test]
+fn nvfp4_activations_carry_a_global_per_row_and_weights_one_per_tensor() {
+    let f = Format::Nvfp4 { group: 16 };
+    assert_eq!(f.bytes(8, 5120), Some(8 * (2560 + 320 + 4)));
+    assert_eq!(f.weight_bytes(8, 5120), Some(8 * (2560 + 320) + 4));
+    assert_eq!(
+        Format::Bf16.weight_bytes(8, 5120),
+        Format::Bf16.bytes(8, 5120)
+    );
+}
+
 #[test]
 fn a_dim_off_the_scale_group_has_no_size() {
     assert_eq!(Format::Nvfp4 { group: 16 }.bytes(1, 24), None);

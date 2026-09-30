@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: Hopper fusion rules: gb10's (inherited), plus the GatedDeltaNet routing Hopper's
+# default selects. kernels/hopper/HARDWARE.toml [defaults] sets ssm_batched_recurrent = true, and
+# gb10's GDN rules only cover `off`, so without these rules every GDN node of a Hopper plan is a
+# gap (schema and overlay semantics: crates/circuit/src/rules.rs, crates/circuit/src/hardware/
+# class.rs).
+#
+# Owner: hopper kernels.
+# Invariants:
+# - A rule here replaces gb10's rule of the same id; the ids below are new, so they add.
+# - Cites follow gb10's FUSIONS.toml abbreviations (ml/ = crates/model-layers/src/layers/).
+# - Not modelled: the batched arm also needs the sequences' state slots to be contiguous at run
+#   time (ssm_batched_recurrent.rs:93-150 falls back to the per-sequence loop when they are not),
+#   and ops::dense_gemm_ba_gates_prefill may substitute its byte-identical Hopper twin
+#   (ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper, [defaults] ssm_ba_gates_hopper) under
+#   a shape guard (ops/ssm_preproc.rs:338-360). The plan names the path both start from.
+
+schema = 1
+inherits = "gb10"
+
+# 2026-09-30: One sequence: the single-sequence decode path does not read the flag, so these are
+# gb10's per-row rules at one row, under `on`.
+
+[[rule]]
+id = "gdn_ba_gates_gemv_decode_batched_on"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_preprocess", func = "dense_gemv_ba_gates" }]
+repeat = "per_row"
+emitter = "dense_gemv_ba_gates"
+rows = [1, 1]
+modes = ["decode"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/ssm_forward.rs:181-196 (single-sequence decode; no ssm_batched_recurrent branch)"
+
+[[rule]]
+id = "gdn_conv_l2_f32_decode_batched_on"
+pattern = [{ op = "conv1d_update" }, { op = "state_snapshot" }, { op = "l2_norm" }]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm_f32" }]
+repeat = "per_row"
+emitter = "conv1d_update_l2norm"
+rows = [1, 1]
+modes = ["decode"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/ssm_forward.rs:213-233"
+
+[[rule]]
+id = "gdn_recurrence_f32_decode_batched_on"
+pattern = [{ op = "gdn_recurrence", input = "f32" }]
+kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32" }]
+repeat = "per_row"
+emitter = "gdn_decode"
+rows = [1, 1]
+modes = ["decode"]
+when = { ssm_h_dtype = "f32", ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/ssm_forward.rs:266,330-347"
+
+[[rule]]
+id = "gdn_out_norm_f32_decode_batched_on"
+pattern = [{ op = "gated_rms_norm", input = "f32" }]
+kernels = [{ module = "norm", func = "gated_rms_norm_f32_input" }]
+repeat = "per_row"
+emitter = "gated_rms_norm"
+rows = [1, 1]
+modes = ["decode"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/ssm_forward.rs:354-372"
+
+# 2026-09-30: Many sequences: the batched arm, one launch for all rows.
+
+[[rule]]
+id = "gdn_ba_gates_gemm_batched"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_preprocess", func = "dense_gemm_ba_gates_prefill" }]
+repeat = "once"
+emitter = "dense_gemm_ba_gates"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-96 (enabled, the strided GDN kernel loaded, n > 1), :155-171"
+
+[[rule]]
+id = "gdn_conv_l2_f32_batched"
+pattern = [{ op = "conv1d_update" }, { op = "state_snapshot" }, { op = "l2_norm" }]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm_f32_strided" }]
+repeat = "once"
+emitter = "conv1d_update_l2norm_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:182-199 (one launch when the strided kernel is loaded)"
+
+[[rule]]
+id = "gdn_recurrence_f32_batched"
+pattern = [{ op = "gdn_recurrence", input = "f32" }]
+kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32_strided" }]
+repeat = "once"
+emitter = "gdn_decode_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_h_dtype = "f32", ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-222 (the fused-norm arm needs --gdn-fused-norm, default off), :328-350"
+
+[[rule]]
+id = "gdn_out_norm_f32_batched"
+pattern = [{ op = "gated_rms_norm", input = "f32" }]
+kernels = [{ module = "norm", func = "gated_rms_norm_f32_input_strided" }]
+repeat = "once"
+emitter = "gated_rms_norm_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (one launch when the strided gated norm is loaded: not for sigmoid-gated norms, ml/qwen3_ssm/init.rs:96-100)"
