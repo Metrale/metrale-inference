@@ -340,6 +340,21 @@ fn a_qwen_checkpoint_without_an_mtp_layer_has_no_draft_head() {
     );
 }
 
+/// 2026-09-30: Qwen/Qwen3.6-27B-FP8 lists MoE router names (`...mlp.gate`) in
+/// modules_to_not_convert; matched on whole segments (crates/config, HF fp8 targets) they do
+/// not exclude the dense gate_proj, so every FFN projection is block-scaled FP8.
+#[test]
+fn the_hf_fp8_dense_27b_declares_block_scaled_w8a8_everywhere() {
+    let r = ok("Qwen--Qwen3.6-27B-FP8");
+    let block = Format::Fp8E4m3 {
+        scale: Scale::Block(128, 128),
+    };
+    for id in ["l0.dense_ffn.gate_up", "l0.dense_ffn.down", "l3.attn.q"] {
+        assert_eq!(node(&r.circuit, id).weight, Some(block), "{id}");
+    }
+    assert_eq!(node(&r.circuit, "l0.gdn.ba").weight, Some(Format::Bf16));
+}
+
 #[test]
 fn a_tied_head_and_the_other_qwen35_checkpoints_instantiate() {
     let small = ok("Qwen--Qwen3.5-0.8B");
@@ -437,14 +452,6 @@ fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
         let e = resolve(name).expect_err(name).to_string();
         assert!(e.contains(want), "{name}: {e}");
     }
-    // 2026-09-30: The HF `fp8` Qwen3.6-27B lists MoE router names (`mlp.gate`) in
-    // modules_to_not_convert; the declared plan's substring match reads them as its dense
-    // `mlp.gate_proj`, so gate and up resolve differently and the node is refused rather than
-    // run at a guessed format (a DeclaredPrecisionPlan finding, crates/config).
-    let e = resolve("Qwen--Qwen3.6-27B-FP8")
-        .expect_err("mixed")
-        .to_string();
-    assert!(e.contains("mlp.gate_proj = bf16/bf16"), "{e}");
 }
 
 #[test]

@@ -627,7 +627,6 @@ the G1 and Nemotron-H ones fetched from the Hub (`crates/circuit/tests/checkpoin
   - Holo-3.1, which has no MTP layer, so its circuit has no draft head (`draft_when = "mtp"`).
 - Refused, with the reason named:
   - The DFlash drafts: they have unmapped keys.
-  - Qwen3.6-27B-FP8: a `DeclaredPrecisionPlan` substring-ignore finding.
   - Every other model type.
 
 **Two mechanisms the config maps rely on:**
