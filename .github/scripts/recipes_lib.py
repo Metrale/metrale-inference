@@ -301,3 +301,28 @@ def doctor_verdict(stdout: str, expected: int) -> tuple[bool, str]:
 
 def dumps(doc: dict) -> bytes:
     return (json.dumps(doc, indent=2, sort_keys=False, ensure_ascii=False) + "\n").encode()
+
+
+# ── the metralectl mirror ─────────────────────────────────────────────────────
+
+
+def mirror_verdict(changed_recipes: list[str] | None, pinned_serve_options: bytes | None,
+                   release_serve_options: bytes) -> tuple[bool, str]:
+    """Whether a release must be mirrored into metralectl, which ships the recipes to users.
+
+    Two things are mirrored (metralectl `scripts/engine-recipes.py`): `recipes/` and the
+    release's `serve-options.json` (as `vendor/serve-options.v2.json`, byte for byte).
+    `changed_recipes` is the list of recipe paths that differ between the commit the mirror is
+    pinned to and this release, or None when that diff could not be computed;
+    `pinned_serve_options` is the mirror's snapshot, or None when it could not be read.
+    An unknown answers True: a needless mirror PR is closed in a click, a missed one leaves
+    every user on stale recipes."""
+    if changed_recipes is None:
+        return True, "the recipes could not be compared with the mirrored commit"
+    if pinned_serve_options is None:
+        return True, "the mirror's serve-options snapshot could not be read"
+    if changed_recipes:
+        return True, f"{len(changed_recipes)} recipe file(s) changed since the mirrored commit"
+    if pinned_serve_options != release_serve_options:
+        return True, "serve-options.json differs from the mirror's snapshot"
+    return False, "the mirror already carries these recipes and serve options"

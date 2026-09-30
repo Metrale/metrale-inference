@@ -20,6 +20,13 @@ Checks (the rules are in recipes_lib.py, which says where each comes from):
 
 Writes to --out: recipes.tar.gz, serve-options.json, index.json, each with a
 `.sha256` sidecar. Exit 1 when any check other than 6 fails.
+
+    recipes.py mirror-needed --pinned-commit SHA --head SHA \
+        --pinned-serve-options FILE --release-serve-options FILE
+
+Prints `dispatch=true|false` (for $GITHUB_OUTPUT) and why: whether a release
+changes what metralectl mirrors (`recipes_lib.mirror_verdict`). dev-release.yml
+asks this before it dispatches metralectl's engine-recipes workflow.
 """
 from __future__ import annotations
 
@@ -185,6 +192,28 @@ def check(args: argparse.Namespace) -> int:
     return 0
 
 
+def changed_recipes(pinned: str, head: str) -> list[str] | None:
+    """Recipe paths that differ between `pinned` and `head`, or None when git cannot tell
+    (an empty or unknown `pinned`, or a history too shallow to hold it)."""
+    if not pinned:
+        return None
+    proc = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", pinned, head, "--", "recipes"],
+                          capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    return [line for line in proc.stdout.splitlines() if line]
+
+
+def mirror_needed(args: argparse.Namespace) -> int:
+    pinned_so = pathlib.Path(args.pinned_serve_options)
+    pinned_bytes = pinned_so.read_bytes() if pinned_so.is_file() else None
+    dispatch, why = lib.mirror_verdict(changed_recipes(args.pinned_commit, args.head), pinned_bytes,
+                                       pathlib.Path(args.release_serve_options).read_bytes())
+    print(f"dispatch={'true' if dispatch else 'false'}")
+    print(f"reason={why}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -195,8 +224,13 @@ def main() -> int:
     c.add_argument("--kernels", default=str(ROOT / "kernels"))
     c.add_argument("--commit", help="commit the bundle is stamped with (default HEAD)")
     c.add_argument("--github", action="store_true", help="also emit ::error/::warning annotations")
+    m = sub.add_parser("mirror-needed", help="does this release change what metralectl mirrors?")
+    m.add_argument("--pinned-commit", required=True, help="the commit metralectl's pin names ('' if unread)")
+    m.add_argument("--head", required=True, help="the commit this release was built from")
+    m.add_argument("--pinned-serve-options", required=True, help="metralectl's snapshot (absent file: unread)")
+    m.add_argument("--release-serve-options", required=True, help="this release's serve-options.json")
     args = ap.parse_args()
-    return check(args)
+    return check(args) if args.command == "check" else mirror_needed(args)
 
 
 if __name__ == "__main__":

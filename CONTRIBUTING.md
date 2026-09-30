@@ -201,6 +201,26 @@ Profile existing kernels and submit improvements. Every PR should include:
 
 Add new shapes and configurations to `crates/bench/`. More data points help us find optimization opportunities.
 
+### How a recipe change reaches users
+
+Recipes live in `recipes/` here, but users get them from `metralectl`. It
+bundles one engine release's recipes into its binary, pinned in its
+`vendor/engine-pin.toml`. A merged recipe edit goes through these steps:
+
+| # | Step | How |
+|---|---|---|
+| 1 | CI on `main` checks every recipe against that commit's `met` and builds the recipe bundle | automatic (`ci.yml`, `recipes`) |
+| 2 | The rolling `bNN` pre-release gets the bundle (`recipes.tar.gz`, `serve-options.json`, `index.json`) | automatic (`dev-release.yml`, `publish`) |
+| 3 | If the release changes `recipes/` or `serve-options.json` relative to the release metralectl mirrors, metralectl's `engine-recipes` workflow is dispatched and opens or refreshes the mirror PR (`engine-recipes/sync`) | automatic (`dev-release.yml`, `mirror-recipes`); also a daily backstop in metralectl |
+| 4 | Approve the mirror PR's CI runs and merge it | by hand, in Metrale/metralectl (`docs/RELEASING.md`) |
+| 5 | Merge metralectl's standing release-please PR, which is the release | by hand, in Metrale/metralectl |
+| 6 | GB10 boxes that run gates refresh their recipe cache with `met sync-recipes` | by hand, per box: the node agent syncs only when the cache is missing |
+
+Steps 4 and 5 stay manual on purpose: merging decides what every user runs.
+Until step 6 runs, a gate serves the box's cached recipe index. A key that
+cache does not carry yet is pinned in the gate's `BENCH.toml`
+`[benchmarks.serve_overrides]`, as `weight_quantization` is today.
+
 ### Bug Reports
 
 Open an issue with:
