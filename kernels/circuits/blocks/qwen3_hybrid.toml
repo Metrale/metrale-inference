@@ -27,6 +27,24 @@ binding = ["model.language_model.embed_tokens"]
 stream_in = "x"
 stream_out = "y"
 
+# 2026-09-30: The recurrent state, one unit per sequence slot (crates/circuit/src/state.rs).
+# Legacy: ModelConfig::ssm_h_state_bytes / ssm_conv_state_bytes (crates/config/src/methods.rs),
+# the conv window 4 taps wide (the config map requires linear_conv_kernel_dim = 4). h is stored
+# at `ssm_h_storage` (f16 under --ssm-h-dtype f16-pool, ssm_reserve::ssm_h_stored_bytes).
+[[block.gdn.state]]
+id = "h"
+kind = "recurrent"
+format = "{ssm_h_storage}"
+shape = "lin_v_heads x lin_k_dim x lin_v_dim"
+verify = "h_steps"
+
+[[block.gdn.state]]
+id = "conv"
+kind = "recurrent"
+format = "f32"
+shape = "lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim x 4"
+verify = "conv_steps"
+
 [[block.gdn.node]]
 id = "input_norm"
 op = "rms_norm"
@@ -111,6 +129,20 @@ out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
 [block.attn]
 stream_in = "x"
 stream_out = "y"
+
+# 2026-09-30: The paged KV cache, one unit per token and side (crates/circuit/src/state.rs).
+# Legacy: KvCacheConfig::{k,v}_block_bytes_for_layer (crates/cache/src/kv_cache.rs).
+[[block.attn.state]]
+id = "k"
+kind = "paged_kv"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.state]]
+id = "v"
+kind = "paged_kv"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
 
 [[block.attn.node]]
 id = "input_norm"

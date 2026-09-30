@@ -63,6 +63,16 @@ pub enum CircuitError {
         /// 2026-09-28: What was wrong.
         detail: String,
     },
+    /// 2026-09-30: A state declaration that does not parse or evaluate.
+    #[error("block `{block}` state `{state}`: {detail}")]
+    State {
+        /// 2026-09-30: Template.
+        block: String,
+        /// 2026-09-30: State id.
+        state: String,
+        /// 2026-09-30: What was wrong.
+        detail: String,
+    },
     /// 2026-09-28: A dimension the arch shape does not define, or an overflow.
     #[error("block `{block}`: {source}")]
     Dim {
@@ -194,6 +204,23 @@ pub(crate) struct BlockFile {
     #[serde(default)]
     pub outputs: Vec<String>,
     pub node: Vec<NodeFile>,
+    /// 2026-09-30: The state the block keeps between steps (`crate::state`).
+    #[serde(default)]
+    pub state: Vec<StateFile>,
+}
+
+/// 2026-09-30: One `[[block.<name>.state]]`: `kind` (`recurrent` | `paged_kv`), `format` (a
+/// dtype or a `{key}` the plan inputs give), `shape` (axes of dim expressions joined by ` x `:
+/// one slot of a recurrent state, one token of a KV side), and for a recurrent state the verify
+/// intermediates it keeps (`h_steps` | `conv_steps`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StateFile {
+    pub id: String,
+    pub kind: String,
+    pub format: String,
+    pub shape: String,
+    pub verify: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -74,6 +74,23 @@ binding = ["backbone.embeddings"]
 stream_in = "x"
 stream_out = "y"
 
+# 2026-09-30: The Mamba2 recurrent state, one unit per sequence slot, in the pool GatedDeltaNet
+# uses (LIFECYCLE-DESIGN.md section 3.6). Legacy: ModelConfig::ssm_h_state_bytes /
+# ssm_conv_state_bytes, the Mamba2 arms (crates/config/src/methods.rs).
+[[block.mamba.state]]
+id = "h"
+kind = "recurrent"
+format = "{ssm_h_storage}"
+shape = "mamba_heads x mamba_head_dim x ssm_state"
+verify = "h_steps"
+
+[[block.mamba.state]]
+id = "conv"
+kind = "recurrent"
+format = "f32"
+shape = "mamba_heads*mamba_head_dim+ssm_groups*ssm_state*2 x conv_kernel"
+verify = "conv_steps"
+
 [[block.mamba.node]]
 id = "norm"
 op = "rms_norm"
@@ -354,6 +371,20 @@ out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
 [block.attn]
 stream_in = "x"
 stream_out = "y"
+
+# 2026-09-30: The paged KV cache, one unit per token and side (crates/circuit/src/state.rs).
+# Legacy: KvCacheConfig::{k,v}_block_bytes_for_layer (crates/cache/src/kv_cache.rs).
+[[block.attn.state]]
+id = "k"
+kind = "paged_kv"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.state]]
+id = "v"
+kind = "paged_kv"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
 
 [[block.attn.node]]
 id = "norm"

@@ -446,6 +446,8 @@ pub struct Circuit {
     pub layer_kinds: Vec<LayerKind>,
     /// 2026-09-28: The dims every expression was evaluated under.
     pub dims: BTreeMap<String, u64>,
+    /// 2026-09-30: The state every block keeps between steps, in block order.
+    pub states: Vec<crate::state::StateDecl>,
 }
 
 impl Circuit {

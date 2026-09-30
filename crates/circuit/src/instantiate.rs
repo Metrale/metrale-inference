@@ -45,6 +45,7 @@ pub fn instantiate(
             blocks: Vec::new(),
             layer_kinds: shape.layer_kinds.clone(),
             dims: shape.dims.clone(),
+            states: Vec::new(),
         },
         stream: None,
         quantized: BTreeMap::new(),
@@ -246,6 +247,13 @@ impl Builder<'_> {
             }
             None => None,
         };
+        for sf in &tpl.state {
+            let decl = state_decl(template, &prefix, layer, section, sf, &self.shape.dims)?;
+            if self.circuit.states.iter().any(|s| s.id == decl.id) {
+                return Err(dup(template, &sf.id));
+            }
+            self.circuit.states.push(decl);
+        }
         self.circuit.blocks.push(BlockInstance {
             template: template.to_string(),
             layer,
@@ -452,6 +460,8 @@ fn dup(block: &str, name: &str) -> CircuitError {
 
 #[path = "instantiate/edges.rs"]
 mod edges;
+mod states;
+use states::state_decl;
 
 #[cfg(test)]
 #[path = "instantiate_tests.rs"]

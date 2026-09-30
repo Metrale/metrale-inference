@@ -44,6 +44,20 @@ binding = ["model.embed_tokens"]
 stream_in = "x"
 stream_out = "y"
 
+# 2026-09-30: The paged KV cache, one unit per token and side (crates/circuit/src/state.rs).
+# Legacy: KvCacheConfig::{k,v}_block_bytes_for_layer (crates/cache/src/kv_cache.rs).
+[[block.attn.state]]
+id = "k"
+kind = "paged_kv"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.state]]
+id = "v"
+kind = "paged_kv"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
 [[block.attn.node]]
 id = "input_norm"
 op = "rms_norm"
