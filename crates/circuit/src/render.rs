@@ -90,8 +90,11 @@ pub fn render(circuit: &Circuit, plan: &FusionPlan, header: &Header) -> String {
 fn group_line(circuit: &Circuit, plan: &FusionPlan, g: usize) -> String {
     let grp = &plan.groups[g];
     // 2026-09-29: A group with no kernels is work the host does outside the program: the
-    // prologue's embedding copy, or sampling from the logits.
-    let kernels = if grp.kernels.is_empty() {
+    // prologue's embedding copy, or sampling from the logits. 2026-09-30: except a hardware
+    // plan's placeholder, which marks an op no kernel of the device's class covers.
+    let kernels = if grp.emitter == crate::hardware::plan::NOVEL_EMITTER {
+        "(novel: no kernel on this class)".to_string()
+    } else if grp.kernels.is_empty() {
         "(host)".to_string()
     } else {
         grp.kernels

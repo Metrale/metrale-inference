@@ -324,12 +324,7 @@ impl KernelTree for Tree {
         })
     }
 
-    fn kernel_target(
-        &self,
-        _model_type: &str,
-        _hidden: u64,
-        _refs: &[&str],
-    ) -> Result<Option<String>, String> {
+    fn kernel_target(&self, _config: &str, _refs: &[&str]) -> Result<Option<String>, String> {
         Ok(Some("toy".into()))
     }
 

@@ -91,15 +91,17 @@ impl CircuitSource for CheckpointSource<'_> {
             &ServePrecision::Declared,
         )
         .map_err(|e| HwError::Model(format!("{}: {e}", spec.checkpoint)))?;
-        let hidden = *rc
-            .shape
-            .dims
-            .get("hidden")
-            .ok_or_else(|| HwError::Model(format!("{}: no hidden dim", spec.checkpoint)))?;
-        let target = self
-            .tree
-            .kernel_target(&rc.model_type, hidden, &[spec.checkpoint])
-            .map_err(HwError::Model)?;
+        // 2026-09-30: The engine's own resolution. A config the engine cannot parse has no
+        // kernel target: the plan says why and reads the class's common layer only; it never
+        // falls back to the raw config.json model_type (which the engine may rewrite).
+        let (target, why_none) = match self.tree.kernel_target(config, &[spec.checkpoint]) {
+            Ok(Some(t)) => (Some(t), String::new()),
+            Ok(None) => (None, "none: no MODEL.toml claims it".to_string()),
+            Err(e) => (
+                None,
+                format!("unresolved: the engine's config parse refuses this checkpoint ({e})"),
+            ),
+        };
         let policy = derive_policy(&rc.circuit, rc.kv_cache)?;
         let kernel_model = target.clone().unwrap_or_else(|| "(none)".into());
         let settings: Vec<String> = policy
@@ -128,10 +130,7 @@ impl CircuitSource for CheckpointSource<'_> {
                 "declared by the checkpoint (arch `{}`, model_type `{}`; kernel target {})",
                 rc.arch,
                 rc.model_type,
-                target.map_or_else(
-                    || "none: no MODEL.toml claims it".into(),
-                    |t| format!("`{t}`")
-                )
+                target.map_or(why_none, |t| format!("`{t}`"))
             ),
             precision_choice: PrecisionChoice::Declared,
             policy_sources: POLICY_SOURCES

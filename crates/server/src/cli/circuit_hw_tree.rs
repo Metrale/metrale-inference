@@ -180,12 +180,11 @@ impl KernelTree for FsTree {
         })
     }
 
-    fn kernel_target(
-        &self,
-        model_type: &str,
-        hidden: u64,
-        refs: &[&str],
-    ) -> Result<Option<String>, String> {
+    fn kernel_target(&self, config_json: &str, refs: &[&str]) -> Result<Option<String>, String> {
+        // 2026-09-30: The serve path's inputs (serve_load/model_setup.rs): the engine's config
+        // parse, which rewrites some model_types (crates/config/src/dispatch.rs), not the raw
+        // config.json field.
+        let cfg = metrale_config::parse_config(config_json).map_err(|e| format!("{e:#}"))?;
         let owned = model_targets(&self.repo.root)?;
         let needles: Vec<Vec<&str>> = owned
             .iter()
@@ -200,8 +199,7 @@ impl KernelTree for FsTree {
                 match_names: n,
             })
             .collect();
-        let hidden = usize::try_from(hidden).map_err(|e| e.to_string())?;
-        resolve_target(&candidates, model_type, hidden, refs)
+        resolve_target(&candidates, &cfg.model_type, cfg.hidden_size, refs)
             .map(|i| i.map(|i| owned[i].name.clone()))
             .map_err(|e| e.to_string())
     }

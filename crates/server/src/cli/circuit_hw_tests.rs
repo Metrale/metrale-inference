@@ -259,6 +259,39 @@ fn only_gb10_uses_the_measured_roofline() {
     assert_eq!(h100.resolved.roofline.roofline.dram_gbps, 3350.0);
 }
 
+// 2026-09-30: Every declared-format matrix model resolves, by the engine's own rule, to a
+// kernel target directory that exists or to an explicit "no target"; and where a recipe serves
+// the same checkpoint, to the recipe's target. Mutation: resolving on config.json's raw
+// model_type sends the 35B-A3B to qwen3.5-35b-a3b and fails here.
+#[test]
+fn every_matrix_model_resolves_to_an_existing_kernel_target_or_none() {
+    let root = root();
+    for m in super::MATRIX_MODELS.iter().filter(|m| m.refused.is_none()) {
+        if m.precision == super::CircuitPrecision::Recipe {
+            continue;
+        }
+        let declared = model(m.checkpoint, PrecisionChoice::Declared);
+        let dir = root.join("kernels/gb10").join(&declared.kernel_model);
+        assert!(
+            declared.kernel_model == "(none)" || dir.join("MODEL.toml").is_file(),
+            "{}: kernel target `{}` has no kernels/gb10 directory",
+            m.checkpoint,
+            declared.kernel_model
+        );
+        let recipe = super::MATRIX_MODELS.iter().find(|r| {
+            r.checkpoint == m.checkpoint && r.precision == super::CircuitPrecision::Recipe
+        });
+        if let Some(r) = recipe {
+            let pinned = model(r.checkpoint, PrecisionChoice::Recipe);
+            assert_eq!(
+                declared.kernel_model, pinned.kernel_model,
+                "{}: declared and recipe cells resolve different kernel targets",
+                m.checkpoint
+            );
+        }
+    }
+}
+
 #[test]
 fn matrix_reports_are_current() {
     matrix(&root(), MATRIX_DIR, true).unwrap_or_else(|e| {
