@@ -275,3 +275,61 @@ fn malformed_blocks_are_refused() {
     assert!(DeclaredPrecisionPlan::from_quantization_config(&fp8).is_err());
     assert!(DeclaredPrecisionPlan::from_quantization_config(&serde_json::json!("fp8")).is_err());
 }
+
+/// 2026-09-30: Qwen/Qwen3.6-27B-FP8 lists MoE router names (`...mlp.gate`) among its
+/// `modules_to_not_convert`. Matched on whole dotted segments they exclude a router, never
+/// the dense `...mlp.gate_proj`, which the checkpoint stores as block-scaled E4M3 (its
+/// `weight_scale_inv` is in the safetensors index). A substring match read it as BF16.
+#[test]
+fn an_hf_fp8_exclusion_names_whole_module_segments() {
+    let text = include_str!("precision_plan/fixtures/qwen3_6_27b_fp8.json");
+    let p = DeclaredPrecisionPlan::from_quantization_config(&serde_json::from_str(text).unwrap())
+        .expect("plan");
+    for proj in ["gate_proj", "up_proj", "down_proj"] {
+        assert_eq!(
+            p.resolve(&format!("{L}.0.mlp.{proj}")).label(),
+            "W8A8",
+            "{proj}"
+        );
+    }
+    // 2026-09-30: The listed modules themselves, and the children of a listed parent.
+    assert_eq!(
+        p.resolve(&format!("{L}.0.mlp.gate")),
+        LayerPrecision::UNQUANTIZED
+    );
+    assert_eq!(
+        p.resolve(&format!("{L}.0.linear_attn.in_proj_b")),
+        LayerPrecision::UNQUANTIZED
+    );
+    assert_eq!(p.resolve("lm_head"), LayerPrecision::UNQUANTIZED);
+}
+
+/// 2026-09-30: The HF entry forms: exact, parent, trailing segments, and regex; a malformed
+/// regex or an empty entry is refused.
+#[test]
+fn hf_module_entries_match_by_segment_and_refuse_bad_patterns() {
+    let t = |e: &str| Target::hf_module(e).expect("entry");
+    let m = "model.layers.3.mlp.gate_proj";
+    assert!(t(m).matches_name(m));
+    assert!(t("model.layers.3").matches_name(m), "a parent");
+    assert!(t("mlp.gate_proj").matches_name(m), "trailing segments");
+    assert!(!t("mlp.gate").matches_name(m), "not a segment of it");
+    assert!(!t("layers.3.mlp.gate").matches_name(m));
+    assert!(t("mlp.gate").matches_name("model.layers.3.mlp.gate"));
+    assert!(
+        t(r"model\.layers\.\d+\.mlp\.gate_proj").matches_name(m),
+        "a regex"
+    );
+    assert!(
+        !t(r"model\.layers\.\d+\.mlp\.gate").matches_name(m),
+        "a regex ends on a segment"
+    );
+    assert!(t("model.layers.*").matches_name(m));
+    assert!(Target::hf_module("model.layers.(").is_err());
+    assert!(Target::hf_module("").is_err());
+    let bad = serde_json::json!({
+        "quant_method": "fp8", "activation_scheme": "dynamic",
+        "weight_block_size": [128, 128], "modules_to_not_convert": ["lm_head", "model.(visual"],
+    });
+    assert!(DeclaredPrecisionPlan::from_quantization_config(&bad).is_err());
+}

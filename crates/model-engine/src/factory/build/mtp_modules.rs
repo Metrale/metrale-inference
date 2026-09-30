@@ -84,31 +84,41 @@ pub(super) fn load_v4_mtp_module(
     }
 }
 
+/// 2026-09-30: The MTP modules whose presence in the ignore list marks the head unquantized:
+/// module paths, as ignore entries name them (not tensor names with `.weight`).
+pub(super) const MTP_IGNORE_PROBES: [&str; 2] = ["mtp.fc", "mtp.layers.0.self_attn.q_proj"];
+
+/// 2026-09-30: Whether the checkpoint's ignore list names the MTP head.
+pub(super) fn mtp_head_ignored(
+    quant_fmt: &dyn metrale_model_layers::quant_format::QuantFormat,
+) -> bool {
+    MTP_IGNORE_PROBES.iter().any(|m| quant_fmt.is_ignored(m))
+}
+
 /// 2026-09-26: The MTP head's quantization: `mtp_quant`, or BF16 when the
-/// checkpoint's quantization config ignores the MTP weights.
+/// checkpoint's quantization config ignores the MTP weights. 2026-09-30: A malformed ignore
+/// entry is an error.
 pub(super) fn effective_mtp_quantization(
     mtp_weights: &[MtpWeights],
     config: &ModelConfig,
     store: &WeightStore,
     mtp_quant: MtpQuantization,
-) -> MtpQuantization {
+) -> anyhow::Result<MtpQuantization> {
     if !mtp_weights.is_empty() {
-        let quant_fmt = metrale_model_layers::quant_format::detect_quant_format(config, store);
-        if quant_fmt.is_ignored("mtp.fc.weight")
-            || quant_fmt.is_ignored("mtp.layers.0.self_attn.q_proj.weight")
-        {
+        let quant_fmt = metrale_model_layers::quant_format::detect_quant_format(config, store)?;
+        if mtp_head_ignored(quant_fmt.as_ref()) {
             if mtp_quant != MtpQuantization::Bf16 {
                 tracing::info!(target: "metrale_model_engine::factory::build", "MTP head listed in checkpoint ignore_modules — overriding \
                      --mtp-quantization {:?} → Bf16 to preserve precision",
                     mtp_quant,
                 );
             }
-            MtpQuantization::Bf16
+            Ok(MtpQuantization::Bf16)
         } else {
-            mtp_quant
+            Ok(mtp_quant)
         }
     } else {
-        mtp_quant
+        Ok(mtp_quant)
     }
 }
 
@@ -132,3 +142,7 @@ pub(super) fn warn_unbound_mtp_head(store: &WeightStore, config: &ModelConfig) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "mtp_modules_tests.rs"]
+mod mtp_modules_tests;

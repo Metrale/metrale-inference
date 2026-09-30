@@ -91,7 +91,8 @@ pub(super) fn load_weights(
     .context("Checkpoint pre-flight check failed")?;
 
     // 2026-09-26: Logged so the quant-format decision shows in the serve log.
-    let quant_format = metrale_model_layers::quant_format::detect_quant_format(config, &store);
+    let quant_format = metrale_model_layers::quant_format::detect_quant_format(config, &store)
+        .context("quantization_config ignore list")?;
     tracing::info!(target: "met::main_modules::serve_load", "Quantization format: {} (base variant {:?}), ignored globs = {}",
         quant_format.name(),
         quant_format.base_variant(),
