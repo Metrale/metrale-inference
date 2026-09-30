@@ -1,0 +1,150 @@
+{
+ "schema": 1,
+ "title": "unsloth/Qwen3.8-27B-NVFP4 C=8 energy: temperature-controlled A/B, Metrale Engine against vLLM + MTP",
+ "subtitle": "Three arms at C=8 on one box and one instrument: the C=8 change (39ab52e6 + 0bf0df3e9, landed on main in #56), the previous main 39ab52e6, and vLLM 0.27.1 + MTP; 9 timed reps per arm",
+ "date": "2026-09-30",
+ "rung": 8,
+ "results_doc": "bench/baselines/qwen38-27b/c8_energy_ab.json",
+ "workload": {
+  "checkpoint": "unsloth/Qwen3.8-27B-NVFP4",
+  "isl_tokens": 128,
+  "osl_tokens": 1024,
+  "prompt_mode": "essay",
+  "concurrency": 8,
+  "temperature": 0.0,
+  "seed": 42,
+  "thinking": "disabled via chat_template_kwargs.enable_thinking=false",
+  "max_model_len": 2048,
+  "max_batch_size": 128,
+  "kv_cache_dtype": "fp8",
+  "harness": "bench/ladder38/harness_w56_conc_ladder.py",
+  "harness_sha256": "55a5963e4beea50e8f7e12de6c70e0709a53ff0d62b020cddefdea24ae92a216"
+ },
+ "box": {
+  "name": "dgx2 (spark-43fa)",
+  "gpu": "NVIDIA GB10",
+  "driver": "580.126.09",
+  "note": "one box for all three arms, 2026-09-30 03:13-04:39 UTC, nothing else on the GPU. The driver is the one the same box's concurrency-sweep gate runs recorded the same night (2026-09-30 01:52-02:50 UTC); the harness rep files do not carry it."
+ },
+ "protocol": "One harness process per timed rep (--reps 1 --warmup 0), so every rep draws a fresh prompt nonce and none hits the prefix cache. Reps run in 3-rep blocks; each block starts on a fresh server (Metrale) or a fresh container (vLLM) and sends one discarded warmup rep first. Every timed rep starts only after the die has cooled to 55 C or below with the server loaded and idle (nvidia-smi temperature.gpu polled every 5 s). Blocks are interleaved in block_order, three per arm. Energy is the harness's GPU-rail figure: nvidia-smi power.draw.average sampled every 250 ms and integrated over the rep window.",
+ "block_order": [
+  "vllm",
+  "change",
+  "previous",
+  "vllm",
+  "previous",
+  "change",
+  "vllm",
+  "change",
+  "previous"
+ ],
+ "statistic": {
+  "per_rep": "gpu_rail_energy_j / completion_tokens of the rep",
+  "arm": "mean of the arm's 9 reps",
+  "interval": "two-sided 95% Student t on the mean, df 8 (t = 2.306)",
+  "comparison": "Welch t on the per-rep J/token",
+  "short_reps": "Three Metrale reps (m_F_B2_r3 7,923, m_F_B3_r3 8,172 and m_F_N3_r1 7,959 completion tokens of 8,192) had a request end on a stop token before OSL; J/token divides by the tokens actually generated, as the harness does, and no rep is excluded. Every rep has zero request errors and gpu_rail_trustworthy true."
+ },
+ "arms": [
+  {
+   "id": "change",
+   "label": "Metrale Engine 39ab52e6 + 0bf0df3e9",
+   "build": "39ab52e6 + 0bf0df3e9",
+   "build_note": "0bf0df3e9 is one commit on top of 39ab52e6: the register-resident GDN WY verify twins from 8 sequences (was 16). It landed on main as part of 93f378ead (#56).",
+   "landed_as": "93f378ead",
+   "landed_pr": 56,
+   "binary_sha256": "8cd7776142502ab7f11f33159bfaf892a79cb78db544eeb94b7ec8013f474fba",
+   "cli": "met serve unsloth/Qwen3.8-27B-NVFP4 --disable-thinking --enable-prefix-caching --gdn-fused-norm --gpu-memory-utilization 0.85 --bind 127.0.0.1 --kv-cache-dtype fp8 --max-batch-size 128 --max-seq-len 2048 --mtp-gate force --mtp-quantization bf16 --no-ssm-tail-midchunk --num-drafts 3 --port 8888 --prefill-codispatch --prefill-varlen-batch --request-timeout 0 --scheduler fifo --speculative --ssm-batched-recurrent on --ssm-cache-slots 8 --ssm-checkpoint-interval 32 --ssm-h-dtype f16-pool --tool-call-parser qwen3_coder --tool-grammar off --w4a4-downcast --w4a4-downcast-wide --weight-quantization nvfp4",
+   "env": "METRALE_FP8_ROWWISE=1 METRALE_MTP_DCUT_RATIO=1.0 METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1",
+   "env_note": "The three METRALE_* levers the concurrency-sweep gate declares for this recipe; no other METRALE_* variable was set.",
+   "reps": [
+    "c8_energy_ab/m_F_N1_r1.json",
+    "c8_energy_ab/m_F_N1_r2.json",
+    "c8_energy_ab/m_F_N1_r3.json",
+    "c8_energy_ab/m_F_N2_r1.json",
+    "c8_energy_ab/m_F_N2_r2.json",
+    "c8_energy_ab/m_F_N2_r3.json",
+    "c8_energy_ab/m_F_N3_r1.json",
+    "c8_energy_ab/m_F_N3_r2.json",
+    "c8_energy_ab/m_F_N3_r3.json"
+   ]
+  },
+  {
+   "id": "previous",
+   "label": "Metrale Engine 39ab52e6",
+   "build": "39ab52e6",
+   "build_note": "main at #51. The binary was built from 4e2523ca9c, whose tree equals 39ab52e6 outside .benchmarks.",
+   "binary_sha256": "2e5c928e6cdddf67b2e2c7b2906a85c963fac3a4fee9fe95c88c98f227ff5ef3",
+   "cli": "met serve unsloth/Qwen3.8-27B-NVFP4 --disable-thinking --enable-prefix-caching --gdn-fused-norm --gpu-memory-utilization 0.85 --bind 127.0.0.1 --kv-cache-dtype fp8 --max-batch-size 128 --max-seq-len 2048 --mtp-gate force --mtp-quantization bf16 --no-ssm-tail-midchunk --num-drafts 3 --port 8888 --prefill-codispatch --prefill-varlen-batch --request-timeout 0 --scheduler fifo --speculative --ssm-batched-recurrent on --ssm-cache-slots 8 --ssm-checkpoint-interval 32 --ssm-h-dtype f16-pool --tool-call-parser qwen3_coder --tool-grammar off --w4a4-downcast --w4a4-downcast-wide --weight-quantization nvfp4",
+   "env": "METRALE_FP8_ROWWISE=1 METRALE_MTP_DCUT_RATIO=1.0 METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1",
+   "env_note": "Identical argv and environment to the change arm; only the binary differs.",
+   "reps": [
+    "c8_energy_ab/m_F_B1_r1.json",
+    "c8_energy_ab/m_F_B1_r2.json",
+    "c8_energy_ab/m_F_B1_r3.json",
+    "c8_energy_ab/m_F_B2_r1.json",
+    "c8_energy_ab/m_F_B2_r2.json",
+    "c8_energy_ab/m_F_B2_r3.json",
+    "c8_energy_ab/m_F_B3_r1.json",
+    "c8_energy_ab/m_F_B3_r2.json",
+    "c8_energy_ab/m_F_B3_r3.json"
+   ]
+  },
+  {
+   "id": "vllm",
+   "label": "vLLM 0.27.1 + MTP",
+   "image": "vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967",
+   "image_note": "The tag vllm/vllm-openai:v0.27.1; local image id sha256:2c211a1273b4. The published vLLM command of bench/ladder38/published.json (MTP 3, ctx 2048, max-num-seqs 128, util 0.85, fp8 KV), one fresh container per block.",
+   "cli": "docker run --rm --network host --gpus all --ipc=host -v \"${HF_HOME:-$HOME/.cache/huggingface}\":/root/.cache/huggingface -e HF_HUB_OFFLINE=1 vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967 --model unsloth/Qwen3.8-27B-NVFP4 --served-model-name unsloth/Qwen3.8-27B-NVFP4 --host 0.0.0.0 --port 8001 --max-model-len 2048 --max-num-seqs 128 --gpu-memory-utilization 0.85 --enable-prefix-caching --dtype bfloat16 --kv-cache-dtype fp8 --speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":3}'",
+   "reps": [
+    "c8_energy_ab/v_F_V1_r1.json",
+    "c8_energy_ab/v_F_V1_r2.json",
+    "c8_energy_ab/v_F_V1_r3.json",
+    "c8_energy_ab/v_F_V2_r1.json",
+    "c8_energy_ab/v_F_V2_r2.json",
+    "c8_energy_ab/v_F_V2_r3.json",
+    "c8_energy_ab/v_F_V3_r1.json",
+    "c8_energy_ab/v_F_V3_r2.json",
+    "c8_energy_ab/v_F_V3_r3.json"
+   ]
+  }
+ ],
+ "sources_note": "Every reps entry is a path relative to this manifest's directory: the harness JSON of one timed rep, copied byte for byte (warmup reps excluded). sha256 of each: m_F_N1_r1.json c28f06dad43874a9, m_F_N1_r2.json b6b3dbe056a2f98b, m_F_N1_r3.json 0d5722b192d2a6d3, m_F_N2_r1.json 19f653edfba91217, m_F_N2_r2.json de3160c7fccae68e, m_F_N2_r3.json f771d3e2d2f965f8, m_F_N3_r1.json 2c3184efe1e02b7f, m_F_N3_r2.json 76dce6b35f27b052, m_F_N3_r3.json 23b26646e6be9020, m_F_B1_r1.json 4280cebaccfe6a4e, m_F_B1_r2.json 0c0429a1e468455e, m_F_B1_r3.json 71fe8ed845fb687a, m_F_B2_r1.json 5c359b880c47769d, m_F_B2_r2.json ae0cb6299b722230, m_F_B2_r3.json c59f1376b61566b4, m_F_B3_r1.json 8a5b569dd63b8860, m_F_B3_r2.json d773cc7ac9ecc37c, m_F_B3_r3.json 58d6585dce67339b, v_F_V1_r1.json 3be107da1e36211f, v_F_V1_r2.json 9dcd9a8a4ae2509d, v_F_V1_r3.json efc123d838d269f5, v_F_V2_r1.json 0a51b7f1e061519d, v_F_V2_r2.json 0fcc3bb0b1dbdf66, v_F_V2_r3.json 7ccd56cafbb21257, v_F_V3_r1.json 701461edeaa74dd0, v_F_V3_r2.json 941130cc59001e8a, v_F_V3_r3.json d1af3af51b828c6c.",
+ "summary": {
+  "change": {
+   "j_per_tok_mean": 0.3171,
+   "ci95": [
+    0.315,
+    0.3192
+   ],
+   "j_per_tok_sd": 0.00278,
+   "tok_s_mean": 136.4,
+   "n": 9
+  },
+  "previous": {
+   "j_per_tok_mean": 0.3262,
+   "ci95": [
+    0.3237,
+    0.3287
+   ],
+   "j_per_tok_sd": 0.00324,
+   "tok_s_mean": 133.5,
+   "n": 9
+  },
+  "vllm": {
+   "j_per_tok_mean": 0.3316,
+   "ci95": [
+    0.3273,
+    0.3358
+   ],
+   "j_per_tok_sd": 0.00552,
+   "tok_s_mean": 117.7,
+   "n": 9
+  },
+  "welch_t_change_vs_vllm": -7.02,
+  "welch_t_previous_vs_vllm": -2.5,
+  "change_vs_vllm_pct": -4.36,
+  "previous_vs_vllm_pct": -1.61
+ },
+ "evidence_note": "Published measurement data, not a gate record. The certified concurrency-sweep record at C=8 is a separate instrument (the gate sampler) and is compared only with the gate's own bounds."
+}
