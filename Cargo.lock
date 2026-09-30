@@ -1861,7 +1861,7 @@ dependencies = [
  "metrale-core",
  "metrale-gpu-sys",
  "rand 0.8.8",
- "rand_chacha 0.3.1",
+ "rand_chacha 0.9.0",
  "rand_distr",
  "serde",
  "serde_json",
