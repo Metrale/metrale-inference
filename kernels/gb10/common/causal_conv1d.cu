@@ -560,7 +560,11 @@ extern "C" __global__ void causal_conv1d_update_l2norm_f32_strided(
 // Output t depends only on inputs t-3..t (for t < 3 partly on the incoming conv_state), never on earlier outputs, so
 // each thread computes 8 consecutive tokens of one channel with a rolling window: 11 input reads for 8 outputs. The host
 // launches block (32, 8), so a warp spans 32 channels and the [t * stride + ch] loads coalesce, and grid
-// (ceil(dim/32), ceil(seq_len/64)). The thread owning the last token writes the new conv_state. d_conv must be 4.
+// (ceil(dim/32), ceil(seq_len/64)). d_conv must be 4.
+// 2026-09-30: It does not write conv_state: the thread owning the last token used to, while the threads owning tokens
+// 0..2 read the incoming state, and with more than 64 tokens those are in another block. When the last block ran first,
+// tokens 0..2 convolved the prompt's own tail instead of the incoming state, so prefill logits changed from run to run.
+// The host launches causal_conv1d_prefill_state after it (same stream) to write the new state.
 
 
 
@@ -633,13 +637,33 @@ causal_conv1d_update_prefill_tp(
         s0 = s1; s1 = s2; s2 = s3;
     }
 
-    // 2026-09-25: The new conv_state is the last d_conv inputs; only the thread owning the last token writes it.
+}
 
-    if (t0 + 8u >= seq_len) {
-        float* st = conv_state + (unsigned long long)ch * d_conv;
-        #pragma unroll
-        for (unsigned int k = 0; k < 4; k++)
-            if (k < d_conv)
-                st[k] = xin((long long)seq_len - (long long)d_conv + (long long)k);
+// 2026-09-30: The new conv_state after causal_conv1d_update_prefill_tp: the last d_conv inputs, x(t) for
+// t = seq_len - d_conv .. seq_len - 1, where x(t < 0) is the incoming state (x(-1) its last element). One thread per
+// channel reads all d_conv values before writing any, so a prompt shorter than d_conv shifts the state in place
+// safely. Grid ceil(dim / 256), block 256.
+extern "C" __global__ void __launch_bounds__(256)
+causal_conv1d_prefill_state(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ input,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int seq_len,
+    unsigned int input_stride
+) {
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ch >= dim || d_conv > 4) return;
+    float* st = conv_state + (unsigned long long)ch * d_conv;
+    float v[4] = {0.f, 0.f, 0.f, 0.f};
+    #pragma unroll
+    for (unsigned int k = 0; k < 4; k++) {
+        if (k >= d_conv) break;
+        const long long t = (long long)seq_len - (long long)d_conv + (long long)k;
+        v[k] = (t >= 0) ? __bfloat162float(input[(unsigned long long)t * input_stride + ch])
+                        : st[(long long)d_conv + t];
     }
+    #pragma unroll
+    for (unsigned int k = 0; k < 4; k++)
+        if (k < d_conv) st[k] = v[k];
 }

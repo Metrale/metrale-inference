@@ -35,7 +35,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-causal-conv1d-cu-causal-conv1d-update-prefill-tp"></a>
 
-### `causal_conv1d_update_prefill_tp` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L581)
+### `causal_conv1d_update_prefill_tp` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L585)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
