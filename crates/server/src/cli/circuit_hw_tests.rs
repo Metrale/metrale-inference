@@ -68,7 +68,10 @@ fn devices_agree_with_their_builds(reg: &Registry) -> Result<(), String> {
     for d in &reg.devices {
         let c = chain(&t, &d.class).map_err(|e| format!("{}: {e}", d.id))?;
         if c[0].arch != d.arch {
-            return Err(format!("{}: arch {} but class builds {}", d.id, d.arch, c[0].arch));
+            return Err(format!(
+                "{}: arch {} but class builds {}",
+                d.id, d.arch, c[0].arch
+            ));
         }
         check_build(d, &c[0], &reg.guards).map_err(|e| e.to_string())?;
     }
@@ -89,7 +92,11 @@ fn hopper_claiming_the_fp4_mma_fails_the_hopper_assertion() {
     let (head, tail) = text.split_at(at);
     let tail = tail
         .replacen("fp4_nvfp4 = 0.0", "fp4_nvfp4 = 1979.0", 1)
-        .replacen("fp4_fp4_nvfp4_block16 = false", "fp4_fp4_nvfp4_block16 = true", 1);
+        .replacen(
+            "fp4_fp4_nvfp4_block16 = false",
+            "fp4_fp4_nvfp4_block16 = true",
+            1,
+        );
     let mutated = hardware::parse_devices(&format!("{head}{tail}")).expect("mutated parses");
     let caught = std::panic::catch_unwind(|| hopper_never_runs_fp4(&mutated, &["h100-sxm"]));
     assert!(caught.is_err(), "Hopper claiming FP4 MMA went unnoticed");
@@ -114,12 +121,17 @@ fn gb10_plans_equal_the_golden_plans() {
             for &n in rows {
                 let one = hardware::plan_one(&reg, "gb10", &t, &m, Run { mode, rows: n })
                     .unwrap_or_else(|e| panic!("{} {} n={n}: {e}", inst.recipe, mode.name()));
-                let got = metrale_circuit::render::render(&m.circuit, &one.planned.plan, &one.header);
+                let got =
+                    metrale_circuit::render::render(&m.circuit, &one.planned.plan, &one.header);
                 let file = root()
                     .join("kernels/circuits/plans")
                     .join(inst.plan_file(mode, n));
                 let want = std::fs::read_to_string(&file).unwrap();
-                assert!(got == want, "{} differs from the gb10 hardware plan", file.display());
+                assert!(
+                    got == want,
+                    "{} differs from the gb10 hardware plan",
+                    file.display()
+                );
                 checked += 1;
             }
         }
@@ -157,8 +169,10 @@ fn hopper_never_runs_fp4(reg: &Registry, devices: &[&str]) {
                 }
             }
             for n in &m.circuit.nodes {
-                let (Some(w), Some(a)) = (n.weight, n.inputs.first().map(|&e| m.circuit.edges[e].format))
-                else {
+                let (Some(w), Some(a)) = (
+                    n.weight,
+                    n.inputs.first().map(|&e| m.circuit.edges[e].format),
+                ) else {
                     continue;
                 };
                 if matches!(a, metrale_circuit::Format::Nvfp4 { .. }) {
@@ -179,7 +193,9 @@ fn hopper_plans_for_the_27b_never_select_an_fp4_mma_kernel() {
     // 2026-09-30: The control: the guard parse does find FP4-MMA kernels in the gb10 sources,
     // so the assertion above can fail.
     let reg = registry();
-    let gb10 = tree().class_sources("gb10", "qwen3.8-27b", "nvfp4").unwrap();
+    let gb10 = tree()
+        .class_sources("gb10", "qwen3.8-27b", "nvfp4")
+        .unwrap();
     let found: Vec<&str> = ["w4a4_gemm", "w4a4_quant_rows", "metrale_nvfp4_gemm_pipe"]
         .into_iter()
         .filter(|f| {
@@ -215,7 +231,10 @@ fn h100_and_h200_differ_only_in_roofline_and_memory() {
         assert!(y.total_us < x.total_us);
     }
     assert_eq!(a.footprint, b.footprint);
-    assert_ne!(a.resolved.device.memory_bytes, b.resolved.device.memory_bytes);
+    assert_ne!(
+        a.resolved.device.memory_bytes,
+        b.resolved.device.memory_bytes
+    );
     assert_ne!(hardware::summary_row(&a), hardware::summary_row(&b));
 }
 

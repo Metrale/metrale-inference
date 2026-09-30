@@ -116,7 +116,9 @@ pub fn resolve(
     });
     // 2026-09-30: A family whose points the class compiles none of cannot be instantiated here,
     // whatever its kernel names match.
-    families.families.retain(|f| f.kernels.is_empty() || !f.points.is_empty());
+    families
+        .families
+        .retain(|f| f.kernels.is_empty() || !f.points.is_empty());
     let base = base_roofline(repo, &planning)?;
     let measured = (families_class(repo, &device.class)?).then_some(&base);
     let roofline = device_roofline(&device, measured, &base);
@@ -164,7 +166,7 @@ fn placeholder(op: &crate::ir::OpKind) -> Rule {
     Rule {
         id: format!("novel.{}", op.name()),
         pattern: vec![PatternOp {
-            op: op.clone(),
+            op: *op,
             roles: BTreeSet::new(),
             layer_kind: None,
             local: None,

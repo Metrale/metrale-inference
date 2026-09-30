@@ -87,9 +87,13 @@ pub fn devices() -> Vec<Dev<'static>> {
         gib,
     };
     vec![
-        d("fp4dev", "base", "mma_sync", 1000.0, 100.0, 200.0, 400.0, 64.0),
+        d(
+            "fp4dev", "base", "mma_sync", 1000.0, 100.0, 200.0, 400.0, 64.0,
+        ),
         d("nofp4", "child", "wgmma", 1000.0, 100.0, 200.0, 0.0, 64.0),
-        d("nofp4big", "child", "wgmma", 2000.0, 100.0, 200.0, 0.0, 128.0),
+        d(
+            "nofp4big", "child", "wgmma", 2000.0, 100.0, 200.0, 0.0, 128.0,
+        ),
         d("slowmath", "child", "wgmma", 1e6, 1e-6, 2e-6, 0.0, 64.0),
         d("nofp8", "child", "wgmma", 1000.0, 100.0, 0.0, 0.0, 64.0),
         d("alone", "lonely", "wgmma", 1000.0, 100.0, 200.0, 0.0, 64.0),
@@ -196,9 +200,17 @@ context_tokens = 4096
     );
     for (id, op, func) in [
         ("f_embed", r#"{ op = "embed" }"#, "embed"),
-        ("f_norm", r#"{ op = "rms_norm" }, { op = "final_norm" }"#, "norm"),
+        (
+            "f_norm",
+            r#"{ op = "rms_norm" }, { op = "final_norm" }"#,
+            "norm",
+        ),
         ("f_up", r#"{ op = "linear", roles = ["gate_up"] }"#, "up"),
-        ("f_up_fp4", r#"{ op = "linear", roles = ["gate_up"] }"#, "up_fp4"),
+        (
+            "f_up_fp4",
+            r#"{ op = "linear", roles = ["gate_up"] }"#,
+            "up_fp4",
+        ),
         ("f_act", r#"{ op = "silu_mul" }"#, "act"),
         ("f_down", r#"{ op = "linear", roles = ["down"] }"#, "down"),
         ("f_add", r#"{ op = "residual_add" }"#, "add"),
@@ -248,7 +260,10 @@ pub fn tree() -> Tree {
         "kernels/child/HARDWARE.toml".into(),
         hw("sm_child", &format!("inherits = \"base\"\n{flags}")),
     );
-    files.insert("kernels/lonely/HARDWARE.toml".into(), hw("sm_lonely", flags));
+    files.insert(
+        "kernels/lonely/HARDWARE.toml".into(),
+        hw("sm_lonely", flags),
+    );
     files.insert("kernels/base/common/FUSIONS.toml".into(), base_rules());
     files.insert(
         "kernels/child/common/FUSIONS.toml".into(),
@@ -257,7 +272,10 @@ pub fn tree() -> Tree {
             rule("act", r#"{ op = "silu_mul" }"#, "act_child", 10)
         ),
     );
-    files.insert("kernels/base/common/KERNEL_FAMILIES.toml".into(), families());
+    files.insert(
+        "kernels/base/common/KERNEL_FAMILIES.toml".into(),
+        families(),
+    );
     files.insert(
         "kernels/lonely/common/KERNEL_FAMILIES.toml".into(),
         families().replace("hardware = \"base\"", "hardware = \"lonely\""),
@@ -284,7 +302,12 @@ impl Repo for Tree {
 }
 
 impl KernelTree for Tree {
-    fn class_sources(&self, class: &str, _model: &str, _quant: &str) -> Result<ClassSources, String> {
+    fn class_sources(
+        &self,
+        class: &str,
+        _model: &str,
+        _quant: &str,
+    ) -> Result<ClassSources, String> {
         let path = "kernels/base/common/m.cu".to_string();
         Ok(ClassSources {
             class: class.to_string(),
@@ -318,8 +341,13 @@ impl KernelTree for Tree {
 /// 2026-09-30: The toy model (2 layers) with `precision`'s formats.
 pub fn model(precision: &str) -> ModelUnderPlan {
     let table = crate::precision::PrecisionTable::parse(precision).unwrap();
-    let circuit = crate::instantiate(crate::test_toy::CIRCUIT, &[], &crate::test_toy::shape(2), &table)
-        .unwrap_or_else(|e| panic!("toy: {e}"));
+    let circuit = crate::instantiate(
+        crate::test_toy::CIRCUIT,
+        &[],
+        &crate::test_toy::shape(2),
+        &table,
+    )
+    .unwrap_or_else(|e| panic!("toy: {e}"));
     ModelUnderPlan {
         label: "toy".into(),
         checkpoint: "toy".into(),
@@ -336,5 +364,6 @@ pub fn model(precision: &str) -> ModelUnderPlan {
         header: vec![("target".into(), "base/toy/q".into())],
         precision: "test".into(),
         precision_choice: super::PrecisionChoice::Declared,
+        policy_sources: Vec::new(),
     }
 }

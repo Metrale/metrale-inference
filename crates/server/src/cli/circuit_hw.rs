@@ -133,7 +133,9 @@ fn fetch(repo: &str, file: &str) -> Result<Option<String>> {
         .with_context(|| format!("running curl for {url}"))?;
     // 2026-09-30: curl -f exits 22 on an HTTP error (a checkpoint without the sidecar).
     match out.status.code() {
-        Some(0) => Ok(Some(String::from_utf8(out.stdout).context("non-UTF-8 JSON")?)),
+        Some(0) => Ok(Some(
+            String::from_utf8(out.stdout).context("non-UTF-8 JSON")?,
+        )),
         Some(22) => Ok(None),
         other => bail!("curl {url} failed ({other:?})"),
     }
@@ -282,7 +284,8 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
         );
         return Ok(());
     }
-    let (Some(checkpoint), Some(device), Some(precision)) = (&a.checkpoint, &a.hardware, a.precision)
+    let (Some(checkpoint), Some(device), Some(precision)) =
+        (&a.checkpoint, &a.hardware, a.precision)
     else {
         bail!("--checkpoint, --hardware and --precision are required without --matrix");
     };

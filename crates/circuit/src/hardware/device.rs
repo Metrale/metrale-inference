@@ -389,10 +389,7 @@ fn device_of(
     }
     let p = &d.peak_tflops;
     let listed = |k: MmaKind| native.iter().any(|i| i.kind == k);
-    for (kind, peak) in [
-        (MmaKind::Fp8, p.fp8),
-        (MmaKind::Fp4BlockScale, p.fp4_nvfp4),
-    ] {
+    for (kind, peak) in [(MmaKind::Fp8, p.fp8), (MmaKind::Fp4BlockScale, p.fp4_nvfp4)] {
         if listed(kind) != (peak > 0.0) {
             return Err(field(format!(
                 "`{}` is {} in native_mma but its dense peak is {peak}",

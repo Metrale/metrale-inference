@@ -76,6 +76,9 @@ pub struct ModelUnderPlan {
     pub precision: String,
     /// 2026-09-30: Which formats were asked for.
     pub precision_choice: PrecisionChoice,
+    /// 2026-09-30: Where each policy setting comes from, when derived rather than stated by a
+    /// recipe (empty: the recipe states them in INSTANCES.toml).
+    pub policy_sources: Vec<(String, String)>,
 }
 
 /// 2026-09-30: Instantiates the model a spec names.
@@ -157,6 +160,7 @@ pub fn model_of(
         header: crate::header(inst),
         precision,
         precision_choice,
+        policy_sources: Vec::new(),
     })
 }
 

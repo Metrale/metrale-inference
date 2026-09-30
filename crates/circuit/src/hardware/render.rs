@@ -61,7 +61,12 @@ pub fn render_report(r: &HwReport) -> String {
 fn inputs(s: &mut String, r: &HwReport) {
     let d = &r.resolved.device;
     let rf = &r.resolved.roofline;
-    let chain: Vec<&str> = r.resolved.planning.iter().map(|c| c.name.as_str()).collect();
+    let chain: Vec<&str> = r
+        .resolved
+        .planning
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
     let rules = match &r.resolved.rules {
         super::class::ClassRules::Rules { files, rules } => {
             format!("{} rules from {}", rules.len(), files.join(" + "))
@@ -103,7 +108,8 @@ fn inputs(s: &mut String, r: &HwReport) {
                 d.memory_bytes / (1u64 << 30) as f64,
                 d.memory_type,
                 d.bandwidth_gbps,
-                d.l2_mb.map_or_else(|| "unpublished".into(), |l| format!("{l} MB")),
+                d.l2_mb
+                    .map_or_else(|| "unpublished".into(), |l| format!("{l} MB")),
                 d.smem_per_sm_kb,
                 d.cluster_max,
                 d.tmem_per_sm_kb
@@ -149,7 +155,25 @@ fn inputs(s: &mut String, r: &HwReport) {
             },
         ),
     ];
-    for (k, v) in rows {
+    let policy: Vec<String> = r
+        .policy
+        .settings
+        .iter()
+        .map(|(k, v)| {
+            match r.model.policy_sources.iter().find(|(key, _)| key == k) {
+                Some((_, why)) => format!("{k}={v} ({why})"),
+                None => format!("{k}={v}"),
+            }
+        })
+        .collect();
+    for (k, v) in rows.into_iter().chain([(
+        "policy",
+        if r.model.policy_sources.is_empty() {
+            format!("{} (stated by the recipe)", policy.join(" "))
+        } else {
+            policy.join("; ")
+        },
+    )]) {
         let _ = writeln!(s, "| {k} | {} |", v.replace('|', "\\|"));
     }
     let _ = writeln!(s);
@@ -211,14 +235,14 @@ fn memory(s: &mut String, r: &HwReport) {
     let f = &r.footprint;
     let _ = writeln!(
         s,
-        "## Memory fit\n\nUsable {} GB = {:.2} GB visible x {} ({}). Weights {} GB (embedding BF16); KV {:.0} bytes per token; recurrent state {} MB per sequence. Not counted: activations, workspaces, conv windows, the CUDA context.\n",
+        "## Memory fit\n\nUsable {} GB = {:.2} GB visible x {} ({}). Weights {} GB (embedding BF16); KV {:.0} bytes per token; recurrent state {:.1} MB per sequence. Not counted: activations, workspaces, conv windows, the CUDA context.\n",
         gb(usable),
         d.memory_bytes / 1e9,
         d.usable_fraction,
         d.usable_why,
         gb(f.weights),
         f.kv_per_token,
-        format!("{:.1}", f.state_per_seq / 1e6)
+        f.state_per_seq / 1e6
     );
     let mut head = String::from("| C |");
     let mut rule = String::from("|---:|");
@@ -435,7 +459,12 @@ pub fn summary_row(r: &HwReport) -> String {
             t.rows
                 .iter()
                 .filter(|x| !matches!(x.class, Class::Shared | Class::SharedUnmeasured))
-                .map(|x| (x.share, format!("{} ({}, {})", x.site, x.class.name(), pct(x.share))))
+                .map(|x| {
+                    (
+                        x.share,
+                        format!("{} ({}, {})", x.site, x.class.name(), pct(x.share)),
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();

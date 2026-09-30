@@ -61,9 +61,9 @@ fn renames(configs: &[PathBuf]) -> Result<BTreeMap<String, String>, String> {
             toml::from_str(&text).map_err(|e| format!("{}: {e}", manifest.display()))?;
         if let Some(t) = value.get("modules").and_then(|m| m.as_table()) {
             for (stem, name) in t {
-                let name = name
-                    .as_str()
-                    .ok_or_else(|| format!("{}: [modules] {stem} is not a string", manifest.display()))?;
+                let name = name.as_str().ok_or_else(|| {
+                    format!("{}: [modules] {stem} is not a string", manifest.display())
+                })?;
                 out.insert(stem.clone(), name.to_string());
             }
         }
@@ -71,7 +71,9 @@ fn renames(configs: &[PathBuf]) -> Result<BTreeMap<String, String>, String> {
     Ok(out)
 }
 
-fn expected_absent(model_toml: &Path) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
+fn expected_absent(
+    model_toml: &Path,
+) -> Result<BTreeMap<String, BTreeMap<String, String>>, String> {
     let Ok(text) = std::fs::read_to_string(model_toml) else {
         return Ok(BTreeMap::new());
     };
@@ -81,7 +83,10 @@ fn expected_absent(model_toml: &Path) -> Result<BTreeMap<String, BTreeMap<String
     if let Some(t) = value.get("expected_absent").and_then(|v| v.as_table()) {
         for (module, funcs) in t {
             let funcs = funcs.as_table().ok_or_else(|| {
-                format!("{}: [expected_absent.{module}] is not a table", model_toml.display())
+                format!(
+                    "{}: [expected_absent.{module}] is not a table",
+                    model_toml.display()
+                )
             })?;
             let m = funcs
                 .iter()
@@ -133,7 +138,12 @@ impl KernelTree for FsTree {
         let names = renames(&configs)?;
         let mut modules = BTreeMap::new();
         for (stem, entry) in lay.modules() {
-            if !own && lay.common.get(&entry.name).is_none_or(|e| e.source != entry.source) {
+            if !own
+                && lay
+                    .common
+                    .get(&entry.name)
+                    .is_none_or(|e| e.source != entry.source)
+            {
                 continue;
             }
             let text = std::fs::read_to_string(&entry.source)
@@ -234,7 +244,9 @@ fn model_targets(root: &Path) -> Result<Vec<ModelTarget>, String> {
                 let model_type = m
                     .get("model_type")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| format!("{}: [[model_types]] without model_type", p.display()))?;
+                    .ok_or_else(|| {
+                        format!("{}: [[model_types]] without model_type", p.display())
+                    })?;
                 let hidden_size = match m.get("hidden_size") {
                     None => None,
                     Some(v) => Some(

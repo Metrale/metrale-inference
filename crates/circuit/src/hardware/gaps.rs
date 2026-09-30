@@ -115,7 +115,10 @@ pub fn gap_table(
         settings,
         plan: Some(plan),
     };
-    let bare = Subject { plan: None, ..with_plan };
+    let bare = Subject {
+        plan: None,
+        ..with_plan
+    };
     let group_of: BTreeMap<NodeIdx, usize> = plan
         .groups
         .iter()
@@ -241,7 +244,11 @@ pub fn gap_table(
     }
     let mut rows_out: Vec<GapRow> = by_site.into_values().collect();
     for row in &mut rows_out {
-        row.share = if total > 0.0 { row.time_us / total } else { 0.0 };
+        row.share = if total > 0.0 {
+            row.time_us / total
+        } else {
+            0.0
+        };
     }
     rows_out.sort_by(|a, b| {
         b.time_us

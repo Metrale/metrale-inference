@@ -168,7 +168,9 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             weights += one * copies;
         }
         match n.op {
-            OpKind::PagedAttention => kv_per_token += 2.0 * dim("kv_heads")? * dim("head_dim")? * kv,
+            OpKind::PagedAttention => {
+                kv_per_token += 2.0 * dim("kv_heads")? * dim("head_dim")? * kv
+            }
             OpKind::GdnRecurrence => {
                 state += dim("lin_v_heads")? * dim("lin_k_dim")? * dim("lin_v_dim")? * h;
             }
@@ -195,11 +197,11 @@ pub fn weight_floor_bytes(c: &Circuit) -> Result<f64, String> {
             let k = n.inputs.first().map_or(0, |&e| c.edges[e].dim_value);
             let out: u64 = n.outputs.iter().map(|&e| c.edges[e].dim_value).sum();
             let copies = match n.op {
-                OpKind::ExpertGateUp | OpKind::ExpertDown => *c
-                    .dims
-                    .get("top_k")
-                    .ok_or_else(|| format!("node `{}`: routed experts need dim `top_k`", n.id))?
-                    as f64,
+                OpKind::ExpertGateUp | OpKind::ExpertDown => {
+                    *c.dims.get("top_k").ok_or_else(|| {
+                        format!("node `{}`: routed experts need dim `top_k`", n.id)
+                    })? as f64
+                }
                 _ => 1.0,
             };
             let one = w

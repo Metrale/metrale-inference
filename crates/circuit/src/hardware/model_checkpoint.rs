@@ -52,8 +52,14 @@ pub const POLICY_SOURCES: [(&str, &str); 8] = [
         "w4a16_tc",
         "on unless METRALE_NO_W4A16_TC (ml/ops/gemv_tc.rs:79-82)",
     ),
-    ("ssm_batched_recurrent", "the device class's HARDWARE.toml [defaults]"),
-    ("decode_split_silu", "the device class's HARDWARE.toml [defaults]"),
+    (
+        "ssm_batched_recurrent",
+        "the device class's HARDWARE.toml [defaults]",
+    ),
+    (
+        "decode_split_silu",
+        "the device class's HARDWARE.toml [defaults]",
+    ),
 ];
 
 /// 2026-09-30: The source over checkpoints, falling back to the recipes for `recipe` formats.
@@ -107,7 +113,10 @@ impl CircuitSource for CheckpointSource<'_> {
             header: vec![
                 ("recipe".into(), "none (planned from the checkpoint)".into()),
                 ("checkpoint".into(), spec.checkpoint.to_string()),
-                ("target".into(), format!("gb10/{kernel_model}/{KERNEL_QUANT}")),
+                (
+                    "target".into(),
+                    format!("gb10/{kernel_model}/{KERNEL_QUANT}"),
+                ),
                 ("settings".into(), settings.join(" ")),
                 ("opt-in levers".into(), "none".into()),
             ],
@@ -119,9 +128,16 @@ impl CircuitSource for CheckpointSource<'_> {
                 "declared by the checkpoint (arch `{}`, model_type `{}`; kernel target {})",
                 rc.arch,
                 rc.model_type,
-                target.map_or_else(|| "none: no MODEL.toml claims it".into(), |t| format!("`{t}`"))
+                target.map_or_else(
+                    || "none: no MODEL.toml claims it".into(),
+                    |t| format!("`{t}`")
+                )
             ),
             precision_choice: PrecisionChoice::Declared,
+            policy_sources: POLICY_SOURCES
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         })
     }
 }
@@ -140,9 +156,10 @@ fn dtype_name(f: Format) -> Result<&'static str, HwError> {
 
 /// 2026-09-30: The serving policy of a checkpoint-derived circuit ([`POLICY_SOURCES`]).
 pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, HwError> {
-    let fp8_experts = c.nodes.iter().any(|n| {
-        n.op == OpKind::ExpertGateUp && matches!(n.weight, Some(Format::Fp8E4m3 { .. }))
-    });
+    let fp8_experts = c
+        .nodes
+        .iter()
+        .any(|n| n.op == OpKind::ExpertGateUp && matches!(n.weight, Some(Format::Fp8E4m3 { .. })));
     let head = c
         .nodes
         .iter()

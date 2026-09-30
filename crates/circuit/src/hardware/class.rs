@@ -94,7 +94,9 @@ pub fn chain(repo: &dyn Repo, class: &str) -> Result<Vec<ClassInfo>, HwError> {
     let mut next = Some(class.to_string());
     while let Some(name) = next {
         if out.iter().any(|c| c.name == name) {
-            return Err(HwError::Class(format!("inheritance cycle through `{name}`")));
+            return Err(HwError::Class(format!(
+                "inheritance cycle through `{name}`"
+            )));
         }
         let text = repo
             .read(&format!("kernels/{name}/HARDWARE.toml"))
@@ -285,7 +287,11 @@ pub fn class_points(points: &[Point], chain: &[ClassInfo], sources: &ClassSource
         .map(|p| (file_name(p), p.as_str()))
         .collect();
     let compiled: BTreeSet<&str> = sources.files.iter().map(String::as_str).collect();
-    let in_chain = |p: &str| chain.iter().any(|c| p.starts_with(&format!("kernels/{}/", c.name)));
+    let in_chain = |p: &str| {
+        chain
+            .iter()
+            .any(|c| p.starts_with(&format!("kernels/{}/", c.name)))
+    };
     points
         .iter()
         .filter_map(|p| {

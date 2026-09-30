@@ -49,10 +49,7 @@ impl Absence {
             Absence::CompiledOut {
                 macro_name,
                 requires,
-            } => format!(
-                "compiled out by -D{macro_name} (needs {})",
-                requires.name()
-            ),
+            } => format!("compiled out by -D{macro_name} (needs {})", requires.name()),
             Absence::NotNative(i) => format!("needs {}, which the device lacks", i.name()),
         }
     }

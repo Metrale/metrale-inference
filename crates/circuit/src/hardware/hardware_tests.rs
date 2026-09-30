@@ -98,7 +98,11 @@ fn a_class_override_wins_over_the_inherited_rule() {
     let base = plan_one(&reg, "fp4dev", &tree, &model, decode()).unwrap();
     let child = plan_one(&reg, "nofp4", &tree, &model, decode()).unwrap();
     assert!(kernel_of(&base, c, "act").iter().all(|x| x == "m::act"));
-    assert!(kernel_of(&child, c, "act").iter().all(|x| x == "m::act_child"));
+    assert!(
+        kernel_of(&child, c, "act")
+            .iter()
+            .all(|x| x == "m::act_child")
+    );
     match class_rules(&tree, "child").unwrap() {
         ClassRules::Rules { rules, files } => {
             assert_eq!(
@@ -129,7 +133,12 @@ fn inherited_families_keep_their_points_and_lose_their_evidence() {
             one.planned.clone(),
         )
         .unwrap();
-        let row = t.rows.iter().find(|r| r.site == "ffn.down").unwrap().clone();
+        let row = t
+            .rows
+            .iter()
+            .find(|r| r.site == "ffn.down")
+            .unwrap()
+            .clone();
         (row.class, one.resolved.families.families.len())
     };
     assert_eq!(class_of("fp4dev").0, Class::Shared);
@@ -163,9 +172,17 @@ fn a_device_roofline_changes_the_ranking_and_the_estimate_but_not_the_plan() {
     let (a, b, slow) = (table("nofp4"), table("nofp4big"), table("slowmath"));
     assert_eq!(a.planned.plan.digest, b.planned.plan.digest);
     assert_eq!(a.planned.plan.digest, slow.planned.plan.digest);
-    assert!(b.total_us < a.total_us, "twice the bandwidth must be faster");
-    let order = |t: &super::gaps::GapTable| t.rows.iter().map(|r| r.site.clone()).collect::<Vec<_>>();
-    assert_ne!(order(&a), order(&slow), "compute-bound ranking equals memory-bound ranking");
+    assert!(
+        b.total_us < a.total_us,
+        "twice the bandwidth must be faster"
+    );
+    let order =
+        |t: &super::gaps::GapTable| t.rows.iter().map(|r| r.site.clone()).collect::<Vec<_>>();
+    assert_ne!(
+        order(&a),
+        order(&slow),
+        "compute-bound ranking equals memory-bound ranking"
+    );
 }
 
 // 2026-09-30: Path C.
@@ -211,7 +228,10 @@ fn a_declared_format_no_mma_can_run_is_reported_as_no_path() {
         Format::parse("nvfp4/g16").unwrap(),
     );
     let dev = |id: &str| reg.device(id).unwrap();
-    assert_eq!(exec_of(dev("nofp8"), w, a), Exec::NoPath(MmaKind::Fp4BlockScale));
+    assert_eq!(
+        exec_of(dev("nofp8"), w, a),
+        Exec::NoPath(MmaKind::Fp4BlockScale)
+    );
     assert_eq!(exec_of(dev("nofp4"), w, a), Exec::ExactFp8Emulation);
     assert_eq!(
         exec_of(dev("fp4dev"), w, a),

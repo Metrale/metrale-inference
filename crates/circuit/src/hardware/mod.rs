@@ -205,10 +205,7 @@ pub fn build_report(
 ) -> Result<HwReport, HwError> {
     let resolved = plan::resolve(registry, device_id, tree, &model)?;
     let (policy, class_settings) = model::policy_on_class(&model.policy, &resolved.chain[0])?;
-    let header = model::with_settings(
-        &model::header_on(&model, &resolved.device.class),
-        &policy,
-    );
+    let header = model::with_settings(&model::header_on(&model, &resolved.device.class), &policy);
     let c = &model.circuit;
     let mut tables = Vec::new();
     for run in plan::report_runs() {
