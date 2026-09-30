@@ -17,7 +17,7 @@
 // Invariants:
 // - A [M, lda] BF16 (the first K of each row read), B [N, K] E4M3 bytes, block_scale
 //   [N / 128, K / 128] FP32, C [M, ldc] BF16 (the first N of each row written). The host
-//   guarantees 1 <= M <= 8 * NT, N a positive multiple of TR_COLS and of 128, K a positive
+//   guarantees 1 <= M <= 8 * NT (any M >= 1 for `_64c`), N a positive multiple of TR_COLS and of 128, K a positive
 //   multiple of 128, lda a multiple of 8 (16-byte rows) and lda >= K, ldc >= N.
 // - A weight byte b becomes the BF16 whose bits are sign(b) | (b & 0x7F) << 4, which equals
 //   E4M3(b) * 2^-120 exactly; activations are staged times 2^60 (exact in BF16) and each
@@ -28,7 +28,8 @@
 //   and K = 16t + 4j + {2,3} as 2t+8, 2t+9. A row's sum order is fixed by K alone and its
 //   column of the MMA reads only its own activations, so a row's output bits do not depend
 //   on M or on the other rows (the three entry points agree row for row).
-// - Grid (N / TR_COLS, 1, 1), block TR_THREADS, static shared memory only.
+// - Grid (N / TR_COLS, 1, 1) (`_64c`: times ceil(M / 64)), block TR_THREADS, static shared
+//   memory only.
 
 #include <cuda_bf16.h>
 
@@ -57,7 +58,8 @@ template <int NT, int G>
 __device__ __forceinline__ void tr_block(
     const __nv_bfloat16* __restrict__ A, const unsigned char* __restrict__ B,
     const float* __restrict__ S, __nv_bfloat16* __restrict__ C,
-    unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
+    unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc,
+    unsigned int col_block
 ) {
     constexpr int GK = 64 * G;
     // 2026-09-28: Shared row pitch in bytes: 16 bytes of padding keep the eight rows of one
@@ -68,7 +70,7 @@ __device__ __forceinline__ void tr_block(
     constexpr int PER = (U4 + TR_THREADS - 1) / TR_THREADS;
     __shared__ __align__(16) unsigned char xs[2][ROWS * RS];
     const unsigned int warp = threadIdx.x >> 5, lane = threadIdx.x & 31, g = lane >> 2, t = lane & 3;
-    const unsigned int f0 = blockIdx.x * TR_COLS + warp * 16;
+    const unsigned int f0 = col_block * TR_COLS + warp * 16;
     const unsigned int kblocks = K / 128, ngroups = K / GK;
     const unsigned int nt_live = (M + 7) / 8;
     const float two60 = 1152921504606846976.0f;
@@ -186,7 +188,7 @@ extern "C" __global__ void __launch_bounds__(TR_THREADS) w8a16_tc_rows_16(
     const float* __restrict__ block_scale, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
 ) {
-    tr_block<2, 4>(A, B, block_scale, C, M, N, K, lda, ldc);
+    tr_block<2, 4>(A, B, block_scale, C, M, N, K, lda, ldc, blockIdx.x);
 }
 
 // 2026-09-28: 1..=32 rows (from 17 rows the 256-byte runs of `_16` cost more than they save).
@@ -195,7 +197,7 @@ extern "C" __global__ void __launch_bounds__(TR_THREADS) w8a16_tc_rows_32(
     const float* __restrict__ block_scale, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
 ) {
-    tr_block<4, 2>(A, B, block_scale, C, M, N, K, lda, ldc);
+    tr_block<4, 2>(A, B, block_scale, C, M, N, K, lda, ldc, blockIdx.x);
 }
 
 // 2026-09-28: 33..=64 rows (any 1..=64; a row's bits equal the other entry points').
@@ -204,5 +206,21 @@ extern "C" __global__ void __launch_bounds__(TR_THREADS) w8a16_tc_rows_64(
     const float* __restrict__ block_scale, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
 ) {
-    tr_block<8, 2>(A, B, block_scale, C, M, N, K, lda, ldc);
+    tr_block<8, 2>(A, B, block_scale, C, M, N, K, lda, ldc, blockIdx.x);
+}
+
+// 2026-09-30: Any number of rows, in 64-row chunks: block b computes chunk b % chunks of column
+// block b / chunks, so the chunks of one column block run next to each other and share its
+// weight tile through L2. Every row runs `tr_block<8, 2>`, whose row bits do not depend on M,
+// so a row's output equals the other entry points' at every row count.
+extern "C" __global__ void __launch_bounds__(TR_THREADS) w8a16_tc_rows_64c(
+    const __nv_bfloat16* __restrict__ A, const unsigned char* __restrict__ B,
+    const float* __restrict__ block_scale, __nv_bfloat16* __restrict__ C,
+    unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
+) {
+    const unsigned int chunks = (M + 63) / 64;
+    const unsigned int chunk = blockIdx.x % chunks;
+    const unsigned int rows = min(64u, M - chunk * 64);
+    tr_block<8, 2>(A + (unsigned long long)chunk * 64 * lda, B, block_scale,
+                   C + (unsigned long long)chunk * 64 * ldc, rows, N, K, lda, ldc, blockIdx.x / chunks);
 }

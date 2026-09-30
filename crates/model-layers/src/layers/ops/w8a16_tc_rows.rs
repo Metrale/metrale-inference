@@ -9,8 +9,9 @@
 //! they launch this kernel instead (`METRALE_NO_W8A16_TC_ROWS` keeps the twins). Same precision (FP8 weights,
 //! BF16 activations, FP32 accumulation, the 128 x 128 block scales), another summation order,
 //! so the output bits differ from the twins'; a row's bits still do not depend on the row
-//! count, so the canonical policy holds from 1 to 64 rows. Above 64 rows the 128-row tile
-//! runs as before.
+//! count, so the canonical policy holds from 1 to 64 rows. 2026-09-30: above 64 rows
+//! `w8a16_tc_rows_64c` runs the same 64-row body per 64-row chunk, so the policy holds at every
+//! row count (the 128-row tile it replaces there sums in another order).
 //!
 //! Owner: model-layers ops.
 //! Invariants: [`w8a16_tc_rows_launch`] launches only when [`w8a16_tc_rows_shape_ok`] holds.
@@ -22,7 +23,8 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 /// 2026-09-28: Output columns per CTA (`TR_COLS`).
 pub const W8A16_TC_ROWS_COLS: u32 = 64;
 
-/// 2026-09-28: Widest row count (`8 * NT` of `w8a16_tc_rows_64`).
+/// 2026-09-28: Widest row count of one row chunk (`8 * NT` of `w8a16_tc_rows_64`); more rows
+/// run as chunks of it (`w8a16_tc_rows_64c`).
 pub const W8A16_TC_ROWS_MAX_M: u32 = 64;
 
 const MODULE: &str = "w8a16_tc_rows";
@@ -34,7 +36,7 @@ fn w8a16_tc_rows_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_W8A16_TC_ROWS").is_none())
 }
 
-/// 2026-09-28: The kernel's shape contract, without a GPU: 1..=64 rows, N a positive
+/// 2026-09-28: The kernel's shape contract, without a GPU: at least one row, N a positive
 /// multiple of 128 (whole scale blocks, whole CTAs), K a positive multiple of 128, and an A
 /// pitch that keeps rows 16-byte aligned and covers K; the C pitch covers N.
 pub fn w8a16_tc_rows_shape_ok(
@@ -44,7 +46,7 @@ pub fn w8a16_tc_rows_shape_ok(
     a_row_stride: u32,
     c_row_stride: u32,
 ) -> bool {
-    (1..=W8A16_TC_ROWS_MAX_M).contains(&m)
+    m >= 1
         && n > 0
         && n.is_multiple_of(128)
         && k > 0
@@ -116,16 +118,18 @@ pub fn w8a16_tc_rows(
         w8a16_tc_rows_shape_ok(m, n, k, a_row_stride, c_row_stride),
         "w8a16_tc_rows: m={m} n={n} k={k} lda={a_row_stride} ldc={c_row_stride} outside the kernel's contract"
     );
-    let entry = if m <= 16 {
-        "w8a16_tc_rows_16"
+    let (entry, chunks) = if m <= 16 {
+        ("w8a16_tc_rows_16", 1)
     } else if m <= 32 {
-        "w8a16_tc_rows_32"
+        ("w8a16_tc_rows_32", 1)
+    } else if m <= W8A16_TC_ROWS_MAX_M {
+        ("w8a16_tc_rows_64", 1)
     } else {
-        "w8a16_tc_rows_64"
+        ("w8a16_tc_rows_64c", m.div_ceil(W8A16_TC_ROWS_MAX_M))
     };
     let kernel = gpu.op_cache().kernel(gpu, MODULE, entry)?;
     KernelLaunch::new(gpu, kernel)
-        .grid([n / W8A16_TC_ROWS_COLS, 1, 1])
+        .grid([n / W8A16_TC_ROWS_COLS * chunks, 1, 1])
         .block([128, 1, 1])
         .arg_ptr(input)
         .arg_ptr(weight)
@@ -154,12 +158,18 @@ mod tests {
             CU.contains("#define TR_WARPS 4\n") && CU.contains("#define TR_COLS (TR_WARPS * 16)\n")
         );
         assert_eq!(W8A16_TC_ROWS_COLS, 4 * 16);
-        assert!(CU.contains("tr_block<8, 2>(A, B, block_scale, C, M, N, K, lda, ldc);"));
+        assert!(
+            CU.contains("tr_block<8, 2>(A, B, block_scale, C, M, N, K, lda, ldc, blockIdx.x);")
+        );
+        // 2026-09-30: The chunked entry runs the 64-row body per chunk of `W8A16_TC_ROWS_MAX_M`.
+        assert!(CU.contains("const unsigned int chunks = (M + 63) / 64;"));
+        assert!(CU.contains("tr_block<8, 2>(A + (unsigned long long)chunk * 64 * lda"));
         assert_eq!(W8A16_TC_ROWS_MAX_M, 8 * 8);
         for entry in [
             "w8a16_tc_rows_16(",
             "w8a16_tc_rows_32(",
             "w8a16_tc_rows_64(",
+            "w8a16_tc_rows_64c(",
         ] {
             assert!(CU.contains(entry), "{entry} missing from the kernel");
         }
@@ -171,7 +181,8 @@ mod tests {
         assert!(w8a16_tc_rows_shape_ok(1, 12288, 2048, 2048, 12288));
         assert!(w8a16_tc_rows_shape_ok(64, 512, 2048, 2048, 512));
         assert!(!w8a16_tc_rows_shape_ok(0, 512, 2048, 2048, 512));
-        assert!(!w8a16_tc_rows_shape_ok(65, 512, 2048, 2048, 512));
+        assert!(w8a16_tc_rows_shape_ok(65, 512, 2048, 2048, 512));
+        assert!(w8a16_tc_rows_shape_ok(256, 12288, 2048, 2048, 12288));
         assert!(!w8a16_tc_rows_shape_ok(8, 576, 2048, 2048, 576));
         assert!(!w8a16_tc_rows_shape_ok(8, 512, 2000, 2048, 512));
         assert!(!w8a16_tc_rows_shape_ok(8, 512, 2048, 2044, 512));

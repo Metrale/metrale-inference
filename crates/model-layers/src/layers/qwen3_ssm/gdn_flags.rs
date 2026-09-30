@@ -193,8 +193,15 @@ pub fn ssm_batched_recurrent_enabled() -> bool {
 
 /// 2026-09-25: `--exact-verify` given and the h-state FP32: the MTP-verify pass
 /// runs the sequential-decode-exact chain. See [`GdnFlags::verify_exact_active`].
+///
+/// 2026-09-30: Also on under a fixed `--activation-quantization` for the GDN family: a verify row
+/// then computes the bits a decode step computes, so a token's logits do not depend on which
+/// verify row, or which step, produced it. Not with an FP16 h-state (refused beside a fixed GDN
+/// format by `validate_serve_args`).
 pub fn verify_exact_enabled() -> bool {
-    flags().verify_exact_active()
+    let f = flags();
+    f.verify_exact_active()
+        || (!f.h_f16 && crate::layers::family_fixed(metrale_config::ProjFamily::Gdn))
 }
 
 /// 2026-09-25: Batch width at which the multi-sequence decode projections switch
