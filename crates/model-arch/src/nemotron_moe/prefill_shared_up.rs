@@ -105,6 +105,9 @@ impl NemotronMoeLayer {
                 stream,
             )?;
         } else if let Some(ref sut) = self.shared_up_t {
+            // 2026-09-30: This copy exists only under `--nemotron-shared-expert-e4m3`, which
+            // discloses the saturating cast, so debug builds count it instead of panicking.
+            let _disclosed = ops::allow_e4m3_saturation(ops::NEMOTRON_SHARED_EXPERT_E4M3);
             if n > 128 && self.w4a16_gemm_t_m128_k.0 != 0 {
                 ops::w4a16_gemm_n128_m128(
                     ctx.gpu,

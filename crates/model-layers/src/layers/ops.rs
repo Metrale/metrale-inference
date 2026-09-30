@@ -222,7 +222,11 @@ pub use dispatch_helpers::*;
 pub use dispatch_proj::*;
 pub use dispatch_proj_decode::*;
 pub use dispatch_proj_rowwise::*;
-pub use e4m3_range::{E4M3_MAX, check_e4m3_activation_range, check_e4m3_range};
+pub use e4m3_range::{
+    E4M3_MAX, E4m3Saturation, E4m3SaturationScope, MOE_ROUTED_DOWN_KNOWN,
+    NEMOTRON_SHARED_EXPERT_E4M3, allow_e4m3_saturation, check_e4m3_activation_range,
+    check_e4m3_grouped, check_e4m3_range, e4m3_saturations,
+};
 pub use embeddings::*;
 pub use fp8_act_quant::*;
 pub use fp8_act_quant_floor::*;
