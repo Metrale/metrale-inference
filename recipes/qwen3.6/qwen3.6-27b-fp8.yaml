@@ -6,25 +6,33 @@ max_nodes: 1
 
 metadata:
   description: |
-    Qwen3.6-27B (dense, native FP8) on the Metrale Engine runtime. FP8 weights
-    paired with BF16 KV — FP8/NVFP4 KV breaks dense attention here
-    (request timeouts, CUDA graph thrash). max_model_len capped at
-    60_000 so the full spark-arena-v2 concurrency=10 sweep fits in the
-    KV pool on a single GB10; cells at depth=65535/100000 in
-    spark-arena-v2 will be skipped because they exceed max_model_len.
-    Use --tp 2 / EP=2 to get the full long-context sweep. No MTP.
+    Qwen3.6-27B (dense, native FP8) on the Metrale Engine runtime, at the
+    full 262,144-token context, two sequences, FP8 KV cache with the first
+    and last two attention layers kept at BF16 (`kv_high_precision_layers:
+    auto`). No MTP.
+
+    Precision (`weight_quantization: declared`, the checkpoint's own FP8):
+    the GDN projections serve their block-scaled FP8 weights (W8A16, prefill
+    and decode), and attention prefill reads the FP8 weights (W8A16).
+    Attention decode and every dense-FFN projection run from NVFP4 copies
+    requantized at load, with 16-bit activations: those paths have no
+    per-row FP8 decode arm yet. That is below the declared FP8 weights, and
+    the load log says so. The checkpoint ships no KV scales, so the FP8 KV
+    cache runs at scale 1.0.
   maintainer: metrale
   category: chat
   model_params: 27B
   model_dtype: fp8
   quantization: fp8
-  kv_dtype: bf16
+  kv_dtype: fp8
 
 defaults:
-  # The --weight-quantization tier this recipe was measured under: FP8-declared layers
-  # requantized to NVFP4, the engine as it ran before the tiers. `declared` (the
-  # engine default) is not measured on this recipe.
-  weight_quantization: nvfp4
+  # 2026-09-30: The checkpoint's declared FP8, the engine default, which states the precision
+  # the checkpoint declares. Booted on GB10 under both tiers: the same load paths (the NVFP4
+  # requantization above happens under both) and the same greedy replies and tool call.
+  # Single-stream decode read 8-10% slower than `nvfp4` there (11.5-22.2 vs 12.8-24.5 tok/s over
+  # five short greedy replies each, one box; not a benchmark, cause not yet isolated).
+  weight_quantization: declared
   port: 8888
   host: 0.0.0.0
   max_model_len: 262144

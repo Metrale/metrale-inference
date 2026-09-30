@@ -47,6 +47,15 @@ metadata:
     fused FP8 dual-GEMV decode kernel would raise the no-spec floor and
     change every number in that table. Do not read 15.6 as "this model's
     speed".
+
+    Precision (`weight_quantization: declared`, the checkpoint's own FP8):
+    the GDN projections serve their block-scaled FP8 weights (W8A16, prefill
+    and decode), and attention prefill reads the FP8 weights (W8A16).
+    Attention decode and every dense-FFN projection run from NVFP4 copies
+    requantized at load, with 16-bit activations: those paths have no
+    per-row FP8 decode arm yet. That is below the declared FP8 weights, and
+    the load log says so. The MTP head's projections are FP8 e4m3, and the
+    draft-only LM head is NVFP4. The table above predates the tiers.
   maintainer: metrale
   category: chat
   model_params: 27B
@@ -55,10 +64,13 @@ metadata:
   kv_dtype: bf16
 
 defaults:
-  # The --weight-quantization tier this recipe was measured under: FP8-declared layers
-  # requantized to NVFP4, the engine as it ran before the tiers. `declared` (the
-  # engine default) is not measured on this recipe.
-  weight_quantization: nvfp4
+  # 2026-09-30: The checkpoint's declared FP8, the engine default, which states the precision
+  # the checkpoint declares. Booted on GB10 under both tiers with MTP at K=1: the same load
+  # paths (the NVFP4 requantization in the description happens under both) and the same greedy
+  # replies and tool call.
+  # Single-stream decode read 8-10% slower than `nvfp4` there (19.0-20.4 vs 21.2-23.1 tok/s over
+  # five short greedy replies each, one box; not a benchmark, cause not yet isolated).
+  weight_quantization: declared
   port: 8888
   host: 0.0.0.0
   # 60k, not 262144: the full spark-arena-v2 concurrency=10 sweep has to
