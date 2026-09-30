@@ -1377,7 +1377,7 @@ layer_kind = "moe"
 per_sequence = ["multi_seq", "verify"]
 sites = []
 rows_above = 1
-cite = "crates/model-arch/src/nemotron_moe.rs:276"
+cite = "crates/model-arch/src/nemotron_moe.rs:278"
 holds = "impl TransformerLayer for NemotronMoeLayer"
 note = "MoE layer: only single-row decode (1-row routed GEMV + ReLU²-down kernels); multi-sequence decode and verify loop per row"
 

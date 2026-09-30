@@ -396,7 +396,12 @@ pub(super) fn kernel_launches(f: &Fixture) -> impl Iterator<Item = &super::progr
 }
 
 pub(super) fn run(f: &Fixture, gdn: &[Vec<GdnState>], max_blocks: u32) -> Vec<MockLaunch> {
-    run_on(&MockGpuBackend::new(), f, gdn, max_blocks)
+    let gpu = MockGpuBackend::new();
+    // 2026-09-30: Every mock kernel is handle 0xDEAD, and the tiled W4A16 launches size their
+    // grid from the kernel's published N tile (`GpuBackend::kernel_n_tile`); 128 is the tile
+    // `w4a16_gemm_t_p3` publishes in the qwen3.6-27b tree.
+    gpu.set_kernel_n_tile(metrale_gpu_runtime::gpu::KernelHandle(0xDEAD), 128);
+    run_on(&gpu, f, gdn, max_blocks)
 }
 
 /// 2026-09-29: [`run`] on `gpu`, whose allocations the states may point into.
