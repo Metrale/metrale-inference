@@ -79,7 +79,7 @@ fn lightning_fp8_per_tensor_scales_are_wxay_policy_variants() {
     }
     // 2026-09-29: The static per-tensor quantizer: no family computes it; the dynamic ones are
     // the policy it would join.
-    let q = row(&r, Mode::Decode, 1, "mamba.in_quant")
+    let q = row(&r, Mode::Decode, 1, "mamba.in_proj_quant")
         .primary
         .as_ref()
         .expect("classified");

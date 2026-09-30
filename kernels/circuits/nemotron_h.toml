@@ -15,10 +15,14 @@
 #   Qwen3.5 norms scale by 1 + weight); the router's logits are FP32.
 # - Declared precision (the precision table): the routed and shared experts and lm_head are
 #   NVFP4 W4A16; the Mamba2 in_proj and out_proj are FP8 W8A8 with per-tensor weight scales and
-#   STATIC per-tensor activation scales (explicit `act_quant` nodes); conv1d, the router,
+#   STATIC per-tensor activation scales (the `act_quant` nodes the declared precision inserts,
+#   each bound to its projection's `input_scale`); conv1d, the router,
 #   attention, the embeddings and the MTP head are BF16; the KV cache is FP8 with static scales.
 # - It is not an executor target yet: FUSIONS.toml has no rules for its Mamba2 and ReLU² nodes.
 #   `met circuit venn` reads it.
+# - Every projection reads a 16-bit edge; a projection whose declared activation is quantized
+#   gets its quantizer from the precision (crates/circuit/src/instantiate.rs), so one circuit
+#   serves Nano (NVFP4 mixers) and Lightning (FP8 W8A8 mixers).
 # - The MTP head spans two modules (`mtp.layers.0` attention, `mtp.layers.1` MoE) while the
 #   schema has one `draft_module`, so the draft MoE is its own block with explicit bindings.
 
@@ -31,11 +35,13 @@ include = []
 dims = [
   "hidden", "vocab", "q_heads", "kv_heads", "head_dim",
   "mamba_heads", "mamba_head_dim", "ssm_state", "ssm_groups", "conv_kernel",
-  "experts", "top_k", "moe_inter", "shared_inter",
+  "experts", "top_k", "moe_inter", "shared_inter", "mtp",
 ]
 prologue = ["embed"]
 epilogue = ["head"]
 draft = ["mtp_in", "attn", "mtp_moe", "mtp_out"]
+# 2026-09-30: The draft head exists only in a checkpoint with a next-token layer (`mtp`).
+draft_when = "mtp"
 
 [layout]
 kind = "list"
@@ -68,18 +74,10 @@ binding = ["{L}.norm"]
 params = { weight_form = "plain" }
 
 [[block.mamba.node]]
-id = "in_quant"
-op = "act_quant"
-format = "fp8/tensor"
-in = ["xn"]
-out = [{ edge = "xq", format = "fp8/tensor", shape = "n x hidden" }]
-binding = ["{L}.mixer.in_proj.input_scale"]
-
-[[block.mamba.node]]
 id = "in_proj"
 op = "linear"
 role = "mamba_in"
-in = ["xq"]
+in = ["xn"]
 out = [{ edge = "zxbcdt", format = "bf16", shape = "n x mamba_heads*mamba_head_dim*2+ssm_groups*ssm_state*2+mamba_heads" }]
 binding = ["{L}.mixer.in_proj"]
 
@@ -132,18 +130,10 @@ binding = ["{L}.mixer.norm"]
 params = { norm_order = "gate_first" }
 
 [[block.mamba.node]]
-id = "out_quant"
-op = "act_quant"
-format = "fp8/tensor"
-in = ["gated"]
-out = [{ edge = "gq", format = "fp8/tensor", shape = "n x mamba_heads*mamba_head_dim" }]
-binding = ["{L}.mixer.out_proj.input_scale"]
-
-[[block.mamba.node]]
 id = "out_proj"
 op = "linear"
 role = "mamba_out"
-in = ["gq"]
+in = ["gated"]
 out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
 binding = ["{L}.mixer.out_proj"]
 
@@ -184,7 +174,7 @@ out = [
   { edge = "topk_id", format = "i32", shape = "n x top_k" },
 ]
 binding = ["{L}.mixer.gate.e_score_correction_bias"]
-params = { top_k = "6", scoring = "sigmoid_bias", renormalize = "true", scaling = "2.5" }
+params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
 
 [[block.moe.node]]
 id = "experts_up"
@@ -401,7 +391,7 @@ out = [
   { edge = "topk_id", format = "i32", shape = "n x top_k" },
 ]
 binding = ["mtp.layers.1.mixer.gate.e_score_correction_bias"]
-params = { top_k = "6", scoring = "sigmoid_bias", renormalize = "true", scaling = "2.5" }
+params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
 
 [[block.mtp_moe.node]]
 id = "experts_up"

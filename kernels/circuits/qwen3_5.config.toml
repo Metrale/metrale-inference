@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: config.json -> the `qwen3_5` circuit's arch shape (the dense Qwen3.5 / 3.6 / 3.8
+# hybrids: GatedDeltaNet + gated full attention, SwiGLU FFN, one MTP layer).
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/config_map.rs).
+# Invariants:
+# - Every key the checkpoints carry is classified: a dim, a param, a required value, a nested
+#   object, or ignorable with its reason. Any other key is refused (LIFECYCLE-DESIGN.md 6).
+# - The model reads `text_config` (Qwen3_5Config nests the text stack); the top level holds
+#   the multimodal wrapper and the quantization block.
+# - A default is the transformers Qwen3.5 text-config default, stated where a checkpoint may
+#   omit the key.
+
+schema = 1
+arch = "qwen3_5"
+model_types = ["qwen3_5"]
+nest = "text_config"
+
+[root]
+model_type = "ignore"
+architectures = { ignore = "the HF class name; model_type selects the circuit" }
+transformers_version = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors; the load plan reads each tensor's own" }
+torch_dtype = { ignore = "the storage dtype of unquantized tensors" }
+quantization_config = { ignore = "read by the precision plan (DeclaredPrecisionPlan)" }
+vision_config = { ignore = "the vision tower is outside the text circuit (LIFECYCLE-DESIGN.md 13)" }
+image_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+video_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+vision_start_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+vision_end_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+language_model_only = { ignore = "whether the vision weights ship; the text circuit is the same" }
+tie_word_embeddings = { param = "root.tie_word_embeddings" }
+# 2026-09-30: Copies of text_config values some exporters add for other runtimes; the
+# model reads text_config.
+head_dim = { ignore = "a top-level copy of text_config.head_dim" }
+num_attention_heads = { ignore = "a top-level copy of text_config.num_attention_heads" }
+num_key_value_heads = { ignore = "a top-level copy of text_config.num_key_value_heads" }
+mtp_num_hidden_layers = { ignore = "a top-level copy of text_config.mtp_num_hidden_layers" }
+unsloth_fixed_mtp = { ignore = "exporter provenance" }
+
+[layers]
+count = "num_hidden_layers"
+sources = [
+  { key = "layer_types", values = { linear_attention = "linear_attention", full_attention = "full_attention" } },
+]
+
+[dims]
+hidden = "hidden_size"
+inter = "intermediate_size"
+vocab = "vocab_size"
+q_heads = "num_attention_heads"
+kv_heads = "num_key_value_heads"
+head_dim = "head_dim"
+lin_k_heads = "linear_num_key_heads"
+lin_k_dim = "linear_key_head_dim"
+lin_v_heads = "linear_num_value_heads"
+lin_v_dim = "linear_value_head_dim"
+
+[keys]
+model_type = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors" }
+torch_dtype = { ignore = "the storage dtype of unquantized tensors" }
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+pad_token_id = { ignore = "tokenizer ids" }
+initializer_range = { ignore = "training initialisation" }
+attention_dropout = { ignore = "training only" }
+use_cache = { ignore = "an HF generate flag" }
+max_position_embeddings = { ignore = "the context limit; RoPE here has no scaling that reads it" }
+rms_norm_eps = { param = true, default = 1e-6 }
+tie_word_embeddings = { param = true, default = false }
+hidden_act = { require = "silu", why = "the circuit's FFN is SiLU-gated", default = "silu" }
+attention_bias = { require = false, why = "the circuit's projections have no bias", default = false }
+attn_output_gate = { require = true, why = "the circuit's attention is output-gated", default = true }
+output_gate_type = { require = "silu", values = { swish = "silu" }, why = "the GDN output norm gates with SiLU (swish)", default = "swish" }
+mamba_ssm_dtype = { require = "float32", why = "the recurrent state is FP32", default = "float32" }
+full_attention_interval = { require = 4, why = "the circuit's layout is interval-4 (the layer_types are checked against it)" }
+linear_conv_kernel_dim = { require = 4, why = "the conv1d kernels are 4-tap" }
+mtp_num_hidden_layers = { require = 1, why = "the circuit's draft head is one MTP layer (a checkpoint without one has no draft circuit yet)", default = 0 }
+mtp_use_dedicated_embeddings = { require = false, why = "the draft head reads the model's embeddings", default = false }
+mlp_only_layers = { require = [[]], why = "every layer has its mixer" , default = [] }
+partial_rotary_factor = { param = true }
+rope_parameters = { param = "rope", object = { rope_type = { require = "default", why = "no RoPE scaling is modelled here" }, rope_theta = { param = true }, partial_rotary_factor = { param = true }, mrope_section = { param = true }, mrope_interleaved = { require = true, why = "the circuit's RoPE is interleaved MRoPE" } } }

@@ -71,7 +71,9 @@ binding = ["{L}.mlp.experts.*.gate_proj", "{L}.mlp.experts.*.up_proj"]
 id = "experts_act"
 op = "silu_mul"
 in = ["egu"]
-out = [{ edge = "eact", format = "f32", shape = "n*top_k x moe_inter" }]
+# 2026-09-30: BF16 as the reference computes it; a precision whose down projection reads F32 (the
+# grouped FP8 expert kernels' FP32 SiLU product) widens it (crates/circuit/src/instantiate.rs).
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
 
 [[block.moe_ffn.node]]
 id = "experts_down"
@@ -92,7 +94,7 @@ binding = ["{L}.mlp.shared_expert.gate_proj", "{L}.mlp.shared_expert.up_proj"]
 id = "shared_act"
 op = "silu_mul"
 in = ["sgu"]
-out = [{ edge = "sact", format = "f32", shape = "n x shared_inter" }]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
 
 [[block.moe_ffn.node]]
 id = "shared_down"

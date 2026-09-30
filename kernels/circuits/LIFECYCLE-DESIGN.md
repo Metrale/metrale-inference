@@ -567,6 +567,78 @@ The mapping for `nemotron_h`:
   `rescale_prenorm_residual` (initialisation only), `residual_in_fp32 = false` (it matches the
   BF16 residual).
 
+### 6.2 Interface for the hardware axis (2026-09-30)
+
+The model axis is one pure entry point in `metrale-circuit`, module `checkpoint`, re-exported at
+the crate root:
+
+```rust
+pub struct QuantMetadata<'a> {
+    /// `hf_quant_config.json` (ModelOpt), verbatim; read only when config.json has no
+    /// `quantization_config` (the serve rule).
+    pub hf_quant_config: Option<&'a str>,
+}
+
+/// Every edge at the checkpoint's DECLARED formats.
+pub fn instantiate_from_checkpoint(config_json: &str, quant: QuantMetadata<'_>)
+    -> Result<Circuit, CheckpointError>;
+
+/// Arch, shape, params, KV-cache format and circuit, with the edge formats `serve` gives.
+pub fn resolve_checkpoint(config_json: &str, quant: QuantMetadata<'_>, serve: &ServePrecision)
+    -> Result<ResolvedCheckpoint, CheckpointError>;
+
+/// The config mapping alone (arch, shape, params), without instantiating.
+pub fn map_checkpoint(config_json: &str) -> Result<MappedConfig, CheckpointError>;
+
+pub enum ServePrecision {
+    Declared,
+    Policy { tier: String, caps: Vec<String>, engine: Vec<(String, LinearFormats)> },
+}
+
+pub struct ResolvedCheckpoint {
+    pub arch: String,        // qwen3_5 | qwen3_6_moe | nemotron_h | dense_gqa
+    pub model_type: String,
+    pub shape: ArchShape,
+    pub params: BTreeMap<String, String>,   // math params as JSON text: rope.*, rms_norm_eps, ...
+    pub kv_cache: Option<Format>,           // declared KV-cache format; None = 16-bit
+    pub circuit: Circuit,
+}
+```
+
+`CheckpointError` names why a checkpoint has no circuit:
+
+- `UnknownModelType`: no map serves the `model_type`.
+- `Map(UnmappedKey | Refused | MissingKey)`: the config map rejects the config.
+- `Quant`: a declared format the circuit has no edge or weight format for, or malformed quant
+  metadata.
+- `Circuit`: the circuit does not instantiate.
+
+The circuit, block and config-map TOMLs are embedded, so the caller passes file text only.
+Fusing is unchanged: `fuse(&resolved.circuit, &rules, &available, &policy, mode, rows)`.
+
+**Which checkpoints resolve.** The coverage, over every checkpoint cached on the three boxes plus
+the G1 and Nemotron-H ones fetched from the Hub (`crates/circuit/tests/checkpoints.rs`):
+
+- Served:
+  - the dense Qwen3.5 / 3.6 / 3.8 hybrids (`qwen3_5`);
+  - the Qwen3.5 / 3.6 MoE hybrids (`qwen3_6_moe`);
+  - Nemotron-3 Nano and Nemotron-3.5 Lightning (`nemotron_h`);
+  - Llama 3.1, Qwen3 dense, Qwen2.5 and Mistral Small (`dense_gqa`).
+- Refused, with the reason named:
+  - Nemotron-3 Super: the latent MoE projections are not modelled yet.
+  - Holo-3.1: it has no MTP layer for the Qwen MoE draft head.
+  - The DFlash drafts: they have unmapped keys.
+  - Qwen3.6-27B-FP8: a `DeclaredPrecisionPlan` substring-ignore finding.
+  - Every other model type.
+
+**Two mechanisms the config maps rely on:**
+
+- **Switch dims.** An integer dim that is 0 or 1, read by a node's `when` (absent node = identity)
+  or `params_when`, and by a circuit's `draft_when`.
+- **Quantizer insertion.** A projection whose declared activation is quantized gets its
+  `act_quant` node from the precision. A static per-tensor scale is bound to that projection's
+  `input_scale` and is not shared.
+
 ## 7. Parity instruments per phase
 
 ### 7.1 Legacy byte parity (existing families)
