@@ -220,6 +220,12 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # The stamp race (see below): a `/stamp` comment younger than this is
+          # treated as in flight, and the lookup polls for its mark this long,
+          # this often. The command handler takes ~15 s on its runner.
+          STAMP_INFLIGHT_WINDOW_SECONDS: "600"
+          STAMP_WAIT_SECONDS: "180"
+          STAMP_POLL_SECONDS: "10"
         run: |
           set -uo pipefail
           # Only a pull_request can be un-stamped. A merge_group entry reached
@@ -257,25 +263,63 @@ jobs:
           # head first, then the rest newest-first. Carrying it forward is safe
           # because a stamp only releases an expensive lane — it approves
           # nothing, and certification still has to pass on its own merits.
-          stamped_at=""
-          for s in $SHA $(gh api "repos/$REPO/pulls/$PR/commits?per_page=100" \
-                            --jq 'reverse | .[].sha' 2>/dev/null); do
-            # `k=$(cmd || echo FAILOPEN)` would CONCATENATE gh's error body with
-            # the marker, so the equality test misses and `-gt` then dies on a
-            # non-integer — silently reading an API failure as "not stamped",
-            # the exact inverse of the fail-open doctrine. Assign, then test the
-            # command's own status, and require a clean integer.
-            k=$(gh api "repos/$REPO/commits/$s/check-runs?per_page=100" \
-                  --jq '[.check_runs[] | select((.name == "Stamp" or .name == "Expedite") and .conclusion == "success")] | length' \
-                  2>/dev/null) || k=FAILOPEN
-            case "$k" in ''|*[!0-9]*) k=FAILOPEN ;; esac
-            if [ "$k" = "FAILOPEN" ]; then
+          : "${STAMP_INFLIGHT_WINDOW_SECONDS:?}" "${STAMP_WAIT_SECONDS:?}" "${STAMP_POLL_SECONDS:?}"
+          commits="$SHA $(gh api "repos/$REPO/pulls/$PR/commits?per_page=100" \
+                            --jq 'reverse | .[].sha' 2>/dev/null)"
+          find_stamp() {  # find_stamp <sha>... -- the first sha carrying a mark
+            stamped_at=""
+            for s in "$@"; do
+              # `k=$(cmd || echo FAILOPEN)` would CONCATENATE gh's error body with
+              # the marker, so the equality test misses and `-gt` then dies on a
+              # non-integer — silently reading an API failure as "not stamped",
+              # the exact inverse of the fail-open doctrine. Assign, then test the
+              # command's own status, and require a clean integer.
+              k=$(gh api "repos/$REPO/commits/$s/check-runs?per_page=100" \
+                    --jq '[.check_runs[] | select((.name == "Stamp" or .name == "Expedite") and .conclusion == "success")] | length' \
+                    2>/dev/null) || k=FAILOPEN
+              case "$k" in ''|*[!0-9]*) k=FAILOPEN ;; esac
+              if [ "$k" = "FAILOPEN" ]; then
+                echo "stamped=true" >>"$GITHUB_OUTPUT"
+                echo "could not read check runs — failing OPEN, the lane runs."
+                exit 0
+              fi
+              if [ "${k:-0}" -gt 0 ]; then stamped_at="$s"; break; fi
+            done
+          }
+          # shellcheck disable=SC2086  # one sha per word, by construction
+          find_stamp $commits
+          # ★ THE STAMP RACE (#56, 2026-09-30). `/stamp` was commented 4 s after
+          # the push, this job read the marks 12 s after it, and the handler
+          # minted the Stamp 15 s after the comment -- so the lane read "held"
+          # with the stamp already asked for. merge-pipeline.yml re-runs this job
+          # once the run completes, but that costs the whole run's duration, and
+          # a red gate in the meantime invites a by-hand FULL re-run that repeats
+          # every job. So when a stamp is visibly IN FLIGHT -- a `/stamp` or
+          # `/expedite` comment younger than the window and no mark yet -- wait
+          # for the mark, bounded. The comment only decides whether to WAIT; the
+          # verdict is still the App's check run, never the comment. A refused or
+          # lost command costs one bounded wait and then reads "held" as before.
+          if [ -z "$stamped_at" ]; then
+            since=$(date -u -d "@$(( $(date +%s) - STAMP_INFLIGHT_WINDOW_SECONDS ))" +%Y-%m-%dT%H:%M:%SZ)
+            inflight=$(gh api --paginate "repos/$REPO/issues/$PR/comments?per_page=100&since=$since" \
+                --jq ".[] | select(.created_at >= \"$since\") | select((.body | startswith(\"/stamp\")) or (.body | startswith(\"/expedite\"))) | .created_at" \
+                2>/dev/null) || inflight=FAILOPEN
+            if [ "$inflight" = "FAILOPEN" ]; then
               echo "stamped=true" >>"$GITHUB_OUTPUT"
-              echo "could not read check runs — failing OPEN, the lane runs."
+              echo "could not read the PR's comments — failing OPEN, the lane runs."
               exit 0
             fi
-            if [ "${k:-0}" -gt 0 ]; then stamped_at="$s"; break; fi
-          done
+            if [ -n "$inflight" ]; then
+              echo "a stamp command is in flight (commented $(printf '%s\n' "$inflight" | sort | tail -1)) — waiting up to ${STAMP_WAIT_SECONDS}s for its mark."
+              deadline=$(( $(date +%s) + STAMP_WAIT_SECONDS ))
+              while [ -z "$stamped_at" ] && [ "$(date +%s)" -lt "$deadline" ]; do
+                sleep "$STAMP_POLL_SECONDS"
+                # The handler stamps the head it reads, and a newer push would
+                # have cancelled this run, so only the head is polled.
+                find_stamp "$SHA"
+              done
+            fi
+          fi
           if [ -n "$stamped_at" ]; then
             echo "stamped=true" >>"$GITHUB_OUTPUT"
             echo "stamped at $stamped_at — the lane runs."
@@ -2238,7 +2282,10 @@ jobs:
           Comment /stamp to release certification and the nine release-matrix \
           builds. They are held so a draft does not spend an hour of runners on \
           every push. Anyone with write access can stamp, and a stamp survives \
-          new commits."
+          new commits. Already stamped? Then nothing more is needed and nothing \
+          should be re-run by hand: when this run completes, the merge pipeline \
+          re-runs stamp lookup and the certification lane by itself (a by-hand \
+          full re-run repeats every job)."
             exit 1
           fi
           # Anything else — failure, cancelled, skipped — is not a

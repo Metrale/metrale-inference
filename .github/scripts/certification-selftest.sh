@@ -467,18 +467,117 @@ mkstub() {
   chmod +x "$TMP/bin/gh"
 }
 
+# The stamp-race knobs, small so the bounded wait finishes in seconds here.
+# Production values live on the step in ci.yml; these only shorten the clock.
+STAMP_KNOBS="STAMP_INFLIGHT_WINDOW_SECONDS=600 STAMP_WAIT_SECONDS=3 STAMP_POLL_SECONDS=1"
+
 extract 'stamp/-' > "$TMP/stamp.sh"
 if [ -s "$TMP/stamp.sh" ]; then
   mkstub 1
   : > "$TMP/go1"
-  ( PATH="$TMP/bin:$PATH" GITHUB_OUTPUT="$TMP/go1" REPO=o/r EVENT=pull_request \
+  ( env $STAMP_KNOBS PATH="$TMP/bin:$PATH" GITHUB_OUTPUT="$TMP/go1" REPO=o/r EVENT=pull_request \
     SHA=abc PR=1 MQ_HEAD_REF= bash "$TMP/stamp.sh" >/dev/null 2>&1 )
   grep -q 'stamped=true' "$TMP/go1" && ok "stamp: a Stamp releases the lane" || bad "stamp: a Stamp did not release the lane"
   mkstub 0
   : > "$TMP/go2"
-  ( PATH="$TMP/bin:$PATH" GITHUB_OUTPUT="$TMP/go2" REPO=o/r EVENT=pull_request \
+  ( env $STAMP_KNOBS PATH="$TMP/bin:$PATH" GITHUB_OUTPUT="$TMP/go2" REPO=o/r EVENT=pull_request \
     SHA=abc PR=1 MQ_HEAD_REF= bash "$TMP/stamp.sh" >/dev/null 2>&1 )
   grep -q 'stamped=false' "$TMP/go2" && ok "control: no Stamp holds the lane" || bad "control: an unstamped PR did not hold the lane"
+  # No implicit defaults: a lookup missing its knobs must not quietly pick some.
+  : > "$TMP/go2k"
+  ( env PATH="$TMP/bin:$PATH" GITHUB_OUTPUT="$TMP/go2k" REPO=o/r EVENT=pull_request \
+    SHA=abc PR=1 MQ_HEAD_REF= bash "$TMP/stamp.sh" >/dev/null 2>&1 )
+  grep -q 'stamped=false' "$TMP/go2k" && bad "control: a lookup with no race knobs still decided" \
+    || ok "control: a lookup with no race knobs refuses to decide"
+
+  # ── THE STAMP RACE (#56) ──────────────────────────────────────────────────
+  # race_stub <comments-json> <reads-before-the-mark-exists>: the PR carries
+  # those comments, and the Stamp check run appears only after that many
+  # check-run reads -- the handler minting it while the lookup runs. The stub
+  # answers with JSON and applies the lookup's OWN --jq filter, so the window
+  # and the body match are exercised, not bypassed.
+  race_stub() {
+    mkdir -p "$TMP/bin"; echo 0 > "$TMP/reads"
+    printf '%s' "$1" > "$TMP/comments.json"
+    cat > "$TMP/bin/gh" <<STUB
+#!/bin/bash
+q=""; prev=""
+for a in "\$@"; do [ "\$prev" = "--jq" ] && q="\$a"; prev="\$a"; done
+case "\$*" in
+  *issues/*/comments*) doc=\$(cat "$TMP/comments.json") ;;
+  *check-runs*) n=\$(( \$(cat "$TMP/reads") + 1 )); echo \$n > "$TMP/reads"
+                if [ \$n -gt $2 ]; then doc='{"check_runs":[{"name":"Stamp","conclusion":"success"}]}'
+                else doc='{"check_runs":[]}'; fi ;;
+  *pulls/*/commits*) doc='[]' ;;
+  *) doc='{}' ;;
+esac
+if [ -n "\$q" ]; then printf '%s' "\$doc" | jq -r "\$q"; else printf '%s' "\$doc"; fi
+STUB
+    chmod +x "$TMP/bin/gh"
+  }
+  race_run() {  # race_run <outfile> -- the lookup against the current stub; sets $took
+    : > "$1"; local t0; t0=$(date +%s)
+    # `timeout`: a lookup whose wait lost its bound must FAIL a row here, not
+    # hang the suite.
+    ( timeout 20 env $STAMP_KNOBS PATH="$TMP/bin:$PATH" GITHUB_OUTPUT="$1" REPO=o/r EVENT=pull_request \
+      SHA=abc PR=1 MQ_HEAD_REF= bash "${2:-$TMP/stamp.sh}" >/dev/null 2>&1 )
+    took=$(( $(date +%s) - t0 ))
+  }
+  comment() { printf '[{"created_at":"%s","body":"%s"}]' "$1" "$2"; }
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  hour_ago=$(date -u -d @$(( $(date +%s) - 3600 )) +%Y-%m-%dT%H:%M:%SZ)
+  # STAMP_WAIT_SECONDS=3 above: a lookup that waited takes >= 3 s, one that did
+  # not takes well under 2.
+  race_stub "$(comment "$now" /stamp)" 2; race_run "$TMP/race1"
+  grep -q 'stamped=true' "$TMP/race1" && ok "stamp race: a /stamp in flight is waited for and releases the lane" \
+    || bad "stamp race: a /stamp in flight still read as held"
+  race_stub "$(comment "$now" /expedite)" 2; race_run "$TMP/race1e"
+  grep -q 'stamped=true' "$TMP/race1e" && ok "stamp race: an /expedite in flight is waited for too" \
+    || bad "stamp race: an /expedite in flight still read as held"
+  # CONTROL: the same late mark with NO stamp comment is not waited for. If this
+  # waited, the lookup would poll on every push of every PR.
+  race_stub '[]' 2; race_run "$TMP/race2"
+  grep -q 'stamped=false' "$TMP/race2" && [ "$took" -lt 2 ] \
+    && ok "control: no stamp comment -> held at once, no wait" \
+    || bad "control: the lookup waited (or released) with no stamp in flight (${took}s)"
+  # CONTROL: prose that MENTIONS /stamp is not a command (the handler matches
+  # the start of the body), so it is not in flight either.
+  race_stub "$(comment "$now" 'please /stamp when ready')" 2; race_run "$TMP/race2p"
+  grep -q 'stamped=false' "$TMP/race2p" && [ "$took" -lt 2 ] \
+    && ok "control: a comment merely mentioning /stamp is not waited for" \
+    || bad "control: prose mentioning /stamp made the lookup wait (${took}s)"
+  # CONTROL: an OLD /stamp that never produced a mark (refused, lost) is not in
+  # flight; waiting on it would tax every later push of that PR.
+  race_stub "$(comment "$hour_ago" /stamp)" 2; race_run "$TMP/race3"
+  grep -q 'stamped=false' "$TMP/race3" && [ "$took" -lt 2 ] \
+    && ok "control: a /stamp older than the window is not waited for" \
+    || bad "control: the lookup waited on a stale /stamp comment (${took}s)"
+  # CONTROL: the wait is BOUNDED. A refused /stamp never mints a mark; the
+  # lookup must give up and hold, not hang the job.
+  race_stub "$(comment "$now" /stamp)" 1000; race_run "$TMP/race4"
+  grep -q 'stamped=false' "$TMP/race4" && [ "$took" -ge 3 ] && [ "$took" -le 8 ] \
+    && ok "control: a refused /stamp holds after the bounded wait (${took}s)" \
+    || bad "control: a refused /stamp did not hold within the bound (${took}s)"
+  # FAIL OPEN, like the mark read: an unreadable comment list must cost runner
+  # minutes (the lane runs), never hold a PR on an API error.
+  race_stub '[]' 1000
+  sed -i 's|^  \*issues/\*/comments\*) .*|  *issues/*/comments*) echo "HTTP 502" >\&2; exit 1 ;;|' "$TMP/bin/gh"
+  grep -q 'HTTP 502' "$TMP/bin/gh" || bad "control: the failing-comments stub anchor no longer matches"
+  race_run "$TMP/race6"
+  grep -q 'stamped=true' "$TMP/race6" && ok "stamp race: an unreadable comment list fails OPEN (the lane runs)" \
+    || bad "stamp race: an unreadable comment list held the lane"
+  # CONTROL (sabotage): without the in-flight wait, the #56 sequence reads held.
+  # Proves the first race row is caught by the wait and not by something else.
+  sed 's/if \[ -n "\$inflight" \]; then/if false; then/' "$TMP/stamp.sh" > "$TMP/stamp-nowait.sh"
+  if cmp -s "$TMP/stamp.sh" "$TMP/stamp-nowait.sh"; then
+    bad "control: the sabotage anchor for the in-flight wait no longer matches"
+  else
+    race_stub "$(comment "$now" /stamp)" 2; race_run "$TMP/race5" "$TMP/stamp-nowait.sh"
+    grep -q 'stamped=false' "$TMP/race5" && ok "control: with the wait removed, the #56 race reads held" \
+      || bad "control: the race row passes without the wait -- it proves nothing"
+  fi
+  # The merge_group row below reuses the plain stub.
+  mkstub 0
   : > "$TMP/go3"
   ( PATH="$TMP/bin:$PATH" GITHUB_OUTPUT="$TMP/go3" REPO=o/r EVENT=merge_group \
     SHA=abc PR= MQ_HEAD_REF= bash "$TMP/stamp.sh" >/dev/null 2>&1 )
