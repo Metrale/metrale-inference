@@ -135,8 +135,12 @@ impl Format {
                 if !dim.is_multiple_of(g) || !elems.is_multiple_of(2) {
                     return None;
                 }
-                // 2026-09-28: Packed E2M1 pairs, one E4M3 byte per group, one F32 global.
-                (elems / 2).checked_add(elems / g)?.checked_add(4)
+                // 2026-09-28: Packed E2M1 pairs, one E4M3 byte per group. 2026-09-30: One F32
+                // global per row, as the activation quantizer writes it (`w4a4_quant_rows`);
+                // an edge is always an activation.
+                (elems / 2)
+                    .checked_add(elems / g)?
+                    .checked_add(rows.checked_mul(4)?)
             }
         }
     }

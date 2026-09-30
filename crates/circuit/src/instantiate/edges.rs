@@ -181,7 +181,7 @@ impl Builder<'_> {
         let node = self.circuit.nodes.len();
         self.circuit.edges[x].consumers.push(node);
         self.circuit.edges.push(Edge {
-            id: format!("{prefix}.{local}.{}", format.name()),
+            id: format!("{prefix}.{local}"),
             format,
             rows: src.rows,
             dim: src.dim,

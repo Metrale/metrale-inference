@@ -20,6 +20,7 @@ use metrale_circuit::{Circuit, LinearRole};
 
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
+use crate::layers::ops::{W8a8Kernels, W8a8Weight};
 use crate::weight_map::{DenseWeight, QuantizedWeight};
 
 /// 2026-09-28: Which weight of a layer a circuit node reads.
@@ -76,6 +77,9 @@ pub enum BoundWeight {
     /// 2026-09-28: NVFP4 repacked for the MMQ GEMM (`ops::nvfp4_mmq_repack`); its
     /// `weight_scale_2` stays with the source weight.
     Mmq(DevicePtr),
+    /// 2026-09-30: A declared W8A8 projection (`W8a8Mixer`, `W8a8Ffn`): the checkpoint's E4M3
+    /// weight with its scales, and the kernels its layer runs it with.
+    W8a8(W8a8Weight, W8a8Kernels),
 }
 
 impl BoundWeight {
@@ -84,6 +88,7 @@ impl BoundWeight {
         match self {
             BoundWeight::Dense(_) => "bf16",
             BoundWeight::Nvfp4(_) | BoundWeight::Mmq(_) => "nvfp4",
+            BoundWeight::W8a8(..) => "fp8",
         }
     }
 }

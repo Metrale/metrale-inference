@@ -32,8 +32,26 @@ impl Matcher<'_> {
         };
         op && p.local.as_deref().is_none_or(|l| l == n.local)
             && p.weight.is_none_or(|w| n.weight == Some(w))
+            && self.reads_quantized_as(p, n)
             && p.layer_kind
                 .is_none_or(|k| n.layer.is_some_and(|i| self.circuit.layer_kinds[i] == k))
+    }
+
+    /// 2026-09-30: A node that reads a quantized activation (an `act_quant` output) matches only
+    /// a pattern element that names that format as its `input`; a pattern naming a quantized
+    /// input matches only such a node. A kernel for 16-bit activations never takes a W4A4 or
+    /// W8A8 projection.
+    fn reads_quantized_as(&self, p: &PatternOp, n: &Node) -> bool {
+        let read = n
+            .inputs
+            .first()
+            .map(|&e| self.circuit.edges[e].format)
+            .filter(|f| !f.is_plain());
+        match (read, p.input.filter(|f| !f.is_plain())) {
+            (None, None) => true,
+            (Some(r), Some(w)) => r == w,
+            _ => false,
+        }
     }
 
     fn free(&self, n: NodeIdx, owner: &[Option<usize>], chain: &[NodeIdx]) -> bool {

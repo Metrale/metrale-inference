@@ -72,6 +72,8 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
             "decode_split_silu".to_string(),
             on_off(levers.decode_split_silu),
         ),
+        // 2026-09-30: No fused norm-quantize launch exists in the engine.
+        ("rms_norm_act_quant".to_string(), "off".to_string()),
     ]);
     Policy {
         opt_in_levers: Default::default(),
@@ -82,7 +84,7 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
 /// 2026-09-28: Environment switches of the multi-sequence decode and (2026-09-29) MTP verify
 /// dispatch whose defaults the rules' row bands and arms encode, with the file that reads
 /// each.
-pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 15] = [
+pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 16] = [
     (
         "METRALE_GDN_FUSED_VERIFY",
         "qwen3_ssm/trait_decode_batched_conv_gdn.rs",
@@ -125,6 +127,8 @@ pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 15] = [
     ("METRALE_NO_MMQ_SMALL_TILE", "layers/dense_ffn.rs"),
     ("METRALE_NO_MMQ_TILE64", "layers/dense_ffn.rs"),
     ("METRALE_W4A16_TC_WIDE", "ops/gemv_tc.rs"),
+    // 2026-09-30: A diagnostic that runs the W4A16 twin of every W4A4 projection.
+    ("METRALE_W4A4_PROJ_AUDIT", "ops/w4a4_proj.rs"),
 ];
 
 /// 2026-09-28: Switches that change legacy decode which no rule reads, when they are set.

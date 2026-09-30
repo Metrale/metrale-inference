@@ -19,6 +19,8 @@ use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
 use crate::layers::{try_kernel, try_target_kernel};
 
+mod declared;
+
 /// 2026-09-28: Emitter handles by kernel id; only present kernels are kept.
 #[derive(Debug, Clone, Default)]
 pub struct KernelTable {
@@ -420,6 +422,7 @@ impl KernelTable {
         ];
         let handles = entries
             .into_iter()
+            .chain(declared::entries(gpu, &look))
             .filter(|(_, _, h)| h.0 != 0)
             .map(|(m, f, h)| {
                 (

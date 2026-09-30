@@ -31,7 +31,6 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 
 use crate::weight_map::QuantizedWeight;
 
@@ -93,6 +92,9 @@ fn audit_enabled() -> bool {
 #[path = "w4a4_proj/mx_plan.rs"]
 mod mx_plan;
 pub use mx_plan::*;
+#[path = "w4a4_proj/steps.rs"]
+mod steps;
+pub use steps::{Nvfp4ActBuf, W4a4Proj};
 
 fn cache() -> &'static Mutex<Vec<(usize, Option<W4a4State>)>> {
     static CACHE: OnceLock<Mutex<Vec<(usize, Option<W4a4State>)>>> = OnceLock::new();
@@ -331,47 +333,15 @@ fn proj(
 ) -> Result<()> {
     let tier = crate::layers::weight_quantization();
     if let Some(s) = w4a4_state_for(gpu, weight, m, n, k) {
+        let p = W4a4Proj(s);
         let want: QuantKey = (key(gpu), input.0, m, k, stream);
         let mut last = last_quant().lock().unwrap_or_else(|p| p.into_inner());
         if !(same_input && *last == Some(want)) {
-            KernelLaunch::new(gpu, s.quant)
-                .grid([m, 1, 1])
-                .block([256, 1, 1])
-                .arg_ptr(input)
-                .arg_ptr(s.aq)
-                .arg_ptr(s.a_scale)
-                .arg_ptr(s.a_gs)
-                .arg_u32(k)
-                .launch(stream)?;
+            p.quantize(gpu, input, p.scratch(), m, k, stream)?;
             *last = Some(want);
         }
         drop(last);
-        let (mx, grid, smem, sst) = match mx_plan(&s, m, n, k, mx_nt(), mx_ps()) {
-            MxLaunch::Tiles {
-                kernel,
-                rows_per_cta,
-            } => (kernel, div_ceil(n, rows_per_cta), 0, None),
-            MxLaunch::Persistent { kernel, sst, smem } => (kernel, s.sms, smem, Some(sst)),
-        };
-        anyhow::ensure!(mx.0 != 0, "w4a4: no kernel for {m} rows");
-        let launch = KernelLaunch::new(gpu, mx)
-            .grid([grid, 1, 1])
-            .block([256, 1, 1])
-            .shared_mem(smem)
-            .arg_ptr(s.aq)
-            .arg_ptr(s.a_scale)
-            .arg_ptr(s.a_gs)
-            .arg_ptr(weight.weight)
-            .arg_ptr(weight.weight_scale)
-            .arg_f32(weight.weight_scale_2)
-            .arg_ptr(output)
-            .arg_u32(m)
-            .arg_u32(n)
-            .arg_u32(k);
-        match sst {
-            Some(sst) => launch.arg_u32(sst).launch(stream)?,
-            None => launch.launch(stream)?,
-        }
+        p.gemv(gpu, p.scratch(), weight, output, m, n, k, stream)?;
         if audit_enabled()
             && !s.audit_ref.is_null()
             && (n as usize) <= AUDIT_MAX_N

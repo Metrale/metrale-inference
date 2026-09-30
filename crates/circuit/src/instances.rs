@@ -33,6 +33,10 @@ pub struct Instance {
     pub checkpoint: String,
     /// 2026-09-28: Circuit arch: `kernels/circuits/<arch>.toml`.
     pub arch: String,
+    /// 2026-09-30: What tells this instance's golden plans apart from another golden instance
+    /// of the same arch (the recipe served under another `--weight-quantization` tier); `None`
+    /// for the arch's only golden instance.
+    pub variant: Option<String>,
     /// 2026-09-28: Where each linear module's formats come from.
     pub precision: PrecisionSpec,
     /// 2026-09-28: Kernel target, `hw/model/quant`.
@@ -48,9 +52,18 @@ pub struct Instance {
 }
 
 impl Instance {
-    /// 2026-09-28: The golden file name of one plan: `<arch>-<mode>-n<rows>.txt`.
+    /// 2026-09-28: The golden file name of one plan: `<stem>-<mode>-n<rows>.txt`.
     pub fn plan_file(&self, mode: Mode, rows: u64) -> String {
-        format!("{}-{}-n{rows}.txt", self.arch, mode.name())
+        format!("{}-{}-n{rows}.txt", self.plan_stem(), mode.name())
+    }
+
+    /// 2026-09-30: `<arch>`, or `<arch>.<variant>` for a variant: the prefix of every golden
+    /// file of this instance.
+    pub fn plan_stem(&self) -> String {
+        match &self.variant {
+            Some(v) => format!("{}.{v}", self.arch),
+            None => self.arch.clone(),
+        }
     }
 }
 
@@ -114,6 +127,7 @@ struct InstanceFile {
     recipe: String,
     checkpoint: String,
     arch: String,
+    variant: Option<String>,
     precision: PrecisionFile,
     target: String,
     golden: bool,
@@ -167,6 +181,7 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
         )));
     }
     let mut seen = BTreeSet::new();
+    let mut stems = BTreeSet::new();
     let mut out = Vec::with_capacity(file.instance.len());
     for f in file.instance {
         let field = |detail: String| InstanceError::Field {
@@ -175,6 +190,17 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
         };
         if !seen.insert(f.recipe.clone()) {
             return Err(field("listed twice".into()));
+        }
+        if f.variant.as_deref().is_some_and(|v| v.is_empty()) {
+            return Err(field("`variant` is empty".into()));
+        }
+        let stem = (f.arch.clone(), f.variant.clone());
+        if f.golden && !stems.insert(stem) {
+            return Err(field(format!(
+                "a second golden `{}` instance without its own `variant`: the golden plan files \
+                 would collide",
+                f.arch
+            )));
         }
         let mut layer_kinds = Vec::new();
         for c in f.layer_kinds.chars().filter(|c| !c.is_whitespace()) {
@@ -227,6 +253,7 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
             recipe: f.recipe.clone(),
             checkpoint: f.checkpoint,
             arch: f.arch,
+            variant: f.variant,
             precision,
             target: f.target,
             golden: f.golden,

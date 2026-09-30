@@ -846,11 +846,17 @@ point = {}
 rows = [32]
 measurement = "qwen3.8-27b::metrale_nvfp4_mmq32_nc @ decode C=16 (R=32, MTP k=1) · FFN gate or up M=32 N=17408 K=5120"
 
+# 2026-09-30: The declared W4A4 dense FFN (1..=32 rows) runs the whole mx ladder the default
+# levers pick (ml/ops/w4a4_proj/mx_plan.rs), not just the 8-row entry.
 [[family]]
 id = "w4a4_mx"
-description = "Opt-in W4A4 MX GEMV (activation quantize + mx8)"
-kernels = ["w4a4_gemv_mx::w4a4_quant_rows", "w4a4_gemv_mx::w4a4_gemv_mx8"]
-rows = [1, 8]
+description = "W4A4 MX GEMV (per-row NVFP4 activation quantize; mx8, the activation-reuse twins and the persistent entries)"
+kernels = [
+  "w4a4_gemv_mx::w4a4_quant_rows", "w4a4_gemv_mx::w4a4_gemv_mx8",
+  "w4a4_gemv_mx::w4a4_gemv_mx16_nt2", "w4a4_gemv_mx::w4a4_gemv_mx32_nt4",
+  "w4a4_gemv_mx::w4a4_gemv_mx16_ps", "w4a4_gemv_mx::w4a4_gemv_mx32_ps",
+]
+rows = [1, 32]
 op = [{ op = "linear", weight = ["nvfp4/g16"], activation = ["nvfp4/g16"] }]
 [[family.point]]
 values = {}

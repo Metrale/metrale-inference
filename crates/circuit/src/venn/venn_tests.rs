@@ -284,6 +284,7 @@ fn instance(recipe: &str, hidden: u64) -> Instance {
         recipe: recipe.into(),
         checkpoint: recipe.into(),
         arch: "toy".into(),
+        variant: None,
         precision: PrecisionSpec::Table("toy".into()),
         target: "toy/toy/nvfp4".into(),
         golden: false,

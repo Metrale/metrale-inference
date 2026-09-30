@@ -1314,6 +1314,9 @@ cite = "k/residual_add_rms_norm_exact.cu (new); replaces the layer-end ffn_resid
 
 [[rule]]
 id = "rms_norm_quant_fp8_row"
+# 2026-09-30: Gated on `rms_norm_act_quant`, off in every policy until the executor has the
+# emitter: ungated, this priority-100 fusion took the norm ahead of a declared W8A8/W4A4
+# act_quant that the legacy decode launches separately after the norm.
 pattern = [{ op = "rms_norm" }, { op = "act_quant", format = "fp8/token" }]
 kernels = [{ module = "rms_norm_act_quant", func = "rms_norm_quant_fp8_row" }]
 repeat = "once"
@@ -1322,6 +1325,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "bit_identical"
 microtest = "rms_norm_act_quant_microtest"
+when = { rms_norm_act_quant = "on" }
 priority = 100
 cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then quant_rowwise_fp8 (k/quant_rowwise_fp8.cu, ml/ops/dispatch_proj_rowwise.rs)"
 
@@ -1335,6 +1339,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "bit_identical"
 microtest = "rms_norm_act_quant_microtest"
+when = { rms_norm_act_quant = "on" }
 priority = 100
 cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then per_token_group_quant_fp8 (k/per_token_group_quant_fp8.cu, ml/ops/fp8_act_quant.rs)"
 
@@ -1348,5 +1353,446 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "bit_identical"
 microtest = "rms_norm_act_quant_microtest"
+when = { rms_norm_act_quant = "on" }
 priority = 100
 cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then w4a4_quant_rows (k/w4a4_gemv_mx.cu, ml/ops/w4a4_proj.rs)"
+
+# 2026-09-30: The declared W8A8 decode projections (`--weight-quantization declared`, FP8 weights
+# with per-channel scales and FP8 per-token activations: unsloth/Qwen3.8-27B's attention, GDN and
+# the FFN of layers 56-63). Every decode, verify and multi-sequence path tries the W8A8 arm first
+# at 1..=ops::W8A8_MAX_ROWS rows (ml/w8a8_layer.rs; ml/qwen3_attention/w8a8_decode_arm.rs;
+# ml/qwen3_ssm/w8a8_decode.rs; ml/dense_ffn_w8a8.rs). One quantize launch into the per-token E4M3
+# activation, then one GEMV per projection; the GEMV entry is chosen by the launch's rows
+# (ml/ops/w8a8_decode.rs `entry_index`: every entry sums in the same order).
+
+[[rule]]
+id = "w8a8_act_quant_row"
+pattern = [{ op = "act_quant", format = "fp8/token" }]
+kernels = [{ module = "w8a8_act_quant", func = "w8a8_act_quant_row" }]
+repeat = "once"
+emitter = "w8a8_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV)"
+
+[[rule]]
+id = "w8a8_act_quant_silu_row"
+pattern = [{ op = "silu_mul", local = "act" }, { op = "act_quant", format = "fp8/token" }]
+kernels = [{ module = "w8a8_act_quant", func = "w8a8_act_quant_silu_row" }]
+repeat = "once"
+emitter = "w8a8_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_w8a8.rs:72-74; ml/w8a8_layer.rs:82-116 (silu_proj: bf16(silu(gate) * up) quantized in one launch)"
+
+[[rule]]
+id = "w8a8_gemv_mb1_ku8"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb1_ku8"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+[[rule]]
+id = "w8a8_gemv_mb2"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb2"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+[[rule]]
+id = "w8a8_gemv_mb4"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb4" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb4"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb4" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb4" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+[[rule]]
+id = "w8a8_gemv_mb8"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb8" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [33, 64]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb8"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb8" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb8" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [33, 64]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+[[rule]]
+id = "w8a8_gemv_mb16"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb16" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [65, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb16"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb16" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb16" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [65, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+# 2026-09-30: The declared W4A4 dense FFN (NVFP4 weights with FP4 activations: unsloth/Qwen3.8-27B's
+# FFN of layers 0-55) at the rows `forward_km` serves, 1..=32 (the FFN edge,
+# ml/w4a16_gemv_tiers.rs:177-179): the single row (ml/dense_ffn_decode.rs:252-261), 2 and 3 rows
+# (forward_k2/k3 under `small_batch_w4a4`), and 4..=32 (ml/qwen3_attention/trait_impl/multi_seq/
+# ffn.rs:191-222). Each projection quantizes its input per row to NVFP4 (`w4a4_quant_rows`, the up
+# projection reuses gate's) and runs the FP4 MMA entry `mx_plan` picks for its rows and N at the
+# default levers (ml/ops/w4a4_proj/mx_plan.rs:96-127); the executor refuses a plan whose entry is
+# not that pick.
+
+[[rule]]
+id = "w4a4_act_quant"
+pattern = [{ op = "act_quant", format = "nvfp4/g16" }]
+kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_quant_rows" }]
+repeat = "once"
+emitter = "w4a4_act_quant"
+rows = [1, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w4a4_proj.rs:331-347 (the quantize launch of nvfp4_proj_small_m, skipped for up's same input)"
+
+[[rule]]
+id = "w4a4_gate_up_1_8"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_gate_up_9_16"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_ps" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_ps" },
+]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_gate_up_17_32"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_ps" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_ps" },
+]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_down_1_8"
+pattern = [{ op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" }]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_down_9_16"
+pattern = [{ op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_nt2" }]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_down_17_32"
+pattern = [{ op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_nt4" }]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+# 2026-09-30: The declared W4A4 FFN where `forward_prefill` serves it: a GDN layer's FFN from
+# METRALE_SSM_FFN_PREFILL_MIN_N (5) rows (ml/qwen3_ssm/trait_decode_multi_seq.rs:201-220), every
+# layer's above the 32-row FFN edge (ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:191-222). A
+# weight stamped A4 takes the NVFP4 MMQ arm there as an unstamped one does under `nvfp4`
+# (crates/config/src/weight_quantization.rs:167-181), so these are the MMQ rules above with the
+# act_quant the declared circuit places before the projection inside the group: the MMQ quantizer
+# writes its own block layout, which no other kernel reads.
+
+[[rule]]
+id = "ffn_mmq16_a4_gate_up_gdn"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [5, 16]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+
+[[rule]]
+id = "ffn_mmq16_a4_act_down_gdn"
+pattern = [
+  { op = "silu_mul", local = "act", layer_kind = "linear_attention" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [5, 16]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq32_a4_gate_up_gdn"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [17, 32]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+
+[[rule]]
+id = "ffn_mmq32_a4_act_down_gdn"
+pattern = [
+  { op = "silu_mul", local = "act", layer_kind = "linear_attention" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [17, 32]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq64_a4_gate_up"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [33, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+
+[[rule]]
+id = "ffn_mmq64_a4_act_down"
+pattern = [
+  { op = "silu_mul", local = "act" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [33, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq_pipe_a4_gate_up"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+
+[[rule]]
+id = "ffn_mmq_pipe_a4_act_down"
+pattern = [
+  { op = "silu_mul", local = "act" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183"

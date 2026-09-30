@@ -227,6 +227,16 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
         .filter(|i| i.golden)
         .flat_map(|i| common::load(i).circuit.nodes.into_iter().map(|n| n.op))
         .collect();
+    // 2026-09-30: A bit-identical rule may also wait behind a policy setting no golden instance
+    // turns on (`rms_norm_act_quant`: its emitter is not in the executor yet).
+    let gated_off = |r: &metrale_circuit::Rule| {
+        !r.when.is_empty()
+            && common::instances().iter().filter(|i| i.golden).all(|i| {
+                r.when
+                    .iter()
+                    .any(|(k, v)| i.policy.settings.get(k) != Some(v))
+            })
+    };
     for r in &rules {
         match &r.numerics {
             Numerics::Differs { .. } => assert!(
@@ -235,9 +245,10 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
                 r.id
             ),
             Numerics::BitIdentical { .. } if !used.contains(&r.id) => assert!(
-                r.pattern
-                    .iter()
-                    .any(|p| !ops.contains(&p.op) && p.roles.is_empty()),
+                gated_off(r)
+                    || r.pattern
+                        .iter()
+                        .any(|p| !ops.contains(&p.op) && p.roles.is_empty()),
                 "bit-identical rule `{}` matches circuit ops but no golden plan selects it",
                 r.id
             ),

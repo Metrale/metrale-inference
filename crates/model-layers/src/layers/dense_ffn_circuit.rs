@@ -5,8 +5,9 @@
 //!
 //! Owner: model-layers (dense FFN).
 //! Invariants:
-//! - Only the NVFP4 SiLU FFN without an adapter is bound; every other arm of `forward` is
-//!   reported as unmodelled.
+//! - Only the NVFP4 SiLU FFN without an adapter is bound, and (2026-09-30) the declared W8A8
+//!   one and the declared-W4A4 NVFP4 one; every other arm of `forward` is reported as
+//!   unmodelled.
 //! - The wide-batch arm bound is the NVFP4 MMQ one with the fused down quantize, as
 //!   `fp4mmq_arms` answers it; any other `forward_prefill` arm is unmodelled.
 
@@ -37,15 +38,7 @@ impl DenseFfnLayer {
                 "a non-SiLU FFN activation",
             ),
             (
-                self.w8a8.is_some(),
-                "declared W8A8 FFN projections (not bound yet)",
-            ),
-            (
-                self.single_row_w4a4(),
-                "a declared-W4A4 single-row FFN (not bound yet)",
-            ),
-            (
-                !(mmq_gate_up && mmq_down && self.nvfp4_silu_quant_k.0 != 0),
+                self.w8a8.is_none() && !(mmq_gate_up && mmq_down && self.nvfp4_silu_quant_k.0 != 0),
                 "a wide-batch FFN arm other than NVFP4 MMQ with the fused down quantize",
             ),
         ];
@@ -53,6 +46,23 @@ impl DenseFfnLayer {
             if present {
                 unmodelled.push(what.to_string());
             }
+        }
+        // 2026-09-30: A declared W8A8 FFN runs W8A8 at every decode row count up to
+        // `ops::W8A8_MAX_ROWS` (`forward_w8a8`, tried first by every entry point), so its
+        // NVFP4 copies and their MMQ repacks serve no row the circuit plans.
+        if let Some(w) = self.w8a8 {
+            if w.ctx.kernels.resolved(w.gate.scale()) {
+                for (slot, p) in [
+                    (WeightSlot::FfnGate, w.gate),
+                    (WeightSlot::FfnUp, w.up),
+                    (WeightSlot::Linear(LinearRole::Down), w.down),
+                ] {
+                    weights.insert(slot, BoundWeight::W8a8(p, w.ctx.kernels));
+                }
+            } else {
+                unmodelled.push("W8A8 FFN projections whose kernels did not resolve".to_string());
+            }
+            return;
         }
         weights.insert(
             WeightSlot::FfnGate,

@@ -42,10 +42,6 @@ impl CircuitBindings for Qwen3SsmLayer {
             (self.qkvz_q2.is_some(), "a packed-Q2 qkvz projection"),
             (self.out_proj_fp8w.is_some(), "an FP8 out_proj"),
             (
-                self.w8a8.is_some(),
-                "declared W8A8 GDN projections (not bound yet)",
-            ),
-            (
                 levers.gdn_fused_conv,
                 "the fused GDN conv+norm kernel (METRALE_GDN_FUSED_CONV)",
             ),
@@ -88,6 +84,23 @@ impl CircuitBindings for Qwen3SsmLayer {
                 None => BoundWeight::Nvfp4(self.ssm.out_proj),
             },
         );
+        // 2026-09-30: The declared W8A8 QKV|Z and out_proj, which every decode path tries first
+        // (`w8a8_decode.rs`); installed only on a sequential-QKVZ layer, the layout
+        // `qkvz_deinterleaved` states.
+        if let Some(w) = self.w8a8 {
+            if w.ctx.kernels.resolved(w.input.scale()) {
+                weights.insert(
+                    WeightSlot::Linear(LinearRole::Qkvz),
+                    BoundWeight::W8a8(w.input, w.ctx.kernels),
+                );
+                weights.insert(
+                    WeightSlot::Linear(LinearRole::GdnOut),
+                    BoundWeight::W8a8(w.output, w.ctx.kernels),
+                );
+            } else {
+                unmodelled.push("W8A8 GDN projections whose kernels did not resolve".to_string());
+            }
+        }
         for (role, twin) in [
             (LinearRole::Qkvz, self.qkvz_nvfp4_t),
             (LinearRole::GdnOut, self.out_proj_nvfp4_t),

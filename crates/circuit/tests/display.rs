@@ -198,8 +198,25 @@ fn the_dedup_badge_counts_the_layers_of_each_kind() {
         assert_eq!(covered("◆ Full-attention layer"), attn);
         assert_eq!(covered("╪ Layer boundary"), gdn + attn - 1);
         let titles = |t: &str| text.lines().filter(|l| l.starts_with(t)).count();
+        // 2026-09-30: Layers whose dense FFN runs one weight format share a plan; the declared
+        // instance's layers 56-63 run W8A8 where the others run W4A4 (a MoE counts as one).
+        let formats = |t: &str| {
+            loaded
+                .circuit
+                .blocks
+                .iter()
+                .filter(|b| b.template == t && b.section == Section::Main)
+                .filter_map(|b| {
+                    let id = format!("l{}.dense_ffn.gate_up", b.layer?);
+                    loaded.circuit.nodes[loaded.circuit.node(&id)?].weight
+                })
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                .max(1)
+        };
         assert!(
-            titles("▰ GatedDeltaNet layer") <= 2 && titles("◆ Full-attention layer") <= 2,
+            titles("▰ GatedDeltaNet layer") <= 2 * formats("gdn")
+                && titles("◆ Full-attention layer") <= 2 * formats("attn"),
             "layers with one plan share one diagram (the first and last layer differ at the \
              boundary they do not have)"
         );

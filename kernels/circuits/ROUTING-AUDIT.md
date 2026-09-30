@@ -26,6 +26,7 @@ dispatch code that makes today's choice, and lists the routing the circuit canno
 |---|---|---|
 | `qwen3.8/qwen3.8-27b-nvfp4-unsloth` | dense Qwen3.8-27B | by_rows tiers, bf16 KV, bf16 head, f32 GDN state, batched recurrence off, gemv_sw on, tc8 on, split SiLU on, no opt-in levers |
 | `qwen3.6/qwen3.6-35b-a3b-fp8-bf16head` | Qwen3.6-35B-A3B MoE | as above, except canonical row tiers |
+| `qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared` | dense Qwen3.8-27B under `--weight-quantization declared` (2026-09-30) | as the first row; the checkpoint's own W8A8 and W4A4 projections, plans named `qwen3_5.declared-*` |
 
 Each instance has one plan per mode and row count:
 
@@ -34,8 +35,8 @@ Each instance has one plan per mode and row count:
 - **verify** K = 2, 3, 4;
 - **draft** n1, the serial MTP head.
 
-That is 32 plan files, plus 6 display snapshots (decode n1 of each model at Unicode 80/120 and
-ASCII 80). Every policy value cites its source in `kernels/circuits/INSTANCES.toml`.
+That is 48 plan files, plus 9 display snapshots (decode n1 of each instance at Unicode 80/120
+and ASCII 80). Every policy value cites its source in `kernels/circuits/INSTANCES.toml`.
 
 The dense agentic recipe runs `max_batch_size: 1`, so its multi_seq plans describe what the
 engine would run at those widths under this policy, not a width that recipe reaches.
@@ -146,6 +147,33 @@ class and exact citation.
 | `rms_norm_quant_fp8_row` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then quant_rowwise_fp8 (k/quant_rowwise_fp8.cu, ml/ops/dispatch_proj_rowwise.rs) |
 | `rms_norm_quant_fp8_g128` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then per_token_group_quant_fp8 (k/per_token_group_quant_fp8.cu, ml/ops/fp8_act_quant.rs) |
 | `rms_norm_quant_nvfp4` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then w4a4_quant_rows (k/w4a4_gemv_mx.cu, ml/ops/w4a4_proj.rs) |
+| `w8a8_act_quant_row` | reference | ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV) |
+| `w8a8_act_quant_silu_row` | reference | ml/dense_ffn_w8a8.rs:72-74; ml/w8a8_layer.rs:82-116 (silu_proj: bf16(silu(gate) * up) quantized in one launch) |
+| `w8a8_gemv_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb1_ku8` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
+| `w8a8_gemv_mb2` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb2` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
+| `w8a8_gemv_mb4` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb4` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
+| `w8a8_gemv_mb8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb8` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
+| `w8a8_gemv_mb16` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb16` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
+| `w4a4_act_quant` | reference | ml/ops/w4a4_proj.rs:331-347 (the quantize launch of nvfp4_proj_small_m, skipped for up's same input) |
+| `w4a4_gate_up_1_8` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_gate_up_9_16` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_gate_up_17_32` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_down_1_8` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_down_9_16` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_down_17_32` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `ffn_mmq16_a4_gate_up_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
+| `ffn_mmq16_a4_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
+| `ffn_mmq32_a4_gate_up_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
+| `ffn_mmq32_a4_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
+| `ffn_mmq64_a4_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
+| `ffn_mmq64_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
+| `ffn_mmq_pipe_a4_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
+| `ffn_mmq_pipe_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183 |
 
 ## Bit-identical fusions
 
@@ -160,8 +188,10 @@ all-equal, one-hot, mixed-magnitude and all-zero rows.
   39 on the MoE. At the 2- and 3-row multi_seq rungs a GDN layer's per-row adds also collapse
   into the one launch.
 - **`rms_norm_quant_*` is RMSNorm with an activation-quantizer epilogue.** It covers per-token
-  FP8, g128 FP8 and NVFP4 g16. No circuit quantizes activations yet, so no golden plan selects
-  them; they wait for the W8A8/W4A4 circuits.
+  FP8, g128 FP8 and NVFP4 g16. No golden plan selects them: the executor has no emitter for
+  them, so (2026-09-30) they are gated on the policy setting `rms_norm_act_quant`, off in every
+  instance. Ungated, they took the norm ahead of the declared instance's act_quant, which the
+  legacy decode launches separately after the norm.
 - **The fused kernel reproduces `rms_norm`, not the residual variants.** The norm is plain
   `rms_norm`. The input and post-attention norms, which run `rms_norm_residual` and
   `residual_add_rms_norm`, need their own quantizing twins.

@@ -55,7 +55,13 @@ pub(super) struct Fixture {
     pub fixed: Fixed,
     pub layers: Vec<CircuitLayer>,
     pub head: HeadBinding,
+    /// 2026-09-30: The weight and scale pointers of the W8A8 bindings, which a `BoundWeight`
+    /// does not expose.
+    pub w8a8_ptrs: BTreeSet<u64>,
 }
+
+/// 2026-09-30: Layer `i`'s binding (its attention index `attn`) and the W8A8 pointers in it.
+pub(super) type Bind = dyn Fn(&Circuit, usize, usize) -> (CircuitLayer, Vec<u64>);
 
 /// 2026-09-28: Weight tags: layer `i`, slot `s` at `0x1_0000_0000 + i << 24 + s << 12`.
 pub(super) fn tag(layer: usize, slot: u64) -> u64 {
@@ -260,7 +266,22 @@ pub(super) fn build_at(
     edit: impl Fn(&mut Vec<CircuitLayer>),
     edit_head: impl Fn(&mut HeadBinding),
 ) -> anyhow::Result<Fixture> {
-    let inst = sources::instance(RECIPE)?;
+    let bind = |c: &Circuit, i: usize, attn: usize| (layer_binding(c, i, attn), Vec::new());
+    build_for(RECIPE, &bind, fusions, mode, rows, edit, edit_head)
+}
+
+/// 2026-09-30: [`build_at`] for the instance `recipe`, its layers bound by `bind`. The W4A4
+/// kernels are prepared on the build's backend, as the model build does.
+pub(super) fn build_for(
+    recipe: &str,
+    bind: &Bind,
+    fusions: Fusions,
+    mode: Mode,
+    rows: u64,
+    edit: impl Fn(&mut Vec<CircuitLayer>),
+    edit_head: impl Fn(&mut HeadBinding),
+) -> anyhow::Result<Fixture> {
+    let inst = sources::instance(recipe)?;
     let loaded = metrale_circuit::load(&inst, sources::sources(&inst)?)?;
     let mut avail = AvailableKernels::all_named_by(&loaded.rules);
     if fusions == Fusions::ReferenceOnly {
@@ -285,10 +306,12 @@ pub(super) fn build_at(
     let layout = compile::layout(&loaded.circuit, &plan)?;
     let buffers = plan_buffers_with(&loaded.circuit, &plan, rows, &layout)?;
     let mut attn = 0;
+    let mut w8a8_ptrs = BTreeSet::new();
     let mut layers: Vec<CircuitLayer> = (0..loaded.circuit.layer_kinds.len())
         .map(|i| {
-            let l = layer_binding(&loaded.circuit, i, attn);
+            let (l, ptrs) = bind(&loaded.circuit, i, attn);
             attn += usize::from(matches!(l.mixer, MixerFacts::Attention(_)));
+            w8a8_ptrs.extend(ptrs);
             l
         })
         .collect();
@@ -305,6 +328,7 @@ pub(super) fn build_at(
     let draft = (mode == Mode::Draft).then(|| draft_binding(&loaded.circuit));
     let fixed = fixed(attn);
     let gpu = MockGpuBackend::new();
+    crate::layers::ops::w4a4_proj::prepare(&gpu)?;
     let cfg = config();
     let table = KernelTable::resolve(&gpu, &AvailableKernels::all_named_by(&loaded.rules));
     let program = compile::compile(
@@ -332,6 +356,7 @@ pub(super) fn build_at(
         fixed,
         layers,
         head,
+        w8a8_ptrs,
     })
 }
 
@@ -398,13 +423,17 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched
     let mut known: BTreeSet<u64> = BTreeSet::new();
     for l in f.layers.iter().chain(&f.draft) {
         for w in l.weights.values() {
+            // 2026-09-30: Each pointer inserted on its own (an `&&` skipped the scale whenever
+            // the weight was already known). A W8A8 weight's segments are in `f.w8a8_ptrs`.
             match w {
-                BoundWeight::Dense(d) => known.insert(d.weight.0),
-                BoundWeight::Nvfp4(q) => known.insert(q.weight.0) && known.insert(q.weight_scale.0),
-                BoundWeight::Mmq(p) => known.insert(p.0),
-            };
+                BoundWeight::Dense(d) => known.extend([d.weight.0]),
+                BoundWeight::Nvfp4(q) => known.extend([q.weight.0, q.weight_scale.0]),
+                BoundWeight::Mmq(p) => known.extend([p.0]),
+                BoundWeight::W8a8(..) => {}
+            }
         }
     }
+    known.extend(&f.w8a8_ptrs);
     known.extend([f.head.final_norm.weight.0, 0x9100_0000]);
     for m in [f.fixed.meta, f.fixed.batch_meta, f.fixed.verify_meta] {
         known.extend([m.positions.0, m.slot.0, m.seq_len.0, m.block_table.0]);

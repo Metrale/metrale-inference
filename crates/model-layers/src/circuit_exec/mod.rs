@@ -304,6 +304,9 @@ impl CircuitExec {
 }
 
 #[cfg(test)]
+#[path = "exec_declared_tests.rs"]
+mod exec_declared_tests;
+#[cfg(test)]
 #[path = "exec_draft_tests.rs"]
 mod exec_draft_tests;
 #[cfg(test)]

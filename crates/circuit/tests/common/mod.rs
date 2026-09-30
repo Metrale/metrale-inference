@@ -224,7 +224,7 @@ pub fn golden_plans() -> Vec<(String, String)> {
                 expand: metrale_circuit::display::Expand::Summary,
             };
             let text = display_text(inst, &loaded, metrale_circuit::Mode::Decode, 1, opts);
-            out.push((format!("{}-decode-n1.{tag}.txt", inst.arch), text));
+            out.push((format!("{}-decode-n1.{tag}.txt", inst.plan_stem()), text));
         }
     }
     out

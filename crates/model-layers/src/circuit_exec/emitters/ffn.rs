@@ -13,10 +13,11 @@
 //!   fused SiLU·mul quantize applies both scales, and down's is applied by the pipelined GEMM
 //!   or by `nvfp4_scale_bf16`, as legacy does.
 //! - The quantized activation lives in `Fixed::ffn_act_q8`, the buffer legacy uses; it is
-//!   written and read within one group.
+//!   written and read within one group. (2026-09-30) Under the declared circuit the group
+//!   also holds the act_quant node before the projection: the MMQ quantizer is that node.
 
 use anyhow::{Result, bail, ensure};
-use metrale_circuit::LinearRole;
+use metrale_circuit::{LinearRole, OpKind};
 use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::super::bindings::{BoundWeight, WeightSlot};
@@ -94,17 +95,19 @@ fn mmq_weight(cx: &Cx<'_>, i: usize, slot: WeightSlot) -> Result<DevicePtr> {
 pub(crate) struct DenseFfnMmq;
 
 impl DenseFfnMmq {
-    fn gate_up(cx: &mut Cx<'_>) -> Result<()> {
+    /// 2026-09-30: `lin` is the projection's member: 0, or 1 behind the declared circuit's
+    /// act_quant, which the MMQ quantizer replaces (its own block layout stays in `q8`).
+    fn gate_up(cx: &mut Cx<'_>, lin: usize) -> Result<()> {
         let tile = mmq_tile(&cx.g.group.kernels[1].func)?;
         ensure!(
             cx.g.group.kernels.len() == 3 && cx.g.group.kernels[2] == cx.g.group.kernels[1],
             "the gate and up GEMMs take one kernel"
         );
         let (gate, up) = (
-            mmq_weight(cx, 0, WeightSlot::FfnGateMmq)?,
-            mmq_weight(cx, 0, WeightSlot::FfnUpMmq)?,
+            mmq_weight(cx, lin, WeightSlot::FfnGateMmq)?,
+            mmq_weight(cx, lin, WeightSlot::FfnUpMmq)?,
         );
-        let (g, u, inter) = gate_up_rows(cx, cx.g.output(0, 0)?)?;
+        let (g, u, inter) = gate_up_rows(cx, cx.g.output(lin, 0)?)?;
         let x = cx.ptr(cx.g.input(0, 0)?)?;
         let (m, h, q8) = (rows(cx)?, dim(cx, "hidden")?, cx.fixed.ffn_act_q8);
         tile_fits(tile, m, inter, h)?;
@@ -129,7 +132,8 @@ impl DenseFfnMmq {
         Ok(())
     }
 
-    fn act_down(cx: &mut Cx<'_>) -> Result<()> {
+    /// 2026-09-30: `lin` is the down projection's member: 1, or 2 behind the act_quant.
+    fn act_down(cx: &mut Cx<'_>, lin: usize) -> Result<()> {
         let tile = mmq_tile(&cx.g.group.kernels[1].func)?;
         let pipe = tile == 128;
         ensure!(
@@ -138,11 +142,14 @@ impl DenseFfnMmq {
         );
         let gate_s = nvfp4(cx.weight(0, WeightSlot::FfnGate)?, "gate")?.weight_scale_2;
         let up_s = nvfp4(cx.weight(0, WeightSlot::FfnUp)?, "up")?.weight_scale_2;
-        let down_s =
-            nvfp4(cx.weight(1, WeightSlot::Linear(LinearRole::Down))?, "down")?.weight_scale_2;
-        let down = mmq_weight(cx, 1, WeightSlot::FfnDownMmq)?;
+        let down_s = nvfp4(
+            cx.weight(lin, WeightSlot::Linear(LinearRole::Down))?,
+            "down",
+        )?
+        .weight_scale_2;
+        let down = mmq_weight(cx, lin, WeightSlot::FfnDownMmq)?;
         let (g, u, inter) = gate_up_rows(cx, cx.g.input(0, 0)?)?;
-        let y = cx.ptr(cx.g.output(1, 0)?)?;
+        let y = cx.ptr(cx.g.output(lin, 0)?)?;
         let (m, h, q8) = (rows(cx)?, dim(cx, "hidden")?, cx.fixed.ffn_act_q8);
         tile_fits(tile, m, h, inter)?;
         let ks = cx.handle(0)?;
@@ -211,14 +218,30 @@ impl OpEmitter for DenseFfnMmq {
     }
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
-        if cx.g.group.nodes.len() == 1 {
-            cx.g.expect_ops(self.id(), &["linear:gate_up"])?;
-            super::expect_kernel(cx, 0, "metrale_nvfp4_quantize_bf16")?;
-            Self::gate_up(cx)
-        } else {
-            cx.g.expect_ops(self.id(), &["silu_mul", "linear:down"])?;
-            super::expect_kernel(cx, 0, "metrale_nvfp4_silu_mul_quant")?;
-            Self::act_down(cx)
+        let first = cx.g.node(0).op;
+        match (cx.g.group.nodes.len(), first) {
+            (1 | 2, OpKind::Linear(_) | OpKind::ActQuant(_)) => {
+                let lin = cx.g.group.nodes.len() - 1;
+                let ops: &[&str] = if lin == 0 {
+                    &["linear:gate_up"]
+                } else {
+                    &["act_quant:nvfp4/g16", "linear:gate_up"]
+                };
+                cx.g.expect_ops(self.id(), ops)?;
+                super::expect_kernel(cx, 0, "metrale_nvfp4_quantize_bf16")?;
+                Self::gate_up(cx, lin)
+            }
+            _ => {
+                let lin = cx.g.group.nodes.len() - 1;
+                let ops: &[&str] = if lin == 1 {
+                    &["silu_mul", "linear:down"]
+                } else {
+                    &["silu_mul", "act_quant:nvfp4/g16", "linear:down"]
+                };
+                cx.g.expect_ops(self.id(), ops)?;
+                super::expect_kernel(cx, 0, "metrale_nvfp4_silu_mul_quant")?;
+                Self::act_down(cx, lin)
+            }
         }
     }
 }

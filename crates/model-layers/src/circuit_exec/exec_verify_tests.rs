@@ -23,7 +23,7 @@ fn at(fusions: Fusions, k: u64) -> Fixture {
 
 /// 2026-09-29: One sequence's states, the conv windows and their rollback slots allocated on
 /// `gpu` (the snapshots copy them).
-fn states_on(gpu: &MockGpuBackend, f: &Fixture) -> Vec<Vec<GdnState>> {
+pub(super) fn states_on(gpu: &MockGpuBackend, f: &Fixture) -> Vec<Vec<GdnState>> {
     let d = |k: &str| f.circuit.dims[k] as usize;
     let window =
         (d("lin_k_heads") * d("lin_k_dim") * 2 + d("lin_v_heads") * d("lin_v_dim")) * 4 * 4;

@@ -102,7 +102,8 @@ pub fn instance(recipe: &str) -> Result<Instance> {
 
 /// 2026-09-28: The instance whose checkpoint and kernel target are these. Several recipes may
 /// serve one checkpoint on one target; they must then agree on the circuit and the precision
-/// table, the only parts the executor takes from an instance (the policy is read live).
+/// source, the only parts the executor takes from an instance (the policy, and 2026-09-30 a
+/// policy precision's tier and kernel capabilities, are read live: `CircuitExec::build`).
 pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
     let all = metrale_circuit::parse_instances(INSTANCES)?;
     let hits: Vec<Instance> = all
@@ -117,7 +118,7 @@ pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
     };
     if let Some(other) = hits
         .iter()
-        .find(|i| i.arch != first.arch || i.precision != first.precision)
+        .find(|i| i.arch != first.arch || !same_source(&i.precision, &first.precision))
     {
         bail!(
             "recipes `{}` and `{}` both serve `{checkpoint}` on `{target}` with different \
@@ -127,6 +128,26 @@ pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
         );
     }
     Ok(first.clone())
+}
+
+/// 2026-09-30: `a` and `b` read the same precision table, or the same checkpoint plan with the
+/// same engine formats; the tier and capabilities of a policy are the process's own.
+fn same_source(a: &PrecisionSpec, b: &PrecisionSpec) -> bool {
+    match (a, b) {
+        (
+            PrecisionSpec::Policy {
+                checkpoint_plan: pa,
+                engine: ea,
+                ..
+            },
+            PrecisionSpec::Policy {
+                checkpoint_plan: pb,
+                engine: eb,
+                ..
+            },
+        ) => pa == pb && ea == eb,
+        _ => a == b,
+    }
 }
 
 /// 2026-09-28: The arch shape of a model config, in the dim names the circuits read.
@@ -241,5 +262,58 @@ mod served_shape_tests {
         let mut kinds = shape(248_320, 5120);
         kinds.layer_kinds.pop();
         assert!(served_shape(&stated, &kinds).is_err());
+    }
+}
+
+#[cfg(test)]
+mod instance_for_tests {
+    use super::*;
+
+    /// 2026-09-30: The dense checkpoint has an instance per tier; the executor takes the tier
+    /// from the process, so either serves it. Before `same_source` the pair was refused.
+    #[test]
+    fn two_tiers_of_one_checkpoint_plan_serve_one_checkpoint() {
+        let got = instance_for("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4").unwrap();
+        assert_eq!(got.recipe, "qwen3.8/qwen3.8-27b-nvfp4-unsloth");
+    }
+
+    #[test]
+    fn another_checkpoint_plan_or_engine_format_is_another_source() {
+        let all = metrale_circuit::parse_instances(INSTANCES).unwrap();
+        let find = |r: &str| {
+            all.iter()
+                .find(|i| i.recipe == r)
+                .unwrap()
+                .precision
+                .clone()
+        };
+        let (nvfp4, declared) = (
+            find("qwen3.8/qwen3.8-27b-nvfp4-unsloth"),
+            find("qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared"),
+        );
+        assert!(nvfp4 != declared && same_source(&nvfp4, &declared));
+        let edit = |f: &dyn Fn(&mut String, &mut Vec<(String, metrale_circuit::LinearFormats)>)| {
+            let mut p = declared.clone();
+            if let PrecisionSpec::Policy {
+                checkpoint_plan,
+                engine,
+                ..
+            } = &mut p
+            {
+                f(checkpoint_plan, engine);
+            }
+            p
+        };
+        assert!(!same_source(&nvfp4, &edit(&|plan, _| plan.push('x'))));
+        assert!(!same_source(
+            &nvfp4,
+            &edit(&|_, engine| {
+                engine.pop();
+            })
+        ));
+        assert!(!same_source(
+            &nvfp4,
+            &PrecisionSpec::Table("unsloth--Qwen3.8-27B-NVFP4".into())
+        ));
     }
 }

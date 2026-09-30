@@ -46,6 +46,37 @@ fn proj(
     }
 }
 
+/// 2026-09-30: The declared W8A8 Q, K, V (the stacked input's segments) and O over the slots
+/// the NVFP4 copies took: every decode arm tries W8A8 first (`w8a8_decode_arm.rs`), at every
+/// row count the circuit plans. A stack other than Q|K|V, or kernels that did not resolve, is
+/// unmodelled.
+fn bind_w8a8(
+    w: &crate::layers::W8a8Mixer,
+    weights: &mut BTreeMap<WeightSlot, BoundWeight>,
+    unmodelled: &mut Vec<String>,
+) {
+    if w.input.segments() != 3 || !w.ctx.kernels.resolved(w.input.scale()) {
+        unmodelled.push("a W8A8 attention input that is not a resolved Q|K|V stack".to_string());
+        return;
+    }
+    let roles = [LinearRole::Q, LinearRole::K, LinearRole::V];
+    for (i, role) in roles.into_iter().enumerate() {
+        match w.input.segment(i) {
+            Ok(seg) => {
+                weights.insert(
+                    WeightSlot::Linear(role),
+                    BoundWeight::W8a8(seg, w.ctx.kernels),
+                );
+            }
+            Err(e) => unmodelled.push(format!("W8A8 {role:?} segment: {e:#}")),
+        }
+    }
+    weights.insert(
+        WeightSlot::Linear(LinearRole::O),
+        BoundWeight::W8a8(w.output, w.ctx.kernels),
+    );
+}
+
 impl CircuitBindings for Qwen3AttentionLayer {
     fn circuit_prepare(
         &self,
@@ -95,10 +126,6 @@ impl CircuitBindings for Qwen3AttentionLayer {
             ),
             (self.o_dense_bf16.is_some(), "a BF16 output projection"),
             (
-                self.w8a8.is_some(),
-                "declared W8A8 attention projections (not bound yet)",
-            ),
-            (
                 self.qkv_nvfp4_t.is_some()
                     && super::trait_impl::multi_seq::qkv::fused_qkv_enabled(),
                 "a fused [q | k | v] transposed twin",
@@ -147,6 +174,9 @@ impl CircuitBindings for Qwen3AttentionLayer {
             WeightSlot::Linear(LinearRole::O),
             BoundWeight::Nvfp4(self.attn.o_proj),
         );
+        if let Some(w) = self.w8a8 {
+            bind_w8a8(&w, &mut weights, &mut unmodelled);
+        }
         for (role, twin) in [
             (LinearRole::Q, self.q_nvfp4_t),
             (LinearRole::K, self.k_nvfp4_t),

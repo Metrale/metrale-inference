@@ -17,6 +17,7 @@ use super::compile::{Cx, OpEmitter};
 
 mod attn;
 mod batched;
+mod declared;
 mod draft;
 mod ffn;
 mod gdn;
@@ -24,7 +25,7 @@ mod gdn_verify;
 mod linear;
 mod norm;
 
-static EMITTERS: [&dyn OpEmitter; 38] = [
+static EMITTERS: [&dyn OpEmitter; 42] = [
     &norm::EmbedCopy,
     &norm::RmsNormResidual,
     &norm::ResidualAddRmsNorm,
@@ -63,6 +64,10 @@ static EMITTERS: [&dyn OpEmitter; 38] = [
     &draft::Concat,
     &draft::DenseGemv,
     &draft::Rope,
+    &declared::W8a8ActQuant,
+    &declared::W8a8Gemv,
+    &declared::W4a4ActQuant,
+    &declared::W4a4Gemv,
 ];
 
 /// 2026-09-28: The emitter named `id`.
