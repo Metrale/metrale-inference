@@ -483,6 +483,31 @@ fn path_c_an_unmapped_math_key_or_a_missing_quant_group_is_refused() {
         matches!(&e, CheckpointError::Quant(m) if m.contains("no format")),
         "{e}"
     );
+    // 2026-09-30: A quantization block that names a method but no scheme for any layer (a
+    // missing quant group) would read every projection as 16-bit; it is refused.
+    let e = with(
+        "quantization_config",
+        serde_json::json!({ "quant_method": "compressed-tensors", "config_groups": {} }),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&e, CheckpointError::Quant(m) if m.contains("missing quant group")),
+        "{e}"
+    );
+    let e = resolve_checkpoint(
+        &config,
+        QuantMetadata {
+            hf_quant_config: Some(
+                r#"{"producer": {"name": "modelopt"}, "quantization": {"quant_algo": "MIXED_PRECISION", "quantized_layers": {}}}"#,
+            ),
+        },
+        &ServePrecision::Declared,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&e, CheckpointError::Quant(m) if m.contains("without quantized_layers")),
+        "{e}"
+    );
     let e = resolve_checkpoint(
         &config,
         QuantMetadata {

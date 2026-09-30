@@ -172,6 +172,18 @@ pub fn resolve_checkpoint(
             .map_err(|e| CheckpointError::Quant(format!("{e:#}")))?,
         None => DeclaredPrecisionPlan::default(),
     };
+    if let Some(qc) = &qc
+        && plan.rules.is_empty()
+    {
+        return Err(CheckpointError::Quant(format!(
+            "the quantization block declares no scheme for any layer (a missing quant group): {}",
+            serde_json::to_string(qc)
+                .unwrap_or_default()
+                .chars()
+                .take(200)
+                .collect::<String>()
+        )));
+    }
     let kv_cache = kv_cache_format(qc.as_ref())?;
     let text = ARCHES[i].circuit;
     let circuit = match serve {
