@@ -266,7 +266,7 @@ fn only_gb10_uses_the_measured_roofline() {
 #[test]
 fn every_matrix_model_resolves_to_an_existing_kernel_target_or_none() {
     let root = root();
-    for m in super::MATRIX_MODELS.iter().filter(|m| m.refused.is_none()) {
+    for m in &super::MATRIX_MODELS {
         if m.precision == super::CircuitPrecision::Recipe {
             continue;
         }

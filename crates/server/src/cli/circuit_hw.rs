@@ -38,10 +38,6 @@ pub(crate) struct MatrixModel {
     pub(crate) checkpoint: &'static str,
     /// 2026-09-30: Formats.
     pub(crate) precision: CircuitPrecision,
-    /// 2026-09-30: The model axis refuses this checkpoint on purpose, for this reason: the
-    /// matrix shows a "refused" row with the axis's own message instead of a report. A refusal
-    /// of any other model, or no refusal here, is an error.
-    pub(crate) refused: Option<&'static str>,
 }
 
 /// 2026-09-30: The checkpoint configs the matrix reads, checked in so the `--check` test is
@@ -55,57 +51,46 @@ pub(crate) const MATRIX_MODELS: [MatrixModel; 9] = [
         slug: "qwen3.8-27b-nvfp4",
         checkpoint: "unsloth/Qwen3.8-27B-NVFP4",
         precision: CircuitPrecision::Recipe,
-        refused: None,
     },
     MatrixModel {
         slug: "qwen3.8-27b-nvfp4-declared",
         checkpoint: "unsloth/Qwen3.8-27B-NVFP4",
         precision: CircuitPrecision::Declared,
-        refused: None,
     },
     MatrixModel {
         slug: "qwen3.6-35b-a3b-fp8",
         checkpoint: "Qwen/Qwen3.6-35B-A3B-FP8",
         precision: CircuitPrecision::Recipe,
-        refused: None,
     },
     MatrixModel {
         slug: "qwen3.6-35b-a3b-fp8-declared",
         checkpoint: "Qwen/Qwen3.6-35B-A3B-FP8",
         precision: CircuitPrecision::Declared,
-        refused: None,
     },
     MatrixModel {
         slug: "nemotron-3-nano-30b-a3b-nvfp4",
         checkpoint: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
         precision: CircuitPrecision::Declared,
-        refused: None,
     },
     MatrixModel {
         slug: "nemotron-3.5-lightning-30b-a3b-nvfp4",
         checkpoint: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
         precision: CircuitPrecision::Declared,
-        refused: None,
     },
     MatrixModel {
         slug: "nemotron-3-super-120b-a12b-nvfp4",
         checkpoint: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
         precision: CircuitPrecision::Declared,
-        refused: None,
     },
     MatrixModel {
         slug: "qwen3.6-27b-fp8",
         checkpoint: "Qwen/Qwen3.6-27B-FP8",
         precision: CircuitPrecision::Declared,
-        refused: Some(
-            "pending fix: a DeclaredPrecisionPlan parsing bug in crates/config (being fixed separately)",
-        ),
     },
     MatrixModel {
         slug: "llama-3.1-8b-instruct",
         checkpoint: "NousResearch/Meta-Llama-3.1-8B-Instruct",
         precision: CircuitPrecision::Declared,
-        refused: None,
     },
 ];
 
@@ -278,7 +263,6 @@ pub(crate) fn matrix(root: &Path, dir: &str, check: bool) -> Result<String> {
         slug,
         checkpoint,
         precision,
-        refused,
     } in MATRIX_MODELS
     {
         let configs = root
@@ -289,28 +273,6 @@ pub(crate) fn matrix(root: &Path, dir: &str, check: bool) -> Result<String> {
             config: read_optional(&configs.join("config.json"))?,
             hf_quant: read_optional(&configs.join("hf_quant_config.json"))?,
         };
-        if let Some(why) = refused {
-            let spec = ModelSpec {
-                checkpoint,
-                config_json: texts.config.as_deref(),
-                hf_quant: texts.hf_quant.as_deref(),
-                precision: precision_of(precision),
-            };
-            match source(&tree).model(&spec) {
-                Err(hardware::HwError::Model(axis)) => {
-                    let n = MATRIX_DEVICES.len();
-                    rows.push(format!(
-                        "| {checkpoint} | all {n} | - | - | - | - | - | refused: {why}. Model axis: {} |",
-                        axis.replace('|', "\\|")
-                    ));
-                    continue;
-                }
-                Err(e) => bail!("{checkpoint}: expected the model axis's refusal, got: {e}"),
-                Ok(_) => bail!(
-                    "{checkpoint} is no longer refused: drop `refused` from its MATRIX_MODELS entry"
-                ),
-            }
-        }
         for device in MATRIX_DEVICES {
             let rel = format!("{dir}/{slug}--{device}.md");
             let command = format!("met circuit plan --matrix {dir}");
@@ -356,10 +318,9 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
         if let Some(p) = &a.summary {
             std::fs::write(p, &summary).with_context(|| format!("writing {}", p.display()))?;
         }
-        let refused = MATRIX_MODELS.iter().filter(|m| m.refused.is_some()).count();
         eprintln!(
-            "{} matrix reports {} ({refused} refused model(s) listed in MATRIX.md only)",
-            (MATRIX_MODELS.len() - refused) * MATRIX_DEVICES.len(),
+            "{} matrix reports {}",
+            MATRIX_MODELS.len() * MATRIX_DEVICES.len(),
             if a.check { "current" } else { "written" }
         );
         return Ok(());
