@@ -187,7 +187,7 @@ fn main() -> Result<()> {
         }
     );
 
-    let mut rng = Rng(0x917_0928_2026);
+    let mut rng = Rng(0x0917_0928_2026);
     let max_m_pad = BATCHES
         .iter()
         .map(|m| m.div_ceil(16) * 16)

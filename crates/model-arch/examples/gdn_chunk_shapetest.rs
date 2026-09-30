@@ -446,7 +446,7 @@ fn main() -> Result<()> {
     println!("{}", "-".repeat(96));
 
     for &t in &[2048usize, 8192, 16384] {
-        let batch = 1_usize;
+        let batch = 1usize;
         let case = gen_case(t, batch);
 
         let (sc0, uc0, sf0) = run_full(g, k_wu, k_ref, &case, false)?;
