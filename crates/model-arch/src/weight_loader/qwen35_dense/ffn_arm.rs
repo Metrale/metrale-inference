@@ -19,6 +19,7 @@ use metrale_model_layers::weight_map::{
 
 use super::fp8_residency::{self, DerivedResidency};
 use super::load_cx::LoadCx;
+use super::served_formats::{Group, Served};
 use super::{
     concat_fp8_block_scaled, ffn_fp8_arm_selected, ffn_gateup_fused_selected, ffn_inter,
     packed_q2_from_store, proj_q2_group,
@@ -28,6 +29,7 @@ use super::{
 pub(super) fn build_dense_ffn(
     cx: &LoadCx<'_>,
     residency: &mut DerivedResidency,
+    layer: usize,
     lp: &str,
 ) -> Result<FfnComponent> {
     let LoadCx {
@@ -87,6 +89,8 @@ pub(super) fn build_dense_ffn(
     // (`fp8_residency.rs`).
     let plan = route_env.plan(ffn_fp8, false, false);
     let ffn_nvfp4 = !ffn_q2 && plan.ffn_nvfp4;
+    let gate_module = format!("{lp}.mlp.gate_proj");
+    let mut nvfp4_served = None;
     let ffn_weights = if ffn_nvfp4 {
         let mut w = load_dense_ffn(
             store, lp, gpu, variant, absmax_k, quantize_k, stream, config,
@@ -104,6 +108,7 @@ pub(super) fn build_dense_ffn(
                 t.act = act;
             }
         }
+        nvfp4_served = Some(cx.nvfp4_served(&gate_module, w.gate_proj.act));
         w
     } else {
         // 2026-09-25: No NVFP4 FFN weights: the layer runs from the Q2 weights (`ffn_q2`)
@@ -194,8 +199,23 @@ pub(super) fn build_dense_ffn(
     if config.adapter_max_rank == 0 {
         dffn.finalize_nvfp4_mmq_load(gpu, h as u32, config.intermediate_size as u32, stream)?;
     }
+    let bf16 = ffn_bf16_snapshot.is_some();
     if let Some((g, u, d)) = ffn_bf16_snapshot {
         dffn.set_bf16_weights(g, u, d);
+    }
+    // 2026-09-30: What decode reads, in the order the layer's forward prefers its weights:
+    // the FP8 overlay, then BF16, then the packed Q2, then NVFP4.
+    let served = if ffn_fp8 {
+        Some(Served::Fp8)
+    } else if bf16 {
+        Some(Served::Bf16)
+    } else if ffn_q2 {
+        Some(Served::Q2)
+    } else {
+        nvfp4_served
+    };
+    if let Some(served) = served {
+        cx.record_served(Group::Ffn, layer, &gate_module, served);
     }
     Ok(FfnComponent::Dense(dffn))
 }
