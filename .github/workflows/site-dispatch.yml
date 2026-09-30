@@ -244,3 +244,38 @@ jobs:
             gh api graphql -f id="$node_id" -f query="$ARM_MUTATION" --silent
           fi
           echo "PR #$NUMBER: $title, auto-merge armed"
+
+  # 2026-09-30: Tells the private metrale-roadmap repository that main advanced, so its documents
+  # rebuild with the new certified records, gate limits and published ladders baked in. Its
+  # build-deploy workflow listens for `repository_dispatch` of type `engine-main-updated` and skips
+  # the build when its inputs are unchanged. Only the dispatch: nothing here reads or builds it.
+  roadmap:
+    name: Rebuild the roadmap
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository == 'Metrale/metrale-inference' && github.event_name != 'schedule'
+      && github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # 2026-09-30: GITHUB_TOKEN cannot reach another repository, so the governance App mints a
+      # token limited to metrale-roadmap; contents: write is what POST /dispatches requires.
+      - name: Mint a token for metrale-roadmap
+        id: apptoken
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.GOVERNANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GOVERNANCE_APP_PRIVATE_KEY }}
+          owner: Metrale
+          repositories: metrale-roadmap
+          permission-contents: write
+
+      - name: Send engine-main-updated
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh api -X POST repos/Metrale/metrale-roadmap/dispatches \
+            -f event_type=engine-main-updated \
+            -F "client_payload[sha]=$GITHUB_SHA"
+          echo "dispatched engine-main-updated for $GITHUB_SHA"
