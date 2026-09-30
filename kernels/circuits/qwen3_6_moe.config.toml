@@ -56,6 +56,8 @@ lin_k_heads = "linear_num_key_heads"
 lin_k_dim = "linear_key_head_dim"
 lin_v_heads = "linear_num_value_heads"
 lin_v_dim = "linear_value_head_dim"
+# 2026-09-30: The MTP layers the checkpoint ships (0: no draft head).
+mtp = { key = "mtp_num_hidden_layers", default = 0, allowed = [0, 1] }
 experts = "num_experts"
 top_k = "num_experts_per_tok"
 moe_inter = "moe_intermediate_size"
@@ -81,7 +83,6 @@ output_gate_type = { require = "silu", values = { swish = "silu" }, why = "the G
 mamba_ssm_dtype = { require = "float32", why = "the recurrent state is FP32", default = "float32" }
 full_attention_interval = { require = 4, why = "the circuit's layout is interval-4 (the layer_types are checked against it)" }
 linear_conv_kernel_dim = { require = 4, why = "the conv1d kernels are 4-tap" }
-mtp_num_hidden_layers = { require = 1, why = "the circuit's draft head is one MTP layer (a checkpoint without one has no draft circuit yet)", default = 0 }
 mtp_use_dedicated_embeddings = { require = false, why = "the draft head reads the model's embeddings", default = false }
 mlp_only_layers = { require = [[]], why = "every layer has its mixer" , default = [] }
 partial_rotary_factor = { param = true }

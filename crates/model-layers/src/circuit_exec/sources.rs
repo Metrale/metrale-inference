@@ -154,6 +154,8 @@ pub fn arch_shape(cfg: &metrale_config::ModelConfig) -> Result<ArchShape> {
         ("top_k", cfg.num_experts_per_tok),
         ("moe_inter", cfg.moe_intermediate_size),
         ("shared_inter", cfg.shared_expert_intermediate_size),
+        // 2026-09-30: The MTP layers (the circuits' `draft_when` switch).
+        ("mtp", cfg.mtp_num_hidden_layers),
     ]
     .into_iter()
     .filter(|(_, v)| *v > 0)

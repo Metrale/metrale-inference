@@ -21,11 +21,13 @@ draft_module = "mtp.layers.0"
 include = ["qwen3_hybrid"]
 dims = [
   "hidden", "inter", "vocab", "q_heads", "kv_heads", "head_dim",
-  "lin_k_heads", "lin_k_dim", "lin_v_heads", "lin_v_dim",
+  "lin_k_heads", "lin_k_dim", "lin_v_heads", "lin_v_dim", "mtp",
 ]
 prologue = ["embed"]
 epilogue = ["head"]
 draft = ["mtp_in", "attn", "dense_ffn", "mtp_out"]
+# 2026-09-30: The draft head exists only in a checkpoint with an MTP layer (`mtp`).
+draft_when = "mtp"
 
 [layout]
 kind = "interval"
