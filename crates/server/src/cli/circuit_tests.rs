@@ -141,16 +141,15 @@ const DENSE_CONFIG: &str = r#"{
 }"#;
 
 #[test]
-fn the_config_adapter_matches_the_instance_and_names_drift() {
-    let cfg = metrale_config::parse_config(DENSE_CONFIG).expect("fixture config parses");
-    let from_config = arch_shape(&cfg).unwrap();
+fn the_config_map_matches_the_instance_and_names_drift() {
+    let from_config = metrale_circuit::map_checkpoint(DENSE_CONFIG).unwrap().shape;
     let mut stated = instance("qwen3.8/qwen3.8-27b-nvfp4-unsloth").unwrap().shape;
     stated.layer_kinds.truncate(8);
     assert_eq!(shape_drift(&stated, &from_config), Vec::<String>::new());
     let wider = DENSE_CONFIG.replace("\"hidden_size\": 5120", "\"hidden_size\": 6144");
     let drift = shape_drift(
         &stated,
-        &arch_shape(&metrale_config::parse_config(&wider).unwrap()).unwrap(),
+        &metrale_circuit::map_checkpoint(&wider).unwrap().shape,
     );
     assert_eq!(
         drift,
@@ -160,11 +159,13 @@ fn the_config_adapter_matches_the_instance_and_names_drift() {
     assert_eq!(shape_drift(&stated, &from_config).len(), 1);
 }
 
-/// 2026-09-30: The executor's adapter (`arch_shape` over the parsed ModelConfig) and the
-/// circuit's declarative config map give each golden instance the shape INSTANCES.toml states,
-/// from the checkpoint's real config.json (crates/circuit/tests/fixtures/checkpoints).
+/// 2026-09-30: The executor's served shape IS the config map's: for each golden checkpoint's
+/// real config.json (crates/circuit/tests/fixtures/checkpoints), `checkpoint_shape` at the
+/// checkpoint's own vocabulary is `map_checkpoint`'s shape and INSTANCES.toml's, and a
+/// tokenizer-capped vocabulary moves `vocab` alone, which `served_shape` accepts.
 #[test]
-fn the_executor_adapter_and_the_config_map_agree_on_the_golden_checkpoints() {
+fn the_executor_shape_is_the_config_map_shape() {
+    use metrale_model_layers::circuit_exec::sources::{checkpoint_shape, served_shape};
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for recipe in [
         "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
@@ -175,14 +176,19 @@ fn the_executor_adapter_and_the_config_map_agree_on_the_golden_checkpoints() {
             .join("crates/circuit/tests/fixtures/checkpoints")
             .join(inst.checkpoint.replace('/', "--"));
         let text = std::fs::read_to_string(dir.join("config.json")).unwrap();
-        let cfg = metrale_config::parse_config(&text).unwrap();
+        let mapped = metrale_circuit::map_checkpoint(&text).unwrap().shape;
+        assert_eq!(mapped, inst.shape, "{recipe}: the config map");
+        let vocab = mapped.dims["vocab"];
+        assert_eq!(checkpoint_shape(&text, vocab).unwrap(), mapped, "{recipe}");
+        let capped = checkpoint_shape(&text, vocab - 243).unwrap();
+        let mut want = mapped.clone();
+        want.dims.insert("vocab".into(), vocab - 243);
+        assert_eq!(capped, want, "{recipe}: only vocab moves");
         assert_eq!(
-            shape_drift(&inst.shape, &arch_shape(&cfg).unwrap()),
-            Vec::<String>::new(),
-            "{recipe}: the executor's adapter"
+            served_shape(&inst.shape, &capped).unwrap(),
+            capped,
+            "{recipe}"
         );
-        let mapped = metrale_circuit::map_checkpoint(&text).unwrap();
-        assert_eq!(mapped.shape, inst.shape, "{recipe}: the config map");
     }
 }
 

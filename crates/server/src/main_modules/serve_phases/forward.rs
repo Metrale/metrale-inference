@@ -22,10 +22,11 @@ pub(crate) fn circuit_target(t: &metrale_core::target::KernelTarget) -> Result<S
     Ok(format!("{hw}/{}/{}", t.model, t.quant))
 }
 
-/// 2026-09-28: The selection `--forward` asks for.
+/// 2026-09-28: The selection `--forward` asks for; `config_json` is the served checkpoint's.
 pub(crate) fn forward_select(
     args: &cli::ServeArgs,
     ptx_set: &metrale_kernels::TargetPtxSet,
+    config_json: &str,
 ) -> Result<ForwardSelect> {
     let fusions = match args.forward {
         ForwardArg::Legacy => return Ok(ForwardSelect::Legacy),
@@ -41,5 +42,6 @@ pub(crate) fn forward_select(
         instance: Box::new(instance),
         fusions,
         modules: TargetModules(ptx_set.modules.clone()),
+        config_json: config_json.to_string(),
     })
 }

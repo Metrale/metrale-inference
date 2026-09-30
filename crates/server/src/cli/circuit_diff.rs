@@ -265,6 +265,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         instance: Box::new(instance.clone()),
         fusions,
         modules: modules.clone(),
+        config_json: engine.config_json.clone(),
     };
     let forwards = [
         ("legacy-repeat", ForwardSelect::Legacy),

@@ -64,6 +64,9 @@ impl std::fmt::Debug for TargetModules {
 pub struct Boot<'a> {
     pub gpu: &'a dyn GpuBackend,
     pub config: &'a ModelConfig,
+    /// 2026-09-30: The checkpoint's `config.json`, which the circuit's config map turns into the
+    /// served shape ([`sources::checkpoint_shape`]).
+    pub config_json: &'a str,
     /// 2026-09-28: The model's levers, as its legacy layers read them (`ForwardContext::levers`).
     pub levers: &'a crate::layers::ops::ModelLevers,
     pub instance: &'a Instance,
@@ -108,7 +111,8 @@ impl CircuitExec {
     /// 2026-09-28: Build the executor.
     pub fn build(b: Boot<'_>) -> Result<Self> {
         let mut served = b.instance.clone();
-        served.shape = sources::served_shape(&b.instance.shape, &sources::arch_shape(b.config)?)?;
+        let from_checkpoint = sources::checkpoint_shape(b.config_json, b.config.vocab_size as u64)?;
+        served.shape = sources::served_shape(&b.instance.shape, &from_checkpoint)?;
         let src = sources::sources(&served)?;
         let loaded = match &served.precision {
             // 2026-09-28: The served model's own policy: its parsed quantization_config under

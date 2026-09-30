@@ -26,6 +26,9 @@ pub enum ForwardSelect {
         fusions: Fusions,
         /// 2026-09-28: The served target's compiled modules: which kernels exist.
         modules: TargetModules,
+        /// 2026-09-30: The checkpoint's `config.json` as the server read it; the executor maps it
+        /// to the served shape through the circuit's config map.
+        config_json: String,
     },
 }
 

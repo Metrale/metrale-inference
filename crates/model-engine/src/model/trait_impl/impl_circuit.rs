@@ -120,6 +120,7 @@ impl TransformerModel {
         instance: &metrale_circuit::Instance,
         fusions: Fusions,
         modules: &TargetModules,
+        config_json: &str,
     ) -> Result<CircuitExec> {
         let unmodelled = self.circuit_unmodelled();
         if !unmodelled.is_empty() {
@@ -194,6 +195,7 @@ impl TransformerModel {
         CircuitExec::build(metrale_model_layers::circuit_exec::Boot {
             gpu: self.gpu.as_ref(),
             config: &self.config,
+            config_json,
             levers: &self.levers,
             instance,
             policy: policy::live_policy(&self.levers, policy::kv_dtype_name(kv)?, lm_head_dtype),
@@ -234,7 +236,8 @@ impl ModelCircuit for TransformerModel {
                 instance,
                 fusions,
                 modules,
-            } => Some(self.build_circuit(instance, *fusions, modules)?),
+                config_json,
+            } => Some(self.build_circuit(instance, *fusions, modules, config_json)?),
         };
         self.destroy_lora_decode_graphs();
         // 2026-09-29: The draft head drops the previous executor's program before its

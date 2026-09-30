@@ -21,9 +21,7 @@ use super::{CircuitAction, CircuitArgs, CircuitMode, CircuitPlanArgs, circuit_pa
 
 // 2026-09-28: The embedded texts and the instance lookups live with the executor, so the view
 // and the executor read one copy.
-pub(crate) use metrale_model_layers::circuit_exec::sources::{
-    arch_shape, instance, shape_drift, sources,
-};
+pub(crate) use metrale_model_layers::circuit_exec::sources::{instance, shape_drift, sources};
 
 fn mode_of(m: CircuitMode) -> Mode {
     match m {
@@ -61,7 +59,6 @@ fn check_shape(inst: &Instance) -> Result<()> {
     };
     let text = std::fs::read_to_string(dir.join("config.json"))
         .with_context(|| format!("reading {}", dir.join("config.json").display()))?;
-    let cfg = metrale_config::parse_config(&text)?;
     if let metrale_circuit::PrecisionSpec::Policy {
         checkpoint_plan, ..
     } = &inst.precision
@@ -87,7 +84,7 @@ fn check_shape(inst: &Instance) -> Result<()> {
             );
         }
     }
-    let drift = shape_drift(&inst.shape, &arch_shape(&cfg)?);
+    let drift = shape_drift(&inst.shape, &metrale_circuit::map_checkpoint(&text)?.shape);
     if !drift.is_empty() {
         bail!(
             "kernels/circuits/INSTANCES.toml disagrees with {}'s config.json:\n  {}",

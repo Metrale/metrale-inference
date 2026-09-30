@@ -10,7 +10,7 @@
 //! - A lookup of a name the tables lack is an error, never a fallback to another entry.
 
 use anyhow::{Result, anyhow, bail};
-use metrale_circuit::{ArchShape, Instance, LayerKind, PrecisionSpec, Sources};
+use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 
 /// 2026-09-28: kernels/circuits/INSTANCES.toml as built.
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
@@ -150,39 +150,14 @@ fn same_source(a: &PrecisionSpec, b: &PrecisionSpec) -> bool {
     }
 }
 
-/// 2026-09-28: The arch shape of a model config, in the dim names the circuits read.
-pub fn arch_shape(cfg: &metrale_config::ModelConfig) -> Result<ArchShape> {
-    let mut layer_kinds = Vec::with_capacity(cfg.num_hidden_layers);
-    for i in 0..cfg.num_hidden_layers {
-        layer_kinds.push(match cfg.layer_type(i) {
-            metrale_config::LayerType::LinearAttention => LayerKind::LinearAttention,
-            metrale_config::LayerType::FullAttention => LayerKind::FullAttention,
-            other => bail!("layer {i} is {other:?}, which no circuit models"),
-        });
-    }
-    let dims = [
-        ("hidden", cfg.hidden_size),
-        ("inter", cfg.intermediate_size),
-        ("vocab", cfg.vocab_size),
-        ("q_heads", cfg.num_attention_heads),
-        ("kv_heads", cfg.num_key_value_heads),
-        ("head_dim", cfg.head_dim),
-        ("lin_k_heads", cfg.linear_num_key_heads),
-        ("lin_k_dim", cfg.linear_key_head_dim),
-        ("lin_v_heads", cfg.linear_num_value_heads),
-        ("lin_v_dim", cfg.linear_value_head_dim),
-        ("experts", cfg.num_experts),
-        ("top_k", cfg.num_experts_per_tok),
-        ("moe_inter", cfg.moe_intermediate_size),
-        ("shared_inter", cfg.shared_expert_intermediate_size),
-        // 2026-09-30: The MTP layers (the circuits' `draft_when` switch).
-        ("mtp", cfg.mtp_num_hidden_layers),
-    ]
-    .into_iter()
-    .filter(|(_, v)| *v > 0)
-    .map(|(k, v)| (k.to_string(), v as u64))
-    .collect();
-    Ok(ArchShape { layer_kinds, dims })
+/// 2026-09-30: The shape a served checkpoint runs: its `config.json` through the circuit's config
+/// map (`metrale_circuit::map_checkpoint`, the one config-to-shape mapping), with `vocab` at the
+/// served vocabulary: `ModelConfig::vocab_size` after the server caps it to the tokenizer
+/// (`cap_vocab_size_to_tokenizer`). [`served_shape`] then checks it against INSTANCES.toml.
+pub fn checkpoint_shape(config_json: &str, served_vocab: u64) -> Result<ArchShape> {
+    let mut shape = metrale_circuit::map_checkpoint(config_json)?.shape;
+    shape.dims.insert("vocab".to_string(), served_vocab);
+    Ok(shape)
 }
 
 /// 2026-09-28: Every way `from_config` disagrees with the instance's stated shape.
@@ -232,6 +207,7 @@ pub fn served_shape(stated: &ArchShape, served: &ArchShape) -> Result<ArchShape>
 #[cfg(test)]
 mod served_shape_tests {
     use super::*;
+    use metrale_circuit::LayerKind;
 
     fn shape(vocab: u64, hidden: u64) -> ArchShape {
         ArchShape {
