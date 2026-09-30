@@ -23,6 +23,7 @@ use metrale_model_weights::weights::WeightDtype;
 
 use super::load_cx::{Flow, LayerIn, LoadCx};
 use super::rowwise_fp8;
+use super::served_formats::{Group, Served};
 use crate::tp_shard::{
     TpGdnDims, shard_gdn_ba_rows, shard_gdn_conv_rows, shard_gdn_out_proj_row_parallel,
     shard_gdn_qkvz_rows, shard_gdn_value_vector,
@@ -135,6 +136,13 @@ pub(super) fn load_gdn_dequant(
         qkv_qw.act = cx.nvfp4_act(&format!("{la}.in_proj_qkv"));
         z_qw.act = cx.nvfp4_act(&format!("{la}.in_proj_z"));
         let qkvz_nvfp4 = qkv_qw.concat_rows(&z_qw, qkv_rows, z_rows, h, gpu)?;
+        let qkv_module = format!("{la}.in_proj_qkv");
+        cx.record_served(
+            Group::Gdn,
+            i,
+            &qkv_module,
+            cx.nvfp4_served(&qkv_module, qkvz_nvfp4.act),
+        );
         let qkvz_nvfp4_t = qkvz_nvfp4.transpose_for_gemm(gpu, qkvz_size, h)?;
 
         let mut out_proj_nvfp4 = quantized_auto(
@@ -241,6 +249,7 @@ pub(super) fn load_gdn_dequant(
     // 2026-09-25: Bf16Raw: keep the BF16 `[Q|K|V|Z]` (`in_proj_qkvz`) and out_proj
     // (`out_proj_dense`) and build no NVFP4 or FP8 copy; `ssm.out_proj` stays NULL.
     if matches!(variant, Nvfp4Variant::Bf16Raw) {
+        cx.record_served(Group::Gdn, i, &format!("{la}.in_proj_qkv"), Served::Bf16);
         let ssm = SsmWeights {
             in_proj_qkvz: qkvz_dense,
             in_proj_ba: ba_dense,
@@ -275,6 +284,7 @@ pub(super) fn load_gdn_dequant(
         Some("1")
     );
     if gdn_bf16 {
+        cx.record_served(Group::Gdn, i, &format!("{la}.in_proj_qkv"), Served::Bf16);
         let ssm = SsmWeights {
             in_proj_qkvz: DenseWeight {
                 weight: qkvz_dense.weight,
@@ -323,6 +333,16 @@ pub(super) fn load_gdn_dequant(
     ]);
 
     let qkvz_nvfp4_t = qkvz_nvfp4.transpose_for_gemm(gpu, qkvz_size, h)?;
+    // 2026-09-30: Requantized here whatever the source, so never the checkpoint's own NVFP4.
+    cx.record_served(
+        Group::Gdn,
+        i,
+        &format!("{la}.in_proj_qkv"),
+        Served::Nvfp4 {
+            from_checkpoint: false,
+            act: qkvz_nvfp4.act,
+        },
+    );
 
     let mut out_proj_nvfp4 = quantize_to_nvfp4(
         &out_proj_dense,

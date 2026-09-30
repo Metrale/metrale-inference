@@ -20,6 +20,7 @@ use metrale_model_layers::weight_map::{
 use super::attn_arms;
 use super::fp8_residency::{self, DerivedResidency};
 use super::load_cx::{Flow, LayerIn, LoadCx};
+use super::served_formats::{Group, Served};
 use super::{dense_fp8_enabled, proj_is_native_fp8, proj_q2_group};
 use crate::tp_shard::{TpShardKind, load_qkvo_tp};
 
@@ -78,6 +79,7 @@ pub(super) fn load_full_attention(
         )?;
         layers.push(Box::new(attn_layer));
         *attn_idx += 1;
+        cx.record_served(Group::Attention, i, &format!("{p}.q_proj"), Served::Q2);
         if (i + 1) % 10 == 0 {
             tracing::info!(target: "metrale_model_arch::weight_loader::qwen35_dense", "Loaded layers 0..{}", i + 1);
         }
@@ -172,6 +174,17 @@ pub(super) fn load_full_attention(
     if attn_fp8 {
         install_fp8_overlay(cx, residency, &mut attn_layer, &p, i)?;
     }
+    // 2026-09-30: What decode reads: the FP8 overlay replaces the decode weights; the Bf16Raw
+    // arm keeps 16-bit weights; every other arm built NVFP4 q/k/v/o.
+    let q_module = format!("{p}.q_proj");
+    let served = if attn_fp8 {
+        Served::Fp8
+    } else if matches!(variant, Nvfp4Variant::Bf16Raw) {
+        Served::Bf16
+    } else {
+        cx.nvfp4_served(&q_module, attn_layer.attn.o_proj.act)
+    };
+    cx.record_served(Group::Attention, i, &q_module, served);
     layers.push(Box::new(attn_layer));
     *attn_idx += 1;
     Ok(Flow::Proceed)

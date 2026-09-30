@@ -27,6 +27,7 @@ use metrale_model_layers::layers::{W8a8Ctx, W8a8Ffn, W8a8Mixer};
 use metrale_model_weights::weights::WeightStore;
 
 use super::rowwise_fp8::{load_fp8_per_row, proj_is_fp8_per_row};
+use super::served_formats::{Group, ServedFormats};
 
 /// 2026-09-28: Projections installed, by group.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -79,6 +80,7 @@ pub(super) fn install_declared(
     gpu: &dyn GpuBackend,
     layer_types: &[LayerType],
     layers: &mut [Box<dyn TransformerLayer>],
+    served: &mut ServedFormats,
 ) -> Result<W8a8Installed> {
     let policy = super::load_cx::weight_quant_policy(config);
     if !policy.follows_plan() {
@@ -87,7 +89,7 @@ pub(super) fn install_declared(
     let wants = |m: &str| {
         policy.fp8_decode_act(m) == Some(metrale_config::weight_quantization::ActFormat::Fp8)
     };
-    install_w8a8_decode(store, config, gpu, layer_types, layers, &wants)
+    install_w8a8_decode(store, config, gpu, layer_types, layers, &wants, served)
 }
 
 /// 2026-09-28: Install on `layers` (index = model layer) and return what was installed.
@@ -98,6 +100,7 @@ pub(super) fn install_w8a8_decode(
     layer_types: &[LayerType],
     layers: &mut [Box<dyn TransformerLayer>],
     wants: &dyn Fn(&str) -> bool,
+    served: &mut ServedFormats,
 ) -> Result<W8a8Installed> {
     let mut done = W8a8Installed::default();
     if config.tp_world_size > 1 {
@@ -146,10 +149,12 @@ pub(super) fn install_w8a8_decode(
                         output.k(),
                     )?;
                     done.attention += 4;
+                    served.upgrade_w8a8(Group::Attention, i)?;
                 }
                 if let Some(f) = ffn {
                     l.set_w8a8_ffn_weights(f, h, inter)?;
                     done.ffn += 3;
+                    served.upgrade_w8a8(Group::Ffn, i)?;
                 }
             }
             LayerType::LinearAttention => {
@@ -167,10 +172,12 @@ pub(super) fn install_w8a8_decode(
                         output.k(),
                     )?;
                     done.gdn += 3;
+                    served.upgrade_w8a8(Group::Gdn, i)?;
                 }
                 if let Some(f) = ffn {
                     l.set_w8a8_ffn_weights(f, h, inter)?;
                     done.ffn += 3;
+                    served.upgrade_w8a8(Group::Ffn, i)?;
                 }
             }
             _ => {}
