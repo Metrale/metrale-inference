@@ -1,0 +1,91 @@
+{
+  "label": "m_F_B1_r2",
+  "url": "http://127.0.0.1:45245",
+  "model": "unsloth/Qwen3.8-27B-NVFP4",
+  "isl": 128,
+  "osl": 1024,
+  "reps": 1,
+  "warmup": 0,
+  "temperature": 0.0,
+  "seed": 42,
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "nonce_base": 392949,
+  "nonce_base_pinned": false,
+  "nonce_width": 6,
+  "driver_sha256": "55a5963e4beea50e8f7e12de6c70e0709a53ff0d62b020cddefdea24ae92a216",
+  "started_utc": "2026-09-30T03:38:13Z",
+  "rungs": [
+    {
+      "concurrency": 8,
+      "reps": [
+        {
+          "wall_s": 61.42099270800827,
+          "completion_tokens": 8192,
+          "prompt_tokens": 1600,
+          "prompt_tokens_per_req": [
+            200
+          ],
+          "tok_s": 133.37459456157407,
+          "n_ok": 8,
+          "n_err": 0,
+          "errors": [],
+          "ttft_p50_ms": 1469.1161295049824,
+          "ttft_p99_ms": 1469.6652045007795,
+          "tpot_p50_ms": 57.8571462673513,
+          "e2e_p50_s": 60.6646929080016,
+          "finish_reasons": [
+            "length"
+          ],
+          "completion_tokens_per_req": [
+            1024,
+            1024,
+            1024,
+            1024,
+            1024,
+            1024,
+            1024,
+            1024
+          ],
+          "gpu_rail_status": "ok",
+          "gpu_rail_energy_j": 2677.1628832016077,
+          "gpu_rail_mean_power_w": 43.645105543489386,
+          "gpu_rail_max_power_w": 72.14,
+          "gpu_rail_min_power_w": 14.31,
+          "gpu_rail_power_samples": 246,
+          "gpu_rail_window_s": 61.42099270800827,
+          "gpu_rail_covered_s": 61.33936096302932,
+          "gpu_rail_coverage_frac": 0.998670947156992,
+          "gpu_rail_sample_period_ms": 250,
+          "gpu_rail_max_gap_s": 0.2512223570374772,
+          "gpu_rail_edge_error_frac": 0.016281078437692147,
+          "gpu_rail_avg_instant_lag_w": 1.9890243902439027,
+          "gpu_rail_sw_power_cap_frac": 0.0,
+          "gpu_rail_hw_power_brake_frac": 0.0,
+          "sm_clock_mhz_mean": 2520.8861788617887,
+          "gpu_util_mean_pct": 95.1869918699187,
+          "gpu_temp_c_max": 69.0,
+          "gpu_rail_trustworthy": true,
+          "rep": 0
+        }
+      ],
+      "tok_s_series": [
+        133.37459456157407
+      ],
+      "tok_s_mean": 133.37459456157407,
+      "tok_s_median": 133.37459456157407,
+      "tok_s_spread_pct": 0.0,
+      "wall_s_series": [
+        61.42099270800827
+      ],
+      "wall_s_mean": 61.42099270800827,
+      "completion_tokens_series": [
+        8192
+      ],
+      "completion_tokens_mean": 8192.0,
+      "errors_total": 0
+    }
+  ],
+  "finished_utc": "2026-09-30T03:39:25Z"
+}
