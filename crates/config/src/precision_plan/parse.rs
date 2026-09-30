@@ -327,7 +327,9 @@ fn fp8(qc: &Value) -> Result<DeclaredPrecisionPlan> {
     };
     let mut ignore = Vec::new();
     for key in ["modules_to_not_convert", "ignored_layers"] {
-        ignore.extend(str_list(qc, key)?.into_iter().map(Target::Substring));
+        for entry in str_list(qc, key)? {
+            ignore.push(Target::hf_module(&entry)?);
+        }
     }
     Ok(DeclaredPrecisionPlan {
         source: PlanSource::Fp8,
