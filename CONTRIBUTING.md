@@ -45,6 +45,8 @@ hardware. CI runs all of these on a standard `ubuntu-latest` runner:
 # Both are needed. These are exactly what ci.yml sets workflow-wide.
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo check --workspace
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo clippy --workspace --tests
+METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo clippy --workspace --examples --benches \
+  --features metrale-model-arch/gpu-examples,metrale-server/gpu-examples   # GPU microtests
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo test --workspace
 cargo fmt --all -- --check          # formatting
 ```

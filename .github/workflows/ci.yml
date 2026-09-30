@@ -367,6 +367,19 @@ jobs:
         if: runner.os == 'macOS'
         run: rustup target add x86_64-unknown-linux-gnu
       - run: cargo clippy --workspace --tests ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
+      # 2026-09-30: The GPU microtests are examples behind `required-features = ["cuda",
+      # "gpu-examples"]`, and `--tests` never builds an example, so nothing compiled them: 17
+      # lints and a real type error (an API that moved to `Fp8ActQuant` while an example still
+      # passed a `KernelHandle`) accumulated in 11 files. Type-checking them needs no CUDA
+      # toolkit: the `cuda` feature already builds here under METRALE_SKIP_BUILD and
+      # CUDARC_CUDA_VERSION, and `gpu-examples` only unlocks the targets. An example whose
+      # required features are not enabled here (the Metal ones) is skipped by cargo; the macOS
+      # jobs build those.
+      - name: cargo clippy --examples --benches (GPU microtests included)
+        run: >-
+          cargo clippy --workspace --examples --benches
+          --features metrale-model-arch/gpu-examples,metrale-server/gpu-examples
+          ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
       # 2026-09-26: The Metal build compiles metrale-storage without its `cuda`
       # feature. Checking that combination here, on Linux, catches a module
       # gated on `cuda` that an always-built module imports, in seconds and

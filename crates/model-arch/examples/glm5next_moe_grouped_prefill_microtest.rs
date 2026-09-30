@@ -146,7 +146,7 @@ fn w(e: &Expert, n: usize, k: usize) -> f32 {
 /// the sort's contract instead.
 fn sort_host(ids: &[u32]) -> (Vec<i32>, Vec<i32>, Vec<i32>) {
     let te = ids.len();
-    let mut counts = vec![0i32; NUM_EXPERTS];
+    let mut counts = [0i32; NUM_EXPERTS];
     for &e in ids {
         counts[e as usize] += 1;
     }

@@ -185,7 +185,13 @@ fn gemm(
 
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
-    let quant = gpu.kernel("per_token_group_quant_fp8", "per_token_group_quant_fp8")?;
+    // 2026-09-30: The quantizer as the layer resolves it (`Fp8ActQuant::resolve`, the shared
+    // kernel plus the Hopper twin where the image has one). Both arms quantize through it.
+    let quant = ops::Fp8ActQuant::resolve(&gpu);
+    ensure!(
+        quant.available(),
+        "per_token_group_quant_fp8 is not in this image"
+    );
     let kmajor = gpu.kernel("fp8_scale_transpose", "fp8_act_scale_to_kmajor")?;
     let silu = gpu.kernel("moe_silu_mul", "moe_silu_mul")?;
     let silu_strided = gpu.kernel("silu_mul_strided", "silu_mul_strided")?;
