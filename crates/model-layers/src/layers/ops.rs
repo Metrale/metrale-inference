@@ -62,6 +62,8 @@ mod w8a16_tc_rows;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
+#[path = "ops/e4m3_range.rs"]
+mod e4m3_range;
 #[path = "ops/gemm_dense.rs"]
 mod gemm_dense;
 #[path = "ops/gemm_dense_int8.rs"]
@@ -70,6 +72,8 @@ mod gemm_dense_int8;
 mod gemm_fp4;
 #[path = "ops/model_stats.rs"]
 pub mod model_stats;
+#[path = "ops/n_tile.rs"]
+mod n_tile;
 #[path = "ops/w8a16_gemm_m16.rs"]
 mod w8a16_gemm_m16;
 // 2026-09-25: N-column-blocked W8A16 batch-16 GEMVs (`w8a16_gemv_batch16_ncol2`/`ncol4`).
@@ -218,6 +222,7 @@ pub use dispatch_helpers::*;
 pub use dispatch_proj::*;
 pub use dispatch_proj_decode::*;
 pub use dispatch_proj_rowwise::*;
+pub use e4m3_range::{E4M3_MAX, check_e4m3_activation_range, check_e4m3_range};
 pub use embeddings::*;
 pub use fp8_act_quant::*;
 pub use fp8_act_quant_floor::*;
@@ -235,6 +240,7 @@ pub use gemm_quant::*;
 pub use gemv_q2::*;
 pub use gemv_q2_vec::*;
 pub use gemv_sw::*;
+pub use n_tile::n_tile_blocks;
 pub use nvfp4_moe_grouped::*;
 
 pub use hyper_connection::*;

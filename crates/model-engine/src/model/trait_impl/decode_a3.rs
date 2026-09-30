@@ -20,22 +20,30 @@ use metrale_model_layers::layer::{ForwardContext, TransformerLayer};
 use metrale_model_layers::layers::ops;
 
 impl TransformerModel {
-    /// 2026-09-25: Mamba-2 has no per-token state clamp, so every 64 decode tokens the
-    /// h-state is re-normalized; a failure is logged and decode continues. Runs only when
+    /// 2026-09-29: Every 64 decode tokens of a Mamba-2 model, `normalize_ssm_states`, which
+    /// for Mamba-2 checks the h state for non-finite values; a failure fails the step. Runs
+    /// only when
     /// `run`, and the caller must then be outside CUDA graph capture:
     /// `normalize_ssm_states` H2D-copies a temporary host pointer table, and recording that
     /// memcpy replays a freed host address (CUDA 716) whenever the capture step's seq_len is
     /// a multiple of 64. The graph path calls it before capture or replay, the eager path
     /// inside the forward body.
-    pub(super) fn normalize_ssm_outside_graph(&self, seq: &SequenceState, stream: u64, run: bool) {
+    pub(super) fn normalize_ssm_outside_graph(
+        &self,
+        seq: &SequenceState,
+        stream: u64,
+        run: bool,
+    ) -> Result<()> {
         if run
             && self.config.mamba_num_heads > 0
             && seq.seq_len > 0
             && seq.seq_len.is_multiple_of(64)
-            && let Err(e) = self.normalize_ssm_states(seq, stream)
         {
-            tracing::warn!("Periodic SSM state normalization failed: {e:#}");
+            // 2026-09-29: For Mamba-2 this is the non-finite guard, and its failure fails
+            // the step rather than decoding on from a NaN state.
+            self.normalize_ssm_states(seq, stream)?;
         }
+        Ok(())
     }
 
     /// 2026-09-25: Single-token decode forward body. `decode_dispatch_with` runs it
@@ -97,7 +105,7 @@ impl TransformerModel {
 
         // 2026-09-25: Eager only. The graph path runs the same helper before capture
         // or replay; recording it bakes a host memcpy from a freed buffer.
-        self.normalize_ssm_outside_graph(seq, stream, !use_graphs);
+        self.normalize_ssm_outside_graph(seq, stream, !use_graphs)?;
 
         let normed = self.buffers.norm_output();
         let h = self.config.hidden_size as u32;

@@ -121,7 +121,11 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                     // 2026-09-25: Transposed prefill copies; routed experts are
                     // transposed only when `moe_latent_size == 0`
                     // (`nemotron_moe/prefill_weights.rs`).
-                    moe_layer.prepare_prefill_weights(gpu, config);
+                    moe_layer.prepare_prefill_weights(
+                        gpu,
+                        config,
+                        crate::nemotron_moe::shared_expert_e4m3(),
+                    );
                     layers.push(Box::new(moe_layer));
                 }
                 metrale_config::LayerType::FullAttention => {

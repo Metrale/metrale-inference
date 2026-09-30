@@ -1686,3 +1686,23 @@ void fp8_fp8_gemm_t_m128_mfast(
     fp8_fp8_gemm_t_m128_impl(A_fp8, B_fp8, C, M, N, K,
                              blockIdx.x * (2 * M_TILE), blockIdx.y * N_TILE_LG);
 }
+
+// 2026-09-29: The N tile of each entry point above whose grid covers N in tiles. Launchers
+// size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
+// that entry multiplies `blockIdx.x` by.
+extern "C" __device__ unsigned int w4a16_gemm_n_tile = N_TILE_SM;
+extern "C" __device__ unsigned int w4a16_gemm_t_n_tile = N_TILE_LG;
+extern "C" __device__ unsigned int w4a16_gemm_t_k64_n_tile = N_TILE_LG;
+extern "C" __device__ unsigned int w4a16_gemm_t_m128_n_tile = N_TILE_LG;
+
+// 2026-09-29: Entries that cast their BF16 A operand to E4M3 with no scale
+// (`bf16x4_to_e4m3x4`), so an activation past 448 saturates. The runtime reads each
+// symbol when the handle is resolved (`GpuBackend::kernel_casts_a_to_e4m3`), and debug
+// builds check the activation range before the launch.
+extern "C" __device__ unsigned int w4a16_gemm_t_a_e4m3 = 1;
+extern "C" __device__ unsigned int fp8_gemm_t_a_e4m3 = 1;
+extern "C" __device__ unsigned int fp8_gemm_t_mfast_a_e4m3 = 1;
+extern "C" __device__ unsigned int w4a16_gemm_t_k64_a_e4m3 = 1;
+extern "C" __device__ unsigned int w4a16_gemm_t_m128_a_e4m3 = 1;
+extern "C" __device__ unsigned int fp8_gemm_t_m128_mfast_a_e4m3 = 1;
+extern "C" __device__ unsigned int fp8_gemm_t_m128_a_e4m3 = 1;

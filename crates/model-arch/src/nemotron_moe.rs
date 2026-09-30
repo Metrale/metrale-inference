@@ -269,6 +269,8 @@ mod prefill_shared_up;
 mod prefill_sorted;
 mod prefill_weights;
 mod ptr_tables;
+mod shared_e4m3;
+pub use shared_e4m3::{set_shared_expert_e4m3_from_cli, shared_expert_e4m3};
 
 use prefill_sorted::SortedPrefillCtx;
 use ptr_tables::{build_ptr_table, build_ptr_table_from_weights};

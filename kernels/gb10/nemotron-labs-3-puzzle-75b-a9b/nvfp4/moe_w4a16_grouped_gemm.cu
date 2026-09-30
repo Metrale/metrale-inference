@@ -798,3 +798,10 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_t(
         if (row1_valid && col1 < N) C[row1 * N + col1] = __float2bfloat16(acc[n_tile][3]);
     }
 }
+
+// 2026-09-29: The N tile of each entry point above whose grid covers N in tiles. Launchers
+// size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
+// that entry multiplies `blockIdx.x` by.
+extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_n_tile = N_TILE_PT;
+extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_relu2_n_tile = N_TILE_PT;
+extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_t_n_tile = N_TILE;

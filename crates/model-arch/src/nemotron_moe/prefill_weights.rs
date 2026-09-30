@@ -61,10 +61,17 @@ impl NemotronMoeLayer {
         }
     }
 
-    /// 2026-09-25: Build the prefill-only weight copies; the loader calls it
+    /// 2026-09-29: Build the prefill-only weight copies; the loader calls it
     /// after construction. Routed experts are transposed only when
-    /// `moe_latent_size == 0`.
-    pub fn prepare_prefill_weights(&mut self, gpu: &dyn GpuBackend, config: &ModelConfig) {
+    /// `moe_latent_size == 0`. `shared_e4m3` (`--nemotron-shared-expert-e4m3`) builds the
+    /// shared expert's transposed copies, which the E4M3 tile GEMM reads; without it the
+    /// shared expert runs the BF16-MMA `w4a16_gemm` on the checkpoint's NVFP4 weights.
+    pub fn prepare_prefill_weights(
+        &mut self,
+        gpu: &dyn GpuBackend,
+        config: &ModelConfig,
+        shared_e4m3: bool,
+    ) {
         let h = config.hidden_size;
         let inter = self.moe_inter;
         let shared_inter = config.shared_expert_intermediate_size;
@@ -95,12 +102,15 @@ impl NemotronMoeLayer {
             }
         }
 
-        // 2026-09-25: The shared expert's copies, in every layer shape: with
+        // 2026-09-29: The shared expert's copies, in every layer shape: with
         // `METRALE_SHARED_FP8_PREFILL` set (any value) and
-        // `fp8_gemm_t_m128_mfast` resolved, pre-dequantized FP8 copies;
-        // otherwise, or if either failed, transposed NVFP4 copies. Under native
-        // FP8 the NVFP4 shared weights are `QuantizedWeight::null()` and every
-        // copy here is derived from them, so none is built.
+        // `fp8_gemm_t_m128_mfast` resolved, pre-dequantized FP8 copies; otherwise,
+        // or if either failed, transposed NVFP4 copies, and only under `shared_e4m3`:
+        // the tile GEMM that reads them casts activations and dequantized weights to
+        // E4M3 unscaled (saturating at 448; 1-30% local error measured on
+        // Nemotron-3-Nano), so it is opt-in. Under native FP8 the NVFP4 shared weights
+        // are `QuantizedWeight::null()` and every copy here is derived from them, so
+        // none is built.
         let native_shared =
             self.weights.shared_up_fp8.is_some() || self.weights.shared_down_fp8.is_some();
         let fp8_prefill = !native_shared && std::env::var("METRALE_SHARED_FP8_PREFILL").is_ok();
@@ -119,7 +129,9 @@ impl NemotronMoeLayer {
                 .predequant_to_fp8(gpu, pdq_k, h, shared_inter, 0)
                 .ok();
         }
-        if !native_shared && (self.shared_up_pd_fp8.is_none() || self.shared_down_pd_fp8.is_none())
+        if !native_shared
+            && shared_e4m3
+            && (self.shared_up_pd_fp8.is_none() || self.shared_down_pd_fp8.is_none())
         {
             self.shared_up_t = self
                 .weights
@@ -168,3 +180,7 @@ impl NemotronMoeLayer {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "prefill_weights_tests.rs"]
+mod tests;

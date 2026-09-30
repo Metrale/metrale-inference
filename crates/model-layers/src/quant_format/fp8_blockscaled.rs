@@ -6,18 +6,26 @@
 //! Owner: model-layers (weight loading).
 //! Invariants: none beyond the types.
 
-use crate::quant_format::{QuantFormat, module_matches_pattern};
+use crate::quant_format::{IgnoreList, QuantFormat};
 use crate::weight_map::Nvfp4Variant;
+use metrale_config::precision_plan::IgnoreDialect;
 
 /// 2026-09-25: An FP8 block-scaled checkpoint.
 #[derive(Debug)]
 pub struct Fp8BlockScaledFormat {
-    pub ignore_modules: Vec<String>,
+    /// 2026-09-30: The config's `ignore` / `exclude_modules` (`QuantizationConfig::ignore_modules`;
+    /// an HF `modules_to_not_convert` list does not reach it). The FP8 checkpoints that carry
+    /// one are ModelOpt exports (nvidia/DeepSeek-V4-Flash-NVFP4: `*.attn.*`, `mtp.*`), so it
+    /// matches as ModelOpt does: exact names or globs.
+    pub ignore: IgnoreList,
 }
 
 impl Fp8BlockScaledFormat {
-    pub fn new(ignore_modules: Vec<String>) -> Self {
-        Self { ignore_modules }
+    /// 2026-09-30: A malformed ignore entry is refused.
+    pub fn new(ignore_modules: &[String]) -> anyhow::Result<Self> {
+        Ok(Self {
+            ignore: IgnoreList::new(IgnoreDialect::ModelOpt, ignore_modules)?,
+        })
     }
 }
 
@@ -31,8 +39,6 @@ impl QuantFormat for Fp8BlockScaledFormat {
     }
 
     fn is_ignored(&self, module_path: &str) -> bool {
-        self.ignore_modules
-            .iter()
-            .any(|pat| module_matches_pattern(module_path, pat))
+        self.ignore.matches(module_path)
     }
 }

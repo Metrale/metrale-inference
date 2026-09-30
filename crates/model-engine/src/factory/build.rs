@@ -224,7 +224,7 @@ pub fn build_model(
     // weights (`mtp.fc.weight` or layer 0's q_proj), they stay BF16 whatever
     // `--mtp-quantization` says.
     let effective_mtp_quant =
-        mtp_modules::effective_mtp_quantization(&mtp_weights, &config, &store, mtp_quant);
+        mtp_modules::effective_mtp_quantization(&mtp_weights, &config, &store, mtp_quant)?;
 
     // 2026-09-25: Step 3: LM-head quantization (NVFP4, FP8 or BF16) and the
     // draft-only NVFP4 head for MTP, in lm_head_setup.rs.

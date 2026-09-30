@@ -1092,3 +1092,11 @@ void fp8_fp8_gemm_t_m128(
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc1[nb][e]);
         }
 }
+
+// 2026-09-29: The N tile of each entry point above whose grid covers N in tiles. Launchers
+// size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
+// that entry multiplies `blockIdx.x` by.
+extern "C" __device__ unsigned int w4a16_gemm_n_tile = N_TILE_SM;
+extern "C" __device__ unsigned int w4a16_gemm_t_n_tile = N_TILE_LG;
+extern "C" __device__ unsigned int w4a16_gemm_t_k64_n_tile = N_TILE_LG;
+extern "C" __device__ unsigned int w4a16_gemm_t_m128_n_tile = N_TILE_LG;

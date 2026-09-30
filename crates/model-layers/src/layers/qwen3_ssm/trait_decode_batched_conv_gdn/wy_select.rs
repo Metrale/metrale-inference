@@ -31,8 +31,13 @@ fn wy3_resident_enabled() -> bool {
 /// select the register-resident twins, which are `__launch_bounds__(128, 1)`
 /// (kernels/gb10/common/gated_delta_rule_wy{2,3}_resident.cu). Narrower launches run the
 /// base kernel.
+///
+/// 2026-09-30: 8, was 16. The twins are bit-identical to the base kernels at every width
+/// 1..=32, eager and graphed (`gdn_wy_resident_width_oracle`), so the threshold is a speed
+/// choice only. On the dense Qwen3.8-27B at C=8 (dgx3, nsys) the FP16 wy2 twin takes
+/// 176.9 us per layer against 216.4 us for the base kernel.
 fn wy_resident_min_width() -> usize {
-    16
+    8
 }
 
 impl Qwen3SsmLayer {

@@ -148,3 +148,26 @@ extern "C" __global__ void ssm_state_clamp_norm_fused_f16(
         }
     }
 }
+
+// 2026-09-29: Count the non-finite values of a Mamba-2 h state, in place of the norm clamp
+// above for Mamba-2 models (the reference bounds nothing, and prefill states reach per-head
+// norms of 11275). Same grid and layout as ssm_state_clamp_norm_fused; *count must be
+// zeroed before the launch. Each thread adds its column's count once.
+extern "C" __global__ void ssm_state_nonfinite_count(
+    const float* const* __restrict__ h_state_ptrs,
+    unsigned int num_heads,
+    unsigned int k_dim,
+    unsigned int v_dim,
+    unsigned int* __restrict__ count
+) {
+    const unsigned int head = blockIdx.x;
+    const unsigned int layer = blockIdx.y;
+    const unsigned int tid = threadIdx.x;
+    if (head >= num_heads || tid >= v_dim) return;
+    const float* H = h_state_ptrs[layer] + (unsigned long long)head * k_dim * v_dim;
+    unsigned int bad = 0;
+    for (unsigned int j = 0; j < k_dim; j++) {
+        if (!isfinite(H[j * v_dim + tid])) bad++;
+    }
+    if (bad) atomicAdd(count, bad);
+}

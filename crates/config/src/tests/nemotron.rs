@@ -63,6 +63,9 @@ fn nemotron_h_fixture_maps_mamba_moe_and_weight_layout() {
         AttnPositionEncoding::None
     );
     assert_eq!(cfg.rotary_dim(), 0);
+    // 2026-09-29: Mamba-2 layers: speculation is refused and the h state is guarded, not
+    // clamped.
+    assert!(cfg.has_mamba2_layers());
     assert_eq!(cfg.routed_scaling_factor, 2.5);
     assert!(cfg.norm_topk_prob);
     assert_eq!(cfg.weight_prefix, "backbone");

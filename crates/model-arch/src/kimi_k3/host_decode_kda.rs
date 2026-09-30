@@ -91,6 +91,9 @@ fn run_layers_try(
     deny_kda_allocation: bool,
 ) -> anyhow::Result<(usize, Vec<(String, String)>)> {
     let gpu = MockGpuBackend::new();
+    // 2026-09-29: Every mock kernel resolves to the handle 0xDEAD; publish the deepseek-v4-flash
+    // tree's 64-column tile for it, as the e8m0 GEMM's module does.
+    gpu.set_kernel_n_tile(metrale_gpu_runtime::gpu::KernelHandle(0xDEAD), 64);
     if deny_moe {
         gpu.deny_kernel(MOE_MODULE, E8M0_ENTRY);
     }

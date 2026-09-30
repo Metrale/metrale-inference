@@ -66,6 +66,10 @@ fn a_rope_family_keeps_rope_and_its_rotary_dims() {
         AttnPositionEncoding::Rope
     );
     assert_eq!(cfg.rotary_dim(), 64);
+    assert!(
+        !cfg.has_mamba2_layers(),
+        "no mamba_* heads, so no Mamba-2 layers"
+    );
 }
 
 /// 2026-09-29: Path C: a Nemotron-H config that also sets a RoPE variant parameter is
