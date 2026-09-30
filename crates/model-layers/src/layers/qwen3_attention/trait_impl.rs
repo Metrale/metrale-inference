@@ -26,7 +26,7 @@ use crate::layer::{
 use crate::layers::FfnComponent;
 
 mod decode_inner;
-mod multi_seq;
+pub(in crate::layers::qwen3_attention) mod multi_seq;
 mod prefill_inner;
 
 /// 2026-09-25: Debug: synchronise `stream`, read a BF16 tensor back and log its

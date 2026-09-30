@@ -423,3 +423,7 @@ mod h_stored_geometry_tests;
 #[cfg(test)]
 #[path = "ssm_pool_slot_guard_tests.rs"]
 mod slot_guard_tests;
+
+#[cfg(test)]
+#[path = "ssm_pool_state_plan_tests.rs"]
+mod state_plan_tests;

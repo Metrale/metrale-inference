@@ -114,6 +114,12 @@ happened to fail.
 
 ## Adding a new model
 
+The standard method is the `new-model` skill,
+[`.claude/skills/new-model/SKILL.md`](.claude/skills/new-model/SKILL.md): describe the model as
+an architecture circuit, run `met circuit venn` against the closest supported models, share
+kernels by parameterizing them, then prove, optimize, fuse and beat vLLM. The walkthrough
+below is the legacy path the circuit replaces.
+
 High-level walkthrough — the patterns to follow are already in-tree.
 
 1. **Model-type dispatch.** Add a new arm in

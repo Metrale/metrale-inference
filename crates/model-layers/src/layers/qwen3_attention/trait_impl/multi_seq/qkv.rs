@@ -36,7 +36,7 @@ pub(super) fn bf16_batchm_enabled() -> bool {
 
 /// 2026-09-25: The fused `[q | k | v]` GEMM in `ms_qkv_batchn` (one launch
 /// instead of three) is on unless `METRALE_NO_FUSED_QKV=1`, read once per process.
-fn fused_qkv_enabled() -> bool {
+pub(in crate::layers::qwen3_attention) fn fused_qkv_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("METRALE_NO_FUSED_QKV").ok().as_deref() != Some("1"))
 }

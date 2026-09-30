@@ -55,9 +55,10 @@ pub fn sources(root: &Path, target: &Target) -> Option<Vec<PathBuf>> {
 /// 2026-09-26: Config files that steer a target's compile without being
 /// sources, in the order `closure_attestation` in the kernels build script
 /// hashes them: `HARDWARE.toml`, every `KERNEL.toml` the resolution read
-/// (least specific first), the target's own `MODEL.toml`. Files that do not
+/// (least specific first), the target's own `MODEL.toml`, then (2026-09-28) the
+/// circuit files of `metrale_closure::circuit_configs`. Files that do not
 /// exist are left out. When the target does not resolve, the list is the
-/// hardware's and the model's manifests only.
+/// hardware's and the model's manifests and the circuit files only.
 pub fn configs(root: &Path, target: &Target) -> Vec<PathBuf> {
     let hw_dir = root.join("kernels").join(&target.hardware);
     let mut out = vec![hw_dir.join("HARDWARE.toml")];
@@ -68,6 +69,7 @@ pub fn configs(root: &Path, target: &Target) -> Vec<PathBuf> {
         }
         Err(_) => out.push(hw_dir.join(&target.model).join("MODEL.toml")),
     }
+    out.extend(metrale_closure::circuit_configs(root, &target.hardware));
     out.into_iter().filter(|p| p.exists()).collect()
 }
 
@@ -103,6 +105,9 @@ pub fn model_of(path: &str) -> Option<(&str, &str)> {
 ///   targets on a hardware that `inherits` the tree, or that name the file in
 ///   `[sources] use`.
 ///
+/// * (2026-09-28) By circuit. A path under `kernels/circuits/` affects every
+///   target: each one hashes those files (`metrale_closure::circuit_configs`).
+///
 /// A path outside `kernels/` affects nothing here. `closure::excuses` refuses
 /// to excuse a path set that holds one.
 pub fn affected(root: &Path, changed: &[String]) -> BTreeSet<Target> {
@@ -117,6 +122,10 @@ pub fn affected(root: &Path, changed: &[String]) -> BTreeSet<Target> {
         }
     }
     for path in changed {
+        if path.starts_with("kernels/circuits/") {
+            out.extend(all.iter().cloned());
+            continue;
+        }
         let Some(hw) = hardware_of(path) else {
             continue;
         };

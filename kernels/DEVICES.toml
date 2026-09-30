@@ -1,0 +1,744 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: The device registry: every GPU SKU a circuit can be planned for, the kernel CLASS
+# (`kernels/<class>/`) its build targets, its roofline and the tensor-core instructions it runs
+# natively (schema: crates/circuit/src/hardware/device.rs; used by `met circuit plan --hardware`).
+#
+# Why one file here and not `[[device]]` rows in each HARDWARE.toml:
+# - A device is a SKU and a class is a compiled kernel set; the mapping is many-to-one (H100 and
+#   H200 both build `hopper`) and the SKUs differ exactly where a class cannot (H200 has 141 GB
+#   at 4.8 TB/s, H100 80 GB at 3.35 TB/s), so a class file cannot hold both without a table of
+#   its own.
+# - HARDWARE.toml is a closure input of every target of its class
+#   (crates/bench/src/gate/taxon.rs) and is read by the build (build_defaults.rs, which refuses
+#   unknown keys), the closure layout and the bench hardware policies. A roofline correction must
+#   not re-open every certified gate of the class, and a spec sheet must not reach the build.
+# - Nothing in the build or the gate reads this file. The circuit planner is its only reader, and
+#   its consistency test (crates/circuit/tests/hardware.rs) holds it to the classes' build flags.
+#
+# Owner: metrale-circuit (hardware axis).
+# Invariants:
+# - The device profiles below the guards are the hardware-specs research of 2026-09-29
+#   (the roadmap's device and hardware-spec tables), copied verbatim with
+#   its conventions and [sources]; only the planner keys are added, after each `sources` line:
+#   `usable_fraction` / `usable_why` (the share of the visible memory weights, KV and state may
+#   use) and, on gb10, `measured` (where the measured achievable roofline lives; the planner
+#   then uses it in place of the datasheet ceiling).
+# - `class` names a `kernels/<class>/HARDWARE.toml`; `arch` equals that file's `[hardware] arch`.
+# - The planner reads `mma_family`, `native_mma`, `peak_tflops` (0.0 = no tensor path),
+#   `memory_bandwidth_gbps`, `memory_gib_visible` (else `memory_gb_datasheet`, which tracks the
+#   visible GiB), `derived` and `sources`; the other spec keys are carried for the roadmap.
+
+# 2026-09-30: From here the research file follows verbatim (planner keys added per device; the
+# [[guard]] tables sit between its [sources] and its first [[device]]).
+
+# Device profiles for the model + hardware -> fused-kernel-circuit planner.
+# Compiled 2026-09-29. Companion document: hardware-specs.md (same numbers, with prose).
+#
+# Conventions
+#   * peak_tflops           = DENSE peak (no 2:4 sparsity). INT8 values are TOPS.
+#   * peak_tflops_sparse    = 2:4 structured-sparsity peak, exactly as NVIDIA publishes it.
+#   * 0.0 in peak_tflops    = no tensor-core path for that dtype on this device.
+#   * Keys listed in `derived` are computed by us, not published by NVIDIA. hardware-specs.md
+#     states how each was derived.
+#   * Keys listed in `unknown` are not published. They are omitted from the table (TOML has
+#     no null).
+#   * memory_gb_datasheet   = the number on NVIDIA's datasheet. In practice it tracks the
+#     CUDA-visible size in GiB, not in decimal GB.
+#   * memory_gib_visible    = what nvidia-smi or cuDeviceTotalMem reports, converted to GiB.
+#   * memory_bandwidth_gbps = decimal GB/s.
+#   * ridge_flop_per_byte   = dense peak / memory bandwidth (derived).
+#   * native_mma            = a single hardware MMA instruction takes this operand pair
+#     (and its scales) directly. `false` means software conversion or emulation is needed.
+#   * `class` names the existing kernel tree under kernels/<class> in the engine repo.
+
+schema_version = 1
+compiled = "2026-09-29"
+
+[sources]
+S1  = "NVIDIA H100 product page, spec table. https://www.nvidia.com/en-us/data-center/h100/ (accessed 2026-09-29)"
+S2  = "NVIDIA H200 product page, spec table ('preliminary'). https://www.nvidia.com/en-us/data-center/h200/ (accessed 2026-09-29)"
+S3  = "NVIDIA Technical Blog, 'NVIDIA Hopper Architecture In-Depth', 2022-03-22. https://developer.nvidia.com/blog/nvidia-hopper-architecture-in-depth/"
+S4  = "NVIDIA Hopper Tuning Guide (CUDA 13.x docs). https://docs.nvidia.com/cuda/hopper-tuning-guide/index.html (accessed 2026-09-29)"
+S5  = "NVIDIA Blackwell Datasheet, doc 3384703, Dec 2024 (PDF created 2024-12-11). https://resources.nvidia.com/en-us-blackwell-architecture/datasheet"
+S6  = "NVIDIA Blackwell Ultra Datasheet, doc 4169750, Oct 2025 (PDF created 2025-10-01). https://resources.nvidia.com/en-us-blackwell-architecture/blackwell-ultra-datasheet ; PDF https://dam-cdn.nvd.orangelogic.com/AssetLink/1k0p832eq8r5ca0u5383ie5o4tp3bst1.pdf"
+S7  = "NVIDIA Blackwell Architecture Technical Brief V2.1 (PDF created 2025-09-30). https://dam-cdn.nvd.orangelogic.com/AssetLink/gl2l4l4812s5fw0p614s6i8bv6mi3vx5.pdf"
+S8  = "NVIDIA Technical Blog, 'Inside NVIDIA Blackwell Ultra: The Chip Powering the AI Factory Era', K. Aubrey & N. Stam, 2025-08-22. https://developer.nvidia.com/blog/inside-nvidia-blackwell-ultra-the-chip-powering-the-ai-factory-era/"
+S9  = "NVIDIA Blackwell Tuning Guide (CUDA 13.4). https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html (accessed 2026-09-29)"
+S10 = "CUDA Programming Guide v13.4.2, Compute Capabilities appendix (Tables: feature support, SM info, memory, carveout, tensor-core input types). https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/compute-capabilities.html (accessed 2026-09-29)"
+S11 = "PTX ISA 9.4, Target ISA notes for mma / wgmma / tcgen05, block-scaling tables 44/45/68/69, Table 72. https://docs.nvidia.com/cuda/parallel-thread-execution/index.html (accessed 2026-09-29)"
+S12 = "NVIDIA CUTLASS docs, 'Blackwell SM100 GEMMs' (tcgen05 kind throughput table; SM120 differences). https://docs.nvidia.com/cutlass/latest/media/docs/cpp/blackwell_functionality.html (accessed 2026-09-29)"
+S13 = "NVIDIA DGX Spark product page, spec table. https://www.nvidia.com/en-us/products/workstations/dgx-spark/ (accessed 2026-09-29)"
+S14 = "NVIDIA DGX Spark User Guide, Hardware Overview. https://docs.nvidia.com/dgx/dgx-spark/hardware.html (accessed 2026-09-29)"
+S15 = "NVIDIA Developer Forums, 'GB10 really does hit ~1 PFLOP NVFP4 (2:4 sparse) - measured', adg1 et al., 2026-06-17/18. https://forums.developer.nvidia.com/t/gb10-really-does-hit-1-pflop-nvfp4-2-4-sparse-measured-with-an-open-source-tool-to-reproduce-it/373618"
+S16 = "Chips and Cheese, 'Analyzing Nvidia GB10's GPU', C. Lam, 2026-03-14. https://chipsandcheese.com/p/analyzing-nvidia-gb10s-gpu"
+S17 = "Chips and Cheese, 'Nvidia's B200: Keeping the CUDA Juggernaut Rolling ft. Verda'. https://chipsandcheese.com/p/nvidias-b200-keeping-the-cuda-juggernaut (accessed 2026-09-29)"
+S18 = "StorageReview, 'NVIDIA DGX Spark Review', 2025-10-14 (MAMF BF16 99.8 / FP8 207.7 TFLOPS). https://www.storagereview.com/review/nvidia-dgx-spark-review-the-ai-appliance-bringing-datacenter-capabilities-to-desktops"
+S19 = "NVIDIA Developer Forums, 'Detailed Compute Performance Metrics for DGX Spark', alan.dang (mmapeak), 2025-11-23. https://forums.developer.nvidia.com/t/detailed-compute-performance-metrics-for-dgx-spark/351993"
+S20 = "NVIDIA HGX product page (HGX B300 / HGX B200 8-GPU totals). https://www.nvidia.com/en-us/data-center/hgx/ (accessed 2026-09-29)"
+S21 = "NVIDIA GB300 NVL72 product page. https://www.nvidia.com/en-us/data-center/gb300-nvl72/ (accessed 2026-09-29)"
+S22 = "NVIDIA GB200 NVL72 product page. https://www.nvidia.com/en-us/data-center/gb200-nvl72/ (accessed 2026-09-29)"
+S23 = "NVIDIA DGX B200 product page. https://www.nvidia.com/en-us/data-center/dgx-b200/ (accessed 2026-09-29)"
+S24 = "NVIDIA DGX B300 product page. https://www.nvidia.com/en-us/data-center/dgx-b300/ (accessed 2026-09-29)"
+S25 = "Lenovo Press LP1732, 'ThinkSystem NVIDIA H100 PCIe Gen5 GPUs Product Guide', 2026-02-19. https://lenovopress.lenovo.com/lp1732-thinksystem-nvidia-h100-pcie-gen5-gpu"
+S26 = "J. Belotti, 'Why does an NVIDIA H100 80GB card offer 85.52 GB?', 2025-02-02 (nvidia-smi: H100 81559 MiB, H200 143771 MiB). https://thundergolfer.com/blog/nvidia-gpu-memory-capacity"
+S27 = "Modal GPU Glossary, nvidia-smi (B200 183359MiB); NVIDIA forum 'Nsight Systems reports 193.51 GiB ... only ~179 GiB is physically available'. https://modal.com/gpu-glossary/host-software/nvidia-smi ; https://forums.developer.nvidia.com/t/nsight-systems-reports-193-51-gib-cuda-memory-usage-per-b200-gpu-while-only-179-gib-is-physically-available/364164"
+S28 = "Oracle OCI GPU quickstarts, README-B300.md (8x 'NVIDIA B300 SXM6 AC', 275040MiB, 1100 W). https://github.com/oracle-quickstart/oci-gpu-quickstarts/blob/main/nvidia/B300/README-B300.md"
+S29 = "ricardojacomini/b300-benchmarks, report 2026-03-17 ('148 SMs (10.3)'). https://github.com/ricardojacomini/b300-benchmarks/blob/main/report/b300_benchmark_report.md"
+S30 = "T.-R. Chen, 'Spec Sheets Are Not Kernels: An ISA- and Source-Level Audit of INT8 Availability on NVIDIA Blackwell Ultra', arXiv:2608.11693, 2026-08-12. https://arxiv.org/abs/2608.11693"
+S31 = "NVML API Reference, Device Queries, nvmlDeviceGetTotalEnergyConsumption (Volta and newer). https://docs.nvidia.com/deploy/nvml-api/group__nvmlDeviceQueries.html"
+S32 = "Local measurement on a GB10 host (driver 580.126.09, CUDA 13.0), 2026-09-29: cuDeviceGetAttribute, cuDeviceTotalMem, cudaOccupancyMaxPotentialClusterSize, nvidia-smi, nvmlDeviceGetTotalEnergyConsumption."
+S33 = "DeepSeek-AI, 'DeepSeek-V3 Technical Report', arXiv:2412.19437, sec. 3.3.2 (FP8 GEMM accumulation on Hopper retains ~14 bits). https://arxiv.org/abs/2412.19437"
+S34 = "Hugging Face model configs and safetensors sizes via the HF API (accessed 2026-09-29)."
+S35 = "Engine memory note operation-songbird-hopper-port.md (2026-08-27): GDN state dominance at C>=64, spec-decode snapshot trap, exact E2M1->E4M3, vLLM NVFP4-on-Hopper."
+
+# 2026-09-30: Source guards that compile a kernel only where an instruction kind exists. A
+# kernel defined inside such a region needs `requires` natively; a class whose HARDWARE.toml
+# `[build] extra_nvcc_flags` defines an `ifndef` macro compiles the region out.
+# - METRALE_NO_WARP_BLOCKSCALE_MMA: crates/kernels/tests/blockscale_mma_guard.rs holds every
+#   `mma.sync kind::mxf4nvf4.block_scale` and `cvt.rn.satfinite.e2m1x2` inside it.
+# - BLACKWELL_MMA_AVAILABLE: the vendor macro nvfp4_mmq.cu tests, defined for compute
+#   capability 12.x only (kernels/hopper/qwen3.8-27b/MODEL.toml [expected_absent.nvfp4_mmq]).
+[[guard]]
+macro = "METRALE_NO_WARP_BLOCKSCALE_MMA"
+polarity = "ifndef"
+requires = "mma_sync.fp4_block_scale"
+
+[[guard]]
+macro = "BLACKWELL_MMA_AVAILABLE"
+polarity = "ifdef"
+requires = "mma_sync.fp4_block_scale"
+
+# ---------------------------------------------------------------------------------------------
+[[device]]
+id = "h100-sxm"
+class = "hopper"
+name = "NVIDIA H100 SXM5 80GB"
+arch = "sm_90a"
+compute_capability = "9.0"
+sm_count = 132
+clock_mhz_max = 1980                 # third-party (nvidia-smi); NVIDIA never finalised a published boost clock
+clock_mhz_peak_implied = 1830        # derived: 989.5 TF / (132 SM * 4096 FLOP/clk)
+memory_type = "HBM3"
+memory_gb_datasheet = 80
+memory_gib_visible = 79.6            # 81559 MiB
+memory_bandwidth_gbps = 3350
+l2_mb = 50
+smem_per_sm_kb = 228
+smem_per_block_kb = 227
+regfile_per_sm_kb = 256
+max_threads_per_sm = 2048
+tmem_per_sm_kb = 0
+mma_family = "wgmma"
+tma = true
+tcgen05 = false
+cta_pair_mma = false
+max_cluster = 8
+max_cluster_nonportable = 16
+nvlink_gen = 4
+nvlink_gbps = 900
+nvlink_domain_gpus = 8
+pcie_gen = 5
+pcie_gbps = 128
+tdp_w = 700
+tdp_configurable = true
+sfu_ex2_te_per_s = 4.5
+nvml_energy_counter = "documented"   # NVML: Volta and newer; not verified by us on this SKU
+derived = ["clock_mhz_peak_implied", "ridge_flop_per_byte"]
+unknown = []
+sources = ["S1", "S3", "S4", "S8", "S10", "S11", "S26", "S31"]
+usable_fraction = 0.90
+usable_why = "the gpu-memory-utilization serving engines default to on datacentre HBM"
+
+[device.peak_tflops]
+fp64 = 34.0
+fp64_tensor = 67.0
+fp32 = 67.0
+tf32 = 494.5
+bf16 = 989.5
+fp16 = 989.5
+fp8 = 1979.0
+fp6 = 0.0
+fp4_nvfp4 = 0.0
+fp4_mxfp4 = 0.0
+int8 = 1979.0
+
+[device.peak_tflops_sparse]
+tf32 = 989.0
+bf16 = 1979.0
+fp16 = 1979.0
+fp8 = 3958.0
+int8 = 3958.0
+
+[device.ridge_flop_per_byte]
+bf16 = 295.4
+fp8 = 590.7
+
+[device.native_mma]
+bf16_bf16 = true
+fp16_fp16 = true
+tf32_tf32 = true
+fp8_fp8 = true
+fp8_fp8_mx_block32 = false
+fp6_fp6 = false
+fp4_fp4_nvfp4_block16 = false
+fp4_fp4_mxfp4_block32 = false
+fp4_fp8_unscaled = false
+fp4_fp8_nvfp4_scaled = false
+fp4_bf16 = false
+int8_int8 = true
+fp64 = true
+
+# ---------------------------------------------------------------------------------------------
+[[device]]
+id = "h100-nvl"
+class = "hopper"
+name = "NVIDIA H100 NVL 94GB (PCIe)"
+arch = "sm_90a"
+compute_capability = "9.0"
+sm_count = 132                       # third-party; conflicting: Lenovo LP1732 lists 14,592 cores = 114 SMs
+memory_type = "HBM3"
+memory_gb_datasheet = 94
+memory_bandwidth_gbps = 3900
+l2_mb = 50
+smem_per_sm_kb = 228
+smem_per_block_kb = 227
+regfile_per_sm_kb = 256
+max_threads_per_sm = 2048
+tmem_per_sm_kb = 0
+mma_family = "wgmma"
+tma = true
+tcgen05 = false
+cta_pair_mma = false
+max_cluster = 8
+max_cluster_nonportable = 16
+nvlink_gen = 4
+nvlink_gbps = 600                    # 2-GPU NVLink bridge
+nvlink_domain_gpus = 2
+pcie_gen = 5
+pcie_gbps = 128
+tdp_w = 400                          # configurable 350-400 W
+tdp_configurable = true
+sfu_ex2_te_per_s = 4.5
+nvml_energy_counter = "documented"
+derived = ["ridge_flop_per_byte"]
+unknown = ["clock_mhz_max", "memory_gib_visible", "sm_count_confirmed"]
+sources = ["S1", "S3", "S4", "S10", "S25", "S31"]
+usable_fraction = 0.90
+usable_why = "the gpu-memory-utilization serving engines default to on datacentre HBM"
+
+[device.peak_tflops]
+fp64 = 30.0
+fp64_tensor = 60.0
+fp32 = 60.0
+tf32 = 417.5
+bf16 = 835.5
+fp16 = 835.5
+fp8 = 1670.5
+fp6 = 0.0
+fp4_nvfp4 = 0.0
+fp4_mxfp4 = 0.0
+int8 = 1670.5
+
+[device.peak_tflops_sparse]
+tf32 = 835.0
+bf16 = 1671.0
+fp16 = 1671.0
+fp8 = 3341.0
+int8 = 3341.0
+
+[device.ridge_flop_per_byte]
+bf16 = 214.2
+fp8 = 428.3
+
+[device.native_mma]
+bf16_bf16 = true
+fp16_fp16 = true
+tf32_tf32 = true
+fp8_fp8 = true
+fp8_fp8_mx_block32 = false
+fp6_fp6 = false
+fp4_fp4_nvfp4_block16 = false
+fp4_fp4_mxfp4_block32 = false
+fp4_fp8_unscaled = false
+fp4_fp8_nvfp4_scaled = false
+fp4_bf16 = false
+int8_int8 = true
+fp64 = true
+
+# ---------------------------------------------------------------------------------------------
+[[device]]
+id = "h200-sxm"
+class = "hopper"
+name = "NVIDIA H200 SXM 141GB"
+arch = "sm_90a"
+compute_capability = "9.0"
+sm_count = 132                       # derived: same GH100 configuration; tensor peaks identical to H100 SXM
+clock_mhz_peak_implied = 1830        # derived, as for H100 SXM
+memory_type = "HBM3e"
+memory_gb_datasheet = 141
+memory_gib_visible = 140.4           # 143771 MiB
+memory_bandwidth_gbps = 4800
+l2_mb = 50                           # derived: same GH100 die as H100 (not on the H200 page)
+smem_per_sm_kb = 228
+smem_per_block_kb = 227
+regfile_per_sm_kb = 256
+max_threads_per_sm = 2048
+tmem_per_sm_kb = 0
+mma_family = "wgmma"
+tma = true
+tcgen05 = false
+cta_pair_mma = false
+max_cluster = 8
+max_cluster_nonportable = 16
+nvlink_gen = 4
+nvlink_gbps = 900
+nvlink_domain_gpus = 8
+pcie_gen = 5
+pcie_gbps = 128
+tdp_w = 700
+tdp_configurable = true
+sfu_ex2_te_per_s = 4.5
+nvml_energy_counter = "documented"
+derived = ["sm_count", "l2_mb", "clock_mhz_peak_implied", "ridge_flop_per_byte"]
+unknown = ["clock_mhz_max"]
+sources = ["S2", "S4", "S8", "S10", "S11", "S26", "S31"]
+usable_fraction = 0.90
+usable_why = "the gpu-memory-utilization serving engines default to on datacentre HBM"
+
+[device.peak_tflops]
+fp64 = 34.0
+fp64_tensor = 67.0
+fp32 = 67.0
+tf32 = 494.5
+bf16 = 989.5
+fp16 = 989.5
+fp8 = 1979.0
+fp6 = 0.0
+fp4_nvfp4 = 0.0
+fp4_mxfp4 = 0.0
+int8 = 1979.0
+
+[device.peak_tflops_sparse]
+tf32 = 989.0
+bf16 = 1979.0
+fp16 = 1979.0
+fp8 = 3958.0
+int8 = 3958.0
+
+[device.ridge_flop_per_byte]
+bf16 = 206.1
+fp8 = 412.3
+
+[device.native_mma]
+bf16_bf16 = true
+fp16_fp16 = true
+tf32_tf32 = true
+fp8_fp8 = true
+fp8_fp8_mx_block32 = false
+fp6_fp6 = false
+fp4_fp4_nvfp4_block16 = false
+fp4_fp4_mxfp4_block32 = false
+fp4_fp8_unscaled = false
+fp4_fp8_nvfp4_scaled = false
+fp4_bf16 = false
+int8_int8 = true
+fp64 = true
+
+# ---------------------------------------------------------------------------------------------
+[[device]]
+id = "b200"
+class = "b200"
+name = "NVIDIA B200 (HGX B200, 1000 W)"
+arch = "sm_100a"
+compute_capability = "10.0"
+sm_count = 148                       # third-party (Chips and Cheese: 74 SM per die); full die = 160
+clock_mhz_peak_implied = 1856        # derived: 2250 TF / (148 SM * 8192 FLOP/clk)
+memory_type = "HBM3e"
+memory_gb_datasheet = 180            # physical 192 GB (8 stacks)
+memory_gib_visible = 179.1           # 183359 MiB
+memory_bandwidth_gbps = 7700
+l2_mb = 126                          # Blackwell Tuning Guide, stated for GB200
+smem_per_sm_kb = 228
+smem_per_block_kb = 227
+regfile_per_sm_kb = 256
+max_threads_per_sm = 2048
+tmem_per_sm_kb = 256
+mma_family = "tcgen05"
+tma = true
+tcgen05 = true
+cta_pair_mma = true
+max_cluster = 8
+max_cluster_nonportable = 16
+nvlink_gen = 5
+nvlink_gbps = 1800
+nvlink_domain_gpus = 8
+pcie_gen = 5
+pcie_gbps = 128
+tdp_w = 1000
+tdp_configurable = true
+sfu_ex2_te_per_s = 5.0
+nvml_energy_counter = "documented"
+derived = ["clock_mhz_peak_implied", "ridge_flop_per_byte"]
+unknown = ["clock_mhz_max"]
+sources = ["S5", "S8", "S9", "S10", "S11", "S12", "S17", "S20", "S23", "S27", "S31"]
+usable_fraction = 0.90
+usable_why = "the gpu-memory-utilization serving engines default to on datacentre HBM"
+
+[device.peak_tflops]
+fp64 = 37.0
+fp64_tensor = 37.0
+fp32 = 75.0
+tf32 = 1100.0
+bf16 = 2250.0
+fp16 = 2250.0
+fp8 = 4500.0
+fp6 = 4500.0
+fp4_nvfp4 = 9000.0
+fp4_mxfp4 = 9000.0
+int8 = 4500.0
+
+[device.peak_tflops_sparse]
+tf32 = 2200.0
+bf16 = 4500.0
+fp16 = 4500.0
+fp8 = 9000.0
+fp6 = 9000.0
+fp4_nvfp4 = 18000.0
+int8 = 9000.0
+
+[device.ridge_flop_per_byte]
+bf16 = 292.2
+fp8 = 584.4
+fp4 = 1168.8
+
+[device.native_mma]
+bf16_bf16 = true
+fp16_fp16 = true
+tf32_tf32 = true
+fp8_fp8 = true
+fp8_fp8_mx_block32 = true
+fp6_fp6 = true
+fp4_fp4_nvfp4_block16 = true
+fp4_fp4_mxfp4_block32 = true
+fp4_fp8_unscaled = true              # tcgen05 kind::f8f6f4, runs at the FP8 rate
+fp4_fp8_nvfp4_scaled = false         # mxf8f6f4 takes only UE8M0 block-32 scales
+fp4_bf16 = false
+int8_int8 = true                     # kind::i8, sm_100a only
+fp64 = true
+
+# ---------------------------------------------------------------------------------------------
+[[device]]
+id = "gb200-b200"
+class = "b200"
+name = "NVIDIA B200 in GB200 NVL72 (1200 W)"
+arch = "sm_100a"
+compute_capability = "10.0"
+sm_count = 148                       # third-party, as b200
+clock_mhz_peak_implied = 2062        # derived: 2500 TF / (148 * 8192)
+memory_type = "HBM3e"
+memory_gb_datasheet = 186
+memory_bandwidth_gbps = 8000
+l2_mb = 126
+smem_per_sm_kb = 228
+smem_per_block_kb = 227
+regfile_per_sm_kb = 256
+max_threads_per_sm = 2048
+tmem_per_sm_kb = 256
+mma_family = "tcgen05"
+tma = true
+tcgen05 = true
+cta_pair_mma = true
+max_cluster = 8
+max_cluster_nonportable = 16
+nvlink_gen = 5
+nvlink_gbps = 1800
+nvlink_domain_gpus = 72
+pcie_gen = 5
+pcie_gbps = 128
+tdp_w = 1200
+tdp_configurable = true
+sfu_ex2_te_per_s = 5.0
+nvml_energy_counter = "documented"
+derived = ["clock_mhz_peak_implied", "ridge_flop_per_byte"]
+unknown = ["clock_mhz_max", "memory_gib_visible"]
+sources = ["S5", "S7", "S8", "S9", "S10", "S11", "S12", "S22", "S31"]
+usable_fraction = 0.90
+usable_why = "the gpu-memory-utilization serving engines default to on datacentre HBM"
+
+[device.peak_tflops]
+fp64 = 40.0
+fp64_tensor = 40.0
+fp32 = 80.0
+tf32 = 1250.0
+bf16 = 2500.0
+fp16 = 2500.0
+fp8 = 5000.0
+fp6 = 5000.0
+fp4_nvfp4 = 10000.0
+fp4_mxfp4 = 10000.0
+int8 = 5000.0
+
+[device.peak_tflops_sparse]
+tf32 = 2500.0
+bf16 = 5000.0
+fp16 = 5000.0
+fp8 = 10000.0
+fp6 = 10000.0
+fp4_nvfp4 = 20000.0
+int8 = 10000.0
+
+[device.ridge_flop_per_byte]
+bf16 = 312.5
+fp8 = 625.0
+fp4 = 1250.0
+
+[device.native_mma]
+bf16_bf16 = true
+fp16_fp16 = true
+tf32_tf32 = true
+fp8_fp8 = true
+fp8_fp8_mx_block32 = true
+fp6_fp6 = true
+fp4_fp4_nvfp4_block16 = true
+fp4_fp4_mxfp4_block32 = true
+fp4_fp8_unscaled = true
+fp4_fp8_nvfp4_scaled = false
+fp4_bf16 = false
+int8_int8 = true
+fp64 = true
+
+# ---------------------------------------------------------------------------------------------
+[[device]]
+id = "gb300"
+class = "b300"
+name = "NVIDIA B300 (Blackwell Ultra) in GB300 NVL72 (1400 W)"
+arch = "sm_103a"
+compute_capability = "10.3"
+sm_count = 148                       # third-party (HGX B300 device report); NVIDIA: 'up to 160'
+clock_mhz_peak_implied = 2062        # derived: 2500 TF / (148 * 8192)
+memory_type = "HBM3e"
+memory_gb_datasheet = 279            # physical 288 GB (8x 12-Hi stacks)
+memory_bandwidth_gbps = 8000
+smem_per_sm_kb = 228
+smem_per_block_kb = 227
+regfile_per_sm_kb = 256
+max_threads_per_sm = 2048
+tmem_per_sm_kb = 256
+mma_family = "tcgen05"
+tma = true
+tcgen05 = true
+cta_pair_mma = true
+max_cluster = 8
+max_cluster_nonportable = 16         # documented for B200 (CC 10.0); assumed, not documented, for CC 10.3
+nvlink_gen = 5
+nvlink_gbps = 1800
+nvlink_domain_gpus = 72
+pcie_gen = 6
+pcie_gbps = 256
+tdp_w = 1400
+tdp_configurable = true
+sfu_ex2_te_per_s = 10.7
+nvml_energy_counter = "documented"
+derived = ["clock_mhz_peak_implied", "ridge_flop_per_byte", "max_cluster_nonportable"]
+unknown = ["clock_mhz_max", "memory_gib_visible", "l2_mb", "sm_count_confirmed"]
+sources = ["S6", "S7", "S8", "S10", "S11", "S21", "S29", "S30", "S31"]
+usable_fraction = 0.90
+usable_why = "the gpu-memory-utilization serving engines default to on datacentre HBM"
+
+[device.peak_tflops]
+fp64 = 1.3
+fp64_tensor = 1.3                    # datasheet row 'FP64/FP64 Tensor Core'; CUDA table lists no FP64 tensor input for CC 10.3
+fp32 = 80.0
+tf32 = 1250.0
+bf16 = 2500.0
+fp16 = 2500.0
+fp8 = 5000.0
+fp6 = 5000.0
+fp4_nvfp4 = 15000.0
+fp4_mxfp4 = 15000.0
+int8 = 165.0
+
+[device.peak_tflops_sparse]
+tf32 = 2500.0
+bf16 = 5000.0
+fp16 = 5000.0
+fp8 = 10000.0
+fp6 = 10000.0
+fp4_nvfp4 = 20000.0
+int8 = 330.0
+
+[device.ridge_flop_per_byte]
+bf16 = 312.5
+fp8 = 625.0
+fp4 = 1875.0
+
+[device.native_mma]
+bf16_bf16 = true
+fp16_fp16 = true
+tf32_tf32 = true
+fp8_fp8 = true
+fp8_fp8_mx_block32 = true
+fp6_fp6 = true
+fp4_fp4_nvfp4_block16 = true
+fp4_fp4_mxfp4_block32 = true
+fp4_fp8_unscaled = true
+fp4_fp8_nvfp4_scaled = false
+fp4_bf16 = false
+int8_int8 = false                    # tcgen05 kind::i8 is not exposed on sm_103a; only legacy warp IMMA
+fp64 = false
+
+# ---------------------------------------------------------------------------------------------
+[[device]]
+id = "hgx-b300"
+class = "b300"
+name = "NVIDIA B300 SXM6 AC (HGX B300, 1100 W)"
+arch = "sm_103a"
+compute_capability = "10.3"
+sm_count = 148                       # third-party device report ('148 SMs (10.3)')
+clock_mhz_peak_implied = 1856        # derived: 2250 TF / (148 * 8192)
+memory_type = "HBM3e"
+memory_gb_datasheet = 270            # physical 288 GB
+memory_gib_visible = 268.6           # 275040 MiB
+memory_bandwidth_gbps = 7700
+smem_per_sm_kb = 228
+smem_per_block_kb = 227
+regfile_per_sm_kb = 256
+max_threads_per_sm = 2048
+tmem_per_sm_kb = 256
+mma_family = "tcgen05"
+tma = true
+tcgen05 = true
+cta_pair_mma = true
+max_cluster = 8
+max_cluster_nonportable = 16
+nvlink_gen = 5
+nvlink_gbps = 1800
+nvlink_domain_gpus = 8
+pcie_gen = 6
+pcie_gbps = 256
+tdp_w = 1100
+tdp_configurable = true
+sfu_ex2_te_per_s = 10.7
+nvml_energy_counter = "documented"
+derived = ["clock_mhz_peak_implied", "ridge_flop_per_byte", "max_cluster_nonportable"]
+unknown = ["clock_mhz_max", "l2_mb", "sm_count_confirmed"]
+sources = ["S6", "S7", "S8", "S10", "S11", "S20", "S24", "S28", "S29", "S30", "S31"]
+usable_fraction = 0.90
+usable_why = "the gpu-memory-utilization serving engines default to on datacentre HBM"
+
+[device.peak_tflops]
+fp64 = 1.2
+fp64_tensor = 1.2
+fp32 = 75.0
+tf32 = 1100.0
+bf16 = 2250.0
+fp16 = 2250.0
+fp8 = 4500.0
+fp6 = 4500.0
+fp4_nvfp4 = 14000.0                  # per-GPU datasheet row; the 8-GPU total (108 PF) gives 13500
+fp4_mxfp4 = 14000.0
+int8 = 153.5
+
+[device.peak_tflops_sparse]
+tf32 = 2200.0
+bf16 = 4500.0
+fp16 = 4500.0
+fp8 = 9000.0
+fp6 = 9000.0
+fp4_nvfp4 = 18000.0
+int8 = 307.0
+
+[device.ridge_flop_per_byte]
+bf16 = 292.2
+fp8 = 584.4
+fp4 = 1818.2
+
+[device.native_mma]
+bf16_bf16 = true
+fp16_fp16 = true
+tf32_tf32 = true
+fp8_fp8 = true
+fp8_fp8_mx_block32 = true
+fp6_fp6 = true
+fp4_fp4_nvfp4_block16 = true
+fp4_fp4_mxfp4_block32 = true
+fp4_fp8_unscaled = true
+fp4_fp8_nvfp4_scaled = false
+fp4_bf16 = false
+int8_int8 = false
+fp64 = false
+
+# ---------------------------------------------------------------------------------------------
+[[device]]
+id = "gb10"
+class = "gb10"
+name = "NVIDIA GB10 (DGX Spark)"
+arch = "sm_121f"                     # repo target; sparse mma kind::mxf4nvf4 needs sm_121a
+compute_capability = "12.1"
+sm_count = 48                        # measured (S32)
+clock_mhz_max = 2418                 # CUDA clockRate (S32); nvidia-smi reports 3003 max; ~2600 observed under NVFP4 load (S15)
+clock_mhz_peak_implied = 2543        # derived: 500 TF / (48 * 4096 FP4 FLOP/clk)
+memory_type = "LPDDR5X"
+memory_gb_datasheet = 128            # unified with the CPU
+memory_gib_visible = 121.7           # cuDeviceTotalMem 130663886848 B (S32)
+memory_bandwidth_gbps = 273
+l2_mb = 24                           # measured 25165824 B; plus 16 MB system-level cache (S16)
+smem_per_sm_kb = 100
+smem_per_block_kb = 99
+regfile_per_sm_kb = 256
+max_threads_per_sm = 1536
+tmem_per_sm_kb = 0
+mma_family = "mma_sync"
+tma = true
+tcgen05 = false
+cta_pair_mma = false
+max_cluster = 8                      # measured (S32)
+max_cluster_nonportable = 12         # measured (S32); CUTLASS SM120 kernels fix cluster 1x1x1 anyway
+nvlink_gen = 0                       # no NVLink between GPUs; CPU-GPU NVLink-C2C inside the SoC
+nvlink_gbps = 0
+nvlink_domain_gpus = 1
+pcie_gen = 5
+pcie_gbps = 0                        # the GPU is not on PCIe; scale-out is ConnectX-7 at 200 Gb/s
+tdp_w = 140                          # the whole GB10 SoC, CPU plus GPU
+tdp_configurable = false
+nvml_energy_counter = "verified"     # via the API only, GPU rail only (S32)
+derived = ["clock_mhz_peak_implied", "peak_tflops.fp8", "peak_tflops.bf16", "peak_tflops.fp16", "peak_tflops.fp32", "peak_tflops.fp64", "ridge_flop_per_byte"]
+unknown = ["peak_tflops.tf32", "peak_tflops.int8", "peak_tflops.fp6"]
+sources = ["S10", "S11", "S12", "S13", "S14", "S15", "S16", "S18", "S19", "S32"]
+usable_fraction = 0.85
+usable_why = "gpu-memory-utilization above 0.85 froze a GB10 and needed a power cycle; fp8 KV is the headroom lever instead"
+measured = "kernels/gb10/common/KERNEL_FAMILIES.toml [roofline]"
+
+[device.peak_tflops]
+fp64 = 0.5                           # derived: 1:64 of FP32
+fp64_tensor = 0.0
+fp32 = 31.3                          # derived: 48 SM * 128 lanes * 2 * 2.543 GHz
+bf16 = 125.0                         # derived: 48 * 1024 * 2.543 GHz; MAMF measures 99.8
+fp16 = 125.0
+fp8 = 250.0                          # derived: 48 * 2048 * 2.543 GHz; MAMF measures 207.7
+fp4_nvfp4 = 500.0                    # NVIDIA: '1 PFLOP FP4 with sparsity'; measured 498-511 dense
+fp4_mxfp4 = 500.0
+
+[device.peak_tflops_sparse]
+fp4_nvfp4 = 1000.0
+
+[device.ridge_flop_per_byte]
+bf16 = 457.9
+fp8 = 915.8
+fp4 = 1831.5
+
+[device.native_mma]
+bf16_bf16 = true
+fp16_fp16 = true
+tf32_tf32 = true
+fp8_fp8 = true
+fp8_fp8_mx_block32 = true            # mma.sync block_scale kind::mxf8f6f4
+fp6_fp6 = true
+fp4_fp4_nvfp4_block16 = true         # mma.sync kind::mxf4nvf4 scale_vec::4X ue4m3
+fp4_fp4_mxfp4_block32 = true
+fp4_fp8_unscaled = true              # mma kind::f8f6f4
+fp4_fp8_nvfp4_scaled = false
+fp4_bf16 = false
+int8_int8 = true
+fp64 = false

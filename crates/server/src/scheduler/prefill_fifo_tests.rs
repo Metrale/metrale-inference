@@ -201,6 +201,7 @@ impl ModelDraft for PrefillStubModel {
 impl ModelVision for PrefillStubModel {}
 
 impl ModelEp for PrefillStubModel {}
+impl metrale_model_engine::traits::ModelCircuit for PrefillStubModel {}
 
 impl ModelStreams for PrefillStubModel {}
 

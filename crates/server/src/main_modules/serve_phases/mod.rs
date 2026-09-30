@@ -8,6 +8,7 @@
 
 mod build;
 mod config;
+mod forward;
 pub(crate) mod fp8_kv_scale_source;
 mod kernel_gate;
 pub(crate) mod kv_cache;
@@ -25,6 +26,7 @@ pub(super) use config::{
     apply_model_default_num_drafts, cap_vocab_size_to_tokenizer, load_model_config,
     merge_sidecar_quant_config, publish_mtp_max_seqs, resolve_model_dir,
 };
+pub(crate) use forward::{circuit_target, forward_select};
 pub(super) use kernel_gate::audit_and_gate;
 pub(super) use kv_cache::{
     KvCacheConfig, PrefillBudget, resolve_kv_cache_config, resolve_prefill_budget,

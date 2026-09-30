@@ -208,10 +208,10 @@ fn main() -> Result<()> {
         ("5-undersized-C", s_a, s_a, None, 4),
     ];
     for &(name, sd, sa, sp, crows) in legs {
-        if let Some(ref o) = only {
-            if !name.starts_with(o.as_str()) {
-                continue;
-            }
+        if let Some(ref o) = only
+            && !name.starts_with(o.as_str())
+        {
+            continue;
         }
         if run_leg(g, name, iters, kt, kt64, km128, karg, sd, sa, sp, crows).is_err() {
             eprintln!("context may be sticky-dead after a fault; stopping here.");

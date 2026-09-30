@@ -61,6 +61,12 @@ impl TransformerModel {
         use_graphs: bool,
         stream: u64,
     ) -> Result<()> {
+        // 2026-09-28: `--forward circuit`: the compiled plan runs the layers, the final norm and
+        // the lm_head. Its build refused every feature the legacy extras below serve (layer
+        // probes, DFlash capture, MLA, Mamba-2 normalisation).
+        if let Some(exec) = self.circuit.read().as_ref() {
+            return self.circuit_forward_body(exec, seq, ctx, stream);
+        }
         for (i, layer) in self.layers.iter().enumerate() {
             layer.decode(
                 hidden,

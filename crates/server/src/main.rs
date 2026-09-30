@@ -118,13 +118,22 @@ async fn serve_main() -> Result<()> {
         std::process::exit(code);
     }
 
+    // 2026-09-28: `circuit` plans and prints from the embedded circuit files; no
+    // subscriber, TUI or GPU.
+    if let Command::Circuit(args) = cli.command {
+        return cli::circuit::dispatch(args);
+    }
+
     let no_tui = match &cli.command {
         // 2026-09-26: `--check-kernels` prints a report and one JSON line on
         // stdout and exits, so it runs without a dashboard.
         Command::Serve(args) => args.no_tui || args.rank > 0 || args.check_kernels,
         // 2026-09-26: Benchmarks always log in plain mode.
         Command::Benchmark(_) => true,
-        Command::DumpServeOptions | Command::SyncRecipes | Command::Doctor => true,
+        Command::DumpServeOptions
+        | Command::SyncRecipes
+        | Command::Doctor
+        | Command::Circuit(_) => true,
     };
 
     // 2026-09-26: `benchmark certify --json` writes JSON lines on stdout, so
@@ -157,7 +166,10 @@ async fn serve_main() -> Result<()> {
     let result = match cli.command {
         // 2026-09-26: Returned above. An explicit arm, not a wildcard, so a new
         // subcommand fails to compile here until it is routed.
-        Command::DumpServeOptions | Command::SyncRecipes | Command::Doctor => {
+        Command::DumpServeOptions
+        | Command::SyncRecipes
+        | Command::Doctor
+        | Command::Circuit(_) => {
             unreachable!("handled before initialisation")
         }
         Command::Benchmark(args) => {

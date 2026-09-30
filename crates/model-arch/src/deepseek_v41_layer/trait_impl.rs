@@ -95,3 +95,4 @@ impl metrale_model_layers::layer::LayerWriteOnAccept for DeepSeekV41Layer {}
 impl metrale_model_layers::layer::LayerGraphHooks for DeepSeekV41Layer {}
 impl metrale_model_layers::layer::LayerAuxState for DeepSeekV41Layer {}
 impl metrale_model_layers::layer::LayerSplitPrefill for DeepSeekV41Layer {}
+impl metrale_model_layers::circuit_exec::CircuitBindings for DeepSeekV41Layer {}

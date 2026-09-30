@@ -471,6 +471,10 @@ pub struct TransformerModel {
     /// `decode_moe_route()`: 0 = Skip, 1 = Fold, 2 = Refuse (any other value
     /// reads as Fold). Initialised to 1.
     pub(super) decode_moe_route: std::sync::atomic::AtomicI32,
+    /// 2026-09-28: The circuit executor decode runs (`ModelCircuit::set_forward`); `None` runs
+    /// the legacy layer loops.
+    pub(super) circuit:
+        parking_lot::RwLock<Option<metrale_model_layers::circuit_exec::CircuitExec>>,
 }
 
 /// 2026-09-25: Pinned host staging buffer plus reusable metadata `Vec`s.

@@ -1,0 +1,46 @@
+{
+    "producer": {
+        "name": "modelopt",
+        "version": "0.43.0rc2.dev57+g87ea8babe"
+    },
+    "quantization": {
+        "quant_algo": "NVFP4",
+        "kv_cache_quant_algo": null,
+        "group_size": 16,
+        "exclude_modules": [
+            "lm_head",
+            "model.embed_vision*",
+            "model.language_model.layers.0.router*",
+            "model.language_model.layers.1.router*",
+            "model.language_model.layers.10.router*",
+            "model.language_model.layers.11.router*",
+            "model.language_model.layers.12.router*",
+            "model.language_model.layers.13.router*",
+            "model.language_model.layers.14.router*",
+            "model.language_model.layers.15.router*",
+            "model.language_model.layers.16.router*",
+            "model.language_model.layers.17.router*",
+            "model.language_model.layers.18.router*",
+            "model.language_model.layers.19.router*",
+            "model.language_model.layers.2.router*",
+            "model.language_model.layers.20.router*",
+            "model.language_model.layers.21.router*",
+            "model.language_model.layers.22.router*",
+            "model.language_model.layers.23.router*",
+            "model.language_model.layers.24.router*",
+            "model.language_model.layers.25.router*",
+            "model.language_model.layers.26.router*",
+            "model.language_model.layers.27.router*",
+            "model.language_model.layers.28.router*",
+            "model.language_model.layers.29.router*",
+            "model.language_model.layers.3.router*",
+            "model.language_model.layers.4.router*",
+            "model.language_model.layers.5.router*",
+            "model.language_model.layers.6.router*",
+            "model.language_model.layers.7.router*",
+            "model.language_model.layers.8.router*",
+            "model.language_model.layers.9.router*",
+            "model.vision_tower*"
+        ]
+    }
+}

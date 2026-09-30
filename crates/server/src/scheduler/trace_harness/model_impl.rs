@@ -454,6 +454,7 @@ impl ModelStreams for RecordingModel {
     }
 }
 
+impl metrale_model_engine::traits::ModelCircuit for RecordingModel {}
 impl ModelDeviceFeed for RecordingModel {
     fn decode_batch_fed(
         &self,

@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-28: The Qwen3.6 MoE circuit (Qwen3.6-35B-A3B, `qwen3_5_moe_text`): the shared
+# GatedDeltaNet and gated full-attention blocks, a 256-expert top-8 MoE FFN with a gated
+# shared expert on every layer, the final norm and lm_head, and the one-layer MTP draft head
+# whose FFN is the same MoE.
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants: as in qwen3_5.toml. The embedding, mixer, head and MTP in/out blocks come from
+# blocks/qwen3_hybrid.toml, which both circuits include; this file adds the MoE FFN.
+
+schema = 1
+arch = "qwen3_6_moe"
+description = "MoE hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, 256-expert top-8 MoE with a shared expert, MTP draft head"
+layer_module = "model.language_model.layers.{i}"
+draft_module = "mtp.layers.0"
+include = ["qwen3_hybrid"]
+dims = [
+  "hidden", "vocab", "q_heads", "kv_heads", "head_dim",
+  "lin_k_heads", "lin_k_dim", "lin_v_heads", "lin_v_dim", "mtp",
+  "experts", "top_k", "moe_inter", "shared_inter",
+]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = ["mtp_in", "attn", "moe_ffn", "mtp_out"]
+# 2026-09-30: The draft head exists only in a checkpoint with an MTP layer (`mtp`).
+draft_when = "mtp"
+
+[layout]
+kind = "interval"
+period = 4
+
+[layout.blocks]
+linear_attention = ["gdn", "moe_ffn"]
+full_attention = ["attn", "moe_ffn"]
+
+[block.moe_ffn]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe_ffn.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+
+[[block.moe_ffn.node]]
+id = "router"
+op = "router"
+in = ["xn"]
+out = [{ edge = "router_logits", format = "bf16", shape = "n x experts" }]
+binding = ["{L}.mlp.gate"]
+
+[[block.moe_ffn.node]]
+id = "top_k"
+op = "top_k"
+in = ["router_logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+params = { top_k = "8", scoring = "softmax" }
+
+[[block.moe_ffn.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.mlp.experts.*.gate_proj", "{L}.mlp.experts.*.up_proj"]
+
+[[block.moe_ffn.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egu"]
+# 2026-09-30: BF16 as the reference computes it; a precision whose down projection reads F32 (the
+# grouped FP8 expert kernels' FP32 SiLU product) widens it (crates/circuit/src/instantiate.rs).
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe_ffn.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.mlp.experts.*.down_proj"]
+
+[[block.moe_ffn.node]]
+id = "shared_gate_up"
+op = "linear"
+role = "shared_gate_up"
+in = ["xn"]
+out = [{ edge = "sgu", format = "bf16", shape = "n x shared_inter*2" }]
+binding = ["{L}.mlp.shared_expert.gate_proj", "{L}.mlp.shared_expert.up_proj"]
+
+[[block.moe_ffn.node]]
+id = "shared_act"
+op = "silu_mul"
+in = ["sgu"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.moe_ffn.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.shared_expert.down_proj"]
+
+[[block.moe_ffn.node]]
+id = "shared_gate"
+op = "linear"
+role = "shared_gate"
+in = ["xn"]
+out = [{ edge = "sg", format = "bf16", shape = "n x 1" }]
+binding = ["{L}.mlp.shared_expert_gate"]
+
+[[block.moe_ffn.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown", "sg"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+
+[[block.moe_ffn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]

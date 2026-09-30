@@ -25,6 +25,10 @@ metrale-bench = { path = "../bench" }
 metrale-cache = { path = "../cache", default-features = false }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
+metrale-circuit = { path = "../circuit" }
+# 2026-09-30: `met circuit plan --hardware` resolves a class's kernel sources with the layout the
+# kernels build compiles (metrale_closure::layout); it was a dev-dependency only before.
+metrale-closure = { path = "../closure", default-features = false }
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
 metrale-grammar = { path = "../grammar" }
@@ -70,7 +74,6 @@ unicode-width = "0.2"
 ureq = { version = "3", features = ["json"] }
 
 [dev-dependencies]
-metrale-closure = { path = "../closure", default-features = false }
 tempfile = "3"
 
 [[bin]]

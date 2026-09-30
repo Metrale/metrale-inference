@@ -1,0 +1,37 @@
+# circuit plan: qwen3_6_moe draft n=1
+# recipe: qwen3.6/qwen3.6-35b-a3b-fp8-bf16head
+# checkpoint: Qwen/Qwen3.6-35B-A3B-FP8
+# target: gb10/qwen3.6-35b-a3b/nvfp4
+# settings: decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=canonical ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
+# opt-in levers: none
+digest: fc0943bc31fa38686371fd31ab4b4cd86e35d8f7904f92560f612755038a4a57
+groups: 27  launches: 26  edges: 3 fused, 33 materialized
+inputs: l39.moe_ffn.y bf16
+== mtp_in
+g0000 draft.mtp_in [embed] (host) reference rule=embed_row_copy writes={e:bf16}
+g0001 draft.mtp_in [embed_norm] norm::rms_norm reference rule=draft_rms_norm writes={en:bf16}
+g0002 draft.mtp_in [hidden_norm] norm::rms_norm reference rule=draft_rms_norm writes={hn:bf16}
+g0003 draft.mtp_in [concat] residual_add::bf16_concat reference rule=draft_concat writes={cat:bf16}
+g0004 draft.mtp_in [fc] gemv::dense_gemv_bf16 reference rule=draft_dense_gemv_bf16 writes={h0:bf16}
+g0005 draft.attn [input_norm] norm::rms_norm reference rule=draft_rms_norm writes={xn:bf16}
+g0006 draft.attn [q] gemv::dense_gemv_bf16 reference rule=draft_dense_gemv_bf16 writes={qg:bf16}
+g0007 draft.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0008 draft.attn [k] gemv::dense_gemv_bf16 reference rule=draft_dense_gemv_bf16 writes={k:bf16}
+g0009 draft.attn [v] gemv::dense_gemv_bf16 reference rule=draft_dense_gemv_bf16 writes={v:bf16}
+g0010 draft.attn [q_norm] norm::rms_norm reference rule=qk_norm_rows writes={qn:bf16}
+g0011 draft.attn [k_norm] norm::rms_norm reference rule=qk_norm_rows writes={kn:bf16}
+g0012 draft.attn [rope] rope::rope_forward reference rule=rope_plain_draft writes={qr:bf16,kr:bf16}
+g0013 draft.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0014 draft.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0015 draft.attn [gate_mul] residual_add::sigmoid_gate_mul reference rule=sigmoid_gate_mul writes={ag:bf16}
+g0016 draft.attn [o] gemv::dense_gemv_bf16 reference rule=draft_dense_gemv_bf16 writes={o:bf16}
+g0017 draft.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0018 draft.moe_ffn [router] gemv::dense_gemv_bf16 reference rule=moe_router_gemv writes={router_logits:bf16}
+g0019 draft.moe_ffn [top_k] moe_topk::moe_topk_softmax reference rule=moe_topk_softmax writes={topk_w:f32,topk_id:i32}
+g0020 draft.moe_ffn [experts_gate_up,shared_gate_up] moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 reference rule=moe_gate_up_shared_fp8 writes={egu:bf16,sgu:bf16}
+g0021 draft.moe_ffn [experts_act,experts_down,shared_act,shared_down] moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 reference rule=moe_silu_down_shared_fp8 fuses={eact,sact} writes={edown:bf16,sdown:bf16}
+g0022 draft.moe_ffn [shared_gate,blend] moe_expert_gemv::moe_weighted_sum_blend reference rule=moe_weighted_sum_blend fuses={sg} writes={f:bf16}
+g0023 draft.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0024 draft.mtp_out [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16}
+g0025 draft.mtp_out [lm_head] w4a16_gemv::w4a16_gemv_sw reference rule=draft_lm_head_nvfp4 writes={logits:bf16}
+g0026 draft.mtp_out [argmax] argmax::argmax_bf16 reference rule=draft_argmax writes={token:i32}

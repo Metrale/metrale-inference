@@ -205,6 +205,19 @@ impl TransformerModel {
         }
     }
 
+    /// 2026-09-28: The BF16 head's routing as `project_bf16_lm_head` reads it: the widest padded
+    /// batch it serves with the batched GEMV (0 when that arm is off), and whether the
+    /// tensor-core arm is live (it takes 5..=16 rows ahead of the GEMV).
+    pub(super) fn bf16_head_route(&self) -> (u32, bool) {
+        let batchm = if lmhead_batch_gemv_enabled() && self.dense_gemv_batchm_kernel.0 != 0 {
+            lm_head_batchm_max()
+        } else {
+            0
+        };
+        let tc = self.lm_head_m16_tc();
+        (batchm, tc.enabled && (tc.narrow.0 != 0 || tc.wide.0 != 0))
+    }
+
     /// 2026-09-25: Project `normed` [padded_n, H] into `logits` [padded_n, V].
     ///
     /// `v` is read from `self.config.vocab_size` rather than passed: it is the
