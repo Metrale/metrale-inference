@@ -1,0 +1,196 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: The generic dense GQA transformer (roadmap family G1): Llama 3.x, Qwen3 dense,
+# Qwen2.5 and dense Mistral. Pre-norm decoder layers of grouped-query attention with RoPE and a
+# SwiGLU FFN, then the final norm and lm_head. The per-family differences are switches the config
+# map sets (dense_gqa.config.toml): Q/K per-head norms (`qk_norm`, Qwen3), Q/K/V biases
+# (`attn_bias`, Qwen2), and a head tied to the embedding (`tie`).
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - Follows the transformers modelling code of each family (LlamaDecoderLayer and the
+#   Qwen2/Qwen3/Mistral ones built the same way); RoPE variants (llama3, yarn, linear scaling)
+#   are params from config.json, not structure.
+# - No draft head: none of these checkpoints ships an MTP layer.
+# - Not an executor target yet: FUSIONS.toml has no rules for its plain RoPE at M > 1, its
+#   biases, or its ungated attention on these head dims; `met circuit plan` and venn read it.
+
+schema = 1
+arch = "dense_gqa"
+description = "Dense GQA transformer: RoPE attention (optional Q/K norm, optional QKV bias), SwiGLU FFN"
+layer_module = "model.layers.{i}"
+include = []
+dims = ["hidden", "inter", "vocab", "q_heads", "kv_heads", "head_dim", "qk_norm", "attn_bias", "tie"]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = []
+
+[layout]
+kind = "list"
+
+[layout.blocks]
+full_attention = ["attn", "ffn"]
+
+[block.embed]
+stream_out = "h"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["model.embed_tokens"]
+
+[block.attn]
+stream_in = "x"
+stream_out = "y"
+
+[[block.attn.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+
+[[block.attn.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_proj"]
+params_when = { attn_bias = { bias = "true" } }
+
+[[block.attn.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+params_when = { attn_bias = { bias = "true" } }
+
+[[block.attn.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.v_proj"]
+params_when = { attn_bias = { bias = "true" } }
+
+# 2026-09-30: Qwen3's per-head RMSNorm of Q and K, before RoPE; absent elsewhere.
+[[block.attn.node]]
+id = "q_norm"
+op = "qk_norm"
+in = ["q"]
+out = [{ edge = "qn", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_norm"]
+when = "qk_norm"
+
+[[block.attn.node]]
+id = "k_norm"
+op = "qk_norm"
+in = ["k"]
+out = [{ edge = "kn", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_norm"]
+when = "qk_norm"
+
+[[block.attn.node]]
+id = "rope"
+op = "rope"
+in = ["qn", "kn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kr", format = "bf16", shape = "n x kv_heads*head_dim" },
+]
+
+[[block.attn.node]]
+id = "kv_write"
+op = "kv_write"
+in = ["kr", "v"]
+out = []
+
+[[block.attn.node]]
+id = "attend"
+op = "paged_attention"
+in = ["qr", "kr", "v"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+
+[[block.attn.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.attn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.ffn]
+stream_in = "x"
+stream_out = "y"
+
+[[block.ffn.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+
+[[block.ffn.node]]
+id = "gate_up"
+op = "linear"
+role = "gate_up"
+in = ["xn"]
+out = [{ edge = "gu", format = "bf16", shape = "n x inter*2" }]
+binding = ["{L}.mlp.gate_proj", "{L}.mlp.up_proj"]
+
+[[block.ffn.node]]
+id = "act"
+op = "silu_mul"
+in = ["gu"]
+out = [{ edge = "act", format = "bf16", shape = "n x inter" }]
+
+[[block.ffn.node]]
+id = "down"
+op = "linear"
+role = "down"
+in = ["act"]
+out = [{ edge = "d", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.down_proj"]
+
+[[block.ffn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "d"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.head]
+stream_in = "x"
+outputs = ["logits", "token"]
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["model.norm"]
+
+# 2026-09-30: A tied head reads the embedding matrix (`tie`); the load plan binds it.
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["lm_head"]
+params_when = { tie = { tied = "model.embed_tokens" } }
+
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]

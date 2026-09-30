@@ -94,7 +94,7 @@ precision = "nemotron-3.5-lightning-30b-a3b-nvfp4"
 target = "gb10/nemotron-3-nano-30b-a3b/nvfp4"
 golden = false
 layer_kinds = "MEME MAEM EMEM AEME MEMA EMEM EMAE MEME MAEM EMEM EMAE MEME MEME"
-dims = { hidden = 2688, vocab = 131072, q_heads = 32, kv_heads = 2, head_dim = 128, mamba_heads = 64, mamba_head_dim = 64, ssm_state = 128, ssm_groups = 8, conv_kernel = 4, experts = 128, top_k = 6, moe_inter = 1856, shared_inter = 3712 }
+dims = { hidden = 2688, vocab = 131072, q_heads = 32, kv_heads = 2, head_dim = 128, mamba_heads = 64, mamba_head_dim = 64, ssm_state = 128, ssm_groups = 8, conv_kernel = 4, experts = 128, top_k = 6, moe_inter = 1856, shared_inter = 3712, mtp = 1, moe_latent = 0, moe_io = 2688 }
 plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
 
 [instance.policy]

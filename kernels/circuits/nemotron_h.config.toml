@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: config.json -> the `nemotron_h` circuit's arch shape: Nemotron-H hybrids of Mamba2,
+# MoE and NoPE attention layers (Nemotron-3 Nano and Super, Nemotron-3.5 Lightning), with the
+# layer schedule from `hybrid_override_pattern` (Nano, Super) or `layers_block_type`
+# (Lightning).
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/config_map.rs).
+# Invariants:
+# - Follows transformers modeling_nemotron_h.py: no RoPE (rope_theta and partial_rotary_factor
+#   are carried by the config but never read), plain-weight RMSNorms, sigmoid routing with a
+#   correction bias, ungated ReLU² experts, one shared expert.
+# - A latent MoE (`moe_latent_size`, Nemotron-3 Super) switches the MoE layers to the latent block.
+# - Refused until modelled: dense MLP layers (pattern `-`), grouped routing (`n_group` > 1),
+#   biases.
+
+schema = 1
+arch = "nemotron_h"
+model_types = ["nemotron_h"]
+
+[layers]
+count = "num_hidden_layers"
+sources = [
+  { key = "hybrid_override_pattern", chars = { M = "mamba", E = "moe", "*" = "full_attention" } },
+  { key = "layers_block_type", values = { mamba = "mamba", moe = "moe", attention = "full_attention" } },
+]
+
+[dims]
+hidden = "hidden_size"
+vocab = "vocab_size"
+q_heads = "num_attention_heads"
+kv_heads = "num_key_value_heads"
+head_dim = "head_dim"
+mamba_heads = "mamba_num_heads"
+mamba_head_dim = "mamba_head_dim"
+ssm_state = "ssm_state_size"
+ssm_groups = "n_groups"
+conv_kernel = "conv_kernel"
+experts = "n_routed_experts"
+top_k = "num_experts_per_tok"
+moe_inter = "moe_intermediate_size"
+shared_inter = "moe_shared_expert_intermediate_size"
+mtp = { key = "num_nextn_predict_layers", default = 0, allowed = [0, 1] }
+# 2026-09-30: A latent MoE's width (Nemotron-3 Super); absent, the experts run at the hidden width.
+moe_io = { key = "moe_latent_size", or_dim = "hidden" }
+moe_latent = { key = "moe_latent_size", bool_present = true }
+
+[keys]
+model_type = "ignore"
+architectures = { ignore = "the HF class name; model_type selects the circuit" }
+auto_map = { ignore = "remote-code class paths" }
+transformers_version = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors; the load plan reads each tensor's own" }
+torch_dtype = { ignore = "the storage dtype of unquantized tensors" }
+quantization_config = { ignore = "read by the precision plan (DeclaredPrecisionPlan)" }
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+pad_token_id = { ignore = "tokenizer ids" }
+initializer_range = { ignore = "training initialisation" }
+rescale_prenorm_residual = { ignore = "training initialisation" }
+time_step_floor = { ignore = "dt_bias initialisation" }
+time_step_max = { ignore = "dt_bias initialisation" }
+time_step_min = { ignore = "dt_bias initialisation" }
+attention_dropout = { ignore = "training only" }
+hidden_dropout = { ignore = "training only" }
+use_cache = { ignore = "an HF generate flag" }
+use_mamba_kernels = { ignore = "an HF kernel choice, same math" }
+num_logits_to_keep = { ignore = "an HF generate hint" }
+max_position_embeddings = { ignore = "the context limit; the attention has no positional encoding" }
+chunk_size = { ignore = "the SSD scan's chunk length, a tiling choice with the same math" }
+moe_shared_expert_overlap = { ignore = "a runtime overlap hint" }
+expand = { ignore = "not read by the mixer: its width is mamba_num_heads * mamba_head_dim" }
+intermediate_size = { ignore = "read only by dense MLP layers (pattern `-`), which are refused" }
+rope_theta = { ignore = "NemotronHAttention applies no rotary embedding" }
+partial_rotary_factor = { ignore = "NemotronHAttention applies no rotary embedding" }
+norm_eps = { param = true }
+layer_norm_epsilon = { param = true, default = 1e-5 }
+routed_scaling_factor = { param = true, default = 1.0 }
+time_step_limit = { param = true }
+norm_topk_prob = { param = true, require = true, why = "the circuit's top-k renormalises the selected weights", default = true }
+n_group = { require = 1, why = "grouped (n_group) routing is not modelled", default = 1 }
+topk_group = { require = 1, why = "grouped (topk_group) routing is not modelled", default = 1 }
+n_shared_experts = { require = 1, why = "the circuit has one shared expert", default = 1 }
+mamba_hidden_act = { require = "silu", why = "the circuit's Mamba2 gate is SiLU", default = "silu" }
+mlp_hidden_act = { require = "relu2", why = "the circuit's experts are ReLU²", default = "relu2" }
+mamba_ssm_cache_dtype = { require = "float32", why = "the recurrent state is FP32", default = "float32" }
+residual_in_fp32 = { require = false, why = "the residual stream is BF16", default = false }
+tie_word_embeddings = { require = false, why = "the head is not tied to the embedding", default = false }
+attention_bias = { require = false, why = "the circuit's projections have no bias", default = false }
+mamba_proj_bias = { require = false, why = "the circuit's projections have no bias", default = false }
+mlp_bias = { require = false, why = "the circuit's projections have no bias", default = false }
+use_bias = { require = false, why = "the circuit's projections have no bias", default = false }
+use_conv_bias = { require = true, why = "the circuit's conv1d has a bias", default = true }
+sliding_window = { refuse = "sliding-window attention is not modelled" }
+mtp_layers_block_type = { require = [["attention", "moe"]], why = "the circuit's draft head is an attention layer then a MoE layer" }
+mtp_hybrid_override_pattern = { require = "*E", why = "the circuit's draft head is an attention layer then a MoE layer" }

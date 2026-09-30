@@ -10,7 +10,10 @@
 //!   TOMLs and pass their text in ([`load`]).
 //! - A plan is deterministic, and its digest is recorded beside the closure hash.
 
+pub mod checkpoint;
 pub mod circuit_toml;
+pub mod config_map;
+pub mod declared_precision;
 pub mod digest;
 pub mod dims;
 pub mod display;
@@ -30,6 +33,10 @@ pub mod venn;
 #[cfg(test)]
 mod test_toy;
 
+pub use checkpoint::{
+    CheckpointError, QuantMetadata, ResolvedCheckpoint, ServePrecision,
+    instantiate_from_checkpoint, map_checkpoint, resolve_checkpoint,
+};
 pub use circuit_toml::{CircuitError, includes_of};
 pub use format::{Format, Scale};
 pub use fuser::{AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse};

@@ -159,7 +159,19 @@ pub(crate) struct CircuitFile {
     pub epilogue: Vec<String>,
     pub draft: Vec<String>,
     pub draft_module: Option<String>,
+    /// 2026-09-30: The draft blocks are instantiated only when this switch holds
+    /// ([`when_holds`]); absent, always.
+    pub draft_when: Option<String>,
+    /// 2026-09-30: Per switch, a draft block list replacing `draft` while it holds. A draft
+    /// entry `template@module` instantiates `template` with `{L}` = `module` (one template
+    /// serves a layer and a draft module).
+    #[serde(default)]
+    pub draft_variant: BTreeMap<String, Vec<String>>,
     pub block: BTreeMap<String, BlockFile>,
+    /// 2026-09-30: The blocks the circuit file itself defines (not its libraries'); only these
+    /// must all be used.
+    #[serde(skip)]
+    pub local_blocks: std::collections::BTreeSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -168,6 +180,10 @@ pub(crate) struct LayoutFile {
     pub kind: String,
     pub period: Option<usize>,
     pub blocks: BTreeMap<String, Vec<String>>,
+    /// 2026-09-30: Per switch ([`when_holds`]), layer kinds whose blocks are replaced while it
+    /// holds (`moe_latent = { moe = ["moe_latent"] }`).
+    #[serde(default)]
+    pub when: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
 #[derive(Deserialize)]
@@ -194,6 +210,13 @@ pub(crate) struct NodeFile {
     pub binding: Vec<String>,
     #[serde(default)]
     pub params: BTreeMap<String, String>,
+    /// 2026-09-30: The node is present only when this switch holds ([`when_holds`]). An absent
+    /// node has one input and one output of the same format and width, and its output IS its
+    /// input (the identity it degenerates to: a norm, bias or projection the checkpoint lacks).
+    pub when: Option<String>,
+    /// 2026-09-30: Params merged in when their switch holds (`attn_bias = { bias = "true" }`).
+    #[serde(default)]
+    pub params_when: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 #[derive(Deserialize)]
@@ -253,6 +276,7 @@ pub(crate) fn parse_file(
     includes: &[(&str, &str)],
 ) -> Result<CircuitFile, CircuitError> {
     let mut file = parse_one(text)?;
+    file.local_blocks = file.block.keys().cloned().collect();
     for name in file.include.clone() {
         let err = |detail: String| CircuitError::Include {
             name: name.clone(),
@@ -289,6 +313,28 @@ pub(crate) fn layout_rule(l: &LayoutFile) -> Result<LayoutRule, CircuitError> {
             "unknown layout kind `{other}` (interval | list)"
         ))),
     }
+}
+
+/// 2026-09-30: Whether switch `expr` holds: `name` when the dim `name` is non-zero, `!name`
+/// when it is zero. The dim must be in the circuit's `dims` list.
+pub(crate) fn when_holds(
+    expr: &str,
+    declared: &[String],
+    dims: &BTreeMap<String, u64>,
+) -> Result<bool, CircuitError> {
+    let (negate, name) = match expr.trim().strip_prefix('!') {
+        Some(n) => (true, n.trim()),
+        None => (false, expr.trim()),
+    };
+    if !declared.iter().any(|d| d == name) {
+        return Err(CircuitError::ShapeMismatch(format!(
+            "switch `{expr}` names `{name}`, which is not in the circuit's `dims` list"
+        )));
+    }
+    let v = dims.get(name).copied().ok_or_else(|| {
+        CircuitError::ShapeMismatch(format!("switch `{expr}`: the arch shape lacks `{name}`"))
+    })?;
+    Ok((v != 0) != negate)
 }
 
 /// 2026-09-28: Split `"<rows> x <dim>"`.

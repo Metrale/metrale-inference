@@ -14,12 +14,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::circuit_toml::{
-    BlockFile, CircuitError, CircuitFile, LayoutRule, NodeFile, layout_rule, parse_file,
-    split_shape,
+    BlockFile, CircuitError, CircuitFile, LayoutRule, NodeFile, layout_rule, parse_file, when_holds,
 };
-use crate::dims::DimExpr;
 use crate::format::Format;
-use crate::ir::{ArchShape, BlockInstance, Circuit, Edge, LayerKind, Node, OpKind, Section};
+use crate::ir::{ArchShape, BlockInstance, Circuit, LayerKind, Node, OpKind, Section};
 use crate::precision::{EdgePrecision, LinearFormats};
 
 /// 2026-09-28: Parse `text`, merge the block libraries it includes (`includes`: name to
@@ -34,7 +32,7 @@ pub fn instantiate(
     let file = parse_file(text, includes)?;
     let rule = layout_rule(&file.layout)?;
     check_dims(&file, shape)?;
-    let sequence = block_sequence(&file, &rule, &shape.layer_kinds)?;
+    let sequence = block_sequence(&file, &rule, &shape.layer_kinds, &shape.dims)?;
     let mut b = Builder {
         file: &file,
         shape,
@@ -49,9 +47,10 @@ pub fn instantiate(
             dims: shape.dims.clone(),
         },
         stream: None,
+        quantized: BTreeMap::new(),
     };
-    for (template, layer, section) in sequence {
-        b.block(&template, layer, section)?;
+    for (template, layer, section, module) in sequence {
+        b.block(&template, layer, section, module)?;
     }
     b.finish()
 }
@@ -68,28 +67,43 @@ fn check_dims(file: &CircuitFile, shape: &ArchShape) -> Result<(), CircuitError>
     Ok(())
 }
 
-type Planned = (String, Option<usize>, Section);
+/// 2026-09-30: One block to instantiate: template, layer, section, and a module that replaces
+/// the draft module for its `{L}`.
+type Planned = (String, Option<usize>, Section, Option<String>);
 
 fn block_sequence(
     file: &CircuitFile,
     rule: &LayoutRule,
     kinds: &[LayerKind],
+    dims: &BTreeMap<String, u64>,
 ) -> Result<Vec<Planned>, CircuitError> {
     if kinds.is_empty() {
         return Err(CircuitError::Layout("the arch shape has no layers".into()));
     }
     let mut used = BTreeSet::new();
     let mut out = Vec::new();
-    let known = |name: &String, used: &mut BTreeSet<String>| {
+    let known = |name: &str, used: &mut BTreeSet<String>| {
         if !file.block.contains_key(name) {
             return Err(CircuitError::Layout(format!("no block template `{name}`")));
         }
-        used.insert(name.clone());
+        used.insert(name.to_string());
         Ok(())
     };
     for name in &file.prologue {
         known(name, &mut used)?;
-        out.push((name.clone(), None, Section::Main));
+        out.push((name.clone(), None, Section::Main, None));
+    }
+    // 2026-09-30: The layout blocks per kind, with the overrides of every switch that holds.
+    let mut layout = file.layout.blocks.clone();
+    for (w, over) in &file.layout.when {
+        for names in over.values() {
+            for n in names {
+                known(n, &mut used)?;
+            }
+        }
+        if when_holds(w, &file.dims, dims)? {
+            layout.extend(over.clone());
+        }
     }
     for (i, kind) in kinds.iter().enumerate() {
         if let LayoutRule::Interval { period } = rule {
@@ -106,7 +120,7 @@ fn block_sequence(
                 )));
             }
         }
-        let blocks = file.layout.blocks.get(kind.name()).ok_or_else(|| {
+        let blocks = layout.get(kind.name()).ok_or_else(|| {
             CircuitError::Layout(format!(
                 "layer {i} is {}, which the layout maps to no blocks",
                 kind.name()
@@ -114,23 +128,44 @@ fn block_sequence(
         })?;
         for name in blocks {
             known(name, &mut used)?;
-            out.push((name.clone(), Some(i), Section::Main));
+            out.push((name.clone(), Some(i), Section::Main, None));
         }
     }
     for name in &file.epilogue {
         known(name, &mut used)?;
-        out.push((name.clone(), None, Section::Main));
+        out.push((name.clone(), None, Section::Main, None));
     }
-    for name in &file.draft {
-        known(name, &mut used)?;
-        out.push((name.clone(), None, Section::Draft));
+    let on = match &file.draft_when {
+        Some(w) => when_holds(w, &file.dims, dims)?,
+        None => true,
+    };
+    let mut draft = &file.draft;
+    for (w, list) in &file.draft_variant {
+        for entry in list {
+            known(entry.split('@').next().unwrap_or_default(), &mut used)?;
+        }
+        if when_holds(w, &file.dims, dims)? {
+            draft = list;
+        }
+    }
+    for entry in &file.draft {
+        known(entry.split('@').next().unwrap_or_default(), &mut used)?;
+    }
+    if on {
+        for entry in draft {
+            let (name, module) = match entry.split_once('@') {
+                Some((n, m)) => (n.to_string(), Some(m.to_string())),
+                None => (entry.clone(), None),
+            };
+            out.push((name, None, Section::Draft, module));
+        }
     }
     if !file.draft.is_empty() && file.draft_module.is_none() {
         return Err(CircuitError::Layout(
             "`draft` blocks need a `draft_module` for their bindings".into(),
         ));
     }
-    if let Some(unused) = file.block.keys().find(|k| !used.contains(*k)) {
+    if let Some(unused) = file.local_blocks.iter().find(|k| !used.contains(*k)) {
         return Err(CircuitError::Layout(format!(
             "block template `{unused}` is never used"
         )));
@@ -144,6 +179,9 @@ struct Builder<'a> {
     precision: &'a dyn EdgePrecision,
     circuit: Circuit,
     stream: Option<usize>,
+    /// 2026-09-29: `(edge, format, owning projection of a static scale)` to the edge holding
+    /// it quantized to that format.
+    quantized: BTreeMap<(usize, Format, Option<String>), usize>,
 }
 
 impl Builder<'_> {
@@ -152,6 +190,7 @@ impl Builder<'_> {
         template: &str,
         layer: Option<usize>,
         section: Section,
+        module_override: Option<String>,
     ) -> Result<(), CircuitError> {
         let file = self.file;
         let tpl: &BlockFile = &file.block[template];
@@ -160,7 +199,10 @@ impl Builder<'_> {
                 format!("l{i}.{template}"),
                 Some(file.layer_module.replace("{i}", &i.to_string())),
             ),
-            (None, Section::Draft) => (format!("draft.{template}"), file.draft_module.clone()),
+            (None, Section::Draft) => (
+                format!("draft.{template}"),
+                module_override.or_else(|| file.draft_module.clone()),
+            ),
             (None, Section::Main) => (template.to_string(), None),
         };
         let first = self.circuit.nodes.len();
@@ -225,6 +267,11 @@ impl Builder<'_> {
         nf: &NodeFile,
         local: &mut BTreeMap<String, usize>,
     ) -> Result<(), CircuitError> {
+        if let Some(w) = &nf.when
+            && !when_holds(w, &self.file.dims, &self.shape.dims)?
+        {
+            return self.elide(template, nf, local);
+        }
         let fmt = nf
             .format
             .as_deref()
@@ -242,7 +289,6 @@ impl Builder<'_> {
                 source,
             })?;
         let id = format!("{prefix}.{}", nf.id);
-        let idx = self.circuit.nodes.len();
         let mut inputs = Vec::with_capacity(nf.inputs.len());
         for name in &nf.inputs {
             let e = *local.get(name).ok_or_else(|| CircuitError::DanglingInput {
@@ -250,8 +296,43 @@ impl Builder<'_> {
                 node: nf.id.clone(),
                 edge: name.clone(),
             })?;
-            self.circuit.edges[e].consumers.push(idx);
             inputs.push(e);
+        }
+        let mut binding = Vec::with_capacity(nf.binding.len());
+        for b in &nf.binding {
+            binding.push(match (b.contains("{L}"), module) {
+                (true, Some(m)) => b.replace("{L}", m),
+                (true, None) => {
+                    return Err(CircuitError::Binding {
+                        node: id.clone(),
+                        detail: format!("`{b}` names {{L}} outside a layer or draft block"),
+                    });
+                }
+                (false, _) => b.clone(),
+            });
+        }
+        let formats = self.resolve(&id, &op, &binding, &inputs)?;
+        if let Some(f) = formats {
+            let x = inputs[0];
+            let have = self.circuit.edges[x].format;
+            // 2026-09-30: A projection whose precision reads F32 where the circuit has a 16-bit
+            // elementwise product (the grouped FP8 expert kernels read the FP32 SiLU product)
+            // makes its producer write F32, while it is the edge's only reader. A 16-bit edge
+            // into a projection declared with quantized activations gets the quantizer node.
+            if have == Format::Bf16 && f.activation == Format::F32 && self.widenable(x) {
+                self.circuit.edges[x].format = Format::F32;
+            } else if have != f.activation {
+                let plain_source = matches!(have, Format::Bf16 | Format::F32);
+                if !plain_source || f.activation.is_plain() || !f.activation.is_edge_format() {
+                    return Err(self.mismatch(&id, &op, x, Some(f.activation)));
+                }
+                inputs[0] =
+                    self.quantized(x, f.activation, template, layer, (&nf.id, binding.first()));
+            }
+        }
+        let idx = self.circuit.nodes.len();
+        for &e in &inputs {
+            self.circuit.edges[e].consumers.push(idx);
         }
         let mut outputs = Vec::with_capacity(nf.out.len());
         for ef in &nf.out {
@@ -267,20 +348,7 @@ impl Builder<'_> {
                 self.expect(&id, &op, o, f)?;
             }
         }
-        let mut binding = Vec::with_capacity(nf.binding.len());
-        for b in &nf.binding {
-            binding.push(match (b.contains("{L}"), module) {
-                (true, Some(m)) => b.replace("{L}", m),
-                (true, None) => {
-                    return Err(CircuitError::Binding {
-                        node: id.clone(),
-                        detail: format!("`{b}` names {{L}} outside a layer or draft block"),
-                    });
-                }
-                (false, _) => b.clone(),
-            });
-        }
-        let weight = self.resolve(&id, &op, &binding, &inputs)?;
+        let weight = formats.map(|f| f.weight);
         for &e in &inputs {
             let f = self.circuit.edges[e].format;
             if weight.is_none() && !f.is_plain() && !matches!(op, OpKind::Copy) {
@@ -295,81 +363,11 @@ impl Builder<'_> {
             outputs,
             weight,
             binding,
-            params: nf.params.clone(),
+            params: self.params(nf)?,
             layer,
             block: template.to_string(),
         });
         Ok(())
-    }
-
-    fn edge(
-        &mut self,
-        template: &str,
-        prefix: &str,
-        producer: usize,
-        ef: &crate::circuit_toml::EdgeFile,
-    ) -> Result<usize, CircuitError> {
-        let block = template.to_string();
-        let format = Format::parse(&ef.format).map_err(|source| CircuitError::Format {
-            block: block.clone(),
-            edge: ef.edge.clone(),
-            source,
-        })?;
-        if !format.is_edge_format() {
-            return Err(CircuitError::WeightFormatOnEdge {
-                block,
-                edge: ef.edge.clone(),
-                format: format.name(),
-            });
-        }
-        let shape_err = |detail: String| CircuitError::Shape {
-            block: template.to_string(),
-            edge: ef.edge.clone(),
-            detail,
-        };
-        let (rows, dim) = split_shape(&ef.shape)
-            .ok_or_else(|| shape_err(format!("shape `{}` is not `<rows> x <dim>`", ef.shape)))?;
-        let rows = DimExpr::parse(rows).map_err(|e| shape_err(e.to_string()))?;
-        let dim = DimExpr::parse(dim).map_err(|e| shape_err(e.to_string()))?;
-        if !rows.names().any(|n| n == "n") {
-            return Err(shape_err(format!(
-                "rows `{}` must scale with `n`",
-                rows.text()
-            )));
-        }
-        let mut with_n = self.shape.dims.clone();
-        with_n.insert("n".into(), 1);
-        for expr in [&rows, &dim] {
-            if let Some(bad) = expr
-                .names()
-                .find(|n| *n != "n" && !self.file.dims.iter().any(|d| d == n))
-            {
-                return Err(shape_err(format!(
-                    "`{bad}` is not in the circuit's `dims` list"
-                )));
-            }
-            expr.eval(&with_n).map_err(|source| CircuitError::Dim {
-                block: template.to_string(),
-                source,
-            })?;
-        }
-        let dim_value = dim
-            .eval(&self.shape.dims)
-            .map_err(|source| CircuitError::Dim {
-                block: template.to_string(),
-                source,
-            })?;
-        self.circuit.edges.push(Edge {
-            id: format!("{prefix}.{}", ef.edge),
-            format,
-            rows,
-            dim,
-            dim_value,
-            producer: Some(producer),
-            consumers: Vec::new(),
-            is_output: false,
-        });
-        Ok(self.circuit.edges.len() - 1)
     }
 
     fn resolve(
@@ -378,7 +376,7 @@ impl Builder<'_> {
         op: &OpKind,
         binding: &[String],
         inputs: &[usize],
-    ) -> Result<Option<Format>, CircuitError> {
+    ) -> Result<Option<LinearFormats>, CircuitError> {
         if !op.reads_linear_weight() {
             return Ok(None);
         }
@@ -403,33 +401,36 @@ impl Builder<'_> {
                 });
             }
         }
-        let Some(&x) = inputs.first() else {
+        if inputs.is_empty() {
             return Err(CircuitError::Binding {
                 node: id.to_string(),
                 detail: "a weight-reading node needs an activation input".into(),
             });
-        };
-        self.expect(id, op, x, formats.activation)?;
-        Ok(Some(formats.weight))
+        }
+        Ok(Some(formats))
     }
 
-    fn expect(&self, id: &str, op: &OpKind, e: usize, want: Format) -> Result<(), CircuitError> {
-        if self.circuit.edges[e].format == want {
-            Ok(())
-        } else {
-            Err(self.mismatch(id, op, e, Some(want)))
+    /// 2026-09-30: A node's params: its own, plus those of each `params_when` switch that
+    /// holds, with every `{dim}` replaced by the dim's value.
+    fn params(&self, nf: &NodeFile) -> Result<BTreeMap<String, String>, CircuitError> {
+        let mut out = nf.params.clone();
+        for (w, extra) in &nf.params_when {
+            if when_holds(w, &self.file.dims, &self.shape.dims)? {
+                out.extend(extra.clone());
+            }
         }
-    }
-
-    fn mismatch(&self, id: &str, op: &OpKind, e: usize, want: Option<Format>) -> CircuitError {
-        let edge = &self.circuit.edges[e];
-        CircuitError::FormatMismatch {
-            node: id.to_string(),
-            op: op.name(),
-            edge: edge.id.clone(),
-            format: edge.format.name(),
-            expected: want.map(|f| f.name()),
+        for v in out.values_mut() {
+            if let Some(name) = v.strip_prefix('{').and_then(|r| r.strip_suffix('}')) {
+                let d = self.shape.dims.get(name).ok_or_else(|| {
+                    CircuitError::ShapeMismatch(format!(
+                        "node `{}` param `{v}` names dim `{name}`, which the arch shape lacks",
+                        nf.id
+                    ))
+                })?;
+                *v = d.to_string();
+            }
         }
+        Ok(out)
     }
 
     fn finish(self) -> Result<Circuit, CircuitError> {
@@ -448,6 +449,9 @@ fn dup(block: &str, name: &str) -> CircuitError {
         name: name.to_string(),
     }
 }
+
+#[path = "instantiate/edges.rs"]
+mod edges;
 
 #[cfg(test)]
 #[path = "instantiate_tests.rs"]

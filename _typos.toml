@@ -183,6 +183,9 @@ daa4bc7c19f25eda = "daa4bc7c19f25eda"
 [files]
 extend-exclude = [
     "test_data/",
+    # Verbatim HuggingFace config.json / hf_quant_config.json snapshots, the circuit's
+    # checkpoint fixtures (upstream keys such as `ues_cls_token` are not ours to fix).
+    "crates/circuit/tests/fixtures/checkpoints/",
     "vendor/",
     "target/",
     "book/output/",

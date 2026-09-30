@@ -54,9 +54,15 @@ pub enum LinearRole {
     MambaOut,
     /// 2026-09-29: An ungated MoE shared expert's up projection.
     SharedUp,
+    /// 2026-09-30: A latent MoE's projection from the hidden width into the experts' latent
+    /// width (`fc1_latent_proj`, Nemotron-3 Super).
+    MoeLatentIn,
+    /// 2026-09-30: A latent MoE's projection of the routed sum back to the hidden width
+    /// (`fc2_latent_proj`).
+    MoeLatentOut,
 }
 
-const ROLES: [(LinearRole, &str); 16] = [
+const ROLES: [(LinearRole, &str); 18] = [
     (LinearRole::Q, "q"),
     (LinearRole::K, "k"),
     (LinearRole::V, "v"),
@@ -73,6 +79,8 @@ const ROLES: [(LinearRole, &str); 16] = [
     (LinearRole::MambaIn, "mamba_in"),
     (LinearRole::MambaOut, "mamba_out"),
     (LinearRole::SharedUp, "shared_up"),
+    (LinearRole::MoeLatentIn, "moe_latent_in"),
+    (LinearRole::MoeLatentOut, "moe_latent_out"),
 ];
 
 impl LinearRole {
