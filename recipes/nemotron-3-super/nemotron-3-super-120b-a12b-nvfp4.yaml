@@ -30,4 +30,6 @@ defaults:
   scheduler: slai
   tool_call_parser: qwen3_coder
   ssm_cache_slots: 0
-  speculative: true
+  # 2026-09-29: No `speculative`: the engine refuses every speculative proposer for a model
+  # with Mamba-2 layers (verify cannot roll Mamba-2 state back), and with no MTP head
+  # loaded for Nemotron-H the flag never drafted anything here.

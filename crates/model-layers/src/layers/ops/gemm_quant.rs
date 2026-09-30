@@ -77,6 +77,7 @@ pub fn fp8_gemm_n128_m128(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 128), div_ceil(m, 128), 1])
         .block([128, 1, 1])

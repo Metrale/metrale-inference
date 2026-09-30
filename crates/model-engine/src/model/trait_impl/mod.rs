@@ -53,6 +53,7 @@ mod impl_streams;
 mod impl_verify;
 mod impl_vision;
 mod lm_head_batched;
+mod mamba2_state_guard;
 mod meta;
 mod meta_argmax;
 mod prefill_a;

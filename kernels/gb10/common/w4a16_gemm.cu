@@ -325,3 +325,9 @@ extern "C" __global__ void w4a16_dequant(
     B_bf16[n * K + k0] = __float2bfloat16(v0);
     if (k1 < K) B_bf16[n * K + k1] = __float2bfloat16(v1);
 }
+
+// 2026-09-29: The N tile of each entry point above whose grid covers N in tiles. Launchers
+// size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
+// that entry multiplies `blockIdx.x` by.
+extern "C" __device__ unsigned int w4a16_gemm_n_tile = N_TILE;
+extern "C" __device__ unsigned int w4a16_gemm_t_n_tile = N_TILE;

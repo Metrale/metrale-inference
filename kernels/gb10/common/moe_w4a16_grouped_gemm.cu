@@ -1029,3 +1029,9 @@ P3B_GROUPED_VARIANT(bt_m16_k128,     16,    64, 128,    4, true,  true,  true, t
 P3B_GROUPED_VARIANT(bt_m16_k256,     16,    64, 256,    4, true,  true,  true, true)
 P3B_GROUPED_VARIANT(bt_m16_n128_k128, 16,  128, 128,    8, true,  true,  true, true)
 P3B_GROUPED_VARIANT(bt_k128,         64,    64, 128,    4, false, true,  true, true)
+
+// 2026-09-29: The N tile of each entry point above whose grid covers N in tiles. Launchers
+// size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
+// that entry multiplies `blockIdx.x` by.
+extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_n_tile = N_TILE;
+extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_t_n_tile = N_TILE;

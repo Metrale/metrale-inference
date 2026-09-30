@@ -162,3 +162,8 @@ void moe_w4a4_grouped_gemm_relu2(
         }
     }
 }
+
+// 2026-09-29: The N tile of each entry point above whose grid covers N in tiles. Launchers
+// size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
+// that entry multiplies `blockIdx.x` by.
+extern "C" __device__ unsigned int moe_w4a4_grouped_gemm_relu2_n_tile = GW_N;

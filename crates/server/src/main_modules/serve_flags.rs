@@ -57,6 +57,18 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             plan.weight_quant
         );
     }
+    // 2026-09-29: `--nemotron-shared-expert-e4m3` is always published: the Nemotron-H loader
+    // reads it (`nemotron_moe/prefill_weights.rs`).
+    let e4m3 = metrale_model_arch::nemotron_moe::set_shared_expert_e4m3_from_cli(
+        args.nemotron_shared_expert_e4m3,
+    );
+    if e4m3 != args.nemotron_shared_expert_e4m3 {
+        tracing::warn!(
+            "nemotron-shared-expert-e4m3 was already resolved ({e4m3}); the command line's \
+             ({}) did NOT take effect",
+            args.nemotron_shared_expert_e4m3
+        );
+    }
     if args.w4a4_downcast_wide && !args.w4a4_downcast {
         tracing::warn!("--w4a4-downcast-wide needs --w4a4-downcast; it did NOT take effect");
     }

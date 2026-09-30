@@ -22,6 +22,7 @@ mod fault_probe;
 mod gpu_copy;
 mod gpu_impl;
 mod gpu_impl_graph;
+mod n_tile;
 mod redzone;
 pub mod tensormap;
 pub(crate) use redzone::{

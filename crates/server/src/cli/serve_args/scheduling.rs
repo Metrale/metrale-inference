@@ -167,6 +167,18 @@ pub struct ServeSchedulingArgs {
     #[arg(long, default_value = "bf16")]
     pub mtp_quantization: String,
 
+    /// Run the Nemotron-H shared expert's prefill projections on the E4M3 tile GEMM
+    /// (default: false).
+    ///
+    /// Off, they run the BF16 tensor-core `w4a16_gemm` on the checkpoint's NVFP4 weights.
+    /// On, they read transposed copies through `w4a16_gemm_t`, which casts the
+    /// activations and the dequantized weights to FP8 E4M3 without scaling: values above
+    /// 448 saturate and small weights lose precision (1-30% error per projection on
+    /// Nemotron-3-Nano). A numerics change below the checkpoint's precision, hence
+    /// opt-in. Other models are not affected.
+    #[arg(long, default_value_t = false)]
+    pub nemotron_shared_expert_e4m3: bool,
+
     /// MTP draft vocabulary size: the draft head's LM-head GEMV covers only the
     /// first N token IDs. Set to 0 to use the full vocabulary.
     #[arg(long, default_value_t = 100000)]

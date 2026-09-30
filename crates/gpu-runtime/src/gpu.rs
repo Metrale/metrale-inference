@@ -171,6 +171,31 @@ pub trait GpuBackend: Send + Sync {
     #[track_caller]
     fn kernel(&self, module: &str, func_name: &str) -> Result<KernelHandle>;
 
+    /// 2026-09-29: The output-column (N) tile width `kernel` publishes as the
+    /// `extern "C" __device__ unsigned int <entry>_n_tile` of its module, read when the
+    /// handle was resolved. A launch whose grid covers N in tiles must size it from this,
+    /// never from a width assumed at the call site: one entry name can carry different
+    /// tiles in different target trees. An error for a kernel that publishes none, a
+    /// zero width included.
+    fn kernel_n_tile(&self, kernel: KernelHandle) -> Result<u32> {
+        match self.op_cache().n_tile(kernel) {
+            Some(t) if t > 0 => Ok(t),
+            Some(_) => anyhow::bail!("kernel {:#x} publishes an N tile of 0", kernel.0),
+            None => anyhow::bail!(
+                "kernel {:#x} publishes no `<entry>_n_tile`; its grid cannot be sized",
+                kernel.0
+            ),
+        }
+    }
+
+    /// 2026-09-29: Whether `kernel` casts its BF16 A operand to E4M3 with no scale, as its
+    /// module declares with `extern "C" __device__ unsigned int <entry>_a_e4m3`. Values
+    /// past 448 saturate there; launchers check the range in debug builds
+    /// (`ops::check_e4m3_activation_range` in model-layers).
+    fn kernel_casts_a_to_e4m3(&self, kernel: KernelHandle) -> bool {
+        self.op_cache().a_e4m3(kernel)
+    }
+
     /// 2026-09-25: Whether `module` is loaded in this backend. Ask before looking
     /// up a kernel that only some targets carry: the CUDA backend's kernel audit
     /// records every failed lookup.

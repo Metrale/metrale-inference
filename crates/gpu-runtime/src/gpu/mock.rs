@@ -145,6 +145,18 @@ impl MockGpuBackend {
         self.launches.lock().clone()
     }
 
+    /// 2026-09-29: Publish `n_tile` as the N tile of `kernel`, as a CUDA module's
+    /// `<entry>_n_tile` symbol does (`GpuBackend::kernel_n_tile`).
+    pub fn set_kernel_n_tile(&self, kernel: KernelHandle, n_tile: u32) {
+        self.op_cache.record_n_tile(kernel, n_tile);
+    }
+
+    /// 2026-09-29: Declare that `kernel` casts its A operand to E4M3 with no scale, as a
+    /// CUDA module's `<entry>_a_e4m3` symbol does (`GpuBackend::kernel_casts_a_to_e4m3`).
+    pub fn set_kernel_a_e4m3(&self, kernel: KernelHandle) {
+        self.op_cache.record_a_e4m3(kernel);
+    }
+
     /// 2026-09-25: Declare a module absent: `has_module` then answers false.
     /// `kernel` still resolves lookups against it.
     pub fn mark_module_absent(&self, module: &str) {
