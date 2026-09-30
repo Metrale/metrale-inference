@@ -441,10 +441,14 @@ fn absent(s: &mut String, r: &HwReport) {
     }
 }
 
+/// 2026-09-30: One device's port list: kernel to (why the device cannot run it, how many of the
+/// matrix's models need it).
+pub type PortList = BTreeMap<String, (String, usize)>;
+
 /// 2026-09-30: The port lists of a matrix: per device (in the order given), every rule kernel
 /// some model's policy could select that the device cannot run, with why and how many of the
 /// matrix's models are affected.
-pub fn port_lists(per_device: &[(String, BTreeMap<String, (String, usize)>)]) -> String {
+pub fn port_lists(per_device: &[(String, PortList)]) -> String {
     let mut s = String::from(
         "## Port lists\n\nRule kernels a matrix model's policy could select that the device cannot run (the class does not compile them, its build compiles them out, or the device lacks the instruction), with the number of matrix models whose policy names them.\n",
     );

@@ -47,7 +47,7 @@ use crate::venn::roofline::CostError;
 pub use device::{Device, Registry, parse_devices};
 pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};
 pub use model_checkpoint::CheckpointSource;
-pub use render::{port_lists, render_report, summary_row};
+pub use render::{PortList, port_lists, render_report, summary_row};
 pub use sources::{ClassSources, KernelTree, Module};
 
 /// 2026-09-30: Why a hardware plan could not be built.

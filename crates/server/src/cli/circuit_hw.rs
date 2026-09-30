@@ -14,7 +14,6 @@
 //!   instantiation behind a checkpoint is chosen.
 //! - `--check` compares and never writes; a stale or missing report is an error.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -198,6 +197,14 @@ fn registry(tree: &FsTree) -> Result<Registry> {
     Ok(hardware::parse_devices(&text)?)
 }
 
+/// 2026-09-30: One matrix cell: its report, its summary row, and the kernels it lacks (kernel,
+/// why).
+pub(crate) struct CellReport {
+    pub(crate) text: String,
+    pub(crate) row: String,
+    pub(crate) absent: Vec<(String, String)>,
+}
+
 /// 2026-09-30: The report of one cell, rendered.
 pub(crate) fn report_text(
     tree: &FsTree,
@@ -206,7 +213,7 @@ pub(crate) fn report_text(
     device: &str,
     precision: CircuitPrecision,
     command: String,
-) -> Result<(String, String, Vec<(String, String)>)> {
+) -> Result<CellReport> {
     let model = source(tree).model(&ModelSpec {
         checkpoint: &texts.id,
         config_json: texts.config.as_deref(),
@@ -219,11 +226,11 @@ pub(crate) fn report_text(
         .iter()
         .map(|(k, a)| (k.to_string(), a.describe()))
         .collect();
-    Ok((
-        hardware::render_report(&r),
-        hardware::summary_row(&r),
+    Ok(CellReport {
+        text: hardware::render_report(&r),
+        row: hardware::summary_row(&r),
         absent,
-    ))
+    })
 }
 
 fn write_or_check(root: &Path, rel: &str, text: &str, check: bool) -> Result<()> {
@@ -255,9 +262,9 @@ pub(crate) fn matrix(root: &Path, dir: &str, check: bool) -> Result<String> {
     let tree = FsTree::new(root.to_path_buf());
     let reg = registry(&tree)?;
     let mut rows = Vec::new();
-    let mut ports: Vec<(String, BTreeMap<String, (String, usize)>)> = MATRIX_DEVICES
+    let mut ports: Vec<(String, hardware::PortList)> = MATRIX_DEVICES
         .iter()
-        .map(|d| (d.to_string(), BTreeMap::new()))
+        .map(|d| (d.to_string(), hardware::PortList::new()))
         .collect();
     for MatrixModel {
         slug,
@@ -276,8 +283,9 @@ pub(crate) fn matrix(root: &Path, dir: &str, check: bool) -> Result<String> {
         for device in MATRIX_DEVICES {
             let rel = format!("{dir}/{slug}--{device}.md");
             let command = format!("met circuit plan --matrix {dir}");
-            let (text, row, absent) = report_text(&tree, &reg, &texts, device, precision, command)
-                .with_context(|| format!("{slug} on {device}"))?;
+            let CellReport { text, row, absent } =
+                report_text(&tree, &reg, &texts, device, precision, command)
+                    .with_context(|| format!("{slug} on {device}"))?;
             write_or_check(root, &rel, &text, check)?;
             rows.push(row);
             let list = ports
@@ -342,7 +350,7 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
             if let Some(o) = &a.out {
                 command.push_str(&format!(" --out {o}"));
             }
-            report_text(&tree, &reg, &texts, device, precision, command)?.0
+            report_text(&tree, &reg, &texts, device, precision, command)?.text
         }
         CircuitHwFormat::Plan => {
             let model = source(&tree).model(&ModelSpec {
