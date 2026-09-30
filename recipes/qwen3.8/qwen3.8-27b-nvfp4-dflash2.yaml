@@ -67,7 +67,7 @@ defaults:
   # 16, the concurrency-sweep-dflash2 gate's pin and the widest rung it
   # measures. 128 does not boot on GB10: the DFlash verify pools are
   # gamma-sized, and at 128 preflight refuses with "No memory left for KV
-  # cache" (dgx1, 2026-09-30: 57.8 GB consumed + a 67.1 GB inference reserve
+  # cache" (GB10, 2026-09-30: 57.8 GB consumed + a 67.1 GB inference reserve
   # against the 103.4 GB budget at util 0.85).
   max_batch_size: 16
   # 0.85 is the ceiling on GB10 — 0.90 has frozen a box and needed a
