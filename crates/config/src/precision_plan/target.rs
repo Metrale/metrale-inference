@@ -33,7 +33,28 @@ pub enum Target {
     Class(String),
 }
 
+/// 2026-09-30: Which format's matching rules an ignore / exclude entry follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IgnoreDialect {
+    /// 2026-09-30: compressed-tensors `ignore` ([`Target::compressed_tensors`]).
+    CompressedTensors,
+    /// 2026-09-30: ModelOpt `exclude_modules` ([`Target::modelopt`]).
+    ModelOpt,
+    /// 2026-09-30: HF `fp8` `modules_to_not_convert` / `ignored_layers` ([`Target::hf_module`]).
+    HfFp8,
+}
+
 impl Target {
+    /// 2026-09-30: An ignore entry of `dialect`, the one matcher the precision plan and the
+    /// weight loaders share. A malformed entry is refused.
+    pub fn ignore_entry(dialect: IgnoreDialect, s: &str) -> Result<Self> {
+        match dialect {
+            IgnoreDialect::CompressedTensors => Self::compressed_tensors(s),
+            IgnoreDialect::ModelOpt => Ok(Self::modelopt(s)),
+            IgnoreDialect::HfFp8 => Self::hf_module(s),
+        }
+    }
+
     /// 2026-09-28: A compressed-tensors target or ignore entry: `re:<pattern>`, a class
     /// name (`Linear`), or an exact path.
     /// 2026-09-30: As compressed-tensors matches them (0.12.2, utils/match.py `_match_name`):

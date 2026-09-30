@@ -22,7 +22,7 @@ mod parse;
 #[path = "precision_plan/target.rs"]
 mod target;
 
-pub use target::Target;
+pub use target::{IgnoreDialect, Target};
 
 /// 2026-09-28: Element type of a quantized operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
