@@ -315,7 +315,7 @@ impl TransformerModel {
             return self.decode_profiled(token, hidden, residual, seq, &mut kv_cache, &ctx, stream);
         }
         // 2026-09-25: Graph path: the periodic SSM normalization runs here, outside capture.
-        self.normalize_ssm_outside_graph(seq, stream, use_graphs);
+        self.normalize_ssm_outside_graph(seq, stream, use_graphs)?;
         let mut graph_cache = if use_graphs {
             Some(self.decode_graph.lock())
         } else {

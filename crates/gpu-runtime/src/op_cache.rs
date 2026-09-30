@@ -39,11 +39,26 @@ pub struct OpCache {
     logged_shapes: Mutex<std::collections::HashSet<(u64, u32, u32, u32)>>,
     /// 2026-09-25: Per-key call counts for `first_n`.
     counters: Mutex<HashMap<&'static str, u32>>,
+    /// 2026-09-29: Kernel handle to the output-column (N) tile width the kernel publishes
+    /// as `<entry>_n_tile`, recorded when the handle is resolved. Launch wrappers size
+    /// their grid from it (`GpuBackend::kernel_n_tile`).
+    n_tiles: RwLock<HashMap<u64, u32>>,
 }
 
 impl OpCache {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 2026-09-29: Record the N tile `kernel` publishes; a later value for the same
+    /// handle replaces it.
+    pub fn record_n_tile(&self, kernel: KernelHandle, n_tile: u32) {
+        self.n_tiles.write().insert(kernel.0, n_tile);
+    }
+
+    /// 2026-09-29: The N tile recorded for `kernel`, or `None` when it publishes none.
+    pub fn n_tile(&self, kernel: KernelHandle) -> Option<u32> {
+        self.n_tiles.read().get(&kernel.0).copied()
     }
 
     /// 2026-09-25: Resolve `module::func`, memoized: `gpu.kernel(..)` on a miss, a

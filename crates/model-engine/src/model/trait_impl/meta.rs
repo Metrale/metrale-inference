@@ -171,6 +171,11 @@ impl TransformerModel {
         if num_ssm == 0 || self.ssm_state_norm_kernel.0 == 0 {
             return Ok(());
         }
+        // 2026-09-29: Mamba-2 states are not clamped (the reference bounds nothing); they are
+        // checked for non-finite values instead.
+        if self.config.has_mamba2_layers() {
+            return self.mamba2_state_finite_guard(seq, stream);
+        }
         // 2026-09-25: The kernel follows the slot's storage dtype (`seq_ssm_h_is_f16`): FP16
         // under the f16-sized pool or after the decode conversion, FP32 otherwise.
         let norm_k = if self.seq_ssm_h_is_f16(seq) {

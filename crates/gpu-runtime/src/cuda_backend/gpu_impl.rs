@@ -20,6 +20,7 @@
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
+use super::n_tile::record_published;
 use crate::registry::{RawCudaFunc, cuda_error_text};
 use anyhow::{Result, bail};
 use cudarc::driver::LaunchConfig;
@@ -295,7 +296,9 @@ impl GpuBackend for MetraleCudaBackend {
             Ok(raw) => {
                 metrale_telemetry::kernel_audit::record(module, func_name, true, site);
                 metrale_telemetry::launch_trace::name_kernel(raw.0 as u64, module, func_name);
-                Ok(KernelHandle(raw.0 as u64))
+                let handle = KernelHandle(raw.0 as u64);
+                record_published(registry, &self.op_cache, module, func_name, handle)?;
+                Ok(handle)
             }
             Err(e) => {
                 // 2026-09-25: A failed lookup is recorded in the kernel audit

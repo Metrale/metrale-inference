@@ -368,6 +368,8 @@ mod tests {
     fn mock_launch_contract_one_expert() {
         let gpu = MockGpuBackend::new();
         let k = K3MoeGemmKernels::resolve(&gpu).unwrap();
+        // 2026-09-29: The deepseek-v4-flash tree's `_ptrtable_e8m0` publishes a 64-column tile.
+        gpu.set_kernel_n_tile(k.ptrtable, 64);
         let packed = dummy_qw(&gpu);
         let a = gpu.alloc(64).unwrap();
         let c = gpu.alloc(128).unwrap();

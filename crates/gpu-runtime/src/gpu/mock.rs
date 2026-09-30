@@ -145,6 +145,12 @@ impl MockGpuBackend {
         self.launches.lock().clone()
     }
 
+    /// 2026-09-29: Publish `n_tile` as the N tile of `kernel`, as a CUDA module's
+    /// `<entry>_n_tile` symbol does (`GpuBackend::kernel_n_tile`).
+    pub fn set_kernel_n_tile(&self, kernel: KernelHandle, n_tile: u32) {
+        self.op_cache.record_n_tile(kernel, n_tile);
+    }
+
     /// 2026-09-25: Declare a module absent: `has_module` then answers false.
     /// `kernel` still resolves lookups against it.
     pub fn mark_module_absent(&self, module: &str) {

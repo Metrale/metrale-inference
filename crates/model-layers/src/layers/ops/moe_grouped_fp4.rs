@@ -39,7 +39,7 @@ pub fn moe_w4a4_grouped_gemm_relu2(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n_out, 128), max_m_tiles, num_experts])
+        .grid([n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts])
         .block([128, 1, 1])
         .arg_ptr(a_packed)
         .arg_ptr(a_sf)

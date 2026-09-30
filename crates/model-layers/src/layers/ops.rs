@@ -70,6 +70,8 @@ mod gemm_dense_int8;
 mod gemm_fp4;
 #[path = "ops/model_stats.rs"]
 pub mod model_stats;
+#[path = "ops/n_tile.rs"]
+mod n_tile;
 #[path = "ops/w8a16_gemm_m16.rs"]
 mod w8a16_gemm_m16;
 // 2026-09-25: N-column-blocked W8A16 batch-16 GEMVs (`w8a16_gemv_batch16_ncol2`/`ncol4`).
@@ -235,6 +237,7 @@ pub use gemm_quant::*;
 pub use gemv_q2::*;
 pub use gemv_q2_vec::*;
 pub use gemv_sw::*;
+pub use n_tile::n_tile_blocks;
 pub use nvfp4_moe_grouped::*;
 
 pub use hyper_connection::*;

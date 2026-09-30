@@ -1686,3 +1686,11 @@ void fp8_fp8_gemm_t_m128_mfast(
     fp8_fp8_gemm_t_m128_impl(A_fp8, B_fp8, C, M, N, K,
                              blockIdx.x * (2 * M_TILE), blockIdx.y * N_TILE_LG);
 }
+
+// 2026-09-29: The N tile of each entry point above whose grid covers N in tiles. Launchers
+// size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
+// that entry multiplies `blockIdx.x` by.
+extern "C" __device__ unsigned int w4a16_gemm_n_tile = N_TILE_SM;
+extern "C" __device__ unsigned int w4a16_gemm_t_n_tile = N_TILE_LG;
+extern "C" __device__ unsigned int w4a16_gemm_t_k64_n_tile = N_TILE_LG;
+extern "C" __device__ unsigned int w4a16_gemm_t_m128_n_tile = N_TILE_LG;

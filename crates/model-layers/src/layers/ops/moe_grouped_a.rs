@@ -5,7 +5,8 @@
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types.
 //!
-//! The pointer-table GEMMs launch `(n tiles, max_m_tiles, num_experts)`: `blockIdx.z` is the
+//! 2026-09-29: The pointer-table GEMMs launch `(n tiles, max_m_tiles, num_experts)`, the N tile
+//! being the one the resolved kernel publishes (`n_tile_blocks`): `blockIdx.z` is the
 //! expert and `blockIdx.y` a row tile within its rows (`expert_offsets[e]..expert_offsets[e+1]`
 //! of the expert-sorted rows, `sorted_token_ids`). `max_m_tiles` must cover the busiest expert
 //! in the kernel's own M tile.
@@ -58,12 +59,6 @@ pub fn moe_w4a16_grouped_gemm(
         .launch(stream)
 }
 
-const PTRTABLE_LEGACY_N_TILE: u32 = 64;
-
-fn ptrtable_legacy_grid_x(n_out: u32) -> u32 {
-    div_ceil(n_out, PTRTABLE_LEGACY_N_TILE)
-}
-
 /// 2026-09-25: `moe_w4a16_grouped_gemm_ptrtable` with a 256-row M tile and a 512-thread block.
 /// `max_m_tiles` counts 256-row tiles: `MoeLayer::launch_grouped_gemm` divides the 64-row count
 /// by 4. Loaded only under `METRALE_MOE_GROUPED_M256=1` (`moe/init.rs`); the measurement behind
@@ -86,7 +81,7 @@ pub fn moe_w4a16_grouped_gemm_ptrtable_m256(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([ptrtable_legacy_grid_x(n_out), max_m_tiles, num_experts])
+        .grid([n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts])
         .block([512, 1, 1])
         .arg_ptr(a)
         .arg_ptr(b_packed_ptrs)
@@ -101,7 +96,7 @@ pub fn moe_w4a16_grouped_gemm_ptrtable_m256(
         .launch(stream)
 }
 
-/// 2026-09-25: Pointer-table grouped W4A16 GEMM with 64-column tiles; one launch covers all
+/// 2026-09-29: Pointer-table grouped W4A16 GEMM, 128 threads; one launch covers all
 /// experts.
 #[allow(clippy::too_many_arguments)]
 pub fn moe_w4a16_grouped_gemm_ptrtable(
@@ -121,7 +116,7 @@ pub fn moe_w4a16_grouped_gemm_ptrtable(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([ptrtable_legacy_grid_x(n_out), max_m_tiles, num_experts])
+        .grid([n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts])
         .block([128, 1, 1])
         .arg_ptr(a)
         .arg_ptr(b_packed_ptrs)
@@ -136,7 +131,8 @@ pub fn moe_w4a16_grouped_gemm_ptrtable(
         .launch(stream)
 }
 
-/// 2026-09-25: Pointer-table grouped W4A16 GEMM for kernels with 128-column tiles.
+/// 2026-09-29: Pointer-table grouped W4A16 GEMM, 128 threads. The name is historical: the
+/// grid follows the kernel's published N tile, 64 or 128.
 #[allow(clippy::too_many_arguments)]
 pub fn moe_w4a16_grouped_gemm_ptrtable_n128(
     gpu: &dyn GpuBackend,
@@ -155,7 +151,7 @@ pub fn moe_w4a16_grouped_gemm_ptrtable_n128(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n_out, 128), max_m_tiles, num_experts])
+        .grid([n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts])
         .block([128, 1, 1])
         .arg_ptr(a)
         .arg_ptr(b_packed_ptrs)
@@ -191,7 +187,7 @@ pub fn moe_fp8_grouped_gemm_ptrtable_n128(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n_out, 128), max_m_tiles, num_experts])
+        .grid([n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts])
         .block([128, 1, 1])
         .arg_ptr(a_fp8)
         .arg_ptr(b_packed_ptrs)
@@ -226,7 +222,7 @@ pub fn moe_w4a16_grouped_gemm_ptrtable_k64_n128(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n_out, 128), max_m_tiles, num_experts])
+        .grid([n_tile_blocks(gpu, kernel, n_out)?, max_m_tiles, num_experts])
         .block([128, 1, 1])
         .arg_ptr(a)
         .arg_ptr(b_packed_ptrs)
@@ -264,7 +260,11 @@ pub fn moe_w4a16_fused_gate_up_k64_n128(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(2 * n_out, 128), max_m_tiles, num_experts])
+        .grid([
+            n_tile_blocks(gpu, kernel, 2 * n_out)?,
+            max_m_tiles,
+            num_experts,
+        ])
         .block([128, 1, 1])
         .arg_ptr(a)
         .arg_ptr(gate_packed_ptrs)
@@ -334,7 +334,11 @@ pub fn moe_w4a16_fused_gate_up_k64_m128(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(2 * n_out, 128), max_m_tiles_m128, num_experts])
+        .grid([
+            n_tile_blocks(gpu, kernel, 2 * n_out)?,
+            max_m_tiles_m128,
+            num_experts,
+        ])
         .block([256, 1, 1])
         .arg_ptr(a)
         .arg_ptr(gate_packed_ptrs)
@@ -377,7 +381,11 @@ pub fn moe_w4a16_fused_gate_up_n128(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(2 * n_out, 128), max_m_tiles, num_experts])
+        .grid([
+            n_tile_blocks(gpu, kernel, 2 * n_out)?,
+            max_m_tiles,
+            num_experts,
+        ])
         .block([128, 1, 1])
         .arg_ptr(a)
         .arg_ptr(gate_packed_ptrs)
@@ -414,18 +422,4 @@ pub fn moe_silu_mul(
         .arg_ptr(output)
         .arg_u32(total_elements)
         .launch(stream)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ptrtable_legacy_grid_x;
-
-    #[test]
-    fn legacy_ptrtable_grid_covers_every_64_column_tile() {
-        assert_eq!(ptrtable_legacy_grid_x(1), 1);
-        assert_eq!(ptrtable_legacy_grid_x(64), 1);
-        assert_eq!(ptrtable_legacy_grid_x(65), 2);
-        assert_eq!(ptrtable_legacy_grid_x(1024), 16);
-        assert_eq!(ptrtable_legacy_grid_x(3072), 48);
-    }
 }

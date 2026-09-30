@@ -8,8 +8,9 @@
 // - Per head h of group g = h / (num_heads / n_groups), per token:
 //     dt = clamp(softplus(dt_raw + dt_bias[h]), dt_min, dt_max);  dA = exp(-exp(A_log[h]) * dt)
 //     H[p][s] <- dA * H[p][s] + dt * x[p] * B[g][s];  y[p] = sum_s H[p][s] C[g][s] + D[h] x[p]
-//   mamba2_ssm_decode also clamps every updated H value to [-200, 200]; the two prefill
-//   kernels do not.
+//   No kernel clamps H (2026-09-29: the decode kernel's [-200, 200] clamp is gone; prefill
+//   states of real prompts reach |H| = 5046 on Nemotron-3-Nano, and the reference has no
+//   clamp).
 // - H is FP32 [batch, num_heads, head_dim, state_size], state_size fastest, updated in
 //   place. One block per (head, batch): blockIdx.x is the head, blockIdx.y the batch row.
 // - x is [.., num_heads * head_dim], B and C are [.., n_groups * state_size] and dt_raw is
@@ -113,7 +114,6 @@ extern "C" __global__ void mamba2_ssm_decode(
         unsigned int idx = hd * state_size + tid;
         float h_val = H[idx];
         h_val = dA * h_val + x_hd * dtB;
-        h_val = fminf(fmaxf(h_val, -200.0f), 200.0f);
         H[idx] = h_val;
 
 
