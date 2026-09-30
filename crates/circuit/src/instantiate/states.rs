@@ -15,7 +15,7 @@ use crate::ir::Section;
 use crate::state::{StateDecl, StateFormat, StateKind, VerifySteps};
 
 /// 2026-09-30: The declaration `sf` of the block `template` instantiated at `prefix`.
-pub(super) fn state_decl(
+pub(crate) fn state_decl(
     template: &str,
     prefix: &str,
     layer: Option<usize>,

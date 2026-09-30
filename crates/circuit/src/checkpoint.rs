@@ -106,6 +106,9 @@ pub enum CheckpointError {
     Circuit(#[from] CircuitError),
 }
 
+mod states;
+pub use states::recurrent_states;
+
 /// 2026-09-30: One architecture's embedded files.
 struct Arch {
     circuit: &'static str,

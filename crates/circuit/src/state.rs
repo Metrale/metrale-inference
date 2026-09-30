@@ -20,7 +20,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::ir::{Circuit, Section};
+#[cfg(doc)]
+use crate::ir::Circuit;
+use crate::ir::Section;
 
 /// 2026-09-30: What a state is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -220,10 +222,11 @@ pub struct StatePlan {
 }
 
 impl StatePlan {
-    /// 2026-09-30: Size every state of `circuit` under `inputs`.
-    pub fn new(circuit: &Circuit, inputs: &StateInputs) -> Result<Self, StateError> {
+    /// 2026-09-30: Size every state of `states` (a circuit's [`Circuit::states`], or the
+    /// declarations of one block) under `inputs`.
+    pub fn new(states: &[StateDecl], inputs: &StateInputs) -> Result<Self, StateError> {
         let mut terms = Vec::new();
-        for s in &circuit.states {
+        for s in states {
             let dtype = match &s.format {
                 StateFormat::Fixed(d) => *d,
                 StateFormat::Keyed(k) => {

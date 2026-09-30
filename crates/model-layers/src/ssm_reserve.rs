@@ -10,13 +10,20 @@
 //! The server's `preflight_reserve`, which runs before the weights load, and the
 //! allocating code (`SsmStatePool::new`, `TransformerModel::new`) call the same
 //! functions here. If the two computed different sizes, a serve would fail a
-//! CUDA allocation after load, or refuse a configuration it could run.
+//! CUDA allocation after load, or refuse a configuration it could run. 2026-09-30:
+//! the pool itself is one plan both read ([`PoolPlan`]).
 
 mod decode_ring;
 pub use decode_ring::{
     DECODE_RING_FIT_LADDER, DecodeRingDecision, decode_rollback_ring_slots,
     decode_rollback_ring_slots_with, fit_decode_ring_slots, parse_decode_ring_slots,
     published_decode_ring_slots, set_decode_ring_slots, watchdogs_disabled_from_value,
+};
+
+mod pool_plan;
+pub use pool_plan::{
+    PoolCounts, PoolPlan, PoolShape, PoolState, UnitSource, VerifyCounts, pool_counts,
+    pool_counts_with, recurrent_units, state_dims,
 };
 
 mod rollback;
@@ -145,7 +152,7 @@ pub fn verify_slot_h_intermediates(
 
 /// 2026-09-25: Bytes of one stored h-state blob: half of `h_f32_bytes` when `f16_pool`
 /// (FP16 elements), else `h_f32_bytes`. `SsmStatePool::new`, the preflight
-/// reserve ([`ssm_pool_reserve_bytes`]) and the SSM layer's slot stride
+/// reserve ([`PoolPlan`]) and the SSM layer's slot stride
 /// (`ssm_h_fp16.rs`) all take the stored width from here.
 ///
 /// `f16_pool` is `ssm_h_f16_pool_enabled()` (`--ssm-h-dtype f16-pool`) at the
@@ -182,50 +189,6 @@ pub fn ssm_h_prefill_stage_bytes(slots: usize, h_layer_f32_bytes: usize, f16_poo
     } else {
         0
     }
-}
-
-/// 2026-09-25: SSM state-pool bytes for the pre-load preflight reserve, following the
-/// layout `SsmStatePool::new` allocates, without the pools' dummy slots:
-///
-/// * base: `max_batch_size` blobs (h and conv across all SSM layers);
-/// * with `spec_on`, per verify slot (`mtp_state_slots` of them): under
-///   `SsmRollbackMode::Snapshot`, [`verify_slot_h_intermediates`] h blobs,
-///   `num_drafts + 1` conv blobs and one pre-verify checkpoint blob (h and
-///   conv); under `SsmRollbackMode::Replay`, the checkpoint blob only.
-///
-/// `h_blob_bytes` and `conv_blob_bytes` are per-sequence totals across all SSM
-/// layers at FP32 width; `h_f16_pool` narrows the h terms through
-/// [`ssm_h_stored_bytes`].
-pub fn ssm_pool_reserve_bytes(
-    max_batch_size: usize,
-    h_blob_bytes: usize,
-    conv_blob_bytes: usize,
-    spec_on: bool,
-    num_drafts: usize,
-    mtp_state_slots: usize,
-    uniform_verify: bool,
-    h_f16_pool: bool,
-    rollback: SsmRollbackMode,
-) -> usize {
-    let h_blob_bytes = ssm_h_stored_bytes(h_blob_bytes, h_f16_pool);
-    let blob = h_blob_bytes + conv_blob_bytes;
-    let base = max_batch_size * blob;
-    if !spec_on {
-        return base;
-    }
-    let verify: usize = (0..mtp_state_slots)
-        .map(|slot| match rollback {
-            SsmRollbackMode::Snapshot => {
-                verify_slot_h_intermediates(slot, num_drafts, uniform_verify) * h_blob_bytes
-                    + (num_drafts + 1) * conv_blob_bytes
-                    + blob
-            }
-            // 2026-09-25: Replay's verify-window input ring is a separate
-            // term (`ssm_replay_ring_bytes`), sized by activation rows.
-            SsmRollbackMode::Replay => blob,
-        })
-        .sum();
-    base + verify
 }
 
 /// 2026-09-25: Outcome of the Marconi snapshot-slot decision. `skip_reason` is `Some`
