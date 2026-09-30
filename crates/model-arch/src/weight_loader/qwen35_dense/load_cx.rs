@@ -41,6 +41,26 @@ pub(super) struct LoadCx<'a> {
 }
 
 impl LoadCx<'_> {
+    /// 2026-09-30: The declared W8A8 install over `layers` (`w8a8_install::install_declared`),
+    /// which upgrades what it installs in the served formats, then the served formats' load line.
+    pub(super) fn install_w8a8_and_log_served(
+        &self,
+        layer_types: &[metrale_config::LayerType],
+        layers: &mut [Box<dyn metrale_model_layers::layer::TransformerLayer>],
+    ) -> anyhow::Result<()> {
+        let mut served = self.served.borrow_mut();
+        super::w8a8_install::install_declared(
+            self.store,
+            self.config,
+            self.gpu,
+            layer_types,
+            layers,
+            &mut served,
+        )?;
+        served.log(self.policy.tier().tier().name());
+        Ok(())
+    }
+
     /// 2026-09-28: The activation stamp for `module`'s NVFP4 weight (a checkpoint module
     /// path, e.g. `{lp}.mlp.gate_proj`), from the weight-quantization policy
     /// (`WeightQuantPolicy::nvfp4_act`). The loader stamps it on the weight

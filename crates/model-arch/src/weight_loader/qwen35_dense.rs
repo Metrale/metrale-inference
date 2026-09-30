@@ -385,11 +385,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             }
         }
 
-        let mut served = served.into_inner();
-        w8a8_install::install_declared(store, config, gpu, &layer_types, &mut layers, &mut served)?;
-        // 2026-09-30: Derived from what the arms and the W8A8 install built
-        // (`served_formats`), not from the policy's intent.
-        tracing::info!("{}", served.summary(policy.tier().tier().name()));
+        cx.install_w8a8_and_log_served(&layer_types, &mut layers)?;
         tracing::info!(
             "Qwen3.5 dense weight loader: {} layers ({} attention, {} SSM, dense FFN)",
             layers.len(),
