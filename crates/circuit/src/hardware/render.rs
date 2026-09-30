@@ -159,12 +159,12 @@ fn inputs(s: &mut String, r: &HwReport) {
         .policy
         .settings
         .iter()
-        .map(|(k, v)| {
-            match r.model.policy_sources.iter().find(|(key, _)| key == k) {
+        .map(
+            |(k, v)| match r.model.policy_sources.iter().find(|(key, _)| key == k) {
                 Some((_, why)) => format!("{k}={v} ({why})"),
                 None => format!("{k}={v}"),
-            }
-        })
+            },
+        )
         .collect();
     for (k, v) in rows.into_iter().chain([(
         "policy",
