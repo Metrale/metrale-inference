@@ -180,7 +180,6 @@ Kernels a rule under this policy names that the device's class does not provide:
 | rms_norm_act_quant::rms_norm_quant_fp8_row | not compiled for this class |
 | rms_norm_act_quant::rms_norm_quant_nvfp4 | not compiled for this class |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class |
-| w4a16::w4a16_gemm_t_k64_p3 | not compiled for this class |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class |
 | w4a16::w4a16_gemm_t_p3 | not compiled for this class |
 | w4a16_gemv_tc::w4a16_gemv_tc8 | not compiled for this class |

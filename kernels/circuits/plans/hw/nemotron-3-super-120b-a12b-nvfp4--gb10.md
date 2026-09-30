@@ -316,13 +316,5 @@ Kernels a rule under this policy names that the device's class does not provide:
 
 | kernel | why |
 |---|---|
-| nvfp4_mmq::metrale_nvfp4_gemm_pipe | not compiled for this class |
-| nvfp4_mmq::metrale_nvfp4_mmq16_nc | not compiled for this class |
-| nvfp4_mmq::metrale_nvfp4_mmq32_nc | not compiled for this class |
-| nvfp4_mmq::metrale_nvfp4_mmq64_nc | not compiled for this class |
-| nvfp4_mmq::metrale_nvfp4_quantize_bf16 | not compiled for this class |
-| nvfp4_mmq::metrale_nvfp4_scale_bf16 | not compiled for this class |
-| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | not compiled for this class |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class |
-| w4a16::w4a16_gemm_t_k64_p3 | not compiled for this class |
 | w4a16::w4a16_gemm_t_p3 | not compiled for this class |

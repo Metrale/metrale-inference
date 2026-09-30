@@ -441,6 +441,27 @@ fn absent(s: &mut String, r: &HwReport) {
     }
 }
 
+/// 2026-09-30: The port lists of a matrix: per device (in the order given), every rule kernel
+/// some model's policy could select that the device cannot run, with why and how many of the
+/// matrix's models are affected.
+pub fn port_lists(per_device: &[(String, BTreeMap<String, (String, usize)>)]) -> String {
+    let mut s = String::from(
+        "## Port lists\n\nRule kernels a matrix model's policy could select that the device cannot run (the class does not compile them, its build compiles them out, or the device lacks the instruction), with the number of matrix models whose policy names them.\n",
+    );
+    for (device, kernels) in per_device {
+        let _ = writeln!(s, "\n### {device}\n");
+        if kernels.is_empty() {
+            let _ = writeln!(s, "None.");
+            continue;
+        }
+        let _ = writeln!(s, "| kernel | why | models |\n|---|---|---:|");
+        for (k, (why, n)) in kernels {
+            let _ = writeln!(s, "| {k} | {} | {n} |", why.replace('|', "\\|"));
+        }
+    }
+    s
+}
+
 /// 2026-09-30: The report's row of the roadmap matrix: coverage, the top five gaps at C=16,
 /// and the memory fit.
 pub fn summary_row(r: &HwReport) -> String {

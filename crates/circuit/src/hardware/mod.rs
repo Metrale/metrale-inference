@@ -47,7 +47,7 @@ use crate::venn::roofline::CostError;
 pub use device::{Device, Registry, parse_devices};
 pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};
 pub use model_checkpoint::CheckpointSource;
-pub use render::{render_report, summary_row};
+pub use render::{port_lists, render_report, summary_row};
 pub use sources::{ClassSources, KernelTree, Module};
 
 /// 2026-09-30: Why a hardware plan could not be built.
@@ -120,7 +120,8 @@ pub struct HwReport {
     pub weight_floor: f64,
     /// 2026-09-30: (declared pair, weight, activation, execution) to node count.
     pub exec: BTreeMap<(String, String, String, exec::Exec), usize>,
-    /// 2026-09-30: Rule kernels the policy could select that the device cannot run.
+    /// 2026-09-30: Kernels of the rules this model's ops and policy could select that the
+    /// device cannot run.
     pub absent: Vec<(KernelId, avail::Absence)>,
     /// 2026-09-30: Every registry device's usable bytes, for the "does not fit" advice.
     pub others: Vec<(String, f64)>,
@@ -192,6 +193,17 @@ pub fn display_on(
     Ok(crate::display::display(&model.circuit, plan, &info, opts)?)
 }
 
+/// 2026-09-30: Some node of `c` has the op (and, for a linear, a role) the rule's first pattern
+/// op names: the rule could apply to this model at all.
+fn heads_a_node(r: &crate::rules::Rule, c: &crate::ir::Circuit) -> bool {
+    r.pattern.first().is_some_and(|p| {
+        c.nodes.iter().any(|n| match n.op {
+            crate::ir::OpKind::Linear(role) if !p.roles.is_empty() => p.roles.contains(&role),
+            op => op == p.op,
+        })
+    })
+}
+
 /// 2026-09-30: Prompt lengths every report estimates.
 pub const PREFILL_TOKENS: [u64; 2] = [4096, 32768];
 
@@ -242,6 +254,7 @@ pub fn build_report(
             r.when
                 .iter()
                 .all(|(k, v)| policy.settings.get(k) == Some(v))
+                && heads_a_node(r, c)
         })
         .flat_map(|r| r.kernels.iter())
         .filter_map(|k| {
