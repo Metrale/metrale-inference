@@ -93,7 +93,7 @@ pub enum Command {
     /// Show a recipe's architecture circuit and the fused kernel plan the engine runs.
     ///
     /// The circuits, precision tables and fusion rules are the ones this binary was built
-    /// with (kernels/circuits/, kernels/<hw>/common/FUSIONS.toml).
+    /// with (`kernels/circuits/`, `kernels/<hw>/common/FUSIONS.toml`).
     Circuit(CircuitArgs),
 }
 
