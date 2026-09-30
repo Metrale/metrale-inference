@@ -162,7 +162,7 @@ pub struct CircuitHwArgs {
     #[arg(long)]
     pub check: bool,
     /// Fetch config.json / hf_quant_config.json from huggingface.co when the checkpoint is not
-    /// in the local cache (curl -sfL .../resolve/main/<file>).
+    /// in the local cache (`curl -sfL .../resolve/main/<file>`).
     #[arg(long)]
     pub allow_network: bool,
     /// Repository root; by default the nearest directory above the working directory that has
