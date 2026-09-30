@@ -27,6 +27,7 @@ fn plan_args(args: &[&str]) -> CircuitPlanArgs {
         CircuitAction::Display(d) => d.plan,
         CircuitAction::Diff(_) => panic!("parsed diff"),
         CircuitAction::Venn(_) => panic!("parsed venn"),
+        CircuitAction::Plan(_) => panic!("parsed plan"),
     }
 }
 

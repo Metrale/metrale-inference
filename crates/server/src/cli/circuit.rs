@@ -115,6 +115,12 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             };
             return super::circuit_venn::run(*v);
         }
+        CircuitAction::Plan(_) => {
+            let CircuitAction::Plan(p) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_hw::run(*p);
+        }
     };
     let inst = instance(&plan_args.recipe)?;
     let rows = rows_of(&inst, &plan_args)?;
@@ -128,7 +134,9 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
     eprintln!("rules: FUSIONS.toml sha256 {}", loaded.rules_digest);
     let text = match args.action {
         CircuitAction::Show(_) => metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows)?,
-        CircuitAction::Diff(_) | CircuitAction::Venn(_) => unreachable!("returned above"),
+        CircuitAction::Diff(_) | CircuitAction::Venn(_) | CircuitAction::Plan(_) => {
+            unreachable!("returned above")
+        }
         CircuitAction::Display(d) => {
             let tty = std::io::stdout().is_terminal();
             let width = if tty {
@@ -151,7 +159,22 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
                 glyphs,
                 expand,
             };
-            let doc = metrale_circuit::display_plan(&inst, &loaded, &avail, mode, rows, &opts)?;
+            let doc = match &d.hardware {
+                // 2026-09-30: The device's class plans it from the working tree.
+                Some(hw) => {
+                    let (tree, reg, _) = super::circuit_hw::tree_here()?;
+                    let model = metrale_circuit::hardware::model::model_of(
+                        &tree,
+                        &inst,
+                        format!("recipe {}", inst.recipe),
+                        metrale_circuit::hardware::PrecisionChoice::Recipe,
+                    )?;
+                    let run = metrale_circuit::venn::Run { mode, rows };
+                    let one = metrale_circuit::hardware::plan_one(&reg, hw, &tree, &model, run)?;
+                    metrale_circuit::hardware::display_on(&model, &one, &opts)?
+                }
+                None => metrale_circuit::display_plan(&inst, &loaded, &avail, mode, rows, &opts)?,
+            };
             let depth = circuit_paint::resolve_depth(
                 d.color,
                 tty,

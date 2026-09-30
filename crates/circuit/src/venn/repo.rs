@@ -77,7 +77,7 @@ pub fn checkpoint_id_of(dir: &str) -> Option<String> {
     }
 }
 
-fn load_instance(repo: &dyn Repo, inst: &Instance) -> Result<Loaded, VennError> {
+pub(crate) fn load_instance(repo: &dyn Repo, inst: &Instance) -> Result<Loaded, VennError> {
     let io = |e: String| VennError::Load(format!("{}: {e}", inst.recipe));
     let circuit = repo
         .read(&format!("kernels/circuits/{}.toml", inst.arch))

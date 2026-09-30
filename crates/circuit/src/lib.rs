@@ -16,6 +16,7 @@ pub mod dims;
 pub mod display;
 pub mod format;
 pub mod fuser;
+pub mod hardware;
 pub mod instances;
 pub mod instantiate;
 pub mod ir;
