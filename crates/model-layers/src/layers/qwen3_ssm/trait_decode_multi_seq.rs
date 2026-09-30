@@ -139,6 +139,19 @@ impl Qwen3SsmLayer {
 
         let normed_base = ctx.buffers.norm_output();
         match n {
+            // 2026-09-30: A fixed `--activation-quantization` for the dense FFN: one format at
+            // every row count (`dense_ffn_fixed.rs`).
+            n if self.ffn.dense_fixed_ok(n, ctx) => {
+                self.ffn.forward_dense_fixed(normed_base, n, ctx, stream)?;
+                ops::residual_add(
+                    ctx.gpu,
+                    self.residual_add_k,
+                    hidden,
+                    ctx.buffers.moe_output(),
+                    (n * h) as u32,
+                    stream,
+                )?;
+            }
             // 2026-09-27: An NVFP4 `--expert-quantization` tier takes the grouped decode at
             // every row count.
             n if self.ffn.nvfp4_grouped_ok(n, ctx) => {

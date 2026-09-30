@@ -12,11 +12,17 @@ const MOE: ModelKind = ModelKind {
     qwen_hybrid: true,
     fp8_moe: true,
     fp8_head: false,
+    declared_tier: true,
 };
 const DENSE: ModelKind = ModelKind {
     qwen_hybrid: true,
     fp8_moe: false,
     fp8_head: false,
+    declared_tier: true,
+};
+const DENSE_NVFP4: ModelKind = ModelKind {
+    declared_tier: false,
+    ..DENSE
 };
 
 /// 2026-09-30: `adaptive` fixes nothing, so every model honours it and nothing is reported.
@@ -28,24 +34,29 @@ fn adaptive_is_supported_everywhere() {
 }
 
 /// 2026-09-30: The default runs everywhere: the families a model lacks a path for are reported,
-/// never refused.
+/// never refused, and a family the model does not have is not reported.
 #[test]
 fn declared_reports_what_a_model_does_not_honour() {
-    assert!(
-        support(&v("declared"), MOE)
-            .unwrap()
-            .contains(&ProjFamily::Ffn)
+    assert!(support(&v("declared"), MOE).unwrap().is_empty());
+    // 2026-09-30: The dense model under the declared weight tier honours every family it has.
+    assert!(support(&v("declared"), DENSE).unwrap().is_empty());
+    // 2026-09-30: Under the nvfp4 tier its projections are not the declared ones.
+    assert_eq!(
+        support(&v("declared"), DENSE_NVFP4).unwrap(),
+        vec![ProjFamily::Gdn, ProjFamily::Attn, ProjFamily::Ffn]
     );
-    let dense = support(&v("declared"), DENSE).unwrap();
-    for f in [
-        ProjFamily::Gdn,
-        ProjFamily::Attn,
-        ProjFamily::Ffn,
-        ProjFamily::Moe,
-    ] {
-        assert!(dense.contains(&f), "{f:?}");
-    }
-    assert!(!dense.contains(&ProjFamily::LmHead));
+    assert!(
+        support(&v("adaptive,ffn:nvfp4"), DENSE_NVFP4)
+            .unwrap()
+            .is_empty()
+    );
+    // 2026-09-30: Not a Qwen hybrid: only the LM head is honoured.
+    let other = ModelKind {
+        qwen_hybrid: false,
+        fp8_moe: false,
+        ..DENSE
+    };
+    assert_eq!(support(&v("declared"), other).unwrap().len(), 4);
 }
 
 /// 2026-09-30: A format the checkpoint cannot run is refused, naming the family and the reason.
@@ -68,4 +79,12 @@ fn impossible_formats_are_refused() {
     assert!(support(&v("adaptive,lm_head:fp8"), fp8_head).is_ok());
     assert!(support(&v("adaptive,moe:fp8"), MOE).is_ok());
     assert!(support(&v("adaptive,moe:fp8"), DENSE).is_ok());
+    for s in [
+        "adaptive,ffn:bf16",
+        "adaptive,gdn:bf16",
+        "adaptive,attn:nvfp4",
+    ] {
+        assert!(support(&v(s), DENSE).is_err(), "{s}");
+    }
+    assert!(support(&v("adaptive,gdn:fp8"), DENSE).is_ok());
 }

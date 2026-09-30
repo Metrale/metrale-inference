@@ -420,6 +420,10 @@ mod load;
 #[path = "dense_ffn_overlays.rs"]
 mod overlays;
 
+/// 2026-09-30: The fixed `--activation-quantization` path (`fixed_ok`, `forward_fixed`).
+#[path = "dense_ffn_fixed.rs"]
+mod fixed;
+
 /// 2026-09-26: Single-token decode (`forward`).
 #[path = "dense_ffn_decode.rs"]
 mod decode;

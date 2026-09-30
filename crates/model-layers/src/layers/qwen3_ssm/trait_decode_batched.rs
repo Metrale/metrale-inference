@@ -306,8 +306,13 @@ impl Qwen3SsmLayer {
         // 2026-09-27: An NVFP4 `--expert-quantization` tier takes the grouped decode at every
         // row count.
         let nvfp4_moe = self.ffn.nvfp4_grouped_ok(num_tokens, ctx);
-        if row_invariant_moe || nvfp4_moe {
-            if nvfp4_moe {
+        // 2026-09-30: A fixed `--activation-quantization` for the dense FFN (`dense_ffn_fixed.rs`).
+        let dense_fixed = self.ffn.dense_fixed_ok(num_tokens, ctx);
+        if row_invariant_moe || nvfp4_moe || dense_fixed {
+            if dense_fixed {
+                self.ffn
+                    .forward_dense_fixed(normed2_base, num_tokens, ctx, stream)?;
+            } else if nvfp4_moe {
                 self.ffn
                     .forward_nvfp4_grouped(normed2_base, num_tokens, ctx, stream)?;
             } else {

@@ -20,10 +20,15 @@ pub(crate) struct ModelKind {
     pub fp8_moe: bool,
     /// 2026-09-30: `--lm-head-dtype fp8`.
     pub fp8_head: bool,
+    /// 2026-09-30: `--weight-quantization declared`: a dense checkpoint's FP8-declared
+    /// attention/GDN projections and MLPs decode W8A8 at every row count, and its A4 MLPs keep
+    /// NVFP4 weights.
+    pub declared_tier: bool,
 }
 
 impl ModelKind {
     pub(crate) fn of(config: &ModelConfig, lm_head_dtype: &str) -> Self {
+        use metrale_config::WeightQuantization;
         let qwen_hybrid = config.num_ssm_layers() > 0 && config.model_type.starts_with("qwen3");
         Self {
             qwen_hybrid,
@@ -31,68 +36,99 @@ impl ModelKind {
                 && config.num_experts > 0
                 && super::super::serve::canonicalize_model_quant(config) == "fp8",
             fp8_head: lm_head_dtype == "fp8",
+            declared_tier: metrale_model_layers::layers::weight_quantization().tier()
+                == WeightQuantization::Declared,
         }
     }
 
-    /// 2026-09-30: The families whose decode sites run the fixed formats on this model.
-    pub(crate) fn honoured(self) -> Vec<ProjFamily> {
-        let mut v = vec![ProjFamily::LmHead];
-        if self.fp8_moe {
-            v.extend([ProjFamily::Gdn, ProjFamily::Attn, ProjFamily::Moe]);
-        }
-        v
-    }
-
-    /// 2026-09-30: Why `family` cannot run `format` on this model, if it cannot.
-    fn refuses(self, family: ProjFamily, format: ActQuantFormat) -> Option<&'static str> {
+    /// 2026-09-30: What happens to `family` at a fixed `format` on this model.
+    fn classify(self, family: ProjFamily, format: ActQuantFormat) -> Support {
         use ActQuantFormat::*;
-        match (family, format) {
-            (_, Adaptive | Declared | Bf16) => None,
-            (ProjFamily::LmHead, Fp8) if self.fp8_head => None,
-            (ProjFamily::LmHead, _) => Some(
-                "the LM head runs 16-bit activations (fp8 needs --lm-head-dtype fp8; nvfp4 has no \
-                 head kernel)",
-            ),
-            (ProjFamily::Moe, Fp8) if self.fp8_moe => None,
-            (ProjFamily::Moe, _) => Some("nvfp4 activations need NVFP4 expert weights"),
-            (ProjFamily::Gdn | ProjFamily::Attn, _) if self.fp8_moe => Some(
-                "this checkpoint's attention/GDN projections decode W8A16; their block-scaled \
-                 W8A8 path is off until it is re-validated",
-            ),
-            _ => None,
+        use Support::*;
+        let dense = self.qwen_hybrid && !self.fp8_moe;
+        match family {
+            ProjFamily::LmHead => match format {
+                Fp8 if !self.fp8_head => {
+                    Refused("the LM head runs 16-bit activations (fp8 needs --lm-head-dtype fp8)")
+                }
+                Nvfp4 => Refused("the LM head has no NVFP4-activation kernel"),
+                _ => Honoured,
+            },
+            ProjFamily::Moe if self.fp8_moe => match format {
+                Nvfp4 => Refused("nvfp4 activations need NVFP4 expert weights"),
+                _ => Honoured,
+            },
+            ProjFamily::Gdn | ProjFamily::Attn if self.fp8_moe => match format {
+                Fp8 | Nvfp4 => Refused(
+                    "this checkpoint's attention/GDN projections decode W8A16; their \
+                     block-scaled W8A8 path is off until it is re-validated",
+                ),
+                _ => Honoured,
+            },
+            ProjFamily::Gdn | ProjFamily::Attn if dense && self.declared_tier => match format {
+                Declared | Fp8 => Honoured,
+                _ => Refused("the declared W8A8 projections run FP8 activations only"),
+            },
+            ProjFamily::Ffn if dense => match format {
+                Nvfp4 => Honoured,
+                Declared if self.declared_tier => Honoured,
+                Declared => Unhonoured,
+                _ => Refused("the dense MLP runs a fixed format as NVFP4 or its declared one"),
+            },
+            // 2026-09-30: A family the model does not have: nothing to route.
+            ProjFamily::Moe if dense => Honoured,
+            ProjFamily::Ffn if self.fp8_moe => Honoured,
+            _ => Unhonoured,
         }
     }
+}
+
+/// 2026-09-30: A family at a fixed format, on one model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Support {
+    /// 2026-09-30: Its decode sites run the format at every row count.
+    Honoured,
+    /// 2026-09-30: The model has no invariant path for it here: it runs adaptive.
+    Unhonoured,
+    /// 2026-09-30: The checkpoint cannot run the format.
+    Refused(&'static str),
 }
 
 /// 2026-09-30: The families `value` fixes that this model does not honour (they run
 /// `adaptive`), or the first refusal.
 pub(crate) fn support(value: &ActivationQuantization, kind: ModelKind) -> Result<Vec<ProjFamily>> {
-    let honoured = kind.honoured();
     let mut unhonoured = Vec::new();
     for family in ProjFamily::ALL {
         let rungs = value.ladder(family).rungs();
-        if rungs.iter().all(|r| r.format == ActQuantFormat::Adaptive) {
+        let fixed: Vec<ActQuantFormat> = rungs
+            .iter()
+            .map(|r| r.format)
+            .filter(|&f| f != ActQuantFormat::Adaptive)
+            .collect();
+        if fixed.is_empty() {
             continue;
-        }
-        if !honoured.contains(&family) {
-            unhonoured.push(family);
-            continue;
-        }
-        for r in rungs {
-            if let Some(why) = kind.refuses(family, r.format) {
-                bail!(
-                    "--activation-quantization {value}: {} cannot run {} on this model: {why}",
-                    family.name(),
-                    r.format.name()
-                );
-            }
         }
         // 2026-09-30: The MoE expert activation format is one process-wide cell.
-        if family == ProjFamily::Moe && rungs.len() > 1 {
+        if family == ProjFamily::Moe && kind.fp8_moe && rungs.len() > 1 {
             bail!(
                 "--activation-quantization {value}: moe takes one format for every row count \
                  (the expert decode's activation format is chosen once per process)"
             );
+        }
+        for format in fixed {
+            match kind.classify(family, format) {
+                Support::Honoured => {}
+                Support::Unhonoured => {
+                    if !unhonoured.contains(&family) {
+                        unhonoured.push(family);
+                    }
+                }
+                Support::Refused(why) => bail!(
+                    "--activation-quantization {value}: {} cannot run {} on this model: {why}",
+                    family.name(),
+                    format.name()
+                ),
+            }
         }
     }
     Ok(unhonoured)

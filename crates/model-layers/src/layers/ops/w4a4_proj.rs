@@ -92,6 +92,9 @@ fn audit_enabled() -> bool {
 #[path = "w4a4_proj/mx_plan.rs"]
 mod mx_plan;
 pub use mx_plan::*;
+#[path = "w4a4_proj/fixed.rs"]
+mod fixed;
+pub use fixed::nvfp4_proj_mx;
 #[path = "w4a4_proj/steps.rs"]
 mod steps;
 pub use steps::{Nvfp4ActBuf, W4a4Proj};
@@ -111,7 +114,10 @@ fn key(gpu: &dyn GpuBackend) -> usize {
 /// for the backend and logs, and every projection stays W4A16.
 pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
     let tier = crate::layers::weight_quantization();
-    if !tier.uses_w4a4_decode() {
+    // 2026-09-30: A fixed `--activation-quantization` may run NVFP4 activations under any tier
+    // (`nvfp4_proj_mx`).
+    let fixed = crate::layers::any_fixed();
+    if !tier.uses_w4a4_decode() && !fixed {
         return Ok(());
     }
     let mut guard = cache().lock().unwrap_or_else(|p| p.into_inner());
@@ -133,7 +139,7 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
     {
         let sms = gpu.sm_count()?;
         let (mx64, mx64_nt2, max_m) =
-            wide_entries(tier, h("w4a4_gemv_mx64"), h("w4a4_gemv_mx64_nt2"));
+            wide_entries(tier, fixed, h("w4a4_gemv_mx64"), h("w4a4_gemv_mx64_nt2"));
         tracing::info!(
             "w4a4 projection ({tier:?}): METRALE_W4A4_MX_NT={} METRALE_W4A4_MX_PS={} ({sms} SMs), max rows {max_m}",
             mx_nt(),
@@ -173,12 +179,18 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
 /// 2026-09-28: The 33..=64-row entries and the scratch's row count. Under `declared` they are
 /// used when this target has them. Under `nvfp4` they belong to `--w4a4-downcast-wide`, as
 /// before the tiers existed: without it they are not resolved and the scratch holds 32 rows.
+/// 2026-09-30: Also under a fixed `--activation-quantization` (`fixed`), whose NVFP4 projections
+/// run in chunks of the widest entry.
 fn wide_entries(
     tier: metrale_config::WeightQuantTier,
+    fixed: bool,
     mx64: KernelHandle,
     mx64_nt2: KernelHandle,
 ) -> (KernelHandle, KernelHandle, u32) {
     use metrale_config::{W4a4Downcast, WeightQuantization};
+    if fixed && mx64.0 != 0 && mx64_nt2.0 != 0 {
+        return (mx64, mx64_nt2, W4A4_WIDE_MAX_M);
+    }
     match (tier.tier(), tier.downcast()) {
         (WeightQuantization::Declared, _) if mx64.0 != 0 && mx64_nt2.0 != 0 => {
             (mx64, mx64_nt2, W4A4_WIDE_MAX_M)

@@ -303,6 +303,27 @@ impl FfnComponent {
         }
     }
 
+    /// 2026-09-30: Whether this is a dense FFN that runs `m` rows under a fixed
+    /// `--activation-quantization` (`DenseFfnLayer::fixed_ok`). False for MoE and none.
+    pub fn dense_fixed_ok(&self, m: usize, ctx: &ForwardContext) -> bool {
+        matches!(self, Self::Dense(d) if d.fixed_ok(m, ctx))
+    }
+
+    /// 2026-09-30: `DenseFfnLayer::forward_fixed` over `m` rows into `moe_output`; call only
+    /// when `dense_fixed_ok(m)` holds.
+    pub fn forward_dense_fixed(
+        &self,
+        input: DevicePtr,
+        m: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        match self {
+            Self::Dense(d) => d.forward_fixed(input, m, ctx, stream),
+            _ => anyhow::bail!("forward_dense_fixed on a non-dense FFN"),
+        }
+    }
+
     /// 2026-09-25: Whether this is a dense FFN whose
     /// `DenseFfnLayer::can_forward_km(m)` holds: a batched-GEMV tier serves `m`
     /// rows and NVFP4 or FP8 weights are loaded. False for MoE and none.
