@@ -21,7 +21,7 @@ use crate::format::Format;
 use crate::rules::{KernelId, Mode};
 use crate::venn::{Class, Run};
 
-const W4A16: &str = r#"
+pub(super) const W4A16: &str = r#"
 schema = 1
 checkpoint = "toy"
 tier = "nvfp4"
@@ -104,7 +104,7 @@ fn a_class_override_wins_over_the_inherited_rule() {
             .all(|x| x == "m::act_child")
     );
     match class_rules(&tree, "child").unwrap() {
-        ClassRules::Rules { rules, files } => {
+        ClassRules::Rules { rules, files, .. } => {
             assert_eq!(
                 files,
                 [

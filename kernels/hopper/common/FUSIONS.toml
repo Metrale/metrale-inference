@@ -10,9 +10,11 @@
 # Invariants:
 # - A rule here replaces gb10's rule of the same id; the ids below are new, so they add.
 # - Cites follow gb10's FUSIONS.toml abbreviations (ml/ = crates/model-layers/src/layers/).
-# - Not modelled: the batched arm also needs the sequences' state slots to be contiguous at run
-#   time (ssm_batched_recurrent.rs:93-150 falls back to the per-sequence loop when they are not),
-#   and ops::dense_gemm_ba_gates_prefill may substitute its byte-identical Hopper twin
+# - The batched arm also needs the sequences' state slots to be contiguous at run time
+#   (ssm_batched_recurrent.rs:93-150 falls back to the per-sequence loop when they are not). The
+#   `[[runtime]]` route below models the fallback, and every plan it applies to shows both arms
+#   (schema: crates/circuit/src/hardware/runtime.rs).
+# - Not modelled: ops::dense_gemm_ba_gates_prefill may substitute its byte-identical Hopper twin
 #   (ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper, [defaults] ssm_ba_gates_hopper) under
 #   a shape guard (ops/ssm_preproc.rs:338-360). The plan names the path both start from.
 
@@ -75,6 +77,18 @@ priority = 10
 cite = "ml/qwen3_ssm/ssm_forward.rs:354-372"
 
 # 2026-09-30: Many sequences: the batched arm, one launch for all rows.
+
+# 2026-09-30: The batched arm's run-time fallback. The per-sequence loop it falls back to is the
+# code the `off` arm runs (per_seq.rs, `decode_ms_ssm_recurrent_per_seq`), so the route is planned
+# with gb10's per-row rules under `off`.
+[[runtime]]
+id = "gdn_state_slots_fragmented"
+when = { ssm_batched_recurrent = "on" }
+modes = ["multi_seq"]
+rows = [2, 128]
+plans_as = { ssm_batched_recurrent = "off" }
+why = "the sequences' GDN state slots are not contiguous in slice order (slots fragment as sequences finish), and the step runs the per-sequence loop"
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-150 (the contiguity check), :396-397 (the per-sequence call)"
 
 [[rule]]
 id = "gdn_ba_gates_gemm_batched"

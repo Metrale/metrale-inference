@@ -21,6 +21,7 @@ use super::avail::{Availability, availability, check_build, kernel_status};
 use super::class::{ClassInfo, ClassRules, chain, class_families, class_rules, planning_chain};
 use super::device::{Device, Registry};
 use super::estimate::{DeviceRoofline, device_roofline};
+use super::runtime::{RoutePlan, RuntimeRoute};
 use super::sources::{ClassSources, KernelTree};
 use super::{HwError, ModelUnderPlan};
 use crate::fuser::{FuseError, FusionPlan, fuse};
@@ -44,6 +45,9 @@ pub struct Planned {
     /// 2026-09-30: Rules left out of this plan because they matched a node whose edge format
     /// they cannot read (the pattern matches op and weight, not the input format), and why.
     pub refused: Vec<(String, String)>,
+    /// 2026-09-30: The runtime routes that apply to this run, each with its own plan
+    /// ([`super::runtime`]).
+    pub routes: Vec<RoutePlan>,
 }
 
 /// 2026-09-30: A device's class, resolved for one model.
@@ -72,6 +76,14 @@ impl Resolved {
     pub fn rule_list(&self) -> &[Rule] {
         match &self.rules {
             ClassRules::Rules { rules, .. } => rules,
+            ClassRules::None => &[],
+        }
+    }
+
+    /// 2026-09-30: The runtime routes, empty for a class without any.
+    pub fn route_list(&self) -> &[RuntimeRoute] {
+        match &self.rules {
+            ClassRules::Rules { runtime, .. } => runtime,
             ClassRules::None => &[],
         }
     }
@@ -197,8 +209,27 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
 }
 
 /// 2026-09-30: Fuse `circuit` at `run` with the rules and kernels of `r`, covering what no rule
-/// covers with placeholders.
+/// covers with placeholders; each runtime route that applies is planned beside it.
 pub fn fuse_on(
+    r: &Resolved,
+    circuit: &Circuit,
+    policy: &crate::fuser::Policy,
+    run: Run,
+) -> Result<Planned, HwError> {
+    let mut primary = fuse_arm(r, circuit, policy, run)?;
+    for route in r.route_list().iter().filter(|x| x.applies(policy, run)) {
+        let planned = fuse_arm(r, circuit, &route.policy(policy), run)?;
+        if planned.plan.digest != primary.plan.digest {
+            primary.routes.push(RoutePlan {
+                route: route.clone(),
+                planned,
+            });
+        }
+    }
+    Ok(primary)
+}
+
+fn fuse_arm(
     r: &Resolved,
     circuit: &Circuit,
     policy: &crate::fuser::Policy,
@@ -227,6 +258,7 @@ pub fn fuse_on(
                     plan,
                     novel,
                     refused,
+                    routes: Vec::new(),
                 });
             }
             Err(FuseError::Uncovered { node, .. }) => {

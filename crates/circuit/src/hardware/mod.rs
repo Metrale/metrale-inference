@@ -30,6 +30,8 @@ pub mod model_checkpoint;
 pub mod plan;
 mod render;
 mod render_matrix;
+mod render_routes;
+pub mod runtime;
 pub mod sources;
 
 #[cfg(test)]
@@ -50,6 +52,7 @@ pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, Preci
 pub use model_checkpoint::CheckpointSource;
 pub use render::render_report;
 pub use render_matrix::{PortList, port_lists, summary_row};
+pub use render_routes::plan_text;
 pub use sources::{ClassSources, KernelTree, Module};
 
 /// 2026-09-30: Why a hardware plan could not be built.
@@ -114,6 +117,8 @@ pub struct HwReport {
     pub header: Header,
     /// 2026-09-30: One table per report run ([`plan::report_runs`]).
     pub tables: Vec<gaps::GapTable>,
+    /// 2026-09-30: The runtime routes that apply to those runs, estimated.
+    pub routes: Vec<render_routes::RouteRow>,
     /// 2026-09-30: Prefill estimates: (tokens, microseconds).
     pub prefill: Vec<(u64, f64)>,
     /// 2026-09-30: Weights, KV and state.
@@ -240,6 +245,7 @@ pub fn build_report(
             planned,
         )?);
     }
+    let routes = render_routes::route_rows(&resolved, c, &policy, &model.label, &tables)?;
     let rf = &resolved.roofline.roofline;
     let prefill = PREFILL_TOKENS
         .iter()
@@ -284,6 +290,7 @@ pub fn build_report(
         class_settings,
         header,
         tables,
+        routes,
         prefill,
         footprint,
         weight_floor,

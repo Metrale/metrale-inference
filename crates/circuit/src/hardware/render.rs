@@ -46,6 +46,7 @@ pub fn render_report(r: &HwReport) -> String {
     inputs(&mut s, r);
     execution(&mut s, r);
     estimates(&mut s, r);
+    super::render_routes::routes_section(&mut s, r);
     memory(&mut s, r);
     flags(&mut s, r);
     if let Some(t) = r.tables.first() {
@@ -68,8 +69,16 @@ fn inputs(s: &mut String, r: &HwReport) {
         .map(|c| c.name.as_str())
         .collect();
     let rules = match &r.resolved.rules {
-        super::class::ClassRules::Rules { files, rules } => {
-            format!("{} rules from {}", rules.len(), files.join(" + "))
+        super::class::ClassRules::Rules {
+            files,
+            rules,
+            runtime,
+        } => {
+            let routes = match runtime.len() {
+                0 => String::new(),
+                n => format!(" and {n} runtime route{}", if n == 1 { "" } else { "s" }),
+            };
+            format!("{} rules{routes} from {}", rules.len(), files.join(" + "))
         }
         super::class::ClassRules::None => {
             "none: the class declares no FUSIONS.toml and inherits none, so every node is a gap"

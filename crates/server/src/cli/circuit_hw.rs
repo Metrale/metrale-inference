@@ -367,7 +367,7 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
                 (None, _) => bail!("--mode {} needs --rows", mode.name()),
             };
             let one = hardware::plan_one(&reg, device, &tree, &model, Run { mode, rows })?;
-            metrale_circuit::render::render(&model.circuit, &one.planned.plan, &one.header)
+            hardware::plan_text(&model.circuit, &one)
         }
     };
     match &a.out {
