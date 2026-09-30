@@ -20,7 +20,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::ir::{Circuit, Section};
+#[cfg(doc)]
+use crate::ir::Circuit;
+use crate::ir::Section;
 
 /// 2026-09-30: What a state is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -59,6 +61,32 @@ impl VerifySteps {
         match s {
             "h_steps" => Some(Self::H),
             "conv_steps" => Some(Self::Conv),
+            _ => None,
+        }
+    }
+}
+
+/// 2026-09-30: How a node touches a state of its block (`state = { h = "update" }`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum StateAccess {
+    /// 2026-09-30: Reads it (attention over the KV cache).
+    Read,
+    /// 2026-09-30: Writes new units without reading them (the KV write of this step's rows).
+    Write,
+    /// 2026-09-30: Reads and replaces it in place (a recurrence, a conv window).
+    Update,
+    /// 2026-09-30: Copies it after each row but the last into the verify intermediates.
+    Snapshot,
+}
+
+impl StateAccess {
+    /// 2026-09-30: The spelling in the circuit TOML.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "read" => Some(Self::Read),
+            "write" => Some(Self::Write),
+            "update" => Some(Self::Update),
+            "snapshot" => Some(Self::Snapshot),
             _ => None,
         }
     }
@@ -220,10 +248,11 @@ pub struct StatePlan {
 }
 
 impl StatePlan {
-    /// 2026-09-30: Size every state of `circuit` under `inputs`.
-    pub fn new(circuit: &Circuit, inputs: &StateInputs) -> Result<Self, StateError> {
+    /// 2026-09-30: Size every state of `states` (a circuit's [`Circuit::states`], or the
+    /// declarations of one block) under `inputs`.
+    pub fn new(states: &[StateDecl], inputs: &StateInputs) -> Result<Self, StateError> {
         let mut terms = Vec::new();
-        for s in &circuit.states {
+        for s in states {
             let dtype = match &s.format {
                 StateFormat::Fixed(d) => *d,
                 StateFormat::Keyed(k) => {

@@ -81,6 +81,7 @@ binding = ["{L}.linear_attn.A_log", "{L}.linear_attn.dt_bias"]
 [[block.gdn.node]]
 id = "conv"
 op = "conv1d_update"
+state = { conv = "update" }
 in = ["qkvz"]
 out = [{ edge = "conv", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
 binding = ["{L}.linear_attn.conv1d"]
@@ -90,6 +91,7 @@ binding = ["{L}.linear_attn.conv1d"]
 [[block.gdn.node]]
 id = "conv_ckpt"
 op = "state_snapshot"
+state = { conv = "snapshot" }
 in = ["conv"]
 out = []
 
@@ -102,6 +104,7 @@ out = [{ edge = "qkv", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_
 [[block.gdn.node]]
 id = "recur"
 op = "gdn_recurrence"
+state = { h = "update" }
 in = ["qkv", "decay", "beta"]
 out = [{ edge = "core", format = "f32", shape = "n x lin_v_heads*lin_v_dim" }]
 
@@ -210,12 +213,14 @@ out = [
 [[block.attn.node]]
 id = "kv_write"
 op = "kv_write"
+state = { k = "write", v = "write" }
 in = ["kr", "v"]
 out = []
 
 [[block.attn.node]]
 id = "attend"
 op = "paged_attention"
+state = { k = "read", v = "read" }
 in = ["qr", "kr", "v"]
 out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
 

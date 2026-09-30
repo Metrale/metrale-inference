@@ -29,6 +29,7 @@ pub mod precision_policy;
 pub mod render;
 pub mod rules;
 pub mod state;
+pub mod state_ops;
 pub mod venn;
 
 #[cfg(test)]

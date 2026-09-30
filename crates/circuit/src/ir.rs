@@ -352,6 +352,8 @@ pub struct Node {
     pub layer: Option<usize>,
     /// 2026-09-28: The block template it was instantiated from.
     pub block: String,
+    /// 2026-09-30: The states it touches: indices into [`Circuit::states`], and how.
+    pub state: Vec<(usize, crate::state::StateAccess)>,
 }
 
 /// 2026-09-28: A decoder layer's kind, as `ModelConfig::layer_type` reports it.

@@ -202,6 +202,7 @@ impl Builder<'_> {
             params: Default::default(),
             layer,
             block: template.to_string(),
+            state: Vec::new(),
         });
         self.quantized.insert(key, q);
         q

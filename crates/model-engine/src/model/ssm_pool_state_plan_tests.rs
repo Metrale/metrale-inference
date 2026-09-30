@@ -117,7 +117,7 @@ fn one_unit_of_every_state_is_the_legacy_blob() {
         };
         assert_eq!(main("k").len(), config.num_attention_layers(), "{name}");
         let p = StatePlan::new(
-            &c,
+            &c.states,
             &StateInputs {
                 kv: Some(KvInputs {
                     blocks: 1,
@@ -162,7 +162,7 @@ fn with_the_allocators_counts_the_plan_is_what_the_pool_allocates() {
             } else {
                 StateDtype::F32
             };
-            let p = StatePlan::new(&c, &inputs(max_slots as u64 + 1, h, verify)).unwrap();
+            let p = StatePlan::new(&c.states, &inputs(max_slots as u64 + 1, h, verify)).unwrap();
             // 2026-09-30: The FP32 prefill staging arena of an f16 pool is one layer's blob per
             // slot, a scratch the circuit does not declare as state.
             let stage = ssm_h_prefill_stage_bytes(max_slots + 1, config.ssm_h_state_bytes(), f16);
@@ -204,12 +204,41 @@ fn with_preflights_counts_the_plan_is_the_preflight_reserve() {
             } else {
                 StateDtype::F32
             };
-            let p = StatePlan::new(&c, &inputs(max_batch as u64, h, verify)).unwrap();
+            let p = StatePlan::new(&c.states, &inputs(max_batch as u64, h, verify)).unwrap();
             assert_eq!(
                 recurrent(&c, &p) as usize,
                 want,
                 "{name} batch={max_batch} spec={spec} f16={f16}"
             );
         }
+    }
+}
+
+/// 2026-09-30: The state programs (`metrale_circuit::state_ops`) move one sequence's unit of
+/// every recurrent layer's h and conv: on the Mamba2 layers of Nemotron-3-Nano too, whose conv
+/// the legacy verify copy sites size with the GatedDeltaNet formula (0 bytes there).
+#[test]
+fn a_state_program_moves_one_unit_of_every_recurrent_layer() {
+    use metrale_circuit::state_ops::{StateProgramId, state_programs};
+    for name in CHECKPOINTS {
+        let (config, c) = load(name);
+        let formats = BTreeMap::from([("ssm_h_storage".to_string(), StateDtype::F32)]);
+        let per_seq =
+            config.num_ssm_layers() * (config.ssm_h_state_bytes() + config.ssm_conv_state_bytes());
+        for p in state_programs(&c) {
+            assert_eq!(
+                p.nodes.len(),
+                2 * config.num_ssm_layers(),
+                "{name} {:?}",
+                p.id
+            );
+            assert_eq!(
+                p.bytes(&c, &formats).unwrap() as usize,
+                per_seq,
+                "{name} {:?}",
+                p.id
+            );
+        }
+        assert_eq!(state_programs(&c)[0].id, StateProgramId::VerifyCheckpoint);
     }
 }

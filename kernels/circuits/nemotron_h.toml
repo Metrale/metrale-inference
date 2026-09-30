@@ -121,6 +121,7 @@ params = { layout = "contiguous" }
 [[block.mamba.node]]
 id = "conv"
 op = "conv1d_update"
+state = { conv = "update" }
 in = ["xbc"]
 out = [{ edge = "xbc_c", format = "bf16", shape = "n x mamba_heads*mamba_head_dim+ssm_groups*ssm_state*2" }]
 binding = ["{L}.mixer.conv1d"]
@@ -131,12 +132,14 @@ params = { bias = "true" }
 [[block.mamba.node]]
 id = "conv_ckpt"
 op = "state_snapshot"
+state = { conv = "snapshot" }
 in = ["xbc_c"]
 out = []
 
 [[block.mamba.node]]
 id = "ssm"
 op = "ssm_update"
+state = { h = "update" }
 in = ["xbc_c", "dt"]
 out = [{ edge = "y_ssm", format = "bf16", shape = "n x mamba_heads*mamba_head_dim" }]
 binding = ["{L}.mixer.A_log", "{L}.mixer.D", "{L}.mixer.dt_bias"]
@@ -144,6 +147,7 @@ binding = ["{L}.mixer.A_log", "{L}.mixer.D", "{L}.mixer.dt_bias"]
 [[block.mamba.node]]
 id = "ssm_ckpt"
 op = "state_snapshot"
+state = { h = "snapshot" }
 in = ["y_ssm"]
 out = []
 
@@ -421,12 +425,14 @@ binding = ["{L}.mixer.v_proj"]
 [[block.attn.node]]
 id = "kv_write"
 op = "kv_write"
+state = { k = "write", v = "write" }
 in = ["k", "v"]
 out = []
 
 [[block.attn.node]]
 id = "attend"
 op = "paged_attention"
+state = { k = "read", v = "read" }
 in = ["q", "k", "v"]
 out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
 

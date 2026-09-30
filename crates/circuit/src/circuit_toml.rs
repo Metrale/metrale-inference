@@ -228,6 +228,9 @@ pub(crate) struct StateFile {
 pub(crate) struct NodeFile {
     pub id: String,
     pub op: String,
+    /// 2026-09-30: The block states the node touches, by state id (`crate::state::StateAccess`).
+    #[serde(default)]
+    pub state: BTreeMap<String, String>,
     pub role: Option<String>,
     pub format: Option<String>,
     #[serde(default, rename = "in")]

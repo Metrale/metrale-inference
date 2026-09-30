@@ -121,12 +121,14 @@ out = [
 [[block.attn.node]]
 id = "kv_write"
 op = "kv_write"
+state = { k = "write", v = "write" }
 in = ["kr", "v"]
 out = []
 
 [[block.attn.node]]
 id = "attend"
 op = "paged_attention"
+state = { k = "read", v = "read" }
 in = ["qr", "kr", "v"]
 out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
 

@@ -220,6 +220,14 @@ impl Builder<'_> {
             }
             None => None,
         };
+        let first_state = self.circuit.states.len();
+        for sf in &tpl.state {
+            let decl = state_decl(template, &prefix, layer, section, sf, &self.shape.dims)?;
+            if self.circuit.states.iter().any(|s| s.id == decl.id) {
+                return Err(dup(template, &sf.id));
+            }
+            self.circuit.states.push(decl);
+        }
         let mut node_ids = BTreeSet::new();
         for nf in &tpl.node {
             if !node_ids.insert(nf.id.as_str()) {
@@ -247,13 +255,7 @@ impl Builder<'_> {
             }
             None => None,
         };
-        for sf in &tpl.state {
-            let decl = state_decl(template, &prefix, layer, section, sf, &self.shape.dims)?;
-            if self.circuit.states.iter().any(|s| s.id == decl.id) {
-                return Err(dup(template, &sf.id));
-            }
-            self.circuit.states.push(decl);
-        }
+        check_state_access(template, &self.circuit, first_state, first)?;
         self.circuit.blocks.push(BlockInstance {
             template: template.to_string(),
             layer,
@@ -363,6 +365,7 @@ impl Builder<'_> {
                 return Err(self.mismatch(&id, &op, e, None));
             }
         }
+        let state = self.state_refs(template, prefix, nf)?;
         self.circuit.nodes.push(Node {
             id,
             local: nf.id.clone(),
@@ -374,6 +377,7 @@ impl Builder<'_> {
             params: self.params(nf)?,
             layer,
             block: template.to_string(),
+            state,
         });
         Ok(())
     }
@@ -461,7 +465,7 @@ fn dup(block: &str, name: &str) -> CircuitError {
 #[path = "instantiate/edges.rs"]
 mod edges;
 mod states;
-use states::state_decl;
+use states::{check_state_access, state_decl};
 
 #[cfg(test)]
 #[path = "instantiate_tests.rs"]
