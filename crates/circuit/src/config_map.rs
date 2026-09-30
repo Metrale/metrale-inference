@@ -111,6 +111,16 @@ impl ConfigMap {
     pub fn model_types(&self) -> &[String] {
         &self.file.model_types
     }
+
+    /// 2026-09-30: Whether this map's circuit serves an engine-configured `model_type`: one of
+    /// `model_types`, or a name the engine's parser gives such a checkpoint.
+    pub fn serves_engine_model_type(&self, model_type: &str) -> bool {
+        self.file
+            .model_types
+            .iter()
+            .chain(&self.file.engine_model_types)
+            .any(|t| t == model_type)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -119,6 +129,11 @@ pub(crate) struct MapFile {
     pub schema: u32,
     pub arch: String,
     pub model_types: Vec<String>,
+    /// 2026-09-30: The `ModelConfig::model_type` names the engine's config parser gives these
+    /// checkpoints where it renames them (`qwen3_6_moe`, `holo3_1_moe` for a `qwen3_5_moe`
+    /// config); a model configured by the engine finds its circuit by these or `model_types`.
+    #[serde(default)]
+    pub engine_model_types: Vec<String>,
     /// 2026-09-30: The object the model's keys live in (`text_config`); the top level's
     /// other keys are classified by `root`.
     pub nest: Option<String>,

@@ -5,9 +5,9 @@
 //! two Qwen families and Nemotron-3-Nano (crates/circuit/tests/fixtures/checkpoints/):
 //! - one unit of each state equals the legacy per-layer blob (`ssm_h_state_bytes`,
 //!   `ssm_conv_state_bytes`, `KvCacheConfig::{k,v}_block_bytes_for_layer`);
-//! - with the allocator's unit counts (the padding dummy, the tiered h intermediates), the plan
-//!   is the bytes `SsmStatePool::new` allocates;
-//! - with preflight's counts (no dummies), it is `ssm_pool_reserve_bytes`.
+//! - the circuit families are sized from their circuits, which agree with the transitional
+//!   source;
+//! - `SsmStatePool::new` allocates exactly the pool plan the preflight reserve reserves.
 //!
 //! Owner: model-engine SSM state pool.
 //! Invariants: none beyond the types.
@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 
 use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype};
+use metrale_circuit::state::VerifySteps;
 use metrale_circuit::state::{
     Holding, KvInputs, StateDtype, StateInputs, StateKind, StatePlan, VerifyInputs,
 };
@@ -23,7 +24,8 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 use metrale_model_layers::ssm_reserve::{
-    SsmRollbackMode, ssm_h_prefill_stage_bytes, ssm_pool_reserve_bytes, verify_slot_h_intermediates,
+    PoolPlan, PoolShape, SsmRollbackMode, UnitSource, pool_counts, recurrent_units,
+    ssm_h_prefill_stage_bytes, ssm_replay_ring_bytes, ssm_replay_row_bytes,
 };
 
 use super::SsmStatePool;
@@ -135,80 +137,73 @@ fn one_unit_of_every_state_is_the_legacy_blob() {
     }
 }
 
+/// 2026-09-30: The circuit families are sized from their circuits (not the transitional
+/// source), and the two sources agree on them, so the transitional path is safe to keep for
+/// the families without a circuit until M3.
 #[test]
-fn with_the_allocators_counts_the_plan_is_what_the_pool_allocates() {
+fn circuit_families_take_the_circuit_source_which_agrees_with_the_transitional_one() {
     for name in CHECKPOINTS {
-        let (config, c) = load(name);
-        for (max_slots, has_mtp, f16) in [(1, false, false), (8, true, false), (64, true, true)] {
-            let gpu = MockGpuBackend::new();
-            let (ni, nd) = (4, 3);
-            let pool = SsmStatePool::new(
-                &config,
-                max_slots,
-                has_mtp,
-                ni,
-                nd,
-                f16,
-                SsmRollbackMode::Snapshot,
-                &gpu,
-            )
-            .unwrap();
-            let verify = has_mtp.then(|| VerifyInputs {
-                h_steps: pool.h_inter_counts.iter().map(|&n| n as u64).collect(),
-                conv_steps: ni as u64,
-            });
-            let h = if f16 {
-                StateDtype::F16
-            } else {
-                StateDtype::F32
-            };
-            let p = StatePlan::new(&c.states, &inputs(max_slots as u64 + 1, h, verify)).unwrap();
-            // 2026-09-30: The FP32 prefill staging arena of an f16 pool is one layer's blob per
-            // slot, a scratch the circuit does not declare as state.
-            let stage = ssm_h_prefill_stage_bytes(max_slots + 1, config.ssm_h_state_bytes(), f16);
-            assert_eq!(
-                recurrent(&c, &p) as usize + stage,
-                gpu.live_bytes().unwrap(),
-                "{name} slots={max_slots} mtp={has_mtp} f16={f16}"
-            );
-        }
+        let (config, _) = load(name);
+        let (decls, source) = recurrent_units(&config).unwrap();
+        assert_eq!(
+            source,
+            UnitSource::Circuit,
+            "{name}: model_type {}",
+            config.model_type
+        );
+        let unit = |v: VerifySteps| decls.iter().find(|d| d.verify == Some(v)).unwrap().elements;
+        assert_eq!(
+            unit(VerifySteps::H) as usize * 4,
+            config.ssm_h_state_bytes(),
+            "{name}"
+        );
+        assert_eq!(
+            unit(VerifySteps::Conv) as usize * 4,
+            config.ssm_conv_state_bytes(),
+            "{name}"
+        );
     }
 }
 
+/// 2026-09-30: One plan: what the pool allocates (mock backend) is the plan's bytes, and the
+/// preflight reserve is that same plan (`preflight_reserve` calls `pool_counts` and
+/// `PoolPlan::new` with the pool's arguments).
 #[test]
-fn with_preflights_counts_the_plan_is_the_preflight_reserve() {
+fn the_pool_allocates_exactly_the_plan() {
     for name in CHECKPOINTS {
-        let (config, c) = load(name);
-        let layers = config.num_ssm_layers();
-        for (max_batch, spec, f16) in [(1, false, false), (16, true, false), (128, true, true)] {
-            let (nd, mtp_slots) = (3, max_batch.min(32));
-            let want = ssm_pool_reserve_bytes(
-                max_batch,
-                config.ssm_h_state_bytes() * layers,
-                config.ssm_conv_state_bytes() * layers,
-                spec,
-                nd,
-                mtp_slots,
-                false,
-                f16,
-                SsmRollbackMode::Snapshot,
-            );
-            let verify = spec.then(|| VerifyInputs {
-                h_steps: (0..mtp_slots)
-                    .map(|s| verify_slot_h_intermediates(s, nd, false) as u64)
-                    .collect(),
-                conv_steps: nd as u64 + 1,
+        let (config, _) = load(name);
+        for (max_slots, has_mtp, f16, rollback) in [
+            (1, false, false, SsmRollbackMode::Snapshot),
+            (8, true, false, SsmRollbackMode::Snapshot),
+            (64, true, true, SsmRollbackMode::Snapshot),
+            (8, true, false, SsmRollbackMode::Replay),
+        ] {
+            let gpu = MockGpuBackend::new();
+            let (ni, nd) = (4, 3);
+            SsmStatePool::new(&config, max_slots, has_mtp, ni, nd, f16, rollback, &gpu).unwrap();
+            let counts = pool_counts(&PoolShape {
+                max_slots,
+                spec: has_mtp,
+                num_intermediates: ni,
+                num_drafts: nd,
+                uniform_h: false,
+                rollback,
             });
-            let h = if f16 {
-                StateDtype::F16
-            } else {
-                StateDtype::F32
+            let plan = PoolPlan::new(&config, &counts, f16).unwrap();
+            let stage = ssm_h_prefill_stage_bytes(counts.slots, plan.h_f32_unit, f16);
+            let ring = match (&counts.verify, rollback) {
+                (Some(v), SsmRollbackMode::Replay) => ssm_replay_ring_bytes(
+                    plan.layers,
+                    ssm_replay_row_bytes(config.ssm_qkvz_size(), config.linear_num_value_heads),
+                    ni,
+                    v.slots(),
+                ),
+                _ => 0,
             };
-            let p = StatePlan::new(&c.states, &inputs(max_batch as u64, h, verify)).unwrap();
             assert_eq!(
-                recurrent(&c, &p) as usize,
-                want,
-                "{name} batch={max_batch} spec={spec} f16={f16}"
+                plan.total() + stage + ring,
+                gpu.live_bytes().unwrap(),
+                "{name} slots={max_slots} mtp={has_mtp} f16={f16} {rollback:?}"
             );
         }
     }

@@ -16,6 +16,9 @@
 schema = 1
 arch = "qwen3_6_moe"
 model_types = ["qwen3_5_moe"]
+# 2026-09-30: The engine's parser renames an MRoPE-interleaved `qwen3_5_moe` config to
+# `qwen3_6_moe` and Holo-3.1's to `holo3_1_moe` (crates/config/src/dispatch.rs:182-205).
+engine_model_types = ["qwen3_6_moe", "holo3_1_moe"]
 nest = "text_config"
 
 [root]

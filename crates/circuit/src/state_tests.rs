@@ -153,3 +153,32 @@ fn every_term_carries_the_lifetime_of_its_holding() {
     assert_eq!(Lifetime::parse("verify"), Some(Lifetime::Verify));
     assert_eq!(Lifetime::parse("step"), None);
 }
+
+/// 2026-09-30: An engine-configured `model_type` finds its circuit's recurrent layer block,
+/// renamed or not; an attention-only circuit has none; an unserved type has no circuit.
+#[test]
+fn recurrent_states_follow_the_engine_model_type() {
+    let dims: BTreeMap<String, u64> = [
+        ("lin_k_heads", 16),
+        ("lin_k_dim", 128),
+        ("lin_v_heads", 32),
+        ("lin_v_dim", 128),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    for t in ["qwen3_5", "qwen3_5_moe", "qwen3_6_moe", "holo3_1_moe"] {
+        let s = crate::recurrent_states(t, &dims).unwrap().unwrap();
+        let ids: Vec<&str> = s.iter().map(|d| d.id.as_str()).collect();
+        assert_eq!(ids, ["gdn.h", "gdn.conv"], "{t}");
+        assert_eq!(s[0].elements, 32 * 128 * 128, "{t}");
+        assert_eq!(s[1].elements, (16 * 128 * 2 + 32 * 128) * 4, "{t}");
+    }
+    assert_eq!(
+        crate::recurrent_states("llama", &dims).unwrap(),
+        Some(Vec::new())
+    );
+    assert_eq!(crate::recurrent_states("gemma4", &dims).unwrap(), None);
+    // 2026-09-30: A dim the declaration reads and the caller does not give is an error.
+    assert!(crate::recurrent_states("nemotron_h", &dims).is_err());
+}

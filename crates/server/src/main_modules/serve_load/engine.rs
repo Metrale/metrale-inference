@@ -73,6 +73,8 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // `args.resolved_num_drafts()` is valid.
     serve_phases::apply_model_default_num_drafts(&mut args, &ptx_set);
     serve_phases::publish_mtp_max_seqs(&args, &ptx_set)?;
+    // 2026-09-30: One γ for the reserve, the pools and the scheduler.
+    serve_phases::apply_dflash_gamma(&mut args, serve_phases::model_default_drafter(&ptx_set))?;
 
     let (gpu, free_mem) = serve_phases::init_gpu_backend(&args, &ptx_set)?;
 

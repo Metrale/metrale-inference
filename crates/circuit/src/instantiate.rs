@@ -475,7 +475,8 @@ fn dup(block: &str, name: &str) -> CircuitError {
 #[path = "instantiate/edges.rs"]
 mod edges;
 mod states;
-use states::{check_state_access, state_decl};
+pub(crate) use states::state_decl;
+use states::check_state_access;
 
 #[cfg(test)]
 #[path = "instantiate_tests.rs"]

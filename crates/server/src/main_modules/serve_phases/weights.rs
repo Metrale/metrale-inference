@@ -171,28 +171,11 @@ pub(crate) fn load_dflash_drafter(
     if !args.dflash {
         return Ok(None);
     }
-    let drafter_id = args
-        .draft_model
-        .clone()
-        .or_else(|| ptx_set.dflash.as_ref().map(|d| d.draft_model.to_string()))
-        .context(
-            "--dflash set but no drafter HF id provided: pass --draft-model <ID> \
-             or use a target whose MODEL.toml has a [dflash] section",
-        )?;
-    tracing::info!("DFlash: resolving drafter '{drafter_id}'");
-    let drafter_dir =
-        crate::model_resolver::resolve_model_dir(&drafter_id, args.cache_dir.as_deref())
-            .context("Failed to resolve DFlash drafter checkpoint")?;
-    let drafter_config_json = std::fs::read_to_string(drafter_dir.join("config.json"))
-        .with_context(|| {
-            format!(
-                "Failed to read drafter config.json at {}",
-                drafter_dir.display()
-            )
-        })?;
-    let drafter_config = metrale_model_arch::weight_loader::dflash_loader::parse_dflash_config(
-        &drafter_config_json,
+    let drafter_dir = super::dflash_gamma::dflash_drafter_dir(
+        args,
+        super::dflash_gamma::model_default_drafter(ptx_set),
     )?;
+    let drafter_config = super::dflash_gamma::read_dflash_config(&drafter_dir)?;
     // 2026-09-26: The drafter allocates outside the KV budget, so its whole
     // footprint is estimated from the checkpoint before anything is allocated:
     // safetensors bytes on disk, the drafter KV cache, `fused_kv`, the

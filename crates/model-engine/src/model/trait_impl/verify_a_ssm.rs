@@ -50,17 +50,12 @@ impl TransformerModel {
                     .as_any_mut()
                     .downcast_mut::<SsmLayerState>()
                     .ok_or_else(|| anyhow::anyhow!("Expected SsmLayerState at layer {i}"))?;
-
-                let nv = self.config.linear_num_value_heads;
-                let vd = self.config.linear_value_head_dim;
-                let nk = self.config.linear_num_key_heads;
-                let kd = self.config.linear_key_head_dim;
                 // 2026-09-25: The pool's h storage width (`ssm_h_stored_bytes`), which is half
                 // the FP32 size under the f16-sized pool.
                 let h_bytes = self.ssm_pool.h_stored_bytes;
-                let conv_dim = nk * kd * 2 + nv * vd;
-                let d_conv = self.config.linear_conv_kernel_dim;
-                let conv_bytes = conv_dim * d_conv * 4;
+                // 2026-09-30: The pool plan's conv unit (`ssm_reserve::PoolPlan`), the Mamba2 window on a
+                // Nemotron-H layer; the GatedDeltaNet formula here gave 0 bytes there.
+                let conv_bytes = self.ssm_pool.conv_bytes;
 
                 if ssm.h_state_checkpoint.is_none() {
                     ssm.h_state_checkpoint = Some(self.gpu.alloc(h_bytes)?);
@@ -129,15 +124,10 @@ impl TransformerModel {
                     .as_any_mut()
                     .downcast_mut::<SsmLayerState>()
                     .ok_or_else(|| anyhow::anyhow!("Expected SsmLayerState at layer {i}"))?;
-
-                let nv = self.config.linear_num_value_heads;
-                let vd = self.config.linear_value_head_dim;
-                let kd = self.config.linear_key_head_dim;
-                let nk = self.config.linear_num_key_heads;
                 let h_bytes = self.ssm_pool.h_stored_bytes;
-                let conv_dim = nk * kd * 2 + nv * vd;
-                let d_conv = self.config.linear_conv_kernel_dim;
-                let conv_bytes = conv_dim * d_conv * 4;
+                // 2026-09-30: The pool plan's conv unit (`ssm_reserve::PoolPlan`), the Mamba2 window on a
+                // Nemotron-H layer; the GatedDeltaNet formula here gave 0 bytes there.
+                let conv_bytes = self.ssm_pool.conv_bytes;
 
                 if num_accepted == 0 {
                     if let Some(ckpt) = ssm.h_state_checkpoint {
