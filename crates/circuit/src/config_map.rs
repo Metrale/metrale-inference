@@ -12,8 +12,8 @@
 //!   its path; a math-changing key the circuit does not model is refused by its rule, never
 //!   silently dropped.
 //! - An absent key takes the default its rule states (the Hugging Face class default, cited
-//!   in the TOML); an absent key without one is refused only when its rule is `required`,
-//!   and a requirement otherwise applies to a present value.
+//!   in the TOML); a requirement applies to a present (or defaulted) value, and an absent key
+//!   without a default is simply absent. A dim with no default is required.
 //! - JSON `null` is absent.
 
 use std::collections::BTreeMap;
@@ -229,13 +229,14 @@ pub(crate) struct KeyFull {
     pub why: Option<String>,
     /// 2026-09-30: The value when absent (the HF default).
     pub default: Option<toml::Value>,
-    /// 2026-09-30: The key must be present (or have a `default`); otherwise an absent key
-    /// passes and its requirement applies only to a present value.
-    #[serde(default)]
-    pub required: bool,
+
     /// 2026-09-30: Rename values (`swish` -> `silu`) before `require` and `param`.
     #[serde(default)]
     pub values: BTreeMap<String, String>,
     /// 2026-09-30: A nested object: rules for its keys, prefixed `<param>.` in the params.
     pub object: Option<BTreeMap<String, KeyRule>>,
 }
+
+#[cfg(test)]
+#[path = "config_map_tests.rs"]
+mod config_map_tests;

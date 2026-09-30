@@ -386,9 +386,6 @@ fn apply_full(
         (None, None) => None,
     };
     let Some(mut value) = value else {
-        if f.required {
-            return Err(missing(map, path));
-        }
         return Ok(());
     };
     if let Some(s) = value.as_str()
