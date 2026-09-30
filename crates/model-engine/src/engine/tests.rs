@@ -306,6 +306,7 @@ impl ModelDraft for MockModel {
 impl ModelVision for MockModel {}
 
 impl ModelEp for MockModel {}
+impl crate::traits::ModelCircuit for MockModel {}
 
 impl ModelStreams for MockModel {}
 

@@ -146,7 +146,7 @@ fn upload_fixture(gpu: &dyn GpuBackend) -> Result<Fixture> {
         v_bf16: upload_guarded(gpu, &bf_v)?,
         q: upload_guarded(gpu, &q)?,
         block_tables: upload_guarded(gpu, &table_bytes)?,
-        seq_lens: upload_guarded(gpu, &vec![0u8; MAX_N * 4])?,
+        seq_lens: upload_guarded(gpu, &[0u8; MAX_N * 4])?,
         output: upload_guarded(gpu, &vec![0u8; output_bytes])?,
         workspace: upload_guarded(gpu, &vec![0u8; ws_bytes])?,
         output_bytes,

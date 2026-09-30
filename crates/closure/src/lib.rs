@@ -32,11 +32,14 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+mod circuits;
 pub mod layout;
 mod layout_manifest;
 mod layout_scan;
 
 use sha2::{Digest, Sha256};
+
+pub use circuits::{circuit_configs, circuit_dirs, fusions_chain};
 
 /// 2026-09-26: Version of the hash definition. It is the first value fed into
 /// the digest after the domain tag, so changing it changes every digest.

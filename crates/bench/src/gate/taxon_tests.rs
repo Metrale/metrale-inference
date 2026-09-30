@@ -218,7 +218,7 @@ fn a_redirect_uses_the_source_owners_kernels_but_the_targets_model_config() {
     // read (least specific first), then the target's own `MODEL.toml`, not
     // the source owner's.
     assert_eq!(
-        configs(&root, &redirected),
+        configs(&root, &redirected).unwrap(),
         [
             hw.join("HARDWARE.toml"),
             hw.join("common/KERNEL.toml"),
@@ -403,4 +403,54 @@ fn spans_are_reported_per_node_level() {
         ]
         .into()
     );
+}
+
+/// 2026-09-28: Every target hashes the circuit files, so a change under `kernels/circuits/`
+/// affects all of them, and the real tree's configs list them.
+#[test]
+fn a_circuit_change_affects_every_target_and_is_a_config() {
+    let root = fixture("affected-circuits");
+    let all: BTreeSet<Target> = walk(&root).into_iter().collect();
+    assert_eq!(all.len(), 2);
+    let hit = affected(&root, &["kernels/circuits/qwen3_5.toml".to_string()]);
+    assert_eq!(hit, all);
+    assert!(affected(&root, &["kernels/circuitsx/qwen3_5.toml".to_string()]).is_empty());
+
+    let real = repo_root();
+    let target = Target {
+        hardware: "gb10".into(),
+        model: "qwen3.6-35b-a3b".into(),
+        quant: "nvfp4".into(),
+    };
+    let configs = configs(&real, &target).unwrap();
+    for want in [
+        "kernels/circuits/qwen3_6_moe.toml",
+        "kernels/circuits/INSTANCES.toml",
+        "kernels/gb10/common/FUSIONS.toml",
+    ] {
+        assert!(
+            configs.contains(&real.join(want)),
+            "{want} is not hashed: {configs:?}"
+        );
+    }
+}
+
+/// 2026-09-30: An edit to gb10's FUSIONS.toml affects the targets of every class that plans
+/// with gb10's rules: b300 (FUSIONS `inherits`, without gb10's sources, so no other rule reaches
+/// it) and b200 (HARDWARE.toml `inherits`, no rules of its own).
+#[test]
+fn a_parent_fusions_edit_affects_the_classes_that_inherit_its_rules() {
+    let real = repo_root();
+    let hit = affected(&real, &["kernels/gb10/common/FUSIONS.toml".to_string()]);
+    let all = walk(&real);
+    for class in ["b300", "b200", "hopper"] {
+        let on_class: Vec<&Target> = all.iter().filter(|t| t.hardware == class).collect();
+        assert!(!on_class.is_empty(), "{class} has no targets to check");
+        let missed: Vec<String> = on_class
+            .into_iter()
+            .filter(|t| !hit.contains(*t))
+            .map(|t| t.to_string())
+            .collect();
+        assert!(missed.is_empty(), "{class}: not affected: {missed:?}");
+    }
 }

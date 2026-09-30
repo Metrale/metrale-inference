@@ -1,0 +1,551 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-29: The Nemotron-H circuit (`nemotron_h`, e.g. NVIDIA-Nemotron-3.5-Lightning-30B-A3B):
+# one mixer per layer, picked by `layers_block_type`: a Mamba2 mixer, a MoE FFN (128 experts,
+# top-6, ungated ReLU² experts and one ungated shared expert, sigmoid routing with a correction
+# bias), or ungated GQA attention with no positional encoding. Then the final norm and lm_head,
+# and a two-layer MTP draft head (attention, then MoE).
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - Follows the reference modelling code (transformers `modeling_nemotron_h.py`), not today's
+#   engine: the attention applies no RoPE and has no q/k norm or output gate; the Mamba2 output
+#   norm gates before it normalises, per group of `mamba_heads*mamba_head_dim/ssm_groups`
+#   channels; every RMSNorm scales by its weight as stored (`weight_form = "plain"`, where the
+#   Qwen3.5 norms scale by 1 + weight); the router's logits are FP32.
+# - Declared precision (the precision table): the routed and shared experts and lm_head are
+#   NVFP4 W4A16; the Mamba2 in_proj and out_proj are FP8 W8A8 with per-tensor weight scales and
+#   STATIC per-tensor activation scales (the `act_quant` nodes the declared precision inserts,
+#   each bound to its projection's `input_scale`); conv1d, the router,
+#   attention, the embeddings and the MTP head are BF16; the KV cache is FP8 with static scales.
+# - It is not an executor target yet: FUSIONS.toml has no rules for its Mamba2 and ReLU² nodes.
+#   `met circuit venn` reads it.
+# - Every projection reads a 16-bit edge; a projection whose declared activation is quantized
+#   gets its quantizer from the precision (crates/circuit/src/instantiate.rs), so one circuit
+#   serves Nano (NVFP4 mixers) and Lightning (FP8 W8A8 mixers).
+# - The MTP head spans two modules: `mtp.layers.0` (attention) is the draft module, and its MoE
+#   layer is the `moe` block instantiated at `mtp.layers.1`.
+# - A latent MoE (`moe_latent`, Nemotron-3 Super) runs its routed experts in the `moe_io`-wide
+#   latent space between `fc1_latent_proj` and `fc2_latent_proj`; the shared expert reads the
+#   hidden-width input (transformers NemotronHMoE.forward).
+
+schema = 1
+arch = "nemotron_h"
+description = "Nemotron-H hybrid: Mamba2, MoE (ReLU², sigmoid routing) and NoPE GQA attention layers, MTP draft head"
+layer_module = "backbone.layers.{i}"
+draft_module = "mtp.layers.0"
+include = []
+dims = [
+  "hidden", "vocab", "q_heads", "kv_heads", "head_dim",
+  "mamba_heads", "mamba_head_dim", "ssm_state", "ssm_groups", "conv_kernel",
+  "experts", "top_k", "moe_inter", "shared_inter", "mtp", "moe_latent", "moe_io",
+]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = ["mtp_in", "attn", "moe@mtp.layers.1", "mtp_out"]
+# 2026-09-30: The draft head exists only in a checkpoint with a next-token layer (`mtp`). Its MoE
+# layer is the `moe` block at `mtp.layers.1` (`template@module`); a latent-MoE checkpoint uses the
+# latent block there too.
+draft_when = "mtp"
+draft_variant = { moe_latent = ["mtp_in", "attn", "moe_latent@mtp.layers.1", "mtp_out"] }
+
+[layout]
+kind = "list"
+
+[layout.blocks]
+mamba = ["mamba"]
+moe = ["moe"]
+full_attention = ["attn"]
+
+[layout.when]
+moe_latent = { moe = ["moe_latent"] }
+
+[block.embed]
+stream_out = "h"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["backbone.embeddings"]
+
+# 2026-09-29: The Mamba2 mixer. in_proj packs z | xBC | dt; conv1d runs over xBC only.
+[block.mamba]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-09-30: The Mamba2 recurrent state, one unit per sequence slot, in the pool GatedDeltaNet
+# uses (LIFECYCLE-DESIGN.md section 3.6). Legacy: ModelConfig::ssm_h_state_bytes /
+# ssm_conv_state_bytes, the Mamba2 arms (crates/config/src/methods.rs).
+[[block.mamba.state]]
+id = "h"
+kind = "recurrent"
+lifetime = "sequence"
+format = "{ssm_h_storage}"
+shape = "mamba_heads x mamba_head_dim x ssm_state"
+verify = "h_steps"
+
+[[block.mamba.state]]
+id = "conv"
+kind = "recurrent"
+lifetime = "sequence"
+format = "f32"
+shape = "mamba_heads*mamba_head_dim+ssm_groups*ssm_state*2 x conv_kernel"
+verify = "conv_steps"
+
+[[block.mamba.node]]
+id = "norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.norm"]
+params = { weight_form = "plain" }
+
+[[block.mamba.node]]
+id = "in_proj"
+op = "linear"
+role = "mamba_in"
+in = ["xn"]
+out = [{ edge = "zxbcdt", format = "bf16", shape = "n x mamba_heads*mamba_head_dim*2+ssm_groups*ssm_state*2+mamba_heads" }]
+binding = ["{L}.mixer.in_proj"]
+
+[[block.mamba.node]]
+id = "split"
+op = "split"
+in = ["zxbcdt"]
+out = [
+  { edge = "z", format = "bf16", shape = "n x mamba_heads*mamba_head_dim" },
+  { edge = "xbc", format = "bf16", shape = "n x mamba_heads*mamba_head_dim+ssm_groups*ssm_state*2" },
+  { edge = "dt", format = "bf16", shape = "n x mamba_heads" },
+]
+params = { layout = "contiguous" }
+
+[[block.mamba.node]]
+id = "conv"
+op = "conv1d_update"
+state = { conv = "update" }
+in = ["xbc"]
+out = [{ edge = "xbc_c", format = "bf16", shape = "n x mamba_heads*mamba_head_dim+ssm_groups*ssm_state*2" }]
+binding = ["{L}.mixer.conv1d"]
+params = { bias = "true" }
+
+# 2026-09-29: The conv window and the SSM state after each row but the last: the verify's
+# rollback points, as in the GatedDeltaNet block.
+[[block.mamba.node]]
+id = "conv_ckpt"
+op = "state_snapshot"
+state = { conv = "snapshot" }
+in = ["xbc_c"]
+out = []
+
+[[block.mamba.node]]
+id = "ssm"
+op = "ssm_update"
+state = { h = "update" }
+in = ["xbc_c", "dt"]
+out = [{ edge = "y_ssm", format = "bf16", shape = "n x mamba_heads*mamba_head_dim" }]
+binding = ["{L}.mixer.A_log", "{L}.mixer.D", "{L}.mixer.dt_bias"]
+
+[[block.mamba.node]]
+id = "ssm_ckpt"
+op = "state_snapshot"
+state = { h = "snapshot" }
+in = ["y_ssm"]
+out = []
+
+[[block.mamba.node]]
+id = "out_norm"
+op = "gated_rms_norm"
+in = ["y_ssm", "z"]
+out = [{ edge = "gated", format = "bf16", shape = "n x mamba_heads*mamba_head_dim" }]
+binding = ["{L}.mixer.norm"]
+params = { norm_order = "gate_first" }
+
+[[block.mamba.node]]
+id = "out_proj"
+op = "linear"
+role = "mamba_out"
+in = ["gated"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mixer.out_proj"]
+
+[[block.mamba.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+# 2026-09-29: The MoE FFN: sigmoid scores, top-6 chosen on score + correction bias, weights
+# renormalised and scaled by the routed scaling factor; ungated ReLU² experts; the shared expert
+# is ungated and added unscaled.
+[block.moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe.node]]
+id = "norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.norm"]
+params = { weight_form = "plain" }
+
+[[block.moe.node]]
+id = "router"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
+binding = ["{L}.mixer.gate"]
+
+[[block.moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.mixer.gate.e_score_correction_bias"]
+params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
+
+[[block.moe.node]]
+id = "experts_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "eup", format = "bf16", shape = "n*top_k x moe_inter" }]
+binding = ["{L}.mixer.experts.*.up_proj"]
+
+[[block.moe.node]]
+id = "experts_act"
+op = "relu2"
+in = ["eup"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.mixer.experts.*.down_proj"]
+
+[[block.moe.node]]
+id = "shared_up"
+op = "linear"
+role = "shared_up"
+in = ["xn"]
+out = [{ edge = "sup", format = "bf16", shape = "n x shared_inter" }]
+binding = ["{L}.mixer.shared_experts.up_proj"]
+
+[[block.moe.node]]
+id = "shared_act"
+op = "relu2"
+in = ["sup"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.moe.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mixer.shared_experts.down_proj"]
+
+[[block.moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared_gate = "none" }
+
+[[block.moe.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+# 2026-09-30: The latent MoE (Nemotron-3 Super): routing on the hidden-width input, routed
+# experts in the latent space (fc1 before, the routed sum through fc2 after), the shared expert
+# on the hidden-width input, added after fc2.
+[block.moe_latent]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe_latent.node]]
+id = "norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.norm"]
+params = { weight_form = "plain" }
+
+[[block.moe_latent.node]]
+id = "router"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
+binding = ["{L}.mixer.gate"]
+
+[[block.moe_latent.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.mixer.gate.e_score_correction_bias"]
+params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
+
+[[block.moe_latent.node]]
+id = "latent_in"
+op = "linear"
+role = "moe_latent_in"
+in = ["xn"]
+out = [{ edge = "xl", format = "bf16", shape = "n x moe_io" }]
+binding = ["{L}.mixer.fc1_latent_proj"]
+
+[[block.moe_latent.node]]
+id = "experts_up"
+op = "expert_gate_up"
+in = ["xl", "topk_id"]
+out = [{ edge = "eup", format = "bf16", shape = "n*top_k x moe_inter" }]
+binding = ["{L}.mixer.experts.*.up_proj"]
+
+[[block.moe_latent.node]]
+id = "experts_act"
+op = "relu2"
+in = ["eup"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe_latent.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x moe_io" }]
+binding = ["{L}.mixer.experts.*.down_proj"]
+
+[[block.moe_latent.node]]
+id = "routed"
+op = "blend"
+in = ["edown", "topk_w"]
+out = [{ edge = "r", format = "bf16", shape = "n x moe_io" }]
+params = { shared = "none" }
+
+[[block.moe_latent.node]]
+id = "latent_out"
+op = "linear"
+role = "moe_latent_out"
+in = ["r"]
+out = [{ edge = "ro", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mixer.fc2_latent_proj"]
+
+[[block.moe_latent.node]]
+id = "shared_up"
+op = "linear"
+role = "shared_up"
+in = ["xn"]
+out = [{ edge = "sup", format = "bf16", shape = "n x shared_inter" }]
+binding = ["{L}.mixer.shared_experts.up_proj"]
+
+[[block.moe_latent.node]]
+id = "shared_act"
+op = "relu2"
+in = ["sup"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.moe_latent.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mixer.shared_experts.down_proj"]
+
+[[block.moe_latent.node]]
+id = "combine"
+op = "residual_add"
+in = ["ro", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+
+[[block.moe_latent.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+# 2026-09-29: Ungated GQA attention with no positional encoding and no q/k norm.
+[block.attn]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-09-30: The paged KV cache, one unit per token and side (crates/circuit/src/state.rs).
+# Legacy: KvCacheConfig::{k,v}_block_bytes_for_layer (crates/cache/src/kv_cache.rs).
+[[block.attn.state]]
+id = "k"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.state]]
+id = "v"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.node]]
+id = "norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.norm"]
+params = { weight_form = "plain" }
+
+[[block.attn.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.mixer.q_proj"]
+
+[[block.attn.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.mixer.k_proj"]
+
+[[block.attn.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.mixer.v_proj"]
+
+[[block.attn.node]]
+id = "kv_write"
+op = "kv_write"
+state = { k = "write", v = "write" }
+in = ["k", "v"]
+out = []
+
+[[block.attn.node]]
+id = "attend"
+op = "paged_attention"
+state = { k = "read", v = "read" }
+in = ["q", "k", "v"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+
+[[block.attn.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mixer.o_proj"]
+
+[[block.attn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.head]
+stream_in = "x"
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["backbone.norm_f"]
+params = { weight_form = "plain" }
+
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["lm_head"]
+
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]
+
+# 2026-09-29: MTP input: the embedding of the last token and the main model's hidden state, each
+# normalised, concatenated and projected (`eh_proj`).
+[block.mtp_in]
+stream_in = "hidden"
+stream_out = "h0"
+# 2026-09-30: The token embedding the draft runner fills (a declared output: the executor
+# places it in the draft embedding buffer).
+outputs = [{ edge = "e", buffer = "draft_embed" }]
+
+[[block.mtp_in.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "e", format = "bf16", shape = "n x hidden" }]
+binding = ["backbone.embeddings"]
+
+[[block.mtp_in.node]]
+id = "embed_norm"
+op = "rms_norm"
+in = ["e"]
+out = [{ edge = "en", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.layers.0.enorm"]
+params = { weight_form = "plain" }
+
+[[block.mtp_in.node]]
+id = "hidden_norm"
+op = "rms_norm"
+in = ["hidden"]
+out = [{ edge = "hn", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.layers.0.hnorm"]
+params = { weight_form = "plain" }
+
+[[block.mtp_in.node]]
+id = "concat"
+op = "concat"
+in = ["en", "hn"]
+out = [{ edge = "cat", format = "bf16", shape = "n x hidden*2" }]
+
+[[block.mtp_in.node]]
+id = "fc"
+op = "linear"
+role = "mtp_fc"
+in = ["cat"]
+out = [{ edge = "h0", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.layers.0.eh_proj"]
+
+[block.mtp_out]
+stream_in = "x"
+# 2026-09-29: The draft logits are read outside the program (LIFECYCLE-DESIGN.md 3.4).
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.mtp_out.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.layers.1.final_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.mtp_out.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["lm_head"]
+
+[[block.mtp_out.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]

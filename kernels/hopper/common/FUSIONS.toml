@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: Hopper fusion rules: gb10's, inherited. gb10's rule set covers both arms of the
+# GatedDeltaNet recurrence Hopper's default selects (ssm_batched_recurrent = true in
+# kernels/hopper/HARDWARE.toml), and the per-sequence fallback as a runtime route
+# (schema and overlay semantics: crates/circuit/src/rules.rs, crates/circuit/src/runtime.rs,
+# crates/circuit/src/hardware/class.rs).
+#
+# Owner: hopper kernels.
+# Invariants:
+# - A rule here replaces gb10's rule of the same id; `remove` drops one.
+# - The BA-gates twin needs two CTAs per SM: 264 rows on H100/H200's 132 SMs, above the
+#   128-row ladder, so gb10's twin rule (96 rows, GB10's 48 SMs) never applies here.
+
+schema = 1
+inherits = "gb10"
+remove = ["gdn_ba_gates_gemm_batched_twin"]

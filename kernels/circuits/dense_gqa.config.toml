@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: config.json -> the `dense_gqa` circuit's arch shape: Llama 3.x (`llama`), Qwen3
+# dense (`qwen3`), Qwen2.5 (`qwen2`) and dense Mistral (`mistral`).
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/config_map.rs).
+# Invariants:
+# - Every key is classified; any other key is refused (LIFECYCLE-DESIGN.md 6). A DFlash draft
+#   checkpoint that reuses `model_type = "qwen3"` is refused by its extra keys, never mapped as
+#   a Qwen3 base model.
+# - The switches: `qk_norm` (Qwen3's per-head Q/K RMSNorm, fixed per family), `attn_bias` (the
+#   Q/K/V biases: Qwen2 always, Llama when `attention_bias`), `tie` (a head tied to the
+#   embedding).
+# - Defaults are the transformers config-class defaults of the family (LlamaConfig,
+#   Qwen2Config, Qwen3Config, MistralConfig).
+
+schema = 1
+arch = "dense_gqa"
+model_types = ["llama", "qwen3", "qwen2", "mistral"]
+
+[layers]
+count = "num_hidden_layers"
+uniform = "full_attention"
+
+[dims]
+hidden = "hidden_size"
+inter = "intermediate_size"
+vocab = "vocab_size"
+q_heads = "num_attention_heads"
+kv_heads = { key = "num_key_value_heads", or_dim = "q_heads" }
+head_dim = { key = "head_dim", or_div = ["hidden", "q_heads"] }
+qk_norm = { const = 0 }
+attn_bias = { key = "attention_bias", bool = true, default = 0 }
+tie = { key = "tie_word_embeddings", bool = true, default = 0 }
+
+[keys]
+model_type = "ignore"
+architectures = { ignore = "the HF class name; model_type selects the circuit" }
+transformers_version = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors; the load plan reads each tensor's own" }
+torch_dtype = { ignore = "the storage dtype of unquantized tensors" }
+quantization_config = { ignore = "read by the precision plan (DeclaredPrecisionPlan)" }
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+pad_token_id = { ignore = "tokenizer ids" }
+initializer_range = { ignore = "training initialisation" }
+attention_dropout = { ignore = "training only" }
+use_cache = { ignore = "an HF generate flag" }
+max_position_embeddings = { ignore = "the context limit; RoPE scaling states its own original length" }
+rms_norm_eps = { param = true, default = 1e-6 }
+hidden_act = { require = "silu", why = "the circuit's FFN is SiLU-gated", default = "silu" }
+mlp_bias = { require = false, why = "the circuit's FFN projections have no bias", default = false }
+pretraining_tp = { require = 1, why = "tensor-parallel pretraining slices change the math", default = 1 }
+sliding_window = { refuse = "sliding-window attention is not modelled by this circuit" }
+rope_theta = { param = true, default = 10000.0 }
+rope_scaling = { param = "rope_scaling", object = { rope_type = { param = true, require = ["default", "llama3", "yarn", "linear"], why = "the circuit's RoPE params cover default, llama3, yarn and linear scaling" }, type = { param = "rope_scaling.rope_type", require = ["default", "llama3", "yarn", "linear"], why = "the circuit's RoPE params cover default, llama3, yarn and linear scaling" }, factor = "param", low_freq_factor = "param", high_freq_factor = "param", original_max_position_embeddings = "param", beta_fast = "param", beta_slow = "param", mscale = "param", mscale_all_dim = "param", attention_factor = "param" } }
+rope_parameters = { param = "rope", object = { rope_type = { param = true, require = ["default", "llama3", "yarn", "linear"], why = "the circuit's RoPE params cover default, llama3, yarn and linear scaling" }, rope_theta = "param", partial_rotary_factor = { require = 1.0, why = "partial rotary is not modelled for this family" }, factor = "param", low_freq_factor = "param", high_freq_factor = "param", original_max_position_embeddings = "param", beta_fast = "param", beta_slow = "param", mscale = "param", mscale_all_dim = "param", attention_factor = "param" } }
+
+# 2026-09-30: Qwen3: Q/K per-head RMSNorm (Qwen3Attention), no sliding window in use.
+[variant.qwen3]
+dims = { qk_norm = { const = 1 } }
+[variant.qwen3.keys]
+use_sliding_window = { require = false, why = "sliding-window attention is not modelled", default = false }
+sliding_window = { ignore = "inactive while use_sliding_window is false (required)" }
+max_window_layers = { ignore = "inactive while use_sliding_window is false (required)" }
+
+# 2026-09-30: Qwen2: Q/K/V always carry biases (Qwen2Attention), no sliding window in use.
+[variant.qwen2]
+dims = { attn_bias = { const = 1 } }
+[variant.qwen2.keys]
+use_sliding_window = { require = false, why = "sliding-window attention is not modelled", default = false }
+sliding_window = { ignore = "inactive while use_sliding_window is false (required)" }
+max_window_layers = { ignore = "inactive while use_sliding_window is false (required)" }

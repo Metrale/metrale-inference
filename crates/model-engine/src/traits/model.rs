@@ -50,14 +50,18 @@ pub struct BeamReq {
 /// graphs are keyed by a few batch shapes instead of one per `n`.
 #[inline]
 pub fn padded_batch_n(n: usize) -> usize {
-    [2usize, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128]
+    DECODE_BATCH_LADDER
         .iter()
         .copied()
         .find(|&s| s >= n)
         .unwrap_or(n)
 }
 
+/// 2026-09-28: The rungs [`padded_batch_n`] pads to.
+pub const DECODE_BATCH_LADDER: [usize; 11] = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128];
+
 mod adapters;
+mod circuit;
 mod device_feed;
 mod draft;
 mod ep;
@@ -70,6 +74,7 @@ mod verify;
 mod vision;
 
 pub use adapters::ModelAdapters;
+pub use circuit::{ForwardDisclosure, ForwardSelect, ModelCircuit};
 pub use device_feed::ModelDeviceFeed;
 pub use draft::ModelDraft;
 pub use ep::ModelEp;
@@ -97,6 +102,7 @@ pub trait Model:
     + ModelEp
     + ModelStreams
     + ModelDeviceFeed
+    + ModelCircuit
 {
 }
 

@@ -31,11 +31,12 @@ pub(super) fn apply_dflash_capture_config(
         // DFlash head resolves its γ through the same helper
         // (dflash_head/from_weights.rs), so the pools sized from this value
         // match the head.
-        config.dflash_gamma = Some(args.gamma.unwrap_or_else(|| {
-            metrale_model_layers::layers::qwen3_ssm::default_dflash_gamma(
-                args.drafter_config.effective_block_size(),
-            )
-        }));
+        config.dflash_gamma = Some(
+            metrale_model_layers::layers::qwen3_ssm::resolve_dflash_gamma(
+                args.gamma,
+                Some(args.drafter_config.effective_block_size()),
+            ),
+        );
         tracing::info!(target: "metrale_model_engine::factory::build", "DFlash: target layer capture indices = {:?} (drafter target_layer_ids, \
              used directly), γ = {:?}",
             config.dflash_capture_layers,

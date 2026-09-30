@@ -12,10 +12,10 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::{MtpHead, MtpProposerState, MtpQuantization, ProjectionWeight};
 use crate::layer::ForwardContext;
-use crate::layers::mtp_meta::{MTP_META_OFFSET, pack_mtp_attn_meta};
 use crate::layers::ops;
 
 mod attend;
+mod draft_step;
 mod host_logits;
 
 /// 2026-09-25: L2 norm of a BF16 device buffer, for the `mtp_debug_norms` lever
@@ -55,6 +55,21 @@ impl MtpHead {
         grammar_bitmask: Option<&[i32]>,
         target_row: bool,
     ) -> Result<u32> {
+        // 2026-09-29: `--forward circuit`: the compiled draft program runs the step (the
+        // grammar-masked argmax stays on this path: it samples on the host).
+        let runner = self.circuit_draft.read().clone();
+        if let Some(runner) = runner.filter(|_| grammar_bitmask.is_none()) {
+            return self.forward_one_circuit(
+                runner.as_ref(),
+                token,
+                target_hidden,
+                position,
+                state,
+                ctx,
+                stream,
+                draft_embed_target,
+            );
+        }
         let debug_norms = ctx.levers.mtp_debug_norms;
         let h = ctx.config.hidden_size as u32;
         let nq = ctx.config.num_attention_heads as u32;
@@ -237,29 +252,8 @@ impl MtpHead {
 
         let mut kv_cache = self.kv_cache.lock();
         let bs = kv_cache.block_size();
-        let blocks_needed = (state.seq_len / bs) + 1;
-        while state.block_table.len() < blocks_needed {
-            state.block_table.push(kv_cache.alloc_block()?);
-        }
-
-        let meta_base = ctx.buffers.scratch().offset(MTP_META_OFFSET);
-        let max_blocks = state.block_table.len() as u32;
-
-        let block_idx = state.block_table[state.seq_len / bs];
-        let global_slot = (block_idx as i64) * (bs as i64) + ((state.seq_len % bs) as i64);
-        let actual_seq_len = (state.seq_len + 1) as i32;
-
-        // 2026-09-25: The metadata grows with the block table, so its bound is the rest
-        // of the scratch arena past `MTP_META_OFFSET`; `pack_mtp_attn_meta` fails
-        // rather than write past it.
-        let meta_buf = pack_mtp_attn_meta(
-            position as u32,
-            global_slot,
-            actual_seq_len,
-            &state.block_table,
-            ctx.buffers.scratch_bytes().saturating_sub(MTP_META_OFFSET),
-        )?;
-        ctx.gpu.copy_h2d_async(&meta_buf, meta_base, stream)?;
+        let (meta_base, max_blocks) =
+            self.upload_draft_meta(&mut kv_cache, state, position, ctx, stream)?;
 
         ops::rope(
             ctx.gpu,
@@ -422,6 +416,9 @@ impl MtpHead {
 
         let out_ptr = ctx.buffers.scratch();
 
+        if grammar_bitmask.is_none() {
+            ops::argmax_bf16(ctx.gpu, self.argmax_k, logits, out_ptr, v, stream)?;
+        }
         let token_id = if let Some(bitmask) = grammar_bitmask {
             self.grammar_masked_argmax(
                 ctx,
@@ -435,30 +432,9 @@ impl MtpHead {
                 stream,
             )?
         } else {
-            ops::argmax_bf16(ctx.gpu, self.argmax_k, logits, out_ptr, v, stream)?;
-            if let Some(embed_target) = draft_embed_target {
-                ops::embed_from_argmax(
-                    ctx.gpu,
-                    self.embed_from_argmax_k,
-                    out_ptr,
-                    self.embed_tokens.weight,
-                    embed_target,
-                    self.draft_token_id_dev,
-                    h,
-                    stream,
-                )?;
-                0u32
-            } else {
-                let mut buf = [0u8; 4];
-                ctx.gpu.copy_d2h(out_ptr, &mut buf)?;
-                u32::from_le_bytes(buf)
-            }
+            self.draft_token(ctx, out_ptr, draft_embed_target, stream)?
         };
-
-        state.seq_len += 1;
-        // 2026-09-25: This call wrote the drafter row for sequence key `position - 1`;
-        // the catch-up path reads `last_pair_key` to find missing rows.
-        state.last_pair_key = Some(position.saturating_sub(1));
+        Self::finish_row(state, position);
         Ok(token_id)
     }
 }

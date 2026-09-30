@@ -210,6 +210,39 @@ pub enum FfnComponent {
 }
 
 impl FfnComponent {
+    /// 2026-09-28: Add the FFN's weights to a circuit binding; a MoE or absent FFN is reported
+    /// as unmodelled (the executor binds dense FFNs so far).
+    pub(crate) fn circuit_bind(
+        &self,
+        levers: &ops::ModelLevers,
+        weights: &mut std::collections::BTreeMap<
+            crate::circuit_exec::WeightSlot,
+            crate::circuit_exec::BoundWeight,
+        >,
+        unmodelled: &mut Vec<String>,
+    ) {
+        match self {
+            Self::Dense(d) => d.circuit_bind(levers, weights, unmodelled),
+            Self::Moe(_) => unmodelled.push("a MoE FFN (not bound yet)".to_string()),
+            Self::None => unmodelled.push("no FFN".to_string()),
+        }
+    }
+
+    /// 2026-09-28: Build what a dense FFN's binding hands out (`DenseFfnLayer::circuit_prepare`);
+    /// nothing for a MoE or an absent FFN, which bind as unmodelled.
+    pub(crate) fn circuit_prepare(
+        &self,
+        gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+        config: &metrale_config::ModelConfig,
+        levers: &ops::ModelLevers,
+        stream: u64,
+    ) -> Result<()> {
+        match self {
+            Self::Dense(d) => d.circuit_prepare(gpu, config, levers, stream),
+            Self::Moe(_) | Self::None => Ok(()),
+        }
+    }
+
     pub fn is_none(&self) -> bool {
         matches!(self, Self::None)
     }

@@ -121,7 +121,7 @@ fn main() -> Result<()> {
     let perf_only = mode == "perf" || mode == "--perf";
     let skew = mode == "skew" || mode == "--skew";
 
-    if k % FP8_BLOCK != 0 {
+    if !k.is_multiple_of(FP8_BLOCK) {
         bail!("K ({k}) must be a multiple of {FP8_BLOCK}");
     }
     let total = num_experts * tpe;
@@ -241,7 +241,7 @@ fn main() -> Result<()> {
 
     // 2026-09-25: A 1-D grid of one CTA per tile, at least `PM5_PERSIST_CTAS` and at most
     // 16384; the kernel strides over the work-list by gridDim.x.
-    let grid_ctas = (host_total_tiles as u32).max(PM5_PERSIST_CTAS).min(16384);
+    let grid_ctas = (host_total_tiles as u32).clamp(PM5_PERSIST_CTAS, 16384);
     let pm4_threads: u32 = 512;
     let grid_block = || -> ([u32; 3], [u32; 3]) { ([grid_ctas, 1, 1], [pm4_threads, 1, 1]) };
     // 2026-09-25: The work-list and tile-count pointers follow the base arguments.

@@ -487,6 +487,7 @@ impl metrale_model_layers::layer::LayerGraphHooks for Glm5NextDsaLayer {
 
 impl metrale_model_layers::layer::LayerAuxState for Glm5NextDsaLayer {}
 impl metrale_model_layers::layer::LayerSplitPrefill for Glm5NextDsaLayer {}
+impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextDsaLayer {}
 
 #[cfg(test)]
 mod tests;

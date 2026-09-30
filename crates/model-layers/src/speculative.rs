@@ -271,4 +271,22 @@ pub trait DraftProposer: Send + Sync {
         let _ = (gpu, state);
         Ok(())
     }
+
+    /// 2026-09-29: This proposer's draft head as the circuit executor binds it; `None` for a
+    /// proposer the circuit does not model.
+    fn circuit_draft(
+        &self,
+        _config: &ModelConfig,
+        _levers: &crate::layers::ops::ModelLevers,
+    ) -> Option<crate::circuit_exec::DraftBinding> {
+        None
+    }
+
+    /// 2026-09-29: Run `runner` in place of the draft head's own forward from now on, or its
+    /// own forward again with `None`. A proposer without a circuit binding ignores it.
+    fn set_circuit_draft(
+        &self,
+        _runner: Option<std::sync::Arc<dyn crate::circuit_exec::DraftRunner>>,
+    ) {
+    }
 }

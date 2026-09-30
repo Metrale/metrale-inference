@@ -20,6 +20,7 @@ mod ple_seq;
 pub use layer_struct::Qwen3SsmLayer;
 
 mod carry;
+mod circuit;
 mod debug;
 mod decode_w8a8_proj;
 pub mod gdn_flags;
@@ -57,9 +58,10 @@ mod w8a8_decode;
 mod woa;
 
 pub use gdn_flags::{
-    GdnFlags, MAX_F16_TWIN_DFLASH_GAMMA, MAX_F16_TWIN_K, default_dflash_gamma,
-    gdn_fused_norm_enabled, ssm_batched_recurrent_enabled, ssm_h_dtype_bits,
-    ssm_h_f16_pool_enabled, ssm_h_fp16_enabled, verify_exact_enabled,
+    GdnFlags, MAX_F16_TWIN_DFLASH_GAMMA, MAX_F16_TWIN_K, UNRESOLVED_DFLASH_GAMMA,
+    default_dflash_gamma, gdn_fused_norm_enabled, resolve_dflash_gamma,
+    ssm_batched_recurrent_enabled, ssm_h_dtype_bits, ssm_h_f16_pool_enabled, ssm_h_fp16_enabled,
+    verify_exact_enabled,
 };
 
 #[cfg(test)]

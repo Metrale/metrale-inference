@@ -1,0 +1,385 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-09-28: The circuit executor: run a model's decode from its fused circuit plan instead of
+//! the hand-written layer loops. At boot it instantiates the model's circuit, fuses it under the
+//! live policy with the kernels the loaded modules contain, lays its buffers out in one
+//! workspace and compiles a straight-line [`program::Program`] for single-sequence decode and
+//! one per multi-sequence batch width; a decode step then runs the program for its width
+//! between the legacy prologue (embedding, metadata upload) and the logits.
+//!
+//! Owner: model-layers circuit executor.
+//! Invariants:
+//! - Every emitter launches through an existing `ops::*` function; the executor adds no launch
+//!   code of its own.
+//! - Anything the circuit does not model (a layer feature, a switch, a head feature, a plan
+//!   kernel no emitter launches) refuses the build; a decode never runs a plan that
+//!   misdescribes the model.
+//! - The workspace is allocated once, at build, and never moves, so captured graphs stay valid.
+//!   Every program lays its buffers out from the workspace base: programs run one at a time on
+//!   the model's stream, so they share it, and it is sized for the largest.
+
+pub mod bindings;
+pub mod compile;
+mod emitters;
+pub mod kernels;
+pub mod policy;
+pub mod program;
+pub mod routes;
+pub mod sources;
+
+use anyhow::{Context, Result, bail};
+use metrale_circuit::planner::plan_buffers_with;
+use metrale_circuit::{FusionPlan, Instance, Mode, Numerics, Policy, fuse};
+use metrale_config::ModelConfig;
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+
+pub use bindings::{
+    AttnFacts, BoundWeight, CircuitBindings, CircuitLayer, DraftBinding, GdnFacts, HeadBinding,
+    MixerFacts, RopeFacts, WeightSlot,
+};
+pub use compile::{DraftFixed, Fixed};
+pub use program::{DraftRunner, GdnState, Program, StepEnv};
+
+/// 2026-09-28: Which rules a build may select.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fusions {
+    /// 2026-09-28: Every rule whose kernel is present.
+    All,
+    /// 2026-09-28: Only `reference` rules: the kernels of `bit_identical` rules are treated as
+    /// absent, so the plan is today's routing exactly. The parity harness compares the two.
+    ReferenceOnly,
+}
+
+/// 2026-09-28: The compiled kernel modules of the served target, `(module, PTX)`: the fuser's
+/// view of which kernels exist ([`kernels::available_in`]).
+#[derive(Clone)]
+pub struct TargetModules(pub Vec<(&'static str, &'static [u8])>);
+
+impl std::fmt::Debug for TargetModules {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TargetModules({} modules)", self.0.len())
+    }
+}
+
+/// 2026-09-28: What a build reads.
+pub struct Boot<'a> {
+    pub gpu: &'a dyn GpuBackend,
+    pub config: &'a ModelConfig,
+    /// 2026-09-30: The checkpoint's `config.json`, which the circuit's config map turns into the
+    /// served shape ([`sources::checkpoint_shape`]).
+    pub config_json: &'a str,
+    /// 2026-09-28: The model's levers, as its legacy layers read them (`ForwardContext::levers`).
+    pub levers: &'a crate::layers::ops::ModelLevers,
+    pub instance: &'a Instance,
+    pub policy: Policy,
+    pub layers: Vec<Option<CircuitLayer>>,
+    pub head: HeadBinding,
+    pub fixed: Fixed,
+    pub fusions: Fusions,
+    pub modules: &'a TargetModules,
+    /// 2026-09-28: The padded multi-sequence batch widths to compile (the decode graph ladder
+    /// up to the serve's widest batch).
+    pub multi_seq_rows: Vec<u64>,
+    /// 2026-09-29: The MTP verify widths `K` to compile (none without speculative decode).
+    pub verify_rows: Vec<u64>,
+    /// 2026-09-29: The MTP draft head, when one is loaded; its buffers are `fixed.draft`.
+    pub draft: Option<CircuitLayer>,
+}
+
+/// 2026-09-28: A built executor: the decode program and the workspace it runs in.
+pub struct CircuitExec {
+    /// 2026-09-28: Decode at one row.
+    pub decode: Program,
+    /// 2026-09-28: The plan `decode` was compiled from.
+    pub decode_plan: FusionPlan,
+    /// 2026-09-28: Multi-sequence decode, one program per padded width, ascending; each with
+    /// the plan it was compiled from.
+    pub multi_seq: Vec<(Program, FusionPlan)>,
+    /// 2026-09-29: The single-sequence MTP verify, one program per `K`, ascending.
+    pub verify: Vec<(Program, FusionPlan)>,
+    /// 2026-09-29: The MTP draft head's single-row step, which the head runs itself
+    /// (`DraftRunner`).
+    pub draft: Option<(std::sync::Arc<Program>, FusionPlan)>,
+    /// 2026-09-30: The runtime routes' arms, beside the primary program of each mode and row
+    /// count they apply to ([`routes`]).
+    pub routes: Vec<routes::RoutedProgram>,
+    /// 2026-09-30: Per layer, the `(h, conv)` slot pitch of its GDN state; `None` elsewhere.
+    pub gdn_pitch: Vec<Option<(usize, usize)>>,
+    /// 2026-09-28: SHA-256 of the FUSIONS.toml the plan was chosen from.
+    pub rules_digest: String,
+    /// 2026-09-28: Which rules the build allowed.
+    pub fusions: Fusions,
+    workspace: DevicePtr,
+    workspace_bytes: u64,
+}
+
+impl CircuitExec {
+    /// 2026-09-28: Build the executor.
+    pub fn build(b: Boot<'_>) -> Result<Self> {
+        let mut served = b.instance.clone();
+        let from_checkpoint = sources::checkpoint_shape(b.config_json, b.config.vocab_size as u64)?;
+        served.shape = sources::served_shape(&b.instance.shape, &from_checkpoint)?;
+        let src = sources::sources(&served)?;
+        let loaded = match &served.precision {
+            // 2026-09-28: The served model's own policy: its parsed quantization_config under
+            // the published tier and kernel capabilities, with the instance's engine formats.
+            metrale_circuit::PrecisionSpec::Policy { engine, .. } => {
+                let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
+                    crate::layers::weight_quantization(),
+                    b.config.quantization_config.as_ref(),
+                    crate::layers::kernel_caps(),
+                );
+                metrale_circuit::load_with(
+                    &served,
+                    src,
+                    &metrale_circuit::precision_policy::PolicyPrecision::new(policy, engine),
+                )?
+            }
+            metrale_circuit::PrecisionSpec::Table(_) => metrale_circuit::load(&served, src)?,
+        };
+        let unmodelled = policy::unmodelled_switches(b.levers);
+        if !unmodelled.is_empty() {
+            bail!(
+                "the circuit does not model these switches: {}",
+                unmodelled.join(", ")
+            );
+        }
+        let layers = bindings::check_bindings(&loaded.circuit, &b.layers, &b.head)?;
+        if let Some(d) = &b.draft {
+            if !d.unmodelled.is_empty() {
+                bail!(
+                    "the circuit does not model this draft head: {}",
+                    d.unmodelled.join(", ")
+                );
+            }
+            anyhow::ensure!(b.fixed.draft.is_some(), "a draft head without its buffers");
+        }
+        let present = kernels::available_in(&loaded.rules, &b.modules.0)?;
+        let mut available = present.clone();
+        if b.fusions == Fusions::ReferenceOnly {
+            for r in &loaded.rules {
+                if matches!(r.numerics, Numerics::BitIdentical { .. }) {
+                    for k in &r.kernels {
+                        available.kernels.remove(k);
+                    }
+                }
+            }
+        }
+        let table = kernels::KernelTable::resolve(b.gpu, &present);
+        let inputs = compile::Inputs {
+            gpu: b.gpu,
+            config: b.config,
+            kernels: &table,
+            fixed: &b.fixed,
+            layers: &layers,
+            head: &b.head,
+            draft: b.draft.as_ref(),
+        };
+        let shapes = std::iter::once((Mode::Decode, 1))
+            .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)))
+            .chain(b.verify_rows.iter().map(|&r| (Mode::Verify, r)))
+            .chain(b.draft.iter().map(|_| (Mode::Draft, 1)));
+        routes::check_known(&loaded.runtime)?;
+        let mut laid = Vec::new();
+        for (mode, rows) in shapes {
+            let plan = fuse(
+                &loaded.circuit,
+                &loaded.rules,
+                &available,
+                &b.policy,
+                mode,
+                rows,
+            )
+            .with_context(|| format!("fusing {mode:?} at {rows} rows"))?;
+            let set = (loaded.rules.as_slice(), loaded.runtime.as_slice());
+            let arms = metrale_circuit::runtime::route_arms(
+                &loaded.circuit,
+                set,
+                &available,
+                &b.policy,
+                &plan,
+            )
+            .with_context(|| format!("fusing the runtime routes of {mode:?} at {rows} rows"))?;
+            for (route, plan) in
+                std::iter::once((None, plan)).chain(arms.into_iter().map(|(r, p)| (Some(r), p)))
+            {
+                let layout = compile::layout(&loaded.circuit, &plan)?;
+                let buffers = plan_buffers_with(&loaded.circuit, &plan, rows, &layout)?;
+                laid.push((route, plan, layout, buffers));
+            }
+        }
+        let workspace_bytes = laid
+            .iter()
+            .map(|(_, _, _, buf)| buf.arena_bytes)
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        let workspace = b
+            .gpu
+            .alloc(workspace_bytes as usize)
+            .context("allocating the circuit workspace")?;
+        let mut programs = Vec::with_capacity(laid.len());
+        let mut routed = Vec::new();
+        for (route, plan, layout, buffers) in laid {
+            match compile::compile(
+                &loaded.circuit,
+                &plan,
+                &layout,
+                &buffers,
+                workspace,
+                &inputs,
+            ) {
+                Ok(program) => match route {
+                    None => programs.push((program, plan)),
+                    Some(route) => routed.push(routes::RoutedProgram {
+                        route,
+                        program,
+                        plan,
+                    }),
+                },
+                Err(e) => {
+                    b.gpu.free(workspace).ok();
+                    return Err(
+                        e.context(format!("compiling {:?} at {} rows", plan.mode, plan.rows))
+                    );
+                }
+            }
+        }
+        let mut programs = programs.into_iter();
+        let (decode, plan) = programs.next().context("no decode program")?;
+        let (draft, rest): (Vec<_>, Vec<_>) = programs.partition(|(p, _)| p.mode == Mode::Draft);
+        let (multi_seq, verify): (Vec<_>, Vec<_>) = rest
+            .into_iter()
+            .partition(|(p, _)| p.mode == Mode::MultiSeq);
+        let draft = draft
+            .into_iter()
+            .next()
+            .map(|(p, plan)| (std::sync::Arc::new(p), plan));
+        tracing::info!(
+            "circuit decode: {} launches/step, plan {} ({} rules, {:?}), {} multi-seq widths, \
+             {} verify widths, {} runtime-route programs, workspace {} KiB",
+            decode.launches.len(),
+            &plan.digest[..12],
+            loaded.rules.len(),
+            b.fusions,
+            multi_seq.len(),
+            verify.len(),
+            routed.len(),
+            workspace_bytes / 1024
+        );
+        let gdn_pitch = layers
+            .iter()
+            .map(|l| match l.mixer {
+                MixerFacts::Gdn(g) => Some((g.h_slot_bytes as usize, g.conv_state_bytes as usize)),
+                MixerFacts::Attention(_) => None,
+            })
+            .collect();
+        Ok(CircuitExec {
+            decode,
+            decode_plan: plan,
+            multi_seq,
+            verify,
+            draft,
+            routes: routed,
+            gdn_pitch,
+            rules_digest: loaded.rules_digest,
+            fusions: b.fusions,
+            workspace,
+            workspace_bytes,
+        })
+    }
+
+    /// 2026-09-28: The multi-sequence program for `rows` padded rows, if one was compiled.
+    pub fn multi_seq_program(&self, rows: u64) -> Option<&Program> {
+        self.multi_seq
+            .iter()
+            .find(|(p, _)| p.rows == rows)
+            .map(|(p, _)| p)
+    }
+
+    /// 2026-09-30: The program a multi-sequence step of `rows` padded rows runs, given its GDN
+    /// states: the arm of the first runtime route whose condition holds, else the primary one.
+    pub fn multi_seq_step(&self, rows: u64, gdn: &[Vec<GdnState>]) -> Result<&Program> {
+        for r in self
+            .routes
+            .iter()
+            .filter(|r| r.program.mode == Mode::MultiSeq && r.program.rows == rows)
+        {
+            if routes::holds(&r.route, &self.gdn_pitch, gdn)? {
+                return Ok(&r.program);
+            }
+        }
+        self.multi_seq_program(rows)
+            .with_context(|| format!("no circuit program was compiled for {rows} rows"))
+    }
+
+    /// 2026-09-29: The draft head's program, if one was compiled.
+    pub fn draft_runner(&self) -> Option<std::sync::Arc<dyn DraftRunner>> {
+        self.draft
+            .as_ref()
+            .map(|(p, _)| p.clone() as std::sync::Arc<dyn DraftRunner>)
+    }
+
+    /// 2026-09-29: The verify program for `k` rows, if one was compiled.
+    pub fn verify_program(&self, k: u64) -> Option<&Program> {
+        self.verify
+            .iter()
+            .find(|(p, _)| p.rows == k)
+            .map(|(p, _)| p)
+    }
+
+    /// 2026-09-28: One digest over every compiled plan, in order (decode, then the
+    /// multi-sequence widths ascending, then the verify widths, the draft step and, 2026-09-30,
+    /// the runtime routes' arms): what a record of this forward discloses.
+    pub fn plans_digest(&self) -> String {
+        metrale_circuit::digest::plans_digest(
+            std::iter::once(self.decode_plan.digest.as_str()).chain(
+                self.multi_seq
+                    .iter()
+                    .chain(&self.verify)
+                    .map(|(_, p)| p.digest.as_str())
+                    .chain(self.draft.iter().map(|(_, p)| p.digest.as_str()))
+                    .chain(self.routes.iter().map(|r| r.plan.digest.as_str())),
+            ),
+        )
+    }
+
+    /// 2026-09-28: Bytes of the workspace.
+    pub fn workspace_bytes(&self) -> u64 {
+        self.workspace_bytes
+    }
+
+    /// 2026-09-28: Free the workspace. The caller must first destroy every graph that captured
+    /// a program of this executor.
+    pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
+        if let Some((p, _)) = &self.draft {
+            anyhow::ensure!(
+                std::sync::Arc::strong_count(p) == 1,
+                "the draft program is still installed; remove it before freeing the workspace"
+            );
+        }
+        gpu.free(self.workspace)
+    }
+}
+
+#[cfg(test)]
+#[path = "exec_declared_tests.rs"]
+mod exec_declared_tests;
+#[cfg(test)]
+#[path = "exec_draft_tests.rs"]
+mod exec_draft_tests;
+#[cfg(test)]
+#[path = "exec_fixture.rs"]
+mod exec_fixture;
+#[cfg(test)]
+#[path = "exec_fixture_run.rs"]
+mod exec_fixture_run;
+#[cfg(test)]
+#[path = "exec_multi_tests.rs"]
+mod exec_multi_tests;
+#[cfg(test)]
+#[path = "exec_tests.rs"]
+mod exec_tests;
+#[cfg(test)]
+#[path = "exec_verify_tests.rs"]
+mod exec_verify_tests;

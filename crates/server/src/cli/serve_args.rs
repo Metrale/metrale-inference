@@ -212,7 +212,7 @@ pub struct ServeArgs {
     ///
     /// An enum, not a presence flag, because its default is not one value: the
     /// compiled target declares it (`kernels/<hw>/HARDWARE.toml` `[defaults]
-    /// ssm_batched_recurrent`: on for `hopper`, off for `gb10`, `b200` and
+    /// ssm_batched_recurrent`: on for `hopper` and `gb10`, off for `b200` and
     /// `b300`), and `METRALE_SSM_BATCHED_RECURRENT` overrides that. `auto` defers
     /// to them; `on`/`off` pin it either way and hand the whole GDN selection to
     /// the command line.
@@ -451,12 +451,12 @@ impl ServeArgs {
         )
     }
 
-    /// 2026-09-26: `--dflash-gamma` when given, else `drafter_block_size`, else 16.
-    /// Every caller passes `None`, so this is the flag or 16; the built drafter head
-    /// resolves an unset flag itself (`default_dflash_gamma`), and `serve_load` reads
-    /// the head's γ back once the model exists.
-    pub fn resolved_dflash_gamma(&self, drafter_block_size: Option<usize>) -> usize {
-        self.dflash_gamma.or(drafter_block_size).unwrap_or(16)
+    /// 2026-09-30: The γ this DFlash serve runs (`resolve_dflash_gamma` of the flag and the
+    /// drafter), valid only after `serve_phases::apply_dflash_gamma`; panics when read
+    /// earlier, as [`Self::resolved_num_drafts`] does.
+    pub fn serve_dflash_gamma(&self) -> usize {
+        self.dflash_gamma_resolved
+            .expect("dflash gamma read before apply_dflash_gamma resolved it")
     }
 
     /// 2026-09-26: The draft count, valid only after

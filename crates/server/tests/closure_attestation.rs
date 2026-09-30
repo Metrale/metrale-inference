@@ -87,7 +87,8 @@ fn the_baked_attestation_reproduces_from_the_tree() {
             &root,
             &metrale_closure::ClosureInputs {
                 sources,
-                configs: taxon::configs(&root, &target),
+                configs: taxon::configs(&root, &target)
+                    .unwrap_or_else(|e| panic!("{key}: configs do not resolve: {e}")),
                 flags: recorded.flags.clone(),
                 arch: recorded.arch.clone(),
                 compiler: recorded.compiler.clone(),

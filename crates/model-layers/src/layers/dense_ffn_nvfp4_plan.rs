@@ -44,6 +44,31 @@ impl DenseFfnLayer {
             && self.weights.up_proj.act.allows_fp4_prefill()
     }
 
+    /// 2026-09-28: Whether the NVFP4 MMQ arm serves gate and up, and down, under `levers`:
+    /// the one home of that choice, read by `nvfp4_prefill_plan` and the circuit binding.
+    ///
+    /// 2026-09-28: The MMQ arm quantizes activations to FP4, so a projection stamped
+    /// `Nvfp4Act::Wide` (its checkpoint declares wider activations, under
+    /// `--weight-quantization declared`) never takes it (`mmq_gate_up_declared`).
+    /// 2026-09-25: A LoRA adapter turns the NVFP4 MMQ arm off: its gate/up outputs lack
+    /// `weight_scale_2` until the scaled SiLU·mul applies it, so a delta added to them would be
+    /// scaled too. Down takes the arm too, unless `METRALE_NO_FFN_NVFP4_MMQ_DOWN` is set; it needs
+    /// `nvfp4_scale_k` to apply down's `weight_scale_2`.
+    pub(super) fn fp4mmq_arms(&self, levers: &crate::layers::ops::ModelLevers) -> (bool, bool) {
+        let gate_up = self.nvfp4_mmq_nc_k.0 != 0
+            && self.nvfp4_quant_act_k.0 != 0
+            && self.nvfp4_silu_scaled_k.0 != 0
+            && matches!(self.activation, FfnActivation::SiLU)
+            && self.lora.is_none()
+            && levers.ffn_nvfp4_mmq
+            && self.mmq_gate_up_declared();
+        let down = gate_up
+            && self.nvfp4_scale_k.0 != 0
+            && levers.ffn_nvfp4_mmq_down
+            && self.weights.down_proj.act.allows_fp4_prefill();
+        (gate_up, down)
+    }
+
     /// 2026-09-26: Resolves the NVFP4 prefill arms from `ctx.levers` and the resolved handles.
     pub(super) fn nvfp4_prefill_plan(&self, ctx: &ForwardContext) -> Nvfp4PrefillPlan {
         let bf16_tc_env = ctx.levers.bf16_tc_prefill;
@@ -56,19 +81,8 @@ impl DenseFfnLayer {
                 );
             }
         }
-        // 2026-09-28: The MMQ arm quantizes activations to FP4, so a projection stamped
-        // `Nvfp4Act::Wide` (its checkpoint declares wider activations, under
-        // `--weight-quantization declared`) never takes it (`mmq_gate_up_declared`).
-        // 2026-09-25: A LoRA adapter turns the NVFP4 MMQ arm off: its gate/up outputs lack
-        // `weight_scale_2` until the scaled SiLU·mul applies it, so a delta added to them would be
-        // scaled too. The Q4_K arm is off while this arm is on; both use `ffn_act_q8`.
-        let fp4mmq_prefill = self.nvfp4_mmq_nc_k.0 != 0
-            && self.nvfp4_quant_act_k.0 != 0
-            && self.nvfp4_silu_scaled_k.0 != 0
-            && matches!(self.activation, FfnActivation::SiLU)
-            && self.lora.is_none()
-            && ctx.levers.ffn_nvfp4_mmq
-            && self.mmq_gate_up_declared();
+        // 2026-09-25: The Q4_K arm is off while the MMQ arm is on; both use `ffn_act_q8`.
+        let (fp4mmq_prefill, fp4mmq_down) = self.fp4mmq_arms(ctx.levers);
         if fp4mmq_prefill {
             // 2026-09-25: Latched per model (`ModelStats::once`).
             if ctx.stats.once("log:ffn_fp4_mmq_prefill") {
@@ -76,12 +90,6 @@ impl DenseFfnLayer {
                 );
             }
         }
-        // 2026-09-25: Down takes the NVFP4 MMQ arm too, unless `METRALE_NO_FFN_NVFP4_MMQ_DOWN` is
-        // set; it needs `nvfp4_scale_k` to apply down's `weight_scale_2`.
-        let fp4mmq_down = fp4mmq_prefill
-            && self.nvfp4_scale_k.0 != 0
-            && ctx.levers.ffn_nvfp4_mmq_down
-            && self.weights.down_proj.act.allows_fp4_prefill();
         // 2026-09-25: Under the Q4_K arm, down runs int8 (`int8_gemm_faith2`) unless
         // `METRALE_FFN_MMQ_DOWN_Q4K` is set. Down never takes the Q4_K arm (`w4_gemm!` gets
         // `allow_q4k = false` for it), so with that variable set down falls to the later arms.

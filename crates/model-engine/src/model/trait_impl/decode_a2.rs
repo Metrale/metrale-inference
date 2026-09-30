@@ -368,87 +368,96 @@ impl TransformerModel {
 
             dump_hidden("post_embed", stream)?;
 
-            let mut ssm_us: u128 = 0;
-            let mut attn_us: u128 = 0;
-            for (layer_idx, layer) in self.layers.iter().enumerate() {
-                let mut layer_state_refs = extract_layer_refs(&mut all_layer_states, layer_idx);
-                let t0 = if ms_profile {
+            // 2026-09-28: `--forward circuit`: the compiled program for this width runs the
+            // layers, the final norm and the lm_head. Its build refused every feature the legacy
+            // extras below serve (DFlash capture, the profiling syncs, the hidden dumps).
+            let circuit = self.circuit.read();
+            if let Some(exec) = circuit.as_ref() {
+                self.circuit_multi_seq_body(exec, &all_layer_states, padded_n, stream)?;
+            } else {
+                let mut ssm_us: u128 = 0;
+                let mut attn_us: u128 = 0;
+                for (layer_idx, layer) in self.layers.iter().enumerate() {
+                    let mut layer_state_refs = extract_layer_refs(&mut all_layer_states, layer_idx);
+                    let t0 = if ms_profile {
+                        self.gpu.synchronize(stream).ok();
+                        Some(std::time::Instant::now())
+                    } else {
+                        None
+                    };
+                    layer.decode_multi_seq(
+                        hidden,
+                        residual,
+                        padded_n,
+                        &mut layer_state_refs,
+                        &mut kv_cache,
+                        &seq_lens,
+                        &block_tables,
+                        &ctx,
+                        stream,
+                    )?;
+                    if let Some(t0) = t0 {
+                        self.gpu.synchronize(stream).ok();
+                        let dt = t0.elapsed().as_micros();
+                        if self.config.layer_type(layer_idx) == LayerType::LinearAttention {
+                            ssm_us += dt;
+                        } else {
+                            attn_us += dt;
+                        }
+                    }
+                    // 2026-09-25: DFlash capture of every row's hidden (row i =
+                    // sequence i). It runs inside the graph region with fixed source
+                    // and destination addresses, so replays capture too; a borrowed
+                    // wider graph also writes the rows past `n`. No-op without DFlash
+                    // or off a capture layer.
+                    self.try_dflash_capture_all(layer_idx, padded_n, stream)?;
+                    if conc_hsd {
+                        let _ = dump_hidden(&format!("after_L{:02}", layer_idx), stream);
+                    }
+                }
+                if ms_profile {
                     self.gpu.synchronize(stream).ok();
+                }
+                let lmhead_t0 = if ms_profile {
                     Some(std::time::Instant::now())
                 } else {
                     None
                 };
-                layer.decode_multi_seq(
+
+                let normed = self.buffers.norm_output();
+                self.final_norm_apply(
                     hidden,
-                    residual,
-                    padded_n,
-                    &mut layer_state_refs,
-                    &mut kv_cache,
-                    &seq_lens,
-                    &block_tables,
-                    &ctx,
+                    normed,
+                    padded_n as u32,
+                    h as u32,
+                    self.config.rms_norm_eps as f32,
                     stream,
                 )?;
-                if let Some(t0) = t0 {
+
+                // 2026-09-25: One batched LM head for all `padded_n` rows, so the vocab
+                // weight is read once per step. The kernel ladder is in
+                // `lm_head_batched.rs` (an FP8 head still runs one GEMV per row); the
+                // mixed co-dispatch head `decode_b2::mixed_final_norm_lm_head` calls the
+                // same function. The returned pointer is dropped: the function ends
+                // with `decode_logits_ptr()`, the same buffer.
+                self.lm_head_project_batched(normed, padded_n, h, bf16, stream)?;
+                if let Some(t0) = lmhead_t0 {
                     self.gpu.synchronize(stream).ok();
-                    let dt = t0.elapsed().as_micros();
-                    if self.config.layer_type(layer_idx) == LayerType::LinearAttention {
-                        ssm_us += dt;
-                    } else {
-                        attn_us += dt;
-                    }
-                }
-                // 2026-09-25: DFlash capture of every row's hidden (row i =
-                // sequence i). It runs inside the graph region with fixed source
-                // and destination addresses, so replays capture too; a borrowed
-                // wider graph also writes the rows past `n`. No-op without DFlash
-                // or off a capture layer.
-                self.try_dflash_capture_all(layer_idx, padded_n, stream)?;
-                if conc_hsd {
-                    let _ = dump_hidden(&format!("after_L{:02}", layer_idx), stream);
+                    let head_us = t0.elapsed().as_micros();
+                    let total = ssm_us + attn_us + head_us;
+                    tracing::info!(
+                        "METRALE_MS_PROFILE n={n} padded_n={padded_n}: total={}us  ssm={}us({}L)  attn={}us({}L)  head={}us  [per-tok {:.2}ms]",
+                        total,
+                        ssm_us,
+                        self.config.num_ssm_layers(),
+                        attn_us,
+                        self.layers.len() - self.config.num_ssm_layers(),
+                        head_us,
+                        total as f64 / 1000.0 / padded_n as f64,
+                    );
                 }
             }
-            if ms_profile {
-                self.gpu.synchronize(stream).ok();
-            }
-            let lmhead_t0 = if ms_profile {
-                Some(std::time::Instant::now())
-            } else {
-                None
-            };
-
-            let normed = self.buffers.norm_output();
-            self.final_norm_apply(
-                hidden,
-                normed,
-                padded_n as u32,
-                h as u32,
-                self.config.rms_norm_eps as f32,
-                stream,
-            )?;
-
-            // 2026-09-25: One batched LM head for all `padded_n` rows, so the vocab
-            // weight is read once per step. The kernel ladder is in
-            // `lm_head_batched.rs` (an FP8 head still runs one GEMV per row); the
-            // mixed co-dispatch head `decode_b2::mixed_final_norm_lm_head` calls the
-            // same function. The returned pointer is dropped: the function ends
-            // with `decode_logits_ptr()`, the same buffer.
-            self.lm_head_project_batched(normed, padded_n, h, bf16, stream)?;
-            if let Some(t0) = lmhead_t0 {
-                self.gpu.synchronize(stream).ok();
-                let head_us = t0.elapsed().as_micros();
-                let total = ssm_us + attn_us + head_us;
-                tracing::info!(
-                    "METRALE_MS_PROFILE n={n} padded_n={padded_n}: total={}us  ssm={}us({}L)  attn={}us({}L)  head={}us  [per-tok {:.2}ms]",
-                    total,
-                    ssm_us,
-                    self.config.num_ssm_layers(),
-                    attn_us,
-                    self.layers.len() - self.config.num_ssm_layers(),
-                    head_us,
-                    total as f64 / 1000.0 / padded_n as f64,
-                );
-            }
+            drop(circuit);
 
             if use_graphs {
                 let graph = self.gpu.end_capture(stream)?;

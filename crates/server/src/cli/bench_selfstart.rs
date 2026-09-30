@@ -132,6 +132,7 @@ pub async fn serve_for(
     let port = metrale_bench::benchmarks::agentic::score::free_port()?;
     let serve_args = plan.serve_args(port)?;
     let resolved = plan.disclosed(port)?;
+    let forward = serve_args.forward;
     check_box_is_free_enough(
         serve_args.gpu_memory_utilization,
         &plan.recipe_id,
@@ -170,6 +171,8 @@ pub async fn serve_for(
     )
     .await?;
     eprintln!("gate: endpoint is serving {model}");
+    super::bench_serve_plan::attach_live_forward(&served.target, forward, &mut served.resolved)
+        .await?;
 
     Ok(served)
 }

@@ -71,7 +71,8 @@ pub(super) fn dflash_build_args<'a>(
         .map(|(s, c)| metrale_model_engine::factory::DflashBuildArgs {
             drafter_store: s,
             drafter_config: c.clone(),
-            gamma: args.dflash_gamma,
+            // 2026-09-30: The resolved γ, so the pools the build sizes are the reserve's.
+            gamma: Some(args.serve_dflash_gamma()),
             window_size: if args.dflash_window_size > 0 {
                 Some(args.dflash_window_size)
             } else {

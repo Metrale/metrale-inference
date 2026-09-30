@@ -18,7 +18,8 @@ fn args(extra: &[&str]) -> cli::ServeArgs {
         cli::Command::Benchmark(_)
         | cli::Command::DumpServeOptions
         | cli::Command::SyncRecipes
-        | cli::Command::Doctor => {
+        | cli::Command::Doctor
+        | cli::Command::Circuit(_) => {
             unreachable!("parsed a serve command")
         }
     }

@@ -316,6 +316,7 @@ impl ModelDraft for NllbGpuModel {
 impl ModelVision for NllbGpuModel {}
 
 impl ModelEp for NllbGpuModel {}
+impl crate::traits::ModelCircuit for NllbGpuModel {}
 
 impl ModelStreams for NllbGpuModel {}
 

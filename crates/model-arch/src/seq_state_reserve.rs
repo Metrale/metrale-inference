@@ -14,7 +14,7 @@
 //!     in its own field: the proposer is not a `TransformerLayer` and is not in the layer list.
 //!
 //! Not charged here:
-//!   * KDA recurrent and conv state: pool-owned (`ssm_reserve::ssm_pool_reserve_bytes`);
+//!   * KDA recurrent and conv state: pool-owned (`ssm_reserve::PoolPlan`);
 //!     `meta.rs` gives pool-backed linear-attention layers pool addresses instead of calling
 //!     `alloc_state`;
 //!   * the paged KV pool: this reserve is subtracted from the KV budget.

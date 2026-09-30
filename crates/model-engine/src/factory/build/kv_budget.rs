@@ -164,6 +164,14 @@ pub(super) fn dflash_reserve_bytes(
 
 /// 2026-09-26: Bytes reserved for the MTP head's paged KV pool, which
 /// allocates after KV sizing; `0` when no MTP head is built.
+///
+/// 2026-09-30: The pool is bounded by the main pool's block count before this
+/// reserve, so it scales with the KV budget: every byte taken from the budget
+/// costs the main pool `main / (main + draft)` of a block. On the dense 27B
+/// (1 MiB main blocks, 64 KiB draft blocks) that is 15/16: the pool plan's
+/// 765 MiB of dummy-slot reserve (`ssm_reserve::PoolPlan`) removes 717 main
+/// blocks, not 765 (4434 -> 3717). The bound over-reserves by
+/// `(blocks before - blocks after) x draft block` (about 18 MiB there).
 pub(super) fn mtp_pool_reserve_bytes(
     use_speculative: bool,
     mtp_weights: &[MtpWeights],

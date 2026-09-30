@@ -1,0 +1,1904 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-28: GB10 fusion rules: which kernel covers which op chain, per mode and padded row
+# count. These rules encode the decode, multi-sequence, verify and draft routing the engine
+# makes today for the dense Qwen3.8-27B and the Qwen3.6-35B-A3B MoE, so the golden plans in
+# kernels/circuits/plans/ reproduce it exactly. kernels/circuits/ROUTING-AUDIT.md cites every
+# rule's dispatch site and lists what the rules cannot express yet.
+#
+# Owner: gb10 kernels (schema: crates/circuit/src/rules.rs).
+# Invariants:
+# - `numerics = "reference"` marks today's default, grandfathered as the reference even where
+#   it rounds differently from the unfused chain. `bit_identical` needs a `microtest`;
+#   `differs` needs the opt-in `lever` and is never selected without it.
+# - A `when` key must be stated by every policy (kernels/circuits/INSTANCES.toml); a rule is
+#   never selected under a setting it does not name.
+# - Priorities: 200 opt-in (`differs`) rules, 110 multi-row multi-op arms over their per-row
+#   twins (the batched GDN recurrence), 100 multi-op fused rules, 50 row-tier overrides, 20
+#   narrow single-op overrides, 10 single-op defaults, 5 fallbacks.
+# - `[[runtime]]` routes (schema: crates/circuit/src/runtime.rs) name a condition the engine
+#   checks per step and the settings its other arm plans as; plans, reports and the executor
+#   carry both arms.
+# - `cite` abbreviations: ml/ = crates/model-layers/src/layers/, me/ =
+#   crates/model-engine/src/model/trait_impl/, mm/ = crates/model-engine/src/model/,
+#   k/ = kernels/gb10/common/. crates/circuit/tests/circuits.rs checks every cited file exists
+#   and holds the cited line.
+
+schema = 1
+
+# 2026-09-28: Embedding, norms, residuals.
+
+[[rule]]
+id = "embed_row_copy"
+pattern = [{ op = "embed" }]
+kernels = []
+repeat = "once"
+emitter = "embed_copy"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 10
+cite = "me/decode_a2.rs:241-254 (one D2D copy per row, padding rows memset); ml/mtp_head/forward.rs:82-83"
+
+[[rule]]
+id = "input_norm_residual"
+pattern = [{ op = "rms_norm", local = "input_norm" }]
+kernels = [{ module = "norm", func = "rms_norm_residual" }]
+repeat = "once"
+emitter = "rms_norm_residual"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode.rs:38-49; ml/qwen3_attention/trait_impl/decode_inner.rs:76-87; ml/qwen3_attention/trait_impl/multi_seq/mod.rs:58-69; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:170-183; ml/qwen3_ssm/trait_decode_batched.rs:193"
+
+[[rule]]
+id = "draft_rms_norm"
+pattern = [{ op = "rms_norm" }]
+kernels = [{ module = "norm", func = "rms_norm" }]
+repeat = "once"
+emitter = "rms_norm"
+rows = [1, 1]
+modes = ["draft"]
+numerics = "reference"
+priority = 5
+cite = "ml/mtp_head/forward.rs:86-96,103-113,152-162 (the residual copy is a D2D copy at :148)"
+
+[[rule]]
+id = "residual_add_post_norm"
+pattern = [
+  { op = "residual_add", local = "add", keep = true },
+  { op = "rms_norm", local = "post_norm" },
+]
+kernels = [{ module = "norm", func = "residual_add_rms_norm" }]
+repeat = "once"
+emitter = "residual_add_rms_norm"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 100
+cite = "k/rms_norm.cu:379-382 (FP32 sum of squares before the BF16 rounding: not the unfused chain); ml/qwen3_ssm/trait_decode.rs:117-129; ml/qwen3_attention/trait_impl/decode_inner.rs:241-253; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:247-261; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:131-143; ml/qwen3_ssm/trait_decode_batched.rs:284; ml/mtp_head/forward.rs:306-318"
+
+[[rule]]
+id = "ffn_residual_add"
+pattern = [{ op = "residual_add", local = "add" }]
+kernels = [{ module = "residual_add", func = "bf16_residual_add" }]
+repeat = "once"
+emitter = "residual_add"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode.rs:143-150; ml/qwen3_attention/trait_impl/decode_inner.rs:384-391; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:147-154; ml/qwen3_ssm/trait_decode_multi_seq.rs:212,235 (after the prefill and km arms); ml/qwen3_ssm/trait_decode_batched.rs:323-334; ml/mtp_head/forward.rs:337"
+
+[[rule]]
+id = "ffn_residual_add_per_row_gdn_k2k3"
+pattern = [{ op = "residual_add", local = "add", layer_kind = "linear_attention" }]
+kernels = [{ module = "residual_add", func = "bf16_residual_add" }]
+repeat = "per_row"
+emitter = "residual_add"
+rows = [2, 3]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_ssm/trait_decode_multi_seq.rs:178-196 (the n == 2 | 3 arm adds each row's FFN output in a loop, :192)"
+
+[[rule]]
+id = "final_norm"
+pattern = [{ op = "final_norm" }]
+kernels = [{ module = "norm", func = "rms_norm" }]
+repeat = "once"
+emitter = "rms_norm"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 10
+cite = "me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:340-350"
+
+# 2026-09-28: GatedDeltaNet mixer. 2026-09-30: One row (decode) runs the per-row kernels whatever
+# `ssm_batched_recurrent` says: the single-sequence path does not read it. A multi-sequence step
+# runs the batched arm under `on` (the `*_batched` rules below outrank the per-row ones) and the
+# per-row loop under `off`, or under `on` when the state slots are not contiguous (the
+# `gdn_state_slots_fragmented` route).
+
+[[rule]]
+id = "gdn_ba_gates_gemv_per_row"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_preprocess", func = "dense_gemv_ba_gates" }]
+repeat = "per_row"
+emitter = "dense_gemv_ba_gates"
+rows = [1, 128]
+modes = ["decode", "multi_seq"]
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (the per-sequence loop: one row, the `off` arm, or the fragmented-slots route)"
+
+[[rule]]
+id = "gdn_ba_gates_gemm_verify"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_preprocess", func = "dense_gemm_ba_gates_prefill" }]
+repeat = "once"
+emitter = "dense_gemm_ba_gates"
+rows = [2, 4]
+modes = ["verify"]
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:37-59 (kill switch METRALE_NO_BATCHED_BA_GATES)"
+
+[[rule]]
+id = "gdn_conv_l2_f32_per_row"
+pattern = [{ op = "conv1d_update" }, { op = "state_snapshot" }, { op = "l2_norm" }]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm_f32" }]
+repeat = "per_row"
+emitter = "conv1d_update_l2norm"
+rows = [1, 128]
+modes = ["decode", "multi_seq"]
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/ssm_forward.rs:213-233; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:99-113"
+
+[[rule]]
+id = "gdn_conv_l2_bf16_verify"
+pattern = [
+  { op = "conv1d_update" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm" }]
+repeat = "per_row"
+copies = "per_row_but_last"
+emitter = "conv1d_update_l2norm"
+rows = [2, 4]
+modes = ["verify"]
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:105-110 (BF16 conv rows, not bitwise equal to decode's FP32 conv), :114-331 (the conv window copied to conv_state_intermediates[t] after each row but the last)"
+
+[[rule]]
+id = "gdn_recurrence_f32_per_row"
+pattern = [{ op = "gdn_recurrence", input = "f32" }]
+kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32" }]
+repeat = "per_row"
+emitter = "gdn_decode"
+rows = [1, 128]
+modes = ["decode", "multi_seq"]
+when = { ssm_h_dtype = "f32" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/ssm_forward.rs:266,330-347; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:195-212"
+
+[[rule]]
+id = "gdn_recurrence_f32_fused_norm"
+pattern = [{ op = "gdn_recurrence", input = "f32" }, { op = "gated_rms_norm" }]
+kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32_norm" }]
+repeat = "per_row"
+emitter = "gdn_decode_f32_norm"
+rows = [1, 1]
+modes = ["decode"]
+when = { ssm_h_dtype = "f32" }
+numerics = "differs"
+lever = "gdn_fused_norm"
+priority = 200
+cite = "ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:940-942,1051 (the fused kernel clamps the state norm, the unfused one does not)"
+
+# 2026-09-30: The same lever on the per-sequence multi-sequence arm. Under `on` the batched arm
+# with this lever runs gated_delta_rule_decode_f32_strided_norm (or its half-register twin),
+# which no rule models; the executor refuses the lever.
+[[rule]]
+id = "gdn_recurrence_f32_fused_norm_per_row"
+pattern = [{ op = "gdn_recurrence", input = "f32" }, { op = "gated_rms_norm" }]
+kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32_norm" }]
+repeat = "per_row"
+emitter = "gdn_decode_f32_norm"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_h_dtype = "f32", ssm_batched_recurrent = "off" }
+numerics = "differs"
+lever = "gdn_fused_norm"
+priority = 200
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:160-190 (the per-sequence arm's fused norm); ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-262 (the batched arm's strided fused norm, not modelled)"
+
+[[rule]]
+id = "gdn_recurrence_wy2_verify"
+pattern = [{ op = "gdn_recurrence", input = "bf16", writes = "bf16" }]
+kernels = [{ module = "gated_delta_rule_wy", func = "gated_delta_rule_wy2" }]
+repeat = "once"
+emitter = "gdn_decode_wy"
+rows = [2, 2]
+modes = ["verify"]
+when = { ssm_h_dtype = "f32" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163"
+
+[[rule]]
+id = "gdn_recurrence_wy3_verify"
+pattern = [{ op = "gdn_recurrence", input = "bf16", writes = "bf16" }]
+kernels = [{ module = "gated_delta_rule_wy3", func = "gated_delta_rule_wy3" }]
+repeat = "once"
+emitter = "gdn_decode_wy"
+rows = [3, 3]
+modes = ["verify"]
+when = { ssm_h_dtype = "f32" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163"
+
+[[rule]]
+id = "gdn_recurrence_wy4_verify"
+pattern = [{ op = "gdn_recurrence", input = "bf16", writes = "bf16" }]
+kernels = [{ module = "gated_delta_rule_wy4", func = "gated_delta_rule_wy4" }]
+repeat = "once"
+emitter = "gdn_decode_wy"
+rows = [4, 4]
+modes = ["verify"]
+when = { ssm_h_dtype = "f32" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163"
+
+[[rule]]
+id = "gdn_fused_conv_norm_k2_verify"
+pattern = [
+  { op = "conv1d_update" },
+  { op = "state_snapshot" },
+  { op = "l2_norm" },
+  { op = "gdn_recurrence" },
+  { op = "gated_rms_norm" },
+]
+kernels = [
+  { module = "gdn_verify_fused_k2", func = "gdn_verify_fused_conv_k2" },
+  { module = "gdn_verify_fused_k2", func = "gdn_verify_fused_norm_k2" },
+]
+repeat = "once"
+emitter = "gdn_verify_fused_k2"
+rows = [2, 2]
+modes = ["verify"]
+numerics = "differs"
+lever = "gdn_fused_verify"
+priority = 200
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:57-67 (METRALE_GDN_FUSED_VERIFY=1; checked at cos >= 0.99999, not bitwise)"
+
+[[rule]]
+id = "gdn_out_norm_f32_per_row"
+pattern = [{ op = "gated_rms_norm", input = "f32" }]
+kernels = [{ module = "norm", func = "gated_rms_norm_f32_input" }]
+repeat = "per_row"
+emitter = "gated_rms_norm"
+rows = [1, 128]
+modes = ["decode", "multi_seq"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/ssm_forward.rs:354-372; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:222-236"
+
+# 2026-09-30: The batched arm (`ssm_batched_recurrent = on`, the GB10 default since #51): one
+# launch for all rows, each kernel a stride twin of its per-row one (same per-row arithmetic,
+# gdn_decode_strided_microtest). Moved here from kernels/hopper/common/FUSIONS.toml.
+
+[[rule]]
+id = "gdn_ba_gates_gemm_batched"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_preprocess", func = "dense_gemm_ba_gates_prefill" }]
+repeat = "once"
+emitter = "dense_gemm_ba_gates"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 110
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-96 (enabled, the strided GDN kernel loaded, n > 1), :155-171"
+
+[[rule]]
+id = "gdn_conv_l2_f32_batched"
+pattern = [{ op = "conv1d_update" }, { op = "state_snapshot" }, { op = "l2_norm" }]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm_f32_strided" }]
+repeat = "once"
+emitter = "conv1d_update_l2norm_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 110
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:182-199 (one launch when the strided kernel is loaded)"
+
+[[rule]]
+id = "gdn_recurrence_f32_batched"
+pattern = [{ op = "gdn_recurrence", input = "f32" }]
+kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32_strided" }]
+repeat = "once"
+emitter = "gdn_decode_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_h_dtype = "f32", ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-222 (the fused-norm arm needs --gdn-fused-norm, default off), :328-350"
+
+[[rule]]
+id = "gdn_out_norm_f32_batched"
+pattern = [{ op = "gated_rms_norm", input = "f32" }]
+kernels = [{ module = "norm", func = "gated_rms_norm_f32_input_strided" }]
+repeat = "once"
+emitter = "gated_rms_norm_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (one launch when the strided gated norm is loaded: not for sigmoid-gated norms, ml/qwen3_ssm/init.rs:96-100)"
+
+# 2026-09-30: The batched BA GEMM's byte-identical twin, which `ops::dense_gemm_ba_gates_prefill`
+# picks when `ssm_ba_gates_hopper` is on and the rows fill the device at two CTAs per SM: 96 rows
+# on GB10's 48 SMs (kernels/DEVICES.toml). The executor checks the pick against that guard.
+[[rule]]
+id = "gdn_ba_gates_gemm_batched_twin"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_ba_gates_hopper", func = "dense_gemm_ba_gates_prefill_hopper" }]
+repeat = "once"
+emitter = "dense_gemm_ba_gates"
+rows = [96, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on" }
+numerics = "reference"
+priority = 120
+cite = "ml/ops/ssm_preproc.rs:333-362 (the pick); ml/ops/ssm_ba_gates_hopper.rs:88-112 (the guard: 2 CTAs per SM)"
+
+# 2026-09-30: The batched arm's run-time fallback. The per-sequence loop it falls back to is the
+# code the `off` arm runs (per_seq.rs, `decode_ms_ssm_recurrent_per_seq`), so the route plans as
+# `off`.
+[[runtime]]
+id = "gdn_state_slots_fragmented"
+when = { ssm_batched_recurrent = "on" }
+modes = ["multi_seq"]
+rows = [2, 128]
+plans_as = { ssm_batched_recurrent = "off" }
+why = "the sequences' GDN state slots are not contiguous in slice order (slots fragment as sequences finish), and the step runs the per-sequence loop"
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-150 (the contiguity check), :396-397 (the per-sequence call)"
+
+[[rule]]
+id = "gdn_out_norm_prefill_verify"
+pattern = [{ op = "gated_rms_norm", input = "bf16" }]
+kernels = [{ module = "norm", func = "gated_rms_norm_prefill" }]
+repeat = "once"
+emitter = "gated_rms_norm"
+rows = [2, 4]
+modes = ["verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:138-157 (kill switch METRALE_NO_BATCHED_GDN_NORM)"
+
+# 2026-09-28: Attention mixer.
+
+[[rule]]
+id = "deinterleave_qg"
+pattern = [{ op = "split" }]
+kernels = [{ module = "ssm_preprocess", func = "deinterleave_qg" }]
+repeat = "once"
+emitter = "deinterleave_qg"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 5
+cite = "ml/qwen3_attention/decode/attention_forward/q_proj.rs:70-79; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-286; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:186-198"
+
+[[rule]]
+id = "qk_norm_rows"
+pattern = [{ op = "qk_norm" }]
+kernels = [{ module = "norm", func = "rms_norm" }]
+repeat = "once"
+emitter = "rms_norm"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/decode/attention_forward.rs:140-151,174-186; ml/mtp_head/forward.rs:230-251"
+
+[[rule]]
+id = "qk_norm_strided"
+pattern = [{ op = "qk_norm" }]
+kernels = [{ module = "norm", func = "rms_norm_strided" }]
+repeat = "once"
+emitter = "rms_norm_strided"
+rows = [2, 128]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:234-283 (bit-identical to rms_norm per row)"
+
+[[rule]]
+id = "rope_mrope_interleaved"
+pattern = [{ op = "rope" }]
+kernels = [{ module = "rope_mrope_interleaved", func = "rope_forward_mrope_interleaved" }]
+repeat = "once"
+emitter = "rope_mrope"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/decode/attention_forward/rope.rs:70-88"
+
+[[rule]]
+id = "rope_strided"
+pattern = [{ op = "rope" }]
+kernels = [{ module = "rope", func = "rope_forward_strided" }]
+repeat = "once"
+emitter = "rope_strided"
+rows = [2, 128]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/trait_impl/multi_seq/attn.rs:48-87 (plain RoPE; bit-identical to MRoPE while pos_t == pos_h == pos_w, k/rope_mrope_interleaved.cu:15-17)"
+
+[[rule]]
+id = "rope_plain_draft"
+pattern = [{ op = "rope" }]
+kernels = [{ module = "rope", func = "rope_forward" }]
+repeat = "once"
+emitter = "rope"
+rows = [1, 1]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward.rs:258-271"
+
+[[rule]]
+id = "kv_write_bf16"
+pattern = [{ op = "kv_write" }]
+kernels = [{ module = "reshape_and_cache", func = "reshape_and_cache_flash" }]
+repeat = "once"
+emitter = "kv_write"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/decode/write_kv_cache.rs:428-444; ml/qwen3_attention/trait_impl/multi_seq/attn.rs:159-176; ml/mtp_head/forward/attend.rs:36-73 (the draft KV is BF16 under mtp_quantization bf16, ml/mtp_head/new.rs:228-236)"
+
+[[rule]]
+id = "paged_attention_bf16"
+pattern = [{ op = "paged_attention" }]
+kernels = [{ module = "paged_decode", func = "paged_decode_attn" }]
+repeat = "once"
+emitter = "paged_decode"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/decode/run_paged_decode/bf16_fp8.rs:182-201; ml/qwen3_attention/decode/splitk_dispatch.rs:241-251 (no BF16 split-K pair on GB10); ml/qwen3_attention/trait_impl/multi_seq/attn.rs:231-306"
+
+[[rule]]
+id = "sigmoid_gate_mul"
+pattern = [{ op = "sigmoid_gate_mul" }]
+kernels = [{ module = "residual_add", func = "sigmoid_gate_mul" }]
+repeat = "once"
+emitter = "sigmoid_gate_mul"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/decode/attention_forward.rs:421-432; ml/mtp_head/forward.rs:292-300"
+
+[[rule]]
+id = "sigmoid_gate_mul_batched"
+pattern = [{ op = "sigmoid_gate_mul" }]
+kernels = [{ module = "residual_add", func = "sigmoid_gate_mul_batched" }]
+repeat = "once"
+emitter = "sigmoid_gate_mul"
+rows = [2, 128]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:59-81"
+
+# 2026-09-28: NVFP4 projections (W4A16).
+# The dense checkpoint's FP8 per-channel projections are requantized to NVFP4 at load
+# (crates/model-arch/src/weight_loader/qwen35_dense.rs:81-103), so every dense projection
+# below reads NVFP4 weights and BF16 activations.
+
+[[rule]]
+id = "w4a16_gemv_sw_1row"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "o", "down"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_sw" }]
+repeat = "once"
+emitter = "w4a16_decode_gemv"
+rows = [1, 1]
+modes = ["decode"]
+when = { gemv_sw = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/ssm_forward.rs:90-105,389-422; ml/qwen3_attention/decode/attention_forward_oproj.rs:82-93; ml/dense_ffn_decode.rs:386-397 (gemv_sw on unless METRALE_NO_GEMV_SW=1, ml/ops/model_levers_resolve.rs:53; bit-identical to w4a16_gemv, k/w4a16_gemv_fused.cu:305-307)"
+
+[[rule]]
+id = "w4a16_gemv_qg_1row"
+pattern = [{ op = "linear", role = "q", weight = "nvfp4/g16" }, { op = "split" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_qg" }]
+repeat = "once"
+emitter = "w4a16_gemv_qg"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/decode/attention_forward/q_proj.rs:80-118 (K walk differs from w4a16_gemv, k/w4a16_gemv.cu:1447-1449)"
+
+[[rule]]
+id = "w4a16_gemv_dual_kv_1row"
+pattern = [
+  { op = "linear", role = "k", weight = "nvfp4/g16", keep = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+]
+kernels = [{ module = "w4a16_gemv_fused", func = "w4a16_gemv_dual" }]
+repeat = "once"
+emitter = "w4a16_gemv_dual"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/decode/attention_forward_kv.rs:80-97 (always the non-_sw dual)"
+
+[[rule]]
+id = "w4a16_gemv_dual_sw_gate_up_1row"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv_fused", func = "w4a16_gemv_dual_sw" }]
+repeat = "once"
+emitter = "w4a16_gemv_dual"
+rows = [1, 1]
+modes = ["decode"]
+when = { gemv_sw = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode.rs:335-362"
+
+[[rule]]
+id = "silu_mul_split_1row"
+pattern = [{ op = "silu_mul", local = "act" }]
+kernels = [{ module = "moe_silu_mul", func = "moe_silu_mul" }]
+repeat = "once"
+emitter = "silu_mul"
+rows = [1, 1]
+modes = ["decode"]
+when = { decode_split_silu = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode.rs:371-385 (decode_split_silu = true, kernels/gb10/HARDWARE.toml:164, kill switch METRALE_NO_DECODE_SPLIT_SILU)"
+
+[[rule]]
+id = "silu_input_down_1row"
+pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv_fused", func = "w4a16_gemv_silu_input_sw" }]
+repeat = "once"
+emitter = "w4a16_gemv_silu_input"
+rows = [1, 1]
+modes = ["decode"]
+when = { gemv_sw = "on" }
+numerics = "differs"
+lever = "decode_fused_silu"
+priority = 200
+cite = "ml/dense_ffn_decode.rs:407-433; ml/dense_ffn_fp8_down.rs:28-31 (keeps the SiLU product in FP32 where moe_silu_mul rounds it to BF16)"
+
+[[rule]]
+id = "silu_mul_rows"
+pattern = [{ op = "silu_mul", local = "act" }]
+kernels = [{ module = "moe_silu_mul", func = "moe_silu_mul" }]
+repeat = "once"
+emitter = "silu_mul"
+rows = [1, 128]
+modes = ["multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 5
+cite = "ml/dense_ffn_decode_batch.rs:91-123,238-307 (forward_k2/k3/km); ml/mtp_head/moe_forward.rs:50-63"
+
+[[rule]]
+id = "w4a16_tc8_multi_seq"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "q", "k", "v", "o", "down"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv_tc", func = "w4a16_gemv_tc8" }]
+repeat = "once"
+emitter = "w4a16_gemv_batchm"
+rows = [2, 8]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows", w4a16_tc = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207,353-370; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:257-316; ml/dense_ffn_decode_batch.rs:238-307; ml/ops/quant_dispatch.rs:183-205; ml/ops/gemv_tc.rs:56-74,137-148 (tc8 rounds differently from the CUDA-core tiers, k/w4a16_gemv_tc.cu:26-29)"
+
+[[rule]]
+id = "w4a16_tc8_verify_k4"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "q", "k", "v", "o", "down"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv_tc", func = "w4a16_gemv_tc8" }]
+repeat = "once"
+emitter = "w4a16_gemv_batchm"
+rows = [4, 4]
+modes = ["verify"]
+when = { row_tiers = "by_rows", w4a16_tc = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307"
+
+[[rule]]
+id = "w4a16_tc8_gate_up_km"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a16_gemv_tc", func = "w4a16_gemv_tc8" },
+  { module = "w4a16_gemv_tc", func = "w4a16_gemv_tc8" },
+]
+repeat = "once"
+emitter = "dense_ffn_km"
+rows = [4, 8]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows", w4a16_tc = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (try_forward_km: gate and up are two launches); arms: ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:178-208 (4..=ffn_proj_max_rows() = 8), ml/qwen3_ssm/trait_decode_multi_seq.rs:211-230, ml/qwen3_ssm/trait_decode_batched.rs:348-365"
+
+[[rule]]
+id = "w4a16_batch2_verify"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "o", "down"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_batch2" }]
+repeat = "once"
+emitter = "w4a16_gemv_batch"
+rows = [2, 2]
+modes = ["verify"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:251-262; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:202-212; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/dense_ffn_decode_batch.rs:91-123 (bit-identical per row to w4a16_gemv, k/w4a16_gemv.cu:454)"
+
+[[rule]]
+id = "w4a16_batch2_ms_o_down"
+pattern = [{ op = "linear", roles = ["o", "down"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_batch2" }]
+repeat = "once"
+emitter = "w4a16_gemv_batch"
+rows = [2, 2]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/dense_ffn_decode_batch.rs:91-123 (forward_k2 down)"
+
+[[rule]]
+id = "w4a16_batch3_verify"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "o", "down"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_batch3" }]
+repeat = "once"
+emitter = "w4a16_gemv_batch"
+rows = [3, 3]
+modes = ["verify"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:225-236; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:191-201; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-340; ml/dense_ffn_decode_batch.rs:125-188"
+
+[[rule]]
+id = "w4a16_dual_batch2_gate_up"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_dual_batch2" }]
+repeat = "once"
+emitter = "w4a16_gemv_dual_batch"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 20
+cite = "ml/dense_ffn_decode_batch.rs:91-123 (forward_k2); arms ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:153-176, ml/qwen3_ssm/trait_decode_multi_seq.rs:178-196, ml/qwen3_ssm/trait_decode_batched.rs:337-347"
+
+[[rule]]
+id = "w4a16_dual_batch3_gate_up"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_dual_batch3" }]
+repeat = "once"
+emitter = "w4a16_gemv_dual_batch"
+rows = [3, 3]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 20
+cite = "ml/dense_ffn_decode_batch.rs:125-188 (forward_k3); arm ml/qwen3_ssm/trait_decode_batched.rs:326-336"
+
+[[rule]]
+id = "w4a16_qg_batch2"
+pattern = [{ op = "linear", role = "q", weight = "nvfp4/g16" }, { op = "split" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_qg_batch2" }]
+repeat = "once"
+emitter = "w4a16_gemv_qg_batch"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:44-159 (matches w4a16_gemv_qg bit for bit, k/w4a16_gemv.cu:1656-1658)"
+
+[[rule]]
+id = "w4a16_qg_batch3"
+pattern = [{ op = "linear", role = "q", weight = "nvfp4/g16" }, { op = "split" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_qg_batch3" }]
+repeat = "once"
+emitter = "w4a16_gemv_qg_batch"
+rows = [3, 3]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:44-159"
+
+[[rule]]
+id = "w4a16_dual_batch2_kv"
+pattern = [
+  { op = "linear", role = "k", weight = "nvfp4/g16", keep = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_dual_batch2" }]
+repeat = "once"
+emitter = "w4a16_gemv_dual_batch"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:165-192 (w4a16_gemv_qg's K walk, not w4a16_gemv_dual's, k/w4a16_gemv.cu:1788; the copies into qkv_buf are D2D)"
+
+[[rule]]
+id = "w4a16_dual_batch3_kv"
+pattern = [
+  { op = "linear", role = "k", weight = "nvfp4/g16", keep = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_dual_batch3" }]
+repeat = "once"
+emitter = "w4a16_gemv_dual_batch"
+rows = [3, 3]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:165-192"
+
+[[rule]]
+id = "w4a16_gemm_t_p3_rows"
+pattern = [{ op = "linear", roles = ["qkvz", "q", "k", "v"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16", func = "w4a16_gemm_t_p3" }]
+repeat = "once"
+emitter = "w4a16_gemm_n128"
+rows = [9, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207; ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:340-441; ml/qwen3_ssm/kernel_select.rs:30-98 (E4M3 activations, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:344-347)"
+
+[[rule]]
+id = "w4a16_gemm_t_k64_n64_p3_rows"
+pattern = [{ op = "linear", roles = ["gdn_out", "o"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16", func = "w4a16_gemm_t_k64_n64_p3" }]
+repeat = "once"
+emitter = "w4a16_gemm"
+rows = [9, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:353-370; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/mod.rs:142-179 (K = 6144 takes the k64 tile; 40 * ceil(m / 64) <= 64 picks n64)"
+
+[[rule]]
+id = "w4a16_gemm_t_m128_rows"
+pattern = [{ op = "linear", roles = ["qkvz", "q", "k", "v", "o"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16", func = "w4a16_gemm_t_m128" }]
+repeat = "once"
+emitter = "w4a16_gemm_n128_m128"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207 (m >= 65 unless METRALE_NO_SSM_M128); ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:340-441; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366"
+
+[[rule]]
+id = "w4a16_gemm_t_k64_p3_gdn_out_wide"
+pattern = [{ op = "linear", role = "gdn_out", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16", func = "w4a16_gemm_t_k64_p3" }]
+repeat = "once"
+emitter = "w4a16_gemm_n128"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 60
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:353-370; ml/qwen3_ssm/kernel_select.rs:81-98 (m128 refused: 40 CTAs < 48 SMs; same bits as k64_n64_p3, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:1629-1631)"
+
+[[rule]]
+id = "w4a4_downcast_mx8"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "q", "k", "v", "o", "down"], weight = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+]
+repeat = "once"
+emitter = "w4a4_proj"
+rows = [4, 8]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows" }
+numerics = "differs"
+lever = "w4a4_downcast"
+priority = 200
+cite = "ml/ops/w4a4_proj.rs:40,191-231 (--w4a4-downcast under --weight-quantization nvfp4, default off: crates/server/src/cli/serve_args.rs:285-306; an accuracy change, w4a4_proj.rs:6-10)"
+
+# 2026-09-28: Dense FFN, NVFP4 MMQ (W4A4).
+# forward_prefill quantizes the activations to NVFP4 and runs the MMQ tiles: W4A4 at these
+# row counts by default (ml/dense_ffn_prefill_nvfp4.rs:51-68,211-330).
+
+[[rule]]
+id = "ffn_mmq16_gate_up_gdn"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16", layer_kind = "linear_attention" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [5, 8]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (n >= METRALE_SSM_FFN_PREFILL_MIN_N, default 5, ahead of the km arm: :24-40); ml/dense_ffn_prefill_nvfp4.rs:51-55"
+
+[[rule]]
+id = "ffn_mmq16_act_down_gdn"
+pattern = [
+  { op = "silu_mul", local = "act", layer_kind = "linear_attention" },
+  { op = "linear", role = "down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [5, 8]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 (the tile path leaves the down scale to metrale_nvfp4_scale_bf16)"
+
+[[rule]]
+id = "ffn_mmq16_gate_up"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [9, 16]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 (a dense FFN above the km band); ml/dense_ffn_prefill_nvfp4.rs:51-55"
+
+[[rule]]
+id = "ffn_mmq16_act_down"
+pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [9, 16]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq32_gate_up"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [17, 32]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:56-60"
+
+[[rule]]
+id = "ffn_mmq32_act_down"
+pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [17, 32]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:56-60,272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq64_gate_up"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [33, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:61-66 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:232-235)"
+
+[[rule]]
+id = "ffn_mmq64_act_down"
+pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [33, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:61-66,272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq_pipe_gate_up"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:67-68; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe)"
+
+[[rule]]
+id = "ffn_mmq_pipe_act_down"
+pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/ops/nvfp4_mmq.rs:175-183 (the pipe applies the down scale in its store, so no metrale_nvfp4_scale_bf16)"
+
+# 2026-09-28: FP8 block-scaled projections (W8A16).
+# The MoE checkpoint's projections are native FP8 with 128x128 block scales. Under the
+# canonical row tiers (the default for an FP8 MoE checkpoint: ml/row_tiers.rs:64-78, published
+# at crates/server/src/main_modules/serve_load/model_setup.rs:319-327) every row count takes
+# the pipelined tile family.
+
+[[rule]]
+id = "w8a16_m32"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "q", "k", "v", "o"], weight = "fp8/block128x128" }]
+kernels = [{ module = "w8a16_gemm_pipelined_m32", func = "w8a16_gemm_pipelined_m32" }]
+repeat = "once"
+emitter = "w8a16_gemm_pipelined"
+rows = [1, 32]
+modes = ["decode", "multi_seq", "verify"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/row_tier_proj.rs:64-117; ml/qwen3_attention/decode/attention_forward/q_proj.rs:54-66; ml/qwen3_attention/decode/attention_forward_kv.rs:49-76; ml/ops/gemm_quant_w8a16.rs:272-274; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248; ml/ops/w8a16_gemm_pipelined_m32.rs:318-344"
+
+[[rule]]
+id = "w8a16_m64"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "q", "k", "v", "o"], weight = "fp8/block128x128" }]
+kernels = [{ module = "w8a16_gemm_pipelined_m32", func = "w8a16_gemm_pipelined_m64" }]
+repeat = "once"
+emitter = "w8a16_gemm_pipelined"
+rows = [33, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212,253-258 (canonical chunk 64); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248; ml/ops/w8a16_gemm_pipelined_m32.rs:345-357"
+
+[[rule]]
+id = "w8a16_m64_attn_chunked"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o"], weight = "fp8/block128x128" }]
+kernels = [{ module = "w8a16_gemm_pipelined_m32", func = "w8a16_gemm_pipelined_m64" }]
+repeat = "chunk64"
+emitter = "w8a16_gemm_pipelined"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:253-285 (64-row chunks); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248,279-304 (step 64)"
+
+[[rule]]
+id = "w8a16_full_gdn_wide"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out"], weight = "fp8/block128x128" }]
+kernels = [{ module = "w8a16_gemm_pipelined", func = "w8a16_gemm_pipelined" }]
+repeat = "once"
+emitter = "w8a16_gemm_pipelined"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:101-167,257-323; ml/ops/w8a16_gemm_pipelined_m32.rs:318-371 (w8a16_gemm_pipelined_by_m above 64 rows)"
+
+# 2026-09-28: MoE FFN.
+# Path A, one row: MoeLayer::forward (ml/moe/forward.rs). Path B, 2..=64 rows under the
+# canonical tiers: forward_fp8_grouped_decode_routed with the per-row router
+# (ml/moe/forward_fp8_grouped_decode.rs:206-380; claimed bit for bit equal to path A given
+# the same routing, :14-18). Above 64 rows: forward_prefill_fp8, W8A8.
+
+[[rule]]
+id = "moe_router_gemv"
+pattern = [{ op = "router" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "once"
+emitter = "moe_router"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/moe/forward/route.rs:36"
+
+[[rule]]
+id = "moe_topk_softmax"
+pattern = [{ op = "top_k" }]
+kernels = [{ module = "moe_topk", func = "moe_topk_softmax" }]
+repeat = "once"
+emitter = "moe_topk"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/moe/forward/route.rs:117-128 (ties go to the lower expert index)"
+
+[[rule]]
+id = "moe_gate_up_shared_fp8"
+pattern = [
+  { op = "expert_gate_up", weight = "fp8/block128x128", keep = true },
+  { op = "linear", role = "shared_gate_up", sibling = true },
+]
+kernels = [{ module = "moe_shared_expert_fused_fp8", func = "moe_expert_gate_up_shared_fp8" }]
+repeat = "once"
+emitter = "moe_fused_fp8"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward.rs:235-262 (grid y 0..7 routed experts, y = 8 the shared expert); ml/moe/init.rs:431-434"
+
+[[rule]]
+id = "moe_silu_down_shared_fp8"
+pattern = [
+  { op = "silu_mul", local = "experts_act" },
+  { op = "expert_down", keep = true },
+  { op = "silu_mul", local = "shared_act", sibling = true },
+  { op = "linear", role = "shared_down" },
+]
+kernels = [{ module = "moe_shared_expert_fused_fp8", func = "moe_expert_silu_down_shared_fp8" }]
+repeat = "once"
+emitter = "moe_fused_fp8"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward.rs:263-304; ml/moe/init.rs:435-438"
+
+[[rule]]
+id = "moe_weighted_sum_blend"
+pattern = [{ op = "linear", role = "shared_gate" }, { op = "blend" }]
+kernels = [{ module = "moe_expert_gemv", func = "moe_weighted_sum_blend" }]
+repeat = "once"
+emitter = "moe_blend"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward.rs:446-476 (sum of w * out plus sigmoid(x . seg) * shared, rounded to BF16 once); the EP reduce is a no-op without EP, ml/moe/forward/ep_reduce.rs:12-50"
+
+[[rule]]
+id = "moe_grouped_router_rows"
+pattern = [{ op = "router" }]
+kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm" }]
+repeat = "once"
+emitter = "moe_router"
+rows = [2, 64]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 10
+cite = "ml/moe/forward_fp8_grouped_router.rs:95-137 (the per-row router repeats the one-row router's bits, :6-12); arms ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:94-130, ml/qwen3_ssm/trait_decode_multi_seq.rs:154-170, ml/qwen3_ssm/trait_decode_batched.rs:304-320"
+
+[[rule]]
+id = "moe_grouped_topk_sort"
+pattern = [{ op = "top_k" }]
+kernels = [
+  { module = "moe_topk", func = "moe_topk_softmax_rows" },
+  { module = "moe_fp8_grouped_sort", func = "moe_fp8_grouped_sort" },
+]
+repeat = "once"
+emitter = "moe_grouped_route"
+rows = [2, 64]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 10
+cite = "ml/moe/forward_fp8_grouped_decode.rs:268-300 (FP8_GROUPED_DECODE_MAX_ROWS = 64, :28)"
+
+[[rule]]
+id = "moe_gate_up_act_grouped"
+pattern = [
+  { op = "expert_gate_up", weight = "fp8/block128x128" },
+  { op = "silu_mul", local = "experts_act", keep = true },
+  { op = "linear", role = "shared_gate_up", sibling = true },
+  { op = "silu_mul", local = "shared_act" },
+]
+kernels = [{ module = "moe_shared_expert_fused_fp8_grouped", func = "moe_expert_gate_up_act_fp8_grouped" }]
+repeat = "once"
+emitter = "moe_grouped_fp8"
+rows = [2, 64]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward_fp8_grouped_decode.rs:300-321; k/moe_shared_expert_fused_fp8_grouped.cu:17-22 (writes the FP32 SiLU product; per row equal to moe_shared_expert_fused_fp8.cu bit for bit)"
+
+[[rule]]
+id = "moe_down_act_grouped"
+pattern = [
+  { op = "expert_down", weight = "fp8/block128x128", keep = true },
+  { op = "linear", role = "shared_down", sibling = true },
+]
+kernels = [{ module = "moe_shared_expert_fused_fp8_grouped", func = "moe_expert_down_act_fp8_grouped" }]
+repeat = "once"
+emitter = "moe_grouped_fp8"
+rows = [2, 64]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward_fp8_grouped_decode.rs:322-340"
+
+[[rule]]
+id = "moe_blend_grouped"
+pattern = [{ op = "linear", role = "shared_gate" }, { op = "blend" }]
+kernels = [{ module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp8_grouped" }]
+repeat = "once"
+emitter = "moe_blend"
+rows = [2, 64]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward_fp8_grouped_decode.rs:364-380"
+
+[[rule]]
+id = "moe_prefill_fp8_w8a8_wide"
+pattern = [
+  { op = "router" },
+  { op = "top_k" },
+  { op = "expert_gate_up", weight = "fp8/block128x128" },
+  { op = "silu_mul", local = "experts_act" },
+  { op = "expert_down" },
+  { op = "linear", role = "shared_gate_up", sibling = true },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down" },
+  { op = "linear", role = "shared_gate", sibling = true },
+  { op = "blend" },
+]
+kernels = [
+  { module = "per_token_group_quant_fp8", func = "per_token_group_quant_fp8" },
+  { module = "fp8_gemm_t_blockscaled", func = "fp8_gemm_t_blockscaled" },
+  { module = "fp8_gemm_t_blockscaled", func = "fp8_gemm_t_blockscaled" },
+  { module = "moe_silu_mul", func = "silu_mul_quant_fp8" },
+  { module = "fp8_gemm_t_blockscaled", func = "fp8_gemm_t_blockscaled" },
+  { module = "gemm", func = "dense_gemm_bf16_router" },
+  { module = "moe_topk", func = "moe_topk_softmax_batched" },
+  { module = "moe", func = "moe_sort_by_expert" },
+  { module = "moe", func = "moe_build_tile_worklist" },
+  { module = "moe_w8a8_grouped_gemm", func = "moe_w8a8_grouped_gemm_pm4" },
+  { module = "moe_w8a8_grouped_gemm", func = "moe_w8a8_grouped_gemm_pm4" },
+  { module = "moe_silu_mul", func = "silu_mul_quant_fp8" },
+  { module = "moe", func = "moe_build_tile_worklist" },
+  { module = "moe_w8a8_grouped_gemm", func = "moe_w8a8_grouped_gemm_pm4" },
+  { module = "moe_unpermute_blend", func = "moe_unpermute_blend" },
+]
+repeat = "once"
+emitter = "moe_prefill_fp8"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "canonical" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 and ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (forward_prefill above the grouped cap); ml/moe/forward_prefill_fp8.rs:113-165 (shared W8A8 first, input quantized once), :166-265 (router: dense_gemm_router below MOE_ROUTER_RT_MIN_ROWS = 1024, ml/moe/helpers_c.rs:246-283), :313-395; ml/moe/forward_prefill_fp8/gate_up.rs:57-160 and down.rs:40-140 (ctx.decode_step declines the adaptive and E4M3 arms, ml/moe/adaptive_fp8.rs:105-116); ml/moe/forward_prefill_fp8/combine.rs:40-60 (W8A8 activations: not row-invariant with paths A and B)"
+
+# 2026-09-28: Vocabulary heads.
+
+[[rule]]
+id = "lm_head_bf16_gemv"
+pattern = [{ op = "lm_head", weight = "bf16" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "once"
+emitter = "lm_head"
+rows = [1, 1]
+modes = ["decode"]
+when = { lm_head_dtype = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "mm/impl_a3_lm_head.rs:392-402 (use_fp32_logits is false, mm/impl_a1/kernels.rs:200)"
+
+[[rule]]
+id = "lm_head_bf16_batchm"
+pattern = [{ op = "lm_head", weight = "bf16" }]
+kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm" }]
+repeat = "once"
+emitter = "lm_head"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+when = { lm_head_dtype = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "me/lm_head_batched.rs:133-162 (m <= lm_head_batchm_max = 8, kernels/gb10/HARDWARE.toml:115); mm/impl_a3_lm_head.rs:150-202 (verify); per row bit-identical to dense_gemv_bf16, k/dense_gemv_bf16_batchm.cu:16"
+
+[[rule]]
+id = "lm_head_bf16_gemm"
+pattern = [{ op = "lm_head", weight = "bf16" }]
+kernels = [{ module = "gemm", func = "dense_gemm_bf16" }]
+repeat = "once"
+emitter = "lm_head"
+rows = [9, 128]
+modes = ["multi_seq"]
+when = { lm_head_dtype = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "me/lm_head_batched.rs:133-162"
+
+[[rule]]
+id = "draft_lm_head_nvfp4"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_sw" }]
+repeat = "once"
+emitter = "w4a16_decode_gemv"
+rows = [1, 1]
+modes = ["draft"]
+when = { gemv_sw = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward.rs:360-371 (the draft head is NVFP4 whatever the target head: a draft-only copy when the target head is BF16, mm/impl_a1/ssm_setup.rs:48-50)"
+
+[[rule]]
+id = "argmax_host"
+pattern = [{ op = "argmax" }]
+kernels = []
+repeat = "once"
+emitter = "host_sampling"
+rows = [1, 128]
+modes = ["decode", "multi_seq"]
+numerics = "reference"
+priority = 10
+cite = "me/decode_a2.rs:489 (the step returns the logits; the caller samples on the host)"
+
+[[rule]]
+id = "argmax_verify_rows"
+pattern = [{ op = "argmax" }]
+kernels = [{ module = "argmax", func = "argmax_bf16" }]
+repeat = "per_row"
+emitter = "argmax"
+rows = [2, 4]
+modes = ["verify"]
+numerics = "reference"
+priority = 10
+cite = "me/verify_b.rs:374-389; me/verify_c.rs:344-356; me/verify_c2.rs:363-375 (one argmax_bf16 per row into scratch + 4t, inside the graph)"
+
+[[rule]]
+id = "draft_argmax"
+pattern = [{ op = "argmax" }]
+kernels = [{ module = "argmax", func = "argmax_bf16" }]
+repeat = "once"
+emitter = "argmax"
+rows = [1, 1]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward.rs:419-421; ml/mtp_head/forward/draft_step.rs:53-77"
+
+# 2026-09-28: MTP draft head (BF16 projections).
+
+[[rule]]
+id = "draft_concat"
+pattern = [{ op = "concat" }]
+kernels = [{ module = "residual_add", func = "bf16_concat" }]
+repeat = "once"
+emitter = "concat"
+rows = [1, 1]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward.rs:116-124"
+
+[[rule]]
+id = "draft_dense_gemv_bf16"
+pattern = [{ op = "linear", roles = ["mtp_fc", "q", "k", "v", "o", "down"], weight = "bf16" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [1, 1]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward.rs:138,186-198,224-227,303; ml/mtp_head.rs:334-343 (mtp_quantization bf16: every projection is ProjectionWeight::Bf16)"
+
+[[rule]]
+id = "draft_dense_gate_up_bf16"
+pattern = [{ op = "linear", role = "gate_up", weight = "bf16" }]
+kernels = [
+  { module = "gemv", func = "dense_gemv_bf16" },
+  { module = "gemv", func = "dense_gemv_bf16" },
+]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [1, 1]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/moe_forward.rs:30-64 (dense_ffn_forward_generic: gate and up are two GEMVs)"
+
+# 2026-09-28: Bit-identical fusions. Each names the model-arch example that byte-compares the
+# fused kernel with the unfused chain (rows 1..=128, hidden 5120 and 2048, adversarial
+# magnitudes); crates/circuit/tests/circuits.rs checks the example exists and is registered.
+
+[[rule]]
+id = "cross_layer_add_norm"
+pattern = [
+  { op = "residual_add", local = "add", keep = true },
+  { op = "rms_norm", local = "input_norm" },
+]
+kernels = [{ module = "residual_add_rms_norm_exact", func = "residual_add_rms_norm_exact" }]
+repeat = "once"
+emitter = "residual_add_rms_norm_exact"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "bit_identical"
+microtest = "residual_add_rms_norm_exact_microtest"
+priority = 100
+cite = "k/residual_add_rms_norm_exact.cu (new); replaces the layer-end ffn_residual_add (bf16_residual_add) and the next layer's input_norm_residual (rms_norm_residual), whose dispatch sites those rules cite"
+
+[[rule]]
+id = "rms_norm_quant_fp8_row"
+# 2026-09-30: Gated on `rms_norm_act_quant`, off in every policy until the executor has the
+# emitter: ungated, this priority-100 fusion took the norm ahead of a declared W8A8/W4A4
+# act_quant that the legacy decode launches separately after the norm.
+pattern = [{ op = "rms_norm" }, { op = "act_quant", format = "fp8/token" }]
+kernels = [{ module = "rms_norm_act_quant", func = "rms_norm_quant_fp8_row" }]
+repeat = "once"
+emitter = "rms_norm_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "bit_identical"
+microtest = "rms_norm_act_quant_microtest"
+when = { rms_norm_act_quant = "on" }
+priority = 100
+cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then quant_rowwise_fp8 (k/quant_rowwise_fp8.cu, ml/ops/dispatch_proj_rowwise.rs)"
+
+[[rule]]
+id = "rms_norm_quant_fp8_g128"
+pattern = [{ op = "rms_norm" }, { op = "act_quant", format = "fp8/g128" }]
+kernels = [{ module = "rms_norm_act_quant", func = "rms_norm_quant_fp8_g128" }]
+repeat = "once"
+emitter = "rms_norm_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "bit_identical"
+microtest = "rms_norm_act_quant_microtest"
+when = { rms_norm_act_quant = "on" }
+priority = 100
+cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then per_token_group_quant_fp8 (k/per_token_group_quant_fp8.cu, ml/ops/fp8_act_quant.rs)"
+
+[[rule]]
+id = "rms_norm_quant_nvfp4"
+pattern = [{ op = "rms_norm" }, { op = "act_quant", format = "nvfp4/g16" }]
+kernels = [{ module = "rms_norm_act_quant", func = "rms_norm_quant_nvfp4" }]
+repeat = "once"
+emitter = "rms_norm_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "bit_identical"
+microtest = "rms_norm_act_quant_microtest"
+when = { rms_norm_act_quant = "on" }
+priority = 100
+cite = "k/rms_norm_act_quant.cu (new); the chain rms_norm then w4a4_quant_rows (k/w4a4_gemv_mx.cu, ml/ops/w4a4_proj.rs)"
+
+# 2026-09-30: The declared W8A8 decode projections (`--weight-quantization declared`, FP8 weights
+# with per-channel scales and FP8 per-token activations: unsloth/Qwen3.8-27B's attention, GDN and
+# the FFN of layers 56-63). Every decode, verify and multi-sequence path tries the W8A8 arm first
+# at 1..=ops::W8A8_MAX_ROWS rows (ml/w8a8_layer.rs; ml/qwen3_attention/w8a8_decode_arm.rs;
+# ml/qwen3_ssm/w8a8_decode.rs; ml/dense_ffn_w8a8.rs). One quantize launch into the per-token E4M3
+# activation, then one GEMV per projection; the GEMV entry is chosen by the launch's rows
+# (ml/ops/w8a8_decode.rs `entry_index`: every entry sums in the same order).
+
+[[rule]]
+id = "w8a8_act_quant_row"
+pattern = [{ op = "act_quant", format = "fp8/token" }]
+kernels = [{ module = "w8a8_act_quant", func = "w8a8_act_quant_row" }]
+repeat = "once"
+emitter = "w8a8_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV)"
+
+[[rule]]
+id = "w8a8_act_quant_silu_row"
+pattern = [{ op = "silu_mul", local = "act" }, { op = "act_quant", format = "fp8/token" }]
+kernels = [{ module = "w8a8_act_quant", func = "w8a8_act_quant_silu_row" }]
+repeat = "once"
+emitter = "w8a8_act_quant"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_w8a8.rs:72-74; ml/w8a8_layer.rs:82-116 (silu_proj: bf16(silu(gate) * up) quantized in one launch)"
+
+[[rule]]
+id = "w8a8_gemv_mb1_ku8"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb1_ku8"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+[[rule]]
+id = "w8a8_gemv_mb2"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb2"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+[[rule]]
+id = "w8a8_gemv_mb4"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb4" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb4"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb4" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb4" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+[[rule]]
+id = "w8a8_gemv_mb8"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb8" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [33, 64]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb8"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb8" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb8" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [33, 64]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+[[rule]]
+id = "w8a8_gemv_mb16"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "qkvz", "gdn_out", "down"], weight = "fp8/channel", input = "fp8/token" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb16" }]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [65, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+
+[[rule]]
+id = "w8a8_gemv_gate_up_mb16"
+pattern = [{ op = "linear", role = "gate_up", weight = "fp8/channel", input = "fp8/token" }]
+kernels = [
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb16" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb16" },
+]
+repeat = "once"
+emitter = "w8a8_gemv"
+rows = [65, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+
+# 2026-09-30: The declared W4A4 dense FFN (NVFP4 weights with FP4 activations: unsloth/Qwen3.8-27B's
+# FFN of layers 0-55) at the rows `forward_km` serves, 1..=32 (the FFN edge,
+# ml/w4a16_gemv_tiers.rs:177-179): the single row (ml/dense_ffn_decode.rs:252-261), 2 and 3 rows
+# (forward_k2/k3 under `small_batch_w4a4`), and 4..=32 (ml/qwen3_attention/trait_impl/multi_seq/
+# ffn.rs:191-222). Each projection quantizes its input per row to NVFP4 (`w4a4_quant_rows`, the up
+# projection reuses gate's) and runs the FP4 MMA entry `mx_plan` picks for its rows and N at the
+# default levers (ml/ops/w4a4_proj/mx_plan.rs:96-127); the executor refuses a plan whose entry is
+# not that pick.
+
+[[rule]]
+id = "w4a4_act_quant"
+pattern = [{ op = "act_quant", format = "nvfp4/g16" }]
+kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_quant_rows" }]
+repeat = "once"
+emitter = "w4a4_act_quant"
+rows = [1, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/ops/w4a4_proj.rs:331-347 (the quantize launch of nvfp4_proj_small_m, skipped for up's same input)"
+
+[[rule]]
+id = "w4a4_gate_up_1_8"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_gate_up_9_16"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_ps" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_ps" },
+]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_gate_up_17_32"
+pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_ps" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_ps" },
+]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_down_1_8"
+pattern = [{ op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" }]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_down_9_16"
+pattern = [{ op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_nt2" }]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+[[rule]]
+id = "w4a4_down_17_32"
+pattern = [{ op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" }]
+kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_nt4" }]
+repeat = "once"
+emitter = "w4a4_gemv"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+
+# 2026-09-30: The declared W4A4 FFN where `forward_prefill` serves it: a GDN layer's FFN from
+# METRALE_SSM_FFN_PREFILL_MIN_N (5) rows (ml/qwen3_ssm/trait_decode_multi_seq.rs:201-220), every
+# layer's above the 32-row FFN edge (ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:191-222). A
+# weight stamped A4 takes the NVFP4 MMQ arm there as an unstamped one does under `nvfp4`
+# (crates/config/src/weight_quantization.rs:167-181), so these are the MMQ rules above with the
+# act_quant the declared circuit places before the projection inside the group: the MMQ quantizer
+# writes its own block layout, which no other kernel reads.
+
+[[rule]]
+id = "ffn_mmq16_a4_gate_up_gdn"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [5, 16]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+
+[[rule]]
+id = "ffn_mmq16_a4_act_down_gdn"
+pattern = [
+  { op = "silu_mul", local = "act", layer_kind = "linear_attention" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [5, 16]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq32_a4_gate_up_gdn"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [17, 32]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+
+[[rule]]
+id = "ffn_mmq32_a4_act_down_gdn"
+pattern = [
+  { op = "silu_mul", local = "act", layer_kind = "linear_attention" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [17, 32]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq64_a4_gate_up"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [33, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+
+[[rule]]
+id = "ffn_mmq64_a4_act_down"
+pattern = [
+  { op = "silu_mul", local = "act" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [33, 64]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+
+[[rule]]
+id = "ffn_mmq_pipe_a4_gate_up"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+
+[[rule]]
+id = "ffn_mmq_pipe_a4_act_down"
+pattern = [
+  { op = "silu_mul", local = "act" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "dense_ffn_mmq"
+rows = [65, 128]
+modes = ["multi_seq"]
+when = { row_tiers = "by_rows" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183"

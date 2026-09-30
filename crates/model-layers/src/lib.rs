@@ -16,6 +16,7 @@
 #![allow(clippy::ptr_arg)]
 #![allow(clippy::type_complexity)]
 
+pub mod circuit_exec;
 pub mod forward;
 pub mod layer;
 pub mod layers;

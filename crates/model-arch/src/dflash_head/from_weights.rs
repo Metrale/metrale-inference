@@ -68,14 +68,13 @@ impl BlockDiffusionDraftHead {
         let vocab_size = weights.config.vocab_size;
         // 2026-09-25: `gamma` is `--dflash-gamma` when given, else `default_dflash_gamma`
         // of the drafter's `effective_block_size()` (`dflash_config.block_size`, else the
-        // top-level `block_size`, which defaults to 16). The model factory sizes its
-        // pools with the same helper (factory/build.rs), so this must use it too. The
+        // top-level `block_size`, which defaults to 16). 2026-09-30: one resolver
+        // (`resolve_dflash_gamma`) for this, the factory's pools and the server's reserve. The
         // serve reads the head's gamma back through `block_gamma()`.
-        let gamma_val = gamma.unwrap_or_else(|| {
-            metrale_model_layers::layers::qwen3_ssm::default_dflash_gamma(
-                weights.config.effective_block_size(),
-            )
-        });
+        let gamma_val = metrale_model_layers::layers::qwen3_ssm::resolve_dflash_gamma(
+            gamma,
+            Some(weights.config.effective_block_size()),
+        );
 
         // 2026-09-25: The drafter's paged KV cache: one cache for all drafter layers,
         // in 16-token blocks.

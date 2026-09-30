@@ -33,33 +33,101 @@ fn default_ladder(n: usize) -> usize {
     if n <= 8 { 3 } else { 1 }
 }
 
+/// 2026-09-30: The Qwen3.6-27B geometry above as a config: 64 layers, every fourth full
+/// attention (48 GDN layers). `qwen3_next` has no circuit, so the pool is sized from the
+/// transitional source; `ssm_pool_state_plan_tests` (model-engine) checks that source against
+/// the circuits.
+fn config27() -> metrale_config::ModelConfig {
+    let mut c = metrale_config::ModelConfig::qwen3_next_80b_nvfp4();
+    c.layer_types = Vec::new();
+    c.num_hidden_layers = 64;
+    c.full_attention_interval = 4;
+    c.linear_num_value_heads = 48;
+    c
+}
+
+/// 2026-09-30: The pool's two dummies: one live blob, and with speculation one verify slot at
+/// full width (K-1 h and K conv intermediates and a checkpoint; a checkpoint only under
+/// replay). The reserve left them out until 2026-09-30.
+fn dummies(spec_on: bool, f16: bool, rollback: SsmRollbackMode) -> usize {
+    let h = if f16 { H_BLOB / 2 } else { H_BLOB };
+    let blob = h + CONV_BLOB;
+    let verify = match (spec_on, rollback) {
+        (false, _) => 0,
+        (true, SsmRollbackMode::Snapshot) => ND * h + (ND + 1) * CONV_BLOB + blob,
+        (true, SsmRollbackMode::Replay) => blob,
+    };
+    blob + verify
+}
+
+/// 2026-09-30: The pool plan with `mtp_slots` verify slots, minus its dummies: the terms the
+/// pre-2026-09-30 reserve counted, which the totals below still pin.
+fn reserve(
+    bs: usize,
+    spec_on: bool,
+    uniform: bool,
+    mtp_slots: usize,
+    f16: bool,
+    rollback: SsmRollbackMode,
+) -> usize {
+    let shape = PoolShape {
+        max_slots: bs,
+        spec: spec_on,
+        num_intermediates: ND + 1,
+        num_drafts: ND,
+        uniform_h: uniform,
+        rollback,
+    };
+    let counts = pool_counts_with(&shape, mtp_slots, |s| {
+        verify_slot_h_intermediates(s, ND, false)
+    });
+    let plan = PoolPlan::new(&config27(), &counts, f16).unwrap();
+    assert_eq!(plan.source, UnitSource::Transitional);
+    plan.total() - dummies(spec_on, f16, rollback)
+}
+
 fn tiered_pool_bytes(bs: usize, spec_on: bool) -> usize {
-    ssm_pool_reserve_bytes(
-        bs,
-        H_BLOB,
-        CONV_BLOB,
-        spec_on,
-        ND,
-        mtp_state_slots_with(bs, 32, false),
-        false,
-        false,
-        SsmRollbackMode::Snapshot,
-    )
+    let slots = mtp_state_slots_with(bs, 32, false);
+    reserve(bs, spec_on, false, slots, false, SsmRollbackMode::Snapshot)
 }
 
 /// 2026-09-25: `tiered_pool_bytes` with the f16-sized pool (`h_f16_pool = true`).
 fn tiered_pool_bytes_f16(bs: usize, spec_on: bool) -> usize {
-    ssm_pool_reserve_bytes(
-        bs,
-        H_BLOB,
-        CONV_BLOB,
-        spec_on,
-        ND,
-        mtp_state_slots_with(bs, 32, false),
-        false,
-        true,
-        SsmRollbackMode::Snapshot,
-    )
+    let slots = mtp_state_slots_with(bs, 32, false);
+    reserve(bs, spec_on, false, slots, true, SsmRollbackMode::Snapshot)
+}
+
+/// 2026-09-30: The behaviour change of 2026-09-30: the reserve is the plan the pool
+/// allocates, dummies included, one blob and one full-width verify slot above the old sum.
+#[test]
+fn the_reserve_counts_the_dummies_the_pool_allocates() {
+    for (bs, spec) in [(1, false), (8, true), (64, true)] {
+        let shape = PoolShape {
+            max_slots: bs,
+            spec,
+            num_intermediates: ND + 1,
+            num_drafts: ND,
+            uniform_h: false,
+            rollback: SsmRollbackMode::Snapshot,
+        };
+        let counts = pool_counts_with(&shape, mtp_state_slots_with(bs, 32, false), |s| {
+            verify_slot_h_intermediates(s, ND, false)
+        });
+        assert_eq!(counts.slots, bs + 1, "the live dummy");
+        if let Some(v) = &counts.verify {
+            assert_eq!(v.slots(), bs.min(32) + 1, "the verify dummy");
+            assert_eq!(
+                *v.h_steps.last().unwrap(),
+                ND,
+                "the verify dummy is full width"
+            );
+        }
+        let total = PoolPlan::new(&config27(), &counts, false).unwrap().total();
+        // 2026-09-30: The live dummy, and the verify dummy: 3 h + 4 conv intermediates and a
+        // checkpoint (h + conv).
+        let verify_dummy = if spec { 4 * H_BLOB + 5 * CONV_BLOB } else { 0 };
+        assert_eq!(total - tiered_pool_bytes(bs, spec), BLOB + verify_dummy);
+    }
 }
 
 #[test]
@@ -123,17 +191,7 @@ fn k_minus_1_shrink_and_kill_switch_shape() {
         for spec_on in [false, true] {
             let expect = legacy_pool_bytes(bs, spec_on) - if spec_on { bs * H_BLOB } else { 0 };
             assert_eq!(
-                ssm_pool_reserve_bytes(
-                    bs,
-                    H_BLOB,
-                    CONV_BLOB,
-                    spec_on,
-                    ND,
-                    bs,
-                    true,
-                    false,
-                    SsmRollbackMode::Snapshot,
-                ),
+                reserve(bs, spec_on, true, bs, false, SsmRollbackMode::Snapshot),
                 expect,
                 "bs={bs} spec={spec_on}: uniform = legacy minus the dead h blob/slot"
             );
@@ -192,17 +250,7 @@ fn bs64_ledger_before_after_and_fit() {
     // 2026-09-25: `uniform_verify` at 32 covered slots: the slot-count cap minus
     // one h blob per slot.
     assert_eq!(
-        ssm_pool_reserve_bytes(
-            64,
-            H_BLOB,
-            CONV_BLOB,
-            true,
-            ND,
-            32,
-            true,
-            false,
-            SsmRollbackMode::Snapshot,
-        ),
+        reserve(64, true, true, 32, false, SsmRollbackMode::Snapshot),
         slot_capped - 32 * H_BLOB
     );
     let tiered = tiered_pool_bytes(64, true);
@@ -313,17 +361,8 @@ fn prefill_staging_costs_one_fp32_layer_blob_per_slot() {
 
 /// 2026-09-25: `tiered_pool_bytes` under `SsmRollbackMode::Replay`.
 fn replay_pool_bytes(bs: usize, spec_on: bool) -> usize {
-    ssm_pool_reserve_bytes(
-        bs,
-        H_BLOB,
-        CONV_BLOB,
-        spec_on,
-        ND,
-        mtp_state_slots_with(bs, 32, false),
-        false,
-        false,
-        SsmRollbackMode::Replay,
-    )
+    let slots = mtp_state_slots_with(bs, 32, false);
+    reserve(bs, spec_on, false, slots, false, SsmRollbackMode::Replay)
 }
 
 #[test]

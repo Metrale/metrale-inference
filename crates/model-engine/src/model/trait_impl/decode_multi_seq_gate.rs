@@ -82,6 +82,7 @@ mod tests {
         impl LayerGraphHooks for Plain {}
         impl LayerAuxState for Plain {}
         impl LayerSplitPrefill for Plain {}
+        impl metrale_model_layers::circuit_exec::CircuitBindings for Plain {}
         assert!(
             !Plain.decode_multi_seq_unsupported(),
             "default must be false — a new predicate may not re-route existing models"
@@ -108,6 +109,7 @@ mod tests {
         impl LayerGraphHooks for DeclinesDecode {}
         impl LayerAuxState for DeclinesDecode {}
         impl LayerSplitPrefill for DeclinesDecode {}
+        impl metrale_model_layers::circuit_exec::CircuitBindings for DeclinesDecode {}
         struct DeclinesVerify;
         impl TransformerLayer for DeclinesVerify {
             stub_forward!();
@@ -122,6 +124,7 @@ mod tests {
         impl LayerGraphHooks for DeclinesVerify {}
         impl LayerAuxState for DeclinesVerify {}
         impl LayerSplitPrefill for DeclinesVerify {}
+        impl metrale_model_layers::circuit_exec::CircuitBindings for DeclinesVerify {}
         assert!(DeclinesDecode.decode_multi_seq_unsupported());
         assert!(
             !DeclinesDecode.decode_verify_multi_unsupported(),
@@ -178,6 +181,30 @@ mod tests {
         assert!(
             b.contains("&& !self"),
             "the term must be a NEGATED conjunct of the existing self-gate"
+        );
+    }
+
+    /// 2026-09-30: Under `--forward circuit` no sequence of a multi-sequence MTP step verifies or
+    /// drafts in legacy code: the batched verify is refused as a routing decision and fails fast
+    /// if called, and the batched propose declines so each sequence drafts through the circuit.
+    #[test]
+    fn a_circuit_forward_takes_no_batched_verify_or_propose() {
+        let s = src("src/model/trait_impl/verify_e.rs");
+        let gate = block(&s, "fn can_batch_verify_dispatch", "\n    pub(super) fn ");
+        assert!(
+            gate.contains("&& self.circuit.read().is_none()"),
+            "can_batch_verify_dispatch must refuse under a circuit forward"
+        );
+        let call = block(&s, "fn decode_verify_batched_dispatch", "let t_launch");
+        assert!(
+            call.contains("ensure!(\n            self.circuit.read().is_none(),"),
+            "decode_verify_batched_dispatch must fail fast under a circuit forward"
+        );
+        let p = src("../model-layers/src/layers/mtp_head/draft_proposer.rs");
+        let propose = block(&p, "fn propose_batch(", "let mut mtp_states");
+        assert!(
+            propose.contains("|| self.circuit_draft.read().is_some()"),
+            "propose_batch must decline under a circuit draft program"
         );
     }
 
