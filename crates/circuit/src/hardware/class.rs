@@ -340,10 +340,11 @@ pub fn class_discovered(
     out
 }
 
-/// 2026-09-30: The points of a family that `sources` realises: a point whose kernel files the
-/// class compiles as they are, or through its own copy of the same file name (a shadow), with
-/// the files rewritten to what the class compiles. Host-side files (`crates/...`) are shared by
-/// every class. A point one of whose kernel files the class does not compile is dropped.
+/// 2026-09-30: The points of a family that `sources` realises: the files of a point that the
+/// class compiles as they are, or through its own copy of the same file name (a shadow),
+/// rewritten to what the class compiles. Host-side files (`crates/...`) are shared by every
+/// class. A point is kept with the files the class compiles (a point realised by several
+/// per-model copies exists where one of them is compiled) and dropped when none is.
 pub fn class_points(points: &[Point], chain: &[ClassInfo], sources: &ClassSources) -> Vec<Point> {
     let by_name: BTreeMap<&str, &str> = sources
         .files
@@ -359,17 +360,20 @@ pub fn class_points(points: &[Point], chain: &[ClassInfo], sources: &ClassSource
     points
         .iter()
         .filter_map(|p| {
-            let files = p
+            let files: Vec<String> = p
                 .files
                 .iter()
-                .map(|f| {
+                .filter_map(|f| {
                     if !f.starts_with("kernels/") || compiled.contains(f.as_str()) {
                         return Some(f.clone());
                     }
                     let own = by_name.get(file_name(f)).copied()?;
                     in_chain(own).then(|| own.to_string())
                 })
-                .collect::<Option<Vec<_>>>()?;
+                .collect();
+            if files.is_empty() {
+                return None;
+            }
             Some(Point {
                 values: p.values.clone(),
                 how: p.how,

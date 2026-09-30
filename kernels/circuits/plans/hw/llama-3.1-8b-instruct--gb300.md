@@ -105,16 +105,16 @@ Estimated step 1.945 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | attn.add | residual_add | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | ffn.add | residual_add | - | - | 32 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | attn.rope | rope | - | - | 32 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved |
-| attn.input_norm | rms_norm | - | - | 32 | 0.0% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
-| ffn.post_norm | rms_norm | - | - | 32 | 0.0% | Policy variant | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm; differs: weight_form plain->one_plus |
+| attn.input_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
+| ffn.post_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.kv_write | kv_write | - | - | 32 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Policy variant | rms_norm | norm::rms_norm rule=final_norm; differs: weight_form plain->one_plus |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=16
 
-Estimated step 2.975 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterisation 0.0%, policy variant 0.1%, novel 0.0% of the step.
+Estimated step 2.975 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -130,16 +130,16 @@ Estimated step 2.975 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | attn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | ffn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | attn.rope | rope | - | - | 32 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| attn.input_norm | rms_norm | - | - | 32 | 0.0% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
-| ffn.post_norm | rms_norm | - | - | 32 | 0.0% | Policy variant | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm; differs: weight_form plain->one_plus |
+| attn.input_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
+| ffn.post_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.kv_write | kv_write | - | - | 32 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Policy variant | rms_norm | norm::rms_norm rule=final_norm; differs: weight_form plain->one_plus |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=128
 
-Estimated step 10.664 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.8%, parameterisation 0.0%, policy variant 0.2%, novel 0.0% of the step.
+Estimated step 10.664 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -155,11 +155,11 @@ Estimated step 10.664 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | attn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | ffn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | attn.rope | rope | - | - | 32 | 0.1% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| attn.input_norm | rms_norm | - | - | 32 | 0.1% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
-| ffn.post_norm | rms_norm | - | - | 32 | 0.1% | Policy variant | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm; differs: weight_form plain->one_plus |
+| attn.input_norm | rms_norm | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
+| ffn.post_norm | rms_norm | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.kv_write | kv_write | - | - | 32 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Policy variant | rms_norm | norm::rms_norm rule=final_norm; differs: weight_form plain->one_plus |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Rule kernels this device cannot run

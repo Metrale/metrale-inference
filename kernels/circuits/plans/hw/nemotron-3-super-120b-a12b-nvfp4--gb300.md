@@ -160,7 +160,7 @@ Estimated step 1.630 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.0% | Novel | - | no family available on this device implements it |
 | moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Novel | - | no family available on this device implements it |
 | mamba.out_norm | gated_rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
-| moe_latent.routed | blend | - | - | 40 | 0.0% | Policy variant | moe_weighted_sum_scale | no rule of this class covers it; family `moe_weighted_sum_scale` implements the op; differs: shared_gate none->sigmoid |
+| moe_latent.routed | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
 | mamba.conv | conv1d_update | - | - | 40 | 0.0% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
 | mamba.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | moe_latent.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
@@ -190,7 +190,7 @@ Estimated step 1.630 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 23.622 ms. Shared 0.0% (measured on this class), shared-unmeasured 36.0%, parameterisation 0.0%, policy variant 0.0%, novel 64.0% of the step.
+Estimated step 23.622 ms. Shared 0.0% (measured on this class), shared-unmeasured 36.1%, parameterisation 0.0%, policy variant 0.0%, novel 63.9% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -221,7 +221,7 @@ Estimated step 23.622 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Novel | - | no family available on this device implements it |
 | attn.o | linear:o | fp8/tensor x fp8/tensor | native fp8 | 2 | 0.0% | Novel | - | no family available on this device implements it |
 | mamba.out_norm | gated_rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
-| moe_latent.routed | blend | - | - | 40 | 0.0% | Novel | - | no rule of this class covers it; moe_weighted_sum_scale run it one row per launch only |
+| moe_latent.routed | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
 | mamba.conv | conv1d_update | - | - | 40 | 0.0% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
 | mamba.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | moe_latent.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
@@ -280,7 +280,7 @@ Estimated step 187.835 ms. Shared 0.0% (measured on this class), shared-unmeasur
 | moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.1% | Novel | - | no family available on this device implements it |
 | moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Novel | - | no family available on this device implements it |
 | mamba.out_norm | gated_rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
-| moe_latent.routed | blend | - | - | 40 | 0.0% | Novel | - | no rule of this class covers it; moe_weighted_sum_scale run it one row per launch only |
+| moe_latent.routed | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | mamba.conv | conv1d_update | - | - | 40 | 0.0% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
 | mamba.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |

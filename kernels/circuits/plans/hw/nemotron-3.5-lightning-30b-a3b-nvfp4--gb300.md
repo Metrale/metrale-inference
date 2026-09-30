@@ -179,7 +179,7 @@ Estimated step 4.455 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe.experts_act | relu2 | - | - | 23 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
-| moe.blend | blend | - | - | 23 | 0.0% | Novel | - | no rule of this class covers it; moe_weighted_sum_scale run it one row per launch only |
+| moe.blend | blend | - | - | 23 | 0.0% | Policy variant | moe_blend | no rule of this class covers it; family `moe_blend` implements the op; differs: shared_gate sigmoid->none |
 | mamba.conv | conv1d_update | - | - | 23 | 0.0% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
 | mamba.out_norm | gated_rms_norm | - | - | 23 | 0.0% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
 | mamba.add | residual_add | - | - | 23 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
@@ -221,7 +221,7 @@ Estimated step 35.361 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | head.lm_head | lm_head | nvfp4/g16 x bf16 | native bf16 | 1 | 0.1% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe.experts_act | relu2 | - | - | 23 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
-| moe.blend | blend | - | - | 23 | 0.0% | Novel | - | no rule of this class covers it; moe_weighted_sum_scale run it one row per launch only |
+| moe.blend | blend | - | - | 23 | 0.0% | Policy variant | moe_blend | no rule of this class covers it; family `moe_blend` implements the op; differs: shared_gate sigmoid->none |
 | mamba.conv | conv1d_update | - | - | 23 | 0.0% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
 | mamba.out_norm | gated_rms_norm | - | - | 23 | 0.0% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
 | mamba.add | residual_add | - | - | 23 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |

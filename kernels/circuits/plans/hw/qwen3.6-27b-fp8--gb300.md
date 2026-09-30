@@ -135,9 +135,9 @@ Estimated step 3.443 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
 | dense_ffn.add | residual_add | - | - | 64 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | gdn.add | residual_add | - | - | 48 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.0% | Policy variant | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm; differs: weight_form plain->one_plus |
+| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.xn_quant | act_quant:fp8/g128 | - | - | 64 | 0.0% | Novel | - | no family available on this device implements it |
-| gdn.input_norm | rms_norm | - | - | 48 | 0.0% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
+| gdn.input_norm | rms_norm | - | - | 48 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
 | gdn.gated_quant | act_quant:fp8/g128 | - | - | 48 | 0.0% | Novel | - | no family available on this device implements it |
 | attn.q_split | split | - | - | 16 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
 | gdn.xn_quant | act_quant:fp8/g128 | - | - | 48 | 0.0% | Novel | - | no family available on this device implements it |
@@ -145,19 +145,19 @@ Estimated step 3.443 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.add | residual_add | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | attn.rope | rope | - | - | 16 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved |
-| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm rule=qk_norm_rows; differs: weight_form plain->one_plus |
-| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
+| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows |
+| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
 | attn.ag_quant | act_quant:fp8/g128 | - | - | 16 | 0.0% | Novel | - | no family available on this device implements it |
 | attn.xn_quant | act_quant:fp8/g128 | - | - | 16 | 0.0% | Novel | - | no family available on this device implements it |
-| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm rule=qk_norm_rows; differs: weight_form plain->one_plus |
+| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows |
 | attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
 | gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Policy variant | rms_norm | norm::rms_norm rule=final_norm; differs: weight_form plain->one_plus |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=16
 
-Estimated step 4.695 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.6%, parameterisation 0.0%, policy variant 0.1%, novel 0.3% of the step.
+Estimated step 4.695 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.7%, parameterisation 0.0%, policy variant 0.0%, novel 0.3% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -181,9 +181,9 @@ Estimated step 4.695 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
 | dense_ffn.add | residual_add | - | - | 64 | 0.1% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | gdn.add | residual_add | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Policy variant | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm; differs: weight_form plain->one_plus |
+| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.xn_quant | act_quant:fp8/g128 | - | - | 64 | 0.0% | Novel | - | no family available on this device implements it |
-| gdn.input_norm | rms_norm | - | - | 48 | 0.0% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
+| gdn.input_norm | rms_norm | - | - | 48 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
 | gdn.gated_quant | act_quant:fp8/g128 | - | - | 48 | 0.0% | Novel | - | no family available on this device implements it |
 | attn.q_split | split | - | - | 16 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
 | gdn.xn_quant | act_quant:fp8/g128 | - | - | 48 | 0.0% | Novel | - | no family available on this device implements it |
@@ -191,19 +191,19 @@ Estimated step 4.695 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.add | residual_add | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | attn.rope | rope | - | - | 16 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm_strided rule=qk_norm_strided; differs: weight_form plain->one_plus |
-| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
+| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
+| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
 | attn.ag_quant | act_quant:fp8/g128 | - | - | 16 | 0.0% | Novel | - | no family available on this device implements it |
 | attn.xn_quant | act_quant:fp8/g128 | - | - | 16 | 0.0% | Novel | - | no family available on this device implements it |
-| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm_strided rule=qk_norm_strided; differs: weight_form plain->one_plus |
+| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
 | attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
 | gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Policy variant | rms_norm | norm::rms_norm rule=final_norm; differs: weight_form plain->one_plus |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=128
 
-Estimated step 14.046 ms. Shared 0.0% (measured on this class), shared-unmeasured 98.9%, parameterisation 0.0%, policy variant 0.4%, novel 0.7% of the step.
+Estimated step 14.046 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.3%, parameterisation 0.0%, policy variant 0.0%, novel 0.7% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -225,9 +225,9 @@ Estimated step 14.046 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
 | dense_ffn.add | residual_add | - | - | 64 | 0.2% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | gdn.add | residual_add | - | - | 48 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Policy variant | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm; differs: weight_form plain->one_plus |
+| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.xn_quant | act_quant:fp8/g128 | - | - | 64 | 0.1% | Novel | - | no family available on this device implements it |
-| gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
+| gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
 | gdn.gated_quant | act_quant:fp8/g128 | - | - | 48 | 0.1% | Novel | - | no family available on this device implements it |
 | attn.q_split | split | - | - | 16 | 0.1% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
 | attn.k | linear:k | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 0.1% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
@@ -237,14 +237,14 @@ Estimated step 14.046 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | head.argmax | argmax | - | - | 1 | 0.1% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.add | residual_add | - | - | 16 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | attn.rope | rope | - | - | 16 | 0.1% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm_strided rule=qk_norm_strided; differs: weight_form plain->one_plus |
-| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm_residual rule=input_norm_residual; differs: weight_form plain->one_plus |
+| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
+| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
 | attn.ag_quant | act_quant:fp8/g128 | - | - | 16 | 0.0% | Novel | - | no family available on this device implements it |
 | attn.xn_quant | act_quant:fp8/g128 | - | - | 16 | 0.0% | Novel | - | no family available on this device implements it |
-| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Policy variant | rms_norm | norm::rms_norm_strided rule=qk_norm_strided; differs: weight_form plain->one_plus |
+| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
 | attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
 | gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Policy variant | rms_norm | norm::rms_norm rule=final_norm; differs: weight_form plain->one_plus |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Rule kernels this device cannot run
