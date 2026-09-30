@@ -321,6 +321,26 @@ fn the_g1_dense_families_map_their_switches_and_rope() {
 }
 
 #[test]
+fn a_qwen_checkpoint_without_an_mtp_layer_has_no_draft_head() {
+    let holo = ok("Hcompany--Holo-3.1-35B-A3B-NVFP4");
+    assert_eq!((holo.arch.as_str(), dim(&holo, "mtp")), ("qwen3_6_moe", 0));
+    assert!(
+        !holo
+            .circuit
+            .nodes
+            .iter()
+            .any(|n| n.id.starts_with("draft."))
+    );
+    let with = ok("Qwen--Qwen3.6-35B-A3B-FP8");
+    assert!(
+        with.circuit
+            .nodes
+            .iter()
+            .any(|n| n.id.starts_with("draft."))
+    );
+}
+
+#[test]
 fn a_tied_head_and_the_other_qwen35_checkpoints_instantiate() {
     let small = ok("Qwen--Qwen3.5-0.8B");
     assert_eq!(
@@ -336,6 +356,7 @@ fn a_tied_head_and_the_other_qwen35_checkpoints_instantiate() {
         "Sehyo--Qwen3.5-35B-A3B-NVFP4",
         "Sehyo--Qwen3.5-122B-A10B-NVFP4",
         "nvidia--Qwen3.6-35B-A3B-NVFP4",
+        "Hcompany--Holo-3.1-35B-A3B-NVFP4",
         "Qwen--Qwen3-32B",
     ] {
         ok(name);
@@ -376,7 +397,7 @@ fn path_b_golden_instances_restate_the_config_derived_shape() {
 /// 2026-09-30: Every other fixture is refused, for the reason named.
 #[test]
 fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
-    let cases: [(&str, &str); 13] = [
+    let cases: [(&str, &str); 12] = [
         (
             "Inferact--Qwen3.8-Flash-Next-NVFP4",
             "model_type `qwen4_exp`",
@@ -411,11 +432,6 @@ fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
             "`dflash_config` is not mapped",
         ),
         ("z-lab--Qwen3.6-27B-DFlash", "`auto_map` is not mapped"),
-        // 2026-09-30: A refused value: no MTP layer for the Qwen MoE circuit's draft head.
-        (
-            "Hcompany--Holo-3.1-35B-A3B-NVFP4",
-            "mtp_num_hidden_layers` = 0",
-        ),
     ];
     for (name, want) in cases {
         let e = resolve(name).expect_err(name).to_string();

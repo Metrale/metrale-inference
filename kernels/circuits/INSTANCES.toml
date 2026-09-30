@@ -32,7 +32,7 @@ arch = "qwen3_5"
 target = "gb10/qwen3.8-27b/nvfp4"
 golden = true
 layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
-dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128 }
+dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128, mtp = 1 }
 plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
 
 # 2026-09-28: Formats from the engine's own policy (metrale_circuit::PolicyPrecision) over the
@@ -66,7 +66,7 @@ precision = "qwen3.6-35b-a3b-fp8-bf16head"
 target = "gb10/qwen3.6-35b-a3b/nvfp4"
 golden = true
 layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
-dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512 }
+dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
 plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
 
 [instance.policy]

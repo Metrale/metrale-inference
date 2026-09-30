@@ -135,7 +135,7 @@ const DENSE_CONFIG: &str = r#"{
                     "linear_attention", "linear_attention", "linear_attention", "full_attention"],
     "linear_num_key_heads": 16, "linear_key_head_dim": 128,
     "linear_num_value_heads": 48, "linear_value_head_dim": 128, "linear_conv_kernel_dim": 4,
-    "rms_norm_eps": 1e-6, "max_position_embeddings": 262144
+    "rms_norm_eps": 1e-6, "max_position_embeddings": 262144, "mtp_num_hidden_layers": 1
   }
 }"#;
 
@@ -157,6 +157,32 @@ fn the_config_adapter_matches_the_instance_and_names_drift() {
     );
     stated.layer_kinds.pop();
     assert_eq!(shape_drift(&stated, &from_config).len(), 1);
+}
+
+/// 2026-09-30: The executor's adapter (`arch_shape` over the parsed ModelConfig) and the
+/// circuit's declarative config map give each golden instance the shape INSTANCES.toml states,
+/// from the checkpoint's real config.json (crates/circuit/tests/fixtures/checkpoints).
+#[test]
+fn the_executor_adapter_and_the_config_map_agree_on_the_golden_checkpoints() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for recipe in [
+        "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
+        "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head",
+    ] {
+        let inst = instance(recipe).unwrap();
+        let dir = root
+            .join("crates/circuit/tests/fixtures/checkpoints")
+            .join(inst.checkpoint.replace('/', "--"));
+        let text = std::fs::read_to_string(dir.join("config.json")).unwrap();
+        let cfg = metrale_config::parse_config(&text).unwrap();
+        assert_eq!(
+            shape_drift(&inst.shape, &arch_shape(&cfg).unwrap()),
+            Vec::<String>::new(),
+            "{recipe}: the executor's adapter"
+        );
+        let mapped = metrale_circuit::map_checkpoint(&text).unwrap();
+        assert_eq!(mapped.shape, inst.shape, "{recipe}: the config map");
+    }
 }
 
 #[test]

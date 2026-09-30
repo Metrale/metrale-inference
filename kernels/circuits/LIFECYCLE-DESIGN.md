@@ -624,8 +624,8 @@ the G1 and Nemotron-H ones fetched from the Hub (`crates/circuit/tests/checkpoin
   - the Qwen3.5 / 3.6 MoE hybrids (`qwen3_6_moe`);
   - Nemotron-3 Nano, Nemotron-3 Super (latent MoE) and Nemotron-3.5 Lightning (`nemotron_h`);
   - Llama 3.1, Qwen3 dense, Qwen2.5 and Mistral Small (`dense_gqa`).
+  - Holo-3.1, which has no MTP layer, so its circuit has no draft head (`draft_when = "mtp"`).
 - Refused, with the reason named:
-  - Holo-3.1: it has no MTP layer for the Qwen MoE draft head.
   - The DFlash drafts: they have unmapped keys.
   - Qwen3.6-27B-FP8: a `DeclaredPrecisionPlan` substring-ignore finding.
   - Every other model type.
