@@ -46,11 +46,16 @@ fn registry() -> Registry {
 
 fn model(checkpoint: &str, precision: PrecisionChoice) -> hardware::ModelUnderPlan {
     let t = tree();
+    let dir = root()
+        .join(super::MATRIX_CONFIGS)
+        .join(checkpoint.replacen('/', "--", 1));
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).ok();
+    let (config, hf_quant) = (read("config.json"), read("hf_quant_config.json"));
     source(&t)
         .model(&ModelSpec {
             checkpoint,
-            config_json: None,
-            hf_quant: None,
+            config_json: config.as_deref(),
+            hf_quant: hf_quant.as_deref(),
             precision,
         })
         .unwrap_or_else(|e| panic!("{checkpoint}: {e}"))
@@ -165,7 +170,7 @@ fn hopper_never_runs_fp4(reg: &Registry, devices: &[&str]) {
 }
 
 /// 2026-09-30: The formats the Hopper assertion plans the 27B at.
-const PRECISIONS_27B: [PrecisionChoice; 1] = [PrecisionChoice::Recipe];
+const PRECISIONS_27B: [PrecisionChoice; 2] = [PrecisionChoice::Recipe, PrecisionChoice::Declared];
 
 // 2026-09-30: Path A.
 #[test]

@@ -48,6 +48,12 @@ pub trait KernelTree: Repo {
     fn class_sources(&self, class: &str, model: &str, quant: &str)
     -> Result<ClassSources, String>;
 
+    /// 2026-09-30: The kernel model directory that serves a checkpoint of `model_type` and
+    /// `hidden` size named by `refs` (the engine's MODEL.toml resolution), or `None` when no
+    /// target claims it.
+    fn kernel_target(&self, model_type: &str, hidden: u64, refs: &[&str])
+    -> Result<Option<String>, String>;
+
     /// 2026-09-30: This tree as a plain [`Repo`].
     fn as_repo(&self) -> &dyn Repo;
 }

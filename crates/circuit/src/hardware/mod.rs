@@ -26,6 +26,7 @@ pub mod estimate;
 pub mod exec;
 pub mod gaps;
 pub mod model;
+pub mod model_checkpoint;
 pub mod plan;
 mod render;
 pub mod sources;
@@ -45,6 +46,7 @@ use crate::venn::roofline::CostError;
 
 pub use device::{Device, Registry, parse_devices};
 pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};
+pub use model_checkpoint::CheckpointSource;
 pub use render::{render_report, summary_row};
 pub use sources::{ClassSources, KernelTree, Module};
 

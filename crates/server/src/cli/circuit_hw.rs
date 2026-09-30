@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use metrale_circuit::hardware::{
-    self, CircuitSource, InstancesSource, ModelSpec, PrecisionChoice, Registry,
+    self, CheckpointSource, CircuitSource, ModelSpec, PrecisionChoice, Registry,
 };
 use metrale_circuit::venn::Run;
 
@@ -29,30 +29,69 @@ use super::{CircuitHwArgs, CircuitHwFormat, CircuitMode, CircuitPrecision};
 /// 2026-09-30: The devices of the roadmap matrix.
 pub(crate) const MATRIX_DEVICES: [&str; 5] = ["h100-sxm", "h200-sxm", "b200", "gb300", "gb10"];
 
-/// 2026-09-30: The models of the roadmap matrix: (report slug, checkpoint or recipe, formats).
-/// `recipe` where a golden recipe pins the formats (its gb10 cell is the golden plan);
-/// `declared` otherwise.
-pub(crate) const MATRIX_MODELS: [(&str, &str, CircuitPrecision); 3] = [
-    (
-        "qwen3.8-27b-nvfp4",
-        "unsloth/Qwen3.8-27B-NVFP4",
-        CircuitPrecision::Recipe,
-    ),
-    (
-        "qwen3.6-35b-a3b-fp8",
-        "Qwen/Qwen3.6-35B-A3B-FP8",
-        CircuitPrecision::Recipe,
-    ),
-    (
-        "nemotron-3.5-lightning-30b-a3b-nvfp4",
-        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
-        CircuitPrecision::Declared,
-    ),
+/// 2026-09-30: One model of the roadmap matrix.
+pub(crate) struct MatrixModel {
+    /// 2026-09-30: Report file slug.
+    pub(crate) slug: &'static str,
+    /// 2026-09-30: Checkpoint id.
+    pub(crate) checkpoint: &'static str,
+    /// 2026-09-30: Formats.
+    pub(crate) precision: CircuitPrecision,
+}
+
+/// 2026-09-30: The checkpoint configs the matrix reads, checked in so the `--check` test is
+/// hermetic: the model axis's fixtures, `<dir>/<org>--<name>/config.json` (+ sidecar).
+pub(crate) const MATRIX_CONFIGS: &str = "crates/circuit/tests/fixtures/checkpoints";
+
+/// 2026-09-30: The models of the roadmap matrix. `recipe` where a golden recipe pins the formats
+/// (its gb10 cell is the golden plan); `declared` plans the checkpoint's own formats.
+pub(crate) const MATRIX_MODELS: [MatrixModel; 8] = [
+    MatrixModel {
+        slug: "qwen3.8-27b-nvfp4",
+        checkpoint: "unsloth/Qwen3.8-27B-NVFP4",
+        precision: CircuitPrecision::Recipe,
+    },
+    MatrixModel {
+        slug: "qwen3.8-27b-nvfp4-declared",
+        checkpoint: "unsloth/Qwen3.8-27B-NVFP4",
+        precision: CircuitPrecision::Declared,
+    },
+    MatrixModel {
+        slug: "qwen3.6-35b-a3b-fp8",
+        checkpoint: "Qwen/Qwen3.6-35B-A3B-FP8",
+        precision: CircuitPrecision::Recipe,
+    },
+    MatrixModel {
+        slug: "qwen3.6-35b-a3b-fp8-declared",
+        checkpoint: "Qwen/Qwen3.6-35B-A3B-FP8",
+        precision: CircuitPrecision::Declared,
+    },
+    MatrixModel {
+        slug: "nemotron-3-nano-30b-a3b-nvfp4",
+        checkpoint: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
+        precision: CircuitPrecision::Declared,
+    },
+    MatrixModel {
+        slug: "nemotron-3.5-lightning-30b-a3b-nvfp4",
+        checkpoint: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        precision: CircuitPrecision::Declared,
+    },
+    MatrixModel {
+        slug: "nemotron-3-super-120b-a12b-nvfp4",
+        checkpoint: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+        precision: CircuitPrecision::Declared,
+    },
+    MatrixModel {
+        slug: "llama-3.1-8b-instruct",
+        checkpoint: "NousResearch/Meta-Llama-3.1-8B-Instruct",
+        precision: CircuitPrecision::Declared,
+    },
 ];
 
-/// 2026-09-30: The model source: the one line that picks how a checkpoint becomes a circuit.
+/// 2026-09-30: The model source: the one line that picks how a checkpoint becomes a circuit
+/// (the checkpoint's own config for declared formats, the recipe's instance for recipe formats).
 pub(crate) fn source(tree: &FsTree) -> impl CircuitSource + '_ {
-    InstancesSource { repo: tree }
+    CheckpointSource { tree }
 }
 
 fn precision_of(p: CircuitPrecision) -> PrecisionChoice {
@@ -186,8 +225,20 @@ pub(crate) fn matrix(root: &Path, dir: &str, check: bool) -> Result<String> {
     let tree = FsTree::new(root.to_path_buf());
     let reg = registry(&tree)?;
     let mut rows = Vec::new();
-    for (slug, checkpoint, precision) in MATRIX_MODELS {
-        let texts = checkpoint_texts(checkpoint, false)?;
+    for MatrixModel {
+        slug,
+        checkpoint,
+        precision,
+    } in MATRIX_MODELS
+    {
+        let configs = root
+            .join(MATRIX_CONFIGS)
+            .join(checkpoint.replacen('/', "--", 1));
+        let texts = CheckpointTexts {
+            id: checkpoint.to_string(),
+            config: read_optional(&configs.join("config.json"))?,
+            hf_quant: read_optional(&configs.join("hf_quant_config.json"))?,
+        };
         for device in MATRIX_DEVICES {
             let rel = format!("{dir}/{slug}--{device}.md");
             let command = format!("met circuit plan --matrix {dir}");

@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use metrale_circuit::hardware::{ClassSources, KernelTree, Module};
 use metrale_circuit::venn::Repo;
 use metrale_closure::layout::{self, Target};
+use metrale_kernels::ModelTypeMatch;
+use metrale_kernels::resolve::{ResolveCandidate, resolve_target};
 
 use super::circuit_venn::FsRepo;
 
@@ -168,7 +170,98 @@ impl KernelTree for FsTree {
         })
     }
 
+    fn kernel_target(
+        &self,
+        model_type: &str,
+        hidden: u64,
+        refs: &[&str],
+    ) -> Result<Option<String>, String> {
+        let owned = model_targets(&self.repo.root)?;
+        let needles: Vec<Vec<&str>> = owned
+            .iter()
+            .map(|t| t.match_names.iter().map(String::as_str).collect())
+            .collect();
+        let candidates: Vec<ResolveCandidate<'_>> = owned
+            .iter()
+            .zip(&needles)
+            .map(|(t, n)| ResolveCandidate {
+                name: &t.name,
+                type_matches: &t.types,
+                match_names: n,
+            })
+            .collect();
+        let hidden = usize::try_from(hidden).map_err(|e| e.to_string())?;
+        resolve_target(&candidates, model_type, hidden, refs)
+            .map(|i| i.map(|i| owned[i].name.clone()))
+            .map_err(|e| e.to_string())
+    }
+
     fn as_repo(&self) -> &dyn Repo {
         self
     }
+}
+
+/// 2026-09-30: One gb10 kernel target's resolution keys, from its MODEL.toml.
+struct ModelTarget {
+    name: String,
+    types: Vec<ModelTypeMatch>,
+    match_names: Vec<String>,
+}
+
+/// 2026-09-30: Every `kernels/gb10/<model>/MODEL.toml` (the reference class names the targets;
+/// the other classes reuse the directory names). `ModelTypeMatch` holds `&'static str` because
+/// the build bakes it; the CLI leaks the few names it parses, once per call.
+fn model_targets(root: &Path) -> Result<Vec<ModelTarget>, String> {
+    let dir = root.join("kernels/gb10");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?
+        .flatten()
+        .filter(|e| e.path().join("MODEL.toml").is_file())
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .collect();
+    names.sort();
+    let mut out = Vec::with_capacity(names.len());
+    for name in names {
+        let p = dir.join(&name).join("MODEL.toml");
+        let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        let t: toml::Table = toml::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?;
+        let types = t
+            .get("model_types")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|m| {
+                let model_type = m
+                    .get("model_type")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("{}: [[model_types]] without model_type", p.display()))?;
+                let hidden_size = match m.get("hidden_size") {
+                    None => None,
+                    Some(v) => Some(
+                        v.as_integer()
+                            .and_then(|h| usize::try_from(h).ok())
+                            .ok_or_else(|| format!("{}: hidden_size is not a size", p.display()))?,
+                    ),
+                };
+                Ok(ModelTypeMatch {
+                    model_type: model_type.to_string().leak(),
+                    hidden_size,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let match_names = t
+            .get("model")
+            .and_then(|m| m.get("match_names"))
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        out.push(ModelTarget {
+            name,
+            types,
+            match_names,
+        });
+    }
+    Ok(out)
 }
