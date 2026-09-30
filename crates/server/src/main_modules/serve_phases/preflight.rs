@@ -53,15 +53,11 @@ pub(crate) fn preflight_reserve(
         args.speculative || args.self_speculative || args.ngram_speculative || args.dflash;
     ssm_h_fp16_preconditions(args, config)?;
     // 2026-09-26: A DFlash serve's verify pools are γ + 1 rows wide on every
-    // slot, and the drafter loads after this preflight. γ here is
-    // `default_dflash_gamma` of the drafter's `dflash_config.block_size` when
-    // its local config.json has one, else `resolved_dflash_gamma(None)`
-    // (`--dflash-gamma`, else 16). An unset γ allocates 17 rows
-    // (`TransformerModel::new`), so the fallback does not under-reserve.
+    // slot. 2026-09-30: γ is the one the build sizes them for
+    // (`ServeArgs::serve_dflash_gamma`); until then this peeked the drafter's block
+    // size and ignored a pinned `--dflash-gamma`.
     let pool_num_drafts = if args.dflash {
-        peek_dflash_block_size(args.draft_model.as_deref())
-            .map(metrale_model_layers::layers::qwen3_ssm::default_dflash_gamma)
-            .unwrap_or_else(|| args.resolved_dflash_gamma(None))
+        args.serve_dflash_gamma()
     } else {
         args.resolved_num_drafts()
     };
@@ -294,33 +290,16 @@ pub(crate) fn preflight_reserve(
     })
 }
 
-/// 2026-09-26: The DFlash drafter's trained block size,
-/// `dflash_config.block_size` in `--draft-model`'s config.json, read without
-/// loading the checkpoint. `None` when there is no local config.json with a
-/// positive value (an unset flag, an HF id, an absent field).
-fn peek_dflash_block_size(draft_model: Option<&str>) -> Option<usize> {
-    let dir = std::path::Path::new(draft_model?);
-    let raw = std::fs::read_to_string(dir.join("config.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let g = v.get("dflash_config")?.get("block_size")?.as_u64()? as usize;
-    (g > 0).then_some(g)
-}
-
 /// 2026-09-26: Rows one sequence's speculative step can occupy.
 /// `max_batch_tokens_pre` here and `resolve_prefill_budget` (`kv_cache.rs`)
 /// take a max against it.
 ///
-/// DFlash: γ + 1, with γ from `--dflash-gamma`, else `default_dflash_gamma` of
-/// the peeked drafter block size, else 16. MTP, self- and n-gram speculation:
+/// DFlash: γ + 1, with the serve's γ (`ServeArgs::serve_dflash_gamma`). MTP, self- and
+/// n-gram speculation:
 /// `num_drafts + 2`. Otherwise 1.
 pub(crate) fn spec_reserve_tokens(args: &cli::ServeArgs) -> usize {
     if args.dflash {
-        let gamma = args.dflash_gamma.unwrap_or_else(|| {
-            peek_dflash_block_size(args.draft_model.as_deref())
-                .map(metrale_model_layers::layers::qwen3_ssm::default_dflash_gamma)
-                .unwrap_or_else(|| args.resolved_dflash_gamma(None))
-        });
-        gamma + 1
+        args.serve_dflash_gamma() + 1
     } else if args.speculative || args.self_speculative || args.ngram_speculative {
         args.resolved_num_drafts() + 2
     } else {

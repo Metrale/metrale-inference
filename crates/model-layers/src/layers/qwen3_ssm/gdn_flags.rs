@@ -130,6 +130,26 @@ pub const fn default_dflash_gamma(trained_block_size: usize) -> usize {
     }
 }
 
+/// 2026-09-30: The γ of a DFlash serve when neither `--dflash-gamma` nor a drafter block
+/// size decides it.
+pub const UNRESOLVED_DFLASH_GAMMA: usize = 16;
+
+/// 2026-09-30: The one resolver of a DFlash serve's γ: `--dflash-gamma` when pinned, else
+/// [`default_dflash_gamma`] of the drafter's trained block size
+/// (`DflashConfig::effective_block_size`), else [`UNRESOLVED_DFLASH_GAMMA`]. The server
+/// resolves it once before the preflight reserve (`serve_phases::apply_dflash_gamma`); the
+/// reserve, the pools the build sizes and the scheduler all read that value.
+pub const fn resolve_dflash_gamma(
+    pinned: Option<usize>,
+    drafter_block_size: Option<usize>,
+) -> usize {
+    match (pinned, drafter_block_size) {
+        (Some(g), _) => g,
+        (None, Some(b)) => default_dflash_gamma(b),
+        (None, None) => UNRESOLVED_DFLASH_GAMMA,
+    }
+}
+
 /// 2026-09-25: `--ssm-h-dtype f16` or `f16-pool` (environment fallback:
 /// `METRALE_SSM_H_FP16`).
 pub fn ssm_h_fp16_enabled() -> bool {
@@ -212,6 +232,21 @@ pub fn gdn_woa_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{GdnFlags, ssm_h_dtype_bits};
+
+    /// 2026-09-30: A pinned γ wins, even above the FP16-twin clamp the drafter default
+    /// takes; an unpinned one is the drafter's block + 2 (clamped); neither gives 16.
+    #[test]
+    fn dflash_gamma_resolves_pinned_then_drafter_then_unresolved() {
+        use super::{MAX_F16_TWIN_DFLASH_GAMMA, UNRESOLVED_DFLASH_GAMMA, resolve_dflash_gamma};
+        assert_eq!(resolve_dflash_gamma(Some(8), Some(8)), 8);
+        assert_eq!(resolve_dflash_gamma(Some(20), Some(8)), 20);
+        assert_eq!(resolve_dflash_gamma(None, Some(8)), 10);
+        assert_eq!(
+            resolve_dflash_gamma(None, Some(16)),
+            MAX_F16_TWIN_DFLASH_GAMMA
+        );
+        assert_eq!(resolve_dflash_gamma(None, None), UNRESOLVED_DFLASH_GAMMA);
+    }
 
     const BASE: GdnFlags = GdnFlags {
         h_f16: false,

@@ -72,6 +72,8 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // 2026-09-26: After this call `args.num_drafts` is `Some`, so
     // `args.resolved_num_drafts()` is valid.
     serve_phases::apply_model_default_num_drafts(&mut args, &ptx_set);
+    // 2026-09-30: One γ for the reserve, the pools and the scheduler.
+    serve_phases::apply_dflash_gamma(&mut args, serve_phases::model_default_drafter(&ptx_set))?;
 
     let (gpu, free_mem) = serve_phases::init_gpu_backend(&args, &ptx_set)?;
 

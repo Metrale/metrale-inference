@@ -146,6 +146,13 @@ pub struct ServeSchedulingArgs {
     #[arg(long)]
     pub dflash_gamma: Option<usize>,
 
+    /// 2026-09-30: The γ this DFlash serve runs, resolved once from `dflash_gamma` and the
+    /// drafter (`serve_phases::apply_dflash_gamma`); read it through
+    /// `ServeArgs::serve_dflash_gamma`. `dflash_gamma` stays the flag as given, since the
+    /// scheduler's rung treats a pinned γ differently.
+    #[arg(skip)]
+    pub dflash_gamma_resolved: Option<usize>,
+
     /// DFlash drafter sliding-window size, in tokens. Set to 0 to disable the
     /// window (full-prefix attention).
     #[arg(long, default_value_t = 4096)]

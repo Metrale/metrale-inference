@@ -107,10 +107,10 @@ pub(crate) fn build_model(
         comm,
         args.self_speculative || args.ngram_speculative,
         if args.dflash {
-            // 2026-09-26: The drafter head is not built yet: `--dflash-gamma`
-            // (else 16) minus one. `serve_load` takes the scheduler's
-            // `num_drafts` from the built head's gamma.
-            args.resolved_dflash_gamma(None).saturating_sub(1).max(1)
+            // 2026-09-26: The drafter head is not built yet: the serve's γ minus
+            // one (2026-09-30: the resolved γ, `serve_dflash_gamma`). `serve_load`
+            // takes the scheduler's `num_drafts` from the built head's gamma.
+            args.serve_dflash_gamma().saturating_sub(1).max(1)
         } else {
             args.resolved_num_drafts()
         },
