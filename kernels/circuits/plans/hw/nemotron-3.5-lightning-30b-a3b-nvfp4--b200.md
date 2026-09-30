@@ -66,9 +66,9 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 | run | layer kind | added (ms) | share | sites | rules |
 |---|---|---:|---:|---|---|
 | multi_seq n=16 | mamba | 1.734 | 37.5% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
-| multi_seq n=16 | moe | 0.993 | 21.4% | moe.add, moe.blend, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k | legacy crates/model-arch/src/nemotron_moe.rs:276 |
+| multi_seq n=16 | moe | 0.993 | 21.4% | moe.add, moe.blend, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k | legacy crates/model-arch/src/nemotron_moe.rs:278 |
 | multi_seq n=16 | full_attention | 0.290 | 6.3% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
-| multi_seq n=128 | moe | 15.244 | 41.5% | moe.add, moe.blend, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k | legacy crates/model-arch/src/nemotron_moe.rs:276 |
+| multi_seq n=128 | moe | 15.244 | 41.5% | moe.add, moe.blend, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k | legacy crates/model-arch/src/nemotron_moe.rs:278 |
 | multi_seq n=128 | mamba | 14.684 | 40.0% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
 | multi_seq n=128 | full_attention | 2.452 | 6.7% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
 

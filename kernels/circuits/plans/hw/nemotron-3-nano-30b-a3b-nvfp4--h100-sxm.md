@@ -65,9 +65,9 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 | run | layer kind | added (ms) | share | sites | rules |
 |---|---|---:|---:|---|---|
 | multi_seq n=16 | mamba | 3.737 | 35.7% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.gated_quant, mamba.in_proj, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.split, mamba.ssm, mamba.ssm_ckpt, mamba.xn_quant | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
-| multi_seq n=16 | moe | 2.231 | 21.3% | moe.add, moe.blend, moe.eact_quant, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.sact_quant, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k, moe.xn_quant | legacy crates/model-arch/src/nemotron_moe.rs:276 |
+| multi_seq n=16 | moe | 2.231 | 21.3% | moe.add, moe.blend, moe.eact_quant, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.sact_quant, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k, moe.xn_quant | legacy crates/model-arch/src/nemotron_moe.rs:278 |
 | multi_seq n=16 | full_attention | 0.666 | 6.4% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
-| multi_seq n=128 | moe | 34.629 | 42.2% | moe.add, moe.blend, moe.eact_quant, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.sact_quant, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k, moe.xn_quant | legacy crates/model-arch/src/nemotron_moe.rs:276 |
+| multi_seq n=128 | moe | 34.629 | 42.2% | moe.add, moe.blend, moe.eact_quant, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.sact_quant, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k, moe.xn_quant | legacy crates/model-arch/src/nemotron_moe.rs:278 |
 | multi_seq n=128 | mamba | 31.641 | 38.6% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.gated_quant, mamba.in_proj, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.split, mamba.ssm, mamba.ssm_ckpt, mamba.xn_quant | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
 | multi_seq n=128 | full_attention | 5.635 | 6.9% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
 
