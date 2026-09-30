@@ -161,6 +161,19 @@ fn fetch(repo: &str, file: &str) -> Result<Option<String>> {
     }
 }
 
+/// 2026-09-30: The cached snapshot of Hub id `id` that holds `config.json`: `refs/main`'s, else
+/// none. Unlike serving (`model_resolver::resolve_model_dir`), a plan needs no weights, so a
+/// metadata-only snapshot counts.
+fn cached_snapshot(id: &str) -> Result<Option<PathBuf>> {
+    let root = crate::model_resolver::resolve_cache_root(None)?;
+    let model = root.join(format!("models--{}", id.replace('/', "--")));
+    let Ok(rev) = std::fs::read_to_string(model.join("refs/main")) else {
+        return Ok(None);
+    };
+    let snap = model.join("snapshots").join(rev.trim());
+    Ok(snap.join("config.json").is_file().then_some(snap))
+}
+
 /// 2026-09-30: The texts `spec` names: a directory's files, the local cache's, or the Hub's.
 pub(crate) fn checkpoint_texts(spec: &str, allow_network: bool) -> Result<CheckpointTexts> {
     let dir = Path::new(spec);
@@ -176,7 +189,7 @@ pub(crate) fn checkpoint_texts(spec: &str, allow_network: bool) -> Result<Checkp
             .with_context(|| format!("cannot tell which checkpoint {spec} holds"))?;
         return from_dir(dir, id);
     }
-    if let Ok(d) = crate::model_resolver::resolve_model_dir(spec, None) {
+    if let Some(d) = cached_snapshot(spec)? {
         return from_dir(&d, spec.to_string());
     }
     if allow_network && spec.contains('/') {
@@ -320,9 +333,10 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
         if let Some(p) = &a.summary {
             std::fs::write(p, &summary).with_context(|| format!("writing {}", p.display()))?;
         }
+        let refused = MATRIX_MODELS.iter().filter(|m| m.refused.is_some()).count();
         eprintln!(
-            "{} matrix reports {}",
-            MATRIX_MODELS.len() * MATRIX_DEVICES.len(),
+            "{} matrix reports {} ({refused} refused model(s) listed in MATRIX.md only)",
+            (MATRIX_MODELS.len() - refused) * MATRIX_DEVICES.len(),
             if a.check { "current" } else { "written" }
         );
         return Ok(());
