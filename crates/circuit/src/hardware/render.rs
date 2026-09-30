@@ -300,7 +300,7 @@ fn advice(r: &HwReport, need: f64, usable: f64) -> String {
 fn flags(s: &mut String, r: &HwReport) {
     let _ = writeln!(
         s,
-        "## Multi-row fallbacks\n\nPlan groups that loop once per row, costed as the time the loop adds over one multi-row launch.\n"
+        "## Multi-row fallbacks\n\nPlan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.\n"
     );
     let mut any = false;
     for t in &r.tables {

@@ -12,8 +12,9 @@
 //!   the op, and is Novel when none does.
 //! - A site's execution line states how the device runs the node's DECLARED formats
 //!   ([`super::exec`]); nothing is re-planned at a wider format.
-//! - Flags are plan groups that loop per row at more than one row, costed as the time the loop
-//!   adds over one multi-row launch.
+//! - Flags are plan groups that loop per row at more than one row, and the layer loops the
+//!   families manifest records for the engine's code (`[[legacy_path]]`), each costed as the
+//!   time the loop adds over one multi-row launch; the step estimate includes that time.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -142,11 +143,22 @@ pub fn gap_table(
             .ok_or_else(|| HwError::Plan(format!("node `{}` is in no group", node.id)))?];
         let one = node_cost(c, node, mode, 1, settings, rf)?.time_us;
         let all = node_cost(c, node, mode, rows, settings, rf)?.time_us;
-        let per_row = matches!(g.repeat, Repeat::PerRow | Repeat::PerRowButLast) && rows > 1;
+        let kind = node.layer.map(|l| c.layer_kinds[l]);
+        let site = site_of(c, n);
+        // 2026-09-30: The engine's layer code loops per sequence here (a KERNEL_FAMILIES.toml
+        // legacy fact, the same Rust on every class), whatever the plan groups say.
+        let legacy = r.families.legacy.iter().find(|l| {
+            l.arch == c.arch
+                && l.per_sequence.contains(&mode)
+                && rows > l.rows_above
+                && Some(l.layer_kind) == kind
+                && (l.sites.is_empty() || l.sites.contains(&site))
+        });
+        let looped = matches!(g.repeat, Repeat::PerRow | Repeat::PerRowButLast) && rows > 1;
+        let per_row = looped || legacy.is_some();
         let time = if per_row { rows as f64 * one } else { all };
         total += time;
         if per_row {
-            let kind = node.layer.map(|l| c.layer_kinds[l]);
             let f = flags.entry(kind).or_insert_with(|| Flag {
                 layer_kind: kind,
                 sites: BTreeSet::new(),
@@ -154,13 +166,16 @@ pub fn gap_table(
                 added_us: 0.0,
                 share: 0.0,
             });
-            f.sites.insert(site_of(c, n));
-            f.rules.insert(g.rule.clone());
+            f.sites.insert(site.clone());
+            f.rules.insert(match legacy.filter(|_| !looped) {
+                Some(l) => format!("legacy {}", l.cite),
+                None => g.rule.clone(),
+            });
             f.added_us += time - all;
         }
         let act = activation_of(c, node);
         let formats = node.weight.zip(act).map(|(w, a)| (w.name(), a.name()));
-        let key = (site_of(c, n), format!("{formats:?}"));
+        let key = (site, format!("{formats:?}"));
         if let Some(row) = by_site.get_mut(&key) {
             row.count += 1;
             row.time_us += time;

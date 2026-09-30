@@ -59,7 +59,7 @@ Usable 173.08 GB = 192.31 GB visible x 0.9 (the gpu-memory-utilization serving e
 
 ## Multi-row fallbacks
 
-Plan groups that loop once per row, costed as the time the loop adds over one multi-row launch.
+Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
 
 None.
 

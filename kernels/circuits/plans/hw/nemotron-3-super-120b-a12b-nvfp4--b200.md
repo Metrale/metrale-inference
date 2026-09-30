@@ -36,8 +36,8 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 | case | time (ms) | tok/s |
 |---|---:|---:|
 | decode C=1 (decode n=1) | 1.693 | 590.6 |
-| decode C=16 (multi_seq n=16) | 6.272 | 2551.1 |
-| decode C=128 (multi_seq n=128) | 16.109 | 7945.8 |
+| decode C=16 (multi_seq n=16) | 24.543 | 651.9 |
+| decode C=128 (multi_seq n=128) | 195.153 | 655.9 |
 | prefill 4k | 48.1 | 85121 |
 | prefill 32k | 354.5 | 92433 |
 
@@ -61,9 +61,16 @@ Usable 173.08 GB = 192.31 GB visible x 0.9 (the gpu-memory-utilization serving e
 
 ## Multi-row fallbacks
 
-Plan groups that loop once per row, costed as the time the loop adds over one multi-row launch.
+Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
 
-None.
+| run | layer kind | added (ms) | share | sites | rules |
+|---|---|---:|---:|---|---|
+| multi_seq n=16 | mamba | 11.035 | 45.0% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
+| multi_seq n=16 | moe | 6.648 | 27.1% | moe_latent.add, moe_latent.combine, moe_latent.eact_quant, moe_latent.experts_act, moe_latent.experts_down, moe_latent.experts_up, moe_latent.latent_in, moe_latent.latent_in_quant, moe_latent.latent_out, moe_latent.latent_out_quant, moe_latent.norm, moe_latent.routed, moe_latent.router, moe_latent.sact_quant, moe_latent.shared_act, moe_latent.shared_down, moe_latent.shared_down_quant, moe_latent.shared_up, moe_latent.shared_up_quant, moe_latent.top_k, moe_latent.xl_quant | legacy crates/model-arch/src/nemotron_moe.rs:276 |
+| multi_seq n=16 | full_attention | 0.588 | 2.4% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
+| multi_seq n=128 | mamba | 93.426 | 47.9% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
+| multi_seq n=128 | moe | 80.637 | 41.3% | moe_latent.add, moe_latent.combine, moe_latent.eact_quant, moe_latent.experts_act, moe_latent.experts_down, moe_latent.experts_up, moe_latent.latent_in, moe_latent.latent_in_quant, moe_latent.latent_out, moe_latent.latent_out_quant, moe_latent.norm, moe_latent.routed, moe_latent.router, moe_latent.sact_quant, moe_latent.shared_act, moe_latent.shared_down, moe_latent.shared_down_quant, moe_latent.shared_up, moe_latent.shared_up_quant, moe_latent.top_k, moe_latent.xl_quant | legacy crates/model-arch/src/nemotron_moe.rs:276 |
+| multi_seq n=128 | full_attention | 4.981 | 2.6% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
 
 ## Fused plan: decode n=1
 
@@ -183,43 +190,44 @@ Estimated step 1.693 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 6.272 ms. Shared 0.0% (measured on this class), shared-unmeasured 89.6%, parameterisation 0.0%, policy variant 10.4%, novel 0.0% of the step.
+Estimated step 24.543 ms. Shared 0.0% (measured on this class), shared-unmeasured 59.3%, parameterisation 0.0%, policy variant 40.7%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| moe_latent.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 40 | 33.3% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
-| moe_latent.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 40 | 33.2% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
-| mamba.ssm | ssm_update | - | - | 40 | 11.2% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
-| mamba.in_proj | linear:mamba_in | fp8/tensor x fp8/tensor | native fp8 | 28 | 4.4% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 12 | 3.8% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.2% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
-| mamba.out_proj | linear:mamba_out | fp8/tensor x fp8/tensor | native fp8 | 29 | 2.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| moe_latent.shared_up | linear:shared_up | fp8/tensor x fp8/tensor | native fp8 | 39 | 1.8% | Policy variant | moe_grouped_tc | no rule of this class covers it; family `moe_grouped_tc` implements the op; differs: weight fp8/block128x128->fp8/tensor |
-| moe_latent.shared_down | linear:shared_down | fp8/tensor x fp8/tensor | native fp8 | 37 | 1.7% | Policy variant | moe_grouped_tc | no rule of this class covers it; family `moe_grouped_tc` implements the op; differs: weight fp8/block128x128->fp8/tensor |
-| mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 11 | 1.5% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe_latent.latent_out | linear:moe_latent_out | bf16 x bf16 | native bf16 | 39 | 0.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe_latent.latent_in | linear:moe_latent_in | bf16 x bf16 | native bf16 | 37 | 0.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| attn.attend | paged_attention | - | - | 8 | 0.6% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
-| attn.q | linear:q | bf16 x bf16 | native bf16 | 8 | 0.6% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe_latent.router | router | bf16 x bf16 | native bf16 | 40 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe_latent.experts_act | relu2 | - | - | 40 | 0.3% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
-| moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.2% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
-| moe_latent.shared_down | linear:shared_down | bf16 x bf16 | native bf16 | 2 | 0.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe_latent.shared_up | linear:shared_up | bf16 x bf16 | native bf16 | 1 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| attn.o | linear:o | fp8/tensor x fp8/tensor | native fp8 | 2 | 0.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| mamba.out_norm | gated_rms_norm | - | - | 40 | 0.1% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
-| moe_latent.routed | blend | - | - | 40 | 0.1% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
-| mamba.conv | conv1d_update | - | - | 40 | 0.1% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
-| attn.k | linear:k | bf16 x bf16 | native bf16 | 8 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| attn.v | linear:v | bf16 x bf16 | native bf16 | 8 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mamba.in_proj | linear:mamba_in | fp8/tensor x fp8/tensor | native fp8 | 28 | 18.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 12 | 15.5% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 40 | 11.6% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
+| moe_latent.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 40 | 11.6% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
+| mamba.out_proj | linear:mamba_out | fp8/tensor x fp8/tensor | native fp8 | 29 | 8.2% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| moe_latent.shared_up | linear:shared_up | fp8/tensor x fp8/tensor | native fp8 | 39 | 7.3% | Policy variant | moe_grouped_tc | no rule of this class covers it; family `moe_grouped_tc` implements the op; differs: weight fp8/block128x128->fp8/tensor |
+| moe_latent.shared_down | linear:shared_down | fp8/tensor x fp8/tensor | native fp8 | 37 | 6.9% | Policy variant | moe_grouped_tc | no rule of this class covers it; family `moe_grouped_tc` implements the op; differs: weight fp8/block128x128->fp8/tensor |
+| mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 11 | 6.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mamba.ssm | ssm_update | - | - | 40 | 2.9% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
+| moe_latent.latent_out | linear:moe_latent_out | bf16 x bf16 | native bf16 | 39 | 2.8% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.latent_in | linear:moe_latent_in | bf16 x bf16 | native bf16 | 37 | 2.6% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.q | linear:q | bf16 x bf16 | native bf16 | 8 | 2.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.router | router | bf16 x bf16 | native bf16 | 40 | 1.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.shared_down | linear:shared_down | bf16 x bf16 | native bf16 | 2 | 0.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.6% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
+| moe_latent.shared_up | linear:shared_up | bf16 x bf16 | native bf16 | 1 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.attend | paged_attention | - | - | 8 | 0.1% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
+| attn.k | linear:k | bf16 x bf16 | native bf16 | 8 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.v | linear:v | bf16 x bf16 | native bf16 | 8 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.latent_in | linear:moe_latent_in | fp8/tensor x fp8/tensor | native fp8 | 3 | 0.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 1 | 0.1% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
+| moe_latent.experts_act | relu2 | - | - | 40 | 0.1% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
+| moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.1% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
+| moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| attn.o | linear:o | fp8/tensor x fp8/tensor | native fp8 | 2 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| mamba.out_norm | gated_rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
+| moe_latent.routed | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
+| mamba.conv | conv1d_update | - | - | 40 | 0.0% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
 | mamba.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | moe_latent.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | moe_latent.combine | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
 | moe_latent.shared_act | relu2 | - | - | 40 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
 | mamba.conv_ckpt | state_snapshot | - | - | 40 | 0.0% | Novel | - | no family available on this device implements it |
-| moe_latent.latent_in | linear:moe_latent_in | fp8/tensor x fp8/tensor | native fp8 | 3 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 1 | 0.0% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
 | mamba.out_proj_quant | act_quant:fp8/tensor | - | - | 29 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
 | mamba.norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
 | mamba.ssm_ckpt | state_snapshot | - | - | 40 | 0.0% | Novel | - | no family available on this device implements it |
@@ -227,7 +235,6 @@ Estimated step 6.272 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | moe_latent.shared_down_quant | act_quant:fp8/tensor | - | - | 37 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
 | moe_latent.shared_up_quant | act_quant:fp8/tensor | - | - | 39 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
 | mamba.in_proj_quant | act_quant:fp8/tensor | - | - | 28 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
-| moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.add | residual_add | - | - | 8 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | attn.norm | rms_norm | - | - | 8 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
@@ -244,56 +251,56 @@ Estimated step 6.272 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=128
 
-Estimated step 16.109 ms. Shared 0.0% (measured on this class), shared-unmeasured 94.8%, parameterisation 0.0%, policy variant 5.1%, novel 0.2% of the step.
+Estimated step 195.153 ms. Shared 0.0% (measured on this class), shared-unmeasured 59.0%, parameterisation 0.0%, policy variant 41.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| mamba.ssm | ssm_update | - | - | 40 | 34.8% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
-| moe_latent.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 40 | 26.0% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
-| moe_latent.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 40 | 25.8% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
-| mamba.in_proj | linear:mamba_in | fp8/tensor x fp8/tensor | native fp8 | 28 | 1.8% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| attn.attend | paged_attention | - | - | 8 | 1.7% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
-| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 12 | 1.5% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe_latent.experts_act | relu2 | - | - | 40 | 1.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.9% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
-| mamba.out_proj | linear:mamba_out | fp8/tensor x fp8/tensor | native fp8 | 29 | 0.8% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| moe_latent.shared_up | linear:shared_up | fp8/tensor x fp8/tensor | native fp8 | 39 | 0.8% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| moe_latent.shared_down | linear:shared_down | fp8/tensor x fp8/tensor | native fp8 | 37 | 0.7% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.6% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
-| mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 11 | 0.6% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe_latent.latent_out | linear:moe_latent_out | bf16 x bf16 | native bf16 | 39 | 0.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe_latent.latent_in | linear:moe_latent_in | bf16 x bf16 | native bf16 | 37 | 0.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| attn.q | linear:q | bf16 x bf16 | native bf16 | 8 | 0.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| mamba.out_norm | gated_rms_norm | - | - | 40 | 0.2% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
-| moe_latent.routed | blend | - | - | 40 | 0.2% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
-| moe_latent.router | router | bf16 x bf16 | native bf16 | 40 | 0.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| mamba.conv | conv1d_update | - | - | 40 | 0.2% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
-| mamba.add | residual_add | - | - | 40 | 0.1% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
-| moe_latent.add | residual_add | - | - | 40 | 0.1% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
-| moe_latent.combine | residual_add | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
-| moe_latent.shared_act | relu2 | - | - | 40 | 0.1% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
-| mamba.conv_ckpt | state_snapshot | - | - | 40 | 0.1% | Novel | - | no family available on this device implements it |
-| moe_latent.shared_down | linear:shared_down | bf16 x bf16 | native bf16 | 2 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| mamba.out_proj_quant | act_quant:fp8/tensor | - | - | 29 | 0.1% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
-| mamba.norm | rms_norm | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
-| mamba.ssm_ckpt | state_snapshot | - | - | 40 | 0.1% | Novel | - | no family available on this device implements it |
-| moe_latent.norm | rms_norm | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
-| moe_latent.shared_down_quant | act_quant:fp8/tensor | - | - | 37 | 0.1% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
+| mamba.in_proj | linear:mamba_in | fp8/tensor x fp8/tensor | native fp8 | 28 | 18.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 12 | 15.5% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 40 | 11.6% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
+| moe_latent.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 40 | 11.6% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
+| mamba.out_proj | linear:mamba_out | fp8/tensor x fp8/tensor | native fp8 | 29 | 8.3% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| moe_latent.shared_up | linear:shared_up | fp8/tensor x fp8/tensor | native fp8 | 39 | 7.3% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| moe_latent.shared_down | linear:shared_down | fp8/tensor x fp8/tensor | native fp8 | 37 | 6.9% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 11 | 6.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mamba.ssm | ssm_update | - | - | 40 | 2.9% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
+| moe_latent.latent_out | linear:moe_latent_out | bf16 x bf16 | native bf16 | 39 | 2.8% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.latent_in | linear:moe_latent_in | bf16 x bf16 | native bf16 | 37 | 2.6% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.q | linear:q | bf16 x bf16 | native bf16 | 8 | 2.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.router | router | bf16 x bf16 | native bf16 | 40 | 1.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.shared_down | linear:shared_down | bf16 x bf16 | native bf16 | 2 | 0.8% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.shared_up | linear:shared_up | bf16 x bf16 | native bf16 | 1 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.attend | paged_attention | - | - | 8 | 0.1% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
+| attn.k | linear:k | bf16 x bf16 | native bf16 | 8 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.v | linear:v | bf16 x bf16 | native bf16 | 8 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe_latent.latent_in | linear:moe_latent_in | fp8/tensor x fp8/tensor | native fp8 | 3 | 0.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 1 | 0.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
+| moe_latent.experts_act | relu2 | - | - | 40 | 0.1% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.1% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
+| moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.1% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
+| moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
+| mamba.out_norm | gated_rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |
+| moe_latent.routed | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
+| attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mamba.conv | conv1d_update | - | - | 40 | 0.0% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
+| mamba.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
+| moe_latent.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
+| moe_latent.combine | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| moe_latent.shared_act | relu2 | - | - | 40 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
+| mamba.conv_ckpt | state_snapshot | - | - | 40 | 0.0% | Novel | - | no family available on this device implements it |
+| mamba.out_proj_quant | act_quant:fp8/tensor | - | - | 29 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
+| mamba.norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| mamba.ssm_ckpt | state_snapshot | - | - | 40 | 0.0% | Novel | - | no family available on this device implements it |
+| moe_latent.norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| moe_latent.shared_down_quant | act_quant:fp8/tensor | - | - | 37 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
 | moe_latent.shared_up_quant | act_quant:fp8/tensor | - | - | 39 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
-| moe_latent.shared_up | linear:shared_up | bf16 x bf16 | native bf16 | 1 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | mamba.in_proj_quant | act_quant:fp8/tensor | - | - | 28 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
 | attn.o | linear:o | fp8/tensor x fp8/tensor | native fp8 | 2 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
-| attn.k | linear:k | bf16 x bf16 | native bf16 | 8 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| attn.v | linear:v | bf16 x bf16 | native bf16 | 8 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.add | residual_add | - | - | 8 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
 | attn.norm | rms_norm | - | - | 8 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
-| moe_latent.latent_in | linear:moe_latent_in | fp8/tensor x fp8/tensor | native fp8 | 3 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 1 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | moe_latent.xl_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
 | moe_latent.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | no rule of this class covers it; family `moe_topk` implements the op |
-| moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
 | moe_latent.latent_in_quant | act_quant:fp8/tensor | - | - | 3 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
 | attn.o_quant | act_quant:fp8/tensor | - | - | 2 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
 | head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |

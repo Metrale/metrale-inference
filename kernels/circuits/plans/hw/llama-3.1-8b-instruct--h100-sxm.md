@@ -60,7 +60,7 @@ C=128 at 4k does not fit: needs 84.78 GB of 76.92 GB usable: TP=2 on h100-sxm, o
 
 ## Multi-row fallbacks
 
-Plan groups that loop once per row, costed as the time the loop adds over one multi-row launch.
+Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
 
 None.
 
