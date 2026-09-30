@@ -19,7 +19,7 @@
 # Owner: metrale-circuit (hardware axis).
 # Invariants:
 # - The device profiles below the guards are the hardware-specs research of 2026-09-29
-#   (/workspace/claude-state/roadmap/devices.toml and hardware-specs.md), copied verbatim with
+#   (the roadmap's device and hardware-spec tables), copied verbatim with
 #   its conventions and [sources]; only the planner keys are added, after each `sources` line:
 #   `usable_fraction` / `usable_why` (the share of the visible memory weights, KV and state may
 #   use) and, on gb10, `measured` (where the measured achievable roofline lives; the planner
@@ -87,7 +87,7 @@ S28 = "Oracle OCI GPU quickstarts, README-B300.md (8x 'NVIDIA B300 SXM6 AC', 275
 S29 = "ricardojacomini/b300-benchmarks, report 2026-03-17 ('148 SMs (10.3)'). https://github.com/ricardojacomini/b300-benchmarks/blob/main/report/b300_benchmark_report.md"
 S30 = "T.-R. Chen, 'Spec Sheets Are Not Kernels: An ISA- and Source-Level Audit of INT8 Availability on NVIDIA Blackwell Ultra', arXiv:2608.11693, 2026-08-12. https://arxiv.org/abs/2608.11693"
 S31 = "NVML API Reference, Device Queries, nvmlDeviceGetTotalEnergyConsumption (Volta and newer). https://docs.nvidia.com/deploy/nvml-api/group__nvmlDeviceQueries.html"
-S32 = "Local measurement, host spark-256a (GB10, driver 580.126.09, CUDA 13.0), 2026-09-29: cuDeviceGetAttribute, cuDeviceTotalMem, cudaOccupancyMaxPotentialClusterSize, nvidia-smi, nvmlDeviceGetTotalEnergyConsumption."
+S32 = "Local measurement on a GB10 host (driver 580.126.09, CUDA 13.0), 2026-09-29: cuDeviceGetAttribute, cuDeviceTotalMem, cudaOccupancyMaxPotentialClusterSize, nvidia-smi, nvmlDeviceGetTotalEnergyConsumption."
 S33 = "DeepSeek-AI, 'DeepSeek-V3 Technical Report', arXiv:2412.19437, sec. 3.3.2 (FP8 GEMM accumulation on Hopper retains ~14 bits). https://arxiv.org/abs/2412.19437"
 S34 = "Hugging Face model configs and safetensors sizes via the HF API (accessed 2026-09-29)."
 S35 = "Engine memory note operation-songbird-hopper-port.md (2026-08-27): GDN state dominance at C>=64, spec-decode snapshot trap, exact E2M1->E4M3, vLLM NVFP4-on-Hopper."

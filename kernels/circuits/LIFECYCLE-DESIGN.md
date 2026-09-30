@@ -1,7 +1,7 @@
 # The circuit over the whole model lifecycle: design
 
-Status: REVIEWED 2026-09-29 (coordinator), approved with the changes recorded in section 0.
-Owner: the circuit agent (branch `feat/circuit`).
+Status: REVIEWED 2026-09-29, approved with the changes recorded in section 0.
+Owner: metrale-circuit (branch `feat/circuit`).
 
 Owner directive (2026-09-29): "Please make sure the circuit covers the whole lifecycle,
 including prefill. Ideally, the entire model can be built from this architectural method."
@@ -9,10 +9,10 @@ including prefill. Ideally, the entire model can be built from this architectura
 Path prefixes used below: `ml/` = `crates/model-layers/src`, `me/` = `crates/model-engine/src`,
 `ma/` = `crates/model-arch/src`, `mw/` = `crates/model-weights/src`, `cfg/` =
 `crates/config/src`, `sv/` = `crates/server/src`, `k/` = `kernels/gb10/common`. Line numbers are
-feat/circuit at 67ebc194. The three surveys behind this document are kept verbatim in
-`/workspace/claude-state/circuit/survey-{loader,state-config,prefill}.md`.
+feat/circuit at 67ebc194. Three surveys of the legacy loader, state/config and prefill code are
+behind this document; their findings are cited inline.
 
-## 0. Review decisions (coordinator, 2026-09-29)
+## 0. Review decisions (2026-09-29)
 
 1. **Architecture package:** approved.
 2. **IR extensions:** approved (the `t`/`s` row symbols, typed state edges with lifetimes,
@@ -67,8 +67,7 @@ Two M1 lessons shape this design:
   `logits` an output of `mtp_out`. General rule (section 3.4): every buffer read outside the
   program is a declared output, and the executor binds each by name or refuses to build.
 - **Legacy is not always a deterministic reference.** Legacy prefill gives run-to-run different
-  last-position logits for 1-4 rows in 128
-  (`/workspace/claude-state/circuit/legacy-prefill-nondeterminism.md`), and the first MTP run of
+  last-position logits for 1-4 rows in 128, and the first MTP run of
   a process drafts from different drafter-KV history than later runs. Prefill parity therefore
   needs a legacy-repeat precondition (section 7).
 
@@ -196,8 +195,7 @@ may overlap the next compute program, and the executor places it.
 
 ### 3.6 Nemotron-H: Mamba2 state (review decision 2)
 
-The survey of the legacy Nemotron-H code is in
-`/workspace/claude-state/circuit/survey-nemotron.md`.
+A survey of the legacy Nemotron-H code is behind this section; its findings are cited inline.
 
 **Mamba2 state kinds:**
 
@@ -666,8 +664,7 @@ Every instrument follows the M1 pattern:
 
 - **Prompt lengths straddle every bucket boundary.** The prefill instruments run T = t_lo and
   t_hi of every bucket, so each plan runs at both ends of its range.
-- **Legacy-repeat precondition.** Legacy prefill is not always repeatable
-  (`/workspace/claude-state/circuit/legacy-prefill-nondeterminism.md`):
+- **Legacy-repeat precondition.** Legacy prefill is not always repeatable (section 0):
   - a row whose legacy-repeat differs from the reference is left out of the circuit comparison
     and reported, as `--batch` does today;
   - a phase passes only if at most the documented rate of rows is left out, and the
@@ -689,7 +686,7 @@ the same prompts:
 - **The script is generic.** One reference script, `tools/circuit/hf_reference.py`, is keyed by
   the package, never by a family. It writes last-position logits per prompt, and optionally
   per-op hidden rows via forward hooks for localisation. The repo has only family-specific
-  scripts today (`bench/fp8_dgx2_drift/*`, `bench/qwen4_exp/*`).
+  scripts today (the FP8 drift and qwen4_exp scripts under `bench/`).
 - **Tolerance is declared per format in the package.** For example: BF16 weights need top-1
   agreement on every position and max |Δlogit| under a stated bound; quantized formats (NVFP4,
   FP8) are bounded by KL and top-k overlap. The reference runs at the checkpoint's dequantized
@@ -769,7 +766,7 @@ The rules:
 
   Each lands behind `--forward legacy`, so gate numbers should not move. A campaign that moves
   one is a finding before it is a merge.
-- **Parity and A/B legs run outside campaigns,** on the circuit agent's own box.
+- **Parity and A/B legs run outside campaigns,** on a box no campaign holds.
 
 ## 10. Milestones
 
@@ -788,7 +785,7 @@ and campaign pacing.
 | M7 | Load plan + config mapping; `met circuit diff --load` | every bound weight's pointee hash equal (or the requant nondeterminism documented and fixed first); config field-by-field equality | 3 days |
 | M8 | Pilot: Nemotron-3.5-Lightning built only from its package (Mamba2, ReLU² MoE with sigmoid routing, NoPE attention, FP8 per-tensor static-scale W8A8, MTP over Mamba2 rollback); then Llama 3.x / Qwen3-dense (G1) | HF tolerance parity (7.2), then the accuracy gates; certifies | 4-6 days |
 | M3 | Flip `--forward circuit` for the circuit-built families; delete their legacy forward, loader and dispatch code | full campaign green; code deleted | 1 day + campaign |
-| skill | `/new-model` adopted as the agent standard (a draft is on feat/circuit-venn) | the M8 pilot followed it end to end | with M8 |
+| skill | `/new-model` adopted as the standard method (a draft is on feat/circuit-venn) | the M8 pilot followed it end to end | with M8 |
 
 ## 11. The Venn method
 
