@@ -37,6 +37,7 @@ pub fn fp8_gemm_n128(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     if k.is_multiple_of(32) && std::env::var("METRALE_FP8_LDMAB").as_deref() != Ok("0") {
         return fp8_act_ldmab_gemm(gpu, input, b_fp8, output, m, n, k, stream);
     }
@@ -143,6 +144,7 @@ pub fn fp8_gemm_n128_mfast(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(m, 64), div_ceil(n, 128), 1])
         .block([128, 1, 1])
@@ -168,6 +170,7 @@ pub fn fp8_gemm_m128_mfast(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(m, 128), div_ceil(n, 128), 1])
         .block([128, 1, 1])
@@ -235,6 +238,9 @@ pub fn predequant_nvfp4_to_fp8(
 
 /// 2026-09-25: Cast `total_elements` BF16 values to FP8 E4M3, two per thread.
 /// `total_elements` must be even: the kernel reads and writes pairs.
+///
+/// 2026-09-29: The cast has no scale, so a value past 448 saturates; debug builds check
+/// the source range first ([`check_e4m3_range`]).
 pub fn bf16_to_fp8(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
@@ -243,6 +249,7 @@ pub fn bf16_to_fp8(
     total_elements: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_range(gpu, src, total_elements as usize, stream)?;
     let threads_needed = total_elements / 2;
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(threads_needed, 256), 1, 1])
@@ -295,6 +302,7 @@ pub fn fp8_gemm_n128_row_scaled_m16(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 128), 1, 1])
         .block([32, 1, 1])
@@ -328,6 +336,7 @@ pub fn fp8_gemm_n128_row_scaled(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 128), div_ceil(m, 64), 1])
         .block([128, 1, 1])

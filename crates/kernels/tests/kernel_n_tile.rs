@@ -15,9 +15,12 @@
 //! body is the same bug moved into the kernel file, so this test compares the two.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 
 use metrale_closure::layout::{discover, walk};
+
+#[path = "support/cu_source.rs"]
+mod cu_source;
+use cu_source::{block_at, entry_start, int_defines, is_ident, workspace_root};
 
 /// 2026-09-29: The entry points the tiled launchers run. A kernel added to a tiled launcher
 /// without a symbol fails at its first launch; listing it here moves that failure to CI.
@@ -53,56 +56,6 @@ const TILED_ENTRIES: &[&str] = &[
     "moe_w4a4_grouped_gemm_relu2",
 ];
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("crates/kernels is two levels below the workspace root")
-        .to_path_buf()
-}
-
-fn is_ident(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// 2026-09-29: `NAME -> value` for every `#define NAME <integer>`.
-fn int_defines(text: &str) -> BTreeMap<String, u32> {
-    let mut out = BTreeMap::new();
-    for line in text.lines() {
-        let mut it = line.split_whitespace();
-        if it.next() != Some("#define") {
-            continue;
-        }
-        if let (Some(name), Some(v)) = (it.next(), it.next())
-            && let Ok(v) = v.parse::<u32>()
-        {
-            out.insert(name.to_string(), v);
-        }
-    }
-    out
-}
-
-/// 2026-09-29: Byte offset just past `name(` in the first `extern "C" __global__` declaration
-/// of `name`, if the file declares it.
-fn entry_start(text: &str, name: &str) -> Option<usize> {
-    let mut at = 0;
-    while let Some(i) = text[at..].find("extern \"C\"") {
-        let decl_at = at + i;
-        let paren = text[decl_at..].find('(').map(|p| decl_at + p)?;
-        let head = &text[decl_at..paren];
-        let ident = head
-            .trim_end()
-            .rsplit(|c: char| !is_ident(c))
-            .next()
-            .unwrap_or("");
-        if head.contains("__global__") && ident == name {
-            return Some(paren + 1);
-        }
-        at = decl_at + 1;
-    }
-    None
-}
-
 /// 2026-09-29: The identifiers `blockIdx.x` is multiplied by in `body`.
 fn block_x_factors(body: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -118,25 +71,6 @@ fn block_x_factors(body: &str) -> Vec<String> {
         }
     }
     out
-}
-
-/// 2026-09-29: The brace-matched block that opens at the first `{` at or after `from`.
-fn block_at(text: &str, from: usize) -> Option<&str> {
-    let open = from + text[from..].find('{')?;
-    let mut depth = 0usize;
-    for (i, c) in text[open..].char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&text[open..=open + i]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// 2026-09-29: The N tile(s) the entry's body uses: `blockIdx.x * TILE` in the entry's own
@@ -230,4 +164,16 @@ fn a_published_tile_that_differs_from_the_body_is_found() {
         "only k's own helper counts"
     );
     assert_eq!(published_tile(text, "k", &defines), Some(64));
+}
+
+/// 2026-09-29: An entry declared with `__launch_bounds__` between `__global__` and its name
+/// is found, not skipped.
+#[test]
+fn an_entry_with_launch_bounds_is_found() {
+    let text = "#define N_TILE_LG 128\n\
+        extern \"C\" __global__\n__launch_bounds__(128, 3)\nvoid k(int n) {\n\
+        unsigned cta_n = blockIdx.x * N_TILE_LG; }\n";
+    let defines = int_defines(text);
+    assert!(entry_start(text, "k").is_some());
+    assert_eq!(body_tiles(text, "k", &defines), vec![128]);
 }

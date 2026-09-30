@@ -2005,3 +2005,15 @@ extern "C" __device__ unsigned int w4a16_gemm_n_tile = N_TILE_SM;
 extern "C" __device__ unsigned int w4a16_gemm_t_n_tile = N_TILE_LG;
 extern "C" __device__ unsigned int w4a16_gemm_t_k64_n_tile = N_TILE_LG;
 extern "C" __device__ unsigned int w4a16_gemm_t_m128_n_tile = N_TILE_LG;
+
+// 2026-09-29: Entries that cast their BF16 A operand to E4M3 with no scale
+// (`bf16x4_to_e4m3x4`), so an activation past 448 saturates. The runtime reads each
+// symbol when the handle is resolved (`GpuBackend::kernel_casts_a_to_e4m3`), and debug
+// builds check the activation range before the launch.
+extern "C" __device__ unsigned int w4a16_gemm_t_a_e4m3 = 1;
+extern "C" __device__ unsigned int fp8_gemm_t_a_e4m3 = 1;
+extern "C" __device__ unsigned int w4a16_gemm_t_k64_a_e4m3 = 1;
+extern "C" __device__ unsigned int w4a16_gemm_t_m128_a_e4m3 = 1;
+extern "C" __device__ unsigned int fp8_gemm_t_m128_a_e4m3 = 1;
+extern "C" __device__ unsigned int fp8_gemm_t_row_scaled_a_e4m3 = 1;
+extern "C" __device__ unsigned int fp8_gemm_t_row_scaled_m16_a_e4m3 = 1;

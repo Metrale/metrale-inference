@@ -44,6 +44,7 @@ pub fn w4a16_gemm(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([n_tile_blocks(gpu, kernel, n)?, div_ceil(m, 64), 1])
         .block([128, 1, 1])
@@ -79,6 +80,7 @@ pub fn w4a16_gemm_n128_ldb(
     ldb: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([n_tile_blocks(gpu, kernel, n)?, div_ceil(m, 64), 1])
         .block([128, 1, 1])
@@ -125,6 +127,7 @@ pub fn w4a16_gemm_n128_m128_v3(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([n_tile_blocks(gpu, kernel, n)?, div_ceil(m, 128), 1])
         .block([256, 1, 1])
@@ -156,6 +159,7 @@ pub fn w4a16_gemm_n128_m128_v2(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([n_tile_blocks(gpu, kernel, n)?, div_ceil(m, 128), 1])
         .block([256, 1, 1])
@@ -192,6 +196,7 @@ pub fn w4a16_gemm_n128_m128(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([n_tile_blocks(gpu, kernel, n)?, div_ceil(m, 128), 1])
         .block([128, 1, 1])
@@ -222,6 +227,7 @@ pub fn w4a16_gemm_n128_m128_bf16_ldb(
     ldb: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([n_tile_blocks(gpu, kernel, n)?, div_ceil(m, 128), 1])
         .block([128, 1, 1])
@@ -254,6 +260,7 @@ pub fn w4a16_gemm_n128_m128_bf16(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
     KernelLaunch::new(gpu, kernel)
         .grid([n_tile_blocks(gpu, kernel, n)?, div_ceil(m, 128), 1])
         .block([128, 1, 1])

@@ -62,6 +62,8 @@ mod w8a16_tc_rows;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
+#[path = "ops/e4m3_range.rs"]
+mod e4m3_range;
 #[path = "ops/gemm_dense.rs"]
 mod gemm_dense;
 #[path = "ops/gemm_dense_int8.rs"]
@@ -220,6 +222,7 @@ pub use dispatch_helpers::*;
 pub use dispatch_proj::*;
 pub use dispatch_proj_decode::*;
 pub use dispatch_proj_rowwise::*;
+pub use e4m3_range::{E4M3_MAX, check_e4m3_activation_range, check_e4m3_range};
 pub use embeddings::*;
 pub use fp8_act_quant::*;
 pub use fp8_act_quant_floor::*;

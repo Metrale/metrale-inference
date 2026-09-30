@@ -188,6 +188,14 @@ pub trait GpuBackend: Send + Sync {
         }
     }
 
+    /// 2026-09-29: Whether `kernel` casts its BF16 A operand to E4M3 with no scale, as its
+    /// module declares with `extern "C" __device__ unsigned int <entry>_a_e4m3`. Values
+    /// past 448 saturate there; launchers check the range in debug builds
+    /// (`ops::check_e4m3_activation_range` in model-layers).
+    fn kernel_casts_a_to_e4m3(&self, kernel: KernelHandle) -> bool {
+        self.op_cache().a_e4m3(kernel)
+    }
+
     /// 2026-09-25: Whether `module` is loaded in this backend. Ask before looking
     /// up a kernel that only some targets carry: the CUDA backend's kernel audit
     /// records every failed lookup.

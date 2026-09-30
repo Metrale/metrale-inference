@@ -287,3 +287,9 @@ void w4a16_gemm_t_m128_v2(
 // size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
 // that entry multiplies `blockIdx.x` by.
 extern "C" __device__ unsigned int w4a16_gemm_t_m128_v2_n_tile = N_TILE_LG;
+
+// 2026-09-29: Entries that cast their BF16 A operand to E4M3 with no scale
+// (`bf16x4_to_e4m3x4`), so an activation past 448 saturates. The runtime reads each
+// symbol when the handle is resolved (`GpuBackend::kernel_casts_a_to_e4m3`), and debug
+// builds check the activation range before the launch.
+extern "C" __device__ unsigned int w4a16_gemm_t_m128_v2_a_e4m3 = 1;
