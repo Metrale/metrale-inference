@@ -160,7 +160,7 @@ Estimated step 7.678 ms. Shared 0.0% (measured on this class), shared-unmeasured
 |---|---|---|---|---:|---:|---|---|---|
 | dense_ffn.gate_up | linear:gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 31.2% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | dense_ffn.down | linear:down | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 15.6% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.recur | gdn_recurrence | - | - | 48 | 13.2% | Shared, unmeasured | - | gated_delta_rule::gated_delta_rule_decode_f32_strided (in no kernel family) |
+| gdn.recur | gdn_recurrence | - | - | 48 | 13.2% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
 | attn.attend | paged_attention | - | - | 16 | 11.7% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 11.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 6.9% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
@@ -170,13 +170,13 @@ Estimated step 7.678 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | dense_ffn.act | silu_mul | - | - | 64 | 0.3% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows |
 | attn.k | linear:k | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 0.2% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.v | linear:v | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 0.2% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.l2 | l2_norm | - | - | 48 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.conv | conv1d_update | - | - | 48 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.l2 | l2_norm | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.conv | conv1d_update | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 0.1% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_batched |
 | dense_ffn.act_quant | act_quant:fp8/g128 | - | - | 64 | 0.1% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | - | norm::gated_rms_norm_f32_input_strided (in no kernel family) |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
 | dense_ffn.add | residual_add | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.add | residual_add | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.xn_quant | act_quant:fp8/g128 | - | - | 64 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
@@ -204,7 +204,7 @@ Estimated step 22.162 ms. Shared 0.0% (measured on this class), shared-unmeasure
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| gdn.recur | gdn_recurrence | - | - | 48 | 36.7% | Shared, unmeasured | - | gated_delta_rule::gated_delta_rule_decode_f32_strided (in no kernel family) |
+| gdn.recur | gdn_recurrence | - | - | 48 | 36.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
 | attn.attend | paged_attention | - | - | 16 | 32.4% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
 | dense_ffn.gate_up | linear:gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 11.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | dense_ffn.down | linear:down | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 5.6% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
@@ -214,12 +214,12 @@ Estimated step 22.162 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 1.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | dense_ffn.act | silu_mul | - | - | 64 | 0.8% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows |
 | attn.o | linear:o | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 0.5% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.l2 | l2_norm | - | - | 48 | 0.5% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.conv | conv1d_update | - | - | 48 | 0.4% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.l2 | l2_norm | - | - | 48 | 0.5% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.conv | conv1d_update | - | - | 48 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | dense_ffn.act_quant | act_quant:fp8/g128 | - | - | 64 | 0.4% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.4% | Shared, unmeasured | - | norm::gated_rms_norm_f32_input_strided (in no kernel family) |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.4% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
 | dense_ffn.add | residual_add | - | - | 64 | 0.2% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.add | residual_add | - | - | 48 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.post_norm | rms_norm | - | - | 64 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.xn_quant | act_quant:fp8/g128 | - | - | 64 | 0.1% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |

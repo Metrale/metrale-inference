@@ -174,7 +174,7 @@ Estimated step 5.667 ms. Shared 0.0% (measured on this class), shared-unmeasured
 |---|---|---|---|---:|---:|---|---|---|
 | moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 45.1% | Shared, unmeasured | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped |
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 22.7% | Shared, unmeasured | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped rule=moe_down_act_grouped |
-| gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | - | gated_delta_rule::gated_delta_rule_decode_f32_strided (in no kernel family) |
+| gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
 | attn.attend | paged_attention | - | - | 10 | 7.1% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 4.0% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
@@ -184,12 +184,12 @@ Estimated step 5.667 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | attn.o | linear:o | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
 | moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 0.2% | Shared, unmeasured | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped rule=moe_down_act_grouped |
 | moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 0.2% | Shared, unmeasured | dense_bf16 | dense_gemv_bf16_batchm::dense_gemv_bf16_batchm rule=moe_grouped_router_rows |
-| gdn.l2 | l2_norm | - | - | 30 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.conv | conv1d_update | - | - | 30 | 0.1% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.l2 | l2_norm | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.conv | conv1d_update | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | moe_ffn.blend | blend | - | - | 40 | 0.1% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped |
-| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.1% | Shared, unmeasured | - | norm::gated_rms_norm_f32_input_strided (in no kernel family) |
+| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.1% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
 | moe_ffn.experts_act | silu_mul | - | - | 40 | 0.1% | Shared, unmeasured | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped |
-| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.1% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | attn.k | linear:k | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
 | attn.v | linear:v | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.1% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_batched |
@@ -227,19 +227,19 @@ Estimated step 18.975 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
 | moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 33.4% | Shared, unmeasured | moe_prefill_w8a8 | no rule of this class covers it; family `moe_prefill_w8a8` implements the op |
-| gdn.recur | gdn_recurrence | - | - | 30 | 25.6% | Shared, unmeasured | - | gated_delta_rule::gated_delta_rule_decode_f32_strided (in no kernel family) |
+| gdn.recur | gdn_recurrence | - | - | 30 | 25.6% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
 | attn.attend | paged_attention | - | - | 10 | 16.9% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 16.9% | Shared, unmeasured | moe_prefill_w8a8 | no rule of this class covers it; family `moe_prefill_w8a8` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 1.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined::w8a16_gemm_pipelined rule=w8a16_full_gdn_wide |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 0.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined::w8a16_gemm_pipelined rule=w8a16_full_gdn_wide |
-| gdn.l2 | l2_norm | - | - | 30 | 0.4% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.conv | conv1d_update | - | - | 30 | 0.3% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.l2 | l2_norm | - | - | 30 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.conv | conv1d_update | - | - | 30 | 0.3% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | moe_ffn.blend | blend | - | - | 40 | 0.3% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked |
-| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.3% | Shared, unmeasured | - | norm::gated_rms_norm_f32_input_strided (in no kernel family) |
+| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.3% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
 | moe_ffn.experts_act | silu_mul | - | - | 40 | 0.2% | Shared, unmeasured | silu_mul | no rule of this class covers it; family `silu_mul` implements the op |
-| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 0.2% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.o | linear:o | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked |
 | moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 0.1% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |

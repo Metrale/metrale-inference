@@ -168,7 +168,7 @@ Estimated step 8.019 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
 | dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 56 | 21.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
-| gdn.recur | gdn_recurrence | - | - | 48 | 18.2% | Shared, unmeasured | - | gated_delta_rule::gated_delta_rule_decode_f32_strided (in no kernel family) |
+| gdn.recur | gdn_recurrence | - | - | 48 | 18.2% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
 | gdn.qkvz | linear:qkvz | fp8/channel x fp8/token | native fp8 | 48 | 15.1% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | dense_ffn.down | linear:down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 56 | 10.5% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | attn.attend | paged_attention | - | - | 16 | 8.0% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
@@ -181,13 +181,13 @@ Estimated step 8.019 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | dense_ffn.act | silu_mul | - | - | 64 | 0.4% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows |
 | attn.k | linear:k | fp8/channel x fp8/token | native fp8 | 16 | 0.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.v | linear:v | fp8/channel x fp8/token | native fp8 | 16 | 0.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.l2 | l2_norm | - | - | 48 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.conv | conv1d_update | - | - | 48 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.l2 | l2_norm | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.conv | conv1d_update | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 0.2% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_batched |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.2% | Shared, unmeasured | - | norm::gated_rms_norm_f32_input_strided (in no kernel family) |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.2% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
 | dense_ffn.act_quant | act_quant:nvfp4/g16 | - | - | 64 | 0.2% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
 | dense_ffn.add | residual_add | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.add | residual_add | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
@@ -216,7 +216,7 @@ Estimated step 24.244 ms. Shared 0.0% (measured on this class), shared-unmeasure
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| gdn.recur | gdn_recurrence | - | - | 48 | 48.1% | Shared, unmeasured | - | gated_delta_rule::gated_delta_rule_decode_f32_strided (in no kernel family) |
+| gdn.recur | gdn_recurrence | - | - | 48 | 48.1% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
 | attn.attend | paged_attention | - | - | 16 | 21.2% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
 | dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 56 | 7.6% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | gdn.qkvz | linear:qkvz | fp8/channel x fp8/token | native fp8 | 48 | 5.2% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
@@ -228,12 +228,12 @@ Estimated step 24.244 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | dense_ffn.act | silu_mul | - | - | 64 | 1.1% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows |
 | dense_ffn.down | linear:down | fp8/channel x fp8/token | native fp8 | 8 | 0.9% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.o | linear:o | fp8/channel x fp8/token | native fp8 | 16 | 0.7% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.l2 | l2_norm | - | - | 48 | 0.6% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.conv | conv1d_update | - | - | 48 | 0.6% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.5% | Shared, unmeasured | - | norm::gated_rms_norm_f32_input_strided (in no kernel family) |
+| gdn.l2 | l2_norm | - | - | 48 | 0.6% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.conv | conv1d_update | - | - | 48 | 0.6% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.5% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
 | dense_ffn.act_quant | act_quant:nvfp4/g16 | - | - | 64 | 0.5% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
 | dense_ffn.add | residual_add | - | - | 64 | 0.3% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.3% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.3% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.add | residual_add | - | - | 48 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.post_norm | rms_norm | - | - | 64 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | gdn.input_norm | rms_norm | - | - | 48 | 0.2% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |

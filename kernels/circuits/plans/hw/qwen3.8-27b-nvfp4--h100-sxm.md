@@ -145,7 +145,7 @@ Estimated step 7.802 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
 | dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x bf16 | native bf16 | 64 | 24.9% | Shared, unmeasured | w4a16_tc | no rule of this class covers it; family `w4a16_tc` implements the op |
-| gdn.recur | gdn_recurrence | - | - | 48 | 18.7% | Shared, unmeasured | - | gated_delta_rule::gated_delta_rule_decode_f32_strided (in no kernel family) |
+| gdn.recur | gdn_recurrence | - | - | 48 | 18.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
 | attn.attend | paged_attention | - | - | 16 | 16.5% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
 | dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 12.5% | Shared, unmeasured | w4a16_tc | no rule of this class covers it; family `w4a16_tc` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 9.8% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
@@ -154,14 +154,14 @@ Estimated step 7.802 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 2.2% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_p3 rule=w4a16_gemm_t_p3_rows |
 | attn.o | linear:o | nvfp4/g16 x bf16 | native bf16 | 16 | 1.1% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_k64_n64_p3 rule=w4a16_gemm_t_k64_n64_p3_rows |
 | dense_ffn.act | silu_mul | - | - | 64 | 0.4% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows |
-| gdn.l2 | l2_norm | - | - | 48 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.conv | conv1d_update | - | - | 48 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.l2 | l2_norm | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.conv | conv1d_update | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 0.2% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_batched |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.2% | Shared, unmeasured | - | norm::gated_rms_norm_f32_input_strided (in no kernel family) |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.2% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
 | attn.k | linear:k | nvfp4/g16 x bf16 | native bf16 | 16 | 0.2% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_p3 rule=w4a16_gemm_t_p3_rows |
 | attn.v | linear:v | nvfp4/g16 x bf16 | native bf16 | 16 | 0.2% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_p3 rule=w4a16_gemm_t_p3_rows |
 | dense_ffn.add | residual_add | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.add | residual_add | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
@@ -184,7 +184,7 @@ Estimated step 30.145 ms. Shared 0.0% (measured on this class), shared-unmeasure
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| gdn.recur | gdn_recurrence | - | - | 48 | 38.7% | Shared, unmeasured | - | gated_delta_rule::gated_delta_rule_decode_f32_strided (in no kernel family) |
+| gdn.recur | gdn_recurrence | - | - | 48 | 38.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
 | attn.attend | paged_attention | - | - | 16 | 34.1% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
 | dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x bf16 | native bf16 | 64 | 9.8% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
 | dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 4.9% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
@@ -193,12 +193,12 @@ Estimated step 30.145 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 1.3% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_k64_p3 rule=w4a16_gemm_t_k64_p3_gdn_out_wide |
 | attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 0.9% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_m128 rule=w4a16_gemm_t_m128_rows |
 | dense_ffn.act | silu_mul | - | - | 64 | 0.8% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows |
-| gdn.l2 | l2_norm | - | - | 48 | 0.5% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
-| gdn.conv | conv1d_update | - | - | 48 | 0.4% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.l2 | l2_norm | - | - | 48 | 0.5% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
+| gdn.conv | conv1d_update | - | - | 48 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | attn.o | linear:o | nvfp4/g16 x bf16 | native bf16 | 16 | 0.4% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_m128 rule=w4a16_gemm_t_m128_rows |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.4% | Shared, unmeasured | - | norm::gated_rms_norm_f32_input_strided (in no kernel family) |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.4% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
 | dense_ffn.add | residual_add | - | - | 64 | 0.2% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.2% | Shared, unmeasured | - | causal_conv1d::causal_conv1d_update_l2norm_f32_strided (in no kernel family) |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
 | gdn.add | residual_add | - | - | 48 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | dense_ffn.post_norm | rms_norm | - | - | 64 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
 | gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
