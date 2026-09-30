@@ -167,7 +167,11 @@ pub fn plan_one(
     run: crate::venn::Run,
 ) -> Result<OnePlan, HwError> {
     let resolved = plan::resolve(registry, device_id, tree, model)?;
-    let (policy, _) = model::policy_on_class(&model.policy, &resolved.chain[0])?;
+    let (policy, _) = model::policy_on_class(
+        &model.policy,
+        model.settings_class.as_deref(),
+        &resolved.chain[0],
+    )?;
     let header = model::with_settings(&model::header_on(model, &resolved.device.class), &policy);
     let planned = plan::fuse_on(&resolved, &model.circuit, &policy, run)?;
     Ok(OnePlan {
@@ -218,7 +222,11 @@ pub fn build_report(
     command: String,
 ) -> Result<HwReport, HwError> {
     let resolved = plan::resolve(registry, device_id, tree, &model)?;
-    let (policy, class_settings) = model::policy_on_class(&model.policy, &resolved.chain[0])?;
+    let (policy, class_settings) = model::policy_on_class(
+        &model.policy,
+        model.settings_class.as_deref(),
+        &resolved.chain[0],
+    )?;
     let header = model::with_settings(&model::header_on(&model, &resolved.device.class), &policy);
     let c = &model.circuit;
     let mut tables = Vec::new();

@@ -9,7 +9,9 @@
 //! Owner: metrale-circuit (hardware).
 //! Invariants:
 //! - Settings a class's `HARDWARE.toml [defaults]` decides are re-read from the device's class
-//!   ([`policy_on_class`]); a recipe's value for them describes the class it was written for.
+//!   ([`policy_on_class`]), except on the class a recipe was written for
+//!   ([`ModelUnderPlan::settings_class`]), where the recipe's value stands: it may pin one away
+//!   from the class default.
 //! - `recipe` precision is the instance's own (the golden plans' formats); `declared` is the
 //!   checkpoint's declared formats. Neither is chosen silently: the report prints which.
 
@@ -79,6 +81,10 @@ pub struct ModelUnderPlan {
     /// 2026-09-30: Where each policy setting comes from, when derived rather than stated by a
     /// recipe (empty: the recipe states them in INSTANCES.toml).
     pub policy_sources: Vec<(String, String)>,
+    /// 2026-09-30: The class a recipe's settings were stated for (its INSTANCES.toml target's
+    /// hardware); `None` for a model planned from its checkpoint, which takes every class's
+    /// defaults.
+    pub settings_class: Option<String>,
 }
 
 /// 2026-09-30: Instantiates the model a spec names.
@@ -143,8 +149,8 @@ pub fn model_of(
 ) -> Result<ModelUnderPlan, HwError> {
     let loaded = load_instance(repo, inst).map_err(|e| HwError::Model(e.to_string()))?;
     let mut parts = inst.target.split('/');
-    let (_hw, model, quant) = (parts.next(), parts.next(), parts.next());
-    let (Some(model), Some(quant)) = (model, quant) else {
+    let (hw, model, quant) = (parts.next(), parts.next(), parts.next());
+    let (Some(hw), Some(model), Some(quant)) = (hw, model, quant) else {
         return Err(HwError::Model(format!(
             "{}: target `{}` is not hw/model/quant",
             inst.recipe, inst.target
@@ -161,6 +167,7 @@ pub fn model_of(
         precision,
         precision_choice,
         policy_sources: Vec::new(),
+        settings_class: Some(hw.to_string()),
     })
 }
 
@@ -172,12 +179,15 @@ pub const CLASS_DEFAULT_SETTINGS: [(&str, &str); 2] = [
     ("decode_split_silu", "decode_split_silu"),
 ];
 
-/// 2026-09-30: `policy` with the class-decided settings re-read from `class`; the changed keys
-/// are returned for the report. A class that does not state one is an error.
+/// 2026-09-30: `policy` with the class-decided settings re-read from `class`, unless `class` is
+/// the `settings_class` the policy was stated for; the changed keys are returned for the report.
+/// A class that does not state one is an error either way.
 pub fn policy_on_class(
     policy: &Policy,
+    settings_class: Option<&str>,
     class: &ClassInfo,
 ) -> Result<(Policy, BTreeMap<String, String>), HwError> {
+    let own = settings_class == Some(class.name.as_str());
     let mut out = policy.clone();
     let mut changed = BTreeMap::new();
     for (setting, key) in CLASS_DEFAULT_SETTINGS {
@@ -196,6 +206,9 @@ pub fn policy_on_class(
             other => other,
         }
         .to_string();
+        if own {
+            continue;
+        }
         if policy.settings.get(setting) != Some(&v) {
             changed.insert(setting.to_string(), v.clone());
         }

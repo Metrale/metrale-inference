@@ -325,3 +325,50 @@ values = {}
     let files: Vec<&str> = found.iter().map(|f| f.file.as_str()).collect();
     assert_eq!(files, ["kernels/child/common/attn_b.cu"]);
 }
+
+// 2026-09-30: A recipe's value for a class-decided setting stands on the class it was stated for,
+// even away from that class's default; every other class, and a model planned from its
+// checkpoint on any class, takes the class's value; a class that does not state the setting is
+// refused on the recipe's own class too. Mutation: dropping the own-class check turns the first
+// assertion's `off` into `on`; applying it to every class keeps `off` on `hopper`.
+#[test]
+fn a_recipe_pin_stands_on_its_own_class_only() {
+    use std::collections::{BTreeMap, BTreeSet};
+    let class = |name: &str| super::class::ClassInfo {
+        name: name.into(),
+        arch: "sm_0".into(),
+        inherits: None,
+        defines: BTreeSet::new(),
+        defaults: BTreeMap::from([
+            ("ssm_batched_recurrent".to_string(), "true".to_string()),
+            ("decode_split_silu".to_string(), "true".to_string()),
+        ]),
+    };
+    let policy = crate::fuser::Policy {
+        opt_in_levers: BTreeSet::new(),
+        settings: BTreeMap::from([
+            ("ssm_batched_recurrent".to_string(), "off".to_string()),
+            ("decode_split_silu".to_string(), "on".to_string()),
+        ]),
+    };
+    let (kept, changed) =
+        super::model::policy_on_class(&policy, Some("gb10"), &class("gb10")).unwrap();
+    assert_eq!(kept.settings, policy.settings);
+    assert!(changed.is_empty(), "{changed:?}");
+    for (stated_for, on) in [(Some("gb10"), "hopper"), (None, "hopper"), (None, "gb10")] {
+        let (p, changed) = super::model::policy_on_class(&policy, stated_for, &class(on)).unwrap();
+        assert_eq!(
+            p.settings["ssm_batched_recurrent"], "on",
+            "{stated_for:?} on {on}"
+        );
+        assert_eq!(p.settings["decode_split_silu"], "on");
+        assert_eq!(
+            changed,
+            BTreeMap::from([("ssm_batched_recurrent".to_string(), "on".to_string())])
+        );
+    }
+    let mut bare = class("gb10");
+    bare.defaults.clear();
+    let e = super::model::policy_on_class(&policy, Some("gb10"), &bare).unwrap_err();
+    assert!(matches!(e, HwError::Class(_)), "{e}");
+}

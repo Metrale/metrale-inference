@@ -21,10 +21,14 @@ schema = 1
 # - kv_cache_dtype, lm_head_dtype: bf16, pinned by the recipe.
 # - ssm_h_dtype f32 and gdn_fused_norm off: flag defaults
 #   (crates/server/src/cli/serve_args.rs:145-206).
-# - ssm_batched_recurrent: off, HARDWARE.toml:118 under the flag's `auto`.
+# - ssm_batched_recurrent: off, pinned. The circuit models the per-sequence GDN recurrence only;
+#   GB10 runs the batched arm by default (kernels/gb10/HARDWARE.toml:122), so a circuit serve
+#   sets `--ssm-batched-recurrent off` (or METRALE_SSM_BATCHED_RECURRENT=0) and the executor
+#   refuses the batched arm (circuit_exec/policy.rs `unmodelled_switches`) until its rules land.
+#   On gb10 the hardware planner keeps this pin (hardware/model.rs `policy_on_class`).
 # - gemv_sw: on unless METRALE_NO_GEMV_SW=1 (ml/ops/model_levers_resolve.rs:53).
 # - w4a16_tc: on unless METRALE_NO_W4A16_TC (ml/ops/gemv_tc.rs:79-82).
-# - decode_split_silu: on, HARDWARE.toml:164.
+# - decode_split_silu: on, kernels/gb10/HARDWARE.toml:168.
 # - rms_norm_act_quant: off, the engine has no fused norm-quantize launch (2026-09-30).
 [[instance]]
 recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"

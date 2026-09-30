@@ -360,5 +360,6 @@ pub fn model(precision: &str) -> ModelUnderPlan {
         precision: "test".into(),
         precision_choice: super::PrecisionChoice::Declared,
         policy_sources: Vec::new(),
+        settings_class: None,
     }
 }

@@ -55,13 +55,11 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
         ("kv_cache_dtype".to_string(), kv_cache_dtype.to_string()),
         ("lm_head_dtype".to_string(), lm_head_dtype.to_string()),
         ("ssm_h_dtype".to_string(), ssm_h.to_string()),
+        // 2026-09-30: The GDN flag cell, which a pinned `--ssm-batched-recurrent` sets and the
+        // multi-sequence dispatch reads; the target default alone misses the pin.
         (
             "ssm_batched_recurrent".to_string(),
-            on_off(
-                crate::layers::ops::target_defaults::resolved()
-                    .ssm_batched_recurrent
-                    .value,
-            ),
+            on_off(crate::layers::qwen3_ssm::ssm_batched_recurrent_enabled()),
         ),
         ("gemv_sw".to_string(), on_off(levers.gemv_sw)),
         (
@@ -148,6 +146,15 @@ pub fn unmodelled_switches(levers: &ModelLevers) -> Vec<String> {
         out.push(
             "multi-sequence profiling or hidden dumps (METRALE_MS_PROFILE, METRALE_CONC_HSD, \
              METRALE_SSM_*_PROFILE)"
+                .to_string(),
+        );
+    }
+    // 2026-09-30: No rule covers the batched GDN recurrence (the golden instances' target has
+    // `off` rules only; metrale-circuit `tests/circuits.rs` holds it), and GB10 defaults to it.
+    if crate::layers::qwen3_ssm::ssm_batched_recurrent_enabled() {
+        out.push(
+            "the batched GDN recurrence (--ssm-batched-recurrent, METRALE_SSM_BATCHED_RECURRENT; \
+             serve --forward circuit with --ssm-batched-recurrent off)"
                 .to_string(),
         );
     }

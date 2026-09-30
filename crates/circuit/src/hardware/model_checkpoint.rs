@@ -141,6 +141,7 @@ impl CircuitSource for CheckpointSource<'_> {
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
+            settings_class: None,
         })
     }
 }

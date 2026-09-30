@@ -415,3 +415,54 @@ fn every_bit_identical_rule_names_a_registered_microtest() {
     }
     assert!(named >= 4, "only {named} bit-identical rules");
 }
+
+// 2026-09-30: No rule of the golden instances' target covers the batched GDN recurrence: each
+// golden instance plans a multi-sequence step under its pinned `ssm_batched_recurrent = "off"`
+// and leaves a GDN node uncovered under `on`. The executor refuses the batched arm for this reason
+// (model-layers `circuit_exec/policy.rs` `unmodelled_switches`); when rules for it land, this
+// test fails and that refusal goes with it.
+#[test]
+fn the_batched_gdn_recurrence_has_no_rules() {
+    let mut checked = 0;
+    for inst in common::instances().iter().filter(|i| i.golden) {
+        let loaded = common::load(inst);
+        assert!(
+            loaded
+                .circuit
+                .layer_kinds
+                .contains(&LayerKind::LinearAttention),
+            "{}: no GDN layer",
+            inst.recipe
+        );
+        let avail = common::available(inst, &loaded.rules);
+        let setting = |p: &metrale_circuit::Policy| p.settings["ssm_batched_recurrent"].clone();
+        assert_eq!(setting(&inst.policy), "off", "{}", inst.recipe);
+        let fuse = |p: &metrale_circuit::Policy| {
+            metrale_circuit::fuse(
+                &loaded.circuit,
+                &loaded.rules,
+                &avail,
+                p,
+                Mode::MultiSeq,
+                16,
+            )
+        };
+        fuse(&inst.policy).unwrap_or_else(|e| panic!("{}: {e}", inst.recipe));
+        let mut on = inst.policy.clone();
+        on.settings
+            .insert("ssm_batched_recurrent".into(), "on".into());
+        let e = fuse(&on).expect_err("a batched-arm plan");
+        let metrale_circuit::FuseError::Uncovered { node, .. } = &e else {
+            panic!("{}: {e}", inst.recipe);
+        };
+        let layer = loaded.circuit.nodes[loaded.circuit.node(node).expect("node")].layer;
+        assert_eq!(
+            layer.map(|l| loaded.circuit.layer_kinds[l]),
+            Some(LayerKind::LinearAttention),
+            "{}: {e}",
+            inst.recipe
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 3, "golden instances checked");
+}
