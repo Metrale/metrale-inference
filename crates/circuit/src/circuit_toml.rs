@@ -162,6 +162,11 @@ pub(crate) struct CircuitFile {
     /// 2026-09-30: The draft blocks are instantiated only when this switch holds
     /// ([`when_holds`]); absent, always.
     pub draft_when: Option<String>,
+    /// 2026-09-30: Per switch, a draft block list replacing `draft` while it holds. A draft
+    /// entry `template@module` instantiates `template` with `{L}` = `module` (one template
+    /// serves a layer and a draft module).
+    #[serde(default)]
+    pub draft_variant: BTreeMap<String, Vec<String>>,
     pub block: BTreeMap<String, BlockFile>,
     /// 2026-09-30: The blocks the circuit file itself defines (not its libraries'); only these
     /// must all be used.
@@ -175,6 +180,10 @@ pub(crate) struct LayoutFile {
     pub kind: String,
     pub period: Option<usize>,
     pub blocks: BTreeMap<String, Vec<String>>,
+    /// 2026-09-30: Per switch ([`when_holds`]), layer kinds whose blocks are replaced while it
+    /// holds (`moe_latent = { moe = ["moe_latent"] }`).
+    #[serde(default)]
+    pub when: BTreeMap<String, BTreeMap<String, Vec<String>>>,
 }
 
 #[derive(Deserialize)]

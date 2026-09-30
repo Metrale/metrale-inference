@@ -123,9 +123,7 @@ fn the_unsloth_27b_declares_w8a8_attention_w4a4_ffn_and_fp8_kv() {
         // 2026-09-30: The MTP head is 16-bit.
         assert_eq!(node(c, "draft.mtp_in.fc").weight, Some(Format::Bf16));
         assert_eq!(
-            r.params
-                .get("rope.rope_theta")
-                .map(String::as_str),
+            r.params.get("rope.rope_theta").map(String::as_str),
             Some("10000000")
         );
     }
@@ -224,6 +222,52 @@ fn nemotron_h_takes_either_layer_schedule_and_its_own_precision() {
 }
 
 #[test]
+fn nemotron_3_super_runs_its_routed_experts_in_the_latent_space() {
+    let r = ok("nvidia--NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4");
+    assert_eq!(
+        kinds(&r),
+        BTreeMap::from([("full_attention", 8), ("mamba", 40), ("moe", 40)])
+    );
+    assert_eq!(
+        (dim(&r, "moe_latent"), dim(&r, "moe_io"), dim(&r, "top_k")),
+        (1, 1024, 22)
+    );
+    let c = &r.circuit;
+    // 2026-09-30: hidden -> fc1 -> experts at 1024 -> routed sum -> fc2 -> + shared (hidden).
+    let fc1 = node(c, "l1.moe_latent.latent_in");
+    assert_eq!(c.edges[fc1.outputs[0]].dim_value, 1024);
+    assert_eq!(fc1.weight, Some(FP8_TENSOR));
+    assert_eq!(input_format(c, "l1.moe_latent.latent_in"), FP8_TENSOR);
+    // 2026-09-30: The experts are declared W4A4: they read the latent input quantized.
+    assert_eq!(input_format(c, "l1.moe_latent.experts_up"), NVFP4);
+    let q = node(c, "l1.moe_latent.xl_quant");
+    assert_eq!(c.edges[q.inputs[0]].id, "l1.moe_latent.xl");
+    let shared = node(c, "l1.moe_latent.shared_up");
+    assert_eq!(c.edges[shared.inputs[0]].dim_value, 4096);
+    let combine = node(c, "l1.moe_latent.combine");
+    assert_eq!(
+        combine.inputs,
+        [
+            node(c, "l1.moe_latent.latent_out").outputs[0],
+            node(c, "l1.moe_latent.shared_down").outputs[0]
+        ]
+    );
+    // 2026-09-30: The draft MoE layer is the latent block at mtp.layers.1.
+    assert_eq!(
+        node(c, "draft.moe_latent.latent_in").binding,
+        ["mtp.layers.1.mixer.fc1_latent_proj"]
+    );
+    assert!(c.node("l1.moe.experts_up").is_none());
+    assert_eq!(
+        node(c, "l1.moe_latent.top_k")
+            .params
+            .get("top_k")
+            .map(String::as_str),
+        Some("22")
+    );
+}
+
+#[test]
 fn the_g1_dense_families_map_their_switches_and_rope() {
     let llama = ok("NousResearch--Meta-Llama-3.1-8B-Instruct");
     let qwen3 = ok("Qwen--Qwen3-8B");
@@ -280,10 +324,7 @@ fn the_g1_dense_families_map_their_switches_and_rope() {
 fn a_tied_head_and_the_other_qwen35_checkpoints_instantiate() {
     let small = ok("Qwen--Qwen3.5-0.8B");
     assert_eq!(
-        small
-            .params
-            .get("tie_word_embeddings")
-            .map(String::as_str),
+        small.params.get("tie_word_embeddings").map(String::as_str),
         Some("true")
     );
     for name in [
@@ -335,7 +376,7 @@ fn path_b_golden_instances_restate_the_config_derived_shape() {
 /// 2026-09-30: Every other fixture is refused, for the reason named.
 #[test]
 fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
-    let cases: [(&str, &str); 14] = [
+    let cases: [(&str, &str); 13] = [
         (
             "Inferact--Qwen3.8-Flash-Next-NVFP4",
             "model_type `qwen4_exp`",
@@ -370,15 +411,10 @@ fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
             "`dflash_config` is not mapped",
         ),
         ("z-lab--Qwen3.6-27B-DFlash", "`auto_map` is not mapped"),
-        // 2026-09-30: Refused values: no MTP layer for the Qwen MoE circuit's draft head, and
-        // Super's latent MoE.
+        // 2026-09-30: A refused value: no MTP layer for the Qwen MoE circuit's draft head.
         (
             "Hcompany--Holo-3.1-35B-A3B-NVFP4",
             "mtp_num_hidden_layers` = 0",
-        ),
-        (
-            "nvidia--NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
-            "`moe_latent_size` = 1024",
         ),
     ];
     for (name, want) in cases {

@@ -158,8 +158,18 @@ fn in_section(c: &Circuit, mode: Mode) -> Vec<NodeIdx> {
 }
 
 fn site_of(c: &Circuit, n: NodeIdx) -> String {
-    let node = &c.nodes[n];
-    format!("{}.{}", node.block, node.local)
+    site(&c.nodes[n])
+}
+
+/// 2026-09-30: `block.local`, prefixed `draft.` in the draft head, whose blocks may reuse a
+/// main-stack template (the Nemotron-H draft MoE is the `moe` block at `mtp.layers.1`).
+fn site(node: &crate::ir::Node) -> String {
+    let draft = if node.id.starts_with("draft.") {
+        "draft."
+    } else {
+        ""
+    };
+    format!("{draft}{}.{}", node.block, node.local)
 }
 
 /// 2026-09-29: Build the report.
@@ -294,7 +304,7 @@ pub fn build(inp: &VennInputs<'_>) -> Result<VennReport, VennError> {
                 .first()
                 .map(|&e| tc.edges[e].format.name())
                 .unwrap_or_default();
-            precision.insert(format!("{}.{}", n.block, n.local), (w.name(), act));
+            precision.insert(site(n), (w.name(), act));
         }
     }
     Ok(VennReport {

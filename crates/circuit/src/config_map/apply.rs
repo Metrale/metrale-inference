@@ -220,6 +220,7 @@ fn dims<'a>(
             DimRule::Key(k) => super::DimFull {
                 key: Some(k.clone()),
                 bool: false,
+                bool_present: false,
                 constant: None,
                 or_dim: None,
                 or_div: None,
@@ -236,6 +237,14 @@ fn dims<'a>(
             .key
             .as_deref()
             .ok_or_else(|| ConfigMapError::Schema(format!("dim `{name}` has no key or const")))?;
+        if full.bool_present {
+            let present = fields.get_key_value(key);
+            if let Some((k, _)) = present {
+                consumed.insert(k);
+            }
+            out.insert(name.clone(), u64::from(present.is_some()));
+            continue;
+        }
         if let Some((k, v)) = fields.get_key_value(key) {
             consumed.insert(k);
             let value = match (full.bool, v.as_bool()) {

@@ -622,10 +622,9 @@ the G1 and Nemotron-H ones fetched from the Hub (`crates/circuit/tests/checkpoin
 - Served:
   - the dense Qwen3.5 / 3.6 / 3.8 hybrids (`qwen3_5`);
   - the Qwen3.5 / 3.6 MoE hybrids (`qwen3_6_moe`);
-  - Nemotron-3 Nano and Nemotron-3.5 Lightning (`nemotron_h`);
+  - Nemotron-3 Nano, Nemotron-3 Super (latent MoE) and Nemotron-3.5 Lightning (`nemotron_h`);
   - Llama 3.1, Qwen3 dense, Qwen2.5 and Mistral Small (`dense_gqa`).
 - Refused, with the reason named:
-  - Nemotron-3 Super: the latent MoE projections are not modelled yet.
   - Holo-3.1: it has no MTP layer for the Qwen MoE draft head.
   - The DFlash drafts: they have unmapped keys.
   - Qwen3.6-27B-FP8: a `DeclaredPrecisionPlan` substring-ignore finding.
@@ -635,6 +634,10 @@ the G1 and Nemotron-H ones fetched from the Hub (`crates/circuit/tests/checkpoin
 
 - **Switch dims.** An integer dim that is 0 or 1, read by a node's `when` (absent node = identity)
   or `params_when`, and by a circuit's `draft_when`.
+- **Layout and draft variants.** `[layout.when]` replaces a layer kind's blocks while a switch
+  holds, and `draft_variant` replaces the draft list. A draft entry `template@module` reuses a
+  main-stack template at another module, e.g. the Nemotron-H draft MoE is `moe@mtp.layers.1`,
+  or `moe_latent@...` under `moe_latent`.
 - **Quantizer insertion.** A projection whose declared activation is quantized gets its
   `act_quant` node from the precision. A static per-tensor scale is bound to that projection's
   `input_scale` and is not shared.

@@ -185,6 +185,10 @@ pub(crate) struct DimFull {
     /// 2026-09-30: A boolean key read as 0 / 1.
     #[serde(default)]
     pub bool: bool,
+    /// 2026-09-30: 1 when the key is present (not null), else 0: a switch on an optional
+    /// feature whose size is another dim (`moe_latent_size`).
+    #[serde(default)]
+    pub bool_present: bool,
     /// 2026-09-30: A fixed value.
     #[serde(rename = "const")]
     pub constant: Option<u64>,

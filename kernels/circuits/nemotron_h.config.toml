@@ -10,8 +10,9 @@
 # - Follows transformers modeling_nemotron_h.py: no RoPE (rope_theta and partial_rotary_factor
 #   are carried by the config but never read), plain-weight RMSNorms, sigmoid routing with a
 #   correction bias, ungated ReLU² experts, one shared expert.
-# - Refused until modelled: dense MLP layers (pattern `-`), the latent MoE projections
-#   (`moe_latent_size`, Nemotron-3 Super), grouped routing (`n_group` > 1), biases.
+# - A latent MoE (`moe_latent_size`, Nemotron-3 Super) switches the MoE layers to the latent block.
+# - Refused until modelled: dense MLP layers (pattern `-`), grouped routing (`n_group` > 1),
+#   biases.
 
 schema = 1
 arch = "nemotron_h"
@@ -40,6 +41,9 @@ top_k = "num_experts_per_tok"
 moe_inter = "moe_intermediate_size"
 shared_inter = "moe_shared_expert_intermediate_size"
 mtp = { key = "num_nextn_predict_layers", default = 0, allowed = [0, 1] }
+# 2026-09-30: A latent MoE's width (Nemotron-3 Super); absent, the experts run at the hidden width.
+moe_io = { key = "moe_latent_size", or_dim = "hidden" }
+moe_latent = { key = "moe_latent_size", bool_present = true }
 
 [keys]
 model_type = "ignore"
@@ -77,7 +81,6 @@ norm_topk_prob = { param = true, require = true, why = "the circuit's top-k reno
 n_group = { require = 1, why = "grouped (n_group) routing is not modelled", default = 1 }
 topk_group = { require = 1, why = "grouped (topk_group) routing is not modelled", default = 1 }
 n_shared_experts = { require = 1, why = "the circuit has one shared expert", default = 1 }
-moe_latent_size = { refuse = "the latent MoE projections (fc1/fc2_latent_proj) are not modelled yet" }
 mamba_hidden_act = { require = "silu", why = "the circuit's Mamba2 gate is SiLU", default = "silu" }
 mlp_hidden_act = { require = "relu2", why = "the circuit's experts are ReLU²", default = "relu2" }
 mamba_ssm_cache_dtype = { require = "float32", why = "the recurrent state is FP32", default = "float32" }

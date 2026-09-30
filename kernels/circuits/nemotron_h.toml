@@ -23,8 +23,11 @@
 # - Every projection reads a 16-bit edge; a projection whose declared activation is quantized
 #   gets its quantizer from the precision (crates/circuit/src/instantiate.rs), so one circuit
 #   serves Nano (NVFP4 mixers) and Lightning (FP8 W8A8 mixers).
-# - The MTP head spans two modules (`mtp.layers.0` attention, `mtp.layers.1` MoE) while the
-#   schema has one `draft_module`, so the draft MoE is its own block with explicit bindings.
+# - The MTP head spans two modules: `mtp.layers.0` (attention) is the draft module, and its MoE
+#   layer is the `moe` block instantiated at `mtp.layers.1`.
+# - A latent MoE (`moe_latent`, Nemotron-3 Super) runs its routed experts in the `moe_io`-wide
+#   latent space between `fc1_latent_proj` and `fc2_latent_proj`; the shared expert reads the
+#   hidden-width input (transformers NemotronHMoE.forward).
 
 schema = 1
 arch = "nemotron_h"
@@ -35,13 +38,16 @@ include = []
 dims = [
   "hidden", "vocab", "q_heads", "kv_heads", "head_dim",
   "mamba_heads", "mamba_head_dim", "ssm_state", "ssm_groups", "conv_kernel",
-  "experts", "top_k", "moe_inter", "shared_inter", "mtp",
+  "experts", "top_k", "moe_inter", "shared_inter", "mtp", "moe_latent", "moe_io",
 ]
 prologue = ["embed"]
 epilogue = ["head"]
-draft = ["mtp_in", "attn", "mtp_moe", "mtp_out"]
-# 2026-09-30: The draft head exists only in a checkpoint with a next-token layer (`mtp`).
+draft = ["mtp_in", "attn", "moe@mtp.layers.1", "mtp_out"]
+# 2026-09-30: The draft head exists only in a checkpoint with a next-token layer (`mtp`). Its MoE
+# layer is the `moe` block at `mtp.layers.1` (`template@module`); a latent-MoE checkpoint uses the
+# latent block there too.
 draft_when = "mtp"
+draft_variant = { moe_latent = ["mtp_in", "attn", "moe_latent@mtp.layers.1", "mtp_out"] }
 
 [layout]
 kind = "list"
@@ -50,6 +56,9 @@ kind = "list"
 mamba = ["mamba"]
 moe = ["moe"]
 full_attention = ["attn"]
+
+[layout.when]
+moe_latent = { moe = ["moe_latent"] }
 
 [block.embed]
 stream_out = "h"
@@ -231,6 +240,116 @@ op = "residual_add"
 in = ["x", "f"]
 out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
 
+# 2026-09-30: The latent MoE (Nemotron-3 Super): routing on the hidden-width input, routed
+# experts in the latent space (fc1 before, the routed sum through fc2 after), the shared expert
+# on the hidden-width input, added after fc2.
+[block.moe_latent]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe_latent.node]]
+id = "norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.norm"]
+params = { weight_form = "plain" }
+
+[[block.moe_latent.node]]
+id = "router"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
+binding = ["{L}.mixer.gate"]
+
+[[block.moe_latent.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.mixer.gate.e_score_correction_bias"]
+params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
+
+[[block.moe_latent.node]]
+id = "latent_in"
+op = "linear"
+role = "moe_latent_in"
+in = ["xn"]
+out = [{ edge = "xl", format = "bf16", shape = "n x moe_io" }]
+binding = ["{L}.mixer.fc1_latent_proj"]
+
+[[block.moe_latent.node]]
+id = "experts_up"
+op = "expert_gate_up"
+in = ["xl", "topk_id"]
+out = [{ edge = "eup", format = "bf16", shape = "n*top_k x moe_inter" }]
+binding = ["{L}.mixer.experts.*.up_proj"]
+
+[[block.moe_latent.node]]
+id = "experts_act"
+op = "relu2"
+in = ["eup"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe_latent.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x moe_io" }]
+binding = ["{L}.mixer.experts.*.down_proj"]
+
+[[block.moe_latent.node]]
+id = "routed"
+op = "blend"
+in = ["edown", "topk_w"]
+out = [{ edge = "r", format = "bf16", shape = "n x moe_io" }]
+params = { shared = "none" }
+
+[[block.moe_latent.node]]
+id = "latent_out"
+op = "linear"
+role = "moe_latent_out"
+in = ["r"]
+out = [{ edge = "ro", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mixer.fc2_latent_proj"]
+
+[[block.moe_latent.node]]
+id = "shared_up"
+op = "linear"
+role = "shared_up"
+in = ["xn"]
+out = [{ edge = "sup", format = "bf16", shape = "n x shared_inter" }]
+binding = ["{L}.mixer.shared_experts.up_proj"]
+
+[[block.moe_latent.node]]
+id = "shared_act"
+op = "relu2"
+in = ["sup"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.moe_latent.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mixer.shared_experts.down_proj"]
+
+[[block.moe_latent.node]]
+id = "combine"
+op = "residual_add"
+in = ["ro", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+
+[[block.moe_latent.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
 # 2026-09-29: Ungated GQA attention with no positional encoding and no q/k norm.
 [block.attn]
 stream_in = "x"
@@ -360,93 +479,6 @@ role = "mtp_fc"
 in = ["cat"]
 out = [{ edge = "h0", format = "bf16", shape = "n x hidden" }]
 binding = ["mtp.layers.0.eh_proj"]
-
-# 2026-09-29: The MTP head's MoE layer (`mtp.layers.1`): the `moe` block with explicit bindings
-# (see the header). Its experts are BF16: the checkpoint leaves `mtp*` unquantized.
-[block.mtp_moe]
-stream_in = "x"
-stream_out = "y"
-
-[[block.mtp_moe.node]]
-id = "norm"
-op = "rms_norm"
-in = ["x"]
-out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
-binding = ["mtp.layers.1.norm"]
-params = { weight_form = "plain" }
-
-[[block.mtp_moe.node]]
-id = "router"
-op = "router"
-in = ["xn"]
-out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
-binding = ["mtp.layers.1.mixer.gate"]
-
-[[block.mtp_moe.node]]
-id = "top_k"
-op = "top_k"
-in = ["logits"]
-out = [
-  { edge = "topk_w", format = "f32", shape = "n x top_k" },
-  { edge = "topk_id", format = "i32", shape = "n x top_k" },
-]
-binding = ["mtp.layers.1.mixer.gate.e_score_correction_bias"]
-params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
-
-[[block.mtp_moe.node]]
-id = "experts_up"
-op = "expert_gate_up"
-in = ["xn", "topk_id"]
-out = [{ edge = "eup", format = "bf16", shape = "n*top_k x moe_inter" }]
-binding = ["mtp.layers.1.mixer.experts.*.up_proj"]
-
-[[block.mtp_moe.node]]
-id = "experts_act"
-op = "relu2"
-in = ["eup"]
-out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
-
-[[block.mtp_moe.node]]
-id = "experts_down"
-op = "expert_down"
-in = ["eact", "topk_id"]
-out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
-binding = ["mtp.layers.1.mixer.experts.*.down_proj"]
-
-[[block.mtp_moe.node]]
-id = "shared_up"
-op = "linear"
-role = "shared_up"
-in = ["xn"]
-out = [{ edge = "sup", format = "bf16", shape = "n x shared_inter" }]
-binding = ["mtp.layers.1.mixer.shared_experts.up_proj"]
-
-[[block.mtp_moe.node]]
-id = "shared_act"
-op = "relu2"
-in = ["sup"]
-out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
-
-[[block.mtp_moe.node]]
-id = "shared_down"
-op = "linear"
-role = "shared_down"
-in = ["sact"]
-out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
-binding = ["mtp.layers.1.mixer.shared_experts.down_proj"]
-
-[[block.mtp_moe.node]]
-id = "blend"
-op = "blend"
-in = ["edown", "topk_w", "sdown"]
-out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
-params = { shared_gate = "none" }
-
-[[block.mtp_moe.node]]
-id = "add"
-op = "residual_add"
-in = ["x", "f"]
-out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
 
 [block.mtp_out]
 stream_in = "x"

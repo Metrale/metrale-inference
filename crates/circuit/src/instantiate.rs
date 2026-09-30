@@ -49,8 +49,8 @@ pub fn instantiate(
         stream: None,
         quantized: BTreeMap::new(),
     };
-    for (template, layer, section) in sequence {
-        b.block(&template, layer, section)?;
+    for (template, layer, section, module) in sequence {
+        b.block(&template, layer, section, module)?;
     }
     b.finish()
 }
@@ -67,7 +67,9 @@ fn check_dims(file: &CircuitFile, shape: &ArchShape) -> Result<(), CircuitError>
     Ok(())
 }
 
-type Planned = (String, Option<usize>, Section);
+/// 2026-09-30: One block to instantiate: template, layer, section, and a module that replaces
+/// the draft module for its `{L}`.
+type Planned = (String, Option<usize>, Section, Option<String>);
 
 fn block_sequence(
     file: &CircuitFile,
@@ -80,16 +82,28 @@ fn block_sequence(
     }
     let mut used = BTreeSet::new();
     let mut out = Vec::new();
-    let known = |name: &String, used: &mut BTreeSet<String>| {
+    let known = |name: &str, used: &mut BTreeSet<String>| {
         if !file.block.contains_key(name) {
             return Err(CircuitError::Layout(format!("no block template `{name}`")));
         }
-        used.insert(name.clone());
+        used.insert(name.to_string());
         Ok(())
     };
     for name in &file.prologue {
         known(name, &mut used)?;
-        out.push((name.clone(), None, Section::Main));
+        out.push((name.clone(), None, Section::Main, None));
+    }
+    // 2026-09-30: The layout blocks per kind, with the overrides of every switch that holds.
+    let mut layout = file.layout.blocks.clone();
+    for (w, over) in &file.layout.when {
+        for names in over.values() {
+            for n in names {
+                known(n, &mut used)?;
+            }
+        }
+        if when_holds(w, &file.dims, dims)? {
+            layout.extend(over.clone());
+        }
     }
     for (i, kind) in kinds.iter().enumerate() {
         if let LayoutRule::Interval { period } = rule {
@@ -106,7 +120,7 @@ fn block_sequence(
                 )));
             }
         }
-        let blocks = file.layout.blocks.get(kind.name()).ok_or_else(|| {
+        let blocks = layout.get(kind.name()).ok_or_else(|| {
             CircuitError::Layout(format!(
                 "layer {i} is {}, which the layout maps to no blocks",
                 kind.name()
@@ -114,21 +128,36 @@ fn block_sequence(
         })?;
         for name in blocks {
             known(name, &mut used)?;
-            out.push((name.clone(), Some(i), Section::Main));
+            out.push((name.clone(), Some(i), Section::Main, None));
         }
     }
     for name in &file.epilogue {
         known(name, &mut used)?;
-        out.push((name.clone(), None, Section::Main));
+        out.push((name.clone(), None, Section::Main, None));
     }
-    let draft = match &file.draft_when {
+    let on = match &file.draft_when {
         Some(w) => when_holds(w, &file.dims, dims)?,
         None => true,
     };
-    for name in &file.draft {
-        known(name, &mut used)?;
-        if draft {
-            out.push((name.clone(), None, Section::Draft));
+    let mut draft = &file.draft;
+    for (w, list) in &file.draft_variant {
+        for entry in list {
+            known(entry.split('@').next().unwrap_or_default(), &mut used)?;
+        }
+        if when_holds(w, &file.dims, dims)? {
+            draft = list;
+        }
+    }
+    for entry in &file.draft {
+        known(entry.split('@').next().unwrap_or_default(), &mut used)?;
+    }
+    if on {
+        for entry in draft {
+            let (name, module) = match entry.split_once('@') {
+                Some((n, m)) => (n.to_string(), Some(m.to_string())),
+                None => (entry.clone(), None),
+            };
+            out.push((name, None, Section::Draft, module));
         }
     }
     if !file.draft.is_empty() && file.draft_module.is_none() {
@@ -161,6 +190,7 @@ impl Builder<'_> {
         template: &str,
         layer: Option<usize>,
         section: Section,
+        module_override: Option<String>,
     ) -> Result<(), CircuitError> {
         let file = self.file;
         let tpl: &BlockFile = &file.block[template];
@@ -169,7 +199,10 @@ impl Builder<'_> {
                 format!("l{i}.{template}"),
                 Some(file.layer_module.replace("{i}", &i.to_string())),
             ),
-            (None, Section::Draft) => (format!("draft.{template}"), file.draft_module.clone()),
+            (None, Section::Draft) => (
+                format!("draft.{template}"),
+                module_override.or_else(|| file.draft_module.clone()),
+            ),
             (None, Section::Main) => (template.to_string(), None),
         };
         let first = self.circuit.nodes.len();
