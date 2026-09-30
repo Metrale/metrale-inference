@@ -158,6 +158,20 @@ fn batch_prompts_put_rows_at_distinct_positions_and_the_batch_verdict_reads_ever
     assert!(bad[1].contains("changed row 8 was left out"), "{bad:?}");
 }
 
+/// 2026-09-30: The control changes a row no comparison left out, so a legacy prefill that set
+/// row `n / 2` apart cannot blind it (seen at 48 rows: every run left out row 24). Mutation:
+/// keeping `n / 2` fails the first case.
+#[test]
+fn the_control_row_avoids_rows_left_out_for_their_prefill() {
+    assert_eq!(batch::control_row(48, &[vec![], vec![]]), 24);
+    assert_eq!(
+        batch::control_row(48, &[vec![24], vec![24], vec![11, 24]]),
+        25
+    );
+    assert_eq!(batch::control_row(4, &[vec![2, 3], vec![]]), 0);
+    assert_eq!(batch::control_row(2, &[vec![0, 1]]), 1);
+}
+
 #[test]
 fn a_row_whose_prefill_differs_is_left_out_of_the_step_comparison() {
     let row = |v: f32| [v, v + 1.0];

@@ -253,9 +253,12 @@ pub(crate) fn diff_widths(
             timings.push(timing(name, &r));
             comparisons.push(c);
         }
-        // 2026-09-28: The control runs under the last forward, still selected.
+        // 2026-09-28: The control runs under the last forward, still selected. 2026-09-30: Its
+        // changed row is the first from `n / 2` on whose prefill agreed in every run above: a
+        // row the legacy prefill already set apart (its run-to-run nondeterminism) is left out
+        // of every comparison, so a change there could not be detected.
         let mut changed = ref_tokens.clone();
-        let (row, at) = (n / 2, steps / 2);
+        let (row, at) = (control_row(n, &prefill_rows), steps / 2);
         changed[row][at] = (changed[row][at] + 1) % model.vocab_size() as u32;
         let (_, r) = run_batch(model, rows, steps, BatchFeed::Forced(&changed))?;
         let (control, control_skipped) = compare_rows(
@@ -278,6 +281,15 @@ pub(crate) fn diff_widths(
     }
     model.set_forward(&ForwardSelect::Legacy)?;
     Ok(out)
+}
+
+/// 2026-09-30: The detection control's row: the first from `n / 2` on (wrapping) that no
+/// comparison left out; `n / 2` when every row was left out, which the report then fails.
+pub(crate) fn control_row(n: usize, skipped: &[Vec<usize>]) -> usize {
+    (n / 2..n)
+        .chain(0..n / 2)
+        .find(|r| !skipped.iter().any(|s| s.contains(r)))
+        .unwrap_or(n / 2)
 }
 
 /// 2026-09-29: Why a batch report fails; empty for a pass. A comparison leaving out more than
