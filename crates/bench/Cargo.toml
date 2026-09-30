@@ -40,7 +40,7 @@ futures = "0.3"
 # 2026-09-26: Media fixtures reach the API as base64 `data:` URIs, since the
 # server refuses remote image URLs unless started with
 # `--vision-allow-remote-images`. The same 0.22 the other crates use.
-base64 = "0.22"
+base64 = "0.23"
 # 2026-09-26: TCP to the endpoint, child processes for provisioned artifacts,
 # timers. No `rt-multi-thread`: the executor spawns onto a runtime the caller
 # owns.
