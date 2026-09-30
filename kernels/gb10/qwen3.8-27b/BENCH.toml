@@ -2252,12 +2252,15 @@ vLLM commit 6e448d0e) steady one-shot TTFT on GB10 (dgx2 = spark-43fa, 2026-09-2
 fixture, same request body — parity is the pass bar (owner 2026-09-27). The value is the mean \
 of the two cold samples, 24448.9 and 23781.5 ms; neither was the first 32k request after a \
 boot. bench/baselines/qwen38-27b/ttft/published.json holds every pair with its source records. \
-Metrale Engine read 45452.8 and 45400.0 ms on the same box that day: vLLM 1.9x faster. \
+Certified evidence (.benchmarks/high-isl-ttft-cold): Metrale Engine is 1.4x faster than this \
+ceiling at every campaign since #39: 17282.3 ms at #39 (spark-43fa, the ceiling's own box), \
+then 16820.8 ms at #48, 16799.3 ms at #51 and 16784.8 ms at #56 (spark-28c2). Before #39 it \
+read 45452.8 and 45400.0 ms on the ceiling's box (2026-09-27), when vLLM was 1.9x faster. \
 median_ms and p90_ms carry one bound because a single sample is both statistics. The run's own \
 comparison with the stored same-box baseline (ttft/long_prompt.rs one_shot_defaults) is a \
 separate regression guard; it records `info` on a box with no baseline yet, so each box is \
 seeded with two runs before its first campaign. Recipe: the dense default single-stream recipe \
-decode-floor uses, as served for the Phase 1 comparison (bf16 KV; vLLM's published dense \
+decode-floor uses, as served for the 2026-09-27 comparison (bf16 KV; vLLM's published dense \
 config uses fp8 KV).\
 """
 
@@ -2302,9 +2305,12 @@ priming request and one measured byte-identical re-send of the committed 32k-tok
 vLLM commit 6e448d0e) steady one-shot TTFT on GB10 (dgx2 = spark-43fa, 2026-09-27), same \
 fixture, same request body — parity is the pass bar (owner 2026-09-27). The value is the mean \
 of the two warm samples, 2135.3 and 2129.3 ms. bench/baselines/qwen38-27b/ttft/published.json \
-holds every pair with its source records. Metrale Engine read 12519.0 and 12451.3 ms on the \
-same box that day, vLLM 5.9x faster: the warm request restored the SSM checkpoint at token \
-24577, not the tail, and replayed 8195 tokens. median_ms and p90_ms carry one bound because a \
+holds every pair with its source records. Certified evidence (.benchmarks/high-isl-ttft-warm): \
+Metrale Engine is 4.6-9.0x faster than this ceiling at every campaign since #39: 459.8 ms at \
+#39 (spark-43fa, the ceiling's own box), then 249.1 ms at #48, 236.0 ms at #51 and 251.3 ms at \
+#56 (spark-28c2). Before #39 it read 12519.0 and 12451.3 ms on the ceiling's box (2026-09-27), \
+when vLLM was 5.9x faster: the warm request restored the SSM checkpoint at token 24577, not the \
+tail, and replayed 8195 tokens. median_ms and p90_ms carry one bound because a \
 single sample is both statistics. The run's own comparison with the stored same-box baseline \
 (ttft/long_prompt.rs one_shot_defaults) is a separate regression guard; it records `info` on a \
 box with no baseline yet, so each box is seeded with two runs before its first campaign.\

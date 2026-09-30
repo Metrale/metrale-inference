@@ -470,8 +470,11 @@ fixture, same request body — parity is the pass bar (owner 2026-09-27). The va
 median of the three steady cold samples, 9265.4 / 9214.7 / 9231.9 ms. The first request after \
 each of two vLLM boots (cold 41976.1 and 39349.3 ms, warm 1972.2 and 1713.3 ms) paid one-time \
 JIT and autotune and is excluded. bench/baselines/qwen36-35b-a3b/ttft/published.json holds \
-every pair with its source records. Metrale Engine read 14249.9 and 14305.3 ms on the same box \
-that day: vLLM 1.55x faster. median_ms and p90_ms carry one bound because a single sample is \
+every pair with its source records. Certified evidence (.benchmarks/high-isl-ttft-cold-moe): \
+Metrale Engine is 1.4x faster than this ceiling at every campaign since #39: 6676.0 ms at #39 \
+(spark-43fa), then 6417.6 ms at #48, 6431.2 ms at #51 and 6439.9 ms at #56 (spark-28c2, the \
+ceiling's own box). Before #39 it read 14249.9 and 14305.3 ms on the ceiling's box \
+(2026-09-27), when vLLM was 1.55x faster. median_ms and p90_ms carry one bound because a single sample is \
 both statistics. The run's own comparison with the stored same-box baseline \
 (ttft/long_prompt.rs one_shot_defaults) is a separate regression guard; it records `info` on a \
 box with no baseline yet, so each box is seeded with two runs before its first campaign.\
@@ -521,8 +524,11 @@ fixture, same request body — parity is the pass bar (owner 2026-09-27). The va
 median of the three steady warm samples, 579.4 / 581.8 / 566.0 ms. The first request after \
 each of two vLLM boots (cold 41976.1 and 39349.3 ms, warm 1972.2 and 1713.3 ms) paid one-time \
 JIT and autotune and is excluded. bench/baselines/qwen36-35b-a3b/ttft/published.json holds \
-every pair with its source records. Metrale Engine read 155.8 and 164.4 ms on the same box \
-that day: 3.5x faster than vLLM. median_ms and p90_ms carry one bound because a single sample \
+every pair with its source records. Certified evidence (.benchmarks/high-isl-ttft-warm-moe): \
+Metrale Engine is 1.7-4.4x faster than this ceiling at every campaign since #39: 341.7 ms at #39 \
+(spark-43fa), then 137.4 ms at #48, 130.6 ms at #51 and 130.7 ms at #56 (spark-28c2, the \
+ceiling's own box). On 2026-09-27, before #39, it read 155.8 and 164.4 ms on the ceiling's box, \
+3.5x faster than vLLM. median_ms and p90_ms carry one bound because a single sample \
 is both statistics. The run's own comparison with the stored same-box baseline \
 (ttft/long_prompt.rs one_shot_defaults) is a separate regression guard; it records `info` on a \
 box with no baseline yet, so each box is seeded with two runs before its first campaign.\
