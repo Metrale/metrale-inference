@@ -109,7 +109,10 @@ struct Nvfp4Weight {
 /// 2026-09-25: Build a random NVFP4 weight `[N, K]` in packed form, then its
 /// transposed layout by the byte transpose `transpose_for_gemm` performs.
 fn gen_weight(rng: &mut Rng, n: usize, k: usize) -> Nvfp4Weight {
-    assert!(k % GROUP_SIZE == 0, "K must be a multiple of {GROUP_SIZE}");
+    assert!(
+        k.is_multiple_of(GROUP_SIZE),
+        "K must be a multiple of {GROUP_SIZE}"
+    );
     let half_k = k / 2;
     let num_groups = k / GROUP_SIZE;
     let mut packed_nt = vec![0u8; n * half_k];
