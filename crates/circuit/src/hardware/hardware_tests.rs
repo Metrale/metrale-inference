@@ -273,3 +273,55 @@ fn a_native_pair_without_a_peak_is_refused() {
     let e = super::parse_devices(&text).unwrap_err();
     assert!(e.to_string().contains("fp4_block_scale"), "{e}");
 }
+
+// 2026-09-30: Path B. The manifest's discover rules run over the class's own tree too: a
+// class's own copy of a kernel file is a point of its family there, and the inherited tree is
+// not re-rooted onto itself. Mutation: skipping the re-rooting finds nothing.
+#[test]
+fn a_class_s_own_copy_of_a_kernel_is_discovered_as_a_point() {
+    use super::class::{ClassInfo, class_discovered};
+    use super::sources::ClassSources;
+    let manifest = r#"
+schema = 1
+hardware = "base"
+[roofline]
+dram_gbps = 1.0
+bf16_tflops = 1.0
+fp8_tflops = 1.0
+nvfp4_tflops = 1.0
+context_tokens = 1
+[[family]]
+id = "attn"
+description = "test"
+kernels = ["attn_a::attn"]
+rows = [1, 1]
+op = [{ op = "paged_attention" }]
+[[family.point]]
+values = {}
+how = "copy"
+files = ["kernels/base/common/attn_a.cu"]
+[[family.discover]]
+kind = "file"
+glob = "kernels/base/common/attn_*.cu"
+values = {}
+"#;
+    let fams = crate::venn::parse_families(manifest).unwrap();
+    let info = |name: &str| ClassInfo {
+        name: name.into(),
+        arch: "sm".into(),
+        inherits: None,
+        defines: Default::default(),
+        defaults: Default::default(),
+    };
+    let sources = ClassSources {
+        files: [
+            "kernels/base/common/attn_a.cu".to_string(),
+            "kernels/child/common/attn_b.cu".to_string(),
+        ]
+        .into(),
+        ..ClassSources::default()
+    };
+    let found = class_discovered(&fams, "base", &[info("child"), info("base")], &sources);
+    let files: Vec<&str> = found.iter().map(|f| f.file.as_str()).collect();
+    assert_eq!(files, ["kernels/child/common/attn_b.cu"]);
+}

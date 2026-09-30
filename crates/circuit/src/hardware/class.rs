@@ -21,7 +21,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::HwError;
 use super::sources::ClassSources;
 use crate::rules::{Rule, parse_rules};
-use crate::venn::families::{Families, Point, parse_families};
+use crate::venn::discover::{Found, KernelSources, discover};
+use crate::venn::families::{Discover, Families, How, Point, parse_families};
 use crate::venn::repo::Repo;
 
 /// 2026-09-30: What one `HARDWARE.toml` says about the class.
@@ -269,11 +270,74 @@ pub fn class_families(
         }
         out.legacy.extend(overlay.legacy);
     }
-    out.hardware = own;
+    let manifest = std::mem::replace(&mut out.hardware, own);
+    let found = class_discovered(&out, &manifest, chain, sources);
     for f in &mut out.families {
         f.points = class_points(&f.points, chain, sources);
+        for d in found.iter().filter(|d| d.family == f.id) {
+            if !f.points.iter().any(|p| p.files.contains(&d.file)) {
+                f.points.push(Point {
+                    values: d.values.clone(),
+                    how: How::Copy,
+                    files: vec![d.file.clone()],
+                });
+            }
+        }
     }
     Ok(out)
+}
+
+/// 2026-09-30: The points the manifest's `discover` rules find in the class's OWN trees: each
+/// rule's `kernels/<manifest>/...` path re-rooted at every class of the chain that is not the
+/// manifest's, matched against what the class compiles. A class's own copy of a kernel (a
+/// per-class file the manifest never listed) becomes a point of its family on that class.
+pub fn class_discovered(
+    fams: &Families,
+    manifest: &str,
+    chain: &[ClassInfo],
+    sources: &ClassSources,
+) -> BTreeSet<Found> {
+    let texts: BTreeMap<String, String> = sources
+        .modules
+        .values()
+        .map(|m| (m.path.clone(), m.text.clone()))
+        .collect();
+    let from = format!("kernels/{manifest}/");
+    let mut out = BTreeSet::new();
+    for tier in chain.iter().filter(|c| c.name != manifest) {
+        let to = format!("kernels/{}/", tier.name);
+        let reroot = |p: &str| p.strip_prefix(&from).map(|rest| format!("{to}{rest}"));
+        let mut moved = fams.clone();
+        for f in &mut moved.families {
+            f.discover = f
+                .discover
+                .iter()
+                .filter_map(|d| match d {
+                    Discover::File { glob, values } => Some(Discover::File {
+                        glob: reroot(glob)?,
+                        values: values.clone(),
+                    }),
+                    Discover::Macro {
+                        file,
+                        name,
+                        args,
+                        map,
+                    } => Some(Discover::Macro {
+                        file: reroot(file).filter(|f| texts.contains_key(f))?,
+                        name: name.clone(),
+                        args: args.clone(),
+                        map: map.clone(),
+                    }),
+                })
+                .collect();
+        }
+        let src = KernelSources {
+            paths: sources.files.clone(),
+            texts: texts.clone(),
+        };
+        out.extend(discover(&moved, &src).0);
+    }
+    out
 }
 
 /// 2026-09-30: The points of a family that `sources` realises: a point whose kernel files the
