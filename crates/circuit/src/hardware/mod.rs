@@ -29,6 +29,7 @@ pub mod model;
 pub mod model_checkpoint;
 pub mod plan;
 mod render;
+mod render_matrix;
 pub mod sources;
 
 #[cfg(test)]
@@ -47,7 +48,8 @@ use crate::venn::roofline::CostError;
 pub use device::{Device, Registry, parse_devices};
 pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};
 pub use model_checkpoint::CheckpointSource;
-pub use render::{PortList, port_lists, render_report, summary_row};
+pub use render::render_report;
+pub use render_matrix::{PortList, port_lists, summary_row};
 pub use sources::{ClassSources, KernelTree, Module};
 
 /// 2026-09-30: Why a hardware plan could not be built.
