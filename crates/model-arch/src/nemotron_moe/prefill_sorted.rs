@@ -361,6 +361,8 @@ impl NemotronMoeLayer {
                 stream,
             )?;
         } else if let Some(ref sdt) = self.shared_down_t {
+            // 2026-09-30: Only under `--nemotron-shared-expert-e4m3`; see prefill_shared_up.rs.
+            let _disclosed = ops::allow_e4m3_saturation(ops::NEMOTRON_SHARED_EXPERT_E4M3);
             if p.n > 128 && self.w4a16_gemm_t_m128_k.0 != 0 {
                 ops::w4a16_gemm_n128_m128(
                     ctx.gpu,
