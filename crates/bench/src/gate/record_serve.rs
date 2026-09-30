@@ -10,8 +10,8 @@
 //!
 //! Owner: bench gate (records).
 //! Invariants:
-//! - A [`disclosure`] always carries [`SPECULATIVE`] and [`WEIGHT_QUANTIZATION`]; every
-//!   other key is present only when resolved or on.
+//! - A [`disclosure`] always carries [`SPECULATIVE`], [`WEIGHT_QUANTIZATION`] and
+//!   [`ACTIVATION_QUANTIZATION`]; every other key is present only when resolved or on.
 
 use std::collections::BTreeMap;
 
@@ -36,6 +36,10 @@ pub const WEIGHT_QUANTIZATION: &str = "weight_quantization";
 /// `fp8`, with the tier's name as the value (`nvfp4-gate-up`, `nvfp4`). The flag has no
 /// environment fallback, so an absent key means `fp8`.
 pub const EXPERT_QUANTIZATION: &str = "expert_quantization";
+/// 2026-09-30: Key for `--activation-quantization`, always present on a record written since the
+/// flag exists, with the value's canonical form (`adaptive`, `declared`, a ladder). A record
+/// without it predates the flag, and its server ran what `adaptive` names.
+pub const ACTIVATION_QUANTIZATION: &str = "activation_quantization";
 
 /// 2026-09-26: The disclosure for a server whose rendered flags resolved to
 /// these values.
@@ -50,7 +54,8 @@ pub const EXPERT_QUANTIZATION: &str = "expert_quantization";
 /// `serve_env` discloses it when the recipe declares it.
 ///
 /// `expert_quantization` is the tier's name when it is not the default `fp8`, else `None`.
-/// `weight_quantization` is the `--weight-quantization` tier's name, always written.
+/// `weight_quantization` is the `--weight-quantization` tier's name, always written, and so is
+/// `activation_quantization`, the `--activation-quantization` value's canonical form.
 pub fn disclosure(
     mtp_gate_force: Option<bool>,
     speculative: bool,
@@ -58,8 +63,13 @@ pub fn disclosure(
     w4a4_downcast: bool,
     expert_quantization: Option<&str>,
     weight_quantization: &str,
+    activation_quantization: &str,
 ) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
+    m.insert(
+        ACTIVATION_QUANTIZATION.to_string(),
+        activation_quantization.to_string(),
+    );
     m.insert(SPECULATIVE.to_string(), speculative.to_string());
     m.insert(
         WEIGHT_QUANTIZATION.to_string(),

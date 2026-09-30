@@ -64,6 +64,10 @@ metadata:
   kv_dtype: bf16
 
 defaults:
+  # The --activation-quantization routing this recipe was measured under: each projection
+  # picks its activation precision by row count, as before the flag existed. The
+  # row-invariant modes (declared, bf16, fp8, nvfp4) are opt-in until evaluated.
+  activation_quantization: adaptive
   # 2026-09-30: The checkpoint's declared FP8, the engine default, which states the precision
   # the checkpoint declares. Booted on GB10 under both tiers with MTP at K=1: the same load
   # paths (the NVFP4 requantization in the description happens under both) and the same greedy

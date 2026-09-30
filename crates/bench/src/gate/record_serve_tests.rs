@@ -9,8 +9,8 @@
 use super::super::tests::{SHA, bfcl_baseline, hw, run_record};
 use super::super::{GateRecord, check_record, read_record, records_newest_first};
 use super::{
-    EXPERT_QUANTIZATION, MTP_GATE, PREFILL_CODISPATCH, SPECULATIVE, W4A4_DOWNCAST,
-    WEIGHT_QUANTIZATION, disclosure,
+    ACTIVATION_QUANTIZATION, EXPERT_QUANTIZATION, MTP_GATE, PREFILL_CODISPATCH, SPECULATIVE,
+    W4A4_DOWNCAST, WEIGHT_QUANTIZATION, disclosure,
 };
 use crate::result::Verdict;
 use std::collections::BTreeMap;
@@ -21,35 +21,37 @@ fn keys(m: &BTreeMap<String, String>) -> Vec<(&str, &str)> {
 
 #[test]
 fn disclosure_spells_the_regime_and_omits_what_was_not_resolved() {
-    let d = |g, s, c, w, e| disclosure(g, s, c, w, e, "nvfp4");
+    let d = |g, s, c, w, e| disclosure(g, s, c, w, e, "nvfp4", "adaptive");
+    let aq = (ACTIVATION_QUANTIZATION, "adaptive");
     let wq = (WEIGHT_QUANTIZATION, "nvfp4");
     assert_eq!(
         keys(&d(Some(true), true, false, false, None)),
-        vec![(MTP_GATE, "force"), (SPECULATIVE, "true"), wq]
+        vec![aq, (MTP_GATE, "force"), (SPECULATIVE, "true"), wq]
     );
     assert_eq!(
         keys(&d(Some(false), true, false, false, None)),
-        vec![(MTP_GATE, "auto"), (SPECULATIVE, "true"), wq]
+        vec![aq, (MTP_GATE, "auto"), (SPECULATIVE, "true"), wq]
     );
     // 2026-09-26: No `--mtp-gate`: the key is absent, not `auto`.
     assert_eq!(
         keys(&d(None, false, false, false, None)),
-        vec![(SPECULATIVE, "false"), wq]
+        vec![aq, (SPECULATIVE, "false"), wq]
     );
     // 2026-09-26: `--prefill-codispatch` is disclosed only when given.
     assert_eq!(
         keys(&d(None, true, true, false, None)),
-        vec![(PREFILL_CODISPATCH, "true"), (SPECULATIVE, "true"), wq]
+        vec![aq, (PREFILL_CODISPATCH, "true"), (SPECULATIVE, "true"), wq]
     );
     // 2026-09-26: `--w4a4-downcast` is disclosed only when on.
     assert_eq!(
         keys(&d(None, true, false, true, None)),
-        vec![(SPECULATIVE, "true"), (W4A4_DOWNCAST, "true"), wq]
+        vec![aq, (SPECULATIVE, "true"), (W4A4_DOWNCAST, "true"), wq]
     );
     // 2026-09-27: `--expert-quantization` names a tier other than `fp8`.
     assert_eq!(
         keys(&d(None, true, false, false, Some("nvfp4-gate-up"))),
         vec![
+            aq,
             (EXPERT_QUANTIZATION, "nvfp4-gate-up"),
             (SPECULATIVE, "true"),
             wq
@@ -57,8 +59,14 @@ fn disclosure_spells_the_regime_and_omits_what_was_not_resolved() {
     );
     // 2026-09-28: `--weight-quantization` is written for either tier, the default included.
     assert_eq!(
-        keys(&disclosure(None, true, false, false, None, "declared")),
-        vec![(SPECULATIVE, "true"), (WEIGHT_QUANTIZATION, "declared")]
+        keys(&disclosure(
+            None, true, false, false, None, "declared", "declared"
+        )),
+        vec![
+            (ACTIVATION_QUANTIZATION, "declared"),
+            (SPECULATIVE, "true"),
+            (WEIGHT_QUANTIZATION, "declared")
+        ]
     );
 }
 
@@ -84,6 +92,7 @@ fn serve_resolved_round_trips_and_older_records_simply_lack_it() {
         false,
         None,
         "nvfp4",
+        "adaptive",
     ));
     let json = serde_json::to_value(&record).unwrap();
     assert_eq!(json["serve_resolved"][MTP_GATE], "force");
@@ -134,6 +143,7 @@ fn serve_resolved_never_reaches_check_record() {
         false,
         None,
         "nvfp4",
+        "adaptive",
     ));
     assert_eq!(check_record(&with, &baseline), None);
     assert_eq!(
@@ -152,6 +162,7 @@ fn serve_resolved_never_reaches_check_record() {
         false,
         None,
         "nvfp4",
+        "adaptive",
     ));
     let verdict = check_record(&failing_with, &baseline);
     assert!(
@@ -170,7 +181,7 @@ fn live(forward: &str, digest: Option<&str>) -> super::LiveForward {
 
 #[test]
 fn a_legacy_forward_adds_no_keys_and_a_circuit_adds_its_digest() {
-    let mut m = disclosure(None, false, false, false, None, "nvfp4");
+    let mut m = disclosure(None, false, false, false, None, "nvfp4", "adaptive");
     let before = m.clone();
     super::merge_live_forward(&mut m, "legacy", &live("legacy", None)).unwrap();
     assert_eq!(m, before);

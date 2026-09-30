@@ -47,6 +47,9 @@ fn round_trip(flag: &str, value: &str) -> Result<(), String> {
     argv.push(format!("--{flag}"));
     argv.push(value.to_string());
     argv.extend(companions(flag).iter().map(|s| s.to_string()));
+    // 2026-09-30: Every offered value of the enumerated flags is valid under the routing the
+    // recipes pin; the fixed formats refuse some of them (`validate.rs`).
+    argv.extend(["--activation-quantization", "adaptive"].map(String::from));
     let cli = crate::cli::Cli::try_parse_from(argv).map_err(|e| e.to_string())?;
     let crate::cli::Command::Serve(args) = cli.command else {
         unreachable!("this test parses a serve command");

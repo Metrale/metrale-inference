@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 fn recipe(defaults: &str) -> Recipe {
     let text = format!(
         "recipe_version: \"2\"\nmodel: org/model\ncontainer: metrale\nruntime: metrale\n\
-         metadata:\n  updated: \"2026-08-28\"\ndefaults:\n{defaults}"
+         metadata:\n  updated: \"2026-08-28\"\ndefaults:\n  activation_quantization: adaptive\n{defaults}"
     );
     Recipe::parse("fam/stem", &text).expect("the fixture recipe parses")
 }
@@ -35,9 +35,12 @@ fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 /// 2026-09-28: `v` plus the `weight_quantization` key every disclosure carries, which sorts
-/// after the others.
+/// after the others. 2026-09-30: And `activation_quantization`, which the fixture recipe pins
+/// to `adaptive` as every committed recipe does, and which sorts before them.
 fn pairs_with_tier(v: &[(&str, &str)], tier: &str) -> Vec<(String, String)> {
-    v.iter()
+    [("activation_quantization", "adaptive")]
+        .iter()
+        .chain(v)
         .chain(&[("weight_quantization", tier)])
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()

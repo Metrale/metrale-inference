@@ -50,6 +50,64 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             "add --weight-quantization nvfp4, or drop --w4a4-downcast",
         ));
     }
+    // 2026-09-30: `--w4a4-downcast` picks activations by row count, so it is a lever of the
+    // `adaptive` routing; a row-invariant family has its format from the flag itself.
+    if args.w4a4_downcast {
+        use metrale_config::{ActQuantFormat, ProjFamily};
+        let fixed: Vec<&str> = [ProjFamily::Gdn, ProjFamily::Attn, ProjFamily::Ffn]
+            .into_iter()
+            .filter(|&f| {
+                args.activation_quantization
+                    .ladder(f)
+                    .rungs()
+                    .iter()
+                    .any(|r| r.format != ActQuantFormat::Adaptive)
+            })
+            .map(ProjFamily::name)
+            .collect();
+        if !fixed.is_empty() {
+            v.push(Violation::new(
+                "--w4a4-downcast with a fixed --activation-quantization",
+                format!(
+                    "--w4a4-downcast chooses NVFP4 activations by row count, which is the \
+                     `adaptive` routing; --activation-quantization {} fixes the format of {}",
+                    args.activation_quantization,
+                    fixed.join(", ")
+                ),
+                "add --activation-quantization adaptive, or drop --w4a4-downcast and name \
+                 nvfp4 in the ladder (e.g. 1-32=nvfp4;33-=adaptive)",
+            ));
+        }
+    }
+    if args
+        .ssm_h_dtype
+        .as_deref()
+        .is_some_and(|d| d.starts_with("f16"))
+        && args
+            .activation_quantization
+            .ladder(metrale_config::ProjFamily::Gdn)
+            .rungs()
+            .iter()
+            .any(|r| r.format != metrale_config::ActQuantFormat::Adaptive)
+    {
+        v.push(Violation::new(
+            "--ssm-h-dtype f16 with a fixed --activation-quantization for gdn",
+            "a fixed GDN format runs the MTP verify on the exact chain (the kernels decode \
+             runs), whose kernels read an FP32 h-state only",
+            "drop --ssm-h-dtype, or give gdn the adaptive ladder (e.g. `declared,gdn:adaptive`)",
+        ));
+    }
+    if args.no_canonical_tiers && !args.activation_quantization.is_adaptive() {
+        v.push(Violation::new(
+            "--no-canonical-tiers with a fixed --activation-quantization",
+            format!(
+                "--no-canonical-tiers picks W8A16 kernels by row count, which is the `adaptive` \
+                 routing; --activation-quantization {} fixes a format",
+                args.activation_quantization
+            ),
+            "add --activation-quantization adaptive, or drop --no-canonical-tiers",
+        ));
+    }
     for (flag, value) in [
         ("--ssm-batched-recurrent", &args.ssm_batched_recurrent),
         ("--content-loop-watchdog", &args.content_loop_watchdog),

@@ -28,6 +28,10 @@ metadata:
   kv_dtype: fp8
 
 defaults:
+  # The --activation-quantization routing this recipe was measured under: each projection
+  # picks its activation precision by row count, as before the flag existed. The
+  # row-invariant modes (declared, bf16, fp8, nvfp4) are opt-in until evaluated.
+  activation_quantization: adaptive
   # The --weight-quantization tier this recipe was measured under: FP8-declared layers
   # requantized to NVFP4, the engine as it ran before the tiers. `declared` (the
   # engine default) is not measured on this recipe.

@@ -186,6 +186,11 @@ pub use expert_quantization::{
     ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
 };
 
+mod activation_quantization;
+pub use activation_quantization::{
+    act_route, activation_quantization, any_fixed, family_fixed, fixed_act,
+    set_activation_quantization_from_cli,
+};
 mod weight_quantization;
 pub use weight_quantization::{kernel_caps, set_weight_quantization_from_cli, weight_quantization};
 

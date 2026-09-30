@@ -17,6 +17,10 @@ mods:
   - mods/diffusiongemma
 
 defaults:
+  # The --activation-quantization routing this recipe was measured under: each projection
+  # picks its activation precision by row count, as before the flag existed. The
+  # row-invariant modes (declared, bf16, fp8, nvfp4) are opt-in until evaluated.
+  activation_quantization: adaptive
   port: 8009
   host: 0.0.0.0
   gpu_memory_utilization: 0.8
