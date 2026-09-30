@@ -23,7 +23,8 @@
  "box": {
   "name": "dgx2 (spark-43fa)",
   "gpu": "NVIDIA GB10",
-  "note": "one box for all three arms, 2026-09-30 03:13-04:39 UTC, nothing else on the GPU"
+  "driver": "580.126.09",
+  "note": "one box for all three arms, 2026-09-30 03:13-04:39 UTC, nothing else on the GPU. The driver is the one the same box's concurrency-sweep gate runs recorded the same night (2026-09-30 01:52-02:50 UTC); the harness rep files do not carry it."
  },
  "protocol": "One harness process per timed rep (--reps 1 --warmup 0), so every rep draws a fresh prompt nonce and none hits the prefix cache. Reps run in 3-rep blocks; each block starts on a fresh server (Metrale) or a fresh container (vLLM) and sends one discarded warmup rep first. Every timed rep starts only after the die has cooled to 55 C or below with the server loaded and idle (nvidia-smi temperature.gpu polled every 5 s). Blocks are interleaved in block_order, three per arm. Energy is the harness's GPU-rail figure: nvidia-smi power.draw.average sampled every 250 ms and integrated over the rep window.",
  "block_order": [
