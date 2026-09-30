@@ -18,6 +18,13 @@ use metrale_bench::{gate, serve_env};
 
 use super::bench_resolve::Resolved;
 
+/// 2026-09-30: The recipe key of `--activation-quantization` (`gate::record_serve` discloses
+/// the same name).
+const ACTIVATION_QUANTIZATION_KEY: &str = gate::record_serve::ACTIVATION_QUANTIZATION;
+
+/// 2026-09-30: The routing a gate serves a recipe under when the recipe names none.
+const GATE_ACTIVATION_QUANTIZATION: &str = "adaptive";
+
 /// 2026-09-26: A resolved serve: everything but the port.
 pub struct ServePlan {
     pub model: String,
@@ -41,29 +48,31 @@ pub struct ServePlan {
 }
 
 impl ServePlan {
-    /// 2026-09-26: The argv `met serve` is started with on `port`: the recipe's
-    /// rendering, which a reused server must also fingerprint to.
-    /// `["met", "serve", <model>, …]`; callers skip the program name.
+    /// 2026-09-30: The overrides both renderings apply ([`rendered_overrides`]).
+    fn rendered_overrides(&self, port: u16) -> BTreeMap<String, String> {
+        rendered_overrides(&self.requested, &self.recipe.defaults, port)
+    }
+
     pub fn argv(&self, port: u16) -> Result<Vec<String>> {
-        let mut overrides = self.requested.clone();
-        overrides.insert("port".to_string(), port.to_string());
-        self.recipe.argv(&overrides).with_context(|| {
-            format!(
-                "rendering serve args from recipe {:?} (port override {port})",
-                self.recipe_id
-            )
-        })
+        self.recipe
+            .argv(&self.rendered_overrides(port))
+            .with_context(|| {
+                format!(
+                    "rendering serve args from recipe {:?} (port override {port})",
+                    self.recipe_id
+                )
+            })
     }
 
     pub fn serve_args(&self, port: u16) -> Result<crate::cli::ServeArgs> {
-        let mut overrides = self.requested.clone();
-        overrides.insert("port".to_string(), port.to_string());
-        self.recipe.serve_args(&overrides).with_context(|| {
-            format!(
-                "rendering serve args from recipe {:?} (port override {port})",
-                self.recipe_id
-            )
-        })
+        self.recipe
+            .serve_args(&self.rendered_overrides(port))
+            .with_context(|| {
+                format!(
+                    "rendering serve args from recipe {:?} (port override {port})",
+                    self.recipe_id
+                )
+            })
     }
 
     /// 2026-09-26: What the gate record discloses about this serve: the knobs
@@ -102,6 +111,27 @@ pub async fn attach_live_forward(
         serde_json::from_value(doc).context("parsing /forward")?;
     gate::record_serve::merge_live_forward(resolved, requested.name(), &live)
         .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// 2026-09-30: The overrides a gate serve renders a recipe with: the requested set, the port,
+/// and [`GATE_ACTIVATION_QUANTIZATION`] when neither the recipe's `defaults` nor the requested
+/// set names an `activation_quantization`. A recipe that predates `--activation-quantization`
+/// was measured under the routing `adaptive` names, so its gate serve runs that, not the flag's
+/// default. It is a rendering rule, not an override: `requested`, and so the record's
+/// `serve_overrides`, do not carry it; `serve_resolved` discloses what ran.
+pub(crate) fn rendered_overrides(
+    requested: &BTreeMap<String, String>,
+    recipe_defaults: &BTreeMap<String, String>,
+    port: u16,
+) -> BTreeMap<String, String> {
+    let mut overrides = requested.clone();
+    overrides.insert("port".to_string(), port.to_string());
+    if !recipe_defaults.contains_key(ACTIVATION_QUANTIZATION_KEY) {
+        overrides
+            .entry(ACTIVATION_QUANTIZATION_KEY.to_string())
+            .or_insert_with(|| GATE_ACTIVATION_QUANTIZATION.to_string());
+    }
+    overrides
 }
 
 /// 2026-09-26: The disclosure for one rendered, validated serve; the body of
