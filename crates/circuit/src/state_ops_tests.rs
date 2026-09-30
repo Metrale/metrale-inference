@@ -20,6 +20,7 @@ fn decl(id: &str, kind: StateKind, section: Section, elements: u64) -> StateDecl
         format: StateFormat::Keyed("h".into()),
         elements,
         verify: (kind == StateKind::Recurrent).then_some(VerifySteps::H),
+        lifetime: crate::state::Lifetime::of_kind(kind),
     }
 }
 

@@ -45,6 +45,48 @@ impl StateKind {
     }
 }
 
+/// 2026-09-30: How long a unit of state lives (LIFECYCLE-DESIGN.md section 3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Lifetime {
+    /// 2026-09-30: Allocated once with the model (a KV pool; its blocks are per sequence).
+    Model,
+    /// 2026-09-30: Claimed with a sequence's slot and released with it.
+    Sequence,
+    /// 2026-09-30: Valid from a verify's snapshot to its commit or rollback.
+    Verify,
+}
+
+impl Lifetime {
+    /// 2026-09-30: The spelling in the circuit TOML.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "model" => Some(Self::Model),
+            "sequence" => Some(Self::Sequence),
+            "verify" => Some(Self::Verify),
+            _ => None,
+        }
+    }
+
+    /// 2026-09-30: The spelling.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Sequence => "sequence",
+            Self::Verify => "verify",
+        }
+    }
+
+    /// 2026-09-30: The one lifetime a state of `kind` may declare: a recurrent state lives with
+    /// its sequence, a KV side with the model's pool. `Verify` belongs to the verify holdings
+    /// ([`Holding::lifetime`]), never to a declaration.
+    pub fn of_kind(kind: StateKind) -> Self {
+        match kind {
+            StateKind::Recurrent => Self::Sequence,
+            StateKind::PagedKv => Self::Model,
+        }
+    }
+}
+
 /// 2026-09-30: Which verify intermediate count a recurrent state keeps per verify slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VerifySteps {
@@ -165,6 +207,8 @@ pub struct StateDecl {
     pub elements: u64,
     /// 2026-09-30: The verify intermediates a recurrent state keeps; `None` for a KV side.
     pub verify: Option<VerifySteps>,
+    /// 2026-09-30: How long a live unit lives ([`Lifetime::of_kind`]).
+    pub lifetime: Lifetime,
 }
 
 /// 2026-09-30: Why a state plan could not be made.
@@ -231,11 +275,24 @@ pub enum Holding {
     Blocks,
 }
 
+impl Holding {
+    /// 2026-09-30: How long this holding of a state declared `declared` lives: the verify
+    /// intermediates and checkpoints only across one verify, the rest as declared.
+    pub fn lifetime(self, declared: Lifetime) -> Lifetime {
+        match self {
+            Holding::Steps | Holding::Checkpoint => Lifetime::Verify,
+            Holding::Live | Holding::Blocks => declared,
+        }
+    }
+}
+
 /// 2026-09-30: One sized term: a state, what it holds, its units and bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateTerm {
     pub state: String,
     pub holding: Holding,
+    /// 2026-09-30: `holding.lifetime(declared)`.
+    pub lifetime: Lifetime,
     pub dtype: StateDtype,
     pub units: u64,
     pub bytes: u64,
@@ -276,6 +333,7 @@ impl StatePlan {
                 terms.push(StateTerm {
                     state: s.id.clone(),
                     holding,
+                    lifetime: holding.lifetime(s.lifetime),
                     dtype,
                     units,
                     bytes,

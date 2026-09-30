@@ -27,6 +27,7 @@ fn decl(id: &str, kind: StateKind, format: StateFormat, elements: u64) -> StateD
             (_, true) => Some(VerifySteps::H),
             (_, false) => Some(VerifySteps::Conv),
         },
+        lifetime: Lifetime::of_kind(kind),
     }
 }
 
@@ -134,4 +135,21 @@ fn format_and_verify_spellings_parse_or_are_refused() {
     assert_eq!(StateFormat::parse("fp4"), None);
     assert_eq!(VerifySteps::parse("h_steps"), Some(VerifySteps::H));
     assert_eq!(VerifySteps::parse("steps"), None);
+}
+
+/// 2026-09-30: Every term carries its lifetime: the live slots and KV blocks as their state is
+/// declared, the verify intermediates and checkpoints only across one verify.
+#[test]
+fn every_term_carries_the_lifetime_of_its_holding() {
+    let p = StatePlan::new(&toy().states, &inputs(StateDtype::F32)).unwrap();
+    for t in &p.terms {
+        let want = match t.holding {
+            Holding::Live => Lifetime::Sequence,
+            Holding::Blocks => Lifetime::Model,
+            Holding::Steps | Holding::Checkpoint => Lifetime::Verify,
+        };
+        assert_eq!(t.lifetime, want, "{} {:?}", t.state, t.holding);
+    }
+    assert_eq!(Lifetime::parse("verify"), Some(Lifetime::Verify));
+    assert_eq!(Lifetime::parse("step"), None);
 }

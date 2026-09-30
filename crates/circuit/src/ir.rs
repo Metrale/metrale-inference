@@ -327,6 +327,9 @@ pub struct Edge {
     pub consumers: Vec<NodeIdx>,
     /// 2026-09-28: Read outside the circuit (the logits); never fused away.
     pub is_output: bool,
+    /// 2026-09-30: The model buffer a declared output lands in; `None` for an output declared
+    /// without one (the executor refuses such a program) and for every other edge.
+    pub binds: Option<crate::model_buffer::ModelBuffer>,
 }
 
 /// 2026-09-28: One op instance.

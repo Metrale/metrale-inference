@@ -139,6 +139,7 @@ impl Builder<'_> {
             producer: Some(producer),
             consumers: Vec::new(),
             is_output: false,
+            binds: None,
         });
         Ok(self.circuit.edges.len() - 1)
     }
@@ -189,6 +190,7 @@ impl Builder<'_> {
             producer: Some(node),
             consumers: Vec::new(),
             is_output: false,
+            binds: None,
         });
         let q = self.circuit.edges.len() - 1;
         self.circuit.nodes.push(Node {

@@ -236,12 +236,22 @@ impl Builder<'_> {
             self.node(template, &prefix, layer, module.as_deref(), nf, &mut local)?;
         }
         for out in &tpl.outputs {
-            let e = *local.get(out).ok_or_else(|| {
+            let name = out.edge();
+            let e = *local.get(name).ok_or_else(|| {
                 CircuitError::Layout(format!(
-                    "block `{template}` declares output `{out}`, which it does not produce"
+                    "block `{template}` declares output `{name}`, which it does not produce"
                 ))
             })?;
             self.circuit.edges[e].is_output = true;
+            if let crate::circuit_toml::OutputFile::Bound { buffer, .. } = out {
+                let b = crate::model_buffer::ModelBuffer::parse(buffer).ok_or_else(|| {
+                    CircuitError::Layout(format!(
+                        "block `{template}` output `{name}`: `{buffer}` is no model buffer \
+                         (logits, tokens, draft_embed)"
+                    ))
+                })?;
+                self.circuit.edges[e].binds = Some(b);
+            }
         }
         let stream_out = match &tpl.stream_out {
             Some(name) => {

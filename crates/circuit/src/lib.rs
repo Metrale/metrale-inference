@@ -23,6 +23,7 @@ pub mod hardware;
 pub mod instances;
 pub mod instantiate;
 pub mod ir;
+pub mod model_buffer;
 pub mod planner;
 pub mod precision;
 pub mod precision_policy;

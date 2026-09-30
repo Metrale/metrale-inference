@@ -196,3 +196,30 @@ fn ptx_availability_reads_entry_points_not_names() {
             .is_err()
     );
 }
+
+/// 2026-09-30: An external edge lands in the buffer its declared output binds; one that binds
+/// none is refused, not placed by guessing from its producer (LIFECYCLE-DESIGN.md 3.4).
+#[test]
+fn an_output_lands_in_its_declared_buffer_and_an_unbound_one_is_refused() {
+    use metrale_circuit::model_buffer::ModelBuffer;
+    let f = build(Fusions::All, |_| {}).unwrap();
+    let logits = f
+        .circuit
+        .edges
+        .iter()
+        .position(|e| e.binds == Some(ModelBuffer::Logits))
+        .unwrap();
+    let tokens = f
+        .circuit
+        .edges
+        .iter()
+        .position(|e| e.binds == Some(ModelBuffer::Tokens))
+        .unwrap();
+    let place = |c: &metrale_circuit::Circuit, e| super::compile::external_buffer(c, e, &f.fixed);
+    assert_eq!(place(&f.circuit, logits).unwrap(), f.fixed.logits);
+    assert_eq!(place(&f.circuit, tokens).unwrap(), f.fixed.tokens);
+    let mut c = f.circuit.clone();
+    c.edges[logits].binds = None;
+    let e = place(&c, logits).unwrap_err().to_string();
+    assert!(e.contains("unbound output"), "{e}");
+}

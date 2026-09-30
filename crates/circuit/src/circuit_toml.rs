@@ -202,11 +202,29 @@ pub(crate) struct BlockFile {
     pub stream_in: Option<String>,
     pub stream_out: Option<String>,
     #[serde(default)]
-    pub outputs: Vec<String>,
+    pub outputs: Vec<OutputFile>,
     pub node: Vec<NodeFile>,
     /// 2026-09-30: The state the block keeps between steps (`crate::state`).
     #[serde(default)]
     pub state: Vec<StateFile>,
+}
+
+/// 2026-09-30: A declared output: the edge, and (in a served circuit) the model buffer it binds
+/// to (`crate::model_buffer::ModelBuffer`). A bare edge name declares an output with no buffer.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum OutputFile {
+    Bare(String),
+    Bound { edge: String, buffer: String },
+}
+
+impl OutputFile {
+    /// 2026-09-30: The edge it names.
+    pub fn edge(&self) -> &str {
+        match self {
+            Self::Bare(e) | Self::Bound { edge: e, .. } => e,
+        }
+    }
 }
 
 /// 2026-09-30: One `[[block.<name>.state]]`: `kind` (`recurrent` | `paged_kv`), `format` (a
@@ -218,6 +236,8 @@ pub(crate) struct BlockFile {
 pub(crate) struct StateFile {
     pub id: String,
     pub kind: String,
+    /// 2026-09-30: `sequence` (recurrent) or `model` (a KV pool); see `crate::state::Lifetime`.
+    pub lifetime: String,
     pub format: String,
     pub shape: String,
     pub verify: Option<String>,

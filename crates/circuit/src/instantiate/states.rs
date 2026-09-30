@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use crate::circuit_toml::{CircuitError, StateFile};
 use crate::dims::DimExpr;
 use crate::ir::Section;
-use crate::state::{StateAccess, StateDecl, StateFormat, StateKind, VerifySteps};
+use crate::state::{Lifetime, StateAccess, StateDecl, StateFormat, StateKind, VerifySteps};
 
 /// 2026-09-30: The declaration `sf` of the block `template` instantiated at `prefix`.
 pub(super) fn state_decl(
@@ -47,6 +47,20 @@ pub(super) fn state_decl(
         }
         (StateKind::PagedKv, None) => None,
     };
+    let lifetime = Lifetime::parse(&sf.lifetime).ok_or_else(|| {
+        err(format!(
+            "lifetime `{}` is not model, sequence or verify",
+            sf.lifetime
+        ))
+    })?;
+    if lifetime != Lifetime::of_kind(kind) {
+        return Err(err(format!(
+            "a {} state lives `{}`, not `{}`",
+            sf.kind,
+            Lifetime::of_kind(kind).name(),
+            sf.lifetime
+        )));
+    }
     let mut elements: u64 = 1;
     for axis in sf.shape.split(" x ") {
         let v = DimExpr::parse(axis)
@@ -66,6 +80,7 @@ pub(super) fn state_decl(
         format,
         elements,
         verify,
+        lifetime,
     })
 }
 

@@ -340,11 +340,10 @@ pub fn layout(circuit: &Circuit, plan: &FusionPlan) -> Result<Layout> {
             }
         }
     }
+    // 2026-09-30: The declared outputs (`Edge::is_output`); `external_buffer` places each by
+    // the model buffer it binds to and refuses one that binds none.
     for (e, edge) in circuit.edges.iter().enumerate() {
-        let embedding = edge
-            .producer
-            .is_some_and(|p| circuit.nodes[p].op == metrale_circuit::OpKind::Embed);
-        if (edge.is_output || embedding) && materialized(e) {
+        if edge.is_output && materialized(e) {
             layout.external.insert(e);
         }
     }
@@ -359,10 +358,10 @@ pub fn layout(circuit: &Circuit, plan: &FusionPlan) -> Result<Layout> {
     Ok(layout)
 }
 
-/// 2026-09-29: The model buffer an external edge is: a stream edge is `hidden`; otherwise, by
-/// its producer: the lm_head's output is `logits`, an argmax's `tokens`, and an embedding
-/// outside the stream (the draft head's) the draft embedding buffer.
-fn external_buffer(circuit: &Circuit, e: usize, fixed: &Fixed) -> Result<DevicePtr> {
+/// 2026-09-29: The model buffer an external edge is: a stream edge is `hidden`; otherwise
+/// (2026-09-30) the buffer its declared output binds (`Edge::binds`, LIFECYCLE-DESIGN.md 3.4).
+/// An output that binds none is refused.
+pub(super) fn external_buffer(circuit: &Circuit, e: usize, fixed: &Fixed) -> Result<DevicePtr> {
     let edge = &circuit.edges[e];
     let stream = circuit
         .blocks
@@ -371,15 +370,19 @@ fn external_buffer(circuit: &Circuit, e: usize, fixed: &Fixed) -> Result<DeviceP
     if stream {
         return Ok(fixed.hidden);
     }
-    match edge.producer.map(|p| circuit.nodes[p].op) {
-        Some(metrale_circuit::OpKind::LmHead) => Ok(fixed.logits),
-        Some(metrale_circuit::OpKind::Argmax) => Ok(fixed.tokens),
-        Some(metrale_circuit::OpKind::Embed) => fixed
+    use metrale_circuit::model_buffer::ModelBuffer;
+    match edge.binds {
+        Some(ModelBuffer::Logits) => Ok(fixed.logits),
+        Some(ModelBuffer::Tokens) => Ok(fixed.tokens),
+        Some(ModelBuffer::DraftEmbed) => fixed
             .draft
             .as_ref()
             .map(|d| d.embed)
             .with_context(|| format!("`{}`: no draft embedding buffer", edge.id)),
-        other => bail!("`{}` has no model buffer (written by {other:?})", edge.id),
+        None => bail!(
+            "`{}` is read outside the program but binds no model buffer: an unbound output",
+            edge.id
+        ),
     }
 }
 

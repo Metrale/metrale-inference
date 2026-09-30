@@ -34,6 +34,7 @@ stream_out = "y"
 [[block.gdn.state]]
 id = "h"
 kind = "recurrent"
+lifetime = "sequence"
 format = "{ssm_h_storage}"
 shape = "lin_v_heads x lin_k_dim x lin_v_dim"
 verify = "h_steps"
@@ -41,6 +42,7 @@ verify = "h_steps"
 [[block.gdn.state]]
 id = "conv"
 kind = "recurrent"
+lifetime = "sequence"
 format = "f32"
 shape = "lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim x 4"
 verify = "conv_steps"
@@ -138,12 +140,14 @@ stream_out = "y"
 [[block.attn.state]]
 id = "k"
 kind = "paged_kv"
+lifetime = "model"
 format = "{kv_cache_dtype}"
 shape = "kv_heads x head_dim"
 
 [[block.attn.state]]
 id = "v"
 kind = "paged_kv"
+lifetime = "model"
 format = "{kv_cache_dtype}"
 shape = "kv_heads x head_dim"
 
@@ -246,7 +250,7 @@ out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
 
 [block.head]
 stream_in = "x"
-outputs = ["logits", "token"]
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
 
 [[block.head.node]]
 id = "final_norm"
@@ -273,6 +277,9 @@ out = [{ edge = "token", format = "i32", shape = "n x 1" }]
 [block.mtp_in]
 stream_in = "hidden"
 stream_out = "h0"
+# 2026-09-30: The token embedding the draft runner fills (a declared output: the executor
+# places it in the draft embedding buffer).
+outputs = [{ edge = "e", buffer = "draft_embed" }]
 
 [[block.mtp_in.node]]
 id = "embed"
@@ -312,7 +319,7 @@ binding = ["mtp.fc"]
 stream_in = "x"
 # 2026-09-29: The draft logits are an output: `forward_one` leaves them in the model's logits
 # buffer, where the host reads them (draft confidence, shadow top-k).
-outputs = ["logits", "token"]
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
 
 [[block.mtp_out.node]]
 id = "final_norm"

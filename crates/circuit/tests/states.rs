@@ -151,3 +151,61 @@ fn a_state_touched_wrongly_or_not_at_all_is_refused() {
         assert!(e.contains(want), "{recipe}: `{from}` -> `{to}`: {e}");
     }
 }
+
+/// 2026-09-30: Every output a served circuit declares binds a model buffer: the head's logits
+/// and tokens, and the draft head's embedding when there is a draft (LIFECYCLE-DESIGN.md 3.4).
+#[test]
+fn every_declared_output_of_a_served_circuit_binds_a_model_buffer() {
+    use metrale_circuit::model_buffer::ModelBuffer;
+    for inst in common::instances() {
+        let c = common::load(&inst).circuit;
+        let outs: Vec<_> = c.edges.iter().filter(|e| e.is_output).collect();
+        assert!(outs.iter().all(|e| e.binds.is_some()), "{}", inst.recipe);
+        let mut bound: Vec<_> = outs.iter().filter_map(|e| e.binds).collect();
+        bound.sort();
+        bound.dedup();
+        let draft = c.blocks.iter().any(|b| b.section == Section::Draft);
+        let want: &[ModelBuffer] = if draft {
+            &[
+                ModelBuffer::Logits,
+                ModelBuffer::Tokens,
+                ModelBuffer::DraftEmbed,
+            ]
+        } else {
+            &[ModelBuffer::Logits, ModelBuffer::Tokens]
+        };
+        assert_eq!(bound, want, "{}", inst.recipe);
+    }
+    let e = mutated(
+        "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
+        "{ edge = \"token\", buffer = \"tokens\" }",
+        "{ edge = \"token\", buffer = \"token_ids\" }",
+    );
+    assert!(e.contains("is no model buffer"), "{e}");
+}
+
+/// 2026-09-30: A declared lifetime that is not its kind's is refused.
+#[test]
+fn a_state_declared_with_another_kinds_lifetime_is_refused() {
+    let dense = "qwen3.8/qwen3.8-27b-nvfp4-unsloth";
+    for (from, to, want) in [
+        (
+            "kind = \"recurrent\"\nlifetime = \"sequence\"",
+            "kind = \"recurrent\"\nlifetime = \"model\"",
+            "lives `sequence`, not `model`",
+        ),
+        (
+            "kind = \"paged_kv\"\nlifetime = \"model\"",
+            "kind = \"paged_kv\"\nlifetime = \"verify\"",
+            "lives `model`, not `verify`",
+        ),
+        (
+            "kind = \"paged_kv\"\nlifetime = \"model\"",
+            "kind = \"paged_kv\"\nlifetime = \"forever\"",
+            "is not model, sequence or verify",
+        ),
+    ] {
+        let e = mutated(dense, from, to);
+        assert!(e.contains(want), "`{to}`: {e}");
+    }
+}
