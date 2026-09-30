@@ -49,6 +49,11 @@ hyper = { version = "1", features = ["server", "http1", "http2", "client"] }
 hyper-util = { version = "0.1", features = ["server-auto", "client-legacy", "http1", "tokio"] }
 lazy_static = "1"
 libc = "0.2"
+# 2026-09-30: Exactly 2.21.0. 2.22 changed how `none` and booleans render through `|string`
+# (to `None`/`True`/`False`), which changes the tool-call argument text inside the prompt the
+# model reads; `tokenizer::tests::qwen_dense_parity` pins today's rendering and fails on 2.24.
+# Raising it is a prompt-content change that needs its own certification, not a version bump
+# (Dependabot ignores it in .github/dependabot.yml).
 minijinja = { version = "=2.21.0", features = ["builtins", "adjacent_loop_items", "json", "loop_controls", "preserve_order"] }
 parking_lot = { workspace = true }
 prometheus = { version = "0.14", default-features = false }

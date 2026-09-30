@@ -82,7 +82,7 @@ pub fn fingerprint(levers: &BTreeMap<String, String>) -> String {
         h.update(v.as_bytes());
         h.update([0u8]);
     }
-    format!("{:x}", h.finalize())
+    metrale_closure::hex_lower(&h.finalize())
 }
 
 /// 2026-09-26: Validate one declaration (a recipe's `env:` block or a

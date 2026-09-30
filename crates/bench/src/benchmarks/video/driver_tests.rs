@@ -38,7 +38,7 @@ fn the_registered_descriptor_matches_the_measurement() {
         )
     );
     assert_eq!(
-        format!("{:x}", sha2::Sha256::digest(registered.detail)),
+        metrale_closure::hex_lower(&sha2::Sha256::digest(registered.detail)),
         "0b7193e1765ef69a0697c9fa1ed79dff988148faca4d6c0a9f33d36a00fd7c5a"
     );
 }

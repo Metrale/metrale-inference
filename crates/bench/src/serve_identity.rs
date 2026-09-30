@@ -39,15 +39,25 @@ pub fn argv_fingerprint(args_after_program: &[String]) -> String {
         h.update(a.as_bytes());
         h.update([0u8]);
     }
-    format!("{:x}", h.finalize())
+    metrale_closure::hex_lower(&h.finalize())
 }
 
 /// 2026-09-26: The SHA-256 of a file's bytes; used as a binary's identity.
 pub fn file_sha256(path: &Path) -> Result<String> {
     let mut f = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut h = Sha256::new();
-    std::io::copy(&mut f, &mut h).with_context(|| format!("reading {}", path.display()))?;
-    Ok(format!("{:x}", h.finalize()))
+    // 2026-09-30: Read in chunks; sha2 0.11's hasher is not an `io::Write`, so
+    // `io::copy` into it no longer compiles.
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        match std::io::Read::read(&mut f, &mut buf) {
+            Ok(0) => break,
+            Ok(n) => h.update(&buf[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+        }
+    }
+    Ok(metrale_closure::hex_lower(&h.finalize()))
 }
 
 /// 2026-09-26: The identity of this process, computed once: the digests of
@@ -148,6 +158,13 @@ mod tests {
         assert_ne!(
             file_sha256(&p).unwrap(),
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        // 2026-09-30: Several read chunks (64 KiB each) hash as the bytes do in one call.
+        let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&p, &big).unwrap();
+        assert_eq!(
+            file_sha256(&p).unwrap(),
+            metrale_closure::hex_lower(&Sha256::digest(&big))
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

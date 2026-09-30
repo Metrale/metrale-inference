@@ -9,7 +9,7 @@
 
 use half::bf16;
 use rand::SeedableRng;
-use rand::distributions::Distribution;
+use rand::distr::Distribution;
 use rand_chacha::ChaCha8Rng;
 use rand_distr::StandardNormal;
 
@@ -63,5 +63,23 @@ mod tests {
         let s = PredictorShape::new(128, 32);
         let p = build_projection(s, 1);
         assert_eq!(p.len(), 128 * 32);
+    }
+
+    /// 2026-09-30: The stream itself, pinned: the default seed's `P` bit for bit, as rand 0.8 /
+    /// rand_chacha 0.3 / rand_distr 0.4 produced it and rand 0.9 / rand_chacha 0.9 /
+    /// rand_distr 0.5 still do. A dependency bump that changes the predictor's projection
+    /// fails here instead of passing `determinism`, which compares two runs of one build.
+    #[test]
+    fn the_default_seed_gives_the_pinned_projection() {
+        let p = build_projection(PredictorShape::new(128, 32), 0xCAFE_F00D);
+        let bits: Vec<u16> = p.iter().map(|x| x.to_bits()).collect();
+        assert_eq!(
+            bits[..8],
+            [48010, 48438, 15723, 15775, 48398, 48642, 48035, 48715]
+        );
+        let fnv = bits.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+        });
+        assert_eq!(fnv, 0x5498_6948_5a9b_0c37);
     }
 }
