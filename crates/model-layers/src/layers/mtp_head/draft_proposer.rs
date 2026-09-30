@@ -115,7 +115,11 @@ impl DraftProposer for MtpHead {
         stream: u64,
         out_conf: Option<&mut Vec<Vec<f32>>>,
     ) -> Result<Option<Vec<Vec<u32>>>> {
-        if !self.can_propose_batch(last_tokens.len(), ctx.buffers, ctx.config) {
+        // 2026-09-30: Under `--forward circuit` each sequence drafts alone, through the circuit's
+        // draft program (`forward.rs`); the batched propose is legacy code.
+        if !self.can_propose_batch(last_tokens.len(), ctx.buffers, ctx.config)
+            || self.circuit_draft.read().is_some()
+        {
             return Ok(None);
         }
         // 2026-09-25: The width policy sees only the config and the arena, so the

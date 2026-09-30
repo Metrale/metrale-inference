@@ -184,6 +184,30 @@ mod tests {
         );
     }
 
+    /// 2026-09-30: Under `--forward circuit` no sequence of a multi-sequence MTP step verifies or
+    /// drafts in legacy code: the batched verify is refused as a routing decision and fails fast
+    /// if called, and the batched propose declines so each sequence drafts through the circuit.
+    #[test]
+    fn a_circuit_forward_takes_no_batched_verify_or_propose() {
+        let s = src("src/model/trait_impl/verify_e.rs");
+        let gate = block(&s, "fn can_batch_verify_dispatch", "\n    pub(super) fn ");
+        assert!(
+            gate.contains("&& self.circuit.read().is_none()"),
+            "can_batch_verify_dispatch must refuse under a circuit forward"
+        );
+        let call = block(&s, "fn decode_verify_batched_dispatch", "let t_launch");
+        assert!(
+            call.contains("ensure!(\n            self.circuit.read().is_none(),"),
+            "decode_verify_batched_dispatch must fail fast under a circuit forward"
+        );
+        let p = src("../model-layers/src/layers/mtp_head/draft_proposer.rs");
+        let propose = block(&p, "fn propose_batch(", "let mut mtp_states");
+        assert!(
+            propose.contains("|| self.circuit_draft.read().is_some()"),
+            "propose_batch must decline under a circuit draft program"
+        );
+    }
+
     /// 2026-09-25: The veto is consumed at dispatch, not as a serve-time `max_batch_size` clamp
     /// in `serve_load.rs`, which would lower concurrency for every model.
     #[test]

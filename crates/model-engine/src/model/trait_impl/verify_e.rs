@@ -82,6 +82,9 @@ impl TransformerModel {
             && shape_ok
             && ks.iter().sum::<usize>() <= super::verify_e2::VERIFY_ROW_CAP
             && self.comm.is_none()
+            // 2026-09-30: The circuit has no batched verify; under `--forward circuit` each
+            // sequence verifies alone, through the circuit's verify program.
+            && self.circuit.read().is_none()
             && !(self.lora.is_some() && metrale_model_layers::lora::no_batch_verify())
             && !self.verify_hidden_stash.is_null()
             && !self
@@ -119,6 +122,12 @@ impl TransformerModel {
         // on.
         self.gdn_woa_eligible
             .store(false, std::sync::atomic::Ordering::Release);
+        // 2026-09-30: Legacy layers must not run under a circuit forward's name.
+        ensure!(
+            self.circuit.read().is_none(),
+            "decode_verify_batched: the circuit forward has no batched verify \
+             (can_batch_verify refuses it)"
+        );
         let t_launch = std::time::Instant::now();
         let mapped_argmax = mapped_argmax_host_dev(self.gpu.as_ref());
         let stream = self.gpu.default_stream();
