@@ -21,11 +21,10 @@ schema = 1
 # - kv_cache_dtype, lm_head_dtype: bf16, pinned by the recipe.
 # - ssm_h_dtype f32 and gdn_fused_norm off: flag defaults
 #   (crates/server/src/cli/serve_args.rs:145-206).
-# - ssm_batched_recurrent: off, pinned. The circuit models the per-sequence GDN recurrence only;
-#   GB10 runs the batched arm by default (kernels/gb10/HARDWARE.toml:122), so a circuit serve
-#   sets `--ssm-batched-recurrent off` (or METRALE_SSM_BATCHED_RECURRENT=0) and the executor
-#   refuses the batched arm (circuit_exec/policy.rs `unmodelled_switches`) until its rules land.
-#   On gb10 the hardware planner keeps this pin (hardware/model.rs `policy_on_class`).
+# - ssm_batched_recurrent: on, kernels/gb10/HARDWARE.toml:122 (the default since #51). The
+#   per-sequence fallback is the `gdn_state_slots_fragmented` runtime route of gb10's
+#   FUSIONS.toml.
+# - ssm_ba_gates_hopper: on, kernels/gb10/HARDWARE.toml:157.
 # - gemv_sw: on unless METRALE_NO_GEMV_SW=1 (ml/ops/model_levers_resolve.rs:53).
 # - w4a16_tc: on unless METRALE_NO_W4A16_TC (ml/ops/gemv_tc.rs:79-82).
 # - decode_split_silu: on, kernels/gb10/HARDWARE.toml:168.
@@ -57,7 +56,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "off", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
 
 # 2026-09-30: The dense agentic recipe above served under `--weight-quantization declared` (the
 # engine default; the recipe pins `nvfp4`, so no recipe serves this yet): the checkpoint's own
@@ -86,7 +85,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "off", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
 
 # 2026-09-28: The MoE flagship recipe (the agentic-webserver gate's default entry,
 # kernels/gb10/qwen3.6-35b-a3b/BENCH.toml). As above, except:
@@ -105,7 +104,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "off", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
 
 # 2026-09-29: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, the first model built by the
 # `new-model` method (`.claude/skills/new-model/SKILL.md`). The recipe id is the planned one: no
@@ -133,4 +132,4 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "off", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }

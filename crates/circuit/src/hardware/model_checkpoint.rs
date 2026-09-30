@@ -30,7 +30,7 @@ use crate::{QuantMetadata, ServePrecision, resolve_checkpoint};
 pub const KERNEL_QUANT: &str = "nvfp4";
 
 /// 2026-09-30: Where each derived setting comes from, printed in the report.
-pub const POLICY_SOURCES: [(&str, &str); 9] = [
+pub const POLICY_SOURCES: [(&str, &str); 10] = [
     (
         "row_tiers",
         "canonical for FP8 routed experts, else by_rows (ml/row_tiers.rs:64-78)",
@@ -54,6 +54,10 @@ pub const POLICY_SOURCES: [(&str, &str); 9] = [
     ),
     (
         "ssm_batched_recurrent",
+        "the device class's HARDWARE.toml [defaults]",
+    ),
+    (
+        "ssm_ba_gates_hopper",
         "the device class's HARDWARE.toml [defaults]",
     ),
     (
@@ -187,6 +191,7 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         ("gemv_sw", "on"),
         ("w4a16_tc", "on"),
         ("ssm_batched_recurrent", "class"),
+        ("ssm_ba_gates_hopper", "class"),
         ("decode_split_silu", "class"),
         ("rms_norm_act_quant", "off"),
     ]

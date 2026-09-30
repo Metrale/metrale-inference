@@ -31,11 +31,13 @@ pub mod plan;
 mod render;
 mod render_matrix;
 mod render_routes;
-pub mod runtime;
 pub mod sources;
 
 #[cfg(test)]
 mod hardware_tests;
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod runtime_tests;
 #[cfg(test)]
 mod test_fixture;
 
@@ -177,7 +179,8 @@ pub fn plan_one(
         model.settings_class.as_deref(),
         &resolved.chain[0],
     )?;
-    let header = model::with_settings(&model::header_on(model, &resolved.device.class), &policy);
+    let header =
+        crate::render::with_settings(&model::header_on(model, &resolved.device.class), &policy);
     let planned = plan::fuse_on(&resolved, &model.circuit, &policy, run)?;
     Ok(OnePlan {
         resolved,
@@ -232,7 +235,8 @@ pub fn build_report(
         model.settings_class.as_deref(),
         &resolved.chain[0],
     )?;
-    let header = model::with_settings(&model::header_on(&model, &resolved.device.class), &policy);
+    let header =
+        crate::render::with_settings(&model::header_on(&model, &resolved.device.class), &policy);
     let c = &model.circuit;
     let mut tables = Vec::new();
     for run in plan::report_runs() {

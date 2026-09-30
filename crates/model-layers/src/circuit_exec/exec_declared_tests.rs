@@ -104,8 +104,7 @@ fn build(mode: Mode, rows: u64, edit: impl Fn(&mut Vec<CircuitLayer>)) -> anyhow
         DECLARED,
         &declared_binding,
         Fusions::All,
-        mode,
-        rows,
+        (mode, rows, Arm::Primary),
         edit,
         |_| {},
     )

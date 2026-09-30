@@ -24,7 +24,7 @@ dispatch code that makes today's choice, and lists the routing the circuit canno
 
 | Instance (recipe) | Model | Policy |
 |---|---|---|
-| `qwen3.8/qwen3.8-27b-nvfp4-unsloth` | dense Qwen3.8-27B | by_rows tiers, bf16 KV, bf16 head, f32 GDN state, batched recurrence off, gemv_sw on, tc8 on, split SiLU on, no opt-in levers |
+| `qwen3.8/qwen3.8-27b-nvfp4-unsloth` | dense Qwen3.8-27B | by_rows tiers, bf16 KV, bf16 head, f32 GDN state, batched recurrence on (its per-sequence fallback a runtime route), BA-gates twin on, gemv_sw on, tc8 on, split SiLU on, no opt-in levers |
 | `qwen3.6/qwen3.6-35b-a3b-fp8-bf16head` | Qwen3.6-35B-A3B MoE | as above, except canonical row tiers |
 | `qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared` | dense Qwen3.8-27B under `--weight-quantization declared` (2026-09-30) | as the first row; the checkpoint's own W8A8 and W4A4 projections, plans named `qwen3_5.declared-*` |
 
@@ -62,17 +62,23 @@ class and exact citation.
 | `ffn_residual_add` | reference | ml/qwen3_ssm/trait_decode.rs:143-150; ml/qwen3_attention/trait_impl/decode_inner.rs:384-391; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:147-154; ml/qwen3_ssm/trait_decode_multi_seq.rs:212,235 (after the prefill and km arms); ml/qwen3_ssm/trait_decode_batched.rs:323-334; ml/mtp_head/forward.rs:337 |
 | `ffn_residual_add_per_row_gdn_k2k3` | reference | ml/qwen3_ssm/trait_decode_multi_seq.rs:178-196 (the n == 2 | 3 arm adds each row's FFN output in a loop, :192) |
 | `final_norm` | reference | me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:340-350 |
-| `gdn_ba_gates_gemv_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (per-sequence loop when the batched recurrence is off, HARDWARE.toml:118) |
+| `gdn_ba_gates_gemv_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (the per-sequence loop: one row, the `off` arm, or the fragmented-slots route) |
 | `gdn_ba_gates_gemm_verify` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:37-59 (kill switch METRALE_NO_BATCHED_BA_GATES) |
 | `gdn_conv_l2_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:213-233; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:99-113 |
 | `gdn_conv_l2_bf16_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:105-110 (BF16 conv rows, not bitwise equal to decode's FP32 conv), :114-331 (the conv window copied to conv_state_intermediates[t] after each row but the last) |
 | `gdn_recurrence_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:266,330-347; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:195-212 |
 | `gdn_recurrence_f32_fused_norm` | differs (gdn_fused_norm) | ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:940-942,1051 (the fused kernel clamps the state norm, the unfused one does not) |
+| `gdn_recurrence_f32_fused_norm_per_row` | differs (gdn_fused_norm) | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:160-190 (the per-sequence arm's fused norm); ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-262 (the batched arm's strided fused norm, not modelled) |
 | `gdn_recurrence_wy2_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
 | `gdn_recurrence_wy3_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
 | `gdn_recurrence_wy4_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
 | `gdn_fused_conv_norm_k2_verify` | differs (gdn_fused_verify) | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:57-67 (METRALE_GDN_FUSED_VERIFY=1; checked at cos >= 0.99999, not bitwise) |
 | `gdn_out_norm_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:354-372; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:222-236 |
+| `gdn_ba_gates_gemm_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-96 (enabled, the strided GDN kernel loaded, n > 1), :155-171 |
+| `gdn_conv_l2_f32_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:182-199 (one launch when the strided kernel is loaded) |
+| `gdn_recurrence_f32_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-222 (the fused-norm arm needs --gdn-fused-norm, default off), :328-350 |
+| `gdn_out_norm_f32_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (one launch when the strided gated norm is loaded: not for sigmoid-gated norms, ml/qwen3_ssm/init.rs:96-100) |
+| `gdn_ba_gates_gemm_batched_twin` | reference | ml/ops/ssm_preproc.rs:333-362 (the pick); ml/ops/ssm_ba_gates_hopper.rs:88-112 (the guard: 2 CTAs per SM) |
 | `gdn_out_norm_prefill_verify` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:138-157 (kill switch METRALE_NO_BATCHED_GDN_NORM) |
 | `deinterleave_qg` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:70-79; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-286; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:186-198 |
 | `qk_norm_rows` | reference | ml/qwen3_attention/decode/attention_forward.rs:140-151,174-186; ml/mtp_head/forward.rs:230-251 |
@@ -213,7 +219,7 @@ These are facts about the code, found while encoding it. They are not changes.
 4. **Probable defect: FP8 KV scales are never loaded for the dense checkpoint.**
    - `load_kv_scales` looks up `{p}.k_proj.k_scale`; the checkpoint ships `self_attn.k_scale`.
    - Not exercised by the golden policy (bf16 KV). It matters for the throughput recipe's fp8 KV.
-5. **The GDN batched recurrence almost never engages at a padded width.** Padding rows share one dummy slot, so the contiguity check fails (ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-149).
+5. **The GDN batched recurrence almost never engages at a padded width.** Padding rows share one dummy slot, so the contiguity check fails (ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-149). 2026-09-30: the check is now the `gdn_state_slots_fragmented` runtime route: every multi-sequence plan under `ssm_batched_recurrent = on` carries the per-row arm beside the batched one, and the executor runs whichever the step's slots select.
 6. **`gdn_fused_norm` is not only a fusion.** The fused kernel clamps the state's Frobenius norm and the unfused one does not (k/gated_delta_rule.cu:940-942, 1051). The rule is therefore `differs`, not `bit_identical`.
 7. **The dense throughput recipe's K ladder disagrees with its BENCH pin.** The recipe prose says `1:3,2:1,4:2,8:2,16:1`; BENCH.toml says `1:3,2:2,4:1,8:1,16:1`, and the BENCH pin wins.
 
@@ -225,7 +231,7 @@ These are facts about the code, found while encoding it. They are not changes.
 - The K ladder, adaptive rung, D-Cut row pruning and the per-slot capacity clamp choose the verify width.
 - Graph borrowing replays a wider captured graph, so kernels run at the captured width.
 - GDN carry is eager or lazy (8 sequences or more). Per-sequence fallback happens on non-contiguous slots or null WY tables.
-- The batched-recurrence contiguity check (item 5 above).
+- The batched-recurrence contiguity check (item 5 above) is modelled since 2026-09-30, as the `gdn_state_slots_fragmented` runtime route (FUSIONS.toml `[[runtime]]`).
 - Mixed prefill+decode steps, preemption, grammar truncation of drafts.
 - FP8 KV calibration suppresses graphs until its window freezes.
 
@@ -247,7 +253,7 @@ These are facts about the code, found while encoding it. They are not changes.
 
 **Kill switches not modelled.** Most `METRALE_NO_*` levers are absent. The policy states only the settings a rule reads:
 
-- `row_tiers`, `kv_cache_dtype`, `lm_head_dtype`, `ssm_h_dtype`, `ssm_batched_recurrent`;
+- `row_tiers`, `kv_cache_dtype`, `lm_head_dtype`, `ssm_h_dtype`, `ssm_batched_recurrent`, `ssm_ba_gates_hopper`;
 - `gemv_sw`, `w4a16_tc`, `decode_split_silu`.
 
 **The W8A8 MoE path above 64 rows is one opaque group.** `moe_prefill_fp8_w8a8_wide` pins today's 15-launch sequence. Inside it, the engine picks between arms that the rule does not model:
@@ -268,7 +274,7 @@ These are facts about the code, found while encoding it. They are not changes.
 - **EP reduce** is omitted: EP is not used by either recipe.
 - **Recipes without an instance.** `qwen3.8-27b-nvfp4-throughput` and `qwen3.6-35b-a3b-fp8-nvfp4head` need rules the golden policies never reach, and `met circuit show` refuses them by name:
   - FP8 KV, the NVFP4 head (tile GEMM under canonical tiers);
-  - f16-pool state and the batched recurrence;
+  - f16-pool state;
   - W4A4 at 9-64 rows (mx16/mx32/mx64 and the `_ps`/`_nt` twins).
 - **Only four `differs` levers are modelled:** `gdn_fused_norm`, `decode_fused_silu`, `gdn_fused_verify` (K=2) and `w4a4_downcast` (4-8 rows, mx8).
 - **Sampling is outside the main circuit.** The verify's per-row argmax is part of today's verify forward but not of the circuit.

@@ -12,13 +12,52 @@
 
 use std::fmt::Write as _;
 
-use crate::fuser::{EdgeState, FusionPlan};
+use crate::fuser::{EdgeState, FusionPlan, Policy};
 use crate::ir::Circuit;
 use crate::rules::Numerics;
+use crate::runtime::RuntimeRoute;
 
 /// 2026-09-28: `key: value` lines printed under the title, in order (recipe, checkpoint,
 /// policy). The caller decides what they say; the renderer only prints them.
 pub type Header = Vec<(String, String)>;
+
+/// 2026-09-30: `header` with its settings line rebuilt from `policy` (after a device class
+/// re-reads its settings, or for a runtime route's arm).
+pub fn with_settings(header: &Header, policy: &Policy) -> Header {
+    header
+        .iter()
+        .map(|(k, v)| {
+            if k == "settings" {
+                let s: Vec<String> = policy
+                    .settings
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect();
+                (k.clone(), s.join(" "))
+            } else {
+                (k.clone(), v.clone())
+            }
+        })
+        .collect()
+}
+
+/// 2026-09-30: A runtime route's arm, rendered after the primary plan: a heading that names the
+/// route, its condition and the settings it plans as, then the arm's plan under `header`.
+pub fn route_section(
+    circuit: &Circuit,
+    route: &RuntimeRoute,
+    plan: &FusionPlan,
+    header: &Header,
+) -> String {
+    format!(
+        "\n# runtime route `{}`: when {}; planned as `{}` ({})\n\n{}",
+        route.id,
+        route.why,
+        route.plans_as_text(),
+        route.cite,
+        render(circuit, plan, header)
+    )
+}
 
 /// 2026-09-28: Render `plan` of `circuit`.
 pub fn render(circuit: &Circuit, plan: &FusionPlan, header: &Header) -> String {

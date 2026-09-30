@@ -21,11 +21,12 @@ mod declared;
 mod draft;
 mod ffn;
 mod gdn;
+mod gdn_batched;
 mod gdn_verify;
 mod linear;
 mod norm;
 
-static EMITTERS: [&dyn OpEmitter; 42] = [
+static EMITTERS: [&dyn OpEmitter; 45] = [
     &norm::EmbedCopy,
     &norm::RmsNormResidual,
     &norm::ResidualAddRmsNorm,
@@ -59,6 +60,9 @@ static EMITTERS: [&dyn OpEmitter; 42] = [
     &ffn::DenseFfnMmq,
     &gdn_verify::DenseGemmBaGates,
     &gdn_verify::GdnDecodeWy,
+    &gdn_batched::Conv1dUpdateL2normStrided,
+    &gdn_batched::GdnDecodeStrided,
+    &gdn_batched::GatedRmsNormStrided,
     &linear::Argmax,
     &linear::HostSampling,
     &draft::Concat,

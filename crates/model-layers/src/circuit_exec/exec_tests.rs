@@ -116,6 +116,8 @@ fn a_binding_the_plan_does_not_describe_is_refused() {
     let e = err(&|l| {
         l[0].mixer = MixerFacts::Gdn(GdnFacts {
             qkvz_deinterleaved: false,
+            h_slot_bytes: STATE_PITCH,
+            conv_state_bytes: STATE_PITCH,
         })
     });
     assert!(e.contains("deinterleaved"), "{e}");

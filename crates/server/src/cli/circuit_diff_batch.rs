@@ -46,20 +46,25 @@ pub(crate) enum BatchFeed<'a> {
 }
 
 /// 2026-09-28: The rows' tokens and the run, its prefill and step logits concatenated row by
-/// row.
+/// row. 2026-09-30: With `fragment`, a spare sequence allocated before row `n / 2` holds a slot
+/// between that row and the one before it, for the whole run.
 fn run_batch(
     model: &dyn Model,
-    prompts: &[Vec<u32>],
+    (prompts, fragment): (&[Vec<u32>], bool),
     steps: usize,
     feed: BatchFeed<'_>,
 ) -> Result<(Vec<Vec<u32>>, Run)> {
     let n = prompts.len();
     let row_bytes = model.vocab_size() * 2;
     let mut seqs: Vec<SequenceState> = Vec::with_capacity(n);
+    let mut spare: Option<SequenceState> = None;
     let result = (|| {
         let mut prefill = Vec::with_capacity(n * row_bytes);
         let mut tokens: Vec<Vec<u32>> = Vec::with_capacity(n);
         for (i, p) in prompts.iter().enumerate() {
+            if fragment && i == n / 2 {
+                spare = Some(model.alloc_sequence()?);
+            }
             seqs.push(model.alloc_sequence()?);
             let l = logits(model, model.prefill(p, &mut seqs[i], 0)?)?;
             tokens.push(vec![match feed {
@@ -98,7 +103,20 @@ fn run_batch(
             },
         ))
     })();
-    for s in &mut seqs {
+    // 2026-09-30: Freed in reverse allocation order, so the pool's free list (a stack) hands the
+    // next run the same slots in the same order: every run sees the one slot layout.
+    let mid = if spare.is_some() {
+        (n / 2).min(seqs.len())
+    } else {
+        0
+    };
+    let (low, high) = seqs.split_at_mut(mid);
+    for s in high
+        .iter_mut()
+        .rev()
+        .chain(spare.as_mut())
+        .chain(low.iter_mut().rev())
+    {
         model.free_sequence(s)?;
     }
     result
@@ -210,7 +228,7 @@ pub(crate) struct WidthReport {
 /// 2026-09-28: Run the reference and every forward in `forwards` at each width.
 pub(crate) fn diff_widths(
     model: &dyn Model,
-    widths: &[usize],
+    (widths, fragment): (&[usize], bool),
     steps: usize,
     forwards: &[(&'static str, ForwardSelect)],
 ) -> Result<Vec<WidthReport>> {
@@ -221,12 +239,13 @@ pub(crate) fn diff_widths(
         let prompts = batch_prompts(n, model.vocab_size());
         let row_bytes = model.vocab_size() * 2;
         model.set_forward(&ForwardSelect::Legacy)?;
-        let (ref_tokens, reference) = run_batch(model, &prompts, steps, BatchFeed::Greedy)?;
+        let rows = (prompts.as_slice(), fragment);
+        let (ref_tokens, reference) = run_batch(model, rows, steps, BatchFeed::Greedy)?;
         let (mut comparisons, mut timings) = (Vec::new(), vec![timing("legacy", &reference)]);
         let (mut prefill_rows, mut deltas) = (Vec::new(), Vec::new());
         for (name, sel) in forwards {
             model.set_forward(sel)?;
-            let (_, r) = run_batch(model, &prompts, steps, BatchFeed::Forced(&ref_tokens))?;
+            let (_, r) = run_batch(model, rows, steps, BatchFeed::Forced(&ref_tokens))?;
             let (c, skipped) = compare_rows(name, &reference, &r, row_bytes);
             deltas.push(row_deltas(&reference, &r, row_bytes, &skipped));
             prefill_rows.push(skipped);
@@ -238,7 +257,7 @@ pub(crate) fn diff_widths(
         let mut changed = ref_tokens.clone();
         let (row, at) = (n / 2, steps / 2);
         changed[row][at] = (changed[row][at] + 1) % model.vocab_size() as u32;
-        let (_, r) = run_batch(model, &prompts, steps, BatchFeed::Forced(&changed))?;
+        let (_, r) = run_batch(model, rows, steps, BatchFeed::Forced(&changed))?;
         let (control, control_skipped) = compare_rows(
             "last forward, one row's token changed",
             &reference,

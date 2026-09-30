@@ -14,12 +14,12 @@ use metrale_circuit::{
     AvailableKernels, Circuit, FusionPlan, LayerKind, LinearRole, Mode, Numerics,
 };
 use metrale_gpu_runtime::gpu::DevicePtr;
-use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
+use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 
 use super::bindings::*;
 use super::compile::{self, DraftFixed, Fixed, Inputs};
 use super::kernels::KernelTable;
-use super::program::{GdnState, Program, StepEnv};
+use super::program::Program;
 use super::{Fusions, sources};
 use crate::layer::AttnMetadataDev;
 use crate::weight_map::{DenseWeight, QuantizedWeight};
@@ -95,6 +95,8 @@ pub(super) fn layer_binding(circuit: &Circuit, i: usize, attn_idx: usize) -> Cir
         );
         MixerFacts::Gdn(GdnFacts {
             qkvz_deinterleaved: true,
+            h_slot_bytes: STATE_PITCH,
+            conv_state_bytes: STATE_PITCH,
         })
     } else {
         for (s, role) in [
@@ -267,7 +269,42 @@ pub(super) fn build_at(
     edit_head: impl Fn(&mut HeadBinding),
 ) -> anyhow::Result<Fixture> {
     let bind = |c: &Circuit, i: usize, attn: usize| (layer_binding(c, i, attn), Vec::new());
-    build_for(RECIPE, &bind, fusions, mode, rows, edit, edit_head)
+    build_for(
+        RECIPE,
+        &bind,
+        fusions,
+        (mode, rows, Arm::Primary),
+        edit,
+        edit_head,
+    )
+}
+
+/// 2026-09-30: Which arm of a plan a fixture compiles.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Arm {
+    /// 2026-09-30: The plan the policy selects.
+    Primary,
+    /// 2026-09-30: The arm of the runtime route with this id; an error when it does not apply.
+    Route(&'static str),
+    /// 2026-09-30: The plan under the instance's policy with one setting changed.
+    Setting(&'static str, &'static str),
+}
+
+/// 2026-09-30: [`build_at`] for the arm of runtime route `route`.
+pub(super) fn build_route_at(
+    route: &'static str,
+    mode: Mode,
+    rows: u64,
+) -> anyhow::Result<Fixture> {
+    let bind = |c: &Circuit, i: usize, attn: usize| (layer_binding(c, i, attn), Vec::new());
+    build_for(
+        RECIPE,
+        &bind,
+        Fusions::All,
+        (mode, rows, Arm::Route(route)),
+        |_| {},
+        |_| {},
+    )
 }
 
 /// 2026-09-30: [`build_at`] for the instance `recipe`, its layers bound by `bind`. The W4A4
@@ -276,8 +313,7 @@ pub(super) fn build_for(
     recipe: &str,
     bind: &Bind,
     fusions: Fusions,
-    mode: Mode,
-    rows: u64,
+    (mode, rows, arm): (Mode, u64, Arm),
     edit: impl Fn(&mut Vec<CircuitLayer>),
     edit_head: impl Fn(&mut HeadBinding),
 ) -> anyhow::Result<Fixture> {
@@ -295,14 +331,27 @@ pub(super) fn build_for(
             }
         }
     }
-    let plan = metrale_circuit::fuse(
-        &loaded.circuit,
-        &loaded.rules,
-        &avail,
-        &inst.policy,
-        mode,
-        rows,
-    )?;
+    let mut policy = inst.policy.clone();
+    if let Arm::Setting(k, v) = arm {
+        policy.settings.insert(k.into(), v.into());
+    }
+    let mut plan =
+        metrale_circuit::fuse(&loaded.circuit, &loaded.rules, &avail, &policy, mode, rows)?;
+    if let Arm::Route(id) = arm {
+        let set = (loaded.rules.as_slice(), loaded.runtime.as_slice());
+        let arms = metrale_circuit::runtime::route_arms(
+            &loaded.circuit,
+            set,
+            &avail,
+            &inst.policy,
+            &plan,
+        )?;
+        plan = arms
+            .into_iter()
+            .find(|(r, _)| r.id == id)
+            .map(|(_, p)| p)
+            .ok_or_else(|| anyhow::anyhow!("route `{id}` does not apply at {mode:?} {rows}"))?;
+    }
     let layout = compile::layout(&loaded.circuit, &plan)?;
     let buffers = plan_buffers_with(&loaded.circuit, &plan, rows, &layout)?;
     let mut attn = 0;
@@ -360,131 +409,5 @@ pub(super) fn build_for(
     })
 }
 
-pub(super) fn states(f: &Fixture, base: u64) -> Vec<Vec<GdnState>> {
-    states_rows(f, base, 1)
-}
-
-/// 2026-09-28: `rows` distinct GDN states per GDN layer, from `base`.
-pub(super) fn states_rows(f: &Fixture, base: u64, rows: usize) -> Vec<Vec<GdnState>> {
-    f.layers
-        .iter()
-        .enumerate()
-        .map(|(i, l)| match l.mixer {
-            MixerFacts::Gdn(_) => (0..rows)
-                .map(|r| {
-                    let at = base + ((i as u64) << 24) + ((r as u64) << 16);
-                    GdnState {
-                        h: ptr(at),
-                        conv: ptr(at + 0x8000),
-                        h_steps: [1, 2, 3].map(|t| ptr(at + 0x1000 * t)),
-                        conv_steps: [1, 2, 3].map(|t| ptr(at + 0x8000 + 0x1000 * t)),
-                    }
-                })
-                .collect(),
-            MixerFacts::Attention(_) => Vec::new(),
-        })
-        .collect()
-}
-
-/// 2026-09-29: The program's kernel launches, in order: what the mock records (it does not
-/// record copies).
-pub(super) fn kernel_launches(f: &Fixture) -> impl Iterator<Item = &super::program::Launch> {
-    f.program
-        .launches
-        .iter()
-        .filter(|l| l.kind == super::program::LaunchKind::Kernel)
-}
-
-pub(super) fn run(f: &Fixture, gdn: &[Vec<GdnState>], max_blocks: u32) -> Vec<MockLaunch> {
-    let gpu = MockGpuBackend::new();
-    // 2026-09-30: Every mock kernel is handle 0xDEAD, and the tiled W4A16 launches size their
-    // grid from the kernel's published N tile (`GpuBackend::kernel_n_tile`); 128 is the tile
-    // `w4a16_gemm_t_p3` publishes in the qwen3.6-27b tree.
-    gpu.set_kernel_n_tile(metrale_gpu_runtime::gpu::KernelHandle(0xDEAD), 128);
-    run_on(&gpu, f, gdn, max_blocks)
-}
-
-/// 2026-09-29: [`run`] on `gpu`, whose allocations the states may point into.
-pub(super) fn run_on(
-    gpu: &MockGpuBackend,
-    f: &Fixture,
-    gdn: &[Vec<GdnState>],
-    max_blocks: u32,
-) -> Vec<MockLaunch> {
-    f.program
-        .run(&StepEnv {
-            gpu,
-            stream: 7,
-            gdn,
-            max_blocks_per_seq: max_blocks,
-        })
-        .unwrap();
-    gpu.launches_snapshot()
-}
-
-/// 2026-09-28: Every buffer a launch of `f` reads is a bound weight, a row of a fixed buffer,
-/// the step's metadata, one of `gdn`'s states, or in the workspace.
-pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched: &[MockLaunch]) {
-    let mut known: BTreeSet<u64> = BTreeSet::new();
-    for l in f.layers.iter().chain(&f.draft) {
-        for w in l.weights.values() {
-            // 2026-09-30: Each pointer inserted on its own (an `&&` skipped the scale whenever
-            // the weight was already known). A W8A8 weight's segments are in `f.w8a8_ptrs`.
-            match w {
-                BoundWeight::Dense(d) => known.extend([d.weight.0]),
-                BoundWeight::Nvfp4(q) => known.extend([q.weight.0, q.weight_scale.0]),
-                BoundWeight::Mmq(p) => known.extend([p.0]),
-                BoundWeight::W8a8(..) => {}
-            }
-        }
-    }
-    known.extend(&f.w8a8_ptrs);
-    known.extend([f.head.final_norm.weight.0, 0x9100_0000]);
-    for m in [f.fixed.meta, f.fixed.batch_meta, f.fixed.verify_meta] {
-        known.extend([m.positions.0, m.slot.0, m.seq_len.0, m.block_table.0]);
-    }
-    known.insert(f.fixed.ffn_act_q8.0);
-    if let Some(d) = &f.fixed.draft {
-        known.extend([d.embed.0, d.k_pool.0, d.v_pool.0]);
-        known.extend([
-            d.meta.positions.0,
-            d.meta.slot.0,
-            d.meta.seq_len.0,
-            d.meta.block_table.0,
-        ]);
-    }
-    let row = |dim: &str| f.circuit.dims[dim] * 2;
-    let rows_of = [
-        (f.fixed.hidden.0, row("hidden")),
-        (f.fixed.residual.0, row("hidden")),
-        (f.fixed.logits.0, row("vocab")),
-        (f.fixed.tokens.0, 4),
-    ];
-    let in_fixed = |p: u64| {
-        rows_of
-            .iter()
-            .any(|&(base, w)| (0..f.plan.rows).any(|r| p == base + r * w))
-    };
-    known.extend(f.fixed.k_pools.iter().chain(&f.fixed.v_pools).map(|p| p.0));
-    known.extend(gdn.iter().flatten().flat_map(|s| {
-        [s.h, s.conv]
-            .into_iter()
-            .chain(s.h_steps)
-            .chain(s.conv_steps)
-            .map(|p| p.0)
-    }));
-    let kernels: Vec<&str> = kernel_launches(f).map(|l| l.kernel.as_str()).collect();
-    for (i, l) in launched.iter().enumerate() {
-        for a in &l.args {
-            if let MockArg::Buffer(p) = a {
-                let in_ws = (WORKSPACE..WORKSPACE + f.arena).contains(&p.0);
-                assert!(
-                    in_ws || known.contains(&p.0) || in_fixed(p.0) || p.0 == 0,
-                    "launch {i} ({}) reads {:#x}, which is neither bound nor placed",
-                    kernels[i],
-                    p.0
-                );
-            }
-        }
-    }
-}
+// 2026-09-30: The run helpers live in exec_fixture_run.rs (split for the file-size cap).
+pub(super) use super::exec_fixture_run::*;

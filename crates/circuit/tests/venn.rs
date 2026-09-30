@@ -54,8 +54,9 @@ fn the_manifest_matches_the_kernel_sources() {
 #[test]
 fn every_fusions_kernel_and_emitter_belongs_to_one_family() {
     let fams = families();
-    let rules =
-        metrale_circuit::parse_rules(&common::read("kernels/gb10/common/FUSIONS.toml")).unwrap();
+    let rules = metrale_circuit::parse_rule_set(&common::read("kernels/gb10/common/FUSIONS.toml"))
+        .unwrap()
+        .rules;
     for r in &rules {
         for k in &r.kernels {
             let n = fams

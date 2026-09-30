@@ -245,16 +245,21 @@ values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/ssm_preprocess.cu"]
 
+# 2026-09-30: `ssm_ba_gates_hopper` is the byte-identical twin `ops::dense_gemm_ba_gates_prefill`
+# picks from two CTAs per SM (96 rows on GB10) when [defaults] ssm_ba_gates_hopper is on.
 [[family]]
 id = "gdn_ba_gates_gemm"
 description = "GDN in_proj_b|a GEMM fused with the gates, all rows"
-kernels = ["ssm_preprocess::dense_gemm_ba_gates_prefill"]
+kernels = [
+  "ssm_preprocess::dense_gemm_ba_gates_prefill",
+  "ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper",
+]
 rows = [1, 65536]
 op = [{ op = "linear", roles = ["ba"] }, { op = "gdn_gates" }]
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/ssm_preprocess.cu"]
+files = ["kernels/gb10/common/ssm_preprocess.cu", "kernels/gb10/common/ssm_ba_gates_hopper.cu"]
 [[family.evidence]]
 point = {}
 rows = [2]
@@ -295,8 +300,8 @@ files = ["kernels/gb10/common/causal_conv1d.cu"]
 [[family]]
 id = "causal_conv1d_l2norm"
 description = "Causal conv1d update + SiLU + L2 norm of the q/k heads (GDN)"
-# 2026-09-30: The strided twin runs every sequence's row in one launch (Hopper's batched GDN arm,
-# kernels/hopper/common/FUSIONS.toml).
+# 2026-09-30: The strided twin runs every sequence's row in one launch (the batched GDN arm,
+# kernels/gb10/common/FUSIONS.toml).
 kernels = [
   "causal_conv1d::causal_conv1d_update_l2norm_f32", "causal_conv1d::causal_conv1d_update_l2norm",
   "causal_conv1d::causal_conv1d_update_l2norm_f32_strided",
@@ -348,7 +353,8 @@ measurement = "qwen3.8-27b::gated_delta_rule_wy4 @ decode C=1 (R=4, MTP k=3)"
 
 # 2026-09-30: The batched decode arm: every sequence's recurrence in one launch, states strided
 # by the pool slot pitch (ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:328-350).
-# Selected where [defaults] ssm_batched_recurrent is on (Hopper); no microbench yet.
+# Selected where [defaults] ssm_batched_recurrent is on (GB10 since #51, Hopper); no microbench
+# yet.
 [[family]]
 id = "gdn_recurrence_strided"
 description = "Gated delta rule decode, all sequences in one launch (strided states)"
@@ -404,7 +410,7 @@ files = ["kernels/gb10/common/mamba2_ssm_decode.cu"]
 [[family]]
 id = "gated_rms_norm"
 description = "Gated RMSNorm: rmsnorm(x) * silu(z) (GDN output norm)"
-# 2026-09-30: `_strided` is the one-launch multi-sequence twin (Hopper's batched GDN arm).
+# 2026-09-30: `_strided` is the one-launch multi-sequence twin (the batched GDN arm).
 kernels = [
   "norm::gated_rms_norm_f32_input", "norm::gated_rms_norm_prefill",
   "norm::gated_rms_norm_f32_input_strided",

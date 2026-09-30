@@ -174,8 +174,9 @@ pub fn model_of(
 /// 2026-09-30: Policy settings a class's `HARDWARE.toml [defaults]` decides: setting to the
 /// defaults key (booleans map to `on` / `off`). INSTANCES.toml cites these rows for the values
 /// its recipes state.
-pub const CLASS_DEFAULT_SETTINGS: [(&str, &str); 2] = [
+pub const CLASS_DEFAULT_SETTINGS: [(&str, &str); 3] = [
     ("ssm_batched_recurrent", "ssm_batched_recurrent"),
+    ("ssm_ba_gates_hopper", "ssm_ba_gates_hopper"),
     ("decode_split_silu", "decode_split_silu"),
 ];
 
@@ -228,25 +229,6 @@ pub fn header_on(model: &ModelUnderPlan, class: &str) -> Header {
                     k.clone(),
                     format!("{class}/{}/{}", model.kernel_model, model.kernel_quant),
                 )
-            } else {
-                (k.clone(), v.clone())
-            }
-        })
-        .collect()
-}
-
-/// 2026-09-30: The settings line of a header, rebuilt after [`policy_on_class`].
-pub fn with_settings(header: &Header, policy: &Policy) -> Header {
-    header
-        .iter()
-        .map(|(k, v)| {
-            if k == "settings" {
-                let s: Vec<String> = policy
-                    .settings
-                    .iter()
-                    .map(|(k, v)| format!("{k}={v}"))
-                    .collect();
-                (k.clone(), s.join(" "))
             } else {
                 (k.clone(), v.clone())
             }

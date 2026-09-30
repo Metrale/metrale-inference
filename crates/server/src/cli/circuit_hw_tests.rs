@@ -108,7 +108,8 @@ fn hopper_claiming_the_fp4_mma_fails_the_hopper_assertion() {
 }
 
 // 2026-09-30: Path A: the gb10 plan of every golden instance, at every checked-in mode and row
-// count, is the golden plan byte for byte (header and digest included).
+// count, is the golden plan byte for byte (header and digest included), runtime-route arms
+// included.
 #[test]
 fn gb10_plans_equal_the_golden_plans() {
     let t = tree();
@@ -121,8 +122,7 @@ fn gb10_plans_equal_the_golden_plans() {
             for &n in rows {
                 let one = hardware::plan_one(&reg, "gb10", &t, &m, Run { mode, rows: n })
                     .unwrap_or_else(|e| panic!("{} {} n={n}: {e}", inst.recipe, mode.name()));
-                let got =
-                    metrale_circuit::render::render(&m.circuit, &one.planned.plan, &one.header);
+                let got = hardware::plan_text(&m.circuit, &one);
                 let file = root()
                     .join("kernels/circuits/plans")
                     .join(inst.plan_file(mode, n));

@@ -13,8 +13,12 @@
 #   `differs` needs the opt-in `lever` and is never selected without it.
 # - A `when` key must be stated by every policy (kernels/circuits/INSTANCES.toml); a rule is
 #   never selected under a setting it does not name.
-# - Priorities: 200 opt-in (`differs`) rules, 100 multi-op fused rules, 50 row-tier overrides,
-#   20 narrow single-op overrides, 10 single-op defaults, 5 fallbacks.
+# - Priorities: 200 opt-in (`differs`) rules, 110 multi-row multi-op arms over their per-row
+#   twins (the batched GDN recurrence), 100 multi-op fused rules, 50 row-tier overrides, 20
+#   narrow single-op overrides, 10 single-op defaults, 5 fallbacks.
+# - `[[runtime]]` routes (schema: crates/circuit/src/runtime.rs) name a condition the engine
+#   checks per step and the settings its other arm plans as; plans, reports and the executor
+#   carry both arms.
 # - `cite` abbreviations: ml/ = crates/model-layers/src/layers/, me/ =
 #   crates/model-engine/src/model/trait_impl/, mm/ = crates/model-engine/src/model/,
 #   k/ = kernels/gb10/common/. crates/circuit/tests/circuits.rs checks every cited file exists
@@ -112,7 +116,11 @@ numerics = "reference"
 priority = 10
 cite = "me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:340-350"
 
-# 2026-09-28: GatedDeltaNet mixer.
+# 2026-09-28: GatedDeltaNet mixer. 2026-09-30: One row (decode) runs the per-row kernels whatever
+# `ssm_batched_recurrent` says: the single-sequence path does not read it. A multi-sequence step
+# runs the batched arm under `on` (the `*_batched` rules below outrank the per-row ones) and the
+# per-row loop under `off`, or under `on` when the state slots are not contiguous (the
+# `gdn_state_slots_fragmented` route).
 
 [[rule]]
 id = "gdn_ba_gates_gemv_per_row"
@@ -122,10 +130,9 @@ repeat = "per_row"
 emitter = "dense_gemv_ba_gates"
 rows = [1, 128]
 modes = ["decode", "multi_seq"]
-when = { ssm_batched_recurrent = "off" }
 numerics = "reference"
 priority = 100
-cite = "ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (per-sequence loop when the batched recurrence is off, HARDWARE.toml:118)"
+cite = "ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (the per-sequence loop: one row, the `off` arm, or the fragmented-slots route)"
 
 [[rule]]
 id = "gdn_ba_gates_gemm_verify"
@@ -147,7 +154,6 @@ repeat = "per_row"
 emitter = "conv1d_update_l2norm"
 rows = [1, 128]
 modes = ["decode", "multi_seq"]
-when = { ssm_batched_recurrent = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/qwen3_ssm/ssm_forward.rs:213-233; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:99-113"
@@ -177,7 +183,7 @@ repeat = "per_row"
 emitter = "gdn_decode"
 rows = [1, 128]
 modes = ["decode", "multi_seq"]
-when = { ssm_h_dtype = "f32", ssm_batched_recurrent = "off" }
+when = { ssm_h_dtype = "f32" }
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/ssm_forward.rs:266,330-347; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:195-212"
@@ -188,13 +194,30 @@ pattern = [{ op = "gdn_recurrence", input = "f32" }, { op = "gated_rms_norm" }]
 kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32_norm" }]
 repeat = "per_row"
 emitter = "gdn_decode_f32_norm"
-rows = [1, 128]
-modes = ["decode", "multi_seq"]
-when = { ssm_h_dtype = "f32", ssm_batched_recurrent = "off" }
+rows = [1, 1]
+modes = ["decode"]
+when = { ssm_h_dtype = "f32" }
 numerics = "differs"
 lever = "gdn_fused_norm"
 priority = 200
 cite = "ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:940-942,1051 (the fused kernel clamps the state norm, the unfused one does not)"
+
+# 2026-09-30: The same lever on the per-sequence multi-sequence arm. Under `on` the batched arm
+# with this lever runs gated_delta_rule_decode_f32_strided_norm (or its half-register twin),
+# which no rule models; the executor refuses the lever.
+[[rule]]
+id = "gdn_recurrence_f32_fused_norm_per_row"
+pattern = [{ op = "gdn_recurrence", input = "f32" }, { op = "gated_rms_norm" }]
+kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32_norm" }]
+repeat = "per_row"
+emitter = "gdn_decode_f32_norm"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_h_dtype = "f32", ssm_batched_recurrent = "off" }
+numerics = "differs"
+lever = "gdn_fused_norm"
+priority = 200
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:160-190 (the per-sequence arm's fused norm); ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-262 (the batched arm's strided fused norm, not modelled)"
 
 [[rule]]
 id = "gdn_recurrence_wy2_verify"
@@ -265,10 +288,93 @@ repeat = "per_row"
 emitter = "gated_rms_norm"
 rows = [1, 128]
 modes = ["decode", "multi_seq"]
-when = { ssm_batched_recurrent = "off" }
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/ssm_forward.rs:354-372; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:222-236"
+
+# 2026-09-30: The batched arm (`ssm_batched_recurrent = on`, the GB10 default since #51): one
+# launch for all rows, each kernel a stride twin of its per-row one (same per-row arithmetic,
+# gdn_decode_strided_microtest). Moved here from kernels/hopper/common/FUSIONS.toml.
+
+[[rule]]
+id = "gdn_ba_gates_gemm_batched"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_preprocess", func = "dense_gemm_ba_gates_prefill" }]
+repeat = "once"
+emitter = "dense_gemm_ba_gates"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 110
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-96 (enabled, the strided GDN kernel loaded, n > 1), :155-171"
+
+[[rule]]
+id = "gdn_conv_l2_f32_batched"
+pattern = [{ op = "conv1d_update" }, { op = "state_snapshot" }, { op = "l2_norm" }]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm_f32_strided" }]
+repeat = "once"
+emitter = "conv1d_update_l2norm_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 110
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:182-199 (one launch when the strided kernel is loaded)"
+
+[[rule]]
+id = "gdn_recurrence_f32_batched"
+pattern = [{ op = "gdn_recurrence", input = "f32" }]
+kernels = [{ module = "gated_delta_rule", func = "gated_delta_rule_decode_f32_strided" }]
+repeat = "once"
+emitter = "gdn_decode_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_h_dtype = "f32", ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-222 (the fused-norm arm needs --gdn-fused-norm, default off), :328-350"
+
+[[rule]]
+id = "gdn_out_norm_f32_batched"
+pattern = [{ op = "gated_rms_norm", input = "f32" }]
+kernels = [{ module = "norm", func = "gated_rms_norm_f32_input_strided" }]
+repeat = "once"
+emitter = "gated_rms_norm_strided"
+rows = [2, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (one launch when the strided gated norm is loaded: not for sigmoid-gated norms, ml/qwen3_ssm/init.rs:96-100)"
+
+# 2026-09-30: The batched BA GEMM's byte-identical twin, which `ops::dense_gemm_ba_gates_prefill`
+# picks when `ssm_ba_gates_hopper` is on and the rows fill the device at two CTAs per SM: 96 rows
+# on GB10's 48 SMs (kernels/DEVICES.toml). The executor checks the pick against that guard.
+[[rule]]
+id = "gdn_ba_gates_gemm_batched_twin"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_ba_gates_hopper", func = "dense_gemm_ba_gates_prefill_hopper" }]
+repeat = "once"
+emitter = "dense_gemm_ba_gates"
+rows = [96, 128]
+modes = ["multi_seq"]
+when = { ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on" }
+numerics = "reference"
+priority = 120
+cite = "ml/ops/ssm_preproc.rs:333-362 (the pick); ml/ops/ssm_ba_gates_hopper.rs:88-112 (the guard: 2 CTAs per SM)"
+
+# 2026-09-30: The batched arm's run-time fallback. The per-sequence loop it falls back to is the
+# code the `off` arm runs (per_seq.rs, `decode_ms_ssm_recurrent_per_seq`), so the route plans as
+# `off`.
+[[runtime]]
+id = "gdn_state_slots_fragmented"
+when = { ssm_batched_recurrent = "on" }
+modes = ["multi_seq"]
+rows = [2, 128]
+plans_as = { ssm_batched_recurrent = "off" }
+why = "the sequences' GDN state slots are not contiguous in slice order (slots fragment as sequences finish), and the step runs the per-sequence loop"
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-150 (the contiguity check), :396-397 (the per-sequence call)"
 
 [[rule]]
 id = "gdn_out_norm_prefill_verify"

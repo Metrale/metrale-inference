@@ -99,6 +99,11 @@ pub struct GdnFacts {
     /// 2026-09-28: The qkvz projection writes `[Q | K | V | Z]` itself (`sequential_qkvz`), so no
     /// deinterleave follows it.
     pub qkvz_deinterleaved: bool,
+    /// 2026-09-30: Bytes from one pool slot's h state to the next (`h_slot_stride_bytes`), the
+    /// pitch the batched arm's slot check and strided recurrence use.
+    pub h_slot_bytes: u64,
+    /// 2026-09-30: Bytes from one pool slot's conv window to the next (`conv_state_bytes`).
+    pub conv_state_bytes: u64,
 }
 
 /// 2026-09-28: A full-attention layer's rotary embedding.

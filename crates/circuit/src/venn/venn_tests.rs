@@ -301,6 +301,7 @@ fn the_report_is_deterministic_and_ranked_by_time_then_site() {
     let loaded = |h| crate::Loaded {
         circuit: toy(h),
         rules: rules.clone(),
+        runtime: Vec::new(),
         rules_digest: String::new(),
     };
     let (t, a) = (instance("toy/target", 32), instance("toy/against", 64));

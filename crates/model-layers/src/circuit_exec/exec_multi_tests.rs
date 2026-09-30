@@ -53,11 +53,147 @@ fn every_width_launches_what_its_plan_counts_and_reads_only_known_buffers() {
     }
 }
 
+/// 2026-09-30: Row `r` of every GDN layer moved `r + 1` extra slots out, so no two rows are
+/// contiguous: the `gdn_state_slots_fragmented` route's condition.
+fn fragmented(f: &Fixture, rows: usize) -> Vec<Vec<GdnState>> {
+    let mut gdn = states_rows(f, 0xD000_0000, rows);
+    for layer in gdn.iter_mut() {
+        for (r, s) in layer.iter_mut().enumerate() {
+            let shift = (r * (r + 1) / 2) * STATE_PITCH as usize;
+            s.h = s.h.offset(shift);
+            s.conv = s.conv.offset(shift);
+        }
+    }
+    gdn
+}
+
+/// 2026-09-30: The launches of `kernel`, with the GDN layer each belongs to.
+fn gdn_launches<'a>(f: &'a Fixture, kernel: &'a str) -> impl Iterator<Item = (usize, usize)> + 'a {
+    f.program
+        .launches
+        .iter()
+        .enumerate()
+        .filter(move |(_, l)| l.kernel == kernel)
+        .map(|(j, l)| {
+            (
+                j,
+                f.circuit.nodes[f.plan.groups[l.group].nodes[0]]
+                    .layer
+                    .unwrap(),
+            )
+        })
+}
+
+// 2026-09-30: The primary arm under `ssm_batched_recurrent = on` launches each strided kernel
+// once per GDN layer for every row, addressed at row 0's state. Mutation: passing row `n - 1`'s
+// state, or launching per row, fails.
 #[test]
-fn each_row_of_a_gdn_layer_reads_its_own_sequence_state() {
+fn the_batched_arm_reads_row_zeros_state_once_per_layer() {
     for rows in [2u64, 16, 128] {
         let f = at(rows);
         let gdn = states_rows(&f, 0xD000_0000, rows as usize);
+        let launched = run(&f, &gdn, 9);
+        let gdn_layers = gdn.iter().filter(|l| !l.is_empty()).count();
+        for (kernel, state) in [
+            (
+                "causal_conv1d::causal_conv1d_update_l2norm_f32_strided",
+                (|s: GdnState| s.conv) as fn(GdnState) -> _,
+            ),
+            (
+                "gated_delta_rule::gated_delta_rule_decode_f32_strided",
+                |s: GdnState| s.h,
+            ),
+        ] {
+            let mut n = 0;
+            for (j, layer) in gdn_launches(&f, kernel) {
+                let args = &launched[j].args;
+                assert!(
+                    args.contains(&MockArg::Buffer(state(gdn[layer][0]))),
+                    "{rows}: {kernel}"
+                );
+                assert!(
+                    args.contains(&u32_arg(rows as u32)),
+                    "{rows}: {kernel} batch"
+                );
+                n += 1;
+            }
+            assert_eq!(n, gdn_layers, "{rows} rows: {kernel} once per GDN layer");
+        }
+        for per_row in [
+            "causal_conv1d::causal_conv1d_update_l2norm_f32",
+            "gated_delta_rule::gated_delta_rule_decode_f32",
+        ] {
+            assert_eq!(gdn_launches(&f, per_row).count(), 0, "{rows}: {per_row}");
+        }
+    }
+}
+
+// 2026-09-30: A batched launch that finds a row's state out of place fails instead of reading
+// another sequence's state. Mutation: dropping `contiguous_base`'s check runs it.
+#[test]
+fn a_batched_launch_refuses_out_of_place_slots() {
+    let f = at(16);
+    let gpu = metrale_gpu_runtime::gpu::mock::MockGpuBackend::new();
+    gpu.set_kernel_n_tile(metrale_gpu_runtime::gpu::KernelHandle(0xDEAD), 128);
+    let e = f
+        .program
+        .run(&super::program::StepEnv {
+            gpu: &gpu,
+            stream: 7,
+            gdn: &fragmented(&f, 16),
+            max_blocks_per_seq: 9,
+        })
+        .unwrap_err();
+    assert!(format!("{e:#}").contains("slots past row 0"), "{e:#}");
+}
+
+// 2026-09-30: The BA-gates kernel a plan names must be the one `ops::dense_gemm_ba_gates_prefill`
+// picks for its rows on this device (the mock is a 48-SM GB10, so the twin from 96 rows). A plan
+// that names the base kernel where the engine picks the twin is refused. Mutation: dropping the
+// emitter's pick check compiles the disowned plan.
+#[test]
+fn the_ba_gates_kernel_is_the_one_the_engine_picks() {
+    let twin = "ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper";
+    let base = "ssm_preprocess::dense_gemm_ba_gates_prefill";
+    for (rows, want) in [(64u64, base), (96, twin), (128, twin)] {
+        let f = at(rows);
+        let ks: Vec<&str> = f
+            .program
+            .launches
+            .iter()
+            .map(|l| l.kernel.as_str())
+            .filter(|k| k.contains("dense_gemm_ba_gates_prefill"))
+            .collect();
+        assert!(
+            !ks.is_empty() && ks.iter().all(|k| *k == want),
+            "{rows}: {ks:?}"
+        );
+    }
+    let bind = |c: &metrale_circuit::Circuit, i: usize, attn: usize| {
+        (layer_binding(c, i, attn), Vec::new())
+    };
+    let off = Arm::Setting("ssm_ba_gates_hopper", "off");
+    let e = build_for(
+        RECIPE,
+        &bind,
+        Fusions::All,
+        (Mode::MultiSeq, 96, off),
+        |_| {},
+        |_| {},
+    )
+    .err()
+    .map(|e| format!("{e:#}"))
+    .unwrap_or_default();
+    assert!(e.contains("where the engine picks the twin"), "{e}");
+}
+
+// 2026-09-30: The fragmented-slots route runs the per-row arm, each row on its own state.
+#[test]
+fn the_fragmented_route_reads_each_rows_own_state() {
+    for rows in [2u64, 16, 128] {
+        let f = build_route_at("gdn_state_slots_fragmented", Mode::MultiSeq, rows)
+            .unwrap_or_else(|e| panic!("{rows}: {e:#}"));
+        let gdn = fragmented(&f, rows as usize);
         let launched = run(&f, &gdn, 9);
         let mut seen = std::collections::BTreeMap::<(usize, &str), usize>::new();
         for (j, l) in f.program.launches.iter().enumerate() {

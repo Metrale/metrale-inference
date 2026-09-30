@@ -21,12 +21,12 @@ use super::avail::{Availability, availability, check_build, kernel_status};
 use super::class::{ClassInfo, ClassRules, chain, class_families, class_rules, planning_chain};
 use super::device::{Device, Registry};
 use super::estimate::{DeviceRoofline, device_roofline};
-use super::runtime::{RoutePlan, RuntimeRoute};
 use super::sources::{ClassSources, KernelTree};
 use super::{HwError, ModelUnderPlan};
 use crate::fuser::{FuseError, FusionPlan, fuse};
 use crate::ir::{Circuit, NodeIdx};
 use crate::rules::{Mode, Numerics, PatternOp, Repeat, Rule};
+use crate::runtime::RuntimeRoute;
 use crate::venn::Run;
 use crate::venn::families::Families;
 
@@ -46,8 +46,17 @@ pub struct Planned {
     /// they cannot read (the pattern matches op and weight, not the input format), and why.
     pub refused: Vec<(String, String)>,
     /// 2026-09-30: The runtime routes that apply to this run, each with its own plan
-    /// ([`super::runtime`]).
+    /// ([`crate::runtime`]).
     pub routes: Vec<RoutePlan>,
+}
+
+/// 2026-09-30: A route that applies to a run, with its arm's plan.
+#[derive(Debug, Clone)]
+pub struct RoutePlan {
+    /// 2026-09-30: The route.
+    pub route: RuntimeRoute,
+    /// 2026-09-30: The arm's plan (its own `routes` are empty).
+    pub planned: Planned,
 }
 
 /// 2026-09-30: A device's class, resolved for one model.
@@ -217,7 +226,11 @@ pub fn fuse_on(
     run: Run,
 ) -> Result<Planned, HwError> {
     let mut primary = fuse_arm(r, circuit, policy, run)?;
-    for route in r.route_list().iter().filter(|x| x.applies(policy, run)) {
+    for route in r
+        .route_list()
+        .iter()
+        .filter(|x| x.applies(policy, run.mode, run.rows))
+    {
         let planned = fuse_arm(r, circuit, &route.policy(policy), run)?;
         if planned.plan.digest != primary.plan.digest {
             primary.routes.push(RoutePlan {

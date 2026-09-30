@@ -13,10 +13,10 @@ use std::fmt::Write as _;
 
 use super::gaps::{GapTable, gap_table};
 use super::plan::{Planned, Resolved};
-use super::runtime::RuntimeRoute;
 use super::{HwError, HwReport, OnePlan};
 use crate::fuser::{FusionPlan, Policy};
 use crate::ir::Circuit;
+use crate::runtime::RuntimeRoute;
 
 /// 2026-09-30: One route at one report run, estimated.
 #[derive(Debug, Clone)]
@@ -131,13 +131,6 @@ pub fn plan_text(circuit: &Circuit, one: &OnePlan) -> String {
 }
 
 fn route_plan_text(circuit: &Circuit, one: &OnePlan, route: &RuntimeRoute, p: &Planned) -> String {
-    let header = super::model::with_settings(&one.header, &route.policy(&one.policy));
-    format!(
-        "\n# runtime route `{}`: when {}; planned as `{}` ({})\n\n{}",
-        route.id,
-        route.why,
-        route.plans_as_text(),
-        route.cite,
-        crate::render::render(circuit, &p.plan, &header)
-    )
+    let header = crate::render::with_settings(&one.header, &route.policy(&one.policy));
+    crate::render::route_section(circuit, route, &p.plan, &header)
 }

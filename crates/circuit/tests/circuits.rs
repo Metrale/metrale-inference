@@ -416,13 +416,12 @@ fn every_bit_identical_rule_names_a_registered_microtest() {
     assert!(named >= 4, "only {named} bit-identical rules");
 }
 
-// 2026-09-30: No rule of the golden instances' target covers the batched GDN recurrence: each
-// golden instance plans a multi-sequence step under its pinned `ssm_batched_recurrent = "off"`
-// and leaves a GDN node uncovered under `on`. The executor refuses the batched arm for this reason
-// (model-layers `circuit_exec/policy.rs` `unmodelled_switches`); when rules for it land, this
-// test fails and that refusal goes with it.
+// 2026-09-30: Both arms of the GDN recurrence plan for every golden instance. Under the default
+// `ssm_batched_recurrent = "on"` a multi-sequence step runs the batched rules (the BA-gates twin
+// from 96 rows on GB10), and the fragmented-slots route's arm is exactly the plan under "off",
+// the per-row rules. One row runs the per-row rules under either setting.
 #[test]
-fn the_batched_gdn_recurrence_has_no_rules() {
+fn both_gdn_arms_plan_and_the_route_arm_is_the_off_plan() {
     let mut checked = 0;
     for inst in common::instances().iter().filter(|i| i.golden) {
         let loaded = common::load(inst);
@@ -435,31 +434,61 @@ fn the_batched_gdn_recurrence_has_no_rules() {
             inst.recipe
         );
         let avail = common::available(inst, &loaded.rules);
-        let setting = |p: &metrale_circuit::Policy| p.settings["ssm_batched_recurrent"].clone();
-        assert_eq!(setting(&inst.policy), "off", "{}", inst.recipe);
-        let fuse = |p: &metrale_circuit::Policy| {
-            metrale_circuit::fuse(
-                &loaded.circuit,
-                &loaded.rules,
-                &avail,
-                p,
-                Mode::MultiSeq,
-                16,
-            )
-        };
-        fuse(&inst.policy).unwrap_or_else(|e| panic!("{}: {e}", inst.recipe));
-        let mut on = inst.policy.clone();
-        on.settings
-            .insert("ssm_batched_recurrent".into(), "on".into());
-        let e = fuse(&on).expect_err("a batched-arm plan");
-        let metrale_circuit::FuseError::Uncovered { node, .. } = &e else {
-            panic!("{}: {e}", inst.recipe);
-        };
-        let layer = loaded.circuit.nodes[loaded.circuit.node(node).expect("node")].layer;
         assert_eq!(
-            layer.map(|l| loaded.circuit.layer_kinds[l]),
-            Some(LayerKind::LinearAttention),
-            "{}: {e}",
+            inst.policy.settings["ssm_batched_recurrent"], "on",
+            "{}",
+            inst.recipe
+        );
+        let mut off = inst.policy.clone();
+        off.settings
+            .insert("ssm_batched_recurrent".into(), "off".into());
+        let fuse = |p: &metrale_circuit::Policy, mode, rows| {
+            metrale_circuit::fuse(&loaded.circuit, &loaded.rules, &avail, p, mode, rows)
+                .unwrap_or_else(|e| panic!("{}: {e}", inst.recipe))
+        };
+        let rules = |p: &metrale_circuit::FusionPlan| -> BTreeSet<String> {
+            p.groups.iter().map(|g| g.rule.clone()).collect()
+        };
+        for rows in [16u64, 128] {
+            let on = fuse(&inst.policy, Mode::MultiSeq, rows);
+            let r = rules(&on);
+            let ba = if rows >= 96 {
+                "gdn_ba_gates_gemm_batched_twin"
+            } else {
+                "gdn_ba_gates_gemm_batched"
+            };
+            for id in [
+                ba,
+                "gdn_conv_l2_f32_batched",
+                "gdn_recurrence_f32_batched",
+                "gdn_out_norm_f32_batched",
+            ] {
+                assert!(r.contains(id), "{} n={rows}: no {id}", inst.recipe);
+            }
+            assert!(
+                !r.iter()
+                    .any(|x| x.starts_with("gdn_") && x.ends_with("_per_row"))
+            );
+            let set = (loaded.rules.as_slice(), loaded.runtime.as_slice());
+            let arms = metrale_circuit::runtime::route_arms(
+                &loaded.circuit,
+                set,
+                &avail,
+                &inst.policy,
+                &on,
+            )
+            .unwrap();
+            let [(route, arm)] = arms.as_slice() else {
+                panic!("{} n={rows}: {} route arms", inst.recipe, arms.len());
+            };
+            assert_eq!(route.id, "gdn_state_slots_fragmented");
+            assert_eq!(arm.digest, fuse(&off, Mode::MultiSeq, rows).digest);
+            assert!(rules(arm).contains("gdn_recurrence_f32_per_row"));
+        }
+        assert_eq!(
+            fuse(&inst.policy, Mode::Decode, 1).digest,
+            fuse(&off, Mode::Decode, 1).digest,
+            "{}: one row does not read the setting",
             inst.recipe
         );
         checked += 1;

@@ -34,7 +34,10 @@ fn gdn_dims(cx: &Cx<'_>) -> Result<(u32, u32, u32, u32)> {
 
 /// 2026-09-29: `dense_gemm_ba_gates`: the BF16 `in_proj_ba` GEMM over every row with the decay
 /// and beta gates, one launch. At the verify's row counts the batched kernel's Hopper twin
-/// declines (it needs two rows per SM), so the base kernel runs.
+/// declines (it needs two rows per SM), so the base kernel runs. 2026-09-30: The batched GDN arm
+/// of a multi-sequence step runs it too, and its twin
+/// (`dense_gemm_ba_gates_prefill_hopper`) where the plan names it. Either way the kernel must be
+/// the one `ops::dense_gemm_ba_gates_prefill` would pick for these rows on this device.
 pub(crate) struct DenseGemmBaGates;
 
 impl OpEmitter for DenseGemmBaGates {
@@ -52,7 +55,10 @@ impl OpEmitter for DenseGemmBaGates {
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["linear:ba", "gdn_gates"])?;
-        expect_kernel(cx, 0, "dense_gemm_ba_gates_prefill")?;
+        let twin = cx.g.group.kernels[0].func == "dense_gemm_ba_gates_prefill_hopper";
+        if !twin {
+            expect_kernel(cx, 0, "dense_gemm_ba_gates_prefill")?;
+        }
         let (nk, _, nv, _) = gdn_dims(cx)?;
         let ba = dense(cx.weight(0, WeightSlot::Linear(LinearRole::Ba))?, "ba")?;
         let a_log = dense(cx.weight(1, WeightSlot::GdnALog)?, "A_log")?.weight;
@@ -66,6 +72,40 @@ impl OpEmitter for DenseGemmBaGates {
         );
         let x = cx.ptr(cx.g.input(0, 0)?)?;
         let (k, m, h, vpg) = (cx.handle(0)?, rows(cx)?, dim(cx, "hidden")?, nv / nk);
+        let present = crate::layers::try_target_kernel(
+            cx.gpu,
+            "ssm_ba_gates_hopper",
+            "dense_gemm_ba_gates_prefill_hopper",
+        )
+        .0 != 0;
+        let reject = ops::ssm_ba_gates_hopper_reject(
+            ops::ssm_ba_gates_hopper_enabled(),
+            present,
+            m,
+            ba_size,
+            h,
+            h,
+            ops::ba_gates_sm_count(cx.gpu),
+        );
+        ensure!(
+            twin == reject.is_none(),
+            "the plan runs the {} BA-gates kernel at {m} rows where the engine picks the {} \
+             ({})",
+            if twin { "twin" } else { "base" },
+            if twin { "base" } else { "twin" },
+            reject.unwrap_or("the twin's guard passes")
+        );
+        if twin {
+            return cx.push(
+                0,
+                Box::new(move |e| {
+                    ops::dense_gemm_ba_gates_prefill_hopper(
+                        e.gpu, k, x, &ba, a_log, dt_bias, decay, m, ba_size, h, h, stride, nv, vpg,
+                        e.stream,
+                    )
+                }),
+            );
+        }
         cx.push(
             0,
             Box::new(move |e| {

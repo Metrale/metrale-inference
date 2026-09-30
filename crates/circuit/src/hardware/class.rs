@@ -19,9 +19,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::HwError;
-use super::runtime::{self, RuntimeRoute};
 use super::sources::ClassSources;
-use crate::rules::{Rule, parse_rules};
+use crate::rules::Rule;
+use crate::runtime::{RuleSet, RuntimeRoute, check_ids, overlay, parse_rule_set};
 use crate::venn::discover::{Found, KernelSources, discover};
 use crate::venn::families::{Discover, Families, How, Point, parse_families};
 use crate::venn::repo::Repo;
@@ -140,7 +140,7 @@ pub enum ClassRules {
         rules: Vec<Rule>,
         /// 2026-09-30: `kernels/<class>/common/FUSIONS.toml` paths read, base first.
         files: Vec<String>,
-        /// 2026-09-30: Runtime routes after every override ([`super::runtime`]).
+        /// 2026-09-30: Runtime routes after every override ([`crate::runtime`]).
         runtime: Vec<RuntimeRoute>,
     },
     /// 2026-09-30: Neither the class nor any ancestor declares a FUSIONS.toml.
@@ -174,12 +174,14 @@ fn rules_of(repo: &dyn Repo, class: &str, seen: &mut Vec<String>) -> Result<Clas
     let mut table: toml::Table = toml::from_str(&text).map_err(toml_err(&rel))?;
     let inherits = table.remove("inherits");
     let remove = table.remove("remove");
-    let own_runtime = runtime::parse_routes(table.remove("runtime"), &rel)?;
     table
         .entry("rule")
         .or_insert_with(|| toml::Value::Array(Vec::new()));
     let own_text = toml::to_string(&table).map_err(|e| HwError::Class(format!("{rel}: {e}")))?;
-    let own = parse_rules(&own_text).map_err(|e| HwError::Class(format!("{rel}: {e}")))?;
+    let RuleSet {
+        rules: own,
+        runtime: own_runtime,
+    } = parse_rule_set(&own_text).map_err(|e| HwError::Class(format!("{rel}: {e}")))?;
     let Some(parent) = inherits else {
         if remove.is_some() {
             return Err(HwError::Class(format!(
@@ -228,13 +230,8 @@ fn rules_of(repo: &dyn Repo, class: &str, seen: &mut Vec<String>) -> Result<Clas
             None => base.push(r),
         }
     }
-    runtime::overlay(&mut runtime, own_runtime);
-    if let Some(r) = runtime.iter().find(|r| base.iter().any(|b| b.id == r.id)) {
-        return Err(HwError::Class(format!(
-            "{rel}: runtime route `{}` shares its id with a rule",
-            r.id
-        )));
-    }
+    overlay(&mut runtime, own_runtime);
+    check_ids(&base, &runtime).map_err(|e| HwError::Class(format!("{rel}: {e}")))?;
     files.push(rel);
     Ok(ClassRules::Rules {
         rules: base,

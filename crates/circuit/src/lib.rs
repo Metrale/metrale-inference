@@ -29,6 +29,7 @@ pub mod precision;
 pub mod precision_policy;
 pub mod render;
 pub mod rules;
+pub mod runtime;
 pub mod state;
 pub mod state_ops;
 pub mod venn;
@@ -48,6 +49,7 @@ pub use instantiate::instantiate;
 pub use ir::{ArchShape, Circuit, LayerKind, LinearRole, OpKind, Section};
 pub use precision::{EdgePrecision, LinearFormats, PrecisionError, PrecisionTable};
 pub use rules::{KernelId, Mode, Numerics, Rule, RuleError, parse_rules};
+pub use runtime::{RuleSet, RuntimeRoute, parse_rule_set};
 
 /// 2026-09-28: Any failure between the TOML texts and a rendered plan.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -102,6 +104,8 @@ pub struct Loaded {
     pub circuit: Circuit,
     /// 2026-09-28: The rules, in file order.
     pub rules: Vec<Rule>,
+    /// 2026-09-30: The runtime routes, in file order.
+    pub runtime: Vec<RuntimeRoute>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml text ([`digest::rules_digest`]).
     pub rules_digest: String,
 }
@@ -150,10 +154,11 @@ pub fn load_with(
     precision: &dyn EdgePrecision,
 ) -> Result<Loaded, LoadError> {
     let circuit = instantiate(src.circuit, src.blocks, &instance.shape, precision)?;
-    let rules = parse_rules(src.rules)?;
+    let RuleSet { rules, runtime } = parse_rule_set(src.rules)?;
     Ok(Loaded {
         circuit,
         rules,
+        runtime,
         rules_digest: digest::rules_digest(src.rules),
     })
 }
@@ -203,7 +208,16 @@ pub fn render_plan(
         mode,
         rows,
     )?;
-    Ok(render::render(&loaded.circuit, &plan, &header(instance)))
+    let head = header(instance);
+    let mut text = render::render(&loaded.circuit, &plan, &head);
+    let set = (loaded.rules.as_slice(), loaded.runtime.as_slice());
+    for (route, arm) in
+        runtime::route_arms(&loaded.circuit, set, available, &instance.policy, &plan)?
+    {
+        let h = render::with_settings(&head, &route.policy(&instance.policy));
+        text.push_str(&render::route_section(&loaded.circuit, &route, &arm, &h));
+    }
+    Ok(text)
 }
 
 /// 2026-09-28: Fuse, lay out and draw one plan of `instance`: the view `met circuit display`

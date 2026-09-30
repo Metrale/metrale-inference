@@ -8,10 +8,10 @@
 //! Invariants: every test fails when the behaviour it names is removed (the mutation notes say
 //! which change each one catches).
 
-use super::super::class::{ClassRules, class_rules};
-use super::super::hardware_tests::W4A16;
-use super::super::test_fixture::{self as fx, Tree};
-use super::super::{ModelUnderPlan, build_report, plan_one, plan_text, render_report};
+use super::class::{ClassRules, class_rules};
+use super::hardware_tests::W4A16;
+use super::test_fixture::{self as fx, Tree};
+use super::{ModelUnderPlan, build_report, plan_one, plan_text, render_report};
 use crate::rules::Mode;
 use crate::venn::Run;
 
@@ -129,13 +129,13 @@ fn a_route_that_does_not_apply_leaves_the_plan_alone() {
     };
     let mut wide = model.policy.clone();
     wide.settings.insert("arm".into(), "wide".into());
-    assert!(route.applies(&wide, run(Mode::MultiSeq, 2)));
-    assert!(route.applies(&wide, run(Mode::MultiSeq, 128)));
-    assert!(!route.applies(&model.policy, run(Mode::MultiSeq, 16)));
-    assert!(!route.applies(&wide, run(Mode::MultiSeq, 1)));
-    assert!(!route.applies(&wide, run(Mode::Verify, 2)));
+    assert!(route.applies(&wide, Mode::MultiSeq, 2));
+    assert!(route.applies(&wide, Mode::MultiSeq, 128));
+    assert!(!route.applies(&model.policy, Mode::MultiSeq, 16));
+    assert!(!route.applies(&wide, Mode::MultiSeq, 1));
+    assert!(!route.applies(&wide, Mode::Verify, 2));
     wide.settings.remove("arm");
-    assert!(!route.applies(&wide, run(Mode::MultiSeq, 16)));
+    assert!(!route.applies(&wide, Mode::MultiSeq, 16));
 }
 
 // 2026-09-30: Mutation: not calling `routes_section` drops the section; rendering it
@@ -210,11 +210,19 @@ fn malformed_routes_are_refused() {
     }
 }
 
-// 2026-09-30: The executor's parser refuses the table, so a class it serves cannot declare a
-// route it would ignore. Mutation: `#[serde(default)] runtime` on `RulesFile` accepts it.
+// 2026-09-30: `parse_rules` refuses a routed file, so a caller that ignores routes cannot drop
+// one unseen; `parse_rule_set` reads it. Mutation: returning the rules of a routed file from
+// `parse_rules` passes the first assertion.
 #[test]
-fn the_executor_rule_parser_refuses_runtime_routes() {
-    let text = format!("schema = 1\n{}", ROUTE);
+fn only_the_rule_set_parser_reads_runtime_routes() {
+    let text = format!("schema = 1\n{ROUTE}");
     let e = crate::rules::parse_rules(&text).unwrap_err().to_string();
-    assert!(e.contains("runtime"), "{e}");
+    assert!(
+        e.contains("runtime `narrow_fallback`") && e.contains("parse_rule_set"),
+        "{e}"
+    );
+    let set = crate::runtime::parse_rule_set(&text).unwrap();
+    assert_eq!(set.rules.len(), 1);
+    assert_eq!(set.runtime.len(), 1);
+    assert_eq!(set.runtime[0].plans_as_text(), "arm=narrow");
 }

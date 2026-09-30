@@ -92,9 +92,6 @@ impl TransformerModel {
         padded_n: usize,
         stream: u64,
     ) -> Result<()> {
-        let program = exec
-            .multi_seq_program(padded_n as u64)
-            .with_context(|| format!("no circuit program was compiled for {padded_n} rows"))?;
         ensure!(
             states.len() == padded_n,
             "{} states for {padded_n} rows",
@@ -102,6 +99,9 @@ impl TransformerModel {
         );
         let rows: Vec<&[Box<dyn LayerState>]> = states.iter().map(Vec::as_slice).collect();
         let gdn = gdn_states(self.layers.len(), &rows)?;
+        // 2026-09-30: The arm this step's slots select (a runtime route's, or the primary);
+        // under a graph capture the choice is baked with the slots the graph is keyed by.
+        let program = exec.multi_seq_step(padded_n as u64, &gdn)?;
         self.run_program(program, &gdn, self.max_blocks_per_seq, stream)
     }
 

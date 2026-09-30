@@ -277,7 +277,13 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         "--batch and --verify are separate diffs"
     );
     if !args.batch.is_empty() {
-        return batch_report(model, &args.batch, args.steps, &forwards, &args.out);
+        return batch_report(
+            model,
+            (&args.batch, args.fragment_slots),
+            args.steps,
+            &forwards,
+            &args.out,
+        );
     }
     if !args.verify.is_empty() {
         let prompt = &prompts(1, model.vocab_size())[0];
@@ -356,6 +362,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
 #[derive(Debug, Serialize)]
 struct BatchReport {
     graphs: &'static str,
+    fragment_slots: bool,
     steps: usize,
     variants: Vec<Variant>,
     widths: Vec<batch::WidthReport>,
@@ -366,13 +373,13 @@ struct BatchReport {
 /// 2026-09-28: The `--batch` diff: every width, then the verdict.
 fn batch_report(
     model: &dyn Model,
-    widths: &[usize],
+    (widths, fragment): (&[usize], bool),
     steps: usize,
     forwards: &[(&'static str, ForwardSelect)],
     out: &Path,
 ) -> Result<()> {
     let variants = disclosed(model, forwards)?;
-    let widths = batch::diff_widths(model, widths, steps, forwards)?;
+    let widths = batch::diff_widths(model, (widths, fragment), steps, forwards)?;
     let reasons = batch::batch_failures(&widths);
     let report = BatchReport {
         graphs: if std::env::var("METRALE_NO_DECODE_GRAPHS_MULTISEQ").as_deref() == Ok("1") {
@@ -380,6 +387,7 @@ fn batch_report(
         } else {
             "graphed"
         },
+        fragment_slots: fragment,
         steps,
         variants,
         widths,

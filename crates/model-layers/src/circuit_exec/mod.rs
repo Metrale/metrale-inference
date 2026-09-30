@@ -24,6 +24,7 @@ mod emitters;
 pub mod kernels;
 pub mod policy;
 pub mod program;
+pub mod routes;
 pub mod sources;
 
 use anyhow::{Context, Result, bail};
@@ -99,6 +100,11 @@ pub struct CircuitExec {
     /// 2026-09-29: The MTP draft head's single-row step, which the head runs itself
     /// (`DraftRunner`).
     pub draft: Option<(std::sync::Arc<Program>, FusionPlan)>,
+    /// 2026-09-30: The runtime routes' arms, beside the primary program of each mode and row
+    /// count they apply to ([`routes`]).
+    pub routes: Vec<routes::RoutedProgram>,
+    /// 2026-09-30: Per layer, the `(h, conv)` slot pitch of its GDN state; `None` elsewhere.
+    pub gdn_pitch: Vec<Option<(usize, usize)>>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml the plan was chosen from.
     pub rules_digest: String,
     /// 2026-09-28: Which rules the build allowed.
@@ -173,6 +179,7 @@ impl CircuitExec {
             .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)))
             .chain(b.verify_rows.iter().map(|&r| (Mode::Verify, r)))
             .chain(b.draft.iter().map(|_| (Mode::Draft, 1)));
+        routes::check_known(&loaded.runtime)?;
         let mut laid = Vec::new();
         for (mode, rows) in shapes {
             let plan = fuse(
@@ -184,13 +191,26 @@ impl CircuitExec {
                 rows,
             )
             .with_context(|| format!("fusing {mode:?} at {rows} rows"))?;
-            let layout = compile::layout(&loaded.circuit, &plan)?;
-            let buffers = plan_buffers_with(&loaded.circuit, &plan, rows, &layout)?;
-            laid.push((plan, layout, buffers));
+            let set = (loaded.rules.as_slice(), loaded.runtime.as_slice());
+            let arms = metrale_circuit::runtime::route_arms(
+                &loaded.circuit,
+                set,
+                &available,
+                &b.policy,
+                &plan,
+            )
+            .with_context(|| format!("fusing the runtime routes of {mode:?} at {rows} rows"))?;
+            for (route, plan) in
+                std::iter::once((None, plan)).chain(arms.into_iter().map(|(r, p)| (Some(r), p)))
+            {
+                let layout = compile::layout(&loaded.circuit, &plan)?;
+                let buffers = plan_buffers_with(&loaded.circuit, &plan, rows, &layout)?;
+                laid.push((route, plan, layout, buffers));
+            }
         }
         let workspace_bytes = laid
             .iter()
-            .map(|(_, _, buf)| buf.arena_bytes)
+            .map(|(_, _, _, buf)| buf.arena_bytes)
             .max()
             .unwrap_or(0)
             .max(1);
@@ -199,7 +219,8 @@ impl CircuitExec {
             .alloc(workspace_bytes as usize)
             .context("allocating the circuit workspace")?;
         let mut programs = Vec::with_capacity(laid.len());
-        for (plan, layout, buffers) in laid {
+        let mut routed = Vec::new();
+        for (route, plan, layout, buffers) in laid {
             match compile::compile(
                 &loaded.circuit,
                 &plan,
@@ -208,7 +229,14 @@ impl CircuitExec {
                 workspace,
                 &inputs,
             ) {
-                Ok(p) => programs.push((p, plan)),
+                Ok(program) => match route {
+                    None => programs.push((program, plan)),
+                    Some(route) => routed.push(routes::RoutedProgram {
+                        route,
+                        program,
+                        plan,
+                    }),
+                },
                 Err(e) => {
                     b.gpu.free(workspace).ok();
                     return Err(
@@ -229,21 +257,31 @@ impl CircuitExec {
             .map(|(p, plan)| (std::sync::Arc::new(p), plan));
         tracing::info!(
             "circuit decode: {} launches/step, plan {} ({} rules, {:?}), {} multi-seq widths, \
-             {} verify widths, workspace {} KiB",
+             {} verify widths, {} runtime-route programs, workspace {} KiB",
             decode.launches.len(),
             &plan.digest[..12],
             loaded.rules.len(),
             b.fusions,
             multi_seq.len(),
             verify.len(),
+            routed.len(),
             workspace_bytes / 1024
         );
+        let gdn_pitch = layers
+            .iter()
+            .map(|l| match l.mixer {
+                MixerFacts::Gdn(g) => Some((g.h_slot_bytes as usize, g.conv_state_bytes as usize)),
+                MixerFacts::Attention(_) => None,
+            })
+            .collect();
         Ok(CircuitExec {
             decode,
             decode_plan: plan,
             multi_seq,
             verify,
             draft,
+            routes: routed,
+            gdn_pitch,
             rules_digest: loaded.rules_digest,
             fusions: b.fusions,
             workspace,
@@ -257,6 +295,22 @@ impl CircuitExec {
             .iter()
             .find(|(p, _)| p.rows == rows)
             .map(|(p, _)| p)
+    }
+
+    /// 2026-09-30: The program a multi-sequence step of `rows` padded rows runs, given its GDN
+    /// states: the arm of the first runtime route whose condition holds, else the primary one.
+    pub fn multi_seq_step(&self, rows: u64, gdn: &[Vec<GdnState>]) -> Result<&Program> {
+        for r in self
+            .routes
+            .iter()
+            .filter(|r| r.program.mode == Mode::MultiSeq && r.program.rows == rows)
+        {
+            if routes::holds(&r.route, &self.gdn_pitch, gdn)? {
+                return Ok(&r.program);
+            }
+        }
+        self.multi_seq_program(rows)
+            .with_context(|| format!("no circuit program was compiled for {rows} rows"))
     }
 
     /// 2026-09-29: The draft head's program, if one was compiled.
@@ -275,8 +329,8 @@ impl CircuitExec {
     }
 
     /// 2026-09-28: One digest over every compiled plan, in order (decode, then the
-    /// multi-sequence widths ascending, then the verify widths): what a record of this
-    /// forward discloses.
+    /// multi-sequence widths ascending, then the verify widths, the draft step and, 2026-09-30,
+    /// the runtime routes' arms): what a record of this forward discloses.
     pub fn plans_digest(&self) -> String {
         metrale_circuit::digest::plans_digest(
             std::iter::once(self.decode_plan.digest.as_str()).chain(
@@ -284,7 +338,8 @@ impl CircuitExec {
                     .iter()
                     .chain(&self.verify)
                     .map(|(_, p)| p.digest.as_str())
-                    .chain(self.draft.iter().map(|(_, p)| p.digest.as_str())),
+                    .chain(self.draft.iter().map(|(_, p)| p.digest.as_str()))
+                    .chain(self.routes.iter().map(|r| r.plan.digest.as_str())),
             ),
         )
     }
@@ -316,6 +371,9 @@ mod exec_draft_tests;
 #[cfg(test)]
 #[path = "exec_fixture.rs"]
 mod exec_fixture;
+#[cfg(test)]
+#[path = "exec_fixture_run.rs"]
+mod exec_fixture_run;
 #[cfg(test)]
 #[path = "exec_multi_tests.rs"]
 mod exec_multi_tests;

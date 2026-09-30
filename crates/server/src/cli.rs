@@ -209,6 +209,11 @@ pub struct CircuitDiffArgs {
     /// single-sequence decode. `--prompts` is unused then; a width of `n` decodes `n` prompts.
     #[arg(long, value_delimiter = ',')]
     pub batch: Vec<usize>,
+    /// With --batch: hold a spare sequence between rows n/2 - 1 and n/2, so the rows' state
+    /// slots are not contiguous and each step takes the batched GDN arm's per-sequence fallback
+    /// (the circuit's `gdn_state_slots_fragmented` route).
+    #[arg(long, requires = "batch")]
+    pub fragment_slots: bool,
     /// MTP verify widths K (comma-separated, 2..=4): diff the single-sequence verify at each
     /// K instead. Needs a serve with speculative decoding (the rollback slots).
     #[arg(long, value_delimiter = ',')]
