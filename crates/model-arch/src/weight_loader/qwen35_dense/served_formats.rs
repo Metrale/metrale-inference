@@ -7,8 +7,9 @@
 //! Owner: model-arch weight loader (Qwen3.5 dense).
 //! Invariants:
 //! - Business logic only: the arms [`ServedFormats::record`] what they built, the W8A8 install
-//!   [`ServedFormats::upgrade_w8a8`]s what it installed, and the loader logs
-//!   [`ServedFormats::summary`]. Nothing here reads the store, the policy or the environment.
+//!   [`ServedFormats::upgrade_w8a8`]s what it installed, and the loader logs the
+//!   [`ServedFormats::summary`] ([`ServedFormats::log`]). Nothing here reads the store, the
+//!   policy or the environment.
 //! - The summary is derived from the recorded builds and nothing else, so it cannot describe a
 //!   load path the loader did not take. (It replaced a line computed from the policy before
 //!   the layer loop, which said every FP8-declared projection ran as NVFP4 while the GDN
@@ -144,6 +145,12 @@ impl ServedFormats {
 
     /// 2026-09-30: The load line: per group, how many layers serve each format, then how many
     /// serve a weight narrower than the checkpoint declares.
+    /// 2026-09-30: Log [`Self::summary`] under `tier`: the load line derived from what the arms
+    /// and the W8A8 install built, not from the policy's intent.
+    pub(super) fn log(&self, tier: &str) {
+        tracing::info!("{}", self.summary(tier));
+    }
+
     pub(super) fn summary(&self, tier: &str) -> String {
         let mut by: BTreeMap<Group, BTreeMap<String, usize>> = BTreeMap::new();
         let mut below: BTreeMap<Group, usize> = BTreeMap::new();
