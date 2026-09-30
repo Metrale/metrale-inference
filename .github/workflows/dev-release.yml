@@ -154,6 +154,10 @@ jobs:
     name: publish b-release
     needs: [prepare, build]
     runs-on: ubuntu-24.04
+    outputs:
+      # 2026-09-30: `success` when the checked recipe bundle was attached; the
+      # metralectl mirror below runs only then.
+      recipes: ${{ steps.recipes.outcome }}
     permissions:
       # The only job in this workflow that can write anything.
       contents: write
@@ -272,3 +276,80 @@ jobs:
             --target "$SHA" \
             dist/* "${extra[@]}"
           echo "published: $(gh release view "$BUILD" --json url --jq .url)"
+
+  # ---------------------------------------------------------------------
+  # 2026-09-30: Hand the release to metralectl, which ships the recipes to
+  # users. metralectl mirrors `recipes/` and `serve-options.json` from one
+  # engine release (its vendor/engine-pin.toml); its engine-recipes workflow
+  # moves the pin and opens the mirror PR, but ran only daily. Dispatching it
+  # here opens that PR within minutes of a release that changes what it
+  # mirrors. Merging the PR, and the metralectl release that ships it, stay
+  # with a person (CONTRIBUTING.md, "How a recipe change reaches users").
+  #
+  # The sync logic stays metralectl's own: this job only asks whether the
+  # release changes the mirrored files (`recipes.py mirror-needed`, tested in
+  # recipes-selftest.py) and dispatches. The certification App is installed
+  # on every Metrale repository with actions:write, which a dispatch needs.
+  # ---------------------------------------------------------------------
+  mirror-recipes:
+    name: dispatch the metralectl recipe mirror
+    needs: [prepare, publish]
+    if: needs.publish.outputs.recipes == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      MIRROR_REPO: Metrale/metralectl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          # The whole history: the pinned commit is compared with this one.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # recipes_lib imports yaml; ci.yml's recipes job installs it the same way.
+      - run: python3 -m pip install --quiet PyYAML
+
+      - name: Does this release change what metralectl mirrors?
+        id: need
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD: ${{ needs.prepare.outputs.build_number }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # An unread pin or snapshot is passed on as unknown, and unknown
+          # dispatches (recipes_lib.mirror_verdict).
+          pinned=""
+          if pin=$(gh api "repos/$MIRROR_REPO/contents/vendor/engine-pin.toml" -H "Accept: application/vnd.github.raw"); then
+            pinned=$(python3 -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["commit"])' <<<"$pin") || pinned=""
+          fi
+          mkdir -p mirror release
+          gh api "repos/$MIRROR_REPO/contents/vendor/serve-options.v2.json" -H "Accept: application/vnd.github.raw" \
+            > mirror/serve-options.json || rm -f mirror/serve-options.json
+          gh release download "$BUILD" -R "$GITHUB_REPOSITORY" -p serve-options.json -D release
+          python3 .github/scripts/recipes.py mirror-needed --pinned-commit "$pinned" --head "$SHA" \
+            --pinned-serve-options mirror/serve-options.json \
+            --release-serve-options release/serve-options.json | tee -a "$GITHUB_OUTPUT"
+
+      - name: Mint a token for metralectl
+        if: steps.need.outputs.dispatch == 'true'
+        id: apptoken
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.CERTIFICATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CERTIFICATION_APP_PRIVATE_KEY }}
+          owner: Metrale
+          repositories: metralectl
+          permission-actions: write
+
+      - name: Dispatch metralectl's engine-recipes workflow
+        if: steps.need.outputs.dispatch == 'true'
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+          BUILD: ${{ needs.prepare.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          gh workflow run engine-recipes.yml -R "$MIRROR_REPO" --ref main -f release="$BUILD"
+          echo "dispatched engine-recipes.yml for $BUILD on $MIRROR_REPO"

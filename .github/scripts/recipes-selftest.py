@@ -171,10 +171,42 @@ def c_bundle() -> None:
     assert lib.sidecar("x.json", b"") == f"{lib.sha256(b'')}  x.json\n"
 
 
+def c_mirror() -> None:
+    same = b'{"flags": []}'
+    assert lib.mirror_verdict([], same, same)[0] is False, "an unchanged release was mirrored"
+    assert lib.mirror_verdict(["recipes/a/b.yaml"], same, same)[0] is True, "a recipe change was not mirrored"
+    assert lib.mirror_verdict([], b"{}", same)[0] is True, "a serve-options change was not mirrored"
+    assert lib.mirror_verdict(None, same, same)[0] is True, "an unknown diff did not fail open"
+    assert lib.mirror_verdict([], None, same)[0] is True, "an unread snapshot did not fail open"
+
+
+def c_mirror_cli() -> None:
+    # Through the subcommand and a real git: an unknown pinned commit fails open, and the
+    # same commit on both sides with identical serve options is not mirrored.
+    import subprocess
+    with tempfile.TemporaryDirectory() as d:
+        so = pathlib.Path(d) / "so.json"
+        so.write_bytes(b"{}")
+        head = subprocess.run(["git", "-C", str(recipes.ROOT), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+        def verdict(pinned: str, pinned_file: pathlib.Path) -> str:
+            out = subprocess.run([sys.executable, str(HERE / "recipes.py"), "mirror-needed",
+                                  "--pinned-commit", pinned, "--head", head,
+                                  "--pinned-serve-options", str(pinned_file),
+                                  "--release-serve-options", str(so)],
+                                 capture_output=True, text=True, check=True).stdout
+            return out.splitlines()[0]
+        assert verdict(head, so) == "dispatch=false", "the same commit and snapshot were mirrored"
+        assert verdict("0" * 40, so) == "dispatch=true", "an unknown pinned commit did not fail open"
+        assert verdict(head, pathlib.Path(d) / "absent.json") == "dispatch=true", "a missing snapshot"
+
+
 PURE = {"positive": c_positive, "render": c_render, "unknown-key": c_unknown_key, "bad-value": c_bad_value,
         "presence-only": c_presence_only, "unknown-lever": c_unknown_lever, "bench-missing": c_bench_missing,
         "util-ceiling": c_util, "parse": c_parse, "met-verdict": c_met_verdict,
-        "doctor-verdict": c_doctor_verdict, "bundle": c_bundle}
+        "doctor-verdict": c_doctor_verdict, "bundle": c_bundle,
+        "mirror": c_mirror, "mirror-cli": c_mirror_cli}
 
 # Each check replaced by one that finds nothing (or accepts everything). The
 # named controls must then fail.
@@ -183,6 +215,7 @@ MUTATIONS = {
                                     ["unknown-key", "bad-value", "presence-only", "unknown-lever"]),
     "check_bench_refs finds nothing": ("check_bench_refs", lambda *a, **k: [], ["bench-missing"]),
     "check_util finds nothing": ("check_util", lambda *a, **k: [], ["util-ceiling"]),
+    "mirror_verdict never mirrors": ("mirror_verdict", lambda *a, **k: (False, "no"), ["mirror"]),
     "met_verdict accepts everything": ("met_verdict", lambda *a, **k: (True, "accepted"), ["met-verdict"]),
     "doctor_verdict accepts everything": ("doctor_verdict", lambda *a, **k: (True, "ok"), ["doctor-verdict"]),
     "render_argv renders no flag": ("render_argv", lambda r, table: ["met", "serve", r.model], ["render"]),
