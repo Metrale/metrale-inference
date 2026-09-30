@@ -2,11 +2,12 @@
 
 //! 2026-09-28: The tensor-core grouped FP8 MoE decode, W8A16 (`moe_fp8_grouped_tc.cu`) and
 //! the opt-in W8A8 twin (`moe_fp8_grouped_tc_w8a8.cu`), at Qwen3.6-35B-A3B shapes: row
-//! invariance and closeness to the scalar grouped kernels.
+//! invariance and closeness to the scalar grouped kernels. 2026-09-29: Also W8A8 gate+up with
+//! the FP32 SiLU product (`_hilo`) into the W8A16 down, its input in the down output buffer.
 //!
 //! Owner: model-arch examples.
 //! Invariants:
-//! - Returns an error unless, for every M and both tensor-core legs, each row of the M-row
+//! - Returns an error unless, for every M and each tensor-core leg, each row of the M-row
 //!   dispatch equals, byte for byte, the same row dispatched alone (M = 1), and the whole
 //!   output is within the leg's bound (`MAX_REL_L2`, `MAX_REL_L2_W8A8`; relative L2) of the
 //!   scalar grouped kernels' output on the same routing.
@@ -47,6 +48,7 @@ const GUARD: usize = 64;
 const MAX_REL_L2: f64 = 1e-2;
 /// 2026-09-28: W8A8 rounds the input and the SiLU product to E4M3 (3 mantissa bits) per
 /// 128 group; on these uniform random activations that is 4.2e-2 against FP64, so 8e-2.
+/// 2026-09-29: The hi|lo leg rounds only the input, so the same bound holds it.
 const MAX_REL_L2_W8A8: f64 = 8e-2;
 
 /// 2026-09-28: The expert kernels a dispatch runs.
@@ -55,6 +57,7 @@ enum Leg {
     Scalar,
     Tc,
     TcW8a8,
+    TcW8a8Hilo,
 }
 
 struct Kernels {
@@ -64,6 +67,7 @@ struct Kernels {
     down: [KernelHandle; 2],
     quant_w8a8: KernelHandle,
     gate_up_w8a8: KernelHandle,
+    gate_up_w8a8_hilo: KernelHandle,
     down_w8a8: KernelHandle,
 }
 
@@ -116,7 +120,7 @@ fn dispatch(
         ),
     };
     let cap = ops::fp8_grouped_active_cap(m as u32, TOP_K as u32, e as u32);
-    let tc = leg == Leg::Tc;
+    let tc = leg == Leg::Tc || leg == Leg::TcW8a8Hilo;
     let (gu_geom, down_geom) = if tc {
         (ops::FP8_GROUPED_GATE_UP_TC, ops::FP8_GROUPED_DOWN_TC)
     } else {
@@ -142,20 +146,48 @@ fn dispatch(
         TOP_K as u32,
         0,
     )?;
-    if leg == Leg::TcW8a8 {
+    let rows = ops::Fp8GroupedW8a8Rows {
+        expert_offsets: offsets,
+        sorted_token_ids: sorted_ids,
+        active_experts: active,
+        active_count: count,
+        cap,
+        num_tokens: m as u32,
+    };
+    if leg == Leg::TcW8a8Hilo {
+        let lay = ops::Fp8GroupedW8a8HiloLayout::new(
+            m,
+            TOP_K,
+            H,
+            INTER,
+            te * INTER * 4,
+            m * INTER * 4,
+            te * H * 2,
+        )?;
+        let (xq, xs) = (s.down_out, s.down_out.offset(lay.xs));
+        ops::moe_act_quant_e4m3(gpu, k.quant_w8a8, input, xq, xs, m as u32, H as u32, 0)?;
+        ops::moe_expert_gate_up_act_fp8_grouped_tc_w8a8(
+            gpu,
+            k.gate_up_w8a8_hilo,
+            xq,
+            xs,
+            x.gate,
+            x.up,
+            (s.act, DevicePtr::NULL),
+            &rows,
+            &x.sh_gate,
+            &x.sh_up,
+            (s.sh_act, DevicePtr::NULL),
+            INTER as u32,
+            H as u32,
+            0,
+        )?;
+    } else if leg == Leg::TcW8a8 {
         let lay =
             ops::Fp8GroupedW8a8Layout::new(m, TOP_K, H, INTER, te * INTER * 4, m * INTER * 4)?;
         let (xq, xs) = (s.act.offset(lay.xq), s.act.offset(lay.xs));
         let act = (s.act, s.act.offset(lay.act_s));
         let sh = (s.sh_act, s.sh_act.offset(lay.sh_s));
-        let rows = ops::Fp8GroupedW8a8Rows {
-            expert_offsets: offsets,
-            sorted_token_ids: sorted_ids,
-            active_experts: active,
-            active_count: count,
-            cap,
-            num_tokens: m as u32,
-        };
         ops::moe_act_quant_e4m3(gpu, k.quant_w8a8, input, xq, xs, m as u32, H as u32, 0)?;
         ops::moe_expert_gate_up_act_fp8_grouped_tc_w8a8(
             gpu,
@@ -211,6 +243,8 @@ fn dispatch(
             m as u32,
             0,
         )?;
+    }
+    if leg != Leg::TcW8a8 {
         ops::moe_expert_down_act_fp8_grouped(
             gpu,
             k.down[tc as usize],
@@ -311,6 +345,7 @@ fn main() -> Result<()> {
         ],
         quant_w8a8: gpu.kernel(W8A8, "moe_act_quant_e4m3")?,
         gate_up_w8a8: gpu.kernel(W8A8, "moe_expert_gate_up_act_fp8_grouped_tc_w8a8")?,
+        gate_up_w8a8_hilo: gpu.kernel(W8A8, "moe_expert_gate_up_act_fp8_grouped_tc_w8a8_hilo")?,
         down_w8a8: gpu.kernel(W8A8, "moe_expert_down_act_fp8_grouped_tc_w8a8")?,
     };
     let e_count = if std::env::args().nth(1).is_some() {
@@ -378,7 +413,12 @@ fn main() -> Result<()> {
 
     // 2026-09-28: Every row dispatched alone through each tensor-core leg.
     let mut alone: Vec<Vec<Vec<u8>>> = Vec::new();
-    for leg in [Leg::Tc, Leg::TcW8a8] {
+    const LEGS: [(Leg, f64); 3] = [
+        (Leg::Tc, MAX_REL_L2),
+        (Leg::TcW8a8, MAX_REL_L2_W8A8),
+        (Leg::TcW8a8Hilo, MAX_REL_L2_W8A8),
+    ];
+    for (leg, _) in LEGS {
         let mut rows = Vec::with_capacity(MAX_M);
         for r in 0..MAX_M {
             let (inp, ind, wts) = (
@@ -410,10 +450,7 @@ fn main() -> Result<()> {
         )?;
         let scalar = read(m)?;
         let mut line = format!("M={m:3}");
-        for (i, (leg, bound)) in [(Leg::Tc, MAX_REL_L2), (Leg::TcW8a8, MAX_REL_L2_W8A8)]
-            .into_iter()
-            .enumerate()
-        {
+        for (i, (leg, bound)) in LEGS.into_iter().enumerate() {
             dispatch(&gpu, &k, &x, &s, input, indices, weights, out, m, leg)?;
             let got = read(m)?;
             if first {
@@ -445,11 +482,15 @@ fn main() -> Result<()> {
             gpu.synchronize(0)?;
             Ok(t.elapsed().as_secs_f64() * 1e6 / 20.0)
         };
-        let (us_s, us_tc, us_w8a8) = (time(Leg::Scalar)?, time(Leg::Tc)?, time(Leg::TcW8a8)?);
-        println!("{line} | scalar {us_s:7.1}us tc {us_tc:7.1}us w8a8 {us_w8a8:7.1}us  PASS");
+        let (us_s, us_tc) = (time(Leg::Scalar)?, time(Leg::Tc)?);
+        let (us_w8a8, us_hilo) = (time(Leg::TcW8a8)?, time(Leg::TcW8a8Hilo)?);
+        println!(
+            "{line} | scalar {us_s:7.1}us tc {us_tc:7.1}us w8a8 {us_w8a8:7.1}us \
+             w8a8-hilo {us_hilo:7.1}us  PASS"
+        );
     }
     println!(
-        "ALL PASS: tensor-core grouped FP8 MoE decode (W8A16, W8A8) is row-invariant and within \
+        "ALL PASS: tensor-core grouped FP8 MoE decode (W8A16, W8A8, W8A8 hi|lo) is row-invariant and within \
          {MAX_REL_L2:.0e} / {MAX_REL_L2_W8A8:.0e} of the scalar kernels, M=1..{MAX_M}"
     );
     Ok(())

@@ -105,6 +105,7 @@ pub(super) struct Target {
     pub(super) behavior_default_kv_dtype: String,
     pub(super) behavior_default_num_drafts: u32,
     pub(super) behavior_mtp_max_seqs: u32,
+    pub(super) behavior_expert_down_w8a16: bool,
     pub(super) behavior_disable_tool_steering: bool,
     pub(super) behavior_disable_cwd_hint_injection: bool,
     pub(super) behavior_use_sampling_presets_for_core: bool,

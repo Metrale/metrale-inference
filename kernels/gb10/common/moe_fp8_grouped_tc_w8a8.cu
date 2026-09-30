@@ -24,6 +24,10 @@
 //   output bits do not depend on the other rows (moe_fp8_grouped_tc_rows.cuh block rows).
 // - The gate+up block covers TC8_GU_COLS = 128 columns, one quantization group of the down
 //   projection's K, and writes act_q [pos, N] E4M3 and act_s [pos, N / 128].
+// - 2026-09-29: The _hilo gate+up entry instead writes the FP32 SiLU product as the W8A16
+//   kernels store it (moe_fp8_grouped_tc.cu): BF16 hi = BF16(a * 2^60) and lo =
+//   BF16(a * 2^60 - hi), row [pos, 2N] = N hi then N lo, for moe_fp8_grouped_tc.cu's down
+//   kernel. The input stays E4M3; only the down projection's input is above the declared FP8.
 // - Grids: quant (T), block 128; gate+up (N / TC8_GU_COLS, cap + S), down
 //   (N / TC8_DOWN_COLS, cap + S), block TC8_THREADS. TC8_* must equal FP8_GROUPED_TC_W8A8_*
 //   in fp8_moe_grouped_tc_w8a8.rs.
@@ -79,7 +83,9 @@ extern "C" __global__ void __launch_bounds__(128) moe_act_quant_e4m3(
 // 2026-09-29: RG row groups of TC_ROWS share each weight fragment (one weight pass per
 // TC_ROWS * RG rows). Group q is its own MMA column block with the K order, block scaling and
 // quantization of RG = 1, so a row's bits do not depend on RG or on the other rows.
-template <bool GATE_UP, int MT, int RG>
+// 2026-09-29: HILO (GATE_UP only): out_q is the BF16 hi|lo row [pos, 2N] of SiLU * 2^60 and
+// out_s is unused; no block amax, so no barrier.
+template <bool GATE_UP, int MT, int RG, bool HILO = false>
 __device__ __forceinline__ void tc8_warp(
     const unsigned char* __restrict__ Xq, const float* __restrict__ Xs,
     const int* __restrict__ sorted_token_ids, bool by_pos, unsigned int begin, unsigned int end,
@@ -191,7 +197,25 @@ __device__ __forceinline__ void tc8_warp(
         #pragma unroll
         for (int q = 0; q < RG; q++) {
             const unsigned int rbase = row0 + q * TC_ROWS;
-            if (GATE_UP) {
+            if constexpr (GATE_UP && HILO) {
+                const float two60 = 1152921504606846976.0f;
+                __nv_bfloat16* o = (__nv_bfloat16*)out_q;
+                #pragma unroll
+                for (int m = 0; m < MT; m++)
+                    #pragma unroll
+                    for (int e = 0; e < 4; e++) {
+                        const unsigned int r = 2 * t + (e & 1);
+                        if (r >= cnt[q]) continue;
+                        const float gv = __bfloat162float(__float2bfloat16(acc[q][m][e]));
+                        const float uv = __bfloat162float(__float2bfloat16(acc[q][m + MT][e]));
+                        const float hv = (gv / (1.0f + __expf(-gv))) * uv * two60;
+                        const __nv_bfloat16 hi = __float2bfloat16(hv);
+                        const unsigned long long ro =
+                            (unsigned long long)(rbase + r) * 2 * N + f0 + 16 * m + g + ((e >> 1) ? 8 : 0);
+                        o[ro] = hi;
+                        o[ro + N] = __float2bfloat16(hv - __bfloat162float(hi));
+                    }
+            } else if constexpr (GATE_UP) {
                 float h[MT][4];
                 float am[2] = {0.f, 0.f};
                 #pragma unroll
@@ -244,7 +268,7 @@ __device__ __forceinline__ void tc8_warp(
 
 // 2026-09-29: tc8_warp for a routed expert's rows: RG = 2 (one weight pass per 16 rows) when the
 // expert has more than TC_ROWS rows, else RG = 1. Every warp of the CTA takes the same branch.
-template <bool GATE_UP, int MT>
+template <bool GATE_UP, int MT, bool HILO = false>
 __device__ __forceinline__ void tc8_warp_routed(
     const unsigned char* __restrict__ Xq, const float* __restrict__ Xs,
     const int* __restrict__ sorted_token_ids, bool by_pos, unsigned int begin, unsigned int end,
@@ -254,16 +278,66 @@ __device__ __forceinline__ void tc8_warp_routed(
     unsigned int N, unsigned int K, unsigned int f0
 ) {
     if (end - begin > TC_ROWS)
-        tc8_warp<GATE_UP, MT, 2>(Xq, Xs, sorted_token_ids, by_pos, begin, end, W0, S0, W1, S1, out, out_q,
+        tc8_warp<GATE_UP, MT, 2, HILO>(Xq, Xs, sorted_token_ids, by_pos, begin, end, W0, S0, W1, S1, out, out_q,
                                  out_s, N, K, f0);
     else
-        tc8_warp<GATE_UP, MT, 1>(Xq, Xs, sorted_token_ids, by_pos, begin, end, W0, S0, W1, S1, out, out_q,
+        tc8_warp<GATE_UP, MT, 1, HILO>(Xq, Xs, sorted_token_ids, by_pos, begin, end, W0, S0, W1, S1, out, out_q,
                                  out_s, N, K, f0);
 }
 
 // 2026-09-28: Gate+up and SiLU of the routed experts and the shared expert from the quantized
 // layer input (moe_act_quant_e4m3). act_q/act_s routed by sorted position, sh_q/sh_s shared by
 // token. A null routed gate or up pointer makes that expert's act 0 (scale 1e-12).
+// 2026-09-29: HILO: act_q / sh_q are the BF16 hi|lo rows [pos, 2N] (act_s / sh_s unused), and a
+// null expert's rows are BF16 zeros, as moe_fp8_grouped_tc.cu writes them.
+template <bool HILO>
+__device__ __forceinline__ void tc8_gate_up(
+    const unsigned char* __restrict__ Xq, const float* __restrict__ Xs,
+    const unsigned long long* __restrict__ gate_weight_ptrs,
+    const unsigned long long* __restrict__ gate_block_scale_ptrs,
+    const unsigned long long* __restrict__ up_weight_ptrs,
+    const unsigned long long* __restrict__ up_block_scale_ptrs,
+    unsigned char* __restrict__ act_q, float* __restrict__ act_s,
+    const int* __restrict__ expert_offsets, const int* __restrict__ sorted_token_ids,
+    const int* __restrict__ active_experts, const int* __restrict__ active_count,
+    const unsigned char* __restrict__ sh_gate_weight, const float* __restrict__ sh_gate_block_scale,
+    const unsigned char* __restrict__ sh_up_weight, const float* __restrict__ sh_up_block_scale,
+    unsigned char* __restrict__ sh_q, float* __restrict__ sh_s,
+    unsigned int N, unsigned int K, unsigned int num_tokens
+) {
+    bool is_shared;
+    unsigned int expert, begin, end;
+    if (!tc_block_rows(expert_offsets, active_experts, active_count, num_tokens,
+                       &is_shared, &expert, &begin, &end)) return;
+    const unsigned int f0 = blockIdx.x * TC8_GU_COLS + (threadIdx.x >> 5) * 16 * TC8_GU_MT;
+    if (is_shared) {
+        tc8_warp<true, TC8_GU_MT, 1, HILO>(Xq, Xs, sorted_token_ids, true, begin, end, sh_gate_weight,
+                                  sh_gate_block_scale, sh_up_weight, sh_up_block_scale, nullptr, sh_q, sh_s,
+                                  N, K, f0);
+        return;
+    }
+    const unsigned char* Wg = (const unsigned char*)gate_weight_ptrs[expert];
+    const unsigned char* Wu = (const unsigned char*)up_weight_ptrs[expert];
+    if (Wg == 0 || Wu == 0) {
+        for (unsigned int pos = begin; pos < end; pos++) {
+            if constexpr (HILO) {
+                for (unsigned int hl = 0; hl < 2; hl++)
+                    for (unsigned int i = threadIdx.x; i < TC8_GU_COLS; i += TC8_THREADS)
+                        ((__nv_bfloat16*)act_q)[(unsigned long long)pos * 2 * N + hl * N + blockIdx.x * TC8_GU_COLS + i] =
+                            __float2bfloat16(0.0f);
+            } else {
+                for (unsigned int i = threadIdx.x; i < TC8_GU_COLS; i += TC8_THREADS)
+                    act_q[(unsigned long long)pos * N + blockIdx.x * TC8_GU_COLS + i] = 0;
+                if (threadIdx.x == 0) act_s[(unsigned long long)pos * (N / 128) + blockIdx.x] = 1e-12f;
+            }
+        }
+        return;
+    }
+    tc8_warp_routed<true, TC8_GU_MT, HILO>(Xq, Xs, sorted_token_ids, false, begin, end, Wg,
+                              (const float*)gate_block_scale_ptrs[expert], Wu,
+                              (const float*)up_block_scale_ptrs[expert], nullptr, act_q, act_s, N, K, f0);
+}
+
 extern "C" __global__ void __launch_bounds__(TC8_THREADS) moe_expert_gate_up_act_fp8_grouped_tc_w8a8(
     const unsigned char* __restrict__ Xq, const float* __restrict__ Xs,
     const unsigned long long* __restrict__ gate_weight_ptrs,
@@ -278,30 +352,30 @@ extern "C" __global__ void __launch_bounds__(TC8_THREADS) moe_expert_gate_up_act
     unsigned char* __restrict__ sh_q, float* __restrict__ sh_s,
     unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
 ) {
-    bool is_shared;
-    unsigned int expert, begin, end;
-    if (!tc_block_rows(expert_offsets, active_experts, active_count, num_tokens,
-                       &is_shared, &expert, &begin, &end)) return;
-    const unsigned int f0 = blockIdx.x * TC8_GU_COLS + (threadIdx.x >> 5) * 16 * TC8_GU_MT;
-    if (is_shared) {
-        tc8_warp<true, TC8_GU_MT, 1>(Xq, Xs, sorted_token_ids, true, begin, end, sh_gate_weight,
-                                  sh_gate_block_scale, sh_up_weight, sh_up_block_scale, nullptr, sh_q, sh_s,
-                                  N, K, f0);
-        return;
-    }
-    const unsigned char* Wg = (const unsigned char*)gate_weight_ptrs[expert];
-    const unsigned char* Wu = (const unsigned char*)up_weight_ptrs[expert];
-    if (Wg == 0 || Wu == 0) {
-        for (unsigned int pos = begin; pos < end; pos++) {
-            for (unsigned int i = threadIdx.x; i < TC8_GU_COLS; i += TC8_THREADS)
-                act_q[(unsigned long long)pos * N + blockIdx.x * TC8_GU_COLS + i] = 0;
-            if (threadIdx.x == 0) act_s[(unsigned long long)pos * (N / 128) + blockIdx.x] = 1e-12f;
-        }
-        return;
-    }
-    tc8_warp_routed<true, TC8_GU_MT>(Xq, Xs, sorted_token_ids, false, begin, end, Wg,
-                              (const float*)gate_block_scale_ptrs[expert], Wu,
-                              (const float*)up_block_scale_ptrs[expert], nullptr, act_q, act_s, N, K, f0);
+    tc8_gate_up<false>(Xq, Xs, gate_weight_ptrs, gate_block_scale_ptrs, up_weight_ptrs, up_block_scale_ptrs, act_q,
+                       act_s, expert_offsets, sorted_token_ids, active_experts, active_count, sh_gate_weight,
+                       sh_gate_block_scale, sh_up_weight, sh_up_block_scale, sh_q, sh_s, N, K, num_tokens);
+}
+
+// 2026-09-29: The same gate+up with the SiLU product kept at FP32 precision (BF16 hi|lo), for
+// moe_fp8_grouped_tc.cu's W8A16 down kernel.
+extern "C" __global__ void __launch_bounds__(TC8_THREADS) moe_expert_gate_up_act_fp8_grouped_tc_w8a8_hilo(
+    const unsigned char* __restrict__ Xq, const float* __restrict__ Xs,
+    const unsigned long long* __restrict__ gate_weight_ptrs,
+    const unsigned long long* __restrict__ gate_block_scale_ptrs,
+    const unsigned long long* __restrict__ up_weight_ptrs,
+    const unsigned long long* __restrict__ up_block_scale_ptrs,
+    unsigned char* __restrict__ act_q, float* __restrict__ act_s,
+    const int* __restrict__ expert_offsets, const int* __restrict__ sorted_token_ids,
+    const int* __restrict__ active_experts, const int* __restrict__ active_count,
+    const unsigned char* __restrict__ sh_gate_weight, const float* __restrict__ sh_gate_block_scale,
+    const unsigned char* __restrict__ sh_up_weight, const float* __restrict__ sh_up_block_scale,
+    unsigned char* __restrict__ sh_q, float* __restrict__ sh_s,
+    unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
+) {
+    tc8_gate_up<true>(Xq, Xs, gate_weight_ptrs, gate_block_scale_ptrs, up_weight_ptrs, up_block_scale_ptrs, act_q,
+                       act_s, expert_offsets, sorted_token_ids, active_experts, active_count, sh_gate_weight,
+                       sh_gate_block_scale, sh_up_weight, sh_up_block_scale, sh_q, sh_s, N, K, num_tokens);
 }
 
 // 2026-09-28: Down projection of the quantized SiLU products into C [pos, N] and sh_down_out

@@ -326,42 +326,83 @@ pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
     ));
 }
 
-/// 2026-09-28: Publish whether the MoE experts decode W8A8 (`set_moe_expert_fp8_act`) before the
-/// model is built. The cell is process-wide, so it holds FP8 only when the
-/// `--weight-quantization` policy asks for FP8 activations on every layer's experts; a dense
-/// model, the `nvfp4` tier, or a checkpoint that declares 16-bit activations keeps W8A16.
-pub(super) fn publish_moe_expert_act(config: &ModelConfig) {
-    use metrale_config::weight_quantization::ActFormat;
+/// 2026-09-28: Publish the MoE expert decode (`set_moe_expert_decode`) before the model is
+/// built. The cell is process-wide, so gate+up takes FP8 activations only when the
+/// `--weight-quantization` policy asks for them on every layer's experts, and down only when
+/// gate+up does too; a dense model, the `nvfp4` tier, or a checkpoint that declares 16-bit
+/// activations keeps W8A16. 2026-09-29: The policy carries the model's MODEL.toml exceptions
+/// above the declared precision (`[behavior] expert_down_w8a16`), which the log states.
+pub(super) fn publish_moe_expert_act(
+    config: &ModelConfig,
+    behavior: &metrale_kernels::ModelBehavior,
+) {
+    use metrale_config::weight_quantization::AboveDeclared;
+    use metrale_model_layers::layers::MoeExpertDecode;
     let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
         metrale_model_layers::layers::weight_quantization(),
         config.quantization_config.as_ref(),
         metrale_model_layers::layers::kernel_caps(),
-    );
-    let fp8 = config.num_experts > 0
-        && (0..config.num_hidden_layers).all(|i| {
-            let module = format!("{}.mlp.experts.0.gate_proj", config.layer_prefix(i));
-            policy.fp8_decode_act(&module) == Some(ActFormat::Fp8)
-        });
-    let published = metrale_model_layers::layers::set_moe_expert_fp8_act(fp8);
+    )
+    .with_above_declared(AboveDeclared {
+        expert_down_w8a16: behavior.expert_down_w8a16,
+    });
+    let prefixes: Vec<String> = (0..config.num_hidden_layers)
+        .map(|i| config.layer_prefix(i))
+        .collect();
+    let decode = moe_expert_decode_for(&policy, config.num_experts, &prefixes);
+    let module = |i: usize, proj: &str| format!("{}.mlp.experts.0.{proj}", prefixes[i]);
+    let published = metrale_model_layers::layers::set_moe_expert_decode(decode);
     let declared_a8 = config.num_experts > 0
-        && (0..config.num_hidden_layers).any(|i| {
-            let module = format!("{}.mlp.experts.0.gate_proj", config.layer_prefix(i));
-            policy.declares_fp8_activations(&module)
-        });
-    if !fp8 && declared_a8 {
+        && (0..config.num_hidden_layers)
+            .any(|i| policy.declares_fp8_activations(&module(i, "gate_proj")));
+    if decode == MoeExpertDecode::W8a16 && declared_a8 {
         tracing::info!(
             "--weight-quantization declared: the checkpoint declares FP8 activations for some of \
              its MoE experts; they decode W8A16, as the MoE W8A8 decode is process-wide and needs \
              every layer's experts at FP8 activations (or its kernel cap)"
         );
     }
-    if published != fp8 {
+    if published != decode {
         tracing::warn!(
-            "MoE expert decode activations were fixed before the serve published them: \
-             FP8 = {published}, the policy asks for FP8 = {fp8}"
+            "MoE expert decode was fixed before the serve published it: {published:?}, the \
+             policy asks for {decode:?}"
         );
-    } else if fp8 {
+    } else if decode == MoeExpertDecode::W8a8 {
         tracing::info!("MoE experts: W8A8 decode (declared FP8 weights and activations)");
+    } else if decode == MoeExpertDecode::W8a8GateUp {
+        tracing::info!(
+            "MoE experts: gate/up W8A8 decode (declared FP8 weights and activations); down \
+             W8A16, above the declared FP8 activations: MODEL.toml [behavior] \
+             expert_down_w8a16 keeps the SiLU product at FP32 precision (see its note for the \
+             evidence)"
+        );
+    }
+}
+
+/// 2026-09-29: The expert decode `policy` asks for on a model with `num_experts` routed experts
+/// and these layer prefixes: W8A8 when every layer's expert gate and down take FP8
+/// activations, W8A8 gate+up when every gate does and every down answers BF16, else W8A16.
+pub(super) fn moe_expert_decode_for(
+    policy: &metrale_config::WeightQuantPolicy<'_>,
+    num_experts: usize,
+    layer_prefixes: &[String],
+) -> metrale_model_layers::layers::MoeExpertDecode {
+    use metrale_config::weight_quantization::ActFormat;
+    use metrale_model_layers::layers::MoeExpertDecode;
+    let every_layer = |proj: &str, act: ActFormat| {
+        num_experts > 0
+            && layer_prefixes
+                .iter()
+                .all(|p| policy.fp8_decode_act(&format!("{p}.mlp.experts.0.{proj}")) == Some(act))
+    };
+    if !every_layer("gate_proj", ActFormat::Fp8) {
+        MoeExpertDecode::W8a16
+    } else if every_layer("down_proj", ActFormat::Fp8) {
+        MoeExpertDecode::W8a8
+    } else if every_layer("down_proj", ActFormat::Bf16) {
+        MoeExpertDecode::W8a8GateUp
+    } else {
+        MoeExpertDecode::W8a16
     }
 }
 

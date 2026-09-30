@@ -4,7 +4,7 @@
 //! `fp8`: E4M3 weights in 128x128 blocks, activations declared dynamic per token and 128-wide
 //! group) W8A8 at decode, on the block-scaled FP8 weights the loader already holds
 //! (`adopt_fp8_block_w8a8`). The routed and shared experts are not touched here: their W8A8
-//! decode is the MoE layer's own (`set_moe_expert_fp8_act`).
+//! decode is the MoE layer's own (`set_moe_expert_decode`).
 //!
 //! Owner: model-arch weight loader (Qwen3.5).
 //! Invariants: at TP > 1, or when the W8A8 kernels are not compiled into the target, nothing is

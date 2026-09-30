@@ -8,7 +8,8 @@
 
 use super::*;
 use crate::layers::ops::{
-    FP8_GROUPED_DOWN_TC_W8A8, FP8_GROUPED_GATE_UP_TC_W8A8, Fp8GroupedW8a8Layout,
+    FP8_GROUPED_DOWN_TC_W8A8, FP8_GROUPED_GATE_UP_TC_W8A8, Fp8GroupedW8a8HiloLayout,
+    Fp8GroupedW8a8Layout,
 };
 
 const SCALAR_CU: &str =
@@ -102,6 +103,28 @@ fn w8a8_layout_fits_and_refuses() {
         assert!(Fp8GroupedW8a8Layout::new(m, top_k, h, inter, routed, sh_need - 1).is_err());
     }
     assert!(Fp8GroupedW8a8Layout::new(4, top_k, 2000, inter, 1 << 24, 1 << 24).is_err());
+}
+
+/// 2026-09-29: The hi|lo step's quantized input fits the down output buffer the grouped decode
+/// sizes (`[te, hidden]` BF16) at every row count up to 256 and top-k 1, its scales start
+/// past the E4M3 rows on a 16-byte boundary, and a buffer one byte short is refused.
+#[test]
+fn w8a8_hilo_layout_fits_and_refuses() {
+    let (h, inter) = (2048, 512);
+    for top_k in [1usize, 8] {
+        for m in [1usize, 2, 7, 16, 64, 256] {
+            let (routed, shared, down) = (m * top_k * inter * 4, m * inter * 4, m * top_k * h * 2);
+            let l = Fp8GroupedW8a8HiloLayout::new(m, top_k, h, inter, routed, shared, down)
+                .expect("fits");
+            assert!(l.xs >= m * h && l.xs.is_multiple_of(16));
+            let need = l.xs + m * (h / 128) * 4;
+            let bad = |r, s, d| Fp8GroupedW8a8HiloLayout::new(m, top_k, h, inter, r, s, d);
+            assert!(bad(routed, shared, need - 1).is_err());
+            assert!(bad(routed - 1, shared, down).is_err());
+            assert!(bad(routed, shared - 1, down).is_err());
+        }
+    }
+    assert!(Fp8GroupedW8a8HiloLayout::new(4, 8, 2000, 512, 1 << 24, 1 << 24, 1 << 24).is_err());
 }
 
 /// 2026-09-28: The Qwen3.6-35B-A3B projections fit the tensor-core tiles; a projection off
