@@ -36,7 +36,7 @@ const WARM_CONTENT_SHA256: &str =
     "c943228f01a771c1ddce0cf5c0cb0eb6f6bd8a495b19a19b82f2fd400fc31b26";
 
 fn sha256(text: &str) -> String {
-    format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
+    metrale_closure::hex_lower(&sha2::Sha256::digest(text.as_bytes()))
 }
 
 /// 2026-09-27: A loopback endpoint that answers `/v1/models` and every chat

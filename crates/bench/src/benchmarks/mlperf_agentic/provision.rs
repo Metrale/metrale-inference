@@ -109,7 +109,7 @@ fn sha256_file(path: &Path) -> Result<(String, u64)> {
         total += n as u64;
         digest.update(&buf[..n]);
     }
-    Ok((format!("{:x}", digest.finalize()), total))
+    Ok((metrale_closure::hex_lower(&digest.finalize()), total))
 }
 
 #[cfg(test)]

@@ -53,11 +53,11 @@ fn fixtures_are_pinned_to_the_recorded_upstream_commit() {
         assert_eq!(cases(&f, key).len(), count, "{key} fixture count");
     }
     assert_eq!(
-        format!("{:x}", Sha256::digest(FIXTURES.as_bytes())),
+        metrale_closure::hex_lower(&Sha256::digest(FIXTURES.as_bytes())),
         "cb70bbda8d9da4883480f8d08c4fd12b826b6a0c83ed99b738bfde44916fbf9e"
     );
     assert_eq!(
-        format!("{:x}", Sha256::digest(GENERATOR.as_bytes())),
+        metrale_closure::hex_lower(&Sha256::digest(GENERATOR.as_bytes())),
         "27302fc9e9169e44d3cf252122739a1fb0dd0a2b0f5d42e1b7aaefdebc8779eb"
     );
 }

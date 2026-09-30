@@ -33,9 +33,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod circuits;
+mod hex;
 pub mod layout;
 mod layout_manifest;
 mod layout_scan;
+
+pub use hex::hex_lower;
 
 use sha2::{Digest, Sha256};
 
@@ -176,7 +179,7 @@ pub fn hash_with_report(root: &Path, inputs: &ClosureInputs) -> Result<Closure> 
     }
 
     Ok(Closure {
-        digest: format!("{:x}", digest.finalize()),
+        digest: hex_lower(&digest.finalize()),
         unresolved,
     })
 }

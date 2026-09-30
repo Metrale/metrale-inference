@@ -22,6 +22,9 @@ updates:
     ignore:
       # CUDA FFI binding — pin intentionally, update manually with CUDA toolkit.
       - dependency-name: cudarc
+      # 2026-09-30: Pinned exactly; a newer minijinja changes the rendered prompt
+      # (see the comment on the pin in crates/server/Cargo.toml).
+      - dependency-name: minijinja
 
   - package-ecosystem: github-actions
     directory: /

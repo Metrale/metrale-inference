@@ -121,7 +121,7 @@ pub fn draw_fingerprint(conversations: &[Conversation]) -> String {
             );
         }
     }
-    format!("{:x}", digest.finalize())
+    metrale_closure::hex_lower(&digest.finalize())
 }
 
 fn parse(text: &str) -> Result<Vec<Conversation>> {

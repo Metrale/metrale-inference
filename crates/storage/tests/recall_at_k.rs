@@ -13,7 +13,7 @@ use std::ffi::c_void;
 
 use half::bf16;
 use rand::SeedableRng;
-use rand::distributions::Distribution;
+use rand::distr::Distribution;
 use rand_chacha::ChaCha8Rng;
 use rand_distr::StandardNormal;
 

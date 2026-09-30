@@ -40,7 +40,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
-base64 = "0.22"
+base64 = "0.23"
 
 [lints]
 workspace = true

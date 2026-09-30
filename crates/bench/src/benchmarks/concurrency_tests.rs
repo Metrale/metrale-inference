@@ -170,7 +170,7 @@ fn default_prompt_mode_is_the_code_generation_fixture() {
     assert!(p.ends_with(CODE_TASK));
     use sha2::{Digest, Sha256};
     assert_eq!(
-        format!("{:x}", Sha256::digest(CODE_TASK.as_bytes())),
+        metrale_closure::hex_lower(&Sha256::digest(CODE_TASK.as_bytes())),
         "7f51f5f271897f32801928c01b59f49472ad3e1880366fccb3cef4cb79db56cd"
     );
     assert!(b.cell_prompt(2048, "c0").len() > p.len());

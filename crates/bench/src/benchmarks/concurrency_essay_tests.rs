@@ -22,7 +22,7 @@ fn sweep_with_fixture(name: &str) -> ConcurrencySweep {
 #[test]
 fn essay_fixture_is_byte_identical_to_the_ladder38_harness() {
     use sha2::Digest;
-    let sha256 = |t: &str| format!("{:x}", sha2::Sha256::digest(t.as_bytes()));
+    let sha256 = |t: &str| metrale_closure::hex_lower(&sha2::Sha256::digest(t.as_bytes()));
     let b = sweep_with_fixture("essay");
     assert_eq!(b.fixture, Fixture::Essay);
     let digests = [
