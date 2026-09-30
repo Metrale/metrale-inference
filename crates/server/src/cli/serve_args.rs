@@ -212,7 +212,7 @@ pub struct ServeArgs {
     ///
     /// An enum, not a presence flag, because its default is not one value: the
     /// compiled target declares it (`kernels/<hw>/HARDWARE.toml` `[defaults]
-    /// ssm_batched_recurrent`: on for `hopper`, off for `gb10`, `b200` and
+    /// ssm_batched_recurrent`: on for `hopper` and `gb10`, off for `b200` and
     /// `b300`), and `METRALE_SSM_BATCHED_RECURRENT` overrides that. `auto` defers
     /// to them; `on`/`off` pin it either way and hand the whole GDN selection to
     /// the command line.
