@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub use metrale_closure::layout::Target;
-use metrale_closure::layout::{discover, walk as walk_tree};
+use metrale_closure::layout::{LayoutError, discover, walk as walk_tree};
 
 /// 2026-09-26: Every target in the tree, as the resolver enumerates it: a
 /// hardware dir holds `HARDWARE.toml`, a model dir holds `MODEL.toml` (no
@@ -59,7 +59,9 @@ pub fn sources(root: &Path, target: &Target) -> Option<Vec<PathBuf>> {
 /// circuit files of `metrale_closure::circuit_configs`. Files that do not
 /// exist are left out. When the target does not resolve, the list is the
 /// hardware's and the model's manifests and the circuit files only.
-pub fn configs(root: &Path, target: &Target) -> Vec<PathBuf> {
+/// (2026-09-30) An inherited rule chain that does not resolve is an error: a
+/// shorter list would leave an ancestor's FUSIONS.toml out of the hash.
+pub fn configs(root: &Path, target: &Target) -> Result<Vec<PathBuf>, LayoutError> {
     let hw_dir = root.join("kernels").join(&target.hardware);
     let mut out = vec![hw_dir.join("HARDWARE.toml")];
     match discover(root, target) {
@@ -69,8 +71,8 @@ pub fn configs(root: &Path, target: &Target) -> Vec<PathBuf> {
         }
         Err(_) => out.push(hw_dir.join(&target.model).join("MODEL.toml")),
     }
-    out.extend(metrale_closure::circuit_configs(root, &target.hardware));
-    out.into_iter().filter(|p| p.exists()).collect()
+    out.extend(metrale_closure::circuit_configs(root, &target.hardware)?);
+    Ok(out.into_iter().filter(|p| p.exists()).collect())
 }
 
 /// 2026-09-26: The hardware node a repo-relative path sits under: the first
@@ -107,6 +109,11 @@ pub fn model_of(path: &str) -> Option<(&str, &str)> {
 ///
 /// * (2026-09-28) By circuit. A path under `kernels/circuits/` affects every
 ///   target: each one hashes those files (`metrale_closure::circuit_configs`).
+///   (2026-09-30) So does a FUSIONS.toml a target's rules are inherited from
+///   (`metrale_closure::fusions_chain`): gb10's rules reach hopper and b300
+///   through FUSIONS `inherits`, and b200 through HARDWARE.toml `inherits`. A
+///   target whose chain does not resolve is affected by any path, like one
+///   whose sources do not.
 ///
 /// A path outside `kernels/` affects nothing here. `closure::excuses` refuses
 /// to excuse a path set that holds one.
@@ -115,8 +122,14 @@ pub fn affected(root: &Path, changed: &[String]) -> BTreeSet<Target> {
     let mut out = BTreeSet::new();
     let mut resolved: Vec<(Target, BTreeSet<PathBuf>)> = Vec::new();
     for t in &all {
-        match discover(root, t) {
-            Ok(l) => resolved.push((t.clone(), l.inputs())),
+        let inputs = discover(root, t)
+            .map(|l| l.inputs())
+            .and_then(|mut inputs| {
+                inputs.extend(metrale_closure::fusions_chain(root, &t.hardware)?);
+                Ok(inputs)
+            });
+        match inputs {
+            Ok(inputs) => resolved.push((t.clone(), inputs)),
             // 2026-09-26: Empty inputs: affected by any path under `kernels/`.
             Err(_) => resolved.push((t.clone(), BTreeSet::new())),
         }

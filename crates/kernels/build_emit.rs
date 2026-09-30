@@ -138,7 +138,12 @@ pub(super) fn closure_attestation(
         configs.extend(target.layout.configs());
         configs.push(target.layout.model_dir.join("MODEL.toml"));
         // 2026-09-28: The circuits and FUSIONS.toml choose which kernel runs for which op.
-        configs.extend(metrale_closure::circuit_configs(workspace_root, &target.hw));
+        // 2026-09-30: Including every FUSIONS.toml the class inherits its rules from; a
+        // chain that does not resolve fails the build rather than hash a shorter list.
+        configs.extend(
+            metrale_closure::circuit_configs(workspace_root, &target.hw)
+                .unwrap_or_else(|e| panic!("circuit configs of `{}`: {e}", target.hw)),
+        );
         let configs: Vec<PathBuf> = configs.into_iter().filter(|p| p.is_file()).collect();
         for c in &configs {
             println!("cargo:rerun-if-changed={}", c.display());
