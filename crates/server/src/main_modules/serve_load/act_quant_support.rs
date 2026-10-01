@@ -69,6 +69,12 @@ impl ModelKind {
                 Declared | Fp8 => Honoured,
                 _ => Refused("the declared W8A8 projections run FP8 activations only"),
             },
+            // 2026-10-01: On the nvfp4 tier the dense GDN and attention projections hold NVFP4
+            // weights, which a fixed `nvfp4` format runs on the row-invariant W4A4 mx path.
+            ProjFamily::Gdn | ProjFamily::Attn if dense => match format {
+                Nvfp4 => Honoured,
+                _ => Unhonoured,
+            },
             ProjFamily::Ffn if dense => match format {
                 Nvfp4 => Honoured,
                 Declared if self.declared_tier => Honoured,
@@ -78,6 +84,11 @@ impl ModelKind {
             // 2026-09-30: A family the model does not have: nothing to route.
             ProjFamily::Moe if dense => Honoured,
             ProjFamily::Ffn if self.fp8_moe => Honoured,
+            // 2026-10-01: The fixed `nvfp4` arms of the attention and GDN layers serve the Qwen3.5
+            // family only; elsewhere they would cover some decode sites and not others.
+            ProjFamily::Gdn | ProjFamily::Attn if format == Nvfp4 => Refused(
+                "the row-invariant nvfp4 attention/GDN path serves the Qwen3.5-family hybrids only",
+            ),
             _ => Unhonoured,
         }
     }
