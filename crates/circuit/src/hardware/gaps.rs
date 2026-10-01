@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::HwError;
 use super::estimate::activation_of;
-use super::exec::{Exec, exec_of};
+use super::exec::Exec;
 use super::plan::{NOVEL_EMITTER, Planned, Resolved};
 use crate::fuser::section_of;
 use crate::ir::{Circuit, LayerKind, NodeIdx};
@@ -245,7 +245,7 @@ pub fn gap_table(
             GapRow {
                 site: key.0,
                 op: node.op.name(),
-                exec: node.weight.zip(act).map(|(w, a)| exec_of(&r.device, w, a)),
+                exec: r.exec[n],
                 formats,
                 count: 1,
                 time_us: time,

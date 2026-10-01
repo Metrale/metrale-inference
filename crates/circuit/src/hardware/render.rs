@@ -199,7 +199,7 @@ fn inputs(s: &mut String, r: &HwReport) {
 fn execution(s: &mut String, r: &HwReport) {
     let _ = writeln!(
         s,
-        "## Declared formats on this device\n\nThe checkpoint's formats are kept; this is how the device runs them.\n"
+        "## Declared formats on this device\n\nThe checkpoint's formats are kept; this is how the device and its class's compiled kernels run them. A pair whose nodes run differently has one row per execution.\n"
     );
     let _ = writeln!(
         s,

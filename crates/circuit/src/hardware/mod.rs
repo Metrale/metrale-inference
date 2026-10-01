@@ -260,11 +260,12 @@ pub fn build_report(
     let footprint = estimate::footprint(c, &policy.settings).map_err(HwError::Model)?;
     let weight_floor = estimate::weight_floor_bytes(c).map_err(HwError::Model)?;
     let mut exec = BTreeMap::new();
-    for n in &c.nodes {
-        let (Some(w), Some(a)) = (n.weight, estimate::activation_of(c, n)) else {
+    for (i, n) in c.nodes.iter().enumerate() {
+        let (Some(w), Some(a), Some(e)) =
+            (n.weight, estimate::activation_of(c, n), resolved.exec[i])
+        else {
             continue;
         };
-        let e = exec::exec_of(&resolved.device, w, a);
         *exec
             .entry((exec::pair_name(w, a), w.name(), a.name(), e))
             .or_insert(0) += 1;

@@ -15,7 +15,8 @@
 
 use std::collections::BTreeMap;
 
-use super::device::{Device, MmaKind};
+use super::device::Device;
+use super::exec::fp4_fallback;
 use crate::format::Format;
 use crate::fuser::section_of;
 use crate::ir::{Circuit, NodeIdx, OpKind, Section};
@@ -26,88 +27,44 @@ use crate::venn::roofline::{CostError, node_cost};
 /// 2026-09-30: The roofline constants used on a device, and where they come from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceRoofline {
-    /// 2026-09-30: Constants.
+    /// 2026-09-30: Constants. A node's own are [`super::plan::Resolved::roofline_of`].
     pub roofline: Roofline,
-    /// 2026-10-01: `roofline` with NVFP4 activations at the peak of the path that runs them
-    /// without an FP4 block-scale kernel: the cost of a node the class compiles no FP4 kernel
-    /// for ([`super::avail::without_fp4_kernel`]).
-    pub without_fp4: Roofline,
-    /// 2026-10-01: That path: `the FP8 peak (exact E2M1->E4M3)` or `the BF16 peak`.
-    pub fp4_fallback: &'static str,
     /// 2026-09-30: `measured (...)` or `datasheet (...)`.
     pub basis: String,
     /// 2026-10-01: The constants are a measurement on the device's own class; otherwise every
     /// estimate from them is a roofline projection, unmeasured on the device.
     pub measured: bool,
-    /// 2026-09-30: How NVFP4 activations are costed where FP4 is not native.
-    pub fp4_note: Option<String>,
-}
-
-/// 2026-10-01: The peak NVFP4 activations take without an FP4 block-scale MMA, and its name:
-/// the FP8 MMA through the exact E2M1 -> E4M3 conversion ([`super::exec`]) where the device has
-/// it, else the BF16 MMA.
-fn fp4_fallback(device: &Device, fp8: f64, bf16: f64) -> (f64, &'static str) {
-    if device.runs(MmaKind::Fp8) {
-        (fp8, "the FP8 peak (exact E2M1->E4M3)")
-    } else {
-        (bf16, "the BF16 peak")
-    }
 }
 
 /// 2026-09-30: The device's constants: the measured ones when the registry points at them and
 /// they are `measured` (the class's own manifest), else the datasheet with `context_tokens`
-/// taken from `assumptions`.
+/// taken from `assumptions`. A device without the FP4 MMA states its NVFP4 slot at the peak of
+/// [`fp4_fallback`].
 pub fn device_roofline(
     device: &Device,
     measured: Option<&Roofline>,
     assumptions: &Roofline,
 ) -> DeviceRoofline {
     if let (Some(src), Some(m)) = (&device.measured, measured) {
-        let (peak, fp4_fallback) = fp4_fallback(device, m.fp8_tflops, m.bf16_tflops);
         return DeviceRoofline {
             roofline: *m,
-            without_fp4: Roofline {
-                nvfp4_tflops: peak,
-                ..*m
-            },
-            fp4_fallback,
             basis: format!("measured achievable ({src})"),
             measured: true,
-            fp4_note: None,
         };
     }
     let p = device.peaks;
-    let fp8 = p.fp8.unwrap_or(p.bf16);
-    let (peak, fallback) = fp4_fallback(device, fp8, p.bf16);
-    let (nvfp4, fp4_note) = match p.fp4_block_scale {
-        Some(v) => (v, None),
-        None if device.runs(MmaKind::Fp8) => (
-            peak,
-            Some(format!(
-                "FP4 MMA not native: NVFP4-activation nodes costed at {fallback}"
-            )),
-        ),
-        None => (
-            peak,
-            Some(format!(
-                "FP4 and FP8 MMA not native: NVFP4-activation nodes costed at {fallback}"
-            )),
-        ),
-    };
-    let roofline = Roofline {
+    let mut roofline = Roofline {
         dram_gbps: device.bandwidth_gbps,
         bf16_tflops: p.bf16,
-        fp8_tflops: fp8,
-        nvfp4_tflops: nvfp4,
+        fp8_tflops: p.fp8.unwrap_or(p.bf16),
+        nvfp4_tflops: 0.0,
         context_tokens: assumptions.context_tokens,
     };
+    roofline.nvfp4_tflops = p
+        .fp4_block_scale
+        .unwrap_or_else(|| fp4_fallback(device).peak(&roofline).0);
     DeviceRoofline {
         roofline,
-        without_fp4: Roofline {
-            nvfp4_tflops: peak,
-            ..roofline
-        },
-        fp4_fallback: fallback,
         basis: format!(
             "datasheet ceiling (sources {}{})",
             device.sources.join(", "),
@@ -118,7 +75,6 @@ pub fn device_roofline(
             }
         ),
         measured: false,
-        fp4_note,
     }
 }
 

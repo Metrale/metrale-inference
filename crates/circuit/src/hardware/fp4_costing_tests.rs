@@ -9,11 +9,12 @@
 //! Invariants: every test fails when the behaviour it names is removed (the mutation notes say
 //! which change each one catches).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::avail::{Absence, guard_of};
-use super::device::{Guard, Instr, Polarity};
+use super::device::{Guard, Instr, MmaKind, Polarity};
 use super::estimate::prefill_us;
+use super::exec::Exec;
 use super::gaps::gap_table;
 use super::plan::Resolved;
 use super::test_fixture::{self as fx, Dev};
@@ -21,6 +22,7 @@ use super::{Registry, build_report, plan_one, render_report, summary_row};
 use crate::ir::{Circuit, NodeIdx};
 use crate::rules::{KernelId, Mode};
 use crate::venn::Run;
+use crate::venn::roofline::nvfp4_mma;
 
 const W4A4: &str = r#"
 schema = 1
@@ -279,4 +281,61 @@ fn every_datasheet_estimate_is_labelled_a_roofline_projection() {
     assert!(measured.resolved.roofline.measured);
     assert!(!render_report(&measured).contains("roofline projection"));
     assert!(!summary_row(&measured).contains("roofline projection"));
+}
+
+/// 2026-10-01: The ops the "FP4 costing" row marks native.
+fn marked_native(costing: &str, all: &BTreeSet<String>) -> BTreeSet<String> {
+    if costing == "native" {
+        return all.clone();
+    }
+    costing
+        .split("; ")
+        .filter_map(|p| p.strip_prefix("native for "))
+        .flat_map(|ops| ops.split(", ").map(String::from))
+        .collect()
+}
+
+// 2026-10-01: The declared-formats table, every gap row's execution column, the "FP4 costing" row
+// and each node's cost tell one story: an NVFP4-activation op is "native fp4_block_scale" in the
+// columns exactly when the row marks it native, and is costed at the peak its column names; a
+// pair whose nodes run differently is one row per execution. Mutation: computing either column
+// from the device's instruction alone (`exec_of`) prints `native fp4_block_scale` on `tcfp4`
+// and for `fp4dev`'s down projection, which the row marks as having no path.
+#[test]
+fn the_execution_columns_the_fp4_costing_row_and_the_cost_agree() {
+    let (reg, tree) = (registry(), fx::tree());
+    let native = Exec::Native(MmaKind::Fp4BlockScale);
+    for dev in ["fp4dev", "tcfp4", "nofp4", "nofp8"] {
+        let r = build_report(&reg, dev, &tree, fx::model(W4A4), "cmd".into()).unwrap();
+        let (c, res) = (&r.model.circuit, &r.resolved);
+        let fp4: Vec<NodeIdx> = (0..c.nodes.len())
+            .filter(|&i| nvfp4_mma(c, &c.nodes[i]))
+            .collect();
+        let ops: BTreeSet<String> = fp4.iter().map(|&i| c.nodes[i].op.name()).collect();
+        let marked = marked_native(&res.fp4_costing(c), &ops);
+        for &i in &fp4 {
+            let e = res.exec[i].unwrap();
+            let op = c.nodes[i].op.name();
+            assert_eq!(e == native, marked.contains(&op), "{dev} {op}: {e:?}");
+            let base = res.roofline.roofline;
+            assert_eq!(res.roofline_of(i).nvfp4_tflops, e.peak(&base).0, "{dev}");
+        }
+        for t in &r.tables {
+            for row in t.rows.iter().filter(|x| x.op.starts_with("linear:")) {
+                let op_native = marked.contains(&row.op);
+                assert_eq!(row.exec == Some(native), op_native, "{dev} {}", row.site);
+            }
+        }
+        let text = render_report(&r);
+        let w4a4: Vec<&str> = text.lines().filter(|l| l.starts_with("| W4A4 |")).collect();
+        let native_rows = w4a4
+            .iter()
+            .filter(|l| l.ends_with("| native fp4_block_scale |"))
+            .count();
+        let expected = match dev {
+            "fp4dev" => (1, 2),
+            _ => (0, 1),
+        };
+        assert_eq!((native_rows, w4a4.len()), expected, "{dev}: {w4a4:?}");
+    }
 }

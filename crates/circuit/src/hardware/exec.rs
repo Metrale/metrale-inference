@@ -10,12 +10,20 @@
 //!   step: the same products as the declared W4A4, not an upcast;
 //! - anything else has no path, which the plan states.
 //!
+//! A device's instruction is not enough: a node runs on the FP4 MMA only where the device's class
+//! compiles an FP4 block-scale kernel for it ([`super::avail::without_fp4_kernel`]); elsewhere it
+//! takes the same path as on a device without that MMA. [`node_exec`] is the one answer per node:
+//! the report's execution columns, its "FP4 costing" row and every node's cost read it.
+//!
 //! Owner: metrale-circuit (hardware).
 //! Invariants: no silent upcast. An activation format with no native or exact path is
 //! [`Exec::NoPath`], never re-planned at a wider format.
 
 use super::device::{Device, MmaKind};
+use super::estimate::activation_of;
 use crate::format::Format;
+use crate::ir::{Circuit, Node};
+use crate::venn::families::Roofline;
 
 /// 2026-09-30: The execution of one node's declared formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -27,6 +35,13 @@ pub enum Exec {
     ExactFp8Emulation,
     /// 2026-09-30: No MMA of the device can run the activation format.
     NoPath(MmaKind),
+    /// 2026-10-01: The device has the FP4 block-scale MMA but its class compiles no FP4 kernel
+    /// for the node: the exact E2M1 -> E4M3 path on the FP8 MMA where the device has one
+    /// (`fp8`), else no path.
+    NoFp4Kernel {
+        /// 2026-10-01: The device has the FP8 MMA.
+        fp8: bool,
+    },
 }
 
 impl Exec {
@@ -38,8 +53,54 @@ impl Exec {
                 "exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair)".into()
             }
             Exec::NoPath(k) => format!("no path: the device has no {} MMA", k.name()),
+            Exec::NoFp4Kernel { fp8: true } => {
+                "no FP4 block-scale kernel compiled for this class: exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32".into()
+            }
+            Exec::NoFp4Kernel { fp8: false } => {
+                "no path: no FP4 block-scale kernel compiled for this class and no FP8 MMA".into()
+            }
         }
     }
+
+    /// 2026-10-01: The tensor peak of `r` this execution runs at, and its name.
+    pub fn peak(self, r: &Roofline) -> (f64, &'static str) {
+        match self {
+            Exec::Native(MmaKind::Fp4BlockScale) => (r.nvfp4_tflops, "the NVFP4 peak"),
+            Exec::ExactFp8Emulation | Exec::NoFp4Kernel { fp8: true } => {
+                (r.fp8_tflops, "the FP8 peak (exact E2M1->E4M3)")
+            }
+            Exec::Native(MmaKind::Fp8 | MmaKind::Fp4Fp8Nvfp4) => (r.fp8_tflops, "the FP8 peak"),
+            Exec::Native(_) | Exec::NoPath(_) | Exec::NoFp4Kernel { fp8: false } => {
+                (r.bf16_tflops, "the BF16 peak")
+            }
+        }
+    }
+}
+
+/// 2026-10-01: How `device` runs an NVFP4 activation without an FP4 block-scale kernel: on the
+/// FP8 MMA through the exact conversion where it has one, else no path; [`Exec::NoFp4Kernel`]
+/// when the device has the FP4 MMA and only the kernel is missing.
+pub fn fp4_fallback(device: &Device) -> Exec {
+    let fp8 = device.runs(MmaKind::Fp8);
+    if device.runs(MmaKind::Fp4BlockScale) {
+        Exec::NoFp4Kernel { fp8 }
+    } else if fp8 {
+        Exec::ExactFp8Emulation
+    } else {
+        Exec::NoPath(MmaKind::Fp4BlockScale)
+    }
+}
+
+/// 2026-10-01: How node `n` of `c` runs on `device` (weight-reading nodes only): its declared
+/// formats on the device's instructions ([`exec_of`]), or [`fp4_fallback`] when the class
+/// compiles no FP4 block-scale kernel for it (`no_fp4_kernel`).
+pub fn node_exec(device: &Device, c: &Circuit, n: &Node, no_fp4_kernel: bool) -> Option<Exec> {
+    let (w, a) = (n.weight?, activation_of(c, n)?);
+    Some(if no_fp4_kernel {
+        fp4_fallback(device)
+    } else {
+        exec_of(device, w, a)
+    })
 }
 
 /// 2026-09-30: The MMA kind the activation format needs.
@@ -68,8 +129,8 @@ pub fn exec_of(device: &Device, weight: Format, activation: Format) -> Exec {
     }
     if device.runs(kind) {
         Exec::Native(kind)
-    } else if kind == MmaKind::Fp4BlockScale && device.runs(MmaKind::Fp8) {
-        Exec::ExactFp8Emulation
+    } else if kind == MmaKind::Fp4BlockScale {
+        fp4_fallback(device)
     } else {
         Exec::NoPath(kind)
     }
