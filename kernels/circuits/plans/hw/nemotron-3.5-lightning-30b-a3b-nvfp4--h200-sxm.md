@@ -35,13 +35,13 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 
 | case | time (ms) | tok/s |
 |---|---:|---:|
-| decode C=1 (decode n=1) | 0.529 | 1891.7 |
-| decode C=16 (multi_seq n=16) | 7.426 | 2154.7 |
-| decode C=128 (multi_seq n=128) | 58.966 | 2170.7 |
-| prefill 4k | 29.6 | 138550 |
-| prefill 32k | 283.0 | 115783 |
+| decode C=1 (decode n=1) (roofline projection, unmeasured) | 0.529 | 1891.7 |
+| decode C=16 (multi_seq n=16) (roofline projection, unmeasured) | 7.426 | 2154.7 |
+| decode C=128 (multi_seq n=128) (roofline projection, unmeasured) | 58.966 | 2170.7 |
+| prefill 4k (roofline projection, unmeasured) | 29.6 | 138550 |
+| prefill 32k (roofline projection, unmeasured) | 283.0 | 115783 |
 
-Weight floor at C=1: 2.42 GB read per step = 0.504 ms at 4800 GB/s.
+Weight floor at C=1: 2.42 GB read per step = 0.504 ms at 4800 GB/s (roofline projection, unmeasured).
 
 ## Memory fit
 
@@ -61,7 +61,7 @@ Usable 135.68 GB = 150.75 GB visible x 0.9 (the gpu-memory-utilization serving e
 
 ## Multi-row fallbacks
 
-Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
+Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch (roofline projection, unmeasured); the estimates above include it.
 
 | run | layer kind | added (ms) | share | sites | rules |
 |---|---|---:|---:|---|---|
@@ -118,7 +118,7 @@ Rule `gdn_out_norm_f32_per_row` left out of this plan: edge `l0.mamba.y_ssm` is 
 
 ## Gap report: decode n=1
 
-Estimated step 0.529 ms. Shared 0.0% (measured on this class), shared-unmeasured 64.8%, parameterisation 0.0%, policy variant 35.1%, novel 0.0% of the step.
+Estimated step 0.529 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 64.8%, parameterisation 0.0%, policy variant 35.1%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -160,7 +160,7 @@ Estimated step 0.529 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 7.426 ms. Shared 0.0% (measured on this class), shared-unmeasured 25.1%, parameterisation 0.0%, policy variant 74.9%, novel 0.0% of the step.
+Estimated step 7.426 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 25.1%, parameterisation 0.0%, policy variant 74.9%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -202,7 +202,7 @@ Estimated step 7.426 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=128
 
-Estimated step 58.966 ms. Shared 0.0% (measured on this class), shared-unmeasured 12.6%, parameterisation 0.0%, policy variant 52.2%, novel 35.1% of the step.
+Estimated step 58.966 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 12.6%, parameterisation 0.0%, policy variant 52.2%, novel 35.1% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -251,4 +251,5 @@ Kernels a rule under this policy names that the device's class does not provide:
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class |
 | w4a16::w4a16_gemm_t_p3 | not compiled for this class |
+| w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
 | w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |

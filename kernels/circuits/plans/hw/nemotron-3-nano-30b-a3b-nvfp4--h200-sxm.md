@@ -34,13 +34,13 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 
 | case | time (ms) | tok/s |
 |---|---:|---:|
-| decode C=1 (decode n=1) | 0.620 | 1612.4 |
-| decode C=16 (multi_seq n=16) | 7.308 | 2189.3 |
-| decode C=128 (multi_seq n=128) | 57.245 | 2236.0 |
-| prefill 4k | 23.6 | 173690 |
-| prefill 32k | 235.2 | 139331 |
+| decode C=1 (decode n=1) (roofline projection, unmeasured) | 0.620 | 1612.4 |
+| decode C=16 (multi_seq n=16) (roofline projection, unmeasured) | 7.308 | 2189.3 |
+| decode C=128 (multi_seq n=128) (roofline projection, unmeasured) | 57.245 | 2236.0 |
+| prefill 4k (roofline projection, unmeasured) | 23.6 | 173690 |
+| prefill 32k (roofline projection, unmeasured) | 235.2 | 139331 |
 
-Weight floor at C=1: 2.86 GB read per step = 0.595 ms at 4800 GB/s.
+Weight floor at C=1: 2.86 GB read per step = 0.595 ms at 4800 GB/s (roofline projection, unmeasured).
 
 ## Memory fit
 
@@ -60,7 +60,7 @@ Usable 135.68 GB = 150.75 GB visible x 0.9 (the gpu-memory-utilization serving e
 
 ## Multi-row fallbacks
 
-Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
+Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch (roofline projection, unmeasured); the estimates above include it.
 
 | run | layer kind | added (ms) | share | sites | rules |
 |---|---|---:|---:|---|---|
@@ -122,7 +122,7 @@ Rule `gdn_out_norm_f32_per_row` left out of this plan: edge `l0.mamba.y_ssm` is 
 
 ## Gap report: decode n=1
 
-Estimated step 0.620 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.8%, parameterisation 0.0%, policy variant 0.0%, novel 0.2% of the step.
+Estimated step 0.620 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 87.3%, parameterisation 0.0%, policy variant 12.5%, novel 0.2% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -130,13 +130,13 @@ Estimated step 0.620 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | moe.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 13.0% | Shared, unmeasured | moe_relu2_down_1row | no rule of this class covers it; family `moe_relu2_down_1row` implements the op |
 | moe.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 13.0% | Shared, unmeasured | moe_nvfp4_gemv_1row | no rule of this class covers it; family `moe_nvfp4_gemv_1row` implements the op |
 | mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 6 | 11.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 8.9% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
+| mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 8.9% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 4.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.q | linear:q | bf16 x bf16 | native bf16 | 6 | 4.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 6 | 4.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe.shared_up | linear:shared_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 4.3% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
-| moe.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 4.3% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
-| mamba.out_proj | linear:mamba_out | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 3.5% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
+| moe.shared_up | linear:shared_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 4.3% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
+| moe.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 4.3% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
+| mamba.out_proj | linear:mamba_out | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 3.5% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | mamba.ssm | ssm_update | - | - | 23 | 3.3% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
 | attn.attend | paged_attention | - | - | 6 | 0.4% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 6 | 0.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
@@ -169,19 +169,19 @@ Estimated step 0.620 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 7.308 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.7%, parameterisation 0.0%, policy variant 0.1%, novel 0.2% of the step.
+Estimated step 7.308 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 82.8%, parameterisation 0.0%, policy variant 17.0%, novel 0.2% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
 | moe.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 17.7% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
 | moe.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 17.7% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
 | mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 6 | 15.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 12.1% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
+| mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 12.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | attn.q | linear:q | bf16 x bf16 | native bf16 | 6 | 6.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 6 | 6.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe.shared_up | linear:shared_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 5.9% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
-| moe.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 5.9% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
-| mamba.out_proj | linear:mamba_out | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 4.8% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
+| moe.shared_up | linear:shared_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 5.9% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
+| moe.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 5.9% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
+| mamba.out_proj | linear:mamba_out | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 4.8% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | mamba.ssm | ssm_update | - | - | 23 | 4.4% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.0% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
 | attn.attend | paged_attention | - | - | 6 | 0.6% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
@@ -216,7 +216,7 @@ Estimated step 7.308 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=128
 
-Estimated step 57.245 ms. Shared 0.0% (measured on this class), shared-unmeasured 70.4%, parameterisation 0.0%, policy variant 29.4%, novel 0.2% of the step.
+Estimated step 57.245 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 70.4%, parameterisation 0.0%, policy variant 29.4%, novel 0.2% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -275,4 +275,5 @@ Kernels a rule under this policy names that the device's class does not provide:
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | not compiled for this class |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class |
 | w4a16::w4a16_gemm_t_p3 | not compiled for this class |
+| w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
 | w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |

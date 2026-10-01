@@ -108,7 +108,6 @@ pub fn gap_table(
     planned: Planned,
 ) -> Result<GapTable, HwError> {
     let plan = &planned.plan;
-    let rf = &r.roofline.roofline;
     let (mode, rows) = (plan.mode, plan.rows);
     let with_plan = Subject {
         recipe,
@@ -141,8 +140,9 @@ pub fn gap_table(
         let g = &plan.groups[*group_of
             .get(&n)
             .ok_or_else(|| HwError::Plan(format!("node `{}` is in no group", node.id)))?];
-        let one = node_cost(c, node, mode, 1, settings, rf)?.time_us;
-        let all = node_cost(c, node, mode, rows, settings, rf)?.time_us;
+        let rf = r.roofline_of(n);
+        let one = node_cost(c, node, mode, 1, settings, &rf)?.time_us;
+        let all = node_cost(c, node, mode, rows, settings, &rf)?.time_us;
         let kind = node.layer.map(|l| c.layer_kinds[l]);
         let site = site_of(c, n);
         // 2026-09-30: The engine's layer code loops per sequence here (a KERNEL_FAMILIES.toml

@@ -34,17 +34,17 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 
 | case | time (ms) | tok/s |
 |---|---:|---:|
-| decode C=1 (decode n=1) | 8.222 | 121.6 |
-| decode C=16 (multi_seq n=16) | 11.001 | 1454.4 |
-| decode C=128 (multi_seq n=128) | 31.755 | 4030.9 |
-| prefill 4k | 162.5 | 25201 |
-| prefill 32k | 1486.2 | 22048 |
+| decode C=1 (decode n=1) (roofline projection, unmeasured) | 8.222 | 121.6 |
+| decode C=16 (multi_seq n=16) (roofline projection, unmeasured) | 11.001 | 1454.4 |
+| decode C=128 (multi_seq n=128) (roofline projection, unmeasured) | 31.755 | 4030.9 |
+| prefill 4k (roofline projection, unmeasured) | 162.5 | 25201 |
+| prefill 32k (roofline projection, unmeasured) | 1486.2 | 22048 |
 
-Weight floor at C=1: 26.92 GB read per step = 8.037 ms at 3350 GB/s.
+Weight floor at C=1: 26.92 GB read per step = 8.037 ms at 3350 GB/s (roofline projection, unmeasured).
 
 ## Runtime routes
 
-Conditions the engine checks at run time, under which a step runs another arm than the plan's (FUSIONS.toml `[[runtime]]`). The estimates above are the primary arm's; each route is planned and estimated beside it.
+Conditions the engine checks at run time, under which a step runs another arm than the plan's (FUSIONS.toml `[[runtime]]`). The estimates above are the primary arm's; each route is planned and estimated beside it (roofline projection, unmeasured).
 
 - `gdn_state_slots_fragmented`: when the sequences' GDN state slots are not contiguous in slice order (slots fragment as sequences finish), and the step runs the per-sequence loop; planned as `ssm_batched_recurrent=off` (ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-150 (the contiguity check), :396-397 (the per-sequence call)).
 
@@ -72,7 +72,7 @@ C=128 at 4k does not fit: needs 88.32 GB of 76.92 GB usable: TP=2 on h100-sxm, o
 
 ## Multi-row fallbacks
 
-Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
+Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch (roofline projection, unmeasured); the estimates above include it.
 
 None.
 
@@ -120,7 +120,7 @@ digest ebdc43141fb3849dde648d2da79b2d1f97e1ffcf21c3c3ddd3d18a82345139fb; 1045 gr
 
 ## Gap report: decode n=1
 
-Estimated step 8.222 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 8.222 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -166,7 +166,7 @@ Estimated step 8.222 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 11.001 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 11.001 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -212,7 +212,7 @@ Estimated step 11.001 ms. Shared 0.0% (measured on this class), shared-unmeasure
 
 ## Gap report: multi_seq n=128
 
-Estimated step 31.755 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 31.755 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -269,4 +269,9 @@ Kernels a rule under this policy names that the device's class does not provide:
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
 | nvfp4_mmq::metrale_nvfp4_scale_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
 | nvfp4_mmq::metrale_nvfp4_silu_mul_quant | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
+| w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx16_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx32_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
 | w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |

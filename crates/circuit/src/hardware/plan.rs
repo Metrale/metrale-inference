@@ -17,18 +17,19 @@
 
 use std::collections::BTreeSet;
 
-use super::avail::{Availability, availability, check_build, kernel_status};
+use super::avail::{Availability, availability, check_build, kernel_status, without_fp4_kernel};
 use super::class::{ClassInfo, ClassRules, chain, class_families, class_rules, planning_chain};
-use super::device::{Device, Registry};
+use super::device::{Device, MmaKind, Registry};
 use super::estimate::{DeviceRoofline, device_roofline};
 use super::sources::{ClassSources, KernelTree};
 use super::{HwError, ModelUnderPlan};
 use crate::fuser::{FuseError, FusionPlan, fuse};
 use crate::ir::{Circuit, NodeIdx};
-use crate::rules::{Mode, Numerics, PatternOp, Repeat, Rule};
+use crate::rules::{KernelId, Mode, Numerics, PatternOp, Repeat, Rule};
 use crate::runtime::RuntimeRoute;
 use crate::venn::Run;
-use crate::venn::families::Families;
+use crate::venn::families::{Families, Roofline};
+use crate::venn::roofline::nvfp4_mma;
 
 /// 2026-09-30: The emitter of a placeholder group.
 pub const NOVEL_EMITTER: &str = "novel";
@@ -78,6 +79,9 @@ pub struct Resolved {
     pub families: Families,
     /// 2026-09-30: Roofline constants.
     pub roofline: DeviceRoofline,
+    /// 2026-10-01: The model's NVFP4-activation nodes the class compiles no FP4 block-scale
+    /// kernel for ([`without_fp4_kernel`]), costed with [`DeviceRoofline::without_fp4`].
+    pub without_fp4: BTreeSet<NodeIdx>,
 }
 
 impl Resolved {
@@ -94,6 +98,56 @@ impl Resolved {
         match &self.rules {
             ClassRules::Rules { runtime, .. } => runtime,
             ClassRules::None => &[],
+        }
+    }
+
+    /// 2026-10-01: The constants node `n` is costed with: an NVFP4-activation node the class
+    /// compiles no FP4 block-scale kernel for is costed on the path that runs it without one.
+    pub fn roofline_of(&self, n: NodeIdx) -> Roofline {
+        if self.without_fp4.contains(&n) {
+            self.roofline.without_fp4
+        } else {
+            self.roofline.roofline
+        }
+    }
+
+    /// 2026-10-01: The report's "FP4 costing": the device's note where it has no FP4 MMA;
+    /// otherwise `native` only when every NVFP4-activation op the report costs in `c` has a
+    /// compiled FP4 block-scale kernel, and the ops that have none named.
+    pub fn fp4_costing(&self, c: &Circuit) -> String {
+        if let Some(note) = &self.roofline.fp4_note {
+            return note.clone();
+        }
+        let sections: BTreeSet<_> = report_runs()
+            .iter()
+            .map(|r| crate::fuser::section_of(r.mode))
+            .collect();
+        let (mut native, mut none) = (BTreeSet::new(), BTreeSet::new());
+        for b in c.blocks.iter().filter(|b| sections.contains(&b.section)) {
+            for i in (b.first..b.end).filter(|&i| nvfp4_mma(c, &c.nodes[i])) {
+                let set = if self.without_fp4.contains(&i) {
+                    &mut none
+                } else {
+                    &mut native
+                };
+                set.insert(c.nodes[i].op.name());
+            }
+        }
+        let list = |s: BTreeSet<String>| s.into_iter().collect::<Vec<_>>().join(", ");
+        match (native.is_empty(), none.is_empty()) {
+            (true, true) => "not used: the model has no NVFP4-activation node".into(),
+            (false, true) => "native".into(),
+            (all_none, false) => {
+                let mut s = format!(
+                    "no path for {} (the class compiles no FP4 block-scale kernel for them): costed at {}",
+                    list(none),
+                    self.roofline.fp4_fallback
+                );
+                if !all_none {
+                    s.push_str(&format!("; native for {}", list(native)));
+                }
+                s
+            }
         }
     }
 }
@@ -143,6 +197,11 @@ pub fn resolve(
     let base = base_roofline(repo, &planning)?;
     let measured = (families_class(repo, &device.class)?).then_some(&base);
     let roofline = device_roofline(&device, measured, &base);
+    let kernel = |k: &KernelId| match kernel_status(&device, own, &sources, &registry.guards, k) {
+        (Ok(()), req) => Some(req.is_some_and(|i| i.kind == MmaKind::Fp4BlockScale)),
+        (Err(_), _) => None,
+    };
+    let without_fp4 = without_fp4_kernel(&model.circuit, rule_list, &families, &kernel);
     Ok(Resolved {
         device,
         chain,
@@ -152,6 +211,7 @@ pub fn resolve(
         availability,
         families,
         roofline,
+        without_fp4,
     })
 }
 

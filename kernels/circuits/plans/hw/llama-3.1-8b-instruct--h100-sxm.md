@@ -33,13 +33,13 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 
 | case | time (ms) | tok/s |
 |---|---:|---:|
-| decode C=1 (decode n=1) | 4.644 | 215.3 |
-| decode C=16 (multi_seq n=16) | 7.104 | 2252.4 |
-| decode C=128 (multi_seq n=128) | 25.465 | 5026.5 |
-| prefill 4k | 74.5 | 55016 |
-| prefill 32k | 844.5 | 38801 |
+| decode C=1 (decode n=1) (roofline projection, unmeasured) | 4.644 | 215.3 |
+| decode C=16 (multi_seq n=16) (roofline projection, unmeasured) | 7.104 | 2252.4 |
+| decode C=128 (multi_seq n=128) (roofline projection, unmeasured) | 25.465 | 5026.5 |
+| prefill 4k (roofline projection, unmeasured) | 74.5 | 55016 |
+| prefill 32k (roofline projection, unmeasured) | 844.5 | 38801 |
 
-Weight floor at C=1: 15.01 GB read per step = 4.480 ms at 3350 GB/s.
+Weight floor at C=1: 15.01 GB read per step = 4.480 ms at 3350 GB/s (roofline projection, unmeasured).
 
 ## Memory fit
 
@@ -60,7 +60,7 @@ C=128 at 4k does not fit: needs 84.78 GB of 76.92 GB usable: TP=2 on h100-sxm, o
 
 ## Multi-row fallbacks
 
-Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
+Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch (roofline projection, unmeasured); the estimates above include it.
 
 None.
 
@@ -91,7 +91,7 @@ digest f294e905408ad584fec120f47efdd3e6ecf991b4338496ab881b22d1b10d513d; 389 gro
 
 ## Gap report: decode n=1
 
-Estimated step 4.644 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 4.644 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -116,7 +116,7 @@ Estimated step 4.644 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 7.104 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 7.104 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -141,7 +141,7 @@ Estimated step 7.104 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=128
 
-Estimated step 25.465 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 25.465 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -181,4 +181,9 @@ Kernels a rule under this policy names that the device's class does not provide:
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class |
 | w4a16::w4a16_gemm_t_p3 | not compiled for this class |
+| w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx16_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx32_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
 | w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |

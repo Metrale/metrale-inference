@@ -35,13 +35,13 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 
 | case | time (ms) | tok/s |
 |---|---:|---:|
-| decode C=1 (decode n=1) | 3.892 | 256.9 |
-| decode C=16 (multi_seq n=16) | 56.412 | 283.6 |
-| decode C=128 (multi_seq n=128) | 448.561 | 285.4 |
-| prefill 4k | 110.2 | 37168 |
-| prefill 32k | 874.8 | 37457 |
+| decode C=1 (decode n=1) (roofline projection, unmeasured) | 3.892 | 256.9 |
+| decode C=16 (multi_seq n=16) (roofline projection, unmeasured) | 56.412 | 283.6 |
+| decode C=128 (multi_seq n=128) (roofline projection, unmeasured) | 448.561 | 285.4 |
+| prefill 4k (roofline projection, unmeasured) | 110.2 | 37168 |
+| prefill 32k (roofline projection, unmeasured) | 874.8 | 37457 |
 
-Weight floor at C=1: 12.64 GB read per step = 3.773 ms at 3350 GB/s.
+Weight floor at C=1: 12.64 GB read per step = 3.773 ms at 3350 GB/s (roofline projection, unmeasured).
 
 ## Memory fit
 
@@ -63,7 +63,7 @@ C=128 at 4k does not fit: needs 105.26 GB of 76.92 GB usable: TP=2 on h100-sxm, 
 
 ## Multi-row fallbacks
 
-Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
+Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch (roofline projection, unmeasured); the estimates above include it.
 
 | run | layer kind | added (ms) | share | sites | rules |
 |---|---|---:|---:|---|---|
@@ -139,7 +139,7 @@ Rule `gdn_out_norm_f32_per_row` left out of this plan: edge `l0.mamba.y_ssm` is 
 
 ## Gap report: decode n=1
 
-Estimated step 3.892 ms. Shared 0.0% (measured on this class), shared-unmeasured 62.9%, parameterisation 0.0%, policy variant 37.1%, novel 0.0% of the step.
+Estimated step 3.892 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 62.9%, parameterisation 0.0%, policy variant 37.1%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -165,7 +165,7 @@ Estimated step 3.892 ms. Shared 0.0% (measured on this class), shared-unmeasured
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 8 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 8 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe_latent.latent_in | linear:moe_latent_in | fp8/tensor x fp8/tensor | native fp8 | 3 | 0.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 1 | 0.1% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
+| moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 1 | 0.1% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
 | moe_latent.experts_act | relu2 | - | - | 40 | 0.1% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
 | moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
 | moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
@@ -200,7 +200,7 @@ Estimated step 3.892 ms. Shared 0.0% (measured on this class), shared-unmeasured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 56.412 ms. Shared 0.0% (measured on this class), shared-unmeasured 59.3%, parameterisation 0.0%, policy variant 40.7%, novel 0.0% of the step.
+Estimated step 56.412 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 59.3%, parameterisation 0.0%, policy variant 40.7%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -225,7 +225,7 @@ Estimated step 56.412 ms. Shared 0.0% (measured on this class), shared-unmeasure
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 8 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe_latent.latent_in | linear:moe_latent_in | fp8/tensor x fp8/tensor | native fp8 | 3 | 0.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
-| moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 1 | 0.1% | Shared, unmeasured | w4a4_mx | no rule of this class covers it; family `w4a4_mx` implements the op |
+| moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 1 | 0.1% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
 | moe_latent.experts_act | relu2 | - | - | 40 | 0.1% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
 | moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.1% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
 | moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
@@ -261,7 +261,7 @@ Estimated step 56.412 ms. Shared 0.0% (measured on this class), shared-unmeasure
 
 ## Gap report: multi_seq n=128
 
-Estimated step 448.561 ms. Shared 0.0% (measured on this class), shared-unmeasured 59.0%, parameterisation 0.0%, policy variant 41.0%, novel 0.0% of the step.
+Estimated step 448.561 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 59.0%, parameterisation 0.0%, policy variant 41.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -334,4 +334,5 @@ Kernels a rule under this policy names that the device's class does not provide:
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | not compiled for this class |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class |
 | w4a16::w4a16_gemm_t_p3 | not compiled for this class |
+| w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
 | w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |

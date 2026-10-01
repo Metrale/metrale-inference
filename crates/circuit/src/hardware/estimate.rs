@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use super::device::{Device, MmaKind};
 use crate::format::Format;
 use crate::fuser::section_of;
-use crate::ir::{Circuit, OpKind, Section};
+use crate::ir::{Circuit, NodeIdx, OpKind, Section};
 use crate::rules::Mode;
 use crate::venn::families::Roofline;
 use crate::venn::roofline::{CostError, node_cost};
@@ -28,10 +28,30 @@ use crate::venn::roofline::{CostError, node_cost};
 pub struct DeviceRoofline {
     /// 2026-09-30: Constants.
     pub roofline: Roofline,
+    /// 2026-10-01: `roofline` with NVFP4 activations at the peak of the path that runs them
+    /// without an FP4 block-scale kernel: the cost of a node the class compiles no FP4 kernel
+    /// for ([`super::avail::without_fp4_kernel`]).
+    pub without_fp4: Roofline,
+    /// 2026-10-01: That path: `the FP8 peak (exact E2M1->E4M3)` or `the BF16 peak`.
+    pub fp4_fallback: &'static str,
     /// 2026-09-30: `measured (...)` or `datasheet (...)`.
     pub basis: String,
+    /// 2026-10-01: The constants are a measurement on the device's own class; otherwise every
+    /// estimate from them is a roofline projection, unmeasured on the device.
+    pub measured: bool,
     /// 2026-09-30: How NVFP4 activations are costed where FP4 is not native.
     pub fp4_note: Option<String>,
+}
+
+/// 2026-10-01: The peak NVFP4 activations take without an FP4 block-scale MMA, and its name:
+/// the FP8 MMA through the exact E2M1 -> E4M3 conversion ([`super::exec`]) where the device has
+/// it, else the BF16 MMA.
+fn fp4_fallback(device: &Device, fp8: f64, bf16: f64) -> (f64, &'static str) {
+    if device.runs(MmaKind::Fp8) {
+        (fp8, "the FP8 peak (exact E2M1->E4M3)")
+    } else {
+        (bf16, "the BF16 peak")
+    }
 }
 
 /// 2026-09-30: The device's constants: the measured ones when the registry points at them and
@@ -43,33 +63,51 @@ pub fn device_roofline(
     assumptions: &Roofline,
 ) -> DeviceRoofline {
     if let (Some(src), Some(m)) = (&device.measured, measured) {
+        let (peak, fp4_fallback) = fp4_fallback(device, m.fp8_tflops, m.bf16_tflops);
         return DeviceRoofline {
             roofline: *m,
+            without_fp4: Roofline {
+                nvfp4_tflops: peak,
+                ..*m
+            },
+            fp4_fallback,
             basis: format!("measured achievable ({src})"),
+            measured: true,
             fp4_note: None,
         };
     }
     let p = device.peaks;
     let fp8 = p.fp8.unwrap_or(p.bf16);
+    let (peak, fallback) = fp4_fallback(device, fp8, p.bf16);
     let (nvfp4, fp4_note) = match p.fp4_block_scale {
         Some(v) => (v, None),
         None if device.runs(MmaKind::Fp8) => (
-            fp8,
-            Some("FP4 MMA not native: NVFP4-activation nodes costed at the FP8 peak (exact E2M1->E4M3)".into()),
+            peak,
+            Some(format!(
+                "FP4 MMA not native: NVFP4-activation nodes costed at {fallback}"
+            )),
         ),
         None => (
-            p.bf16,
-            Some("FP4 and FP8 MMA not native: NVFP4-activation nodes costed at the BF16 peak".into()),
+            peak,
+            Some(format!(
+                "FP4 and FP8 MMA not native: NVFP4-activation nodes costed at {fallback}"
+            )),
         ),
     };
+    let roofline = Roofline {
+        dram_gbps: device.bandwidth_gbps,
+        bf16_tflops: p.bf16,
+        fp8_tflops: fp8,
+        nvfp4_tflops: nvfp4,
+        context_tokens: assumptions.context_tokens,
+    };
     DeviceRoofline {
-        roofline: Roofline {
-            dram_gbps: device.bandwidth_gbps,
-            bf16_tflops: p.bf16,
-            fp8_tflops: fp8,
-            nvfp4_tflops: nvfp4,
-            context_tokens: assumptions.context_tokens,
+        roofline,
+        without_fp4: Roofline {
+            nvfp4_tflops: peak,
+            ..roofline
         },
+        fp4_fallback: fallback,
         basis: format!(
             "datasheet ceiling (sources {}{})",
             device.sources.join(", "),
@@ -79,26 +117,28 @@ pub fn device_roofline(
                 format!("; derived, not published: {}", device.derived.join(", "))
             }
         ),
+        measured: false,
         fp4_note,
     }
 }
 
-/// 2026-09-30: The estimated prefill time of `tokens` tokens, microseconds.
+/// 2026-09-30: The estimated prefill time of `tokens` tokens, microseconds, each node costed
+/// with `roofline_of` its index.
 pub fn prefill_us(
     c: &Circuit,
     settings: &BTreeMap<String, String>,
-    r: &Roofline,
+    roofline_of: &dyn Fn(NodeIdx) -> Roofline,
     tokens: u64,
 ) -> Result<f64, CostError> {
-    let causal = Roofline {
-        context_tokens: (tokens / 2).max(1),
-        ..*r
-    };
     let main = section_of(Mode::Decode);
     let mut total = 0.0;
     for b in c.blocks.iter().filter(|b| b.section == main) {
-        for n in &c.nodes[b.first..b.end] {
-            total += node_cost(c, n, Mode::Decode, tokens, settings, &causal)?.time_us;
+        for i in b.first..b.end {
+            let causal = Roofline {
+                context_tokens: (tokens / 2).max(1),
+                ..roofline_of(i)
+            };
+            total += node_cost(c, &c.nodes[i], Mode::Decode, tokens, settings, &causal)?.time_us;
         }
     }
     Ok(total)
