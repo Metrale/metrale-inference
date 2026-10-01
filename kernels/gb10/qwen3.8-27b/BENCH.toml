@@ -1600,6 +1600,30 @@ osl = "200"
 
 
 
+# 2026-10-01: RATCHETED from the committed record history of this instrument (isl 512, osl 200,
+# natural fixture, batch cap 16, fp8 KV, ctx 4096, gamma 8; unchanged across all ten records)
+# plus three runs on spark-256a, the one box certify may bundle this gate onto that had never
+# run it. Rule, as the concurrency-sweep entry above writes it: the bar is at most both the
+# latest record and the slowest run of the rung's regime on ANY box, x 0.975, rounded down to
+# a 0.5 step; no noise band, because the 2.5% is already in each bar. A regime starts where the
+# rung's level moved: #48 (record e55829e49b) for C1, C2 and C8; #39 (record c4e6fde56c) for
+# C16 and the peak; C4 did not move, so its regime is the whole history.
+# Why C1 moved DOWN at #48 (bisected 2026-10-01, spark-43fa, interleaved n=3, die <= 55 C):
+# d441871aae, the FP8-KV scale-key fix, which made this FP8-KV serve use the checkpoint's KV
+# scales instead of 1.0. The greedy completion of the C=1 cell's single prompt changed, and the
+# drafter's accept length on it fell 3.92 -> 3.33 while the verify step stayed 114 ms. It is
+# one prompt's acceptance, not a speed loss: on 24 other prompts accept per token moved -0.7%
+# (paired t -0.73), and C2 rose 3.70 -> 4.00.
+# spark-256a, b32255fa42, the certified gate command x3 (2026-10-01): C1 27.81/27.53/27.45,
+# C2 48.56/50.75/49.58, C4 56.53/54.99/59.03, C8 74.87/79.36/77.56, C16 79.67/82.03/77.07.
+#
+#     rung  regime from    min (any box)       latest  floor (was min/noise)
+#     C1    e55829e49b     27.45 spark-256a    28.40   26.5  (24.0/0.95)
+#     C2    e55829e49b     48.56 spark-256a    51.24   47.0  (40.5/0.62)
+#     C4    a6d711dc0e     54.99 spark-256a    60.53   53.5  (42.5/0.73)
+#     C8    e55829e49b     74.87 spark-256a    81.46   72.5  (54.0/0.88)
+#     C16   c4e6fde56c     77.07 spark-256a    84.13   75.0  (59.0/1.0)
+#     peak  c4e6fde56c     77.56 spark-256a    84.13   75.5  (59.0/1.00)
 [benchmarks.metrics.c1_aggregate_tok_s]
 
 
@@ -1632,8 +1656,8 @@ osl = "200"
 
 
 
-min = 24.0
-noise = 0.95
+min = 26.5
+noise = 0.0
 
 [benchmarks.metrics.c2_aggregate_tok_s]
 
@@ -1644,8 +1668,8 @@ noise = 0.95
 
 
 
-min = 40.5
-noise = 0.62
+min = 47.0
+noise = 0.0
 
 [benchmarks.metrics.c4_aggregate_tok_s]
 
@@ -1660,8 +1684,8 @@ noise = 0.62
 
 
 
-min = 42.5
-noise = 0.73
+min = 53.5
+noise = 0.0
 
 [benchmarks.metrics.c8_aggregate_tok_s]
 
@@ -1675,8 +1699,8 @@ noise = 0.73
 
 
 
-min = 54.0
-noise = 0.88
+min = 72.5
+noise = 0.0
 
 [benchmarks.metrics.c16_aggregate_tok_s]
 
@@ -1687,8 +1711,8 @@ noise = 0.88
 
 
 
-min = 59.0
-noise = 1.0
+min = 75.0
+noise = 0.0
 
 [benchmarks.metrics.peak_aggregate_tok_s]
 
@@ -1702,8 +1726,8 @@ noise = 1.0
 
 
 
-min = 59.0
-noise = 1.00
+min = 75.5
+noise = 0.0
 
 [benchmarks.metrics.min_completion_tokens]
 
