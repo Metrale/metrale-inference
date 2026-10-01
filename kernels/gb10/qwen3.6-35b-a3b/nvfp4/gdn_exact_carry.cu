@@ -28,80 +28,34 @@
 #include <cuda_bf16.h>
 #include "../../common/gdn_carry_stash.cuh"
 
-template <int K, bool LAZY>
-__device__ __forceinline__ void gdn_exact_carry_body(
-    float* const* __restrict__ h_table,
-    const float* __restrict__ query,
-    const float* __restrict__ key,
+// 2026-10-01: The K rows of one (v-head, sequence): row t runs gdn_decode_f32_strided_body's
+// expressions in its order on the state in registers, writes its output, and leaves its vn and
+// clamped gate in vn[t] and gs[t]. With `snap` non-null, the state after row t < K - 1 is also
+// stored at snap[t] (this head's slice), as the per-row exact arm's snapshot copies would.
+template <int K>
+__device__ __forceinline__ void exact_rows(
+    float (&H_reg)[CARRY_KD],
+    const float (*sk)[CARRY_KD],
+    const float (*sq)[CARRY_KD],
     const float* __restrict__ value,
     const float* __restrict__ gate,
     const float* __restrict__ beta,
     float* __restrict__ output,
-    float* __restrict__ carry_base,
-    const unsigned int* __restrict__ slot_tab,
-    const unsigned int* __restrict__ pend,
-    unsigned int seq_floats,
-    unsigned int batch_size,
-    unsigned int num_k_heads,
-    unsigned int num_v_heads,
+    unsigned long long row0,
+    unsigned int vh,
+    unsigned int tid,
     unsigned int k_dim,
-    unsigned int qk_stride,
     unsigned int v_stride,
     unsigned int gb_stride,
     unsigned int out_stride,
-    unsigned int* __restrict__ engaged_flag
+    float* vn,
+    float* gs,
+    float* const* snap
 ) {
-    const unsigned int vh = blockIdx.x;
-    const unsigned int b = blockIdx.y;
-    if (vh >= num_v_heads || b >= batch_size) return;
-    const unsigned int tid = threadIdx.x;
-    const unsigned int head_repeat = num_v_heads / num_k_heads;
-    const unsigned int kh = vh / head_repeat;
     const unsigned int v_dim = CARRY_VD;
-
-    float* H_global = h_table[b] + (unsigned long long)vh * CARRY_KD * CARRY_VD;
-    const unsigned int slot = slot_tab[b];
-    float* S = carry_base + (unsigned long long)slot * seq_floats;
-    const unsigned int np = pend[slot];
-    const bool wb = !LAZY || np + K > CARRY_CAP;
-    const unsigned int base = wb ? 0u : np;
-    if (tid == 0 && vh == 0) engaged_flag[b] = wb ? 2u : 1u;
-
-    __shared__ float sk[K][CARRY_KD], sq[K][CARRY_KD];
-    __shared__ float pk[CARRY_CAP][CARRY_KD], pg[CARRY_CAP];
     #pragma unroll
     for (int t = 0; t < K; ++t) {
-        const unsigned long long row = (unsigned long long)b * K + t;
-        sk[t][tid] = key[row * qk_stride + kh * k_dim + tid];
-        sq[t][tid] = query[row * qk_stride + kh * k_dim + tid];
-    }
-    // 2026-10-01: Pending rows are read before the barrier: this block overwrites the same stash
-    // rows below after a write-back.
-    for (unsigned int t = 0; t < np; ++t) pk[t][tid] = CARRY_SK(S, t, vh)[tid];
-    if (tid < np) pg[tid] = *CARRY_G(S, tid, vh);
-    __syncthreads();
-
-    float H_reg[CARRY_KD];
-    #pragma unroll
-    for (int j = 0; j < CARRY_KD; j++) {
-        H_reg[j] = H_global[j * CARRY_VD + tid];
-    }
-    for (unsigned int t = 0; t < np; ++t) {
-        const float pv = CARRY_VN(S, t, vh)[tid];
-        const float pgt = pg[t];
-        const volatile float* vpk = pk[t];
-        #pragma unroll
-        for (int j = 0; j < CARRY_KD; j++) H_reg[j] = pgt * H_reg[j] + vpk[j] * pv;
-    }
-    if (wb && np > 0) {
-        #pragma unroll
-        for (int j = 0; j < CARRY_KD; j++) H_global[j * CARRY_VD + tid] = H_reg[j];
-    }
-
-    float vn[K], gs[K];
-    #pragma unroll
-    for (int t = 0; t < K; ++t) {
-        const unsigned long long row = (unsigned long long)b * K + t;
+        const unsigned long long row = row0 + t;
         const float* smem_k = sk[t];
         const float v_i = value[row * v_stride + vh * v_dim + tid];
         const float g = fminf(
@@ -148,7 +102,86 @@ __device__ __forceinline__ void gdn_exact_carry_body(
         output[row * out_stride + vh * v_dim + tid] = q_dot * inv_sqrt_d;
         vn[t] = v_new;
         gs[t] = g;
+        if (snap != nullptr && t + 1 < K) {
+            #pragma unroll
+            for (int j = 0; j < CARRY_KD; j++) snap[t][j * CARRY_VD + tid] = H_reg[j];
+        }
     }
+
+}
+
+template <int K, bool LAZY>
+__device__ __forceinline__ void gdn_exact_carry_body(
+    float* const* __restrict__ h_table,
+    const float* __restrict__ query,
+    const float* __restrict__ key,
+    const float* __restrict__ value,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ output,
+    float* __restrict__ carry_base,
+    const unsigned int* __restrict__ slot_tab,
+    const unsigned int* __restrict__ pend,
+    unsigned int seq_floats,
+    unsigned int batch_size,
+    unsigned int num_k_heads,
+    unsigned int num_v_heads,
+    unsigned int k_dim,
+    unsigned int qk_stride,
+    unsigned int v_stride,
+    unsigned int gb_stride,
+    unsigned int out_stride,
+    unsigned int* __restrict__ engaged_flag
+) {
+    const unsigned int vh = blockIdx.x;
+    const unsigned int b = blockIdx.y;
+    if (vh >= num_v_heads || b >= batch_size) return;
+    const unsigned int tid = threadIdx.x;
+    const unsigned int head_repeat = num_v_heads / num_k_heads;
+    const unsigned int kh = vh / head_repeat;
+
+    float* H_global = h_table[b] + (unsigned long long)vh * CARRY_KD * CARRY_VD;
+    const unsigned int slot = slot_tab[b];
+    float* S = carry_base + (unsigned long long)slot * seq_floats;
+    const unsigned int np = pend[slot];
+    const bool wb = !LAZY || np + K > CARRY_CAP;
+    const unsigned int base = wb ? 0u : np;
+    if (tid == 0 && vh == 0) engaged_flag[b] = wb ? 2u : 1u;
+
+    __shared__ float sk[K][CARRY_KD], sq[K][CARRY_KD];
+    __shared__ float pk[CARRY_CAP][CARRY_KD], pg[CARRY_CAP];
+    #pragma unroll
+    for (int t = 0; t < K; ++t) {
+        const unsigned long long row = (unsigned long long)b * K + t;
+        sk[t][tid] = key[row * qk_stride + kh * k_dim + tid];
+        sq[t][tid] = query[row * qk_stride + kh * k_dim + tid];
+    }
+    // 2026-10-01: Pending rows are read before the barrier: this block overwrites the same stash
+    // rows below after a write-back.
+    for (unsigned int t = 0; t < np; ++t) pk[t][tid] = CARRY_SK(S, t, vh)[tid];
+    if (tid < np) pg[tid] = *CARRY_G(S, tid, vh);
+    __syncthreads();
+
+    float H_reg[CARRY_KD];
+    #pragma unroll
+    for (int j = 0; j < CARRY_KD; j++) {
+        H_reg[j] = H_global[j * CARRY_VD + tid];
+    }
+    for (unsigned int t = 0; t < np; ++t) {
+        const float pv = CARRY_VN(S, t, vh)[tid];
+        const float pgt = pg[t];
+        const volatile float* vpk = pk[t];
+        #pragma unroll
+        for (int j = 0; j < CARRY_KD; j++) H_reg[j] = pgt * H_reg[j] + vpk[j] * pv;
+    }
+    if (wb && np > 0) {
+        #pragma unroll
+        for (int j = 0; j < CARRY_KD; j++) H_global[j * CARRY_VD + tid] = H_reg[j];
+    }
+
+    float vn[K], gs[K];
+    exact_rows<K>(H_reg, sk, sq, value, gate, beta, output, (unsigned long long)b * K, vh, tid,
+                  k_dim, v_stride, gb_stride, out_stride, vn, gs, nullptr);
 
     #pragma unroll
     for (int t = 0; t < K; ++t) {
@@ -179,6 +212,73 @@ EXACT_CARRY_ENTRY(gdn_exact_carry4, 4, false)
 EXACT_CARRY_ENTRY(gdn_exact_carry2_lazy, 2, true)
 EXACT_CARRY_ENTRY(gdn_exact_carry3_lazy, 3, true)
 EXACT_CARRY_ENTRY(gdn_exact_carry4_lazy, 4, true)
+
+// 2026-10-01: The single-sequence exact verify (gdn_exact_chain{2,3,4}): K rows of one sequence
+// in one launch, the state read once, the per-row exact arm's snapshots written inline (the state
+// after row t < K - 1 at h_inter[t]) and the final state written back. Row t's q and k are at
+// t * qk_stride, v at t * v_stride, gate and beta at t * gb_stride, its FP32 output at
+// t * out_stride. Grid (num_v_heads, 1), block 128.
+template <int K>
+__device__ __forceinline__ void gdn_exact_chain_body(
+    float* __restrict__ h_state,
+    const float* __restrict__ query,
+    const float* __restrict__ key,
+    const float* __restrict__ value,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ output,
+    float* __restrict__ h_inter0,
+    float* __restrict__ h_inter1,
+    float* __restrict__ h_inter2,
+    unsigned int num_k_heads,
+    unsigned int num_v_heads,
+    unsigned int k_dim,
+    unsigned int qk_stride,
+    unsigned int v_stride,
+    unsigned int gb_stride,
+    unsigned int out_stride
+) {
+    const unsigned int vh = blockIdx.x;
+    if (vh >= num_v_heads) return;
+    const unsigned int tid = threadIdx.x;
+    const unsigned int kh = vh / (num_v_heads / num_k_heads);
+    const unsigned long long head = (unsigned long long)vh * CARRY_KD * CARRY_VD;
+    float* H_global = h_state + head;
+
+    __shared__ float sk[K][CARRY_KD], sq[K][CARRY_KD];
+    #pragma unroll
+    for (int t = 0; t < K; ++t) {
+        sk[t][tid] = key[(unsigned long long)t * qk_stride + kh * k_dim + tid];
+        sq[t][tid] = query[(unsigned long long)t * qk_stride + kh * k_dim + tid];
+    }
+    __syncthreads();
+
+    float H_reg[CARRY_KD];
+    #pragma unroll
+    for (int j = 0; j < CARRY_KD; j++) H_reg[j] = H_global[j * CARRY_VD + tid];
+    float* const snap[3] = {h_inter0 + head, h_inter1 + head, h_inter2 + head};
+    float vn[K], gs[K];
+    exact_rows<K>(H_reg, sk, sq, value, gate, beta, output, 0ull, vh, tid, k_dim, v_stride,
+                  gb_stride, out_stride, vn, gs, snap);
+    #pragma unroll
+    for (int j = 0; j < CARRY_KD; j++) H_global[j * CARRY_VD + tid] = H_reg[j];
+}
+
+#define EXACT_CHAIN_ENTRY(NAME, K) \
+extern "C" __global__ void __launch_bounds__(128, 1) NAME( \
+    float* __restrict__ h_state, const float* __restrict__ query, \
+    const float* __restrict__ key, const float* __restrict__ value, \
+    const float* __restrict__ gate, const float* __restrict__ beta, \
+    float* __restrict__ output, float* __restrict__ h_inter0, float* __restrict__ h_inter1, \
+    float* __restrict__ h_inter2, unsigned int num_k_heads, unsigned int num_v_heads, \
+    unsigned int k_dim, unsigned int qk_stride, unsigned int v_stride, unsigned int gb_stride, \
+    unsigned int out_stride) { \
+    gdn_exact_chain_body<K>(h_state, query, key, value, gate, beta, output, h_inter0, h_inter1, \
+        h_inter2, num_k_heads, num_v_heads, k_dim, qk_stride, v_stride, gb_stride, out_stride); \
+}
+EXACT_CHAIN_ENTRY(gdn_exact_chain2, 2)
+EXACT_CHAIN_ENTRY(gdn_exact_chain3, 3)
+EXACT_CHAIN_ENTRY(gdn_exact_chain4, 4)
 
 // 2026-10-01: The fold under the exact verify (carry_flush_kernel looks it up in this module). This
 // directory's strided decode has no state clamp, so it is gdn_carry_flush's body; the 27B directory

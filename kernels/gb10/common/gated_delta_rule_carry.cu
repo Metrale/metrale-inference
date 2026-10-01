@@ -433,6 +433,45 @@ extern "C" __global__ void gdn_carry_conv_flush(
     for (unsigned int i = 0; i < d_conv; i++) state[i] = win[i];
 }
 
+// 2026-10-01: One position of causal_conv1d_update_l2norm_f32_strided for the window in registers:
+// shift `x` in, the parent's dot product, SiLU and per-head L2 norm in its order. Every thread of
+// the 256-thread block calls it (the norm is a block reduction); `valid` threads own a channel.
+__device__ __forceinline__ float conv_f32_row(
+    float (&win)[8], const float (&wcoef)[8], unsigned int d_conv, bool valid, __nv_bfloat16 x,
+    unsigned int tid, bool block_needs_l2, unsigned int head_dim, float l2_eps, float* warp_sums
+) {
+    float silu = 0.0f;
+    if (valid) {
+        for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
+        win[d_conv - 1] = (float)x;
+        float acc = 0.0f;
+        for (unsigned int k = 0; k < d_conv; k++) acc += win[k] * wcoef[k];
+        float sigmoid_acc = 1.0f / (1.0f + __expf(-acc));
+        silu = acc * sigmoid_acc;
+    }
+    if (block_needs_l2) {
+        float sq = valid ? (silu * silu) : 0.0f;
+        const unsigned int warp_id = tid / 32;
+        const unsigned int lane = tid % 32;
+        for (int offset = 16; offset >= 1; offset >>= 1)
+            sq += __shfl_down_sync(0xFFFFFFFF, sq, offset);
+        if (lane == 0) warp_sums[warp_id] = sq;
+        __syncthreads();
+        const unsigned int head_in_block = tid / head_dim;
+        const unsigned int base_warp = head_in_block * (head_dim / 32);
+        if (tid == 0 || tid == head_dim) {
+            float total = warp_sums[base_warp] + warp_sums[base_warp + 1]
+                        + warp_sums[base_warp + 2] + warp_sums[base_warp + 3];
+            warp_sums[base_warp] = rsqrtf(total + l2_eps);
+        }
+        __syncthreads();
+        if (valid) silu *= warp_sums[base_warp];
+        // 2026-10-01: Keeps the next position's lane-0 write to warp_sums behind this read.
+        __syncthreads();
+    }
+    return silu;
+}
+
 // 2026-10-01: Carried-state twin of causal_conv1d_update_l2norm_f32_strided (causal_conv1d.cu), the
 // FP32 conv of the exact verify: one launch for every position of a K-row verify. Thread ch owns
 // channel ch of sequence blockIdx.y. It shifts the `pend[slot]` pending input rows into its window
@@ -494,39 +533,69 @@ extern "C" __global__ void gdn_carry_conv_f32(
     __shared__ float warp_sums[8];
     for (unsigned int t = 0; t < num_tokens; t++) {
         const size_t row = (size_t) b * num_tokens + t;
-        float silu = 0.0f;
+        __nv_bfloat16 x = __float2bfloat16(0.0f);
         if (valid) {
-            const __nv_bfloat16 x = new_input[row * input_stride + ch];
-            for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
-            win[d_conv - 1] = (float)x;
+            x = new_input[row * input_stride + ch];
             stash[(base + t) * dim + ch] = x;
-            float acc = 0.0f;
-            for (unsigned int k = 0; k < d_conv; k++) acc += win[k] * wcoef[k];
-            float sigmoid_acc = 1.0f / (1.0f + __expf(-acc));
-            silu = acc * sigmoid_acc;
         }
-
-        if (block_needs_l2) {
-            float sq = valid ? (silu * silu) : 0.0f;
-            const unsigned int warp_id = tid / 32;
-            const unsigned int lane = tid % 32;
-            for (int offset = 16; offset >= 1; offset >>= 1)
-                sq += __shfl_down_sync(0xFFFFFFFF, sq, offset);
-            if (lane == 0) warp_sums[warp_id] = sq;
-            __syncthreads();
-            const unsigned int head_in_block = tid / head_dim;
-            const unsigned int base_warp = head_in_block * (head_dim / 32);
-            if (tid == 0 || tid == head_dim) {
-                float total = warp_sums[base_warp] + warp_sums[base_warp + 1]
-                            + warp_sums[base_warp + 2] + warp_sums[base_warp + 3];
-                warp_sums[base_warp] = rsqrtf(total + l2_eps);
-            }
-            __syncthreads();
-            if (valid) silu *= warp_sums[base_warp];
-            // 2026-10-01: Keeps the next position's lane-0 write to warp_sums behind this read.
-            __syncthreads();
-        }
-
+        const float silu = conv_f32_row(win, wcoef, d_conv, valid, x, tid, block_needs_l2,
+                                        head_dim, l2_eps, warp_sums);
         if (valid) output[row * output_stride + ch] = silu;
+    }
+}
+
+// 2026-10-01: The single-sequence exact verify's FP32 conv (gdn_conv_chain_f32): positions
+// 0..num_tokens-1 of causal_conv1d_update_l2norm_f32_strided in one launch for one sequence, the
+// window in registers. The window after position t < num_tokens - 1 is stored at conv_inter[t] (the
+// per-row exact arm's conv intermediates, conv_state's layout), and the final window at
+// conv_state. Position t reads new_input + t * input_stride and writes output + t * output_stride.
+// Grid (ceil(dim / 256), 1), block 256; the parent's contract on d_conv, head_dim and qk_channels.
+extern "C" __global__ void gdn_conv_chain_f32(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ new_input,
+    const __nv_bfloat16* __restrict__ weight,
+    float* __restrict__ output,
+    float* __restrict__ conv_inter0,
+    float* __restrict__ conv_inter1,
+    float* __restrict__ conv_inter2,
+    unsigned int num_tokens,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    float l2_eps,
+    unsigned int input_stride,
+    unsigned int output_stride
+) {
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int tid = threadIdx.x;
+    const bool block_needs_l2 = (blockIdx.x * blockDim.x < qk_channels);
+    const bool valid = (ch < dim);
+    float* const inter[3] = {conv_inter0, conv_inter1, conv_inter2};
+
+    float win[8];
+    float wcoef[8];
+    float* state = conv_state + (size_t) ch * d_conv;
+    if (valid) {
+        for (unsigned int i = 0; i < d_conv; i++) win[i] = state[i];
+        const __nv_bfloat16* w = weight + ch * d_conv;
+        for (unsigned int k = 0; k < d_conv; k++) wcoef[k] = (float)w[k];
+    }
+    __shared__ float warp_sums[8];
+    for (unsigned int t = 0; t < num_tokens; t++) {
+        const __nv_bfloat16 x = valid ? new_input[(size_t) t * input_stride + ch]
+                                      : __float2bfloat16(0.0f);
+        const float silu = conv_f32_row(win, wcoef, d_conv, valid, x, tid, block_needs_l2,
+                                        head_dim, l2_eps, warp_sums);
+        if (valid) {
+            output[(size_t) t * output_stride + ch] = silu;
+            if (t + 1 < num_tokens && t < 3) {
+                float* snap = inter[t] + (size_t) ch * d_conv;
+                for (unsigned int i = 0; i < d_conv; i++) snap[i] = win[i];
+            }
+        }
+    }
+    if (valid) {
+        for (unsigned int i = 0; i < d_conv; i++) state[i] = win[i];
     }
 }

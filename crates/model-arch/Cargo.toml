@@ -151,6 +151,10 @@ name = "exact_carry_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "exact_chain_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "moe_gateup_silu_e4m3_microtest"
 required-features = ["cuda", "gpu-examples"]
 

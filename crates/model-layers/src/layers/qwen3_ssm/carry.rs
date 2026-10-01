@@ -40,6 +40,10 @@ pub(super) struct CarryKernels {
     pub exact: [KernelHandle; 3],
     pub exact_lazy: [KernelHandle; 3],
     pub conv_f32: KernelHandle,
+    /// 2026-10-01: The single-sequence exact verify (`gdn_exact_chain{2,3,4}`,
+    /// `gdn_conv_chain_f32`), each 0 where the kernel set has none.
+    pub chain: [KernelHandle; 3],
+    pub conv_chain: KernelHandle,
 }
 
 pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
@@ -69,6 +73,12 @@ pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
             crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_carry4_lazy"),
         ],
         conv_f32: crate::layers::try_kernel(gpu, m, "gdn_carry_conv_f32"),
+        chain: [
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_chain2"),
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_chain3"),
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_chain4"),
+        ],
+        conv_chain: crate::layers::try_kernel(gpu, m, "gdn_conv_chain_f32"),
     }
 }
 

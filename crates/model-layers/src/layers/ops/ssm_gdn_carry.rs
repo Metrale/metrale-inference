@@ -289,6 +289,97 @@ pub fn gdn_carry_conv_f32(
         .launch(stream)
 }
 
+/// 2026-10-01: The single-sequence exact verify (`gdn_exact_chain{2,3,4}`, chosen by the caller's
+/// `kernel`): K rows of one sequence's strided-decode chain in one launch. `h_state` is updated to
+/// the state after the last row, `h_inter[t]` receives the state after row t (t < K - 1; the other
+/// entries must still be valid pointers and are not written). Rows are `strides =
+/// [qk, v, gate|beta, out]` floats apart.
+#[allow(clippy::too_many_arguments)]
+pub fn gdn_exact_chain(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    h_state: DevicePtr,
+    query: DevicePtr,
+    key: DevicePtr,
+    value: DevicePtr,
+    gate: DevicePtr,
+    beta: DevicePtr,
+    output: DevicePtr,
+    h_inter: [DevicePtr; 3],
+    num_k_heads: u32,
+    num_v_heads: u32,
+    k_dim: u32,
+    strides: [u32; 4],
+    stream: u64,
+) -> Result<()> {
+    let [qk_stride, v_stride, gb_stride, out_stride] = strides;
+    KernelLaunch::new(gpu, kernel)
+        .grid([num_v_heads, 1, 1])
+        .block([128, 1, 1])
+        .arg_ptr(h_state)
+        .arg_ptr(query)
+        .arg_ptr(key)
+        .arg_ptr(value)
+        .arg_ptr(gate)
+        .arg_ptr(beta)
+        .arg_ptr(output)
+        .arg_ptr(h_inter[0])
+        .arg_ptr(h_inter[1])
+        .arg_ptr(h_inter[2])
+        .arg_u32(num_k_heads)
+        .arg_u32(num_v_heads)
+        .arg_u32(k_dim)
+        .arg_u32(qk_stride)
+        .arg_u32(v_stride)
+        .arg_u32(gb_stride)
+        .arg_u32(out_stride)
+        .launch(stream)
+}
+
+/// 2026-10-01: The single-sequence exact verify's FP32 conv (`gdn_conv_chain_f32`): `num_tokens`
+/// positions of `causal_conv1d_update_l2norm_f32_strided` for one sequence in one launch, the
+/// window after position t (t < num_tokens - 1) at `conv_inter[t]`, the final window at
+/// `conv_state`. The unused `conv_inter` entries must be valid pointers; they are not written.
+#[allow(clippy::too_many_arguments)]
+pub fn gdn_conv_chain_f32(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    conv_state: DevicePtr,
+    new_input: DevicePtr,
+    weight: &crate::weight_map::DenseWeight,
+    output: DevicePtr,
+    conv_inter: [DevicePtr; 3],
+    num_tokens: u32,
+    dim: u32,
+    d_conv: u32,
+    qk_channels: u32,
+    head_dim: u32,
+    l2_eps: f32,
+    input_stride: u32,
+    output_stride: u32,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([dim.div_ceil(256), 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(conv_state)
+        .arg_ptr(new_input)
+        .arg_ptr(weight.weight)
+        .arg_ptr(output)
+        .arg_ptr(conv_inter[0])
+        .arg_ptr(conv_inter[1])
+        .arg_ptr(conv_inter[2])
+        .arg_u32(num_tokens)
+        .arg_u32(dim)
+        .arg_u32(d_conv)
+        .arg_u32(qk_channels)
+        .arg_u32(head_dim)
+        .arg_f32(l2_eps)
+        .arg_u32(input_stride)
+        .arg_u32(output_stride)
+        .launch(stream)
+}
+
 /// 2026-09-26: Standalone conv fold (`gdn_carry_conv_flush`) over `layers` GDN layers, laid
 /// out as in [`gdn_carry_flush`] with conv-state pointers and a BF16 stash.
 #[allow(clippy::too_many_arguments)]
