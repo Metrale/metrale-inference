@@ -50,73 +50,67 @@ pub(crate) fn preflight_reserve(
     // of it is in `args` or `config`.
     post_load: &PostLoadInputs<'_>,
 ) -> Result<ReservePreflight> {
-    let h_state_bytes = config.ssm_h_state_bytes();
-    let conv_state_bytes = config.ssm_conv_state_bytes();
     // 2026-09-26: `args.dflash` counts as speculative here because
     // `TransformerModel::new` allocates the SSM rollback pools whenever DFlash
     // capture layers exist (`has_mtp` includes `dflash_kgamma > 0`).
     let spec_on_pool = args.speculative_proposer_requested();
     refuse_speculation_over_mamba2(args, config)?;
     ssm_h_fp16_preconditions(args, config)?;
-    // 2026-09-26: Verify slots are `ssm_reserve::mtp_state_slots`, the count
-    // `SsmStatePool::new` also allocates. `METRALE_MTP_POOL_FULL_WIDTH`
-    // (present, any value) makes it `max_batch_size`.
-    let mtp_state_slots = metrale_model_layers::ssm_reserve::mtp_state_slots(args.max_batch_size);
-    // 2026-09-26: The FP32 prefill staging arena of an f16-sized h pool: one
-    // blob per slot, shared by all layers, and 0 without `--ssm-h-dtype
-    // f16-pool` (`ssm_h_prefill_stage_bytes`). Counted for `max_batch_size`
-    // slots, without the pools' dummy slot.
-    let ssm_h_stage_bytes = metrale_model_layers::ssm_reserve::ssm_h_prefill_stage_bytes(
-        args.max_batch_size,
-        h_state_bytes,
-        metrale_model_layers::layers::qwen3_ssm::ssm_h_f16_pool_enabled(),
-    );
     // 2026-09-26: A DFlash serve's verify pools are γ + 1 rows wide on every
-    // slot, and the drafter loads after this preflight. γ here is
-    // `default_dflash_gamma` of the drafter's `dflash_config.block_size` when
-    // its local config.json has one, else `resolved_dflash_gamma(None)`
-    // (`--dflash-gamma`, else 16). An unset γ allocates 17 rows
-    // (`TransformerModel::new`), so the fallback does not under-reserve.
+    // slot. 2026-09-30: γ is the one the build sizes them for
+    // (`ServeArgs::serve_dflash_gamma`); until then this peeked the drafter's block
+    // size and ignored a pinned `--dflash-gamma`.
     let pool_num_drafts = if args.dflash {
-        peek_dflash_block_size(args.draft_model.as_deref())
-            .map(metrale_model_layers::layers::qwen3_ssm::default_dflash_gamma)
-            .unwrap_or_else(|| args.resolved_dflash_gamma(None))
+        args.serve_dflash_gamma()
     } else {
         args.resolved_num_drafts()
     };
-    let ssm_pool_bytes = metrale_model_layers::ssm_reserve::ssm_pool_reserve_bytes(
-        args.max_batch_size,
-        config.num_ssm_layers() * h_state_bytes,
-        config.num_ssm_layers() * conv_state_bytes,
-        spec_on_pool,
-        pool_num_drafts,
-        mtp_state_slots,
-        args.dflash,
-        // 2026-09-26: The h-pool narrowing `SsmStatePool::new` applies under
-        // `--ssm-h-dtype f16-pool`.
-        metrale_model_layers::layers::qwen3_ssm::ssm_h_f16_pool_enabled(),
-        // 2026-09-26: `--ssm-rollback-mode`, published by `serve_flags` before
-        // this runs. Replay mode reserves only the checkpoint blob per verify
-        // slot; its input ring is the separate term below.
-        metrale_model_layers::ssm_reserve::ssm_rollback_mode(),
+    // 2026-09-30: The SSM state pool is the plan `SsmStatePool::new` allocates
+    // (`ssm_reserve::PoolPlan`, M5): the same unit counts, dummy slots included,
+    // and the same bytes. Until 2026-09-30 this reserve left out the live and
+    // verify dummies the pool allocates. Rollback mode is `--ssm-rollback-mode`,
+    // published by `serve_flags` before this runs; the h narrowing is
+    // `--ssm-h-dtype f16-pool`.
+    let h_f16_pool = metrale_model_layers::layers::qwen3_ssm::ssm_h_f16_pool_enabled();
+    let rollback = metrale_model_layers::ssm_reserve::ssm_rollback_mode();
+    let pool_counts = metrale_model_layers::ssm_reserve::pool_counts(
+        &metrale_model_layers::ssm_reserve::PoolShape {
+            max_slots: args.max_batch_size,
+            spec: spec_on_pool,
+            num_intermediates: pool_num_drafts + 1,
+            num_drafts: pool_num_drafts,
+            uniform_h: args.dflash,
+            rollback,
+        },
+    );
+    let pool = metrale_model_layers::ssm_reserve::PoolPlan::new(config, &pool_counts, h_f16_pool)?;
+    let ssm_pool_bytes = pool.total();
+    // 2026-09-30: One layer's h (FP32 width) and conv unit, from the same plan.
+    let (h_state_bytes, conv_state_bytes) = (pool.h_f32_unit, pool.conv_unit);
+    // 2026-09-26: The FP32 prefill staging arena of an f16-sized h pool: one
+    // blob per slot (2026-09-30: the pool's slots, its dummy included), shared by
+    // all layers, and 0 without `--ssm-h-dtype f16-pool`.
+    let ssm_h_stage_bytes = metrale_model_layers::ssm_reserve::ssm_h_prefill_stage_bytes(
+        pool_counts.slots,
+        pool.h_f32_unit,
+        h_f16_pool,
     );
     // 2026-09-26: Replay mode's verify-window input ring, sized by
-    // `ssm_replay_ring_bytes` as `SsmStatePool::new` sizes it.
-    let ssm_replay_ring = if spec_on_pool
-        && metrale_model_layers::ssm_reserve::ssm_rollback_mode()
-            == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
-    {
-        metrale_model_layers::ssm_reserve::ssm_replay_ring_bytes(
-            config.num_ssm_layers(),
-            metrale_model_layers::ssm_reserve::ssm_replay_row_bytes(
-                config.ssm_qkvz_size(),
-                config.linear_num_value_heads,
-            ),
-            pool_num_drafts + 1,
-            mtp_state_slots,
-        )
-    } else {
-        0
+    // `ssm_replay_ring_bytes` as `SsmStatePool::new` sizes it (2026-09-30: over
+    // the pool's verify slots, its dummy included).
+    let ssm_replay_ring = match &pool_counts.verify {
+        Some(v) if rollback == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay => {
+            metrale_model_layers::ssm_reserve::ssm_replay_ring_bytes(
+                pool.layers,
+                metrale_model_layers::ssm_reserve::ssm_replay_row_bytes(
+                    config.ssm_qkvz_size(),
+                    config.linear_num_value_heads,
+                ),
+                pool_num_drafts + 1,
+                v.slots(),
+            )
+        }
+        _ => 0,
     };
     let spec_tokens_pre = spec_reserve_tokens(args);
     // 2026-09-26: An SSM model prefills in chunks of `--max-prefill-tokens`
@@ -263,7 +257,7 @@ pub(crate) fn preflight_reserve(
     let spec_on = spec_on_pool;
     tracing::debug!(
         "Preflight reserve breakdown: \
-         ssm_pool={} MB ({} max_batch blobs + {} MTP-covered slots × {} verify blobs, \
+         ssm_pool={} MB ({} max_batch blobs + dummy, {} verify slots incl. dummy × {} verify blobs, \
          {} ssm_layers × (h+conv)), \
          ssm_snapshot={} MB ({} slots), \
          gdn_two_phase={} MB ({} tokens), \
@@ -271,7 +265,7 @@ pub(crate) fn preflight_reserve(
          spec_on={}, num_drafts={}",
         ssm_pool_bytes / (1024 * 1024),
         args.max_batch_size,
-        if spec_on_pool { mtp_state_slots } else { 0 },
+        pool_counts.verify.as_ref().map_or(0, |v| v.slots()),
         if spec_on_pool {
             args.resolved_num_drafts() + 2
         } else {
@@ -300,33 +294,16 @@ pub(crate) fn preflight_reserve(
     })
 }
 
-/// 2026-09-26: The DFlash drafter's trained block size,
-/// `dflash_config.block_size` in `--draft-model`'s config.json, read without
-/// loading the checkpoint. `None` when there is no local config.json with a
-/// positive value (an unset flag, an HF id, an absent field).
-fn peek_dflash_block_size(draft_model: Option<&str>) -> Option<usize> {
-    let dir = std::path::Path::new(draft_model?);
-    let raw = std::fs::read_to_string(dir.join("config.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let g = v.get("dflash_config")?.get("block_size")?.as_u64()? as usize;
-    (g > 0).then_some(g)
-}
-
 /// 2026-09-26: Rows one sequence's speculative step can occupy.
 /// `max_batch_tokens_pre` here and `resolve_prefill_budget` (`kv_cache.rs`)
 /// take a max against it.
 ///
-/// DFlash: γ + 1, with γ from `--dflash-gamma`, else `default_dflash_gamma` of
-/// the peeked drafter block size, else 16. MTP, self- and n-gram speculation:
+/// DFlash: γ + 1, with the serve's γ (`ServeArgs::serve_dflash_gamma`). MTP, self- and
+/// n-gram speculation:
 /// `num_drafts + 2`. Otherwise 1.
 pub(crate) fn spec_reserve_tokens(args: &cli::ServeArgs) -> usize {
     if args.dflash {
-        let gamma = args.dflash_gamma.unwrap_or_else(|| {
-            peek_dflash_block_size(args.draft_model.as_deref())
-                .map(metrale_model_layers::layers::qwen3_ssm::default_dflash_gamma)
-                .unwrap_or_else(|| args.resolved_dflash_gamma(None))
-        });
-        gamma + 1
+        args.serve_dflash_gamma() + 1
     } else if args.speculative || args.self_speculative || args.ngram_speculative {
         args.resolved_num_drafts() + 2
     } else {

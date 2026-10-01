@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-29: The formats each linear module of nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+# runs at under the declared tier: the checkpoint's own quantization (ModelOpt MIXED_PRECISION,
+# config.json `quantization_config` = hf_quant_config.json `quantization`), module by module.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - `quantized_layers` declares W4A16_NVFP4 (group 16) for every routed expert's up/down_proj,
+#   both shared-expert projections and lm_head; FP8 for the 23 Mamba2 in_proj/out_proj, whose
+#   `config_groups` entry gives static per-tensor weight and input scales (`weight_scale`,
+#   `input_scale` tensors). `ignore` keeps the embeddings, conv1d, the router gates, the 24
+#   attention projections and `mtp*` in BF16. The KV cache is FP8 with static k/v scales.
+# - `met circuit venn --target <checkpoint dir>` resolves every bound module through the
+#   checkpoint's declared plan and refuses a table that disagrees with it.
+
+schema = 1
+checkpoint = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "mtp.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.experts.*"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.shared_experts.*"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "lm_head"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mixer.in_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "*.mixer.out_proj"
+weight = "fp8/tensor"
+activation = "fp8/tensor"
+
+[[linear]]
+match = "*"
+weight = "bf16"
+activation = "bf16"

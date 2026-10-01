@@ -167,7 +167,7 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     fn sha256(text: &str) -> String {
-        format!("{:x}", Sha256::digest(text.as_bytes()))
+        metrale_closure::hex_lower(&Sha256::digest(text.as_bytes()))
     }
 
     #[test]

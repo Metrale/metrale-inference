@@ -14,6 +14,8 @@ metal = ["metrale-core/metal", "metrale-config/metal", "metrale-gpu-runtime/meta
 
 [dependencies]
 metrale-cache = { path = "../cache", default-features = false }
+# 2026-09-28: The circuit plans the executor (`circuit_exec`) compiles into launches.
+metrale-circuit = { path = "../circuit" }
 metrale-closure = { path = "../closure" }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
@@ -23,7 +25,7 @@ metrale-kernels = { path = "../kernels" }
 metrale-model-weights = { path = "../model-weights", default-features = false }
 metrale-storage = { path = "../storage", default-features = false }
 anyhow = { workspace = true }
-base64 = "0.22"
+base64 = "0.23"
 half = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
 parking_lot = { workspace = true }

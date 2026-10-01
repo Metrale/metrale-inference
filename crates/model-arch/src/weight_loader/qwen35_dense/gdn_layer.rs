@@ -24,6 +24,7 @@ use metrale_model_weights::weights::WeightDtype;
 use super::fp8_residency::DerivedResidency;
 use super::gdn_dequant::{self, GdnIn};
 use super::load_cx::{Flow, LayerIn, LoadCx};
+use super::served_formats::{Group, Served};
 use super::{concat_fp8_block_scaled, gdn_fp8_arm_selected, packed_q2_from_store, proj_q2_group};
 use crate::tp_shard::TpGdnDims;
 
@@ -66,7 +67,9 @@ pub(super) fn load_linear_attention(
         && std::env::var_os("METRALE_NO_Q2_GDN").is_none()
         && proj_q2_group(store, &format!("{la}.in_proj_qkv")).is_some()
         && proj_q2_group(store, &format!("{la}.in_proj_z")).is_some();
+    let qkv_module = format!("{la}.in_proj_qkv");
     if gdn_q2 {
+        cx.record_served(Group::Gdn, i, &qkv_module, Served::Q2);
         let layer = build_gdn_q2(
             cx,
             LayerIn {
@@ -106,6 +109,7 @@ pub(super) fn load_linear_attention(
     // installed by `set_fp8_decode_weights`. Decode and prefill both read them
     // (`qkvz_fp8w` arms of `qwen3_ssm/trait_prefill_proj.rs`).
     if gdn_fp8_arm_selected(store, &la, config.tp_world_size) {
+        cx.record_served(Group::Gdn, i, &qkv_module, Served::Fp8);
         let layer = build_gdn_fp8(
             cx,
             residency,

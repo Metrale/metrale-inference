@@ -166,30 +166,31 @@ impl TransformerModel {
             self.levers.kv_poison,
         )?;
 
-        let meta_base = self.buffers.scratch().offset(32768);
+        let layout = self.decode_meta(0, metrale_gpu_runtime::gpu::DevicePtr::NULL);
+        let meta_base = layout.positions;
         let max_blocks = seq.block_table.len() as u32;
 
         let pos_val = seq.seq_len as u32;
         self.gpu
-            .copy_h2d_async(&pos_val.to_le_bytes(), meta_base, stream)?;
+            .copy_h2d_async(&pos_val.to_le_bytes(), layout.positions, stream)?;
 
         let block_idx = seq
             .physical_block_for(seq.seq_len / bs)
             .unwrap_or(self.dummy_kv_block);
         let global_slot = (block_idx as i64) * (bs as i64) + ((seq.seq_len % bs) as i64);
         self.gpu
-            .copy_h2d_async(&global_slot.to_le_bytes(), meta_base.offset(8), stream)?;
+            .copy_h2d_async(&global_slot.to_le_bytes(), layout.slot, stream)?;
 
         let actual_seq_len = (seq.seq_len + 1) as i32;
         self.gpu
-            .copy_h2d_async(&actual_seq_len.to_le_bytes(), meta_base.offset(16), stream)?;
+            .copy_h2d_async(&actual_seq_len.to_le_bytes(), layout.seq_len, stream)?;
 
         let bt_i32: Vec<i32> = seq.block_table.iter().map(|&b| b as i32).collect();
         // 2026-09-25: SAFETY: the length is `bt_i32.len() * 4` bytes of the `Vec<i32>` above.
         let bt_bytes: &[u8] =
             unsafe { std::slice::from_raw_parts(bt_i32.as_ptr() as *const u8, bt_i32.len() * 4) };
         self.gpu
-            .copy_h2d_async(bt_bytes, meta_base.offset(256), stream)?;
+            .copy_h2d_async(bt_bytes, layout.block_table, stream)?;
 
         // 2026-09-25: Upload this step's token id into the stable `token_ids` buffer
         // before any replay, for layers that read token ids on the device
@@ -228,16 +229,9 @@ impl TransformerModel {
             self.upload_seq_slot_uniform(seq.adapter_slot, 1, meta_base.offset(128), stream)?;
 
         let attn_metadata = AttnMetadataDev {
-            positions: meta_base,
-            positions_h: meta_base,
-            positions_w: meta_base,
-            slot: meta_base.offset(8),
-            seq_len: meta_base.offset(16),
-            block_table: meta_base.offset(256),
             max_blocks_per_seq: max_blocks,
-            num_seqs: 1,
             seq_slot,
-            moe_row_adapter: metrale_gpu_runtime::gpu::DevicePtr::NULL,
+            ..layout
         };
 
         // 2026-09-25: Lift the FP8-KV calibration graph suppression once every

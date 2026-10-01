@@ -10,6 +10,21 @@
 use super::*;
 
 impl DraftProposer for MtpHead {
+    fn circuit_draft(
+        &self,
+        config: &metrale_config::ModelConfig,
+        levers: &crate::layers::ops::ModelLevers,
+    ) -> Option<crate::circuit_exec::DraftBinding> {
+        Some(self.circuit_binding(config, levers))
+    }
+
+    fn set_circuit_draft(
+        &self,
+        runner: Option<std::sync::Arc<dyn crate::circuit_exec::DraftRunner>>,
+    ) {
+        self.install_circuit(runner);
+    }
+
     fn alloc_state(&self, _gpu: &dyn GpuBackend) -> Result<Box<dyn ProposerState>> {
         Ok(Box::new(MtpProposerState {
             block_table: Vec::new(),
@@ -100,7 +115,11 @@ impl DraftProposer for MtpHead {
         stream: u64,
         out_conf: Option<&mut Vec<Vec<f32>>>,
     ) -> Result<Option<Vec<Vec<u32>>>> {
-        if !self.can_propose_batch(last_tokens.len(), ctx.buffers, ctx.config) {
+        // 2026-09-30: Under `--forward circuit` each sequence drafts alone, through the circuit's
+        // draft program (`forward.rs`); the batched propose is legacy code.
+        if !self.can_propose_batch(last_tokens.len(), ctx.buffers, ctx.config)
+            || self.circuit_draft.read().is_some()
+        {
             return Ok(None);
         }
         // 2026-09-25: The width policy sees only the config and the arena, so the

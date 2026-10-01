@@ -10,11 +10,20 @@
 //! carries no date. clap lists the flags in declaration order, so a flattened
 //! struct's fields sit where its `#[command(flatten)]` field is: last.
 
+use crate::cli::flag_values::ForwardArg;
 use clap::Args;
 
 // 2026-09-26: `ServeArgs` reaches these fields through `Deref`.
 #[derive(Args, Debug, Clone, PartialEq)]
 pub struct ServeSchedulingArgs {
+    /// Which forward decode runs: `legacy`, the hand-written layer loops, or `circuit`, the
+    /// program compiled at boot from the model's circuit plan (`met circuit show`);
+    /// `circuit-reference` compiles the plan without its bit-identical fusions. The circuit
+    /// covers single-sequence decode so far; boot refuses a model, recipe or switch it does not
+    /// model. No environment fallback.
+    #[arg(long, value_enum, default_value_t = ForwardArg::Legacy)]
+    pub forward: ForwardArg,
+
     /// Global kill-switch for chain-of-thought / reasoning output.
     /// When set, the server forces thinking off regardless of what the
     /// client requests (reasoning_effort, thinking.budget_tokens, etc.)
@@ -136,6 +145,13 @@ pub struct ServeSchedulingArgs {
     /// that, for ablation.
     #[arg(long)]
     pub dflash_gamma: Option<usize>,
+
+    /// 2026-09-30: The γ this DFlash serve runs, resolved once from `dflash_gamma` and the
+    /// drafter (`serve_phases::apply_dflash_gamma`); read it through
+    /// `ServeArgs::serve_dflash_gamma`. `dflash_gamma` stays the flag as given, since the
+    /// scheduler's rung treats a pinned γ differently.
+    #[arg(skip)]
+    pub dflash_gamma_resolved: Option<usize>,
 
     /// DFlash drafter sliding-window size, in tokens. Set to 0 to disable the
     /// window (full-prefix attention).

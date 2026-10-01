@@ -170,6 +170,14 @@ pub trait PrefixCache: Send + Sync {
         0
     }
 
+    /// 2026-09-30: Take a reference on each full block of the prefix `lookup` would match,
+    /// without the snapshot lookup or a hit or miss count, so eviction skips that prefix until
+    /// [`PrefixCache::release_matched`] with the returned token count. The default pins nothing
+    /// and answers 0.
+    fn pin_prefix(&self, _tokens: &[u32], _block_size: usize, _adapter_id: u64) -> usize {
+        0
+    }
+
     /// 2026-09-26: Insert a completed prefill's blocks.
     ///
     /// `block_table[i]` is the block for tokens

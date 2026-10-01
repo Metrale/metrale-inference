@@ -28,6 +28,9 @@ metrale-sampling = { path = "../sampling", default-features = false }
 metrale-scheduler = { path = "../scheduler" }
 metrale-storage = { path = "../storage", default-features = false }
 metrale-telemetry = { path = "../telemetry" }
+# 2026-09-28: The circuit instance a `ForwardSelect::Circuit` names; also read by `padded_ladder`,
+# which checks the batch ladder against the instances' plans.
+metrale-circuit = { path = "../circuit" }
 anyhow = { workspace = true }
 half = "2"
 parking_lot = { workspace = true }
@@ -37,7 +40,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
-base64 = "0.22"
+base64 = "0.23"
 
 [lints]
 workspace = true

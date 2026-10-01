@@ -187,7 +187,7 @@ fn main() -> Result<()> {
         }
     );
 
-    let mut rng = Rng(0x9_17_09_28_2026);
+    let mut rng = Rng(0x0917_0928_2026);
     let max_m_pad = BATCHES
         .iter()
         .map(|m| m.div_ceil(16) * 16)
@@ -292,13 +292,13 @@ fn main() -> Result<()> {
                 c.cosine,
                 c.rel_rms,
             );
-            if !(c.cosine >= COSINE_GATE) || !c.cosine.is_finite() {
+            if !c.cosine.is_finite() || c.cosine < COSINE_GATE {
                 failures.push(format!(
                     "{} M={m}: cosine {:.6} < {COSINE_GATE}",
                     shape.label, c.cosine
                 ));
             }
-            if !(c.rel_rms <= rel_rms_gate) || !c.rel_rms.is_finite() {
+            if !c.rel_rms.is_finite() || c.rel_rms > rel_rms_gate {
                 failures.push(format!(
                     "{} M={m}: rel_rms {:.4} > {rel_rms_gate}",
                     shape.label, c.rel_rms
@@ -362,19 +362,19 @@ fn main() -> Result<()> {
                         m * n
                     ));
                 }
-                if !(d.cosine >= CUBLAS_COSINE_GATE) || !d.cosine.is_finite() {
+                if !d.cosine.is_finite() || d.cosine < CUBLAS_COSINE_GATE {
                     failures.push(format!(
                         "{} M={m}: cuBLASLt vs kernel cosine {:.9} < {CUBLAS_COSINE_GATE}",
                         shape.label, d.cosine
                     ));
                 }
-                if !(d.rel_rms <= CUBLAS_REL_RMS_GATE) || !d.rel_rms.is_finite() {
+                if !d.rel_rms.is_finite() || d.rel_rms > CUBLAS_REL_RMS_GATE {
                     failures.push(format!(
                         "{} M={m}: cuBLASLt vs kernel rel_rms {:.2e} > {CUBLAS_REL_RMS_GATE:.0e}",
                         shape.label, d.rel_rms
                     ));
                 }
-                if !(r.cosine >= COSINE_GATE) {
+                if r.cosine.is_nan() || r.cosine < COSINE_GATE {
                     failures.push(format!(
                         "{} M={m}: cuBLASLt vs W8A16 cosine {:.6} < {COSINE_GATE}",
                         shape.label, r.cosine

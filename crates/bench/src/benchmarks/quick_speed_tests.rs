@@ -76,7 +76,10 @@ fn a_fixture_isl_loads_the_committed_text_and_any_other_synthesizes() {
             !p.starts_with("The quick brown fox"),
             "{isl}: expected fixture text, got synthesized filler"
         );
-        assert_eq!(format!("{:x}", Sha256::digest(p.as_bytes())), digest);
+        assert_eq!(
+            metrale_closure::hex_lower(&Sha256::digest(p.as_bytes())),
+            digest
+        );
     }
     // 2026-09-26: Any non-fixture size is exactly the shared synthesizer's
     // output, the function the concurrency sweep also builds prompts with.

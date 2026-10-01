@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: B300 plans with GB10's fusion rules. The rules describe the engine's routing, which
+# lives in shared layer code; what differs per class is which kernels the class compiles and
+# what its HARDWARE.toml [defaults] set, and the planner reads both from this class. B300 does
+# not inherit gb10's sources (kernels/b300/README.md), so the rule set is inherited here
+# explicitly rather than through HARDWARE.toml (schema: crates/circuit/src/hardware/class.rs).
+#
+# Owner: b300 kernels.
+# Invariants: a rule added here replaces gb10's rule of the same id; `remove` drops one.
+
+schema = 1
+inherits = "gb10"

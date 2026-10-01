@@ -234,7 +234,7 @@ fn string_at(value: &toml::Value, path: &Path, key: &str) -> Result<Option<Strin
 
 /// 2026-09-26: Read one `HARDWARE.toml` without validating `inherits`;
 /// [`hardware`] does.
-fn hardware_raw(kernels: &Path, hw: &str) -> Result<Hardware, LayoutError> {
+pub(crate) fn hardware_raw(kernels: &Path, hw: &str) -> Result<Hardware, LayoutError> {
     let path = kernels.join(hw).join("HARDWARE.toml");
     if !path.is_file() {
         return Err(LayoutError::UnknownHardware(hw.to_string()));

@@ -25,6 +25,10 @@ metrale-bench = { path = "../bench" }
 metrale-cache = { path = "../cache", default-features = false }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
+metrale-circuit = { path = "../circuit" }
+# 2026-09-30: `met circuit plan --hardware` resolves a class's kernel sources with the layout the
+# kernels build compiles (metrale_closure::layout); it was a dev-dependency only before.
+metrale-closure = { path = "../closure", default-features = false }
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
 metrale-grammar = { path = "../grammar" }
@@ -40,7 +44,7 @@ metrale-storage = { path = "../storage", default-features = false }
 metrale-telemetry = { path = "../telemetry" }
 anyhow = { workspace = true }
 axum = { version = "0.8", features = ["json"] }
-base64 = "0.22"
+base64 = "0.23"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 futures = "0.3"
@@ -49,6 +53,11 @@ hyper = { version = "1", features = ["server", "http1", "http2", "client"] }
 hyper-util = { version = "0.1", features = ["server-auto", "client-legacy", "http1", "tokio"] }
 lazy_static = "1"
 libc = "0.2"
+# 2026-09-30: Exactly 2.21.0. 2.22 changed how `none` and booleans render through `|string`
+# (to `None`/`True`/`False`), which changes the tool-call argument text inside the prompt the
+# model reads; `tokenizer::tests::qwen_dense_parity` pins today's rendering and fails on 2.24.
+# Raising it is a prompt-content change that needs its own certification, not a version bump
+# (Dependabot ignores it in .github/dependabot.yml).
 minijinja = { version = "=2.21.0", features = ["builtins", "adjacent_loop_items", "json", "loop_controls", "preserve_order"] }
 parking_lot = { workspace = true }
 prometheus = { version = "0.14", default-features = false }
@@ -70,7 +79,6 @@ unicode-width = "0.2"
 ureq = { version = "3", features = ["json"] }
 
 [dev-dependencies]
-metrale-closure = { path = "../closure", default-features = false }
 tempfile = "3"
 
 [[bin]]

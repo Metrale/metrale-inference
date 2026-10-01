@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-28: The formats each linear module of Qwen/Qwen3.6-35B-A3B-FP8 runs at under the
+# recipe qwen3.6/qwen3.6-35b-a3b-fp8-bf16head on main.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - The checkpoint is FP8 E4M3 with 128x128 block scales for q/k/v/o, linear_attn
+#   in_proj_qkv/in_proj_z/out_proj and every routed and shared expert, and BF16 for the
+#   router, shared_expert_gate, in_proj_a/b, lm_head and the MTP fc. The projections run
+#   W8A16 (BF16 activations) at decode; --expert-quantization defaults to fp8
+#   (crates/model-layers/src/layers/expert_quantization.rs:39-43).
+# - The MTP attention projections run BF16: the loader dequantizes them and quantize_proj
+#   keeps BF16 (crates/model-layers/src/layers/mtp_head.rs:344-365). Its experts stay FP8
+#   (mtp_head/new_native_fp8_moe.rs:24-51).
+
+schema = 1
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+tier = "nvfp4"
+
+[[linear]]
+match = "*.linear_attn.in_proj_b"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.linear_attn.in_proj_a"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.gate"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.shared_expert_gate"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "lm_head"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "mtp.lm_head"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "mtp.fc"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "mtp.layers.0.self_attn.*"
+weight = "bf16"
+activation = "bf16"
+
+# 2026-09-28: The expert and shared-expert down projections read the FP32 SiLU product the
+# gate/up side stages (kernels/gb10/common/moe_shared_expert_fused_fp8_grouped.cu:17-22).
+[[linear]]
+match = "*.mlp.experts.*.down_proj"
+weight = "fp8/block128x128"
+activation = "f32"
+
+[[linear]]
+match = "*.mlp.shared_expert.down_proj"
+weight = "fp8/block128x128"
+activation = "f32"
+
+[[linear]]
+match = "*"
+weight = "fp8/block128x128"
+activation = "bf16"

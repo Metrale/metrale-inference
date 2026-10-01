@@ -88,6 +88,22 @@ impl ServePlan {
     }
 }
 
+/// 2026-09-28: Read the serving endpoint's forward (`GET /forward`) into `resolved`
+/// (`record_serve::merge_live_forward`), refusing a server whose forward is not the one
+/// `requested` renders. Called once the endpoint serves.
+pub async fn attach_live_forward(
+    target: &metrale_bench::TargetEndpoint,
+    requested: crate::cli::flag_values::ForwardArg,
+    resolved: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    let doc = metrale_bench::http::get_json(target, "/forward", std::time::Duration::from_secs(10))
+        .await?;
+    let live: gate::record_serve::LiveForward =
+        serde_json::from_value(doc).context("parsing /forward")?;
+    gate::record_serve::merge_live_forward(resolved, requested.name(), &live)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
 /// 2026-09-26: The disclosure for one rendered, validated serve; the body of
 /// [`ServePlan::disclosed`], free so a test can call it without a plan.
 pub(crate) fn disclosed_from(args: &crate::cli::ServeArgs) -> BTreeMap<String, String> {

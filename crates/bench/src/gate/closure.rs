@@ -40,7 +40,7 @@ impl TargetClosure {
     fn inputs(&self, root: &Path, target: &Target) -> Option<metrale_closure::ClosureInputs> {
         Some(metrale_closure::ClosureInputs {
             sources: taxon::sources(root, target)?,
-            configs: taxon::configs(root, target),
+            configs: taxon::configs(root, target).ok()?,
             flags: self.flags.clone(),
             arch: self.arch.clone(),
             compiler: self.compiler.clone(),

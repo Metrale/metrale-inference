@@ -17,7 +17,7 @@ fn tmp(name: &str) -> std::path::PathBuf {
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    metrale_closure::hex_lower(&Sha256::digest(bytes))
 }
 
 /// 2026-09-26: The set holds every clip the legs name, with pinned bytes, and

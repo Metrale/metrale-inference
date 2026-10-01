@@ -33,6 +33,7 @@ mod impl_ngram;
 pub(crate) mod lm_head_fp8_rows;
 pub(crate) mod lm_head_q6k;
 pub(crate) mod pinned_pack;
+pub(crate) mod prefix_reclaim;
 pub(crate) mod seq_memtrace;
 pub(crate) mod ssm_batched_copy;
 pub(crate) mod ssm_pool;

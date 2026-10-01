@@ -9,6 +9,15 @@
 use crate::traits::SequenceState;
 use anyhow::{Result, bail};
 
+/// 2026-09-30: What [`ModelLifecycle::reclaim_prefix_blocks_for`] left: the free-block
+/// count a prefill of the prompt needs (`target`) and the count reached (`free`).
+/// `free < target` means nothing more was evictable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrefixReclaim {
+    pub target: usize,
+    pub free: usize,
+}
+
 /// 2026-09-26: The model's lifecycle and memory: teardown, thread binding, sequence allocation and
 /// release, sequence swap, and the KV pool counts.
 pub trait ModelLifecycle {
@@ -99,5 +108,28 @@ pub trait ModelLifecycle {
     /// caller stops asking. Default `0`.
     fn reclaim_prefix_blocks(&self, _num_blocks: usize) -> usize {
         0
+    }
+
+    /// 2026-09-30: Reclaim prefix-cache blocks until `num_free_blocks()` covers what a prefill
+    /// of `prompt` under `adapter_slot` allocates: `blocks_needed` (the caller's count for the
+    /// whole prompt, headroom included) less the blocks of the cached prefix that prefill will
+    /// reuse. An empty `prompt` means the prefill reuses nothing (prompt logprobs). Admission
+    /// and preemption resume call it before they allocate. Default: no prefix is reused, and
+    /// [`Self::reclaim_prefix_blocks`] runs until `blocks_needed` is free or it returns 0.
+    fn reclaim_prefix_blocks_for(
+        &self,
+        prompt: &[u32],
+        adapter_slot: i32,
+        blocks_needed: usize,
+    ) -> PrefixReclaim {
+        let _ = (prompt, adapter_slot);
+        let mut free = self.num_free_blocks();
+        while free < blocks_needed && self.reclaim_prefix_blocks(blocks_needed - free) > 0 {
+            free = self.num_free_blocks();
+        }
+        PrefixReclaim {
+            target: blocks_needed,
+            free,
+        }
     }
 }

@@ -490,6 +490,7 @@ impl TransformerModel {
             overlay_kernels,
             overlay_route_slot: std::sync::atomic::AtomicI32::new(-1),
             decode_moe_route: std::sync::atomic::AtomicI32::new(1), // 2026-09-25: `MoeLoraRoute::Fold`
+            circuit: parking_lot::RwLock::new(None),
         })
     }
 }

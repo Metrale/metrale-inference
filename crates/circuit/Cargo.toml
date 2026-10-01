@@ -1,0 +1,33 @@
+[package]
+name = "metrale-circuit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Architecture circuits: an op graph per model, the fusion rules that cover it, and the fused plan."
+
+# 2026-09-28: Pure logic. No GPU, no file I/O, no environment, no clock and no
+# randomness: callers read `kernels/circuits/*.toml`, `FUSIONS.toml` and the
+# kernel sources and pass their contents in. The server's `met circuit` and the
+# golden-plan tests are the two callers.
+
+[dependencies]
+# 2026-09-28: `DeclaredPrecisionPlan` and `WeightQuantPolicy`, the engine's precision answers the
+# circuit's `PolicyPrecision` adapter asks. Pure: no environment, no I/O.
+metrale-config = { path = "../config", default-features = false }
+serde_json = { workspace = true }
+sha2.workspace = true
+thiserror.workspace = true
+serde = { workspace = true }
+# 2026-09-28: Same pin as `metrale-closure` and `metrale-kernels`.
+toml = "1.1"
+
+[dev-dependencies]
+# 2026-09-28: The golden tests enumerate each target's kernel sources through
+# the same resolver the kernels build uses, so "available" means what the
+# build compiles.
+metrale-closure = { path = "../closure" }
+# 2026-09-28: The display tests measure lines as a terminal does; the renderer counts chars.
+unicode-width = "0.2"
+
+[lints]
+workspace = true

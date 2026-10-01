@@ -38,10 +38,10 @@ fn stamp_value(requirements: &str, provision: &str, scorer: &str) -> String {
         digest.update(asset.as_bytes());
     }
     format!(
-        "v2 py>={}.{} assets={:x}",
+        "v2 py>={}.{} assets={}",
         MIN_PYTHON.0,
         MIN_PYTHON.1,
-        digest.finalize()
+        metrale_closure::hex_lower(&digest.finalize())
     )
 }
 

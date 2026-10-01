@@ -227,6 +227,7 @@ mod gdn_dequant;
 mod gdn_layer;
 mod load_cx;
 mod prune;
+mod served_formats;
 mod w8a8_install;
 
 use fp8_residency::{DerivedResidency, RouteEnv};
@@ -307,7 +308,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
         let route_env = RouteEnv::from_env();
         let mut residency = DerivedResidency::default();
         let policy = load_cx::weight_quant_policy(config);
-        load_cx::log_declared_plan(&policy, config, &layer_types);
+        let served = std::cell::RefCell::new(served_formats::ServedFormats::default());
         let cx = LoadCx {
             store,
             config,
@@ -321,6 +322,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             bf16_to_fp8_k,
             route_env: &route_env,
             policy,
+            served: &served,
         };
 
         for (i, lt) in layer_types.iter().enumerate() {
@@ -330,7 +332,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             let lp = config.layer_prefix(i);
             let input_norm = dense(store, &format!("{lp}.input_layernorm.weight"))?;
             let post_attn_norm = dense(store, &format!("{lp}.post_attention_layernorm.weight"))?;
-            let ffn = ffn_arm::build_dense_ffn(&cx, &mut residency, &lp)?;
+            let ffn = ffn_arm::build_dense_ffn(&cx, &mut residency, i, &lp)?;
 
             match lt {
                 LayerType::FullAttention => {
@@ -383,7 +385,7 @@ impl ModelWeightLoader for Qwen35DenseWeightLoader {
             }
         }
 
-        w8a8_install::install_declared(store, config, gpu, &layer_types, &mut layers)?;
+        cx.install_w8a8_and_log_served(&layer_types, &mut layers)?;
         tracing::info!(
             "Qwen3.5 dense weight loader: {} layers ({} attention, {} SSM, dense FFN)",
             layers.len(),

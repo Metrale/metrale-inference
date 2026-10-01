@@ -185,18 +185,30 @@ impl SsmStatePool {
         rollback_mode: metrale_model_layers::ssm_reserve::SsmRollbackMode,
         gpu: &dyn GpuBackend,
     ) -> Result<Self> {
-        let _d_conv = config.linear_conv_kernel_dim;
-
-        let h_bytes = config.ssm_h_state_bytes();
-        let h_stored_bytes =
-            metrale_model_layers::ssm_reserve::ssm_h_stored_bytes(h_bytes, h_f16_pool);
-        let conv_bytes = config.ssm_conv_state_bytes();
-        let num_ssm_layers = config.num_ssm_layers();
-
-        // 2026-09-25: Slot `max_slots` is a reserved dummy (`dummy_slot()`)
-        // that batched-decode padding rows use, so padding never writes a
-        // claimed slot's state. It costs one extra h and conv blob per layer.
-        let total_slots = max_slots + 1;
+        use metrale_circuit::state::Holding;
+        use metrale_model_layers::ssm_reserve::{PoolPlan, PoolShape, PoolState, pool_counts};
+        // 2026-09-30: Every size below is the pool plan's, the one the server's preflight
+        // reserves (`ssm_reserve::PoolPlan`): unit counts from `pool_counts`, bytes from the
+        // circuit's state declarations. Slot `max_slots` is a reserved dummy (`dummy_slot()`)
+        // that batched-decode padding rows use, so padding never writes a claimed slot's
+        // state. Every slot gets the full H width when the model captures DFlash layers
+        // (DFlash's K=γ verify uses every slot at full width) or when `num_intermediates` is
+        // not the MTP `num_drafts + 1`.
+        let counts = pool_counts(&PoolShape {
+            max_slots,
+            spec: has_mtp,
+            num_intermediates,
+            num_drafts,
+            uniform_h: !config.dflash_capture_layers.is_empty()
+                || num_intermediates != num_drafts + 1,
+            rollback: rollback_mode,
+        });
+        let plan = PoolPlan::new(config, &counts, h_f16_pool)?;
+        let h_bytes = plan.h_f32_unit;
+        let h_stored_bytes = plan.h_stored_unit;
+        let conv_bytes = plan.conv_unit;
+        let num_ssm_layers = plan.layers;
+        let total_slots = counts.slots;
 
         let mut owned_allocations = Vec::new();
         let mut h_intermediate_pools = Vec::new();
@@ -204,11 +216,17 @@ impl SsmStatePool {
         let mut h_checkpoint_pools = Vec::new();
         let mut conv_checkpoint_pools = Vec::new();
 
-        let (h_state_pools, allocations) =
-            alloc_layer_pools(gpu, num_ssm_layers, total_slots * h_stored_bytes)?;
+        let (h_state_pools, allocations) = alloc_layer_pools(
+            gpu,
+            num_ssm_layers,
+            plan.layer_bytes(PoolState::H, Holding::Live),
+        )?;
         owned_allocations.extend(allocations);
-        let (conv_state_pools, allocations) =
-            alloc_layer_pools(gpu, num_ssm_layers, total_slots * conv_bytes)?;
+        let (conv_state_pools, allocations) = alloc_layer_pools(
+            gpu,
+            num_ssm_layers,
+            plan.layer_bytes(PoolState::Conv, Holding::Live),
+        )?;
         owned_allocations.extend(allocations);
 
         // 2026-09-25: The FP32 prefill staging arena exists only when the h
@@ -234,60 +252,35 @@ impl SsmStatePool {
             }
         };
 
-        // 2026-09-25: MTP verify pools cover only the slots speculative
-        // dispatch can reach: `ssm_reserve::mtp_state_slots`, the same number
-        // preflight reserves for and the scheduler's `spec_slot_cap` uses.
-        // The pools allocate `mtp_slots + 1`, the extra being their own dummy.
-        let mtp_slots = if has_mtp {
-            metrale_model_layers::ssm_reserve::mtp_state_slots(max_slots)
-        } else {
-            0
-        };
-        // 2026-09-25: Per-slot H-intermediate counts come from
-        // `ssm_reserve::verify_slot_h_intermediates`, which the preflight
-        // reserve also uses. The MTP dummy at index `mtp_slots` always gets
-        // full width (`num_intermediates - 1`): batched-verify pad rows may
-        // write any live token index. The H side holds K-1 intermediates per
-        // K-row verify; the conv side keeps all K (`num_intermediates`), see
-        // `verify_slot_h_intermediates` for why.
+        // 2026-09-25: MTP verify pools cover only the slots speculative dispatch can reach
+        // (`ssm_reserve::mtp_state_slots`, which the scheduler's `spec_slot_cap` uses), plus
+        // their own dummy; the h intermediates per slot are `pool_counts`' (K-1, tiered by
+        // the MTP ladder, the dummy at full width; 0 under replay, which keeps none).
         let replay = rollback_mode == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay;
-        // 2026-09-25: Every slot gets the full H width when the model captures
-        // DFlash layers (DFlash's K=γ verify uses every slot at full width) or
-        // when `num_intermediates` is not the MTP `num_drafts + 1`.
-        let uniform_h =
-            !config.dflash_capture_layers.is_empty() || num_intermediates != num_drafts + 1;
-        let h_inter_counts: Vec<usize> = if has_mtp && replay {
-            // 2026-09-25: Replay keeps no per-token snapshots, so every count is
-            // 0; the vec keeps its length for the accessors.
-            vec![0; mtp_slots + 1]
-        } else if has_mtp {
-            (0..=mtp_slots)
-                .map(|s| {
-                    if s == mtp_slots || uniform_h {
-                        num_intermediates.saturating_sub(1)
-                    } else {
-                        metrale_model_layers::ssm_reserve::verify_slot_h_intermediates(
-                            s, num_drafts, false,
-                        )
-                        .min(num_intermediates.saturating_sub(1))
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let h_inter_counts: Vec<usize> = counts
+            .verify
+            .as_ref()
+            .map(|v| v.h_steps.clone())
+            .unwrap_or_default();
+        let mtp_slots = h_inter_counts.len().saturating_sub(1);
         let (h_inter_offsets, h_inter_total) = h_inter_layout(&h_inter_counts);
         let mut replay_input_rings = Vec::new();
         if has_mtp {
             let ni = num_intermediates;
             let mtp_total = mtp_slots + 1;
             if !replay {
-                let (layers, allocations) =
-                    alloc_layer_pools(gpu, num_ssm_layers, h_inter_total * h_stored_bytes)?;
+                let (layers, allocations) = alloc_layer_pools(
+                    gpu,
+                    num_ssm_layers,
+                    plan.layer_bytes(PoolState::H, Holding::Steps),
+                )?;
                 h_intermediate_pools = layers;
                 owned_allocations.extend(allocations);
-                let (layers, allocations) =
-                    alloc_layer_pools(gpu, num_ssm_layers, mtp_total * ni * conv_bytes)?;
+                let (layers, allocations) = alloc_layer_pools(
+                    gpu,
+                    num_ssm_layers,
+                    plan.layer_bytes(PoolState::Conv, Holding::Steps),
+                )?;
                 conv_intermediate_pools = layers;
                 owned_allocations.extend(allocations);
             } else {
@@ -308,12 +301,18 @@ impl SsmStatePool {
 
             // 2026-09-25: One checkpoint per MTP slot (dummy included) per
             // layer, in both rollback modes.
-            let (layers, allocations) =
-                alloc_layer_pools(gpu, num_ssm_layers, mtp_total * h_stored_bytes)?;
+            let (layers, allocations) = alloc_layer_pools(
+                gpu,
+                num_ssm_layers,
+                plan.layer_bytes(PoolState::H, Holding::Checkpoint),
+            )?;
             h_checkpoint_pools = layers;
             owned_allocations.extend(allocations);
-            let (layers, allocations) =
-                alloc_layer_pools(gpu, num_ssm_layers, mtp_total * conv_bytes)?;
+            let (layers, allocations) = alloc_layer_pools(
+                gpu,
+                num_ssm_layers,
+                plan.layer_bytes(PoolState::Conv, Holding::Checkpoint),
+            )?;
             conv_checkpoint_pools = layers;
             owned_allocations.extend(allocations);
 
@@ -423,3 +422,7 @@ mod h_stored_geometry_tests;
 #[cfg(test)]
 #[path = "ssm_pool_slot_guard_tests.rs"]
 mod slot_guard_tests;
+
+#[cfg(test)]
+#[path = "ssm_pool_state_plan_tests.rs"]
+mod state_plan_tests;

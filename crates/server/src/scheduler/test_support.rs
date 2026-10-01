@@ -241,6 +241,9 @@ pub(super) struct PreemptStubModel {
     pub(super) free_blocks: AtomicUsize,
     pub(super) total_blocks: usize,
     pub(super) reclaimable: AtomicUsize,
+    /// 2026-09-30: Blocks of any non-empty prompt's prefix the stub's prefix cache
+    /// holds, which `reclaim_prefix_blocks_for` leaves out of its target.
+    pub(super) cached_prefix_blocks: usize,
 }
 
 impl PreemptStubModel {

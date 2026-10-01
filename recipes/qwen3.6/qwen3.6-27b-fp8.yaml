@@ -7,9 +7,7 @@ max_nodes: 1
 metadata:
   description: |
     Qwen3.6-27B (dense, native FP8) on the Metrale Engine runtime, at the
-    full 262,144-token context, two sequences, FP8 KV cache with the first
-    and last two attention layers kept at BF16 (`kv_high_precision_layers:
-    auto`). No MTP.
+    full 262,144-token context, two sequences, BF16 KV cache. No MTP.
 
     Precision (`weight_quantization: declared`, the checkpoint's own FP8):
     the GDN projections serve their block-scaled FP8 weights (W8A16, prefill
@@ -17,14 +15,20 @@ metadata:
     Attention decode and every dense-FFN projection run from NVFP4 copies
     requantized at load, with 16-bit activations: those paths have no
     per-row FP8 decode arm yet. That is below the declared FP8 weights, and
-    the load log says so. The checkpoint ships no KV scales, so the FP8 KV
-    cache runs at scale 1.0.
+    the load log says so.
+
+    KV cache: BF16. The checkpoint ships no K/V scales, so an FP8 KV cache
+    would run at scale 1.0 (uncalibrated) unless calibrated online. On a
+    GB10 boot (2026-09-30) BF16 still holds 733,664 KV tokens at util 0.85,
+    above the 524,288 two full-length sequences need; it answered a 98k-token
+    three-needle passkey probe 3/3 with a prefill 19% faster than FP8 KV
+    (117 s vs 145 s); decode speed was unchanged.
   maintainer: metrale
   category: chat
   model_params: 27B
   model_dtype: fp8
   quantization: fp8
-  kv_dtype: fp8
+  kv_dtype: bf16
 
 defaults:
   # 2026-09-30: The checkpoint's declared FP8, the engine default, which states the precision
@@ -38,8 +42,14 @@ defaults:
   max_model_len: 262144
   max_batch_size: 2
   max_num_seqs: 2
-  kv_cache_dtype: fp8
-  kv_high_precision_layers: auto
+  # 2026-09-30: BF16, not FP8. This checkpoint ships no K/V scales, so FP8 KV ran uncalibrated
+  # at scale 1.0. Measured on GB10 (plain recipe, declared, util 0.85): BF16, FP8 with
+  # `--fp8-kv-calibration-tokens 256`, and uncalibrated FP8 all passed 32k and 98k three-needle
+  # passkey probes 3/3. Of four short greedy replies, uncalibrated FP8 diverged from BF16 on
+  # one, and calibrated FP8 matched BF16 on all four. BF16 prefilled the 98k prompt in 117 s
+  # against 145 s for either FP8 KV, decode was unchanged, and its 733,664-token KV pool
+  # covers two full 262,144-token sequences.
+  kv_cache_dtype: bf16
   gpu_memory_utilization: 0.88
   scheduler: slai
   mtp_quantization: bf16

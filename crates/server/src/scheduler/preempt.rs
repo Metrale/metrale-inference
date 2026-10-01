@@ -277,15 +277,12 @@ pub(super) fn resume_preempted_seqs(
             );
             continue;
         }
-        let mut free = model.num_free_blocks();
-        while free < want {
-            let got = model.reclaim_prefix_blocks(want - free);
-            if got == 0 {
-                break;
-            }
-            free = model.num_free_blocks();
-        }
-        if free < want {
+        // 2026-09-30: The re-prefill reuses the history `preempt_requeue` offered to
+        // the prefix cache, so that prefix is not counted and not evicted
+        // (`Model::reclaim_prefix_blocks_for`).
+        let p = &preempted[idx];
+        let reclaim = model.reclaim_prefix_blocks_for(&p.tokens, p.a.seq.adapter_slot, want);
+        if reclaim.free < reclaim.target {
             return;
         }
         let p = preempted.remove(idx);

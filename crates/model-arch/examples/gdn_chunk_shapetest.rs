@@ -440,39 +440,38 @@ fn main() -> Result<()> {
         challenger_smem()
     );
     println!(
-        "{:>5} {:>5} | {:>16} | {:>16} | {:>16} | {:>10} | {}",
-        "t", "batch", "S_c: cos nrdev", "uc: cos nrdev", "S_final: cos nrdev", "speedup", "result"
+        "{:>5} {:>5} | {:>16} | {:>16} | {:>16} | {:>10} | result",
+        "t", "batch", "S_c: cos nrdev", "uc: cos nrdev", "S_final: cos nrdev", "speedup"
     );
     println!("{}", "-".repeat(96));
 
     for &t in &[2048usize, 8192, 16384] {
-        for &batch in &[1usize] {
-            let case = gen_case(t, batch);
+        let batch = 1usize;
+        let case = gen_case(t, batch);
 
-            let (sc0, uc0, sf0) = run_full(g, k_wu, k_ref, &case, false)?;
-            let (sc1, uc1, sf1) = run_full(g, k_wu, k_tc, &case, true)?;
+        let (sc0, uc0, sf0) = run_full(g, k_wu, k_ref, &case, false)?;
+        let (sc1, uc1, sf1) = run_full(g, k_wu, k_tc, &case, true)?;
 
-            let (sc_cos, sc_nr) = cmp_bf16(&sc1, &sc0);
-            let (uc_cos, uc_nr) = cmp_bf16(&uc1, &uc0);
-            let (sf_cos, sf_nr) = cmp_f32(&sf1, &sf0);
+        let (sc_cos, sc_nr) = cmp_bf16(&sc1, &sc0);
+        let (uc_cos, uc_nr) = cmp_bf16(&uc1, &uc0);
+        let (sf_cos, sf_nr) = cmp_f32(&sf1, &sf0);
 
-            let pass = sc_cos >= COS_GATE
-                && sc_nr < NRDEV_GATE
-                && uc_cos >= COS_GATE
-                && uc_nr < NRDEV_GATE
-                && sf_cos >= COS_GATE
-                && sf_nr < NRDEV_GATE;
-            all_ok &= pass;
+        let pass = sc_cos >= COS_GATE
+            && sc_nr < NRDEV_GATE
+            && uc_cos >= COS_GATE
+            && uc_nr < NRDEV_GATE
+            && sf_cos >= COS_GATE
+            && sf_nr < NRDEV_GATE;
+        all_ok &= pass;
 
-            let t_ref = time_scan(g, k_wu, k_ref, &case, false, iters)?;
-            let t_new = time_scan(g, k_wu, k_tc, &case, true, iters)?;
-            let speedup = if t_new > 0.0 { t_ref / t_new } else { 0.0 };
+        let t_ref = time_scan(g, k_wu, k_ref, &case, false, iters)?;
+        let t_new = time_scan(g, k_wu, k_tc, &case, true, iters)?;
+        let speedup = if t_new > 0.0 { t_ref / t_new } else { 0.0 };
 
-            println!(
-                "{t:>5} {batch:>5} | ksplit {t_ref:>8.4}ms  tc_vblock {t_new:>8.4}ms | {speedup:>6.2}x | Sf_cos {sf_cos:>7.4} | {}",
-                if pass { "PASS" } else { "FAIL" }
-            );
-        }
+        println!(
+            "{t:>5} {batch:>5} | ksplit {t_ref:>8.4}ms  tc_vblock {t_new:>8.4}ms | {speedup:>6.2}x | Sf_cos {sf_cos:>7.4} | {}",
+            if pass { "PASS" } else { "FAIL" }
+        );
     }
 
     println!("{}", "-".repeat(96));

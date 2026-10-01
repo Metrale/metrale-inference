@@ -141,6 +141,15 @@ impl PrefixCache for RadixTree {
         self.inner.lock().walk(tokens, block_size, adapter_id).2
     }
 
+    fn pin_prefix(&self, tokens: &[u32], block_size: usize, adapter_id: u64) -> usize {
+        let mut inner = self.inner.lock();
+        let matched = inner.walk(tokens, block_size, adapter_id).2;
+        if matched > 0 {
+            inner.inc_refs(tokens, block_size, matched, adapter_id);
+        }
+        matched
+    }
+
     fn insert(
         &self,
         tokens: &[u32],

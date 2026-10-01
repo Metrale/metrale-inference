@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-28: The recipes that have a circuit, with the arch shape, precision table, policy and
+# plan matrix each one is rendered and checked under (schema: crates/circuit/src/instances.rs).
+#
+# Owner: metrale-circuit.
+# Invariants:
+# - Every policy setting a FUSIONS.toml `when` reads is stated here; nothing falls back to an
+#   engine default. Each value cites where the recipe or the engine sets it.
+# - The shapes restate the checkpoints' config.json (verified 2026-09-28 against the local
+#   snapshots); `met circuit show` re-checks them whenever the checkpoint is cached.
+# - `multi_seq` rows are the padded batch ladder of `padded_batch_n`
+#   (crates/model-engine/src/traits/model.rs:52-58); verify rows are K = 1 + drafts.
+# - `golden = true` instances have every plan checked in under kernels/circuits/plans/.
+
+schema = 1
+
+# 2026-09-28: The dense agentic recipe (the decode-floor gate's default entry,
+# kernels/gb10/qwen3.8-27b/BENCH.toml). Settings:
+# - row_tiers: by_rows, the default for a dense checkpoint (ml/row_tiers.rs:64-78).
+# - kv_cache_dtype, lm_head_dtype: bf16, pinned by the recipe.
+# - ssm_h_dtype f32 and gdn_fused_norm off: flag defaults
+#   (crates/server/src/cli/serve_args.rs:145-206).
+# - ssm_batched_recurrent: on, kernels/gb10/HARDWARE.toml:122 (the default since #51). The
+#   per-sequence fallback is the `gdn_state_slots_fragmented` runtime route of gb10's
+#   FUSIONS.toml.
+# - ssm_ba_gates_hopper: on, kernels/gb10/HARDWARE.toml:157.
+# - gemv_sw: on unless METRALE_NO_GEMV_SW=1 (ml/ops/model_levers_resolve.rs:53).
+# - w4a16_tc: on unless METRALE_NO_W4A16_TC (ml/ops/gemv_tc.rs:79-82).
+# - decode_split_silu: on, kernels/gb10/HARDWARE.toml:168.
+# - rms_norm_act_quant: off, the engine has no fused norm-quantize launch (2026-09-30).
+[[instance]]
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+arch = "qwen3_5"
+target = "gb10/qwen3.8-27b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+
+# 2026-09-28: Formats from the engine's own policy (metrale_circuit::PolicyPrecision) over the
+# checkpoint's declared plan (checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml) at the tier the
+# recipe's gates pin (kernels/gb10/qwen3.8-27b/BENCH.toml). The checkpoint declares FP8 W8A8
+# for attention, the GDN projections, lm_head and the MLP of layers 56-63, and NVFP4 W4A4 for
+# the other MLPs; under `nvfp4` all of them run NVFP4 weights with BF16 activations.
+[instance.precision]
+checkpoint_plan = "unsloth--Qwen3.8-27B-NVFP4"
+tier = "nvfp4"
+caps = []
+engine = [
+  { match = "lm_head", weight = "bf16", activation = "bf16", why = "--lm-head-dtype bf16, pinned by the recipe (the checkpoint declares an FP8 head)" },
+  { match = "mtp.lm_head", weight = "nvfp4/g16", activation = "bf16", why = "the draft head's runtime NVFP4 copy of the BF16 lm_head (crates/model-engine/src/factory/lm_head_setup.rs:116-133)" },
+  { match = "mtp.*", weight = "bf16", activation = "bf16", why = "--mtp-quantization bf16, pinned by the recipe" },
+]
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+
+# 2026-09-30: The dense agentic recipe above served under `--weight-quantization declared` (the
+# engine default; the recipe pins `nvfp4`, so no recipe serves this yet): the checkpoint's own
+# precision, FP8 W8A8 attention, GDN projections and layers 56-63's MLP, and NVFP4 W4A4 for the
+# other MLPs. Everything else is the instance above; `variant` names its golden plans.
+[[instance]]
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+arch = "qwen3_5"
+variant = "declared"
+target = "gb10/qwen3.8-27b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+
+[instance.precision]
+checkpoint_plan = "unsloth--Qwen3.8-27B-NVFP4"
+tier = "declared"
+caps = ["w8a8_decode", "fp8_lm_head_batched"]
+engine = [
+  { match = "lm_head", weight = "bf16", activation = "bf16", why = "--lm-head-dtype bf16, pinned by the recipe (the checkpoint declares an FP8 head)" },
+  { match = "mtp.lm_head", weight = "nvfp4/g16", activation = "bf16", why = "the draft head's runtime NVFP4 copy of the BF16 lm_head (crates/model-engine/src/factory/lm_head_setup.rs:116-133)" },
+  { match = "mtp.*", weight = "bf16", activation = "bf16", why = "--mtp-quantization bf16, pinned by the recipe" },
+]
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+
+# 2026-09-28: The MoE flagship recipe (the agentic-webserver gate's default entry,
+# kernels/gb10/qwen3.6-35b-a3b/BENCH.toml). As above, except:
+# - row_tiers: canonical, the default for an FP8 MoE checkpoint (ml/row_tiers.rs:64-78,
+#   published at crates/server/src/main_modules/serve_load/model_setup.rs:282-290).
+[[instance]]
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+arch = "qwen3_6_moe"
+precision = "qwen3.6-35b-a3b-fp8-bf16head"
+target = "gb10/qwen3.6-35b-a3b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+
+# 2026-09-29: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, the first model built by the
+# `new-model` method (`.claude/skills/new-model/SKILL.md`). The recipe id is the planned one: no
+# recipe serves this checkpoint yet, and the circuit is not an executor target (`golden = false`;
+# `met circuit venn` reads it). Architecturally Nemotron-3 Nano 30B-A3B plus an MTP head, a new
+# quantization mix and the `layers_block_type` config format, so the kernel target is Nano's.
+# - Shape: config.json (verified 2026-09-29): `layers_block_type` (M = mamba, E = moe,
+#   A = attention), hidden_size, vocab_size, num_attention_heads, num_key_value_heads, head_dim,
+#   mamba_num_heads, mamba_head_dim, ssm_state_size, n_groups, conv_kernel, n_routed_experts,
+#   num_experts_per_tok, moe_intermediate_size, moe_shared_expert_intermediate_size.
+# - kv_cache_dtype: fp8, as the checkpoint declares (`kv_cache_quant_algo = FP8`, static
+#   k_scale/v_scale tensors). lm_head_dtype: nvfp4, declared W4A16_NVFP4.
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE
+#   (ml/row_tiers.rs:64-78). The other settings are the flag defaults cited for the entries above.
+[[instance]]
+recipe = "nemotron-3.5/nemotron-3.5-lightning-30b-a3b-nvfp4"
+checkpoint = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+arch = "nemotron_h"
+precision = "nemotron-3.5-lightning-30b-a3b-nvfp4"
+target = "gb10/nemotron-3-nano-30b-a3b/nvfp4"
+golden = false
+layer_kinds = "MEME MAEM EMEM AEME MEMA EMEM EMAE MEME MAEM EMEM EMAE MEME MEME"
+dims = { hidden = 2688, vocab = 131072, q_heads = 32, kv_heads = 2, head_dim = 128, mamba_heads = 64, mamba_head_dim = 64, ssm_state = 128, ssm_groups = 8, conv_kernel = 4, experts = 128, top_k = 6, moe_inter = 1856, shared_inter = 3712, mtp = 1, moe_latent = 0, moe_io = 2688 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }

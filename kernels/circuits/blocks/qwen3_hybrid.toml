@@ -1,0 +1,342 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-28: Block templates shared by the Qwen3.5/3.6 hybrid circuits (qwen3_5.toml,
+# qwen3_6_moe.toml): the embedding, the GatedDeltaNet and gated full-attention mixers, the
+# head, and the MTP draft head's input and output blocks. A circuit takes them with
+# `include = ["qwen3_hybrid"]`; each circuit keeps its own FFN block.
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - Every edge states its format and `rows x dim` shape; `{L}` in a binding is the layer's
+#   (or the draft head's) module path, as in the circuits that include this file.
+# - A block name defined here and in an including circuit is a load error.
+
+schema = 1
+description = "Qwen3.5/3.6 hybrid shared blocks: embed, GatedDeltaNet, gated attention, head, MTP in/out"
+
+[block.embed]
+stream_out = "h"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["model.language_model.embed_tokens"]
+
+[block.gdn]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-09-30: The recurrent state, one unit per sequence slot (crates/circuit/src/state.rs).
+# Legacy: ModelConfig::ssm_h_state_bytes / ssm_conv_state_bytes (crates/config/src/methods.rs),
+# the conv window 4 taps wide (the config map requires linear_conv_kernel_dim = 4). h is stored
+# at `ssm_h_storage` (f16 under --ssm-h-dtype f16-pool, ssm_reserve::ssm_h_stored_bytes).
+[[block.gdn.state]]
+id = "h"
+kind = "recurrent"
+lifetime = "sequence"
+format = "{ssm_h_storage}"
+shape = "lin_v_heads x lin_k_dim x lin_v_dim"
+verify = "h_steps"
+
+[[block.gdn.state]]
+id = "conv"
+kind = "recurrent"
+lifetime = "sequence"
+format = "f32"
+shape = "lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim x 4"
+verify = "conv_steps"
+
+[[block.gdn.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+
+[[block.gdn.node]]
+id = "qkvz"
+op = "linear"
+role = "qkvz"
+in = ["xn"]
+out = [{ edge = "qkvz", format = "bf16", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim*2" }]
+binding = ["{L}.linear_attn.in_proj_qkv", "{L}.linear_attn.in_proj_z"]
+
+[[block.gdn.node]]
+id = "ba"
+op = "linear"
+role = "ba"
+in = ["xn"]
+out = [{ edge = "ba", format = "bf16", shape = "n x lin_v_heads*2" }]
+binding = ["{L}.linear_attn.in_proj_b", "{L}.linear_attn.in_proj_a"]
+
+[[block.gdn.node]]
+id = "gates"
+op = "gdn_gates"
+in = ["ba"]
+out = [
+  { edge = "decay", format = "f32", shape = "n x lin_v_heads" },
+  { edge = "beta", format = "f32", shape = "n x lin_v_heads" },
+]
+binding = ["{L}.linear_attn.A_log", "{L}.linear_attn.dt_bias"]
+
+[[block.gdn.node]]
+id = "conv"
+op = "conv1d_update"
+state = { conv = "update" }
+in = ["qkvz"]
+out = [{ edge = "conv", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
+binding = ["{L}.linear_attn.conv1d"]
+
+# 2026-09-29: The conv window after each row but the last, into the step's checkpoint slots:
+# the MTP verify's rollback points (the verify copies the state; other modes take none).
+[[block.gdn.node]]
+id = "conv_ckpt"
+op = "state_snapshot"
+state = { conv = "snapshot" }
+in = ["conv"]
+out = []
+
+[[block.gdn.node]]
+id = "l2"
+op = "l2_norm"
+in = ["conv"]
+out = [{ edge = "qkv", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
+
+[[block.gdn.node]]
+id = "recur"
+op = "gdn_recurrence"
+state = { h = "update" }
+in = ["qkv", "decay", "beta"]
+out = [{ edge = "core", format = "f32", shape = "n x lin_v_heads*lin_v_dim" }]
+
+[[block.gdn.node]]
+id = "out_norm"
+op = "gated_rms_norm"
+in = ["core", "qkvz"]
+out = [{ edge = "gated", format = "bf16", shape = "n x lin_v_heads*lin_v_dim" }]
+binding = ["{L}.linear_attn.norm"]
+
+[[block.gdn.node]]
+id = "out"
+op = "linear"
+role = "gdn_out"
+in = ["gated"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.linear_attn.out_proj"]
+
+[[block.gdn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.attn]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-09-30: The paged KV cache, one unit per token and side (crates/circuit/src/state.rs).
+# Legacy: KvCacheConfig::{k,v}_block_bytes_for_layer (crates/cache/src/kv_cache.rs).
+[[block.attn.state]]
+id = "k"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.state]]
+id = "v"
+kind = "paged_kv"
+lifetime = "model"
+format = "{kv_cache_dtype}"
+shape = "kv_heads x head_dim"
+
+[[block.attn.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+
+[[block.attn.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "qg", format = "bf16", shape = "n x q_heads*head_dim*2" }]
+binding = ["{L}.self_attn.q_proj"]
+
+[[block.attn.node]]
+id = "q_split"
+op = "split"
+in = ["qg"]
+out = [
+  { edge = "q", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "gate", format = "bf16", shape = "n x q_heads*head_dim" },
+]
+
+[[block.attn.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+
+[[block.attn.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.v_proj"]
+
+[[block.attn.node]]
+id = "q_norm"
+op = "qk_norm"
+in = ["q"]
+out = [{ edge = "qn", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_norm"]
+
+[[block.attn.node]]
+id = "k_norm"
+op = "qk_norm"
+in = ["k"]
+out = [{ edge = "kn", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_norm"]
+
+[[block.attn.node]]
+id = "rope"
+op = "rope"
+in = ["qn", "kn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kr", format = "bf16", shape = "n x kv_heads*head_dim" },
+]
+
+[[block.attn.node]]
+id = "kv_write"
+op = "kv_write"
+state = { k = "write", v = "write" }
+in = ["kr", "v"]
+out = []
+
+[[block.attn.node]]
+id = "attend"
+op = "paged_attention"
+state = { k = "read", v = "read" }
+in = ["qr", "kr", "v"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+
+[[block.attn.node]]
+id = "gate_mul"
+op = "sigmoid_gate_mul"
+in = ["a", "gate"]
+out = [{ edge = "ag", format = "bf16", shape = "n x q_heads*head_dim" }]
+
+[[block.attn.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["ag"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.attn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.head]
+stream_in = "x"
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.head.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["model.language_model.norm"]
+
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["lm_head"]
+
+# 2026-09-29: Each row's greedy token: on the device in the MTP verify; the caller samples
+# from the logits on the host in the other modes.
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]
+
+[block.mtp_in]
+stream_in = "hidden"
+stream_out = "h0"
+# 2026-09-30: The token embedding the draft runner fills (a declared output: the executor
+# places it in the draft embedding buffer).
+outputs = [{ edge = "e", buffer = "draft_embed" }]
+
+[[block.mtp_in.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "e", format = "bf16", shape = "n x hidden" }]
+binding = ["model.language_model.embed_tokens"]
+
+[[block.mtp_in.node]]
+id = "embed_norm"
+op = "rms_norm"
+in = ["e"]
+out = [{ edge = "en", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.pre_fc_norm_embedding"]
+
+[[block.mtp_in.node]]
+id = "hidden_norm"
+op = "rms_norm"
+in = ["hidden"]
+out = [{ edge = "hn", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.pre_fc_norm_hidden"]
+
+[[block.mtp_in.node]]
+id = "concat"
+op = "concat"
+in = ["en", "hn"]
+out = [{ edge = "cat", format = "bf16", shape = "n x hidden*2" }]
+
+[[block.mtp_in.node]]
+id = "fc"
+op = "linear"
+role = "mtp_fc"
+in = ["cat"]
+out = [{ edge = "h0", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.fc"]
+
+[block.mtp_out]
+stream_in = "x"
+# 2026-09-29: The draft logits are an output: `forward_one` leaves them in the model's logits
+# buffer, where the host reads them (draft confidence, shadow top-k).
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.mtp_out.node]]
+id = "final_norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["mtp.norm"]
+
+[[block.mtp_out.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["mtp.lm_head"]
+
+[[block.mtp_out.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]

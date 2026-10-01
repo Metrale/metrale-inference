@@ -206,3 +206,4 @@ impl LayerAuxState for K3BoundLayer {
 }
 
 impl LayerSplitPrefill for K3BoundLayer {}
+impl metrale_model_layers::circuit_exec::CircuitBindings for K3BoundLayer {}

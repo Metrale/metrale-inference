@@ -26,7 +26,7 @@ mod ctx;
 mod ffn;
 mod mla;
 mod mla_gemv;
-mod qkv;
+pub(in crate::layers::qwen3_attention) mod qkv;
 mod qkv_fp8_batch;
 mod w8a8_decode;
 

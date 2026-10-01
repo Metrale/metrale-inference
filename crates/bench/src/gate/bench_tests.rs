@@ -71,7 +71,7 @@ fn bench_toml_is_not_a_closure_input() {
         model: "qwen3.6-27b".into(),
         quant: "nvfp4".into(),
     };
-    let configs = taxon::configs(&root, &target);
+    let configs = taxon::configs(&root, &target).expect("configs");
     assert!(
         !configs.iter().any(|p| p.ends_with("BENCH.toml")),
         "BENCH.toml must not be hashed: a threshold ratchet would invalidate \

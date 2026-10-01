@@ -452,6 +452,9 @@ pub fn w8a8_proj(
     w8a8_gemv(gpu, kernels, w, scratch, rows, out, ldc, stream)
 }
 
+#[path = "w8a8_decode/parts.rs"]
+mod parts;
+
 #[cfg(test)]
 #[path = "w8a8_decode_tests.rs"]
 mod tests;

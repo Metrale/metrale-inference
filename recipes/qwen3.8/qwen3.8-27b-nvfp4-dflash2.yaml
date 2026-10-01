@@ -45,7 +45,7 @@ metadata:
   maintainer: metrale
   category: interactive
   quantization: NVFP4 (compressed-tensors, mixed precision)
-  updated: "2026-08-29"
+  updated: "2026-09-30"
   tags:
     - qwen3.8
     - nvfp4
@@ -62,11 +62,14 @@ defaults:
   port: 8888
   # The concurrency instrument's operating point, matched to the plain
   # concurrency gate's serve pin so the two ladders differ in ONE axis.
-  # 4096 leaves >4x headroom over the fixture's ~832-token sequences while
-  # keeping the per-sequence KV commitment small enough to admit 128 of them.
+  # 4096 leaves >4x headroom over the fixture's ~832-token sequences.
   max_model_len: 4096
-  # Must cover the widest measured rung, or that rung measures the cap.
-  max_batch_size: 128
+  # 16, the concurrency-sweep-dflash2 gate's pin and the widest rung it
+  # measures. 128 does not boot on GB10: the DFlash verify pools are
+  # gamma-sized, and at 128 preflight refuses with "No memory left for KV
+  # cache" (GB10, 2026-09-30: 57.8 GB consumed + a 67.1 GB inference reserve
+  # against the 103.4 GB budget at util 0.85).
+  max_batch_size: 16
   # 0.85 is the ceiling on GB10 — 0.90 has frozen a box and needed a
   # powercycle. Do not raise it to buy drafter headroom; lower the batch.
   gpu_memory_utilization: 0.85
@@ -81,10 +84,9 @@ defaults:
   kv_high_precision_layers: auto
   scheduler: slai
   enable_prefix_caching: true
-  # A concurrency ladder issues independent sequences rather than replaying
-  # long shared prefixes, so 8 slots keep the warm-prefix value at a quarter
-  # of the reserve. Each slot holds one full per-sequence SSM blob.
-  ssm_cache_slots: 8
+  # 32, the gate's pin: it covers every sequence of the 16-wide batch twice
+  # over. Each slot holds one full per-sequence SSM blob.
+  ssm_cache_slots: 32
   ssm_checkpoint_interval: 16
   # ── DFlash2 ──
   dflash: true

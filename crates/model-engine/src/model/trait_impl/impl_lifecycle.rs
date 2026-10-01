@@ -100,4 +100,13 @@ impl ModelLifecycle for TransformerModel {
     fn reclaim_prefix_blocks(&self, num_blocks: usize) -> usize {
         self.reclaim_prefix_blocks_dispatch(num_blocks)
     }
+
+    fn reclaim_prefix_blocks_for(
+        &self,
+        prompt: &[u32],
+        adapter_slot: i32,
+        blocks_needed: usize,
+    ) -> crate::traits::PrefixReclaim {
+        self.reclaim_prefix_blocks_for_dispatch(prompt, adapter_slot, blocks_needed)
+    }
 }

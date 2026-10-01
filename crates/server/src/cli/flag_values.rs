@@ -249,3 +249,29 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 #[path = "flag_values_tests.rs"]
 mod tests;
+
+/// 2026-09-28: `--forward`: which forward decode runs. `legacy` is the hand-written layer
+/// loops; `circuit` runs the program compiled from the model's circuit plan
+/// (`metrale_model_layers::circuit_exec`), and boot refuses a model the circuit does not model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ForwardArg {
+    #[value(help = "the hand-written layer loops")]
+    Legacy,
+    #[value(help = "the program compiled from the model's circuit plan")]
+    Circuit,
+    #[value(
+        help = "the circuit plan with reference rules only (no bit-identical fusions), for A/B"
+    )]
+    CircuitReference,
+}
+
+impl ForwardArg {
+    /// 2026-09-28: The spelling on the command line and in `GET /forward`.
+    pub fn name(self) -> &'static str {
+        match self {
+            ForwardArg::Legacy => "legacy",
+            ForwardArg::Circuit => "circuit",
+            ForwardArg::CircuitReference => "circuit-reference",
+        }
+    }
+}

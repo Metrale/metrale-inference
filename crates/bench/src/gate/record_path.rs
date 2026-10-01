@@ -95,7 +95,7 @@ fn variant_file_slug(baseline: &GateBaseline, model: &str) -> String {
     if !collides {
         return slug;
     }
-    let digest = format!("{:x}", Sha256::digest(model.as_bytes()));
+    let digest = metrale_closure::hex_lower(&Sha256::digest(model.as_bytes()));
     format!("{slug}-{}", &digest[..16])
 }
 

@@ -310,6 +310,11 @@ impl MoeLayer {
             // (METRALE_HOLO_MOE_DOWN_FP4), FP8 activations (METRALE_MOE_PREFILL_FP8_DOWN)
             // or W4A16; else the untransposed W4A16 fallback. All write
             // `expert_down_out` in sorted order.
+            //
+            // 2026-09-30: This input is the one known saturation of an unscaled E4M3 cast on a
+            // certified model (`ops::MOE_ROUTED_DOWN_KNOWN`); debug builds count it, up to that
+            // entry's bound, instead of panicking.
+            let _known = ops::allow_e4m3_saturation(ops::MOE_ROUTED_DOWN_KNOWN);
             if ctx.levers.moe_grouped_cutlass
                 && let Some(down_host) = self
                     .cutlass_grouped_host

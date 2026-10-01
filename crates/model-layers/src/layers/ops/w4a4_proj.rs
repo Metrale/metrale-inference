@@ -31,7 +31,6 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 
 use crate::weight_map::QuantizedWeight;
 
@@ -93,6 +92,9 @@ fn audit_enabled() -> bool {
 #[path = "w4a4_proj/mx_plan.rs"]
 mod mx_plan;
 pub use mx_plan::*;
+#[path = "w4a4_proj/steps.rs"]
+mod steps;
+pub use steps::{Nvfp4ActBuf, W4a4Proj};
 
 fn cache() -> &'static Mutex<Vec<(usize, Option<W4a4State>)>> {
     static CACHE: OnceLock<Mutex<Vec<(usize, Option<W4a4State>)>>> = OnceLock::new();
@@ -285,6 +287,28 @@ pub fn nvfp4_proj_small_m_same_input(
     )
 }
 
+/// 2026-09-28: The prepared W4A4 kernels when [`nvfp4_proj_small_m`] takes the W4A4 path for
+/// this launch: the tier uses W4A4 decode, the kernels are prepared, and [`w4a4_route`] admits
+/// the shape at the weight's row edge.
+fn w4a4_state_for(
+    gpu: &dyn GpuBackend,
+    weight: &QuantizedWeight,
+    m: u32,
+    n: u32,
+    k: u32,
+) -> Option<W4a4State> {
+    if !crate::layers::weight_quantization().uses_w4a4_decode() {
+        return None;
+    }
+    state(gpu).filter(|s| w4a4_route(m, n, k, rows_for(weight, s.max_m)))
+}
+
+/// 2026-09-28: Whether [`nvfp4_proj_small_m`] launches the W4A4 kernels for this shape (and
+/// otherwise the W4A16 `w4a16_gemv_batchm`).
+pub fn routes_w4a4(gpu: &dyn GpuBackend, weight: &QuantizedWeight, m: u32, n: u32, k: u32) -> bool {
+    w4a4_state_for(gpu, weight, m, n, k).is_some()
+}
+
 /// 2026-09-25: What the scratch holds: (backend, input address, m, k, stream).
 type QuantKey = (usize, u64, u32, u32, u64);
 
@@ -308,51 +332,16 @@ fn proj(
     same_input: bool,
 ) -> Result<()> {
     let tier = crate::layers::weight_quantization();
-    if tier.uses_w4a4_decode()
-        && let Some(s) = state(gpu)
-        && w4a4_route(m, n, k, rows_for(weight, s.max_m))
-    {
+    if let Some(s) = w4a4_state_for(gpu, weight, m, n, k) {
+        let p = W4a4Proj(s);
         let want: QuantKey = (key(gpu), input.0, m, k, stream);
         let mut last = last_quant().lock().unwrap_or_else(|p| p.into_inner());
         if !(same_input && *last == Some(want)) {
-            KernelLaunch::new(gpu, s.quant)
-                .grid([m, 1, 1])
-                .block([256, 1, 1])
-                .arg_ptr(input)
-                .arg_ptr(s.aq)
-                .arg_ptr(s.a_scale)
-                .arg_ptr(s.a_gs)
-                .arg_u32(k)
-                .launch(stream)?;
+            p.quantize(gpu, input, p.scratch(), m, k, stream)?;
             *last = Some(want);
         }
         drop(last);
-        let (mx, grid, smem, sst) = match mx_plan(&s, m, n, k, mx_nt(), mx_ps()) {
-            MxLaunch::Tiles {
-                kernel,
-                rows_per_cta,
-            } => (kernel, div_ceil(n, rows_per_cta), 0, None),
-            MxLaunch::Persistent { kernel, sst, smem } => (kernel, s.sms, smem, Some(sst)),
-        };
-        anyhow::ensure!(mx.0 != 0, "w4a4: no kernel for {m} rows");
-        let launch = KernelLaunch::new(gpu, mx)
-            .grid([grid, 1, 1])
-            .block([256, 1, 1])
-            .shared_mem(smem)
-            .arg_ptr(s.aq)
-            .arg_ptr(s.a_scale)
-            .arg_ptr(s.a_gs)
-            .arg_ptr(weight.weight)
-            .arg_ptr(weight.weight_scale)
-            .arg_f32(weight.weight_scale_2)
-            .arg_ptr(output)
-            .arg_u32(m)
-            .arg_u32(n)
-            .arg_u32(k);
-        match sst {
-            Some(sst) => launch.arg_u32(sst).launch(stream)?,
-            None => launch.launch(stream)?,
-        }
+        p.gemv(gpu, p.scratch(), weight, output, m, n, k, stream)?;
         if audit_enabled()
             && !s.audit_ref.is_null()
             && (n as usize) <= AUDIT_MAX_N

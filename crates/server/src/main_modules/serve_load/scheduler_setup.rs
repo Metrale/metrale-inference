@@ -71,7 +71,7 @@ pub(super) fn resolve_speculation(
         // 2026-09-26: The drafter head's resolved gamma wins over the flag.
         let g = scheduler_model
             .dflash_gamma()
-            .unwrap_or_else(|| args.resolved_dflash_gamma(None));
+            .unwrap_or_else(|| args.serve_dflash_gamma());
         g.saturating_sub(1).max(1)
     } else {
         args.resolved_num_drafts()
