@@ -129,7 +129,10 @@ impl TransformerModel {
                 name,
             )
         };
-        let (flush_k, conv_flush_k) = (kernel("gdn_carry_flush"), kernel("gdn_carry_conv_flush"));
+        let (flush_k, conv_flush_k) = (
+            metrale_model_layers::layers::qwen3_ssm::carry_flush_kernel(self.gpu.as_ref()),
+            kernel("gdn_carry_conv_flush"),
+        );
         if flush_k.0 == 0
             || conv_flush_k.0 == 0
             || self.ssm_pool.mtp_slots == 0

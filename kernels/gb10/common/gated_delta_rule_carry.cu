@@ -41,27 +41,7 @@
 
 #include <cuda_bf16.h>
 #include "gdn_reduce.cuh"
-#define CARRY_KD 128u
-#define CARRY_VD 128u
-// 2026-09-26: Rows the stash holds per slot; ops::GDN_CARRY_CAP on the host.
-#define CARRY_CAP 8u
-
-#define CARRY_VN(S, T, VH) ((S) + ((T) * num_v_heads + (VH)) * CARRY_VD)
-#define CARRY_G(S, T, VH)  ((S) + CARRY_CAP * num_v_heads * CARRY_VD + (T) * num_v_heads + (VH))
-#define CARRY_SK(S, T, VH) ((S) + CARRY_CAP * num_v_heads * CARRY_VD + CARRY_CAP * num_v_heads \
-                            + ((T) * num_v_heads + (VH)) * CARRY_KD)
-
-// 2026-09-26: The pending rows t < np applied to one element of row j of a column, from the
-// stashed key rows `pk` and this thread's gates `pgr` and vn values `pvr` (registers: the
-// loop is unrolled over CARRY_CAP and guarded, so the arrays index statically).
-__device__ __forceinline__ float carry_fold(
-    float x, unsigned int np, unsigned int j,
-    const float (*pk)[CARRY_KD], const float* pgr, const float* pvr
-) {
-    #pragma unroll
-    for (unsigned int t = 0; t < CARRY_CAP; ++t) if (t < np) x = pgr[t] * x + pk[t][j] * pvr[t];
-    return x;
-}
+#include "gdn_carry_stash.cuh"
 
 // 2026-09-26: The same fold for the eager form, at most four rows from registers (`pv0`..
 // `pv3`), predicated so that the unrolled pass keeps its loads independent. The host never
@@ -303,30 +283,8 @@ extern "C" __global__ void gdn_carry_flush(
     unsigned int batch_size,
     unsigned int num_v_heads
 ) {
-    const unsigned int vh = blockIdx.x;
-    const unsigned int b = blockIdx.y;
-    const unsigned int l = blockIdx.z;
-    if (vh >= num_v_heads || b >= batch_size) return;
-    const unsigned int slot = slot_tab[b];
-    const unsigned int np = pend[(unsigned long long)l * pend_layer_entries + slot];
-    if (np == 0) return;
-    const unsigned int tid = threadIdx.x;
-    float* H = h_table[l * table_layer_entries + b] + (unsigned long long)vh * CARRY_KD * CARRY_VD;
-    const float* S = carry_base + l * carry_layer_floats + (unsigned long long)slot * seq_floats;
-    __shared__ float pk[CARRY_CAP][CARRY_KD], pg[CARRY_CAP];
-    float pvr[CARRY_CAP], pgr[CARRY_CAP];
-    #pragma unroll
-    for (unsigned int t = 0; t < CARRY_CAP; ++t) {
-        if (t < np) { pk[t][tid] = CARRY_SK(S, t, vh)[tid]; pvr[t] = CARRY_VN(S, t, vh)[tid]; }
-        else pvr[t] = 0.0f;
-    }
-    if (tid < np) pg[tid] = *CARRY_G(S, tid, vh);
-    __syncthreads();
-    #pragma unroll
-    for (unsigned int t = 0; t < CARRY_CAP; ++t) pgr[t] = t < np ? pg[t] : 0.0f;
-    #pragma unroll 4
-    for (unsigned int j = 0; j < CARRY_KD; ++j)
-        H[j * CARRY_VD + tid] = carry_fold(H[j * CARRY_VD + tid], np, j, pk, pgr, pvr);
+    carry_flush_body(h_table, table_layer_entries, carry_base, carry_layer_floats, slot_tab, pend,
+                     pend_layer_entries, seq_floats, batch_size, num_v_heads);
 }
 
 // 2026-09-26: Carried-state twin of gdn_verify_fused_conv_kn_batched (gdn_verify_fused_conv_kn.cu).
@@ -473,4 +431,102 @@ extern "C" __global__ void gdn_carry_conv_flush(
         win[d_conv - 1] = (float)stash[t * dim + ch];
     }
     for (unsigned int i = 0; i < d_conv; i++) state[i] = win[i];
+}
+
+// 2026-10-01: Carried-state twin of causal_conv1d_update_l2norm_f32_strided (causal_conv1d.cu), the
+// FP32 conv of the exact verify: one launch for every position of a K-row verify. Thread ch owns
+// channel ch of sequence blockIdx.y. It shifts the `pend[slot]` pending input rows into its window
+// and writes the window back under the verify kernel's rule (always, or with `lazy` when
+// pend + num_tokens > CARRY_CAP); positions 0..num_tokens-1 then run the parent's arithmetic in the
+// parent's order, writing FP32 rows. No snapshot and no final window is written; the position
+// inputs are stashed as gdn_carry_conv stashes them, so gdn_carry_conv_flush folds either.
+// Sequence b's window is at conv_state + b * dim * d_conv; row r = b * num_tokens + t reads
+// new_input + r * input_stride and writes output + r * output_stride. Grid (ceil(dim / 256),
+// batch), block 256; the parent's contract on d_conv, head_dim and qk_channels applies.
+extern "C" __global__ void gdn_carry_conv_f32(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ new_input,
+    const __nv_bfloat16* __restrict__ weight,
+    float* __restrict__ output,
+    __nv_bfloat16* __restrict__ conv_stash,
+    const unsigned int* __restrict__ slot_tab,
+    const unsigned int* __restrict__ pend,
+    unsigned int stash_seq_elems,
+    unsigned int num_tokens,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    float l2_eps,
+    unsigned int input_stride,
+    unsigned int output_stride,
+    unsigned int lazy
+) {
+    const unsigned int b = blockIdx.y;
+    const unsigned int slot = slot_tab[b];
+    __nv_bfloat16* stash = conv_stash + (size_t) slot * stash_seq_elems;
+    const unsigned int np = pend[slot];
+    const bool wb = !lazy || np + num_tokens > CARRY_CAP;
+    const unsigned int base = wb ? 0u : np;
+
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int tid = threadIdx.x;
+    const unsigned int block_start = blockIdx.x * blockDim.x;
+    const bool block_needs_l2 = (block_start < qk_channels);
+    const bool valid = (ch < dim);
+
+    float win[8];
+    float wcoef[8];
+    if (valid) {
+        float* state = conv_state + ((size_t) b * dim + ch) * d_conv;
+        for (unsigned int i = 0; i < d_conv; i++) win[i] = state[i];
+        for (unsigned int t = 0; t < np; t++) {
+            for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
+            win[d_conv - 1] = (float)stash[t * dim + ch];
+        }
+        if (wb && np > 0) {
+            for (unsigned int i = 0; i < d_conv; i++) state[i] = win[i];
+        }
+        const __nv_bfloat16* w = weight + ch * d_conv;
+        for (unsigned int k = 0; k < d_conv; k++) wcoef[k] = (float)w[k];
+    }
+
+    __shared__ float warp_sums[8];
+    for (unsigned int t = 0; t < num_tokens; t++) {
+        const size_t row = (size_t) b * num_tokens + t;
+        float silu = 0.0f;
+        if (valid) {
+            const __nv_bfloat16 x = new_input[row * input_stride + ch];
+            for (unsigned int i = 0; i < d_conv - 1; i++) win[i] = win[i + 1];
+            win[d_conv - 1] = (float)x;
+            stash[(base + t) * dim + ch] = x;
+            float acc = 0.0f;
+            for (unsigned int k = 0; k < d_conv; k++) acc += win[k] * wcoef[k];
+            float sigmoid_acc = 1.0f / (1.0f + __expf(-acc));
+            silu = acc * sigmoid_acc;
+        }
+
+        if (block_needs_l2) {
+            float sq = valid ? (silu * silu) : 0.0f;
+            const unsigned int warp_id = tid / 32;
+            const unsigned int lane = tid % 32;
+            for (int offset = 16; offset >= 1; offset >>= 1)
+                sq += __shfl_down_sync(0xFFFFFFFF, sq, offset);
+            if (lane == 0) warp_sums[warp_id] = sq;
+            __syncthreads();
+            const unsigned int head_in_block = tid / head_dim;
+            const unsigned int base_warp = head_in_block * (head_dim / 32);
+            if (tid == 0 || tid == head_dim) {
+                float total = warp_sums[base_warp] + warp_sums[base_warp + 1]
+                            + warp_sums[base_warp + 2] + warp_sums[base_warp + 3];
+                warp_sums[base_warp] = rsqrtf(total + l2_eps);
+            }
+            __syncthreads();
+            if (valid) silu *= warp_sums[base_warp];
+            // 2026-10-01: Keeps the next position's lane-0 write to warp_sums behind this read.
+            __syncthreads();
+        }
+
+        if (valid) output[row * output_stride + ch] = silu;
+    }
 }

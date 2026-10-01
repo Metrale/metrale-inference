@@ -20,6 +20,7 @@ mod ple_seq;
 pub use layer_struct::Qwen3SsmLayer;
 
 mod carry;
+pub use carry::carry_flush_kernel;
 mod circuit;
 mod debug;
 mod decode_w8a8_proj;

@@ -173,6 +173,122 @@ pub fn gdn_carry_conv(
         .launch(stream)
 }
 
+/// 2026-10-01: Carried-state exact verify (`gdn_exact_carry{2,3,4}` or its `_lazy` form, chosen
+/// by the caller's `kernel`; `gdn_exact_carry.cu` in the model directory): the stash protocol of
+/// [`gdn_carry_wy`] around the strided FP32 decode's per-token chain. Rows are sequence-major,
+/// `b * K + t`: FP32 q and k at `qk_stride`, v at `v_stride`, gate and beta at `gb_stride`, the
+/// FP32 output at `out_stride`, all in floats.
+#[allow(clippy::too_many_arguments)]
+pub fn gdn_exact_carry(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    h_table: DevicePtr,
+    query: DevicePtr,
+    key: DevicePtr,
+    value: DevicePtr,
+    gate: DevicePtr,
+    beta: DevicePtr,
+    output: DevicePtr,
+    carry_base: DevicePtr,
+    slot_tab: DevicePtr,
+    pend: DevicePtr,
+    seq_floats: u32,
+    batch_size: u32,
+    num_k_heads: u32,
+    num_v_heads: u32,
+    k_dim: u32,
+    strides: [u32; 4],
+    engaged_flag: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        !h_table.is_null()
+            && !carry_base.is_null()
+            && !slot_tab.is_null()
+            && !pend.is_null()
+            && !engaged_flag.is_null(),
+        "gdn_exact_carry: null table/stash/slot/pend/flag"
+    );
+    let [qk_stride, v_stride, gb_stride, out_stride] = strides;
+    KernelLaunch::new(gpu, kernel)
+        .grid([num_v_heads, batch_size, 1])
+        .block([128, 1, 1])
+        .arg_ptr(h_table)
+        .arg_ptr(query)
+        .arg_ptr(key)
+        .arg_ptr(value)
+        .arg_ptr(gate)
+        .arg_ptr(beta)
+        .arg_ptr(output)
+        .arg_ptr(carry_base)
+        .arg_ptr(slot_tab)
+        .arg_ptr(pend)
+        .arg_u32(seq_floats)
+        .arg_u32(batch_size)
+        .arg_u32(num_k_heads)
+        .arg_u32(num_v_heads)
+        .arg_u32(k_dim)
+        .arg_u32(qk_stride)
+        .arg_u32(v_stride)
+        .arg_u32(gb_stride)
+        .arg_u32(out_stride)
+        .arg_ptr(engaged_flag)
+        .launch(stream)
+}
+
+/// 2026-10-01: Carried-state FP32 conv verify (`gdn_carry_conv_f32`): the twin of
+/// `causal_conv1d_update_l2norm_f32_strided` for all `num_tokens` positions of `n_seq`
+/// sequences, with [`gdn_carry_conv`]'s pending-row fold and stash. Sequence b's window is at
+/// `conv_state + b * dim * d_conv` floats; row `b * num_tokens + t` reads `new_input` at
+/// `input_stride` and writes the FP32 `output` at `output_stride`. `lazy` must match the
+/// verify kernel of the same run.
+#[allow(clippy::too_many_arguments)]
+pub fn gdn_carry_conv_f32(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    conv_state: DevicePtr,
+    new_input: DevicePtr,
+    weight: &crate::weight_map::DenseWeight,
+    output: DevicePtr,
+    conv_stash: DevicePtr,
+    slot_tab: DevicePtr,
+    pend: DevicePtr,
+    stash_seq_elems: u32,
+    num_tokens: u32,
+    dim: u32,
+    d_conv: u32,
+    qk_channels: u32,
+    head_dim: u32,
+    l2_eps: f32,
+    input_stride: u32,
+    output_stride: u32,
+    n_seq: u32,
+    lazy: bool,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kernel)
+        .grid([dim.div_ceil(256), n_seq, 1])
+        .block([256, 1, 1])
+        .arg_ptr(conv_state)
+        .arg_ptr(new_input)
+        .arg_ptr(weight.weight)
+        .arg_ptr(output)
+        .arg_ptr(conv_stash)
+        .arg_ptr(slot_tab)
+        .arg_ptr(pend)
+        .arg_u32(stash_seq_elems)
+        .arg_u32(num_tokens)
+        .arg_u32(dim)
+        .arg_u32(d_conv)
+        .arg_u32(qk_channels)
+        .arg_u32(head_dim)
+        .arg_f32(l2_eps)
+        .arg_u32(input_stride)
+        .arg_u32(output_stride)
+        .arg_u32(u32::from(lazy))
+        .launch(stream)
+}
+
 /// 2026-09-26: Standalone conv fold (`gdn_carry_conv_flush`) over `layers` GDN layers, laid
 /// out as in [`gdn_carry_flush`] with conv-state pointers and a BF16 stash.
 #[allow(clippy::too_many_arguments)]
