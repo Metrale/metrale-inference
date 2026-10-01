@@ -191,7 +191,27 @@ pub fn conv1d_update_prefill(
         .arg_u32(seq_len)
         .arg_u32(input_stride)
         .arg_u32(output_stride)
-        .launch(stream)
+        .launch(stream)?;
+    // 2026-09-30: The token-parallel kernel reads the incoming state from several blocks, so it
+    // cannot also write the new one (it did: tokens 0..2 of a prompt over 64 tokens then read the
+    // prompt's own tail whenever the last block ran first). The next launch on this stream writes
+    // it, after every block has read.
+    if tp {
+        let state_k = gpu
+            .op_cache()
+            .kernel(gpu, "causal_conv1d", "causal_conv1d_prefill_state")?;
+        KernelLaunch::new(gpu, state_k)
+            .grid([div_ceil(d_inner, 256), 1, 1])
+            .block([256, 1, 1])
+            .arg_ptr(conv_state)
+            .arg_ptr(input)
+            .arg_u32(d_inner)
+            .arg_u32(d_conv)
+            .arg_u32(seq_len)
+            .arg_u32(input_stride)
+            .launch(stream)?;
+    }
+    Ok(())
 }
 
 /// 2026-09-25: Mamba-2 SSM prefill (`mamba2_ssm_prefill`): the token-sequential
