@@ -102,6 +102,11 @@ pub trait ModelLifecycle {
         0
     }
 
+    /// 2026-10-01: Bytes one block index of the paged cache holds across every layer, K and V,
+    /// so `num_total_blocks() * kv_block_bytes()` is the pool's size. `0` for a model without a
+    /// paged cache. No default: a model that has a pool must say what its blocks cost.
+    fn kv_block_bytes(&self) -> usize;
+
     /// 2026-09-25: Evict up to `num_blocks` blocks from the prefix cache; returns how many became
     /// free. Swap-in and preemption resume check `num_free_blocks()` before they allocate, so
     /// they call this to reach blocks the cache holds. `0` means nothing was evictable, and the

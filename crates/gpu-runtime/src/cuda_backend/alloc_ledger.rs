@@ -2,6 +2,7 @@
 
 //! 2026-09-25: The device-allocation ledger's entries and reports: size and
 //! allocating call site of every live allocation.
+//! 2026-10-01: Also [`LedgerProbe`], which reads the ledger without the backend.
 //!
 //! Owner: gpu-runtime (CUDA backend).
 //! Invariants: none beyond the types.
@@ -15,6 +16,25 @@ use super::MetraleCudaBackend;
 pub(super) struct AllocRecord {
     pub(super) bytes: usize,
     pub(super) site: &'static std::panic::Location<'static>,
+}
+
+/// 2026-10-01: A read handle on one backend's ledger, for a reader that cannot hold the
+/// backend, which moves into the model it builds. It reads the map
+/// [`MetraleCudaBackend::live_bytes`] reads, so the two always agree.
+#[derive(Clone)]
+pub struct LedgerProbe(
+    std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<u64, AllocRecord>>>,
+);
+
+impl LedgerProbe {
+    /// 2026-10-01: Total bytes on the ledger now.
+    pub fn live_bytes(&self) -> usize {
+        ledger_bytes(&self.0.lock())
+    }
+}
+
+fn ledger_bytes(ledger: &std::collections::HashMap<u64, AllocRecord>) -> usize {
+    ledger.values().map(|r| r.bytes).sum()
 }
 
 impl MetraleCudaBackend {
@@ -37,7 +57,12 @@ impl MetraleCudaBackend {
 
     /// 2026-09-25: Total bytes on the ledger.
     pub fn live_bytes(&self) -> usize {
-        self.live_allocs.lock().values().map(|r| r.bytes).sum()
+        ledger_bytes(&self.live_allocs.lock())
+    }
+
+    /// 2026-10-01: A [`LedgerProbe`] on this backend's ledger.
+    pub fn ledger_probe(&self) -> LedgerProbe {
+        LedgerProbe(std::sync::Arc::clone(&self.live_allocs))
     }
 
     /// 2026-09-25: A text report of the ledger: the total, then up to `top_n`

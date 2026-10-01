@@ -3,6 +3,7 @@
 //! 2026-09-26: Operational endpoints: `/metrics`, `/health`, `/health/live`,
 //! `/hardware`, `/serve-config`, `/tokenize`, `/detokenize`, and the
 //! Responses cancel refusal.
+//! 2026-10-01: Also `/forward` and `/memory`.
 //!
 //! Owner: server API.
 //! Invariants: none beyond the types.
@@ -236,6 +237,12 @@ pub async fn serve_config() -> Response {
 /// (`LiveForward`), which a gate record discloses.
 pub async fn forward(CurrentModel(state): CurrentModel) -> Response {
     Json(state.forward.clone()).into_response()
+}
+
+/// 2026-10-01: GET /memory: the model's KV pool and slots, the serve's memory budget, and
+/// the ledger and host memory readings taken now (`memory_probe`).
+pub async fn memory(CurrentModel(state): CurrentModel) -> Response {
+    Json(state.memory.report(state.memory.readings())).into_response()
 }
 
 /// 2026-09-26: POST /tokenize: token IDs and count for `prompt` text or for

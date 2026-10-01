@@ -124,6 +124,9 @@ impl ModelLifecycle for MockModel {
         }
         seq.slot_idx = usize::MAX;
     }
+    fn kv_block_bytes(&self) -> usize {
+        0
+    }
 }
 
 impl ModelForward for MockModel {

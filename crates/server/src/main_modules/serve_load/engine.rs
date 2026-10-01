@@ -37,6 +37,8 @@ pub(crate) struct Engine {
     pub forward: metrale_model_engine::traits::ForwardDisclosure,
     /// 2026-10-01: The slot count `--max-batch-size auto` resolved to; `None` for a count.
     pub auto_max_batch_size: Option<usize>,
+    /// 2026-10-01: The memory budget and ledger reader `GET /memory` reports.
+    pub device_budget: crate::main_modules::memory_probe::DeviceBudget,
 }
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
@@ -79,7 +81,10 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // 2026-09-30: One γ for the reserve, the pools and the scheduler.
     serve_phases::apply_dflash_gamma(&mut args, serve_phases::model_default_drafter(&ptx_set))?;
 
-    let (gpu, free_mem) = serve_phases::init_gpu_backend(&args, &ptx_set)?;
+    // 2026-10-01: Host memory before the first backend exists: the baseline `GET /memory`
+    // measures the serve's device footprint from.
+    crate::main_modules::memory_probe::record_mem_available_at_start();
+    let (gpu, free_mem, device_budget) = serve_phases::init_gpu_backend(&args, &ptx_set)?;
 
     // 2026-09-26: Topology runs before `preflight_reserve`: `resolve_topology`
     // divides the attention and linear-attention head counts by `tp_size`
@@ -267,5 +272,6 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         early_high_speed_swap_cfg,
         forward,
         auto_max_batch_size,
+        device_budget,
     }))
 }

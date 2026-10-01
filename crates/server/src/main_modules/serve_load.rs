@@ -61,6 +61,7 @@ pub(crate) fn load_model(
         early_high_speed_swap_cfg,
         forward,
         auto_max_batch_size,
+        device_budget,
     }) = engine::load_engine(args)?
     else {
         // 2026-09-26: An EP worker rank ran its command loop and the head has
@@ -110,6 +111,13 @@ pub(crate) fn load_model(
 
     let scheduler_model = model;
     let scheduler_eos = eos_tokens;
+    // 2026-10-01: Read before the model moves into the scheduler; the pool is fixed at build.
+    let memory = crate::main_modules::memory_probe::MemoryFacts {
+        kv_blocks: scheduler_model.num_total_blocks(),
+        kv_block_bytes: scheduler_model.kv_block_bytes() as u64,
+        max_batch_size: args.built_max_batch_size()?,
+        device: device_budget,
+    };
     let max_batch_size =
         scheduler_setup::resolve_max_batch_size(&args, world_size, scheduler_model.as_ref())?;
     let (use_speculative, use_self_spec, use_ngram_spec, num_drafts, dflash_rung) =
@@ -296,6 +304,7 @@ pub(crate) fn load_model(
             plan_digest: forward.plan_digest,
             auto_max_batch_size,
         },
+        memory,
         // 2026-09-26: `behavior` is MODEL.toml's, embedded at build time, with
         // the CLI overrides below.
         behavior: model_setup::resolve_behavior(&ptx_set, &args, &default_kwargs),

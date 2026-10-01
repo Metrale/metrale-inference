@@ -51,6 +51,7 @@ fn benchmark_drivers_do_not_import_each_other() {
         "contamination",
         "ssm_poison",
         "decode_floor",
+        "default_tier_boot",
         "quick_speed",
         "concurrency",
     ];

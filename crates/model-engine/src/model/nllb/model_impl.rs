@@ -103,6 +103,11 @@ impl ModelLifecycle for NllbGpuModel {
         // blocks to count; report 2^20.
         1 << 20
     }
+    fn kv_block_bytes(&self) -> usize {
+        // 2026-10-01: No paged cache (see `num_free_blocks`), so no block has a size; 0, as
+        // `num_total_blocks` reports 0 blocks.
+        0
+    }
 }
 
 impl ModelForward for NllbGpuModel {

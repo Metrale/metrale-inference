@@ -103,6 +103,7 @@ impl ModelLifecycle for RecordingModel {
     }
     facts! {
         fn num_total_blocks(&self) -> usize = self.cfg.total_blocks;
+        fn kv_block_bytes(&self) -> usize = 0;
     }
     recorded! {
         fn poll_innerq(&self) -> () = () => "poll_innerq()";
