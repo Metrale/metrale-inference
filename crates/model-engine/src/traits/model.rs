@@ -79,7 +79,7 @@ pub use device_feed::ModelDeviceFeed;
 pub use draft::ModelDraft;
 pub use ep::ModelEp;
 pub use forward::ModelForward;
-pub use lifecycle::ModelLifecycle;
+pub use lifecycle::{ModelLifecycle, PrefixReclaim};
 pub use logits::ModelLogits;
 pub use ssm_state::ModelSsmState;
 pub use streams::ModelStreams;

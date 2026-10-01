@@ -266,6 +266,6 @@ pub use logprobs::*;
 pub use model::{
     BeamReq, DECODE_BATCH_LADDER, EpCommandFailed, FeedSource, ForwardDisclosure, ForwardSelect,
     Model, ModelAdapters, ModelCircuit, ModelDeviceFeed, ModelDraft, ModelEp, ModelForward,
-    ModelLifecycle, ModelLogits, ModelSsmState, ModelStreams, ModelVerify, ModelVision, RowMask,
-    VerifyBatchedOpts, padded_batch_n,
+    ModelLifecycle, ModelLogits, ModelSsmState, ModelStreams, ModelVerify, ModelVision,
+    PrefixReclaim, RowMask, VerifyBatchedOpts, padded_batch_n,
 };

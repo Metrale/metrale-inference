@@ -62,6 +62,24 @@ impl ModelLifecycle for PreemptStubModel {
         self.free_blocks.fetch_add(take, Ordering::SeqCst);
         take
     }
+    fn reclaim_prefix_blocks_for(
+        &self,
+        prompt: &[u32],
+        _slot: i32,
+        blocks_needed: usize,
+    ) -> metrale_model_engine::traits::PrefixReclaim {
+        let reused = if prompt.is_empty() {
+            0
+        } else {
+            self.cached_prefix_blocks
+        };
+        let target = blocks_needed.saturating_sub(reused);
+        let mut free = self.num_free_blocks();
+        while free < target && self.reclaim_prefix_blocks(target - free) > 0 {
+            free = self.num_free_blocks();
+        }
+        metrale_model_engine::traits::PrefixReclaim { target, free }
+    }
 }
 
 impl ModelForward for PreemptStubModel {

@@ -299,6 +299,34 @@ impl TransformerModel {
         self.kv_cache.lock().num_blocks()
     }
 
+    /// 2026-09-30: The prefix discount applies only where the chunk-0 lookup would match
+    /// (`prefill_b_prefix_lookup`): not for a vision prompt, not when MLA prefill recomputes the
+    /// whole prompt, and not on a multi-rank world, where the agreed match can be shorter than
+    /// this rank's.
+    pub(super) fn reclaim_prefix_blocks_for_dispatch(
+        &self,
+        prompt: &[u32],
+        adapter_slot: i32,
+        blocks_needed: usize,
+    ) -> crate::traits::PrefixReclaim {
+        let reused = if self.tokens_have_vision_pad(prompt)
+            || self.mla_prefill_needs_full_recompute()
+            || self.multi_rank_protocol_active()
+        {
+            &[][..]
+        } else {
+            prompt
+        };
+        let adapter_id = self.adapter_id_for_slot(adapter_slot);
+        super::super::prefix_reclaim::reclaim_for_prompt(
+            self.prefix_cache.as_ref(),
+            &mut self.kv_cache.lock(),
+            reused,
+            adapter_id,
+            blocks_needed,
+        )
+    }
+
     pub(super) fn reclaim_prefix_blocks_dispatch(&self, num_blocks: usize) -> usize {
         if num_blocks == 0 || !self.prefix_cache.is_active() {
             return 0;

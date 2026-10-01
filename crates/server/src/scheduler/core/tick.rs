@@ -154,24 +154,30 @@ impl SchedulerCore {
         if let Some(spill) = sched.io.spill.as_deref() {
             for req in &new_reqs {
                 let prompt_len = req.prompt_len();
-                let blocks_needed = prompt_len / block_size + 1;
                 // 2026-09-25: Reclaim prefix-cache blocks before spilling a live sequence.
                 // `num_free_blocks()` does not count blocks the cache holds, so it
                 // can read near zero while blocks are reclaimable (see
                 // `Model::reclaim_prefix_blocks`).
-                loop {
-                    let free = sched.io.dev.model().num_free_blocks();
-                    if free >= blocks_needed
-                        || sched
-                            .io
-                            .dev
-                            .model()
-                            .reclaim_prefix_blocks(blocks_needed - free)
-                            == 0
-                    {
-                        break;
-                    }
-                }
+                // 2026-09-30: The target leaves out the cached prefix the prefill will
+                // reuse, and that prefix is never evicted to make room for its own request
+                // (`Model::reclaim_prefix_blocks_for`). A prompt-logprobs request reuses
+                // nothing.
+                let prompt = req.prompt_tokens_arc();
+                let reused: &[u32] = if req.prompt_logprobs().is_some() {
+                    &[]
+                } else {
+                    &prompt
+                };
+                let blocks_needed = sched
+                    .io
+                    .dev
+                    .model()
+                    .reclaim_prefix_blocks_for(
+                        reused,
+                        req.adapter_slot(),
+                        prompt_len / block_size + 1,
+                    )
+                    .target;
                 while sched.io.dev.model().num_free_blocks() < blocks_needed && !active.is_empty() {
                     let victim_idx = active
                         .iter()

@@ -259,3 +259,36 @@ fn resume_loop_errors_out_a_sequence_that_can_never_fit() {
     assert!(preempted.is_empty() && active.is_empty());
     assert!(rx.try_recv().expect("error delivered").is_err());
 }
+
+/// 2026-09-30: A victim's history is in the prefix cache after `preempt_requeue`, and the
+/// re-prefill reuses it, so the resume needs only the uncached blocks plus growth and
+/// evicts nothing for them. 32 tokens need 32 / 16 + 1 + 1 = 4 blocks; 3 are cached and
+/// 1 is free.
+#[test]
+fn resume_does_not_reclaim_the_cached_history_it_reuses() {
+    let model = std::sync::Arc::new(PreemptStubModel {
+        total_blocks: 100,
+        free_blocks: AtomicUsize::new(1),
+        reclaimable: AtomicUsize::new(50),
+        cached_prefix_blocks: 3,
+        ..Default::default()
+    });
+    let (a, _rx) = active_seq(0, 4);
+    let p = {
+        let mut history_seq = a;
+        history_seq.seq.tokens = (0..32).collect();
+        preempt_requeue(&SchedIo::for_test_with(model.clone()), history_seq)
+    };
+    let mut preempted = vec![p];
+    let mut active = Vec::new();
+    resume_preempted_seqs(
+        &*model,
+        &SchedIo::for_test_with(model.clone()),
+        &mut active,
+        &mut preempted,
+        8,
+        16,
+    );
+    assert_eq!(active.len(), 1);
+    assert_eq!(model.reclaimable.load(Ordering::SeqCst), 50);
+}
