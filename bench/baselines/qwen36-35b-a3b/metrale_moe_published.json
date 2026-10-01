@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "title": "Qwen3.6-35B-A3B-FP8 concurrency ladder: Metrale Engine leg",
-  "subtitle": "Metrale Engine at main 39ab52e6 (#51), C=1..128, on the published ladder instrument of published.json",
-  "aggregate": "mean tok/s over 2 timed reps (1 warmup discarded)",
+  "subtitle": "Metrale Engine at main 2f66da5dd (the certified binary of campaign b32255fa42, #67), C=1..128, on the published ladder instrument of published.json",
+  "aggregate": "mean tok/s over 3 timed reps, one per fresh serve, interleaved across rungs; GPU-rail joules summed over the 3 reps and divided by their summed completion tokens",
   "results_doc": "bench/baselines/qwen36-35b-a3b/metrale_moe_published.json",
   "pairs_with": "bench/baselines/qwen36-35b-a3b/published.json",
   "pairs_with_note": "This manifest holds the Metrale Engine leg only. The vLLM legs it is compared against are the series of pairs_with (vllm-mtp for throughput, vllm-mtp-energy for joules), and are not restated here. A reader pairs the subject below with those series axis by axis: the same checkpoint, ISL 128 / OSL 1024 essay instrument, ctx 2048, batch cap 128, bf16 KV, thinking off, the same box, and the same harness revision as vllm-mtp-energy.",
@@ -12,7 +12,7 @@
     "isl_tokens": 128,
     "isl_note": "~200 rendered prompt tokens after the chat template",
     "osl_tokens": 1024,
-    "reps": 2,
+    "reps": 3,
     "warmup": 1,
     "temperature": 0.0,
     "seed": 42,
@@ -20,12 +20,11 @@
     "sampling_parity": "presence_penalty and frequency_penalty pinned to 0.0 by the harness",
     "harness": "bench/ladder38/harness_w56_conc_ladder.py"
   },
-  "reps_note": "2 timed reps + 1 warmup per rung. The vLLM legs in published.json ran 3 timed reps + 1 warmup. The rep count is a sample count, not an instrument axis: every rep sends the same requests. It is disclosed here rather than matched.",
   "box": {
     "name": "dgx2 (spark-43fa)",
     "gpu": "NVIDIA GB10 Grace Blackwell, 121.7 GB unified",
     "driver": "580.126.09",
-    "note": "the box of both vLLM legs in published.json (vllm-mtp 2026-09-19, vllm-mtp-energy 2026-09-28)"
+    "note": "the box of both vLLM legs in published.json (vllm-mtp 2026-09-19, vllm-mtp-energy 2026-09-28), on the same driver, 580.126.09, read with nvidia-smi after the run"
   },
   "harness_shas": {
     "55a5963e4b": "harness_w56_conc_ladder.py, the copy committed at bench/ladder38/harness_w56_conc_ladder.py (its sha256 is 55a5963e4beea50e8f7e12de6c70e0709a53ff0d62b020cddefdea24ae92a216). The same revision drove vllm-mtp-energy in published.json. It records gpu_rail_energy_j per rep by integrating nvidia-smi power.draw.average over the rep window."
@@ -36,12 +35,12 @@
       "role": "subject",
       "label": "Metrale Engine",
       "engine": "Metrale Engine 1.0.0-beta-preview",
-      "build": "39ab52e6c9",
-      "build_note": "main at #51. The binary (sha256 f5aa8d3a17649c7e84e2ad28cc7746870b80d62dc9e124fb614c9a52410a66a5) was built from d45884cd, whose tree equals 39ab52e6 outside .benchmarks.",
-      "env": "METRALE_HOME=<a scratch directory>",
-      "env_note": "No METRALE_* lever was set. The serve's environment was read from /proc/<pid>/environ at launch and held only METRALE_HOME.",
-      "cli": "met serve Qwen/Qwen3.6-35B-A3B-FP8 --bind 127.0.0.1 --port 18891 --disable-thinking --enable-prefix-caching --gpu-memory-utilization 0.85 --kv-cache-dtype bf16 --kv-high-precision-layers auto --lm-head-dtype nvfp4 --max-batch-size 128 --max-seq-len 2048 --mtp-quantization bf16 --num-drafts 1 --request-timeout 0 --scheduler fifo --speculative --ssm-cache-slots 32 --weight-quantization declared",
-      "cli_note": "The argv read from /proc/<pid>/cmdline, with the binary's path shortened to `met`. It is the concurrency-sweep-moe gate's serve: the recipe qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head under the gate's BENCH.toml serve_overrides (weight_quantization declared, ctx 2048, batch cap 128, bf16 KV, util 0.85, fifo, num_drafts 1, thinking off, ssm_cache_slots 32, request_timeout 0).",
+      "build": "b32255fa42",
+      "build_note": "The certified binary of campaign b32255fa42 (#67; sha256 8e93526a5b2351d77ad0e3e3ec896557eb705fdf3fc778cf6e2539f24a66f138), from the bench cache that campaign built. Its tree equals main 2f66da5dd outside .benchmarks.",
+      "env": "",
+      "env_note": "No METRALE_* lever: the gate reported \"the leased server's METRALE_* serve env is empty\", and /proc/<pid>/environ of every serve agreed.",
+      "cli": "met serve Qwen/Qwen3.6-35B-A3B-FP8 --disable-thinking --enable-prefix-caching --gpu-memory-utilization 0.85 --bind 0.0.0.0 --kv-cache-dtype bf16 --kv-high-precision-layers auto --lm-head-dtype nvfp4 --max-batch-size 128 --max-seq-len 2048 --mtp-quantization bf16 --num-drafts 1 --port <port> --request-timeout 0 --scheduler fifo --speculative --ssm-cache-slots 32 --weight-quantization declared",
+      "cli_note": "The argv read from /proc/<pid>/cmdline of the serve the concurrency-sweep-moe gate leased at b32255fa42 (the recipe qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head under the gate's BENCH.toml serve_overrides: weight_quantization declared, ctx 2048, batch cap 128, bf16 KV, util 0.85, fifo, num_drafts 1, thinking off, ssm_cache_slots 32, request_timeout 0), with the binary's path shortened to `met` and the port generic. Blocks 2 and 3 served the same argv.",
       "speculation": "MTP, --num-drafts 1, at every width",
       "weight_quantization": "declared: the checkpoint's own W8A8 experts; attention and GDN decode W8A16",
       "instrument": {
@@ -51,23 +50,56 @@
         "max_model_len": 2048,
         "max_batch_size": 128,
         "kv_cache_dtype": "bf16",
-        "reps": 2,
+        "reps": 3,
         "warmup": 1,
         "temperature": 0.0,
         "seed": 42
       },
       "sources": {
-        "1": "metrale_moe_energy_c1_16.json",
-        "2": "metrale_moe_energy_c1_16.json",
-        "4": "metrale_moe_energy_c1_16.json",
-        "8": "metrale_moe_energy_c1_16.json",
-        "16": "metrale_moe_energy_c1_16.json",
-        "32": "metrale_moe_energy_c32.json",
-        "64": "metrale_moe_energy_c64.json",
-        "128": "metrale_moe_energy_c128.json"
+        "1": [
+          "metrale_moe_ladder/metrale_moe_c1_b1.json",
+          "metrale_moe_ladder/metrale_moe_c1_b2.json",
+          "metrale_moe_ladder/metrale_moe_c1_b3.json"
+        ],
+        "2": [
+          "metrale_moe_ladder/metrale_moe_c2_b1.json",
+          "metrale_moe_ladder/metrale_moe_c2_b2.json",
+          "metrale_moe_ladder/metrale_moe_c2_b3.json"
+        ],
+        "4": [
+          "metrale_moe_ladder/metrale_moe_c4_b1.json",
+          "metrale_moe_ladder/metrale_moe_c4_b2.json",
+          "metrale_moe_ladder/metrale_moe_c4_b3.json"
+        ],
+        "8": [
+          "metrale_moe_ladder/metrale_moe_c8_b1.json",
+          "metrale_moe_ladder/metrale_moe_c8_b2.json",
+          "metrale_moe_ladder/metrale_moe_c8_b3.json"
+        ],
+        "16": [
+          "metrale_moe_ladder/metrale_moe_c16_b1.json",
+          "metrale_moe_ladder/metrale_moe_c16_b2.json",
+          "metrale_moe_ladder/metrale_moe_c16_b3.json"
+        ],
+        "32": [
+          "metrale_moe_ladder/metrale_moe_c32_b1.json",
+          "metrale_moe_ladder/metrale_moe_c32_b2.json",
+          "metrale_moe_ladder/metrale_moe_c32_b3.json"
+        ],
+        "64": [
+          "metrale_moe_ladder/metrale_moe_c64_b1.json",
+          "metrale_moe_ladder/metrale_moe_c64_b2.json",
+          "metrale_moe_ladder/metrale_moe_c64_b3.json"
+        ],
+        "128": [
+          "metrale_moe_ladder/metrale_moe_c128_b1.json",
+          "metrale_moe_ladder/metrale_moe_c128_b2.json",
+          "metrale_moe_ladder/metrale_moe_c128_b3.json"
+        ]
       },
-      "source_note": "Two legs, one fresh serve each, stopped by PID: C=32/64/128 on 2026-09-29 23:06-23:23 UTC, then C=1..16 23:31-23:37 UTC. The rung files are the harness output split by rung. Only `label` differs from the harness JSON (renamed after the rung file); every rep, every other top-level field and every value are as written. sha256: metrale_moe_energy_c1_16.json f533a07f0844c6cdde827fe27b23919b522f931029f8113df35461653f419abc, metrale_moe_energy_c32.json ed34d383e99d2a177a27057d8ffc0c59e23f8a6b7c5c2d1f82239d9d0d0eacd2, metrale_moe_energy_c64.json cd3ff1dfcf5fc062e9625705eed6afa56c2db9ed0d76f63c026e49c565834a30, metrale_moe_energy_c128.json 347dc0393fd738adc3ba6edb0e05adb692a8011cc81821bbf7e0d2d2bdc152e8. Zero request errors. Every rep is gpu_rail_trustworthy. A 10 Hz NVML total-energy sidecar ran beside both legs as a cross-check on the in-window figure.",
+      "source_note": "24 per-rep harness files, 3 per rung, 2026-10-01 18:54 to 2026-10-01 19:54 UTC on dgx2, copied byte for byte. Zero request errors; every rep is gpu_rail_trustworthy. A 10 Hz NVML total-energy sidecar and 1 Hz telemetry ran beside every rep as a cross-check. sha256: metrale_moe_c1_b1.json f00410e7cf81b947f25924bdba19bef9de328aefd3fbfb2b4490bf73f9f3af35; metrale_moe_c1_b2.json 64683c46d6985159ac6eda118e0adb86c846309b2b636444c8af865c3d85caa2; metrale_moe_c1_b3.json fb919407ed0e38e88173b5588c031d9dda91f747d47737855f7d0b58aca465f4; metrale_moe_c2_b1.json 6c77682403a73203ad06dbf7e9ade2c23515af4657d94c4e56925e5ab6309e85; metrale_moe_c2_b2.json d94b4c8df0f05659d9265f3b9b599f50bc53f22c3405c8c6345a5916d9df9e69; metrale_moe_c2_b3.json 7103fbf6ab5bedc745d93e038229b7ebf5a89c9503125046194a375807e3db60; metrale_moe_c4_b1.json ad566355af63d7c08f815938ab24796ae782691454eb77040a3846bba3daa48c; metrale_moe_c4_b2.json c8d5bc7cd9a6ed080775295b0b1c69daea40322ecbf21e839bc7f2a6d275c712; metrale_moe_c4_b3.json 727d506829cfcd81eefff6cd7e6c2754de71fe4f7179405c9cea65b90b79a208; metrale_moe_c8_b1.json acabfd6538dfb965250049e4abe045602a88ab6d397e8dfa787903b2a15f9e9f; metrale_moe_c8_b2.json 886349b0ef89013384d1c1d5ec19b03cadcc9eb3b6987c5d07af57f434f48afd; metrale_moe_c8_b3.json 6fbaa292fd26f35c2d6dd8ddee1e3dfbee7e147d4b3a97ae766c6eaf521eadc1; metrale_moe_c16_b1.json a37ac767fc0c91b58f1ff9ae472b6bc862917574429e1cb28b47a35834271e72; metrale_moe_c16_b2.json a2013f077ef14a9080e4a49604c5f77f17e27486abf269086d394b9551eab77f; metrale_moe_c16_b3.json f1f4cb9989df9680c30f19aa0fa03f7e62a55227c524ddf4f22563da3fed772b; metrale_moe_c32_b1.json ab9fa5f115dcfaa8f4434120d4d6671df5807ce9db0b8ea526a2b3dc284478a6; metrale_moe_c32_b2.json 0596770f701d1f7254a001c367f49904316c2f08930336f4ccb4fac8acc387f1; metrale_moe_c32_b3.json 5027db6d55600bd385c621a218a1db039fd0e28f24428dd05092eb3f6dee86c9; metrale_moe_c64_b1.json 4cec1c0c02d06b56f5e2c797a7b2e05b56698711d00ffe3930897c48e1335a32; metrale_moe_c64_b2.json e45a45d1353b5d63601baa8ee49d1ead02e07bd948426086f18bbd99827fc5b6; metrale_moe_c64_b3.json 323b9764b13a77834ca40fc672e16965c494f41539f2c422970cecf97206c56d; metrale_moe_c128_b1.json 607edbd55944582ba87c88e4e46e6232643f1618f465baa4bf50b7a026ce06f4; metrale_moe_c128_b2.json f7c586d6e4ec5e684b949b9390c73ef424bc77a59254db5f072d6572ec723555; metrale_moe_c128_b3.json c03b95c2bda72e027a5d0aca1abe10c21df47f1d487204e7ebdc9eb93e15c5c5.",
       "evidence_note": "Published-ladder data, not a gate record. The concurrency-sweep-moe gate covers C=1..16, and its signed records under .benchmarks/ remain the certified evidence for those rungs. C=32/64/128 exist only here."
     }
-  ]
+  ],
+  "protocol": "One harness process per timed rep (--reps 1 --warmup 0), so every rep draws a fresh prompt nonce and none hits the prefix cache. Three blocks, each on a FRESH serve of the same command: block 1 is the serve the certified concurrency-sweep-moe gate command leases (--serve-reuse), blocks 2 and 3 re-run that serve's argv and environment verbatim. On each serve, one discarded warm-up rep runs at every rung first (that is the workload's warmup = 1), then one timed rep per rung, and every timed rep starts only after the GPU die has cooled to 55 C or below with the serve loaded and idle (nvidia-smi temperature.gpu polled every 5 s). Rung order per block: 1,2,4,8,16,32,64,128 / 128,64,32,16,8,4,2,1 / 32,64,128,1,2,4,8,16, so no rung always runs first or last on a serve. The vLLM legs in published.json ran each rung's 3 timed reps back to back after 1 warm-up inside one harness process, with no die gate, so their reps started at whatever die temperature the previous rep left; the die-gated start here is disclosed because a cooler die draws less power, and the peak die temperatures of the two legs are comparable (Metrale 62-80 C, vLLM 58-83 C across the ladder)."
 }
