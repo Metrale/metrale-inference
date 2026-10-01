@@ -70,7 +70,9 @@ files = ["crates/model-engine/src/model/trait_impl/decode_a2.rs"]
 [[family]]
 id = "argmax_device"
 description = "Row-wise BF16 argmax over the logits"
-kernels = ["argmax::argmax_bf16"]
+# 2026-09-30: `argmax_bf16_batch` is every row in one launch (the batched MTP verify);
+# `argmax_bf16_batch_lp` also writes each row's top-1 log-probability (the batched propose).
+kernels = ["argmax::argmax_bf16", "argmax::argmax_bf16_batch", "argmax::argmax_bf16_batch_lp"]
 rows = [1, 65536]
 op = [{ op = "argmax" }]
 [[family.point]]
@@ -380,6 +382,28 @@ op = [
 values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/gdn_verify_fused_k2.cu"]
+
+# 2026-09-30: The carried-state GDN verify (qwen3_ssm/carry.rs): the conv and the WY over a run
+# of sequences with their pending rows folded in, and the folds a declining run runs first.
+[[family]]
+id = "gdn_carry_verify"
+description = "Carried-state batched GDN verify: conv, WY (eager and lazy) and the pending-row folds"
+kernels = [
+  "gated_delta_rule_carry::gdn_carry_conv", "gated_delta_rule_carry::gdn_carry_wy2",
+  "gated_delta_rule_carry::gdn_carry_wy3", "gated_delta_rule_carry::gdn_carry_wy4",
+  "gated_delta_rule_carry::gdn_carry_wy2_lazy", "gated_delta_rule_carry::gdn_carry_wy3_lazy",
+  "gated_delta_rule_carry::gdn_carry_wy4_lazy", "gated_delta_rule_carry::gdn_carry_flush",
+  "gated_delta_rule_carry::gdn_carry_conv_flush",
+]
+rows = [4, 256]
+op = [
+  { op = "conv1d_update", feeds = ["l2_norm"] }, { op = "l2_norm" }, { op = "gdn_recurrence" },
+  { op = "state_snapshot", after = ["conv1d_update"], beside = ["l2_norm"] },
+]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/gated_delta_rule_carry.cu"]
 
 [[family]]
 id = "mamba2_ssm"
@@ -789,6 +813,22 @@ measurement = "qwen3.6-35b-a3b::w4a16_gemv_sw @ decode C=1 (R=2, MTP k=1)"
 point = {}
 rows = [1]
 measurement = "qwen3.8-27b::w4a16_gemv_sw @ decode C=1 (R=4, MTP k=3)"
+
+# 2026-09-30: The 17..32-row CUDA-core tier the batched propose's LM head takes past the
+# tensor-core GEMV (`MtpHead::lm_head_batch_kernel`).
+[[family]]
+id = "w4a16_gemv_wide"
+description = "NVFP4 W4A16 CUDA-core GEMV, up to 32 rows in one launch"
+kernels = ["w4a16_gemv::w4a16_gemv_batch32"]
+rows = [1, 32]
+op = [
+  { op = "linear", weight = ["nvfp4/g16"], activation = ["bf16"] },
+  { op = "lm_head", weight = ["nvfp4/g16"], activation = ["bf16"] },
+]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/w4a16_gemv.cu"]
 
 [[family]]
 id = "w4a16_tc"

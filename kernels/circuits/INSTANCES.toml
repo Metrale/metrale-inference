@@ -10,8 +10,11 @@
 # - The shapes restate the checkpoints' config.json (verified 2026-09-28 against the local
 #   snapshots); `met circuit show` re-checks them whenever the checkpoint is cached.
 # - `multi_seq` rows are the padded batch ladder of `padded_batch_n`
-#   (crates/model-engine/src/traits/model.rs:52-58); verify rows are K = 1 + drafts.
+#   (crates/model-engine/src/traits/model.rs:52-58); verify rows are K = 1 + drafts; draft rows
+#   past 1 are the batched propose's widths (2026-09-30: the edges of its tensor-core tiers).
 # - `golden = true` instances have every plan checked in under kernels/circuits/plans/.
+# - `verify_batch` lists the batched MTP verify's row tables with a golden plan (crates/circuit
+#   src/runs.rs); the executor serves a batched verify only to an instance that lists some.
 
 schema = 1
 
@@ -37,7 +40,8 @@ target = "gb10/qwen3.8-27b/nvfp4"
 golden = true
 layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
 dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128, mtp = 1 }
-plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32] }
+verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
 
 # 2026-09-28: Formats from the engine's own policy (metrale_circuit::PolicyPrecision) over the
 # checkpoint's declared plan (checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml) at the tier the
@@ -71,7 +75,8 @@ target = "gb10/qwen3.8-27b/nvfp4"
 golden = true
 layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
 dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128, mtp = 1 }
-plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32] }
+verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
 
 [instance.precision]
 checkpoint_plan = "unsloth--Qwen3.8-27B-NVFP4"

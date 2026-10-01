@@ -10,7 +10,9 @@
 
 use super::*;
 
+mod circuit;
 mod propose;
+mod stage;
 
 impl MtpHead {
     /// 2026-09-25: One draft position for n sequences, the n-row counterpart
@@ -48,11 +50,8 @@ impl MtpHead {
         let kv_dim = (nkv * hd) as usize;
 
         // 2026-09-25: 1. Embed the n tokens into `ssm_qkvz`.
+        self.stage_batch_embeds(tokens, ctx, stream)?;
         let embeds = ctx.buffers.ssm_qkvz();
-        for (i, &t) in tokens.iter().enumerate() {
-            let src = self.embed_tokens.weight.offset(t as usize * h * bf16);
-            gpu.copy_d2d_async(src, embeds.offset(i * h * bf16), h * bf16, stream)?;
-        }
 
         // 2026-09-25: 2. Pre-fc norms. The embeddings are contiguous and take
         // one n-row launch; `hiddens` are separate pointers (verify-stash rows
@@ -198,49 +197,21 @@ impl MtpHead {
         // (it was a loop of four launches and an upload per sequence: 129 paged-attention
         // launches of one sequence's heads each per 128-wide propose). Each kernel computes a
         // row as it did alone.
-        let mut kv_cache = self.kv_cache.lock();
+        // 2026-09-30: The host buffer is held until the readback below synchronizes.
+        let (_meta_buf, max_blocks) = self.stage_batch_meta(states, positions, ctx, stream)?;
+        let meta = crate::layers::mtp_meta::mtp_attn_meta_batch_dev(self.propose_meta, n);
+        let kv_cache = self.kv_cache.lock();
         let bs = kv_cache.block_size();
         let scratch = ctx.buffers.scratch();
         let attn_out = ctx.buffers.attn_output();
         let inv_sqrt_d = 1.0f32 / (hd as f32).sqrt();
         let kv_stride = nkv * hd;
-        let mut slots = Vec::with_capacity(n);
-        let mut seq_lens = Vec::with_capacity(n);
-        let mut pos_u32 = Vec::with_capacity(n);
-        for i in 0..n {
-            let state = &mut *states[i];
-            let blocks_needed = (state.seq_len / bs) + 1;
-            while state.block_table.len() < blocks_needed {
-                state.block_table.push(kv_cache.alloc_block()?);
-            }
-            let block_idx = state.block_table[state.seq_len / bs];
-            slots.push((block_idx as i64) * (bs as i64) + ((state.seq_len % bs) as i64));
-            seq_lens.push((state.seq_len + 1) as i32);
-            pos_u32.push(positions[i] as u32);
-        }
-        let max_blocks = states
-            .iter()
-            .map(|s| s.block_table.len())
-            .max()
-            .unwrap_or(1);
-        let tables: Vec<&[u32]> = states.iter().map(|s| s.block_table.as_slice()).collect();
-        // 2026-09-29: The whole `propose_meta` allocation: `PROPOSE_META_SEQS` strides.
-        let (meta_buf, meta) = crate::layers::mtp_meta::pack_mtp_attn_meta_batch(
-            &pos_u32,
-            &slots,
-            &seq_lens,
-            &tables,
-            max_blocks,
-            super::super::batch_caps::PROPOSE_META_SEQS * self.propose_meta_stride,
-        )?;
-        let meta_base = self.propose_meta;
-        gpu.copy_h2d_async(&meta_buf, meta_base, stream)?;
         ops::rope_strided(
             gpu,
             self.rope_strided_k,
             q_out,
             k_out,
-            meta_base.offset(meta.positions),
+            meta.positions,
             n as u32,
             nq,
             nkv,
@@ -258,7 +229,7 @@ impl MtpHead {
             v_out,
             kv_cache.k_pool_ptr(self.attn_layer_idx),
             kv_cache.v_pool_ptr(self.attn_layer_idx),
-            meta_base.offset(meta.slots),
+            meta.slot,
             n as u32,
             nkv,
             hd,
@@ -275,9 +246,9 @@ impl MtpHead {
             kv_cache.k_pool_ptr(self.attn_layer_idx),
             kv_cache.v_pool_ptr(self.attn_layer_idx),
             attn_out,
-            meta_base.offset(meta.block_tables),
-            meta_base.offset(meta.seq_lens),
-            max_blocks as u32,
+            meta.block_table,
+            meta.seq_len,
+            max_blocks,
             n as u32,
             nq,
             nkv,
@@ -351,9 +322,12 @@ impl MtpHead {
         // the twin's row stride, padded to a multiple of 128 (`impl_a1.rs`),
         // not `v`. Otherwise `w4a16_gemv_batchm` runs on the narrowest
         // covering tier.
-        if !self.mtp_tc_lm_head(gpu, n, v, h as u32)
-            && n >= 5
-            && self.w4a16_gemm_t_k.0 != 0
+        let arm = lm_head_rows_arm(
+            n,
+            self.mtp_tc_lm_head(gpu, n, v, h as u32),
+            self.lm_head_twin_ready(),
+        );
+        if arm == LmHeadRowsArm::TileTwin
             && let Some((ref nvfp4_t, ldb)) = self.lm_head_nvfp4_t
         {
             ops::w4a16_gemm_n128_ldb(
@@ -423,35 +397,9 @@ impl MtpHead {
         }
 
         // 2026-09-25: 11. One `copy_d2h` reads the n ids and, when the LP
-        // kernel ran, the log-probabilities up to `LP_SCRATCH_OFF + n * 4`.
-        let d2h_len = if want_lp {
-            LP_SCRATCH_OFF + n * 4
-        } else {
-            n * 4
-        };
-        let mut buf = vec![0u8; d2h_len];
-        gpu.copy_d2h(scratch, &mut buf)?;
-        for (i, id) in out_ids.iter_mut().enumerate() {
-            *id = u32::from_le_bytes([buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2], buf[i * 4 + 3]]);
-        }
-        if let Some(lp) = out_lp {
-            for (i, slot) in lp.iter_mut().enumerate().take(n) {
-                *slot = if want_lp {
-                    let o = LP_SCRATCH_OFF + i * 4;
-                    f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]])
-                } else {
-                    // 2026-09-25: 0.0 is log(1): without the LP kernel no
-                    // row is reported as uncertain.
-                    0.0
-                };
-            }
-        }
-
-        // 2026-09-25: 12. `forward_one`'s tail, per row.
-        for (i, state) in states.iter_mut().enumerate() {
-            state.seq_len += 1;
-            state.last_pair_key = Some(positions[i].saturating_sub(1));
-        }
+        // kernel ran, the log-probabilities. 12. `forward_one`'s tail, per row.
+        Self::read_batch_ids(ctx, want_lp, out_ids, out_lp)?;
+        Self::finish_batch_rows(states, positions);
         Ok(())
     }
 
@@ -467,7 +415,6 @@ impl MtpHead {
         v: u32,
         h: u32,
     ) -> bool {
-        ops::dense_gemv_tc::mtp_tc_enabled()
-            && ops::gemv_tc::tc_kernel(gpu, n as u32, v, h).is_some()
+        tc_lm_head(gpu, n, v, h)
     }
 }

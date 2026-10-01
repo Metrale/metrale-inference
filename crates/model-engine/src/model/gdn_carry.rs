@@ -196,6 +196,13 @@ impl TransformerModel {
         Ok(true)
     }
 
+    /// 2026-09-30: Bind the carry buffers now, if the model can carry; the circuit executor's
+    /// build reads the bindings from the layers.
+    pub(super) fn gdn_carry_bind_now(&self) -> Result<bool> {
+        let mut inner = self.gdn_carry.inner.lock();
+        self.gdn_carry_bind(&mut inner)
+    }
+
     fn carry_slot(&self, seq: &SequenceState) -> usize {
         seq.slot_idx.min(self.ssm_pool.mtp_slots)
     }

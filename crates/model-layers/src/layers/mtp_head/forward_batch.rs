@@ -27,7 +27,41 @@ mod position;
 /// log-probabilities. The n argmax ids occupy `scratch[0..n*4)`, and
 /// n <= `PROPOSE_META_SEQS` keeps them below this offset (2026-09-29: derived; it was 256,
 /// which ids overwrite past 64 rows).
-const LP_SCRATCH_OFF: usize = 4 * super::batch_caps::PROPOSE_META_SEQS;
+pub(super) const LP_SCRATCH_OFF: usize = 4 * super::batch_caps::PROPOSE_META_SEQS;
+
+/// 2026-09-30: The LM-head launch of an n-row draft position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LmHeadRowsArm {
+    /// 2026-09-30: `w4a16_gemm_n128_ldb` on the transposed twin.
+    TileTwin,
+    /// 2026-09-30: `w4a16_gemv_batchm` on `lm_head_batch_kernel(n)`, which takes the
+    /// tensor-core entry `gemv_tc::tc_kernel` resolves, if any.
+    Gemv,
+}
+
+/// 2026-09-30: The arm `forward_batch_position` takes at `n` rows: the tile twin when the
+/// tensor-core LM head is not taken (`tc_lm_head`), from 5 rows, with the twin and its kernel
+/// present (`twin_ready`); else the batched GEMV. The legacy forward and the circuit executor's
+/// plan check both call it.
+pub(crate) fn lm_head_rows_arm(n: usize, tc_lm_head: bool, twin_ready: bool) -> LmHeadRowsArm {
+    if !tc_lm_head && n >= 5 && twin_ready {
+        LmHeadRowsArm::TileTwin
+    } else {
+        LmHeadRowsArm::Gemv
+    }
+}
+
+/// 2026-09-30: True when the tensor-core drafter path is on
+/// (`ops::dense_gemv_tc::mtp_tc_enabled`) and `gemv_tc::tc_kernel` resolves a
+/// `w4a16_gemv_tc8`/`tc16` entry for an `n`-row LM head of `v` rows over `h`.
+pub(crate) fn tc_lm_head(
+    gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+    n: usize,
+    v: u32,
+    h: u32,
+) -> bool {
+    ops::dense_gemv_tc::mtp_tc_enabled() && ops::gemv_tc::tc_kernel(gpu, n as u32, v, h).is_some()
+}
 
 impl MtpHead {
     /// 2026-09-25: n-row projection of a BF16 or weight-only NVFP4 weight.
@@ -146,6 +180,33 @@ impl MtpHead {
                 }
                 Ok(())
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LmHeadRowsArm, lm_head_rows_arm};
+
+    /// 2026-09-30: The legacy dispatch's edges: the tile twin from 5 rows, only off the
+    /// tensor-core head and only when ready.
+    #[test]
+    fn the_lm_head_arm_edges() {
+        use LmHeadRowsArm::{Gemv, TileTwin};
+        for (n, tc, twin, want) in [
+            (4, false, true, Gemv),
+            (5, false, true, TileTwin),
+            (32, false, true, TileTwin),
+            (5, true, true, Gemv),
+            (16, true, true, Gemv),
+            (17, false, false, Gemv),
+            (2, false, false, Gemv),
+        ] {
+            assert_eq!(
+                lm_head_rows_arm(n, tc, twin),
+                want,
+                "n={n} tc={tc} twin={twin}"
+            );
         }
     }
 }

@@ -260,6 +260,19 @@ impl LayerWeightSetup for Qwen3SsmLayer {
 }
 
 impl LayerWriteOnAccept for Qwen3SsmLayer {
+    fn gdn_verify_run_batched(
+        &self,
+        states: &[&mut (dyn crate::layer::LayerState + 'static)],
+        kk: usize,
+        gdn_wyn: bool,
+        wy_tables: metrale_gpu_runtime::gpu::DevicePtr,
+    ) -> anyhow::Result<Option<bool>> {
+        Ok(Some(matches!(
+            self.multi_run_arm(states, kk, gdn_wyn, wy_tables)?,
+            super::trait_decode_batched_conv_gdn_multi::RunArm::Batched(..)
+        )))
+    }
+
     fn gdn_woa_stash_seq_floats(&self) -> Option<usize> {
         self.woa_stash_seq_floats_impl()
     }

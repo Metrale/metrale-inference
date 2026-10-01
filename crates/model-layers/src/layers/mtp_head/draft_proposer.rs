@@ -115,10 +115,16 @@ impl DraftProposer for MtpHead {
         stream: u64,
         out_conf: Option<&mut Vec<Vec<f32>>>,
     ) -> Result<Option<Vec<Vec<u32>>>> {
-        // 2026-09-30: Under `--forward circuit` each sequence drafts alone, through the circuit's
-        // draft program (`forward.rs`); the batched propose is legacy code.
-        if !self.can_propose_batch(last_tokens.len(), ctx.buffers, ctx.config)
-            || self.circuit_draft.read().is_some()
+        if !self.can_propose_batch(last_tokens.len(), ctx.buffers, ctx.config) {
+            return Ok(None);
+        }
+        // 2026-09-30: Under `--forward circuit` the batch runs the circuit's n-row draft
+        // program, which writes the D-Cut confidences; a width it has no program for, or a
+        // caller without D-Cut (whose legacy argmax the plan does not state), drafts each
+        // sequence alone on the single-row program (`forward.rs`).
+        let circuit = self.circuit_draft.read().clone();
+        if let Some(r) = &circuit
+            && !(r.serves(last_tokens.len() as u64) && out_conf.is_some())
         {
             return Ok(None);
         }
@@ -150,6 +156,7 @@ impl DraftProposer for MtpHead {
             }
         }
         self.propose_batch_impl(
+            circuit.as_deref(),
             last_tokens,
             target_hiddens,
             positions,

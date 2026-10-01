@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-09-30: Kernel launches of one legacy batched MTP verify step (the second of the reference
+# run), by kernel function, from nsys traces of `met circuit diff --verify-batch` on GB10 with
+# unsloth/Qwen3.8-27B-NVFP4 (bf16 KV and head, --speculative --num-drafts 3), under each
+# --weight-quantization tier. `crates/circuit/tests/verify_batch.rs` checks that the reference
+# plan of each table launches exactly these. Copies are not kernels and are not counted.
+
+schema = 1
+
+[[trace]]
+tier = "declared"
+table = "4x2"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemv_bf16_batchm = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4 = 48, moe_silu_mul = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a4_gemv_mx8 = 168, w4a4_quant_rows = 112, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb1_ku8 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "4x4"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4 = 48, moe_silu_mul = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a4_gemv_mx16_nt2 = 56, w4a4_gemv_mx16_ps = 112, w4a4_quant_rows = 112, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb2 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "2x8"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy2_lazy = 48, moe_silu_mul = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a4_gemv_mx16_nt2 = 56, w4a4_gemv_mx16_ps = 112, w4a4_quant_rows = 112, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb2 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "3x8"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy3_lazy = 48, moe_silu_mul = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a4_gemv_mx32_nt4 = 56, w4a4_gemv_mx32_ps = 112, w4a4_quant_rows = 112, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb4 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "4x8"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4_lazy = 48, moe_silu_mul = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a4_gemv_mx32_nt4 = 56, w4a4_gemv_mx32_ps = 112, w4a4_quant_rows = 112, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb4 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "2x16"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy2_lazy = 48, moe_silu_mul = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a4_gemv_mx32_nt4 = 56, w4a4_gemv_mx32_ps = 112, w4a4_quant_rows = 112, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb4 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "4x3"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4 = 48, moe_silu_mul = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a4_gemv_mx16_nt2 = 56, w4a4_gemv_mx16_ps = 112, w4a4_quant_rows = 112, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb2 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "4x6"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4 = 48, moe_silu_mul = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a4_gemv_mx32_nt4 = 56, w4a4_gemv_mx32_ps = 112, w4a4_quant_rows = 112, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb4 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "uncarried: 4x8! 2x8!"
+launches = 4107
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, causal_conv1d_update_l2norm = 2304, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_delta_rule_wy2 = 384, gated_delta_rule_wy4 = 384, gated_rms_norm_prefill = 48, metrale_nvfp4_mmq64_nc = 168, metrale_nvfp4_quantize_bf16 = 56, metrale_nvfp4_scale_bf16 = 56, metrale_nvfp4_silu_mul_quant = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb8 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "2x32"
+launches = 1131
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy2_lazy = 48, metrale_nvfp4_mmq64_nc = 168, metrale_nvfp4_quantize_bf16 = 56, metrale_nvfp4_scale_bf16 = 56, metrale_nvfp4_silu_mul_quant = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb8 = 152 }
+
+[[trace]]
+tier = "declared"
+table = "uncarried: 4x8! 2x24!"
+launches = 6355
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, causal_conv1d_update_l2norm = 3840, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_delta_rule_wy2 = 1152, gated_delta_rule_wy4 = 384, gated_rms_norm_prefill = 48, metrale_nvfp4_gemm_pipe = 168, metrale_nvfp4_quantize_bf16 = 56, metrale_nvfp4_silu_mul_quant = 56, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w8a8_act_quant_row = 136, w8a8_act_quant_silu_row = 8, w8a8_gemv_rowscale_mb16 = 152 }
+
+[[trace]]
+tier = "nvfp4"
+table = "4x2"
+launches = 915
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemv_bf16_batchm = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4 = 48, moe_silu_mul = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemv_tc8 = 352 }
+
+[[trace]]
+tier = "nvfp4"
+table = "4x4"
+launches = 1043
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4 = 48, metrale_nvfp4_mmq16_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "2x8"
+launches = 1043
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy2_lazy = 48, metrale_nvfp4_mmq16_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "3x8"
+launches = 1043
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy3_lazy = 48, metrale_nvfp4_mmq32_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "4x8"
+launches = 1043
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4_lazy = 48, metrale_nvfp4_mmq32_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "2x16"
+launches = 1043
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy2_lazy = 48, metrale_nvfp4_mmq32_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "4x3"
+launches = 1043
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4 = 48, metrale_nvfp4_mmq16_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "4x6"
+launches = 1043
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy4 = 48, metrale_nvfp4_mmq32_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "uncarried: 4x8! 2x8!"
+launches = 4019
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, causal_conv1d_update_l2norm = 2304, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_delta_rule_wy2 = 384, gated_delta_rule_wy4 = 384, gated_rms_norm_prefill = 48, metrale_nvfp4_mmq64_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "2x32"
+launches = 1043
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_rms_norm_prefill = 48, gdn_carry_conv = 48, gdn_carry_wy2_lazy = 48, metrale_nvfp4_mmq64_nc = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_scale_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_n64_p3 = 64, w4a16_gemm_t_p3 = 96 }
+
+[[trace]]
+tier = "nvfp4"
+table = "uncarried: 4x8! 2x24!"
+launches = 6259
+kernels = { argmax_bf16_batch = 1, bf16_residual_add = 64, causal_conv1d_update_l2norm = 3840, deinterleave_qg = 16, dense_gemm_ba_gates_prefill = 48, dense_gemm_bf16 = 1, gated_delta_rule_wy2 = 1152, gated_delta_rule_wy4 = 384, gated_rms_norm_prefill = 48, metrale_nvfp4_gemm_pipe = 192, metrale_nvfp4_quantize_bf16 = 64, metrale_nvfp4_silu_mul_quant = 64, paged_decode_attn = 16, reshape_and_cache_flash = 16, residual_add_rms_norm = 64, rms_norm = 1, rms_norm_residual = 64, rms_norm_strided = 32, rope_forward_strided = 16, sigmoid_gate_mul_batched = 16, w4a16_gemm_t_k64_p3 = 48, w4a16_gemm_t_m128 = 112 }
+

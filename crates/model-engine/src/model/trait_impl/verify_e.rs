@@ -50,8 +50,11 @@ use metrale_model_layers::layers::ops;
 
 mod eager;
 mod graphs;
+mod mapped_argmax;
 mod readback;
 mod stage;
+
+pub(super) use mapped_argmax::mapped_argmax_host_dev;
 
 impl TransformerModel {
     /// 2026-09-25: Whether `decode_verify_batched_dispatch` can take `ks.len()`
@@ -82,9 +85,17 @@ impl TransformerModel {
             && shape_ok
             && ks.iter().sum::<usize>() <= super::verify_e2::VERIFY_ROW_CAP
             && self.comm.is_none()
-            // 2026-09-30: The circuit has no batched verify; under `--forward circuit` each
-            // sequence verifies alone, through the circuit's verify program.
-            && self.circuit.read().is_none()
+            // 2026-09-30: Under `--forward circuit` only when the executor compiles batched
+            // verifies (`CircuitExec::verify_batch`).
+            && self
+                .circuit
+                .read()
+                .as_ref()
+                .is_none_or(|e| {
+                    e.verify_batch
+                        .as_ref()
+                        .is_some_and(|v| ks.iter().sum::<usize>() as u64 <= v.max_rows)
+                })
             && !(self.lora.is_some() && metrale_model_layers::lora::no_batch_verify())
             && !self.verify_hidden_stash.is_null()
             && !self
@@ -122,12 +133,6 @@ impl TransformerModel {
         // on.
         self.gdn_woa_eligible
             .store(false, std::sync::atomic::Ordering::Release);
-        // 2026-09-30: Legacy layers must not run under a circuit forward's name.
-        ensure!(
-            self.circuit.read().is_none(),
-            "decode_verify_batched: the circuit forward has no batched verify \
-             (can_batch_verify refuses it)"
-        );
         let t_launch = std::time::Instant::now();
         let mapped_argmax = mapped_argmax_host_dev(self.gpu.as_ref());
         let stream = self.gpu.default_stream();
@@ -286,98 +291,142 @@ impl TransformerModel {
             // when graphs are on. A full cache still captures: the insert
             // below evicts the least recently used entry.
             let capture = graphs.is_some();
-
-            let ctx = ForwardContext {
-                buffers: &self.buffers,
-                hc_row_offset: 0,
-                gpu: self.gpu.as_ref(),
-                config: &self.config,
-                dispatch: &self.dispatch,
-                moe_lora_route: self.decode_moe_route(),
-                derived: &self.derived,
-                levers: &self.levers,
-                stats: &self.stats,
-                attn_metadata: Some(metadata),
-                profile: false,
-                comm: self.comm_ref(),
-                graph_capture: capture,
-                decode_step: false,
-                gdn_exact_replay: false,
-                gdn_write_on_accept: write_on_accept || carry,
-                token_ids: None,
-                host_token_ids: None,
-                routed_lora_layers: None,
-                midchunk_capture: None,
+            // 2026-09-30: `--forward circuit`: the program compiled for this batch's row table
+            // runs the layers, the final norm, the lm_head and the argmax
+            // (`impl_circuit_verify_batch.rs`). It is compiled before any capture.
+            let circuit = self.circuit.read();
+            let circuit_program = match circuit.as_ref() {
+                Some(exec) => Some(self.circuit_verify_batch_prepare(
+                    exec,
+                    seqs,
+                    ks,
+                    wy_tables_base,
+                    carry,
+                    &metadata,
+                    mapped_argmax.map_or(self.buffers.scratch(), |(_, d)| d),
+                )?),
+                None => None,
             };
-
-            let mut seq_lens_vec: Vec<usize> = Vec::with_capacity(r_total);
-            let mut block_tables_vec: Vec<Vec<u32>> = Vec::with_capacity(r_total);
-            for (i, seq) in seqs.iter().enumerate() {
-                for j in 0..ks[i] {
-                    seq_lens_vec.push(seq.seq_len + j);
-                    block_tables_vec.push(seq.block_table.clone());
+            if let Some((program, gdn)) = circuit_program {
+                if capture {
+                    self.gpu.begin_capture(stream)?;
                 }
-            }
-
-            // 2026-09-25: Attention layer states for `decode_multi_seq`,
-            // allocated before `begin_capture`.
-            let mut attn_dummy_states: Vec<Vec<Box<dyn LayerState>>> = Vec::new();
-            for (layer_idx, layer) in self.layers.iter().enumerate() {
-                if self.config.layer_type(layer_idx) == LayerType::FullAttention {
-                    attn_dummy_states.push(
-                        (0..r_total)
-                            .map(|_| layer.alloc_state(self.gpu.as_ref()))
-                            .collect::<Result<_>>()?,
-                    );
+                self.run_circuit_program(
+                    &program.program,
+                    &gdn,
+                    metadata.max_blocks_per_seq,
+                    stream,
+                )?;
+                if capture {
+                    self.finish_verify_capture(
+                        &mut graphs,
+                        graph_key,
+                        &mut outcome,
+                        ks,
+                        n,
+                        stream,
+                    )?;
                 }
-            }
+            } else {
+                let ctx = ForwardContext {
+                    buffers: &self.buffers,
+                    hc_row_offset: 0,
+                    gpu: self.gpu.as_ref(),
+                    config: &self.config,
+                    dispatch: &self.dispatch,
+                    moe_lora_route: self.decode_moe_route(),
+                    derived: &self.derived,
+                    levers: &self.levers,
+                    stats: &self.stats,
+                    attn_metadata: Some(metadata),
+                    profile: false,
+                    comm: self.comm_ref(),
+                    graph_capture: capture,
+                    decode_step: false,
+                    gdn_exact_replay: false,
+                    gdn_write_on_accept: write_on_accept || carry,
+                    token_ids: None,
+                    host_token_ids: None,
+                    routed_lora_layers: None,
+                    midchunk_capture: None,
+                };
 
-            if capture {
-                self.gpu.begin_capture(stream)?;
-            }
+                let mut seq_lens_vec: Vec<usize> = Vec::with_capacity(r_total);
+                let mut block_tables_vec: Vec<Vec<u32>> = Vec::with_capacity(r_total);
+                for (i, seq) in seqs.iter().enumerate() {
+                    for j in 0..ks[i] {
+                        seq_lens_vec.push(seq.seq_len + j);
+                        block_tables_vec.push(seq.block_table.clone());
+                    }
+                }
 
-            self.run_verify_layers(
-                &mut attn_dummy_states,
-                seqs,
-                &mut kv_cache,
-                &seq_lens_vec,
-                &block_tables_vec,
-                hidden,
-                residual,
-                r_total,
-                n,
-                ks,
-                &off,
-                wy_tables_base,
-                k4_diag,
-                &ctx,
-                stream,
-            )?;
+                // 2026-09-25: Attention layer states for `decode_multi_seq`,
+                // allocated before `begin_capture`.
+                let mut attn_dummy_states: Vec<Vec<Box<dyn LayerState>>> = Vec::new();
+                for (layer_idx, layer) in self.layers.iter().enumerate() {
+                    if self.config.layer_type(layer_idx) == LayerType::FullAttention {
+                        attn_dummy_states.push(
+                            (0..r_total)
+                                .map(|_| layer.alloc_state(self.gpu.as_ref()))
+                                .collect::<Result<_>>()?,
+                        );
+                    }
+                }
 
-            let normed = self.buffers.norm_output();
-            self.final_norm_apply(
-                hidden,
-                normed,
-                r_total as u32,
-                h as u32,
-                self.config.rms_norm_eps as f32,
-                stream,
-            )?;
+                if capture {
+                    self.gpu.begin_capture(stream)?;
+                }
 
-            if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
-                anyhow::bail!("K4_DIAG(batched): CUDA error after final norm: {e:#}");
-            }
+                self.run_verify_layers(
+                    &mut attn_dummy_states,
+                    seqs,
+                    &mut kv_cache,
+                    &seq_lens_vec,
+                    &block_tables_vec,
+                    hidden,
+                    residual,
+                    r_total,
+                    n,
+                    ks,
+                    &off,
+                    wy_tables_base,
+                    k4_diag,
+                    &ctx,
+                    stream,
+                )?;
 
-            self.lm_head_batched(normed, r_total as u32, self.buffers.logits(), stream)?;
+                let normed = self.buffers.norm_output();
+                self.final_norm_apply(
+                    hidden,
+                    normed,
+                    r_total as u32,
+                    h as u32,
+                    self.config.rms_norm_eps as f32,
+                    stream,
+                )?;
 
-            if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
-                anyhow::bail!("K4_DIAG(batched): CUDA error after lm_head_batched: {e:#}");
-            }
+                if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
+                    anyhow::bail!("K4_DIAG(batched): CUDA error after final norm: {e:#}");
+                }
 
-            self.verify_rows_argmax(mapped_argmax, r_total, bf16, stream)?;
+                self.lm_head_batched(normed, r_total as u32, self.buffers.logits(), stream)?;
 
-            if capture {
-                self.finish_verify_capture(&mut graphs, graph_key, &mut outcome, ks, n, stream)?;
+                if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
+                    anyhow::bail!("K4_DIAG(batched): CUDA error after lm_head_batched: {e:#}");
+                }
+
+                self.verify_rows_argmax(mapped_argmax, r_total, bf16, stream)?;
+
+                if capture {
+                    self.finish_verify_capture(
+                        &mut graphs,
+                        graph_key,
+                        &mut outcome,
+                        ks,
+                        n,
+                        stream,
+                    )?;
+                }
             }
         }
         // 2026-09-25: The live key count, read while the lock is held, is
@@ -446,36 +495,4 @@ impl TransformerModel {
             .store(write_on_accept, std::sync::atomic::Ordering::Release);
         Ok(out)
     }
-}
-
-/// 2026-09-25: A 65_536-byte page-locked host blob and its device alias
-/// (`host_ptr_to_device`) for the mapped argmax. After the first success the
-/// same pair is returned for the rest of the process, so a captured graph
-/// keeps a valid address. Returns `None` when `METRALE_NO_MAPPED_ARGMAX=1`, or
-/// when the allocation or the mapping fails; callers then use scratch and a
-/// copy.
-fn mapped_argmax_host_dev(
-    gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
-) -> Option<(*mut u8, metrale_gpu_runtime::gpu::DevicePtr)> {
-    use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
-    static HOST: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
-    static DEV: AtomicU64 = AtomicU64::new(0);
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *OFF.get_or_init(|| std::env::var("METRALE_NO_MAPPED_ARGMAX").as_deref() == Ok("1")) {
-        return None;
-    }
-    let mut h = HOST.load(Ordering::Acquire);
-    if h.is_null() {
-        // 2026-09-25: Only the scheduler thread calls this. A failure stores
-        // nothing, so the next call tries again.
-        h = gpu.alloc_host_pinned(65_536).ok()?;
-        let d = gpu.host_ptr_to_device(h).ok()?;
-        DEV.store(d.0, Ordering::Release);
-        HOST.store(h, Ordering::Release);
-    }
-    let d = DEV.load(Ordering::Acquire);
-    if d == 0 {
-        return None;
-    }
-    Some((h, metrale_gpu_runtime::gpu::DevicePtr(d)))
 }

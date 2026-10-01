@@ -86,6 +86,27 @@ pub struct Group {
     pub numerics: Numerics,
     /// 2026-09-28: Member nodes, in pattern order.
     pub nodes: Vec<NodeIdx>,
+    /// 2026-09-30: A `per_run` group's launches for each run of the plan's row table, in batch
+    /// order; empty for any other repeat.
+    pub runs: Vec<crate::runs::RunLaunches>,
+}
+
+impl Group {
+    /// 2026-09-30: Kernel launches per step at `rows` rows (per run for a `per_run` group).
+    pub fn launch_count(&self, rows: u64) -> u64 {
+        match self.repeat.count(rows) {
+            Some(c) => self.kernels.len() as u64 * c,
+            None => self.runs.iter().map(|r| r.launch_count()).sum(),
+        }
+    }
+
+    /// 2026-09-30: Copy-engine transfers per step at `rows` rows.
+    pub fn copy_count(&self, rows: u64) -> u64 {
+        match self.repeat {
+            crate::rules::Repeat::PerRun => self.runs.iter().map(|r| r.copy_count()).sum(),
+            _ => self.copies.and_then(|c| c.count(rows)).unwrap_or(0),
+        }
+    }
 }
 
 /// 2026-09-28: The fused plan of one circuit for one mode and row count.
@@ -97,6 +118,8 @@ pub struct FusionPlan {
     pub mode: Mode,
     /// 2026-09-28: Padded rows the plan was chosen for.
     pub rows: u64,
+    /// 2026-09-30: The row table of a [`Mode::VerifyBatch`] plan; `None` in every other mode.
+    pub table: Option<crate::runs::RowTable>,
     /// 2026-09-28: Groups in execution order.
     pub groups: Vec<Group>,
     /// 2026-09-28: Per edge: `None` outside this mode's section, else its state.
@@ -110,18 +133,12 @@ pub struct FusionPlan {
 impl FusionPlan {
     /// 2026-09-28: Kernel launches per step: kernels times repetitions, over every group.
     pub fn launches(&self) -> u64 {
-        self.groups
-            .iter()
-            .map(|g| g.kernels.len() as u64 * g.repeat.count(self.rows))
-            .sum()
+        self.groups.iter().map(|g| g.launch_count(self.rows)).sum()
     }
 
     /// 2026-09-29: Copy-engine transfers per step, over every group.
     pub fn copies(&self) -> u64 {
-        self.groups
-            .iter()
-            .filter_map(|g| g.copies.map(|c| c.count(self.rows)))
-            .sum()
+        self.groups.iter().map(|g| g.copy_count(self.rows)).sum()
     }
 }
 
@@ -169,17 +186,21 @@ pub enum FuseError {
     /// 2026-09-28: `rows` is zero.
     #[error("a plan needs at least one row")]
     ZeroRows,
+    /// 2026-09-30: A `verify_batch` plan without a row table, or a table in another mode.
+    #[error("{0}")]
+    RowTable(String),
 }
 
 /// 2026-09-28: The section a mode runs.
 pub fn section_of(mode: Mode) -> Section {
     match mode {
         Mode::Draft => Section::Draft,
-        Mode::Decode | Mode::MultiSeq | Mode::Verify => Section::Main,
+        Mode::Decode | Mode::MultiSeq | Mode::Verify | Mode::VerifyBatch => Section::Main,
     }
 }
 
-/// 2026-09-28: Fuse `circuit` for `mode` at `rows` padded rows.
+/// 2026-09-28: Fuse `circuit` for `mode` at `rows` padded rows. A `verify_batch` plan needs a
+/// row table: [`fuse_table`].
 pub fn fuse(
     circuit: &Circuit,
     rules: &[Rule],
@@ -187,6 +208,39 @@ pub fn fuse(
     policy: &Policy,
     mode: Mode,
     rows: u64,
+) -> Result<FusionPlan, FuseError> {
+    if mode == Mode::VerifyBatch {
+        return Err(FuseError::RowTable(
+            "a verify_batch plan is fused for a row table (`fuse_table`)".into(),
+        ));
+    }
+    fuse_inner(circuit, rules, available, policy, (mode, rows, None))
+}
+
+/// 2026-09-30: Fuse `circuit` for a batched verify of `table`.
+pub fn fuse_table(
+    circuit: &Circuit,
+    rules: &[Rule],
+    available: &AvailableKernels,
+    policy: &Policy,
+    table: &crate::runs::RowTable,
+) -> Result<FusionPlan, FuseError> {
+    let rows = table.rows();
+    fuse_inner(
+        circuit,
+        rules,
+        available,
+        policy,
+        (Mode::VerifyBatch, rows, Some(table)),
+    )
+}
+
+fn fuse_inner(
+    circuit: &Circuit,
+    rules: &[Rule],
+    available: &AvailableKernels,
+    policy: &Policy,
+    (mode, rows, table): (Mode, u64, Option<&crate::runs::RowTable>),
 ) -> Result<FusionPlan, FuseError> {
     if rows == 0 {
         return Err(FuseError::ZeroRows);
@@ -211,6 +265,10 @@ pub fn fuse(
     let mut order: Vec<&Rule> = rules
         .iter()
         .filter(|r| applies(r, available, policy, mode, rows))
+        .filter(|r| {
+            r.runs.is_empty()
+                || table.is_some_and(|t| crate::runs::resolve_runs(t, &r.runs).is_some())
+        })
         .collect();
     order.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.id.cmp(&b.id)));
 
@@ -262,17 +320,33 @@ pub fn fuse(
                 emitter: rule.emitter.clone(),
                 numerics: rule.numerics.clone(),
                 nodes: nodes.clone(),
+                runs: table
+                    .and_then(|t| crate::runs::resolve_runs(t, &rule.runs))
+                    .filter(|_| !rule.runs.is_empty())
+                    .unwrap_or_default(),
             }
         })
         .collect();
     let owner: Vec<Option<usize>> = owner.iter().map(|o| o.map(|g| remap[g])).collect();
     let edge_formats = stored_formats(circuit, &groups, rules);
     check_reads(circuit, &groups, rules, &edge_formats)?;
-    let edge_states = edge_states(circuit, &in_scope, &owner);
+    // 2026-09-30: Outputs a pattern element marks `stored` stay in memory.
+    let stored: BTreeSet<EdgeIdx> = found
+        .iter()
+        .flat_map(|(rule, nodes)| {
+            rule.pattern
+                .iter()
+                .zip(nodes)
+                .filter(|(p, _)| p.stored)
+                .flat_map(|(_, &n)| circuit.nodes[n].outputs.iter().copied())
+        })
+        .collect();
+    let edge_states = edge_states(circuit, &in_scope, &owner, &stored);
     let mut plan = FusionPlan {
         arch: circuit.arch.clone(),
         mode,
         rows,
+        table: table.cloned(),
         groups,
         edge_states,
         edge_formats,
@@ -358,11 +432,13 @@ fn edge_states(
     circuit: &Circuit,
     in_scope: &[bool],
     owner: &[Option<usize>],
+    stored: &BTreeSet<EdgeIdx>,
 ) -> Vec<Option<EdgeState>> {
     circuit
         .edges
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(i, e)| {
             let producer_in = e.producer.is_some_and(|p| in_scope[p]);
             let read_in = e.consumers.iter().any(|&c| in_scope[c]);
             if !producer_in && !read_in {
@@ -371,6 +447,7 @@ fn edge_states(
             let g = e.producer.filter(|&p| in_scope[p]).and_then(|p| owner[p]);
             let internal = g.is_some()
                 && !e.is_output
+                && !stored.contains(&i)
                 && !e.consumers.is_empty()
                 && e.consumers.iter().all(|&c| owner[c] == g);
             Some(match (internal, g) {

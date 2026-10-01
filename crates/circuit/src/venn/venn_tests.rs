@@ -291,6 +291,7 @@ fn instance(recipe: &str, hidden: u64) -> Instance {
         shape,
         policy: test_toy::policy(),
         plans: BTreeMap::new(),
+        verify_batch: Vec::new(),
     }
 }
 

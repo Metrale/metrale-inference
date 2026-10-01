@@ -44,8 +44,8 @@ fn a_valid_rule_loads_every_field() {
     assert_eq!(r.pattern[1].local.as_deref(), Some("post_norm"));
     assert_eq!(r.kernels[0].to_string(), "norm::residual_add_rms_norm");
     assert_eq!(r.repeat, Repeat::Chunk(64));
-    assert_eq!(r.repeat.count(128), 2);
-    assert_eq!(r.repeat.count(65), 2);
+    assert_eq!(r.repeat.count(128), Some(2));
+    assert_eq!(r.repeat.count(65), Some(2));
     assert_eq!(r.rows, (1, 128));
     assert_eq!(
         r.modes.iter().copied().collect::<Vec<_>>(),

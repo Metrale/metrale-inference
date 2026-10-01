@@ -27,10 +27,15 @@ pub enum Mode {
     Verify,
     /// 2026-09-28: The MTP draft head proposing one token for each of `n` sequences.
     Draft,
+    /// 2026-09-30: `n` sequences' MTP verifies in one forward (`decode_verify_batched`):
+    /// `R = Σ k` rows, seq-major, planned for a row table ([`crate::runs::RowTable`]).
+    VerifyBatch,
 }
 
 impl Mode {
     /// 2026-09-28: Every mode, in plan-file order.
+    /// 2026-09-30: [`Mode::VerifyBatch`] is not among them: its plans are keyed by a row table,
+    /// not a row count.
     pub const ALL: [Mode; 4] = [Mode::Decode, Mode::MultiSeq, Mode::Verify, Mode::Draft];
 
     /// 2026-09-28: The spelling in rules, file names and the CLI.
@@ -40,12 +45,16 @@ impl Mode {
             Mode::MultiSeq => "multi_seq",
             Mode::Verify => "verify",
             Mode::Draft => "draft",
+            Mode::VerifyBatch => "verify_batch",
         }
     }
 
     /// 2026-09-28: Parse [`Mode::name`].
     pub fn parse(s: &str) -> Option<Self> {
-        Mode::ALL.into_iter().find(|m| m.name() == s)
+        Mode::ALL
+            .into_iter()
+            .chain([Mode::VerifyBatch])
+            .find(|m| m.name() == s)
     }
 }
 
@@ -118,6 +127,10 @@ pub struct PatternOp {
     /// 2026-09-28: The kernel writes this element's outputs even though a later element
     /// reads them, so they may have readers outside the group.
     pub keep: bool,
+    /// 2026-09-30: The kernel stores this element's outputs in memory, where a later launch of
+    /// the group reads them back (a per-run schedule's conv rows), so they are materialized even
+    /// when every reader is in the group.
+    pub stored: bool,
     /// 2026-09-28: The element joins the group by sitting in the same block as the first
     /// element rather than by reading an output of an earlier one (a shared expert beside
     /// the routed experts).
@@ -135,16 +148,21 @@ pub enum Repeat {
     Chunk(u64),
     /// 2026-09-29: Once per row but the last.
     PerRowButLast,
+    /// 2026-09-30: Per run of a batched verify, as the rule's selectors say
+    /// ([`Rule::runs`], [`crate::fuser::Group::runs`]); not a function of the rows alone.
+    PerRun,
 }
 
 impl Repeat {
-    /// 2026-09-28: Launches of each kernel for `rows` rows.
-    pub fn count(self, rows: u64) -> u64 {
+    /// 2026-09-28: Launches of each kernel for `rows` rows. 2026-09-30: `None` for
+    /// [`Repeat::PerRun`], whose count is its runs' ([`crate::fuser::Group::launch_count`]).
+    pub fn count(self, rows: u64) -> Option<u64> {
         match self {
-            Repeat::Once => 1,
-            Repeat::PerRow => rows,
-            Repeat::Chunk(c) => rows.div_ceil(c),
-            Repeat::PerRowButLast => rows.saturating_sub(1),
+            Repeat::Once => Some(1),
+            Repeat::PerRow => Some(rows),
+            Repeat::Chunk(c) => Some(rows.div_ceil(c)),
+            Repeat::PerRowButLast => Some(rows.saturating_sub(1)),
+            Repeat::PerRun => None,
         }
     }
 
@@ -155,6 +173,7 @@ impl Repeat {
             Repeat::PerRow => "per_row".into(),
             Repeat::Chunk(c) => format!("chunk{c}"),
             Repeat::PerRowButLast => "per_row_but_last".into(),
+            Repeat::PerRun => "per_run".into(),
         }
     }
 
@@ -163,6 +182,7 @@ impl Repeat {
             "once" => Some(Repeat::Once),
             "per_row" => Some(Repeat::PerRow),
             "per_row_but_last" => Some(Repeat::PerRowButLast),
+            "per_run" => Some(Repeat::PerRun),
             _ => s
                 .strip_prefix("chunk")?
                 .parse::<u64>()
@@ -204,6 +224,9 @@ pub struct Rule {
     pub priority: i64,
     /// 2026-09-28: The dispatch site(s) that make this choice today.
     pub cite: String,
+    /// 2026-09-30: A `per_run` rule's selectors (`[[rule.run]]`), in file order; empty for any
+    /// other repeat.
+    pub runs: Vec<crate::runs::RunSelect>,
 }
 
 /// 2026-09-28: Why FUSIONS.toml did not load.

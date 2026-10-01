@@ -112,6 +112,18 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 
 | kernel | why | models |
 |---|---|---:|
+| dense_gemv_bf16_tc::dense_gemv_bf16_tc16 | not compiled for this class | 9 |
+| dense_gemv_bf16_tc::dense_gemv_bf16_tc32 | not compiled for this class | 9 |
+| dense_gemv_bf16_tc::dense_gemv_bf16_tc8 | not compiled for this class | 9 |
+| gated_delta_rule_carry::gdn_carry_conv | not compiled for this class | 8 |
+| gated_delta_rule_carry::gdn_carry_conv_flush | not compiled for this class | 8 |
+| gated_delta_rule_carry::gdn_carry_flush | not compiled for this class | 8 |
+| gated_delta_rule_carry::gdn_carry_wy2 | not compiled for this class | 8 |
+| gated_delta_rule_carry::gdn_carry_wy2_lazy | not compiled for this class | 8 |
+| gated_delta_rule_carry::gdn_carry_wy3 | not compiled for this class | 8 |
+| gated_delta_rule_carry::gdn_carry_wy3_lazy | not compiled for this class | 8 |
+| gated_delta_rule_carry::gdn_carry_wy4 | not compiled for this class | 8 |
+| gated_delta_rule_carry::gdn_carry_wy4_lazy | not compiled for this class | 8 |
 | moe_fp8_grouped_sort::moe_fp8_grouped_sort | not compiled for this class | 2 |
 | moe_unpermute_blend::moe_unpermute_blend | not compiled for this class | 2 |
 | nvfp4_mmq::metrale_nvfp4_gemm_pipe | not compiled for this class | 6 |
@@ -126,7 +138,8 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | w4a16::w4a16_gemm_t_k64_p3 | not compiled for this class | 3 |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class | 7 |
 | w4a16::w4a16_gemm_t_p3 | not compiled for this class | 7 |
-| w4a16_gemv_tc::w4a16_gemv_tc8 | not compiled for this class | 7 |
+| w4a16_gemv_tc::w4a16_gemv_tc16 | not compiled for this class | 9 |
+| w4a16_gemv_tc::w4a16_gemv_tc8 | not compiled for this class | 9 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | not compiled for this class | 4 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_ps | not compiled for this class | 4 |
 | w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | not compiled for this class | 4 |

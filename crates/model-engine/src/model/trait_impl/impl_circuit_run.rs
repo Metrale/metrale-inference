@@ -23,7 +23,10 @@ use crate::traits::SequenceState;
 
 /// 2026-09-29: Per layer, each row's GDN state; row `i` is `rows[i]`'s sequence. A layer
 /// without one gets no rows.
-fn gdn_states(layers: usize, rows: &[&[Box<dyn LayerState>]]) -> Result<Vec<Vec<GdnState>>> {
+pub(super) fn gdn_states(
+    layers: usize,
+    rows: &[&[Box<dyn LayerState>]],
+) -> Result<Vec<Vec<GdnState>>> {
     let mut gdn = vec![Vec::new(); layers];
     for (row, seq) in rows.iter().enumerate() {
         for (layer, st) in seq.iter().enumerate() {
@@ -51,7 +54,7 @@ fn gdn_states(layers: usize, rows: &[&[Box<dyn LayerState>]]) -> Result<Vec<Vec<
 }
 
 impl TransformerModel {
-    fn run_program(
+    pub(super) fn run_circuit_program(
         &self,
         program: &Program,
         gdn: &[Vec<GdnState>],
@@ -79,7 +82,7 @@ impl TransformerModel {
             .attn_metadata
             .context("circuit decode needs the step's attention metadata")?;
         let gdn = gdn_states(self.layers.len(), &[&seq.layer_states])?;
-        self.run_program(&exec.decode, &gdn, meta.max_blocks_per_seq, stream)
+        self.run_circuit_program(&exec.decode, &gdn, meta.max_blocks_per_seq, stream)
     }
 
     /// 2026-09-28: Run `exec`'s program for `padded_n` rows in place of the layer loops, the
@@ -102,7 +105,7 @@ impl TransformerModel {
         // 2026-09-30: The arm this step's slots select (a runtime route's, or the primary);
         // under a graph capture the choice is baked with the slots the graph is keyed by.
         let program = exec.multi_seq_step(padded_n as u64, &gdn)?;
-        self.run_program(program, &gdn, self.max_blocks_per_seq, stream)
+        self.run_circuit_program(program, &gdn, self.max_blocks_per_seq, stream)
     }
 
     /// 2026-09-29: Run `exec`'s verify program for `k` rows of `seq` in place of the layer
@@ -118,6 +121,6 @@ impl TransformerModel {
             .verify_program(k as u64)
             .with_context(|| format!("no circuit verify program was compiled for K={k}"))?;
         let gdn = gdn_states(self.layers.len(), &[&seq.layer_states])?;
-        self.run_program(program, &gdn, self.max_blocks_per_seq, stream)
+        self.run_circuit_program(program, &gdn, self.max_blocks_per_seq, stream)
     }
 }

@@ -115,6 +115,7 @@ impl CircuitBindings for Qwen3SsmLayer {
                 qkvz_deinterleaved: self.sequential_qkvz,
                 h_slot_bytes: self.h_slot_stride_bytes() as u64,
                 conv_state_bytes: self.conv_state_bytes as u64,
+                carry: self.carry.binding.get().copied(),
             }),
             weights,
             unmodelled,

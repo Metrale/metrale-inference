@@ -201,6 +201,7 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
             input,
             writes: None,
             keep: false,
+            stored: false,
             sibling: false,
         }],
         kernels: Vec::new(),
@@ -212,6 +213,7 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
         requires: BTreeSet::new(),
         when: Default::default(),
         numerics: Numerics::Reference,
+        runs: Vec::new(),
         priority: i64::MIN,
         cite: "no rule of this class covers the op on this device".into(),
     }
