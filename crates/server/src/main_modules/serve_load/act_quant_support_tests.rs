@@ -88,3 +88,24 @@ fn impossible_formats_are_refused() {
     }
     assert!(support(&v("adaptive,gdn:fp8"), DENSE).is_ok());
 }
+
+/// 2026-10-01: The cross-sequence prefill levers are refused beside any fixed format, by their
+/// resolved values, and never under `adaptive`.
+#[test]
+fn prefill_levers_are_refused_beside_a_fixed_format() {
+    assert!(prefill_lever_refusal(&v("adaptive"), true, true, true).is_none());
+    assert!(prefill_lever_refusal(&v("declared"), false, false, false).is_none());
+    for (varlen, codispatch, first, needle) in [
+        (true, false, false, "--prefill-varlen-batch"),
+        (false, true, false, "--prefill-codispatch"),
+        (false, false, true, "METRALE_Q12_BATCHED_FIRST_CHUNK"),
+    ] {
+        for s in ["declared", "adaptive,ffn:nvfp4"] {
+            let why = prefill_lever_refusal(&v(s), varlen, codispatch, first).expect(s);
+            assert!(why.contains(needle), "{s}: {why}");
+        }
+    }
+    // 2026-10-01: Co-dispatch turns the batched first chunk on by itself; it is named once.
+    let why = prefill_lever_refusal(&v("declared"), false, true, true).unwrap();
+    assert!(!why.contains("Q12"), "{why}");
+}

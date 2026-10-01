@@ -134,9 +134,59 @@ pub(crate) fn support(value: &ActivationQuantization, kind: ModelKind) -> Result
     Ok(unhonoured)
 }
 
-/// 2026-09-30: `support` for the published value, logging what runs.
+/// 2026-10-01: The refusal of the cross-sequence prefill levers beside a fixed format, given their
+/// resolved values (flag or environment fallback): `--prefill-varlen-batch`,
+/// `--prefill-codispatch` and the batched first chunk prefill prompts that arrive together in one
+/// forward whose GEMMs are sized by the wave's total tokens, so a prompt's prefill, and from it
+/// its whole output, depends on its wave-mates. `None` under `adaptive`, or with all three off.
+pub(crate) fn prefill_lever_refusal(
+    value: &ActivationQuantization,
+    varlen: bool,
+    codispatch: bool,
+    first_chunk: bool,
+) -> Option<String> {
+    if value.is_adaptive() {
+        return None;
+    }
+    let on: Vec<&str> = [
+        (varlen, "--prefill-varlen-batch (or METRALE_PREFILL_VARLEN)"),
+        (
+            codispatch,
+            "--prefill-codispatch (or METRALE_PREFILL_CODISPATCH)",
+        ),
+        (
+            first_chunk && !codispatch,
+            "METRALE_Q12_BATCHED_FIRST_CHUNK",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(set, name)| set.then_some(name))
+    .collect();
+    (!on.is_empty()).then(|| {
+        format!(
+            "--activation-quantization {value} with {}: these prefill concurrently arriving \
+             prompts in one forward sized by the wave's total tokens, so a prompt's output \
+             depends on its wave-mates; drop them, or add --activation-quantization adaptive",
+            on.join(" and ")
+        )
+    })
+}
+
+/// 2026-09-30: `support` for the published value, logging what runs. 2026-10-01: Also refuses the
+/// cross-sequence prefill levers beside a fixed format ([`prefill_lever_refusal`]).
 pub(crate) fn check(config: &ModelConfig, lm_head_dtype: &str) -> Result<()> {
     let value = metrale_model_layers::layers::activation_quantization();
+    {
+        use metrale_model_layers::layers::ops;
+        if let Some(why) = prefill_lever_refusal(
+            value,
+            ops::prefill_varlen_enabled(),
+            ops::prefill_codispatch_enabled(),
+            ops::prefill_batched_first_chunk_enabled(),
+        ) {
+            bail!("{why}");
+        }
+    }
     let unhonoured = support(value, ModelKind::of(config, lm_head_dtype))?;
     if !unhonoured.is_empty() {
         tracing::warn!(
