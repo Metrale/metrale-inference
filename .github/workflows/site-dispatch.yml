@@ -279,3 +279,49 @@ jobs:
             -f event_type=engine-main-updated \
             -F "client_payload[sha]=$GITHUB_SHA"
           echo "dispatched engine-main-updated for $GITHUB_SHA"
+
+  # 2026-10-01: Publishes this repository's numbers-only status manifest (main, the certified
+  # campaign, open pull requests awaiting certification) to the internal repos dashboards named in
+  # the REPOS_MANIFEST_ORIGINS variable (space-separated origins; unset, the job is skipped). Each
+  # push carries this job's GitHub Actions OIDC token with that origin as audience; the dashboard
+  # verifies it against GitHub's published keys and accepts only this workflow on main, so no
+  # secret is stored here or there. The reads (pull requests, check runs of this public
+  # repository) need only this job's own token.
+  repos:
+    name: Publish the repos manifest
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository == 'Metrale/metrale-inference' && github.ref == 'refs/heads/main'
+      && vars.REPOS_MANIFEST_ORIGINS != ''
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Build the manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/repos-manifest.py --checkout . --slug "$GITHUB_REPOSITORY" --repo engine > manifest.json
+
+      - name: Push it to each dashboard
+        env:
+          ORIGINS: ${{ vars.REPOS_MANIFEST_ORIGINS }}
+        run: |
+          set -euo pipefail
+          for origin in $ORIGINS; do
+            token=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$origin" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')
+            echo "::add-mask::$token"
+            code=$(curl -sS -o /tmp/reply -w '%{http_code}' -X POST -H "Authorization: Bearer $token" \
+              -H 'Content-Type: application/json' --data-binary @manifest.json "$origin/api/manifest")
+            echo "$origin: HTTP $code $(head -c 300 /tmp/reply)"
+            [ "$code" = 200 ]
+          done
