@@ -32,11 +32,21 @@ pub(super) fn hss_kv_blocks(
     n
 }
 
+/// 2026-10-02: The driver memory a budget-filling KV pool under the prefix cache uses beyond the
+/// planned terms, per mille of the pool's budget. Calibrated on GB10, 2026-10-02: Nemotron-3-Nano
+/// with prefix caching (a 59.8 GB pool) peaked 100 MiB over its 85% budget at 128 concurrent
+/// full-length prompts with every other term charged, so 3 per mille (180 MiB there) leaves it
+/// 80 MiB under. Not attributed to one allocation: the pool is 12 allocations, and the growth
+/// appears while long prefills run.
+pub(super) const PREFIX_POOL_DRIVER_PER_MILLE: usize = 3;
+
 /// 2026-10-01: The pool's block count for `kv_budget` and `max_batch_size` slots, without
 /// logging: `(blocks, budget_blocks)`, the second before the reachable-demand clamp. With the
 /// prefix cache inactive (and `METRALE_KV_POOL_UNCLAMPED` absent) blocks beyond
 /// `max_batch_size x blocks per sequence` can never be addressed, so the pool is clamped to that
 /// plus one spare block per sequence and the dummy block. An error when the budget is `0`.
+/// 2026-10-02: An unclamped pool keeps [`PREFIX_POOL_DRIVER_PER_MILLE`] of its budget for the
+/// driver.
 pub(super) fn pool_blocks(
     kv_config: &KvCacheConfig,
     kv_budget: usize,
@@ -48,7 +58,11 @@ pub(super) fn pool_blocks(
     anyhow::ensure!(kv_budget > 0, "no memory left for the KV cache");
     let budget_blocks = PagedKvCache::compute_num_blocks(kv_config, kv_budget)?;
     if prefix_active || std::env::var("METRALE_KV_POOL_UNCLAMPED").is_ok() {
-        return Ok((budget_blocks, budget_blocks));
+        let unclamped = PagedKvCache::compute_num_blocks(
+            kv_config,
+            kv_budget - kv_budget / 1000 * PREFIX_POOL_DRIVER_PER_MILLE,
+        )?;
+        return Ok((unclamped, budget_blocks));
     }
     let per_seq = max_seq_len.div_ceil(kv_block_size);
     let reachable = max_batch_size
@@ -201,3 +215,7 @@ pub(super) fn check_kv_concurrency(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "kv_blocks_tests.rs"]
+mod tests;

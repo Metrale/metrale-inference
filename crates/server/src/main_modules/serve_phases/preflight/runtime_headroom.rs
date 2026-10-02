@@ -39,7 +39,9 @@
 //! once the weights are placed (`model-engine` `kv_sizing.rs`), so it applies only where it occurs.
 //! Less that slack, `DRIVER_FIXED_BYTES + DRIVER_BUDGET_PER_MILLE` of the util budget covers every
 //! measured serve, the largest being the dense default tier's 3.13 GB, with 0.12 GB to spare at
-//! util 0.85 on GB10.
+//! util 0.85 on GB10. A KV pool the prefix cache leaves unclamped also keeps a small share of its
+//! own budget for the driver (`model-engine` `kv_blocks::PREFIX_POOL_DRIVER_PER_MILLE`), the one
+//! term calibrated rather than attributed.
 
 use metrale_config::ModelConfig;
 
