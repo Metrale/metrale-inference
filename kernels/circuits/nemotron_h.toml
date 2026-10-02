@@ -250,6 +250,11 @@ op = "router"
 in = ["xn"]
 out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
 binding = ["{L}.mixer.gate"]
+# 2026-10-02: The router is a parameter of `NemotronHTopkRouter`, not a linear layer, so a
+# checkpoint-wide ModelOpt `quant_algo` (Nemotron-3-Nano: NVFP4, no per-layer list) does not
+# reach it: every checkpoint stores `mixer.gate.weight` unquantized (Nano and Lightning F32,
+# Super BF16; safetensors headers, 2026-10-02) and HF computes the logits in FP32.
+unquantized = true
 
 [[block.moe.node]]
 id = "top_k"
@@ -338,6 +343,11 @@ op = "router"
 in = ["xn"]
 out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
 binding = ["{L}.mixer.gate"]
+# 2026-10-02: The router is a parameter of `NemotronHTopkRouter`, not a linear layer, so a
+# checkpoint-wide ModelOpt `quant_algo` (Nemotron-3-Nano: NVFP4, no per-layer list) does not
+# reach it: every checkpoint stores `mixer.gate.weight` unquantized (Nano and Lightning F32,
+# Super BF16; safetensors headers, 2026-10-02) and HF computes the logits in FP32.
+unquantized = true
 
 [[block.moe_latent.node]]
 id = "top_k"

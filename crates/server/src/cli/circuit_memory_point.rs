@@ -283,6 +283,28 @@ impl Point<'_> {
         Ok(one.planned.plan)
     }
 
+    /// 2026-10-02: The target KV pool the budget leaves once everything else in `r` is placed
+    /// (the engine gives the pool what remains): `(blocks, tokens, blocks the workload of `r`
+    /// needs)`. The MTP head's pool stays at its size in `r`.
+    pub(crate) fn kv_pool(&self, r: &MemoryReport) -> (u64, u64, u64) {
+        let main = |t: &&metrale_circuit::state::StateTerm| {
+            t.holding == metrale_circuit::state::Holding::Blocks
+                && self
+                    .served
+                    .states
+                    .iter()
+                    .any(|d| d.id == t.state && d.section == metrale_circuit::Section::Main)
+        };
+        let terms: Vec<_> = r.states.terms.iter().filter(main).collect();
+        let bytes: u64 = terms.iter().map(|t| t.bytes).sum();
+        let bs = self.args.block_size as u64;
+        let blocks = terms.first().map_or(0, |t| t.units / bs.max(1));
+        let per_block = bytes.checked_div(blocks).unwrap_or(0);
+        let rest = r.totals.device.saturating_sub(bytes);
+        let fit = r.budget_bytes.saturating_sub(rest).checked_div(per_block).unwrap_or(0);
+        (fit, fit * bs, blocks)
+    }
+
     /// 2026-10-02: Whether `c` sequences of `isl + osl` fit the budget.
     pub(crate) fn fits(&self, c: u64, isl: u64, osl: u64) -> Result<bool, budget::BudgetError> {
         let q = |e: anyhow::Error| budget::BudgetError::Query(format!("{e:#}"));

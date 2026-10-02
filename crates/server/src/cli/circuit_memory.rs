@@ -52,8 +52,11 @@ fn header(p: &Point<'_>, f: &EngineFacts) -> Vec<(String, String)> {
             device.class,
             gib(device.memory_bytes),
             gib(p.budget_bytes as f64),
-            if util > device.usable_fraction {
-                format!(" (above the device's usable fraction {}: {})", device.usable_fraction, device.usable_why)
+            if util > p.driver.util_ceiling {
+                format!(
+                    " (above the {} ceiling {}, kernels/{}/HARDWARE.toml [memory] util_ceiling)",
+                    device.class, p.driver.util_ceiling, device.class
+                )
             } else {
                 String::new()
             }
@@ -130,6 +133,7 @@ pub(crate) fn run(a: CircuitMemoryArgs) -> Result<()> {
                 point.fits(a.concurrency, i, osl)
             })?,
         )),
+        kv_pool: Some(point.kv_pool(&report)),
     };
     let head = header(&point, &f);
     let out = if a.json {

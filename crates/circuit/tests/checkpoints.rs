@@ -120,6 +120,11 @@ fn nemotron_h_takes_either_layer_schedule_and_its_own_precision() {
             .find(|n| n.op == OpKind::TopK)
             .unwrap();
         assert_eq!(topk.params.get("top_k").map(String::as_str), Some("6"));
+        // 2026-10-02: The router is no quantization target: Nano's checkpoint-wide NVFP4
+        // `quant_algo` does not reach it (stored F32 with no scales), and no quantizer feeds it.
+        let router = node(&r.circuit, "l1.moe.router");
+        assert_eq!(router.weight, Some(Format::Bf16), "{}", r.model_type);
+        assert_eq!(input_format(&r.circuit, "l1.moe.router"), Format::Bf16);
     }
     // 2026-09-30: Nano (hybrid_override_pattern) has no MTP layer and NVFP4 mixers.
     assert_eq!(dim(&nano, "mtp"), 0);

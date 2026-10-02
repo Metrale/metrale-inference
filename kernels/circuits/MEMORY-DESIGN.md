@@ -85,10 +85,54 @@ Until then the validation test above is the agreement proof.
 - **The declared circuit gave nvidia/Qwen3.6-35B-A3B-NVFP4's routed experts BF16**: ModelOpt
   names the fused `…mlp.experts` module, not its projections. `declared_precision.rs` now lets a
   routed expert's projection inherit it.
-- **Nemotron-3-Nano's router is declared NVFP4 by the global ModelOpt algo** but stored F32
-  (128 x 2688 per layer, 30 MiB over 23 layers); the declared plan has no router exclusion.
+- **Nemotron-3-Nano's router was declared NVFP4 by the global ModelOpt algo** but is stored F32
+  (128 x 2688 per layer, 30 MiB over 23 layers): the router is a `NemotronHTopkRouter`
+  parameter, which no ModelOpt config quantizes. The circuit now marks it `unquantized`
+  (section 5 has the loader's BF16 cast of it).
 
-## 5. Follow-ups
+## 5. Derived-copy backlog: inherent or avoidable
+
+Every COPIES.toml rule, by what it costs on the validated serves (MiB, from `met circuit
+memory`) and whether a serve could do without it. **Inherent** means a kernel that runs today
+reads it and nothing else serves that read; **avoidable** names what would remove it. Owners are
+the agents or areas whose code the change sits in.
+
+| copy (rule) | serves | MiB | verdict | what removes it | owner |
+|---|---|---:|---|---|---|
+| BF16 intermediate of the FP8 attention requant (`dense-attn-bf16-dequant`) | dense 27B | 3200 | **leak** | freed after the requant (`fix/dense-load-leaks`) | CIRCUIT-MEM |
+| GDN `out_proj` FP8 predequant replaced by the cast (`dense-gdn-out-fp8-predequant`) | dense 27B | 1440 | **leak** | not made when the cast is (`fix/dense-load-leaks`) | CIRCUIT-MEM |
+| first `in_proj_ba` interleave (`dense-gdn-ba-interleave-first`) | dense 27B | 45 | **leak** | made only on the native-NVFP4 path (`fix/dense-load-leaks`) | CIRCUIT-MEM |
+| FP8 per-channel -> NVFP4 requant (`dense-fp8-to-nvfp4`) | dense 27B | 5018 | inherent under `--weight-quantization nvfp4` (the tier's definition); **avoidable** under `declared`, where the W8A8 decode already reads the FP8 store and the NVFP4 copy serves the routes W8A8 does not cover (prefill above its row ceiling, the batched paths) | W8A8 on every route of a declared-FP8 projection | engine (W8A8) |
+| NVFP4 transposed twins of those requants (`dense-fp8-nvfp4-twin`, `dense-fp8-ffn-twin`) | dense 27B | 3870 (+1148 declared) | inherent while the prefill tile GEMMs read K-major NVFP4 | goes with the requant above; or a tile GEMM reading the row-major weight | kernels |
+| unscaled FP8 casts of GDN qkvz / out_proj for `fp8_gemm_n128` (`dense-gdn-fp8-cast`) | dense 27B | 5280 | **avoidable**: the checkpoint's per-row FP8 is already resident and `METRALE_FP8_ROWWISE` prefills from it with no cast (opt-in today) | the per-row FP8 prefill as default, after a TTFT A/B | engine (prefill) |
+| MMQ `block_nvfp4` repack of the NVFP4 FFN (`dense-ffn-mmq-repack`) | dense 27B | 8033-9180 | inherent: decode reads the row-major store, the MMQ prefill the repack | one layout both read (a kernel change) | kernels |
+| BF16 dequant of the FP8 lm_head (`fp8-head-bf16-dequant`) | dense 27B | 2425 | inherent under `--lm-head-dtype bf16` (it is the served head; then the FP8 store's 1213 MiB is the avoidable one); **to verify** under `declared` (FP8 head on W8A8: likely read only to quantize the draft head) | free whichever of the FP8 store or the BF16 dequant no route reads | engine (head setup) |
+| draft-only NVFP4 head (`draft-head-nvfp4-of-*`) | 27B, FP8 35B | 682 / 273 | inherent with a non-NVFP4 target head; avoidable if the draft read the target head | a draft propose over the target's head format | MTP |
+| fused GDN `[qkv\|z]` FP8, sources kept (`moe-gdn-qkvz-concat*`) | 35B FP8 and NVFP4 | 720 | **avoidable** if no route reads the separate `in_proj_qkv` / `in_proj_z` store tensors (the dense loader prunes them, `prune.rs`); needs a reader audit | prune the sources after the concat | engine (MoE loader) |
+| FP8 attention prefill twins (`moe-attn-fp8-prefill-twin*`) | 35B FP8 and NVFP4 | 260 | inherent while `w8a16_gemm_t` reads K-major | a GEMM reading row-major | kernels |
+| NVFP4 routed and shared expert transposed tables (`moe-nvfp4-expert-twin`) | NVFP4 35B | 17348 | inherent: the grouped prefill GEMM reads K-major, the decode row-major | one layout both read | MOENVFP4 |
+| NVFP4 shared expert -> FP8 predequant (`moe-nvfp4-shared-fp8-predequant`) | NVFP4 35B | 120 | **avoidable**: being removed (MOENVFP4 ae95f37a3, prefill W4A16 from the NVFP4 store) | in flight | MOENVFP4 |
+| FP8 shared expert -> NVFP4 (`moe-shared-expert-nvfp4`) | FP8 35B | 68 | to verify which of the FP8 store and the NVFP4 copy the serve reads | free the unread one | engine (MoE loader) |
+| Nemotron routed expert transposed tables (`nemotron-expert-twin`) | Nano | 15758 | inherent, as for the NVFP4 35B | one layout both read | MOENVFP4 / Nemotron |
+| Nemotron Mamba2 NVFP4 -> FP8 predequant (`nemotron-mamba-fp8-predequant`) | Nano | 628 | **avoidable** with a W4A16 prefill from the NVFP4 store (as ae95f37a3 does for the shared expert) | W4A16 Mamba2 projections in prefill | Nemotron |
+| NVFP4 lm_head transposed twin (`head-nvfp4-twin`) | NVFP4 heads | 189-682 | inherent while the head's tile GEMM reads K-major (`METRALE_NO_LMHEAD_TGEMM` trades it for speed) | - | kernels |
+| FP32 block-scale grids, per-row scales, the BA interleave | all | < 50 each | inherent (the kernels' scale format) | - | - |
+
+Not in COPIES.toml (outside the validated serves, from the loader survey): the Nemotron dequant
+scratch (`nemotron.rs:68`, 53 MiB, never freed: **leak**); the MTP projections' and experts' BF16
+dequants on the MoE when the serve does not speculate (`impl_a1_init.rs:88`, about 1.5 GiB, never
+freed: **leak**); the same out_proj-predequant pattern in `qwen35/.../linear_attn_arms/nvfp4.rs:
+173-180` for `Fp8Dequanted` GDN layers (**leak**); the 4-byte absmax buffer per quantize call
+(`loaders_fp8.rs:171`, leaks one 2 MiB chunk's worth of driver slack in total).
+
+**A precision finding, not a copy:** the Nemotron loader casts the F32 router of Nano and
+Lightning to BF16 (`weight_map/nemotron.rs:228-231`), while HF computes the router logits in FP32
+from the F32 weight. That lowers routing precision below the checkpoint's; LIFECYCLE-DESIGN.md
+section 5.5 records the package's intent to keep F32. The declared circuit now marks the router
+`unquantized` (it had resolved Nano's to NVFP4 from the checkpoint-wide ModelOpt `quant_algo`,
+which does not reach a `NemotronHTopkRouter` parameter).
+
+## 6. Follow-ups
 
 - `hardware::estimate::footprint` (the `met circuit plan` memory fit) sizes weights with its own
   `out x k x experts` sum; it should read `memory::weights::node_weights` (which also stores the

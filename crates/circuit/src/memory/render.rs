@@ -23,6 +23,9 @@ pub struct Inverse {
     pub max_concurrency: Option<(u64, u64, Option<u64>)>,
     /// 2026-10-02: `(concurrency, osl, longest prompt that fits)`.
     pub max_isl: Option<(u64, u64, Option<u64>)>,
+    /// 2026-10-02: The KV pool the budget leaves once everything else is placed, as the engine
+    /// sizes it: `(blocks, tokens, blocks this workload needs)`.
+    pub kv_pool: Option<(u64, u64, u64)>,
 }
 
 fn mib(b: u64) -> String {
@@ -203,6 +206,12 @@ pub fn render_text(
     if let Some((conc, osl, isl)) = &inverse.max_isl {
         let _ = writeln!(s, "Max ISL at C={conc} OSL={osl}: {}.", ans(isl));
     }
+    if let Some((blocks, tokens, need)) = &inverse.kv_pool {
+        let _ = writeln!(
+            s,
+            "KV pool at this budget: {blocks} blocks ({tokens} tokens); this workload needs {need}."
+        );
+    }
     s
 }
 
@@ -275,6 +284,8 @@ pub fn render_json(
                 json!({"isl": i, "osl": o, "concurrency": c})),
             "max_isl": inverse.max_isl.map(|(c, o, i)|
                 json!({"concurrency": c, "osl": o, "isl": i})),
+            "kv_pool": inverse.kv_pool.map(|(b, t, n)|
+                json!({"blocks": b, "tokens": t, "needed_blocks": n})),
         },
     })
 }

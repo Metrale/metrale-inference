@@ -9,7 +9,7 @@
 use super::*;
 
 const TERMS: &str =
-    "[memory]\ndriver_fixed_bytes = 1073741824\ndriver_budget_per_mille = 21\nunified = true\n";
+    "[memory]\nutil_ceiling = 0.85\ndriver_fixed_bytes = 1073741824\ndriver_budget_per_mille = 21\nunified = true\n";
 
 #[test]
 fn driver_terms_are_read_from_the_class_and_sized_like_the_reserve() {
@@ -34,6 +34,8 @@ fn a_missing_table_or_key_is_refused() {
     assert!(DriverTerms::parse("gb10", &unknown).is_err());
     let over = TERMS.replace("= 21", "= 1001");
     assert!(DriverTerms::parse("gb10", &over).is_err());
+    let ceiling = TERMS.replace("util_ceiling = 0.85", "util_ceiling = 1.5");
+    assert!(DriverTerms::parse("gb10", &ceiling).is_err());
 }
 
 #[test]

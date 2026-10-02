@@ -251,3 +251,26 @@ impl Builder<'_> {
         }
     }
 }
+
+/// 2026-10-02: The formats of node `id` declared `unquantized` (no quantization target): a BF16
+/// weight, the 16-bit answer a precision gives an unquantized module, and its input edge's
+/// format as the activation.
+pub(super) fn unquantized(
+    id: &str,
+    op: &OpKind,
+    input: Option<Format>,
+) -> Result<Option<crate::precision::LinearFormats>, CircuitError> {
+    let bad = |detail: String| CircuitError::Binding {
+        node: id.to_string(),
+        detail,
+    };
+    if !op.reads_linear_weight() {
+        return Err(bad(format!("`unquantized`: `{}` reads no weight", op.name())));
+    }
+    let activation =
+        input.ok_or_else(|| bad("a weight-reading node needs an activation input".into()))?;
+    Ok(Some(crate::precision::LinearFormats {
+        weight: Format::Bf16,
+        activation,
+    }))
+}

@@ -15,7 +15,7 @@
 use serde::Deserialize;
 
 /// 2026-10-02: What the driver holds beyond the allocation ledger, for one device class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DriverTerms {
     /// 2026-10-02: The CUDA context, loaded modules, the local-memory reservation and the
@@ -26,6 +26,8 @@ pub struct DriverTerms {
     /// 2026-10-02: Host memory is the device's memory (a unified-memory SoC): host caches compete
     /// for the same pool, outside the util budget.
     pub unified: bool,
+    /// 2026-10-02: The largest `--gpu-memory-utilization` a serve of this class may run at.
+    pub util_ceiling: f64,
 }
 
 /// 2026-10-02: Why the class's memory terms could not be read.
@@ -58,8 +60,12 @@ impl DriverTerms {
         let terms: Self = mem
             .try_into()
             .map_err(|e: toml::de::Error| err(e.to_string()))?;
-        if terms.driver_budget_per_mille > 1000 {
-            return Err(err("driver_budget_per_mille is at most 1000".into()));
+        if terms.driver_budget_per_mille > 1000
+            || !(terms.util_ceiling > 0.0 && terms.util_ceiling <= 1.0)
+        {
+            return Err(err(
+                "driver_budget_per_mille is at most 1000 and util_ceiling in (0, 1]".into(),
+            ));
         }
         Ok(terms)
     }

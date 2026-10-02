@@ -270,6 +270,11 @@ pub(crate) struct NodeFile {
     /// 2026-09-30: Params merged in when their switch holds (`attn_bias = { bias = "true" }`).
     #[serde(default)]
     pub params_when: BTreeMap<String, BTreeMap<String, String>>,
+    /// 2026-10-02: The weight is no quantization target (a parameter, not a linear layer), so
+    /// no checkpoint-wide quantization config reaches it: the precision is not asked; the
+    /// weight is 16-bit and the node reads its input edge as is.
+    #[serde(default)]
+    pub unquantized: bool,
 }
 
 #[derive(Deserialize)]

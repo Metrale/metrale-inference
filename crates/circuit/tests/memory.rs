@@ -147,6 +147,7 @@ impl Golden {
             &render::Inverse {
                 max_concurrency: None,
                 max_isl: None,
+                kv_pool: None,
             },
             false,
         )

@@ -339,7 +339,10 @@ impl Builder<'_> {
                 (false, _) => b.clone(),
             });
         }
-        let formats = self.resolve(&id, &op, &binding, &inputs)?;
+        let formats = match nf.unquantized {
+            true => edges::unquantized(&id, &op, inputs.first().map(|&x| self.circuit.edges[x].format))?,
+            false => self.resolve(&id, &op, &binding, &inputs)?,
+        };
         if let Some(f) = formats {
             let x = inputs[0];
             let have = self.circuit.edges[x].format;

@@ -22,6 +22,7 @@ const TERMS: DriverTerms = DriverTerms {
     driver_fixed_bytes: 1000,
     driver_budget_per_mille: 10,
     unified: true,
+    util_ceiling: 0.85,
 };
 
 fn state_inputs() -> StateInputs {

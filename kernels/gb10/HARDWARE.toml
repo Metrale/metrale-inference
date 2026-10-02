@@ -356,7 +356,12 @@ reason = "The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batc
 # also keep their whole 2 MiB chunk resident; that slack is measured from a ledger, not modelled.
 # unified: the GPU's memory is the SoC's LPDDR5X, so host memory (the prompt-lookup index, the
 # serve's anonymous pages) competes for the same pool outside the util budget.
+#
+# 2026-10-02: util_ceiling: the largest `--gpu-memory-utilization` a GB10 serve may run at: 0.90
+# froze a GB10 and needed a power cycle; fp8 KV is the headroom lever instead. A launch recipe
+# above it is refused by `.github/scripts/recipes.py check` (recipes_lib.util_ceilings).
 [memory]
+util_ceiling = 0.85
 driver_fixed_bytes = 1073741824
 driver_budget_per_mille = 21
 unified = true
