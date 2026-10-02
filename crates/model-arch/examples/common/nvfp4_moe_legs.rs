@@ -6,7 +6,10 @@
 //! Owner: model-arch examples.
 //! Invariants: none beyond the types.
 
-use super::fixture::bf16_to_f64;
+use anyhow::{Result, ensure};
+use half::bf16;
+
+use super::fixture::{HostDot, bf16_to_f64};
 
 /// 2026-09-27: The configurations `forward_nvfp4_grouped_decode` launches. 2026-10-02:
 /// `AllNvfp4Tc` is `AllNvfp4` on the tensor-core expert kernels (`moe_nvfp4_grouped_tc.cu`),
@@ -65,4 +68,33 @@ pub(crate) fn hi_lo_rows(b: &[u8], n: usize) -> Vec<f64> {
     v.chunks_exact(2 * n)
         .flat_map(|r| (0..n).map(move |i| r[i] + r[n + i]))
         .collect()
+}
+
+/// 2026-09-27: The SiLU product the gate+up kernels write, from the f64 projections rounded
+/// to BF16 as they round them.
+pub(crate) fn silu_product(
+    gate: &dyn HostDot,
+    up: &dyn HostDot,
+    x: &[f64],
+    inter: usize,
+) -> Vec<f64> {
+    (0..inter)
+        .map(|c| {
+            let gv = bf16::from_f64(gate.dot(c, x)).to_f64();
+            let uv = bf16::from_f64(up.dot(c, x)).to_f64();
+            gv / (1.0 + (-gv).exp()) * uv
+        })
+        .collect()
+}
+
+/// 2026-09-27: `got` within 2 % of the largest |want| of its row, element by element.
+pub(crate) fn close(got: &[f64], want: &[f64], what: &str) -> Result<()> {
+    let scale = want.iter().fold(1e-30f64, |a, v| a.max(v.abs()));
+    for (i, (x, y)) in got.iter().zip(want).enumerate() {
+        ensure!(
+            x.is_finite() && (x - y).abs() <= 0.02 * scale,
+            "{what}: element {i} is {x}, the reference {y} (row max {scale})"
+        );
+    }
+    Ok(())
 }

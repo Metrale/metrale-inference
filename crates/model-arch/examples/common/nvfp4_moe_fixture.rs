@@ -7,7 +7,7 @@
 //! Owner: model-arch examples.
 //! Invariants: none beyond the types.
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use half::bf16;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops;
@@ -211,35 +211,6 @@ pub(crate) fn f32s(b: &[u8]) -> Vec<f64> {
     b.chunks_exact(4)
         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64)
         .collect()
-}
-
-/// 2026-09-27: The SiLU product the gate+up kernels write, from the f64 projections rounded
-/// to BF16 as they round them.
-pub(crate) fn silu_product(
-    gate: &dyn HostDot,
-    up: &dyn HostDot,
-    x: &[f64],
-    inter: usize,
-) -> Vec<f64> {
-    (0..inter)
-        .map(|c| {
-            let gv = bf16::from_f64(gate.dot(c, x)).to_f64();
-            let uv = bf16::from_f64(up.dot(c, x)).to_f64();
-            gv / (1.0 + (-gv).exp()) * uv
-        })
-        .collect()
-}
-
-/// 2026-09-27: `got` within 2 % of the largest |want| of its row, element by element.
-pub(crate) fn close(got: &[f64], want: &[f64], what: &str) -> Result<()> {
-    let scale = want.iter().fold(1e-30f64, |a, v| a.max(v.abs()));
-    for (i, (x, y)) in got.iter().zip(want).enumerate() {
-        ensure!(
-            x.is_finite() && (x - y).abs() <= 0.02 * scale,
-            "{what}: element {i} is {x}, the reference {y} (row max {scale})"
-        );
-    }
-    Ok(())
 }
 
 pub(crate) struct Kernels {
@@ -493,7 +464,13 @@ pub(crate) fn run(
     };
     Ok((
         read(g, b.output, m * H * 2)?,
-        if leg.tc() {
+        if leg == Leg::AllNvfp4TcPaired {
+            // 2026-10-02: The paired policy stores the SiLU product times its 2^60 activation lift.
+            hi_lo_rows(&read(g, b.act, te * INTER * 4)?, INTER)
+                .into_iter()
+                .map(|v| v / 2f64.powi(60))
+                .collect()
+        } else if leg.tc() {
             hi_lo_rows(&read(g, b.act, te * INTER * 4)?, INTER)
         } else {
             f32s(&read(g, b.act, te * INTER * 4)?)
