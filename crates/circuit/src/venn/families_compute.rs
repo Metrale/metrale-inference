@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-02: A family's `compute`, `mma` and `kernel_compute` fields into
-//! [`super::FamilyCompute`] ([`crate::venn::compute`]).
+//! [`super::FamilyCompute`] ([`crate::venn::compute`]), and its `pipeline` and
+//! `kernel_pipeline` fields into its declared pipelines ([`crate::pipeline::declare`]).
 //!
 //! Owner: metrale-circuit (venn).
 //! Invariants:
@@ -70,4 +71,33 @@ pub(super) fn family_compute(
         unit,
         kernels: by_kernel,
     })
+}
+
+/// 2026-10-02: A family's `pipeline` and `kernel_pipeline` tables into its declarations,
+/// checked against its ops, kernels and points ([`crate::pipeline::declare::validate`]).
+pub(super) fn family_pipelines(
+    family: &BTreeMap<String, toml::Value>,
+    by_kernel: &BTreeMap<String, BTreeMap<String, toml::Value>>,
+    kernels: &[KernelId],
+    ops: &[super::OpSpec],
+    points: &[Point],
+) -> Result<crate::pipeline::declare::FamilyPipelines, String> {
+    use crate::pipeline::declare::{FamilyPipelines, parse_by_op, validate};
+    let mut out = FamilyPipelines {
+        family: parse_by_op(family)?,
+        kernels: BTreeMap::new(),
+    };
+    for (name, t) in by_kernel {
+        let k = kernels
+            .iter()
+            .find(|k| k.to_string() == *name)
+            .ok_or_else(|| format!("kernel_pipeline names `{name}`, which is not its kernel"))?;
+        out.kernels.insert(
+            k.clone(),
+            parse_by_op(t).map_err(|e| format!("kernel_pipeline `{name}`: {e}"))?,
+        );
+    }
+    let pts: Vec<_> = points.iter().map(|p| (&p.values, &p.pipeline)).collect();
+    validate(ops, kernels, &out, &pts)?;
+    Ok(out)
 }

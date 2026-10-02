@@ -64,6 +64,9 @@ struct FamilyFile {
     mma: Option<String>,
     #[serde(default)]
     kernel_compute: BTreeMap<String, ComputeFile>,
+    pipeline: BTreeMap<String, toml::Value>,
+    #[serde(default)]
+    kernel_pipeline: BTreeMap<String, BTreeMap<String, toml::Value>>,
 }
 
 #[derive(Deserialize)]
@@ -110,6 +113,8 @@ struct PointFile {
     files: Vec<String>,
     compute: Option<String>,
     mma: Option<String>,
+    #[serde(default)]
+    pipeline: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Deserialize)]
@@ -321,11 +326,14 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
                 p.values
             )));
         }
+        let pipeline = crate::pipeline::declare::parse_by_op(&p.pipeline)
+            .map_err(|e| field(format!("point {:?}: {e}", p.values)))?;
         points.push(Point {
             values: p.values,
             how,
             files: p.files,
             compute,
+            pipeline,
         });
     }
     let mut evidence = Vec::with_capacity(f.evidence.len());
@@ -393,6 +401,14 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         &points,
     )
     .map_err(field)?;
+    let pipeline = super::compute_file::family_pipelines(
+        &f.pipeline,
+        &f.kernel_pipeline,
+        &kernels,
+        &ops,
+        &points,
+    )
+    .map_err(field)?;
     Ok(Family {
         id: f.id,
         description: f.description,
@@ -405,6 +421,7 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         evidence,
         discover,
         compute,
+        pipeline,
     })
 }
 
@@ -418,7 +435,12 @@ fn op_spec(family: &str, o: &OpFile) -> Result<OpSpec, FamilyError> {
         family: family.to_string(),
         op: op.to_string(),
     };
-    if !known_op(&o.op) {
+    // 2026-10-02: An `act_quant` may name its output format (`act_quant:nvfp4/g16`), so a
+    // family implements only the quantizer it has.
+    let quantizer =
+        o.op.strip_prefix("act_quant:")
+            .is_some_and(|f| Format::parse(f).is_ok());
+    if !known_op(&o.op) && !quantizer {
         return Err(unknown(&o.op));
     }
     let qualified = |f: &String| match f.split_once(':') {

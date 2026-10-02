@@ -296,6 +296,7 @@ description = "test"
 compute = "cuda_core"
 kernels = ["attn_a::attn"]
 rows = [1, 1]
+pipeline.paged_attention = { in = ["bf16", "bf16", "bf16"], cache = "bf16", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
 op = [{ op = "paged_attention" }]
 [[family.point]]
 values = {}
