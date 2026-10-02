@@ -398,6 +398,15 @@ pub(crate) fn prepare<'a>(
             "expert_quantization".to_string(),
             args.expert_quantization.0.name().to_string(),
         ),
+        (
+            "latent_moe".to_string(),
+            if config.moe_latent_size > 0 {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+        ),
     ]);
     let copies = memory::parse_copies(
         &tree

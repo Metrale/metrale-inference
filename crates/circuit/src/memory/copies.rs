@@ -121,11 +121,14 @@ struct RuleFile {
 pub struct CopyError(pub String);
 
 /// 2026-10-02: The settings a rule's `when` may read: the serve facts the loader branches on.
-pub const COPY_SETTINGS: [&str; 4] = [
+/// `latent_moe` is `on` when the checkpoint's MoE runs through a latent projection
+/// (`moe_latent_size > 0`, Nemotron-3-Super), `off` otherwise.
+pub const COPY_SETTINGS: [&str; 5] = [
     "speculative",
     "weight_quantization",
     "lm_head_dtype",
     "expert_quantization",
+    "latent_moe",
 ];
 
 /// 2026-10-02: Parse the rules text.

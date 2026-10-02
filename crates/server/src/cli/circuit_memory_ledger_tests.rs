@@ -17,12 +17,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use metrale_circuit::memory::MemoryReport;
+use metrale_circuit::memory::copies::COPY_SETTINGS;
 use metrale_circuit::state::{Holding, StateKind};
 use serde::Deserialize;
 
 use super::super::CircuitMemoryArgs;
 use super::super::circuit_hw::CheckpointTexts;
-use super::super::circuit_memory_point::{BootPool, prepare};
+use super::super::circuit_memory_point::{BootPool, Point, prepare};
 use super::super::circuit_memory_serve::EngineFacts;
 use super::load;
 
@@ -117,36 +118,63 @@ fn model_term(r: &MemoryReport, f: &EngineFacts, term: &str) -> u64 {
 }
 
 /// 2026-10-02: One fixture's model, evaluated at the boot's own pools.
-fn evaluate(name: &str, fx: &Fixture) -> (MemoryReport, EngineFacts) {
+/// 2026-10-02: The prepared point of `checkpoint` (its in-tree config fixture) under `recipe` and
+/// `serve`; every setting a copy rule may read is set.
+fn point(
+    name: &str,
+    checkpoint: &str,
+    recipe: Option<String>,
+    serve: Vec<String>,
+    capture_rows: u64,
+) -> Point<'static> {
     let dir = root()
         .join("crates/circuit/tests/fixtures/checkpoints")
-        .join(fx.checkpoint.replacen('/', "--", 1));
+        .join(checkpoint.replacen('/', "--", 1));
     let read = |f: &str| std::fs::read_to_string(dir.join(f)).ok();
     let texts = CheckpointTexts {
-        id: fx.checkpoint.clone(),
+        id: checkpoint.to_string(),
         config: read("config.json"),
         hf_quant: read("hf_quant_config.json"),
         dir: None,
     };
-    let a = CircuitMemoryArgs {
-        checkpoint: fx.checkpoint.clone(),
+    // 2026-10-02: A test-lifetime point borrows its args, tree and registry; leaked, not freed.
+    let a: &'static CircuitMemoryArgs = Box::leak(Box::new(CircuitMemoryArgs {
+        checkpoint: checkpoint.to_string(),
         hardware: "gb10".into(),
-        recipe: fx.recipe.clone(),
+        recipe,
         isl: 1,
         osl: 1,
         concurrency: 1,
         slots: None,
-        capture_rows: fx.capture_rows,
+        capture_rows,
         prompt_lookup: false,
         tree_nodes: None,
         per_node: false,
         json: false,
         allow_network: false,
         root: Some(root()),
-        serve: fx.serve.clone(),
-    };
-    let (tree, reg) = load(&a, &root()).unwrap();
-    let p = prepare(&a, &texts, &root(), &tree, &reg).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        serve,
+    }));
+    let (tree, reg) = load(a, &root()).unwrap();
+    let (tree, reg) = (Box::leak(Box::new(tree)), Box::leak(Box::new(reg)));
+    let p = prepare(a, &texts, &root(), tree, reg).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+    for k in COPY_SETTINGS {
+        assert!(
+            p.settings.contains_key(k),
+            "{name}: copy setting `{k}` unset"
+        );
+    }
+    p
+}
+
+fn evaluate(name: &str, fx: &Fixture) -> (MemoryReport, EngineFacts) {
+    let p = point(
+        name,
+        &fx.checkpoint,
+        fx.recipe.clone(),
+        fx.serve.clone(),
+        fx.capture_rows,
+    );
     let boot = BootPool {
         kv_blocks: fx.kv_blocks,
         draft_kv_blocks: fx.draft_kv_blocks,
@@ -240,5 +268,32 @@ fn pr72_reserve_terms_agree_with_the_model() {
                 "{name} {term}: model {model} MiB, #72 reserve {reserve} MB"
             );
         }
+    }
+}
+
+/// 2026-10-02: Path B: the routed experts' transposed NVFP4 tables are built only without a
+/// latent MoE (`prefill_weights.rs`): Nemotron-3-Nano carries them, Nemotron-3-Super
+/// (`moe_latent_size` 1024) has none.
+#[test]
+fn the_nemotron_expert_twins_follow_the_latent_moe() {
+    for (checkpoint, latent) in [
+        ("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4", "off"),
+        ("nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4", "on"),
+    ] {
+        let p = point(checkpoint, checkpoint, None, vec![], 0);
+        assert_eq!(p.settings["latent_moe"], latent, "{checkpoint}");
+        let (r, _) = p.eval_with(1, 1, 1, None).unwrap();
+        let twins: u64 = r
+            .weights
+            .iter()
+            .flat_map(|w| &w.derived)
+            .filter(|d| d.rule == "nemotron-expert-twin")
+            .map(|d| d.bytes)
+            .sum();
+        assert_eq!(
+            twins > 0,
+            latent == "off",
+            "{checkpoint}: {twins} twin bytes"
+        );
     }
 }
