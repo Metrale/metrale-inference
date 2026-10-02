@@ -461,7 +461,7 @@ g0410 l39.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_
 g0411 l39.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16} compute=memory
 == head
 g0412 head [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16} compute=memory
-g0413 head [lm_head] gemm::dense_gemm_bf16 reference rule=lm_head_bf16_gemm writes={logits:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+g0413 head [lm_head] gemm::dense_gemm_bf16 reference rule=lm_head_bf16_gemm writes={logits:bf16} compute=cuda_core
 g0414 head [argmax] (host) reference rule=argmax_host writes={token:i32}
 
 # runtime route `gdn_state_slots_fragmented`: when the sequences' GDN state slots are not contiguous in slice order (slots fragment as sequences finish), and the step runs the per-sequence loop; planned as `ssm_batched_recurrent=off` (ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-150 (the contiguity check), :396-397 (the per-sequence call))
@@ -929,5 +929,5 @@ g0410 l39.moe_ffn [router,top_k,experts_gate_up,experts_act,experts_down,shared_
 g0411 l39.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16} compute=memory
 == head
 g0412 head [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16} compute=memory
-g0413 head [lm_head] gemm::dense_gemm_bf16 reference rule=lm_head_bf16_gemm writes={logits:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+g0413 head [lm_head] gemm::dense_gemm_bf16 reference rule=lm_head_bf16_gemm writes={logits:bf16} compute=cuda_core
 g0414 head [argmax] (host) reference rule=argmax_host writes={token:i32}

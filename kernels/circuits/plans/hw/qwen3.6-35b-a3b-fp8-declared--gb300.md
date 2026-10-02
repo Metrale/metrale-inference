@@ -184,7 +184,7 @@ Estimated step 2.388 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 22.5% | Shared, unmeasured | moe_grouped_fp8_scalar | no rule of this class covers it; family `moe_grouped_fp8_scalar` implements the op |
 | gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
 | attn.attend | paged_attention | - | - | 10 | 7.0% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 4.0% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 1.3% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.9% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
@@ -238,7 +238,7 @@ Estimated step 8.071 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | gdn.recur | gdn_recurrence | - | - | 30 | 25.2% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
 | attn.attend | paged_attention | - | - | 10 | 16.7% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 16.6% | Shared, unmeasured | moe_prefill_w8a8 | no rule of this class covers it; family `moe_prefill_w8a8` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 1.6% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 1.3% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 0.4% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
