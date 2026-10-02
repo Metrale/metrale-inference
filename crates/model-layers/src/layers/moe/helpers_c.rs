@@ -253,6 +253,24 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        // 2026-10-01: Up to 64 rows (a warm request's tail replay under
+        // `prefill_row_invariant`), `router_gemm_bf16`: `moe_router_gemm_bf16` has the same
+        // bits (dense_gemm_bf16's ascending-k FP32 chain, --fmad=false) and is ~5x faster
+        // there (GB10, 27 rows: 23 vs 110 us per layer).
+        if num_tokens <= ops::MOE_ROUTER_GEMM_MAX_PREFILL_ROWS
+            && self.moe_router_gemm_k.0 != 0
+            && hidden_size.is_multiple_of(16)
+        {
+            return self.router_gemm_bf16(
+                router_in,
+                gate_logits,
+                num_tokens,
+                num_experts,
+                hidden_size,
+                ctx,
+                stream,
+            );
+        }
         if self.moe_router_rt_k.0 != 0
             && num_tokens >= ops::MOE_ROUTER_RT_MIN_ROWS
             && hidden_size.is_multiple_of(16)

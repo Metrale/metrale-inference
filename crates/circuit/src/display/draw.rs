@@ -57,7 +57,7 @@ impl Pen<'_> {
                 .collect::<Vec<_>>()
                 .join(self.g.then)
         };
-        let reps = group.repeat.count(self.plan.rows);
+        let reps = group.repeat.count(self.plan.rows).unwrap_or(1);
         if reps > 1 {
             s.push_str(&format!(" {}{reps}", self.g.times));
         }

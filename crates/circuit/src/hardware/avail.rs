@@ -13,14 +13,18 @@
 //!   of its devices claims the instruction, or keeps it while a device lacks it, is an error
 //!   ([`check_build`]), never resolved in either's favour.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::HwError;
 use super::class::ClassInfo;
 use super::device::{Device, Guard, Instr, Polarity};
 use super::sources::ClassSources;
-use crate::fuser::AvailableKernels;
-use crate::rules::{KernelId, Rule};
+use crate::fuser::{AvailableKernels, pattern_fits};
+use crate::ir::{Circuit, NodeIdx};
+use crate::rules::{KernelId, PatternOp, Rule};
+use crate::venn::Families;
+use crate::venn::classify::implements;
+use crate::venn::roofline::nvfp4_mma;
 
 /// 2026-09-30: Why a kernel is not available on the device.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,14 +101,15 @@ pub fn names_word(text: &str, word: &str) -> bool {
 pub fn guard_of<'g>(text: &str, func: &str, guards: &'g [Guard]) -> Option<&'g Guard> {
     let lines: Vec<&str> = text.lines().collect();
     let regions = regions(&lines, guards);
+    let macros = entry_macros(&lines);
     let mut found: Option<&Guard> = None;
     let mut any = false;
     for (i, line) in lines.iter().enumerate() {
-        if !defines_here(line, func) {
-            continue;
-        }
-        let head = lines[i.saturating_sub(3)..=i].join(" ");
-        if !head.contains("__global__") {
+        let direct = defines_here(line, func)
+            && lines[i.saturating_sub(3)..=i]
+                .join(" ")
+                .contains("__global__");
+        if !direct && !instantiates(line, func, &macros) {
             continue;
         }
         any = true;
@@ -121,6 +126,60 @@ fn defines_here(line: &str, func: &str) -> bool {
         let before = line[..at].chars().next_back();
         let after = line[at + func.len()..].trim_start();
         before.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_')) && after.starts_with('(')
+    })
+}
+
+/// 2026-10-01: The function-like macros of `lines` whose body defines a `__global__` kernel
+/// named by a parameter (`#define ENTRY(NAME, ...) ... __global__ ... void NAME(...)`), with that
+/// parameter's position. An entry point defined by expanding one sits where the macro is
+/// invoked, so its guard is the invocation's region.
+fn entry_macros(lines: &[&str]) -> Vec<(String, usize)> {
+    let ident = |c: &char| c.is_ascii_alphanumeric() || *c == '_';
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let define = lines[i]
+            .trim_start()
+            .strip_prefix('#')
+            .map(str::trim_start)
+            .and_then(|r| r.strip_prefix("define"));
+        let mut body = define.unwrap_or_default().to_string();
+        while define.is_some() && body.trim_end().ends_with('\\') && i + 1 < lines.len() {
+            body.truncate(body.trim_end().len() - 1);
+            i += 1;
+            body.push(' ');
+            body.push_str(lines[i]);
+        }
+        i += 1;
+        let head = body.trim_start();
+        let name: String = head.chars().take_while(ident).collect();
+        let Some((params, rest)) = head[name.len()..]
+            .strip_prefix('(')
+            .and_then(|r| r.split_once(')'))
+        else {
+            continue;
+        };
+        if !rest.contains("__global__") {
+            continue;
+        }
+        if let Some(at) = params
+            .split(',')
+            .map(str::trim)
+            .position(|p| !p.is_empty() && defines_here(rest, p))
+        {
+            out.push((name, at));
+        }
+    }
+    out
+}
+
+/// 2026-10-01: `line` invokes one of `macros` with `func` as its kernel-name argument.
+fn instantiates(line: &str, func: &str, macros: &[(String, usize)]) -> bool {
+    let line = line.trim_start();
+    macros.iter().any(|(m, at)| {
+        line.strip_prefix(m.as_str())
+            .and_then(|r| r.trim_start().strip_prefix('('))
+            .is_some_and(|args| args.split([',', ')']).nth(*at).map(str::trim) == Some(func))
     })
 }
 
@@ -248,4 +307,40 @@ pub fn availability(
         }
     }
     out
+}
+
+/// 2026-10-01: The nodes of `c` that multiply an NVFP4 activation ([`nvfp4_mma`]) and that no
+/// compiled FP4 block-scale kernel of the class runs: no rule with a pattern element that fits
+/// the node has every kernel available and one that needs the FP4 block-scale MMA, and no family
+/// that implements the node has such a kernel available. `kernel` answers for one kernel: `None`
+/// when the device cannot run it, else whether its source guard needs the FP4 block-scale MMA.
+/// Row ranges and policy conditions are not consulted: they choose among the kernels a class
+/// compiles, not which kernels it compiles.
+pub fn without_fp4_kernel(
+    c: &Circuit,
+    rules: &[Rule],
+    families: &Families,
+    kernel: &dyn Fn(&KernelId) -> Option<bool>,
+) -> BTreeSet<NodeIdx> {
+    let fp4 = |k: &KernelId| kernel(k) == Some(true);
+    let patterns: Vec<&PatternOp> = rules
+        .iter()
+        .filter(|r| r.kernels.iter().all(|k| kernel(k).is_some()) && r.kernels.iter().any(fp4))
+        .flat_map(|r| &r.pattern)
+        .collect();
+    let fams: Vec<_> = families
+        .families
+        .iter()
+        .filter(|f| f.kernels.iter().any(fp4))
+        .collect();
+    c.nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| nvfp4_mma(c, n))
+        .filter(|(_, n)| {
+            !patterns.iter().any(|p| pattern_fits(c, p, n))
+                && !fams.iter().any(|f| implements(f, c, n))
+        })
+        .map(|(i, _)| i)
+        .collect()
 }

@@ -99,10 +99,16 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched
     }
     known.extend(&f.w8a8_ptrs);
     known.extend([f.head.final_norm.weight.0, 0x9100_0000]);
-    for m in [f.fixed.meta, f.fixed.batch_meta, f.fixed.verify_meta] {
+    for m in [
+        f.fixed.meta,
+        f.fixed.batch_meta,
+        f.fixed.verify_meta,
+        f.fixed.verify_batch_meta,
+    ] {
         known.extend([m.positions.0, m.slot.0, m.seq_len.0, m.block_table.0]);
     }
     known.insert(f.fixed.ffn_act_q8.0);
+    known.insert(f.fixed.verify_batch_tokens.0);
     if let Some(d) = &f.fixed.draft {
         known.extend([d.embed.0, d.k_pool.0, d.v_pool.0]);
         known.extend([
@@ -111,6 +117,11 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched
             d.meta.seq_len.0,
             d.meta.block_table.0,
         ]);
+        // 2026-09-30: An n-row draft's batched metadata and the confidences it writes.
+        if let (Some(r), Ok(m)) = (&d.rows, d.meta_rows(f.plan.rows)) {
+            known.extend([m.positions.0, m.slot.0, m.seq_len.0, m.block_table.0]);
+            known.insert(f.fixed.tokens.offset(r.lp_offset).0);
+        }
     }
     let row = |dim: &str| f.circuit.dims[dim] * 2;
     let rows_of = [
@@ -119,6 +130,24 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched
         (f.fixed.logits.0, row("vocab")),
         (f.fixed.tokens.0, 4),
     ];
+    // 2026-09-30: The carried verify's tables, at any sequence's slice, and each GDN layer's WY
+    // tables.
+    let carry = super::exec_fixture::CARRY;
+    let tables = |p: u64, base: u64, span: u64| (base..base + span).contains(&p);
+    let wy = f.fixed.verify_wy_tables.0;
+    let in_carry = |p: u64| {
+        [carry.flag, carry.slot_tab, carry.conv_tab]
+            .iter()
+            .any(|b| tables(p, b.0, 128 * 8))
+            || [carry.stash, carry.pend, carry.conv_stash]
+                .iter()
+                .any(|b| b.0 == p)
+            || tables(
+                p,
+                wy,
+                64 * crate::layer::VERIFY_WY_LAYER_STRIDE_BYTES as u64,
+            )
+    };
     let in_fixed = |p: u64| {
         rows_of
             .iter()
@@ -138,7 +167,7 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched
             if let MockArg::Buffer(p) = a {
                 let in_ws = (WORKSPACE..WORKSPACE + f.arena).contains(&p.0);
                 assert!(
-                    in_ws || known.contains(&p.0) || in_fixed(p.0) || p.0 == 0,
+                    in_ws || known.contains(&p.0) || in_fixed(p.0) || in_carry(p.0) || p.0 == 0,
                     "launch {i} ({}) reads {:#x}, which is neither bound nor placed",
                     kernels[i],
                     p.0

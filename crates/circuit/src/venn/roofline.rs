@@ -131,7 +131,7 @@ pub fn node_cost(
     }
     let peak = match n.inputs.first().map(|&e| c.edges[e].format) {
         Some(Format::Fp8E4m3 { .. }) if n.op.reads_linear_weight() => r.fp8_tflops,
-        Some(Format::Nvfp4 { .. }) if n.op.reads_linear_weight() => r.nvfp4_tflops,
+        _ if nvfp4_mma(c, n) => r.nvfp4_tflops,
         _ => r.bf16_tflops,
     };
     let time_us = (bytes / (r.dram_gbps * 1e3)).max(flops / (peak * 1e6));
@@ -140,6 +140,16 @@ pub fn node_cost(
         flops,
         time_us,
     })
+}
+
+/// 2026-10-01: `n` multiplies an NVFP4 activation by a linear weight: the node the NVFP4 peak
+/// costs.
+pub fn nvfp4_mma(c: &Circuit, n: &Node) -> bool {
+    n.op.reads_linear_weight()
+        && matches!(
+            n.inputs.first().map(|&e| c.edges[e].format),
+            Some(Format::Nvfp4 { .. })
+        )
 }
 
 fn edge_bytes(c: &Circuit, n: &Node, e: usize, rows: u64) -> Result<f64, CostError> {

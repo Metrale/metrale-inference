@@ -111,6 +111,7 @@ fn run_full(
         enabled,
         batchm_max,
         m16_tc,
+        false,
         7,
     )
     .unwrap();
@@ -424,4 +425,56 @@ fn the_route_message_still_names_the_lever_kernel_band_and_off_switch() {
     assert!(msg.contains("dense_gemv_bf16_batchm"));
     assert!(msg.contains("REASSOCIATED"));
     assert!(msg.contains("Unset it to restore the bit-exact tier (#927/#928)"));
+}
+
+/// 2026-09-30: A fixed `--activation-quantization` head runs the batched GEMV at every row
+/// count, in chunks of `DENSE_GEMV_BATCHM_MAX_M` rows, each chunk reading its own input rows and
+/// writing its own logits rows, whatever the tier's own band says (here 0 and disabled).
+#[test]
+fn a_fixed_head_chunks_the_batched_gemv_at_every_row_count() {
+    let gpu = MockGpuBackend::new();
+    let (m, n, k) = (40_u32, 67_u32, 64_u32);
+    let input = gpu.alloc((m * k * 2) as usize).unwrap();
+    let weight = DenseWeight {
+        weight: gpu.alloc((n * k * 2) as usize).unwrap(),
+    };
+    let output = gpu.alloc((m * n * 2) as usize).unwrap();
+    let off = LmHeadM16Tc {
+        narrow: KernelHandle(0),
+        wide: KernelHandle(0),
+        enabled: false,
+        n_tile: 32,
+    };
+    project_bf16_lm_head(
+        &gpu,
+        KernelHandle(0xCAFE),
+        KernelHandle(0xBF16),
+        input,
+        &weight,
+        output,
+        [m, n, k],
+        false,
+        0,
+        off,
+        true,
+        7,
+    )
+    .unwrap();
+    let launches = gpu.launches_snapshot();
+    let rows: Vec<u32> = vec![16, 16, 8];
+    assert_eq!(launches.len(), rows.len());
+    let mut done = 0u32;
+    for (l, r) in launches.iter().zip(rows) {
+        assert_eq!(l.func, 0xBF16);
+        assert_eq!(
+            l.args[0],
+            MockArg::Buffer(input.offset((done * k * 2) as usize))
+        );
+        assert_eq!(
+            l.args[2],
+            MockArg::Buffer(output.offset((done * n * 2) as usize))
+        );
+        done += r;
+    }
+    assert_eq!(done, m);
 }

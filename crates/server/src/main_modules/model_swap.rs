@@ -119,6 +119,22 @@ fn pin_published_weight_quantization(next: &mut cli::ServeArgs) {
     next.w4a4_downcast_wide = published.downcast() == metrale_config::W4a4Downcast::Wide;
 }
 
+/// 2026-09-30: `--activation-quantization` is published once per process, like the weight tier:
+/// a swapped-in recipe's value is rewritten to the one in force, with a warning.
+fn pin_published_activation_quantization(next: &mut cli::ServeArgs) {
+    let published = metrale_model_layers::layers::activation_quantization();
+    if next.activation_quantization == *published {
+        return;
+    }
+    tracing::warn!(
+        "this recipe asks for --activation-quantization {}, but this process published {} at \
+         startup and keeps it; restart the server to change it",
+        next.activation_quantization,
+        published
+    );
+    next.activation_quantization = published.clone();
+}
+
 /// 2026-09-26: How long in-flight requests get to release the outgoing model
 /// before the swap gives up and republishes it.
 const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
@@ -209,6 +225,7 @@ pub(crate) fn swap(host: &Arc<ModelHost>, next: cli::ServeArgs) -> Result<SwapOu
         carry_process_flags(&mut next, previous);
     }
     pin_published_weight_quantization(&mut next);
+    pin_published_activation_quantization(&mut next);
 
     // 2026-09-26: A caller that waited on the guard may ask for what the
     // previous holder just loaded. The whole argv is compared, after the

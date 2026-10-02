@@ -9,6 +9,11 @@ use clap::Parser;
 
 fn parse(extra: &[&str]) -> ServeArgs {
     let mut argv = vec!["met", "serve", "dummy/model", "--model-name", "dummy"];
+    // 2026-09-30: The rules here are checked under the routing every recipe pins, unless a test
+    // names another `--activation-quantization`.
+    if !extra.contains(&"--activation-quantization") {
+        argv.extend_from_slice(&["--activation-quantization", "adaptive"]);
+    }
     argv.extend_from_slice(extra);
     match super::super::Cli::parse_from(argv).command {
         super::super::Command::Serve(a) => a,

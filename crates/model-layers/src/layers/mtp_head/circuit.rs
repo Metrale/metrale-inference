@@ -129,8 +129,9 @@ impl MtpHead {
             sliding_window: 0,
             // 2026-09-29: `forward_one`'s `inv_sqrt_d`.
             softmax_scale: 1.0 / (hd as f32).sqrt(),
-            // 2026-09-29: One row on `paged_decode_k` (`forward/attend.rs`).
-            paged_decode_plain_rows: 1,
+            // 2026-09-29: One row on `paged_decode_k` (`forward/attend.rs`). 2026-09-30: n rows
+            // on it too (`forward_batch_position`): the head has no split-K arm.
+            paged_decode_plain_rows: u128::MAX,
         };
         let cache = self.kv_cache.lock();
         DraftBinding {
@@ -149,6 +150,16 @@ impl MtpHead {
             } else {
                 config.vocab_size as u32
             },
+            rows: self
+                .propose_batch_scope_ok()
+                .then(|| crate::circuit_exec::DraftRows {
+                    meta: self.propose_meta,
+                    lp_offset: super::forward_batch::LP_SCRATCH_OFF,
+                    lm_head_gemv: (0..=super::batch_caps::PROPOSE_META_SEQS)
+                        .map(|n| self.lm_head_batch_kernel(n))
+                        .collect(),
+                    lm_head_twin: self.lm_head_twin_ready(),
+                }),
         }
     }
 
@@ -191,7 +202,7 @@ impl MtpHead {
             self.upload_draft_meta(&mut kv_cache, state, position, ctx, stream)?
                 .1
         };
-        runner.run_draft(ctx.gpu, stream, max_blocks)?;
+        runner.run_draft(ctx.gpu, stream, 1, max_blocks)?;
         let token_id = self.draft_token(ctx, ctx.buffers.scratch(), draft_embed_target, stream)?;
         Self::finish_row(state, position);
         Ok(token_id)

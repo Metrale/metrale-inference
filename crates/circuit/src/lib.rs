@@ -29,6 +29,7 @@ pub mod precision;
 pub mod precision_policy;
 pub mod render;
 pub mod rules;
+pub mod runs;
 pub mod runtime;
 pub mod state;
 pub mod state_ops;
@@ -43,12 +44,15 @@ pub use checkpoint::{
 };
 pub use circuit_toml::{CircuitError, includes_of};
 pub use format::{Format, Scale};
-pub use fuser::{AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse};
+pub use fuser::{
+    AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse, fuse_table,
+};
 pub use instances::{Instance, InstanceError, PrecisionSpec, parse_instances};
 pub use instantiate::instantiate;
 pub use ir::{ArchShape, Circuit, LayerKind, LinearRole, OpKind, Section};
 pub use precision::{EdgePrecision, LinearFormats, PrecisionError, PrecisionTable};
 pub use rules::{KernelId, Mode, Numerics, Rule, RuleError, parse_rules};
+pub use runs::{RowTable, VerifyRun};
 pub use runtime::{RuleSet, RuntimeRoute, parse_rule_set};
 
 /// 2026-09-28: Any failure between the TOML texts and a rendered plan.
@@ -218,6 +222,23 @@ pub fn render_plan(
         text.push_str(&render::route_section(&loaded.circuit, &route, &arm, &h));
     }
     Ok(text)
+}
+
+/// 2026-09-30: Fuse and render one batched-verify plan of `instance`, for `table`.
+pub fn render_table_plan(
+    instance: &Instance,
+    loaded: &Loaded,
+    available: &AvailableKernels,
+    table: &RowTable,
+) -> Result<String, LoadError> {
+    let plan = fuse_table(
+        &loaded.circuit,
+        &loaded.rules,
+        available,
+        &instance.policy,
+        table,
+    )?;
+    Ok(render::render(&loaded.circuit, &plan, &header(instance)))
 }
 
 /// 2026-09-28: Fuse, lay out and draw one plan of `instance`: the view `met circuit display`

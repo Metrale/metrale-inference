@@ -18,6 +18,38 @@ use std::collections::{BTreeSet, VecDeque};
 use crate::ir::{Circuit, Node, NodeIdx, OpKind};
 use crate::rules::{PatternOp, Rule};
 
+/// 2026-10-01: Node `n` of `c` fits pattern element `p`: op (any listed linear role), local id,
+/// weight format, quantized input format and layer kind. The fuser matches chains with it, and
+/// the hardware planner asks which rules could run a node at all.
+pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
+    let op = match n.op {
+        OpKind::Linear(r) if !p.roles.is_empty() => p.roles.contains(&r),
+        _ => p.op == n.op,
+    };
+    op && p.local.as_deref().is_none_or(|l| l == n.local)
+        && p.weight.is_none_or(|w| n.weight == Some(w))
+        && reads_quantized_as(c, p, n)
+        && p.layer_kind
+            .is_none_or(|k| n.layer.is_some_and(|i| c.layer_kinds[i] == k))
+}
+
+/// 2026-09-30: A node that reads a quantized activation (an `act_quant` output) matches only
+/// a pattern element that names that format as its `input`; a pattern naming a quantized
+/// input matches only such a node. A kernel for 16-bit activations never takes a W4A4 or
+/// W8A8 projection.
+fn reads_quantized_as(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
+    let read = n
+        .inputs
+        .first()
+        .map(|&e| c.edges[e].format)
+        .filter(|f| !f.is_plain());
+    match (read, p.input.filter(|f| !f.is_plain())) {
+        (None, None) => true,
+        (Some(r), Some(w)) => r == w,
+        _ => false,
+    }
+}
+
 pub(super) struct Matcher<'a> {
     pub circuit: &'a Circuit,
     pub in_scope: &'a [bool],
@@ -26,32 +58,7 @@ pub(super) struct Matcher<'a> {
 
 impl Matcher<'_> {
     fn fits(&self, p: &PatternOp, n: &Node) -> bool {
-        let op = match n.op {
-            OpKind::Linear(r) if !p.roles.is_empty() => p.roles.contains(&r),
-            _ => p.op == n.op,
-        };
-        op && p.local.as_deref().is_none_or(|l| l == n.local)
-            && p.weight.is_none_or(|w| n.weight == Some(w))
-            && self.reads_quantized_as(p, n)
-            && p.layer_kind
-                .is_none_or(|k| n.layer.is_some_and(|i| self.circuit.layer_kinds[i] == k))
-    }
-
-    /// 2026-09-30: A node that reads a quantized activation (an `act_quant` output) matches only
-    /// a pattern element that names that format as its `input`; a pattern naming a quantized
-    /// input matches only such a node. A kernel for 16-bit activations never takes a W4A4 or
-    /// W8A8 projection.
-    fn reads_quantized_as(&self, p: &PatternOp, n: &Node) -> bool {
-        let read = n
-            .inputs
-            .first()
-            .map(|&e| self.circuit.edges[e].format)
-            .filter(|f| !f.is_plain());
-        match (read, p.input.filter(|f| !f.is_plain())) {
-            (None, None) => true,
-            (Some(r), Some(w)) => r == w,
-            _ => false,
-        }
+        fits(self.circuit, p, n)
     }
 
     fn free(&self, n: NodeIdx, owner: &[Option<usize>], chain: &[NodeIdx]) -> bool {

@@ -111,6 +111,12 @@ impl Qwen3SsmLayer {
         } = *args;
         let eps = ctx.config.rms_norm_eps as f32;
 
+        // 2026-10-01: The same chain in three launches where its twins are linked
+        // (`trait_decode_batched_conv_gdn_exact_chain.rs`).
+        if self.decode_batched_conv_gdn_exact_chain(ssm_state, ctx, args)? {
+            return Ok(());
+        }
+
         // 2026-09-25: Kernel selection as in `ssm_forward`.
         let use_f32_conv = self.conv1d_l2norm_f32_k.0 != 0;
         let use_f32_gdn = self.gdn_f32_k.0 != 0 && self.gated_rms_norm_f32_k.0 != 0;

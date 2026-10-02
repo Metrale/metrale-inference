@@ -15,20 +15,22 @@
 //! - On the class a model's golden plans were written for, with its own kernel target, the
 //!   plan equals the golden plan (crates/server/src/cli/circuit_hw_tests.rs holds it).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::avail::{Availability, availability, check_build, kernel_status};
+use super::avail::{Availability, availability, check_build, kernel_status, without_fp4_kernel};
 use super::class::{ClassInfo, ClassRules, chain, class_families, class_rules, planning_chain};
-use super::device::{Device, Registry};
+use super::device::{Device, MmaKind, Registry};
 use super::estimate::{DeviceRoofline, device_roofline};
+use super::exec::{Exec, fp4_fallback, node_exec};
 use super::sources::{ClassSources, KernelTree};
 use super::{HwError, ModelUnderPlan};
 use crate::fuser::{FuseError, FusionPlan, fuse};
 use crate::ir::{Circuit, NodeIdx};
-use crate::rules::{Mode, Numerics, PatternOp, Repeat, Rule};
+use crate::rules::{KernelId, Mode, Numerics, PatternOp, Repeat, Rule};
 use crate::runtime::RuntimeRoute;
 use crate::venn::Run;
-use crate::venn::families::Families;
+use crate::venn::families::{Families, Roofline};
+use crate::venn::roofline::nvfp4_mma;
 
 /// 2026-09-30: The emitter of a placeholder group.
 pub const NOVEL_EMITTER: &str = "novel";
@@ -78,6 +80,12 @@ pub struct Resolved {
     pub families: Families,
     /// 2026-09-30: Roofline constants.
     pub roofline: DeviceRoofline,
+    /// 2026-10-01: The model's NVFP4-activation nodes the class compiles no FP4 block-scale
+    /// kernel for ([`without_fp4_kernel`]).
+    pub without_fp4: BTreeSet<NodeIdx>,
+    /// 2026-10-01: How each node of the model runs here ([`node_exec`]; `None`: reads no
+    /// weight). Its execution columns, its "FP4 costing" row and its cost all read this.
+    pub exec: Vec<Option<Exec>>,
 }
 
 impl Resolved {
@@ -94,6 +102,72 @@ impl Resolved {
         match &self.rules {
             ClassRules::Rules { runtime, .. } => runtime,
             ClassRules::None => &[],
+        }
+    }
+
+    /// 2026-10-01: The constants node `n` is costed with: the device's, with the NVFP4 slot
+    /// (which `node_cost` reads only for an NVFP4 activation) at the peak of the node's
+    /// execution.
+    pub fn roofline_of(&self, n: NodeIdx) -> Roofline {
+        let base = self.roofline.roofline;
+        match self.exec[n] {
+            Some(e) => Roofline {
+                nvfp4_tflops: e.peak(&base).0,
+                ..base
+            },
+            None => base,
+        }
+    }
+
+    /// 2026-10-01: The report's "FP4 costing", read from the nodes' executions: the device's note
+    /// where it has no FP4 MMA; otherwise `native` only when every NVFP4-activation op the report
+    /// costs in `c` runs on it, and the ops that do not named with the path they take.
+    pub fn fp4_costing(&self, c: &Circuit) -> String {
+        let base = &self.roofline.roofline;
+        let fallback = fp4_fallback(&self.device);
+        if !self.device.runs(MmaKind::Fp4BlockScale) {
+            let lacks = match fallback {
+                Exec::ExactFp8Emulation => "FP4 MMA",
+                _ => "FP4 and FP8 MMA",
+            };
+            return format!(
+                "{lacks} not native: NVFP4-activation nodes costed at {}",
+                fallback.peak(base).1
+            );
+        }
+        let sections: BTreeSet<_> = report_runs()
+            .iter()
+            .map(|r| crate::fuser::section_of(r.mode))
+            .collect();
+        let mut by_exec: BTreeMap<Exec, BTreeSet<String>> = BTreeMap::new();
+        for b in c.blocks.iter().filter(|b| sections.contains(&b.section)) {
+            for i in (b.first..b.end).filter(|&i| nvfp4_mma(c, &c.nodes[i])) {
+                if let Some(e) = self.exec[i] {
+                    by_exec.entry(e).or_default().insert(c.nodes[i].op.name());
+                }
+            }
+        }
+        let list = |s: &BTreeSet<String>| s.iter().cloned().collect::<Vec<_>>().join(", ");
+        let native = by_exec.remove(&Exec::Native(MmaKind::Fp4BlockScale));
+        let mut parts: Vec<String> = by_exec
+            .iter()
+            .map(|(e, ops)| {
+                format!(
+                    "no path for {} (the class compiles no FP4 block-scale kernel for them): costed at {}",
+                    list(ops),
+                    e.peak(base).1
+                )
+            })
+            .collect();
+        match (native, parts.is_empty()) {
+            (None, true) => "not used: the model has no NVFP4-activation node".into(),
+            (Some(_), true) => "native".into(),
+            (native, false) => {
+                if let Some(ops) = native {
+                    parts.push(format!("native for {}", list(&ops)));
+                }
+                parts.join("; ")
+            }
         }
     }
 }
@@ -143,6 +217,18 @@ pub fn resolve(
     let base = base_roofline(repo, &planning)?;
     let measured = (families_class(repo, &device.class)?).then_some(&base);
     let roofline = device_roofline(&device, measured, &base);
+    let kernel = |k: &KernelId| match kernel_status(&device, own, &sources, &registry.guards, k) {
+        (Ok(()), req) => Some(req.is_some_and(|i| i.kind == MmaKind::Fp4BlockScale)),
+        (Err(_), _) => None,
+    };
+    let c = &model.circuit;
+    let without_fp4 = without_fp4_kernel(c, rule_list, &families, &kernel);
+    let exec = c
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| node_exec(&device, c, n, without_fp4.contains(&i)))
+        .collect();
     Ok(Resolved {
         device,
         chain,
@@ -152,6 +238,8 @@ pub fn resolve(
         availability,
         families,
         roofline,
+        without_fp4,
+        exec,
     })
 }
 
@@ -201,6 +289,7 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
             input,
             writes: None,
             keep: false,
+            stored: false,
             sibling: false,
         }],
         kernels: Vec::new(),
@@ -212,6 +301,7 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
         requires: BTreeSet::new(),
         when: Default::default(),
         numerics: Numerics::Reference,
+        runs: Vec::new(),
         priority: i64::MIN,
         cite: "no rule of this class covers the op on this device".into(),
     }

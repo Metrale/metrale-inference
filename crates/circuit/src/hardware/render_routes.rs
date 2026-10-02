@@ -74,7 +74,8 @@ pub(super) fn routes_section(s: &mut String, r: &HwReport) {
     }
     let _ = writeln!(
         s,
-        "## Runtime routes\n\nConditions the engine checks at run time, under which a step runs another arm than the plan's (FUSIONS.toml `[[runtime]]`). The estimates above are the primary arm's; each route is planned and estimated beside it.\n"
+        "## Runtime routes\n\nConditions the engine checks at run time, under which a step runs another arm than the plan's (FUSIONS.toml `[[runtime]]`). The estimates above are the primary arm's; each route is planned and estimated beside it{}.\n",
+        super::render::projection(r)
     );
     let mut described = BTreeSet::new();
     for row in &r.routes {

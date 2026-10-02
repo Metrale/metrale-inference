@@ -124,7 +124,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-gated-delta-rule-carry-cu-gdn-carry-conv"></a>
 
-### `gdn_carry_conv` — [kernels/gb10/common/gated_delta_rule_carry.cu](../../kernels/gb10/common/gated_delta_rule_carry.cu#L343)
+### `gdn_carry_conv` — [kernels/gb10/common/gated_delta_rule_carry.cu](../../kernels/gb10/common/gated_delta_rule_carry.cu#L301)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -132,7 +132,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-gated-delta-rule-carry-cu-gdn-carry-wy2-lazy"></a>
 
-### `gdn_carry_wy2_lazy` — [kernels/gb10/common/gated_delta_rule_carry.cu](../../kernels/gb10/common/gated_delta_rule_carry.cu#L286)
+### `gdn_carry_wy2_lazy` — [kernels/gb10/common/gated_delta_rule_carry.cu](../../kernels/gb10/common/gated_delta_rule_carry.cu#L266)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|

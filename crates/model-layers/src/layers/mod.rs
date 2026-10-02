@@ -186,12 +186,18 @@ pub use expert_quantization::{
     ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
 };
 
+mod activation_quantization;
+pub use activation_quantization::{
+    act_route, activation_quantization, any_fixed, family_fixed, fixed_act,
+    set_activation_quantization_from_cli,
+};
 mod weight_quantization;
 pub use weight_quantization::{kernel_caps, set_weight_quantization_from_cli, weight_quantization};
 
 mod row_tiers;
 pub use row_tiers::{
-    RowTiers, publish_row_tiers, resolve_row_tiers, row_invariant, row_tiers, row_tiers_from,
+    RowTiers, prefill_row_invariant, publish_row_tiers, resolve_row_tiers, row_invariant,
+    row_tiers, row_tiers_from,
 };
 
 mod kernel_probe;
@@ -295,6 +301,27 @@ impl FfnComponent {
             Self::Moe(m) => m.forward_k3(input, ctx, stream),
             Self::Dense(d) => d.forward_k3(input, ctx, stream),
             Self::None => Ok(()),
+        }
+    }
+
+    /// 2026-09-30: Whether this is a dense FFN that runs `m` rows under a fixed
+    /// `--activation-quantization` (`DenseFfnLayer::fixed_ok`). False for MoE and none.
+    pub fn dense_fixed_ok(&self, m: usize, ctx: &ForwardContext) -> bool {
+        matches!(self, Self::Dense(d) if d.fixed_ok(m, ctx))
+    }
+
+    /// 2026-09-30: `DenseFfnLayer::forward_fixed` over `m` rows into `moe_output`; call only
+    /// when `dense_fixed_ok(m)` holds.
+    pub fn forward_dense_fixed(
+        &self,
+        input: DevicePtr,
+        m: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        match self {
+            Self::Dense(d) => d.forward_fixed(input, m, ctx, stream),
+            _ => anyhow::bail!("forward_dense_fixed on a non-dense FFN"),
         }
     }
 

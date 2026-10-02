@@ -33,6 +33,11 @@ impl DenseFfnLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<DevicePtr> {
+        // 2026-09-30: A fixed `--activation-quantization` for the FFN (`dense_ffn_fixed.rs`).
+        if self.fixed_ok(1, ctx) {
+            self.forward_fixed(input, 1, ctx, stream)?;
+            return Ok(ctx.buffers.moe_output());
+        }
         // 2026-09-28: The declared-W8A8 arm first (`dense_ffn_w8a8.rs`).
         if self.forward_w8a8(input, 1, ctx, stream)? {
             return Ok(ctx.buffers.moe_output());

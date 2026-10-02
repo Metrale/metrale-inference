@@ -126,7 +126,7 @@ impl MtpHead {
     /// 2026-09-25: Whether the weight layout, an FFN arm (`propose_ffn_arm`) and the
     /// width-independent kernels and buffers of the batched propose are all
     /// present. [`Self::propose_batch_max`] decides the width.
-    fn propose_batch_scope_ok(&self) -> bool {
+    pub(super) fn propose_batch_scope_ok(&self) -> bool {
         batch_weight_layout_ok(
             self.quant,
             self.kv_bf16,
@@ -191,8 +191,13 @@ impl MtpHead {
     /// 2026-09-29: Whether a resolved LM-head kernel serves an `n`-row batched propose: a
     /// batched GEMV tier, or from 5 rows the tile GEMM on the transposed twin.
     fn lm_head_covers(&self, n: usize) -> bool {
-        self.lm_head_batch_kernel(n).0 != 0
-            || (n >= 5 && self.w4a16_gemm_t_k.0 != 0 && self.lm_head_nvfp4_t.is_some())
+        self.lm_head_batch_kernel(n).0 != 0 || (n >= 5 && self.lm_head_twin_ready())
+    }
+
+    /// 2026-09-30: The tile GEMM on the transposed LM-head twin can run: its kernel resolved
+    /// and the twin is present (`forward_batch::lm_head_rows_arm`'s `twin_ready`).
+    pub(super) fn lm_head_twin_ready(&self) -> bool {
+        self.w4a16_gemm_t_k.0 != 0 && self.lm_head_nvfp4_t.is_some()
     }
 
     /// 2026-09-25: Whether the batched propose can run for `n` sequences:

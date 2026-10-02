@@ -129,6 +129,17 @@ pub fn row_invariant() -> bool {
     row_tiers() != RowTiers::ByRows
 }
 
+/// 2026-10-01: Whether a prefill pass picks its kernels without regard to its row count,
+/// so a row's bits are the same in a long pass and in a short pass over the same rows (a
+/// warm request replaying a prompt's tail). On under the canonical tiers: the FP8 MoE then
+/// takes the grouped prefill kernels at every row count (`MoeLayer::forward_prefill`),
+/// where it took the per-row decode kernels up to 64 rows. The row-count switches left in
+/// a prefill (W8A16 `pipe128`, the BA-gates twin, the router's register tile, the gate/up
+/// `_w1`/`_w2` entries) choose between kernels that give the same bits.
+pub fn prefill_row_invariant() -> bool {
+    row_tiers() == RowTiers::Canonical
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

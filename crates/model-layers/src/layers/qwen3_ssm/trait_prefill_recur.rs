@@ -14,6 +14,15 @@ impl Qwen3SsmLayer {
     /// first matching arm runs: split4 on `metrale_scale` builds; FLA chunked;
     /// the register-resident kernel; WY4; persistent (256..=4096 tokens);
     /// split4.
+    ///
+    /// 2026-10-01: With a mid-chunk capture (`ctx.midchunk_capture`) the chunk runs
+    /// as consecutive segments on the chained h_state, split at `cap_local_early`
+    /// (when set) and `cap_local`, and h_state is copied into the plan's slots at each
+    /// split. Every segment starts its own arm, so an FLA segment's 64-token chunks
+    /// start at the split, exactly as a separate prefill pass starting there would. On
+    /// every build. Under `replay_tail` the segment after `cap_local` takes the
+    /// exact-replay arm, as the pass of a request restoring that state does
+    /// (`gdn_exact_replay`), so both give those tokens the same bits.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prefill_gdn_recurrence(
         &self,
@@ -34,6 +43,75 @@ impl Qwen3SsmLayer {
         stream: u64,
     ) -> Result<()> {
         let fp32 = 4usize;
+        let bf16 = 2usize;
+        let gb_stride = nv * 2;
+        let value_dim = nv * vd;
+        // 2026-10-01: The recurrence over local tokens [start, start + len) on the
+        // chained h_state.
+        let seg = |start: usize, len: u32, exact: bool| -> Result<()> {
+            self.prefill_gdn_recurrence_arm(
+                h_state,
+                q_ptr.offset(start * conv_dim * bf16),
+                k_ptr.offset(start * conv_dim * bf16),
+                v_ptr.offset(start * conv_dim * bf16),
+                gates_buf.offset(start * gb_stride * fp32),
+                gdn_out_buf.offset(start * value_dim * bf16),
+                len,
+                nk,
+                nv,
+                kd,
+                vd,
+                conv_dim,
+                exact || ctx.gdn_exact_replay,
+                ctx,
+                stream,
+            )
+        };
+        if let (Some(cap), Some(idx)) = (ctx.midchunk_capture.as_ref(), midcap_idx) {
+            let cl = cap.cap_local;
+            if cl > 0 && (cl as u32) < k {
+                // 2026-09-25: Optional earlier capture at `cap_local_early`
+                // (token tb - block_size).
+                let mut start = 0usize;
+                if let Some(ce) = cap.cap_local_early {
+                    seg(0, ce as u32, false)?;
+                    ctx.gpu
+                        .copy_d2d_async(h_state, cap.h_dsts_early[idx], cap.h_bytes, stream)?;
+                    start = ce;
+                }
+                seg(start, (cl - start) as u32, false)?;
+                ctx.gpu
+                    .copy_d2d_async(h_state, cap.h_dsts[idx], cap.h_bytes, stream)?;
+                return seg(cl, k - cl as u32, cap.replay_tail);
+            }
+        }
+        seg(0, k, false)
+    }
+
+    /// 2026-10-01: One recurrence launch sequence over `k` tokens on `h_state`: the arm
+    /// `prefill_gdn_recurrence` documents. `gates_buf` holds per token `gate[nv]` then
+    /// `beta[nv]`, FP32. `exact_replay` skips the FLA arm (`ctx.gdn_exact_replay`, or the
+    /// tail of a `replay_tail` capture).
+    #[allow(clippy::too_many_arguments)]
+    fn prefill_gdn_recurrence_arm(
+        &self,
+        h_state: DevicePtr,
+        q_ptr: DevicePtr,
+        k_ptr: DevicePtr,
+        v_ptr: DevicePtr,
+        gates_buf: DevicePtr,
+        gdn_out_buf: DevicePtr,
+        k: u32,
+        nk: usize,
+        nv: usize,
+        kd: usize,
+        vd: usize,
+        conv_dim: usize,
+        exact_replay: bool,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let fp32 = 4usize;
         let gb_stride = (nv * 2) as u32;
 
         // 2026-09-25: `metrale_scale` builds (gfx1151, 64 KB LDS) run split4
@@ -41,61 +119,6 @@ impl Qwen3SsmLayer {
         // persistent ask for 69688 B and 67584 B of shared memory at 128-dim
         // heads.
         if cfg!(metrale_scale) {
-            // 2026-09-25: Mid-chunk tail capture: run split4 up to
-            // `cap_local_early` (when set) and to `cap_local`, copying h_state
-            // into the reserved snapshot slots at each point, then finish the
-            // chunk on the same h_state.
-            if let (Some(cap), Some(idx)) = (ctx.midchunk_capture.as_ref(), midcap_idx) {
-                let cl = cap.cap_local;
-                if cl > 0 && (cl as u32) < k {
-                    let bf16 = 2usize;
-                    let value_dim = nv * vd;
-                    // 2026-09-25: Split4 over local tokens [start, start + len)
-                    // on the chained h_state.
-                    let seg = |start: usize, len: u32| -> Result<()> {
-                        let gate = gates_buf.offset(start * gb_stride as usize * fp32);
-                        ops::gdn_prefill_split4(
-                            ctx.gpu,
-                            self.gdn_prefill_split4_k,
-                            h_state,
-                            q_ptr.offset(start * conv_dim * bf16),
-                            k_ptr.offset(start * conv_dim * bf16),
-                            v_ptr.offset(start * conv_dim * bf16),
-                            gate,
-                            gate.offset(nv * fp32),
-                            gdn_out_buf.offset(start * value_dim * bf16),
-                            1,
-                            len,
-                            nk as u32,
-                            nv as u32,
-                            kd as u32,
-                            vd as u32,
-                            conv_dim as u32,
-                            conv_dim as u32,
-                            gb_stride,
-                            stream,
-                        )
-                    };
-                    // 2026-09-25: Optional earlier capture at `cap_local_early`
-                    // (token tb - block_size).
-                    let mut start = 0usize;
-                    if let Some(ce) = cap.cap_local_early {
-                        seg(0, ce as u32)?;
-                        ctx.gpu.copy_d2d_async(
-                            h_state,
-                            cap.h_dsts_early[idx],
-                            cap.h_bytes,
-                            stream,
-                        )?;
-                        start = ce;
-                    }
-                    // 2026-09-25: Capture h_state at the tail boundary tb.
-                    seg(start, (cl - start) as u32)?;
-                    ctx.gpu
-                        .copy_d2d_async(h_state, cap.h_dsts[idx], cap.h_bytes, stream)?;
-                    return seg(cl, k - cl as u32);
-                }
-            }
             return ops::gdn_prefill_split4(
                 ctx.gpu,
                 self.gdn_prefill_split4_k,
@@ -135,7 +158,7 @@ impl Qwen3SsmLayer {
         let no_fla =
             *NO_FLA.get_or_init(|| std::env::var("METRALE_NO_GDN_FLA").as_deref() == Ok("1"));
         if !no_fla
-            && !ctx.gdn_exact_replay
+            && !exact_replay
             && kd == 128
             && vd == 128
             && fla_scratch.0 != 0

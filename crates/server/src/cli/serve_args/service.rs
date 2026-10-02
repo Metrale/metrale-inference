@@ -14,6 +14,13 @@ use clap::Args;
 
 use super::{DEFAULT_REQUEST_TIMEOUT_SECS, parse_lora_adapter_spec, parse_lora_stageable_spec};
 
+/// 2026-09-30: `--activation-quantization`, parsed by the config crate's one grammar.
+fn parse_activation_quantization(
+    s: &str,
+) -> Result<metrale_config::ActivationQuantization, String> {
+    metrale_config::ActivationQuantization::parse(s).map_err(|e| format!("{e:#}"))
+}
+
 // 2026-09-26: `ServeArgs` reaches these fields through `Deref`, via
 // `ServeSchedulingArgs`.
 #[derive(Args, Debug, Clone, PartialEq)]
@@ -85,6 +92,21 @@ pub struct ServeServiceArgs {
     /// reads. Also enabled by `METRALE_FAST_LOAD_PREFETCH_SHARDS=1` (or `true`).
     #[arg(long, default_value_t = false)]
     pub fast_load_prefetch_shards: bool,
+
+    /// Activation precision of each decode projection, by projection family and by the
+    /// number of rows in the launch (batch rows, MTP verify rows included).
+    ///
+    /// One format (`bf16`, `fp8`, `nvfp4`, `declared`) runs that activation precision
+    /// through one fixed-order kernel family at every row count, so a sequence's logits do
+    /// not depend on how many other sequences share its step. `declared` is each layer's
+    /// checkpoint-declared input-activation format. `adaptive` is the routing before this
+    /// flag: each projection picks its kernel, and with it the activation precision, by row
+    /// count. A ladder maps row ranges to formats, `1=bf16;2-8=nvfp4;9-=fp8`, and a family
+    /// can be given its own ladder after a comma: `declared,lm_head:bf16`. Families: `gdn`,
+    /// `attn`, `ffn`, `moe`, `lm_head`. Recipes pin `adaptive`. On a model without a
+    /// row-invariant path for a family, that family runs `adaptive` and the load log says so.
+    #[arg(long, value_name = "SPEC", default_value = "declared", value_parser = parse_activation_quantization)]
+    pub activation_quantization: metrale_config::ActivationQuantization,
 
     /// Vision input area bound in pixels, applied before patching. A non-zero
     /// value overrides the checkpoint in both directions: it may raise the bound

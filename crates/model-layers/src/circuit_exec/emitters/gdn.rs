@@ -111,7 +111,7 @@ impl OpEmitter for Conv1dUpdateL2norm {
         let (qk, kd, k) = ((d.key() * 2) as u32, d.kd, cx.handle(0)?);
         // 2026-09-29: The FP32 window `[conv_dim, d_conv]` (`SsmLayerState::conv_state`).
         let window = conv_dim as usize * d_conv as usize * 4;
-        let snapshots = cx.g.group.copies.map_or(0, |c| c.count(cx.rows)) as usize;
+        let snapshots = cx.g.group.copy_count(cx.rows) as usize;
         ensure!(
             snapshots == 0 || (cx.mode == Mode::Verify && snapshots < MAX_VERIFY_STEPS + 1),
             "{snapshots} conv snapshots in a {:?} plan",

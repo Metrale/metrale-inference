@@ -24,6 +24,7 @@ use crate::main_modules::serve_phases;
 
 use crate::{cli, scheduler, session_manager};
 
+mod act_quant_support;
 mod adapters;
 mod carried;
 pub(crate) mod engine;

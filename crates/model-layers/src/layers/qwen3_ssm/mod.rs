@@ -20,6 +20,7 @@ mod ple_seq;
 pub use layer_struct::Qwen3SsmLayer;
 
 mod carry;
+pub use carry::carry_flush_kernel;
 mod circuit;
 mod debug;
 mod decode_w8a8_proj;
@@ -39,6 +40,7 @@ mod trait_decode;
 mod trait_decode_batched;
 mod trait_decode_batched_conv_gdn;
 mod trait_decode_batched_conv_gdn_exact;
+mod trait_decode_batched_conv_gdn_exact_chain;
 mod trait_decode_batched_conv_gdn_multi;
 mod trait_decode_batched_conv_gdn_multi_exact;
 mod trait_decode_batched_conv_gdn_wyn;
@@ -72,6 +74,9 @@ mod prefill_alloc_tests;
 mod rowwise_alloc_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "tests_inpass_capture.rs"]
+mod tests_inpass_capture;
 
 #[path = "hc.rs"]
 mod hc;

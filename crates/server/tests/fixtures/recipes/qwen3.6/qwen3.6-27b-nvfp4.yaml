@@ -58,6 +58,8 @@ metadata:
   kv_dtype: bf16
 
 defaults:
+  # The routing the recipe this fixture stands in for was measured under.
+  activation_quantization: adaptive
   port: 8888
   host: 0.0.0.0
   max_model_len: 32768

@@ -12,7 +12,13 @@ use metrale_config::{W4a4Downcast, WeightQuantTier, WeightQuantization};
 use metrale_model_layers::layers::ExpertQuantization;
 
 fn plan(flags: &[&str]) -> KernelFlagPlan {
-    let mut argv = vec!["met", "serve", "org/model"];
+    let mut argv = vec![
+        "met",
+        "serve",
+        "org/model",
+        "--activation-quantization",
+        "adaptive",
+    ];
     argv.extend_from_slice(flags);
     let Command::Serve(args) = Cli::try_parse_from(argv).expect("parses").command else {
         unreachable!("a serve command")

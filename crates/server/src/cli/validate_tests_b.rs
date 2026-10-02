@@ -9,6 +9,11 @@ use clap::Parser;
 
 fn parse(extra: &[&str]) -> ServeArgs {
     let mut argv = vec!["met", "serve", "dummy/model", "--model-name", "dummy"];
+    // 2026-09-30: The rules here are checked under the routing every recipe pins, unless a test
+    // names another `--activation-quantization`.
+    if !extra.contains(&"--activation-quantization") {
+        argv.extend_from_slice(&["--activation-quantization", "adaptive"]);
+    }
     argv.extend_from_slice(extra);
     match super::super::Cli::parse_from(argv).command {
         super::super::Command::Serve(a) => a,
@@ -290,4 +295,40 @@ fn both_scheduler_routers_are_accepted_and_the_default_stays_sync() {
     assert_eq!(parse(&[]).scheduler_config, "sync", "the default router");
     let err = validate_serve_args(&parse(&["--scheduler-config", "nonsense"])).unwrap_err();
     assert!(err.contains("--scheduler-config"), "{err}");
+}
+
+/// 2026-09-30: The routing levers of `adaptive` are refused beside a fixed format for the
+/// families they route, and allowed beside `adaptive`, or beside a fixed format for families
+/// they do not touch.
+#[test]
+fn adaptive_levers_need_the_adaptive_routing() {
+    let aq = |v: &'static str, extra: &[&'static str]| {
+        let mut a = vec!["--activation-quantization", v];
+        a.extend_from_slice(extra);
+        validate_serve_args(&parse(&a))
+    };
+    let w4a4 = ["--weight-quantization", "nvfp4", "--w4a4-downcast"];
+    assert!(aq("adaptive", &w4a4).is_ok());
+    assert!(aq("adaptive,lm_head:bf16", &w4a4).is_ok());
+    let e = aq("declared", &w4a4).unwrap_err();
+    assert!(
+        e.contains("--w4a4-downcast") && e.contains("gdn, attn, ffn"),
+        "{e}"
+    );
+    assert!(aq("adaptive,ffn:1-4=nvfp4;5-=adaptive", &w4a4).is_err());
+
+    let f16 = ["--ssm-h-dtype", "f16", "--gdn-fused-norm"];
+    assert!(aq("adaptive,attn:bf16", &f16).is_ok());
+    let e = aq("declared", &f16).unwrap_err();
+    assert!(e.contains("--ssm-h-dtype f16") && e.contains("gdn"), "{e}");
+    let e = aq(
+        "adaptive,gdn:1=bf16;2-=adaptive",
+        &["--ssm-h-dtype", "f16-pool", "--gdn-fused-norm"],
+    )
+    .unwrap_err();
+    assert!(e.contains("gdn"), "{e}");
+
+    assert!(aq("adaptive", &["--no-canonical-tiers"]).is_ok());
+    let e = aq("bf16", &["--no-canonical-tiers"]).unwrap_err();
+    assert!(e.contains("--no-canonical-tiers"), "{e}");
 }

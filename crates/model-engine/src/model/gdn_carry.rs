@@ -129,7 +129,10 @@ impl TransformerModel {
                 name,
             )
         };
-        let (flush_k, conv_flush_k) = (kernel("gdn_carry_flush"), kernel("gdn_carry_conv_flush"));
+        let (flush_k, conv_flush_k) = (
+            metrale_model_layers::layers::qwen3_ssm::carry_flush_kernel(self.gpu.as_ref()),
+            kernel("gdn_carry_conv_flush"),
+        );
         if flush_k.0 == 0
             || conv_flush_k.0 == 0
             || self.ssm_pool.mtp_slots == 0
@@ -194,6 +197,13 @@ impl TransformerModel {
             d_conv: c.linear_conv_kernel_dim,
         });
         Ok(true)
+    }
+
+    /// 2026-09-30: Bind the carry buffers now, if the model can carry; the circuit executor's
+    /// build reads the bindings from the layers.
+    pub(super) fn gdn_carry_bind_now(&self) -> Result<bool> {
+        let mut inner = self.gdn_carry.inner.lock();
+        self.gdn_carry_bind(&mut inner)
     }
 
     fn carry_slot(&self, seq: &SequenceState) -> usize {

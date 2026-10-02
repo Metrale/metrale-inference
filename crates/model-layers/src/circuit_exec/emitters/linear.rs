@@ -295,6 +295,58 @@ impl OpEmitter for Argmax {
     }
 }
 
+/// 2026-09-30: `argmax_batch`: every row's argmax in one launch (`argmax_bf16_batch`, the
+/// batched verify's `verify_rows_argmax`), into the token buffer the verify reads back; or, in
+/// an n-row draft, `argmax_bf16_batch_lp`, which also writes each row's top-1 log-probability
+/// where the batched propose reads it (scratch + `DraftRows::lp_offset`).
+pub(crate) struct ArgmaxBatch;
+
+impl OpEmitter for ArgmaxBatch {
+    fn id(&self) -> &'static str {
+        "argmax_batch"
+    }
+
+    fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
+        cx.g.expect_ops(self.id(), &["argmax"])?;
+        let (inp, out) = (cx.g.input(0, 0)?, cx.g.output(0, 0)?);
+        let (x, stride) = cx.strided(inp)?;
+        let y = cx.ptr(out)?;
+        let (v, rows, k) = (width(cx, inp)?, super::rows(cx)?, cx.handle(0)?);
+        ensure!(
+            stride == v,
+            "the logits rows are {stride} apart; the batched argmax reads them {v} apart"
+        );
+        if cx.mode == metrale_circuit::Mode::Draft {
+            expect_kernel(cx, 0, "argmax_bf16_batch_lp")?;
+            let d = cx.draft_fixed()?;
+            let lp_offset = d
+                .rows
+                .as_ref()
+                .context("an n-row draft plan for a head outside the batched propose")?
+                .lp_offset;
+            ensure!(
+                y == cx.fixed.tokens && rows as usize * 4 <= lp_offset,
+                "the draft ids must land at scratch's start, below the confidences"
+            );
+            // 2026-10-01: The head scores its first `sv` vocabulary rows and packs them `sv`
+            // apart (`draft_lm_head_rows`), as `forward_batch_position` leaves them.
+            let (lp, sv) = (cx.fixed.tokens.offset(lp_offset), d.vocab);
+            ensure!(sv <= v, "the draft scores {sv} rows of its {v}-wide logits");
+            return cx.push(
+                0,
+                Box::new(move |e| {
+                    ops::argmax_bf16_batch_lp(e.gpu, k, x, y, lp, sv, rows, sv, e.stream)
+                }),
+            );
+        }
+        expect_kernel(cx, 0, "argmax_bf16_batch")?;
+        cx.push(
+            0,
+            Box::new(move |e| ops::argmax_bf16_batch(e.gpu, k, x, y, v, rows, v, e.stream)),
+        )
+    }
+}
+
 /// 2026-09-29: `host_sampling`: the step returns the logits and the caller samples from them
 /// on the host, so the group launches nothing.
 pub(crate) struct HostSampling;

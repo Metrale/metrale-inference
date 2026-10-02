@@ -7,14 +7,14 @@
 //! Owner: server CLI (`met benchmark`).
 //! Invariants: none beyond the types.
 
-use super::disclosed_from;
+use super::{disclosed_from, rendered_overrides};
 use crate::recipe::Recipe;
 use std::collections::BTreeMap;
 
 fn recipe(defaults: &str) -> Recipe {
     let text = format!(
         "recipe_version: \"2\"\nmodel: org/model\ncontainer: metrale\nruntime: metrale\n\
-         metadata:\n  updated: \"2026-08-28\"\ndefaults:\n{defaults}"
+         metadata:\n  updated: \"2026-08-28\"\ndefaults:\n  activation_quantization: adaptive\n{defaults}"
     );
     Recipe::parse("fam/stem", &text).expect("the fixture recipe parses")
 }
@@ -35,9 +35,12 @@ fn pairs(v: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 /// 2026-09-28: `v` plus the `weight_quantization` key every disclosure carries, which sorts
-/// after the others.
+/// after the others. 2026-09-30: And `activation_quantization`, which the fixture recipe pins
+/// to `adaptive` as every committed recipe does, and which sorts before them.
 fn pairs_with_tier(v: &[(&str, &str)], tier: &str) -> Vec<(String, String)> {
-    v.iter()
+    [("activation_quantization", "adaptive")]
+        .iter()
+        .chain(v)
         .chain(&[("weight_quantization", tier)])
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
@@ -204,4 +207,45 @@ fn every_committed_serve_pin_renders_a_valid_serve() {
         }
     }
     assert!(refused.is_empty(), "{}", refused.join("\n"));
+}
+
+/// 2026-09-30: A gate serve renders a recipe that names no `activation_quantization` under
+/// `adaptive`, the routing it was measured under, and never overrides one the recipe or the
+/// requested set names; the rule is not an override, so `requested` never carries it.
+#[test]
+fn a_silent_recipe_is_served_adaptive_and_a_named_value_wins() {
+    let m = |kv: &[(&str, &str)]| -> BTreeMap<String, String> {
+        kv.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let silent = m(&[("speculative", "true")]);
+    let r = rendered_overrides(&m(&[]), &silent, 9);
+    assert_eq!(
+        r.get("activation_quantization").map(String::as_str),
+        Some("adaptive")
+    );
+    assert_eq!(r.get("port").map(String::as_str), Some("9"));
+    let pinned = m(&[("activation_quantization", "declared")]);
+    assert!(!rendered_overrides(&m(&[]), &pinned, 9).contains_key("activation_quantization"));
+    let asked = m(&[("activation_quantization", "bf16")]);
+    assert_eq!(
+        rendered_overrides(&asked, &silent, 9)
+            .get("activation_quantization")
+            .map(String::as_str),
+        Some("bf16")
+    );
+    // 2026-09-30: The rendered argv of a silent recipe carries it.
+    let text = "recipe_version: \"2\"\nmodel: org/model\ncontainer: metrale\nruntime: metrale\n\
+                defaults:\n  speculative: \"true\"\n";
+    let silent_recipe = Recipe::parse("fam/silent", text).expect("parses");
+    assert!(
+        !silent_recipe
+            .defaults
+            .contains_key("activation_quantization")
+    );
+    let args = silent_recipe
+        .serve_args(&rendered_overrides(&m(&[]), &silent_recipe.defaults, 9))
+        .expect("renders");
+    assert!(args.activation_quantization.is_adaptive());
 }

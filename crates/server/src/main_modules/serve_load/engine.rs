@@ -12,7 +12,7 @@
 
 use anyhow::Result;
 
-use super::{adapters, load_phases, model_setup};
+use super::{act_quant_support, adapters, load_phases, model_setup};
 use crate::cli;
 use crate::main_modules::serve_phases;
 
@@ -67,6 +67,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let sampling_presets = ptx_set.sampling;
     model_setup::check_kernel_target(&ptx_set, &mut config)?;
     model_setup::publish_row_tiers(&args, &config);
+    act_quant_support::check(&config, &args.lm_head_dtype)?;
     model_setup::publish_moe_expert_act(&config);
 
     // 2026-09-26: After this call `args.num_drafts` is `Some`, so

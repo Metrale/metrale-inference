@@ -249,6 +249,14 @@ impl LayerCapabilities for Qwen3SsmLayer {
     fn is_ssm_layer(&self) -> bool {
         self.is_ssm_layer_inner()
     }
+
+    /// 2026-10-01: Both prefill entry paths (`prefill_inner`, `prefill_inner_hc`) run
+    /// `prefill_block`, whose conv (`conv1d_prefill_capture`) and recurrence
+    /// (`prefill_gdn_recurrence`) split at the capture point on every build, the
+    /// recurrence's tail on the exact-replay arm.
+    fn supports_replay_tail_split(&self) -> bool {
+        true
+    }
 }
 
 impl LayerWeightSetup for Qwen3SsmLayer {
@@ -260,6 +268,19 @@ impl LayerWeightSetup for Qwen3SsmLayer {
 }
 
 impl LayerWriteOnAccept for Qwen3SsmLayer {
+    fn gdn_verify_run_batched(
+        &self,
+        states: &[&mut (dyn crate::layer::LayerState + 'static)],
+        kk: usize,
+        gdn_wyn: bool,
+        wy_tables: metrale_gpu_runtime::gpu::DevicePtr,
+    ) -> anyhow::Result<Option<bool>> {
+        Ok(Some(matches!(
+            self.multi_run_arm(states, kk, gdn_wyn, wy_tables)?,
+            super::trait_decode_batched_conv_gdn_multi::RunArm::Batched(..)
+        )))
+    }
+
     fn gdn_woa_stash_seq_floats(&self) -> Option<usize> {
         self.woa_stash_seq_floats_impl()
     }

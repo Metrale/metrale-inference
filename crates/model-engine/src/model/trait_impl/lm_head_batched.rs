@@ -141,8 +141,33 @@ fn project_bf16_lm_head(
     batch_enabled: bool,
     batchm_max: u32,
     m16_tc: LmHeadM16Tc,
+    fixed: bool,
     stream: u64,
 ) -> Result<()> {
+    // 2026-09-30: A fixed `--activation-quantization` for the head: the batched GEMV at every
+    // row count, in chunks of its widest launch. Every row equals `dense_gemv_bf16`, the kernel
+    // one row takes, whatever the row count.
+    if fixed && batch_gemv.0 != 0 && k.is_multiple_of(8) {
+        let h = k as usize;
+        let mut done = 0u32;
+        while done < m {
+            let rows = (m - done).min(ops::DENSE_GEMV_BATCHM_MAX_M);
+            ops::dense_gemv_batchm(
+                gpu,
+                batch_gemv,
+                input.offset(done as usize * h * 2),
+                weight,
+                output.offset(done as usize * n as usize * 2),
+                rows,
+                n,
+                k,
+                n,
+                stream,
+            )?;
+            done += rows;
+        }
+        return Ok(());
+    }
     // 2026-09-25: The tensor-core arm goes first, at 5..=16 rows (`lm_head_m16_tc_route`). It
     // reassociates the K reduction, so it is not bit-identical to the batched GEMV; it runs
     // only where the target declares `lm_head_m16_tc` or `METRALE_LM_HEAD_M16_TC` turns it on.
@@ -223,7 +248,7 @@ impl TransformerModel {
     /// `v` is read from `self.config.vocab_size` rather than passed: it is the
     /// same number at both call sites and a parameter would be a second place
     /// for it to be wrong.
-    pub(super) fn lm_head_project_batched(
+    pub(in crate::model) fn lm_head_project_batched(
         &self,
         normed: DevicePtr,
         padded_n: usize,
@@ -241,7 +266,14 @@ impl TransformerModel {
             // for `padded_n`; `w4a16_gemm` when no GEMV kernel applies or the batched GEMV is off.
             // 2026-09-27: Under a row-invariant tier policy the tile GEMM serves every
             // `padded_n`.
-            let tile_rows = padded_n >= 5 || metrale_model_layers::layers::row_invariant();
+            // 2026-09-30: So does a fixed `--activation-quantization` for the head.
+            let tile_rows = padded_n >= 5
+                || metrale_model_layers::layers::row_invariant()
+                || metrale_model_layers::layers::fixed_act(
+                    metrale_config::ProjFamily::LmHead,
+                    padded_n,
+                )
+                .is_some();
             if tile_rows
                 && self.w4a16_gemm_t_bf16_kernel.0 != 0
                 && let Some((ref nvfp4_t, ldb)) = self.lm_head_nvfp4_t
@@ -322,6 +354,11 @@ impl TransformerModel {
                 lmhead_batch_gemv_enabled(),
                 lm_head_batchm_max(),
                 self.lm_head_m16_tc(),
+                metrale_model_layers::layers::fixed_act(
+                    metrale_config::ProjFamily::LmHead,
+                    padded_n,
+                )
+                .is_some(),
                 stream,
             )?;
         }

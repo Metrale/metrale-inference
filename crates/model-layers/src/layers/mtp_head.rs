@@ -382,6 +382,7 @@ mod circuit;
 mod draft_proposer;
 mod forward;
 mod forward_batch;
+pub(crate) use forward_batch::{LmHeadRowsArm, lm_head_rows_arm, tc_lm_head};
 mod forward_batch_ffn;
 mod moe_forward;
 mod new;

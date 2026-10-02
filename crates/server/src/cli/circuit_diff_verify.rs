@@ -14,7 +14,9 @@
 //!   runs verify the same inputs and commit the same prefixes.
 //! - The detection control changes one draft halfway; its difference must be seen.
 
-use anyhow::{Result, bail, ensure};
+use std::path::Path;
+
+use anyhow::{Context, Result, bail, ensure};
 use metrale_model_engine::traits::{ForwardSelect, Model, SequenceState};
 use serde::Serialize;
 
@@ -115,7 +117,7 @@ fn verify(model: &dyn Model, tokens: &[u32], seq: &mut SequenceState) -> Result<
 }
 
 /// 2026-09-29: The model's greedy continuation of `prompt`, `n` tokens, by plain decode.
-fn continuation(model: &dyn Model, prompt: &[u32], n: usize) -> Result<Vec<u32>> {
+pub(crate) fn continuation(model: &dyn Model, prompt: &[u32], n: usize) -> Result<Vec<u32>> {
     let mut seq = model.alloc_sequence()?;
     let result = (|| {
         let mut out = vec![argmax_bf16(&logits(
@@ -324,4 +326,49 @@ pub(crate) fn verify_failures(reports: &[VerifyReport]) -> Vec<String> {
         }
     }
     out
+}
+
+#[derive(Debug, Serialize)]
+struct VerifyDiffReport {
+    graphs: &'static str,
+    mtp: bool,
+    steps: usize,
+    variants: Vec<super::Variant>,
+    verify: Vec<VerifyReport>,
+    verdict: &'static str,
+    reasons: Vec<String>,
+}
+
+/// 2026-09-29: The `--verify` diff: every `K`, then the verdict.
+pub(crate) fn verify_report(
+    model: &dyn Model,
+    prompt: &[u32],
+    (ks, mtp): (&[usize], bool),
+    steps: usize,
+    forwards: &[(&'static str, ForwardSelect)],
+    out: &Path,
+) -> Result<()> {
+    let variants = super::disclosed(model, forwards)?;
+    let verify = diff_verify(model, prompt, ks, steps, mtp, forwards)?;
+    let reasons = verify_failures(&verify);
+    let report = VerifyDiffReport {
+        graphs: if std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1") {
+            "eager"
+        } else {
+            "graphed"
+        },
+        mtp,
+        steps,
+        variants,
+        verify,
+        verdict: if reasons.is_empty() { "PASS" } else { "FAIL" },
+        reasons: reasons.clone(),
+    };
+    std::fs::write(out, serde_json::to_vec_pretty(&report)?)
+        .with_context(|| format!("writing {}", out.display()))?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !reasons.is_empty() {
+        bail!("circuit diff FAILED:\n  {}", reasons.join("\n  "));
+    }
+    Ok(())
 }

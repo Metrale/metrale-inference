@@ -21,63 +21,10 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use super::bindings::{BoundWeight, CircuitLayer, HeadBinding, WeightSlot};
 use super::emitters::emitter;
+pub use super::fixed::{DraftFixed, Fixed};
 use super::kernels::KernelTable;
 use super::program::{Launch, LaunchKind, Program, RunFn};
 use crate::layer::AttnMetadataDev;
-
-/// 2026-09-28: Device addresses that never move after boot.
-#[derive(Clone)]
-pub struct Fixed {
-    /// 2026-09-28: The residual stream (`BufferArena::hidden_states`).
-    pub hidden: DevicePtr,
-    /// 2026-09-28: The copy of the stream the norms write (`BufferArena::residual`).
-    pub residual: DevicePtr,
-    /// 2026-09-28: The logits buffer the step returns.
-    pub logits: DevicePtr,
-    /// 2026-09-29: Where a verify's argmax writes each row's token (`i32` per row): the
-    /// scratch buffer's start, which the verify reads back.
-    pub tokens: DevicePtr,
-    /// 2026-09-28: The single-sequence step's attention metadata, at its fixed upload
-    /// address. `max_blocks_per_seq` is ignored: a step supplies it.
-    pub meta: AttnMetadataDev,
-    /// 2026-09-28: The multi-sequence step's attention metadata (one row per sequence), at its
-    /// fixed upload address; `max_blocks_per_seq` is ignored.
-    pub batch_meta: AttnMetadataDev,
-    /// 2026-09-29: The MTP verify step's attention metadata (one row per verified token), at
-    /// its fixed upload address; `max_blocks_per_seq` is ignored.
-    pub verify_meta: AttnMetadataDev,
-    /// 2026-09-29: The MTP draft head's buffers; `None` without a bound draft head.
-    pub draft: Option<DraftFixed>,
-    /// 2026-09-28: The quantized-activation scratch the NVFP4 MMQ GEMMs read
-    /// (`BufferArena::ffn_act_q8`), sized for the widest batch.
-    pub ffn_act_q8: DevicePtr,
-    /// 2026-09-28: K pool per attention layer (`PagedKvCache::k_pool_ptr`).
-    pub k_pools: Vec<DevicePtr>,
-    /// 2026-09-28: V pool per attention layer.
-    pub v_pools: Vec<DevicePtr>,
-    /// 2026-09-28: Tokens per KV block.
-    pub block_size: u32,
-    /// 2026-09-28: `PagedKvCache::cache_stride`.
-    pub cache_stride: u64,
-}
-
-/// 2026-09-29: The MTP draft head's fixed buffers.
-#[derive(Clone)]
-pub struct DraftFixed {
-    /// 2026-09-29: Where the host puts the token's embedding row (`MtpHead::forward_one`'s
-    /// `ssm_qkvz`).
-    pub embed: DevicePtr,
-    /// 2026-09-29: The draft step's attention metadata (`mtp_meta::mtp_attn_meta_dev`);
-    /// `max_blocks_per_seq` is ignored.
-    pub meta: AttnMetadataDev,
-    /// 2026-09-29: The draft cache's pools and geometry.
-    pub k_pool: DevicePtr,
-    pub v_pool: DevicePtr,
-    pub block_size: u32,
-    pub cache_stride: u64,
-    /// 2026-09-29: The vocabulary rows the draft lm_head scores (`DraftBinding::vocab`).
-    pub vocab: u32,
-}
 
 /// 2026-09-28: A group of the plan being compiled.
 pub(crate) struct GroupRef<'a> {
@@ -139,6 +86,7 @@ pub(crate) struct Cx<'a> {
     pub layers: &'a [CircuitLayer],
     pub head: &'a HeadBinding,
     pub draft: Option<&'a CircuitLayer>,
+    table: Option<&'a metrale_circuit::RowTable>,
     ptrs: &'a [Option<DevicePtr>],
     strides: &'a [Option<u64>],
     formats: &'a [metrale_circuit::Format],
@@ -209,11 +157,41 @@ impl<'a> Cx<'a> {
     /// 2026-09-28: The attention metadata this plan's steps upload.
     pub fn meta(&self) -> Result<AttnMetadataDev> {
         Ok(match self.mode {
-            Mode::Draft => self.draft_fixed()?.meta,
+            Mode::Draft => self.draft_fixed()?.meta_rows(self.rows)?,
             Mode::Decode => self.fixed.meta,
             Mode::MultiSeq => self.fixed.batch_meta,
             Mode::Verify => self.fixed.verify_meta,
+            Mode::VerifyBatch => self.fixed.verify_batch_meta,
         })
+    }
+
+    /// 2026-09-30: The plan's row table (a batched verify's); `None` in other modes.
+    pub fn table(&self) -> Option<&'a metrale_circuit::RowTable> {
+        self.table
+    }
+
+    /// 2026-09-30: The handle of `k`, one of the group's kernels (a per-run launch).
+    pub fn run_handle(&self, k: &metrale_circuit::KernelId) -> Result<KernelHandle> {
+        let i = self
+            .g
+            .group
+            .kernels
+            .iter()
+            .position(|x| x == k)
+            .with_context(|| format!("group {} does not list {k}", self.g.index))?;
+        self.handle(i)
+    }
+
+    /// 2026-09-30: Queue one launch of `k`, one of the group's kernels.
+    pub fn push_kernel(&mut self, k: &metrale_circuit::KernelId, run: RunFn) -> Result<()> {
+        let i = self
+            .g
+            .group
+            .kernels
+            .iter()
+            .position(|x| x == k)
+            .with_context(|| format!("group {} does not list {k}", self.g.index))?;
+        self.push(i, run)
     }
 
     /// 2026-09-29: The draft head's buffers; an error without a bound draft head.
@@ -232,7 +210,7 @@ impl<'a> Cx<'a> {
 
     /// 2026-09-28: Launches of each kernel this group makes: its repeat at the plan's rows.
     pub fn reps(&self) -> usize {
-        self.g.group.repeat.count(self.rows) as usize
+        self.g.group.repeat.count(self.rows).unwrap_or(0) as usize
     }
 
     /// 2026-09-28: The group's `i`-th kernel.
@@ -300,7 +278,7 @@ impl<'a> Cx<'a> {
     /// 2026-09-29: Queue one copy-engine transfer of this group (its rule's `copies`).
     pub fn push_copy(&mut self, run: RunFn) -> Result<()> {
         ensure!(
-            self.g.group.copies.is_some(),
+            self.g.group.copies.is_some() || self.g.group.runs.iter().any(|r| r.copies.is_some()),
             "group {} declares no copies",
             self.g.index
         );
@@ -361,7 +339,12 @@ pub fn layout(circuit: &Circuit, plan: &FusionPlan) -> Result<Layout> {
 /// 2026-09-29: The model buffer an external edge is: a stream edge is `hidden`; otherwise
 /// (2026-09-30) the buffer its declared output binds (`Edge::binds`, LIFECYCLE-DESIGN.md 3.4).
 /// An output that binds none is refused.
-pub(super) fn external_buffer(circuit: &Circuit, e: usize, fixed: &Fixed) -> Result<DevicePtr> {
+pub(super) fn external_buffer(
+    circuit: &Circuit,
+    e: usize,
+    fixed: &Fixed,
+    mode: Mode,
+) -> Result<DevicePtr> {
     let edge = &circuit.edges[e];
     let stream = circuit
         .blocks
@@ -373,6 +356,7 @@ pub(super) fn external_buffer(circuit: &Circuit, e: usize, fixed: &Fixed) -> Res
     use metrale_circuit::model_buffer::ModelBuffer;
     match edge.binds {
         Some(ModelBuffer::Logits) => Ok(fixed.logits),
+        Some(ModelBuffer::Tokens) if mode == Mode::VerifyBatch => Ok(fixed.verify_batch_tokens),
         Some(ModelBuffer::Tokens) => Ok(fixed.tokens),
         Some(ModelBuffer::DraftEmbed) => fixed
             .draft
@@ -413,7 +397,7 @@ pub fn compile(
         strides[s.edge] = Some(s.row_stride);
     }
     for &e in &layout.external {
-        ptrs[e] = Some(external_buffer(circuit, e, inp.fixed)?);
+        ptrs[e] = Some(external_buffer(circuit, e, inp.fixed, plan.mode)?);
     }
     let mut launches = Vec::with_capacity(plan.launches() as usize);
     for (index, group) in plan.groups.iter().enumerate() {
@@ -437,6 +421,7 @@ pub fn compile(
             layers: inp.layers,
             head: inp.head,
             draft: inp.draft,
+            table: plan.table.as_ref(),
             ptrs: &ptrs,
             strides: &strides,
             formats: &plan.edge_formats,
@@ -446,8 +431,8 @@ pub fn compile(
         emitter(&group.emitter)?
             .emit(&mut cx)
             .with_context(|| format!("group {index} (rule `{}`)", group.rule))?;
-        let want = group.kernels.len() as u64 * group.repeat.count(plan.rows);
-        let want_copies = group.copies.map_or(0, |c| c.count(plan.rows));
+        let want = group.launch_count(plan.rows);
+        let want_copies = group.copy_count(plan.rows);
         let copies = cx
             .launches
             .iter()

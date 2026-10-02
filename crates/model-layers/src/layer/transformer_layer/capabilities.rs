@@ -82,4 +82,16 @@ pub trait LayerCapabilities {
     fn uses_ssm_pool(&self) -> bool {
         true
     }
+
+    /// 2026-10-01: True when this layer's `prefill` honours a replay-tail capture
+    /// (`ForwardContext::midchunk_capture` with `replay_tail`) on every build: the rows
+    /// from `cap_local` on get the bits a prefill pass starting at `cap_local` gives them
+    /// (an SSM layer splits its conv and recurrence there and copies its state into the
+    /// plan's slots; an attention layer runs those rows as their own paged call). The
+    /// model plans a replay-tail capture only when every layer says so
+    /// (`TransformerModel::inpass_cut_capture_supported`); otherwise it keeps the
+    /// two-pass tail split.
+    fn supports_replay_tail_split(&self) -> bool {
+        false
+    }
 }

@@ -104,6 +104,9 @@ pub struct GdnFacts {
     pub h_slot_bytes: u64,
     /// 2026-09-30: Bytes from one pool slot's conv window to the next (`conv_state_bytes`).
     pub conv_state_bytes: u64,
+    /// 2026-09-30: The carried-state verify's buffers (`LayerWriteOnAccept::gdn_carry_bind`),
+    /// which the batched verify's GDN launches read; `None` until the model binds them.
+    pub carry: Option<crate::layer::GdnCarryBinding>,
 }
 
 /// 2026-09-28: A full-attention layer's rotary embedding.
@@ -215,6 +218,25 @@ pub struct DraftBinding {
     /// 2026-09-29: The vocabulary rows the draft lm_head scores and the argmax reads (the
     /// first `mtp_vocab_size`, or all).
     pub vocab: u32,
+    /// 2026-09-30: What the head's n-row draft (`forward_batch_position`) reads beyond the
+    /// layer; `None` for a head outside the batched propose's scope.
+    pub rows: Option<DraftRows>,
+}
+
+/// 2026-09-30: The MTP head's n-row draft facts: where its batched metadata and confidences
+/// live, and the LM-head launch it chooses at each width (`MtpHead::lm_head_batch_kernel`,
+/// `mtp_head::lm_head_rows_arm`), which the executor checks the plan against.
+#[derive(Debug, Clone)]
+pub struct DraftRows {
+    /// 2026-09-30: The batched propose's metadata allocation (`MtpHead::propose_meta`).
+    pub meta: DevicePtr,
+    /// 2026-09-30: Byte offset in scratch of the per-row top-1 log-probabilities
+    /// (`LP_SCRATCH_OFF`); the ids sit at scratch's start.
+    pub lp_offset: usize,
+    /// 2026-09-30: `lm_head_batch_kernel(n)` at index `n`; the zero handle where none serves.
+    pub lm_head_gemv: Vec<metrale_gpu_runtime::gpu::KernelHandle>,
+    /// 2026-09-30: The tile GEMM on the transposed LM-head twin is available to the head.
+    pub lm_head_twin: bool,
 }
 
 /// 2026-09-28: The model's own weights the head block reads, filled by the model.

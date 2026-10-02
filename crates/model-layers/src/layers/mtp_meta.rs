@@ -116,6 +116,27 @@ impl MtpBatchMetaLayout {
     }
 }
 
+/// 2026-09-30: The attention metadata `pack_mtp_attn_meta_batch` lays out at `base` for `n`
+/// rows (`MtpBatchMetaLayout`); `max_blocks_per_seq` is the step's, set by its reader.
+pub fn mtp_attn_meta_batch_dev(
+    base: metrale_gpu_runtime::gpu::DevicePtr,
+    n: usize,
+) -> crate::layer::AttnMetadataDev {
+    let l = MtpBatchMetaLayout::new(n, 0);
+    crate::layer::AttnMetadataDev {
+        positions: base.offset(l.positions),
+        positions_h: base.offset(l.positions),
+        positions_w: base.offset(l.positions),
+        slot: base.offset(l.slots),
+        seq_len: base.offset(l.seq_lens),
+        block_table: base.offset(l.block_tables),
+        max_blocks_per_seq: 0,
+        num_seqs: n as u32,
+        seq_slot: metrale_gpu_runtime::gpu::DevicePtr::NULL,
+        moe_row_adapter: metrale_gpu_runtime::gpu::DevicePtr::NULL,
+    }
+}
+
 /// 2026-09-29: Pack the attention metadata of `n` propose rows in [`MtpBatchMetaLayout`], for
 /// one upload and one launch per attention kernel. Row `i` has `positions[i]`, `slots[i]`,
 /// `seq_lens[i]` and `tables[i]`, zero-padded to `max_blocks` entries. Refused, with the phrase
@@ -217,6 +238,28 @@ mod tests {
         assert_eq!(u32::from_le_bytes(buf[260..264].try_into().unwrap()), 9);
         // 2026-09-25: Every byte the layout does not define is zero.
         assert!(buf[20..256].iter().all(|&b| b == 0));
+    }
+
+    /// 2026-09-30: The device view of the batched metadata reads every field where the packer
+    /// wrote it, at every width (the circuit's n-row draft reads it through this view).
+    #[test]
+    fn the_batched_device_view_is_the_packed_layout() {
+        let base = metrale_gpu_runtime::gpu::DevicePtr(0x1000);
+        for n in [1usize, 2, 3, 5, 16, 32, 128] {
+            let pos = vec![0u32; n];
+            let slots = vec![0i64; n];
+            let lens = vec![0i32; n];
+            let t = [0u32; 2];
+            let tables = vec![&t[..]; n];
+            let (_, l) =
+                pack_mtp_attn_meta_batch(&pos, &slots, &lens, &tables, 2, 1 << 20).unwrap();
+            let m = mtp_attn_meta_batch_dev(base, n);
+            assert_eq!(m.positions, base.offset(l.positions), "n={n}");
+            assert_eq!(m.slot, base.offset(l.slots), "n={n}");
+            assert_eq!(m.seq_len, base.offset(l.seq_lens), "n={n}");
+            assert_eq!(m.block_table, base.offset(l.block_tables), "n={n}");
+            assert_eq!(m.num_seqs as usize, n);
+        }
     }
 
     /// 2026-09-25: A block table that would overrun the region is refused.

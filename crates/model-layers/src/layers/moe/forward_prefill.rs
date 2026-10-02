@@ -37,7 +37,9 @@ impl MoeLayer {
         // buffers; `forward_batched` folds them per row.
 
         // 2026-09-25: BF16 and FP8 experts: the grouped GEMM above 64 rows when its
-        // kernel resolved, else `forward_batched`.
+        // kernel resolved, else `forward_batched`. 2026-10-01: FP8 experts take the grouped
+        // GEMM at every row count under `prefill_row_invariant`, so a prompt's rows get the
+        // same bits in a cold pass and in a warm request's short replay of its tail.
         if self.bf16_gate_weight_ptrs.is_some() {
             if self.moe_bf16_grouped_gemm_k.0 != 0 && num_tokens > 64 && !hip_force_batched {
                 return self.forward_prefill_bf16(input, num_tokens, ctx, stream);
@@ -46,7 +48,9 @@ impl MoeLayer {
         }
 
         if self.fp8_gate_weight_ptrs.is_some() {
-            if self.moe_fp8_grouped_gemm_k.0 != 0 && num_tokens > 64 && !hip_force_batched_fp8 {
+            let grouped_rows =
+                num_tokens > 64 || (!ctx.decode_step && crate::layers::prefill_row_invariant());
+            if self.moe_fp8_grouped_gemm_k.0 != 0 && grouped_rows && !hip_force_batched_fp8 {
                 return self.forward_prefill_fp8(input, num_tokens, ctx, stream);
             }
             return self.forward_batched(input, num_tokens, ctx, stream);

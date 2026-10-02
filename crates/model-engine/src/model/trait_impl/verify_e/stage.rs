@@ -31,7 +31,7 @@ impl TransformerModel {
         // VMETA_* offsets. Consumers get absolute pointers through
         // `AttnMetadataDev`, and this step uploads its layout before dispatch,
         // so other paths using other layouts at the same base do not conflict.
-        let meta_base = self.buffers.scratch().offset(32768);
+        let meta_base = self.verify_batch_meta_at().positions;
         let max_blocks = self.max_blocks_per_seq;
         let mb = max_blocks as usize;
 
@@ -118,16 +118,29 @@ impl TransformerModel {
         )?;
 
         Ok(AttnMetadataDev {
+            max_blocks_per_seq: max_blocks,
+            num_seqs: r_up as u32,
+            seq_slot,
+            ..self.verify_batch_meta_at()
+        })
+    }
+
+    /// 2026-09-30: Where the batched verify's metadata lives: `scratch + 32768`, at the VMETA_*
+    /// offsets. `stage_verify_metadata` fills it per step; the circuit executor reads it there
+    /// (`Fixed::verify_batch_meta`). `max_blocks_per_seq` and `num_seqs` are the step's.
+    pub(in crate::model) fn verify_batch_meta_at(&self) -> AttnMetadataDev {
+        let meta_base = self.buffers.scratch().offset(32768);
+        AttnMetadataDev {
             positions: meta_base,
             positions_h: meta_base,
             positions_w: meta_base,
             slot: meta_base.offset(VMETA_SLOTS),
             seq_len: meta_base.offset(VMETA_SEQ_LENS),
             block_table: meta_base.offset(VMETA_BT),
-            max_blocks_per_seq: max_blocks,
-            num_seqs: r_up as u32,
-            seq_slot,
+            max_blocks_per_seq: 0,
+            num_seqs: 0,
+            seq_slot: metrale_gpu_runtime::gpu::DevicePtr::NULL,
             moe_row_adapter: metrale_gpu_runtime::gpu::DevicePtr::NULL,
-        })
+        }
     }
 }

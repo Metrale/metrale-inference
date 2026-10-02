@@ -24,6 +24,17 @@ fn gb(b: f64) -> String {
     format!("{:.2}", b / 1e9)
 }
 
+/// 2026-10-01: The label every number estimated from `r`'s constants carries when they are not
+/// measured on the device's own class (a datasheet ceiling): `" (roofline projection,
+/// unmeasured)"`, else nothing.
+pub(super) fn projection(r: &HwReport) -> &'static str {
+    if r.resolved.roofline.measured {
+        ""
+    } else {
+        " (roofline projection, unmeasured)"
+    }
+}
+
 pub(super) fn pct(x: f64) -> String {
     // 2026-09-30: `+ 0.0` turns the -0.0 an empty f64 sum yields into 0.0.
     format!("{:.1}%", 100.0 * x + 0.0)
@@ -53,7 +64,7 @@ pub fn render_report(r: &HwReport) -> String {
         plan_sites(&mut s, t, r);
     }
     for t in &r.tables {
-        gap_rows(&mut s, t);
+        gap_rows(&mut s, t, projection(r));
     }
     absent(&mut s, r);
     s
@@ -144,10 +155,7 @@ fn inputs(s: &mut String, r: &HwReport) {
                 rf.roofline.context_tokens
             ),
         ),
-        (
-            "FP4 costing",
-            rf.fp4_note.clone().unwrap_or_else(|| "native".into()),
-        ),
+        ("FP4 costing", r.resolved.fp4_costing(&r.model.circuit)),
         ("class chain", chain.join(" -> ")),
         ("rules", rules),
         ("kernel sources", target),
@@ -191,7 +199,7 @@ fn inputs(s: &mut String, r: &HwReport) {
 fn execution(s: &mut String, r: &HwReport) {
     let _ = writeln!(
         s,
-        "## Declared formats on this device\n\nThe checkpoint's formats are kept; this is how the device runs them.\n"
+        "## Declared formats on this device\n\nThe checkpoint's formats are kept; this is how the device and its class's compiled kernels run them. A pair whose nodes run differently has one row per execution.\n"
     );
     let _ = writeln!(
         s,
@@ -214,8 +222,9 @@ fn estimates(s: &mut String, r: &HwReport) {
         let rows = t.planned.plan.rows;
         let _ = writeln!(
             s,
-            "| decode C={rows} ({}) | {:.3} | {:.1} |",
+            "| decode C={rows} ({}){} | {:.3} | {:.1} |",
             run_name(t),
+            projection(r),
             t.total_us / 1e3,
             rows as f64 / (t.total_us / 1e6)
         );
@@ -223,8 +232,9 @@ fn estimates(s: &mut String, r: &HwReport) {
     for (tokens, us) in &r.prefill {
         let _ = writeln!(
             s,
-            "| prefill {}k | {:.1} | {:.0} |",
+            "| prefill {}k{} | {:.1} | {:.0} |",
             tokens / 1024,
+            projection(r),
             us / 1e3,
             *tokens as f64 / (us / 1e6)
         );
@@ -232,9 +242,10 @@ fn estimates(s: &mut String, r: &HwReport) {
     let floor_us = r.weight_floor / (bw * 1e3);
     let _ = writeln!(
         s,
-        "\nWeight floor at C=1: {} GB read per step = {:.3} ms at {bw} GB/s.\n",
+        "\nWeight floor at C=1: {} GB read per step = {:.3} ms at {bw} GB/s{}.\n",
         gb(r.weight_floor),
-        floor_us / 1e3
+        floor_us / 1e3,
+        projection(r)
     );
 }
 
@@ -309,7 +320,8 @@ fn advice(r: &HwReport, need: f64, usable: f64) -> String {
 fn flags(s: &mut String, r: &HwReport) {
     let _ = writeln!(
         s,
-        "## Multi-row fallbacks\n\nPlan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.\n"
+        "## Multi-row fallbacks\n\nPlan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch{}; the estimates above include it.\n",
+        projection(r)
     );
     let mut any = false;
     for t in &r.tables {
@@ -394,10 +406,10 @@ fn plan_sites(s: &mut String, t: &GapTable, r: &HwReport) {
     let _ = writeln!(s);
 }
 
-fn gap_rows(s: &mut String, t: &GapTable) {
+fn gap_rows(s: &mut String, t: &GapTable, projection: &str) {
     let _ = writeln!(
         s,
-        "## Gap report: {}\n\nEstimated step {:.3} ms. Shared {} (measured on this class), shared-unmeasured {}, parameterisation {}, policy variant {}, novel {} of the step.\n",
+        "## Gap report: {}\n\nEstimated step {:.3} ms{projection}. Shared {} (measured on this class), shared-unmeasured {}, parameterisation {}, policy variant {}, novel {} of the step.\n",
         run_name(t),
         t.total_us / 1e3,
         pct(t.share_of(&[Class::Shared])),
