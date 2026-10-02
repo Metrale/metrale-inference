@@ -36,6 +36,30 @@ impl Qwen3SsmLayer {
         if fp8.scale_format != crate::weight_map::WeightQuantFormat::Fp8BlockScaled {
             return Ok(false);
         }
+        // 2026-09-30: A fixed 16-bit activation format (`--activation-quantization`) for the GDN
+        // projections: the row-tile kernel at every row count, 64-row chunks above 64 (the
+        // 128-row tile the canonical tier takes there sums in another order).
+        if matches!(
+            crate::layers::fixed_act(metrale_config::ProjFamily::Gdn, m),
+            Some(metrale_config::ActQuantFormat::Bf16 | metrale_config::ActQuantFormat::Declared)
+        ) && ops::w8a16_tc_rows_shape_ok(m as u32, n, k, k, n)
+            && ctx.gpu.has_module("w8a16_tc_rows")
+        {
+            ops::w8a16_tc_rows(
+                ctx.gpu,
+                input,
+                fp8.weight,
+                fp8.row_scale,
+                output,
+                m as u32,
+                n,
+                k,
+                k,
+                n,
+                stream,
+            )?;
+            return Ok(true);
+        }
         match crate::layers::row_tiers() {
             RowTiers::ByRows => Ok(false),
             RowTiers::Exact => {
@@ -98,7 +122,8 @@ impl Qwen3SsmLayer {
         k: u32,
         stream: u64,
     ) -> Result<()> {
-        if crate::layers::row_tiers() == RowTiers::Canonical
+        if (crate::layers::row_tiers() == RowTiers::Canonical
+            || crate::layers::fixed_act(metrale_config::ProjFamily::Gdn, 1).is_some())
             && self.row_tier_fp8_proj(ctx, fp8, input, output, 1, n, k, stream)?
         {
             return Ok(());

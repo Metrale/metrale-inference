@@ -25,14 +25,16 @@ use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::ops;
 
-const MAX_M: u32 = 64;
+const MAX_M: u32 = 256;
 const PAD: u32 = 64;
 const SENTINEL: u8 = 0x5a;
 /// 2026-09-28: Both kernels round the FP32 sum once to BF16; they differ in summation order
 /// only, measured ~2e-3 relative L2, so 1e-2.
 const MAX_REL_L2: f64 = 1e-2;
 const SHAPES: [(u32, u32); 4] = [(12288, 2048), (2048, 4096), (8192, 2048), (512, 2048)];
-const ROWS: [u32; 12] = [1, 2, 3, 4, 7, 8, 9, 16, 17, 32, 33, 64];
+const ROWS: [u32; 18] = [
+    1, 2, 3, 4, 7, 8, 9, 16, 17, 32, 33, 64, 65, 96, 127, 128, 129, 256,
+];
 
 struct Rng(u64);
 impl Rng {
@@ -103,6 +105,7 @@ fn check_close(got: &[f32], want: &[f32]) -> Result<f64> {
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let m32 = gpu.kernel("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m32")?;
+    let full = gpu.kernel("w8a16_gemm_pipelined", "w8a16_gemm_pipelined")?;
     let mut rng = Rng(0x7472_2d72_6f77_2028);
     let mut first = true;
     for (n, k) in SHAPES {
@@ -183,13 +186,26 @@ fn main() -> Result<()> {
                 Ok(t.elapsed().as_secs_f64() * 1e6 / 20.0)
             };
             let (us_tc, us_twin) = (time(true)?, time(false)?);
+            // 2026-09-30: Above 64 rows the canonical tiers ran the 128-row tile before the
+            // chunked row-tile entry replaced it: its time, for the cost of the swap.
+            let us_full = if m > 64 {
+                gpu.synchronize(0)?;
+                let t = std::time::Instant::now();
+                for _ in 0..20 {
+                    ops::w8a16_gemm_pipelined(&gpu, full, ad, wd, sd, out, m, n, k, 0)?;
+                }
+                gpu.synchronize(0)?;
+                t.elapsed().as_secs_f64() * 1e6 / 20.0
+            } else {
+                f64::NAN
+            };
             println!(
-                "N={n:5} K={k} M={m:2} rows == alone, rel_l2 vs m32 {rel:.2e}; m32 {us_twin:6.1}us tc {us_tc:6.1}us  PASS"
+                "N={n:5} K={k} M={m:3} rows == alone, rel_l2 vs m32 {rel:.2e}; m32 {us_twin:6.1}us tc {us_tc:6.1}us full {us_full:6.1}us  PASS"
             );
         }
     }
     println!(
-        "ALL PASS: w8a16_tc_rows is row-invariant and within {MAX_REL_L2:.0e} of w8a16_gemm_pipelined_m32, M=1..64"
+        "ALL PASS: w8a16_tc_rows is row-invariant and within {MAX_REL_L2:.0e} of w8a16_gemm_pipelined_m32, M=1..256"
     );
     Ok(())
 }

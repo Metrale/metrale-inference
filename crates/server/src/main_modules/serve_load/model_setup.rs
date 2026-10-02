@@ -316,8 +316,15 @@ pub(super) fn check_kernel_target(
 /// 2026-09-27: Publish the model's row-tier policy before it is built:
 /// canonical for an FP8 MoE checkpoint unless `--no-canonical-tiers`, with the two
 /// `METRALE_*` levers over the checkpoint default (`row_tiers`).
+/// 2026-09-30: A fixed `--activation-quantization` for any family publishes canonical: its
+/// single-order kernels are that mode's W8A16 and NVFP4-head paths (`--no-canonical-tiers` is
+/// refused beside it by `validate_serve_args`).
 pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
-    use metrale_model_layers::layers::{publish_row_tiers, resolve_row_tiers};
+    use metrale_model_layers::layers::{RowTiers, publish_row_tiers, resolve_row_tiers};
+    if metrale_model_layers::layers::any_fixed() {
+        publish_row_tiers(RowTiers::Canonical);
+        return;
+    }
     publish_row_tiers(resolve_row_tiers(
         args.no_canonical_tiers,
         std::env::var_os("METRALE_ROW_EXACT_TIERS").is_some(),
@@ -337,11 +344,18 @@ pub(super) fn publish_moe_expert_act(config: &ModelConfig) {
         config.quantization_config.as_ref(),
         metrale_model_layers::layers::kernel_caps(),
     );
-    let fp8 = config.num_experts > 0
+    let declared_fp8 = config.num_experts > 0
         && (0..config.num_hidden_layers).all(|i| {
             let module = format!("{}.mlp.experts.0.gate_proj", config.layer_prefix(i));
             policy.fp8_decode_act(&module) == Some(ActFormat::Fp8)
         });
+    // 2026-09-30: A fixed `--activation-quantization` for the MoE names the expert activations
+    // itself (`act_quant_support` has refused what the experts cannot run, and a ladder).
+    let fp8 = match metrale_model_layers::layers::fixed_act(metrale_config::ProjFamily::Moe, 1) {
+        Some(metrale_config::ActQuantFormat::Bf16) => false,
+        Some(metrale_config::ActQuantFormat::Fp8) => config.num_experts > 0,
+        _ => declared_fp8,
+    };
     let published = metrale_model_layers::layers::set_moe_expert_fp8_act(fp8);
     let declared_a8 = config.num_experts > 0
         && (0..config.num_hidden_layers).any(|i| {

@@ -34,6 +34,16 @@ pub(super) struct CarryKernels {
     pub flush: KernelHandle,
     pub conv: KernelHandle,
     pub conv_flush: KernelHandle,
+    /// 2026-10-01: The exact verify's twins (`gdn_exact_carry{2,3,4}` and `_lazy` in the model
+    /// directory, `gdn_carry_conv_f32`), each 0 where the kernel set has none. A kernel set
+    /// without the `gdn_exact_carry` module issues no lookup for them (`try_target_kernel`).
+    pub exact: [KernelHandle; 3],
+    pub exact_lazy: [KernelHandle; 3],
+    pub conv_f32: KernelHandle,
+    /// 2026-10-01: The single-sequence exact verify (`gdn_exact_chain{2,3,4}`,
+    /// `gdn_conv_chain_f32`), each 0 where the kernel set has none.
+    pub chain: [KernelHandle; 3],
+    pub conv_chain: KernelHandle,
 }
 
 pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
@@ -49,15 +59,47 @@ pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
             crate::layers::try_kernel(gpu, m, "gdn_carry_wy3_lazy"),
             crate::layers::try_kernel(gpu, m, "gdn_carry_wy4_lazy"),
         ],
-        flush: crate::layers::try_kernel(gpu, m, "gdn_carry_flush"),
+        flush: carry_flush_kernel(gpu),
         conv: crate::layers::try_kernel(gpu, m, "gdn_carry_conv"),
         conv_flush: crate::layers::try_kernel(gpu, m, "gdn_carry_conv_flush"),
+        exact: [
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_carry2"),
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_carry3"),
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_carry4"),
+        ],
+        exact_lazy: [
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_carry2_lazy"),
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_carry3_lazy"),
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_carry4_lazy"),
+        ],
+        conv_f32: crate::layers::try_kernel(gpu, m, "gdn_carry_conv_f32"),
+        chain: [
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_chain2"),
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_chain3"),
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_chain4"),
+        ],
+        conv_chain: crate::layers::try_kernel(gpu, m, "gdn_conv_chain_f32"),
     }
+}
+
+/// 2026-10-01: The fold of pending rows (`gdn_carry_flush`), or under the exact verify the model
+/// directory's twin (`gdn_exact_carry_flush`), which every directory with the exact twins
+/// defines: one whose strided decode clamps the state after each update folds with the same
+/// clamp. Shared by the layer's fold and the model's (model-engine `gdn_carry.rs`).
+pub fn carry_flush_kernel(gpu: &dyn GpuBackend) -> KernelHandle {
+    if super::verify_exact_enabled() {
+        let exact =
+            crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_carry_flush");
+        if exact.0 != 0 {
+            return exact;
+        }
+    }
+    crate::layers::try_kernel(gpu, "gated_delta_rule_carry", "gdn_carry_flush")
 }
 
 /// 2026-09-26: Whether a run of `n` sequences takes the lazy kernels
 /// (`ops::GDN_CARRY_LAZY_MIN_SEQS`).
-fn carry_lazy(n: usize) -> bool {
+pub(super) fn carry_lazy(n: usize) -> bool {
     n >= ops::GDN_CARRY_LAZY_MIN_SEQS
 }
 
@@ -118,6 +160,15 @@ impl CarryState {
         match (kk, lazy) {
             (2..=4, false) => self.kernels.wy[kk - 2],
             (2..=4, true) => self.kernels.wy_lazy[kk - 2],
+            _ => KernelHandle(0),
+        }
+    }
+
+    /// 2026-10-01: The exact verify's chain twin for width `kk`, 0 when absent.
+    pub(super) fn exact_kernel_for(&self, kk: usize, lazy: bool) -> KernelHandle {
+        match (kk, lazy) {
+            (2..=4, false) => self.kernels.exact[kk - 2],
+            (2..=4, true) => self.kernels.exact_lazy[kk - 2],
             _ => KernelHandle(0),
         }
     }

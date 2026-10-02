@@ -57,6 +57,20 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             plan.weight_quant
         );
     }
+    // 2026-09-30: `--activation-quantization` is always published: it has no environment
+    // fallback, and decode dispatch reads it (`layers::act_route`).
+    let act = metrale_model_layers::layers::set_activation_quantization_from_cli(
+        args.activation_quantization.clone(),
+    );
+    if *act != args.activation_quantization {
+        tracing::warn!(
+            "activation-quantization was already resolved ({act}); the command line's ({}) \
+             did NOT take effect",
+            args.activation_quantization
+        );
+    } else {
+        tracing::info!("activation quantization: {act}");
+    }
     // 2026-09-29: `--nemotron-shared-expert-e4m3` is always published: the Nemotron-H loader
     // reads it (`nemotron_moe/prefill_weights.rs`).
     let e4m3 = metrale_model_arch::nemotron_moe::set_shared_expert_e4m3_from_cli(

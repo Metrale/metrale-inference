@@ -104,7 +104,9 @@ impl Qwen3AttentionLayer {
         // 2026-09-27: An NVFP4 `--expert-quantization` tier takes the grouped decode at every
         // row count.
         let nvfp4_moe = !force_seq_ffn && self.ffn.nvfp4_grouped_ok(n, fwd);
-        if row_invariant_moe || nvfp4_moe {
+        // 2026-09-30: A fixed `--activation-quantization` for the dense FFN (`dense_ffn_fixed.rs`).
+        let dense_fixed = !force_seq_ffn && self.ffn.dense_fixed_ok(n, fwd);
+        if row_invariant_moe || nvfp4_moe || dense_fixed {
             let normed2 = fwd.buffers.norm_output();
             ops::residual_add_rms_norm(
                 fwd.gpu,
@@ -119,7 +121,9 @@ impl Qwen3AttentionLayer {
                 eps,
                 stream,
             )?;
-            if nvfp4_moe {
+            if dense_fixed {
+                self.ffn.forward_dense_fixed(normed2, n, fwd, stream)?;
+            } else if nvfp4_moe {
                 self.ffn.forward_nvfp4_grouped(normed2, n, fwd, stream)?;
             } else {
                 self.ffn.forward_fp8_grouped_decode_routed(

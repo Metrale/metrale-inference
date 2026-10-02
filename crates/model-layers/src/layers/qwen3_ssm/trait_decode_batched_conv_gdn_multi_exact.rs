@@ -211,4 +211,154 @@ impl Qwen3SsmLayer {
 
         Ok(true)
     }
+
+    /// 2026-10-01: Whether the carried exact verify can run at width `kk` (see
+    /// [`Self::decode_batched_conv_gdn_multi_exact_carry`]): the carry engages
+    /// (`carry_now`), the chain and FP32 conv twins are linked, and the decode in force is
+    /// the unfused one, whose output norm is `gated_rms_norm_f32_strided`.
+    pub(super) fn exact_carry_ready(&self, kk: usize) -> bool {
+        self.carry_now(true, kk)
+            && self.carry.exact_kernel_for(kk, false).0 != 0
+            && self.carry.exact_kernel_for(kk, true).0 != 0
+            && self.carry.kernels.conv_f32.0 != 0
+            && self.gated_rms_norm_f32_strided_k.0 != 0
+            && !crate::layers::qwen3_ssm::gdn_fused_norm_enabled()
+    }
+
+    /// 2026-10-01: The exact verify for one run, carried: three launches for all n sequences
+    /// and K rows, `gdn_carry_conv_f32` (FP32 conv rows `b * K + t`, `qkvz_size` floats
+    /// apart), `gdn_exact_carry{K}` (the strided decode's per-token chain, H read once, the
+    /// accepted rows left pending in the stash instead of written as h intermediates), and
+    /// one `gated_rms_norm_f32_strided` over the n * K rows. Rows are the bits of the
+    /// per-token exact arm: each twin runs its parent's arithmetic in its parent's order.
+    /// `Ok(false)` with nothing launched when the conv states are not on consecutive slots;
+    /// the caller then folds the run and each sequence takes the per-row exact arm.
+    pub(super) fn decode_batched_conv_gdn_multi_exact_carry(
+        &self,
+        states: &mut [&mut (dyn LayerState + 'static)],
+        h_table: DevicePtr,
+        slot_tab: DevicePtr,
+        flag: DevicePtr,
+        args: &ConvGdnArgs,
+        ctx: &crate::layer::ForwardContext,
+    ) -> Result<bool> {
+        let n = states.len();
+        let kk = args.num_tokens;
+        let Some(binding) = self.carry.binding.get().copied() else {
+            return Ok(false);
+        };
+        if n < 2 || h_table.is_null() {
+            return Ok(false);
+        }
+        let mut conv_base = DevicePtr::NULL;
+        for (i, state) in states.iter().enumerate() {
+            let Some(st) = state.as_any().downcast_ref::<SsmLayerState>() else {
+                return Ok(false);
+            };
+            if i == 0 {
+                conv_base = st.conv_state;
+            } else if st.conv_state.0 != conv_base.0 + (i * self.conv_state_bytes) as u64 {
+                return Ok(false);
+            }
+        }
+        let ConvGdnArgs {
+            deinterleaved,
+            gates_buf,
+            normed_out,
+            qkvz_size,
+            conv_dim,
+            key_dim,
+            value_dim,
+            d_conv,
+            qk_ch,
+            nk,
+            nv,
+            kd,
+            vd,
+            bf16,
+            fp32,
+            stream,
+            ..
+        } = *args;
+        let lazy = super::carry::carry_lazy(n);
+        let rows = ctx.buffers.ssm_conv_out_f32();
+        ops::gdn_carry_conv_f32(
+            ctx.gpu,
+            self.carry.kernels.conv_f32,
+            conv_base,
+            deinterleaved,
+            &self.ssm.conv1d,
+            rows,
+            binding.conv_stash,
+            slot_tab,
+            binding.pend,
+            binding.conv_seq_elems as u32,
+            kk as u32,
+            conv_dim as u32,
+            d_conv as u32,
+            qk_ch,
+            kd as u32,
+            1e-6,
+            qkvz_size as u32,
+            qkvz_size as u32,
+            n as u32,
+            lazy,
+            stream,
+        )?;
+        // 2026-10-01: The GDN output goes to each row's `value_dim` tail, as in the strided arm.
+        let gdn_out = rows.offset(conv_dim * fp32);
+        ops::gdn_exact_carry(
+            ctx.gpu,
+            self.carry.exact_kernel_for(kk, lazy),
+            h_table,
+            rows,
+            rows.offset(key_dim * fp32),
+            rows.offset(key_dim * 2 * fp32),
+            gates_buf,
+            gates_buf.offset(nv * fp32),
+            gdn_out,
+            binding.stash,
+            slot_tab,
+            binding.pend,
+            binding.seq_floats as u32,
+            n as u32,
+            nk as u32,
+            nv as u32,
+            kd as u32,
+            [
+                qkvz_size as u32,
+                qkvz_size as u32,
+                (nv * 2) as u32,
+                qkvz_size as u32,
+            ],
+            flag,
+            stream,
+        )?;
+        ops::gated_rms_norm_strided(
+            ctx.gpu,
+            self.gated_rms_norm_f32_strided_k,
+            gdn_out,
+            deinterleaved.offset(conv_dim * bf16),
+            &self.ssm.norm,
+            normed_out,
+            nv as u32,
+            (n * kk) as u32,
+            vd as u32,
+            vd as u32,
+            ctx.config.rms_norm_eps as f32,
+            vd as u32,
+            qkvz_size as u32,
+            qkvz_size as u32,
+            value_dim as u32,
+            stream,
+        )?;
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| {
+            tracing::info!(
+                "EXACT batched MTP verify CARRIED (n={n}, k={kk}): per-token chain with the \
+                 state read once and accepted rows stashed, no h intermediates written"
+            );
+        });
+        Ok(true)
+    }
 }

@@ -258,6 +258,7 @@ pub(crate) fn default_conv_kernel() -> usize {
     4
 }
 
+pub mod activation_quantization;
 mod dispatch;
 mod factory;
 mod gguf;
@@ -274,6 +275,7 @@ pub mod precision_plan;
 mod tests;
 pub mod weight_quantization;
 
+pub use activation_quantization::{ActQuantFormat, ActivationQuantization, ProjFamily};
 pub use dispatch::parse_config;
 pub use gguf::{GgufConfigInputs, GgufMeta, config_from_gguf};
 pub use model_config::ModelConfig;

@@ -100,7 +100,13 @@ impl Qwen3SsmLayer {
         let n = states.len();
         let slot_tab = binding.slot_tab.offset(run_first * 4);
         let flag = binding.flag.offset(run_first * 4);
-        let carry = !super::verify_exact_enabled() && self.carry_now(true, args.num_tokens);
+        // 2026-10-01: Under `--exact-verify` the run carries only through the exact twins
+        // (`exact_carry_ready`); otherwise it folds and runs the strided exact arm.
+        let carry = if super::verify_exact_enabled() {
+            self.exact_carry_ready(args.num_tokens)
+        } else {
+            self.carry_now(true, args.num_tokens)
+        };
         if !carry {
             self.carry_flush_run(ctx.gpu, wy_tables, run_first, n, args.stream)?;
         }
@@ -139,6 +145,11 @@ impl Qwen3SsmLayer {
         // sequence to `decode_batched_conv_gdn`, which runs the per-row exact arm under the
         // same predicate.
         if super::verify_exact_enabled() {
+            if let Some((slot_tab, flag)) = carry {
+                return self.decode_batched_conv_gdn_multi_exact_carry(
+                    states, wy_tables, slot_tab, flag, args, ctx,
+                );
+            }
             return self.decode_batched_conv_gdn_multi_exact(states, ctx, args);
         }
         let (layout, wy_k) = match self.multi_run_arm(states, kk, ctx.levers.gdn_wyn, wy_tables)? {

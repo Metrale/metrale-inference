@@ -333,7 +333,17 @@ impl TransformerModel {
             self.lm_head_q6k_run(hidden, 1, logits, stream)?;
             return Ok(logits);
         }
-        if self.lm_head_fp8.is_some() {
+        // 2026-09-30: Under a fixed `--activation-quantization` for the head one row takes the
+        // batched decode head itself, so a sequence's logits are the bits it gets inside any batch
+        // width. Not for FP32 logits or a vocab-parallel head, which the batched head does not
+        // write.
+        if !fp32
+            && metrale_model_layers::layers::fixed_act(metrale_config::ProjFamily::LmHead, 1)
+                .is_some()
+            && self.lmhead_vocab_shard(v).is_none()
+        {
+            self.lm_head_project_batched(hidden, 1, h as usize, 2, stream)?;
+        } else if self.lm_head_fp8.is_some() {
             // 2026-09-25: FP8 E4M3 head (`--lm-head-dtype fp8`). It has no
             // FP32-output variant; with `use_fp32_logits` false, `logits` is the
             // BF16 buffer. 2026-09-28: W8A8 when declared (`lm_head_fp8_rows.rs`).
