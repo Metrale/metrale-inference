@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-02: The formats each linear module of nvidia/Qwen3.6-35B-A3B-NVFP4 runs at under
+# `--weight-quantization declared` (recipe qwen3.6/qwen3.6-35b-a3b-nvfp4-declared).
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - The checkpoint (ModelOpt MIXED_PRECISION, hf_quant_config.json `quantized_layers`) declares
+#   W4A16_NVFP4 (group 16) for every routed expert, the shared expert and lm_head, and FP8
+#   (per-tensor weight scale, static per-tensor input scale) for q/k/v/o and linear_attn
+#   in_proj_qkv/in_proj_z/out_proj. The router, shared_expert_gate, in_proj_a/b and the whole
+#   MTP head (`exclude_modules` mtp*) are BF16.
+# - The FP8 projections are served at their FP8 weights through the native FP8 arms: the loader
+#   repeats the per-tensor scale over the 128x128 grid the W8A16 kernels index
+#   (crates/model-layers/src/weight_map/loaders_fp8.rs `load_fp8_block_scaled_as_fp8weight`), so
+#   they run as fp8/block128x128 with BF16 activations: above the declared FP8 activations
+#   until `KernelCaps::w8a8_block_scaled_decode` is validated, as on the FP8 35B.
+# - The experts' SiLU product is staged as BF16 hi + lo (about FP32) for the down projection
+#   (kernels/gb10/common/moe_nvfp4_grouped_tc.cu), above the declared 16-bit activation.
+
+schema = 1
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "*.linear_attn.in_proj_b"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.linear_attn.in_proj_a"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.gate"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.shared_expert_gate"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "mtp.lm_head"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "mtp.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "lm_head"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.experts.*.down_proj"
+weight = "nvfp4/g16"
+activation = "f32"
+
+[[linear]]
+match = "*.mlp.shared_expert.down_proj"
+weight = "nvfp4/g16"
+activation = "f32"
+
+[[linear]]
+match = "*.mlp.experts.*"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.shared_expert.*"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*"
+weight = "fp8/block128x128"
+activation = "bf16"
