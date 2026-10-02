@@ -291,6 +291,10 @@ pub(super) fn gate_admissions(
 }
 
 #[cfg(test)]
+#[path = "admission_gate_tests.rs"]
+mod gate_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

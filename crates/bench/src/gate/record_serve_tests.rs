@@ -174,6 +174,7 @@ fn serve_resolved_never_reaches_check_record() {
 
 fn live(forward: &str, digest: Option<&str>) -> super::LiveForward {
     super::LiveForward {
+        auto_max_batch_size: None,
         forward: forward.to_string(),
         plan_digest: digest.map(str::to_string),
     }
@@ -217,4 +218,20 @@ fn the_live_forward_report_round_trips_and_tolerates_a_missing_digest() {
     assert_eq!(back, l);
     let bare: super::LiveForward = serde_json::from_str(r#"{"forward":"legacy"}"#).unwrap();
     assert_eq!(bare, live("legacy", None));
+}
+
+/// 2026-10-01: `--max-batch-size auto` discloses the count it resolved to; an explicit count adds
+/// nothing (the rendered serve states it).
+#[test]
+fn an_auto_slot_count_is_disclosed_and_an_explicit_one_is_not() {
+    let mut m = BTreeMap::new();
+    super::merge_live_forward(&mut m, "legacy", &live("legacy", None)).unwrap();
+    assert!(!m.contains_key(super::MAX_BATCH_SIZE));
+    let mut auto = live("legacy", None);
+    auto.auto_max_batch_size = Some(91);
+    super::merge_live_forward(&mut m, "legacy", &auto).unwrap();
+    assert_eq!(
+        m.get(super::MAX_BATCH_SIZE).map(String::as_str),
+        Some("auto:91")
+    );
 }

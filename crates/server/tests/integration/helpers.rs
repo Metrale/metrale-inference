@@ -105,7 +105,10 @@ pub(super) fn setup_model(
         4,
         block_size,
         4096,
-        8,
+        metrale_model_engine::factory::SlotPlan {
+            request: metrale_model_engine::factory::SlotRequest::Count(8),
+            reserve_for: &|_| Ok(1024 * 1024 * 1024),
+        },
         metrale_model_layers::layers::MtpQuantization::Nvfp4,
         false,
         prefix_cache,
@@ -114,7 +117,6 @@ pub(super) fn setup_model(
         false,
         1,
         metrale_cache::kv_cache::KvCacheDtype::Fp8,
-        1024 * 1024 * 1024,
         0.90,
         0,
         Vec::new(),
@@ -124,7 +126,8 @@ pub(super) fn setup_model(
         None,
         None,
         None,
-    )?;
+    )?
+    .model;
 
     Ok((model, config))
 }

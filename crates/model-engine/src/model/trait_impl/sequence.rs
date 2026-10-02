@@ -299,6 +299,10 @@ impl TransformerModel {
         self.kv_cache.lock().num_blocks()
     }
 
+    pub(super) fn kv_block_bytes_dispatch(&self) -> usize {
+        self.kv_cache.lock().config().block_bytes_kv_all_layers()
+    }
+
     /// 2026-09-30: The prefix discount applies only where the chunk-0 lookup would match
     /// (`prefill_b_prefix_lookup`): not for a vision prompt, not when MLA prefill recomputes the
     /// whole prompt, and not on a multi-rank world, where the agreed match can be shorter than
