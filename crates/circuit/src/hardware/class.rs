@@ -39,6 +39,8 @@ pub struct ClassInfo {
     pub defines: BTreeSet<String>,
     /// 2026-09-30: `[defaults]`, values as text.
     pub defaults: BTreeMap<String, String>,
+    /// 2026-10-02: `[tensor_core_policy]` (`super::tc_policy`); `None` when the class states none.
+    pub tensor_core: Option<super::tc_policy::TcPolicy>,
 }
 
 fn toml_err(rel: &str) -> impl Fn(toml::de::Error) -> HwError + '_ {
@@ -81,12 +83,15 @@ pub fn parse_class(name: &str, text: &str) -> Result<ClassInfo, HwError> {
             (k.clone(), text)
         })
         .collect();
+    let tensor_core =
+        super::tc_policy::parse_policy(&t).map_err(|e| HwError::Class(format!("{rel}: {e}")))?;
     Ok(ClassInfo {
         name: name.to_string(),
         arch,
         inherits,
         defines,
         defaults,
+        tensor_core,
     })
 }
 
@@ -294,6 +299,8 @@ pub fn class_families(
                     values: d.values.clone(),
                     how: How::Copy,
                     files: vec![d.file.clone()],
+                    // 2026-10-02: A discovered copy runs on its family's unit.
+                    compute: None,
                 });
             }
         }
@@ -392,6 +399,7 @@ pub fn class_points(points: &[Point], chain: &[ClassInfo], sources: &ClassSource
                 values: p.values.clone(),
                 how: p.how,
                 files,
+                compute: p.compute.clone(),
             })
         })
         .collect()

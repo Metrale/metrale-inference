@@ -37,6 +37,7 @@ context_tokens = 4096
 [[family]]
 id = "embed"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::embed"]
 rows = [1, 128]
 op = [{{ op = "embed" }}]
@@ -48,6 +49,7 @@ files = ["toy.cu"]
 [[family]]
 id = "norm"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::norm", "m::final_norm"]
 rows = [1, 128]
 op = [{{ op = "rms_norm" }}, {{ op = "final_norm" }}]
@@ -67,6 +69,7 @@ microbench = "toy"
 [[family]]
 id = "gemv"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::up", "m::down"]
 rows = [1, 128]
 op = [{{ op = "linear", weight = ["nvfp4/g16"] }}]
@@ -79,6 +82,7 @@ from = "dim:hidden"
 [[family]]
 id = "act"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::act"]
 rows = [1, 128]
 op = [{{ op = "silu_mul" }}]
@@ -90,6 +94,7 @@ files = ["toy.cu"]
 [[family]]
 id = "add"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::add"]
 rows = [1, 128]
 op = [{{ op = "residual_add" }}]
@@ -101,6 +106,7 @@ files = ["toy.cu"]
 [[family]]
 id = "head"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::lm_head"]
 rows = [1, 128]
 op = [{{ op = "lm_head" }}]

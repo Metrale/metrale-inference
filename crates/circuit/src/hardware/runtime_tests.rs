@@ -102,9 +102,13 @@ fn a_route_that_does_not_apply_leaves_the_plan_alone() {
         decode.planned.routes.is_empty(),
         "decode is outside the route's modes"
     );
+    // 2026-10-02: The plan alone, each group with its compute unit, and no route section.
+    let families = &decode.resolved.families;
     assert_eq!(
         plan_text(&model.circuit, &decode),
-        crate::render::render(&model.circuit, &decode.planned.plan, &decode.header)
+        crate::render::render_noted(&model.circuit, &decode.planned.plan, &decode.header, &|g| {
+            super::tc_policy::unit_tag(families, &g.kernels)
+        })
     );
     let short = ROUTE.replace("rows = [2, 128]\nplans_as", "rows = [32, 128]\nplans_as");
     let (tree, model) = setup("wide", &short);
