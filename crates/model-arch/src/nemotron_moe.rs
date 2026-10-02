@@ -274,6 +274,7 @@ mod prefill_sorted;
 mod prefill_weights;
 mod ptr_tables;
 mod route_f32;
+pub use route_f32::{RouteF32Io, RouteF32Shape, RouterF32, launch_route_f32};
 mod shared_e4m3;
 pub use shared_e4m3::{set_shared_expert_e4m3_from_cli, shared_expert_e4m3};
 

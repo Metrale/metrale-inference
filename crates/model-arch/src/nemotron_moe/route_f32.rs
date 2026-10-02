@@ -18,14 +18,14 @@ use metrale_model_layers::layer::ForwardContext;
 use super::NemotronMoeLayer;
 
 /// 2026-10-02: The FP32 router's kernels.
-pub(super) struct RouterF32 {
-    gemm: KernelHandle,
-    topk: KernelHandle,
+pub struct RouterF32 {
+    pub(super) gemm: KernelHandle,
+    pub(super) topk: KernelHandle,
 }
 
 impl RouterF32 {
     /// 2026-10-02: The kernels when `gate_f32`, `None` otherwise; an error names a missing one.
-    pub(super) fn load(gpu: &dyn GpuBackend, gate_f32: bool) -> Result<Option<Self>> {
+    pub fn load(gpu: &dyn GpuBackend, gate_f32: bool) -> Result<Option<Self>> {
         if !gate_f32 {
             return Ok(None);
         }
@@ -44,10 +44,68 @@ impl RouterF32 {
     }
 }
 
+/// 2026-10-02: Where one FP32 routing reads and writes: `normed` [n, hidden] BF16 in, `gate`
+/// [num_experts, hidden] FP32 and `bias` [num_experts] FP32, `logits` [n, num_experts] FP32
+/// scratch, then the top_k expert ids into `indices` [n, top_k] u32 and their weights into
+/// `weights` [n, top_k] f32.
+pub struct RouteF32Io {
+    pub normed: DevicePtr,
+    pub gate: DevicePtr,
+    pub bias: DevicePtr,
+    pub logits: DevicePtr,
+    pub indices: DevicePtr,
+    pub weights: DevicePtr,
+}
+
+/// 2026-10-02: The routing shape: `n` tokens over `num_experts` experts of `hidden` inputs,
+/// `top_k` chosen, their weights normalized when `normalize`, then scaled by `scale`.
+#[derive(Clone, Copy)]
+pub struct RouteF32Shape {
+    pub n: u32,
+    pub num_experts: u32,
+    pub hidden: u32,
+    pub top_k: u32,
+    pub normalize: bool,
+    pub scale: f32,
+}
+
+/// 2026-10-02: Route `shape.n` tokens: the FP32 logits, then the sigmoid top-k over them.
+pub fn launch_route_f32(
+    gpu: &dyn GpuBackend,
+    r: &RouterF32,
+    io: &RouteF32Io,
+    shape: RouteF32Shape,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, r.gemm)
+        .grid([div_ceil(shape.num_experts, 8), shape.n, 1])
+        .block([256, 1, 1])
+        .arg_ptr(io.normed)
+        .arg_ptr(io.gate)
+        .arg_ptr(io.logits)
+        .arg_u32(shape.n)
+        .arg_u32(shape.num_experts)
+        .arg_u32(shape.hidden)
+        .launch(stream)?;
+    KernelLaunch::new(gpu, r.topk)
+        .grid([1, shape.n, 1])
+        .block([256, 1, 1])
+        .arg_ptr(io.logits)
+        .arg_ptr(io.bias)
+        .arg_ptr(io.indices)
+        .arg_ptr(io.weights)
+        .arg_u32(shape.num_experts)
+        .arg_u32(shape.top_k)
+        .arg_u32(u32::from(shape.normalize))
+        .arg_f32(shape.scale)
+        .arg_u32(shape.n)
+        .launch(stream)
+}
+
 impl NemotronMoeLayer {
-    /// 2026-10-02: Route `n` tokens of `normed` [n, hidden] BF16: the top_k expert indices and
-    /// weights of each into `indices` [n, top_k] u32 and `weights` [n, top_k] f32. The logits go
-    /// through the FP32 router-logit buffer.
+    /// 2026-10-02: Route `n` tokens of `normed` [n, hidden] BF16 into `indices` / `weights`
+    /// ([`RouteF32Io`]), through the FP32 router-logit buffer.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn route_f32(
         &self,
         r: &RouterF32,
@@ -58,31 +116,23 @@ impl NemotronMoeLayer {
         weights: DevicePtr,
         stream: u64,
     ) -> Result<()> {
-        let logits = ctx.buffers.gate_logits_f32();
-        let num_experts = self.weights.experts.len() as u32;
-        KernelLaunch::new(ctx.gpu, r.gemm)
-            .grid([div_ceil(num_experts, 8), n, 1])
-            .block([256, 1, 1])
-            .arg_ptr(normed)
-            .arg_ptr(self.weights.gate.weight)
-            .arg_ptr(logits)
-            .arg_u32(n)
-            .arg_u32(num_experts)
-            .arg_u32(ctx.config.hidden_size as u32)
-            .launch(stream)?;
-        KernelLaunch::new(ctx.gpu, r.topk)
-            .grid([1, n, 1])
-            .block([256, 1, 1])
-            .arg_ptr(logits)
-            .arg_ptr(self.weights.e_score_correction_bias.weight)
-            .arg_ptr(indices)
-            .arg_ptr(weights)
-            .arg_u32(num_experts)
-            .arg_u32(self.top_k as u32)
-            .arg_u32(u32::from(ctx.config.norm_topk_prob))
-            .arg_f32(ctx.config.routed_scaling_factor as f32)
-            .arg_u32(n)
-            .launch(stream)
+        let io = RouteF32Io {
+            normed,
+            gate: self.weights.gate.weight,
+            bias: self.weights.e_score_correction_bias.weight,
+            logits: ctx.buffers.gate_logits_f32(),
+            indices,
+            weights,
+        };
+        let shape = RouteF32Shape {
+            n,
+            num_experts: self.weights.experts.len() as u32,
+            hidden: ctx.config.hidden_size as u32,
+            top_k: self.top_k as u32,
+            normalize: ctx.config.norm_topk_prob,
+            scale: ctx.config.routed_scaling_factor as f32,
+        };
+        launch_route_f32(ctx.gpu, r, &io, shape, stream)
     }
 }
 
