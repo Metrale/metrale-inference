@@ -22,19 +22,24 @@
 //! | Qwen3.8-27B, declared tier, 128 slots, MTP K=4, C128 | 102.8 GB | 2.1-3.1 GB | +0.75 GB kernel slab, +0.15 GB page tables, +0.5 GB vmalloc |
 //! | Qwen3.8-27B throughput recipe, worst cases | 103.5 GB | 1.6-2.4 GB | |
 //! | Qwen3.6-35B-A3B, 128 slots, MTP K=2, worst cases | 101.4 GB | 2.7-2.8 GB | |
-//! | Nemotron-3-Nano, nvfp4, no speculation, 8 slots | 40.5 GB | 2.7-2.9 GB | +0.89 GB kernel slab |
-//! | Nemotron-3-Nano, as above with prefix caching (pool fills the budget) | 102.9 GB | 3.5-3.6 GB | |
+//! | Nemotron-3-Nano, nvfp4, no speculation, 8 slots | 40.5 GB | 2.3-2.9 GB | +0.88 GB kernel slab, 0.43 GB chunk slack |
+//! | Nemotron-3-Nano, as above with prefix caching (pool fills the budget) | 102.9 GB | 3.5-3.6 GB | +0.96 GB kernel slab, +0.63 GB vmalloc, 0.43 GB chunk slack |
 //!
 //! Probed directly: context 250 MiB, the 218 modules of the 27B target 94 MiB, the local-memory
-//! reservation 131 MiB (1,864 B/thread x 48 SMs x 1,536 threads); the rest is the driver's
-//! per-allocation bookkeeping. It does not depend on speculation, so the no-speculation serve
-//! needs the same headroom: 512 MiB under-reserved it by about 2.1-2.6 GB whenever its KV pool
-//! fills the budget. `DRIVER_FIXED_BYTES + DRIVER_BUDGET_PER_MILLE` of the util budget covers
-//! the dense default tier's worst case, 3.13 GB, with 0.12 GB to spare at util 0.85 on GB10, and
-//! every certified recipe. It does not cover Nemotron-3-Nano with prefix caching on (not a
-//! certified configuration: its recipe runs without it, the pool clamped to demand), which reads
-//! 0.4 GB above it; covering that would take 26 per mille, which leaves the dense default tier
-//! no KV pool at 128 slots.
+//! reservation 131 MiB (1,864 B/thread x 48 SMs x 1,536 threads, the same for the 27B, the
+//! 35B-A3B and Nemotron-3-Nano kernel sets); the rest is the driver's per-allocation bookkeeping,
+//! about 2% of the bytes allocated. It does not depend on speculation, so the no-speculation
+//! serve needs the same headroom: 512 MiB under-reserved it by about 2.1-2.6 GB whenever its KV
+//! pool fills the budget.
+//!
+//! One part is not proportional to bytes and is not a reserve term: the driver packs
+//! allocations under 2 MiB into 2 MiB chunks and keeps a chunk resident while any of them lives.
+//! Nemotron-3-Nano's 24,456 small weight allocations leave 429 MiB of that chunk slack (the dense
+//! 27B's 2,274 leave 52 MiB). The KV sizing charges it from the allocation ledger's addresses
+//! once the weights are placed (`model-engine` `kv_sizing.rs`), so it applies only where it occurs.
+//! Less that slack, `DRIVER_FIXED_BYTES + DRIVER_BUDGET_PER_MILLE` of the util budget covers every
+//! measured serve, the largest being the dense default tier's 3.13 GB, with 0.12 GB to spare at
+//! util 0.85 on GB10.
 
 use metrale_config::ModelConfig;
 

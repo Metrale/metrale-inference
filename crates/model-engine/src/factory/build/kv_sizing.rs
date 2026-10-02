@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-01: Step 5 of `build_model`: the slot count and the KV pool, sized together. The KV
-//! budget is the util budget less what is already placed, the pre-load reserve at the slot count
+//! budget is the util budget less what is already placed (the ledger, plus the driver's slack
+//! around small allocations), the pre-load reserve at the slot count
 //! (`SlotPlan::reserve_for`), the DFlash reserve and the MTP propose pool. `--max-batch-size N`
 //! sizes for N; `auto` takes the count `slots::balance_slots` chooses. Split from `build.rs`.
 //!
@@ -60,6 +61,19 @@ pub(super) fn size_kv(inp: &KvInputs<'_>, plan: &SlotPlan<'_>) -> Result<KvSized
         total_mem.saturating_sub(actual_free),
         gib,
     );
+    // 2026-10-01: The driver keeps whole 2 MiB chunks resident for allocations smaller than a
+    // chunk; the ledger counts only their bytes. Charged here, where every load-time allocation is
+    // placed, from the ledger's own addresses. A backend without a ledger reports none.
+    let used_so_far = match inp.gpu.chunk_slack_bytes() {
+        Some(slack) => {
+            tracing::info!(target: "metrale_model_engine::factory::build", "KV budget: {:.2} GB of small-allocation chunk slack (driver chunks held \
+                 beyond the ledger's bytes) charged as used",
+                gib(slack)
+            );
+            used_so_far + slack
+        }
+        None => used_so_far,
+    };
     let total_budget = (total_mem as f64 * inp.gpu_memory_utilization) as usize;
     // 2026-10-01: The KV budget at a slot count: what `build_model` computed before, with the
     // reserve evaluated at that count.

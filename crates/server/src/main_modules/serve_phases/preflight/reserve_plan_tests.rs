@@ -8,7 +8,7 @@
 //!   `ssm_pool_state_plan_tests.rs`), the f16 staging arena, the carry stash
 //!   (`GdnCarrySizes::total`, which `gdn_carry_bind` allocates) and the decode-rollback ring;
 //! - the driver terms cover the driver use measured on GB10 for these serves with at most 20%
-//!   to spare (`runtime_headroom.rs` carries the measurements and the one it does not cover);
+//!   to spare (`runtime_headroom.rs` carries the measurements);
 //! - the inference reserve is the sum of its terms at any slot count.
 //!
 //! Owner: server startup (`met serve`).
@@ -210,16 +210,18 @@ fn the_dense_declared_carry_stash_is_the_one_the_serve_bound() {
 
 #[test]
 fn the_driver_terms_cover_every_measured_serve_with_at_most_a_fifth_to_spare() {
-    // 2026-10-01: The largest driver use measured on GB10 per serve (`runtime_headroom.rs`):
-    // the dense default tier's worst case (C128 and prefix restores, 3,126 MiB), the
-    // throughput recipe (2,423), the 35B-A3B MoE at 128 slots (2,798), Nemotron-3-Nano
-    // no-spec at its recipe flags (2,935).
+    // 2026-10-01: The largest driver use measured on GB10 per serve (`runtime_headroom.rs`),
+    // less the small-allocation chunk slack the KV sizing charges from the ledger: the dense
+    // default tier's worst case (C128 and prefix restores, 3,126 MiB), the throughput recipe
+    // (2,423), the 35B-A3B MoE at 128 slots (2,798), Nemotron-3-Nano no-spec at its recipe flags
+    // (2,935) and with prefix caching on (3,499 less its 429 MiB of chunk slack).
     let driver = DRIVER_FIXED_BYTES + gb10_budget() / 1000 * DRIVER_BUDGET_PER_MILLE;
     let measured = [
         ("dense default tier", 3_126 * MIB),
         ("throughput recipe", 2_423 * MIB),
         ("35B-A3B MoE, 128 slots", 2_798 * MIB),
         ("nano", 2_935 * MIB),
+        ("nano with prefix caching", (3_499 - 429) * MIB),
     ];
     let largest = measured.iter().map(|m| m.1).max().unwrap();
     for (what, m) in measured {
@@ -229,8 +231,6 @@ fn the_driver_terms_cover_every_measured_serve_with_at_most_a_fifth_to_spare() {
         driver <= largest + largest / 5,
         "over-reserves the largest by more than 20%"
     );
-    // 2026-10-01: Not listed: Nemotron-3-Nano with prefix caching on (3,636 MiB), which the
-    // terms do not cover (`runtime_headroom.rs` says why).
     // 2026-10-01: Speculation does not change it: both serves read the same terms.
     let (spec, nospec) = (plan(&SERVES[0]), plan(&SERVES[5]));
     let (a, b) = (

@@ -166,6 +166,10 @@ impl GpuBackend for MetraleCudaBackend {
         Some(MetraleCudaBackend::alloc_report(self, top_n, min_mb))
     }
 
+    fn chunk_slack_bytes(&self) -> Option<usize> {
+        Some(MetraleCudaBackend::chunk_slack_bytes(self))
+    }
+
     fn sweep_unreleased(&self) -> usize {
         MetraleCudaBackend::sweep_unreleased(self)
     }
@@ -465,34 +469,9 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn alloc_arena(&self, bytes: usize) -> Result<DevicePtr> {
-        let mut dptr: u64 = 0;
-        let status = unsafe { cuMemAlloc_v2(&mut dptr, bytes) };
-        if status != 0 {
-            let mut free: usize = 0;
-            let mut total: usize = 0;
-            unsafe { cuMemGetInfo_v2(&mut free, &mut total) };
-            bail!(
-                "cuMemAlloc_v2 (arena) failed: status {status}, requested {bytes} bytes \
-                 (device reports {:.1} GB free / {:.1} GB total)",
-                free as f64 / (1024.0 * 1024.0 * 1024.0),
-                total as f64 / (1024.0 * 1024.0 * 1024.0),
-            );
-        }
-        tracing::info!(
-            "arena: {:.2} GiB of device memory at {dptr:#x}, off the allocation ledger",
-            bytes as f64 / (1024.0 * 1024.0 * 1024.0)
-        );
-        Ok(DevicePtr(dptr))
+        raw::alloc_arena(bytes)
     }
     fn free_arena(&self, ptr: DevicePtr) -> Result<()> {
-        if ptr.is_null() {
-            return Ok(());
-        }
-        let status = unsafe { cuMemFree_v2(ptr.0) };
-        if status != 0 {
-            // 2026-09-25: Logged, not returned, for any nonzero status.
-            tracing::warn!("cuMemFree_v2 (arena) returned status {status}");
-        }
-        Ok(())
+        raw::free_arena(ptr)
     }
 }

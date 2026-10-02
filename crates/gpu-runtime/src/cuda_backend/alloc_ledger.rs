@@ -2,7 +2,8 @@
 
 //! 2026-09-25: The device-allocation ledger's entries and reports: size and
 //! allocating call site of every live allocation.
-//! 2026-10-01: Also [`LedgerProbe`], which reads the ledger without the backend.
+//! 2026-10-01: Also [`LedgerProbe`], which reads the ledger without the backend, and
+//! [`chunk_slack`]: the device memory the driver holds beyond the ledger for small allocations.
 //!
 //! Owner: gpu-runtime (CUDA backend).
 //! Invariants: none beyond the types.
@@ -37,6 +38,29 @@ fn ledger_bytes(ledger: &std::collections::HashMap<u64, AllocRecord>) -> usize {
     ledger.values().map(|r| r.bytes).sum()
 }
 
+/// 2026-10-01: The chunk the driver packs allocations smaller than itself into, on GB10: such
+/// allocations come back at 512 B to 64 KiB alignment inside 2 MiB-aligned ranges, while larger
+/// ones start 2 MiB-aligned (nsys device-memory events of two serves, 2026-10-01). A chunk that
+/// holds any live small allocation stays resident whole.
+pub const SMALL_ALLOC_CHUNK: u64 = 2 << 20;
+
+/// 2026-10-01: The bytes of the `chunk`-sized ranges that hold live allocations smaller than
+/// `chunk`, less those allocations' bytes: memory the driver keeps resident that no ledger entry
+/// accounts for. `allocs` is `(device address, bytes)`; allocations of `chunk` bytes or more are
+/// not packed and count nothing. On GB10 this is 52 MiB for the dense 27B (2,274 small
+/// allocations in 270 chunks) and 429 MiB for Nemotron-3-Nano (24,456 in 2,033 chunks), which
+/// matches the latter's driver use above the other reserve terms to within 11 MiB.
+pub fn chunk_slack(allocs: impl Iterator<Item = (u64, usize)>, chunk: u64) -> usize {
+    let mut chunks = std::collections::BTreeSet::new();
+    let mut small = 0usize;
+    for (addr, bytes) in allocs.filter(|&(_, b)| (b as u64) < chunk && b > 0) {
+        small += bytes;
+        let last = addr + bytes as u64 - 1;
+        chunks.extend(addr / chunk..=last / chunk);
+    }
+    (chunks.len() as u64 * chunk).saturating_sub(small as u64) as usize
+}
+
 impl MetraleCudaBackend {
     /// 2026-09-25: Enter an allocation in the ledger. `site` is the caller of
     /// `GpuBackend::alloc` or `alloc_managed`.
@@ -58,6 +82,12 @@ impl MetraleCudaBackend {
     /// 2026-09-25: Total bytes on the ledger.
     pub fn live_bytes(&self) -> usize {
         ledger_bytes(&self.live_allocs.lock())
+    }
+
+    /// 2026-10-01: `chunk_slack` of the live allocations, at `SMALL_ALLOC_CHUNK`.
+    pub fn chunk_slack_bytes(&self) -> usize {
+        let ledger = self.live_allocs.lock();
+        chunk_slack(ledger.iter().map(|(&a, r)| (a, r.bytes)), SMALL_ALLOC_CHUNK)
     }
 
     /// 2026-10-01: A [`LedgerProbe`] on this backend's ledger.
@@ -137,3 +167,7 @@ impl MetraleCudaBackend {
         out
     }
 }
+
+#[cfg(test)]
+#[path = "alloc_ledger_tests.rs"]
+mod tests;

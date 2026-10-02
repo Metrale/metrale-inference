@@ -249,6 +249,11 @@ pub fn build_model(
         !mtp_weights.is_empty(),
     )?;
 
+    // 2026-10-01: Step 3a: the transposed twin of the NVFP4 LM head, built here rather than in
+    // `TransformerModel::new` so the KV sizing finds it on the allocation ledger.
+    let lm_head_nvfp4_t =
+        crate::model::impl_a1::build_lm_head_nvfp4_t(&lm_head_nvfp4, &config, gpu.as_ref())?;
+
     // 2026-09-25: Copies (DenseWeight is `Copy`) of the embedding and the BF16
     // LM head for the DeepSeek-V4 MTP proposer, taken before both move into
     // `TransformerModel::new`.
@@ -372,6 +377,7 @@ pub fn build_model(
         lm_head_nvfp4,
         lm_head_fp8,
         mtp_lm_head_nvfp4,
+        lm_head_nvfp4_t,
         layers,
         buffers,
         kv_cache,
