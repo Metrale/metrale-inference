@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use super::gaps::{GapTable, gap_table};
-use super::plan::{Planned, Resolved};
+use super::plan::Resolved;
 use super::{HwError, HwReport, OnePlan};
 use crate::fuser::{FusionPlan, Policy};
 use crate::ir::Circuit;
@@ -123,15 +123,20 @@ pub(super) fn routes_section(s: &mut String, r: &HwReport) {
 
 /// 2026-09-30: `one`'s plan text, followed by each applicable route's plan under a heading that
 /// names the route, its condition and the settings it is planned as.
+/// 2026-10-02: Each group line names the compute unit its kernels run on (`compute=`).
 pub fn plan_text(circuit: &Circuit, one: &OnePlan) -> String {
-    let mut s = crate::render::render(circuit, &one.planned.plan, &one.header);
+    let families = &one.resolved.families;
+    let note = |g: &crate::fuser::Group| super::tc_policy::unit_tag(families, &g.kernels);
+    let mut s = crate::render::render_noted(circuit, &one.planned.plan, &one.header, &note);
     for rp in &one.planned.routes {
-        s.push_str(&route_plan_text(circuit, one, &rp.route, &rp.planned));
+        let header = crate::render::with_settings(&one.header, &rp.route.policy(&one.policy));
+        s.push_str(&crate::render::route_section(
+            circuit,
+            &rp.route,
+            &rp.planned.plan,
+            &header,
+            &note,
+        ));
     }
     s
-}
-
-fn route_plan_text(circuit: &Circuit, one: &OnePlan, route: &RuntimeRoute, p: &Planned) -> String {
-    let header = crate::render::with_settings(&one.header, &route.policy(&one.policy));
-    crate::render::route_section(circuit, route, &p.plan, &header)
 }

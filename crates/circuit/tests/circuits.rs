@@ -275,16 +275,17 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
         common::load(&instance("qwen3.8/qwen3.8-27b-nvfp4-unsloth")),
     );
     let avail = common::available(&d, &loaded.rules);
+    let fams = common::families(&d);
     for (lever, mode, rows) in [
         ("gdn_fused_norm", Mode::Decode, 1),
         ("decode_fused_silu", Mode::Decode, 1),
         ("gdn_fused_verify", Mode::Verify, 2),
         ("w4a4_downcast", Mode::Verify, 4),
     ] {
-        let base = metrale_circuit::render_plan(&d, &loaded, &avail, mode, rows).unwrap();
+        let base = metrale_circuit::render_plan(&d, &loaded, &avail, mode, rows, &fams).unwrap();
         let mut on = d.clone();
         on.policy.opt_in_levers.insert(lever.to_string());
-        let with = metrale_circuit::render_plan(&on, &loaded, &avail, mode, rows).unwrap();
+        let with = metrale_circuit::render_plan(&on, &loaded, &avail, mode, rows, &fams).unwrap();
         let body = |t: &str| {
             t.lines()
                 .filter(|l| l.starts_with('g'))

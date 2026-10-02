@@ -56,6 +56,7 @@ pub fn render_report(r: &HwReport) -> String {
     );
     inputs(&mut s, r);
     execution(&mut s, r);
+    super::tc_policy_render::section(&mut s, r);
     estimates(&mut s, r);
     super::render_routes::routes_section(&mut s, r);
     memory(&mut s, r);

@@ -33,9 +33,10 @@ fn path_b_golden_instances_restate_the_config_derived_shape() {
         derived.shape = mapped.shape;
         let loaded = common::load(&derived);
         let avail = common::available(&derived, &loaded.rules);
+        let fams = common::families(&derived);
         for (&mode, rows) in &derived.plans {
             for &n in rows {
-                let text = metrale_circuit::render_plan(&derived, &loaded, &avail, mode, n)
+                let text = metrale_circuit::render_plan(&derived, &loaded, &avail, mode, n, &fams)
                     .unwrap_or_else(|e| panic!("{} {} n={n}: {e}", inst.recipe, mode.name()));
                 let file = common::plans_dir().join(derived.plan_file(mode, n));
                 assert_eq!(
