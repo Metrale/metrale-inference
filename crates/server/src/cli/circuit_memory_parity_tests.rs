@@ -93,3 +93,20 @@ fn the_carry_and_verify_tables_match_the_engines_sizes() {
         );
     }
 }
+
+/// 2026-10-02: The driver terms the memory model reads from kernels/gb10/HARDWARE.toml equal the
+/// reserve's (`preflight/runtime_headroom.rs`), until the reserve reads them from there.
+#[test]
+fn the_class_driver_terms_equal_the_reserves() {
+    use crate::main_modules::serve_phases::preflight::runtime_headroom::{
+        DRIVER_BUDGET_PER_MILLE, DRIVER_FIXED_BYTES,
+    };
+    let text = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../kernels/gb10/HARDWARE.toml"),
+    )
+    .expect("HARDWARE.toml");
+    let t = metrale_circuit::memory::DriverTerms::parse("gb10", &text).expect("terms");
+    assert_eq!(t.driver_fixed_bytes, DRIVER_FIXED_BYTES as u64);
+    assert_eq!(t.driver_budget_per_mille, DRIVER_BUDGET_PER_MILLE as u64);
+}

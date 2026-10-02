@@ -340,7 +340,11 @@ impl Builder<'_> {
             });
         }
         let formats = match nf.unquantized {
-            true => edges::unquantized(&id, &op, inputs.first().map(|&x| self.circuit.edges[x].format))?,
+            true => edges::unquantized(
+                &id,
+                &op,
+                inputs.first().map(|&x| self.circuit.edges[x].format),
+            )?,
             false => self.resolve(&id, &op, &binding, &inputs)?,
         };
         if let Some(f) = formats {

@@ -8,8 +8,7 @@
 
 use super::*;
 
-const TERMS: &str =
-    "[memory]\nutil_ceiling = 0.85\ndriver_fixed_bytes = 1073741824\ndriver_budget_per_mille = 21\nunified = true\n";
+const TERMS: &str = "[memory]\nutil_ceiling = 0.85\ndriver_fixed_bytes = 1073741824\ndriver_budget_per_mille = 21\nunified = true\n";
 
 #[test]
 fn driver_terms_are_read_from_the_class_and_sized_like_the_reserve() {

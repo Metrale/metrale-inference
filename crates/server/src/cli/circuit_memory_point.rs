@@ -104,10 +104,13 @@ impl Point<'_> {
     /// 2026-10-02: The sequence slots at `c` sequences: `--slots`, `auto` (exactly `c`), or the
     /// serve's `--max-batch-size`.
     pub(crate) fn slots(&self, c: u64) -> Result<usize> {
-        Ok(match self.a.slots.as_deref() {
-            None => self.args.max_batch_size,
-            Some("auto") => c as usize,
-            Some(n) => n.parse().with_context(|| format!("--slots {n}"))?,
+        use metrale_model_engine::factory::SlotRequest;
+        Ok(match (self.a.slots.as_deref(), self.args.max_batch_size) {
+            (None, SlotRequest::Count(n)) => n,
+            // 2026-10-02: `--max-batch-size auto` balances slots against KV at boot; at a given
+            // concurrency the model sizes exactly that many, as `--slots auto` does.
+            (None, SlotRequest::Auto) | (Some("auto"), _) => c as usize,
+            (Some(n), _) => n.parse().with_context(|| format!("--slots {n}"))?,
         })
     }
 
@@ -301,7 +304,11 @@ impl Point<'_> {
         let blocks = terms.first().map_or(0, |t| t.units / bs.max(1));
         let per_block = bytes.checked_div(blocks).unwrap_or(0);
         let rest = r.totals.device.saturating_sub(bytes);
-        let fit = r.budget_bytes.saturating_sub(rest).checked_div(per_block).unwrap_or(0);
+        let fit = r
+            .budget_bytes
+            .saturating_sub(rest)
+            .checked_div(per_block)
+            .unwrap_or(0);
         (fit, fit * bs, blocks)
     }
 
@@ -364,7 +371,13 @@ pub(crate) fn prepare<'a>(
     })?;
     let behavior =
         super::circuit_memory_weights::behavior(tree, &device.class, &model.kernel_model)?;
-    let facts = engine_facts(&args, &config, &behavior, args.max_batch_size, None)?;
+    let facts = engine_facts(
+        &args,
+        &config,
+        &behavior,
+        args.max_batch_size.ceiling(),
+        None,
+    )?;
     model.circuit = served.circuit.clone();
     model.policy = hardware::model_checkpoint::derive_policy(&served.circuit, served.kv_cache)?;
     let set = &mut model.policy.settings;

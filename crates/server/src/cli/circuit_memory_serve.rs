@@ -194,7 +194,7 @@ pub(crate) fn engine_facts(
     tree_nodes: Option<usize>,
 ) -> Result<EngineFacts> {
     let mut args = args.clone();
-    args.max_batch_size = slots;
+    args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(slots);
     let spec = args.speculative_proposer_requested();
     let (num_drafts, _) = crate::main_modules::serve_phases::config::resolve_num_drafts(
         args.num_drafts,
@@ -249,14 +249,21 @@ pub(crate) fn engine_facts(
         args.speculative || args.dflash,
     )
     .slots;
-    let gdn_128 = config.linear_key_head_dim == 128 && config.linear_value_head_dim == 128;
-    let carry = match spec && !h_f16_pool && config.linear_num_value_heads > 0 && gdn_128 {
-        true => (
-            mtp_slots as u64 + 1,
-            metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS as u64,
-        ),
-        false => (0, 0),
-    };
+    // 2026-10-02: The carried-state verify binds exactly when the reserve plans its stash
+    // (`runtime_headroom::carry_stash_bytes`, the engine's own condition), over the verify slots.
+    let verify_slots = pool.verify.as_ref().map(|v| v.slots());
+    let carry =
+        match crate::main_modules::serve_phases::preflight::runtime_headroom::carry_stash_bytes(
+            config,
+            verify_slots,
+            h_f16_pool,
+        ) {
+            0 => (0, 0),
+            _ => (
+                verify_slots.unwrap_or(0) as u64,
+                metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS as u64,
+            ),
+        };
     let verify_rows = match spec {
         true => metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS as u64,
         false => 0,

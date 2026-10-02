@@ -13,7 +13,7 @@ mod forward;
 pub(crate) mod fp8_kv_scale_source;
 mod kernel_gate;
 pub(crate) mod kv_cache;
-mod preflight;
+pub(crate) mod preflight;
 mod runtime;
 mod tokenizer_runtime;
 mod topology;

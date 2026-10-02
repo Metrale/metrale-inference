@@ -265,7 +265,10 @@ pub(super) fn unquantized(
         detail,
     };
     if !op.reads_linear_weight() {
-        return Err(bad(format!("`unquantized`: `{}` reads no weight", op.name())));
+        return Err(bad(format!(
+            "`unquantized`: `{}` reads no weight",
+            op.name()
+        )));
     }
     let activation =
         input.ok_or_else(|| bad("a weight-reading node needs an activation input".into()))?;
