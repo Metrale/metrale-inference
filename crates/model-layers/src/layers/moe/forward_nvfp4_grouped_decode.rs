@@ -236,6 +236,12 @@ impl MoeLayer {
     /// NVFP4, so `nvfp4_grouped_decode_ok` admits it under every `--expert-quantization` tier.
     /// Refused for a layer that also holds FP8 experts: the tier decides between those.
     pub fn set_declared_nvfp4_experts(&mut self) -> Result<()> {
+        self.set_draft_nvfp4_experts()
+    }
+
+    /// 2026-10-02: The same mark for a drafter whose experts were requantized to NVFP4 for drafting
+    /// (`MtpHead::new_nvfp4_draft_moe`): the grouped NVFP4 decode serves them at every width.
+    pub fn set_draft_nvfp4_experts(&mut self) -> Result<()> {
         anyhow::ensure!(
             self.fp8_shared_expert.is_none() && self.fp8_down_weight_ptrs.is_none(),
             "set_declared_nvfp4_experts: the layer holds FP8 experts"

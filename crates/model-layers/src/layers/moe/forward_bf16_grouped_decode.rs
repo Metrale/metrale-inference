@@ -52,13 +52,7 @@ impl MoeLayer {
             && self.pre_expert_norm.is_none()
             && self.tid2eid_dev.is_none()
             && h.is_multiple_of(8)
-            && b.scratch_bytes() >= need.scratch
-            && b.gate_logits_bytes() >= need.gate_logits
-            && b.expert_gate_out_bytes() >= need.expert_gate_out
-            && b.expert_down_out_bytes() >= need.expert_down_out
-            && b.logits_bytes() >= need.shared_act
-            && b.attn_output_bytes() >= need.row_hidden
-            && b.moe_output_bytes() >= need.row_hidden
+            && arena_fits(&need, b)
     }
 
     /// 2026-10-02: Whether `forward_bf16_grouped_decode` serves `m` rows under `ctx`: the arena
@@ -209,7 +203,9 @@ impl MoeLayer {
     /// 2026-10-02: The grouped decode of `m` rows on whichever expert tables this layer holds for
     /// it: FP8 (`forward_fp8_grouped_decode`) or BF16 (`forward_bf16_grouped_decode`).
     pub fn any_grouped_decode_ok(&self, m: usize, ctx: &ForwardContext) -> bool {
-        if self.fp8_gate_weight_ptrs.is_some() {
+        if self.nvfp4_grouped.declared_experts {
+            self.nvfp4_grouped_decode_ok(m, ctx)
+        } else if self.fp8_gate_weight_ptrs.is_some() {
             self.fp8_grouped_decode_ok(m, ctx)
         } else {
             self.bf16_grouped_decode_ok(m, ctx)
@@ -223,7 +219,20 @@ impl MoeLayer {
         cfg: &metrale_config::ModelConfig,
         b: &metrale_gpu_runtime::buffers::BufferArena,
     ) -> bool {
-        if self.fp8_gate_weight_ptrs.is_some() {
+        if self.nvfp4_grouped.declared_experts {
+            // 2026-10-02: The NVFP4 grouped decode's arena needs are the FP8 grouped decode's.
+            (1..=NVFP4_GROUPED_DECODE_TC_MAX_ROWS).contains(&m)
+                && arena_fits(
+                    &grouped_decode_buffer_need(
+                        m,
+                        cfg.hidden_size,
+                        cfg.moe_intermediate_size,
+                        cfg.num_experts,
+                        cfg.num_experts_per_tok,
+                    ),
+                    b,
+                )
+        } else if self.fp8_gate_weight_ptrs.is_some() {
             self.fp8_grouped_decode_arena_ok(m, cfg, b)
         } else {
             self.bf16_grouped_decode_arena_ok(m, cfg, b)
@@ -238,10 +247,26 @@ impl MoeLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        if self.fp8_gate_weight_ptrs.is_some() {
+        if self.nvfp4_grouped.declared_experts {
+            self.forward_nvfp4_grouped_decode(input, m, ctx, stream)
+        } else if self.fp8_gate_weight_ptrs.is_some() {
             self.forward_fp8_grouped_decode(input, m, ctx, stream)
         } else {
             self.forward_bf16_grouped_decode(input, m, ctx, stream)
         }
     }
+}
+
+/// 2026-10-02: Whether the arena holds a grouped decode's buffers (`grouped_decode_buffer_need`).
+fn arena_fits(
+    need: &super::forward_fp8_grouped_decode::GroupedDecodeBufferNeed,
+    b: &metrale_gpu_runtime::buffers::BufferArena,
+) -> bool {
+    b.scratch_bytes() >= need.scratch
+        && b.gate_logits_bytes() >= need.gate_logits
+        && b.expert_gate_out_bytes() >= need.expert_gate_out
+        && b.expert_down_out_bytes() >= need.expert_down_out
+        && b.logits_bytes() >= need.shared_act
+        && b.attn_output_bytes() >= need.row_hidden
+        && b.moe_output_bytes() >= need.row_hidden
 }

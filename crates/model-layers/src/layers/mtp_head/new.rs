@@ -88,6 +88,19 @@ impl MtpHead {
         // BF16 head gets a `MoeLayer` on the checkpoint's FP8 tables when the
         // weights carry them (`moe_grouped`), else per-expert weights.
         let mut weights = weights;
+        // 2026-10-02: `--mtp-experts-nvfp4` applies to one head form only: a BF16 MoE head on
+        // BF16 experts. Asked for on any other head, the serve refuses rather than ignore it.
+        let draft_nvfp4 = super::mtp_experts_nvfp4();
+        anyhow::ensure!(
+            !draft_nvfp4
+                || (dense_ffn_generic.is_none()
+                    && quant == MtpQuantization::Bf16
+                    && weights.fp8_experts.is_none()),
+            "--mtp-experts-nvfp4 needs a BF16 MoE MTP head on BF16 experts (this head: \
+             {quant:?}, dense FFN {}, FP8 experts {})",
+            dense_ffn_generic.is_some(),
+            weights.fp8_experts.is_some()
+        );
         let moe_parts = if dense_ffn_generic.is_some() {
             (None, None, None, None)
         } else {
@@ -198,7 +211,11 @@ impl MtpHead {
                 }
                 // 2026-10-02: A BF16 head on BF16 experts: the grouped BF16 MoE layer.
                 MtpQuantization::Bf16 => {
-                    let moe = Self::new_bf16_moe(&weights, config, gpu)?;
+                    let moe = if draft_nvfp4 {
+                        Self::new_nvfp4_draft_moe(&weights, config, gpu, absmax_k, nvfp4_k, stream)?
+                    } else {
+                        Self::new_bf16_moe(&weights, config, gpu)?
+                    };
                     (None, None, None, Some(moe))
                 }
                 // 2026-10-02: An FP8 head on BF16 experts: per-expert FP8 projections.

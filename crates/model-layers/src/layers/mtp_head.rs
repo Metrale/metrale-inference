@@ -389,6 +389,7 @@ mod forward_batch_ffn;
 mod moe_forward;
 mod new;
 mod new_bf16_moe;
+pub use new_bf16_moe::{mtp_experts_nvfp4, set_mtp_experts_nvfp4_from_cli};
 mod new_native_fp8_moe;
 mod prefill;
 pub(crate) mod row_dispatch;
