@@ -133,6 +133,8 @@ class and exact citation.
 | `w8a16_full_gdn_wide` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:101-167,257-323; ml/ops/w8a16_gemm_pipelined_m32.rs:318-371 (w8a16_gemm_pipelined_by_m above 64 rows) |
 | `moe_router_gemv` | reference | ml/moe/forward/route.rs:36 |
 | `moe_topk_softmax` | reference | ml/moe/forward/route.rs:117-128 (ties go to the lower expert index) |
+| `moe_gate_up_shared_bf16` | reference | ml/moe/forward.rs:182-215 (BF16 experts, set_bf16_experts); ml/mtp_head/new_bf16_moe.rs:23-56 |
+| `moe_silu_down_shared_bf16` | reference | ml/moe/forward.rs:216-234 |
 | `moe_gate_up_shared_fp8` | reference | ml/moe/forward.rs:235-262 (grid y 0..7 routed experts, y = 8 the shared expert); ml/moe/init.rs:431-434 |
 | `moe_silu_down_shared_fp8` | reference | ml/moe/forward.rs:263-304; ml/moe/init.rs:435-438 |
 | `moe_weighted_sum_blend` | reference | ml/moe/forward.rs:446-476 (sum of w * out plus sigmoid(x . seg) * shared, rounded to BF16 once); the EP reduce is a no-op without EP, ml/moe/forward/ep_reduce.rs:12-50 |

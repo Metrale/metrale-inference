@@ -1312,6 +1312,41 @@ numerics = "reference"
 priority = 10
 cite = "ml/moe/forward/route.rs:117-128 (ties go to the lower expert index)"
 
+# 2026-10-02: A BF16 MoE drafter (the MTP head of nvidia/Qwen3.6-35B-A3B-NVFP4, excluded from
+# quantization) at one row: `MoeLayer::forward`'s BF16-expert arm (`set_bf16_experts`, built by
+# mtp_head/new_bf16_moe.rs). Above one row the batched propose runs the grouped BF16 point.
+[[rule]]
+id = "moe_gate_up_shared_bf16"
+pattern = [
+  { op = "expert_gate_up", weight = "bf16", keep = true },
+  { op = "linear", role = "shared_gate_up", sibling = true },
+]
+kernels = [{ module = "moe_shared_expert_fused_bf16", func = "moe_expert_gate_up_shared_bf16" }]
+repeat = "once"
+emitter = "moe_fused_bf16"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 110
+cite = "ml/moe/forward.rs:182-215 (BF16 experts, set_bf16_experts); ml/mtp_head/new_bf16_moe.rs:23-56"
+
+[[rule]]
+id = "moe_silu_down_shared_bf16"
+pattern = [
+  { op = "silu_mul", local = "experts_act" },
+  { op = "expert_down", weight = "bf16", keep = true },
+  { op = "silu_mul", local = "shared_act", sibling = true },
+  { op = "linear", role = "shared_down" },
+]
+kernels = [{ module = "moe_shared_expert_fused_bf16", func = "moe_expert_silu_down_shared_bf16" }]
+repeat = "once"
+emitter = "moe_fused_bf16"
+rows = [1, 1]
+modes = ["decode", "draft"]
+numerics = "reference"
+priority = 110
+cite = "ml/moe/forward.rs:216-234"
+
 [[rule]]
 id = "moe_gate_up_shared_fp8"
 pattern = [
