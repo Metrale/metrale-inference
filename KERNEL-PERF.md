@@ -342,7 +342,7 @@ notes = ""
 | Quantization and format conversion | every family | 51 | 51 | 8 | 7 | 4 |
 | Embedding and LM head (lookup, overlays, softcap, scale) | every family | 11 | 18 | 7 | 6 | 0 |
 | Sampling (argmax, top-p, feed-forward of the chosen token) | every family | 7 | 7 | 4 | 1 | 1 |
-| Speculative decoding (MTP heads, DFlash drafter, verify helpers) | every family | 3 | 97 | 13 | 0 | 12 |
+| Speculative decoding (MTP heads, DFlash drafter, verify helpers) | every family | 3 | 97 | 12 | 0 | 12 |
 | Hyper-connections (mHC) | families listing it | 27 | 27 | 13 | 2 | 0 |
 | N-gram and memory embeddings (Engram, PLE, n-gram tables) | families listing it | 5 | 16 | 6 | 0 | 2 |
 | Vision encoder (ViT towers) | families listing it | 32 | 36 | 32 | 3 | 0 |
@@ -1586,11 +1586,10 @@ Entry points whose every engine call site belongs to one component.
 
 ### Unique to Speculative decoding (MTP heads, DFlash drafter, verify helpers)
 
-13 entry points.
+12 entry points.
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
-| argmax::`argmax_bf16_batch_lp` | [gb10/common/argmax_bf16.cu:128][f5] | argmax / top-p | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [2 notes][t5] | not measured |
 | attn_prefill_h128::`attn_prefill_h128` | [gb10/common/attn_prefill_h128.cu:46][f10] | prefill (flash) | b200 b300 gb10 hop strix | all 14 decoder families (30 ckpts) | [1 note][t10] | not measured |
 | dflash2::`dflash2_{conv2, selector_walk, topk16}` (3) | [gb10/common/dflash2.cu:31][f26] | DFlash drafter | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [3 notes][t26] | not measured |
 | prefill_paged_indirect::`attn_prefill_paged_indirect` | [gb10/common/prefill_paged_compute.cuh:162][f147] | prefill (flash) | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [6 notes][t147] | not measured |
