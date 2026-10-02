@@ -1589,10 +1589,19 @@ from = { linear = "weight", lm_head = "weight" }
 values = { weight = "fp8/block128x128" }
 how = "instantiation"
 files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w8a16_tc_rows.cu"]
+# 2026-10-02: An E4M3 byte becomes BF16 E4M3 * 2^-120 exactly, activations are staged times 2^60
+# (exact), each 128-K block's FP32 partial sum is scaled by its block scale * 2^60
+# (tc_weight_formats.cuh Fp8Block128); C is written BF16 (tc_rows.cuh:171). Not used as a head.
+pipeline.linear = { in = ["bf16"], act = "bf16", weight = "fp8/block128x128->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline.lm_head = "uninstantiated"
 [[family.point]]
 values = { weight = "nvfp4/g16" }
 how = "instantiation"
 files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu"]
+# 2026-10-02: BF16(E2M1 x E4M3) exactly per weight, the FP32 sum times s2 once per output
+# (Nvfp4G16 `out`), BF16 logits; only the declared NVFP4 head uses it.
+pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline.linear = "uninstantiated"
 
 [[family]]
 id = "moe_nvfp4_grouped"
