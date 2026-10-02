@@ -97,6 +97,10 @@ impl ModelLifecycle for TransformerModel {
         self.num_total_blocks_dispatch()
     }
 
+    fn kv_block_bytes(&self) -> usize {
+        self.kv_block_bytes_dispatch()
+    }
+
     fn reclaim_prefix_blocks(&self, num_blocks: usize) -> usize {
         self.reclaim_prefix_blocks_dispatch(num_blocks)
     }

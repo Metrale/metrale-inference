@@ -293,6 +293,7 @@ context_tokens = 1
 [[family]]
 id = "attn"
 description = "test"
+compute = "cuda_core"
 kernels = ["attn_a::attn"]
 rows = [1, 1]
 op = [{ op = "paged_attention" }]
@@ -312,6 +313,7 @@ values = {}
         inherits: None,
         defines: Default::default(),
         defaults: Default::default(),
+        tensor_core: None,
     };
     let sources = ClassSources {
         files: [
@@ -343,6 +345,7 @@ fn a_recipe_pin_stands_on_its_own_class_only() {
             ("ssm_batched_recurrent".to_string(), "true".to_string()),
             ("decode_split_silu".to_string(), "true".to_string()),
         ]),
+        tensor_core: None,
     };
     let policy = crate::fuser::Policy {
         opt_in_levers: BTreeSet::new(),

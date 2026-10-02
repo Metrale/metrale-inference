@@ -189,7 +189,8 @@ fn the_swap_the_winner_already_performed_is_not_repeated() {
     let a = cli::ServeArgs::parse_from(["met", "org/m"]);
     let mut b = cli::ServeArgs::parse_from(["met", "org/m"]);
     assert_eq!(a, b, "same argv");
-    b.max_batch_size = a.max_batch_size + 1;
+    b.max_batch_size =
+        metrale_model_engine::factory::SlotRequest::Count(a.max_batch_size.ceiling() + 1);
     assert_ne!(a, b, "a different recipe for the same model is a real swap");
 }
 

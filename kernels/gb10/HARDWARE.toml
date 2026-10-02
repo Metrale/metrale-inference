@@ -226,3 +226,121 @@ ffn_gateup_fused = false
 w8a8_prefill_max_m_widening = 64
 w8a8_prefill_max_m_narrowing = 384
 
+
+# 2026-10-02: The tensor-core policy (crates/circuit/src/hardware/tc_policy.rs): the ops a GB10 plan
+# MUST run on a tensor-core kernel, by mode, row count and weight format. Compute units are the kernel
+# families' (common/KERNEL_FAMILIES.toml `compute`, `mma`). A plan that runs a covered op off tensor
+# cores fails `met circuit plan` (and the matrix `--check` in CI) unless an exemption below lists the
+# op, mode, rows and every kernel of its group, with its kind:
+#   measured: the CUDA-core kernel beats the tensor-core tile there (evidence names the measurement);
+#   shape:    the shape leaves no MMA tile to fill;
+#   backlog:  a known violation awaiting a tensor-core kernel (the tensor-core backlog).
+# Rows are the plan's rows: sequences x tokens per sequence for decode and verify, sequences for
+# multi_seq and draft. The circuit plans no prefill mode yet, so attention prefill and the GDN chunked
+# prefill are not covered here; they join when the circuit plans prefill.
+[tensor_core_policy]
+
+# 2026-10-02: Every weight-reading matmul and the attention of every planned mode, from one row.
+[[tensor_core_policy.require]]
+ops = ["linear", "lm_head", "router", "expert_gate_up", "expert_down", "paged_attention"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+min_rows = 1
+weights = ["any"]
+
+# 2026-10-02: Exemptions: every covered op a GB10 plan runs off tensor cores today, each with its kind.
+# The `backlog` entries are the tensor-core backlog; an entry is removed when its kernels move to
+# tensor cores (or turns `measured` with its evidence).
+[[tensor_core_policy.exempt]]
+ops = ["linear", "lm_head"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 3]
+kernels = [
+  "w4a16_gemv::w4a16_gemv_sw",
+  "w4a16_gemv::w4a16_gemv_qg",
+  "w4a16_gemv::w4a16_gemv_batch2",
+  "w4a16_gemv::w4a16_gemv_batch3",
+  "w4a16_gemv::w4a16_gemv_dual_batch2",
+  "w4a16_gemv::w4a16_gemv_dual_batch3",
+  "w4a16_gemv::w4a16_gemv_qg_batch2",
+  "w4a16_gemv::w4a16_gemv_qg_batch3",
+  "w4a16_gemv_fused::w4a16_gemv_dual",
+  "w4a16_gemv_fused::w4a16_gemv_dual_sw",
+  "w4a16_gemv_fused::w4a16_gemv_silu_input_sw",
+]
+kind = "backlog"
+reason = "NVFP4 W4A16 CUDA-core GEMV at 1-3 rows (the 27B NVFP4 decode at C=1, the MTP draft head). The tensor-core row tier w4a16_tc (mma.sync.m16n8k16.bf16) exists; measure it against this GEMV at M=1-3: a win moves the rules to it, a loss turns this entry into a measured exemption."
+[[tensor_core_policy.exempt]]
+ops = ["lm_head", "router", "linear"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 64]
+kernels = [
+  "gemv::dense_gemv_bf16",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
+]
+kind = "backlog"
+reason = "BF16 CUDA-core GEMV and batched GEMV: the BF16 head at 1-8 rows, the MoE router at 1-64 rows, the MTP draft projections at 1 row. The tensor-core tier dense_bf16_tc (tc8/tc16/tc32) exists; measure it against these at M=1-32."
+[[tensor_core_policy.exempt]]
+ops = ["paged_attention"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 128]
+kernels = [
+  "paged_decode::paged_decode_attn",
+  "paged_decode_fp8::paged_decode_attn_fp8",
+]
+kind = "backlog"
+reason = "Paged decode attention computes QK^T and PV on CUDA cores at every row count; no tensor-core decode-attention kernel exists on this class yet (GQA groups can fill an m16n8k16 tile)."
+[[tensor_core_policy.exempt]]
+ops = ["linear:ba"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 128]
+kernels = [
+  "ssm_preprocess::dense_gemv_ba_gates",
+  "ssm_preprocess::dense_gemm_ba_gates_prefill",
+  "ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper",
+]
+kind = "backlog"
+reason = "The GatedDeltaNet beta/decay projection (N = 2 x value heads) runs as a CUDA-core GEMV/GEMM fused with the gate math; a tensor-core tile fits N >= 96 at 16+ rows."
+[[tensor_core_policy.exempt]]
+ops = ["linear:shared_gate"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 128]
+kernels = [
+  "moe_expert_gemv::moe_weighted_sum_blend",
+  "moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped",
+  "moe_unpermute_blend::moe_unpermute_blend",
+]
+kind = "shape"
+reason = "The shared-expert gate projects to one column and is folded into the expert blend: no MMA tile to fill."
+[[tensor_core_policy.exempt]]
+ops = ["expert_gate_up", "expert_down", "linear:shared_gate_up", "linear:shared_up", "linear:shared_down"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 64]
+kernels = [
+  "moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8",
+  "moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8",
+  "moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped",
+  "moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped",
+  "moe_shared_expert_fused_bf16::moe_expert_gate_up_shared_bf16",
+  "moe_shared_expert_fused_bf16::moe_expert_silu_down_shared_bf16",
+]
+kind = "backlog"
+reason = "FP8 and BF16 MoE experts on CUDA cores (1-row fused and scalar grouped, the 35B-A3B FP8 default at C=1 and C=16). The tensor-core grouped twins (moe_grouped_tc) exist; their selection is the open MoE-energy work."
+[[tensor_core_policy.exempt]]
+ops = ["expert_gate_up", "expert_down", "linear:shared_gate_up", "linear:shared_up", "linear:shared_down"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 64]
+kernels = [
+  "moe_nvfp4_grouped::moe_expert_gate_up_act_nvfp4_grouped",
+  "moe_nvfp4_grouped::moe_expert_down_act_nvfp4_grouped",
+  "moe_expert_gemv::moe_expert_gemv",
+  "moe_relu2_fused::moe_expert_relu2_down_shared",
+]
+kind = "backlog"
+reason = "NVFP4 MoE experts on CUDA cores (Nemotron-3, Qwen3.6-35B-A3B NVFP4); their circuit plans show the experts as gaps today. The NVFP4 MoE blueprint and its tensor-core grouped point (moe_grouped_tc, nvfp4/g16, mma.sync.m16n8k16.bf16) are in progress."
+[[tensor_core_policy.exempt]]
+ops = ["lm_head"]
+modes = ["draft"]
+rows = [17, 32]
+kernels = ["w4a16_gemv::w4a16_gemv_batch32"]
+kind = "backlog"
+reason = "The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batch32 GEMV: the tensor-core row tiers stop at 16 rows and the emitter refuses the tile GEMM twin. A tc32 tier (or the tile twin) is the tensor-core path."

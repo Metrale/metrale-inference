@@ -32,6 +32,8 @@ mod render;
 mod render_matrix;
 mod render_routes;
 pub mod sources;
+pub mod tc_policy;
+mod tc_policy_render;
 
 #[cfg(test)]
 mod fp4_costing_tests;
@@ -95,6 +97,17 @@ pub enum HwError {
         /// 2026-09-30: The class defines the macro.
         defined: bool,
     },
+    /// 2026-10-02: A plan runs a policy-covered op off tensor cores with no exemption.
+    #[error(
+        "kernels/{class}/HARDWARE.toml [tensor_core_policy]: these ops must run on tensor cores \
+         and no exemption lists them:\n  {violations}"
+    )]
+    TensorCore {
+        /// 2026-10-02: The class.
+        class: String,
+        /// 2026-10-02: One line per violation ([`tc_policy::describe`]).
+        violations: String,
+    },
     /// 2026-09-30: The model.
     #[error("{0}")]
     Model(String),
@@ -121,6 +134,9 @@ pub struct HwReport {
     pub header: Header,
     /// 2026-09-30: One table per report run ([`plan::report_runs`]).
     pub tables: Vec<gaps::GapTable>,
+    /// 2026-10-02: The tensor-core audit of each report run (its routes included), in the
+    /// order of `tables`; empty when the class states no policy.
+    pub tensor_core: Vec<tc_policy::TcAudit>,
     /// 2026-09-30: The runtime routes that apply to those runs, estimated.
     pub routes: Vec<render_routes::RouteRow>,
     /// 2026-09-30: Prefill estimates: (tokens, microseconds).
@@ -184,6 +200,7 @@ pub fn plan_one(
     let header =
         crate::render::with_settings(&model::header_on(model, &resolved.device.class), &policy);
     let planned = plan::fuse_on(&resolved, &model.circuit, &policy, run)?;
+    tc_policy::enforce(&resolved, &model.circuit, &planned)?;
     Ok(OnePlan {
         resolved,
         policy,
@@ -241,8 +258,10 @@ pub fn build_report(
         crate::render::with_settings(&model::header_on(&model, &resolved.device.class), &policy);
     let c = &model.circuit;
     let mut tables = Vec::new();
+    let mut tensor_core = Vec::new();
     for run in plan::report_runs() {
         let planned = plan::fuse_on(&resolved, c, &policy, run)?;
+        tensor_core.extend(tc_policy::enforce(&resolved, c, &planned)?);
         tables.push(gaps::gap_table(
             &resolved,
             c,
@@ -297,6 +316,7 @@ pub fn build_report(
         class_settings,
         header,
         tables,
+        tensor_core,
         routes,
         prefill,
         footprint,

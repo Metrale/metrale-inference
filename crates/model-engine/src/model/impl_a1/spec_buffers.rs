@@ -26,7 +26,8 @@ fn lmhead_tgemm_enabled() -> bool {
 }
 
 /// 2026-09-26: The padded transposed lm_head twin and its row stride, or `None`.
-pub(super) fn build_lm_head_nvfp4_t(
+/// 2026-10-01: Called by `factory::build` before the KV pool is sized, so the KV budget counts it.
+pub(crate) fn build_lm_head_nvfp4_t(
     lm_head_nvfp4: &Option<QuantizedWeight>,
     config: &ModelConfig,
     gpu: &dyn GpuBackend,

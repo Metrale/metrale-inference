@@ -24,14 +24,14 @@ use crate::cli;
 pub(super) fn per_sequence_reserve(args: &cli::ServeArgs, config: &ModelConfig) -> usize {
     let spec_on = args.speculative || args.self_speculative || args.dflash;
     let per_seq = per_sequence_state_bytes(config, args.max_seq_len, spec_on).unwrap_or_default();
-    let charge = per_seq.for_batch(args.max_batch_size);
+    let charge = per_seq.for_batch(args.max_batch_size.ceiling());
     if charge > 0 {
         tracing::info!(
             "Per-sequence state reserve: {} MB = {} seq x ({} MB target DSA layers + {} MB \
              proposer). Owned per sequence, replicated per rank (EP does not shard the \
              indexer); previously covered only by cuda_headroom.",
             charge / (1024 * 1024),
-            args.max_batch_size.max(1),
+            args.max_batch_size.ceiling().max(1),
             per_seq.target_layers / (1024 * 1024),
             per_seq.proposer / (1024 * 1024),
         );

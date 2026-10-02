@@ -316,15 +316,15 @@ fn the_promotion_debt_section_is_always_rendered() {
     let body = super::render(&root, &prs);
     assert!(
         body.contains(
-            "### Promotion-candidate debt\n\nThese gates are NOT required, so these PRs can merge without them. Each row is coverage this repository chose not to buy — recorded so the choice stays visible rather than becoming an assumption.\n\n| PR | merged? | title | gates that wanted to run |\n|---|---|---|---|\n| #1 | not yet | a scheduler change | cross-contamination, scheduler-equivalence |\n"
+            "### Promotion-candidate debt\n\nThese gates are NOT required, so these PRs can merge without them. Each row is coverage this repository chose not to buy — recorded so the choice stays visible rather than becoming an assumption.\n\n| PR | merged? | title | gates that wanted to run |\n|---|---|---|---|\n| #1 | not yet | a scheduler change | cross-contamination, scheduler-equivalence, default-tier-boot |\n"
         ),
         "the unconditional debt section must retain its policy, schema, and row: {body}"
     );
 }
 
-/// 2026-09-26: Each PR's debt comes from its own paths: a docs PR owes
-/// nothing, a scheduler PR owes `cross-contamination` and
-/// `scheduler-equivalence`.
+/// 2026-10-01: Each PR's debt comes from its own paths: a docs PR owes
+/// nothing, a scheduler PR owes `cross-contamination`,
+/// `scheduler-equivalence` and `default-tier-boot`.
 #[test]
 fn debt_is_derived_from_the_prs_own_paths() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -357,7 +357,11 @@ fn debt_is_derived_from_the_prs_own_paths() {
     assert_eq!(views[0].promotion_debt, Vec::<&str>::new());
     assert_eq!(
         views[1].promotion_debt,
-        vec!["cross-contamination", "scheduler-equivalence"]
+        vec![
+            "cross-contamination",
+            "scheduler-equivalence",
+            "default-tier-boot"
+        ]
     );
 }
 
@@ -394,7 +398,7 @@ fn the_debt_table_distinguishes_merged_from_open() {
     let body = super::render(&root, &prs);
     assert!(
         body.contains(
-            "| #1 | not yet | still open | cross-contamination, scheduler-equivalence |\n| #2 | **yes** | already landed | cross-contamination, scheduler-equivalence |\n"
+            "| #1 | not yet | still open | cross-contamination, scheduler-equivalence, default-tier-boot |\n| #2 | **yes** | already landed | cross-contamination, scheduler-equivalence, default-tier-boot |\n"
         ),
         "open warning and accrued merged debt must remain distinct: {body}"
     );

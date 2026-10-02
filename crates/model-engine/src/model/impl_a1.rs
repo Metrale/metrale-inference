@@ -41,6 +41,8 @@ mod kernels;
 mod spec_buffers;
 mod ssm_setup;
 
+pub(crate) use spec_buffers::build_lm_head_nvfp4_t;
+
 use kernels::{AuxKernels, ModelKernels};
 
 impl TransformerModel {
@@ -58,6 +60,9 @@ impl TransformerModel {
         // decoding has MTP weights; otherwise it is `None` and the proposer uses
         // `lm_head_nvfp4` (see `draft_lm_head_nvfp4`).
         mtp_lm_head_nvfp4: Option<QuantizedWeight>,
+        // 2026-10-01: The padded transposed twin of `lm_head_nvfp4` and its row stride
+        // (`build_lm_head_nvfp4_t`), built by the factory before the KV pool is sized.
+        lm_head_nvfp4_t: Option<(QuantizedWeight, u32)>,
         layers: Vec<Box<dyn TransformerLayer>>,
         buffers: BufferArena,
         kv_cache: PagedKvCache,
@@ -182,12 +187,9 @@ impl TransformerModel {
         kv_cache.zero_block(dummy_kv_block, gpu.as_ref(), gpu.default_stream())?;
         gpu.synchronize(gpu.default_stream())?;
 
-        // 2026-09-25: Transposed lm_head twin with its row stride padded to a
-        // multiple of 128, so the tile GEMM's 16-byte `cp.async` B loads stay
-        // aligned whatever the vocab size. Built unless
-        // `METRALE_NO_LMHEAD_TGEMM=1`.
-        let lm_head_nvfp4_t =
-            spec_buffers::build_lm_head_nvfp4_t(&lm_head_nvfp4, &config, gpu.as_ref())?;
+        // 2026-09-25: `lm_head_nvfp4_t`: the transposed lm_head twin with its row stride padded
+        // to a multiple of 128, so the tile GEMM's 16-byte `cp.async` B loads stay aligned
+        // whatever the vocab size. Built unless `METRALE_NO_LMHEAD_TGEMM=1`.
         // 2026-09-25: The drafter may use the twin only when its head is the
         // main head (`mtp_lm_head_nvfp4` absent): the twin is a transpose of
         // `lm_head_nvfp4`, so a dedicated draft head would score drafts against

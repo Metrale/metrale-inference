@@ -48,6 +48,13 @@ pub trait GpuBackend: Send + Sync {
         None
     }
 
+    /// 2026-10-01: Device memory the driver holds for this backend's small allocations beyond
+    /// their bytes (`cuda_backend::alloc_ledger::chunk_slack`): `Some` on CUDA, `None` (the
+    /// default) on a backend without an allocation ledger.
+    fn chunk_slack_bytes(&self) -> Option<usize> {
+        None
+    }
+
     /// 2026-09-25: Live device memory by allocating call site; `None` (the
     /// default) on every backend but CUDA.
     fn alloc_report(&self, _top_n: usize, _min_mb: usize) -> Option<String> {

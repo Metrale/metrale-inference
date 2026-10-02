@@ -389,3 +389,18 @@ fn a_change_to_the_equality_driver_reopens_that_gate_and_no_other() {
         "editing the equality detector must cost its own gate and nothing else"
     );
 }
+
+/// 2026-10-01: Every gate excludes the default-tier boot driver, which only reads `/memory`
+/// after a warmup wave, so editing it re-opens no required gate and owes only its own run;
+/// an engine path still owes it.
+#[test]
+fn a_change_to_the_boot_driver_reopens_no_gate_and_owes_only_itself() {
+    let path = "crates/bench/src/benchmarks/default_tier_boot/memory.rs";
+    assert_eq!(coverage::invalidated_by([path]), Vec::<&str>::new());
+    assert_eq!(coverage::promotion_debt([path]), ["default-tier-boot"]);
+    assert!(
+        coverage::promotion_debt(["crates/model-engine/src/factory/build/kv_budget.rs"])
+            .contains(&"default-tier-boot"),
+        "the KV budget is what this check measures"
+    );
+}

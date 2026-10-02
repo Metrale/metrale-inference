@@ -186,10 +186,10 @@ pub(super) fn kv_floor_bytes(
     kv_dtype: KvCacheDtype,
 ) -> usize {
     let tokens = kv_floor_tokens().min(args.max_seq_len);
-    if tokens == 0 || args.max_batch_size == 0 {
+    if tokens == 0 || args.max_batch_size.ceiling() == 0 {
         return 0;
     }
-    args.max_batch_size * tokens * kv_bytes_per_token(args, config, kv_dtype)
+    args.max_batch_size.ceiling() * tokens * kv_bytes_per_token(args, config, kv_dtype)
 }
 
 /// 2026-09-26: Bytes one cached token costs across every attention layer, K

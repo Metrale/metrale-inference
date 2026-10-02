@@ -65,7 +65,8 @@ pub(crate) fn build_model(
     gpu: Box<dyn metrale_gpu_runtime::gpu::GpuBackend>,
     max_batch_tokens: usize,
     kv_dtype: metrale_cache::kv_cache::KvCacheDtype,
-    inference_reserve: usize,
+    // 2026-10-01: The pre-load reserve at any slot count (`reserve_plan.rs`).
+    reserve_plan: &super::preflight::reserve_plan::ReservePlan,
     layer_dtypes: Vec<metrale_cache::kv_cache::KvCacheDtype>,
     hss_cache_blocks_per_seq: Option<u32>,
     prefix_cache: Box<dyn metrale_telemetry::prefix_cache::PrefixCache>,
@@ -74,7 +75,7 @@ pub(crate) fn build_model(
     lora_args: Option<metrale_model_engine::factory::LoraBuildArgs<'_>>,
     nllb_lang: Option<(u32, u32)>,
     nllb_lora_dir: Option<std::path::PathBuf>,
-) -> Result<Box<dyn metrale_model_engine::traits::Model>> {
+) -> Result<metrale_model_engine::factory::BuiltModel> {
     // 2026-09-26: `marconi_min_tokens` is a process-wide `OnceLock` fixed by its
     // first read or write, so it is set here, before the model exists. A
     // `false` return means it was already fixed and the flag had no effect.
@@ -99,7 +100,10 @@ pub(crate) fn build_model(
         max_batch_tokens,
         args.block_size,
         args.max_seq_len,
-        args.max_batch_size,
+        metrale_model_engine::factory::SlotPlan {
+            request: args.max_batch_size,
+            reserve_for: &|slots| reserve_plan.inference_reserve(slots),
+        },
         mtp_quant,
         args.speculative || args.dflash,
         prefix_cache,
@@ -115,7 +119,6 @@ pub(crate) fn build_model(
             args.resolved_num_drafts()
         },
         kv_dtype,
-        inference_reserve,
         args.gpu_memory_utilization,
         args.ssm_cache_slots,
         layer_dtypes,
@@ -235,7 +238,7 @@ pub(crate) fn maybe_run_ep_worker(
     let worker_hss_cfg = early_high_speed_swap_cfg.clone();
     // 2026-09-26: Copied out of `args`: the `'static` worker thread cannot
     // borrow it.
-    let max_batch_size = args.max_batch_size;
+    let max_batch_size = args.built_max_batch_size()?;
     let handle = std::thread::spawn(move || {
         model_owned
             .bind_gpu_to_thread()

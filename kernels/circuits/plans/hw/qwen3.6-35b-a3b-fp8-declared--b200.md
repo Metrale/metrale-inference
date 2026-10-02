@@ -28,6 +28,10 @@ The checkpoint's formats are kept; this is how the device and its class's compil
 | W16A16 | bf16 | bf16 | 115 | native bf16 |
 | W8A8 | fp8/block128x128 | fp8/g128 | 268 | native fp8 |
 
+## Tensor-core policy
+
+kernels/b200/HARDWARE.toml states no `[tensor_core_policy]`: nothing is enforced on this class. The gap report names the compute unit of every planned group.
+
 ## Roofline estimates
 
 Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are costed per row. No launch overhead: a ceiling, not a prediction.
@@ -122,52 +126,52 @@ Estimated step 0.482 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 27.4% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 27.4% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 20.4% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 18.1% | Shared, unmeasured | moe_fp8_1row | no rule of this class covers it; family `moe_fp8_1row` implements the op |
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 9.1% | Shared, unmeasured | moe_fp8_1row | no rule of this class covers it; family `moe_fp8_1row` implements the op |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 6.8% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 4.5% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.recur | gdn_recurrence | - | - | 30 | 3.4% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row |
+| gdn.recur | gdn_recurrence | - | - | 30 | 3.4% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
 | moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 2.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| attn.attend | paged_attention | - | - | 10 | 2.3% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
+| attn.attend | paged_attention | - | - | 10 | 2.3% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | attn.o | linear:o | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 2.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 1.1% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 1.1% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=moe_router_gemv |
+| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 1.1% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=moe_router_gemv compute=cuda_core |
 | attn.k | linear:k | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.v | linear:v | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.2% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| gdn.l2 | l2_norm | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.conv | conv1d_update | - | - | 30 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| moe_ffn.blend | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_expert_gemv::moe_weighted_sum_blend rule=moe_weighted_sum_blend |
-| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row |
-| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.2% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| gdn.l2 | l2_norm | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 30 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| moe_ffn.blend | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_expert_gemv::moe_weighted_sum_blend rule=moe_weighted_sum_blend compute=cuda_core |
+| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row compute=memory |
+| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
 | moe_ffn.experts_act | silu_mul | - | - | 40 | 0.0% | Shared, unmeasured | silu_mul | no rule of this class covers it; family `silu_mul` implements the op |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | moe_ffn.eact_quant | act_quant:fp8/g128 | - | - | 40 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| moe_ffn.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
+| moe_ffn.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | gdn.gated_quant | act_quant:fp8/g128 | - | - | 30 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| gdn.add | residual_add | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_expert_gemv::moe_weighted_sum_blend rule=moe_weighted_sum_blend |
-| attn.q_split | split | - | - | 10 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
-| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
+| gdn.add | residual_add | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_expert_gemv::moe_weighted_sum_blend rule=moe_weighted_sum_blend compute=cuda_core |
+| attn.q_split | split | - | - | 10 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | moe_ffn.xn_quant | act_quant:fp8/g128 | - | - | 40 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul rule=sigmoid_gate_mul |
+| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul rule=sigmoid_gate_mul compute=memory |
 | gdn.xn_quant | act_quant:fp8/g128 | - | - | 30 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved |
-| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows |
+| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved compute=memory |
+| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows compute=memory |
 | attn.ag_quant | act_quant:fp8/g128 | - | - | 10 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
+| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared, unmeasured | silu_mul | no rule of this class covers it; family `silu_mul` implements the op |
-| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
+| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | moe_ffn.sact_quant | act_quant:fp8/g128 | - | - | 40 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
 | attn.xn_quant | act_quant:fp8/g128 | - | - | 10 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | moe_topk::moe_topk_softmax rule=moe_topk_softmax |
-| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows |
-| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | moe_topk::moe_topk_softmax rule=moe_topk_softmax compute=memory |
+| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows compute=memory |
+| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=16
@@ -178,50 +182,50 @@ Estimated step 2.481 ms (roofline projection, unmeasured). Shared 0.0% (measured
 |---|---|---|---|---:|---:|---|---|---|
 | moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 44.8% | Shared, unmeasured | moe_grouped_fp8_scalar | no rule of this class covers it; family `moe_grouped_fp8_scalar` implements the op |
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 22.5% | Shared, unmeasured | moe_grouped_fp8_scalar | no rule of this class covers it; family `moe_grouped_fp8_scalar` implements the op |
-| gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row |
-| attn.attend | paged_attention | - | - | 10 | 7.0% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
+| gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
+| attn.attend | paged_attention | - | - | 10 | 7.0% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 4.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 1.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.9% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.7% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.7% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
 | moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 0.5% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.o | linear:o | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.4% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 0.2% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 0.2% | Shared, unmeasured | dense_bf16 | dense_gemv_bf16_batchm::dense_gemv_bf16_batchm rule=moe_grouped_router_rows |
-| gdn.l2 | l2_norm | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.conv | conv1d_update | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| moe_ffn.blend | blend | - | - | 40 | 0.1% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped |
-| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.1% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row |
-| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
+| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 0.2% | Shared, unmeasured | dense_bf16 | dense_gemv_bf16_batchm::dense_gemv_bf16_batchm rule=moe_grouped_router_rows compute=cuda_core |
+| gdn.l2 | l2_norm | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| moe_ffn.blend | blend | - | - | 40 | 0.1% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped compute=cuda_core |
+| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.1% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row compute=memory |
+| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
 | moe_ffn.experts_act | silu_mul | - | - | 40 | 0.1% | Shared, unmeasured | silu_mul | no rule of this class covers it; family `silu_mul` implements the op |
 | attn.k | linear:k | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.1% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.v | linear:v | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.1% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | moe_ffn.eact_quant | act_quant:fp8/g128 | - | - | 40 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| moe_ffn.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
+| moe_ffn.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | gdn.gated_quant | act_quant:fp8/g128 | - | - | 30 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| gdn.add | residual_add | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.q_split | split | - | - | 10 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
-| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
+| gdn.add | residual_add | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.q_split | split | - | - | 10 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | moe_ffn.xn_quant | act_quant:fp8/g128 | - | - | 40 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched |
+| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched compute=memory |
 | gdn.xn_quant | act_quant:fp8/g128 | - | - | 30 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped |
-| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
+| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
+| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped compute=cuda_core |
+| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
 | attn.ag_quant | act_quant:fp8/g128 | - | - | 10 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
+| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared, unmeasured | silu_mul | no rule of this class covers it; family `silu_mul` implements the op |
-| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
+| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | moe_ffn.sact_quant | act_quant:fp8/g128 | - | - | 40 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
 | attn.xn_quant | act_quant:fp8/g128 | - | - | 10 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | moe_topk::moe_topk_softmax_rows + moe_fp8_grouped_sort::moe_fp8_grouped_sort rule=moe_grouped_topk_sort |
-| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | moe_topk::moe_topk_softmax_rows + moe_fp8_grouped_sort::moe_fp8_grouped_sort rule=moe_grouped_topk_sort compute=memory |
+| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=128
@@ -231,19 +235,19 @@ Estimated step 8.385 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
 | moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 32.8% | Shared, unmeasured | moe_prefill_w8a8 | no rule of this class covers it; family `moe_prefill_w8a8` implements the op |
-| gdn.recur | gdn_recurrence | - | - | 30 | 25.2% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row |
-| attn.attend | paged_attention | - | - | 10 | 16.7% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
+| gdn.recur | gdn_recurrence | - | - | 30 | 25.2% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
+| attn.attend | paged_attention | - | - | 10 | 16.7% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 16.6% | Shared, unmeasured | moe_prefill_w8a8 | no rule of this class covers it; family `moe_prefill_w8a8` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 1.6% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 1.6% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 1.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 0.4% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.l2 | l2_norm | - | - | 30 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.conv | conv1d_update | - | - | 30 | 0.3% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
+| gdn.l2 | l2_norm | - | - | 30 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 30 | 0.3% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
 | moe_ffn.blend | blend | - | - | 40 | 0.3% | Shared, unmeasured | moe_blend | no rule of this class covers it; family `moe_blend` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.3% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row |
-| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
+| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.3% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row compute=memory |
+| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
 | moe_ffn.experts_act | silu_mul | - | - | 40 | 0.2% | Shared, unmeasured | silu_mul | no rule of this class covers it; family `silu_mul` implements the op |
 | moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 0.2% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.o | linear:o | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.1% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
@@ -251,31 +255,31 @@ Estimated step 8.385 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | head.argmax | argmax | - | - | 1 | 0.1% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | moe_ffn.eact_quant | act_quant:fp8/g128 | - | - | 40 | 0.1% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| moe_ffn.add | residual_add | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
+| moe_ffn.add | residual_add | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | gdn.gated_quant | act_quant:fp8/g128 | - | - | 30 | 0.1% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| gdn.add | residual_add | - | - | 30 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.q_split | split | - | - | 10 | 0.1% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
-| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
+| gdn.add | residual_add | - | - | 30 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.q_split | split | - | - | 10 | 0.1% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | moe_ffn.xn_quant | act_quant:fp8/g128 | - | - | 40 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched |
+| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched compute=memory |
 | gdn.xn_quant | act_quant:fp8/g128 | - | - | 30 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
+| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
 | moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
+| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
 | attn.ag_quant | act_quant:fp8/g128 | - | - | 10 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
-| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
+| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared, unmeasured | silu_mul | no rule of this class covers it; family `silu_mul` implements the op |
 | attn.k | linear:k | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.v | linear:v | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
+| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | moe_ffn.sact_quant | act_quant:fp8/g128 | - | - | 40 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
 | attn.xn_quant | act_quant:fp8/g128 | - | - | 10 | 0.0% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
 | moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | no rule of this class covers it; family `moe_topk` implements the op |
-| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Rule kernels this device cannot run

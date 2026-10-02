@@ -130,7 +130,10 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
     // is attested separately (and by the closure hash).
     eprintln!("rules: FUSIONS.toml sha256 {}", loaded.rules_digest);
     let text = match args.action {
-        CircuitAction::Show(_) => metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows)?,
+        CircuitAction::Show(_) => {
+            let families = families_for(&inst)?;
+            metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows, &families)?
+        }
         CircuitAction::Diff(_) | CircuitAction::Venn(_) | CircuitAction::Plan(_) => {
             unreachable!("returned above")
         }
@@ -187,6 +190,24 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         other => Ok(other?),
     }
+}
+
+/// 2026-10-02: KERNEL_FAMILIES.toml per hardware, embedded beside FUSIONS.toml so `show` names
+/// the compute unit of each group (`metrale_circuit::venn::compute`) as this binary declares it.
+const FAMILIES: [(&str, &str); 1] = [(
+    "gb10",
+    include_str!("../../../../kernels/gb10/common/KERNEL_FAMILIES.toml"),
+)];
+
+/// 2026-10-02: The kernel families of the instance's hardware (the first `target` segment).
+pub(crate) fn families_for(inst: &Instance) -> Result<metrale_circuit::venn::Families> {
+    let hw = inst.target.split('/').next().unwrap_or_default();
+    let text = FAMILIES
+        .iter()
+        .find(|(h, _)| *h == hw)
+        .map(|(_, t)| *t)
+        .with_context(|| format!("no KERNEL_FAMILIES.toml embedded for hardware `{hw}`"))?;
+    Ok(metrale_circuit::venn::parse_families(text)?)
 }
 
 #[cfg(test)]
