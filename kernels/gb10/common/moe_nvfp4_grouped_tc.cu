@@ -40,10 +40,9 @@
 //   NVFP4_GROUPED_TC_* in nvfp4_moe_grouped.rs.
 
 #include <cuda_bf16.h>
-#include <cuda_fp16.h>
-#include <cuda_fp8.h>
 
 #include "moe_grouped_tc.cuh"
+#include "tc_weight_formats.cuh"
 
 #define NTC_WARPS 4
 #define NTC_THREADS (NTC_WARPS * 32)
@@ -58,78 +57,6 @@
 #define NTC_DOWN_G 1
 #define NTC_GU_COLS (NTC_WARPS * 16 * NTC_GU_MT)
 #define NTC_DOWN_COLS (NTC_WARPS * 16 * NTC_DOWN_MT)
-
-// 2026-10-02: Four E2M1 values (element e in bits 4e .. 4e + 3 of h; higher bits ignored) as two
-// BF16 pairs: d[0] = elements 0 (low half), 1; d[1] = elements 2, 3. The magnitude picks the low
-// and high BF16 bytes from two 8-entry byte tables; the sign bit moves to bit 15 or 31.
-__device__ __forceinline__ void ntc_e2m1x4_bf16(unsigned int h, unsigned int* d) {
-    // Low bytes of |v| for magnitudes 0..7 (0, 0.5, 1, 1.5 | 2, 3, 4, 6) and high bytes.
-    const unsigned int L0 = 0xC0800000u, L1 = 0xC0804000u;
-    const unsigned int H0 = 0x3F3F3F00u, H1 = 0x40404040u;
-    const unsigned int s = h & 0x7777u;
-    const unsigned int lo = __byte_perm(L0, L1, s), hi = __byte_perm(H0, H1, s);
-    d[0] = __byte_perm(lo, hi, 0x5140u) | ((h << 12) & 0x8000u) | ((h << 24) & 0x80000000u);
-    d[1] = __byte_perm(lo, hi, 0x7362u) | ((h << 4) & 0x8000u) | ((h << 16) & 0x80000000u);
-}
-
-// 2026-10-02: E4M3 byte b as a BF16 pair (b, b), exact.
-__device__ __forceinline__ unsigned int ntc_e4m3_bf16x2(unsigned int b) {
-    const __half_raw h = __nv_cvt_fp8_to_halfraw((__nv_fp8_storage_t)b, __NV_E4M3);
-    const __nv_bfloat16 v = __float2bfloat16_rn(__half2float(__half(h)));
-    const unsigned short u = *(const unsigned short*)&v;
-    return (unsigned int)u | ((unsigned int)u << 16);
-}
-
-__device__ __forceinline__ unsigned int ntc_hmul2(unsigned int a, unsigned int s) {
-    __nv_bfloat162 r = __hmul2(*(const __nv_bfloat162*)&a, *(const __nv_bfloat162*)&s);
-    return *(unsigned int*)&r;
-}
-
-// 2026-10-02: The NVFP4 weight-format policy of gtc_warp. A 16-byte lane load is 32 K of a 128-K
-// chunk; word j / 2 of it feeds MMA j (its low four elements for even j, its high four for odd
-// j). Words 0, 1 lie in E4M3 block 2t of the chunk and words 2, 3 in block 2t + 1; one 2-byte
-// load per row and chunk fetches both. A weight enters as BF16(E2M1 * E4M3) (exact) and s2
-// multiplies the FP32 sum once.
-struct Nvfp4G16 {
-    static constexpr int CHUNK_K = 128;
-    static constexpr bool FOLDS = false;
-    static constexpr float ACT_LIFT = 1.0f;
-    struct Mat { const unsigned char* w; const unsigned char* s; float s2; };
-    struct Tile { const unsigned char* wr[2]; const unsigned char* sr[2]; float s2; };
-    using Sc = unsigned int;
-    static __device__ __forceinline__ Tile tile(const Mat& M, unsigned int col, unsigned int g, unsigned int t, unsigned int K) {
-        Tile T;
-        #pragma unroll
-        for (int h = 0; h < 2; h++) {
-            T.wr[h] = M.w + (unsigned long long)(col + g + 8 * h) * (K / 2) + t * 16;
-            T.sr[h] = M.s + (unsigned long long)(col + g + 8 * h) * (K / 16) + 2 * t;
-        }
-        T.s2 = M.s2;
-        return T;
-    }
-    static __device__ __forceinline__ uint4 load(const Tile& T, int h, unsigned int chunk) {
-        return *(const uint4*)(T.wr[h] + chunk * 64);
-    }
-    static __device__ __forceinline__ Sc scale(const Tile& T, int h, unsigned int chunk) {
-        return *(const unsigned short*)(T.sr[h] + chunk * 8);
-    }
-    static __device__ __forceinline__ void frag(const uint4& lo, const uint4& hi, Sc sg, Sc sh, int j, unsigned int* a) {
-        const int wi = j >> 1, sh_bits = (j & 1) ? 16 : 0, sb = (j >= 4) ? 8 : 0;
-        const unsigned int wg = ((wi == 0) ? lo.x : (wi == 1) ? lo.y : (wi == 2) ? lo.z : lo.w) >> sh_bits;
-        const unsigned int wh = ((wi == 0) ? hi.x : (wi == 1) ? hi.y : (wi == 2) ? hi.z : hi.w) >> sh_bits;
-        const unsigned int cg = ntc_e4m3_bf16x2((sg >> sb) & 0xFFu), ch = ntc_e4m3_bf16x2((sh >> sb) & 0xFFu);
-        unsigned int dg[2], dh[2];
-        ntc_e2m1x4_bf16(wg, dg);
-        ntc_e2m1x4_bf16(wh, dh);
-        a[0] = ntc_hmul2(dg[0], cg);
-        a[1] = ntc_hmul2(dh[0], ch);
-        a[2] = ntc_hmul2(dg[1], cg);
-        a[3] = ntc_hmul2(dh[1], ch);
-    }
-    static __device__ __forceinline__ bool fold_at(unsigned int) { return false; }
-    static __device__ __forceinline__ float fold_scale(const Tile&, unsigned int) { return 1.0f; }
-    static __device__ __forceinline__ float out(const Tile& T, float x) { return x * T.s2; }
-};
 
 // 2026-10-02: Gate+up and SiLU of the routed experts and the shared expert. A: [num_tokens, K]
 // BF16. act: routed hi|lo rows [pos, 2N] BF16 by sorted position; sh_act: shared hi|lo rows

@@ -59,6 +59,8 @@ mod w8a16_gemm_pipelined_m32;
 mod w8a8_decode;
 // 2026-09-28: The tensor-core row-tile W8A16 projection (`w8a16_tc_rows.cu`).
 mod w8a16_tc_rows;
+// 2026-10-02: Its NVFP4 W4A16 point (`w4a16_tc_rows.cu`).
+mod w4a16_tc_rows;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
@@ -305,4 +307,5 @@ pub use w8a16_gemm_m16::*;
 pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;
 pub use w8a16_tc_rows::*;
+pub use w4a16_tc_rows::*;
 pub use wide_prefill::*;

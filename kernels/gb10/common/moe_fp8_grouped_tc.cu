@@ -40,6 +40,7 @@
 #include <cuda_bf16.h>
 
 #include "moe_grouped_tc.cuh"
+#include "tc_weight_formats.cuh"
 
 #define TC_WARPS 4
 #define TC_THREADS (TC_WARPS * 32)
@@ -51,52 +52,6 @@
 #define TC_G 2
 #define TC_GU_COLS (TC_WARPS * 16 * TC_GU_MT)
 #define TC_DOWN_COLS (TC_WARPS * 16 * TC_DOWN_MT)
-
-// 2026-09-28: E4M3 bytes 0,1 (sel 0x1404) or 2,3 (sel 0x3424) of w as a BF16 pair, each
-// E4M3 * 2^-120.
-__device__ __forceinline__ unsigned int tc_e4m3_pair_bf16(unsigned int w, unsigned int sel) {
-    const unsigned int x = __byte_perm(w, 0u, sel);
-    return (x & 0x80008000u) | ((x >> 4) & 0x07F007F0u);
-}
-
-// 2026-10-02: The FP8 weight-format policy of gtc_warp: row-major [N, K] E4M3 with FP32 block
-// scales [N / 128, K / 128]. A 16-byte lane load is 16 K of a 64-K chunk; word j of it feeds MMA j
-// (bytes 0, 1 as slots 2t, 2t + 1, bytes 2, 3 as 2t + 8, 2t + 9). Weights enter as E4M3 * 2^-120
-// and activations times 2^60, so products stay FP32 normals; each 128-K block's sum is scaled
-// once by its block scale times 2^60.
-struct Fp8Block128 {
-    static constexpr int CHUNK_K = 64;
-    static constexpr bool FOLDS = true;
-    static constexpr float ACT_LIFT = 1152921504606846976.0f;
-    struct Mat { const unsigned char* w; const float* s; };
-    struct Tile { const unsigned char* wr[2]; const float* sr; };
-    struct Sc {};
-    static __device__ __forceinline__ Tile tile(const Mat& M, unsigned int col, unsigned int g, unsigned int t, unsigned int K) {
-        Tile T;
-        T.wr[0] = M.w + (unsigned long long)(col + g) * K + t * 16;
-        T.wr[1] = M.w + (unsigned long long)(col + g + 8) * K + t * 16;
-        T.sr = M.s + (col / 128) * (K / 128);
-        return T;
-    }
-    static __device__ __forceinline__ uint4 load(const Tile& T, int h, unsigned int chunk) {
-        return *(const uint4*)(T.wr[h] + chunk * 64);
-    }
-    static __device__ __forceinline__ Sc scale(const Tile&, int, unsigned int) { return Sc{}; }
-    static __device__ __forceinline__ void frag(const uint4& lo, const uint4& hi, Sc, Sc, int j, unsigned int* a) {
-        const unsigned int wg = (j == 0) ? lo.x : (j == 1) ? lo.y : (j == 2) ? lo.z : lo.w;
-        const unsigned int wh = (j == 0) ? hi.x : (j == 1) ? hi.y : (j == 2) ? hi.z : hi.w;
-        a[0] = tc_e4m3_pair_bf16(wg, 0x1404u);
-        a[1] = tc_e4m3_pair_bf16(wh, 0x1404u);
-        a[2] = tc_e4m3_pair_bf16(wg, 0x3424u);
-        a[3] = tc_e4m3_pair_bf16(wh, 0x3424u);
-    }
-    // 2026-09-28: Chunks 2kb and 2kb + 1 make 128-K block kb: scale it once.
-    static __device__ __forceinline__ bool fold_at(unsigned int chunk) { return chunk & 1; }
-    static __device__ __forceinline__ float fold_scale(const Tile& T, unsigned int chunk) {
-        return T.sr[chunk >> 1] * ACT_LIFT;
-    }
-    static __device__ __forceinline__ float out(const Tile&, float x) { return x; }
-};
 
 // 2026-09-28: Gate+up and SiLU of the routed experts and the shared expert. A: [num_tokens, K]
 // BF16. act: routed hi|lo rows [pos, 2N] BF16 by sorted position; sh_act: shared hi|lo rows
