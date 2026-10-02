@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// 2026-09-25: Nemotron-H MoE prefill kernels for N tokens: batched sigmoid top-k routing; NVFP4 W4A16 GEMVs for the
+// 2026-09-25: Nemotron-H MoE prefill kernels for N tokens: batched sigmoid top-k routing (2026-10-02: over BF16 or
+// FP32 logits, and the FP32 router GEMM that makes the latter); NVFP4 W4A16 GEMVs for the
 // experts' up projection and relu^2 + down projection (the experts have no gate projection); and the weighted
 // sum of the routed outputs plus the shared expert's.
 //
@@ -50,8 +51,19 @@ __device__ __constant__ float E2M1_LUT_NMP[16] = {
 #define MAX_EXPERTS 512
 #define MAX_TOP_K 32
 
-extern "C" __global__ void nemotron_moe_topk_sigmoid_batched(
-    const __nv_bfloat16* __restrict__ gate_logits,
+// 2026-10-02: The logit as FP32, from a BF16 or an FP32 logit array.
+__device__ __forceinline__ float logit_f32(const __nv_bfloat16* p, unsigned int i) {
+    return __bfloat162float(p[i]);
+}
+__device__ __forceinline__ float logit_f32(const float* p, unsigned int i) {
+    return p[i];
+}
+
+// 2026-10-02: The routing of `nemotron_moe_topk_sigmoid_batched` over logits of type L; the two entry points
+// below instantiate it for BF16 logits and for the FP32 logits of an FP32 router (`_f32`).
+template <typename L>
+__device__ __forceinline__ void topk_sigmoid_batched(
+    const L* __restrict__ gate_logits,
     const float* __restrict__ bias,
     unsigned int* __restrict__ expert_indices,
     float* __restrict__ expert_weights,
@@ -73,13 +85,13 @@ extern "C" __global__ void nemotron_moe_topk_sigmoid_batched(
     __shared__ unsigned int s_warp_idx[8];
 
     unsigned int actual_n = num_experts < MAX_EXPERTS ? num_experts : MAX_EXPERTS;
-    const __nv_bfloat16* logits = gate_logits + (unsigned long long)token * num_experts;
+    const L* logits = gate_logits + (unsigned long long)token * num_experts;
     unsigned int* out_idx = expert_indices + (unsigned long long)token * top_k;
     float* out_wt = expert_weights + (unsigned long long)token * top_k;
 
 
     for (unsigned int i = tid; i < actual_n; i += blockDim.x) {
-        float logit = __bfloat162float(logits[i]);
+        float logit = logit_f32(logits, i);
         float sig = 1.0f / (1.0f + __expf(-logit));
         s_sigmoid[i] = sig;
         s_selection[i] = sig + bias[i];
@@ -143,6 +155,69 @@ extern "C" __global__ void nemotron_moe_topk_sigmoid_batched(
             w = (sum > 0.0f) ? (w / sum) : w;
         }
         out_wt[tid] = w * scaling_factor;
+    }
+}
+
+extern "C" __global__ void nemotron_moe_topk_sigmoid_batched(
+    const __nv_bfloat16* __restrict__ gate_logits,
+    const float* __restrict__ bias,
+    unsigned int* __restrict__ expert_indices,
+    float* __restrict__ expert_weights,
+    unsigned int num_experts,
+    unsigned int top_k,
+    unsigned int normalize,
+    float scaling_factor,
+    unsigned int num_tokens
+) {
+    topk_sigmoid_batched(gate_logits, bias, expert_indices, expert_weights, num_experts, top_k, normalize,
+                         scaling_factor, num_tokens);
+}
+
+// 2026-10-02: As `nemotron_moe_topk_sigmoid_batched`, over FP32 logits [num_tokens, num_experts].
+extern "C" __global__ void nemotron_moe_topk_sigmoid_batched_f32(
+    const float* __restrict__ gate_logits,
+    const float* __restrict__ bias,
+    unsigned int* __restrict__ expert_indices,
+    float* __restrict__ expert_weights,
+    unsigned int num_experts,
+    unsigned int top_k,
+    unsigned int normalize,
+    float scaling_factor,
+    unsigned int num_tokens
+) {
+    topk_sigmoid_batched(gate_logits, bias, expert_indices, expert_weights, num_experts, top_k, normalize,
+                         scaling_factor, num_tokens);
+}
+
+// 2026-10-02: `nemotron_router_f32`: the router logits of a checkpoint that stores the router F32 (Nemotron-3-Nano,
+// Nemotron-3.5-Lightning), as HF's `NemotronHTopkRouter` computes them: C[M, N] = float(A[M, K]) * W[N, K]^T,
+// FP32 weights, products and sums, FP32 out. Grid (ceil(N / 8), M), block 256: warp w of block (x, m) computes
+// output (m, 8x + w); lane l sums k = l, l + 32, ... in order, then the warp tree-reduces.
+extern "C" __global__ void nemotron_router_f32(
+    const __nv_bfloat16* __restrict__ A,
+    const float* __restrict__ W,
+    float* __restrict__ C,
+    unsigned int M,
+    unsigned int N,
+    unsigned int K
+) {
+    const unsigned int warp = threadIdx.x / WARP_SIZE;
+    const unsigned int lane = threadIdx.x % WARP_SIZE;
+    const unsigned int n = blockIdx.x * 8 + warp;
+    const unsigned int m = blockIdx.y;
+    if (n >= N || m >= M) return;
+    const __nv_bfloat16* a = A + (unsigned long long)m * K;
+    const float* w = W + (unsigned long long)n * K;
+    float acc = 0.0f;
+    for (unsigned int k = lane; k < K; k += WARP_SIZE) {
+        acc += __bfloat162float(a[k]) * w[k];
+    }
+    #pragma unroll
+    for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
+        acc += __shfl_down_sync(0xFFFFFFFF, acc, offset);
+    }
+    if (lane == 0) {
+        C[(unsigned long long)m * N + n] = acc;
     }
 }
 

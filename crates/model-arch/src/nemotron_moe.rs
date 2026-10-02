@@ -107,6 +107,8 @@ pub struct NemotronMoeLayer {
     fp8_gemm_m128_k: KernelHandle,
     w4a4_gemm_k: KernelHandle,
     quantize_nvfp4_k: KernelHandle,
+    /// 2026-10-02: The FP32 router's kernels, when the checkpoint stores the router FP32.
+    router_f32: Option<route_f32::RouterF32>,
 }
 
 impl NemotronMoeLayer {
@@ -148,7 +150,9 @@ impl NemotronMoeLayer {
             metrale_model_layers::layers::ops::MOE_TOPK_SIGMOID_MAX_EXPERTS,
         );
 
+        let router_f32 = route_f32::RouterF32::load(gpu, weights.gate_f32)?;
         Ok(Self {
+            router_f32,
             weights,
             input_norm,
             moe_latent_size: config.moe_latent_size,
@@ -269,6 +273,7 @@ mod prefill_shared_up;
 mod prefill_sorted;
 mod prefill_weights;
 mod ptr_tables;
+mod route_f32;
 mod shared_e4m3;
 pub use shared_e4m3::{set_shared_expert_e4m3_from_cli, shared_expert_e4m3};
 
@@ -336,16 +341,18 @@ impl TransformerLayer for NemotronMoeLayer {
         )?;
 
         let gate_logits = ctx.buffers.gate_logits();
-        self.dense_gemm_prefill(
-            ctx.gpu,
-            normed,
-            &self.weights.gate,
-            gate_logits,
-            n,
-            num_experts,
-            h as u32,
-            stream,
-        )?;
+        if self.router_f32.is_none() {
+            self.dense_gemm_prefill(
+                ctx.gpu,
+                normed,
+                &self.weights.gate,
+                gate_logits,
+                n,
+                num_experts,
+                h as u32,
+                stream,
+            )?;
+        }
 
         let has_batched = self.topk_sigmoid_batched_k.0 != 0
             && self.moe_up_prefill_k.0 != 0
@@ -389,6 +396,10 @@ impl TransformerLayer for NemotronMoeLayer {
         let scratch = ctx.buffers.scratch();
         let indices_dev = scratch;
         let weights_dev = scratch.offset(n as usize * top_k as usize * 4);
+        // 2026-10-02: An FP32 router routes every token here; both paths below then skip routing.
+        if let Some(r) = &self.router_f32 {
+            self.route_f32(r, ctx, normed, n, indices_dev, weights_dev, stream)?;
+        }
 
         // 2026-09-25: The sorted path (sort the routed rows by expert, then grouped
         // GEMMs) needs more than one token, the four `nemotron_moe_prefill`
@@ -409,6 +420,7 @@ impl TransformerLayer for NemotronMoeLayer {
             scale,
             latent,
             gate_logits,
+            routed: self.router_f32.is_some(),
             indices_dev,
             weights_dev,
             normed,

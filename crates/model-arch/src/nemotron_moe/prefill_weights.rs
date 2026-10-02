@@ -183,4 +183,4 @@ impl NemotronMoeLayer {
 
 #[cfg(test)]
 #[path = "prefill_weights_tests.rs"]
-mod tests;
+pub(super) mod tests;

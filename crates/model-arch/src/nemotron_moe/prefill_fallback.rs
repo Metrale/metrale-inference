@@ -25,8 +25,11 @@ impl NemotronMoeLayer {
         stream: u64,
     ) -> Result<()> {
         let scratch_buf = ctx.buffers.scratch();
-        let use_batched_routing = self.topk_sigmoid_batched_k.0 != 0 && p.num_tokens > 1;
-        if use_batched_routing {
+        // 2026-10-02: Routed already (an FP32 router), the per-token indices are read as from the
+        // batched routing.
+        let use_batched_routing =
+            p.routed || (self.topk_sigmoid_batched_k.0 != 0 && p.num_tokens > 1);
+        if use_batched_routing && !p.routed {
             KernelLaunch::new(ctx.gpu, self.topk_sigmoid_batched_k)
                 .grid([1, p.n, 1])
                 .block([256, 1, 1])

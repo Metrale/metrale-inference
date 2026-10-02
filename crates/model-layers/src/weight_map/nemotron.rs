@@ -51,8 +51,12 @@ impl NemotronExpertWeight {
 
 /// 2026-09-25: Nemotron-H MoE layer weights.
 pub struct NemotronMoeWeights {
-    /// 2026-09-25: Router gate, BF16 (converted when the checkpoint stores FP32).
+    /// 2026-09-25: Router gate, as the checkpoint stores it: BF16, or (2026-10-02) FP32, which
+    /// the layer runs in FP32 as HF does (`gate_f32`). Until 2026-10-02 an FP32 router was cast
+    /// to BF16, below the checkpoint's precision.
     pub gate: DenseWeight,
+    /// 2026-10-02: `gate` is FP32.
+    pub gate_f32: bool,
     /// 2026-09-25: The store's `gate.e_score_correction_bias` pointer, unconverted;
     /// `moe_topk_sigmoid` reads it as F32.
     pub e_score_correction_bias: DenseWeight,
@@ -226,11 +230,9 @@ pub fn load_nemotron_moe(
     let p = format!("{layer_prefix}.mixer");
     let gate_name = format!("{p}.gate.weight");
     let gate_w = store.get(&gate_name)?;
-    let gate = if gate_w.dtype == WeightDtype::FP32 {
-        dense_f32_as_bf16(store, &gate_name, gpu)?
-    } else {
-        DenseWeight { weight: gate_w.ptr }
-    };
+    // 2026-10-02: The router as stored: an FP32 router (Nemotron-3-Nano) stays FP32.
+    let gate_f32 = gate_w.dtype == WeightDtype::FP32;
+    let gate = DenseWeight { weight: gate_w.ptr };
     let e_score_correction_bias = dense(store, &format!("{p}.gate.e_score_correction_bias"))?;
 
     // 2026-09-25: `weight_scale_2` marks NVFP4; `weight_scale` alone marks FP8.
@@ -426,6 +428,7 @@ pub fn load_nemotron_moe(
 
     Ok(NemotronMoeWeights {
         gate,
+        gate_f32,
         e_score_correction_bias,
         experts,
         shared_up,
