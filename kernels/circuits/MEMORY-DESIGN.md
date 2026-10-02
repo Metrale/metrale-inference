@@ -140,3 +140,7 @@ which does not reach a `NemotronHTopkRouter` parameter).
   to its own change.
 - FUSIONS.toml has no FP8-KV paged-attention rule on gb10, so an FP8-KV serve's attention plans as
   a placeholder group and its split-K workspace is not attributed.
+- The routed experts' transposed NVFP4 tables (`moe-nvfp4-expert-twin`, `nemotron-expert-twin`)
+  are built only while free memory exceeds them by 2 GiB (`moe_experts.rs:21`); COPIES.toml has no
+  such gate, so the model over-counts them on checkpoints too large for them (Nemotron-3-Super and
+  Qwen3.5-122B-A10B: 61-64 GB). The rule needs a `when` on that budget.
