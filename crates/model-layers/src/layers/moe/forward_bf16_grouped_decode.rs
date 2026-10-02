@@ -65,11 +65,11 @@ impl MoeLayer {
     /// terms, the per-row router's context terms and no expert parallelism.
     pub fn bf16_grouped_decode_ok(&self, m: usize, ctx: &ForwardContext) -> bool {
         let cfg = ctx.config;
-        self.bf16_grouped_decode_arena_ok(m, cfg, ctx.buffers)
-            && !ctx.levers.fp32_gate
-            && !self.fp32_routing_active(ctx.levers)
-            && !(self.is_dflash_capture_layer && ctx.levers.frankenstein_decode_via_prefill)
-            && !(ctx.comm.is_some() && cfg.ep_world_size > 1)
+        let refused = ctx.levers.fp32_gate
+            || self.fp32_routing_active(ctx.levers)
+            || (self.is_dflash_capture_layer && ctx.levers.frankenstein_decode_via_prefill)
+            || (ctx.comm.is_some() && cfg.ep_world_size > 1);
+        self.bf16_grouped_decode_arena_ok(m, cfg, ctx.buffers) && !refused
     }
 
     /// 2026-10-02: The BF16 MoE of `m` rows: `input` is `[m, H]` BF16, the output lands in rows
