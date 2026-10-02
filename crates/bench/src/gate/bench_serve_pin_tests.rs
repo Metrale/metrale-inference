@@ -91,13 +91,8 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
             .map(String::as_str),
         Some(GB10_UTIL_CEILING)
     );
-    assert_eq!(
-        e.serve_overrides
-            .get("weight_quantization")
-            .map(String::as_str),
-        Some(certified_tier(&echolp_checkpoint))
-    );
-    assert_eq!(e.serve_overrides.len(), 3, "{:?}", e.serve_overrides);
+    assert_eq!(served_tier(&root, e), certified_tier(&echolp_checkpoint));
+    assert_eq!(e.serve_overrides.len(), 2, "{:?}", e.serve_overrides);
 
     // 2026-09-26: The poison gate pins the two serve settings its driver documents
     // (`ssm_cache_slots=256` in ssm_poison/driver.rs, `disable_thinking=true` in
@@ -120,13 +115,8 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
             .map(String::as_str),
         Some(GB10_UTIL_CEILING)
     );
-    assert_eq!(
-        p.serve_overrides
-            .get("weight_quantization")
-            .map(String::as_str),
-        Some(certified_tier(&poison_checkpoint))
-    );
-    assert_eq!(p.serve_overrides.len(), 4, "{:?}", p.serve_overrides);
+    assert_eq!(served_tier(&root, p), certified_tier(&poison_checkpoint));
+    assert_eq!(p.serve_overrides.len(), 3, "{:?}", p.serve_overrides);
 
     let sweep = baseline_for(&root, "concurrency-sweep").unwrap();
     let (_, c) = sweep.resolve("gb10", None).unwrap();
@@ -148,9 +138,6 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
         // 2026-09-26: `--w4a4-downcast-wide` extends the same numerics to 33..=64 rows and
         // needs `--w4a4-downcast`; both ladders pin both.
         ("w4a4_downcast_wide", "true"),
-        // 2026-09-28: The lever exists only under `--weight-quantization nvfp4`, the tier the
-        // published ladder ran; both ladders pin it beside the lever.
-        ("weight_quantization", "nvfp4"),
     ] {
         assert_eq!(
             c.serve_overrides.get(key).map(String::as_str),
@@ -159,7 +146,10 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
             c.serve_overrides
         );
     }
-    assert_eq!(c.serve_overrides.len(), 7, "{:?}", c.serve_overrides);
+    assert_eq!(c.serve_overrides.len(), 6, "{:?}", c.serve_overrides);
+    // 2026-10-02: The W4A4 lever exists only under `--weight-quantization nvfp4`, the tier the
+    // published ladder ran; the recipe serves it.
+    assert_eq!(served_tier(&root, c), "nvfp4");
     assert!(
         !c.serve_overrides.contains_key("lm_head_dtype"),
         "the throughput recipe leaves the head at the checkpoint's native NVFP4; pinning \
@@ -185,7 +175,6 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
         ("dflash_gamma", "8"),
         ("w4a4_downcast", "true"),
         ("w4a4_downcast_wide", "true"),
-        ("weight_quantization", "nvfp4"),
     ] {
         assert_eq!(
             d.serve_overrides.get(key).map(String::as_str),
@@ -194,7 +183,8 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
             d.serve_overrides
         );
     }
-    assert_eq!(d.serve_overrides.len(), 10, "{:?}", d.serve_overrides);
+    assert_eq!(d.serve_overrides.len(), 9, "{:?}", d.serve_overrides);
+    assert_eq!(served_tier(&root, d), "nvfp4");
     assert!(
         !d.serve_overrides.contains_key("speculative"),
         "--dflash conflicts with --speculative at the CLI: pinning both would not start"
@@ -239,14 +229,11 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
     for id in ["bfcl-subset", "decode-floor"] {
         let b = baseline_for(&root, id).unwrap();
         let (_, entry) = b.resolve("gb10", None).unwrap();
-        assert_eq!(
-            entry.serve_overrides,
-            std::collections::BTreeMap::from([(
-                "weight_quantization".to_string(),
-                "nvfp4".to_string()
-            )]),
-            "{id} keeps the recipe's own config and pins only the recipe's tier"
+        assert!(
+            entry.serve_overrides.is_empty(),
+            "{id} serves the recipe as written"
         );
+        assert_eq!(served_tier(&root, entry), "nvfp4", "{id}");
     }
     for id in ["ttft-warm-gate", "ttft-cold-gate", "agentic-webserver"] {
         let b = baseline_for(&root, id).unwrap();
@@ -254,17 +241,16 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
         assert_eq!(checkpoint, "Qwen/Qwen3.6-35B-A3B-FP8", "{id}");
         assert_eq!(
             entry.serve_overrides,
-            std::collections::BTreeMap::from([
-                (
-                    "gpu_memory_utilization".to_string(),
-                    GB10_UTIL_CEILING.to_string()
-                ),
-                (
-                    "weight_quantization".to_string(),
-                    certified_tier(&checkpoint).to_string()
-                ),
-            ]),
-            "{id} pins only the GB10 util ceiling and the recipe's tier"
+            std::collections::BTreeMap::from([(
+                "gpu_memory_utilization".to_string(),
+                GB10_UTIL_CEILING.to_string()
+            )]),
+            "{id} pins only the GB10 util ceiling"
+        );
+        assert_eq!(
+            served_tier(&root, entry),
+            certified_tier(&checkpoint),
+            "{id}"
         );
     }
 }
@@ -314,51 +300,18 @@ fn the_high_isl_gates_pin_their_serve_and_vllm_ceilings() {
                     GB10_UTIL_CEILING.to_string()
                 ),
                 ("max_model_len".to_string(), "40960".to_string()),
-                (
-                    "weight_quantization".to_string(),
-                    certified_tier(checkpoint).to_string()
-                ),
             ]),
+            "{id}"
+        );
+        assert_eq!(
+            served_tier(&root, entry),
+            certified_tier(checkpoint),
             "{id}"
         );
         assert_eq!(entry.metrics["median_ms"].max, Some(ceiling), "{id}");
         assert_eq!(entry.metrics["p90_ms"].max, Some(ceiling), "{id}");
         assert_eq!(entry.metrics["prompt_tokens"].min, Some(32768.0), "{id}");
     }
-}
-
-/// 2026-09-28: Every measured GB10 entry of the three models whose gates the batch certifies
-/// pins the tier its recipe declares ([`certified_tier`]: `declared` for the 35B FP8 checkpoint
-/// since 2026-09-29, `nvfp4` otherwise). The gate serves the
-/// mirrored recipe index, which does not carry the key yet, and the serve default is
-/// `declared`, so an entry without the pin would certify a different engine configuration
-/// from the one its recipe names. The gates seen are counted, so the test cannot pass on zero
-/// entries.
-#[test]
-fn every_measured_gb10_entry_pins_the_recipes_weight_quantization_tier() {
-    let root = repo_root();
-    let mut seen = 0;
-    for (target, entry) in load_all(&root).expect("tree loads") {
-        if target.hardware != "gb10"
-            || entry.status != "measured"
-            || !["qwen3.8-27b", "qwen3.6-35b-a3b", "qwen3.6-27b"].contains(&target.model.as_str())
-        {
-            continue;
-        }
-        assert_eq!(
-            entry
-                .serve_overrides
-                .get("weight_quantization")
-                .map(String::as_str),
-            Some(certified_tier(&entry.checkpoint)),
-            "{} / {} ({}) must pin its recipe's tier",
-            target.model,
-            entry.gate,
-            entry.checkpoint
-        );
-        seen += 1;
-    }
-    assert_eq!(seen, 26, "the check must not pass vacuously");
 }
 
 /// 2026-09-29: The `--weight-quantization` tier a certified GB10 entry pins for `checkpoint`:
@@ -370,6 +323,22 @@ fn certified_tier(checkpoint: &str) -> &'static str {
     } else {
         "nvfp4"
     }
+}
+
+/// 2026-10-02: The `--weight-quantization` tier `entry` serves: its in-tree recipe's value, with
+/// the entry's pins applied (`gate::recipe_closure::canonical`).
+fn served_tier(root: &std::path::Path, entry: &ModelBaseline) -> String {
+    let id = entry
+        .recipe
+        .as_deref()
+        .expect("a gate entry names its recipe");
+    let text = crate::gate::recipe_closure::read_in_tree(root, id).unwrap();
+    let served = crate::gate::recipe_closure::canonical(&text, &entry.serve_overrides).unwrap();
+    let defaults = served.as_map().unwrap()["defaults"].as_map().unwrap();
+    defaults["weight_quantization"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 
 /// 2026-09-26: The `gpu_memory_utilization` every 35B FP8 entry on GB10 pins

@@ -271,6 +271,7 @@ mod model_config;
 mod parsers;
 mod position_encoding;
 pub mod precision_plan;
+pub mod recipe_yaml;
 #[cfg(test)]
 mod tests;
 pub mod weight_quantization;

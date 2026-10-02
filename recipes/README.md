@@ -44,8 +44,13 @@ Each dev release (`bNNNN`) attaches `recipes.tar.gz` (this directory),
 `index.json` (every recipe's id, path and sha256) and `serve-options.json` (the
 flag surface they were checked against), each with a `.sha256`. `index.json` is
 also in the shape of `met`'s recipe cache: saved as
-`~/.metrale/metrale-recipes/index.json`, it pins `met benchmark` to that release's
-recipes until the next `met sync-recipes`.
+`~/.metrale/metrale-recipes/index.json`, it is what `met`'s recipe library and launches
+read until the next `met sync-recipes`.
+
+A benchmark gate never reads that cache. It serves the recipe its BENCH entry names
+from `recipes/` in the tree under test, refuses a recipe the tree does not have, and
+records the recipe's canonical content hash; a later commit keeps the record only
+while its recipe hashes the same (`crates/bench/src/gate/recipe_closure.rs`).
 
 ## Provenance
 

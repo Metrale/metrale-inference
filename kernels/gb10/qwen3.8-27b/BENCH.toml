@@ -89,10 +89,6 @@ w4a4_downcast = "true"
 # pins one pins both.
 w4a4_downcast_wide = "true"
 
-# 2026-09-28: `--w4a4-downcast` exists only under `--weight-quantization nvfp4` (the serve
-# refuses it under the `declared` default), so every entry that pins the lever pins the tier
-# beside it. The recipe pins the same tier.
-weight_quantization = "nvfp4"
 
 
 [benchmarks.metrics.followed_directions]
@@ -172,12 +168,6 @@ live_irrelevance_79-2-67, live_multiple_57-22-4, live_parallel_multiple_3-2-1 \
 (the list lives in benchmarks::bfcl::sensitive and every run reports \
 known_partition_sensitive). The floors below are therefore cut from the \
 SHARDED aggregate, never from a whole-draw run."""
-
-[benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 
 [benchmarks.metrics.samples]
 
@@ -296,12 +286,6 @@ flip-flop all over again."""
 
 # 2026-09-25: `--w4a4-downcast` is not pinned here, so this gate runs the engine default (off).
 
-
-[benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 
 [benchmarks.metrics.server_decode_tok_s]
 
@@ -694,7 +678,6 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
-weight_quantization = "nvfp4"
 
 [benchmarks.serve_env]
 
@@ -1554,7 +1537,6 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
-weight_quantization = "nvfp4"
 
 [benchmarks.param_overrides]
 
@@ -1862,7 +1844,6 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
-weight_quantization = "nvfp4"
 
 
 [benchmarks.metrics.geometry_matched]
@@ -2023,12 +2004,6 @@ subset runs (measured: PASS 5/5, 4 skipped)."""
 
 # 2026-09-25: `--w4a4-downcast` is not pinned here, so this gate runs the engine default (off).
 
-[benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
-
 [benchmarks.metrics.legs_passed]
 min = 14.0
 
@@ -2093,10 +2068,6 @@ carrying three against a baseline pinning one fails after the GPU hours are \
 spent."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 
 
 
@@ -2221,10 +2192,6 @@ The serve pins are the SUBJECT: `scheduler_config = sync` names the starting \
 router, and the gate swaps routers itself per leg."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 hermetic = "true"
 enable_prefix_caching = "false"
 mtp_gate = "force"
@@ -2289,10 +2256,6 @@ config uses fp8 KV).\
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -2341,10 +2304,6 @@ box with no baseline yet, so each box is seeded with two runs before its first c
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"

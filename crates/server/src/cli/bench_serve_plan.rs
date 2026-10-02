@@ -22,14 +22,14 @@ use super::bench_resolve::Resolved;
 /// the same name).
 const ACTIVATION_QUANTIZATION_KEY: &str = gate::record_serve::ACTIVATION_QUANTIZATION;
 
-/// 2026-09-30: The routing a gate serves a recipe under when the recipe names none.
-const GATE_ACTIVATION_QUANTIZATION: &str = "adaptive";
-
 /// 2026-09-26: A resolved serve: everything but the port.
 pub struct ServePlan {
     pub model: String,
     pub recipe_id: String,
     pub recipe: crate::recipe::Recipe,
+    /// 2026-10-02: Canonical content hash of the served recipe with `requested` applied
+    /// (`gate::recipe_closure::content_sha256`), for the record's `served_recipe_sha256`.
+    pub recipe_sha256: String,
     /// 2026-09-26: The served variant's baseline entry; see `SelfServed::baseline_entry`.
     pub entry: gate::ModelBaseline,
     /// 2026-09-26: The merged `[benchmarks.serve_overrides]` pin and
@@ -50,7 +50,7 @@ pub struct ServePlan {
 impl ServePlan {
     /// 2026-09-30: The overrides both renderings apply ([`rendered_overrides`]).
     fn rendered_overrides(&self, port: u16) -> BTreeMap<String, String> {
-        rendered_overrides(&self.requested, &self.recipe.defaults, port)
+        rendered_overrides(&self.requested, port)
     }
 
     pub fn argv(&self, port: u16) -> Result<Vec<String>> {
@@ -113,25 +113,35 @@ pub async fn attach_live_forward(
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-/// 2026-09-30: The overrides a gate serve renders a recipe with: the requested set, the port,
-/// and [`GATE_ACTIVATION_QUANTIZATION`] when neither the recipe's `defaults` nor the requested
-/// set names an `activation_quantization`. A recipe that predates `--activation-quantization`
-/// was measured under the routing `adaptive` names, so its gate serve runs that, not the flag's
-/// default. It is a rendering rule, not an override: `requested`, and so the record's
-/// `serve_overrides`, do not carry it; `serve_resolved` discloses what ran.
+/// 2026-09-30: The overrides a gate serve renders a recipe with: the requested set and the port.
+/// The served recipe names its `--activation-quantization` routing itself (`plan_serve` refuses
+/// one that does not), so no routing is added here. `requested`, and so the record's
+/// `serve_overrides`, never carry the port.
 pub(crate) fn rendered_overrides(
     requested: &BTreeMap<String, String>,
-    recipe_defaults: &BTreeMap<String, String>,
     port: u16,
 ) -> BTreeMap<String, String> {
     let mut overrides = requested.clone();
     overrides.insert("port".to_string(), port.to_string());
-    if !recipe_defaults.contains_key(ACTIVATION_QUANTIZATION_KEY) {
-        overrides
-            .entry(ACTIVATION_QUANTIZATION_KEY.to_string())
-            .or_insert_with(|| GATE_ACTIVATION_QUANTIZATION.to_string());
-    }
     overrides
+}
+
+/// 2026-10-02: A gate serve runs the `--activation-quantization` routing its recipe (or the
+/// requested set) states. There is no gate default: a recipe that names none is refused.
+pub(crate) fn routing_is_named(
+    recipe_id: &str,
+    recipe_defaults: &BTreeMap<String, String>,
+    requested: &BTreeMap<String, String>,
+) -> Result<()> {
+    if recipe_defaults.contains_key(ACTIVATION_QUANTIZATION_KEY)
+        || requested.contains_key(ACTIVATION_QUANTIZATION_KEY)
+    {
+        return Ok(());
+    }
+    bail!(
+        "recipe {recipe_id:?} names no `{ACTIVATION_QUANTIZATION_KEY}`. A gate serves the routing \
+         its recipe states; add the key to the recipe's `defaults:`"
+    )
 }
 
 /// 2026-09-26: The disclosure for one rendered, validated serve; the body of
@@ -174,35 +184,10 @@ pub fn plan_serve(
         );
     };
 
-    let store = metrale_bench::ArtifactStore::discover()?;
-    let index = crate::recipe::fetch::cached(store.root());
-    let recipe = index
-        .recipes
-        .iter()
-        .find(|r| r.id == recipe_id)
-        .with_context(|| {
-            format!(
-                "recipe {recipe_id:?} is not in the local index ({} cached). The index is read \
-                 from {}.{} Populate it with:\n    met sync-recipes\n\
-                 (this used to say \"open the TUI Library once\", which a CI runner, a \
-                 container, or a machine reached over ssh cannot do.)",
-                index.recipes.len(),
-                // 2026-09-26: Named through `cache_dir` so the path printed is
-                // the path read.
-                crate::recipe::fetch::cache_dir(store.root())
-                    .join("index.json")
-                    .display(),
-                // 2026-09-26: Why the index could not be used, when the index
-                // layer knows: an unreadable index otherwise reads as one never
-                // written, and `sync-recipes` would not fix it.
-                index
-                    .offline
-                    .as_deref()
-                    .map(|why| format!(" That index could not be used: {why}."))
-                    .unwrap_or_default()
-            )
-        })?
-        .clone();
+    // 2026-10-02: The recipe committed in the tree under test, never a node's cached recipe
+    // index: a recipe missing from the tree is refused (`gate::recipe_closure::read_in_tree`).
+    let recipe_text = gate::recipe_closure::read_in_tree(&root, &recipe_id)?;
+    let recipe = crate::recipe::Recipe::parse(recipe_id.clone(), &recipe_text)?;
 
     // 2026-09-26: The baseline and the recipe must agree on the checkpoint, or
     // the run would be scored against another checkpoint's thresholds. Refused
@@ -253,10 +238,13 @@ pub fn plan_serve(
              recipe as pinned; the gate record will say so"
         );
     }
+    routing_is_named(&recipe_id, &recipe.defaults, &requested)?;
+    let recipe_sha256 = gate::recipe_closure::content_sha256(&recipe_text, &requested)?;
     Ok(ServePlan {
         model,
         recipe_id,
         recipe,
+        recipe_sha256,
         entry,
         requested,
         serve_env,

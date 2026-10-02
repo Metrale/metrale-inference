@@ -47,7 +47,7 @@ pub const PERF_PATHS: [&str; 7] = [
 /// Every other file under `crates/bench/src/gate` is in `GATE_MACHINERY_FILES` and falls under
 /// every gate's `GATE_MACHINERY` exclusion. `every_verdict_symbol_is_defined_inside_the_boundary`
 /// fails if a verdict function it names is defined in a gate file outside this list.
-pub const BOUNDARY_FILES: [&str; 14] = [
+pub const BOUNDARY_FILES: [&str; 15] = [
     "crates/bench/src/gate/coverage.rs",
     // 2026-09-26: `required_for`, `union`, `intent_only`: what the intent half adds to the
     // path-derived floor.
@@ -89,6 +89,9 @@ pub const BOUNDARY_FILES: [&str; 14] = [
     // 2026-09-26: `select_partition`, `held_by`: whether a set of shard records forms a
     // complete partition at one commit.
     "crates/bench/src/gate/group.rs",
+    // 2026-10-02: `recipe_standing`, `canonical`: whether the recipe a record served is still
+    // what its gate serves.
+    "crates/bench/src/gate/recipe_closure.rs",
 ];
 
 /// 2026-09-26: Gate sources reviewed and found not to decide a verdict. Every non-test `.rs`
