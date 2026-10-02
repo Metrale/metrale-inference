@@ -123,6 +123,42 @@ pub struct ServeSchedulingArgs {
     #[arg(long, default_value_t = false)]
     pub ngram_speculative: bool,
 
+    /// Prompt-lookup decoding (default: false): when a sequence's last
+    /// `--prompt-lookup-ngram` tokens occurred earlier in its prompt or output,
+    /// verify the tokens that followed that occurrence as this round's drafts,
+    /// in place of the MTP drafter's chain; with no match the round is MTP's.
+    /// Per sequence, inside batched verify, up to `--prompt-lookup-max-seqs`
+    /// active sequences. Requires `--speculative`.
+    ///
+    /// Only verified tokens are emitted, so greedy output does not depend on the
+    /// flag wherever verify rows are row-invariant (on Qwen3.6-35B-A3B-FP8 under
+    /// `--exact-verify`). The copy window starts at `--prompt-lookup-max-drafts`,
+    /// doubles after a fully accepted copy and halves after a broken one.
+    /// Measured on GB10 at C1: code edits 1.50x, JSON rewrites 1.25x decode
+    /// tok/s; prose and tool echoes 1-4% slower (wrong copies cost verify rows).
+    #[arg(long, default_value_t = false, conflicts_with_all = ["dflash", "ngram_speculative", "self_speculative"])]
+    pub prompt_lookup_decoding: bool,
+
+    /// n-gram length a prompt-lookup match needs (default: 4). Longer matches
+    /// propose less often and are wrong less often.
+    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=64))]
+    pub prompt_lookup_ngram: u32,
+
+    /// Most tokens one prompt-lookup copy proposes, the copy window's ceiling
+    /// (default: 3). 1..=16. The first `--prompt-lookup-max-seqs` verify-pool
+    /// slots are sized to hold this many drafts (about 64 MB per slot per draft
+    /// above the MTP chain on Qwen3.6-35B-A3B, 152 MB on Qwen3.8-27B). A lone
+    /// sequence verifies a copy of up to this length in one pass; inside a
+    /// batch a copy is cut to 3 drafts, the batched verify's widest row count.
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=16))]
+    pub prompt_lookup_max_drafts: u32,
+
+    /// Widest batch that proposes prompt-lookup copies (default: 8). Wider
+    /// batches run the MTP drafter only: a copy widens the verify, which costs
+    /// most where the batch is compute-bound.
+    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=128))]
+    pub prompt_lookup_max_seqs: u32,
+
     /// Enable DFlash block-diffusion speculative decoding (arXiv 2602.06036).
     /// Pairs the target with a small drafter checkpoint (e.g.
     /// `z-lab/Qwen3.6-35B-A3B-DFlash`) that drafts a block of γ tokens per step
