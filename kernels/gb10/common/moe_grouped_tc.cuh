@@ -7,23 +7,13 @@
 //
 // Owner: gb10 kernels.
 // Invariants:
-// - A policy P supplies: CHUNK_K (the K a lane-quad's 16-byte weight load spans; MMAS = CHUNK_K /
-//   16 MMAs per chunk), Mat (one projection's pointers), Tile (one warp tile's rows g and g + 8)
-//   with tile(), load(), scale(), frag(), and the scaling contract below.
-// - Inside a chunk lane t = lane & 3 holds K = t * CHUNK_K / 4 .. + CHUNK_K / 4 - 1 of its rows,
-//   weights and activations alike; MMA j takes, per lane, fragment slots 2t, 2t + 1 and
-//   2t + 8, 2t + 9 from activation words 2j and 2j + 1 (activation word i holds K + 2i, 2i + 1),
-//   and P::frag lays the weights out in the same K order. A row's K order is fixed by K alone.
+// - The weight-format policy P (tc_weight_formats.cuh: Fp8Block128, Nvfp4G16) fixes the chunk,
+//   the fragment K order (shared with tc_rows.cuh), the block and tensor scaling and ACT_LIFT.
 // - Column r of an MMA depends only on row r's activations, so a row's output bits do not
 //   depend on which rows share its launch, its pass, its expert or RG (padding rows are zero).
-// - Scaling: P::FOLDS = true sums each chunk into tmp and folds tmp * P::fold_scale into acc at
-//   the chunks where P::fold_at holds (FP8: per 128-K block, the 2^60 activation lift undone
-//   there); P::FOLDS = false accumulates straight into acc; P::out scales the final sum once (NVFP4:
-//   times s2). P::ACT_LIFT multiplies the BF16 gate+up inputs and the stored SiLU product (exact
-//   powers of two).
-// - gate+up rounds gate and up to BF16, forms the FP32 SiLU product a and stores it as two BF16
-//   terms of a * ACT_LIFT, hi then lo, in the act buffer's FP32 row space (row r: N hi values
-//   then N lo values); down runs one MMA on each, hi first.
+// - gate+up rounds gate and up to BF16 (after P::out), forms the FP32 SiLU product a and stores
+//   it as two BF16 terms of a * ACT_LIFT, hi then lo, in the act buffer's FP32 row space (row r:
+//   N hi values then N lo values); down runs one MMA on each, hi first.
 
 #pragma once
 
