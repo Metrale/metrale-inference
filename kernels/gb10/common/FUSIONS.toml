@@ -1421,7 +1421,8 @@ cite = "ml/moe/forward_fp8_grouped_decode.rs:322-340"
 
 # 2026-10-02: The checkpoint's own NVFP4 experts under `--weight-quantization declared`
 # (nvidia/Qwen3.6-35B-A3B-NVFP4): the grouped NVFP4 decode on the tensor-core point of the
-# moe_grouped_tc family at every width 1..=256, one row's bits at every row count.
+# moe_grouped_tc family at every width 1..=256 (these per-op rules to 64 rows, the whole-block
+# rule `moe_grouped_nvfp4_tc_wide` above), one row's bits at every row count.
 [[rule]]
 id = "moe_gate_up_act_grouped_nvfp4_tc"
 pattern = [
@@ -1433,7 +1434,7 @@ pattern = [
 kernels = [{ module = "moe_nvfp4_grouped_tc", func = "moe_expert_gate_up_act_nvfp4_grouped_tc" }]
 repeat = "once"
 emitter = "moe_grouped_nvfp4"
-rows = [1, 256]
+rows = [1, 64]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 100
@@ -1448,11 +1449,44 @@ pattern = [
 kernels = [{ module = "moe_nvfp4_grouped_tc", func = "moe_expert_down_act_nvfp4_grouped_tc" }]
 repeat = "once"
 emitter = "moe_grouped_nvfp4"
-rows = [1, 256]
+rows = [1, 64]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 100
 cite = "ml/moe/forward_nvfp4_grouped_decode.rs (the NVFP4 down launch with nvfp4_shared_rows = n)"
+
+# 2026-10-02: Above 64 rows the grouped router, top-k and blend rules stop (the FP8 MoE takes its
+# prefill-shaped group there), but the declared NVFP4 decode keeps its grouped path to 256 rows:
+# the whole MoE block as one group, the same kernels as the per-op rules below 65 rows.
+[[rule]]
+id = "moe_grouped_nvfp4_tc_wide"
+pattern = [
+  { op = "router" },
+  { op = "top_k" },
+  { op = "expert_gate_up", weight = "nvfp4/g16" },
+  { op = "silu_mul", local = "experts_act" },
+  { op = "expert_down" },
+  { op = "linear", role = "shared_gate_up", sibling = true },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down" },
+  { op = "linear", role = "shared_gate", sibling = true },
+  { op = "blend" },
+]
+kernels = [
+  { module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm" },
+  { module = "moe_topk", func = "moe_topk_softmax_rows" },
+  { module = "moe_fp8_grouped_sort", func = "moe_fp8_grouped_sort" },
+  { module = "moe_nvfp4_grouped_tc", func = "moe_expert_gate_up_act_nvfp4_grouped_tc" },
+  { module = "moe_nvfp4_grouped_tc", func = "moe_expert_down_act_nvfp4_grouped_tc" },
+  { module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp8_grouped" },
+]
+repeat = "once"
+emitter = "moe_grouped_nvfp4"
+rows = [65, 256]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward_nvfp4_grouped_decode.rs (forward_nvfp4_grouped_decode: grouped_route PerRow, moe_fp8_grouped_sort, the two NVFP4 expert launches, moe_weighted_sum_blend_fp8_grouped; NVFP4_GROUPED_DECODE_TC_MAX_ROWS = 256)"
 
 [[rule]]
 id = "moe_blend_grouped"
