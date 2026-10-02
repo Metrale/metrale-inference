@@ -220,21 +220,26 @@ const CFG: PromptLookupConfig = PromptLookupConfig {
     ngram: 2,
     max_drafts: 3,
     max_seqs: 8,
+    min_match: 2,
+    miss_backoff: 0,
 };
 
 #[test]
 fn seq_marks_a_copy_in_flight_and_settles_it() {
     let mut s = PromptLookupSeq::new(&CFG);
     let h = [1, 2, 3, 4, 5, 1, 2];
-    assert_eq!(s.propose(&h, s.window()), Some(vec![3, 4, 5]));
-    assert_eq!(s.in_flight(), 3);
-    assert_eq!(s.settle(1), 3);
+    // 2026-10-02: The window starts at `WINDOW_START` (2).
+    assert_eq!(s.window(), WINDOW_START);
+    assert_eq!(s.propose(&h, s.window()), Some(vec![3, 4]));
+    assert_eq!(s.in_flight(), 2);
+    assert_eq!(s.settle(2), 2);
     assert_eq!(s.in_flight(), 0);
-    // 2026-10-02: A partial accept halves the window: 3 -> 1.
-    assert_eq!(s.window(), 1);
-    assert_eq!(s.propose(&h, s.window()), Some(vec![3]));
+    // 2026-10-02: A full accept doubles the window to the ceiling (3).
+    assert_eq!(s.window(), 3);
+    assert_eq!(s.propose(&h, s.window()), Some(vec![3, 4, 5]));
     s.settle(1);
-    assert_eq!(s.window(), 2);
+    // 2026-10-02: A partial accept halves it: 3 -> 1.
+    assert_eq!(s.window(), 1);
 }
 
 #[test]
@@ -248,7 +253,11 @@ fn seq_without_a_match_has_nothing_in_flight() {
     assert_eq!(s.propose(&miss, 3), None);
     assert_eq!(s.in_flight(), 0);
     assert_eq!(s.settle(0), 0);
-    assert_eq!(s.window(), 3, "settling nothing must not move the window");
+    assert_eq!(
+        s.window(),
+        WINDOW_START,
+        "settling nothing must not move the window"
+    );
 }
 
 #[test]
@@ -269,5 +278,87 @@ fn seq_abandon_clears_without_moving_the_window() {
     assert!(s.propose(&h, 3).is_some());
     s.abandon();
     assert_eq!(s.in_flight(), 0);
-    assert_eq!(s.window(), 3);
+    assert_eq!(s.window(), WINDOW_START);
+}
+
+// 2026-10-02: Wrong-copy cost controls: minimum match and miss backoff.
+
+#[test]
+fn match_len_counts_back_from_both_ends() {
+    // 2026-10-02: [7 1 2] precedes position 3 and ends the history, but the
+    // token before (9 vs 8) differs: the match spans 3 tokens.
+    let h = [9, 7, 1, 2, 5, 8, 7, 1, 2];
+    assert_eq!(PromptLookupIndex::match_len(&h, 4, 16), 3);
+    assert_eq!(PromptLookupIndex::match_len(&h, 4, 2), 2, "capped");
+    // 2026-10-02: Matching all the way to the history's start stops there.
+    let h = [1, 2, 3, 1, 2];
+    assert_eq!(PromptLookupIndex::match_len(&h, 2, 16), 2);
+}
+
+#[test]
+fn a_short_match_proposes_nothing_under_min_match() {
+    let h = [9, 7, 1, 2, 5, 8, 7, 1, 2];
+    let cfg = PromptLookupConfig {
+        min_match: 4,
+        ..CFG
+    };
+    let mut s = PromptLookupSeq::new(&cfg);
+    assert_eq!(s.propose(&h, 3), None, "a 3-token match is below 4");
+    assert_eq!(s.in_flight(), 0);
+    let cfg = PromptLookupConfig {
+        min_match: 3,
+        ..CFG
+    };
+    let mut s = PromptLookupSeq::new(&cfg);
+    assert_eq!(s.propose(&h, 3), Some(vec![5, 8, 7]));
+}
+
+#[test]
+fn min_match_never_goes_below_the_ngram() {
+    let h = [1, 2, 3, 4, 5, 1, 2];
+    let cfg = PromptLookupConfig {
+        min_match: 0,
+        ..CFG
+    };
+    assert!(PromptLookupSeq::new(&cfg).propose(&h, 3).is_some());
+}
+
+#[test]
+fn backoff_doubles_to_its_cap_and_clears_on_an_accept() {
+    assert_eq!(
+        (1..=8).map(|m| backoff_rounds(m, 16)).collect::<Vec<_>>(),
+        vec![1, 2, 4, 8, 16, 16, 16, 16]
+    );
+    assert_eq!(backoff_rounds(3, 0), 0, "0 disables the backoff");
+    assert_eq!(backoff_rounds(0, 16), 0);
+    assert_eq!(backoff_rounds(200, 16), 16, "no shift overflow");
+
+    let cfg = PromptLookupConfig {
+        miss_backoff: 4,
+        ..CFG
+    };
+    let mut s = PromptLookupSeq::new(&cfg);
+    let h = [1, 2, 3, 4, 5, 1, 2];
+    let proposes = |s: &mut PromptLookupSeq, rounds: usize| {
+        (0..rounds)
+            .filter(|_| s.propose(&h, 2).map(|_| s.abandon()).is_some())
+            .count()
+    };
+    assert!(s.propose(&h, 2).is_some());
+    s.settle(0);
+    assert_eq!(proposes(&mut s, 1), 0, "one round skipped after one miss");
+    assert!(s.propose(&h, 2).is_some());
+    s.settle(0);
+    assert_eq!(
+        proposes(&mut s, 2),
+        0,
+        "two rounds skipped after two misses"
+    );
+    assert!(s.propose(&h, 2).is_some());
+    s.settle(1);
+    assert_eq!(
+        proposes(&mut s, 3),
+        3,
+        "an accepted token clears the backoff"
+    );
 }

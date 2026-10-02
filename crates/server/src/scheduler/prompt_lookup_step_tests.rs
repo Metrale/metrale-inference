@@ -12,6 +12,8 @@ const CFG: PromptLookupConfig = PromptLookupConfig {
     ngram: 2,
     max_drafts: 3,
     max_seqs: 8,
+    min_match: 2,
+    miss_backoff: 0,
 };
 
 /// 2026-10-02: A sequence with a 3-token copy in flight.

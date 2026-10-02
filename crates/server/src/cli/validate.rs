@@ -299,7 +299,7 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
 
     // 2026-10-02: Prompt lookup takes MTP's round when it matches and leaves
     // it to MTP otherwise; with no MTP there is no round to take.
-    if args.prompt_lookup_decoding && !args.speculative {
+    if args.prompt_lookup.prompt_lookup_decoding && !args.speculative {
         v.push(Violation::new(
             "--prompt-lookup-decoding is set without --speculative.",
             "prompt-lookup copies are verified in the MTP speculative step, in place of \

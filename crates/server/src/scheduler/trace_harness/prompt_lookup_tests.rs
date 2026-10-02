@@ -21,6 +21,8 @@ const PL: PromptLookupConfig = PromptLookupConfig {
     ngram: 2,
     max_drafts: 3,
     max_seqs: 8,
+    min_match: 2,
+    miss_backoff: 0,
 };
 
 fn traced(sc: &Scenario) -> Vec<String> {

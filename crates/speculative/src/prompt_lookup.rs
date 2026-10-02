@@ -82,8 +82,20 @@ impl PromptLookupIndex {
     /// is no earlier occurrence, `max_len` is 0, or the history is too short.
     /// Call [`observe`](Self::observe) with the same history first.
     pub fn propose<'h>(&self, history: &'h [u32], max_len: usize) -> Option<&'h [u32]> {
+        let start = self.continuation_start(history)?;
+        if max_len == 0 {
+            return None;
+        }
+        let end = history.len().min(start.saturating_add(max_len));
+        Some(&history[start..end])
+    }
+
+    /// 2026-10-02: Where the continuation [`propose`](Self::propose) copies
+    /// from starts: the position after the latest earlier occurrence of the
+    /// history's final n-gram, re-checked token by token.
+    pub fn continuation_start(&self, history: &[u32]) -> Option<usize> {
         let len = history.len();
-        if max_len == 0 || len <= self.n {
+        if len <= self.n {
             return None;
         }
         let suffix = &history[len - self.n..];
@@ -91,8 +103,18 @@ impl PromptLookupIndex {
         if start < self.n || start >= len || history[start - self.n..start] != *suffix {
             return None;
         }
-        let end = len.min(start.saturating_add(max_len));
-        Some(&history[start..end])
+        Some(start)
+    }
+
+    /// 2026-10-02: How many tokens before `start` equal the tokens before the
+    /// history's end, counted back from both, up to `cap`: the length of the
+    /// match a copy starting at `start` rests on. At least `n` for a start
+    /// [`propose`](Self::propose) returned.
+    pub fn match_len(history: &[u32], start: usize, cap: usize) -> usize {
+        let len = history.len();
+        (1..=cap.min(start))
+            .take_while(|&k| history[start - k] == history[len - k])
+            .count()
     }
 }
 
@@ -139,6 +161,23 @@ impl CopyWindow {
     }
 }
 
+/// 2026-10-02: Where a sequence's copy window starts (capped at
+/// `--prompt-lookup-max-drafts`). A short first copy bounds the verify rows an
+/// untested match can waste; a fully accepted copy doubles the window.
+pub const WINDOW_START: usize = 2;
+
+/// 2026-10-02: Rounds to skip after `misses` copies in a row that matched
+/// nothing: `2^(misses-1)`, capped at `cap` (0 for no backoff).
+pub fn backoff_rounds(misses: u32, cap: usize) -> usize {
+    if cap == 0 || misses == 0 {
+        return 0;
+    }
+    1usize
+        .checked_shl(misses - 1)
+        .unwrap_or(usize::MAX)
+        .min(cap)
+}
+
 /// 2026-10-02: Serve-wide prompt-lookup settings (`--prompt-lookup-*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PromptLookupConfig {
@@ -149,6 +188,12 @@ pub struct PromptLookupConfig {
     pub max_drafts: usize,
     /// 2026-10-02: Widest batch that proposes copies (`--prompt-lookup-max-seqs`).
     pub max_seqs: usize,
+    /// 2026-10-02: Tokens a copy's match must span, counted back from the
+    /// history's end (`--prompt-lookup-min-match`, at least `ngram`).
+    pub min_match: usize,
+    /// 2026-10-02: Most rounds a sequence skips copying after copies that
+    /// matched nothing (`--prompt-lookup-miss-backoff`); 0 never skips.
+    pub miss_backoff: usize,
 }
 
 /// 2026-10-02: One sequence's prompt-lookup state: its index, its copy window,
@@ -159,15 +204,27 @@ pub struct PromptLookupSeq {
     index: PromptLookupIndex,
     window: CopyWindow,
     in_flight: usize,
+    min_match: usize,
+    miss_backoff: usize,
+    /// 2026-10-02: Copies in a row that matched nothing.
+    misses: u32,
+    /// 2026-10-02: Rounds left to skip copying.
+    cooldown: usize,
 }
 
 impl PromptLookupSeq {
-    /// 2026-10-02: Fresh state; the window starts at its ceiling.
+    /// 2026-10-02: Fresh state. The window starts at [`WINDOW_START`] (or the
+    /// ceiling, if lower), so an untested sequence's first copies are short and
+    /// a wrong one costs few verify rows.
     pub fn new(cfg: &PromptLookupConfig) -> Self {
         Self {
             index: PromptLookupIndex::new(cfg.ngram),
-            window: CopyWindow::new(cfg.max_drafts, 1, cfg.max_drafts),
+            window: CopyWindow::new(WINDOW_START, 1, cfg.max_drafts),
             in_flight: 0,
+            min_match: cfg.min_match.max(cfg.ngram),
+            miss_backoff: cfg.miss_backoff,
+            misses: 0,
+            cooldown: 0,
         }
     }
 
@@ -176,10 +233,24 @@ impl PromptLookupSeq {
     /// it in flight. `None` (and nothing in flight) when there is no match or
     /// `max_len` is 0. The caller bounds `max_len`, normally by
     /// [`window`](Self::window).
+    ///
+    /// No copy is proposed while a miss backoff is cooling down (each call
+    /// counts one round), or when the match spans fewer than `min_match`
+    /// tokens.
     pub fn propose(&mut self, history: &[u32], max_len: usize) -> Option<Vec<u32>> {
         self.in_flight = 0;
         self.index.observe(history);
-        let copy = self.index.propose(history, max_len)?.to_vec();
+        if self.cooldown > 0 {
+            self.cooldown -= 1;
+            return None;
+        }
+        let start = self.index.continuation_start(history)?;
+        if max_len == 0
+            || PromptLookupIndex::match_len(history, start, self.min_match) < self.min_match
+        {
+            return None;
+        }
+        let copy = history[start..history.len().min(start + max_len)].to_vec();
         self.in_flight = copy.len();
         Some(copy)
     }
@@ -192,9 +263,21 @@ impl PromptLookupSeq {
     /// 2026-10-02: Closes the in-flight copy: `accepted` of its tokens matched.
     /// Returns the copy's length (0 when none was in flight, which changes
     /// nothing).
+    ///
+    /// A copy that matched nothing starts (or doubles) a backoff of up to
+    /// `miss_backoff` rounds; any accepted token clears it.
     pub fn settle(&mut self, accepted: usize) -> usize {
         let proposed = std::mem::take(&mut self.in_flight);
+        if proposed == 0 {
+            return 0;
+        }
         self.window.record(proposed, accepted.min(proposed));
+        if accepted == 0 {
+            self.misses = self.misses.saturating_add(1);
+            self.cooldown = backoff_rounds(self.misses, self.miss_backoff);
+        } else {
+            self.misses = 0;
+        }
         proposed
     }
 
