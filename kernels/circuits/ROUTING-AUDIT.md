@@ -176,6 +176,12 @@ class and exact citation.
 | `rms_norm_quant_nvfp4` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then w4a4_quant_rows (k/w4a4_gemv_mx.cu, ml/ops/w4a4_proj.rs) |
 | `w8a8_act_quant_row` | reference | ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV) |
 | `w8a8_act_quant_silu_row` | reference | ml/dense_ffn_w8a8.rs:72-74; ml/w8a8_layer.rs:82-116 (silu_proj: bf16(silu(gate) * up) quantized in one launch) |
+| `w8a8_act_quant_g128` | reference | ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant, Block128 at :308: one scale per row and 128-K group) |
+| `w8a8_gemv_blk128_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
+| `w8a8_gemv_blk128_mb2` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
+| `w8a8_gemv_blk128_mb4` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
+| `w8a8_gemv_blk128_mb8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
+| `w8a8_gemv_blk128_mb16` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
 | `w8a8_gemv_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
 | `w8a8_gemv_gate_up_mb1_ku8` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
 | `w8a8_gemv_mb2` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |

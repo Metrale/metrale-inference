@@ -12,10 +12,11 @@
 #   in_proj_qkv/in_proj_z/out_proj. The router, shared_expert_gate, in_proj_a/b and the whole
 #   MTP head (`exclude_modules` mtp*) are BF16.
 # - The FP8 projections are served at their FP8 weights through the native FP8 arms: the loader
-#   repeats the per-tensor scale over the 128x128 grid the W8A16 kernels index
-#   (crates/model-layers/src/weight_map/loaders_fp8.rs `load_fp8_block_scaled_as_fp8weight`), so
-#   they run as fp8/block128x128 with BF16 activations: above the declared FP8 activations
-#   until `KernelCaps::w8a8_block_scaled_decode` is validated, as on the FP8 35B.
+#   repeats the per-tensor scale over the 128x128 grid the kernels index
+#   (crates/model-layers/src/weight_map/loaders_fp8.rs `load_fp8_block_scaled_as_fp8weight`), and
+#   decode runs them W8A8 (FP8 activations, one scale per row and 128-K group: finer than the
+#   declared static per-tensor input scale), since the experts do not decode W8A8
+#   (qwen35/load_layers/w8a8_adopt.rs).
 # - The experts' SiLU product is staged as BF16 hi + lo (about FP32) for the down projection
 #   (kernels/gb10/common/moe_nvfp4_grouped_tc.cu), above the declared 16-bit activation.
 
@@ -81,4 +82,4 @@ activation = "bf16"
 [[linear]]
 match = "*"
 weight = "fp8/block128x128"
-activation = "bf16"
+activation = "fp8/g128"

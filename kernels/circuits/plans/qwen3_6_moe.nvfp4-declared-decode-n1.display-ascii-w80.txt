@@ -3,12 +3,12 @@
 | MoE hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, 256... |
 | 40 layers . hidden 2048 . attn 16q/2kvx256 . GDN 16k/32vx128                 |
 | 256 experts top-8 (ffn 512) . vocab 248320                                   |
-| qkvz/gdn_out/q/k/v/o W8A16 fp8                                               |
+| qkvz/gdn_out/q/k/v/o W8A8 fp8                                                |
 | experts.gate_up/shared_gate_up/lm_head W4A16 nvfp4                           |
 | ba/router/shared_gate W16A16 bf16                                            |
 | experts.down/shared_down W4 nvfp4 . f32 act in                               |
-| mode decode . 1 row . 573 launches/step . 575 kernel groups                  |
-| 180 fused edges . 814 materialized . plan caa3657d50bf                       |
+| mode decode . 1 row . 653 launches/step . 655 kernel groups                  |
+| 180 fused edges . 894 materialized . plan 382651210d3d                       |
 +------------------------------------------------------------------------------+
 
 Layers
@@ -30,8 +30,12 @@ G GatedDeltaNet layer  layer 0
     | input_norm . rms_norm     |  norm::rms_norm_residual . [~] reference
     +---------------------------+
        | v bf16 . nx2048  DRAM
+    +---------------------------+
+    | xn_quant . act_quant      |  w8a8_act_quant::w8a8_act_quant_g128
+    +---------------------------+  [~] reference
+       | v fp8 e4m3/g128 . nx2048  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H qkvz . linear             H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H qkvz . linear             H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
 
   ## ssm_preprocess::dense_gemv_ba_gates ###################### [~] reference ##
@@ -66,8 +70,12 @@ G GatedDeltaNet layer  layer 0
     | out_norm . gated_rms_norm |  norm::gated_rms_norm_f32_input
     +---------------------------+  [~] reference
        | v bf16 . nx4096  DRAM
+    +---------------------------+
+    | gated_quant . act_quant   |  w8a8_act_quant::w8a8_act_quant_g128
+    +---------------------------+  [~] reference
+       | v fp8 e4m3/g128 . nx4096  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H out . linear              H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H out . linear              H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
        | v bf16 . nx2048  DRAM
   ## norm::residual_add_rms_norm ############################## [~] reference ##
@@ -134,8 +142,12 @@ G GatedDeltaNet layer  layer 0
 
 G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
        | v bf16 . nx2048  DRAM  from the layer boundary
+    +---------------------------+
+    | xn_quant . act_quant      |  w8a8_act_quant::w8a8_act_quant_g128
+    +---------------------------+  [~] reference
+       | v fp8 e4m3/g128 . nx2048  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H qkvz . linear             H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H qkvz . linear             H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
 
   ## ssm_preprocess::dense_gemv_ba_gates ###################### [~] reference ##
@@ -170,8 +182,12 @@ G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
     | out_norm . gated_rms_norm |  norm::gated_rms_norm_f32_input
     +---------------------------+  [~] reference
        | v bf16 . nx4096  DRAM
+    +---------------------------+
+    | gated_quant . act_quant   |  w8a8_act_quant::w8a8_act_quant_g128
+    +---------------------------+  [~] reference
+       | v fp8 e4m3/g128 . nx4096  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H out . linear              H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H out . linear              H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
        | v bf16 . nx2048  DRAM
   ## norm::residual_add_rms_norm ############################## [~] reference ##
@@ -238,20 +254,24 @@ G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
 
 A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
        | v bf16 . nx2048  DRAM  from the layer boundary
+    +---------------------------+
+    | xn_quant . act_quant      |  w8a8_act_quant::w8a8_act_quant_g128
+    +---------------------------+  [~] reference
+       | v fp8 e4m3/g128 . nx2048  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H q . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H q . linear                H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
        | v bf16 . nx8192  DRAM
     +---------------------------+
     | q_split . split           |  ssm_preprocess::deinterleave_qg
     +---------------------------+  [~] reference
 
-    #===========================#  < xn . weight fp8 e4m3/128x128 blk
-    H k . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  < xn_quant . weight fp8 e4m3/128x128 blk
+    H k . linear                H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
 
-    #===========================#  < xn . weight fp8 e4m3/128x128 blk
-    H v . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  < xn_quant . weight fp8 e4m3/128x128 blk
+    H v . linear                H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
 
     +---------------------------+  < q
@@ -278,8 +298,12 @@ A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
     | gate_mul . sigmoid_gat... |  residual_add::sigmoid_gate_mul
     +---------------------------+  [~] reference
        | v bf16 . nx4096  DRAM
+    +---------------------------+
+    | ag_quant . act_quant      |  w8a8_act_quant::w8a8_act_quant_g128
+    +---------------------------+  [~] reference
+       | v fp8 e4m3/g128 . nx4096  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H o . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H o . linear                H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
        | v bf16 . nx2048  DRAM
   ## norm::residual_add_rms_norm ############################## [~] reference ##
@@ -332,20 +356,24 @@ A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
 
 A Full-attention layer  layer 39
        | v bf16 . nx2048  DRAM  from the layer boundary
+    +---------------------------+
+    | xn_quant . act_quant      |  w8a8_act_quant::w8a8_act_quant_g128
+    +---------------------------+  [~] reference
+       | v fp8 e4m3/g128 . nx2048  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H q . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H q . linear                H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
        | v bf16 . nx8192  DRAM
     +---------------------------+
     | q_split . split           |  ssm_preprocess::deinterleave_qg
     +---------------------------+  [~] reference
 
-    #===========================#  < xn . weight fp8 e4m3/128x128 blk
-    H k . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  < xn_quant . weight fp8 e4m3/128x128 blk
+    H k . linear                H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
 
-    #===========================#  < xn . weight fp8 e4m3/128x128 blk
-    H v . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    #===========================#  < xn_quant . weight fp8 e4m3/128x128 blk
+    H v . linear                H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
 
     +---------------------------+  < q
@@ -372,8 +400,12 @@ A Full-attention layer  layer 39
     | gate_mul . sigmoid_gat... |  residual_add::sigmoid_gate_mul
     +---------------------------+  [~] reference
        | v bf16 . nx4096  DRAM
+    +---------------------------+
+    | ag_quant . act_quant      |  w8a8_act_quant::w8a8_act_quant_g128
+    +---------------------------+  [~] reference
+       | v fp8 e4m3/g128 . nx4096  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H o . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H o . linear                H  w8a8_gemv::w8a8_gemv_blk128_mb1_ku8
     #===========================#  [~] reference
        | v bf16 . nx2048  DRAM
   ## norm::residual_add_rms_norm ############################## [~] reference ##
@@ -443,7 +475,7 @@ d head
     +---------------------------+
 
 --------------------------------------------------------------------------------
-573 launches/step . 575 groups . 180 fused . 814 materialized edges
-6.6 MiB written/step . arena 0.5 MiB
+653 launches/step . 655 groups . 180 fused . 894 materialized edges
+6.8 MiB written/step . arena 0.5 MiB
 #=# heavy op . +-+ light op . ### fused kernel . |v DRAM . :v on-chip
 [ok] bit-identical . [~] reference . [!] differs
