@@ -57,6 +57,9 @@ impl ModelLifecycle for PrefillStubModel {
     fn compact_sequence(&self, _s: &mut SequenceState, _new_slot: usize) -> Result<()> {
         unreachable!("no compaction in this harness")
     }
+    fn kv_block_bytes(&self) -> usize {
+        0
+    }
 }
 
 impl ModelForward for PrefillStubModel {

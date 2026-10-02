@@ -30,6 +30,57 @@ The checkpoint's formats are kept; this is how the device and its class's compil
 | W8A16 | fp8/block128x128 | bf16 | 182 | native bf16 |
 | W8A16 | fp8/block128x128 | f32 | 82 | native bf16 |
 
+## Tensor-core policy
+
+kernels/gb10/HARDWARE.toml `[tensor_core_policy]`: a plan that runs one of these ops off tensor cores is refused unless an exemption lists the op, mode, rows and kernels. Compute units are the kernel families' (`compute`, `mma`).
+
+| ops | modes | from rows | weights |
+|---|---|---:|---|
+| linear, lm_head, router, expert_gate_up, expert_down, paged_attention | decode, multi_seq, verify, draft | 1 | any |
+
+| run | covered nodes | on tensor cores | exempted sites |
+|---|---:|---:|---:|
+| decode n=1 | 381 | 100 | 9 |
+| multi_seq n=16 | 762 | 202 | 9 |
+| multi_seq n=128 | 762 | 682 | 3 |
+
+Covered sites off tensor cores, each under an exemption (`backlog` is a known violation awaiting a tensor-core kernel):
+
+| run | site | op | weight | unit | kernels | exemption |
+|---|---|---|---|---|---|---|
+| decode n=1 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
+| decode n=1 | `moe_ffn.router` | router | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
+| decode n=1 | `moe_ffn.experts_gate_up` | expert_gate_up | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8` | #6 backlog |
+| decode n=1 | `moe_ffn.shared_gate_up` | linear:shared_gate_up | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8` | #6 backlog |
+| decode n=1 | `moe_ffn.experts_down` | expert_down | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8` | #6 backlog |
+| decode n=1 | `moe_ffn.shared_down` | linear:shared_down | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8` | #6 backlog |
+| decode n=1 | `moe_ffn.shared_gate` | linear:shared_gate | bf16 | cuda_core | `moe_expert_gemv::moe_weighted_sum_blend` | #5 shape |
+| decode n=1 | `attn.attend` | paged_attention | - | cuda_core | `paged_decode::paged_decode_attn` | #3 backlog |
+| decode n=1 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
+| multi_seq n=16 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemm_ba_gates_prefill` | #4 backlog |
+| multi_seq n=16 | `moe_ffn.router` | router | bf16 | cuda_core | `dense_gemv_bf16_batchm::dense_gemv_bf16_batchm` | #2 backlog |
+| multi_seq n=16 | `moe_ffn.experts_gate_up` | expert_gate_up | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped` | #6 backlog |
+| multi_seq n=16 | `moe_ffn.shared_gate_up` | linear:shared_gate_up | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped` | #6 backlog |
+| multi_seq n=16 | `moe_ffn.experts_down` | expert_down | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped` | #6 backlog |
+| multi_seq n=16 | `moe_ffn.shared_down` | linear:shared_down | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped` | #6 backlog |
+| multi_seq n=16 | `moe_ffn.shared_gate` | linear:shared_gate | bf16 | cuda_core | `moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped` | #5 shape |
+| multi_seq n=16 | `attn.attend` | paged_attention | - | cuda_core | `paged_decode::paged_decode_attn` | #3 backlog |
+| multi_seq n=16 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
+| multi_seq n=128 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper` | #4 backlog |
+| multi_seq n=128 | `attn.attend` | paged_attention | - | cuda_core | `paged_decode::paged_decode_attn` | #3 backlog |
+| multi_seq n=128 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
+
+| # | kind | ops | rows | reason |
+|---:|---|---|---|---|
+| 1 | backlog | linear, lm_head | 1-3 | NVFP4 W4A16 CUDA-core GEMV at 1-3 rows (the 27B NVFP4 decode at C=1, the MTP draft head). The tensor-core row tier w4a16_tc (mma.sync.m16n8k16.bf16) exists; measure it against this GEMV at M=1-3: a win moves the rules to it, a loss turns this entry into a measured exemption. |
+| 2 | backlog | lm_head, router, linear | 1-64 | BF16 CUDA-core GEMV and batched GEMV: the BF16 head at 1-8 rows, the MoE router at 1-64 rows, the MTP draft projections at 1 row. The tensor-core tier dense_bf16_tc (tc8/tc16/tc32) exists; measure it against these at M=1-32. |
+| 3 | backlog | paged_attention | 1-128 | Paged decode attention computes QK^T and PV on CUDA cores at every row count; no tensor-core decode-attention kernel exists on this class yet (GQA groups can fill an m16n8k16 tile). |
+| 4 | backlog | linear:ba | 1-128 | The GatedDeltaNet beta/decay projection (N = 2 x value heads) runs as a CUDA-core GEMV/GEMM fused with the gate math; a tensor-core tile fits N >= 96 at 16+ rows. |
+| 5 | shape | linear:shared_gate | 1-128 | The shared-expert gate projects to one column and is folded into the expert blend: no MMA tile to fill. |
+| 6 | backlog | expert_gate_up, expert_down, linear:shared_gate_up, linear:shared_up, linear:shared_down | 1-64 | FP8 and BF16 MoE experts on CUDA cores (1-row fused and scalar grouped, the 35B-A3B FP8 default at C=1 and C=16). The tensor-core grouped twins (moe_grouped_tc) exist; their selection is the open MoE-energy work. |
+| 7 | backlog | expert_gate_up, expert_down, linear:shared_gate_up, linear:shared_up, linear:shared_down | 1-64 | NVFP4 MoE experts on CUDA cores (Nemotron-3, Qwen3.6-35B-A3B NVFP4); their circuit plans show the experts as gaps today. The NVFP4 MoE blueprint and its tensor-core grouped point (moe_grouped_tc, nvfp4/g16, mma.sync.m16n8k16.bf16) are in progress. |
+| 8 | backlog | lm_head | 17-32 | The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batch32 GEMV: the tensor-core row tiers stop at 16 rows and the emitter refuses the tile GEMM twin. A tc32 tier (or the tile twin) is the tensor-core path. |
+
 ## Roofline estimates
 
 Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are costed per row. No launch overhead: a ceiling, not a prediction.
@@ -121,45 +172,45 @@ Estimated step 14.896 ms. Shared 59.2% (measured on this class), shared-unmeasur
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 27.4% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv |
-| gdn.qkvz | linear:qkvz | fp8/block128x128 x bf16 | native bf16 | 30 | 20.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 18.1% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 rule=moe_gate_up_shared_fp8 |
-| moe_ffn.experts_down | expert_down | fp8/block128x128 x f32 | native bf16 | 40 | 9.1% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 rule=moe_silu_down_shared_fp8 |
-| gdn.out | linear:gdn_out | fp8/block128x128 x bf16 | native bf16 | 30 | 6.8% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| attn.q | linear:q | fp8/block128x128 x bf16 | native bf16 | 10 | 4.5% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| gdn.recur | gdn_recurrence | - | - | 30 | 3.4% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row |
-| moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 2.3% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 rule=moe_gate_up_shared_fp8 |
-| attn.attend | paged_attention | - | - | 10 | 2.3% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
-| attn.o | linear:o | fp8/block128x128 x bf16 | native bf16 | 10 | 2.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x f32 | native bf16 | 40 | 1.1% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 rule=moe_silu_down_shared_fp8 |
-| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 1.1% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=moe_router_gemv |
-| attn.k | linear:k | fp8/block128x128 x bf16 | native bf16 | 10 | 0.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| attn.v | linear:v | fp8/block128x128 x bf16 | native bf16 | 10 | 0.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.2% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| gdn.l2 | l2_norm | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.conv | conv1d_update | - | - | 30 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| moe_ffn.blend | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_expert_gemv::moe_weighted_sum_blend rule=moe_weighted_sum_blend |
-| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row |
-| moe_ffn.experts_act | silu_mul | - | - | 40 | 0.0% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 rule=moe_silu_down_shared_fp8 |
-| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 27.4% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv compute=cuda_core |
+| gdn.qkvz | linear:qkvz | fp8/block128x128 x bf16 | native bf16 | 30 | 20.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 18.1% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 rule=moe_gate_up_shared_fp8 compute=cuda_core |
+| moe_ffn.experts_down | expert_down | fp8/block128x128 x f32 | native bf16 | 40 | 9.1% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 rule=moe_silu_down_shared_fp8 compute=cuda_core |
+| gdn.out | linear:gdn_out | fp8/block128x128 x bf16 | native bf16 | 30 | 6.8% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| attn.q | linear:q | fp8/block128x128 x bf16 | native bf16 | 10 | 4.5% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.recur | gdn_recurrence | - | - | 30 | 3.4% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
+| moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 2.3% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 rule=moe_gate_up_shared_fp8 compute=cuda_core |
+| attn.attend | paged_attention | - | - | 10 | 2.3% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
+| attn.o | linear:o | fp8/block128x128 x bf16 | native bf16 | 10 | 2.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x f32 | native bf16 | 40 | 1.1% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 rule=moe_silu_down_shared_fp8 compute=cuda_core |
+| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 1.1% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=moe_router_gemv compute=cuda_core |
+| attn.k | linear:k | fp8/block128x128 x bf16 | native bf16 | 10 | 0.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| attn.v | linear:v | fp8/block128x128 x bf16 | native bf16 | 10 | 0.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.2% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| gdn.l2 | l2_norm | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 30 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| moe_ffn.blend | blend | - | - | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_expert_gemv::moe_weighted_sum_blend rule=moe_weighted_sum_blend compute=cuda_core |
+| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row compute=memory |
+| moe_ffn.experts_act | silu_mul | - | - | 40 | 0.0% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 rule=moe_silu_down_shared_fp8 compute=cuda_core |
+| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
-| moe_ffn.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.add | residual_add | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_expert_gemv::moe_weighted_sum_blend rule=moe_weighted_sum_blend |
-| attn.q_split | split | - | - | 10 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
-| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul rule=sigmoid_gate_mul |
-| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved |
-| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows |
-| moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 rule=moe_silu_down_shared_fp8 |
-| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | moe_topk::moe_topk_softmax rule=moe_topk_softmax |
-| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows |
-| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| moe_ffn.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| gdn.add | residual_add | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_expert_gemv::moe_weighted_sum_blend rule=moe_weighted_sum_blend compute=cuda_core |
+| attn.q_split | split | - | - | 10 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul rule=sigmoid_gate_mul compute=memory |
+| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved compute=memory |
+| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows compute=memory |
+| moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared | moe_fp8_1row | moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 rule=moe_silu_down_shared_fp8 compute=cuda_core |
+| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | moe_topk::moe_topk_softmax rule=moe_topk_softmax compute=memory |
+| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows compute=memory |
+| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=16
@@ -168,45 +219,45 @@ Estimated step 76.227 ms. Shared 68.7% (measured on this class), shared-unmeasur
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 45.1% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped |
-| moe_ffn.experts_down | expert_down | fp8/block128x128 x f32 | native bf16 | 40 | 22.7% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped rule=moe_down_act_grouped |
-| gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
-| attn.attend | paged_attention | - | - | 10 | 7.1% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
-| gdn.qkvz | linear:qkvz | fp8/block128x128 x bf16 | native bf16 | 30 | 4.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| gdn.out | linear:gdn_out | fp8/block128x128 x bf16 | native bf16 | 30 | 1.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| attn.q | linear:q | fp8/block128x128 x bf16 | native bf16 | 10 | 0.9% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 0.5% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped |
-| attn.o | linear:o | fp8/block128x128 x bf16 | native bf16 | 10 | 0.5% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x f32 | native bf16 | 40 | 0.2% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped rule=moe_down_act_grouped |
-| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 0.2% | Shared, unmeasured | dense_bf16 | dense_gemv_bf16_batchm::dense_gemv_bf16_batchm rule=moe_grouped_router_rows |
-| gdn.l2 | l2_norm | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
-| gdn.conv | conv1d_update | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
-| moe_ffn.blend | blend | - | - | 40 | 0.1% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped |
-| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.1% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
-| moe_ffn.experts_act | silu_mul | - | - | 40 | 0.1% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped |
-| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
-| attn.k | linear:k | fp8/block128x128 x bf16 | native bf16 | 10 | 0.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| attn.v | linear:v | fp8/block128x128 x bf16 | native bf16 | 10 | 0.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.1% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_batched |
+| moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 45.1% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped compute=cuda_core |
+| moe_ffn.experts_down | expert_down | fp8/block128x128 x f32 | native bf16 | 40 | 22.7% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped rule=moe_down_act_grouped compute=cuda_core |
+| gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched compute=cuda_core |
+| attn.attend | paged_attention | - | - | 10 | 7.1% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.qkvz | linear:qkvz | fp8/block128x128 x bf16 | native bf16 | 30 | 4.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.out | linear:gdn_out | fp8/block128x128 x bf16 | native bf16 | 30 | 1.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| attn.q | linear:q | fp8/block128x128 x bf16 | native bf16 | 10 | 0.9% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 0.5% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped compute=cuda_core |
+| attn.o | linear:o | fp8/block128x128 x bf16 | native bf16 | 10 | 0.5% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x f32 | native bf16 | 40 | 0.2% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped rule=moe_down_act_grouped compute=cuda_core |
+| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 0.2% | Shared, unmeasured | dense_bf16 | dense_gemv_bf16_batchm::dense_gemv_bf16_batchm rule=moe_grouped_router_rows compute=cuda_core |
+| gdn.l2 | l2_norm | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched compute=cuda_core |
+| moe_ffn.blend | blend | - | - | 40 | 0.1% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped compute=cuda_core |
+| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.1% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched compute=memory |
+| moe_ffn.experts_act | silu_mul | - | - | 40 | 0.1% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped compute=cuda_core |
+| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched compute=cuda_core |
+| attn.k | linear:k | fp8/block128x128 x bf16 | native bf16 | 10 | 0.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| attn.v | linear:v | fp8/block128x128 x bf16 | native bf16 | 10 | 0.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.1% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_batched compute=cuda_core |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
-| moe_ffn.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.add | residual_add | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.q_split | split | - | - | 10 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
-| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched |
-| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped |
-| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped |
-| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | moe_topk::moe_topk_softmax_rows + moe_fp8_grouped_sort::moe_fp8_grouped_sort rule=moe_grouped_topk_sort |
-| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_batched |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| moe_ffn.add | residual_add | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| gdn.add | residual_add | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.q_split | split | - | - | 10 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched compute=memory |
+| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
+| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | moe_blend | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped rule=moe_blend_grouped compute=cuda_core |
+| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped rule=moe_gate_up_act_grouped compute=cuda_core |
+| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | moe_topk::moe_topk_softmax_rows + moe_fp8_grouped_sort::moe_fp8_grouped_sort rule=moe_grouped_topk_sort compute=memory |
+| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_batched compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=128
@@ -215,45 +266,45 @@ Estimated step 255.182 ms. Shared 0.0% (measured on this class), shared-unmeasur
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 33.4% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| gdn.recur | gdn_recurrence | - | - | 30 | 25.6% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched |
-| moe_ffn.experts_down | expert_down | fp8/block128x128 x f32 | native bf16 | 40 | 17.0% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| attn.attend | paged_attention | - | - | 10 | 16.9% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
-| gdn.qkvz | linear:qkvz | fp8/block128x128 x bf16 | native bf16 | 30 | 1.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined::w8a16_gemm_pipelined rule=w8a16_full_gdn_wide |
-| gdn.out | linear:gdn_out | fp8/block128x128 x bf16 | native bf16 | 30 | 0.5% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined::w8a16_gemm_pipelined rule=w8a16_full_gdn_wide |
-| gdn.l2 | l2_norm | - | - | 30 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
-| gdn.conv | conv1d_update | - | - | 30 | 0.3% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
-| moe_ffn.blend | blend | - | - | 40 | 0.3% | Shared, unmeasured | moe_blend | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| attn.q | linear:q | fp8/block128x128 x bf16 | native bf16 | 10 | 0.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked |
-| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.3% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched |
-| moe_ffn.experts_act | silu_mul | - | - | 40 | 0.3% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched |
-| moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 0.2% | Shared, unmeasured | dense_bf16 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| attn.o | linear:o | fp8/block128x128 x bf16 | native bf16 | 10 | 0.2% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked |
-| moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x f32 | native bf16 | 40 | 0.1% | Shared, unmeasured | dense_bf16 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 0.1% | Shared, unmeasured | dense_bf16 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
+| moe_ffn.experts_gate_up | expert_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 33.4% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| gdn.recur | gdn_recurrence | - | - | 30 | 25.6% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched compute=cuda_core |
+| moe_ffn.experts_down | expert_down | fp8/block128x128 x f32 | native bf16 | 40 | 17.0% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.attend | paged_attention | - | - | 10 | 16.9% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.qkvz | linear:qkvz | fp8/block128x128 x bf16 | native bf16 | 30 | 1.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined::w8a16_gemm_pipelined rule=w8a16_full_gdn_wide compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.out | linear:gdn_out | fp8/block128x128 x bf16 | native bf16 | 30 | 0.5% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined::w8a16_gemm_pipelined rule=w8a16_full_gdn_wide compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.l2 | l2_norm | - | - | 30 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 30 | 0.3% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched compute=cuda_core |
+| moe_ffn.blend | blend | - | - | 40 | 0.3% | Shared, unmeasured | moe_blend | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.q | linear:q | fp8/block128x128 x bf16 | native bf16 | 10 | 0.3% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| gdn.out_norm | gated_rms_norm | - | - | 30 | 0.3% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input_strided rule=gdn_out_norm_f32_batched compute=memory |
+| moe_ffn.experts_act | silu_mul | - | - | 40 | 0.3% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| gdn.conv_ckpt | state_snapshot | - | - | 30 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched compute=cuda_core |
+| moe_ffn.shared_gate_up | linear:shared_gate_up | fp8/block128x128 x bf16 | native bf16 | 40 | 0.2% | Shared, unmeasured | dense_bf16 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.o | linear:o | fp8/block128x128 x bf16 | native bf16 | 10 | 0.2% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| moe_ffn.shared_down | linear:shared_down | fp8/block128x128 x f32 | native bf16 | 40 | 0.1% | Shared, unmeasured | dense_bf16 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| moe_ffn.router | router | bf16 x bf16 | native bf16 | 40 | 0.1% | Shared, unmeasured | dense_bf16 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
 | head.argmax | argmax | - | - | 1 | 0.1% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
-| moe_ffn.add | residual_add | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| gdn.add | residual_add | - | - | 30 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.q_split | split | - | - | 10 | 0.1% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
-| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched |
-| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper rule=gdn_ba_gates_gemm_batched_twin |
-| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | dense_bf16 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| attn.k | linear:k | fp8/block128x128 x bf16 | native bf16 | 10 | 0.0% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked |
-| attn.v | linear:v | fp8/block128x128 x bf16 | native bf16 | 10 | 0.0% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked |
-| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm |
-| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide |
-| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper rule=gdn_ba_gates_gemm_batched_twin |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| moe_ffn.add | residual_add | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| gdn.add | residual_add | - | - | 30 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.q_split | split | - | - | 10 | 0.1% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| moe_ffn.post_norm | rms_norm | - | - | 40 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 10 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched compute=memory |
+| gdn.input_norm | rms_norm | - | - | 30 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper rule=gdn_ba_gates_gemm_batched_twin compute=cuda_core |
+| attn.rope | rope | - | - | 10 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
+| moe_ffn.shared_gate | linear:shared_gate | bf16 x bf16 | native bf16 | 40 | 0.0% | Shared, unmeasured | dense_bf16 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.q_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| moe_ffn.shared_act | silu_mul | - | - | 40 | 0.0% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.k | linear:k | fp8/block128x128 x bf16 | native bf16 | 10 | 0.0% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| attn.v | linear:v | fp8/block128x128 x bf16 | native bf16 | 10 | 0.0% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64 rule=w8a16_m64_attn_chunked compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| attn.add | residual_add | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.input_norm | rms_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| moe_ffn.top_k | top_k | - | - | 40 | 0.0% | Shared, unmeasured | moe_topk | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.k_norm | qk_norm | - | - | 10 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.kv_write | kv_write | - | - | 10 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 30 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper rule=gdn_ba_gates_gemm_batched_twin compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Rule kernels this device cannot run

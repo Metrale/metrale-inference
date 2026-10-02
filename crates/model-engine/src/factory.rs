@@ -106,6 +106,7 @@ mod lm_head_setup;
 mod m2_setup;
 
 pub use build::build_model;
+pub use build::slots::{AUTO_MAX_SLOTS, BuiltModel, SlotPlan, SlotRequest, balance_slots};
 
 #[cfg(test)]
 mod tests {
@@ -131,7 +132,10 @@ mod tests {
             1,
             16,
             4096,
-            8,
+            SlotPlan {
+                request: SlotRequest::Count(8),
+                reserve_for: &|_| Ok(1 << 30),
+            },
             MtpQuantization::Nvfp4,
             false,
             prefix_cache,
@@ -140,7 +144,6 @@ mod tests {
             false,
             1,
             KvCacheDtype::Fp8,
-            1024 * 1024 * 1024,
             0.90,
             0,
             vec![],

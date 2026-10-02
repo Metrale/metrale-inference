@@ -10,8 +10,11 @@
 use anyhow::{Context, Result};
 
 use crate::cli;
+use crate::main_modules::memory_probe::{DeviceBudget, budget_bytes};
 
 /// 2026-09-26: Initialize the GPU backend and return it with its free memory.
+/// 2026-10-01: Also returns the serve's [`DeviceBudget`] for `GET /memory`: the budget from
+/// total memory and `--gpu-memory-utilization`, and a reader on the backend's allocation ledger.
 ///
 /// With `cuda`, the device-arch gate runs first, then `MetraleCudaBackend`
 /// loads `ptx_set.modules`. With `metal` and not `cuda`, `MetalGpuBackend`
@@ -22,7 +25,11 @@ use crate::cli;
 pub(crate) fn init_gpu_backend(
     args: &cli::ServeArgs,
     ptx_set: &metrale_kernels::TargetPtxSet,
-) -> Result<(Box<dyn metrale_gpu_runtime::gpu::GpuBackend>, usize)> {
+) -> Result<(
+    Box<dyn metrale_gpu_runtime::gpu::GpuBackend>,
+    usize,
+    DeviceBudget,
+)> {
     super::super::kernel_gate::gate_device_arch(args.check_kernels, ptx_set, args.gpu_ordinal)?;
 
     let backend = metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(
@@ -31,6 +38,7 @@ pub(crate) fn init_gpu_backend(
     )
     .context("Failed to initialize CUDA backend")?;
 
+    let ledger = backend.ledger_probe();
     let gpu: Box<dyn metrale_gpu_runtime::gpu::GpuBackend> = Box::new(backend);
     let total_mem = gpu.total_memory()?;
     let free_mem = gpu.free_memory()?;
@@ -44,14 +52,22 @@ pub(crate) fn init_gpu_backend(
         total_mem as f64 / (1024.0 * 1024.0 * 1024.0),
         free_mem as f64 / (1024.0 * 1024.0 * 1024.0),
     );
-    Ok((gpu, free_mem))
+    let device = DeviceBudget {
+        budget_bytes: budget_bytes(total_mem, args.gpu_memory_utilization),
+        ledger: Some(std::sync::Arc::new(move || ledger.live_bytes())),
+    };
+    Ok((gpu, free_mem, device))
 }
 
 #[cfg(all(feature = "metal", not(feature = "cuda")))]
 pub(crate) fn init_gpu_backend(
     args: &cli::ServeArgs,
     ptx_set: &metrale_kernels::TargetPtxSet,
-) -> Result<(Box<dyn metrale_gpu_runtime::gpu::GpuBackend>, usize)> {
+) -> Result<(
+    Box<dyn metrale_gpu_runtime::gpu::GpuBackend>,
+    usize,
+    DeviceBudget,
+)> {
     let gpu: Box<dyn metrale_gpu_runtime::gpu::GpuBackend> = Box::new(
         metrale_gpu_runtime::metal_backend::MetalGpuBackend::new(
             args.gpu_ordinal,
@@ -68,5 +84,10 @@ pub(crate) fn init_gpu_backend(
         total_mem as f64 / (1024.0 * 1024.0 * 1024.0),
         free_mem as f64 / (1024.0 * 1024.0 * 1024.0),
     );
-    Ok((gpu, free_mem))
+    // 2026-10-01: The Metal backend keeps no allocation ledger (`GpuBackend::live_bytes`).
+    let device = DeviceBudget {
+        budget_bytes: budget_bytes(total_mem, args.gpu_memory_utilization),
+        ledger: None,
+    };
+    Ok((gpu, free_mem, device))
 }

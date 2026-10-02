@@ -33,6 +33,9 @@ pub struct AppState {
     /// 2026-09-28: The model's forward (`--forward`) and its decode plan digest, as
     /// `GET /forward` reports them.
     pub forward: metrale_bench::gate::record_serve::LiveForward,
+    /// 2026-10-01: The built model's KV pool and slots and the serve's memory budget, as
+    /// `GET /memory` reports them with the readings it takes per request.
+    pub memory: crate::main_modules::memory_probe::MemoryFacts,
     pub tokenizer: ChatTokenizer,
     pub model_name: String,
     /// 2026-09-26: The first `--lora-adapter`'s name, if any. No handler reads

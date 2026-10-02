@@ -195,7 +195,7 @@ pub fn gap_table(
                         f.family
                     )
                 } else {
-                    kernels_of(g)
+                    kernels_of(g, &r.families)
                 };
                 let diffs = f
                     .diffs
@@ -236,7 +236,7 @@ pub fn gap_table(
                 Class::SharedUnmeasured,
                 None,
                 Vec::new(),
-                format!("{} (unclassified: {msg})", kernels_of(g)),
+                format!("{} (unclassified: {msg})", kernels_of(g, &r.families)),
             ),
             Err(e) => return Err(HwError::Plan(e.to_string())),
         };
@@ -283,11 +283,14 @@ pub fn gap_table(
     })
 }
 
-fn kernels_of(g: &crate::fuser::Group) -> String {
+/// 2026-09-30: What runs a group. 2026-10-02: with the compute unit its kernels run on
+/// (`venn::compute`), or `undeclared` for a kernel no family lists.
+fn kernels_of(g: &crate::fuser::Group, families: &crate::venn::families::Families) -> String {
     if g.kernels.is_empty() {
         format!("({} emitter) rule={}", g.emitter, g.rule)
     } else {
         let k: Vec<String> = g.kernels.iter().map(|k| k.to_string()).collect();
-        format!("{} rule={}", k.join(" + "), g.rule)
+        let unit = super::tc_policy::unit_tag(families, &g.kernels).unwrap_or_default();
+        format!("{} rule={} compute={unit}", k.join(" + "), g.rule)
     }
 }

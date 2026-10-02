@@ -54,7 +54,9 @@ fn the_cli_plan_is_the_checked_in_golden_plan() {
         (Mode::Decode, 1, "qwen3_5-decode-n1.txt"),
         (Mode::Verify, 4, "qwen3_5-verify-n4.txt"),
     ] {
-        let shown = metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows).unwrap();
+        let families = super::families_for(&inst).unwrap();
+        let shown =
+            metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows, &families).unwrap();
         let path = format!(
             "{}/../../kernels/circuits/plans/{file}",
             env!("CARGO_MANIFEST_DIR")

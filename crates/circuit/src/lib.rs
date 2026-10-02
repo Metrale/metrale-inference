@@ -196,13 +196,27 @@ pub fn header(instance: &Instance) -> render::Header {
     h
 }
 
-/// 2026-09-28: Fuse and render one plan of `instance`.
+/// 2026-09-28: Fuse and render one plan of `instance`. 2026-10-02: each group line names the
+/// compute unit its kernels run on ([`venn::compute`]), from the target class's kernel families.
 pub fn render_plan(
     instance: &Instance,
     loaded: &Loaded,
     available: &AvailableKernels,
     mode: Mode,
     rows: u64,
+    families: &venn::Families,
+) -> Result<String, LoadError> {
+    let note = |g: &fuser::Group| hardware::tc_policy::unit_tag(families, &g.kernels);
+    render_plan_noted(instance, loaded, available, mode, rows, &note)
+}
+
+fn render_plan_noted(
+    instance: &Instance,
+    loaded: &Loaded,
+    available: &AvailableKernels,
+    mode: Mode,
+    rows: u64,
+    note: &dyn Fn(&fuser::Group) -> Option<String>,
 ) -> Result<String, LoadError> {
     let plan = fuse(
         &loaded.circuit,
@@ -213,13 +227,19 @@ pub fn render_plan(
         rows,
     )?;
     let head = header(instance);
-    let mut text = render::render(&loaded.circuit, &plan, &head);
+    let mut text = render::render_noted(&loaded.circuit, &plan, &head, note);
     let set = (loaded.rules.as_slice(), loaded.runtime.as_slice());
     for (route, arm) in
         runtime::route_arms(&loaded.circuit, set, available, &instance.policy, &plan)?
     {
         let h = render::with_settings(&head, &route.policy(&instance.policy));
-        text.push_str(&render::route_section(&loaded.circuit, &route, &arm, &h));
+        text.push_str(&render::route_section(
+            &loaded.circuit,
+            &route,
+            &arm,
+            &h,
+            note,
+        ));
     }
     Ok(text)
 }

@@ -11,13 +11,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
+use super::ComputeUnit;
+use super::compute_file::ComputeFile;
 use super::{
-    Discover, Evidence, EvidenceSource, Extract, Families, Family, FamilyError, How, LegacyPath,
-    OpSpec, Param, ParamKind, Point, Roofline, Values,
+    Discover, Evidence, EvidenceSource, Extract, Families, Family, FamilyError, How, OpSpec, Param,
+    ParamKind, Point, Roofline, Values,
 };
 use crate::format::Format;
-use crate::ir::{LayerKind, LinearRole, OpKind};
-use crate::rules::{KernelId, Mode};
+use crate::ir::{LinearRole, OpKind};
+use crate::rules::KernelId;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,7 +29,7 @@ struct File {
     roofline: RooflineFile,
     family: Vec<FamilyFile>,
     #[serde(default)]
-    legacy_path: Vec<LegacyFile>,
+    legacy_path: Vec<super::legacy_file::LegacyFile>,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +60,10 @@ struct FamilyFile {
     evidence: Vec<EvidenceFile>,
     #[serde(default)]
     discover: Vec<DiscoverFile>,
+    compute: String,
+    mma: Option<String>,
+    #[serde(default)]
+    kernel_compute: BTreeMap<String, ComputeFile>,
 }
 
 #[derive(Deserialize)]
@@ -102,6 +108,8 @@ struct PointFile {
     values: Values,
     how: String,
     files: Vec<String>,
+    compute: Option<String>,
+    mma: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -124,19 +132,6 @@ struct DiscoverFile {
     args: Option<BTreeMap<String, usize>>,
     #[serde(default)]
     map: BTreeMap<String, BTreeMap<String, String>>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyFile {
-    arch: String,
-    layer_kind: String,
-    per_sequence: Vec<String>,
-    sites: Vec<String>,
-    rows_above: u64,
-    cite: String,
-    holds: String,
-    note: String,
 }
 
 pub(super) fn parse(text: &str) -> Result<Families, FamilyError> {
@@ -190,7 +185,7 @@ pub(super) fn parse(text: &str) -> Result<Families, FamilyError> {
     let legacy = file
         .legacy_path
         .into_iter()
-        .map(legacy)
+        .map(super::legacy_file::legacy)
         .collect::<Result<_, _>>()?;
     Ok(Families {
         hardware: file.hardware,
@@ -314,10 +309,23 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
                 p.values
             )));
         }
+        let compute = p
+            .compute
+            .as_deref()
+            .map(|c| ComputeUnit::parse(c, p.mma.as_deref()))
+            .transpose()
+            .map_err(|e| field(format!("point {:?}: {e}", p.values)))?;
+        if p.compute.is_none() && p.mma.is_some() {
+            return Err(field(format!(
+                "point {:?} names an `mma` without `compute`",
+                p.values
+            )));
+        }
         points.push(Point {
             values: p.values,
             how,
             files: p.files,
+            compute,
         });
     }
     let mut evidence = Vec::with_capacity(f.evidence.len());
@@ -377,6 +385,14 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
             },
         );
     }
+    let compute = super::compute_file::family_compute(
+        &f.compute,
+        f.mma.as_deref(),
+        &f.kernel_compute,
+        &kernels,
+        &points,
+    )
+    .map_err(field)?;
     Ok(Family {
         id: f.id,
         description: f.description,
@@ -388,6 +404,7 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         points,
         evidence,
         discover,
+        compute,
     })
 }
 
@@ -445,29 +462,5 @@ fn op_spec(family: &str, o: &OpFile) -> Result<OpSpec, FamilyError> {
         feeds: o.feeds.iter().cloned().collect(),
         after: o.after.iter().cloned().collect(),
         beside: o.beside.iter().cloned().collect(),
-    })
-}
-
-fn legacy(l: LegacyFile) -> Result<LegacyPath, FamilyError> {
-    let bad = |detail: String| FamilyError::Parse(format!("legacy_path `{}`: {detail}", l.cite));
-    let layer_kind = LayerKind::parse(&l.layer_kind)
-        .ok_or_else(|| bad(format!("layer kind `{}`", l.layer_kind)))?;
-    let per_sequence = l
-        .per_sequence
-        .iter()
-        .map(|m| Mode::parse(m).ok_or_else(|| bad(format!("mode `{m}`"))))
-        .collect::<Result<Vec<_>, _>>()?;
-    if per_sequence.is_empty() || l.holds.trim().is_empty() {
-        return Err(bad("needs modes and the text the cited line holds".into()));
-    }
-    Ok(LegacyPath {
-        arch: l.arch.clone(),
-        layer_kind,
-        per_sequence,
-        sites: l.sites.clone(),
-        rows_above: l.rows_above,
-        cite: l.cite.clone(),
-        holds: l.holds.clone(),
-        note: l.note,
     })
 }

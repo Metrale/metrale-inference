@@ -11,6 +11,7 @@ pub(crate) mod auto_swap;
 pub(crate) mod byte_count;
 pub(crate) mod kernel_flag_plan;
 pub(crate) mod kv_dtypes;
+pub(crate) mod memory_probe;
 pub(crate) mod middleware;
 pub(crate) mod model_host;
 pub(crate) mod model_swap;

@@ -54,6 +54,9 @@ impl ModelLifecycle for StubModel {
         Ok(())
     }
     fn detach_slot_for_reuse(&self, _s: &mut SequenceState) {}
+    fn kv_block_bytes(&self) -> usize {
+        0
+    }
 }
 
 impl ModelForward for StubModel {

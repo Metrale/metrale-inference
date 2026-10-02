@@ -19,6 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::compute::{ComputeUnit, FamilyCompute};
 use crate::format::Format;
 use crate::ir::{LayerKind, LinearRole, OpKind};
 use crate::rules::{KernelId, Mode};
@@ -170,6 +171,8 @@ pub struct Point {
     pub how: How,
     /// 2026-09-29: Repo-relative sources that realise it.
     pub files: Vec<String>,
+    /// 2026-10-02: Its compute unit where it differs from the family's (`None`: the family's).
+    pub compute: Option<ComputeUnit>,
 }
 
 /// 2026-09-29: Where an evidence record lives.
@@ -239,6 +242,8 @@ pub struct Family {
     pub evidence: Vec<Evidence>,
     /// 2026-09-29: Discovery rules.
     pub discover: Vec<Discover>,
+    /// 2026-10-02: The compute units it runs on ([`super::compute`]).
+    pub compute: FamilyCompute,
 }
 
 impl Family {
@@ -304,6 +309,15 @@ pub struct Families {
 }
 
 impl Families {
+    /// 2026-10-02: The compute unit `kernel` runs on: its family's answer; `None` when no
+    /// family lists it.
+    pub fn compute_of(&self, kernel: &KernelId) -> Option<&ComputeUnit> {
+        self.families
+            .iter()
+            .find(|f| f.kernels.contains(kernel))
+            .map(|f| f.compute.of(kernel))
+    }
+
     /// 2026-09-29: The family that ran a node of `op` in a plan group launching `kernels`
     /// (or, for a kernel-less group, emitted by `emitter`): the first, in manifest order, that
     /// lists one of them and implements the op (and, for `linear`, the role). Formats are not
@@ -360,8 +374,12 @@ pub enum FamilyError {
     },
 }
 
+#[path = "families_compute.rs"]
+mod compute_file;
 #[path = "families_file.rs"]
 mod file;
+#[path = "families_legacy.rs"]
+mod legacy_file;
 
 /// 2026-09-29: Parse the manifest text.
 pub fn parse_families(text: &str) -> Result<Families, FamilyError> {

@@ -106,6 +106,7 @@ pub(crate) async fn build_and_serve(
         .route("/hardware", get(api::hardware))
         .route("/serve-config", get(api::serve_config))
         .route("/forward", get(api::forward))
+        .route("/memory", get(api::memory))
         .route("/health", get(api::health))
         .route("/health/live", get(api::health_live))
         .route("/metrics", get(api::metrics_handler))

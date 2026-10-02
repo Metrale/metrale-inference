@@ -43,11 +43,13 @@ pub fn with_settings(header: &Header, policy: &Policy) -> Header {
 
 /// 2026-09-30: A runtime route's arm, rendered after the primary plan: a heading that names the
 /// route, its condition and the settings it plans as, then the arm's plan under `header`.
+/// 2026-10-02: Each group line carries `note`'s answer ([`render_noted`]).
 pub fn route_section(
     circuit: &Circuit,
     route: &RuntimeRoute,
     plan: &FusionPlan,
     header: &Header,
+    note: &dyn Fn(&crate::fuser::Group) -> Option<String>,
 ) -> String {
     format!(
         "\n# runtime route `{}`: when {}; planned as `{}` ({})\n\n{}",
@@ -55,12 +57,23 @@ pub fn route_section(
         route.why,
         route.plans_as_text(),
         route.cite,
-        render(circuit, plan, header)
+        render_noted(circuit, plan, header, note)
     )
 }
 
 /// 2026-09-28: Render `plan` of `circuit`.
 pub fn render(circuit: &Circuit, plan: &FusionPlan, header: &Header) -> String {
+    render_noted(circuit, plan, header, &|_| None)
+}
+
+/// 2026-10-02: [`render`], with `note(group)` appended to each group's line as `compute=<note>`
+/// where it answers (the compute unit the group runs on, `venn::compute`).
+pub fn render_noted(
+    circuit: &Circuit,
+    plan: &FusionPlan,
+    header: &Header,
+    note: &dyn Fn(&crate::fuser::Group) -> Option<String>,
+) -> String {
     let mut s = String::new();
     let _ = writeln!(
         s,
@@ -124,7 +137,11 @@ pub fn render(circuit: &Circuit, plan: &FusionPlan, header: &Header) -> String {
             let _ = writeln!(s, "== {title}");
             last_layer = Some(first.layer);
         }
-        let _ = writeln!(s, "{}", group_line(circuit, plan, g));
+        let mut line = group_line(circuit, plan, g);
+        if let Some(n) = note(grp) {
+            let _ = write!(line, " compute={n}");
+        }
+        let _ = writeln!(s, "{line}");
     }
     s
 }

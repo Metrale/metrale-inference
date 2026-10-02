@@ -41,6 +41,7 @@ The phases live in `main_modules/serve.rs`, `serve_load/` and `serve_phases/`:
 | GET | `/health`, `/health/live` | readiness and liveness |
 | GET | `/metrics`, `/v1/events` | Prometheus metrics and the telemetry event stream |
 | GET | `/hardware`, `/serve-config` | what this box is and how it is serving (read by the benchmark harness) |
+| GET | `/forward`, `/memory` | the model's forward, and its KV pool, memory budget and memory readings (read by the benchmark harness) |
 
 OpenAI endpoints the engine does not serve (embeddings, files, audio, images, moderations, batches) are routed to stubs that return a clear "not supported" error rather than a 404.
 

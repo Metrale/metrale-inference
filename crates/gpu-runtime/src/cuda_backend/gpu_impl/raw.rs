@@ -2,13 +2,14 @@
 
 //! 2026-09-26: Bodies the `GpuBackend` impl in `gpu_impl.rs` calls: the red-zone
 //! poisoning of a new `alloc`, and the pitched D2D copy of `copy_d2d_2d_async`.
+//! 2026-10-01: Also `alloc_arena` and `free_arena`, moved here unchanged from `gpu_impl.rs`.
 //!
 //! Owner: gpu-runtime (CUDA backend).
 //! Invariants:
-//! - Each `unsafe` block is one call: `cuMemsetD8Async`, declared in
-//!   `cuda_backend.rs`, or `cudaMemcpy2DAsync`. The caller provides a current
-//!   context and device pointers into live allocations with byte counts that
-//!   fit them.
+//! - Each `unsafe` block is one call: `cuMemsetD8Async`, `cuMemAlloc_v2`, `cuMemGetInfo_v2`
+//!   or `cuMemFree_v2`, declared in `cuda_backend.rs`, or `cudaMemcpy2DAsync`. The caller
+//!   provides a current context and device pointers into live allocations with byte counts
+//!   that fit them.
 
 use std::ffi::c_void;
 
@@ -86,6 +87,43 @@ pub(super) fn memcpy_2d_async(
     };
     if status != 0 {
         bail!("cudaMemcpy2DAsync failed: status {status}");
+    }
+    Ok(())
+}
+
+/// 2026-10-01: `GpuBackend::alloc_arena`: `bytes` of device memory off the allocation ledger.
+pub(super) fn alloc_arena(bytes: usize) -> Result<DevicePtr> {
+    use super::super::{cuMemAlloc_v2, cuMemGetInfo_v2};
+    let mut dptr: u64 = 0;
+    let status = unsafe { cuMemAlloc_v2(&mut dptr, bytes) };
+    if status != 0 {
+        let mut free: usize = 0;
+        let mut total: usize = 0;
+        unsafe { cuMemGetInfo_v2(&mut free, &mut total) };
+        bail!(
+            "cuMemAlloc_v2 (arena) failed: status {status}, requested {bytes} bytes \
+             (device reports {:.1} GB free / {:.1} GB total)",
+            free as f64 / (1024.0 * 1024.0 * 1024.0),
+            total as f64 / (1024.0 * 1024.0 * 1024.0),
+        );
+    }
+    tracing::info!(
+        "arena: {:.2} GiB of device memory at {dptr:#x}, off the allocation ledger",
+        bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+    );
+    Ok(DevicePtr(dptr))
+}
+
+/// 2026-10-01: `GpuBackend::free_arena`.
+pub(super) fn free_arena(ptr: DevicePtr) -> Result<()> {
+    use super::super::cuMemFree_v2;
+    if ptr.is_null() {
+        return Ok(());
+    }
+    let status = unsafe { cuMemFree_v2(ptr.0) };
+    if status != 0 {
+        // 2026-09-25: Logged, not returned, for any nonzero status.
+        tracing::warn!("cuMemFree_v2 (arena) returned status {status}");
     }
     Ok(())
 }

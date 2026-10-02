@@ -23,6 +23,8 @@ mod mamba2_spec;
 mod per_sequence_state;
 mod post_load_audit;
 mod refusal;
+pub(crate) mod reserve_plan;
+mod runtime_headroom;
 mod ssm_h_fp16;
 #[cfg(any(feature = "cuda", feature = "metal"))]
 pub(crate) use gpu_backend::init_gpu_backend;
@@ -34,11 +36,14 @@ use {
 };
 
 pub(crate) struct ReservePreflight {
+    /// 2026-10-01: At the slot ceiling (`SlotRequest::ceiling`).
     pub(crate) inference_reserve: usize,
     pub(crate) buffer_arena_bytes: usize,
     pub(crate) gdn_two_phase_bytes: usize,
     pub(crate) ssm_prefill_chunk: usize,
     pub(crate) max_batch_tokens_pre: usize,
+    /// 2026-10-01: The reserve at any slot count, for the build (`--max-batch-size auto`).
+    pub(crate) plan: reserve_plan::ReservePlan,
 }
 
 pub(crate) fn preflight_reserve(
@@ -65,53 +70,29 @@ pub(crate) fn preflight_reserve(
     } else {
         args.resolved_num_drafts()
     };
-    // 2026-09-30: The SSM state pool is the plan `SsmStatePool::new` allocates
-    // (`ssm_reserve::PoolPlan`, M5): the same unit counts, dummy slots included,
-    // and the same bytes. Until 2026-09-30 this reserve left out the live and
-    // verify dummies the pool allocates. Rollback mode is `--ssm-rollback-mode`,
-    // published by `serve_flags` before this runs; the h narrowing is
-    // `--ssm-h-dtype f16-pool`.
+    // 2026-10-01: The slot count the preflight checks: `--max-batch-size N`, or `auto`'s ceiling
+    // (`SlotRequest::ceiling`); the build sizes KV at the count it resolves (`reserve_plan.rs`).
+    let ceiling = args.max_batch_size.ceiling();
+    // 2026-09-30: Rollback mode is `--ssm-rollback-mode`, published by `serve_flags` before this
+    // runs; the h narrowing is `--ssm-h-dtype f16-pool`.
     let h_f16_pool = metrale_model_layers::layers::qwen3_ssm::ssm_h_f16_pool_enabled();
     let rollback = metrale_model_layers::ssm_reserve::ssm_rollback_mode();
-    let pool_counts = metrale_model_layers::ssm_reserve::pool_counts(
-        &metrale_model_layers::ssm_reserve::PoolShape {
-            max_slots: args.max_batch_size,
-            spec: spec_on_pool,
-            num_intermediates: pool_num_drafts + 1,
-            num_drafts: pool_num_drafts,
-            uniform_h: args.dflash,
-            rollback,
-        },
-    );
-    let pool = metrale_model_layers::ssm_reserve::PoolPlan::new(config, &pool_counts, h_f16_pool)?;
-    let ssm_pool_bytes = pool.total();
-    // 2026-09-30: One layer's h (FP32 width) and conv unit, from the same plan.
-    let (h_state_bytes, conv_state_bytes) = (pool.h_f32_unit, pool.conv_unit);
-    // 2026-09-26: The FP32 prefill staging arena of an f16-sized h pool: one
-    // blob per slot (2026-09-30: the pool's slots, its dummy included), shared by
-    // all layers, and 0 without `--ssm-h-dtype f16-pool`.
-    let ssm_h_stage_bytes = metrale_model_layers::ssm_reserve::ssm_h_prefill_stage_bytes(
-        pool_counts.slots,
-        pool.h_f32_unit,
+    // 2026-09-30: One layer's h (FP32 width) and conv unit, from the pool plan.
+    let unit = metrale_model_layers::ssm_reserve::PoolPlan::new(
+        config,
+        &metrale_model_layers::ssm_reserve::pool_counts(
+            &metrale_model_layers::ssm_reserve::PoolShape {
+                max_slots: 1,
+                spec: spec_on_pool,
+                num_intermediates: pool_num_drafts + 1,
+                num_drafts: pool_num_drafts,
+                uniform_h: args.dflash,
+                rollback,
+            },
+        ),
         h_f16_pool,
-    );
-    // 2026-09-26: Replay mode's verify-window input ring, sized by
-    // `ssm_replay_ring_bytes` as `SsmStatePool::new` sizes it (2026-09-30: over
-    // the pool's verify slots, its dummy included).
-    let ssm_replay_ring = match &pool_counts.verify {
-        Some(v) if rollback == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay => {
-            metrale_model_layers::ssm_reserve::ssm_replay_ring_bytes(
-                pool.layers,
-                metrale_model_layers::ssm_reserve::ssm_replay_row_bytes(
-                    config.ssm_qkvz_size(),
-                    config.linear_num_value_heads,
-                ),
-                pool_num_drafts + 1,
-                v.slots(),
-            )
-        }
-        _ => 0,
-    };
+    )?;
+    let (h_state_bytes, conv_state_bytes) = (unit.h_f32_unit, unit.conv_unit);
     let spec_tokens_pre = spec_reserve_tokens(args);
     // 2026-09-26: An SSM model prefills in chunks of `--max-prefill-tokens`
     // when it is set to anything but 8192 (and above 0), else of 8192; either
@@ -136,15 +117,13 @@ pub(crate) fn preflight_reserve(
     } else {
         args.max_seq_len
     };
-    let max_batch_tokens_pre = prefill_budget_pre
-        .max(spec_tokens_pre)
-        .max(args.max_batch_size);
+    let max_batch_tokens_pre = prefill_budget_pre.max(spec_tokens_pre).max(ceiling);
     let buffer_arena_bytes = metrale_gpu_runtime::buffers::BufferSizes::from_config(
         config,
         max_batch_tokens_pre,
         args.max_seq_len,
         args.block_size,
-        args.max_batch_size,
+        ceiling,
     )
     .total_bytes();
     // 2026-09-26: Marconi snapshot slots, from
@@ -175,11 +154,6 @@ pub(crate) fn preflight_reserve(
     // sequence (`decode_ring::slot_bytes`).
     let per_seq_blob = config.num_ssm_layers() * (h_state_bytes + conv_state_bytes);
     let marconi_bytes = marconi.slots * per_seq_blob;
-    let cuda_headroom: usize = if spec_on_pool {
-        4 * 1024 * 1024 * 1024
-    } else {
-        512 * 1024 * 1024
-    };
     let gdn_two_phase_bytes: usize = {
         let key_dim = config.linear_num_key_heads * config.linear_key_head_dim;
         let value_dim = config.linear_num_value_heads * config.linear_value_head_dim;
@@ -192,15 +166,32 @@ pub(crate) fn preflight_reserve(
             0
         }
     };
-    // 2026-09-26: Every reserve term except the decode-rollback ring, the only
-    // term the auto-fit shrinks.
-    let fixed_reserve: usize = ssm_pool_bytes
-        + ssm_h_stage_bytes
-        + ssm_replay_ring
-        + marconi_bytes
-        + gdn_two_phase_bytes
-        + cuda_headroom
-        + per_sequence_reserve(args, config);
+    // 2026-10-01: Every reserve term as a function of the slot count (`reserve_plan.rs`): the
+    // SSM pool as `SsmStatePool::new` allocates it (M5, dummy slots included), the f16 staging
+    // arena and the replay ring over the pool's slots, Marconi, the GDN two-phase scratch, the
+    // runtime headroom (`runtime_headroom.rs`, which replaced the flat 4 GiB / 512 MiB
+    // `cuda_headroom`), the per-sequence state and the decode-rollback ring. The preflight checks
+    // the slot ceiling; the build sizes KV at the count it resolves.
+    let per_sequence_bytes = per_sequence_reserve(args, config) / ceiling.max(1);
+    let mut plan = reserve_plan::ReservePlan {
+        config: config.clone(),
+        spec: spec_on_pool,
+        num_drafts: pool_num_drafts,
+        uniform_h: args.dflash,
+        rollback,
+        h_f16_pool,
+        marconi_bytes,
+        gdn_two_phase_bytes,
+        budget_bytes: (post_load.total_mem as f64 * args.gpu_memory_utilization) as usize,
+        per_sequence_bytes,
+        ring_slots: 0,
+        per_seq_blob,
+    };
+    let at_ceiling = plan.terms(ceiling)?;
+    let fixed_reserve = at_ceiling.fixed();
+    let ssm_pool_bytes = at_ceiling.ssm_pool;
+    let ssm_h_stage_bytes = at_ceiling.ssm_h_stage;
+    let runtime_headroom = at_ceiling.runtime;
     // 2026-09-26: Decode-rollback ring: the requested depth, then the largest
     // depth that fits (`decode_ring::autofit`). A shrunk depth is published
     // (`set_decode_ring_slots`) so `TransformerModel::new` allocates the depth
@@ -226,7 +217,8 @@ pub(crate) fn preflight_reserve(
         tracing::warn!("SSM decode-rollback ring auto-fit — {}", warning);
     }
     let ssm_snapshot_bytes = marconi_bytes + fit.slots * ring_slot_bytes;
-    let inference_reserve: usize = fixed_reserve + fit.slots * ring_slot_bytes;
+    plan.ring_slots = fit.slots;
+    let inference_reserve: usize = plan.inference_reserve(ceiling)?;
     let total_reserve = inference_reserve + buffer_arena_bytes;
     if total_reserve > free_mem {
         return Err(refusal::reserve_refusal(
@@ -238,7 +230,7 @@ pub(crate) fn preflight_reserve(
                 seq_len_independent: ssm_pool_bytes
                     + ssm_h_stage_bytes
                     + ssm_snapshot_bytes
-                    + cuda_headroom,
+                    + runtime_headroom.total(),
                 ring_requested,
                 ring_slots: fit.slots,
                 per_seq_blob,
@@ -252,38 +244,30 @@ pub(crate) fn preflight_reserve(
         inference_reserve / (1024 * 1024),
         buffer_arena_bytes / (1024 * 1024),
         free_mem as f64 / (1024.0 * 1024.0 * 1024.0),
-        decode_ring::formula(fit.slots, args.max_batch_size, per_seq_blob),
+        decode_ring::formula(fit.slots, ceiling, per_seq_blob),
     );
-    let spec_on = spec_on_pool;
-    tracing::debug!(
-        "Preflight reserve breakdown: \
-         ssm_pool={} MB ({} max_batch blobs + dummy, {} verify slots incl. dummy × {} verify blobs, \
-         {} ssm_layers × (h+conv)), \
-         ssm_snapshot={} MB ({} slots), \
-         gdn_two_phase={} MB ({} tokens), \
-         cuda_headroom={} MB ({}), \
-         spec_on={}, num_drafts={}",
-        ssm_pool_bytes / (1024 * 1024),
-        args.max_batch_size,
-        pool_counts.verify.as_ref().map_or(0, |v| v.slots()),
-        if spec_on_pool {
-            args.resolved_num_drafts() + 2
-        } else {
-            0
-        },
-        config.num_ssm_layers(),
-        ssm_snapshot_bytes / (1024 * 1024),
+    // 2026-10-01: The named terms at the ceiling (the debug breakdown before 2026-10-01).
+    let t = plan.terms(ceiling)?;
+    let mb = |b: usize| b / (1024 * 1024);
+    tracing::info!(
+        "Preflight reserve terms at {} slot(s): ssm_pool={} MB, ssm_h_stage={} MB, \
+         replay_ring={} MB, marconi={} MB ({} slots), gdn_two_phase={} MB ({} tokens), \
+         runtime headroom={} MB (gdn carry stash {} + driver fixed {} + driver bookkeeping {}), \
+         per_sequence={} MB, decode_ring={} MB",
+        ceiling,
+        mb(t.ssm_pool),
+        mb(t.ssm_h_stage),
+        mb(t.replay_ring),
+        mb(t.marconi),
         marconi.slots,
-        gdn_two_phase_bytes / (1024 * 1024),
+        mb(t.gdn_two_phase),
         max_batch_tokens_pre,
-        cuda_headroom / (1024 * 1024),
-        if spec_on { "spec/MTP on" } else { "no spec" },
-        spec_on,
-        if spec_on {
-            args.resolved_num_drafts() as i64
-        } else {
-            -1
-        },
+        mb(t.runtime.total()),
+        mb(t.runtime.carry_stash),
+        mb(t.runtime.driver_fixed),
+        mb(t.runtime.driver_bookkeeping),
+        mb(t.per_sequence),
+        mb(t.decode_ring),
     );
     Ok(ReservePreflight {
         inference_reserve,
@@ -291,6 +275,7 @@ pub(crate) fn preflight_reserve(
         gdn_two_phase_bytes,
         ssm_prefill_chunk,
         max_batch_tokens_pre,
+        plan,
     })
 }
 

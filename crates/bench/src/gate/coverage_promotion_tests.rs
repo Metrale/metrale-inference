@@ -19,7 +19,11 @@ fn every_promotion_candidate_is_a_registered_benchmark() {
             .iter()
             .map(|gate| gate.id)
             .collect::<Vec<_>>(),
-        ["cross-contamination", "scheduler-equivalence"],
+        [
+            "cross-contamination",
+            "scheduler-equivalence",
+            "default-tier-boot"
+        ],
         "promotion tracking must not pass vacuously or gain an unreviewed candidate"
     );
     for gate in coverage::PROMOTION_CANDIDATES {
@@ -71,11 +75,16 @@ fn the_contamination_candidate_accrues_debt_for_engine_changes() {
     let owed = coverage::promotion_debt(["crates/server/src/scheduler/mod.rs"]);
     assert_eq!(
         owed,
-        ["cross-contamination", "scheduler-equivalence"],
+        [
+            "cross-contamination",
+            "scheduler-equivalence",
+            "default-tier-boot"
+        ],
         "a scheduler change is exactly the kind of edit that can cross-wire \
          concurrent requests, so the contamination candidate is owed — and the \
          router-equivalence candidate with it, since a scheduler edit is what \
-         can make the two routers disagree. \
+         can make the two routers disagree. The default-tier boot check is owed \
+         too: any engine path can move the serve's memory plan. \
          kat-equality-gate was the second entry here until 2026-09-10 and \
          concurrency-sweep-moe from 2026-09-20 to 2026-09-23; both are REQUIRED \
          now, and a required gate is owed as a gate, never as debt — \

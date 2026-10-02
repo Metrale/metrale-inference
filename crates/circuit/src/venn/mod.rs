@@ -25,6 +25,7 @@
 pub mod checkpoint;
 pub mod classify;
 mod cli_args;
+pub mod compute;
 pub mod discover;
 pub mod families;
 pub mod measurements;
