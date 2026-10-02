@@ -60,6 +60,7 @@ pub(crate) fn load_model(
         nllb_adapter_name,
         early_high_speed_swap_cfg,
         forward,
+        auto_max_batch_size,
     }) = engine::load_engine(args)?
     else {
         // 2026-09-26: An EP worker rank ran its command loop and the head has
@@ -293,6 +294,7 @@ pub(crate) fn load_model(
         forward: metrale_bench::gate::record_serve::LiveForward {
             forward: forward.forward.to_string(),
             plan_digest: forward.plan_digest,
+            auto_max_batch_size,
         },
         // 2026-09-26: `behavior` is MODEL.toml's, embedded at build time, with
         // the CLI overrides below.

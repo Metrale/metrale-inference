@@ -22,15 +22,16 @@ use super::loader_for_config;
 use super::m2_setup::maybe_run_minimax_m2_moe_transpose;
 use super::{DflashBuildArgs, LoraBuildArgs};
 use crate::model::TransformerModel;
-use crate::traits::Model;
 use metrale_model_layers::layers::MtpQuantization;
 
 mod kv_blocks;
 mod kv_budget;
+mod kv_sizing;
 mod kv_summary;
 mod mem_trace;
 mod mtp_modules;
 mod proposers;
+pub mod slots;
 mod weights_prep;
 
 use mem_trace::MemTrace;
@@ -44,7 +45,9 @@ pub fn build_model(
     max_batch_tokens: usize,
     kv_block_size: usize,
     max_seq_len: usize,
-    max_batch_size: usize,
+    // 2026-10-01: The slot request and the pre-load reserve as a function of the slot count;
+    // the count is resolved at KV sizing (`kv_sizing.rs`) and returned with the model.
+    slots: slots::SlotPlan<'_>,
     mtp_quant: MtpQuantization,
     use_speculative: bool,
     prefix_cache: Box<dyn PrefixCache>,
@@ -53,7 +56,6 @@ pub fn build_model(
     self_speculative: bool,
     num_drafts: usize,
     kv_dtype: KvCacheDtype,
-    inference_reserve: usize,
     gpu_memory_utilization: f64,
     ssm_cache_slots: usize,
     layer_dtypes: Vec<KvCacheDtype>,
@@ -71,7 +73,7 @@ pub fn build_model(
     // 2026-09-25: NLLB / M2M-100 PEFT LoRA adapter directory; `None` for the
     // base model.
     nllb_lora_dir: Option<std::path::PathBuf>,
-) -> Result<Box<dyn Model>> {
+) -> Result<slots::BuiltModel> {
     // 2026-09-25: NLLB / M2M-100 is an encoder-decoder model, served by
     // `NllbGpuModel` from the same `store`. This returns before
     // `loader_for_config`, so the decoder-only loader never runs for it.
@@ -89,16 +91,26 @@ pub fn build_model(
             eos_id: config.eos_token_id,
             pad_id: 1,
         };
+        let nllb_slots = match slots.request {
+            slots::SlotRequest::Count(n) => n,
+            slots::SlotRequest::Auto => anyhow::bail!(
+                "--max-batch-size auto balances recurrent-state slots against the KV pool; \
+                 an encoder-decoder model has neither. Pass a count."
+            ),
+        };
         let model = crate::model::nllb::NllbGpuModel::new(
             &config,
             &store,
             gpu,
             lang,
             max_seq_len,
-            max_batch_size,
+            nllb_slots,
             nllb_lora_dir.as_deref(),
         )?;
-        return Ok(Box::new(model));
+        return Ok(slots::BuiltModel {
+            max_batch_size: nllb_slots,
+            model: Box::new(model),
+        });
     }
     #[cfg(not(feature = "cuda"))]
     let _ = (nllb_lang, nllb_lora_dir);
@@ -258,13 +270,14 @@ pub fn build_model(
         store.resident_bytes() as f64 / (1024.0 * 1024.0 * 1024.0),
     );
 
-    // 2026-09-25: Step 4: the buffer arena.
+    // 2026-09-25: Step 4: the buffer arena. 2026-10-01: Sized for the slot ceiling (`auto` resolves
+    // after it, at KV sizing); the preflight sized the arena reserve for the same ceiling.
     let buffers = BufferArena::new(
         &config,
         max_batch_tokens,
         max_seq_len,
         kv_block_size,
-        max_batch_size,
+        slots.request.ceiling(),
         gpu.as_ref(),
     )?;
 
@@ -303,18 +316,8 @@ pub fn build_model(
     // everything this process holds. The KV cache gets what is left of it
     // after `used_so_far`, `inference_reserve` and the DFlash and MTP
     // reserves, clamped to the free memory left after those reserves.
-    let total_mem = gpu.total_memory()?;
-    let actual_free = gpu.free_memory()?;
+    // 2026-10-01: Sized with the slot count (`kv_sizing.rs`).
     let gib = |b: usize| b as f64 / (1024.0 * 1024.0 * 1024.0);
-    let used_so_far = total_mem.saturating_sub(actual_free);
-    let used_so_far = kv_budget::self_relative_used(
-        gpu.as_ref(),
-        &store,
-        build_entry_free,
-        actual_free,
-        used_so_far,
-        gib,
-    );
     // 2026-09-25: The DFlash drafter head allocates at Step 7, after this
     // sizing, so its estimate is reserved here: drafter KV
     // (max_seq_len × layers × 2 × kv_dim × BF16), fused KV, the hidden-state
@@ -322,65 +325,28 @@ pub fn build_model(
     // scratch.
     let dflash_reserve: usize =
         kv_budget::dflash_reserve_bytes(&dflash_args, &config, max_seq_len, gib);
-    let total_budget = (total_mem as f64 * gpu_memory_utilization) as usize;
-    let kv_budget = total_budget
-        .saturating_sub(used_so_far)
-        .saturating_sub(inference_reserve)
-        .saturating_sub(dflash_reserve)
-        .min(
-            actual_free
-                .saturating_sub(inference_reserve)
-                .saturating_sub(dflash_reserve),
-        );
-    // 2026-09-25: The MTP head allocates its own paged KV pool after this
-    // sizing (per-sequence blocks × `mtp_max_seqs()`, bounded by the main
-    // pool's block count), so the same arithmetic is reserved here. The bound
-    // uses the block count before this reserve, which is at least the final
-    // one, so the reserve can only be too large. The condition is
-    // `build_mtp_proposer`'s without its LM-head check; when that check skips
-    // the head, one pool is over-reserved.
-    let mtp_pool_reserve: usize = kv_budget::mtp_pool_reserve_bytes(
-        use_speculative,
-        &mtp_weights,
-        effective_mtp_quant,
-        &config,
-        &kv_config,
-        kv_budget,
-        max_seq_len,
-    );
-    let kv_budget = kv_budget.saturating_sub(mtp_pool_reserve);
-    if mtp_pool_reserve > 0 {
-        tracing::info!(
-            "KV budget: reserving {:.1} GB for the MTP propose pool (post-sizing alloc in MtpHead::new)",
-            gib(mtp_pool_reserve),
-        );
-    }
-    // 2026-09-25: With `--high-speed-swap` the pool is sized from the cap, not
-    // from the budget.
-    let num_kv_blocks = match hss_cache_blocks_per_seq {
-        Some(cap) => kv_blocks::hss_kv_blocks(cap, max_seq_len, kv_block_size, max_batch_size),
-        None => kv_blocks::budget_kv_blocks(
-            &kv_config,
-            kv_budget,
-            prefix_cache.as_ref(),
+    let sized = kv_sizing::size_kv(
+        &kv_sizing::KvInputs {
+            gpu: gpu.as_ref(),
+            store: &store,
+            build_entry_free,
+            config: &config,
+            kv_config: &kv_config,
+            prefix_cache: prefix_cache.as_ref(),
+            dflash_reserve,
+            use_speculative,
+            mtp_weights: &mtp_weights,
+            effective_mtp_quant,
             max_seq_len,
             kv_block_size,
-            max_batch_size,
-            total_mem,
+            hss_cache_blocks_per_seq,
             gpu_memory_utilization,
-            total_budget,
-            used_so_far,
-            inference_reserve,
-        )?,
-    };
-    let _max_kv_tokens = num_kv_blocks * kv_block_size;
-    kv_blocks::check_kv_concurrency(
-        num_kv_blocks,
-        hss_cache_blocks_per_seq,
-        max_seq_len,
-        kv_block_size,
-        max_batch_size,
+        },
+        &slots,
     )?;
+    let (max_batch_size, num_kv_blocks) = (sized.slots, sized.num_kv_blocks);
+    let total_mem = gpu.total_memory()?;
+    let total_budget = (total_mem as f64 * gpu_memory_utilization) as usize;
     let kv_cache = PagedKvCache::new(kv_config, num_kv_blocks, gpu.as_ref())?;
 
     // 2026-09-25: Step 6: assemble the model. The DFlash drafter shares the
@@ -485,5 +451,8 @@ pub fn build_model(
     model.adopt_weight_store(store);
 
     proposers::log_alloc_report(&model, total_budget, gpu_memory_utilization, total_mem, gib);
-    Ok(Box::new(model))
+    Ok(slots::BuiltModel {
+        model: Box::new(model),
+        max_batch_size,
+    })
 }

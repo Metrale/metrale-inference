@@ -35,6 +35,8 @@ pub(crate) struct Engine {
     pub nllb_adapter_name: Option<String>,
     pub early_high_speed_swap_cfg: Option<metrale_storage::HighSpeedSwapConfig>,
     pub forward: metrale_model_engine::traits::ForwardDisclosure,
+    /// 2026-10-01: The slot count `--max-batch-size auto` resolved to; `None` for a count.
+    pub auto_max_batch_size: Option<usize>,
 }
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
@@ -98,6 +100,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         gdn_two_phase_bytes,
         ssm_prefill_chunk,
         max_batch_tokens_pre,
+        plan: reserve_plan,
     } = load_phases::reserve_preflight(
         &args,
         &config,
@@ -196,7 +199,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let dflash_args = adapters::dflash_build_args(&args, &dflash_drafter_state);
     let nllb_lang = adapters::resolve_nllb_lang(&args, &config, &model_dir)?;
     let (nllb_lora_dir, nllb_adapter_name) = adapters::resolve_nllb_adapter(&args, is_nllb)?;
-    let model = serve_phases::build_model(
+    let built = serve_phases::build_model(
         &args,
         &config,
         // 2026-09-26: Moved: the model owns the weight store from here.
@@ -204,7 +207,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         gpu,
         max_batch_tokens,
         kv_dtype,
-        inference_reserve,
+        &reserve_plan,
         layer_dtypes,
         hss_cache_blocks_per_seq,
         prefix_cache,
@@ -214,6 +217,13 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         nllb_lang,
         nllb_lora_dir,
     )?;
+    // 2026-10-01: From here `--max-batch-size` is the count the model was built with (what `auto`
+    // resolved to), for the scheduler, the EP worker and the disclosure.
+    let auto_max_batch_size = (args.max_batch_size
+        == metrale_model_engine::factory::SlotRequest::Auto)
+        .then_some(built.max_batch_size);
+    args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(built.max_batch_size);
+    let model = built.model;
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
     model.set_forward(&serve_phases::forward_select(
@@ -256,5 +266,6 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         nllb_adapter_name,
         early_high_speed_swap_cfg,
         forward,
+        auto_max_batch_size,
     }))
 }

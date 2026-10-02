@@ -37,7 +37,7 @@ pub(crate) fn resolve_prefill_budget(
     };
     let prefill_budget = if args.high_speed_swap {
         let hss_cap_tokens = args.high_speed_swap_cache_blocks_per_seq as usize * args.block_size;
-        let hss_chunk_max = hss_cap_tokens.saturating_sub(args.max_batch_size);
+        let hss_chunk_max = hss_cap_tokens.saturating_sub(args.max_batch_size.ceiling());
         let clamped = prefill_budget_pre_hss.min(hss_chunk_max);
         if clamped < prefill_budget_pre_hss {
             tracing::info!(
@@ -48,7 +48,7 @@ pub(crate) fn resolve_prefill_budget(
                 clamped,
                 args.high_speed_swap_cache_blocks_per_seq,
                 args.block_size,
-                args.max_batch_size,
+                args.max_batch_size.ceiling(),
             );
         }
         if args.max_seq_len > hss_cap_tokens {
@@ -90,9 +90,9 @@ pub(crate) fn resolve_prefill_budget(
     // max_batch_size`, raised to `spec_tokens` when that is larger.
     // `METRALE_MAX_BATCH_TOKENS` can raise it further; a value below the
     // default, or one that does not parse, is ignored with a warning.
-    let default_max_batch_tokens = (prefill_budget + args.max_batch_size)
+    let default_max_batch_tokens = (prefill_budget + args.max_batch_size.ceiling())
         .max(spec_tokens)
-        .max(args.max_batch_size);
+        .max(args.max_batch_size.ceiling());
     let max_batch_tokens = match std::env::var("METRALE_MAX_BATCH_TOKENS") {
         Ok(v) => match v.parse::<usize>() {
             Ok(n) if n >= default_max_batch_tokens => {
