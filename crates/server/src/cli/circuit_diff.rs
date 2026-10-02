@@ -254,6 +254,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         bail!("{msg}");
     }
     crate::main_modules::serve_flags::publish_kernel_flags(&args.serve);
+    let num_drafts = args.serve.resolved_num_drafts();
     let Some(engine) = load_engine(args.serve)? else {
         bail!("this rank is an expert-parallel worker; run the diff on the head");
     };
@@ -273,8 +274,20 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         ("circuit", circuit(Fusions::All)),
     ];
     ensure!(
-        args.batch.is_empty() || args.verify.is_empty(),
-        "--batch and --verify are separate diffs"
+        [
+            !args.batch.is_empty(),
+            !args.verify.is_empty(),
+            !args.verify_batch.is_empty()
+        ]
+        .iter()
+        .filter(|&&b| b)
+        .count()
+            <= 1,
+        "--batch, --verify and --verify-batch are separate diffs"
+    );
+    ensure!(
+        !args.mtp || !args.verify.is_empty() || !args.verify_batch.is_empty(),
+        "--mtp runs the draft head of --verify or --verify-batch"
     );
     if !args.batch.is_empty() {
         return batch_report(
@@ -285,9 +298,24 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             &args.out,
         );
     }
+    if !args.verify_batch.is_empty() {
+        return verify_batch::verify_batch_report(
+            model,
+            (
+                &args.verify_batch,
+                &args.verify_batch_ks,
+                args.fragment_slots,
+                args.mtp,
+            ),
+            num_drafts,
+            args.steps,
+            &forwards,
+            &args.out,
+        );
+    }
     if !args.verify.is_empty() {
         let prompt = &prompts(1, model.vocab_size())[0];
-        return verify_report(
+        return verify::verify_report(
             model,
             prompt,
             (&args.verify, args.mtp),
@@ -403,51 +431,6 @@ fn batch_report(
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
-struct VerifyDiffReport {
-    graphs: &'static str,
-    mtp: bool,
-    steps: usize,
-    variants: Vec<Variant>,
-    verify: Vec<verify::VerifyReport>,
-    verdict: &'static str,
-    reasons: Vec<String>,
-}
-
-/// 2026-09-29: The `--verify` diff: every `K`, then the verdict.
-fn verify_report(
-    model: &dyn Model,
-    prompt: &[u32],
-    (ks, mtp): (&[usize], bool),
-    steps: usize,
-    forwards: &[(&'static str, ForwardSelect)],
-    out: &Path,
-) -> Result<()> {
-    let variants = disclosed(model, forwards)?;
-    let verify = verify::diff_verify(model, prompt, ks, steps, mtp, forwards)?;
-    let reasons = verify::verify_failures(&verify);
-    let report = VerifyDiffReport {
-        graphs: if std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1") {
-            "eager"
-        } else {
-            "graphed"
-        },
-        mtp,
-        steps,
-        variants,
-        verify,
-        verdict: if reasons.is_empty() { "PASS" } else { "FAIL" },
-        reasons: reasons.clone(),
-    };
-    std::fs::write(out, serde_json::to_vec_pretty(&report)?)
-        .with_context(|| format!("writing {}", out.display()))?;
-    println!("{}", serde_json::to_string_pretty(&report)?);
-    if !reasons.is_empty() {
-        bail!("circuit diff FAILED:\n  {}", reasons.join("\n  "));
-    }
-    Ok(())
-}
-
 /// 2026-09-29: Each forward's disclosure, selecting each in turn.
 fn disclosed(
     model: &dyn Model,
@@ -476,6 +459,9 @@ mod batch;
 
 #[path = "circuit_diff_verify.rs"]
 mod verify;
+
+#[path = "circuit_diff_verify_batch.rs"]
+mod verify_batch;
 
 #[cfg(test)]
 #[path = "circuit_diff_tests.rs"]

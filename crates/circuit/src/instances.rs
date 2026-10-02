@@ -49,12 +49,32 @@ pub struct Instance {
     pub policy: Policy,
     /// 2026-09-28: Row counts per mode that have a plan.
     pub plans: BTreeMap<Mode, Vec<u64>>,
+    /// 2026-09-30: The batched-verify row tables that have a plan. An instance with none is
+    /// not served a batched verify by the executor: each sequence verifies alone.
+    pub verify_batch: Vec<crate::runs::RowTable>,
 }
 
 impl Instance {
     /// 2026-09-28: The golden file name of one plan: `<stem>-<mode>-n<rows>.txt`.
     pub fn plan_file(&self, mode: Mode, rows: u64) -> String {
         format!("{}-{}-n{rows}.txt", self.plan_stem(), mode.name())
+    }
+
+    /// 2026-09-30: The golden file name of one batched-verify plan:
+    /// `<stem>-verify_batch-<table>.txt`, the table's runs joined by `_`, `f` marking a fragmented
+    /// run and a leading `u-` an uncarried table.
+    pub fn table_plan_file(&self, table: &crate::runs::RowTable) -> String {
+        let runs: Vec<String> = table
+            .runs
+            .iter()
+            .map(|r| format!("{}x{}{}", r.k, r.n, if r.contiguous { "" } else { "f" }))
+            .collect();
+        format!(
+            "{}-verify_batch-{}{}.txt",
+            self.plan_stem(),
+            if table.carried { "" } else { "u-" },
+            runs.join("_")
+        )
     }
 
     /// 2026-09-30: `<arch>`, or `<arch>.<variant>` for a variant: the prefix of every golden
@@ -135,6 +155,8 @@ struct InstanceFile {
     dims: BTreeMap<String, u64>,
     policy: PolicyFile,
     plans: BTreeMap<String, Vec<u64>>,
+    #[serde(default)]
+    verify_batch: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -220,6 +242,13 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
             }
             plans.insert(mode, rows.clone());
         }
+        let verify_batch = f
+            .verify_batch
+            .iter()
+            .map(|t| {
+                crate::runs::RowTable::parse(t).map_err(|e| field(format!("verify_batch: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let precision = match f.precision {
             PrecisionFile::Table(name) => PrecisionSpec::Table(name),
             PrecisionFile::Policy(p) => {
@@ -266,6 +295,7 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
                 settings: f.policy.settings,
             },
             plans,
+            verify_batch,
         });
     }
     Ok(out)

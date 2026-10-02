@@ -97,6 +97,7 @@ pub(super) fn layer_binding(circuit: &Circuit, i: usize, attn_idx: usize) -> Cir
             qkvz_deinterleaved: true,
             h_slot_bytes: STATE_PITCH,
             conv_state_bytes: STATE_PITCH,
+            carry: Some(CARRY),
         })
     } else {
         for (s, role) in [
@@ -174,7 +175,7 @@ pub(super) fn draft_binding(circuit: &Circuit) -> CircuitLayer {
             },
             sliding_window: 0,
             softmax_scale: 0.0625,
-            paged_decode_plain_rows: 1,
+            paged_decode_plain_rows: u128::MAX,
         }),
         weights: w,
         unmodelled: Vec::new(),
@@ -227,7 +228,27 @@ pub(super) fn fixed(attn_layers: usize) -> Fixed {
             block_size: 16,
             cache_stride: 4096,
             vocab: 100_000,
+            rows: Some(DraftRows {
+                meta: ptr(meta + 0x5_0000),
+                lp_offset: 512,
+                lm_head_gemv: vec![metrale_gpu_runtime::gpu::KernelHandle(0xDEAD); 129],
+                lm_head_twin: false,
+            }),
         }),
+        verify_batch_meta: AttnMetadataDev {
+            positions: ptr(meta + 0x4_0000),
+            positions_h: ptr(meta + 0x4_0000),
+            positions_w: ptr(meta + 0x4_0000),
+            slot: ptr(meta + 0x4_0000 + 1024),
+            seq_len: ptr(meta + 0x4_0000 + 3072),
+            block_table: ptr(meta + 0x4_0000 + 4096),
+            max_blocks_per_seq: 0,
+            num_seqs: 0,
+            seq_slot: DevicePtr::NULL,
+            moe_row_adapter: DevicePtr::NULL,
+        },
+        verify_wy_tables: ptr(0xA700_0000),
+        verify_batch_tokens: ptr(0xA800_0000),
         verify_meta: AttnMetadataDev {
             positions: ptr(meta + 0x2_0000),
             positions_h: ptr(meta + 0x2_0000),
@@ -288,6 +309,34 @@ pub(super) enum Arm {
     Route(&'static str),
     /// 2026-09-30: The plan under the instance's policy with one setting changed.
     Setting(&'static str, &'static str),
+    /// 2026-09-30: The batched-verify plan of this row table (`mode` is `VerifyBatch`).
+    Table(&'static str),
+}
+
+/// 2026-09-30: The carried-verify buffers every fixture GDN layer binds.
+pub(super) const CARRY: crate::layer::GdnCarryBinding = crate::layer::GdnCarryBinding {
+    flag: DevicePtr(0xE000_0000),
+    stash: DevicePtr(0xE100_0000),
+    pend: DevicePtr(0xE200_0000),
+    slot_tab: DevicePtr(0xE300_0000),
+    seq_floats: 4096,
+    conv_stash: DevicePtr(0xE400_0000),
+    conv_seq_elems: 1024,
+    conv_tab: DevicePtr(0xE500_0000),
+};
+
+/// 2026-09-30: [`build_at`] for the batched-verify plan of `table`.
+pub(super) fn build_table(table: &'static str) -> anyhow::Result<Fixture> {
+    let bind = |c: &Circuit, i: usize, attn: usize| (layer_binding(c, i, attn), Vec::new());
+    let rows = metrale_circuit::RowTable::parse(table)?.rows();
+    build_for(
+        RECIPE,
+        &bind,
+        Fusions::All,
+        (Mode::VerifyBatch, rows, Arm::Table(table)),
+        |_| {},
+        |_| {},
+    )
 }
 
 /// 2026-09-30: [`build_at`] for the arm of runtime route `route`.
@@ -335,8 +384,16 @@ pub(super) fn build_for(
     if let Arm::Setting(k, v) = arm {
         policy.settings.insert(k.into(), v.into());
     }
-    let mut plan =
-        metrale_circuit::fuse(&loaded.circuit, &loaded.rules, &avail, &policy, mode, rows)?;
+    let mut plan = match arm {
+        Arm::Table(t) => metrale_circuit::fuse_table(
+            &loaded.circuit,
+            &loaded.rules,
+            &avail,
+            &policy,
+            &metrale_circuit::RowTable::parse(t)?,
+        )?,
+        _ => metrale_circuit::fuse(&loaded.circuit, &loaded.rules, &avail, &policy, mode, rows)?,
+    };
     if let Arm::Route(id) = arm {
         let set = (loaded.rules.as_slice(), loaded.runtime.as_slice());
         let arms = metrale_circuit::runtime::route_arms(

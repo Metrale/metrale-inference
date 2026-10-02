@@ -12,7 +12,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 /// 2026-09-26: A GDN layer's device buffers for the carried-state verify, set once by the
 /// model (`model-engine gdn_carry.rs`) before any capture.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GdnCarryBinding {
     /// 2026-09-26: This layer's engaged words, one `u32` per batch position; a carry
     /// kernel sets each position it verified to 1.
@@ -57,6 +57,21 @@ pub trait LayerWriteOnAccept {
     /// 2026-09-26: Bind this layer's carried-state buffers. Called once, before any
     /// capture; the buffers never move afterwards.
     fn gdn_carry_bind(&self, _binding: GdnCarryBinding) {}
+
+    /// 2026-09-30: Whether a batched verify runs one run of `states` (adjacent sequences of
+    /// width `kk`, under the WY tables at `wy_tables`) through the batched conv and the
+    /// table-form WY, as this layer's own batched verify decides it; `None` for a layer
+    /// without a batched GDN verify (the default). The circuit executor picks each run's arm
+    /// with it.
+    fn gdn_verify_run_batched(
+        &self,
+        _states: &[&mut (dyn crate::layer::LayerState + 'static)],
+        _kk: usize,
+        _gdn_wyn: bool,
+        _wy_tables: DevicePtr,
+    ) -> Result<Option<bool>> {
+        Ok(None)
+    }
 
     /// 2026-09-25: Apply the accepted rows of the last batched verify to this layer's h
     /// states. `h_table` is the layer's WY pointer-table slice, `na_tab` a device `u32[n]`

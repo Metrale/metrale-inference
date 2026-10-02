@@ -35,7 +35,7 @@ kernels = []
 repeat = "once"
 emitter = "embed_copy"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify", "draft"]
+modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "me/decode_a2.rs:241-254 (one D2D copy per row, padding rows memset); ml/mtp_head/forward.rs:82-83"
@@ -47,7 +47,7 @@ kernels = [{ module = "norm", func = "rms_norm_residual" }]
 repeat = "once"
 emitter = "rms_norm_residual"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode.rs:38-49; ml/qwen3_attention/trait_impl/decode_inner.rs:76-87; ml/qwen3_attention/trait_impl/multi_seq/mod.rs:58-69; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:170-183; ml/qwen3_ssm/trait_decode_batched.rs:193"
@@ -58,11 +58,11 @@ pattern = [{ op = "rms_norm" }]
 kernels = [{ module = "norm", func = "rms_norm" }]
 repeat = "once"
 emitter = "rms_norm"
-rows = [1, 1]
+rows = [1, 128]
 modes = ["draft"]
 numerics = "reference"
 priority = 5
-cite = "ml/mtp_head/forward.rs:86-96,103-113,152-162 (the residual copy is a D2D copy at :148)"
+cite = "ml/mtp_head/forward.rs:86-96,103-113,152-162 (the residual copy is a D2D copy at :148); ml/mtp_head/forward_batch/position.rs:61-70,140-150 (n rows; the target hiddens at :84-94 are normed one row per launch there and in one n-row launch here, stacked by the host, ml/mtp_head/forward_batch/position/circuit.rs; rms_norm is one block per row)"
 
 [[rule]]
 id = "residual_add_post_norm"
@@ -74,7 +74,7 @@ kernels = [{ module = "norm", func = "residual_add_rms_norm" }]
 repeat = "once"
 emitter = "residual_add_rms_norm"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify", "draft"]
+modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 numerics = "reference"
 priority = 100
 cite = "k/rms_norm.cu:379-382 (FP32 sum of squares before the BF16 rounding: not the unfused chain); ml/qwen3_ssm/trait_decode.rs:117-129; ml/qwen3_attention/trait_impl/decode_inner.rs:241-253; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched.rs:247-261; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:131-143; ml/qwen3_ssm/trait_decode_batched.rs:284; ml/mtp_head/forward.rs:306-318"
@@ -86,7 +86,7 @@ kernels = [{ module = "residual_add", func = "bf16_residual_add" }]
 repeat = "once"
 emitter = "residual_add"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify", "draft"]
+modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode.rs:143-150; ml/qwen3_attention/trait_impl/decode_inner.rs:384-391; ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:147-154; ml/qwen3_ssm/trait_decode_multi_seq.rs:212,235 (after the prefill and km arms); ml/qwen3_ssm/trait_decode_batched.rs:323-334; ml/mtp_head/forward.rs:337"
@@ -111,7 +111,7 @@ kernels = [{ module = "norm", func = "rms_norm" }]
 repeat = "once"
 emitter = "rms_norm"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify", "draft"]
+modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; ml/mtp_head/forward.rs:340-350"
@@ -140,8 +140,8 @@ pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
 kernels = [{ module = "ssm_preprocess", func = "dense_gemm_ba_gates_prefill" }]
 repeat = "once"
 emitter = "dense_gemm_ba_gates"
-rows = [2, 4]
-modes = ["verify"]
+rows = [2, 128]
+modes = ["verify", "verify_batch"]
 numerics = "reference"
 priority = 100
 cite = "ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:37-59 (kill switch METRALE_NO_BATCHED_BA_GATES)"
@@ -258,6 +258,176 @@ numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163"
 
+# 2026-09-30: The batched MTP verify's conv and recurrence, one launch schedule per run of equal
+# k (`batched_conv_gdn_route`), carried (`carry.rs`): the scheduler asks every batched verify for
+# write-on-accept (`verify_k4_batch_step.rs`), so the layers run the carry kernels. A contiguous run
+# (the layer's own `multi_run_arm` says Batched) is the carried conv and WY over the run's table
+# slice, lazy from `GDN_CARRY_LAZY_MIN_SEQS` (8) sequences; any other run folds its pending rows and
+# runs each sequence as the single-sequence verify does.
+[[rule]]
+id = "gdn_verify_batch_runs"
+pattern = [
+  { op = "conv1d_update" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16", stored = true },
+  { op = "gdn_recurrence", input = "bf16", writes = "bf16" },
+]
+kernels = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy2" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy3" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy4" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy2_lazy" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy3_lazy" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy4_lazy" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_flush" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_flush" },
+  { module = "causal_conv1d", func = "causal_conv1d_update_l2norm" },
+  { module = "gated_delta_rule_wy", func = "gated_delta_rule_wy2" },
+  { module = "gated_delta_rule_wy3", func = "gated_delta_rule_wy3" },
+  { module = "gated_delta_rule_wy4", func = "gated_delta_rule_wy4" },
+]
+repeat = "per_run"
+emitter = "gdn_verify_runs"
+rows = [4, 128]
+modes = ["verify_batch"]
+when = { ssm_h_dtype = "f32" }
+numerics = "reference"
+priority = 150
+cite = "ml/qwen3_ssm/trait_decode_batched/conv_gdn_route.rs:100-219 (the runs); ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi.rs:89-117 (carry and its decline), :394-470 (multi_run_arm); ml/qwen3_ssm/carry.rs:59-62 (lazy from 8), :164-301 (the launches); ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331 (a sequence alone)"
+
+[[rule.run]]
+k = [2, 2]
+n = [2, 7]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy2", times = "once" },
+]
+
+[[rule.run]]
+k = [2, 2]
+n = [8, 128]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy2_lazy", times = "once" },
+]
+
+[[rule.run]]
+k = [3, 3]
+n = [2, 7]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy3", times = "once" },
+]
+
+[[rule.run]]
+k = [3, 3]
+n = [8, 128]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy3_lazy", times = "once" },
+]
+
+[[rule.run]]
+k = [4, 4]
+n = [2, 7]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy4", times = "once" },
+]
+
+[[rule.run]]
+k = [4, 4]
+n = [8, 128]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_wy4_lazy", times = "once" },
+]
+
+[[rule.run]]
+k = [2, 2]
+n = [1, 128]
+contiguous = false
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_flush", times = "once" },
+  { module = "causal_conv1d", func = "causal_conv1d_update_l2norm", times = "per_row" },
+  { module = "gated_delta_rule_wy", func = "gated_delta_rule_wy2", times = "per_seq" },
+]
+copies = "per_seq_row_but_last"
+
+[[rule.run]]
+k = [3, 3]
+n = [1, 128]
+contiguous = false
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_flush", times = "once" },
+  { module = "causal_conv1d", func = "causal_conv1d_update_l2norm", times = "per_row" },
+  { module = "gated_delta_rule_wy3", func = "gated_delta_rule_wy3", times = "per_seq" },
+]
+copies = "per_seq_row_but_last"
+
+[[rule.run]]
+k = [4, 4]
+n = [1, 128]
+contiguous = false
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_flush", times = "once" },
+  { module = "causal_conv1d", func = "causal_conv1d_update_l2norm", times = "per_row" },
+  { module = "gated_delta_rule_wy4", func = "gated_delta_rule_wy4", times = "per_seq" },
+]
+copies = "per_seq_row_but_last"
+
+[[rule.run]]
+k = [2, 2]
+n = [1, 128]
+contiguous = false
+carried = false
+launches = [
+  { module = "causal_conv1d", func = "causal_conv1d_update_l2norm", times = "per_row" },
+  { module = "gated_delta_rule_wy", func = "gated_delta_rule_wy2", times = "per_seq" },
+]
+copies = "per_seq_row_but_last"
+
+[[rule.run]]
+k = [3, 3]
+n = [1, 128]
+contiguous = false
+carried = false
+launches = [
+  { module = "causal_conv1d", func = "causal_conv1d_update_l2norm", times = "per_row" },
+  { module = "gated_delta_rule_wy3", func = "gated_delta_rule_wy3", times = "per_seq" },
+]
+copies = "per_seq_row_but_last"
+
+[[rule.run]]
+k = [4, 4]
+n = [1, 128]
+contiguous = false
+carried = false
+launches = [
+  { module = "causal_conv1d", func = "causal_conv1d_update_l2norm", times = "per_row" },
+  { module = "gated_delta_rule_wy4", func = "gated_delta_rule_wy4", times = "per_seq" },
+]
+copies = "per_seq_row_but_last"
+
 [[rule]]
 id = "gdn_fused_conv_norm_k2_verify"
 pattern = [
@@ -367,6 +537,24 @@ cite = "ml/ops/ssm_preproc.rs:333-362 (the pick); ml/ops/ssm_ba_gates_hopper.rs:
 # 2026-09-30: The batched arm's run-time fallback. The per-sequence loop it falls back to is the
 # code the `off` arm runs (per_seq.rs, `decode_ms_ssm_recurrent_per_seq`), so the route plans as
 # `off`.
+
+# 2026-09-30: The batched verify's BA-gates twin: the same pick at the same row counts.
+[[rule]]
+id = "gdn_ba_gates_gemm_verify_twin"
+pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+kernels = [{ module = "ssm_ba_gates_hopper", func = "dense_gemm_ba_gates_prefill_hopper" }]
+repeat = "once"
+emitter = "dense_gemm_ba_gates"
+rows = [96, 128]
+modes = ["verify_batch"]
+when = { ssm_ba_gates_hopper = "on" }
+numerics = "reference"
+priority = 120
+cite = "ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:37-59 (the batched verify's BA gates go through the same pick); ml/ops/ssm_preproc.rs:333-362 (the pick); ml/ops/ssm_ba_gates_hopper.rs:88-112 (the guard: 2 CTAs per SM)"
+
+# 2026-09-30: The batched arm's run-time fallback. The per-sequence loop it falls back to is the
+# code the `off` arm runs (per_seq.rs, `decode_ms_ssm_recurrent_per_seq`), so the route plans as
+# `off`.
 [[runtime]]
 id = "gdn_state_slots_fragmented"
 when = { ssm_batched_recurrent = "on" }
@@ -382,8 +570,8 @@ pattern = [{ op = "gated_rms_norm", input = "bf16" }]
 kernels = [{ module = "norm", func = "gated_rms_norm_prefill" }]
 repeat = "once"
 emitter = "gated_rms_norm"
-rows = [2, 4]
-modes = ["verify"]
+rows = [2, 128]
+modes = ["verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:138-157 (kill switch METRALE_NO_BATCHED_GDN_NORM)"
@@ -397,7 +585,7 @@ kernels = [{ module = "ssm_preprocess", func = "deinterleave_qg" }]
 repeat = "once"
 emitter = "deinterleave_qg"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify", "draft"]
+modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 numerics = "reference"
 priority = 5
 cite = "ml/qwen3_attention/decode/attention_forward/q_proj.rs:70-79; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-286; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:164-175; ml/mtp_head/forward.rs:186-198"
@@ -421,10 +609,10 @@ kernels = [{ module = "norm", func = "rms_norm_strided" }]
 repeat = "once"
 emitter = "rms_norm_strided"
 rows = [2, 128]
-modes = ["multi_seq", "verify"]
+modes = ["multi_seq", "verify", "verify_batch", "draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:234-283 (bit-identical to rms_norm per row)"
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:234-283 (bit-identical to rms_norm per row); ml/mtp_head/forward_batch/position.rs:170-193 (the draft rows; K there is rms_norm over n * kv_heads rows, bit-identical per row)"
 
 [[rule]]
 id = "rope_mrope_interleaved"
@@ -445,10 +633,10 @@ kernels = [{ module = "rope", func = "rope_forward_strided" }]
 repeat = "once"
 emitter = "rope_strided"
 rows = [2, 128]
-modes = ["multi_seq", "verify"]
+modes = ["multi_seq", "verify", "verify_batch", "draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_attention/trait_impl/multi_seq/attn.rs:48-87 (plain RoPE; bit-identical to MRoPE while pos_t == pos_h == pos_w, k/rope_mrope_interleaved.cu:15-17)"
+cite = "ml/qwen3_attention/trait_impl/multi_seq/attn.rs:48-87 (plain RoPE; bit-identical to MRoPE while pos_t == pos_h == pos_w, k/rope_mrope_interleaved.cu:15-17); ml/mtp_head/forward_batch/position.rs:209-224"
 
 [[rule]]
 id = "rope_plain_draft"
@@ -469,7 +657,7 @@ kernels = [{ module = "reshape_and_cache", func = "reshape_and_cache_flash" }]
 repeat = "once"
 emitter = "kv_write"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify", "draft"]
+modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 when = { kv_cache_dtype = "bf16" }
 numerics = "reference"
 priority = 10
@@ -482,7 +670,7 @@ kernels = [{ module = "paged_decode", func = "paged_decode_attn" }]
 repeat = "once"
 emitter = "paged_decode"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify", "draft"]
+modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
 when = { kv_cache_dtype = "bf16" }
 numerics = "reference"
 priority = 10
@@ -507,10 +695,10 @@ kernels = [{ module = "residual_add", func = "sigmoid_gate_mul_batched" }]
 repeat = "once"
 emitter = "sigmoid_gate_mul"
 rows = [2, 128]
-modes = ["multi_seq", "verify"]
+modes = ["multi_seq", "verify", "verify_batch", "draft"]
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:59-81"
+cite = "ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:59-81; ml/mtp_head/forward_batch/position.rs:262-272"
 
 # 2026-09-28: NVFP4 projections (W4A16).
 # The dense checkpoint's FP8 per-channel projections are requantized to NVFP4 at load
@@ -604,7 +792,7 @@ kernels = [{ module = "moe_silu_mul", func = "moe_silu_mul" }]
 repeat = "once"
 emitter = "silu_mul"
 rows = [1, 128]
-modes = ["multi_seq", "verify", "draft"]
+modes = ["multi_seq", "verify", "draft", "verify_batch"]
 numerics = "reference"
 priority = 5
 cite = "ml/dense_ffn_decode_batch.rs:91-123,238-307 (forward_k2/k3/km); ml/mtp_head/moe_forward.rs:50-63"
@@ -635,6 +823,23 @@ numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307"
 
+
+# 2026-09-30: The batched verify's projections at 4..8 rows: `nvfp4_proj_small_m` on the batchm
+# tier, the same launch the K=4 single-sequence verify makes (`trait_decode_batched/qkvz_proj.rs`,
+# `out_proj.rs`, attention `wide_verify_gemm`).
+[[rule]]
+id = "w4a16_tc8_verify_batch"
+pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "q", "k", "v", "o", "down"], weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv_tc", func = "w4a16_gemv_tc8" }]
+repeat = "once"
+emitter = "w4a16_gemv_batchm"
+rows = [4, 8]
+modes = ["verify_batch"]
+when = { row_tiers = "by_rows", w4a16_tc = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307"
+
 [[rule]]
 id = "w4a16_tc8_gate_up_km"
 pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
@@ -645,7 +850,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_km"
 rows = [4, 8]
-modes = ["multi_seq", "verify"]
+modes = ["multi_seq", "verify", "verify_batch"]
 when = { row_tiers = "by_rows", w4a16_tc = "on" }
 numerics = "reference"
 priority = 10
@@ -781,7 +986,7 @@ kernels = [{ module = "w4a16", func = "w4a16_gemm_t_p3" }]
 repeat = "once"
 emitter = "w4a16_gemm_n128"
 rows = [9, 64]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -794,7 +999,7 @@ kernels = [{ module = "w4a16", func = "w4a16_gemm_t_k64_n64_p3" }]
 repeat = "once"
 emitter = "w4a16_gemm"
 rows = [9, 64]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -807,7 +1012,7 @@ kernels = [{ module = "w4a16", func = "w4a16_gemm_t_m128" }]
 repeat = "once"
 emitter = "w4a16_gemm_n128_m128"
 rows = [65, 128]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -820,7 +1025,7 @@ kernels = [{ module = "w4a16", func = "w4a16_gemm_t_k64_p3" }]
 repeat = "once"
 emitter = "w4a16_gemm_n128"
 rows = [65, 128]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 60
@@ -836,7 +1041,7 @@ kernels = [
 repeat = "once"
 emitter = "w4a4_proj"
 rows = [4, 8]
-modes = ["multi_seq", "verify"]
+modes = ["multi_seq", "verify", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "differs"
 lever = "w4a4_downcast"
@@ -895,7 +1100,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [9, 16]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -912,7 +1117,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [9, 16]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
@@ -929,7 +1134,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [17, 32]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -946,7 +1151,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [17, 32]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
@@ -963,7 +1168,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [33, 64]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -980,7 +1185,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [33, 64]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
@@ -997,7 +1202,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [65, 128]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -1013,7 +1218,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [65, 128]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
@@ -1289,7 +1494,7 @@ kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm" 
 repeat = "once"
 emitter = "lm_head"
 rows = [2, 8]
-modes = ["multi_seq", "verify"]
+modes = ["multi_seq", "verify", "verify_batch"]
 when = { lm_head_dtype = "bf16" }
 numerics = "reference"
 priority = 10
@@ -1302,7 +1507,7 @@ kernels = [{ module = "gemm", func = "dense_gemm_bf16" }]
 repeat = "once"
 emitter = "lm_head"
 rows = [9, 128]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { lm_head_dtype = "bf16" }
 numerics = "reference"
 priority = 10
@@ -1345,6 +1550,20 @@ numerics = "reference"
 priority = 10
 cite = "me/verify_b.rs:374-389; me/verify_c.rs:344-356; me/verify_c2.rs:363-375 (one argmax_bf16 per row into scratch + 4t, inside the graph)"
 
+
+# 2026-09-30: The batched verify's argmax: one launch for every row (`verify_rows_argmax`), into
+# the buffer the verify reads back (the mapped host blob, or scratch).
+[[rule]]
+id = "argmax_verify_batch"
+pattern = [{ op = "argmax" }]
+kernels = [{ module = "argmax", func = "argmax_bf16_batch" }]
+repeat = "once"
+emitter = "argmax_batch"
+rows = [4, 128]
+modes = ["verify_batch"]
+numerics = "reference"
+priority = 10
+cite = "me/verify_e/eager.rs:117-147 (one launch when the batched kernel is loaded)"
 [[rule]]
 id = "draft_argmax"
 pattern = [{ op = "argmax" }]
@@ -1370,6 +1589,154 @@ modes = ["draft"]
 numerics = "reference"
 priority = 10
 cite = "ml/mtp_head/forward.rs:116-124"
+
+# 2026-09-30: The batched propose (`forward_batch_position`, n rows): the concat per row, the
+# BF16 projections on the tensor-core GEMV tiers (`gemm_rows` tries them first; the emitter
+# checks the router picks the plan's entry), the NVFP4 LM head on the batched GEMV, and the
+# D-Cut argmax. The scheduler asks for confidences by default (`dcut_enabled`); without them the
+# runner declines the batch and each sequence drafts alone.
+[[rule]]
+id = "draft_concat_rows"
+pattern = [{ op = "concat" }]
+kernels = [{ module = "residual_add", func = "bf16_concat" }]
+repeat = "per_row"
+emitter = "concat"
+rows = [2, 128]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch/position.rs:97-110"
+
+[[rule]]
+id = "draft_dense_gemv_tc8"
+pattern = [{ op = "linear", roles = ["mtp_fc", "q", "k", "v", "o", "down"], weight = "bf16" }]
+kernels = [{ module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc8" }]
+repeat = "once"
+emitter = "dense_gemv_tc"
+rows = [2, 8]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch.rs:121-135 (gemm_rows: the tensor-core GEMV first); ml/ops/dense_gemv_tc.rs:69-82,116-130 (the narrowest resolved entry covering m, K a multiple of 64, off under METRALE_NO_MTP_TC); ml/mtp_head/forward_batch/position.rs:125-134,157-159,278; ml/mtp_head/forward_batch_ffn.rs:123"
+
+[[rule]]
+id = "draft_dense_gate_up_tc8"
+pattern = [{ op = "linear", role = "gate_up", weight = "bf16" }]
+kernels = [
+  { module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc8" },
+  { module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc8" },
+]
+repeat = "once"
+emitter = "dense_gemv_tc"
+rows = [2, 8]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch_ffn.rs:111-112 (gate and up are two n-row projections); ml/mtp_head/forward_batch.rs:121-135"
+
+[[rule]]
+id = "draft_dense_gemv_tc16"
+pattern = [{ op = "linear", roles = ["mtp_fc", "q", "k", "v", "o", "down"], weight = "bf16" }]
+kernels = [{ module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc16" }]
+repeat = "once"
+emitter = "dense_gemv_tc"
+rows = [9, 16]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch.rs:121-135 (gemm_rows: the tensor-core GEMV first); ml/ops/dense_gemv_tc.rs:69-82,116-130 (the narrowest resolved entry covering m, K a multiple of 64, off under METRALE_NO_MTP_TC); ml/mtp_head/forward_batch/position.rs:125-134,157-159,278; ml/mtp_head/forward_batch_ffn.rs:123"
+
+[[rule]]
+id = "draft_dense_gate_up_tc16"
+pattern = [{ op = "linear", role = "gate_up", weight = "bf16" }]
+kernels = [
+  { module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc16" },
+  { module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc16" },
+]
+repeat = "once"
+emitter = "dense_gemv_tc"
+rows = [9, 16]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch_ffn.rs:111-112 (gate and up are two n-row projections); ml/mtp_head/forward_batch.rs:121-135"
+
+[[rule]]
+id = "draft_dense_gemv_tc32"
+pattern = [{ op = "linear", roles = ["mtp_fc", "q", "k", "v", "o", "down"], weight = "bf16" }]
+kernels = [{ module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc32" }]
+repeat = "once"
+emitter = "dense_gemv_tc"
+rows = [17, 32]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch.rs:121-135 (gemm_rows: the tensor-core GEMV first); ml/ops/dense_gemv_tc.rs:69-82,116-130 (the narrowest resolved entry covering m, K a multiple of 64, off under METRALE_NO_MTP_TC); ml/mtp_head/forward_batch/position.rs:125-134,157-159,278; ml/mtp_head/forward_batch_ffn.rs:123"
+
+[[rule]]
+id = "draft_dense_gate_up_tc32"
+pattern = [{ op = "linear", role = "gate_up", weight = "bf16" }]
+kernels = [
+  { module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc32" },
+  { module = "dense_gemv_bf16_tc", func = "dense_gemv_bf16_tc32" },
+]
+repeat = "once"
+emitter = "dense_gemv_tc"
+rows = [17, 32]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch_ffn.rs:111-112 (gate and up are two n-row projections); ml/mtp_head/forward_batch.rs:121-135"
+
+[[rule]]
+id = "draft_lm_head_tc8"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv_tc", func = "w4a16_gemv_tc8" }]
+repeat = "once"
+emitter = "draft_lm_head_rows"
+rows = [2, 8]
+modes = ["draft"]
+when = { w4a16_tc = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch/position.rs:325-357 (lm_head_rows_arm; the tile twin is refused by the emitter); ml/mtp_head/batch_caps.rs:105-120 (lm_head_batch_kernel); ml/ops/quant_dispatch.rs:183-218 (the tensor-core entry when gemv_tc::tc_kernel routes, up to 16 rows)"
+
+[[rule]]
+id = "draft_lm_head_tc16"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv_tc", func = "w4a16_gemv_tc16" }]
+repeat = "once"
+emitter = "draft_lm_head_rows"
+rows = [9, 16]
+modes = ["draft"]
+when = { w4a16_tc = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch/position.rs:325-357 (lm_head_rows_arm; the tile twin is refused by the emitter); ml/mtp_head/batch_caps.rs:105-120 (lm_head_batch_kernel); ml/ops/quant_dispatch.rs:183-218 (the tensor-core entry when gemv_tc::tc_kernel routes, up to 16 rows)"
+
+[[rule]]
+id = "draft_lm_head_batch32"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_batch32" }]
+repeat = "once"
+emitter = "draft_lm_head_rows"
+rows = [17, 32]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch/position.rs:325-357 (lm_head_rows_arm; the tile twin is refused by the emitter); ml/mtp_head/batch_caps.rs:105-120 (lm_head_batch_kernel); ml/ops/quant_dispatch.rs:183-218 (the tensor-core entry when gemv_tc::tc_kernel routes, up to 16 rows)"
+
+[[rule]]
+id = "draft_argmax_batch_lp"
+pattern = [{ op = "argmax" }]
+kernels = [{ module = "argmax", func = "argmax_bf16_batch_lp" }]
+repeat = "once"
+emitter = "argmax_batch"
+rows = [2, 128]
+modes = ["draft"]
+numerics = "reference"
+priority = 10
+cite = "ml/mtp_head/forward_batch/position.rs:358-372 (with D-Cut's confidences requested); ml/mtp_head/forward_batch/position/stage.rs:86-111 (the ids at scratch, the confidences at LP_SCRATCH_OFF)"
 
 [[rule]]
 id = "draft_dense_gemv_bf16"
@@ -1412,7 +1779,7 @@ kernels = [{ module = "residual_add_rms_norm_exact", func = "residual_add_rms_no
 repeat = "once"
 emitter = "residual_add_rms_norm_exact"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "bit_identical"
 microtest = "residual_add_rms_norm_exact_microtest"
 priority = 100
@@ -1478,7 +1845,7 @@ kernels = [{ module = "w8a8_act_quant", func = "w8a8_act_quant_row" }]
 repeat = "once"
 emitter = "w8a8_act_quant"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV)"
@@ -1490,7 +1857,7 @@ kernels = [{ module = "w8a8_act_quant", func = "w8a8_act_quant_silu_row" }]
 repeat = "once"
 emitter = "w8a8_act_quant"
 rows = [1, 128]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 60
 cite = "ml/dense_ffn_w8a8.rs:72-74; ml/w8a8_layer.rs:82-116 (silu_proj: bf16(silu(gate) * up) quantized in one launch)"
@@ -1502,7 +1869,7 @@ kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" }]
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [1, 8]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
@@ -1517,7 +1884,7 @@ kernels = [
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [1, 8]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
@@ -1529,7 +1896,7 @@ kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" }]
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [9, 16]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
@@ -1544,7 +1911,7 @@ kernels = [
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [9, 16]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
@@ -1556,7 +1923,7 @@ kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb4" }]
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [17, 32]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
@@ -1571,7 +1938,7 @@ kernels = [
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [17, 32]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
@@ -1583,7 +1950,7 @@ kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb8" }]
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [33, 64]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
@@ -1598,7 +1965,7 @@ kernels = [
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [33, 64]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
@@ -1610,7 +1977,7 @@ kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb16" }]
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [65, 128]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
@@ -1625,7 +1992,7 @@ kernels = [
 repeat = "once"
 emitter = "w8a8_gemv"
 rows = [65, 128]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
@@ -1646,7 +2013,7 @@ kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_quant_rows" }]
 repeat = "once"
 emitter = "w4a4_act_quant"
 rows = [1, 32]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/ops/w4a4_proj.rs:331-347 (the quantize launch of nvfp4_proj_small_m, skipped for up's same input)"
@@ -1661,7 +2028,7 @@ kernels = [
 repeat = "once"
 emitter = "w4a4_gemv"
 rows = [1, 8]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
@@ -1676,7 +2043,7 @@ kernels = [
 repeat = "once"
 emitter = "w4a4_gemv"
 rows = [9, 16]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
@@ -1691,7 +2058,7 @@ kernels = [
 repeat = "once"
 emitter = "w4a4_gemv"
 rows = [17, 32]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
@@ -1703,7 +2070,7 @@ kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" }]
 repeat = "once"
 emitter = "w4a4_gemv"
 rows = [1, 8]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
@@ -1715,7 +2082,7 @@ kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_nt2" }]
 repeat = "once"
 emitter = "w4a4_gemv"
 rows = [9, 16]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
@@ -1727,7 +2094,7 @@ kernels = [{ module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_nt4" }]
 repeat = "once"
 emitter = "w4a4_gemv"
 rows = [17, 32]
-modes = ["decode", "multi_seq", "verify"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
@@ -1836,7 +2203,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [33, 64]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -1857,7 +2224,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [33, 64]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
@@ -1877,7 +2244,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [65, 128]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
@@ -1897,7 +2264,7 @@ kernels = [
 repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [65, 128]
-modes = ["multi_seq"]
+modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100

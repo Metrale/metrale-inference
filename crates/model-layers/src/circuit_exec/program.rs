@@ -106,16 +106,46 @@ impl Program {
 }
 
 /// 2026-09-29: A program another component runs in place of its own forward (the MTP draft
-/// head's single-row step), without GDN state.
+/// head's step), without GDN state. 2026-09-30: One program per row count: one row for a
+/// single sequence's draft, n rows for the batched propose's.
 pub trait DraftRunner: Send + Sync {
-    /// 2026-09-29: Issue the program on `stream` for a step whose block table is
-    /// `max_blocks_per_seq` wide.
-    fn run_draft(&self, gpu: &dyn GpuBackend, stream: u64, max_blocks_per_seq: u32) -> Result<()>;
+    /// 2026-09-30: Whether a program for `rows` draft rows was compiled.
+    fn serves(&self, rows: u64) -> bool;
+    /// 2026-09-29: Issue the `rows`-row program on `stream` for a step whose block table is
+    /// `max_blocks_per_seq` wide; an error when none was compiled for `rows`.
+    fn run_draft(
+        &self,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+        rows: u64,
+        max_blocks_per_seq: u32,
+    ) -> Result<()>;
 }
 
-impl DraftRunner for Program {
-    fn run_draft(&self, gpu: &dyn GpuBackend, stream: u64, max_blocks_per_seq: u32) -> Result<()> {
-        self.run(&StepEnv {
+/// 2026-09-30: The draft head's compiled programs, one per row count, ascending (one row
+/// first).
+pub struct DraftPrograms {
+    pub programs: Vec<(Program, metrale_circuit::FusionPlan)>,
+}
+
+impl DraftRunner for DraftPrograms {
+    fn serves(&self, rows: u64) -> bool {
+        self.programs.iter().any(|(p, _)| p.rows == rows)
+    }
+
+    fn run_draft(
+        &self,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+        rows: u64,
+        max_blocks_per_seq: u32,
+    ) -> Result<()> {
+        let (p, _) = self
+            .programs
+            .iter()
+            .find(|(p, _)| p.rows == rows)
+            .with_context(|| format!("no draft program was compiled for {rows} rows"))?;
+        p.run(&StepEnv {
             gpu,
             stream,
             gdn: &[],

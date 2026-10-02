@@ -212,16 +212,28 @@ pub struct CircuitDiffArgs {
     /// With --batch: hold a spare sequence between rows n/2 - 1 and n/2, so the rows' state
     /// slots are not contiguous and each step takes the batched GDN arm's per-sequence fallback
     /// (the circuit's `gdn_state_slots_fragmented` route).
-    #[arg(long, requires = "batch")]
+    #[arg(long)]
     pub fragment_slots: bool,
     /// MTP verify widths K (comma-separated, 2..=4): diff the single-sequence verify at each
     /// K instead. Needs a serve with speculative decoding (the rollback slots).
     #[arg(long, value_delimiter = ',')]
     pub verify: Vec<usize>,
     /// With --verify: the drafts come from the MTP draft head, as the speculative loop runs it,
-    /// and every run also runs the draft head and compares its logits and drafts.
-    #[arg(long, requires = "verify")]
+    /// and every run also runs the draft head and compares its logits and drafts. With
+    /// --verify-batch: after each step every run also runs the batched propose over the batch
+    /// (the drafts still come from the greedy continuations) and compares its last logits,
+    /// drafts and confidences.
+    #[arg(long)]
     pub mtp: bool,
+    /// Batched MTP verify widths `n` (comma-separated, sequences per verify): diff the batched
+    /// verify with write-on-accept, as the scheduler runs it, instead. Needs a serve with
+    /// speculative decoding and `--max-batch-size` at least the widest `n`.
+    #[arg(long, value_delimiter = ',', requires = "verify_batch_ks")]
+    pub verify_batch: Vec<usize>,
+    /// With --verify-batch: the verify widths K (comma-separated, 2..=4). Each `n` runs every K
+    /// uniform, then one ragged mix of them deepest first.
+    #[arg(long, value_delimiter = ',', requires = "verify_batch")]
+    pub verify_batch_ks: Vec<usize>,
     /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
     #[command(flatten)]
     pub serve: ServeArgs,

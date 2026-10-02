@@ -72,6 +72,9 @@ pub fn render(circuit: &Circuit, plan: &FusionPlan, header: &Header) -> String {
     for (k, v) in header {
         let _ = writeln!(s, "# {k}: {v}");
     }
+    if let Some(t) = &plan.table {
+        let _ = writeln!(s, "# row table: {t}");
+    }
     let fused = plan
         .edge_states
         .iter()
@@ -133,6 +136,33 @@ fn group_line(circuit: &Circuit, plan: &FusionPlan, g: usize) -> String {
     // plan's placeholder, which marks an op no kernel of the device's class covers.
     let kernels = if grp.emitter == crate::hardware::plan::NOVEL_EMITTER {
         "(novel: no kernel on this class)".to_string()
+    } else if !grp.runs.is_empty() {
+        // 2026-09-30: A per-run group: each run's launches, `!` marking a fragmented run.
+        grp.runs
+            .iter()
+            .map(|r| {
+                let l: Vec<String> = r
+                    .launches
+                    .iter()
+                    .map(|(k, t)| match t.count(r.run) {
+                        1 => k.to_string(),
+                        c => format!("{k} x{c}"),
+                    })
+                    .collect();
+                let copies = match r.copy_count() {
+                    0 => String::new(),
+                    c => format!(" + copy x{c}"),
+                };
+                format!(
+                    "[{}x{}{}: {}{copies}]",
+                    r.run.k,
+                    r.run.n,
+                    if r.run.contiguous { "" } else { "!" },
+                    l.join(" + ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     } else if grp.kernels.is_empty() {
         "(host)".to_string()
     } else {
@@ -143,10 +173,10 @@ fn group_line(circuit: &Circuit, plan: &FusionPlan, g: usize) -> String {
             .join(" + ")
     };
     let repeat = match grp.repeat.count(plan.rows) {
-        1 => String::new(),
-        n => format!(" x{n}"),
+        None | Some(1) => String::new(),
+        Some(n) => format!(" x{n}"),
     };
-    let repeat = match grp.copies.map(|c| c.count(plan.rows)) {
+    let repeat = match grp.copies.and_then(|c| c.count(plan.rows)) {
         Some(c) => format!("{repeat} + copy x{c}"),
         None => repeat,
     };

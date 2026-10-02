@@ -118,6 +118,7 @@ fn a_binding_the_plan_does_not_describe_is_refused() {
             qkvz_deinterleaved: false,
             h_slot_bytes: STATE_PITCH,
             conv_state_bytes: STATE_PITCH,
+            carry: None,
         })
     });
     assert!(e.contains("deinterleaved"), "{e}");
@@ -217,7 +218,9 @@ fn an_output_lands_in_its_declared_buffer_and_an_unbound_one_is_refused() {
         .iter()
         .position(|e| e.binds == Some(ModelBuffer::Tokens))
         .unwrap();
-    let place = |c: &metrale_circuit::Circuit, e| super::compile::external_buffer(c, e, &f.fixed);
+    let place = |c: &metrale_circuit::Circuit, e| {
+        super::compile::external_buffer(c, e, &f.fixed, metrale_circuit::Mode::Decode)
+    };
     assert_eq!(place(&f.circuit, logits).unwrap(), f.fixed.logits);
     assert_eq!(place(&f.circuit, tokens).unwrap(), f.fixed.tokens);
     let mut c = f.circuit.clone();

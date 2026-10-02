@@ -43,6 +43,28 @@ struct RuleFile {
     lever: Option<String>,
     priority: i64,
     cite: String,
+    #[serde(default)]
+    run: Vec<RunFile>,
+}
+
+/// 2026-09-30: `[[rule.run]]`: a per-run selector (`crate::runs::RunSelect`).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunFile {
+    k: [u64; 2],
+    n: [u64; 2],
+    contiguous: Option<bool>,
+    carried: Option<bool>,
+    launches: Vec<LaunchFile>,
+    copies: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LaunchFile {
+    module: String,
+    func: String,
+    times: String,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +89,8 @@ struct PatternFile {
     writes: Option<String>,
     #[serde(default)]
     keep: bool,
+    #[serde(default)]
+    stored: bool,
     #[serde(default)]
     sibling: bool,
 }
@@ -130,10 +154,31 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
     }
     let repeat = Repeat::parse(&r.repeat).ok_or_else(|| {
         shape(&format!(
-            "unknown repeat `{}` (once | per_row | per_row_but_last | chunk<n>)",
+            "unknown repeat `{}` (once | per_row | per_row_but_last | per_run | chunk<n>)",
             r.repeat
         ))
     })?;
+    let kernels: Vec<KernelId> = r
+        .kernels
+        .iter()
+        .map(|k| KernelId {
+            module: k.module.clone(),
+            func: k.func.clone(),
+        })
+        .collect();
+    let runs = runs(&r, &kernels)?;
+    if (repeat == Repeat::PerRun) == runs.is_empty() {
+        return Err(shape(
+            "`per_run` needs `[[rule.run]]` selectors, and only a `per_run` rule may have them",
+        ));
+    }
+    if repeat == Repeat::PerRun
+        && (r.copies.is_some() || modes.iter().any(|m| *m != Mode::VerifyBatch))
+    {
+        return Err(shape(
+            "a `per_run` rule serves `verify_batch` only and states copies per run",
+        ));
+    }
     let copies = r
         .copies
         .as_deref()
@@ -155,14 +200,7 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
     }
     Ok(Rule {
         pattern,
-        kernels: r
-            .kernels
-            .into_iter()
-            .map(|k| KernelId {
-                module: k.module,
-                func: k.func,
-            })
-            .collect(),
+        kernels,
         repeat,
         copies,
         emitter: r.emitter,
@@ -173,8 +211,56 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
         numerics,
         priority: r.priority,
         cite: r.cite,
+        runs,
         id: r.id,
     })
+}
+
+/// 2026-09-30: The rule's `[[rule.run]]` selectors; every launch must name one of its kernels.
+fn runs(r: &RuleFile, kernels: &[KernelId]) -> Result<Vec<crate::runs::RunSelect>, RuleError> {
+    use crate::runs::{RunSelect, Times};
+    let bad = |detail: String| RuleError::Shape {
+        rule: r.id.clone(),
+        detail,
+    };
+    let times = |s: &str| {
+        Times::parse(s).ok_or_else(|| {
+            bad(format!(
+                "unknown times `{s}` (once | per_seq | per_row | per_seq_row_but_last)"
+            ))
+        })
+    };
+    let mut out = Vec::with_capacity(r.run.len());
+    for f in &r.run {
+        if f.k[0] == 0 || f.k[0] > f.k[1] || f.n[0] == 0 || f.n[0] > f.n[1] {
+            return Err(bad(format!("run selector k {:?} n {:?}", f.k, f.n)));
+        }
+        if f.launches.is_empty() {
+            return Err(bad("a run selector with no launches".into()));
+        }
+        let mut launches = Vec::with_capacity(f.launches.len());
+        for l in &f.launches {
+            let id = KernelId {
+                module: l.module.clone(),
+                func: l.func.clone(),
+            };
+            if !kernels.contains(&id) {
+                return Err(bad(format!(
+                    "run selector launches {id}, which `kernels` does not list"
+                )));
+            }
+            launches.push((id, times(&l.times)?));
+        }
+        out.push(RunSelect {
+            k: (f.k[0], f.k[1]),
+            n: (f.n[0], f.n[1]),
+            contiguous: f.contiguous,
+            carried: f.carried,
+            launches,
+            copies: f.copies.as_deref().map(times).transpose()?,
+        });
+    }
+    Ok(out)
 }
 
 fn numerics(r: &RuleFile) -> Result<Numerics, RuleError> {
@@ -255,6 +341,7 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         input: fmt(&p.input)?,
         writes: fmt(&p.writes)?,
         keep: p.keep,
+        stored: p.stored,
         sibling: p.sibling,
     })
 }

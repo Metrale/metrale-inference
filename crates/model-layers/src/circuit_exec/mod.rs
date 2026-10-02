@@ -20,12 +20,15 @@
 
 pub mod bindings;
 pub mod compile;
+mod draft_rows;
 mod emitters;
+pub mod fixed;
 pub mod kernels;
 pub mod policy;
 pub mod program;
 pub mod routes;
 pub mod sources;
+pub mod verify_batch;
 
 use anyhow::{Context, Result, bail};
 use metrale_circuit::planner::plan_buffers_with;
@@ -34,11 +37,11 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 pub use bindings::{
-    AttnFacts, BoundWeight, CircuitBindings, CircuitLayer, DraftBinding, GdnFacts, HeadBinding,
-    MixerFacts, RopeFacts, WeightSlot,
+    AttnFacts, BoundWeight, CircuitBindings, CircuitLayer, DraftBinding, DraftRows, GdnFacts,
+    HeadBinding, MixerFacts, RopeFacts, WeightSlot,
 };
 pub use compile::{DraftFixed, Fixed};
-pub use program::{DraftRunner, GdnState, Program, StepEnv};
+pub use program::{DraftPrograms, DraftRunner, GdnState, Program, StepEnv};
 
 /// 2026-09-28: Which rules a build may select.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +87,12 @@ pub struct Boot<'a> {
     pub verify_rows: Vec<u64>,
     /// 2026-09-29: The MTP draft head, when one is loaded; its buffers are `fixed.draft`.
     pub draft: Option<CircuitLayer>,
+    /// 2026-09-30: The widest batched MTP verify, in rows (`Σ k`), when the serve verifies
+    /// several sequences in one forward; `None` otherwise.
+    pub verify_batch_rows: Option<u64>,
+    /// 2026-09-30: The widest batched propose (`propose_batch_max`), whose widths from 2 get
+    /// n-row draft programs; `None` when the head proposes one sequence at a time.
+    pub draft_rows: Option<u64>,
 }
 
 /// 2026-09-28: A built executor: the decode program and the workspace it runs in.
@@ -97,14 +106,16 @@ pub struct CircuitExec {
     pub multi_seq: Vec<(Program, FusionPlan)>,
     /// 2026-09-29: The single-sequence MTP verify, one program per `K`, ascending.
     pub verify: Vec<(Program, FusionPlan)>,
-    /// 2026-09-29: The MTP draft head's single-row step, which the head runs itself
-    /// (`DraftRunner`).
-    pub draft: Option<(std::sync::Arc<Program>, FusionPlan)>,
+    /// 2026-09-29: The MTP draft head's single-row step and (2026-09-30) its n-row ones, which
+    /// the head runs itself (`DraftRunner`).
+    pub draft: Option<std::sync::Arc<DraftPrograms>>,
     /// 2026-09-30: The runtime routes' arms, beside the primary program of each mode and row
     /// count they apply to ([`routes`]).
     pub routes: Vec<routes::RoutedProgram>,
     /// 2026-09-30: Per layer, the `(h, conv)` slot pitch of its GDN state; `None` elsewhere.
     pub gdn_pitch: Vec<Option<(usize, usize)>>,
+    /// 2026-09-30: The batched MTP verify's programs, compiled per row table.
+    pub verify_batch: Option<verify_batch::VerifyBatch>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml the plan was chosen from.
     pub rules_digest: String,
     /// 2026-09-28: Which rules the build allowed.
@@ -208,12 +219,44 @@ impl CircuitExec {
                 laid.push((route, plan, layout, buffers));
             }
         }
-        let workspace_bytes = laid
+        let mut workspace_bytes = laid
             .iter()
             .map(|(_, _, _, buf)| buf.arena_bytes)
             .max()
             .unwrap_or(0)
             .max(1);
+        // 2026-09-30: The batched verify compiles later, per table, in this same workspace; only
+        // for an instance whose batched-verify plans are checked in (`Instance::verify_batch`).
+        let verify_batch_rows = b
+            .verify_batch_rows
+            .filter(|_| !b.instance.verify_batch.is_empty());
+        if b.verify_batch_rows.is_some() && verify_batch_rows.is_none() {
+            tracing::info!(
+                "circuit: `{}` states no batched-verify plans; each sequence verifies alone",
+                b.instance.recipe
+            );
+        }
+        if let Some(max) = verify_batch_rows {
+            for t in verify_batch::sizing_tables(max) {
+                let a = verify_batch::arena_bytes(
+                    &loaded.circuit,
+                    &loaded.rules,
+                    &available,
+                    &b.policy,
+                    &t,
+                )?;
+                workspace_bytes = workspace_bytes.max(a);
+            }
+        }
+        let draft_laid = match (&b.fixed.draft, b.draft_rows) {
+            (Some(d), Some(max)) if b.draft.is_some() && d.rows.is_some() => {
+                draft_rows::lay_out(&loaded, &available, &b.policy, max)
+            }
+            _ => Vec::new(),
+        };
+        for l in &draft_laid {
+            workspace_bytes = workspace_bytes.max(l.buffers.arena_bytes);
+        }
         let workspace = b
             .gpu
             .alloc(workspace_bytes as usize)
@@ -251,19 +294,26 @@ impl CircuitExec {
         let (multi_seq, verify): (Vec<_>, Vec<_>) = rest
             .into_iter()
             .partition(|(p, _)| p.mode == Mode::MultiSeq);
-        let draft = draft
-            .into_iter()
-            .next()
-            .map(|(p, plan)| (std::sync::Arc::new(p), plan));
+        let draft = draft.into_iter().next().map(|one| {
+            let mut programs = vec![one];
+            programs.extend(draft_rows::compile_all(
+                &loaded.circuit,
+                draft_laid,
+                workspace,
+                &inputs,
+            ));
+            std::sync::Arc::new(DraftPrograms { programs })
+        });
         tracing::info!(
             "circuit decode: {} launches/step, plan {} ({} rules, {:?}), {} multi-seq widths, \
-             {} verify widths, {} runtime-route programs, workspace {} KiB",
+             {} verify widths, {} draft widths, {} runtime-route programs, workspace {} KiB",
             decode.launches.len(),
             &plan.digest[..12],
             loaded.rules.len(),
             b.fusions,
             multi_seq.len(),
             verify.len(),
+            draft.as_ref().map_or(0, |d| d.programs.len()),
             routed.len(),
             workspace_bytes / 1024
         );
@@ -274,6 +324,24 @@ impl CircuitExec {
                 MixerFacts::Attention(_) => None,
             })
             .collect();
+        let verify_batch = verify_batch_rows.map(|max| {
+            verify_batch::VerifyBatch::new(
+                verify_batch::Parts {
+                    circuit: loaded.circuit.clone(),
+                    rules: loaded.rules.clone(),
+                    available: available.clone(),
+                    policy: b.policy.clone(),
+                    kernels: table.clone(),
+                    fixed: b.fixed.clone(),
+                    layers: layers.clone(),
+                    head: b.head.clone(),
+                    config: b.config.clone(),
+                },
+                workspace,
+                workspace_bytes,
+                max,
+            )
+        });
         Ok(CircuitExec {
             decode,
             decode_plan: plan,
@@ -282,6 +350,7 @@ impl CircuitExec {
             draft,
             routes: routed,
             gdn_pitch,
+            verify_batch,
             rules_digest: loaded.rules_digest,
             fusions: b.fusions,
             workspace,
@@ -317,7 +386,7 @@ impl CircuitExec {
     pub fn draft_runner(&self) -> Option<std::sync::Arc<dyn DraftRunner>> {
         self.draft
             .as_ref()
-            .map(|(p, _)| p.clone() as std::sync::Arc<dyn DraftRunner>)
+            .map(|d| d.clone() as std::sync::Arc<dyn DraftRunner>)
     }
 
     /// 2026-09-29: The verify program for `k` rows, if one was compiled.
@@ -338,7 +407,11 @@ impl CircuitExec {
                     .iter()
                     .chain(&self.verify)
                     .map(|(_, p)| p.digest.as_str())
-                    .chain(self.draft.iter().map(|(_, p)| p.digest.as_str()))
+                    .chain(
+                        self.draft
+                            .iter()
+                            .flat_map(|d| d.programs.iter().map(|(_, p)| p.digest.as_str())),
+                    )
                     .chain(self.routes.iter().map(|r| r.plan.digest.as_str())),
             ),
         )
@@ -352,7 +425,7 @@ impl CircuitExec {
     /// 2026-09-28: Free the workspace. The caller must first destroy every graph that captured
     /// a program of this executor.
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
-        if let Some((p, _)) = &self.draft {
+        if let Some(p) = &self.draft {
             anyhow::ensure!(
                 std::sync::Arc::strong_count(p) == 1,
                 "the draft program is still installed; remove it before freeing the workspace"
@@ -365,6 +438,9 @@ impl CircuitExec {
 #[cfg(test)]
 #[path = "exec_declared_tests.rs"]
 mod exec_declared_tests;
+#[cfg(test)]
+#[path = "exec_draft_rows_tests.rs"]
+mod exec_draft_rows_tests;
 #[cfg(test)]
 #[path = "exec_draft_tests.rs"]
 mod exec_draft_tests;
@@ -380,6 +456,9 @@ mod exec_multi_tests;
 #[cfg(test)]
 #[path = "exec_tests.rs"]
 mod exec_tests;
+#[cfg(test)]
+#[path = "exec_verify_batch_tests.rs"]
+mod exec_verify_batch_tests;
 #[cfg(test)]
 #[path = "exec_verify_tests.rs"]
 mod exec_verify_tests;

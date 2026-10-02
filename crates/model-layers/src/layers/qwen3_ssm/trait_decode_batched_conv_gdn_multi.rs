@@ -141,70 +141,17 @@ impl Qwen3SsmLayer {
         if super::verify_exact_enabled() {
             return self.decode_batched_conv_gdn_multi_exact(states, ctx, args);
         }
-        // 2026-09-25: The WY handle for width k: the `wy2_kernel` / `wy3_kernel` /
-        // `wy4_kernel` selectors, or the wyN table twin for 5..=16. An unresolved kernel is
-        // a zero handle, which declines below.
-        let wy_k = match kk {
-            2 => self.wy2_kernel(args.kd, args.vd, n),
-            3 => self.wy3_kernel(args.kd, args.vd, n),
-            4 => self.wy4_kernel(),
-            5..=16 => match self.wyn_table_kernel(kk, ctx.levers.gdn_wyn) {
-                Some(h) => h,
-                None => return Ok(false),
-            },
-            _ => return Ok(false),
+        let (layout, wy_k) = match self.multi_run_arm(states, kk, ctx.levers.gdn_wyn, wy_tables)? {
+            RunArm::Batched(layout, wy_k) => (layout, wy_k),
+            RunArm::Declined => return Ok(false),
+            RunArm::LayoutDeclined => return Ok(self.gdn_multi_decline(n, kk)),
         };
-        // 2026-09-25: With an FP16 h-state a zero handle is an error here, not a decline.
-        self.require_wy_f16(kk, wy_k)?;
-        if n < 2
-            || !verify_gdn_batch_enabled()
-            || self.gdn_verify_fused_conv_kn_batched_k.0 == 0
-            || wy_k.0 == 0
-            || wy_tables.is_null()
-        {
-            return Ok(false);
-        }
-
+        let RunLayout {
+            conv_base,
+            inter_base,
+            inter_seq_stride,
+        } = layout;
         let conv_bytes = self.conv_state_bytes;
-        // 2026-09-25: Layout checks on the actual state pointers.
-        let mut conv_base = DevicePtr::NULL;
-        let mut inter_base = DevicePtr::NULL;
-        let mut inter_seq_stride = 0u64;
-        for i in 0..n {
-            let Some(st) = states[i].as_any().downcast_ref::<SsmLayerState>() else {
-                return Ok(self.gdn_multi_decline(n, kk));
-            };
-            // 2026-09-25: The batched conv writes conv intermediates 0..k-1, `conv_bytes`
-            // apart, so all k must exist there. The WY tables read h intermediates
-            // 0..k-2; `upload_verify_wy_tables` checks the same count.
-            if st.conv_state_intermediates.len() < kk || st.h_state_intermediates.len() < kk - 1 {
-                return Ok(self.gdn_multi_decline(n, kk));
-            }
-            let i0 = st.conv_state_intermediates[0];
-            for t in 1..kk {
-                if st.conv_state_intermediates[t].0 != i0.0 + (t * conv_bytes) as u64 {
-                    return Ok(self.gdn_multi_decline(n, kk));
-                }
-            }
-            if i == 0 {
-                conv_base = st.conv_state;
-                inter_base = i0;
-            } else {
-                if st.conv_state.0 != conv_base.0 + (i * conv_bytes) as u64 {
-                    return Ok(self.gdn_multi_decline(n, kk));
-                }
-                if i == 1 {
-                    inter_seq_stride = i0.0.wrapping_sub(inter_base.0);
-                    // 2026-09-25: The next sequence's region must not overlap this one's k
-                    // intermediates.
-                    if inter_seq_stride < (kk * conv_bytes) as u64 {
-                        return Ok(self.gdn_multi_decline(n, kk));
-                    }
-                } else if i0.0 != inter_base.0 + (i as u64) * inter_seq_stride {
-                    return Ok(self.gdn_multi_decline(n, kk));
-                }
-            }
-        }
 
         let ConvGdnArgs {
             deinterleaved,
@@ -430,5 +377,113 @@ impl Qwen3SsmLayer {
         }
         tracing::debug!("batched-verify GDN conv+WY fallback #{n_fb} (n={n}, k={kk})");
         false
+    }
+}
+
+/// 2026-09-30: Where a run's batched conv finds its states: the first sequence's conv state and
+/// conv intermediate, and the stride between sequences' intermediates.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RunLayout {
+    pub conv_base: DevicePtr,
+    pub inter_base: DevicePtr,
+    pub inter_seq_stride: u64,
+}
+
+/// 2026-09-30: How a run of a batched verify runs its conv and recurrence.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RunArm {
+    /// 2026-09-30: The batched conv and the table-form WY, with this layout and WY handle.
+    Batched(RunLayout, metrale_gpu_runtime::gpu::KernelHandle),
+    /// 2026-09-30: Each sequence alone: a width, handle, switch or table precondition failed.
+    Declined,
+    /// 2026-09-30: Each sequence alone: the states are not laid out for the batched kernels
+    /// (the decline `gdn_multi_decline` counts and logs).
+    LayoutDeclined,
+}
+
+impl Qwen3SsmLayer {
+    /// 2026-09-30: How a run of `states` at width `kk` runs, as `decode_batched_conv_gdn_multi_inner`
+    /// decides it. `Err` only where that function errs (an FP16 h-state without its WY kernel).
+    /// The circuit executor's batched verify asks the same question to pick each run's arm.
+    pub(crate) fn multi_run_arm(
+        &self,
+        states: &[&mut (dyn LayerState + 'static)],
+        kk: usize,
+        gdn_wyn: bool,
+        wy_tables: DevicePtr,
+    ) -> Result<RunArm> {
+        let n = states.len();
+        // 2026-09-25: The WY handle for width k: the `wy2_kernel` / `wy3_kernel` /
+        // `wy4_kernel` selectors, or the wyN table twin for 5..=16. An unresolved kernel is
+        // a zero handle, which declines below.
+        let [_, _, kd, vd] = self.carry.dims;
+        let wy_k = match kk {
+            2 => self.wy2_kernel(kd, vd, n),
+            3 => self.wy3_kernel(kd, vd, n),
+            4 => self.wy4_kernel(),
+            5..=16 => match self.wyn_table_kernel(kk, gdn_wyn) {
+                Some(h) => h,
+                None => return Ok(RunArm::Declined),
+            },
+            _ => return Ok(RunArm::Declined),
+        };
+        // 2026-09-25: With an FP16 h-state a zero handle is an error here, not a decline.
+        self.require_wy_f16(kk, wy_k)?;
+        if n < 2
+            || !verify_gdn_batch_enabled()
+            || self.gdn_verify_fused_conv_kn_batched_k.0 == 0
+            || wy_k.0 == 0
+            || wy_tables.is_null()
+        {
+            return Ok(RunArm::Declined);
+        }
+        let conv_bytes = self.conv_state_bytes;
+        // 2026-09-25: Layout checks on the actual state pointers.
+        let mut conv_base = DevicePtr::NULL;
+        let mut inter_base = DevicePtr::NULL;
+        let mut inter_seq_stride = 0u64;
+        for (i, state) in states.iter().enumerate() {
+            let Some(st) = state.as_any().downcast_ref::<SsmLayerState>() else {
+                return Ok(RunArm::LayoutDeclined);
+            };
+            // 2026-09-25: The batched conv writes conv intermediates 0..k-1, `conv_bytes`
+            // apart, so all k must exist there. The WY tables read h intermediates
+            // 0..k-2; `upload_verify_wy_tables` checks the same count.
+            if st.conv_state_intermediates.len() < kk || st.h_state_intermediates.len() < kk - 1 {
+                return Ok(RunArm::LayoutDeclined);
+            }
+            let i0 = st.conv_state_intermediates[0];
+            for t in 1..kk {
+                if st.conv_state_intermediates[t].0 != i0.0 + (t * conv_bytes) as u64 {
+                    return Ok(RunArm::LayoutDeclined);
+                }
+            }
+            if i == 0 {
+                conv_base = st.conv_state;
+                inter_base = i0;
+            } else {
+                if st.conv_state.0 != conv_base.0 + (i * conv_bytes) as u64 {
+                    return Ok(RunArm::LayoutDeclined);
+                }
+                if i == 1 {
+                    inter_seq_stride = i0.0.wrapping_sub(inter_base.0);
+                    // 2026-09-25: The next sequence's region must not overlap this one's k
+                    // intermediates.
+                    if inter_seq_stride < (kk * conv_bytes) as u64 {
+                        return Ok(RunArm::LayoutDeclined);
+                    }
+                } else if i0.0 != inter_base.0 + (i as u64) * inter_seq_stride {
+                    return Ok(RunArm::LayoutDeclined);
+                }
+            }
+        }
+        Ok(RunArm::Batched(
+            RunLayout {
+                conv_base,
+                inter_base,
+                inter_seq_stride,
+            },
+            wy_k,
+        ))
     }
 }

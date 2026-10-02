@@ -37,6 +37,13 @@ impl VennArgs {
                 Mode::Decode | Mode::Draft => vec![1],
                 Mode::MultiSeq => self.rows.iter().copied().filter(|&r| r > 1).collect(),
                 Mode::Verify => self.verify_rows.clone(),
+                // 2026-09-30: A batched verify is planned for a row table, which the Venn does
+                // not take.
+                Mode::VerifyBatch => {
+                    return Err(VennError::Run(
+                        "--mode verify_batch is not classified (its plans take a row table)".into(),
+                    ));
+                }
             };
             if rows.is_empty() || rows.contains(&0) {
                 return Err(VennError::Run(format!(

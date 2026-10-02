@@ -133,6 +133,18 @@ impl TransformerModel {
         for l in &self.layers {
             l.circuit_prepare(self.gpu.as_ref(), &self.config, &self.levers, stream)?;
         }
+        // 2026-09-30: The batched MTP verify runs the carried-state GDN verify, whose buffers
+        // the layers bind once (`gdn_carry.rs`); binding them now puts them in the layers'
+        // circuit facts. Without them the executor compiles no batched verify and each
+        // sequence verifies alone.
+        let verify_batch_rows = if self.proposer.is_some() && self.gdn_carry_bind_now()? {
+            Some(
+                (4 * metrale_model_layers::speculative::mtp_max_seqs())
+                    .min(super::verify_e2::VERIFY_ROW_CAP) as u64,
+            )
+        } else {
+            None
+        };
         let layers: Vec<_> = self
             .layers
             .iter()
@@ -184,8 +196,13 @@ impl TransformerModel {
                     block_size: d.block_size,
                     cache_stride: d.cache_stride,
                     vocab: d.vocab,
+                    rows: d.rows.clone(),
                 }),
                 verify_meta: self.verify_meta(0, 0, DevicePtr::NULL),
+                verify_batch_meta: self.verify_batch_meta_at(),
+                verify_wy_tables: self.verify_wy_tables,
+                verify_batch_tokens: super::verify_e::mapped_argmax_host_dev(self.gpu.as_ref())
+                    .map_or(self.buffers.scratch(), |(_, d)| d),
                 k_pools: (0..n).map(|i| cache.k_pool_ptr(i)).collect(),
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),
                 block_size: u32::try_from(cache.block_size())?,
@@ -213,6 +230,14 @@ impl TransformerModel {
             } else {
                 Vec::new()
             },
+            verify_batch_rows,
+            // 2026-09-30: The batched propose's widths, up to the sequences MTP runs at once.
+            draft_rows: self
+                .proposer
+                .as_ref()
+                .map(|p| p.propose_batch_max(&self.buffers, &self.config))
+                .filter(|&w| w >= 2)
+                .map(|w| w.min(metrale_model_layers::speculative::mtp_max_seqs()) as u64),
         })
     }
 

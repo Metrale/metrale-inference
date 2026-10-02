@@ -1,0 +1,35 @@
+# circuit plan: qwen3_5 draft n=17
+# recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared
+# checkpoint: unsloth/Qwen3.8-27B-NVFP4
+# target: gb10/qwen3.8-27b/nvfp4
+# settings: decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# opt-in levers: none
+digest: f4342389f11e653c00e2aaa21196570f17c9c6256cf69e74305ac6efab0cdadb
+groups: 25  launches: 41  edges: 0 fused, 28 materialized
+inputs: l63.dense_ffn.y bf16
+== mtp_in
+g0000 draft.mtp_in [embed] (host) reference rule=embed_row_copy writes={e:bf16}
+g0001 draft.mtp_in [embed_norm] norm::rms_norm reference rule=draft_rms_norm writes={en:bf16}
+g0002 draft.mtp_in [hidden_norm] norm::rms_norm reference rule=draft_rms_norm writes={hn:bf16}
+g0003 draft.mtp_in [concat] residual_add::bf16_concat x17 reference rule=draft_concat_rows writes={cat:bf16}
+g0004 draft.mtp_in [fc] dense_gemv_bf16_tc::dense_gemv_bf16_tc32 reference rule=draft_dense_gemv_tc32 writes={h0:bf16}
+g0005 draft.attn [input_norm] norm::rms_norm reference rule=draft_rms_norm writes={xn:bf16}
+g0006 draft.attn [q] dense_gemv_bf16_tc::dense_gemv_bf16_tc32 reference rule=draft_dense_gemv_tc32 writes={qg:bf16}
+g0007 draft.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16}
+g0008 draft.attn [k] dense_gemv_bf16_tc::dense_gemv_bf16_tc32 reference rule=draft_dense_gemv_tc32 writes={k:bf16}
+g0009 draft.attn [v] dense_gemv_bf16_tc::dense_gemv_bf16_tc32 reference rule=draft_dense_gemv_tc32 writes={v:bf16}
+g0010 draft.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16}
+g0011 draft.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16}
+g0012 draft.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16}
+g0013 draft.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16
+g0014 draft.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16}
+g0015 draft.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16}
+g0016 draft.attn [o] dense_gemv_bf16_tc::dense_gemv_bf16_tc32 reference rule=draft_dense_gemv_tc32 writes={o:bf16}
+g0017 draft.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16}
+g0018 draft.dense_ffn [gate_up] dense_gemv_bf16_tc::dense_gemv_bf16_tc32 + dense_gemv_bf16_tc::dense_gemv_bf16_tc32 reference rule=draft_dense_gate_up_tc32 writes={gu:bf16}
+g0019 draft.dense_ffn [act] moe_silu_mul::moe_silu_mul reference rule=silu_mul_rows writes={act:bf16}
+g0020 draft.dense_ffn [down] dense_gemv_bf16_tc::dense_gemv_bf16_tc32 reference rule=draft_dense_gemv_tc32 writes={d:bf16}
+g0021 draft.dense_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16}
+g0022 draft.mtp_out [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16}
+g0023 draft.mtp_out [lm_head] w4a16_gemv::w4a16_gemv_batch32 reference rule=draft_lm_head_batch32 writes={logits:bf16}
+g0024 draft.mtp_out [argmax] argmax::argmax_bf16_batch_lp reference rule=draft_argmax_batch_lp writes={token:i32}

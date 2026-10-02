@@ -37,6 +37,10 @@ pub fn canonical(circuit: &Circuit, plan: &FusionPlan) -> String {
         plan.mode.name(),
         plan.rows
     );
+    // 2026-09-30: A batched verify's row table, and each per-run group's launches below.
+    if let Some(t) = &plan.table {
+        let _ = writeln!(s, "table {t}");
+    }
     for (i, g) in plan.groups.iter().enumerate() {
         let kernels: Vec<String> = g.kernels.iter().map(|k| k.to_string()).collect();
         let nodes: Vec<&str> = g
@@ -56,6 +60,22 @@ pub fn canonical(circuit: &Circuit, plan: &FusionPlan) -> String {
             g.numerics,
             nodes.join(",")
         );
+        for r in &g.runs {
+            let launches: Vec<String> = r
+                .launches
+                .iter()
+                .map(|(k, t)| format!("{k}*{}", t.name()))
+                .collect();
+            let _ = writeln!(
+                s,
+                "  run k={} n={} contiguous={} launches=[{}] copies={}",
+                r.run.k,
+                r.run.n,
+                r.run.contiguous,
+                launches.join(","),
+                r.copies.map_or("none", |c| c.name())
+            );
+        }
     }
     for (e, edge) in circuit.edges.iter().enumerate() {
         let Some(state) = plan.edge_states[e] else {

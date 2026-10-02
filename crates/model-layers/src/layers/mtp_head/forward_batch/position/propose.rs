@@ -42,9 +42,13 @@ impl MtpHead {
     /// n-row forward. Draft 0 reads the caller's target hiddens; draft j > 0
     /// reads row i of `Self::chain_hidden`, written by position j - 1.
     /// Returns the drafts per sequence and stores them in each state's
-    /// `last_drafts`. Errors when the slice lengths differ.
+    /// `last_drafts`. Errors when the slice lengths differ. 2026-09-30: With `circuit`, each
+    /// position runs that runner's n-row draft program, which writes the confidences, so the
+    /// caller passes `out_conf` (`propose_batch` checks both).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn propose_batch_impl(
         &self,
+        circuit: Option<&dyn crate::circuit_exec::DraftRunner>,
         last_tokens: &[u32],
         target_hiddens: &[DevicePtr],
         positions: &[usize],
@@ -60,10 +64,13 @@ impl MtpHead {
             "propose_batch: length mismatch"
         );
         // 2026-09-25: Log once per distinct n (a bitmask over `n & 31`), naming
-        // the kernels this width selects.
-        static LOGGED_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        // the kernels this width selects. 2026-10-01: Legacy and the circuit's draft program
+        // each log their own first propose at a width.
+        static LOGGED_N: [std::sync::atomic::AtomicU32; 2] =
+            [const { std::sync::atomic::AtomicU32::new(0) }; 2];
         let bit = 1u32 << (n & 31);
-        if (LOGGED_N.fetch_or(bit, std::sync::atomic::Ordering::Relaxed) & bit) == 0 {
+        let logged = &LOGGED_N[usize::from(circuit.is_some())];
+        if (logged.fetch_or(bit, std::sync::atomic::Ordering::Relaxed) & bit) == 0 {
             // 2026-09-25: The same condition as the LM-head dispatch in
             // `forward_batch_position`.
             let v = if self.mtp_vocab_size > 0 {
@@ -71,9 +78,10 @@ impl MtpHead {
             } else {
                 ctx.config.vocab_size as u32
             };
-            if !self.mtp_tc_lm_head(ctx.gpu, n, v, ctx.config.hidden_size as u32)
-                && n >= 5
-                && self.w4a16_gemm_t_k.0 != 0
+            let tc = self.mtp_tc_lm_head(ctx.gpu, n, v, ctx.config.hidden_size as u32);
+            if circuit.is_some() {
+                tracing::info!("MTP propose_batch active: n={n} on the circuit's draft program");
+            } else if lm_head_rows_arm(n, tc, self.lm_head_twin_ready()) == LmHeadRowsArm::TileTwin
                 && let Some((_, ldb)) = self.lm_head_nvfp4_t
             {
                 tracing::info!(
@@ -123,21 +131,34 @@ impl MtpHead {
                 let chain = Self::chain_hidden(ctx);
                 (0..n).map(|i| chain.offset(i * h * 2)).collect()
             };
-            self.forward_batch_position(
-                &cur_tokens,
-                &hiddens_j,
-                &cur_positions,
-                states,
-                ctx,
-                stream,
-                &mut ids,
-                if out_conf.is_some() {
-                    Some(&mut lp[..])
-                } else {
-                    None
-                },
-                j == 0,
-            )?;
+            match circuit {
+                Some(runner) => self.forward_batch_position_circuit(
+                    runner,
+                    &cur_tokens,
+                    &hiddens_j,
+                    &cur_positions,
+                    states,
+                    ctx,
+                    stream,
+                    &mut ids,
+                    &mut lp,
+                )?,
+                None => self.forward_batch_position(
+                    &cur_tokens,
+                    &hiddens_j,
+                    &cur_positions,
+                    states,
+                    ctx,
+                    stream,
+                    &mut ids,
+                    if out_conf.is_some() {
+                        Some(&mut lp[..])
+                    } else {
+                        None
+                    },
+                    j == 0,
+                )?,
+            }
             for i in 0..n {
                 all[i].push(ids[i]);
                 cur_positions[i] += 1;

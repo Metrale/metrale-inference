@@ -217,6 +217,11 @@ pub fn golden_plans() -> Vec<(String, String)> {
                 out.push((inst.plan_file(mode, n), text));
             }
         }
+        for table in &inst.verify_batch {
+            let text = metrale_circuit::render_table_plan(inst, &loaded, &avail, table)
+                .unwrap_or_else(|e| panic!("{} verify_batch `{table}`: {e}", inst.recipe));
+            out.push((inst.table_plan_file(table), text));
+        }
         for (tag, glyphs, width) in DISPLAY_SNAPSHOTS {
             let opts = metrale_circuit::display::DisplayOpts {
                 width,
