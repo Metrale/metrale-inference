@@ -17,8 +17,6 @@ pub(crate) enum Leg {
     Nvfp4,
     Nvfp4GateUp,
     AllNvfp4Tc,
-    /// 2026-10-02: `AllNvfp4Tc` on MMA-paired weights (`_tc_r`; the weights permuted first).
-    AllNvfp4TcPaired,
 }
 
 impl Leg {
@@ -28,7 +26,6 @@ impl Leg {
             Self::Nvfp4 => "nvfp4",
             Self::Nvfp4GateUp => "nvfp4-gate-up",
             Self::AllNvfp4Tc => "all-nvfp4-tc",
-            Self::AllNvfp4TcPaired => "all-nvfp4-tc-r",
         }
     }
     pub(crate) fn fp8_shared(self) -> bool {
@@ -38,7 +35,7 @@ impl Leg {
         self == Self::Nvfp4GateUp
     }
     pub(crate) fn tc(self) -> bool {
-        matches!(self, Self::AllNvfp4Tc | Self::AllNvfp4TcPaired)
+        self == Self::AllNvfp4Tc
     }
     /// 2026-10-02: The widest row count production admits on this leg's kernels.
     pub(crate) fn max_m(self) -> usize {

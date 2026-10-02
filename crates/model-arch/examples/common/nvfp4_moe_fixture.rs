@@ -100,13 +100,6 @@ impl Mat {
     }
 }
 
-impl Mat {
-    /// 2026-10-02: 32-bit words of the packed weight.
-    pub(crate) fn packed_words(&self) -> usize {
-        self.packed.len() / 4
-    }
-}
-
 impl HostDot for Mat {
     fn dot(&self, row: usize, x: &[f64]) -> f64 {
         (0..self.k)
@@ -247,8 +240,6 @@ pub(crate) struct Kernels {
     pub(crate) down: KernelHandle,
     pub(crate) gate_up_tc: KernelHandle,
     pub(crate) down_tc: KernelHandle,
-    pub(crate) gate_up_tc_r: KernelHandle,
-    pub(crate) down_tc_r: KernelHandle,
     pub(crate) fp8_gate_up: KernelHandle,
     pub(crate) fp8_down: KernelHandle,
     pub(crate) sort: KernelHandle,
@@ -330,14 +321,7 @@ fn experts(
         )?;
     }
     let nv_shared = if leg.fp8_shared() { 0 } else { n };
-    let (gu, gu_geo, dn, dn_geo) = if leg == Leg::AllNvfp4TcPaired {
-        (
-            k.gate_up_tc_r,
-            ops::NVFP4_GROUPED_GATE_UP_TC,
-            k.down_tc_r,
-            ops::NVFP4_GROUPED_DOWN_TC,
-        )
-    } else if leg.tc() {
+    let (gu, gu_geo, dn, dn_geo) = if leg.tc() {
         (
             k.gate_up_tc,
             ops::NVFP4_GROUPED_GATE_UP_TC,

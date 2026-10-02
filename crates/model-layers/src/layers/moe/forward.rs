@@ -35,7 +35,6 @@ impl MoeLayer {
                 .forward_nvfp4_grouped_decode(input, 1, ctx, stream)
                 .map(|()| ctx.buffers.moe_output());
         }
-        self.refuse_if_paired("MoeLayer::forward")?;
         // 2026-09-28: The tensor-core FP8 expert kernels' grouped decode (`fp8_grouped_tc.rs`).
         if let Some(out) = self.forward_fp8_grouped_tc_one_row(input, ctx, stream) {
             return out;

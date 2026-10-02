@@ -377,8 +377,6 @@ pub use fp8_grouped_tc_w8a8::{moe_expert_fp8_act, set_moe_expert_fp8_act};
 mod forward_fp8_grouped_router;
 pub use forward_fp8_grouped_router::GroupedRouting;
 mod forward_bf16_grouped_decode;
-mod nvfp4_paired;
-pub use nvfp4_paired::nvfp4_paired_enabled;
 mod forward_nvfp4_grouped_decode;
 pub use forward_nvfp4_grouped_decode::{
     NVFP4_GROUPED_DECODE_MAX_ROWS, NVFP4_GROUPED_DECODE_TC_MAX_ROWS, nvfp4_grouped_decode_shape_ok,

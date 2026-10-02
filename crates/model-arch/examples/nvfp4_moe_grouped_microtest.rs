@@ -114,14 +114,6 @@ fn main() -> Result<()> {
             "moe_nvfp4_grouped_tc",
             "moe_expert_down_act_nvfp4_grouped_tc",
         )?,
-        gate_up_tc_r: g.kernel(
-            "moe_nvfp4_grouped_tc",
-            "moe_expert_gate_up_act_nvfp4_grouped_tc_r",
-        )?,
-        down_tc_r: g.kernel(
-            "moe_nvfp4_grouped_tc",
-            "moe_expert_down_act_nvfp4_grouped_tc_r",
-        )?,
         fp8_gate_up: g.kernel(FP8, "moe_expert_gate_up_act_fp8_grouped")?,
         fp8_down: g.kernel(FP8, "moe_expert_down_act_fp8_grouped")?,
         sort: g.kernel("moe_fp8_grouped_sort", "moe_fp8_grouped_sort")?,
@@ -239,18 +231,7 @@ fn main() -> Result<()> {
         (seen.iter().filter(|s| **s).count() + 1) as f64 * expert_bytes
     };
     let mut blended: Vec<(Leg, Vec<u8>)> = Vec::new();
-    for leg in [
-        Leg::AllNvfp4,
-        Leg::Nvfp4,
-        Leg::Nvfp4GateUp,
-        Leg::AllNvfp4Tc,
-        Leg::AllNvfp4TcPaired,
-    ] {
-        // 2026-10-02: The paired leg runs last: its weights are permuted in place first (the host
-        // copies keep the row-major order the reference reads), so no earlier leg sees them.
-        if leg == Leg::AllNvfp4TcPaired {
-            pair_weights(g, &w)?;
-        }
+    for leg in [Leg::AllNvfp4, Leg::Nvfp4, Leg::Nvfp4GateUp, Leg::AllNvfp4Tc] {
         let max_m = leg.max_m();
         let full = run(g, &k, &w, &b, leg, max_m, num_experts, 0)?.0;
         let mut bad_widths = Vec::new();
@@ -273,7 +254,7 @@ fn main() -> Result<()> {
                 streamed(m) / r.6 / 1e3
             ));
         }
-        if matches!(leg, Leg::AllNvfp4 | Leg::AllNvfp4Tc | Leg::AllNvfp4TcPaired) {
+        if matches!(leg, Leg::AllNvfp4 | Leg::AllNvfp4Tc) {
             blended.push((leg, full[..ops_rows::SCALAR_MAX * row].to_vec()));
         }
         let live = (0..max_m - 1)
@@ -302,15 +283,7 @@ fn main() -> Result<()> {
     }
     // 2026-10-02: Informative: how far the tensor-core leg's blended rows sit from the CUDA-core
     // leg's (different summation order and SiLU carrier), relative to each row's largest value.
-    if let [(_, a), (_, c), (_, p)] = &blended[..] {
-        // 2026-10-02: The paired decode has the products and sums of the row-major one, so its
-        // blended rows must equal them byte for byte.
-        let same = c == p;
-        println!(
-            "all-nvfp4-tc vs all-nvfp4-tc-r blended, rows 0..64: {}",
-            if same { "identical" } else { "DIFFER" }
-        );
-        failures += usize::from(!same);
+    if let [(_, a), (_, c)] = &blended[..] {
         let (fa, fc) = (bf16_to_f64(a), bf16_to_f64(c));
         let worst = fa
             .chunks_exact(H)
@@ -339,22 +312,4 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
-}
-
-/// 2026-10-02: Permute every NVFP4 weight of the fixture in place into MMA-paired nibble order
-/// (`nvfp4_repack_mma_pairs`).
-fn pair_weights(g: &dyn GpuBackend, w: &Weights) -> Result<()> {
-    let k = g.kernel("moe_nvfp4_grouped_tc", "nvfp4_repack_mma_pairs")?;
-    let s = g.default_stream();
-    let mats = w.gate.iter().chain(&w.up).chain(&w.down).chain(w.sh.iter());
-    for m in mats {
-        let words = m.packed_words() as u64;
-        metrale_gpu_runtime::kernel_args::KernelLaunch::new(g, k)
-            .grid([words.div_ceil(256).min(4096) as u32, 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(m.w.weight)
-            .arg_u64(words)
-            .launch(s)?;
-    }
-    g.synchronize(s)
 }

@@ -379,9 +379,6 @@ pub(super) fn load_layers(
             moe_experts::install_native_fp8_experts(&cx, &lp, i, &mut moe_layer);
         }
 
-        // 2026-10-02: After every prefill copy is built from the row-major order: pair the
-        // declared NVFP4 experts for the tensor-core decode when asked (`declared.rs`).
-        declared::pair_nvfp4_experts(&mut moe_layer, config, gpu, stream, i)?;
         let ffn = FfnComponent::Moe(moe_layer);
 
         match lt {
