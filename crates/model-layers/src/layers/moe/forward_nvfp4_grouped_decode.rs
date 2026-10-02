@@ -49,6 +49,14 @@ pub(super) struct Nvfp4GroupedKernels {
     /// 2026-10-02: The BF16 point's pair (`moe_bf16_grouped_tc.cu`, `forward_bf16_grouped_decode.rs`).
     pub bf16_gate_up_tc: KernelHandle,
     pub bf16_down_tc: KernelHandle,
+    /// 2026-10-02: The tensor-core pair on MMA-paired nibbles (`_tc_r`, the Nvfp4G16R policy) and
+    /// the in-place permutation that prepares the weights (`nvfp4_repack_mma_pairs`). `paired`: this
+    /// layer's routed and shared NVFP4 weights are permuted (`MoeLayer::pair_nvfp4_experts`), so
+    /// only the `_tc_r` pair may read them.
+    pub gate_up_tc_r: KernelHandle,
+    pub down_tc_r: KernelHandle,
+    pub repack: KernelHandle,
+    pub paired: bool,
 }
 
 impl Nvfp4GroupedKernels {
@@ -73,12 +81,27 @@ impl Nvfp4GroupedKernels {
                 "moe_bf16_grouped_tc",
                 "moe_expert_down_act_bf16_grouped_tc",
             ),
+            gate_up_tc_r: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc_r"),
+            down_tc_r: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_r"),
+            repack: try_kernel(gpu, TC, "nvfp4_repack_mma_pairs"),
+            paired: false,
         }
     }
 
     /// 2026-10-02: The gate+up and down launches for an `inter` x `hidden` expert: the
     /// tensor-core twins when on and the shape fits them, else the CUDA-core kernels.
     fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
+        // 2026-10-02: Paired weights are readable by the `_tc_r` pair only; `pair_nvfp4_experts`
+        // checked it resolved and the shapes fit.
+        if self.paired {
+            return Nvfp4GroupedLaunch {
+                gate_up: self.gate_up_tc_r,
+                gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_TC,
+                down: self.down_tc_r,
+                down_geometry: ops::NVFP4_GROUPED_DOWN_TC,
+                max_rows: NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
+            };
+        }
         if nvfp4_grouped_tc_enabled()
             && self.gate_up_tc.0 != 0
             && self.down_tc.0 != 0

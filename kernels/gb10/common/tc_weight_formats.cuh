@@ -169,3 +169,53 @@ struct Bf16Dense {
     static __device__ __forceinline__ float fold_scale(const Tile&, unsigned int) { return 1.0f; }
     static __device__ __forceinline__ float out(const Tile&, float x) { return x; }
 };
+
+// 2026-10-02: The NVFP4 policy on MMA-paired nibbles (Nvfp4G16R): the packed words are permuted
+// once at load (`nvfp4_repack_mma_pairs`, moe_nvfp4_grouped_tc.cu) so that elements 2p and 2p + 1
+// of a word sit at nibbles 3 - p and 7 - p. Shifted left by 4p, the word then holds element 2p's
+// sign at bit 15 and its exponent-mantissa at bits 12-14, element 2p + 1's at 31 and 28-30, and
+// `(t & 0x80008000) | ((t >> 6) & 0x01C001C0)` is the BF16 pair E2M1 * 2^-126 (exact, the
+// subnormal 0.5 included): two logic ops per pair instead of the byte tables of Nvfp4G16. The block
+// scale enters as BF16(E4M3 * 2^66) and the activations times 2^60 (exact powers of two), so a
+// weight is BF16(E2M1 * E4M3 * 2^-60), exact, and every product and sum is the Nvfp4G16 one.
+struct Nvfp4G16R {
+    static constexpr int CHUNK_K = 128;
+    static constexpr bool FOLDS = false;
+    static constexpr float ACT_LIFT = 1152921504606846976.0f;
+    using Mat = Nvfp4G16::Mat;
+    using Tile = Nvfp4G16::Tile;
+    using Sc = unsigned int;
+    static __device__ __forceinline__ Tile tile(const Mat& M, unsigned int col, unsigned int g, unsigned int t, unsigned int K) {
+        return Nvfp4G16::tile(M, col, g, t, K);
+    }
+    static __device__ __forceinline__ uint4 load(const Tile& T, int h, unsigned int chunk) {
+        return Nvfp4G16::load(T, h, chunk);
+    }
+    static __device__ __forceinline__ Sc scale(const Tile& T, int h, unsigned int chunk) {
+        return Nvfp4G16::scale(T, h, chunk);
+    }
+    static __device__ __forceinline__ unsigned int pair(unsigned int w, int p) {
+        const unsigned int t = w << (4 * p);
+        return (t & 0x80008000u) | ((t >> 6) & 0x01C001C0u);
+    }
+    // 2026-10-02: E4M3 byte b as the BF16 pair (b * 2^66, b * 2^66), exact.
+    static __device__ __forceinline__ unsigned int scale_pair(unsigned int b) {
+        const __half_raw h = __nv_cvt_fp8_to_halfraw((__nv_fp8_storage_t)b, __NV_E4M3);
+        const __nv_bfloat16 v = __float2bfloat16_rn(__half2float(__half(h)) * 73786976294838206464.0f);
+        const unsigned short u = *(const unsigned short*)&v;
+        return (unsigned int)u | ((unsigned int)u << 16);
+    }
+    static __device__ __forceinline__ void frag(const uint4& lo, const uint4& hi, Sc sg, Sc sh, int j, unsigned int* a) {
+        const int wi = j >> 1, p0 = (j & 1) * 2, sb = (j >= 4) ? 8 : 0;
+        const unsigned int wg = (wi == 0) ? lo.x : (wi == 1) ? lo.y : (wi == 2) ? lo.z : lo.w;
+        const unsigned int wh = (wi == 0) ? hi.x : (wi == 1) ? hi.y : (wi == 2) ? hi.z : hi.w;
+        const unsigned int cg = scale_pair((sg >> sb) & 0xFFu), ch = scale_pair((sh >> sb) & 0xFFu);
+        a[0] = ntc_hmul2(pair(wg, p0), cg);
+        a[1] = ntc_hmul2(pair(wh, p0), ch);
+        a[2] = ntc_hmul2(pair(wg, p0 + 1), cg);
+        a[3] = ntc_hmul2(pair(wh, p0 + 1), ch);
+    }
+    static __device__ __forceinline__ bool fold_at(unsigned int) { return false; }
+    static __device__ __forceinline__ float fold_scale(const Tile&, unsigned int) { return 1.0f; }
+    static __device__ __forceinline__ float out(const Tile& T, float x) { return x * T.s2; }
+};

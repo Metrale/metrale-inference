@@ -102,3 +102,25 @@ impl<'a> Declared<'a> {
         Ok(())
     }
 }
+
+/// 2026-10-02: Under `METRALE_MOE_NVFP4_PAIRED`, permute a declared-NVFP4 layer's expert weights into
+/// MMA-paired nibble order (`MoeLayer::pair_nvfp4_experts`). Call after the layer's prefill copies
+/// are built from the row-major order. A layer that is not declared NVFP4 is left alone.
+pub(super) fn pair_nvfp4_experts(
+    moe: &mut MoeLayer,
+    config: &metrale_config::ModelConfig,
+    gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+    stream: u64,
+    i: usize,
+) -> Result<()> {
+    if !metrale_model_layers::layers::moe::nvfp4_paired_enabled() || !moe.declared_nvfp4_experts() {
+        return Ok(());
+    }
+    moe.pair_nvfp4_experts(gpu, config, stream)?;
+    if i == 0 {
+        tracing::info!(
+            "METRALE_MOE_NVFP4_PAIRED: expert weights permuted for the paired tensor-core decode"
+        );
+    }
+    Ok(())
+}

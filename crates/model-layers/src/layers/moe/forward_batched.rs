@@ -27,6 +27,12 @@ impl MoeLayer {
                 || (self.correction_bias_dev.is_some() && ctx.config.scoring_func == "softmax"),
             "zero-expert MoE routing is not wired on this dispatch variant yet (forward_batched)"
         );
+        // 2026-10-02: Declared NVFP4 experts (or an NVFP4 tier): the grouped NVFP4 decode, which
+        // writes `moe_output` as this function does; a paired layer has no other reader.
+        if self.nvfp4_grouped_decode_ok(num_tokens, ctx) {
+            return self.forward_nvfp4_grouped_decode(input, num_tokens, ctx, stream);
+        }
+        self.refuse_if_paired("MoeLayer::forward_batched")?;
         // 2026-09-26: FP8 experts with a plain BF16 softmax router: the per-token
         // loop below, grouped by expert, with this function's router arithmetic
         // (`GroupedRouting::PerToken`), so the output bytes are the loop's. Each

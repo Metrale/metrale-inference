@@ -31,6 +31,7 @@ impl MoeLayer {
         if self.nvfp4_grouped_decode_ok(2, ctx) {
             return self.forward_nvfp4_grouped_decode(input, 2, ctx, stream);
         }
+        self.refuse_if_paired("MoeLayer::forward_k2")?;
         // 2026-09-25: The batch2 kernels do not handle zero-computation experts
         // (router width above num_experts), so refuse instead of mis-routing.
         anyhow::ensure!(
