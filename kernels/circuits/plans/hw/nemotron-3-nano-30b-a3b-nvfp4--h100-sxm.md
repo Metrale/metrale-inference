@@ -25,8 +25,8 @@ The checkpoint's formats are kept; this is how the device and its class's compil
 
 | pair | weight | activation | nodes | execution |
 |---|---|---|---:|---|
-| W16A16 | bf16 | bf16 | 37 | native bf16 |
-| W4A4 | nvfp4/g16 | nvfp4/g16 | 149 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) |
+| W16A16 | bf16 | bf16 | 60 | native bf16 |
+| W4A4 | nvfp4/g16 | nvfp4/g16 | 126 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) |
 
 ## Tensor-core policy
 
@@ -38,28 +38,28 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 
 | case | time (ms) | tok/s |
 |---|---:|---:|
-| decode C=1 (decode n=1) (roofline projection, unmeasured) | 0.889 | 1125.3 |
-| decode C=16 (multi_seq n=16) (roofline projection, unmeasured) | 10.471 | 1528.0 |
-| decode C=128 (multi_seq n=128) (roofline projection, unmeasured) | 82.022 | 1560.6 |
-| prefill 4k (roofline projection, unmeasured) | 27.4 | 149640 |
-| prefill 32k (roofline projection, unmeasured) | 257.5 | 127250 |
+| decode C=1 (decode n=1) (roofline projection, unmeasured) | 0.892 | 1121.0 |
+| decode C=16 (multi_seq n=16) (roofline projection, unmeasured) | 10.526 | 1520.0 |
+| decode C=128 (multi_seq n=128) (roofline projection, unmeasured) | 82.460 | 1552.3 |
+| prefill 4k (roofline projection, unmeasured) | 27.5 | 149031 |
+| prefill 32k (roofline projection, unmeasured) | 258.4 | 126821 |
 
-Weight floor at C=1: 2.86 GB read per step = 0.853 ms at 3350 GB/s (roofline projection, unmeasured).
+Weight floor at C=1: 2.87 GB read per step = 0.856 ms at 3350 GB/s (roofline projection, unmeasured).
 
 ## Memory fit
 
-Usable 76.92 GB = 85.47 GB visible x 0.9 (the gpu-memory-utilization serving engines default to on datacentre HBM). Weights 19.31 GB (embedding BF16); KV 3072 bytes per token; recurrent state 48.2 MB per sequence. Not counted: activations, workspaces, conv windows, the CUDA context.
+Usable 76.92 GB = 85.47 GB visible x 0.9 (the gpu-memory-utilization serving engines default to on datacentre HBM). Weights 19.32 GB (embedding BF16); KV 3072 bytes per token; recurrent state 48.2 MB per sequence. Not counted: activations, workspaces, conv windows, the CUDA context.
 
 | C | 4k GB | fits | 32k GB | fits |
 |---:|---:|---|---:|---|
-| 1 | 19.37 | yes | 19.46 | yes |
-| 2 | 19.43 | yes | 19.61 | yes |
-| 4 | 19.55 | yes | 19.91 | yes |
-| 8 | 19.80 | yes | 20.50 | yes |
-| 16 | 20.28 | yes | 21.69 | yes |
-| 32 | 21.26 | yes | 24.08 | yes |
-| 64 | 23.20 | yes | 28.84 | yes |
-| 128 | 27.10 | yes | 38.37 | yes |
+| 1 | 19.38 | yes | 19.47 | yes |
+| 2 | 19.44 | yes | 19.62 | yes |
+| 4 | 19.57 | yes | 19.92 | yes |
+| 8 | 19.81 | yes | 20.51 | yes |
+| 16 | 20.30 | yes | 21.70 | yes |
+| 32 | 21.27 | yes | 24.09 | yes |
+| 64 | 23.21 | yes | 28.85 | yes |
+| 128 | 27.11 | yes | 38.38 | yes |
 
 
 ## Multi-row fallbacks
@@ -68,16 +68,16 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 
 | run | layer kind | added (ms) | share | sites | rules |
 |---|---|---:|---:|---|---|
-| multi_seq n=16 | mamba | 3.737 | 35.7% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.gated_quant, mamba.in_proj, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.split, mamba.ssm, mamba.ssm_ckpt, mamba.xn_quant | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
-| multi_seq n=16 | moe | 2.231 | 21.3% | moe.add, moe.blend, moe.eact_quant, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.sact_quant, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k, moe.xn_quant | legacy crates/model-arch/src/nemotron_moe.rs:278 |
-| multi_seq n=16 | full_attention | 0.666 | 6.4% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
-| multi_seq n=128 | moe | 34.629 | 42.2% | moe.add, moe.blend, moe.eact_quant, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.sact_quant, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k, moe.xn_quant | legacy crates/model-arch/src/nemotron_moe.rs:278 |
-| multi_seq n=128 | mamba | 31.641 | 38.6% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.gated_quant, mamba.in_proj, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.split, mamba.ssm, mamba.ssm_ckpt, mamba.xn_quant | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
-| multi_seq n=128 | full_attention | 5.635 | 6.9% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
+| multi_seq n=16 | mamba | 3.737 | 35.5% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.gated_quant, mamba.in_proj, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.split, mamba.ssm, mamba.ssm_ckpt, mamba.xn_quant | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
+| multi_seq n=16 | moe | 2.282 | 21.7% | moe.add, moe.blend, moe.eact_quant, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.sact_quant, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k, moe.xn_quant | legacy crates/model-arch/src/nemotron_moe.rs:278 |
+| multi_seq n=16 | full_attention | 0.666 | 6.3% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
+| multi_seq n=128 | moe | 35.060 | 42.5% | moe.add, moe.blend, moe.eact_quant, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.sact_quant, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k, moe.xn_quant | legacy crates/model-arch/src/nemotron_moe.rs:278 |
+| multi_seq n=128 | mamba | 31.641 | 38.4% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.gated_quant, mamba.in_proj, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.split, mamba.ssm, mamba.ssm_ckpt, mamba.xn_quant | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
+| multi_seq n=128 | full_attention | 5.635 | 6.8% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
 
 ## Fused plan: decode n=1
 
-digest fc6ffa943e8344c4440b407bd671a9c619f00a05c7ca3b5917370d93c4e2328b; 638 groups, 100 launches, 0 fused edges, 536 placeholder (novel) groups. The full plan: `met circuit plan --checkpoint nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 --hardware h100-sxm --precision declared --format plan`.
+digest b0cc199b5ce21335facaf2a19eea4af10022d95529770d8241f5e82ee4463e2c; 638 groups, 123 launches, 0 fused edges, 513 placeholder (novel) groups. The full plan: `met circuit plan --checkpoint nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 --hardware h100-sxm --precision declared --format plan`.
 
 Rule `gdn_out_norm_f32_per_row` left out of this plan: edge `l0.mamba.y_ssm` is stored as bf16 but rule `gdn_out_norm_f32_per_row` reads it as f32.
 
@@ -116,7 +116,7 @@ Rule `gdn_out_norm_f32_per_row` left out of this plan: edge `l0.mamba.y_ssm` is 
 | moe [experts_down] | (novel) | novel.expert_down.nvfp4/g16 | 23 |
 | moe [experts_up] | (novel) | novel.expert_gate_up.nvfp4/g16 | 23 |
 | moe [norm] | (novel) | novel.rms_norm | 23 |
-| moe [router] | (novel) | novel.router.nvfp4/g16 | 23 |
+| moe [router] | gemv::dense_gemv_bf16 | moe_router_gemv | 23 |
 | moe [sact_quant] | (novel) | novel.act_quant:nvfp4/g16 | 23 |
 | moe [shared_act] | (novel) | novel.relu2 | 23 |
 | moe [shared_down] | (novel) | novel.linear:shared_down.nvfp4/g16 | 23 |
@@ -126,14 +126,14 @@ Rule `gdn_out_norm_f32_per_row` left out of this plan: edge `l0.mamba.y_ssm` is 
 
 ## Gap report: decode n=1
 
-Estimated step 0.889 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 87.3%, parameterisation 0.0%, policy variant 12.5%, novel 0.2% of the step.
+Estimated step 0.892 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 87.5%, parameterisation 0.0%, policy variant 12.4%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 23.7% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv compute=cuda_core |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 23.6% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv compute=cuda_core |
 | moe.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 13.0% | Shared, unmeasured | moe_relu2_down_1row | no rule of this class covers it; family `moe_relu2_down_1row` implements the op |
 | moe.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 13.0% | Shared, unmeasured | moe_nvfp4_gemv_1row | no rule of this class covers it; family `moe_nvfp4_gemv_1row` implements the op |
-| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 6 | 11.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 6 | 11.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 8.9% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 4.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.q | linear:q | bf16 x bf16 | native bf16 | 6 | 4.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
@@ -141,11 +141,11 @@ Estimated step 0.889 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | moe.shared_up | linear:shared_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 4.3% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
 | moe.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 4.3% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
 | mamba.out_proj | linear:mamba_out | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 3.5% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
-| mamba.ssm | ssm_update | - | - | 23 | 3.3% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
+| mamba.ssm | ssm_update | - | - | 23 | 3.2% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
+| moe.router | router | bf16 x bf16 | native bf16 | 23 | 0.5% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=moe_router_gemv compute=cuda_core |
 | attn.attend | paged_attention | - | - | 6 | 0.4% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 6 | 0.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 6 | 0.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe.router | router | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 0.2% | Novel | - | no family available on this device implements it |
 | moe.experts_act | relu2 | - | - | 23 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
 | moe.blend | blend | - | - | 23 | 0.0% | Shared, unmeasured | moe_weighted_sum_scale | no rule of this class covers it; family `moe_weighted_sum_scale` implements the op |
 | moe.eact_quant | act_quant:nvfp4/g16 | - | - | 23 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
@@ -173,14 +173,14 @@ Estimated step 0.889 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 10.471 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 82.8%, parameterisation 0.0%, policy variant 17.0%, novel 0.2% of the step.
+Estimated step 10.526 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 83.1%, parameterisation 0.0%, policy variant 16.9%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| moe.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 17.7% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
-| moe.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 17.7% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
-| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 6 | 15.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 12.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
+| moe.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 17.6% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
+| moe.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 17.6% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
+| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 6 | 15.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 12.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | attn.q | linear:q | bf16 x bf16 | native bf16 | 6 | 6.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 6 | 6.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe.shared_up | linear:shared_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 5.9% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
@@ -188,11 +188,11 @@ Estimated step 10.471 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | mamba.out_proj | linear:mamba_out | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 4.8% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | mamba.ssm | ssm_update | - | - | 23 | 4.4% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.0% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| moe.router | router | bf16 x bf16 | native bf16 | 23 | 0.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.attend | paged_attention | - | - | 6 | 0.6% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| moe.router | router | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 0.2% | Novel | - | no family available on this device implements it |
 | moe.experts_act | relu2 | - | - | 23 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
 | moe.blend | blend | - | - | 23 | 0.0% | Policy variant | moe_blend | no rule of this class covers it; family `moe_blend` implements the op; differs: shared_gate sigmoid->none |
 | moe.eact_quant | act_quant:nvfp4/g16 | - | - | 23 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
@@ -220,25 +220,25 @@ Estimated step 10.471 ms (roofline projection, unmeasured). Shared 0.0% (measure
 
 ## Gap report: multi_seq n=128
 
-Estimated step 82.022 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 70.4%, parameterisation 0.0%, policy variant 29.4%, novel 0.2% of the step.
+Estimated step 82.460 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 70.7%, parameterisation 0.0%, policy variant 29.2%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| moe.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 18.1% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
-| moe.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 18.1% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
-| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 6 | 15.5% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 12.4% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
-| attn.q | linear:q | bf16 x bf16 | native bf16 | 6 | 6.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 6 | 6.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 18.0% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
+| moe.experts_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 18.0% | Shared, unmeasured | moe_w4a16_grouped_gemm | no rule of this class covers it; family `moe_w4a16_grouped_gemm` implements the op |
+| mamba.in_proj | linear:mamba_in | bf16 x bf16 | native bf16 | 6 | 15.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mamba.in_proj | linear:mamba_in | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 12.3% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
+| attn.q | linear:q | bf16 x bf16 | native bf16 | 6 | 6.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mamba.out_proj | linear:mamba_out | bf16 x bf16 | native bf16 | 6 | 6.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe.shared_up | linear:shared_up | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 6.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | moe.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 6.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | mamba.out_proj | linear:mamba_out | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 17 | 4.9% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | mamba.ssm | ssm_update | - | - | 23 | 4.5% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
+| moe.router | router | bf16 x bf16 | native bf16 | 23 | 0.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.attend | paged_attention | - | - | 6 | 0.6% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.3% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
-| moe.router | router | nvfp4/g16 x nvfp4/g16 | exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 (no native MMA for the pair) | 23 | 0.2% | Novel | - | no family available on this device implements it |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe.experts_act | relu2 | - | - | 23 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
 | moe.blend | blend | - | - | 23 | 0.0% | Policy variant | moe_blend | no rule of this class covers it; family `moe_blend` implements the op; differs: shared_gate sigmoid->none |
