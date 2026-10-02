@@ -485,6 +485,7 @@ impl MoeLayer {
             moe_permute_tokens_k: super::super::try_kernel(gpu, "moe", "moe_permute_tokens"),
             // 2026-09-25: Set after construction by the qwen35 loader.
             is_dflash_capture_layer: false,
+            declared_nvfp4_experts: false,
             lora: None,
             correction_bias_dev: weights_correction_bias,
             // 2026-09-25: Optional, so a target without the `moe_topk_sig` module

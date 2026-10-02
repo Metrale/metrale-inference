@@ -324,6 +324,12 @@ pub struct MoeLayer {
     // lever (`METRALE_FRANKENSTEIN_DECODE_VIA_PREFILL`), `forward` runs this
     // layer's single-token decode through `forward_prefill` with one row.
     pub is_dflash_capture_layer: bool,
+    /// 2026-10-02: The routed and shared experts are the checkpoint's own NVFP4 (declared
+    /// W4A16, not a requantized copy), so decode takes the grouped NVFP4 path at every width
+    /// whatever the `--expert-quantization` tier (which governs FP8 checkpoints only). Set by
+    /// the qwen35 loader under `--weight-quantization declared`
+    /// ([`MoeLayer::set_declared_nvfp4_experts`]).
+    pub(crate) declared_nvfp4_experts: bool,
     /// 2026-09-25: This layer's installed MoE LoRA (router and routed-expert deltas plus
     /// apply scratch), set by [`MoeLayer::set_lora_weights`]; `None` means no
     /// adapter. Decode paths that call `reject_decode_lora` refuse a batch
@@ -378,7 +384,7 @@ mod forward_fp8_grouped_router;
 pub use forward_fp8_grouped_router::GroupedRouting;
 mod forward_nvfp4_grouped_decode;
 pub use forward_nvfp4_grouped_decode::{
-    NVFP4_GROUPED_DECODE_MAX_ROWS, nvfp4_grouped_decode_shape_ok,
+    NVFP4_GROUPED_DECODE_MAX_ROWS, NVFP4_GROUPED_DECODE_TC_MAX_ROWS, nvfp4_grouped_decode_shape_ok,
 };
 mod forward_k2;
 mod forward_k3;

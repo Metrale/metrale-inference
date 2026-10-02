@@ -205,6 +205,15 @@ pub(crate) fn f32s(b: &[u8]) -> Vec<f64> {
         .collect()
 }
 
+/// 2026-10-02: The tensor-core kernels' SiLU rows: per row, `n` BF16 hi terms then `n` BF16 lo
+/// terms in the bytes of `n` FP32 values; each value is hi + lo.
+pub(crate) fn hi_lo_rows(b: &[u8], n: usize) -> Vec<f64> {
+    let v = bf16_to_f64(b);
+    v.chunks_exact(2 * n)
+        .flat_map(|r| (0..n).map(move |i| r[i] + r[n + i]))
+        .collect()
+}
+
 /// 2026-09-27: The SiLU product the gate+up kernels write, from the f64 projections rounded
 /// to BF16 as they round them.
 pub(crate) fn silu_product(
@@ -234,12 +243,15 @@ pub(crate) fn close(got: &[f64], want: &[f64], what: &str) -> Result<()> {
     Ok(())
 }
 
-/// 2026-09-27: The configurations `forward_nvfp4_grouped_decode` launches.
+/// 2026-09-27: The configurations `forward_nvfp4_grouped_decode` launches. 2026-10-02:
+/// `AllNvfp4Tc` is `AllNvfp4` on the tensor-core expert kernels (`moe_nvfp4_grouped_tc.cu`),
+/// the declared NVFP4 checkpoint's path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Leg {
     AllNvfp4,
     Nvfp4,
     Nvfp4GateUp,
+    AllNvfp4Tc,
 }
 
 impl Leg {
@@ -248,19 +260,41 @@ impl Leg {
             Self::AllNvfp4 => "all-nvfp4",
             Self::Nvfp4 => "nvfp4",
             Self::Nvfp4GateUp => "nvfp4-gate-up",
+            Self::AllNvfp4Tc => "all-nvfp4-tc",
         }
     }
     pub(crate) fn fp8_shared(self) -> bool {
-        self != Self::AllNvfp4
+        matches!(self, Self::Nvfp4 | Self::Nvfp4GateUp)
     }
     pub(crate) fn fp8_down(self) -> bool {
         self == Self::Nvfp4GateUp
     }
+    pub(crate) fn tc(self) -> bool {
+        self == Self::AllNvfp4Tc
+    }
+    /// 2026-10-02: The widest row count production admits on this leg's kernels.
+    pub(crate) fn max_m(self) -> usize {
+        if self.tc() {
+            ops_rows::TC_MAX
+        } else {
+            ops_rows::SCALAR_MAX
+        }
+    }
+}
+
+/// 2026-10-02: The row envelopes of `forward_nvfp4_grouped_decode`.
+pub(crate) mod ops_rows {
+    pub(crate) const SCALAR_MAX: usize =
+        metrale_model_layers::layers::moe::NVFP4_GROUPED_DECODE_MAX_ROWS;
+    pub(crate) const TC_MAX: usize =
+        metrale_model_layers::layers::moe::NVFP4_GROUPED_DECODE_TC_MAX_ROWS;
 }
 
 pub(crate) struct Kernels {
     pub(crate) gate_up: KernelHandle,
     pub(crate) down: KernelHandle,
+    pub(crate) gate_up_tc: KernelHandle,
+    pub(crate) down_tc: KernelHandle,
     pub(crate) fp8_gate_up: KernelHandle,
     pub(crate) fp8_down: KernelHandle,
     pub(crate) sort: KernelHandle,
@@ -342,9 +376,25 @@ fn experts(
         )?;
     }
     let nv_shared = if leg.fp8_shared() { 0 } else { n };
+    let (gu, gu_geo, dn, dn_geo) = if leg.tc() {
+        (
+            k.gate_up_tc,
+            ops::NVFP4_GROUPED_GATE_UP_TC,
+            k.down_tc,
+            ops::NVFP4_GROUPED_DOWN_TC,
+        )
+    } else {
+        (
+            k.gate_up,
+            ops::NVFP4_GROUPED_GATE_UP_SCALAR,
+            k.down,
+            ops::NVFP4_GROUPED_DOWN_SCALAR,
+        )
+    };
     ops::moe_expert_gate_up_act_nvfp4_grouped(
         g,
-        k.gate_up,
+        gu,
+        gu_geo,
         b.input,
         w.gate_t,
         w.up_t,
@@ -408,7 +458,8 @@ fn experts(
     }
     ops::moe_expert_down_act_nvfp4_grouped(
         g,
-        k.down,
+        dn,
+        dn_geo,
         b.act,
         w.down_t,
         b.down_out,
@@ -481,7 +532,11 @@ pub(crate) fn run(
     };
     Ok((
         read(g, b.output, m * H * 2)?,
-        f32s(&read(g, b.act, te * INTER * 4)?),
+        if leg.tc() {
+            hi_lo_rows(&read(g, b.act, te * INTER * 4)?, INTER)
+        } else {
+            f32s(&read(g, b.act, te * INTER * 4)?)
+        },
         read(g, b.down_out, te * H * 2)?,
         read(g, b.sh_out, m * H * 2)?,
         u32s(read(g, b.sort.sorted_token_ids, te * 4)?),
