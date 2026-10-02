@@ -18,6 +18,7 @@ const TC_ROWS_CUH: &str =
     include_str!("../../../../../kernels/gb10/common/moe_fp8_grouped_tc_rows.cuh");
 const TC_W8A8_CU: &str =
     include_str!("../../../../../kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu");
+const BF16_TC_CU: &str = include_str!("../../../../../kernels/gb10/common/moe_bf16_grouped_tc.cu");
 const NVFP4_TC_CU: &str =
     include_str!("../../../../../kernels/gb10/common/moe_nvfp4_grouped_tc.cu");
 
@@ -149,5 +150,36 @@ fn nvfp4_tc_geometry_matches_the_kernel() {
         512,
         2048 + 128,
         NVFP4_GROUPED_GATE_UP_TC
+    ));
+}
+
+/// 2026-10-02: The BF16 point of the tensor-core grouped family: launch geometry equals the
+/// kernel's tile constants, and the 128-K shape check covers both projections' load groups.
+#[test]
+fn bf16_tc_geometry_matches_the_kernel() {
+    use crate::layers::ops::{
+        BF16_GROUPED_DOWN_TC, BF16_GROUPED_GATE_UP_TC, bf16_grouped_tc_shape_ok,
+    };
+    let warps = define(BF16_TC_CU, "BTC_WARPS");
+    for (g, mt) in [
+        (BF16_GROUPED_GATE_UP_TC, define(BF16_TC_CU, "BTC_GU_MT")),
+        (BF16_GROUPED_DOWN_TC, define(BF16_TC_CU, "BTC_DOWN_MT")),
+    ] {
+        assert_eq!(g.cols_per_cta, warps * 16 * mt);
+        assert_eq!(g.rows_per_pass, define(TC_ROWS_CUH, "TC_ROWS"));
+        assert_eq!(g.threads, warps * 32);
+    }
+    for groups in [
+        define(BF16_TC_CU, "BTC_GU_G"),
+        define(BF16_TC_CU, "BTC_DOWN_G"),
+    ] {
+        assert_eq!(128 % (32 * groups), 0);
+    }
+    assert!(bf16_grouped_tc_shape_ok(512, 2048, BF16_GROUPED_GATE_UP_TC));
+    assert!(bf16_grouped_tc_shape_ok(2048, 512, BF16_GROUPED_DOWN_TC));
+    assert!(!bf16_grouped_tc_shape_ok(
+        2048,
+        512 + 64,
+        BF16_GROUPED_DOWN_TC
     ));
 }

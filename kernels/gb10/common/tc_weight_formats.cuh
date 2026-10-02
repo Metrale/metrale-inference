@@ -138,3 +138,34 @@ struct Nvfp4G16 {
     static __device__ __forceinline__ float fold_scale(const Tile&, unsigned int) { return 1.0f; }
     static __device__ __forceinline__ float out(const Tile& T, float x) { return x * T.s2; }
 };
+
+// 2026-10-02: The BF16 weight-format policy (W16A16): row-major [N, K] BF16 weights, no scales.
+// A 16-byte lane load is 8 K of a 32-K chunk; words 2j and 2j + 1 of it feed MMA j (K + 4j + {0,1}
+// and {2,3}), the activation words' K order.
+struct Bf16Dense {
+    static constexpr int CHUNK_K = 32;
+    static constexpr bool FOLDS = false;
+    static constexpr float ACT_LIFT = 1.0f;
+    struct Mat { const unsigned char* w; };
+    struct Tile { const unsigned char* wr[2]; };
+    struct Sc {};
+    static __device__ __forceinline__ Tile tile(const Mat& M, unsigned int col, unsigned int g, unsigned int t, unsigned int K) {
+        Tile T;
+        T.wr[0] = M.w + (unsigned long long)(col + g) * K * 2 + t * 16;
+        T.wr[1] = M.w + (unsigned long long)(col + g + 8) * K * 2 + t * 16;
+        return T;
+    }
+    static __device__ __forceinline__ uint4 load(const Tile& T, int h, unsigned int chunk) {
+        return *(const uint4*)(T.wr[h] + chunk * 64);
+    }
+    static __device__ __forceinline__ Sc scale(const Tile&, int, unsigned int) { return Sc{}; }
+    static __device__ __forceinline__ void frag(const uint4& lo, const uint4& hi, Sc, Sc, int j, unsigned int* a) {
+        a[0] = j ? lo.z : lo.x;
+        a[1] = j ? hi.z : hi.x;
+        a[2] = j ? lo.w : lo.y;
+        a[3] = j ? hi.w : hi.y;
+    }
+    static __device__ __forceinline__ bool fold_at(unsigned int) { return false; }
+    static __device__ __forceinline__ float fold_scale(const Tile&, unsigned int) { return 1.0f; }
+    static __device__ __forceinline__ float out(const Tile&, float x) { return x; }
+};

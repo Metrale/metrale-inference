@@ -46,6 +46,9 @@ pub(super) struct Nvfp4GroupedKernels {
     pub gate_up_tc: KernelHandle,
     pub down_tc: KernelHandle,
     pub declared_experts: bool,
+    /// 2026-10-02: The BF16 point's pair (`moe_bf16_grouped_tc.cu`, `forward_bf16_grouped_decode.rs`).
+    pub bf16_gate_up_tc: KernelHandle,
+    pub bf16_down_tc: KernelHandle,
 }
 
 impl Nvfp4GroupedKernels {
@@ -60,6 +63,16 @@ impl Nvfp4GroupedKernels {
             gate_up_tc: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc"),
             down_tc: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc"),
             declared_experts: false,
+            bf16_gate_up_tc: try_kernel(
+                gpu,
+                "moe_bf16_grouped_tc",
+                "moe_expert_gate_up_act_bf16_grouped_tc",
+            ),
+            bf16_down_tc: try_kernel(
+                gpu,
+                "moe_bf16_grouped_tc",
+                "moe_expert_down_act_bf16_grouped_tc",
+            ),
         }
     }
 
