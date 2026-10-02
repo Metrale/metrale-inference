@@ -10,7 +10,8 @@
 //! - A declared format the circuit has no edge format for (an integer scheme, an FP8 weight
 //!   with an unstated granularity, ...) is recorded, never guessed; [`DeclaredPrecision::refusals`]
 //!   lists them and the caller refuses the checkpoint.
-//! - A module the plan does not cover is 16-bit (`LayerPrecision::UNQUANTIZED`).
+//! - A module the plan does not cover is 16-bit (`LayerPrecision::UNQUANTIZED`); an expert
+//!   projection is covered by its fused-experts module's declaration (2026-10-02).
 
 use std::cell::RefCell;
 
@@ -95,7 +96,14 @@ fn activation_format(o: Operand) -> Option<Format> {
 
 impl EdgePrecision for DeclaredPrecision<'_> {
     fn linear(&self, module: &str) -> LinearFormats {
-        let declared = self.plan.resolve(module);
+        // 2026-10-02: An expert projection the plan does not name is declared by its experts
+        // module, where the checkpoint quantizes that as one (`precision::expert_container`).
+        let mut declared = self.plan.resolve(module);
+        if declared.weight.is_none()
+            && let Some(container) = crate::precision::expert_container(module)
+        {
+            declared = self.plan.resolve(container);
+        }
         let weight = match declared.weight {
             None => Format::Bf16,
             Some(o) => weight_format(o).unwrap_or_else(|| {
