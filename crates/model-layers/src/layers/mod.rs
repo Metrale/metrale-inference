@@ -196,7 +196,8 @@ pub use weight_quantization::{kernel_caps, set_weight_quantization_from_cli, wei
 
 mod row_tiers;
 pub use row_tiers::{
-    RowTiers, publish_row_tiers, resolve_row_tiers, row_invariant, row_tiers, row_tiers_from,
+    RowTiers, prefill_row_invariant, publish_row_tiers, resolve_row_tiers, row_invariant,
+    row_tiers, row_tiers_from,
 };
 
 mod kernel_probe;

@@ -268,6 +268,42 @@ impl SsmSnapshotPool {
         self.aux_blobs.lock().get(&snap_slot).cloned()
     }
 
+    /// 2026-10-01: 64-bit FNV-1a over every SSM layer's h then conv bytes in `snap_slot`,
+    /// after synchronizing `stream`; `None` when a copy fails. A debug probe
+    /// (`METRALE_SSM_SAVE_DUMP`): equal digests mean byte-identical snapshots.
+    pub(super) fn debug_slot_digest(
+        &self,
+        snap_slot: usize,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Option<u64> {
+        gpu.synchronize(stream).ok()?;
+        let mut acc: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut fold = |bytes: &[u8]| {
+            for &b in bytes {
+                acc ^= b as u64;
+                acc = acc.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        for i in 0..self.num_ssm_layers {
+            let mut hb = vec![0u8; self.h_bytes];
+            let mut cb = vec![0u8; self.conv_bytes];
+            gpu.copy_d2h(
+                self.h_snapshots[i].offset(snap_slot * self.h_bytes),
+                &mut hb,
+            )
+            .ok()?;
+            gpu.copy_d2h(
+                self.conv_snapshots[i].offset(snap_slot * self.conv_bytes),
+                &mut cb,
+            )
+            .ok()?;
+            fold(&hb);
+            fold(&cb);
+        }
+        Some(acc)
+    }
+
     /// 2026-09-25: Whether any tagged slot carries the non-zero `session_hash`. The
     /// mid-chunk tail capture (`prefill_b/midchunk_capture.rs`) skips a sequence with
     /// no cached prefix and no history.

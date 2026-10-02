@@ -87,10 +87,34 @@ impl TransformerModel {
         // (`prefill_plan::plan_chunk_len`), so only a last chunk can span it
         // here. The split does not depend on radix contents, so a prompt is
         // processed in the same passes cold and warm, and on every rank.
+        //
+        // 2026-10-01: A pass that computes from below the split point captures the SSM
+        // state there inside the pass instead (`prepare_cut_capture`), and at the tail
+        // boundary one block above it, so the prompt tail is not run as a second pass
+        // over every layer's weights. Measured on GB10 (dgx3, Qwen3.6-35B-A3B-FP8,
+        // 299-token prompt): the second pass covered 27 tokens and took 68.6 of 229.7 ms
+        // of prefill, about 60% of the expert weights read again. A request that restores
+        // at or past the split point (a warm repeat, which now restores at the tail
+        // boundary and replays 2 to 16 tokens) keeps the two-pass path. The passes then
+        // differ cold and warm, but the bits do not: the replayed rows run the same
+        // kernels in both (`replay_tail`, `prefill_row_invariant`).
         if is_last_chunk
             && let Some(cut) = self.prefill_tail_split_dispatch(tokens)
             && cut > chunk_start
         {
+            if self.inpass_cut_capture_supported(seq)
+                && !self.prefill_restores_through(tokens, seq, chunk_start, cut, stream)?
+            {
+                return self.prefill_chunk_pass(
+                    tokens,
+                    seq,
+                    chunk_start,
+                    chunk_len,
+                    true,
+                    Some(cut),
+                    stream,
+                );
+            }
             self.prefill_chunk_dispatch(
                 tokens,
                 seq,
@@ -101,7 +125,82 @@ impl TransformerModel {
             )?;
             return self.prefill_chunk_dispatch(tokens, seq, cut, total - cut, true, stream);
         }
+        self.prefill_chunk_pass(
+            tokens,
+            seq,
+            chunk_start,
+            chunk_len,
+            is_last_chunk,
+            None,
+            stream,
+        )
+    }
 
+    /// 2026-10-01: Whether this prefill's chunk-0 prefix lookup restored SSM state at or
+    /// past `cut`, running the lookup now when chunk 0 is this call; the chunk then
+    /// replays that decision (`prefill_b_prefix_lookup`, its re-entry rule). Such a
+    /// request keeps the two-pass split, whose first part is fully cached and returns
+    /// early. The lookup's outcome decides, not the radix match: a match the lookup does
+    /// not restore from (a short prompt, another session) recomputes from token 0, and
+    /// must do so in the same single pass as a cold request.
+    fn prefill_restores_through(
+        &self,
+        tokens: &[u32],
+        seq: &mut SequenceState,
+        chunk_start: usize,
+        cut: usize,
+        stream: u64,
+    ) -> Result<bool> {
+        if chunk_start == 0 && !seq.prefix_lookup_applied {
+            let mut kv_cache = self.kv_cache.lock();
+            self.prefill_b_prefix_lookup(
+                tokens,
+                seq,
+                0,
+                tokens.len(),
+                &mut kv_cache,
+                stream,
+                None,
+            )?;
+        }
+        Ok(seq.prefix_lookup_skip && seq.marconi_skip_to >= cut)
+    }
+
+    /// 2026-10-01: Whether a prefill pass may capture the tail split point's SSM state
+    /// in-pass for `seq`. Needs: the mid-chunk capture switch on
+    /// (`--no-ssm-tail-midchunk` turns it off, `ssm_tail_midchunk_enabled`); a build
+    /// other than `metrale_scale`, whose capture is `prepare_midchunk_capture`; prefill
+    /// kernels chosen without regard to row count (`prefill_row_invariant`), so a warm
+    /// request replaying the tail gives its rows the cold pass's bits; every layer
+    /// honouring the replay-tail split (`supports_replay_tail_split`); no aux layer
+    /// state, which a snapshot takes at the end of a pass; one rank; and an FP32 h state,
+    /// so the captured bytes equal what `SsmSnapshotPool::save` writes after a pass
+    /// ending there.
+    fn inpass_cut_capture_supported(&self, seq: &SequenceState) -> bool {
+        !cfg!(metrale_scale)
+            && metrale_gpu_runtime::ssm_tail_midchunk_enabled()
+            && !metrale_model_layers::layers::qwen3_ssm::ssm_h_fp16_enabled()
+            && !self.seq_ssm_h_is_f16(seq)
+            && !self.requires_aux_state()
+            && !self.multi_rank_protocol_active()
+            && metrale_model_layers::layers::prefill_row_invariant()
+            && self.layers.iter().all(|l| l.supports_replay_tail_split())
+    }
+
+    /// 2026-10-01: One prefill pass over `tokens[chunk_start..chunk_start + chunk_len]`.
+    /// `cut_capture` is the tail split point when the pass is to capture its SSM state
+    /// in-pass (`prefill_chunk_dispatch`).
+    fn prefill_chunk_pass(
+        &self,
+        tokens: &[u32],
+        seq: &mut SequenceState,
+        chunk_start: usize,
+        chunk_len: usize,
+        is_last_chunk: bool,
+        cut_capture: Option<usize>,
+        stream: u64,
+    ) -> Result<DevicePtr> {
+        let total = tokens.len();
         let arena_cap = self.buffers.max_batch_tokens();
         if chunk_len > arena_cap {
             anyhow::bail!(
@@ -215,6 +314,12 @@ impl TransformerModel {
             &kv_cache,
             stream,
         )?;
+        // 2026-10-01: A pass that captures at `cut` runs its tail rows' attention as a paged
+        // call (`replay_tail` in qwen3_attention), which reads the block table, so the
+        // paged metadata is uploaded even for a first chunk. Its slot fill writes the
+        // same slots the first-chunk upload above wrote.
+        let needs_paged = needs_paged
+            || cut_capture.is_some_and(|c| proc_start < c && c < proc_start + proc_count);
 
         // 2026-09-25: Paged metadata (block table and `seq_len`).
         if needs_paged {
@@ -235,14 +340,21 @@ impl TransformerModel {
         // 2026-09-25: Mid-chunk tail SSM capture is planned before the forward
         // pass, which uses the plan. `None` (flag off, or the pass does not span
         // `tb`, among other cases) means no capture.
-        let midcap_plan = self.prepare_midchunk_capture(
-            tokens,
-            seq,
-            &mut kv_cache,
-            proc_start,
-            proc_count,
-            stream,
-        );
+        let cut_plan = cut_capture.and_then(|cut| {
+            self.prepare_cut_capture(seq, &mut kv_cache, proc_start, proc_count, cut, total)
+        });
+        let cut_captured = cut_plan.is_some();
+        let midcap_plan = match cut_plan {
+            Some(plan) => Some(plan),
+            None => self.prepare_midchunk_capture(
+                tokens,
+                seq,
+                &mut kv_cache,
+                proc_start,
+                proc_count,
+                stream,
+            ),
+        };
 
         // 2026-09-25: Forward through all layers.
         self.prefill_b_forward_layers(
@@ -266,8 +378,33 @@ impl TransformerModel {
 
         // 2026-09-25: Register the captured slots once the pass has written the
         // `tb` state into them.
+        // 2026-10-01: An in-pass split-point capture is registered after the pass, as
+        // `prefill_b_save_checkpoint` registers a pass that ends there: the split point,
+        // then the deeper tail boundary when the plan has it, so the prompt's tail
+        // checkpoint is the deeper one.
         if let Some(plan) = midcap_plan.as_ref() {
-            self.finalize_midchunk_capture(tokens, seq, plan);
+            if cut_captured {
+                if let (Some(tb_early), Some(slot)) = (plan.tb_early, plan.snap_slot_early) {
+                    self.prefill_b_register_checkpoint(
+                        tokens,
+                        seq,
+                        &mut kv_cache,
+                        tb_early,
+                        slot,
+                        stream,
+                    )?;
+                }
+                self.prefill_b_register_checkpoint(
+                    tokens,
+                    seq,
+                    &mut kv_cache,
+                    plan.tb,
+                    plan.snap_slot,
+                    stream,
+                )?;
+            } else {
+                self.finalize_midchunk_capture(tokens, seq, plan);
+            }
         }
 
         // 2026-09-25: Append this chunk's tokens; the early-return arm above

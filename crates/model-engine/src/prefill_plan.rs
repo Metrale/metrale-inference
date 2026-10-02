@@ -6,7 +6,8 @@
 //! match cannot be restored. So a non-last chunk ends on a KV block boundary, and the
 //! chunk that would span the tail split point ends there. A last chunk that spans the
 //! split point is split by `TransformerModel::prefill_chunk_dispatch` instead, inside
-//! one scheduler tick.
+//! one scheduler tick: 2026-10-01, by capturing the SSM state at the split point inside
+//! its pass where the model and build support it, else as two passes.
 //!
 //! Before 2026-09-27 only the last chunk was split. A dense serve's first chunk is
 //! `prefill_budget + max_batch_size` = 8193 tokens, so every later chunk end sat one

@@ -74,6 +74,9 @@ mod prefill_alloc_tests;
 mod rowwise_alloc_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "tests_inpass_capture.rs"]
+mod tests_inpass_capture;
 
 #[path = "hc.rs"]
 mod hc;

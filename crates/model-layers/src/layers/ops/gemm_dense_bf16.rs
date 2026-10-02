@@ -206,6 +206,11 @@ pub fn dense_gemm_router(
         .launch(stream)
 }
 
+/// 2026-10-01: Most rows for which the MoE prefill router takes [`moe_router_gemm`] (the
+/// decode routers' kernel, the same bits as [`dense_gemm_router`]); the decode routers run it
+/// at 2 to 64 rows.
+pub const MOE_ROUTER_GEMM_MAX_PREFILL_ROWS: u32 = 64;
+
 /// 2026-09-28: Fewest rows for which [`moe_router_gemm_rt`] beats [`dense_gemm_router`] on
 /// GB10 (measured: 0.82x at 300 rows, 2.5x at 1000, 3.0-3.5x at 4k-32k).
 pub const MOE_ROUTER_RT_MIN_ROWS: u32 = 1024;

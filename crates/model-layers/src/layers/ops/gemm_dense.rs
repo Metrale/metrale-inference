@@ -22,9 +22,10 @@ use super::*;
 #[path = "gemm_dense_bf16.rs"]
 mod bf16;
 pub use bf16::{
-    MOE_ROUTER_GEMM_COLS, MOE_ROUTER_GEMM_ROWS, MOE_ROUTER_RT_MIN_ROWS, dense_gemm,
-    dense_gemm_bf16_pipelined, dense_gemm_prefill, dense_gemm_router, dense_gemm_splitk,
-    dense_gemm_tc, dense_gemm_tc_scaled_acc, moe_router_gemm, moe_router_gemm_rt,
+    MOE_ROUTER_GEMM_COLS, MOE_ROUTER_GEMM_MAX_PREFILL_ROWS, MOE_ROUTER_GEMM_ROWS,
+    MOE_ROUTER_RT_MIN_ROWS, dense_gemm, dense_gemm_bf16_pipelined, dense_gemm_prefill,
+    dense_gemm_router, dense_gemm_splitk, dense_gemm_tc, dense_gemm_tc_scaled_acc, moe_router_gemm,
+    moe_router_gemm_rt,
 };
 
 /// 2026-09-29: W4A16 GEMM, `C = A @ dequant(B)`: A `[M, K]` BF16, B NVFP4
