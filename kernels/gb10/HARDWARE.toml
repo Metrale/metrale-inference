@@ -344,3 +344,9 @@ rows = [17, 32]
 kernels = ["w4a16_gemv::w4a16_gemv_batch32"]
 kind = "backlog"
 reason = "The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batch32 GEMV: the tensor-core row tiers stop at 16 rows and the emitter refuses the tile GEMM twin. A tc32 tier (or the tile twin) is the tensor-core path."
+
+# 2026-10-02: The largest `--gpu-memory-utilization` a GB10 serve may run at: 0.90 froze a GB10
+# and needed a power cycle; fp8 KV is the headroom lever instead. A launch recipe above it is
+# refused by `.github/scripts/recipes.py check` (recipes_lib.util_ceilings reads it here).
+[memory]
+util_ceiling = 0.85

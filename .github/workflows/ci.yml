@@ -1010,7 +1010,7 @@ jobs:
   # `validate_serve_args`, which all run before a model is looked at), the engine's
   # own recipe reader via `met doctor`, and every `recipe =` id in
   # kernels/**/BENCH.toml. A CLI change that strands a recipe fails here, in the PR
-  # that makes it. gpu_memory_utilization above a box class's ceiling only warns.
+  # that makes it. gpu_memory_utilization above a box class's ceiling (HARDWARE.toml [memory]) is refused.
   #
   # ADVISORY: not a required check yet. The bundle it writes (recipes.tar.gz,
   # serve-options.json, index.json, each with a .sha256) is what dev-release.yml
