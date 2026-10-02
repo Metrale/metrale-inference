@@ -90,8 +90,13 @@ pub fn candidates<'f>(fams: &'f Families, c: &Circuit, n: &Node, rows: u64) -> V
     fams.families
         .iter()
         .filter(|f| (f.rows.0..=f.rows.1).contains(&rows))
-        .filter(|f| f.ops.iter().any(|s| op_matches(s, c, n)))
+        .filter(|f| implements(f, c, n))
         .collect()
+}
+
+/// 2026-10-01: Family `f` implements node `n` of `c` at some row count.
+pub fn implements(f: &Family, c: &Circuit, n: &Node) -> bool {
+    f.ops.iter().any(|s| op_matches(s, c, n))
 }
 
 fn op_matches(s: &OpSpec, c: &Circuit, n: &Node) -> bool {

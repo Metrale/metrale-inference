@@ -165,11 +165,22 @@ pub fn base_rules() -> String {
         "up_fp4",
         50,
     ));
+    // 2026-10-01: The only rule that takes an NVFP4 activation, through a macro-instantiated
+    // entry inside the FP4 guard; nothing takes the down projection's.
+    s.push_str(&rule(
+        "up_a4",
+        r#"{ op = "linear", role = "gate_up", input = "nvfp4/g16" }"#,
+        "up_a4",
+        50,
+    ));
     s
 }
 
-/// 2026-09-30: The kernel module every class compiles: `up_fp4` sits in the FP4 guard.
+/// 2026-09-30: The kernel module every class compiles: `up_fp4` sits in the FP4 guard, and so
+/// does `up_a4`, which a macro defined outside the guard instantiates inside it.
 pub const MODULE: &str = r#"
+#define FP4_ENTRY(ROWS, NAME) \
+    extern "C" __global__ void NAME(int x) {}
 __global__ void embed(int x) {}
 __global__ void norm(int x) {}
 __global__ void up(int x) {}
@@ -182,6 +193,7 @@ __global__ void lm_head(int x) {}
 #ifndef METRALE_NO_WARP_BLOCKSCALE_MMA
 extern "C" __global__ void __launch_bounds__(256)
 up_fp4(int x) {}
+FP4_ENTRY(8, up_a4)
 #endif
 "#;
 

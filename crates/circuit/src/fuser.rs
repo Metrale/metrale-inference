@@ -24,6 +24,8 @@ use crate::rules::{KernelId, Mode, Numerics, Repeat, Rule};
 #[path = "fuser_match.rs"]
 mod fuser_match;
 
+pub(crate) use fuser_match::fits as pattern_fits;
+
 /// 2026-09-28: The kernels and capabilities a target provides (the boot probe's answer).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AvailableKernels {

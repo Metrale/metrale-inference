@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use super::HwReport;
-use super::render::{FIT_CONTEXTS, FIT_SEQS, pct};
+use super::render::{FIT_CONTEXTS, FIT_SEQS, pct, projection};
 use crate::venn::Class;
 
 /// 2026-09-30: One device's port list: kernel to (why the device cannot run it, how many of the
@@ -74,7 +74,7 @@ pub fn summary_row(r: &HwReport) -> String {
     gaps.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     let top: Vec<String> = gaps.into_iter().take(5).map(|(_, g)| g).collect();
     format!(
-        "| {} | {} | {} / {} | {} | {} / {} / {} | {} | {} | {} |",
+        "| {} | {} | {} / {} | {} | {} / {} / {}{} | {} | {} | {} |",
         r.model.label,
         r.resolved.device.id,
         pct(r.covered(0, true)),
@@ -83,6 +83,7 @@ pub fn summary_row(r: &HwReport) -> String {
         tok(0),
         tok(1),
         tok(2),
+        projection(r),
         if fits(1) {
             "yes".to_string()
         } else {
