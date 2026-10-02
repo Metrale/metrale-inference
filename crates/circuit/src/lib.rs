@@ -24,6 +24,7 @@ pub mod instances;
 pub mod instantiate;
 pub mod ir;
 pub mod model_buffer;
+pub mod pipeline;
 pub mod planner;
 pub mod precision;
 pub mod precision_policy;
@@ -76,6 +77,10 @@ pub enum LoadError {
     /// 2026-09-28: The buffer planner.
     #[error(transparent)]
     Plan(#[from] planner::PlanError),
+    /// 2026-10-02: A node's kernel declares another pipeline than the plan requires, or a
+    /// requirement or declaration is missing ([`pipeline`]).
+    #[error(transparent)]
+    Pipeline(#[from] pipeline::PipelineError),
     /// 2026-09-28: The precision table describes another checkpoint.
     #[error("precision table is for `{table}`, the instance serves `{instance}`")]
     CheckpointMismatch {
@@ -197,7 +202,9 @@ pub fn header(instance: &Instance) -> render::Header {
 }
 
 /// 2026-09-28: Fuse and render one plan of `instance`. 2026-10-02: each group line names the
-/// compute unit its kernels run on ([`venn::compute`]), from the target class's kernel families.
+/// compute unit its kernels run on ([`venn::compute`]), from the target class's kernel families,
+/// and each member node its pipeline; a node whose kernel declares another pipeline than the
+/// plan requires refuses the plan ([`pipeline::check_plan`]).
 pub fn render_plan(
     instance: &Instance,
     loaded: &Loaded,
@@ -205,18 +212,6 @@ pub fn render_plan(
     mode: Mode,
     rows: u64,
     families: &venn::Families,
-) -> Result<String, LoadError> {
-    let note = |g: &fuser::Group| hardware::tc_policy::unit_tag(families, &g.kernels);
-    render_plan_noted(instance, loaded, available, mode, rows, &note)
-}
-
-fn render_plan_noted(
-    instance: &Instance,
-    loaded: &Loaded,
-    available: &AvailableKernels,
-    mode: Mode,
-    rows: u64,
-    note: &dyn Fn(&fuser::Group) -> Option<String>,
 ) -> Result<String, LoadError> {
     let plan = fuse(
         &loaded.circuit,
@@ -227,29 +222,55 @@ fn render_plan_noted(
         rows,
     )?;
     let head = header(instance);
-    let mut text = render::render_noted(&loaded.circuit, &plan, &head, note);
+    let c = &loaded.circuit;
+    let group = |g: &fuser::Group| hardware::tc_policy::unit_tag(families, &g.kernels);
+    let pipes = checked(loaded, &plan, &instance.policy, families)?;
+    let node = |n: ir::NodeIdx| pipes.line(n);
+    let notes = render::Notes {
+        group: &group,
+        node: &node,
+    };
+    let mut text = render::render_noted(c, &plan, &head, &notes);
     let set = (loaded.rules.as_slice(), loaded.runtime.as_slice());
-    for (route, arm) in
-        runtime::route_arms(&loaded.circuit, set, available, &instance.policy, &plan)?
-    {
-        let h = render::with_settings(&head, &route.policy(&instance.policy));
-        text.push_str(&render::route_section(
-            &loaded.circuit,
-            &route,
-            &arm,
-            &h,
-            note,
-        ));
+    for (route, arm) in runtime::route_arms(c, set, available, &instance.policy, &plan)? {
+        let policy = route.policy(&instance.policy);
+        let h = render::with_settings(&head, &policy);
+        let arm_pipes = checked(loaded, &arm, &policy, families)?;
+        let node = |n: ir::NodeIdx| arm_pipes.line(n);
+        let notes = render::Notes {
+            group: &group,
+            node: &node,
+        };
+        text.push_str(&render::route_section(c, &route, &arm, &h, &notes));
     }
     Ok(text)
 }
 
+/// 2026-10-02: The pipelines of `plan`, once its kernels' declarations are checked against
+/// what it requires under `policy`.
+fn checked(
+    loaded: &Loaded,
+    plan: &FusionPlan,
+    policy: &Policy,
+    families: &venn::Families,
+) -> Result<pipeline::PlanPipelines, LoadError> {
+    Ok(pipeline::check_plan(
+        &loaded.circuit,
+        plan,
+        &loaded.rules,
+        families,
+        &policy.settings,
+    )?)
+}
+
 /// 2026-09-30: Fuse and render one batched-verify plan of `instance`, for `table`.
+/// 2026-10-02: Checked and annotated as [`render_plan`].
 pub fn render_table_plan(
     instance: &Instance,
     loaded: &Loaded,
     available: &AvailableKernels,
     table: &RowTable,
+    families: &venn::Families,
 ) -> Result<String, LoadError> {
     let plan = fuse_table(
         &loaded.circuit,
@@ -258,18 +279,31 @@ pub fn render_table_plan(
         &instance.policy,
         table,
     )?;
-    Ok(render::render(&loaded.circuit, &plan, &header(instance)))
+    let pipes = checked(loaded, &plan, &instance.policy, families)?;
+    let group = |g: &fuser::Group| hardware::tc_policy::unit_tag(families, &g.kernels);
+    let node = |n: ir::NodeIdx| pipes.line(n);
+    let notes = render::Notes {
+        group: &group,
+        node: &node,
+    };
+    Ok(render::render_noted(
+        &loaded.circuit,
+        &plan,
+        &header(instance),
+        &notes,
+    ))
 }
 
 /// 2026-09-28: Fuse, lay out and draw one plan of `instance`: the view `met circuit display`
-/// prints, over the same plan [`render_plan`] renders.
+/// prints, over the same plan [`render_plan`] renders. 2026-10-02: Checked and drawn with each
+/// node's pipeline, as [`render_plan`].
 pub fn display_plan(
     instance: &Instance,
     loaded: &Loaded,
     available: &AvailableKernels,
-    mode: Mode,
-    rows: u64,
+    (mode, rows): (Mode, u64),
     opts: &display::DisplayOpts,
+    families: &venn::Families,
 ) -> Result<display::Document, LoadError> {
     let plan = fuse(
         &loaded.circuit,
@@ -280,10 +314,14 @@ pub fn display_plan(
         rows,
     )?;
     let buffers = planner::plan_buffers(&loaded.circuit, &plan, rows)?;
+    let pipes = checked(loaded, &plan, &instance.policy, families)?;
     let info = display::DisplayInfo {
         checkpoint: instance.checkpoint.clone(),
         recipe: instance.recipe.clone(),
         bytes: Some((buffers.materialized_bytes, buffers.arena_bytes)),
+        pipelines: (0..loaded.circuit.nodes.len())
+            .map(|n| pipes.facts(n))
+            .collect(),
     };
     Ok(display::display(&loaded.circuit, &plan, &info, opts)?)
 }

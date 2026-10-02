@@ -24,6 +24,8 @@ pub(super) struct Pen<'a> {
     pub geo: &'a Geo,
     pub group_of: &'a [Option<usize>],
     pub bindings: bool,
+    /// 2026-10-02: Each node's pipeline facts, drawn under its box (`crate::pipeline`).
+    pub pipes: &'a [Option<Vec<String>>],
 }
 
 impl Pen<'_> {
@@ -369,6 +371,35 @@ impl Pen<'_> {
                 self.close(doc, l, frame);
             }
         }
+        self.pipeline(doc, n, None, frame);
+    }
+
+    /// 2026-10-02: Node `n`'s pipeline under its box, wrapped between steps, after `label` when
+    /// two boxes share the row.
+    fn pipeline(
+        &self,
+        doc: &mut Document,
+        n: NodeIdx,
+        label: Option<String>,
+        frame: Option<usize>,
+    ) {
+        let Some(Some(facts)) = self.pipes.get(n) else {
+            return;
+        };
+        let all: Vec<(String, Style)> = facts
+            .iter()
+            .enumerate()
+            .map(|(i, f)| match (i, &label) {
+                (0, Some(l)) => (format!("{l} {f}"), Style::Format),
+                _ => (f.clone(), Style::Format),
+            })
+            .collect();
+        for wrapped in super::card::wrap(&all, self.geo.content.saturating_sub(4), self.g) {
+            let mut l = self.open(frame);
+            l.push("    ", Style::Plain);
+            l.spans.extend(wrapped.spans);
+            self.close(doc, l, frame);
+        }
     }
 
     fn pair(
@@ -412,6 +443,9 @@ impl Pen<'_> {
                 }
             }
             self.close(doc, l, frame);
+        }
+        for n in [a, b].into_iter().flatten() {
+            self.pipeline(doc, n, Some(format!("{}:", self.c.nodes[n].local)), frame);
         }
     }
 

@@ -135,6 +135,14 @@ pub struct PatternOp {
     /// element rather than by reading an output of an earlier one (a shared expert beside
     /// the routed experts).
     pub sibling: bool,
+    /// 2026-10-02: The format the kernel hands this element's outputs to later members of the
+    /// group in, where it is not the format the plan stores (a sum kept in FP32 registers);
+    /// `None` hands them on as stored ([`crate::pipeline::require`]).
+    pub holds: Option<Format>,
+    /// 2026-10-02: Steps of this element's node that the routing runs at another value than
+    /// the reference requirement (an activation quantized inside the group, a sum rounded to
+    /// BF16), stated so the plan shows them and the kernel must declare them.
+    pub steps: BTreeMap<crate::pipeline::StepKind, crate::pipeline::Value>,
 }
 
 /// 2026-09-28: How many times a group's kernels launch per step.

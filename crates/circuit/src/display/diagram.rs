@@ -70,6 +70,7 @@ pub(super) fn diagrams(
     plan: &FusionPlan,
     opts: &DisplayOpts,
     g: &Set,
+    pipes: &[Option<Vec<String>>],
 ) {
     let mut group_of = vec![None; c.nodes.len()];
     for (gi, grp) in plan.groups.iter().enumerate() {
@@ -98,6 +99,7 @@ pub(super) fn diagrams(
         geo: &geo,
         group_of: &group_of,
         bindings: false,
+        pipes,
     };
     match opts.expand {
         Expand::Summary => {

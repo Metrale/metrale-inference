@@ -169,9 +169,15 @@ fn a_rule_or_a_family_with_a_compiled_fp4_kernel_gives_the_op_its_path() {
     );
     no_rule.files.insert(fusions.into(), rules);
     let manifest = "kernels/base/common/KERNEL_FAMILIES.toml";
+    // 2026-10-02: Both families with an FP4 kernel for gate_up go (`f_up_a4` declares `up_a4`'s
+    // pipeline), so only the rule is left to give the path.
     let fams = cut(
-        &no_family.files[manifest],
-        "[[family]]\nid = \"f_up_fp4\"",
+        &cut(
+            &no_family.files[manifest],
+            "[[family]]\nid = \"f_up_fp4\"",
+            "[[family]]",
+        ),
+        "[[family]]\nid = \"f_up_a4\"",
         "[[family]]",
     );
     no_family.files.insert(manifest.into(), fams);

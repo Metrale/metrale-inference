@@ -209,7 +209,7 @@ pub fn display_text(
     opts: metrale_circuit::display::DisplayOpts,
 ) -> String {
     let avail = available(inst, &loaded.rules);
-    metrale_circuit::display_plan(inst, loaded, &avail, mode, rows, &opts)
+    metrale_circuit::display_plan(inst, loaded, &avail, (mode, rows), &opts, &families(inst))
         .unwrap_or_else(|e| panic!("{} display: {e}", inst.recipe))
         .plain()
 }
@@ -229,7 +229,7 @@ pub fn golden_plans() -> Vec<(String, String)> {
             }
         }
         for table in &inst.verify_batch {
-            let text = metrale_circuit::render_table_plan(inst, &loaded, &avail, table)
+            let text = metrale_circuit::render_table_plan(inst, &loaded, &avail, table, &fams)
                 .unwrap_or_else(|e| panic!("{} verify_batch `{table}`: {e}", inst.recipe));
             out.push((inst.table_plan_file(table), text));
         }

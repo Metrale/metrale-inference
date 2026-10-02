@@ -28,6 +28,7 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::attn"]
 rows = [1, 64]
+pipeline.paged_attention = {{ in = ["bf16", "bf16", "bf16"], cache = "bf16", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }}
 op = [{{ op = "paged_attention" }}]
 [[family.param]]
 name = "head_dim"
