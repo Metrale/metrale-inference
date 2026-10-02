@@ -38,7 +38,7 @@ settings and pool sizes and compares every term the boot's allocation ledger ite
 
 | Term | Tolerance | Worst error over the five boots |
 |---|---:|---:|
-| weights (stored + derived + outside) | 1% | -0.22% (Nemotron-3-Nano: the router is declared NVFP4 by the global ModelOpt algo but stored F32; the 52.8 MiB dequant scratch) |
+| weights (stored + derived + outside) | 1% | -0.19% (Nemotron-3-Nano: the router is stored F32 and modelled 16-bit; the 52.8 MiB dequant scratch) |
 | KV (target + MTP pools) | 0.1% | +0.01% |
 | SSM pool | 0.1% | 0.00% |
 | snapshots (Marconi, decode ring) | 0.5% | 0.00% |
@@ -77,7 +77,7 @@ Until then the validation test above is the agreement proof.
 
 ## 4. Findings while validating
 
-- **4.6 GiB of leaked load-time copies on the dense 27B** (both tiers): the BF16 intermediates of
+- **4.6 GiB of leaked load-time copies on the dense 27B** (both tiers; freed by #86, KV 4382 -> 8764 blocks on the recipe): the BF16 intermediates of
   the FP8 attention requant (3.1 GiB, `attn_arms.rs:143-152`), the GDN `out_proj` FP8 predequant
   that the cast overwrites (1.4 GiB, `gdn_dequant.rs:418-424`), and the first `in_proj_ba`
   interleave. COPIES.toml marks them `leaked`; freeing them is a loader fix, not a model change.
@@ -99,9 +99,9 @@ the agents or areas whose code the change sits in.
 
 | copy (rule) | serves | MiB | verdict | what removes it | owner |
 |---|---|---:|---|---|---|
-| BF16 intermediate of the FP8 attention requant (`dense-attn-bf16-dequant`) | dense 27B | 3200 | **leak** | freed after the requant (`fix/dense-load-leaks`) | CIRCUIT-MEM |
-| GDN `out_proj` FP8 predequant replaced by the cast (`dense-gdn-out-fp8-predequant`) | dense 27B | 1440 | **leak** | not made when the cast is (`fix/dense-load-leaks`) | CIRCUIT-MEM |
-| first `in_proj_ba` interleave (`dense-gdn-ba-interleave-first`) | dense 27B | 45 | **leak** | made only on the native-NVFP4 path (`fix/dense-load-leaks`) | CIRCUIT-MEM |
+| BF16 intermediate of the FP8 attention requant (`dense-attn-bf16-dequant`) | dense 27B | 3200 | **leak** | freed after the requant (#86) | CIRCUIT-MEM |
+| GDN `out_proj` FP8 predequant replaced by the cast (`dense-gdn-out-fp8-predequant`) | dense 27B | 1440 | **leak** | not made when the cast is (#86) | CIRCUIT-MEM |
+| first `in_proj_ba` interleave (`dense-gdn-ba-interleave-first`) | dense 27B | 45 | **leak** | made only on the native-NVFP4 path (#86) | CIRCUIT-MEM |
 | FP8 per-channel -> NVFP4 requant (`dense-fp8-to-nvfp4`) | dense 27B | 5018 | inherent under `--weight-quantization nvfp4` (the tier's definition); **avoidable** under `declared`, where the W8A8 decode already reads the FP8 store and the NVFP4 copy serves the routes W8A8 does not cover (prefill above its row ceiling, the batched paths) | W8A8 on every route of a declared-FP8 projection | engine (W8A8) |
 | NVFP4 transposed twins of those requants (`dense-fp8-nvfp4-twin`, `dense-fp8-ffn-twin`) | dense 27B | 3870 (+1148 declared) | inherent while the prefill tile GEMMs read K-major NVFP4 | goes with the requant above; or a tile GEMM reading the row-major weight | kernels |
 | unscaled FP8 casts of GDN qkvz / out_proj for `fp8_gemm_n128` (`dense-gdn-fp8-cast`) | dense 27B | 5280 | **avoidable**: the checkpoint's per-row FP8 is already resident and `METRALE_FP8_ROWWISE` prefills from it with no cast (opt-in today) | the per-row FP8 prefill as default, after a TTFT A/B | engine (prefill) |

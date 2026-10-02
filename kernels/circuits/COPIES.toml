@@ -17,6 +17,8 @@
 #   resident all the same, and the report totals it apart.
 # - Validated against the boot allocation ledgers of the dense 27B (nvfp4 recipe and declared
 #   tier), the FP8 35B-A3B recipe and Nemotron-3-Nano (crates/server/src/cli/circuit_memory_ledger_tests.rs).
+# - 2026-10-02: The dense 27B's three leaked copies (the attention requant's BF16 intermediates,
+#   the replaced GDN out_proj predequant, the first BA interleave) are no longer made (#86).
 # - Not modelled (each under 60 MiB on the validated serves, inside the ledger residual): the
 #   Nemotron dequant scratch (nemotron.rs:68), F32 widenings of A_log / D / dt_bias
 #   (model_a.rs), the 4-byte absmax per quantize (loaders_fp8.rs:171), expert pointer tables.
@@ -67,17 +69,6 @@ count = 1
 site = "crates/model-layers/src/layers/dense_ffn_load.rs:195 (finalize_nvfp4_mmq_load; the twins it replaces are freed)"
 
 [[copy]]
-id = "dense-attn-bf16-dequant"
-arch = ["qwen3_5"]
-ops = ["linear:q", "linear:k", "linear:v", "linear:o"]
-section = "main"
-stored = ["fp8/channel"]
-law = "bf16"
-count = 1
-leaked = true
-site = "crates/model-layers/src/weight_map/quant_helpers.rs:88 (qwen35_dense attn_arms.rs:143-152: the BF16 intermediate is never freed)"
-
-[[copy]]
 id = "dense-gdn-fp8-cast"
 arch = ["qwen3_5"]
 ops = ["linear:qkvz", "linear:gdn_out"]
@@ -88,17 +79,6 @@ count = 1
 site = "crates/model-arch/src/weight_loader/qwen35_dense/gdn_dequant.rs:365/375 (unscaled FP8 prefill casts; off under METRALE_NO_GDN_FP8_PREFILL)"
 
 [[copy]]
-id = "dense-gdn-out-fp8-predequant"
-arch = ["qwen3_5"]
-ops = ["linear:gdn_out"]
-section = "main"
-stored = ["fp8/channel"]
-law = "fp8/tensor"
-count = 1
-leaked = true
-site = "crates/model-layers/src/weight_map/quantized.rs:198 (gdn_dequant.rs:418 via qwen3_ssm/init_fp8.rs:103, overwritten at gdn_dequant.rs:424)"
-
-[[copy]]
 id = "dense-gdn-ba-interleave"
 arch = ["qwen3_5"]
 ops = ["linear:ba"]
@@ -106,16 +86,6 @@ section = "main"
 law = "bf16"
 count = 1
 site = "crates/model-layers/src/weight_map/fp8_lut.rs (gdn_dequant.rs:219: in_proj_b and in_proj_a interleaved per key group)"
-
-[[copy]]
-id = "dense-gdn-ba-interleave-first"
-arch = ["qwen3_5"]
-ops = ["linear:ba"]
-section = "main"
-law = "bf16"
-count = 1
-leaked = true
-site = "crates/model-layers/src/weight_map/fp8_lut.rs (gdn_dequant.rs:98: the first interleave, never freed)"
 
 [[copy]]
 id = "dense-w8a8-row-scale"

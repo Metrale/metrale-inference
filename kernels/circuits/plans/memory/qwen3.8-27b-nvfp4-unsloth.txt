@@ -9,13 +9,13 @@ recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth
 | embed.embed | embed | 1 | 2425.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | gdn.input_norm | rms_norm | 48 | 0.0 | 0.0 | 1.9 | 0.0 | 0.0 |
 | gdn.qkvz | linear:qkvz | 48 | 3840.9 | 8160.0 | 6.0 | 0.0 | 0.0 |
-| gdn.ba | linear:ba | 48 | 45.0 | 90.0 | 0.0 | 0.0 | 0.0 |
+| gdn.ba | linear:ba | 48 | 45.0 | 45.0 | 0.0 | 0.0 | 0.0 |
 | gdn.gates | gdn_gates | 48 | 0.0 | 0.0 | 0.1 | 0.0 | 0.0 |
 | gdn.conv | conv1d_update | 48 | 0.0 | 0.0 | 0.0 | 0.0 | 90.0 |
 | gdn.l2 | l2_norm | 48 | 0.0 | 0.0 | 3.8 | 0.0 | 0.0 |
 | gdn.recur | gdn_recurrence | 48 | 0.0 | 0.0 | 2.2 | 0.0 | 1440.0 |
 | gdn.out_norm | gated_rms_norm | 48 | 0.0 | 0.0 | 2.2 | 0.0 | 0.0 |
-| gdn.out | linear:gdn_out | 48 | 1441.1 | 4500.0 | 1.9 | 0.0 | 0.0 |
+| gdn.out | linear:gdn_out | 48 | 1441.1 | 3060.0 | 1.9 | 0.0 | 0.0 |
 | gdn.add | residual_add | 48 | 0.0 | 0.0 | 1.9 | 0.0 | 0.0 |
 | dense_ffn.post_norm | rms_norm | 64 | 0.0 | 0.0 | 2.5 | 0.0 | 0.0 |
 | dense_ffn.gate_up | linear:gate_up | 64 | 6715.2 | 6885.0 | 17.0 | 0.0 | 0.0 |
@@ -23,17 +23,17 @@ recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth
 | dense_ffn.down | linear:down | 64 | 3358.0 | 3442.5 | 2.5 | 0.0 | 0.0 |
 | dense_ffn.add | residual_add | 64 | 0.0 | 0.0 | 2.5 | 0.0 | 0.0 |
 | attn.input_norm | rms_norm | 16 | 0.0 | 0.0 | 0.6 | 0.0 | 0.0 |
-| attn.q | linear:q | 16 | 960.3 | 3000.0 | 1.5 | 0.0 | 0.0 |
+| attn.q | linear:q | 16 | 960.3 | 1080.0 | 1.5 | 0.0 | 0.0 |
 | attn.q_split | split | 16 | 0.0 | 0.0 | 1.5 | 0.0 | 0.0 |
-| attn.k | linear:k | 16 | 80.3 | 250.0 | 0.1 | 0.0 | 0.0 |
-| attn.v | linear:v | 16 | 80.3 | 250.0 | 0.1 | 0.0 | 0.0 |
+| attn.k | linear:k | 16 | 80.3 | 90.0 | 0.1 | 0.0 | 0.0 |
+| attn.v | linear:v | 16 | 80.3 | 90.0 | 0.1 | 0.0 | 0.0 |
 | attn.q_norm | qk_norm | 16 | 0.0 | 0.0 | 0.8 | 0.0 | 0.0 |
 | attn.k_norm | qk_norm | 16 | 0.0 | 0.0 | 0.1 | 0.0 | 0.0 |
 | attn.rope | rope | 16 | 0.0 | 0.0 | 0.9 | 0.0 | 0.0 |
 | attn.kv_write | kv_write | 16 | 0.0 | 0.0 | 0.0 | 0.0 | 4380.0 |
 | attn.attend | paged_attention | 16 | 0.0 | 0.0 | 0.8 | 0.0 | 0.0 |
 | attn.gate_mul | sigmoid_gate_mul | 16 | 0.0 | 0.0 | 0.8 | 0.0 | 0.0 |
-| attn.o | linear:o | 16 | 480.4 | 1500.0 | 0.6 | 0.0 | 0.0 |
+| attn.o | linear:o | 16 | 480.4 | 540.0 | 0.6 | 0.0 | 0.0 |
 | attn.add | residual_add | 16 | 0.0 | 0.0 | 0.6 | 0.0 | 0.0 |
 | head.final_norm | final_norm | 1 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
 | head.lm_head | lm_head | 1 | 1212.5 | 2425.0 | 1.9 | 0.0 | 0.0 |
@@ -94,16 +94,16 @@ recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth
 |---|---:|
 | weights stored (declared formats) | 21449.1 |
 |   of which outside the circuit | 0.0 |
-| weights derived (load-time copies) | 31184.5 |
-|   of which leaked | 4685.0 |
+| weights derived (load-time copies) | 26499.5 |
+|   of which leaked | 0.0 |
 | activations planned (circuit peak) | 1.9 |
 | activations charged | 1.9 |
 | workspace charged | 0.0 |
 | states (recurrent pool, KV) | 6183.8 |
 | caches (device) | 39159.8 |
 | driver | 3248.3 |
-| device total | 101227.5 |
+| device total | 96542.5 |
 | budget | 105919.2 |
 | host caches | 0.0 |
 
-Headroom: 4691.7 MiB (fits).
+Headroom: 9376.7 MiB (fits).
