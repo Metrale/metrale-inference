@@ -163,7 +163,7 @@ Estimated step 7.802 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | gdn.recur | gdn_recurrence | - | - | 48 | 18.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched compute=cuda_core |
 | attn.attend | paged_attention | - | - | 16 | 16.5% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 12.5% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 9.8% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 9.8% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.qkvz | linear:qkvz | nvfp4/g16 x bf16 | native bf16 | 48 | 8.8% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_p3 rule=w4a16_gemm_t_p3_rows compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 3.3% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_k64_n64_p3 rule=w4a16_gemm_t_k64_n64_p3_rows compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 2.2% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_p3 rule=w4a16_gemm_t_p3_rows compute=tensor_core:mma.sync.m16n8k16.bf16 |
@@ -204,7 +204,7 @@ Estimated step 30.145 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x bf16 | native bf16 | 64 | 9.8% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
 | dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 4.9% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
 | gdn.qkvz | linear:qkvz | nvfp4/g16 x bf16 | native bf16 | 48 | 3.5% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_m128 rule=w4a16_gemm_t_m128_rows compute=tensor_core:mma.sync.m16n8k16.bf16 |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.6% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.6% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 1.3% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_k64_p3 rule=w4a16_gemm_t_k64_p3_gdn_out_wide compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 0.9% | Shared, unmeasured | w4a16_gemm | w4a16::w4a16_gemm_t_m128 rule=w4a16_gemm_t_m128_rows compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | dense_ffn.act | silu_mul | - | - | 64 | 0.8% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows compute=memory |

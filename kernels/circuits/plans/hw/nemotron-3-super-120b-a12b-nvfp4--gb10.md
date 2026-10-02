@@ -41,8 +41,8 @@ kernels/gb10/HARDWARE.toml `[tensor_core_policy]`: a plan that runs one of these
 | run | covered nodes | on tensor cores | exempted sites |
 |---|---:|---:|---:|
 | decode n=1 | 1 | 0 | 1 |
-| multi_seq n=16 | 1 | 1 | 0 |
-| multi_seq n=128 | 1 | 1 | 0 |
+| multi_seq n=16 | 1 | 0 | 1 |
+| multi_seq n=128 | 1 | 0 | 1 |
 
 Covered sites no kernel of this class plans (gaps; their kernel is tensor-core work):
 
@@ -120,6 +120,8 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 | run | site | op | weight | unit | kernels | exemption |
 |---|---|---|---|---|---|---|
 | decode n=1 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
+| multi_seq n=16 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemm::dense_gemm_bf16` | #9 backlog |
+| multi_seq n=128 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemm::dense_gemm_bf16` | #9 backlog |
 
 | # | kind | ops | rows | reason |
 |---:|---|---|---|---|
@@ -131,6 +133,7 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 | 6 | backlog | expert_gate_up, expert_down, linear:shared_gate_up, linear:shared_up, linear:shared_down | 1-64 | FP8 and BF16 MoE experts on CUDA cores (1-row fused and scalar grouped, the 35B-A3B FP8 default at C=1 and C=16). The tensor-core grouped twins (moe_grouped_tc) exist; their selection is the open MoE-energy work. |
 | 7 | backlog | expert_gate_up, expert_down, linear:shared_gate_up, linear:shared_up, linear:shared_down | 1-64 | NVFP4 MoE experts on CUDA cores (Nemotron-3, Qwen3.6-35B-A3B NVFP4); their circuit plans show the experts as gaps today. The NVFP4 MoE blueprint and its tensor-core grouped point (moe_grouped_tc, nvfp4/g16, mma.sync.m16n8k16.bf16) are in progress. |
 | 8 | backlog | lm_head | 17-32 | The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batch32 GEMV: the tensor-core row tiers stop at 16 rows and the emitter refuses the tile GEMM twin. A tc32 tier (or the tile twin) is the tensor-core path. |
+| 9 | backlog | lm_head | 9-128 | The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA GEMM. The mma.sync twin in the same source (dense_gemm_bf16_pipelined) is not selected by any rule; routing the head to it (or to dense_bf16_tc up to 32 rows) is the tensor-core path. |
 
 ## Roofline estimates
 
@@ -325,7 +328,7 @@ Estimated step 758.956 ms. Shared 0.0% (measured on this class), shared-unmeasur
 | attn.q | linear:q | bf16 x bf16 | native bf16 | 8 | 2.3% | Shared, unmeasured | dense_bf16_tc | no rule of this class covers it; family `dense_bf16_tc` implements the op |
 | moe_latent.router | router | bf16 x bf16 | native bf16 | 40 | 1.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe_latent.shared_down | linear:shared_down | bf16 x bf16 | native bf16 | 2 | 0.7% | Shared, unmeasured | dense_bf16_tc | no rule of this class covers it; family `dense_bf16_tc` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.6% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.6% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | moe_latent.shared_up | linear:shared_up | bf16 x bf16 | native bf16 | 1 | 0.4% | Shared, unmeasured | dense_bf16_tc | no rule of this class covers it; family `dense_bf16_tc` implements the op |
 | attn.attend | paged_attention | - | - | 8 | 0.1% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 8 | 0.1% | Shared, unmeasured | dense_bf16_tc | no rule of this class covers it; family `dense_bf16_tc` implements the op |
@@ -393,7 +396,7 @@ Estimated step 6034.861 ms. Shared 0.0% (measured on this class), shared-unmeasu
 | moe_latent.latent_in | linear:moe_latent_in | fp8/tensor x fp8/tensor | native fp8 | 3 | 0.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
 | moe_latent.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 1 | 0.1% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | moe_latent.experts_act | relu2 | - | - | 40 | 0.1% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.1% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.1% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | moe_latent.eact_quant | act_quant:nvfp4/g16 | - | - | 40 | 0.1% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->nvfp4/g16 |
 | moe_latent.latent_out | linear:moe_latent_out | fp8/tensor x fp8/tensor | native fp8 | 1 | 0.0% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->fp8/tensor, weight fp8/channel->fp8/tensor |
 | mamba.out_norm | gated_rms_norm | - | - | 40 | 0.0% | Shared, unmeasured | gated_rms_norm | no rule of this class covers it; family `gated_rms_norm` implements the op |

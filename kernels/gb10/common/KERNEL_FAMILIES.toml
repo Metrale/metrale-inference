@@ -830,10 +830,10 @@ files = ["kernels/gb10/common/reshape_and_cache.cu"]
 [[family]]
 id = "dense_bf16"
 description = "BF16 GEMV (1 row), batched GEMV (M <= 16 per block row) and GEMM (any M)"
-compute = "tensor_core"
-mma = "mma.sync.m16n8k16.bf16"
-kernel_compute."gemv::dense_gemv_bf16" = { compute = "cuda_core" }
-kernel_compute."dense_gemv_bf16_batchm::dense_gemv_bf16_batchm" = { compute = "cuda_core" }
+# 2026-10-02: Every kernel here is CUDA-core FMA: the GEMM and the router GEMM tile in shared
+# memory with FP32 accumulators (dense_gemm_bf16.cu); the file's mma.sync path is
+# `dense_gemm_bf16_pipelined`, which this family does not list.
+compute = "cuda_core"
 kernels = [
   "gemv::dense_gemv_bf16", "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
   "gemm::dense_gemm_bf16", "gemm::dense_gemm_bf16_router",

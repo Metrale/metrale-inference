@@ -178,7 +178,7 @@ Estimated step 7.678 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | gdn.recur | gdn_recurrence | - | - | 48 | 13.2% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched compute=cuda_core |
 | attn.attend | paged_attention | - | - | 16 | 11.7% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 11.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 6.9% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 6.9% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 4.1% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 2.8% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.o | linear:o | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 1.4% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
@@ -224,7 +224,7 @@ Estimated step 22.162 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | dense_ffn.gate_up | linear:gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 11.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | dense_ffn.down | linear:down | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 5.6% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 4.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.5% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.5% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 1.5% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 1.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | dense_ffn.act | silu_mul | - | - | 64 | 0.8% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows compute=memory |

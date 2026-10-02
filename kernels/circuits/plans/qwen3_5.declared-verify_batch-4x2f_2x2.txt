@@ -2374,7 +2374,7 @@ g0985 l63.dense_ffn [add] residual_add::bf16_residual_add reference rule=ffn_res
 == head
 g0986 head [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16} compute=memory
   final_norm: bf16 -> [compute f32] -> bf16
-g0987 head [lm_head] gemm::dense_gemm_bf16 reference rule=lm_head_bf16_gemm writes={logits:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+g0987 head [lm_head] gemm::dense_gemm_bf16 reference rule=lm_head_bf16_gemm writes={logits:bf16} compute=cuda_core
   lm_head: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0988 head [argmax] argmax::argmax_bf16_batch reference rule=argmax_verify_batch writes={token:i32} compute=memory
   argmax: bf16 -> [compare bf16] -> i32

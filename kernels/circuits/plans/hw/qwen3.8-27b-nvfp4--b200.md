@@ -155,7 +155,7 @@ Estimated step 3.486 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | gdn.recur | gdn_recurrence | - | - | 48 | 18.2% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
 | attn.attend | paged_attention | - | - | 16 | 16.0% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 12.1% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 9.5% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 9.5% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.qkvz | linear:qkvz | nvfp4/g16 x bf16 | native bf16 | 48 | 8.6% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
 | gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 3.2% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 2.8% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
@@ -197,7 +197,7 @@ Estimated step 13.923 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 5.7% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
 | dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 4.7% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->bf16, weight fp8/channel->nvfp4/g16 |
 | gdn.qkvz | linear:qkvz | nvfp4/g16 x bf16 | native bf16 | 48 | 3.3% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->bf16, weight fp8/channel->nvfp4/g16 |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 1.2% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->bf16, weight fp8/channel->nvfp4/g16 |
 | attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 0.8% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->bf16, weight fp8/channel->nvfp4/g16 |
 | dense_ffn.act | silu_mul | - | - | 64 | 0.8% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |

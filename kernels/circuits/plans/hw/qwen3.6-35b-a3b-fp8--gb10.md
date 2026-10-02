@@ -41,8 +41,8 @@ kernels/gb10/HARDWARE.toml `[tensor_core_policy]`: a plan that runs one of these
 | run | covered nodes | on tensor cores | exempted sites |
 |---|---:|---:|---:|
 | decode n=1 | 381 | 100 | 9 |
-| multi_seq n=16 | 762 | 202 | 9 |
-| multi_seq n=128 | 762 | 682 | 3 |
+| multi_seq n=16 | 762 | 200 | 10 |
+| multi_seq n=128 | 762 | 680 | 4 |
 
 Covered sites off tensor cores, each under an exemption (`backlog` is a known violation awaiting a tensor-core kernel):
 
@@ -65,9 +65,11 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 | multi_seq n=16 | `moe_ffn.shared_down` | linear:shared_down | fp8/block128x128 | cuda_core | `moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped` | #6 backlog |
 | multi_seq n=16 | `moe_ffn.shared_gate` | linear:shared_gate | bf16 | cuda_core | `moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped` | #5 shape |
 | multi_seq n=16 | `attn.attend` | paged_attention | - | cuda_core | `paged_decode::paged_decode_attn` | #3 backlog |
+| multi_seq n=16 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemm::dense_gemm_bf16` | #9 backlog |
 | multi_seq n=16 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
 | multi_seq n=128 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper` | #4 backlog |
 | multi_seq n=128 | `attn.attend` | paged_attention | - | cuda_core | `paged_decode::paged_decode_attn` | #3 backlog |
+| multi_seq n=128 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemm::dense_gemm_bf16` | #9 backlog |
 | multi_seq n=128 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
 
 | # | kind | ops | rows | reason |
@@ -80,6 +82,7 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 | 6 | backlog | expert_gate_up, expert_down, linear:shared_gate_up, linear:shared_up, linear:shared_down | 1-64 | FP8 and BF16 MoE experts on CUDA cores (1-row fused and scalar grouped, the 35B-A3B FP8 default at C=1 and C=16). The tensor-core grouped twins (moe_grouped_tc) exist; their selection is the open MoE-energy work. |
 | 7 | backlog | expert_gate_up, expert_down, linear:shared_gate_up, linear:shared_up, linear:shared_down | 1-64 | NVFP4 MoE experts on CUDA cores (Nemotron-3, Qwen3.6-35B-A3B NVFP4); their circuit plans show the experts as gaps today. The NVFP4 MoE blueprint and its tensor-core grouped point (moe_grouped_tc, nvfp4/g16, mma.sync.m16n8k16.bf16) are in progress. |
 | 8 | backlog | lm_head | 17-32 | The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batch32 GEMV: the tensor-core row tiers stop at 16 rows and the emitter refuses the tile GEMM twin. A tc32 tier (or the tile twin) is the tensor-core path. |
+| 9 | backlog | lm_head | 9-128 | The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA GEMM. The mma.sync twin in the same source (dense_gemm_bf16_pipelined) is not selected by any rule; routing the head to it (or to dense_bf16_tc up to 32 rows) is the tensor-core path. |
 
 ## Roofline estimates
 
@@ -223,7 +226,7 @@ Estimated step 76.227 ms. Shared 68.7% (measured on this class), shared-unmeasur
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x f32 | native bf16 | 40 | 22.7% | Shared | moe_grouped_fp8_scalar | moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped rule=moe_down_act_grouped compute=cuda_core |
 | gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched compute=cuda_core |
 | attn.attend | paged_attention | - | - | 10 | 7.1% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x bf16 | native bf16 | 30 | 4.1% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | gdn.out | linear:gdn_out | fp8/block128x128 x bf16 | native bf16 | 30 | 1.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | attn.q | linear:q | fp8/block128x128 x bf16 | native bf16 | 10 | 0.9% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 rule=w8a16_m32 compute=tensor_core:mma.sync.m16n8k16.bf16 |
@@ -270,7 +273,7 @@ Estimated step 255.182 ms. Shared 0.0% (measured on this class), shared-unmeasur
 | gdn.recur | gdn_recurrence | - | - | 30 | 25.6% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched compute=cuda_core |
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x f32 | native bf16 | 40 | 17.0% | Shared, unmeasured | moe_prefill_w8a8 | per_token_group_quant_fp8::per_token_group_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + moe_silu_mul::silu_mul_quant_fp8 + fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled + gemm::dense_gemm_bf16_router + moe_topk::moe_topk_softmax_batched + moe::moe_sort_by_expert + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_silu_mul::silu_mul_quant_fp8 + moe::moe_build_tile_worklist + moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 + moe_unpermute_blend::moe_unpermute_blend rule=moe_prefill_fp8_w8a8_wide compute=tensor_core:mma.sync.m16n8k32.e4m3 |
 | attn.attend | paged_attention | - | - | 10 | 16.9% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x bf16 | native bf16 | 30 | 1.4% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined::w8a16_gemm_pipelined rule=w8a16_full_gdn_wide compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | gdn.out | linear:gdn_out | fp8/block128x128 x bf16 | native bf16 | 30 | 0.5% | Shared, unmeasured | w8a16_gemm | w8a16_gemm_pipelined::w8a16_gemm_pipelined rule=w8a16_full_gdn_wide compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | gdn.l2 | l2_norm | - | - | 30 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched compute=cuda_core |

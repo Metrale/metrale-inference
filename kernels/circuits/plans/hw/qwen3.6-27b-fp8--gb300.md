@@ -170,7 +170,7 @@ Estimated step 4.695 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | gdn.recur | gdn_recurrence | - | - | 48 | 13.0% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
 | attn.attend | paged_attention | - | - | 16 | 11.5% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 10.8% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 6.8% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 6.8% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 4.1% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 2.7% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 2.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
@@ -217,7 +217,7 @@ Estimated step 14.046 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 5.4% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
 | dense_ffn.down | linear:down | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 5.3% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 3.8% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.3% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.3% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 1.4% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 1.0% | Shared, unmeasured | fp8_gemm_blockscaled | no rule of this class covers it; family `fp8_gemm_blockscaled` implements the op |
 | dense_ffn.act | silu_mul | - | - | 64 | 0.8% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows compute=memory |

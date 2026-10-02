@@ -192,7 +192,7 @@ Estimated step 5.667 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 22.7% | Shared, unmeasured | moe_grouped_fp8_scalar | no rule of this class covers it; family `moe_grouped_fp8_scalar` implements the op |
 | gdn.recur | gdn_recurrence | - | - | 30 | 10.7% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched compute=cuda_core |
 | attn.attend | paged_attention | - | - | 10 | 7.1% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 5.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 4.0% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 1.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 10 | 0.9% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
@@ -246,7 +246,7 @@ Estimated step 18.975 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | gdn.recur | gdn_recurrence | - | - | 30 | 25.6% | Shared, unmeasured | gdn_recurrence_strided | gated_delta_rule::gated_delta_rule_decode_f32_strided rule=gdn_recurrence_f32_batched compute=cuda_core |
 | attn.attend | paged_attention | - | - | 10 | 16.9% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | moe_ffn.experts_down | expert_down | fp8/block128x128 x fp8/g128 | native fp8 | 40 | 16.9% | Shared, unmeasured | moe_prefill_w8a8 | no rule of this class covers it; family `moe_prefill_w8a8` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.7% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 1.3% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 30 | 0.4% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
 | gdn.l2 | l2_norm | - | - | 30 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32_strided rule=gdn_conv_l2_f32_batched compute=cuda_core |

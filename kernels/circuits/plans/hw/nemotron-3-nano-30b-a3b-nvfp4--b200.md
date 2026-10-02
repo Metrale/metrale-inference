@@ -191,7 +191,7 @@ Estimated step 4.556 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | moe.shared_down | linear:shared_down | nvfp4/g16 x nvfp4/g16 | no FP4 block-scale kernel compiled for this class: exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 | 23 | 5.9% | Shared, unmeasured | moe_nvfp4_grouped | no rule of this class covers it; family `moe_nvfp4_grouped` implements the op |
 | mamba.out_proj | linear:mamba_out | nvfp4/g16 x nvfp4/g16 | no FP4 block-scale kernel compiled for this class: exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 | 17 | 4.8% | Policy variant | wxay | no rule of this class covers it; family `wxay` implements the op; differs: activation fp8/token->nvfp4/g16, weight fp8/channel->nvfp4/g16 |
 | mamba.ssm | ssm_update | - | - | 23 | 4.4% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.0% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.0% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | attn.attend | paged_attention | - | - | 6 | 0.6% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
@@ -241,7 +241,7 @@ Estimated step 35.685 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | attn.attend | paged_attention | - | - | 6 | 0.6% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 6 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.3% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 0.3% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | moe.router | router | nvfp4/g16 x nvfp4/g16 | no FP4 block-scale kernel compiled for this class: exact E2M1->E4M3 on the FP8 MMA, group-16 scales in FP32 | 23 | 0.2% | Novel | - | no family available on this device implements it |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | moe.experts_act | relu2 | - | - | 23 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
