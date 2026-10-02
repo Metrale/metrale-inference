@@ -23,7 +23,7 @@
 //! times of the expert kernels over 20 launches are printed per M.
 //!
 //!   cargo run --release -p metrale-model-arch --features cuda,gpu-examples \
-//!     --example nvfp4_moe_grouped_microtest -- [experts] [zipf_alpha]
+//!     --example nvfp4_moe_grouped_microtest -- [experts] [zipf_alpha] [iters]
 //!
 //! Arguments: routed experts (default 32, so rows share experts; 256 is the model's) and a
 //! Zipf exponent for the routing (default 0.9).
@@ -95,6 +95,9 @@ fn host_reference(
 fn main() -> Result<()> {
     let num_experts: usize = arg(1, 32);
     let alpha: f64 = arg(2, 0.9);
+    // 2026-10-02: Launches per timed width (third argument; default 20). A large count makes each
+    // width's window long enough for an NVML energy integral, printed as `window` lines.
+    let iters: usize = arg(3, 20);
     let set = metrale_kernels::ptx_for_exact_target("qwen3.6-35b-a3b", "nvfp4")
         .context("no compiled qwen3.6-35b-a3b/nvfp4 kernel set")?;
     let backend = MetraleCudaBackend::new(0, &set.modules)?;
@@ -234,7 +237,14 @@ fn main() -> Result<()> {
         let mut bad_widths = Vec::new();
         let mut times = Vec::new();
         for &m in WIDTHS.iter().filter(|&&m| m <= max_m) {
-            let r = run(g, &k, &w, &b, leg, m, num_experts, 20)?;
+            let t0 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0.0, |d| d.as_secs_f64());
+            let r = run(g, &k, &w, &b, leg, m, num_experts, iters)?;
+            if iters > 20 {
+                // 2026-10-02: The window an NVML energy log is cut on (`ITERS` microbench mode).
+                println!("window {} M{m} {t0:.4}", leg.name());
+            }
             if (0..m).any(|t| r.0[t * row..(t + 1) * row] != full[t * row..(t + 1) * row]) {
                 bad_widths.push(m);
             }
