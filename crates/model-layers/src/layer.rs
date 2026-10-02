@@ -322,6 +322,35 @@ pub struct MidchunkCapture<'a> {
     pub h_dsts_early: &'a [DevicePtr],
     /// 2026-09-25: Per-SSM-layer conv_state destination in the `tb - block_size` slot.
     pub conv_dsts_early: &'a [DevicePtr],
+    /// 2026-10-01: The rows from `cap_local` on must get the bits a prefill pass starting
+    /// at `cap_local` would give them, the pass a later request runs when it restores the
+    /// captured state (a tail-split capture, `prefill_plan::tail_split_point`): the GDN
+    /// recurrence after the split takes the exact-replay arm, and attention runs those rows
+    /// as their own paged call. False for the `metrale_scale` tail capture.
+    pub replay_tail: bool,
+}
+
+impl AttnMetadataDev {
+    /// 2026-10-01: The metadata of rows `row..` of a prefill pass: every per-row array
+    /// (positions, slots, the LoRA slot) starts `row` rows later; the block table and
+    /// sequence length are the pass's own.
+    pub fn rows_from(self, row: usize) -> Self {
+        let per_row = |p: DevicePtr, bytes: usize| {
+            if p.is_null() {
+                p
+            } else {
+                p.offset(row * bytes)
+            }
+        };
+        Self {
+            positions: per_row(self.positions, 4),
+            positions_h: per_row(self.positions_h, 4),
+            positions_w: per_row(self.positions_w, 4),
+            slot: per_row(self.slot, 8),
+            seq_slot: per_row(self.seq_slot, 4),
+            ..self
+        }
+    }
 }
 
 /// 2026-09-25: MoE-LoRA fold decision for one forward pass. One MoE adapter is active at
@@ -349,3 +378,7 @@ mod tests;
 #[cfg(test)]
 #[path = "layer/release_contract_tests.rs"]
 mod release_contract_tests;
+
+#[cfg(test)]
+#[path = "layer/rows_from_tests.rs"]
+mod rows_from_tests;

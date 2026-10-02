@@ -42,9 +42,11 @@ fn overlap_k2048(k: u32) -> bool {
 }
 
 /// 2026-09-25: Short C1-shape prefill only. Shared W8A8 and the router read the same
-/// hidden state and write different buffers; other shapes stay serial.
+/// hidden state and write different buffers; other shapes stay serial. 2026-10-01: from one
+/// row, since prefills of up to 64 rows (a warm request's tail replay) also take this path
+/// under `prefill_row_invariant`. The overlap moves no arithmetic, only the stream.
 pub(super) fn overlap_shared_router(rows: usize, experts: u32, topk: u32) -> bool {
-    (65..=128).contains(&rows) && experts == 256 && topk == 8
+    (1..=128).contains(&rows) && experts == 256 && topk == 8
 }
 
 pub(super) fn begin_shared_side<'a>(gpu: &'a dyn GpuBackend, main: u64) -> Result<SideJoin<'a>> {
@@ -275,7 +277,9 @@ mod tests {
     fn shared_router_overlap_is_the_short_c1_shape_only() {
         assert!(overlap_shared_router(128, 256, 8));
         assert!(overlap_shared_router(65, 256, 8));
-        assert!(!overlap_shared_router(64, 256, 8));
+        assert!(overlap_shared_router(64, 256, 8));
+        assert!(overlap_shared_router(1, 256, 8));
+        assert!(!overlap_shared_router(0, 256, 8));
         assert!(!overlap_shared_router(129, 256, 8));
         assert!(!overlap_shared_router(128, 257, 8));
         assert!(!overlap_shared_router(128, 256, 4));

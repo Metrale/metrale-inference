@@ -224,6 +224,12 @@ impl LayerCapabilities for Qwen3AttentionLayer {
         self.mla.is_some()
     }
 
+    /// 2026-10-01: `prefill_inner` splits the attention step at a replay-tail capture
+    /// (`prefill_inner/replay_tail.rs`). The mHC body, MLA and the QSA indexer do not.
+    fn supports_replay_tail_split(&self) -> bool {
+        self.hc.is_none() && self.mla.is_none() && self.qsa.is_none()
+    }
+
     fn fp8_calibration_frozen(&self) -> Option<bool> {
         self.fp8_calibration
             .as_ref()

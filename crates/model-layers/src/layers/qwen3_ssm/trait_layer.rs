@@ -249,6 +249,14 @@ impl LayerCapabilities for Qwen3SsmLayer {
     fn is_ssm_layer(&self) -> bool {
         self.is_ssm_layer_inner()
     }
+
+    /// 2026-10-01: Both prefill entry paths (`prefill_inner`, `prefill_inner_hc`) run
+    /// `prefill_block`, whose conv (`conv1d_prefill_capture`) and recurrence
+    /// (`prefill_gdn_recurrence`) split at the capture point on every build, the
+    /// recurrence's tail on the exact-replay arm.
+    fn supports_replay_tail_split(&self) -> bool {
+        true
+    }
 }
 
 impl LayerWeightSetup for Qwen3SsmLayer {

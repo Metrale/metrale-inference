@@ -25,6 +25,13 @@
 //! the switch on, only `metrale_scale` builds (`METRALE_TARGET_HW=strix*`) plan a
 //! capture: on every other build `prepare_midchunk_capture` returns `None`.
 //!
+//! 2026-10-01: Every other build uses the same in-pass split for one point instead:
+//! [`TransformerModel::prepare_cut_capture`] captures the state at the tail split
+//! point (`prefill_plan::tail_split_point`, which is `tb - block_size`) inside the
+//! last chunk's pass, and `prefill_chunk_dispatch` registers it as the checkpoint a
+//! pass ending there would have saved. With the switch off the prompt tail runs as a
+//! second pass, as before.
+//!
 //! Owner: model-engine prefill (SSM prefix cache).
 //! Invariants: none beyond the types.
 
@@ -68,6 +75,9 @@ pub(in crate::model) struct MidCapturePlan {
     pub h_dsts_early: Vec<DevicePtr>,
     /// 2026-09-25: Per-SSM-layer conv_state destination for the in-pass `tb - bs` capture.
     pub conv_dsts_early: Vec<DevicePtr>,
+    /// 2026-10-01: `MidchunkCapture::replay_tail`: true for a tail-split capture
+    /// (`prepare_cut_capture`), false for the `metrale_scale` one.
+    pub replay_tail: bool,
 }
 
 impl TransformerModel {
@@ -93,6 +103,87 @@ impl TransformerModel {
                 }
             }
         }
+    }
+
+    /// 2026-10-01: Plan an in-pass capture at `cut`, the tail split point
+    /// (`prefill_plan::tail_split_point`), for the pass over tokens
+    /// `[proc_start, proc_start + proc_count)` of a `total`-token prompt, in place of
+    /// ending a pass there (`prefill_chunk_dispatch`). Each SSM layer splits its conv and
+    /// recurrence at the plan's points and copies its state into the reserved slots,
+    /// the states a pass ending there leaves; the caller registers the slots after the
+    /// pass (`prefill_b_register_checkpoint`).
+    ///
+    /// The pass also captures at the tail boundary `tb` (`ssm_tail_boundary`, one block
+    /// above `cut`), where a byte-identical repeat of the prompt restores, when that
+    /// leaves at least two tokens to replay (one would run the decode path) and a second
+    /// slot is free. The replay-tail point (`replay_tail`, the attention split and the
+    /// exact GDN arm) is the deeper of the two captures, so the rows a warm repeat
+    /// replays get its bits; `cut` stays for a next turn whose match lands a block lower.
+    ///
+    /// `None` when the pass does not strictly span `cut`, or no slot can be reserved
+    /// even after a reclaim: the prefill then keeps no checkpoint at `cut`, as
+    /// `prefill_b_save_checkpoint` does on an exhausted pool.
+    pub(in crate::model) fn prepare_cut_capture(
+        &self,
+        seq: &SequenceState,
+        kv_cache: &mut PagedKvCache,
+        proc_start: usize,
+        proc_count: usize,
+        cut: usize,
+        total: usize,
+    ) -> Option<MidCapturePlan> {
+        let end = proc_start + proc_count;
+        if !(proc_start < cut && cut < end) {
+            return None;
+        }
+        let Some(cut_slot) = self.reserve_snapshot_slot(seq.session_hash, kv_cache) else {
+            tracing::warn!(
+                "SSM snapshot pool exhausted and no evictable cached entries — no checkpoint \
+                 at the tail split point {cut}. Consider raising --ssm-cache-slots."
+            );
+            return None;
+        };
+        let bs = kv_cache.block_size();
+        let deep = metrale_gpu_runtime::ssm_tail_boundary(total, bs)
+            .filter(|&tb| tb > cut && tb < end && total - tb >= 2)
+            .and_then(|tb| {
+                self.reserve_snapshot_slot(seq.session_hash, kv_cache)
+                    .map(|slot| (tb, slot))
+            });
+        let n = self.ssm_snapshots.num_ssm_layers();
+        let dsts = |slot: usize| -> (Vec<DevicePtr>, Vec<DevicePtr>) {
+            (
+                (0..n)
+                    .map(|l| self.ssm_snapshots.tail_h_dst(l, slot))
+                    .collect(),
+                (0..n)
+                    .map(|l| self.ssm_snapshots.tail_conv_dst(l, slot))
+                    .collect(),
+            )
+        };
+        let (tb, snap_slot, early) = match deep {
+            Some((tb, slot)) => (tb, slot, Some((cut, cut_slot))),
+            None => (cut, cut_slot, None),
+        };
+        let (h_dsts, conv_dsts) = dsts(snap_slot);
+        let (h_dsts_early, conv_dsts_early) =
+            early.map_or((Vec::new(), Vec::new()), |(_, s)| dsts(s));
+        Some(MidCapturePlan {
+            cap_local: tb - proc_start,
+            snap_slot,
+            tb,
+            h_dsts,
+            conv_dsts,
+            h_bytes: self.ssm_snapshots.h_bytes(),
+            conv_bytes: self.ssm_snapshots.conv_bytes(),
+            bs,
+            cap_local_early: early.map(|(c, _)| c - proc_start),
+            snap_slot_early: early.map(|(_, s)| s),
+            tb_early: early.map(|(c, _)| c),
+            h_dsts_early,
+            conv_dsts_early,
+            replay_tail: true,
+        })
     }
 
     /// 2026-09-25: Plan an in-pass tail capture for the prefill pass over tokens
@@ -253,6 +344,7 @@ impl TransformerModel {
             tb_early,
             h_dsts_early,
             conv_dsts_early,
+            replay_tail: false,
         })
     }
 

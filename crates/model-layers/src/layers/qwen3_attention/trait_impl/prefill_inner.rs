@@ -20,6 +20,7 @@ use crate::layers::ops;
 
 mod ffn_residual;
 mod hc;
+mod replay_tail;
 
 impl Qwen3AttentionLayer {
     #[allow(clippy::too_many_arguments)]
@@ -144,7 +145,30 @@ impl Qwen3AttentionLayer {
                  got seq_len_start=0. Caller must fall back to per-stream for this chunk."
             );
         }
-        let attn_out = if route == AttnRoute::Contiguous {
+        // 2026-10-01: A pass carrying a replay-tail capture runs its tail rows as their
+        // own paged call (`replay_tail.rs`).
+        let replay_split = if batched_meta.is_none() {
+            Self::replay_tail_split(ctx, num_tokens)
+        } else {
+            None
+        };
+        let attn_out = if let Some(cl) = replay_split {
+            self.prefill_attention_replay_tail(
+                state,
+                normed,
+                num_tokens,
+                cl,
+                route,
+                seq_len_start,
+                kv_cache,
+                block_table,
+                disk_block_ids,
+                disk_last_offloaded_per_layer,
+                kv_write_start,
+                ctx,
+                stream,
+            )?
+        } else if route == AttnRoute::Contiguous {
             // 2026-09-25: First chunk of a single stream: attention over this
             // chunk's contiguous Q/K/V, writing K/V to the cache from
             // `kv_write_start`.

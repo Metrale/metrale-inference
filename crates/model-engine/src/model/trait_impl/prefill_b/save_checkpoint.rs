@@ -35,7 +35,6 @@ impl TransformerModel {
         // one block below it) or an interval end saves (`prefill_plan`). The planner ends
         // a chunk at `prefill_plan::tail_split_point`. `--ssm-checkpoint-interval` filters
         // chunk ends; it does not create them.
-        let is_prompt_tail = crate::prefill_plan::is_prompt_tail_end(end_token, tokens.len(), bs);
         if !crate::prefill_plan::is_checkpoint_chunk_end(
             end_token,
             tokens.len(),
@@ -110,6 +109,34 @@ impl TransformerModel {
         let Some(snap_id) = snap_result else {
             return Ok(());
         };
+        self.prefill_b_register_checkpoint(tokens, seq, kv_cache, end_token, snap_id, stream)
+    }
+
+    /// 2026-10-01: Register Marconi slot `snap_id`, which holds the SSM state after
+    /// `end_token` prompt tokens, as an intermediate checkpoint at `end_token`: its aux
+    /// state, the boundary insert and the snapshot link. Callers: the save above, at a
+    /// chunk end, and the in-pass capture at the tail split point (`prefill_b.rs`), whose
+    /// slot the pass filled. Frees `snap_id` when the boundary cannot be inserted.
+    pub(in crate::model) fn prefill_b_register_checkpoint(
+        &self,
+        tokens: &[u32],
+        seq: &mut SequenceState,
+        kv_cache: &mut PagedKvCache,
+        end_token: usize,
+        snap_id: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let bs = kv_cache.block_size();
+        let end_block = end_token / bs;
+        let is_prompt_tail = crate::prefill_plan::is_prompt_tail_end(end_token, tokens.len(), bs);
+        if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+            tracing::info!(
+                "ckpt_digest@{end_token} snap={snap_id} fnv64={:?}",
+                self.ssm_snapshots
+                    .debug_slot_digest(snap_id, self.gpu.as_ref(), stream)
+                    .map(|d| format!("{d:016x}"))
+            );
+        }
         // 2026-09-25: Per-sequence aux layer state (`collect_aux_states`) rides the
         // checkpoint, taken at the end of a completed pass. A model that carries aux
         // state refuses a snapshot without it on restore (`snap_agree::local_proposal`).
