@@ -7,7 +7,7 @@
 //! Invariants: none beyond the types.
 
 mod build;
-mod config;
+pub(crate) mod config;
 mod dflash_gamma;
 mod forward;
 pub(crate) mod fp8_kv_scale_source;

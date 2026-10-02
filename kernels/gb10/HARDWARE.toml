@@ -344,3 +344,19 @@ rows = [17, 32]
 kernels = ["w4a16_gemv::w4a16_gemv_batch32"]
 kind = "backlog"
 reason = "The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batch32 GEMV: the tensor-core row tiers stop at 16 rows and the emitter refuses the tile GEMM twin. A tc32 tier (or the tile twin) is the tensor-core path."
+
+# 2026-10-02: What the driver holds beyond the allocation ledger on this class, for the circuit
+# memory model (`met circuit memory`, crates/circuit/src/memory/budget.rs). Calibrated by PR #72 on
+# GB10 serves (server preflight/runtime_headroom.rs `DRIVER_FIXED_BYTES`,
+# `DRIVER_BUDGET_PER_MILLE`): a serve's device footprint is the drop of host MemAvailable from an
+# idle box less the ledger and the serve's anonymous memory, 2.1-3.6 GB over five serves. Probed:
+# context 250 MiB, the 27B's 218 modules 94 MiB, the local-memory reservation 131 MiB
+# (driver_fixed_bytes, 1 GiB with the CUDA graphs); the rest is per-allocation bookkeeping, about
+# 2% of the bytes allocated (driver_budget_per_mille of the util budget). Allocations under 2 MiB
+# also keep their whole 2 MiB chunk resident; that slack is measured from a ledger, not modelled.
+# unified: the GPU's memory is the SoC's LPDDR5X, so host memory (the prompt-lookup index, the
+# serve's anonymous pages) competes for the same pool outside the util budget.
+[memory]
+driver_fixed_bytes = 1073741824
+driver_budget_per_mille = 21
+unified = true

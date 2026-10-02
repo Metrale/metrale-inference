@@ -24,68 +24,9 @@ use std::collections::BTreeMap;
 use crate::ir::Circuit;
 use crate::ir::Section;
 
-/// 2026-09-30: What a state is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum StateKind {
-    /// 2026-09-30: A recurrent state, one unit per sequence slot (GatedDeltaNet and Mamba2
-    /// `h`, their conv windows).
-    Recurrent,
-    /// 2026-09-30: One side of a paged KV cache, one unit per token.
-    PagedKv,
-}
-
-impl StateKind {
-    /// 2026-09-30: The spelling in the circuit TOML.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "recurrent" => Some(Self::Recurrent),
-            "paged_kv" => Some(Self::PagedKv),
-            _ => None,
-        }
-    }
-}
-
-/// 2026-09-30: How long a unit of state lives (LIFECYCLE-DESIGN.md section 3.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Lifetime {
-    /// 2026-09-30: Allocated once with the model (a KV pool; its blocks are per sequence).
-    Model,
-    /// 2026-09-30: Claimed with a sequence's slot and released with it.
-    Sequence,
-    /// 2026-09-30: Valid from a verify's snapshot to its commit or rollback.
-    Verify,
-}
-
-impl Lifetime {
-    /// 2026-09-30: The spelling in the circuit TOML.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "model" => Some(Self::Model),
-            "sequence" => Some(Self::Sequence),
-            "verify" => Some(Self::Verify),
-            _ => None,
-        }
-    }
-
-    /// 2026-09-30: The spelling.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Model => "model",
-            Self::Sequence => "sequence",
-            Self::Verify => "verify",
-        }
-    }
-
-    /// 2026-09-30: The one lifetime a state of `kind` may declare: a recurrent state lives with
-    /// its sequence, a KV side with the model's pool. `Verify` belongs to the verify holdings
-    /// ([`Holding::lifetime`]), never to a declaration.
-    pub fn of_kind(kind: StateKind) -> Self {
-        match kind {
-            StateKind::Recurrent => Self::Sequence,
-            StateKind::PagedKv => Self::Model,
-        }
-    }
-}
+#[path = "state_kinds.rs"]
+mod kinds;
+pub use kinds::{Lifetime, StateKind};
 
 /// 2026-09-30: Which verify intermediate count a recurrent state keeps per verify slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -143,6 +84,12 @@ pub enum StateDtype {
     /// 2026-09-30: One E4M3 byte per element; its scales live outside the state (a static
     /// per-layer KV scale).
     Fp8,
+    /// 2026-10-02: Integer elements of the caches: masks and flags (`u8`), token ids and
+    /// counts (`i32`, `u32`), keys and device pointers (`u64`).
+    U8,
+    I32,
+    U32,
+    U64,
 }
 
 impl StateDtype {
@@ -153,16 +100,35 @@ impl StateDtype {
             "f16" => Some(Self::F16),
             "bf16" => Some(Self::Bf16),
             "fp8" => Some(Self::Fp8),
+            "u8" => Some(Self::U8),
+            "i32" => Some(Self::I32),
+            "u32" => Some(Self::U32),
+            "u64" => Some(Self::U64),
             _ => None,
+        }
+    }
+
+    /// 2026-10-02: The spelling.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::F32 => "f32",
+            Self::F16 => "f16",
+            Self::Bf16 => "bf16",
+            Self::Fp8 => "fp8",
+            Self::U8 => "u8",
+            Self::I32 => "i32",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
         }
     }
 
     /// 2026-09-30: Bytes per element.
     pub fn size(self) -> u64 {
         match self {
-            Self::F32 => 4,
+            Self::F32 | Self::I32 | Self::U32 => 4,
             Self::F16 | Self::Bf16 => 2,
-            Self::Fp8 => 1,
+            Self::Fp8 | Self::U8 => 1,
+            Self::U64 => 8,
         }
     }
 }
@@ -306,7 +272,8 @@ pub struct StatePlan {
 
 impl StatePlan {
     /// 2026-09-30: Size every state of `states` (a circuit's [`Circuit::states`], or the
-    /// declarations of one block) under `inputs`.
+    /// declarations of one block) under `inputs`. 2026-10-02: Cache kinds
+    /// ([`StateKind::is_cache`]) are left out: `memory::caches` sizes them.
     pub fn new(states: &[StateDecl], inputs: &StateInputs) -> Result<Self, StateError> {
         let mut terms = Vec::new();
         for s in states {
@@ -371,6 +338,17 @@ impl StatePlan {
                         push(Holding::Blocks, tokens)?;
                     }
                 }
+                // 2026-10-02: Caches are sized by `memory::caches` from their own inputs.
+                StateKind::PrefixSnapshot
+                | StateKind::RingSnapshot
+                | StateKind::CarryStash
+                | StateKind::CarryTable
+                | StateKind::VerifyTable
+                | StateKind::AcceptStash
+                | StateKind::HiddenCapture
+                | StateKind::PromptLookupIndex
+                | StateKind::TokenTreeMask
+                | StateKind::DraftTokens => {}
             }
         }
         Ok(Self { terms })

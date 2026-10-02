@@ -63,6 +63,29 @@ moe_latent = { moe = ["moe_latent"] }
 [block.embed]
 stream_out = "h"
 
+# 2026-10-02: The speculative caches over tokens (crates/circuit/src/memory/caches.rs; as in
+# blocks/qwen3_hybrid.toml): the prompt-lookup index (host), a token tree's mask, the drafted ids.
+[[block.embed.state]]
+id = "lookup_index"
+kind = "prompt_lookup_index"
+lifetime = "sequence"
+format = "u64"
+shape = "2"
+
+[[block.embed.state]]
+id = "tree_mask"
+kind = "token_tree_mask"
+lifetime = "verify"
+format = "u8"
+shape = "1"
+
+[[block.embed.state]]
+id = "draft_ids"
+kind = "draft_tokens"
+lifetime = "verify"
+format = "i32"
+shape = "1"
+
 [[block.embed.node]]
 id = "embed"
 op = "embed"
@@ -92,6 +115,37 @@ lifetime = "sequence"
 format = "f32"
 shape = "mamba_heads*mamba_head_dim+ssm_groups*ssm_state*2 x conv_kernel"
 verify = "conv_steps"
+
+# 2026-10-02: The caches over this layer's state (crates/circuit/src/memory/caches.rs): the
+# prefix-cache snapshot and the decode-rollback ring copy h and conv at FP32
+# (ssm_snapshot_init.rs). Mamba2 has no carried-state verify.
+[[block.mamba.state]]
+id = "prefix_h"
+kind = "prefix_snapshot"
+lifetime = "snapshot"
+format = "f32"
+of = "h"
+
+[[block.mamba.state]]
+id = "prefix_conv"
+kind = "prefix_snapshot"
+lifetime = "snapshot"
+format = "f32"
+of = "conv"
+
+[[block.mamba.state]]
+id = "ring_h"
+kind = "ring_snapshot"
+lifetime = "snapshot"
+format = "f32"
+of = "h"
+
+[[block.mamba.state]]
+id = "ring_conv"
+kind = "ring_snapshot"
+lifetime = "snapshot"
+format = "f32"
+of = "conv"
 
 [[block.mamba.node]]
 id = "norm"
@@ -457,6 +511,14 @@ out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
 [block.head]
 stream_in = "x"
 outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+# 2026-10-02: The prefix-cache snapshot of a sequence's last hidden row (ssm_snapshot_init.rs:88).
+[[block.head.state]]
+id = "prefix_hidden"
+kind = "prefix_snapshot"
+lifetime = "snapshot"
+format = "bf16"
+shape = "hidden"
 
 [[block.head.node]]
 id = "final_norm"

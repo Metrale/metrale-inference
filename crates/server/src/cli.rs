@@ -25,6 +25,10 @@ pub(crate) mod circuit;
 mod circuit_diff;
 mod circuit_hw;
 mod circuit_hw_tree;
+mod circuit_memory;
+mod circuit_memory_point;
+mod circuit_memory_serve;
+mod circuit_memory_weights;
 mod circuit_paint;
 mod circuit_venn;
 pub(crate) mod doctor;
@@ -126,6 +130,68 @@ pub enum CircuitAction {
     /// decode and prefill estimates, and the memory fit. `--matrix` writes or checks every
     /// report of the roadmap matrix instead.
     Plan(Box<CircuitHwArgs>),
+    /// The memory a checkpoint needs on a device at a serve's settings: per node (weights and
+    /// their load-time copies, activations, workspace, state), per state and cache (KV, SSM,
+    /// snapshots, speculative caches) as functions of ISL, OSL, concurrency and slots, the total
+    /// against the util budget, and the largest concurrency and prompt that fit.
+    Memory(Box<CircuitMemoryArgs>),
+}
+
+/// `met circuit memory` options. Serve settings come from `--recipe` (`recipes/<id>.yaml`) and the
+/// `met serve` flags after `--`, parsed exactly as `met serve` parses them.
+#[derive(clap::Args, Debug, Clone)]
+pub struct CircuitMemoryArgs {
+    /// The checkpoint: an id (org/name) or a checkpoint directory.
+    #[arg(long)]
+    pub checkpoint: String,
+    /// Target device id from kernels/DEVICES.toml.
+    #[arg(long)]
+    pub hardware: String,
+    /// A recipe (`family/stem`, e.g. qwen3.6/qwen3.6-35b-a3b-nvfp4) whose serve settings apply.
+    #[arg(long)]
+    pub recipe: Option<String>,
+    /// Prompt tokens per sequence.
+    #[arg(long)]
+    pub isl: u64,
+    /// Generated tokens per sequence.
+    #[arg(long)]
+    pub osl: u64,
+    /// Sequences in flight.
+    #[arg(long)]
+    pub concurrency: u64,
+    /// Sequence slots the serve is built with: a count, or `auto` for exactly the concurrency.
+    /// Default: the serve's `--max-batch-size`.
+    #[arg(long)]
+    pub slots: Option<String>,
+    /// Hidden rows the drafter-prefill capture holds (the serve log's "MTP drafter context"
+    /// line); 0 when the serve does not capture.
+    #[arg(long, default_value_t = 0)]
+    pub capture_rows: u64,
+    /// Model a prompt-lookup n-gram index per sequence (host memory).
+    #[arg(long)]
+    pub prompt_lookup: bool,
+    /// Model a token tree (planned DFlash2) of this many nodes per verify slot: its attention
+    /// mask and drafted ids, every node's recurrent state (a uniform K = nodes verify) and the
+    /// nodes' KV.
+    #[arg(long)]
+    pub tree_nodes: Option<u64>,
+    /// Print every node instead of one row per block-template node.
+    #[arg(long)]
+    pub per_node: bool,
+    /// Print JSON instead of the tables.
+    #[arg(long)]
+    pub json: bool,
+    /// Fetch config.json / hf_quant_config.json from huggingface.co when the checkpoint is not
+    /// local.
+    #[arg(long)]
+    pub allow_network: bool,
+    /// Repository root; by default the nearest directory above the working directory that has
+    /// kernels/circuits/INSTANCES.toml.
+    #[arg(long)]
+    pub root: Option<std::path::PathBuf>,
+    /// `met serve` flags, after `--` (e.g. `-- --max-batch-size 16 --kv-cache-dtype fp8`).
+    #[arg(last = true)]
+    pub serve: Vec<String>,
 }
 
 /// `met circuit plan` options.

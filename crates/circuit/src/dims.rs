@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-28: Dimension expressions: a sum of products of named dims and integer literals,
-//! e.g. `q_heads*head_dim*2` or `lin_qk*2+lin_v`.
+//! e.g. `q_heads*head_dim*2` or `lin_qk*2+lin_v`. 2026-10-02: A factor may be a dim divided by a
+//! literal, rounded up (`moe_inter/128`: the scale count of a 128-wide group).
 //!
 //! Owner: metrale-circuit.
 //! Invariants:
@@ -21,6 +22,8 @@ pub struct DimExpr {
 enum Factor {
     Name(String),
     Lit(u64),
+    /// 2026-10-02: `name/lit`, rounded up.
+    CeilDiv(String, u64),
 }
 
 /// 2026-09-28: Why a dimension expression did not parse or evaluate.
@@ -72,7 +75,7 @@ impl DimExpr {
     /// 2026-09-28: Every name the expression reads.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.terms.iter().flatten().filter_map(|f| match f {
-            Factor::Name(n) => Some(n.as_str()),
+            Factor::Name(n) | Factor::CeilDiv(n, _) => Some(n.as_str()),
             Factor::Lit(_) => None,
         })
     }
@@ -84,12 +87,16 @@ impl DimExpr {
         for term in &self.terms {
             let mut prod: u64 = 1;
             for f in term {
-                let v = match f {
-                    Factor::Lit(v) => *v,
-                    Factor::Name(n) => *dims.get(n).ok_or_else(|| DimError::Unknown {
+                let dim = |n: &String| {
+                    dims.get(n).copied().ok_or_else(|| DimError::Unknown {
                         name: n.clone(),
                         expr: self.text.clone(),
-                    })?,
+                    })
+                };
+                let v = match f {
+                    Factor::Lit(v) => *v,
+                    Factor::Name(n) => dim(n)?,
+                    Factor::CeilDiv(n, d) => dim(n)?.div_ceil(*d),
                 };
                 prod = prod.checked_mul(v).ok_or_else(overflow)?;
             }
@@ -100,6 +107,13 @@ impl DimExpr {
 }
 
 fn parse_factor(f: &str) -> Option<Factor> {
+    if let Some((name, lit)) = f.split_once('/') {
+        let d = lit.parse::<u64>().ok().filter(|&v| v > 0)?;
+        return match parse_factor(name)? {
+            Factor::Name(n) => Some(Factor::CeilDiv(n, d)),
+            Factor::Lit(_) | Factor::CeilDiv(..) => None,
+        };
+    }
     let first = f.chars().next()?;
     if first.is_ascii_digit() {
         return f.parse::<u64>().ok().filter(|&v| v > 0).map(Factor::Lit);

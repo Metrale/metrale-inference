@@ -222,7 +222,15 @@ impl Builder<'_> {
         };
         let first_state = self.circuit.states.len();
         for sf in &tpl.state {
-            let decl = state_decl(template, &prefix, layer, section, sf, &self.shape.dims)?;
+            let decl = state_decl(
+                template,
+                &prefix,
+                layer,
+                section,
+                sf,
+                &tpl.state,
+                &self.shape.dims,
+            )?;
             if self.circuit.states.iter().any(|s| s.id == decl.id) {
                 return Err(dup(template, &sf.id));
             }

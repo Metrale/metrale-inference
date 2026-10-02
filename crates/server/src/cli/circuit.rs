@@ -118,6 +118,12 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             };
             return super::circuit_hw::run(*p);
         }
+        CircuitAction::Memory(_) => {
+            let CircuitAction::Memory(m) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_memory::run(*m);
+        }
     };
     let inst = instance(&plan_args.recipe)?;
     let rows = rows_of(&inst, &plan_args)?;
@@ -134,7 +140,10 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             let families = families_for(&inst)?;
             metrale_circuit::render_plan(&inst, &loaded, &avail, mode, rows, &families)?
         }
-        CircuitAction::Diff(_) | CircuitAction::Venn(_) | CircuitAction::Plan(_) => {
+        CircuitAction::Diff(_)
+        | CircuitAction::Venn(_)
+        | CircuitAction::Plan(_)
+        | CircuitAction::Memory(_) => {
             unreachable!("returned above")
         }
         CircuitAction::Display(d) => {

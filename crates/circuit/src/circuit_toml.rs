@@ -227,10 +227,12 @@ impl OutputFile {
     }
 }
 
-/// 2026-09-30: One `[[block.<name>.state]]`: `kind` (`recurrent` | `paged_kv`), `format` (a
-/// dtype or a `{key}` the plan inputs give), `shape` (axes of dim expressions joined by ` x `:
-/// one slot of a recurrent state, one token of a KV side), and for a recurrent state the verify
-/// intermediates it keeps (`h_steps` | `conv_steps`).
+/// 2026-09-30: One `[[block.<name>.state]]`: `kind` (`recurrent` | `paged_kv`, 2026-10-02: or a
+/// cache kind, `crate::state::StateKind`), `format` (a dtype or a `{key}` the plan inputs give),
+/// `shape` (axes of dim expressions joined by ` x `: one slot of a recurrent state, one token of
+/// a KV side, one unit of a cache), and for a recurrent state the verify intermediates it keeps
+/// (`h_steps` | `conv_steps`). 2026-10-02: A snapshot kind names the state of its block it copies
+/// (`of`) instead of a shape, so the copy cannot be sized apart from the original.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StateFile {
@@ -239,8 +241,9 @@ pub(crate) struct StateFile {
     /// 2026-09-30: `sequence` (recurrent) or `model` (a KV pool); see `crate::state::Lifetime`.
     pub lifetime: String,
     pub format: String,
-    pub shape: String,
+    pub shape: Option<String>,
     pub verify: Option<String>,
+    pub of: Option<String>,
 }
 
 #[derive(Deserialize)]

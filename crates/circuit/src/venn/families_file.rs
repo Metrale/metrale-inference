@@ -64,6 +64,8 @@ struct FamilyFile {
     mma: Option<String>,
     #[serde(default)]
     kernel_compute: BTreeMap<String, ComputeFile>,
+    #[serde(default)]
+    workspace: Vec<super::workspace_file::WorkspaceFile>,
 }
 
 #[derive(Deserialize)]
@@ -393,6 +395,7 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         &points,
     )
     .map_err(field)?;
+    let workspace = super::workspace_file::workspaces(f.workspace).map_err(field)?;
     Ok(Family {
         id: f.id,
         description: f.description,
@@ -405,6 +408,7 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         evidence,
         discover,
         compute,
+        workspace,
     })
 }
 

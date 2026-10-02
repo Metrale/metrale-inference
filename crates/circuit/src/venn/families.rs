@@ -244,6 +244,22 @@ pub struct Family {
     pub discover: Vec<Discover>,
     /// 2026-10-02: The compute units it runs on ([`super::compute`]).
     pub compute: FamilyCompute,
+    /// 2026-10-02: Device scratch a launch needs beyond its edges (`crate::memory`).
+    pub workspace: Vec<Workspace>,
+}
+
+/// 2026-10-02: One workspace of a family (`[[family.workspace]]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Workspace {
+    /// 2026-10-02: Name, unique in the family.
+    pub name: String,
+    /// 2026-10-02: Byte expressions over the circuit's dims, `n` (rows), `k` (the node's input
+    /// width) and `sm_count`; the largest is the workspace.
+    pub bytes: Vec<crate::dims::DimExpr>,
+    /// 2026-10-02: Held inside the legacy buffer arena.
+    pub arena: bool,
+    /// 2026-10-02: Where the engine allocates it, and why it has this size.
+    pub why: String,
 }
 
 impl Family {
@@ -380,6 +396,8 @@ mod compute_file;
 mod file;
 #[path = "families_legacy.rs"]
 mod legacy_file;
+#[path = "families_workspace.rs"]
+mod workspace_file;
 
 /// 2026-09-29: Parse the manifest text.
 pub fn parse_families(text: &str) -> Result<Families, FamilyError> {

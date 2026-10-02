@@ -5,7 +5,7 @@
 //!
 //! Owner: metrale-circuit.
 //! Invariants: see [`crate::state`]; a recurrent state names its verify intermediates, a KV
-//! side names none.
+//! side names none, and a cache is touched by no layer node.
 
 use std::collections::BTreeMap;
 
@@ -15,12 +15,14 @@ use crate::ir::Section;
 use crate::state::{Lifetime, StateAccess, StateDecl, StateFormat, StateKind, VerifySteps};
 
 /// 2026-09-30: The declaration `sf` of the block `template` instantiated at `prefix`.
+/// 2026-10-02: `siblings` are the block's declarations, which a snapshot's `of` names.
 pub(crate) fn state_decl(
     template: &str,
     prefix: &str,
     layer: Option<usize>,
     section: Section,
     sf: &StateFile,
+    siblings: &[StateFile],
     dims: &BTreeMap<String, u64>,
 ) -> Result<StateDecl, CircuitError> {
     let err = |detail: String| CircuitError::State {
@@ -28,8 +30,13 @@ pub(crate) fn state_decl(
         state: sf.id.clone(),
         detail,
     };
-    let kind = StateKind::parse(&sf.kind)
-        .ok_or_else(|| err(format!("kind `{}` is not recurrent or paged_kv", sf.kind)))?;
+    let kind = StateKind::parse(&sf.kind).ok_or_else(|| {
+        err(format!(
+            "kind `{}` is not one of {}",
+            sf.kind,
+            StateKind::spellings().join(", ")
+        ))
+    })?;
     let format = StateFormat::parse(&sf.format)
         .ok_or_else(|| err(format!("format `{}` is no dtype or {{key}}", sf.format)))?;
     let verify = match (kind, sf.verify.as_deref()) {
@@ -42,14 +49,17 @@ pub(crate) fn state_decl(
                 "a recurrent state names its verify intermediates".into()
             ));
         }
-        (StateKind::PagedKv, Some(_)) => {
-            return Err(err("a KV side keeps no verify intermediates".into()));
+        (_, Some(_)) => {
+            return Err(err(format!(
+                "a {} state keeps no verify intermediates",
+                kind.name()
+            )));
         }
-        (StateKind::PagedKv, None) => None,
+        (_, None) => None,
     };
     let lifetime = Lifetime::parse(&sf.lifetime).ok_or_else(|| {
         err(format!(
-            "lifetime `{}` is not model, sequence or verify",
+            "lifetime `{}` is not model, sequence, verify or snapshot",
             sf.lifetime
         ))
     })?;
@@ -61,14 +71,37 @@ pub(crate) fn state_decl(
             sf.lifetime
         )));
     }
+    let shape = match (&sf.of, &sf.shape) {
+        (Some(_), _) if !kind.copies_a_state() => {
+            return Err(err(format!(
+                "a {} state copies no state (`of`)",
+                kind.name()
+            )));
+        }
+        (Some(of), None) => {
+            let original = siblings
+                .iter()
+                .find(|s| &s.id == of && s.of.is_none())
+                .ok_or_else(|| err(format!("`of = \"{of}\"` names no state of the block")))?;
+            original
+                .shape
+                .as_deref()
+                .ok_or_else(|| err(format!("`{of}` has no shape")))?
+        }
+        (Some(_), Some(_)) => {
+            return Err(err("a copy takes its shape from `of`, not `shape`".into()));
+        }
+        (None, Some(shape)) => shape.as_str(),
+        (None, None) => return Err(err("a state needs a `shape` (or a copy its `of`)".into())),
+    };
     let mut elements: u64 = 1;
-    for axis in sf.shape.split(" x ") {
+    for axis in shape.split(" x ") {
         let v = DimExpr::parse(axis)
             .and_then(|e| e.eval(dims))
             .map_err(|e| err(e.to_string()))?;
         elements = elements
             .checked_mul(v)
-            .ok_or_else(|| err(format!("shape `{}` overflows", sf.shape)))?;
+            .ok_or_else(|| err(format!("shape `{shape}` overflows")))?;
     }
     Ok(StateDecl {
         id: format!("{prefix}.{}", sf.id),
@@ -167,6 +200,16 @@ pub(super) fn check_state_access(
                     return Err(err(format!(
                         "a KV side is written by exactly one node and read by at least one \
                          (write {write}, read {read}, update {update}, snapshot {snapshot})"
+                    )));
+                }
+            }
+            // 2026-10-02: Caches are moved by state ops and host code, never by a layer node.
+            k => {
+                if update + snapshot + write + read > 0 {
+                    return Err(err(format!(
+                        "a {} cache is touched by no layer node (update {update}, snapshot \
+                         {snapshot}, write {write}, read {read})",
+                        k.name()
                     )));
                 }
             }
