@@ -334,10 +334,18 @@ pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
         config.quantization_config.as_ref(),
         metrale_model_layers::layers::kernel_caps(),
     );
+    // 2026-10-02: `weight_prefix` is set when the weights are opened, after this runs, so a
+    // Qwen3.5/3.6 checkpoint's `model.language_model` names are tried beside the default ones.
     let fp8_projections = (0..config.num_hidden_layers).any(|i| {
-        let lp = config.layer_prefix(i);
-        policy.wants_fp8_weights(&format!("{lp}.self_attn.q_proj"))
-            || policy.wants_fp8_weights(&format!("{lp}.linear_attn.in_proj_qkv"))
+        [
+            config.layer_prefix(i),
+            format!("model.language_model.layers.{i}"),
+        ]
+        .iter()
+        .any(|lp| {
+            policy.wants_fp8_weights(&format!("{lp}.self_attn.q_proj"))
+                || policy.wants_fp8_weights(&format!("{lp}.linear_attn.in_proj_qkv"))
+        })
     });
     publish_row_tiers(resolve_row_tiers(
         args.no_canonical_tiers,

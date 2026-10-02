@@ -23,13 +23,13 @@ pub const W4A16_TC_ROWS_MAX_M: u32 = 64;
 /// 2026-10-02: The kernel module.
 pub const W4A16_TC_ROWS_MODULE: &str = "w4a16_tc_rows";
 
-/// 2026-10-02: The kernel's shape contract, without a GPU: 1..=64 rows, N a positive multiple of
-/// the CTA's columns, K a positive multiple of 256 (whole load groups of every entry point), and
-/// an A pitch that keeps rows 16-byte aligned and covers K; the C pitch covers N.
+/// 2026-10-02: The kernel's shape contract, without a GPU: 1..=64 rows, any positive N (the
+/// entry points are ragged: a partial last CTA loads zero weight rows and stores nothing past N),
+/// K a positive multiple of 256 (whole load groups of every entry point), and an A pitch that
+/// keeps rows 16-byte aligned and covers K; the C pitch covers N.
 pub fn w4a16_tc_rows_shape_ok(m: u32, n: u32, k: u32, lda: u32, ldc: u32) -> bool {
     (1..=W4A16_TC_ROWS_MAX_M).contains(&m)
         && n > 0
-        && n.is_multiple_of(W4A16_TC_ROWS_COLS)
         && k > 0
         && k.is_multiple_of(256)
         && lda >= k
@@ -66,7 +66,7 @@ pub fn w4a16_tc_rows(
     };
     let kernel = gpu.op_cache().kernel(gpu, W4A16_TC_ROWS_MODULE, entry)?;
     KernelLaunch::new(gpu, kernel)
-        .grid([n / W4A16_TC_ROWS_COLS, 1, 1])
+        .grid([n.div_ceil(W4A16_TC_ROWS_COLS), 1, 1])
         .block([128, 1, 1])
         .arg_ptr(input)
         .arg_ptr(weight.weight)
@@ -97,9 +97,9 @@ mod tests {
                 && ROWS.contains("#define TR_COLS (TR_WARPS * 16)\n")
         );
         assert_eq!(W4A16_TC_ROWS_COLS, 4 * 16);
-        assert!(
-            CU.contains("tr_block<Nvfp4G16, 8, 1>(A, {packed, scale, s2}, C, M, N, K, lda, ldc);")
-        );
+        assert!(CU.contains(
+            "tr_block<Nvfp4G16, 8, 1, true>(A, {packed, scale, s2}, C, M, N, K, lda, ldc);"
+        ));
         assert_eq!(W4A16_TC_ROWS_MAX_M, 8 * 8);
         for entry in [
             "w4a16_tc_rows_16(",
@@ -117,7 +117,8 @@ mod tests {
         assert!(w4a16_tc_rows_shape_ok(64, 248320, 2048, 2048, 248320));
         assert!(!w4a16_tc_rows_shape_ok(0, 248320, 2048, 2048, 248320));
         assert!(!w4a16_tc_rows_shape_ok(65, 248320, 2048, 2048, 248320));
-        assert!(!w4a16_tc_rows_shape_ok(8, 248320 + 16, 2048, 2048, 248336));
+        // 2026-10-02: Ragged N: the checkpoint's 248070-entry vocab.
+        assert!(w4a16_tc_rows_shape_ok(8, 248070, 2048, 2048, 248070));
         assert!(!w4a16_tc_rows_shape_ok(8, 248320, 2048 + 128, 2176, 248320));
         assert!(!w4a16_tc_rows_shape_ok(8, 248320, 2048, 2044, 248320));
         assert!(!w4a16_tc_rows_shape_ok(8, 248320, 2048, 2048, 248319));

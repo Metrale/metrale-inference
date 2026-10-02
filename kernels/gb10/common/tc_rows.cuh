@@ -9,8 +9,8 @@
 // Invariants:
 // - A [M, lda] BF16 (the first K of each row read), C [M, ldc] BF16 (the first N of each row
 //   written); the host guarantees 1 <= M <= 8 * NT, N a positive multiple of TR_COLS (and of
-//   128 for FP8), K a positive multiple of P::CHUNK_K * G, lda a multiple of 8 and >= K,
-//   ldc >= N.
+//   128 for FP8) unless RAGGED (any N; grid ceil(N / TR_COLS)), K a positive multiple of
+//   P::CHUNK_K * G, lda a multiple of 8 and >= K, ldc >= N.
 // - Activations are staged per load group in shared memory times P::ACT_LIFT; a row's sum
 //   order is fixed by K alone and its MMA column reads only its own activations, so a row's
 //   output bits do not depend on M, on the other rows, on NT or on G.
@@ -38,7 +38,7 @@ __device__ __forceinline__ void tr_mma_bf16(float* c, const unsigned int* a, uns
 // lane runs), one group ahead; each group's activations are loaded one group ahead into
 // registers and stored (times P::ACT_LIFT) into the other shared buffer after the current
 // group's MMAs. G changes only how loads are batched, never the arithmetic.
-template <class P, int NT, int G>
+template <class P, int NT, int G, bool RAGGED = false>
 __device__ __forceinline__ void tr_block(
     const __nv_bfloat16* __restrict__ A, const typename P::Mat& W, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc,
@@ -91,6 +91,10 @@ __device__ __forceinline__ void tr_block(
     };
 
     const typename P::Tile T = P::tile(W, f0, g, t, K);
+    // 2026-10-02: RAGGED: N need not be a multiple of TR_COLS; weight rows at or past N load as
+    // zero and their columns are not stored.
+#define wload(h, chunk) ((RAGGED && f0 + g + 8 * (h) >= N) ? make_uint4(0u, 0u, 0u, 0u) : P::load(T, (h), (chunk)))
+#define sload(h, chunk) ((RAGGED && f0 + g + 8 * (h) >= N) ? typename P::Sc{} : P::scale(T, (h), (chunk)))
     float acc[NT][4], tmp[NT][4];
     #pragma unroll
     for (int n = 0; n < NT; n++)
@@ -103,8 +107,8 @@ __device__ __forceinline__ void tr_block(
     typename P::Sc sn[G][2];
     #pragma unroll
     for (int c = 0; c < G; c++) {
-        wn[c][0] = P::load(T, 0, c); wn[c][1] = P::load(T, 1, c);
-        sn[c][0] = P::scale(T, 0, c); sn[c][1] = P::scale(T, 1, c);
+        wn[c][0] = wload(0, c); wn[c][1] = wload(1, c);
+        sn[c][0] = sload(0, c); sn[c][1] = sload(1, c);
     }
     __syncthreads();
     for (unsigned int gi = 0; gi < ngroups; gi++) {
@@ -116,10 +120,10 @@ __device__ __forceinline__ void tr_block(
         if (gi + 1 < ngroups) {
             #pragma unroll
             for (int c = 0; c < G; c++) {
-                wn[c][0] = P::load(T, 0, (gi + 1) * G + c);
-                wn[c][1] = P::load(T, 1, (gi + 1) * G + c);
-                sn[c][0] = P::scale(T, 0, (gi + 1) * G + c);
-                sn[c][1] = P::scale(T, 1, (gi + 1) * G + c);
+                wn[c][0] = wload(0, (gi + 1) * G + c);
+                wn[c][1] = wload(1, (gi + 1) * G + c);
+                sn[c][0] = sload(0, (gi + 1) * G + c);
+                sn[c][1] = sload(1, (gi + 1) * G + c);
             }
             group_load(gi + 1);
         }
@@ -163,7 +167,10 @@ __device__ __forceinline__ void tr_block(
         #pragma unroll
         for (int e = 0; e < 4; e++) {
             const unsigned int r = n * 8 + 2 * t + (e & 1);
-            if (r < M) C[(unsigned long long)r * ldc + f0 + g + ((e >> 1) ? 8 : 0)] = __float2bfloat16(P::out(T, acc[n][e]));
+            const unsigned int col = f0 + g + ((e >> 1) ? 8 : 0);
+            if (r < M && (!RAGGED || col < N)) C[(unsigned long long)r * ldc + col] = __float2bfloat16(P::out(T, acc[n][e]));
         }
     }
 }
+#undef wload
+#undef sload

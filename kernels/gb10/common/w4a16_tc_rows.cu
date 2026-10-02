@@ -12,12 +12,13 @@
 // Owner: gb10 kernels.
 // Invariants:
 // - W: packed E2M1 [N, K / 2] (element 2j in the low nibble of byte j), E4M3 scales [N, K / 16],
-//   FP32 s2. The host guarantees 1 <= M <= 8 * NT, N a positive multiple of TR_COLS, K a positive
-//   multiple of 256, lda a multiple of 8 and >= K, ldc >= N.
+//   FP32 s2. The host guarantees 1 <= M <= 8 * NT, N > 0 (any: the ragged tail loads zero weight
+//   rows and stores nothing past N; a 248070-row vocab is not a multiple of 64), K a positive
+//   multiple of 256, lda a multiple of 8 and >= K, ldc >= N. Grid (ceil(N / TR_COLS), 1, 1).
 // - A row's output bits do not depend on M, on the other rows, or on the entry point.
 // - Each entry point keeps the shared-memory footprint of its FP8 twin: a group spans the same
 //   K (G halves, CHUNK_K doubles).
-// - Grid (N / TR_COLS, 1, 1), block TR_THREADS, static shared memory only.
+// - Block TR_THREADS, static shared memory only.
 
 #include "tc_rows.cuh"
 
@@ -27,7 +28,7 @@ extern "C" __global__ void __launch_bounds__(TR_THREADS) w4a16_tc_rows_16(
     const unsigned char* __restrict__ scale, float s2, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
 ) {
-    tr_block<Nvfp4G16, 2, 2>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
+    tr_block<Nvfp4G16, 2, 2, true>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
 }
 
 // 2026-10-02: 1..=32 rows.
@@ -36,7 +37,7 @@ extern "C" __global__ void __launch_bounds__(TR_THREADS) w4a16_tc_rows_32(
     const unsigned char* __restrict__ scale, float s2, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
 ) {
-    tr_block<Nvfp4G16, 4, 1>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
+    tr_block<Nvfp4G16, 4, 1, true>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
 }
 
 // 2026-10-02: 1..=64 rows.
@@ -45,5 +46,5 @@ extern "C" __global__ void __launch_bounds__(TR_THREADS) w4a16_tc_rows_64(
     const unsigned char* __restrict__ scale, float s2, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc
 ) {
-    tr_block<Nvfp4G16, 8, 1>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
+    tr_block<Nvfp4G16, 8, 1, true>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
 }
