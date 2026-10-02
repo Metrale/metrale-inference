@@ -121,6 +121,11 @@ impl MtpHead {
         };
         let mut moe = MoeLayer::new(moe_weights, config.num_experts, None, gpu, config)?;
         moe.set_draft_nvfp4_experts()?;
+        tracing::info!(
+            "--mtp-experts-nvfp4: the MTP head's {} routed experts and shared expert draft as NVFP4 \
+             (requantized from BF16, draft-only); router BF16",
+            weights.experts.len()
+        );
         Ok(moe)
     }
 }
