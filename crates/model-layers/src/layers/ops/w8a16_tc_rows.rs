@@ -165,7 +165,9 @@ mod tests {
         ));
         // 2026-09-30: The chunked entry runs the 64-row body per chunk of `W8A16_TC_ROWS_MAX_M`.
         assert!(CU.contains("const unsigned int chunks = (M + 63) / 64;"));
-        assert!(CU.contains("tr_block<Fp8Block128, 8, 2>(A + (unsigned long long)chunk * 64 * lda"));
+        assert!(
+            CU.contains("tr_block<Fp8Block128, 8, 2>(A + (unsigned long long)chunk * 64 * lda")
+        );
         assert_eq!(W8A16_TC_ROWS_MAX_M, 8 * 8);
         for entry in [
             "w8a16_tc_rows_16(",

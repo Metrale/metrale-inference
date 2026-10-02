@@ -1474,6 +1474,13 @@ mma = "mma.sync.m16n8k16.bf16"
 kernel_compute."moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3" = { compute = "memory" }
 kernel_compute."moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8_grouped_tc_w8a8" = { compute = "tensor_core", mma = "mma.sync.m16n8k32.e4m3" }
 kernel_compute."moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8" = { compute = "tensor_core", mma = "mma.sync.m16n8k32.e4m3" }
+# 2026-10-02: The W8A16 gate+up kernels of every weight format share one SiLU epilogue
+# (moe_grouped_tc.cuh): gate and up rounded to BF16, the FP32 product stored as the BF16 hi + lo
+# pair. Stated per kernel, because the W8A8 point's quantizing epilogue also matches
+# `epilogue = silu_mul` and points alone cannot tell the two apart for a SiLU node.
+kernel_pipeline."moe_fp8_grouped_tc::moe_expert_gate_up_act_fp8_grouped_tc".silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
+kernel_pipeline."moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc".silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
+kernel_pipeline."moe_bf16_grouped_tc::moe_expert_gate_up_act_bf16_grouped_tc".silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 kernels = [
   "moe_fp8_grouped_tc::moe_expert_gate_up_act_fp8_grouped_tc",
   "moe_fp8_grouped_tc::moe_expert_down_act_fp8_grouped_tc",
@@ -1531,7 +1538,7 @@ pipeline."linear:shared_gate_up" = { in = ["fp8/g128"], act = "fp8/g128", weight
 pipeline."linear:shared_down" = { in = ["fp8/g128"], act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline.silu_mul = { in = ["bf16"], compute = "f32", out = ["fp8/g128"] }
 [[family.point]]
-values = { weight = "nvfp4/g16", activation = "bf16", epilogue = "silu_mul", down_input = "f32" }
+values = { weight = "nvfp4/g16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16" }
 how = "instantiation"
 files = ["kernels/gb10/common/moe_grouped_tc.cuh", "kernels/gb10/common/moe_nvfp4_grouped_tc.cu"]
 # 2026-10-02: The NVFP4 g16 point (the checkpoint's own experts under `declared`): an E2M1 nibble
@@ -1543,7 +1550,7 @@ pipeline.expert_down = { in = ["bf16", "i32"], act = "bf16", weight = "nvfp4/g16
 pipeline."linear:shared_gate_up" = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."linear:shared_down" = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 [[family.point]]
-values = { weight = "bf16", activation = "bf16", epilogue = "silu_mul", down_input = "f32" }
+values = { weight = "bf16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16" }
 how = "instantiation"
 files = ["kernels/gb10/common/moe_grouped_tc.cuh", "kernels/gb10/common/moe_bf16_grouped_tc.cu"]
 # 2026-10-02: The BF16 point (an MTP head excluded from quantization, run grouped in the batched
@@ -1580,6 +1587,12 @@ kernels = [
   "w4a16_tc_rows::w4a16_tc_rows_64",
 ]
 rows = [1, 64]
+# 2026-10-02: The FP8 point's pipeline (the NVFP4 point overrides it below): an E4M3 byte becomes
+# BF16 E4M3 * 2^-120 exactly, activations are staged times 2^60 (exact), each 128-K block's FP32
+# partial sum is scaled by its block scale * 2^60 (tc_weight_formats.cuh Fp8Block128); C is
+# written BF16 (tc_rows.cuh:171). The FP8 point serves no head.
+pipeline.linear = { in = ["bf16"], act = "bf16", weight = "fp8/block128x128->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline.lm_head = "uninstantiated"
 op = [{ op = "linear" }, { op = "lm_head" }]
 [[family.param]]
 name = "weight"
@@ -1589,11 +1602,6 @@ from = { linear = "weight", lm_head = "weight" }
 values = { weight = "fp8/block128x128" }
 how = "instantiation"
 files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w8a16_tc_rows.cu"]
-# 2026-10-02: An E4M3 byte becomes BF16 E4M3 * 2^-120 exactly, activations are staged times 2^60
-# (exact), each 128-K block's FP32 partial sum is scaled by its block scale * 2^60
-# (tc_weight_formats.cuh Fp8Block128); C is written BF16 (tc_rows.cuh:171). Not used as a head.
-pipeline.linear = { in = ["bf16"], act = "bf16", weight = "fp8/block128x128->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
-pipeline.lm_head = "uninstantiated"
 [[family.point]]
 values = { weight = "nvfp4/g16" }
 how = "instantiation"

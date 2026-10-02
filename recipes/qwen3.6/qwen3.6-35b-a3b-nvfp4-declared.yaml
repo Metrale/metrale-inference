@@ -22,6 +22,10 @@ metadata:
   kv_dtype: bf16
 
 defaults:
+  # The --activation-quantization routing this recipe was measured under: the engine default,
+  # each projection picking its activation precision by row count (the row-invariant modes are
+  # opt-in until evaluated).
+  activation_quantization: adaptive
   # The checkpoint's own precision per layer (no requantization).
   weight_quantization: declared
   port: 8888

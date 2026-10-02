@@ -98,7 +98,7 @@ mod tests {
         );
         assert_eq!(W4A16_TC_ROWS_COLS, 4 * 16);
         assert!(CU.contains(
-            "tr_block<Nvfp4G16, 8, 1, true>(A, {packed, scale, s2}, C, M, N, K, lda, ldc);"
+            "tr_block<Nvfp4G16, 8, 1, true>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);"
         ));
         assert_eq!(W4A16_TC_ROWS_MAX_M, 8 * 8);
         for entry in [

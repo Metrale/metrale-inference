@@ -71,7 +71,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | # | Phase | Target op | Comparison kernel | Class | Parameter(s) differing | Runtime / compile-time / policy | Est. step share | Evidence at target point | Decision |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | decode | `mamba.in_proj` ×23 (`linear:mamba_in`, W fp8/tensor, A fp8/tensor) | tc_rows: instantiation in `tc_rows.cuh` +1; no compared model runs this op on it here | Policy variant | weight fp8/tensor vs fp8/block128x128 | policy | 25.1% (2560.5 µs) | none | policy template on weight (or split + bit_identical fusion rule); also wxay: Policy variant (activation, weight) |
-| 2 | decode | `moe.experts_down` ×23 (`expert_down`, W nvfp4/g16, A bf16) | moe_relu2_down_1row: instantiation in `moe_expert_relu2_down_shared.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 15.3% (1560.3 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
+| 2 | decode | `moe.experts_down` ×23 (`expert_down`, W nvfp4/g16, A bf16) | moe_grouped_tc: instantiation in `moe_grouped_tc.cuh` +1; no compared model runs this op on it here | Shared, unmeasured | none | - | 15.3% (1560.3 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (down_input) |
 | 3 | decode | `moe.experts_up` ×23 (`expert_gate_up`, W nvfp4/g16, A bf16) | moe_nvfp4_gemv_1row: instantiation in `moe_expert_gemv.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 15.3% (1557.8 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (epilogue); also moe_nvfp4_grouped: Policy variant (epilogue) |
 | 4 | decode | `mamba.out_proj` ×23 (`linear:mamba_out`, W fp8/tensor, A fp8/tensor) | tc_rows: instantiation in `tc_rows.cuh` +1; no compared model runs this op on it here | Policy variant | weight fp8/tensor vs fp8/block128x128 | policy | 10.0% (1017.9 µs) | none | policy template on weight (or split + bit_identical fusion rule); also wxay: Policy variant (activation, weight) |
 | 5 | decode | `head.lm_head` ×1 (`lm_head`, W nvfp4/g16, A bf16) | w4a16_gemv: instantiation in `w4a16_gemv.cu` +1; no compared model runs this op on it here | Shared | none | - | 7.8% (797.0 µs) | `qwen3.6-35b-a3b::w4a16_gemv_sw @ decode C=1 (R=2, MTP k=1)` (98.7% of floor); `qwen3.8-27b::w4a16_gemv_sw @ decode C=1 (R=4, MTP k=3)` (96.4% of floor) | reuse (optimized at this point); also wxay: Policy variant (activation, weight) |
@@ -110,7 +110,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 
 | # | Phase | Target op | Comparison kernel | Class | Parameter(s) differing | Runtime / compile-time / policy | Est. step share | Evidence at target point | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | multi_seq | `moe.experts_down` ×23 (`expert_down`, W nvfp4/g16, A bf16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 35.8% (17869.1 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
+| 1 | multi_seq | `moe.experts_down` ×23 (`expert_down`, W nvfp4/g16, A bf16) | moe_grouped_tc: instantiation in `moe_grouped_tc.cuh` +1; no compared model runs this op on it here | Shared, unmeasured | none | - | 35.8% (17869.1 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (down_input) |
 | 2 | multi_seq | `moe.experts_up` ×23 (`expert_gate_up`, W nvfp4/g16, A bf16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 35.8% (17829.3 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (epilogue); also moe_nvfp4_grouped: Policy variant (epilogue) |
 | 3 | multi_seq | `mamba.ssm` ×23 (`ssm_update`, in bf16) | mamba2_ssm: instantiation in `mamba2_ssm_decode.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 12.5% (6229.3 µs) | none | reuse, then microbench at this point |
 | 4 | multi_seq | `mamba.in_proj` ×23 (`linear:mamba_in`, W fp8/tensor, A fp8/tensor) | tc_rows: instantiation in `tc_rows.cuh` +1; no compared model runs this op on it here | Policy variant | weight fp8/tensor vs fp8/block128x128 | policy | 5.2% (2592.8 µs) | none | policy template on weight (or split + bit_identical fusion rule); also wxay: Policy variant (activation, weight) |
@@ -151,7 +151,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | # | Phase | Target op | Comparison kernel | Class | Parameter(s) differing | Runtime / compile-time / policy | Est. step share | Evidence at target point | Decision |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | multi_seq | `mamba.ssm` ×23 (`ssm_update`, in bf16) | mamba2_ssm: instantiation in `mamba2_ssm_decode.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 37.1% (49834.1 µs) | none | reuse, then microbench at this point |
-| 2 | multi_seq | `moe.experts_down` ×23 (`expert_down`, W nvfp4/g16, A bf16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 25.1% (33753.3 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input) |
+| 2 | multi_seq | `moe.experts_down` ×23 (`expert_down`, W nvfp4/g16, A bf16) | moe_grouped_tc: instantiation in `moe_grouped_tc.cuh` +1; no compared model runs this op on it here | Shared, unmeasured | none | - | 25.1% (33753.3 µs) | none | reuse, then microbench at this point |
 | 3 | multi_seq | `moe.experts_up` ×23 (`expert_gate_up`, W nvfp4/g16, A bf16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 24.9% (33435.5 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (epilogue) |
 | 4 | multi_seq | `attn.attend` ×6 (`paged_attention`, in bf16) | paged_decode_attn: `paged_decode::paged_decode_attn` (qwen3.6-35b-a3b-fp8-bf16head `l3.attn.attend`) | Param. opportunity | head_dim 128 vs 256; kv_dtype fp8 vs bf16 | compile-time; policy | 4.9% (6522.0 µs) | none | template on head_dim + policy kv_dtype; stability gate at existing points; the target point exists only as a file copy |
 | 5 | multi_seq | `mamba.in_proj` ×23 (`linear:mamba_in`, W fp8/tensor, A fp8/tensor) | wxay: instantiation in `w8a8_gemv.cu`; no compared model runs this op on it here | Policy variant | activation fp8/tensor vs fp8/token; weight fp8/tensor vs fp8/channel | policy; policy | 2.1% (2833.8 µs) | none | policy template on activation, weight (or split + bit_identical fusion rule) |
@@ -190,7 +190,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 
 | # | Phase | Target op | Comparison kernel | Class | Parameter(s) differing | Runtime / compile-time / policy | Est. step share | Evidence at target point | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | verify | `moe.experts_down` ×23 (`expert_down`, W nvfp4/g16, A bf16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 23.1% (3047.7 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
+| 1 | verify | `moe.experts_down` ×23 (`expert_down`, W nvfp4/g16, A bf16) | moe_grouped_tc: instantiation in `moe_grouped_tc.cuh` +1; no compared model runs this op on it here | Shared, unmeasured | none | - | 23.1% (3047.7 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (down_input) |
 | 2 | verify | `moe.experts_up` ×23 (`expert_gate_up`, W nvfp4/g16, A bf16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 23.1% (3042.8 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (epilogue); also moe_nvfp4_grouped: Policy variant (epilogue) |
 | 3 | verify | `mamba.in_proj` ×23 (`linear:mamba_in`, W fp8/tensor, A fp8/tensor) | tc_rows: instantiation in `tc_rows.cuh` +1; no compared model runs this op on it here | Policy variant | weight fp8/tensor vs fp8/block128x128 | policy | 19.4% (2562.7 µs) | none | policy template on weight (or split + bit_identical fusion rule); also wxay: Policy variant (activation, weight) |
 | 4 | verify | `mamba.out_proj` ×23 (`linear:mamba_out`, W fp8/tensor, A fp8/tensor) | tc_rows: instantiation in `tc_rows.cuh` +1; no compared model runs this op on it here | Policy variant | weight fp8/tensor vs fp8/block128x128 | policy | 7.7% (1018.7 µs) | none | policy template on weight (or split + bit_identical fusion rule); also wxay: Policy variant (activation, weight) |
@@ -231,7 +231,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | # | Phase | Target op | Comparison kernel | Class | Parameter(s) differing | Runtime / compile-time / policy | Est. step share | Evidence at target point | Decision |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | draft | `draft.mtp_out.lm_head` ×1 (`lm_head`, W nvfp4/g16, A bf16) | w4a16_gemv: `w4a16_gemv::w4a16_gemv_sw` (qwen3.6-35b-a3b-fp8-bf16head `draft.mtp_out.lm_head`) | Shared | none | - | 45.4% (797.0 µs) | `qwen3.6-35b-a3b::w4a16_gemv_sw @ decode C=1 (R=2, MTP k=1)` (98.7% of floor); `qwen3.8-27b::w4a16_gemv_sw @ decode C=1 (R=4, MTP k=3)` (96.4% of floor) | reuse (optimized at this point); also wxay: Policy variant (activation, weight) |
-| 2 | draft | `draft.moe.experts_down` ×1 (`expert_down`, W bf16, A bf16) | moe_bf16_1row: instantiation in `moe_shared_expert_fused_bf16.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 13.7% (240.6 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input) |
+| 2 | draft | `draft.moe.experts_down` ×1 (`expert_down`, W bf16, A bf16) | moe_bf16_1row: instantiation in `moe_shared_expert_fused_bf16.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 13.7% (240.6 µs) | none | reuse, then microbench at this point |
 | 3 | draft | `draft.moe.experts_up` ×1 (`expert_gate_up`, W bf16, A bf16) | moe_bf16_1row: instantiation in `moe_shared_expert_fused_bf16.cu`; no compared model runs this op on it here | Policy variant | epilogue relu2 vs silu_mul | policy | 13.7% (240.5 µs) | none | policy template on epilogue (or split + bit_identical fusion rule); also moe_grouped_tc: Policy variant (epilogue) |
 | 4 | draft | `draft.mtp_in.fc` ×1 (`linear:mtp_fc`, W bf16, A bf16) | dense_bf16: `gemv::dense_gemv_bf16` (qwen3.6-35b-a3b-fp8-bf16head `draft.mtp_in.fc`) | Shared | none | - | 6.6% (116.1 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 5 | draft | `draft.attn.o` ×1 (`linear:o`, W bf16, A bf16) | dense_bf16: `gemv::dense_gemv_bf16` (qwen3.6-35b-a3b-fp8-bf16head `draft.mtp_in.fc`) | Shared | none | - | 5.0% (88.5 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
@@ -263,24 +263,23 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | # | Family | Change | Class | Sites | Max est. share |
 |---|---|---|---|---|---|
 | 1 | wxay | activation bf16 (have fp8/token), weight nvfp4/g16 (have fp8/channel) | Policy variant | `draft.mtp_out.lm_head`, `head.lm_head`, `moe.shared_down`, `moe.shared_up` | 45.4% (draft n=1) |
-| 2 | moe_grouped_tc | down_input bf16 (have f32) | Policy variant | `draft.moe.experts_down`, `moe.experts_down` | 35.8% (multi_seq n=16) |
-| 3 | moe_nvfp4_grouped | down_input bf16 (have f32) | Policy variant | `moe.experts_down` | 35.8% (multi_seq n=16) |
-| 4 | moe_grouped_tc | epilogue relu2 (have silu_mul) | Policy variant | `draft.moe.experts_act`, `draft.moe.experts_up`, `draft.moe.shared_act`, `moe.experts_act`, `moe.experts_up`, `moe.shared_act` | 35.8% (multi_seq n=16) |
-| 5 | moe_nvfp4_grouped | epilogue relu2 (have silu_mul) | Policy variant | `draft.moe.experts_act`, `draft.moe.shared_act`, `moe.experts_act`, `moe.experts_up`, `moe.shared_act` | 35.8% (multi_seq n=16) |
-| 6 | tc_rows | weight fp8/tensor (have fp8/block128x128) | Policy variant | `mamba.in_proj`, `mamba.out_proj` | 25.1% (decode n=1) |
-| 7 | wxay | activation fp8/tensor (have fp8/token), weight fp8/tensor (have fp8/channel) | Policy variant | `mamba.in_proj`, `mamba.out_proj` | 25.1% (decode n=1) |
-| 8 | moe_bf16_1row | epilogue relu2 (have silu_mul) | Policy variant | `draft.moe.experts_act`, `draft.moe.experts_up`, `draft.moe.shared_act`, `moe.experts_act`, `moe.shared_act` | 13.7% (draft n=1) |
-| 9 | tc_rows | weight bf16 (have fp8/block128x128) | Policy variant | `attn.k`, `attn.o`, `attn.q`, `attn.v`, `draft.attn.k`, `draft.attn.o`, `draft.attn.q`, `draft.attn.v`, `draft.moe.shared_down`, `draft.moe.shared_up`, `draft.mtp_in.fc` | 6.6% (draft n=1) |
-| 10 | wxay | activation bf16 (have fp8/token), weight bf16 (have fp8/channel) | Policy variant | `attn.k`, `attn.o`, `attn.q`, `attn.v`, `draft.attn.k`, `draft.attn.o`, `draft.attn.q`, `draft.attn.v`, `draft.moe.shared_down`, `draft.moe.shared_up`, `draft.mtp_in.fc` | 6.6% (draft n=1) |
-| 11 | paged_decode_attn | head_dim 128 (have 256), kv_dtype fp8 (have bf16) | Param. opportunity | `attn.attend`, `draft.attn.attend` | 4.9% (multi_seq n=128) |
-| 12 | moe_blend | shared_gate none (have sigmoid) | Policy variant | `draft.moe.blend`, `moe.blend` | 0.4% (multi_seq n=128) |
-| 13 | gated_rms_norm | norm_order gate_first (have norm_first) | Policy variant | `mamba.out_norm` | 0.2% (multi_seq n=128) |
-| 14 | w8a8_act_quant | format fp8/tensor (have fp8/token) | Policy variant | `mamba.in_proj_quant`, `mamba.out_proj_quant` | 0.1% (multi_seq n=128) |
-| 15 | rms_norm | weight_form plain (have one_plus) | Policy variant | `attn.norm`, `draft.attn.norm`, `draft.moe.norm`, `draft.mtp_in.embed_norm`, `draft.mtp_in.hidden_norm`, `draft.mtp_out.final_norm`, `head.final_norm`, `mamba.norm`, `moe.norm` | 0.1% (multi_seq n=128) |
-| 16 | rms_norm_act_quant | weight_form plain (have one_plus) | Policy variant | `mamba.norm` | 0.1% (multi_seq n=128) |
-| 17 | rms_norm_act_quant | format fp8/tensor (have fp8/token) | Policy variant | `mamba.in_proj_quant` | 0.1% (multi_seq n=128) |
-| 18 | moe_topk | scoring sigmoid_bias (have softmax) | Policy variant | `draft.moe.top_k`, `moe.top_k` | 0.0% (multi_seq n=128) |
-| 19 | kv_write | kv_dtype fp8 (have bf16) | Policy variant | `attn.kv_write`, `draft.attn.kv_write` | 0.0% (multi_seq n=128) |
+| 2 | moe_nvfp4_grouped | down_input bf16 (have f32) | Policy variant | `moe.experts_down` | 35.8% (multi_seq n=16) |
+| 3 | moe_grouped_tc | epilogue relu2 (have silu_mul) | Policy variant | `draft.moe.experts_act`, `draft.moe.experts_up`, `draft.moe.shared_act`, `moe.experts_act`, `moe.experts_up`, `moe.shared_act` | 35.8% (multi_seq n=16) |
+| 4 | moe_nvfp4_grouped | epilogue relu2 (have silu_mul) | Policy variant | `draft.moe.experts_act`, `draft.moe.shared_act`, `moe.experts_act`, `moe.experts_up`, `moe.shared_act` | 35.8% (multi_seq n=16) |
+| 5 | tc_rows | weight fp8/tensor (have fp8/block128x128) | Policy variant | `mamba.in_proj`, `mamba.out_proj` | 25.1% (decode n=1) |
+| 6 | wxay | activation fp8/tensor (have fp8/token), weight fp8/tensor (have fp8/channel) | Policy variant | `mamba.in_proj`, `mamba.out_proj` | 25.1% (decode n=1) |
+| 7 | moe_bf16_1row | epilogue relu2 (have silu_mul) | Policy variant | `draft.moe.experts_act`, `draft.moe.experts_up`, `draft.moe.shared_act`, `moe.experts_act`, `moe.shared_act` | 13.7% (draft n=1) |
+| 8 | tc_rows | weight bf16 (have fp8/block128x128) | Policy variant | `attn.k`, `attn.o`, `attn.q`, `attn.v`, `draft.attn.k`, `draft.attn.o`, `draft.attn.q`, `draft.attn.v`, `draft.moe.shared_down`, `draft.moe.shared_up`, `draft.mtp_in.fc` | 6.6% (draft n=1) |
+| 9 | wxay | activation bf16 (have fp8/token), weight bf16 (have fp8/channel) | Policy variant | `attn.k`, `attn.o`, `attn.q`, `attn.v`, `draft.attn.k`, `draft.attn.o`, `draft.attn.q`, `draft.attn.v`, `draft.moe.shared_down`, `draft.moe.shared_up`, `draft.mtp_in.fc` | 6.6% (draft n=1) |
+| 10 | paged_decode_attn | head_dim 128 (have 256), kv_dtype fp8 (have bf16) | Param. opportunity | `attn.attend`, `draft.attn.attend` | 4.9% (multi_seq n=128) |
+| 11 | moe_blend | shared_gate none (have sigmoid) | Policy variant | `draft.moe.blend`, `moe.blend` | 0.4% (multi_seq n=128) |
+| 12 | gated_rms_norm | norm_order gate_first (have norm_first) | Policy variant | `mamba.out_norm` | 0.2% (multi_seq n=128) |
+| 13 | w8a8_act_quant | format fp8/tensor (have fp8/token) | Policy variant | `mamba.in_proj_quant`, `mamba.out_proj_quant` | 0.1% (multi_seq n=128) |
+| 14 | rms_norm | weight_form plain (have one_plus) | Policy variant | `attn.norm`, `draft.attn.norm`, `draft.moe.norm`, `draft.mtp_in.embed_norm`, `draft.mtp_in.hidden_norm`, `draft.mtp_out.final_norm`, `head.final_norm`, `mamba.norm`, `moe.norm` | 0.1% (multi_seq n=128) |
+| 15 | rms_norm_act_quant | weight_form plain (have one_plus) | Policy variant | `mamba.norm` | 0.1% (multi_seq n=128) |
+| 16 | rms_norm_act_quant | format fp8/tensor (have fp8/token) | Policy variant | `mamba.in_proj_quant` | 0.1% (multi_seq n=128) |
+| 17 | moe_topk | scoring sigmoid_bias (have softmax) | Policy variant | `draft.moe.top_k`, `moe.top_k` | 0.0% (multi_seq n=128) |
+| 18 | kv_write | kv_dtype fp8 (have bf16) | Policy variant | `attn.kv_write`, `draft.attn.kv_write` | 0.0% (multi_seq n=128) |
 
 ## Novel kernels (build, prove, then microbench against the roofline)
 
@@ -294,8 +293,8 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | # | Family | Point | Sites | Max est. share |
 |---|---|---|---|---|
 | 1 | mamba2_ssm | - | `mamba.ssm` | 37.1% (multi_seq n=128) |
-| 2 | moe_w4a16_grouped_gemm | - | `moe.experts_down`, `moe.experts_up` | 35.8% (multi_seq n=16) |
-| 3 | moe_relu2_down_1row | - | `moe.experts_down` | 15.3% (decode n=1) |
+| 2 | moe_grouped_tc | down_input=bf16 weight=nvfp4/g16 | `moe.experts_down` | 35.8% (multi_seq n=16) |
+| 3 | moe_w4a16_grouped_gemm | - | `moe.experts_up` | 35.8% (multi_seq n=16) |
 | 4 | moe_nvfp4_gemv_1row | - | `moe.experts_up` | 15.3% (decode n=1) |
 | 5 | moe_bf16_1row | - | `draft.moe.experts_down` | 13.7% (draft n=1) |
 | 6 | w4a16_gemm | - | `head.lm_head`, `moe.shared_down`, `moe.shared_up` | 0.7% (multi_seq n=128) |
