@@ -1438,7 +1438,7 @@ rows = [1, 64]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 100
-cite = "ml/moe/forward_nvfp4_grouped_decode.rs (nvfp4_grouped_decode_ok: declared_nvfp4_experts; forward.rs:33-37 one row, multi_seq/ffn.rs:106 and qwen3_ssm/trait_decode_multi_seq.rs:144 many); k/moe_grouped_tc.cuh with k/tc_weight_formats.cuh Nvfp4G16 (writes the SiLU product as BF16 hi + lo)"
+cite = "ml/moe/forward_nvfp4_grouped_decode.rs:143-220 (admits m = 1..=256 when declared_experts), :379-397; ml/moe/forward.rs:33-37 (one row); ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:106-123, ml/qwen3_ssm/trait_decode_multi_seq.rs:144-146, ml/qwen3_ssm/trait_decode_batched.rs:308-312 (many rows); k/tc_weight_formats.cuh:101-140 (Nvfp4G16: BF16(E2M1 x E4M3) exact, s2 once)"
 
 [[rule]]
 id = "moe_down_act_grouped_nvfp4_tc"
@@ -1453,7 +1453,7 @@ rows = [1, 64]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 100
-cite = "ml/moe/forward_nvfp4_grouped_decode.rs (the NVFP4 down launch with nvfp4_shared_rows = n)"
+cite = "ml/moe/forward_nvfp4_grouped_decode.rs:422-440 (the shared expert's rows in the same launch)"
 
 # 2026-10-02: Above 64 rows the grouped router, top-k and blend rules stop (the FP8 MoE takes its
 # prefill-shaped group there), but the declared NVFP4 decode keeps its grouped path to 256 rows:
@@ -1486,7 +1486,7 @@ rows = [65, 256]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 100
-cite = "ml/moe/forward_nvfp4_grouped_decode.rs (forward_nvfp4_grouped_decode: grouped_route PerRow, moe_fp8_grouped_sort, the two NVFP4 expert launches, moe_weighted_sum_blend_fp8_grouped; NVFP4_GROUPED_DECODE_TC_MAX_ROWS = 256)"
+cite = "ml/moe/forward_nvfp4_grouped_decode.rs:270-310 (per-row router and moe_fp8_grouped_sort), :379-440 (the two expert launches), :442-458 (the grouped blend); NVFP4_GROUPED_DECODE_TC_MAX_ROWS, :32"
 
 [[rule]]
 id = "moe_blend_grouped"
@@ -1556,7 +1556,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { lm_head_dtype = "nvfp4" }
 numerics = "reference"
 priority = 10
-cite = "me/model/lm_head_nvfp4_rows.rs (lm_head_nvfp4_rows_run, ahead of every other NVFP4 head arm: impl_a3_lm_head.rs lm_head and lm_head_batched, trait_impl/lm_head_batched.rs lm_head_project_batched)"
+cite = "mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode)"
 
 [[rule]]
 id = "lm_head_bf16_gemv"

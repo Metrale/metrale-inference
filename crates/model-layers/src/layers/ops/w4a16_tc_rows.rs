@@ -97,9 +97,15 @@ mod tests {
                 && ROWS.contains("#define TR_COLS (TR_WARPS * 16)\n")
         );
         assert_eq!(W4A16_TC_ROWS_COLS, 4 * 16);
-        assert!(CU.contains("tr_block<Nvfp4G16, 8, 1>(A, {packed, scale, s2}, C, M, N, K, lda, ldc);"));
+        assert!(
+            CU.contains("tr_block<Nvfp4G16, 8, 1>(A, {packed, scale, s2}, C, M, N, K, lda, ldc);")
+        );
         assert_eq!(W4A16_TC_ROWS_MAX_M, 8 * 8);
-        for entry in ["w4a16_tc_rows_16(", "w4a16_tc_rows_32(", "w4a16_tc_rows_64("] {
+        for entry in [
+            "w4a16_tc_rows_16(",
+            "w4a16_tc_rows_32(",
+            "w4a16_tc_rows_64(",
+        ] {
             assert!(CU.contains(entry), "{entry} missing from the kernel");
         }
     }

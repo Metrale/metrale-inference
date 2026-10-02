@@ -8,6 +8,7 @@
 //! Invariants: none beyond the types.
 
 pub(crate) mod attention_arms;
+mod declared;
 mod expert_plan;
 mod fp8_attention_arms;
 pub(crate) mod linear_attn_arms;
@@ -151,28 +152,8 @@ pub(super) fn load_layers(
         variant,
         quant_format,
     );
-    // 2026-10-02: Under `--weight-quantization declared`, a projection the checkpoint declares
-    // FP8 and stores as FP8 E4M3 with a per-tensor or 128x128 block scale is served at its FP8
-    // weights through the native FP8 arms (the scalar scale is repeated over the block grid,
-    // `load_fp8_block_scaled_as_fp8weight`), not requantized to NVFP4. The block-scaled FP8
-    // checkpoint already takes those arms; this adds the ModelOpt mixed-precision NVFP4
-    // checkpoints (nvidia/Qwen3.6-35B-A3B-NVFP4: per-tensor FP8 attention and GDN). The Holo
-    // checkpoint keeps its own arms (`modelopt_mixed_precision`). TP = 1 only: the FP8 SSM
-    // arm has no TP form.
-    let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
-        metrale_model_layers::layers::weight_quantization(),
-        config.quantization_config.as_ref(),
-        metrale_model_layers::layers::kernel_caps(),
-    );
-    let declared_fp8 = |modules: &[String]| {
-        !native_fp8
-            && !modelopt_mixed_precision
-            && config.tp_world_size.max(1) == 1
-            && modules.iter().all(|m| {
-                policy.wants_fp8_weights(m)
-                    && super::super::qwen35_dense::proj_is_fp8_any_scale(store, m)
-            })
-    };
+    // 2026-10-02: The `--weight-quantization declared` answers (`declared.rs`).
+    let declared = declared::Declared::new(config, store, native_fp8, modelopt_mixed_precision);
 
     // 2026-09-25: Bytes of the transposed MoE prefill tables: gate, up and down (packed FP4
     // plus one scale byte per 16 values) for every expert of every layer. When they exceed
@@ -292,9 +273,7 @@ pub(super) fn load_layers(
         // quantizes the gate to NVFP4.
         // 2026-10-02: Under `declared`, a router the checkpoint leaves unquantized stays BF16
         // for every variant.
-        let router_declared_bf16 =
-            policy.follows_plan() && policy.declared(&format!("{lp}.mlp.gate")).weight.is_none();
-        let gate_nvfp4 = if native_fp8 || router_declared_bf16 {
+        let gate_nvfp4 = if native_fp8 || declared.router_bf16(&lp) {
             None
         } else {
             Some(quantize_to_nvfp4(
@@ -314,26 +293,8 @@ pub(super) fn load_layers(
         // `METRALE_FRANKENSTEIN_DECODE_VIA_PREFILL=1` runs MoE decode through `forward_prefill`
         // (`moe/forward.rs`).
         moe_layer.is_dflash_capture_layer = config.dflash_capture_layers.contains(&i);
-        // 2026-10-02: The checkpoint's own NVFP4 experts under `declared` (no FP8 experts in
-        // the layer, nothing requantized): the grouped NVFP4 decode serves them at every
-        // width, with the BF16 router it requires.
-        if policy.follows_plan()
-            && variant == Nvfp4Variant::Standard
-            && router_declared_bf16
-            && !plan.fp8_experts
-            && policy
-                .declared(&format!("{lp}.mlp.experts"))
-                .weight
-                .is_some_and(|w| w.is_fp4())
-        {
-            moe_layer.set_declared_nvfp4_experts()?;
-            if i == 0 {
-                tracing::info!(
-                    "--weight-quantization declared: routed and shared experts decode at the \
-                     checkpoint's NVFP4 (W4A16) through the grouped NVFP4 path; router BF16"
-                );
-            }
-        }
+        // 2026-10-02: The checkpoint's own NVFP4 experts under `declared`.
+        declared.mark_nvfp4_experts(&mut moe_layer, &lp, i, variant, plan.fp8_experts)?;
         if i == 0 && (holo_moe_gateup_fp4() || holo_moe_down_fp4()) && holo_fast_moe_mode.is_none()
         {
             tracing::warn!(
@@ -442,9 +403,9 @@ pub(super) fn load_layers(
                 if ((native_fp8
                     && proj_is_native_fp8(store, &format!("{lp}.self_attn.q_proj")))
                     || native_modelopt_attn
-                    || declared_fp8(
-                        &["q_proj", "k_proj", "v_proj", "o_proj"]
-                            .map(|n| format!("{lp}.self_attn.{n}")),
+                    || declared.fp8(
+                        &format!("{lp}.self_attn"),
+                        &["q_proj", "k_proj", "v_proj", "o_proj"],
                     ))
                     && !(force_nvfp4_all || fp4_proj_decode) =>
             {
@@ -485,9 +446,9 @@ pub(super) fn load_layers(
                     post_attn_norm,
                     ffn,
                 };
-                let declared_fp8_ssm = declared_fp8(
-                    &["in_proj_qkv", "in_proj_z", "out_proj"]
-                        .map(|n| format!("{lp}.linear_attn.{n}")),
+                let declared_fp8_ssm = declared.fp8(
+                    &format!("{lp}.linear_attn"),
+                    &["in_proj_qkv", "in_proj_z", "out_proj"],
                 );
                 let layer = linear_attn_route::build_linear_attention(
                     &cx,

@@ -36,7 +36,10 @@ use metrale_model_layers::layers::ops;
 
 #[path = "common/nvfp4_moe_fixture.rs"]
 mod fixture;
+#[path = "common/nvfp4_moe_legs.rs"]
+mod legs;
 use fixture::*;
+use legs::*;
 
 const H: usize = 2048;
 const INTER: usize = 512;

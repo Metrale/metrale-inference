@@ -35,12 +35,17 @@ pub const NVFP4_GROUPED_DECODE_TC_MAX_ROWS: usize =
 /// 2026-09-27: The two expert kernels of this path, looked up with `try_kernel`; a zero handle
 /// declines it. The sort, router and blend are the grouped FP8 decode's.
 /// 2026-10-02: `gate_up_tc` / `down_tc` are the tensor-core twins (`moe_nvfp4_grouped_tc.cu`),
-/// taken when both resolved unless `METRALE_NO_MOE_NVFP4_TC` is present.
+/// taken when both resolved unless `METRALE_NO_MOE_NVFP4_TC` is present. `declared_experts`: the
+/// layer's routed and shared experts are the checkpoint's own NVFP4 (declared W4A16, not a
+/// requantized copy), so decode takes this path at every width whatever the
+/// `--expert-quantization` tier (which governs FP8 checkpoints only); set by the qwen35 loader
+/// under `--weight-quantization declared` ([`MoeLayer::set_declared_nvfp4_experts`]).
 pub(super) struct Nvfp4GroupedKernels {
     pub gate_up: KernelHandle,
     pub down: KernelHandle,
     pub gate_up_tc: KernelHandle,
     pub down_tc: KernelHandle,
+    pub declared_experts: bool,
 }
 
 impl Nvfp4GroupedKernels {
@@ -54,6 +59,7 @@ impl Nvfp4GroupedKernels {
             down: try_kernel(gpu, MODULE, "moe_expert_down_act_nvfp4_grouped"),
             gate_up_tc: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc"),
             down_tc: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc"),
+            declared_experts: false,
         }
     }
 
@@ -159,7 +165,7 @@ impl MoeLayer {
         let routed = self.weights.experts.first();
         let gate_up_ok =
             routed.is_some_and(|e| !e.gate_proj.weight.is_null() && !e.up_proj.weight.is_null());
-        let native = self.declared_nvfp4_experts;
+        let native = self.nvfp4_grouped.declared_experts;
         let launch = self.nvfp4_grouped.select(h as u32, inter as u32);
         let down_ok = if tier.nvfp4_down() || native {
             !self.down_ptrs.packed_ptrs.is_null()
@@ -221,7 +227,7 @@ impl MoeLayer {
             self.fp8_shared_expert.is_none() && self.fp8_down_weight_ptrs.is_none(),
             "set_declared_nvfp4_experts: the layer holds FP8 experts"
         );
-        self.declared_nvfp4_experts = true;
+        self.nvfp4_grouped.declared_experts = true;
         Ok(())
     }
 
@@ -453,52 +459,5 @@ impl MoeLayer {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 2026-09-27: The admitted widths and the shape terms, each refused alone.
-    #[test]
-    fn shape_admission() {
-        let max = NVFP4_GROUPED_DECODE_MAX_ROWS;
-        assert!(nvfp4_grouped_decode_shape_ok(1, max, 2048, 512, 512));
-        assert!(nvfp4_grouped_decode_shape_ok(max, max, 2048, 512, 512));
-        assert!(!nvfp4_grouped_decode_shape_ok(0, max, 2048, 512, 512));
-        assert!(!nvfp4_grouped_decode_shape_ok(max + 1, max, 2048, 512, 512));
-        assert!(!nvfp4_grouped_decode_shape_ok(4, max, 2048 + 16, 512, 512));
-        assert!(!nvfp4_grouped_decode_shape_ok(
-            4,
-            max,
-            2048,
-            512 + 8,
-            512 + 8
-        ));
-        assert!(!nvfp4_grouped_decode_shape_ok(4, max, 2048, 512, 1024));
-        // 2026-10-02: The tensor-core kernels' envelope: 256 rows, and the 35B's gate+up
-        // (512 x 2048) and down (2048 x 512) fit their tiles; a K that is not a whole load
-        // group of 256 does not.
-        let tc = NVFP4_GROUPED_DECODE_TC_MAX_ROWS;
-        assert_eq!(tc, 256);
-        assert!(nvfp4_grouped_decode_shape_ok(tc, tc, 2048, 512, 512));
-        assert!(!nvfp4_grouped_decode_shape_ok(tc + 1, tc, 2048, 512, 512));
-        assert!(ops::nvfp4_grouped_tc_shape_ok(
-            512,
-            2048,
-            ops::NVFP4_GROUPED_GATE_UP_TC
-        ));
-        assert!(ops::nvfp4_grouped_tc_shape_ok(
-            2048,
-            512,
-            ops::NVFP4_GROUPED_DOWN_TC
-        ));
-        assert!(!ops::nvfp4_grouped_tc_shape_ok(
-            2048,
-            384,
-            ops::NVFP4_GROUPED_DOWN_TC
-        ));
-        assert!(!ops::nvfp4_grouped_tc_shape_ok(
-            96,
-            2048,
-            ops::NVFP4_GROUPED_GATE_UP_TC
-        ));
-    }
-}
+#[path = "forward_nvfp4_grouped_decode_tests.rs"]
+mod tests;
