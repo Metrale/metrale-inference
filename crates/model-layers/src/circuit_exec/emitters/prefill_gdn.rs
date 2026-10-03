@@ -14,10 +14,9 @@
 //! Owner: model-layers circuit executor.
 //! Invariants:
 //! - A launch whose `ops::*` function issues several kernels in order (the FP8 cast and GEMM,
-//!   the conv and its state write, the chunked recurrence) is pushed once at its first kernel;
-//!   the group's following kernels of that call are markers that issue nothing
-//!   ([`push_bundle`]), so the program's launch count is the plan's and the real launches are
-//!   the legacy call's, in its order.
+//!   the conv and its state write, the chunked recurrence) is one bundle covering those plan
+//!   kernels ([`push_bundle`], `Cx::push_bundle`), so the plan's launch count is kept and the
+//!   real launches are the legacy call's, in its order.
 //! - A route switch this module does not model, set in the environment, refuses the build
 //!   ([`refuse_switches`]); nothing here picks a kernel the plan did not name.
 
@@ -87,14 +86,10 @@ fn switch_refusal(vars: &[&str], value_of: impl Fn(&str) -> Option<String>) -> O
         })
 }
 
-/// 2026-10-03: Push `run` as kernel `first` of the group and a marker for each of the `extra`
-/// kernels after it that the same `ops::*` call issues (see the module invariants).
+/// 2026-10-03: Push `run` as one launch issuing kernel `first` and the `extra` kernels after it
+/// that the same `ops::*` call issues (`Cx::push_bundle`).
 pub(super) fn push_bundle(cx: &mut Cx<'_>, first: usize, extra: usize, run: RunFn) -> Result<()> {
-    cx.push(first, run)?;
-    for k in first + 1..=first + extra {
-        cx.push(k, Box::new(|_| Ok(())))?;
-    }
-    Ok(())
+    cx.push_bundle(first, extra + 1, run)
 }
 
 /// 2026-10-03: The layer of member `i`, which a prefill GatedDeltaNet launch reads its state

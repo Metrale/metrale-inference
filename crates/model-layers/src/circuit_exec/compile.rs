@@ -291,6 +291,32 @@ impl<'a> Cx<'a> {
             group: self.g.index,
             kernel: format!("{}::{}", kid.module, kid.func),
             kind: LaunchKind::Kernel,
+            covers: 1,
+            run,
+        });
+        Ok(())
+    }
+
+    /// 2026-10-03: Queue one closure that issues kernels `first..first + n` of this group, in
+    /// order, through one `ops::*` call (the legacy call that launches them together); it
+    /// counts as `n` of the plan's launches.
+    pub fn push_bundle(&mut self, first: usize, n: usize, run: RunFn) -> Result<()> {
+        ensure!(n >= 1, "a bundle of no kernels");
+        let names = (first..first + n)
+            .map(|k| {
+                self.g
+                    .group
+                    .kernels
+                    .get(k)
+                    .map(|kid| format!("{}::{}", kid.module, kid.func))
+                    .with_context(|| format!("group {} has no kernel {k}", self.g.index))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.launches.push(Launch {
+            group: self.g.index,
+            kernel: names.join("+"),
+            kind: LaunchKind::Kernel,
+            covers: n,
             run,
         });
         Ok(())
@@ -307,6 +333,7 @@ impl<'a> Cx<'a> {
             group: self.g.index,
             kernel: "copy".to_string(),
             kind: LaunchKind::Copy,
+            covers: 1,
             run,
         });
         Ok(())
@@ -411,7 +438,12 @@ pub fn compile_placed(
             .iter()
             .filter(|l| l.kind == LaunchKind::Copy)
             .count() as u64;
-        let kernels = cx.launches.len() as u64 - copies;
+        let kernels: u64 = cx
+            .launches
+            .iter()
+            .filter(|l| l.kind == LaunchKind::Kernel)
+            .map(|l| l.covers as u64)
+            .sum();
         if (kernels, copies) != (want, want_copies) {
             bail!(
                 "emitter `{}` queued {kernels} launches and {copies} copies for group {index}; \
@@ -422,7 +454,9 @@ pub fn compile_placed(
         owners.extend(std::iter::repeat_n(segment_of(circuit, group), cx.launches.len()));
         launches.append(&mut cx.launches);
     }
-    ensure!(launches.len() as u64 == plan.launches() + plan.copies());
+    ensure!(
+        launches.iter().map(|l| l.covers as u64).sum::<u64>() == plan.launches() + plan.copies()
+    );
     Ok(Program {
         mode: plan.mode,
         rows: plan.rows,

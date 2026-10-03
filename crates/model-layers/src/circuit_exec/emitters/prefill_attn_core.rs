@@ -439,16 +439,14 @@ fn push_proj(
     [n, kdim]: [u32; 2],
 ) -> Result<()> {
     let handle: KernelHandle = cx.handle(*k)?;
-    cx.push(
+    cx.push_bundle(
         *k,
+        proj.kernels().len(),
         Box::new(move |e| {
             let t = e.prefill()?.tokens;
             attn_route::run(e.gpu, proj, handle, x, &w, dst(t), [t, n, kdim], e.stream)
         }),
     )?;
-    for i in 1..proj.kernels().len() {
-        cx.push(*k + i, Box::new(|_| Ok(())))?;
-    }
     *k += proj.kernels().len();
     Ok(())
 }

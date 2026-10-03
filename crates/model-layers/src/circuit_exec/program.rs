@@ -115,6 +115,10 @@ pub struct Launch {
     pub kernel: String,
     /// 2026-09-29: Kernel or copy.
     pub kind: LaunchKind,
+    /// 2026-10-03: The plan kernels this launch issues: 1, or several for one `ops::*` call
+    /// that launches them in order (a bundle, `Cx::push_bundle`; `kernel` then names them
+    /// joined by `+`).
+    pub covers: usize,
     pub(crate) run: RunFn,
 }
 
