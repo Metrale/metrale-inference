@@ -12,6 +12,8 @@ fn plan(name: &str) -> DeclaredPrecisionPlan {
         "unsloth" => include_str!("precision_plan/fixtures/unsloth_qwen3_8_27b_nvfp4.json"),
         "nvidia27" => include_str!("precision_plan/fixtures/nvidia_qwen3_6_27b_nvfp4.json"),
         "fp8_moe" => include_str!("precision_plan/fixtures/qwen3_6_35b_a3b_fp8.json"),
+        "fp8_dense" => include_str!("precision_plan/fixtures/qwen3_6_27b_fp8.json"),
+        "nvidia35" => include_str!("precision_plan/fixtures/nvidia_qwen3_6_35b_a3b_nvfp4.json"),
         "modelopt_nvfp4" => {
             include_str!("precision_plan/fixtures/nvidia_qwen3_next_80b_nvfp4.json")
         }
@@ -262,6 +264,43 @@ fn block_scaled_and_moe_w8a8_wait_for_their_own_caps() {
     let nv = WeightQuantPolicy::new(nvfp4(W4a4Downcast::Off), &p, all);
     assert_eq!(nv.fp8_block_scaled_decode_act(&attn), None);
     assert!(!nv.declares_fp8_activations(&attn));
+}
+
+/// 2026-10-03: The held block-scaled W8A8 lifts only for a MoE checkpoint without FP8 experts
+/// (the NVFP4 35B). The FP8 35B with its experts at BF16 activations (`moe:bf16`) and the dense
+/// FP8 27B keep W8A16 attention/GDN, as main serves them: lifting there changed greedy text
+/// (FP8 35B, main vs branch, 16 of 19 essays).
+#[test]
+fn block_scaled_w8a8_lifts_only_without_fp8_experts() {
+    let experts = |n: usize| -> Vec<String> {
+        [0, 3]
+            .iter()
+            .take(n)
+            .map(|i| format!("{L}.{i}.mlp.experts.0.gate_proj"))
+            .collect()
+    };
+    let shipped = KernelCaps {
+        w8a8_decode: true,
+        w8a8_moe_decode: true,
+        ..CAPS
+    };
+    let nv = plan("nvidia35");
+    let nvp = WeightQuantPolicy::new(declared(), &nv, shipped);
+    assert!(nvp.lifts_block_scaled_w8a8(&experts(2), false));
+    assert!(!nvp.lifts_block_scaled_w8a8(&experts(2), true));
+    assert!(!nvp.lifts_block_scaled_w8a8(&[], false));
+    let tier4 = WeightQuantPolicy::new(nvfp4(W4a4Downcast::Off), &nv, shipped);
+    assert!(!tier4.lifts_block_scaled_w8a8(&experts(2), false));
+    let fp8 = plan("fp8_moe");
+    for caps in [shipped, CAPS] {
+        let p = WeightQuantPolicy::new(declared(), &fp8, caps);
+        assert!(!p.lifts_block_scaled_w8a8(&experts(2), false), "{caps:?}");
+        assert!(!p.lifts_block_scaled_w8a8(&experts(2), true), "{caps:?}");
+    }
+    let dense = plan("fp8_dense");
+    let d = WeightQuantPolicy::new(declared(), &dense, shipped);
+    assert!(d.declares_fp8_activations(&format!("{L}.3.self_attn.q_proj")));
+    assert!(!d.lifts_block_scaled_w8a8(&[], false));
 }
 
 /// 2026-09-28: A checkpoint without `quantization_config` declares nothing, so both tiers
