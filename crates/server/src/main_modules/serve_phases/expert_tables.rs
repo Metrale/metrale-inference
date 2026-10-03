@@ -10,7 +10,9 @@
 //! Owner: server startup (`met serve`).
 //! Invariants:
 //! - Planned only for a loader that reads the decision (`reads_expert_table_plan`); published
-//!   once, before `build_model`, and logged.
+//!   once, before `build_model`, and logged, with the kernel tree's digest ([`planned_tree`]).
+//! - The tree is `metrale_kernel_tree::materialize`'s: under its own digest, verified byte for
+//!   byte on every serve, unpacked again on any difference.
 //! - The device is the DEVICES.toml entry with the live GPU's architecture and SM count whose
 //!   memory is closest to the live total; none is an error, as is a plan that cannot be made.
 
@@ -33,6 +35,15 @@ fn tree_cache() -> Result<PathBuf> {
          $HOME/.cache/metrale/kernel-tree",
     )?;
     Ok(PathBuf::from(home).join(".cache/metrale/kernel-tree"))
+}
+
+/// 2026-10-03: The digest of the kernel tree the serve's plan read, once it has planned.
+static PLANNED_TREE: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// 2026-10-03: The kernel tree this serve's memory plan was computed from (`GET /forward`,
+/// a gate record's `serve_resolved`), or `None` when it made no plan.
+pub(crate) fn planned_tree() -> Option<&'static str> {
+    PLANNED_TREE.get().copied()
 }
 
 /// 2026-10-02: What the live GPU is, for the device match.
@@ -68,6 +79,7 @@ pub(crate) fn plan(
     live: &LiveDevice<'_>,
 ) -> Result<Option<TablesDecision>> {
     let root = metrale_kernel_tree::materialize(&tree_cache()?)?;
+    let _ = PLANNED_TREE.set(metrale_kernel_tree::SHA256);
     let tree = FsTree::new(root.clone());
     let devices = std::fs::read_to_string(root.join("kernels/DEVICES.toml"))?;
     let reg = metrale_circuit::hardware::parse_devices(&devices)?;
@@ -122,10 +134,16 @@ pub(crate) fn publish(d: Option<&TablesDecision>) -> Result<()> {
         );
     }
     match d.tables {
-        MoeExpertTables::Build => tracing::info!("MoE expert tables: {}", d.describe()),
+        MoeExpertTables::Build => tracing::info!(
+            "MoE expert tables: {} (kernel tree {})",
+            d.describe(),
+            metrale_kernel_tree::SHA256
+        ),
         MoeExpertTables::Skip => tracing::warn!(
-            "MoE expert tables: {}; MoE prefill runs the grouped GEMM on the row-major experts",
-            d.describe()
+            "MoE expert tables: {} (kernel tree {}); MoE prefill runs the grouped GEMM on the \
+             row-major experts",
+            d.describe(),
+            metrale_kernel_tree::SHA256
         ),
     }
     Ok(())

@@ -176,6 +176,7 @@ fn live(forward: &str, digest: Option<&str>) -> super::LiveForward {
     super::LiveForward {
         auto_max_batch_size: None,
         moe_expert_tables: None,
+        kernel_tree: None,
         forward: forward.to_string(),
         plan_digest: digest.map(str::to_string),
     }
@@ -262,4 +263,26 @@ fn skipped_moe_expert_tables_are_disclosed_and_built_ones_are_not() {
         m.get(super::MOE_EXPERT_TABLES).map(String::as_str),
         Some("skip")
     );
+}
+
+/// 2026-10-03: A planned serve's kernel-tree digest is disclosed as given; a value that is not a
+/// SHA-256 is refused before anything is written.
+#[test]
+fn the_kernel_tree_digest_is_disclosed() {
+    let d = "ab".repeat(32);
+    let mut m = BTreeMap::new();
+    let with = |t: &str| super::LiveForward {
+        kernel_tree: Some(t.to_string()),
+        auto_max_batch_size: Some(3),
+        ..live("legacy", None)
+    };
+    for bad in ["", "abc", &"zz".repeat(32)] {
+        assert!(super::merge_live_forward(&mut m, "legacy", &with(bad)).is_err());
+        assert!(
+            m.is_empty(),
+            "`{bad}`: a refused merge leaves the disclosure untouched"
+        );
+    }
+    super::merge_live_forward(&mut m, "legacy", &with(&d)).unwrap();
+    assert_eq!(m.get(super::KERNEL_TREE), Some(&d));
 }

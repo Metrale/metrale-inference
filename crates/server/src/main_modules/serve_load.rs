@@ -305,6 +305,8 @@ pub(crate) fn load_model(
             auto_max_batch_size,
             moe_expert_tables: metrale_model_layers::layers::moe_expert_tables()
                 .map(|t| t.name().to_string()),
+            kernel_tree: crate::main_modules::serve_phases::expert_tables::planned_tree()
+                .map(str::to_string),
         },
         memory,
         // 2026-09-26: `behavior` is MODEL.toml's, embedded at build time, with
