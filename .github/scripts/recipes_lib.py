@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import pathlib
 import re
+import tomllib
 from dataclasses import dataclass, field
 
 import yaml
@@ -36,10 +38,8 @@ import yaml
 # with no MODEL stops with, after the whole command line has been validated.
 SENTINEL = "no model given, and no dashboard to choose one from"
 
-# The GPU memory fraction a box class can be driven to. GB10 froze at 0.90 and
-# needed a power cycle; 0.85 is the measured safe ceiling. Not declared in
-# kernels/<hw>/HARDWARE.toml yet, so it lives here and only ever WARNS.
-UTIL_CEILING = {"gb10": 0.85}
+# The GPU memory fraction a box class can be driven to is declared by the class:
+# `kernels/<hw>/HARDWARE.toml [memory] util_ceiling` (`util_ceilings`), the one source.
 
 REQUIRED = ("recipe_version", "model", "container")
 
@@ -231,16 +231,34 @@ def check_bench_refs(refs: dict[str, list[str]], ids: set[str]) -> list[Finding]
             for path, rids in sorted(refs.items()) for rid in rids if rid not in ids]
 
 
-def hardware_class(container: str) -> str | None:
+def util_ceilings(kernels_dir: pathlib.Path) -> dict[str, float]:
+    """Every hardware class's `[memory] util_ceiling`, by class directory name. A class that
+    declares no `[memory]` table has no ceiling; one whose table lacks the key, or whose value
+    is not a fraction in (0, 1], is an error: a ceiling is never guessed."""
+    out: dict[str, float] = {}
+    for hw in sorted(kernels_dir.glob("*/HARDWARE.toml")):
+        mem = tomllib.loads(hw.read_text()).get("memory")
+        if mem is None:
+            continue
+        value = mem.get("util_ceiling")
+        if not isinstance(value, (int, float)) or not 0 < value <= 1:
+            raise ValueError(f"{hw}: [memory] util_ceiling must be a fraction in (0, 1], got {value!r}")
+        out[hw.parent.name] = float(value)
+    return out
+
+
+def hardware_class(container: str, ceilings: dict[str, float]) -> str | None:
     """`metrale/metrale-inference-gb10:latest` -> `gb10`; None when the image
-    name ends in no class this file has a ceiling for."""
+    name ends in no class that declares a ceiling."""
     name = container.split("@")[0].rsplit(":", 1)[0].rsplit("/", 1)[-1]
     suffix = name.rsplit("-", 1)[-1]
-    return suffix if suffix in UTIL_CEILING and "-" in name else None
+    return suffix if suffix in ceilings and "-" in name else None
 
 
-def check_util(recipe: Recipe) -> list[Finding]:
-    hw = hardware_class(recipe.container)
+def check_util(recipe: Recipe, ceilings: dict[str, float]) -> list[Finding]:
+    """REFUSES gpu_memory_utilization above the recipe's hardware class's ceiling: GB10 froze at
+    0.90 and needed a power cycle (kernels/gb10/HARDWARE.toml)."""
+    hw = hardware_class(recipe.container, ceilings)
     raw = recipe.defaults.get("gpu_memory_utilization")
     if hw is None or raw is None:
         return []
@@ -248,9 +266,10 @@ def check_util(recipe: Recipe) -> list[Finding]:
         util = float(raw)
     except ValueError:
         return [Finding("util-ceiling", recipe.id, f"gpu_memory_utilization {raw!r} is not a number")]
-    if util > UTIL_CEILING[hw]:
+    if util > ceilings[hw]:
         return [Finding("util-ceiling", recipe.id,
-                        f"gpu_memory_utilization {raw} exceeds the {hw} ceiling {UTIL_CEILING[hw]}", error=False)]
+                        f"gpu_memory_utilization {raw} exceeds the {hw} ceiling {ceilings[hw]} "
+                        f"(kernels/{hw}/HARDWARE.toml [memory] util_ceiling)")]
     return []
 
 
