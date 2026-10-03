@@ -37,7 +37,7 @@ fn the_turn_termination_levers_ship_on_in_the_live_resolver() {
         std::env::remove_var("METRALE_TOOL_RESPONSE_STOP");
         std::env::remove_var("METRALE_TOOL_EOS_ESCAPE");
     }
-    let live = SchedLevers::from_env(None);
+    let live = SchedLevers::from_env(None, None);
     assert!(live.tool_response_stop, "METRALE_TOOL_RESPONSE_STOP");
     assert!(live.tool_eos_escape, "METRALE_TOOL_EOS_ESCAPE");
     assert!(SchedLevers::defaults().tool_response_stop);
@@ -88,7 +88,7 @@ fn spec_think_is_off_in_the_resolver_the_server_actually_uses() {
     // variables. `cargo test` runs tests on parallel threads, so a
     // concurrent environment access from another test is not excluded.
     unsafe { std::env::remove_var("METRALE_DFLASH_SPEC_THINK") };
-    let live = SchedLevers::from_env(None);
+    let live = SchedLevers::from_env(None, None);
     assert!(
         !live.dflash_spec_think,
         "METRALE_DFLASH_SPEC_THINK must stay OPT-IN: from_env() resolved it ON. \
@@ -134,7 +134,7 @@ fn an_absent_mtp_gate_flag_leaves_the_legacy_variable_reachable() {
     assert!(resolve_mtp_gate_force(Some(true)));
     assert!(!resolve_mtp_gate_force(Some(false)));
     assert!(
-        SchedLevers::from_env(Some(true)).mtp_gate_force,
+        SchedLevers::from_env(Some(true), None).mtp_gate_force,
         "and the carried levers read the same resolution — one rule, not two"
     );
 }
@@ -247,7 +247,7 @@ fn the_verify_step_levers_hold_their_polarities() {
     // concurrent environment access from another test is not excluded.
     unsafe { std::env::remove_var("METRALE_DFLASH_EAGLE_FIX") };
     assert!(
-        SchedLevers::from_env(None).dflash_eagle_fix,
+        SchedLevers::from_env(None, None).dflash_eagle_fix,
         "METRALE_DFLASH_EAGLE_FIX must stay DEFAULT-ON in the resolver the \
          server actually uses — `defaults()` is a hand-written literal and \
          cannot catch a change here"

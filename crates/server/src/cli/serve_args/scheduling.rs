@@ -167,6 +167,10 @@ pub struct ServeSchedulingArgs {
     #[arg(long)]
     pub num_drafts: Option<usize>,
 
+    /// 2026-10-03: `--mtp-dcut-ratio` and `--mtp-k-ladder`, listed here after `--num-drafts`.
+    #[command(flatten)]
+    pub mtp_shape: crate::cli::serve_args_mtp::ServeMtpShapeArgs,
+
     /// Widest batch that speculates (the multi-sequence MTP dispatch cap): above
     /// this many active sequences a step plain-decodes. Precedence (highest wins):
     /// this flag → MODEL.toml `[behavior].mtp_max_seqs` → 32 (4 under

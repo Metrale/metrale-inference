@@ -48,6 +48,15 @@ defaults:
   scheduler: slai
   speculative: true
   mtp_quantization: bf16
+  # 2026-10-03: Two MTP drafts at one or two active sequences, one from three up, D-Cut off.
+  # Measured on dgx2 (MoE ladder harness, 3 interleaved fresh serves per arm): two drafts
+  # raise tok/s AND lower J/tok at C1-C2 (+2.4%/-1.2%, +3.9%/-1.8%); at C4-C8 they trade
+  # energy for speed (+1.9%/+1.0%, +1.6%/+2.8%), so those widths keep one draft until the
+  # verify cost per row comes down. MODEL.toml has no ladder key, so it stays at one draft
+  # (a bare serve runs one draft at every width) and these three keys carry the shape.
+  num_drafts: 2
+  mtp_k_ladder: "2:2,32:1"
+  mtp_dcut_ratio: 1.0
   # ★ DETERMINISM PIN, not a performance knob. Without it the MTP gate runs in
   # `auto`, where it is a bandit arbiter that switches MTP<->serial at runtime
   # on WALL-CLOCK tok/s. Speculation is not output-neutral at temperature 0

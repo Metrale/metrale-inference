@@ -159,6 +159,7 @@ pub(crate) fn load_model(
     // MODEL.toml `[behavior].enable_loop_watchdog`.
     let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
         args.mtp_gate_force(),
+        args.mtp_shape.mtp_dcut_ratio,
     ));
     sched_levers.set_loop_watchdog(crate::scheduler::resolve_content_loop_watchdog(
         ptx_set.behavior.enable_loop_watchdog,

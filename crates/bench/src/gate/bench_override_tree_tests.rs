@@ -254,7 +254,11 @@ fn the_moe_concurrency_entry_is_the_published_instrument_with_its_bootstrap_floo
             ("kv_cache_dtype", "bf16"),
             ("max_batch_size", "128"),
             ("max_model_len", "2048"),
-            ("num_drafts", "1"),
+            // 2026-10-03: Two drafts at one or two sequences, one from three up, D-Cut off:
+            // the recipe's own three keys.
+            ("mtp_dcut_ratio", "1.0"),
+            ("mtp_k_ladder", "2:2,32:1"),
+            ("num_drafts", "2"),
             // 2026-09-29: No serve-side timeout, so wide rungs are not cut (BENCH.toml).
             ("request_timeout", "0"),
             ("scheduler", "fifo"),
