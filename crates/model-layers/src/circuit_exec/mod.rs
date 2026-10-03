@@ -432,6 +432,9 @@ mod exec_fixture;
 #[path = "exec_fixture_run.rs"]
 mod exec_fixture_run;
 #[cfg(test)]
+#[path = "exec_moe_tests.rs"]
+mod exec_moe_tests;
+#[cfg(test)]
 #[path = "exec_multi_tests.rs"]
 mod exec_multi_tests;
 #[cfg(test)]

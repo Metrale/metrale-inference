@@ -3,11 +3,11 @@
 | MoE hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, 256... |
 | 40 layers . hidden 2048 . attn 16q/2kvx256 . GDN 16k/32vx128                 |
 | 256 experts top-8 (ffn 512) . vocab 248320                                   |
-| qkvz/gdn_out/experts.gate_up/shared_gate_up/q/k/v/o W8A16 fp8                |
+| qkvz/gdn_out/q/k/v/o W8A16 fp8                                               |
+| experts.gate_up/experts.down/shared_gate_up/shared_down W8A8 fp8             |
 | ba/router/shared_gate/lm_head W16A16 bf16                                    |
-| experts.down/shared_down W8 fp8 . f32 act in                                 |
-| mode decode . 1 row . 573 launches/step . 575 kernel groups                  |
-| 180 fused edges . 814 materialized . plan 31d4c6b3314d                       |
+| mode decode . 1 row . 653 launches/step . 575 kernel groups                  |
+| 260 fused edges . 854 materialized . plan 7b2922011622                       |
 +------------------------------------------------------------------------------+
 
 Layers
@@ -32,7 +32,7 @@ G GatedDeltaNet layer  layer 0
         in bf16 . compute f32 . out bf16
        | v bf16 . nx2048  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H qkvz . linear             H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H qkvz . linear             H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -78,7 +78,7 @@ G GatedDeltaNet layer  layer 0
         in f32,bf16 . compute f32 . out bf16
        | v bf16 . nx4096  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H out . linear              H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H out . linear              H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -96,47 +96,77 @@ G GatedDeltaNet layer  layer 0
   ## writes y, xn ##############################################################
        | v bf16 . nx2048  DRAM
     #===========================#  weight bf16
-    H router                    H  gemv::dense_gemv_bf16 . [~] reference
-    #===========================#
+    H router                    H  dense_gemv_bf16_batchm::dense_gemv_bf16_...
+    #===========================#  [~] reference
         in bf16 . act bf16 . weight bf16->bf16 . mma bf16*bf16
         accumulate f32 . scale none . out bf16
        | v bf16 . nx256  DRAM
     +---------------------------+
-    | top_k                     |  moe_topk::moe_topk_softmax . [~] reference
-    +---------------------------+
+    | top_k                     |  moe_topk::moe_topk_softmax_rows -> moe_f...
+    +---------------------------+  [~] reference
         in bf16 . score f32 . out f32,i32
-       | v i32 . nx8  DRAM
-       +-------------------------------------+
-       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
-  ## moe_shared_expert_fused_fp8::moe_expert_gate_up_share... # [~] reference ##
+
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+  < xn                                        #
+  # | xn_quant . act_quant      |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . compute f32 . out fp8/g128                                   #
+  #    : v fp8 e4m3/g128 . nx2048  on-chip                                     #
+  #    +-------------------------------------+                                 #
+  #    : v routed: top-8 of 256 expe...      : v shared expert  on-chip        #
   # #===========================#         #===========================#        #
   # H experts_gate_up           H         H shared_gate_up . linear   H        #
   # #===========================#         #===========================#        #
-  #     experts_gate_up: in bf16,i32 . gather bf16 . act bf16                  #
-  #     weight fp8/block128x128->bf16 . mma bf16*bf16 . accumulate f32         #
+  #     experts_gate_up: in fp8/g128,i32 . gather fp8/g128 . act fp8/g128      #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
   #     scale f32 . out bf16                                                   #
-  #     shared_gate_up: in bf16 . act bf16 . weight fp8/block128x128->bf16     #
-  #     mma bf16*bf16 . accumulate f32 . scale f32 . out bf16                  #
-  ## writes egu, sgu ###########################################################
-       | v bf16 . 8nx1024  DRAM              | v bf16 . nx1024  DRAM
-  ## moe_shared_expert_fused_fp8::moe_expert_silu_down_sha... # [~] reference ##
+  #     shared_gate_up: in fp8/g128 . act fp8/g128                             #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
+  #    : v bf16 . 8nx1024  on-chip           : v bf16 . nx1024  on-chip        #
   # +---------------------------+         +---------------------------+        #
   # | experts_act . silu_mul    |         | shared_act . silu_mul     |        #
   # +---------------------------+         +---------------------------+        #
-  #     experts_act: in bf16 . compute f32 . out f32                           #
-  #     shared_act: in bf16 . compute f32 . out f32                            #
-  #    : v f32 . 8nx512  on-chip             : v f32 . nx512  on-chip          #
-  # #===========================#         #===========================#        #
-  # H experts_down              H         H shared_down . linear      H        #
-  # #===========================#         #===========================#        #
-  #     experts_down: in f32,i32 . act f32 . weight fp8/block128x128->f32      #
-  #     mma f32*f32 . accumulate f32 . scale f32 . out bf16                    #
-  #     shared_down: in f32 . act f32 . weight fp8/block128x128->f32           #
-  #     mma f32*f32 . accumulate f32 . scale f32 . out bf16                    #
+  #     experts_act: in bf16 . compute f32 . out f32 (rule)                    #
+  #     shared_act: in bf16 . compute f32 . out f32 (rule)                     #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+
+  ## moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grou... # [~] reference ##
+  #                                       #===========================#        #
+  #    :                                  H shared_down . linear      H        #
+  #                                       #===========================#        #
+  #     shared_down: in fp8/g128 . act fp8/g128                                #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
   ## writes edown, sdown #######################################################
-       | v bf16 . 8nx2048  DRAM              | v bf16 . nx2048  DRAM
+                                             | v bf16 . nx2048  DRAM
        +-------------------------------------+
-  ## moe_expert_gemv::moe_weighted_sum_blend ################## [~] reference ##
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+                                              #
+  # | eact_quant . act_quant    |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out fp8/g128                             #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+       +-------------------------------------+
+       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
+  ## moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grou... # [~] reference ##
+  # #===========================#                                              #
+  # H experts_down              H                                              #
+  # #===========================#                                              #
+  #     experts_down: in fp8/g128,i32 . act fp8/g128                           #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
+  ## writes edown, sdown #######################################################
+       | v bf16 . 8nx2048  DRAM
+       +-------------------------------------+
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+                                              #
+  # | sact_quant . act_quant    |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out fp8/g128                             #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+
+  ## moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_gro... # [~] reference ##
   # #===========================#  < xn                                        #
   # H shared_gate . linear      H  weight bf16                                 #
   # #===========================#                                              #
@@ -169,7 +199,7 @@ G GatedDeltaNet layer  layer 0
 G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
        | v bf16 . nx2048  DRAM  from the layer boundary
     #===========================#  weight fp8 e4m3/128x128 blk
-    H qkvz . linear             H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H qkvz . linear             H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -215,7 +245,7 @@ G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
         in f32,bf16 . compute f32 . out bf16
        | v bf16 . nx4096  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H out . linear              H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H out . linear              H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -233,47 +263,77 @@ G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
   ## writes y, xn ##############################################################
        | v bf16 . nx2048  DRAM
     #===========================#  weight bf16
-    H router                    H  gemv::dense_gemv_bf16 . [~] reference
-    #===========================#
+    H router                    H  dense_gemv_bf16_batchm::dense_gemv_bf16_...
+    #===========================#  [~] reference
         in bf16 . act bf16 . weight bf16->bf16 . mma bf16*bf16
         accumulate f32 . scale none . out bf16
        | v bf16 . nx256  DRAM
     +---------------------------+
-    | top_k                     |  moe_topk::moe_topk_softmax . [~] reference
-    +---------------------------+
+    | top_k                     |  moe_topk::moe_topk_softmax_rows -> moe_f...
+    +---------------------------+  [~] reference
         in bf16 . score f32 . out f32,i32
-       | v i32 . nx8  DRAM
-       +-------------------------------------+
-       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
-  ## moe_shared_expert_fused_fp8::moe_expert_gate_up_share... # [~] reference ##
+
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+  < xn                                        #
+  # | xn_quant . act_quant      |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . compute f32 . out fp8/g128                                   #
+  #    : v fp8 e4m3/g128 . nx2048  on-chip                                     #
+  #    +-------------------------------------+                                 #
+  #    : v routed: top-8 of 256 expe...      : v shared expert  on-chip        #
   # #===========================#         #===========================#        #
   # H experts_gate_up           H         H shared_gate_up . linear   H        #
   # #===========================#         #===========================#        #
-  #     experts_gate_up: in bf16,i32 . gather bf16 . act bf16                  #
-  #     weight fp8/block128x128->bf16 . mma bf16*bf16 . accumulate f32         #
+  #     experts_gate_up: in fp8/g128,i32 . gather fp8/g128 . act fp8/g128      #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
   #     scale f32 . out bf16                                                   #
-  #     shared_gate_up: in bf16 . act bf16 . weight fp8/block128x128->bf16     #
-  #     mma bf16*bf16 . accumulate f32 . scale f32 . out bf16                  #
-  ## writes egu, sgu ###########################################################
-       | v bf16 . 8nx1024  DRAM              | v bf16 . nx1024  DRAM
-  ## moe_shared_expert_fused_fp8::moe_expert_silu_down_sha... # [~] reference ##
+  #     shared_gate_up: in fp8/g128 . act fp8/g128                             #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
+  #    : v bf16 . 8nx1024  on-chip           : v bf16 . nx1024  on-chip        #
   # +---------------------------+         +---------------------------+        #
   # | experts_act . silu_mul    |         | shared_act . silu_mul     |        #
   # +---------------------------+         +---------------------------+        #
-  #     experts_act: in bf16 . compute f32 . out f32                           #
-  #     shared_act: in bf16 . compute f32 . out f32                            #
-  #    : v f32 . 8nx512  on-chip             : v f32 . nx512  on-chip          #
-  # #===========================#         #===========================#        #
-  # H experts_down              H         H shared_down . linear      H        #
-  # #===========================#         #===========================#        #
-  #     experts_down: in f32,i32 . act f32 . weight fp8/block128x128->f32      #
-  #     mma f32*f32 . accumulate f32 . scale f32 . out bf16                    #
-  #     shared_down: in f32 . act f32 . weight fp8/block128x128->f32           #
-  #     mma f32*f32 . accumulate f32 . scale f32 . out bf16                    #
+  #     experts_act: in bf16 . compute f32 . out f32 (rule)                    #
+  #     shared_act: in bf16 . compute f32 . out f32 (rule)                     #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+
+  ## moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grou... # [~] reference ##
+  #                                       #===========================#        #
+  #    :                                  H shared_down . linear      H        #
+  #                                       #===========================#        #
+  #     shared_down: in fp8/g128 . act fp8/g128                                #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
   ## writes edown, sdown #######################################################
-       | v bf16 . 8nx2048  DRAM              | v bf16 . nx2048  DRAM
+                                             | v bf16 . nx2048  DRAM
        +-------------------------------------+
-  ## moe_expert_gemv::moe_weighted_sum_blend ################## [~] reference ##
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+                                              #
+  # | eact_quant . act_quant    |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out fp8/g128                             #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+       +-------------------------------------+
+       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
+  ## moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grou... # [~] reference ##
+  # #===========================#                                              #
+  # H experts_down              H                                              #
+  # #===========================#                                              #
+  #     experts_down: in fp8/g128,i32 . act fp8/g128                           #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
+  ## writes edown, sdown #######################################################
+       | v bf16 . 8nx2048  DRAM
+       +-------------------------------------+
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+                                              #
+  # | sact_quant . act_quant    |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out fp8/g128                             #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+
+  ## moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_gro... # [~] reference ##
   # #===========================#  < xn                                        #
   # H shared_gate . linear      H  weight bf16                                 #
   # #===========================#                                              #
@@ -306,7 +366,7 @@ G GatedDeltaNet layer  x 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
 A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
        | v bf16 . nx2048  DRAM  from the layer boundary
     #===========================#  weight fp8 e4m3/128x128 blk
-    H q . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H q . linear                H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -317,13 +377,13 @@ A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
         in bf16 . move bf16 . out bf16,bf16
 
     #===========================#  < xn . weight fp8 e4m3/128x128 blk
-    H k . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H k . linear                H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
 
     #===========================#  < xn . weight fp8 e4m3/128x128 blk
-    H v . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H v . linear                H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -360,7 +420,7 @@ A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
         in bf16,bf16 . compute f32 . out bf16
        | v bf16 . nx4096  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H o . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H o . linear                H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -378,47 +438,77 @@ A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
   ## writes y, xn ##############################################################
        | v bf16 . nx2048  DRAM
     #===========================#  weight bf16
-    H router                    H  gemv::dense_gemv_bf16 . [~] reference
-    #===========================#
+    H router                    H  dense_gemv_bf16_batchm::dense_gemv_bf16_...
+    #===========================#  [~] reference
         in bf16 . act bf16 . weight bf16->bf16 . mma bf16*bf16
         accumulate f32 . scale none . out bf16
        | v bf16 . nx256  DRAM
     +---------------------------+
-    | top_k                     |  moe_topk::moe_topk_softmax . [~] reference
-    +---------------------------+
+    | top_k                     |  moe_topk::moe_topk_softmax_rows -> moe_f...
+    +---------------------------+  [~] reference
         in bf16 . score f32 . out f32,i32
-       | v i32 . nx8  DRAM
-       +-------------------------------------+
-       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
-  ## moe_shared_expert_fused_fp8::moe_expert_gate_up_share... # [~] reference ##
+
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+  < xn                                        #
+  # | xn_quant . act_quant      |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . compute f32 . out fp8/g128                                   #
+  #    : v fp8 e4m3/g128 . nx2048  on-chip                                     #
+  #    +-------------------------------------+                                 #
+  #    : v routed: top-8 of 256 expe...      : v shared expert  on-chip        #
   # #===========================#         #===========================#        #
   # H experts_gate_up           H         H shared_gate_up . linear   H        #
   # #===========================#         #===========================#        #
-  #     experts_gate_up: in bf16,i32 . gather bf16 . act bf16                  #
-  #     weight fp8/block128x128->bf16 . mma bf16*bf16 . accumulate f32         #
+  #     experts_gate_up: in fp8/g128,i32 . gather fp8/g128 . act fp8/g128      #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
   #     scale f32 . out bf16                                                   #
-  #     shared_gate_up: in bf16 . act bf16 . weight fp8/block128x128->bf16     #
-  #     mma bf16*bf16 . accumulate f32 . scale f32 . out bf16                  #
-  ## writes egu, sgu ###########################################################
-       | v bf16 . 8nx1024  DRAM              | v bf16 . nx1024  DRAM
-  ## moe_shared_expert_fused_fp8::moe_expert_silu_down_sha... # [~] reference ##
+  #     shared_gate_up: in fp8/g128 . act fp8/g128                             #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
+  #    : v bf16 . 8nx1024  on-chip           : v bf16 . nx1024  on-chip        #
   # +---------------------------+         +---------------------------+        #
   # | experts_act . silu_mul    |         | shared_act . silu_mul     |        #
   # +---------------------------+         +---------------------------+        #
-  #     experts_act: in bf16 . compute f32 . out f32                           #
-  #     shared_act: in bf16 . compute f32 . out f32                            #
-  #    : v f32 . 8nx512  on-chip             : v f32 . nx512  on-chip          #
-  # #===========================#         #===========================#        #
-  # H experts_down              H         H shared_down . linear      H        #
-  # #===========================#         #===========================#        #
-  #     experts_down: in f32,i32 . act f32 . weight fp8/block128x128->f32      #
-  #     mma f32*f32 . accumulate f32 . scale f32 . out bf16                    #
-  #     shared_down: in f32 . act f32 . weight fp8/block128x128->f32           #
-  #     mma f32*f32 . accumulate f32 . scale f32 . out bf16                    #
+  #     experts_act: in bf16 . compute f32 . out f32 (rule)                    #
+  #     shared_act: in bf16 . compute f32 . out f32 (rule)                     #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+
+  ## moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grou... # [~] reference ##
+  #                                       #===========================#        #
+  #    :                                  H shared_down . linear      H        #
+  #                                       #===========================#        #
+  #     shared_down: in fp8/g128 . act fp8/g128                                #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
   ## writes edown, sdown #######################################################
-       | v bf16 . 8nx2048  DRAM              | v bf16 . nx2048  DRAM
+                                             | v bf16 . nx2048  DRAM
        +-------------------------------------+
-  ## moe_expert_gemv::moe_weighted_sum_blend ################## [~] reference ##
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+                                              #
+  # | eact_quant . act_quant    |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out fp8/g128                             #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+       +-------------------------------------+
+       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
+  ## moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grou... # [~] reference ##
+  # #===========================#                                              #
+  # H experts_down              H                                              #
+  # #===========================#                                              #
+  #     experts_down: in fp8/g128,i32 . act fp8/g128                           #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
+  ## writes edown, sdown #######################################################
+       | v bf16 . 8nx2048  DRAM
+       +-------------------------------------+
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+                                              #
+  # | sact_quant . act_quant    |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out fp8/g128                             #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+
+  ## moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_gro... # [~] reference ##
   # #===========================#  < xn                                        #
   # H shared_gate . linear      H  weight bf16                                 #
   # #===========================#                                              #
@@ -435,7 +525,7 @@ A Full-attention layer  x 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
 A Full-attention layer  layer 39
        | v bf16 . nx2048  DRAM  from the layer boundary
     #===========================#  weight fp8 e4m3/128x128 blk
-    H q . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H q . linear                H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -446,13 +536,13 @@ A Full-attention layer  layer 39
         in bf16 . move bf16 . out bf16,bf16
 
     #===========================#  < xn . weight fp8 e4m3/128x128 blk
-    H k . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H k . linear                H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
 
     #===========================#  < xn . weight fp8 e4m3/128x128 blk
-    H v . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H v . linear                H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -489,7 +579,7 @@ A Full-attention layer  layer 39
         in bf16,bf16 . compute f32 . out bf16
        | v bf16 . nx4096  DRAM
     #===========================#  weight fp8 e4m3/128x128 blk
-    H o . linear                H  w8a16_gemm_pipelined_m32::w8a16_gemm_pip...
+    H o . linear                H  w8a16_tc_rows::w8a16_tc_rows_16
     #===========================#  [~] reference
         in bf16 . act bf16 . weight fp8/block128x128->bf16 . mma bf16*bf16
         accumulate f32 . scale f32 . out bf16
@@ -507,47 +597,77 @@ A Full-attention layer  layer 39
   ## writes y, xn ##############################################################
        | v bf16 . nx2048  DRAM
     #===========================#  weight bf16
-    H router                    H  gemv::dense_gemv_bf16 . [~] reference
-    #===========================#
+    H router                    H  dense_gemv_bf16_batchm::dense_gemv_bf16_...
+    #===========================#  [~] reference
         in bf16 . act bf16 . weight bf16->bf16 . mma bf16*bf16
         accumulate f32 . scale none . out bf16
        | v bf16 . nx256  DRAM
     +---------------------------+
-    | top_k                     |  moe_topk::moe_topk_softmax . [~] reference
-    +---------------------------+
+    | top_k                     |  moe_topk::moe_topk_softmax_rows -> moe_f...
+    +---------------------------+  [~] reference
         in bf16 . score f32 . out f32,i32
-       | v i32 . nx8  DRAM
-       +-------------------------------------+
-       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
-  ## moe_shared_expert_fused_fp8::moe_expert_gate_up_share... # [~] reference ##
+
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+  < xn                                        #
+  # | xn_quant . act_quant      |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . compute f32 . out fp8/g128                                   #
+  #    : v fp8 e4m3/g128 . nx2048  on-chip                                     #
+  #    +-------------------------------------+                                 #
+  #    : v routed: top-8 of 256 expe...      : v shared expert  on-chip        #
   # #===========================#         #===========================#        #
   # H experts_gate_up           H         H shared_gate_up . linear   H        #
   # #===========================#         #===========================#        #
-  #     experts_gate_up: in bf16,i32 . gather bf16 . act bf16                  #
-  #     weight fp8/block128x128->bf16 . mma bf16*bf16 . accumulate f32         #
+  #     experts_gate_up: in fp8/g128,i32 . gather fp8/g128 . act fp8/g128      #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
   #     scale f32 . out bf16                                                   #
-  #     shared_gate_up: in bf16 . act bf16 . weight fp8/block128x128->bf16     #
-  #     mma bf16*bf16 . accumulate f32 . scale f32 . out bf16                  #
-  ## writes egu, sgu ###########################################################
-       | v bf16 . 8nx1024  DRAM              | v bf16 . nx1024  DRAM
-  ## moe_shared_expert_fused_fp8::moe_expert_silu_down_sha... # [~] reference ##
+  #     shared_gate_up: in fp8/g128 . act fp8/g128                             #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
+  #    : v bf16 . 8nx1024  on-chip           : v bf16 . nx1024  on-chip        #
   # +---------------------------+         +---------------------------+        #
   # | experts_act . silu_mul    |         | shared_act . silu_mul     |        #
   # +---------------------------+         +---------------------------+        #
-  #     experts_act: in bf16 . compute f32 . out f32                           #
-  #     shared_act: in bf16 . compute f32 . out f32                            #
-  #    : v f32 . 8nx512  on-chip             : v f32 . nx512  on-chip          #
-  # #===========================#         #===========================#        #
-  # H experts_down              H         H shared_down . linear      H        #
-  # #===========================#         #===========================#        #
-  #     experts_down: in f32,i32 . act f32 . weight fp8/block128x128->f32      #
-  #     mma f32*f32 . accumulate f32 . scale f32 . out bf16                    #
-  #     shared_down: in f32 . act f32 . weight fp8/block128x128->f32           #
-  #     mma f32*f32 . accumulate f32 . scale f32 . out bf16                    #
+  #     experts_act: in bf16 . compute f32 . out f32 (rule)                    #
+  #     shared_act: in bf16 . compute f32 . out f32 (rule)                     #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+
+  ## moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grou... # [~] reference ##
+  #                                       #===========================#        #
+  #    :                                  H shared_down . linear      H        #
+  #                                       #===========================#        #
+  #     shared_down: in fp8/g128 . act fp8/g128                                #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
   ## writes edown, sdown #######################################################
-       | v bf16 . 8nx2048  DRAM              | v bf16 . nx2048  DRAM
+                                             | v bf16 . nx2048  DRAM
        +-------------------------------------+
-  ## moe_expert_gemv::moe_weighted_sum_blend ################## [~] reference ##
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+                                              #
+  # | eact_quant . act_quant    |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out fp8/g128                             #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+       +-------------------------------------+
+       | v routed: top-8 of 256 expe...      | v shared expert  DRAM
+  ## moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grou... # [~] reference ##
+  # #===========================#                                              #
+  # H experts_down              H                                              #
+  # #===========================#                                              #
+  #     experts_down: in fp8/g128,i32 . act fp8/g128                           #
+  #     weight fp8/block128x128->e4m3 . mma e4m3*e4m3 . accumulate f32         #
+  #     scale f32 . out bf16                                                   #
+  ## writes edown, sdown #######################################################
+       | v bf16 . 8nx2048  DRAM
+       +-------------------------------------+
+  ## moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 -> moe_fp... # [~] reference ##
+  # +---------------------------+                                              #
+  # | sact_quant . act_quant    |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out fp8/g128                             #
+  ## writes xn_quant, eact_quant, sact_quant ###################################
+
+  ## moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_gro... # [~] reference ##
   # #===========================#  < xn                                        #
   # H shared_gate . linear      H  weight bf16                                 #
   # #===========================#                                              #
@@ -574,8 +694,8 @@ d head
         in bf16 . compute f32 . out bf16
        | v bf16 . nx2048  DRAM
     #===========================#  weight bf16
-    H lm_head                   H  gemv::dense_gemv_bf16 . [~] reference
-    #===========================#
+    H lm_head                   H  dense_gemv_bf16_batchm::dense_gemv_bf16_...
+    #===========================#  [~] reference
         in bf16 . act bf16 . weight bf16->bf16 . mma bf16*bf16
         accumulate f32 . scale none . out bf16
        | v bf16 . nx248320  DRAM
@@ -585,7 +705,7 @@ d head
         in bf16 . compare bf16 . out i32
 
 --------------------------------------------------------------------------------
-573 launches/step . 575 groups . 180 fused . 814 materialized edges
-6.6 MiB written/step . arena 0.5 MiB
+653 launches/step . 575 groups . 260 fused . 854 materialized edges
+6.1 MiB written/step . arena 0.5 MiB
 #=# heavy op . +-+ light op . ### fused kernel . |v DRAM . :v on-chip
 [ok] bit-identical . [~] reference . [!] differs

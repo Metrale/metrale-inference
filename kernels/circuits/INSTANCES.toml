@@ -32,6 +32,9 @@ schema = 1
 # - w4a16_tc: on unless METRALE_NO_W4A16_TC (ml/ops/gemv_tc.rs:79-82).
 # - decode_split_silu: on, kernels/gb10/HARDWARE.toml:168.
 # - rms_norm_act_quant: off, the engine has no fused norm-quantize launch (2026-09-30).
+# - moe_fp8_tc: on, the grouped FP8 MoE decode's tensor-core expert kernels, on unless
+#   METRALE_NO_MOE_FP8_TC is present or published FP8 expert activations (ml/moe/fp8_grouped_tc.rs:
+#   74-81); stated by every policy, which a dense model's plans never read (2026-10-03).
 # - activation_quantization: adaptive, today's per-row-count routing that FUSIONS.toml encodes;
 #   every committed recipe pins it (--activation-quantization, crates/config/src/
 #   activation_quantization.rs). The node pipelines' `act` requirement reads it (2026-10-02).
@@ -63,7 +66,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", moe_fp8_tc = "on", ffn_act_fixed = "off" }
 
 # 2026-09-30: The dense agentic recipe above served under `--weight-quantization declared` (the
 # engine default; the recipe pins `nvfp4`, so no recipe serves this yet): the checkpoint's own
@@ -93,7 +96,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", moe_fp8_tc = "on", ffn_act_fixed = "off" }
 
 # 2026-10-03: The dense agentic recipe above served under the exact MTP verify chain
 # (`gdn_verify_exact = on`: `--exact-verify`, or a fixed GDN activation format,
@@ -126,7 +129,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "on", ffn_act_fixed = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "on", ffn_act_fixed = "off", moe_fp8_tc = "on" }
 
 # 2026-10-03: The declared instance above served under `--activation-quantization declared`
 # (the setting #79 put on the FP8 35B gate recipes; no dense recipe serves it yet). A fixed
@@ -158,26 +161,75 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "declared", gdn_exact_replay = "off", gdn_verify_exact = "on", ffn_act_fixed = "declared" }
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "declared", gdn_exact_replay = "off", gdn_verify_exact = "on", ffn_act_fixed = "declared", moe_fp8_tc = "on" }
 
 # 2026-09-28: The MoE flagship recipe (the agentic-webserver gate's default entry,
 # kernels/gb10/qwen3.6-35b-a3b/BENCH.toml). As above, except:
 # - row_tiers: canonical, the default for an FP8 MoE checkpoint (ml/row_tiers.rs:64-78,
 #   published at crates/server/src/main_modules/serve_load/model_setup.rs:282-290).
+# - activation_quantization: declared, as the recipe pins it (2026-10-02, PR #79).
+# 2026-10-03: Precision from the engine's own policy over the checkpoint's declared plan
+# (checkpoints/Qwen--Qwen3.6-35B-A3B-FP8.toml) at the recipe's `declared` tier, under gb10's
+# kernel caps (ml/weight_quantization.rs:39-51): the routed and shared experts W8A8 (the serve
+# publishes FP8 expert activations, serve_load/model_setup.rs publish_moe_expert_act),
+# attention and GDN projections W8A16 (`w8a8_block_scaled_decode` is off). The batched propose
+# (`draft` rows past 1) and the batched verify (`verify_batch`) run on this recipe too.
+# - gdn_verify_exact: on, as `declared` fixes the GDN activation format (ml/qwen3_ssm/gdn_flags.rs
+#   verify_exact_enabled), so its verify plans run the exact chain.
 [[instance]]
 recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
 checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
 arch = "qwen3_6_moe"
-precision = "qwen3.6-35b-a3b-fp8-bf16head"
 target = "gb10/qwen3.6-35b-a3b/nvfp4"
 golden = true
 layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
 dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
-plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32] }
+verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
+
+[instance.precision]
+checkpoint_plan = "Qwen--Qwen3.6-35B-A3B-FP8"
+tier = "declared"
+caps = ["w8a8_decode", "w8a8_moe_decode", "fp8_lm_head_batched"]
+engine = [
+  { match = "lm_head", weight = "bf16", activation = "bf16", why = "--lm-head-dtype bf16, pinned by the recipe (the checkpoint leaves lm_head unquantized)" },
+  { match = "mtp.lm_head", weight = "nvfp4/g16", activation = "bf16", why = "the draft head's runtime NVFP4 copy of the BF16 lm_head (crates/model-engine/src/factory/lm_head_setup.rs:116-133)" },
+  { match = "mtp.layers.0.self_attn.*", weight = "bf16", activation = "bf16", why = "--mtp-quantization bf16, pinned by the recipe: the loader dequantizes the draft attention (crates/model-layers/src/layers/mtp_head.rs:344-365); its experts stay FP8 (mtp_head/new_native_fp8_moe.rs)" },
+]
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "declared", gdn_exact_replay = "off", gdn_verify_exact = "on", moe_fp8_tc = "on", ffn_act_fixed = "off" }
+
+# 2026-10-03: The MoE concurrency recipe (concurrency-sweep-moe's default entry,
+# kernels/gb10/qwen3.6-35b-a3b/BENCH.toml): the flagship above with `--lm-head-dtype nvfp4`, the
+# head's runtime NVFP4 copy on its tile GEMM; the MTP head drafts with that same NVFP4 head
+# (crates/model-engine/src/factory/lm_head_setup.rs:118). Plans named `qwen3_6_moe.nvfp4head-*`.
+[[instance]]
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head"
+variant = "nvfp4head"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+arch = "qwen3_6_moe"
+target = "gb10/qwen3.6-35b-a3b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32] }
+verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
+
+[instance.precision]
+checkpoint_plan = "Qwen--Qwen3.6-35B-A3B-FP8"
+tier = "declared"
+caps = ["w8a8_decode", "w8a8_moe_decode", "fp8_lm_head_batched"]
+engine = [
+  { match = "lm_head", weight = "nvfp4/g16", activation = "bf16", why = "--lm-head-dtype nvfp4, pinned by the recipe: the runtime NVFP4 copy of the BF16 lm_head (crates/model-engine/src/factory/lm_head_setup.rs:100-111)" },
+  { match = "mtp.lm_head", weight = "nvfp4/g16", activation = "bf16", why = "the draft head's runtime NVFP4 copy of the BF16 lm_head (crates/model-engine/src/factory/lm_head_setup.rs:116-133)" },
+  { match = "mtp.layers.0.self_attn.*", weight = "bf16", activation = "bf16", why = "--mtp-quantization bf16, pinned by the recipe: the loader dequantizes the draft attention (crates/model-layers/src/layers/mtp_head.rs:344-365); its experts stay FP8 (mtp_head/new_native_fp8_moe.rs)" },
+]
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "declared", gdn_exact_replay = "off", gdn_verify_exact = "on", moe_fp8_tc = "on", ffn_act_fixed = "off" }
 
 # 2026-10-02: nvidia/Qwen3.6-35B-A3B-NVFP4 under `--weight-quantization declared`: NVFP4 W4A16
 # routed and shared experts and lm_head (the grouped NVFP4 decode on the tensor-core kernels,
@@ -231,4 +283,4 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", moe_fp8_tc = "on", ffn_act_fixed = "off" }

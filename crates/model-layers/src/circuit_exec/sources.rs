@@ -32,11 +32,7 @@ pub const CIRCUITS: [(&str, &str); 3] = [
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 3] = [
-    (
-        "qwen3.6-35b-a3b-fp8-bf16head",
-        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
-    ),
+pub const PRECISION: [(&str, &str); 2] = [
     (
         "qwen3.6-35b-a3b-nvfp4-declared",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-nvfp4-declared.toml"),
@@ -50,10 +46,16 @@ pub const PRECISION: [(&str, &str); 3] = [
 ];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
-pub const CHECKPOINTS: [(&str, &str); 1] = [(
-    "unsloth--Qwen3.8-27B-NVFP4",
-    include_str!("../../../../kernels/circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
-)];
+pub const CHECKPOINTS: [(&str, &str); 2] = [
+    (
+        "unsloth--Qwen3.8-27B-NVFP4",
+        include_str!("../../../../kernels/circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
+    ),
+    (
+        "Qwen--Qwen3.6-35B-A3B-FP8",
+        include_str!("../../../../kernels/circuits/checkpoints/Qwen--Qwen3.6-35B-A3B-FP8.toml"),
+    ),
+];
 
 /// 2026-09-28: Every block library a circuit can include.
 pub const BLOCKS: [(&str, &str); 1] = [(

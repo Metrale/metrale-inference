@@ -149,9 +149,22 @@ fn moe_circuit_has_the_checkpoint_layers_formats_and_experts() {
     dims.insert("n".into(), 4);
     assert_eq!(c.edges[egu].rows.eval(&dims), Ok(32));
     assert_eq!(c.edges[egu].dim_value, 1024);
+    // 2026-10-03: Under the recipe's `declared` tier the experts run W8A8: the SiLU product is
+    // BF16 in the circuit and quantized per (row, 128) before the down projections, and the
+    // block-scaled attention/GDN projections stay W8A16 (no block-scaled W8A8 cap).
+    let g128 = Format::parse("fp8/g128").unwrap();
     assert_eq!(
         c.edges[c.edge("l0.moe_ffn.eact").unwrap()].format,
-        Format::F32
+        Format::Bf16
+    );
+    assert_eq!(
+        c.edges[c.edge("l0.moe_ffn.eact_quant").unwrap()].format,
+        g128
+    );
+    assert_eq!(c.edges[c.edge("l0.moe_ffn.xn_quant").unwrap()].format, g128);
+    assert!(
+        c.edge("l0.gdn.xn_quant").is_none(),
+        "GDN projections are W8A16"
     );
     assert_eq!(inst.shape.dims["experts"], 256);
 }
@@ -427,7 +440,7 @@ fn both_gdn_arms_plan_and_the_route_arm_is_the_off_plan() {
         );
         checked += 1;
     }
-    // 2026-10-03: Four with the exact-verify variant of the dense recipe; five with its
-    // declared-activation variant.
-    assert_eq!(checked, 5, "golden instances checked");
+    // 2026-10-03: The dense recipe, it under `declared`, its exact-verify and declared-activation
+    // variants, and the two MoE recipes (bf16 and NVFP4 heads).
+    assert_eq!(checked, 7, "golden instances checked");
 }

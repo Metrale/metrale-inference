@@ -136,12 +136,12 @@ fn gb10_plans_equal_the_golden_plans() {
             }
         }
     }
-    // 2026-09-30: Three golden instances (the dense recipe, it under `declared`, the MoE), 16
-    // plans each (decode, 11 multi_seq rungs, 3 verify, draft), and the two dense ones' seven
-    // n-row draft widths. 2026-10-03: plus the dense recipe's 15 prefill buckets (7 prefill, 8
-    // prefill_chunk) and the exact-verify variant's 3 verify plans, and the declared-activation
-    // variant's 15 (decode, 11 multi_seq rungs, 3 verify).
-    assert_eq!(checked, 95, "golden plans checked");
+    // 2026-09-30: The golden instances (the dense recipe, it under `declared`; 2026-10-03: the MoE
+    // with its BF16 head and with its NVFP4 head), 16 plans each (decode, 11 multi_seq rungs, 3
+    // verify, draft) and seven n-row draft widths each. 2026-10-03: plus the dense recipe's 15
+    // prefill buckets (7 prefill, 8 prefill_chunk), the exact-verify variant's 3 verify plans and
+    // the declared-activation variant's 15 (decode, 11 multi_seq rungs, 3 verify).
+    assert_eq!(checked, 125, "golden plans checked");
 }
 
 /// 2026-09-30: On `devices`, the 27B NVFP4 (recipe and declared formats) never selects a kernel

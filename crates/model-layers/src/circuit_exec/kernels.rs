@@ -22,7 +22,9 @@ use crate::layers::{try_kernel, try_target_kernel};
 mod declared;
 mod draft_rows;
 mod exact;
+mod fp8_linear;
 mod gdn;
+mod moe;
 mod prefill;
 mod verify_batch;
 
@@ -433,6 +435,8 @@ impl KernelTable {
             .chain(draft_rows::entries(gpu, &look))
             .chain(prefill::entries(gpu, &look))
             .chain(exact::entries(gpu, &look))
+            .chain(moe::entries(gpu, &look))
+            .chain(fp8_linear::entries(gpu, &look))
             .filter(|(_, _, h)| h.0 != 0)
             .map(|(m, f, h)| {
                 (

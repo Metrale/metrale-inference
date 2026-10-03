@@ -99,6 +99,8 @@ struct PatternFile {
     holds: Option<String>,
     #[serde(default)]
     steps: BTreeMap<String, String>,
+    #[serde(default)]
+    departs: bool,
 }
 
 /// 2026-09-28: Parse FUSIONS.toml text into rules, in file order. 2026-09-30: A file that
@@ -215,6 +217,13 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
     let numerics = numerics(&r)?;
     let mut pattern = Vec::with_capacity(r.pattern.len());
     for p in &r.pattern {
+        // 2026-10-03: Only a `reference` rule (today's routing, grandfathered) may depart from
+        // the policy's activation format, and only by stating the `act` it runs.
+        if p.departs && (numerics != Numerics::Reference || !p.steps.contains_key("act")) {
+            return Err(shape(
+                "`departs` needs a `reference` rule whose element states its `act` step",
+            ));
+        }
         pattern.push(pattern_op(&r.id, p)?);
     }
     Ok(Rule {
@@ -381,5 +390,6 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         sibling: p.sibling,
         holds: fmt(&p.holds)?,
         steps,
+        departs: p.departs,
     })
 }

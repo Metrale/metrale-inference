@@ -6,6 +6,14 @@
 from one rule in `kernels/gb10/common/FUSIONS.toml`. This file cites, for every rule, the
 dispatch code that makes today's choice, and lists the routing the circuit cannot express yet.
 
+2026-10-03 (MoE workstream): the 35B's rules were re-derived against the dispatch code at
+16281a418. Since 2026-09-28 the grouped FP8 MoE decode takes tensor-core expert kernels at every
+width up to 256 rows (one row through `MoeLayer::forward`), its expert step runs W8A8 when the
+serve publishes FP8 expert activations (the `declared` tier), and the W8A16 tile twins launch the
+row-tile kernel `w8a16_tc_rows`; the earlier MoE and W8A16 rows of the rule table described
+paths legacy no longer takes by default. The 35B instance now resolves precision from the
+checkpoint's own `quantization_config` (`kernels/circuits/checkpoints/`).
+
 ## How the rules were checked
 
 - Four read-only traces of the code at `fc670865`: dense M=1 decode, dense multi-sequence
@@ -133,27 +141,25 @@ class and exact citation.
 | `ffn_mmq64_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:61-66,272-286,330-372 |
 | `ffn_mmq_pipe_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:67-68; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe) |
 | `ffn_mmq_pipe_act_down` | reference | ml/ops/nvfp4_mmq.rs:175-183 (the pipe applies the down scale in its store, so no metrale_nvfp4_scale_bf16) |
-| `w8a16_m32` | reference | ml/qwen3_ssm/row_tier_proj.rs:64-117; ml/qwen3_attention/decode/attention_forward/q_proj.rs:54-66; ml/qwen3_attention/decode/attention_forward_kv.rs:49-76; ml/ops/gemm_quant_w8a16.rs:272-274; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248; ml/ops/w8a16_gemm_pipelined_m32.rs:318-344 |
-| `w8a16_m64` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212,253-258 (canonical chunk 64); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248; ml/ops/w8a16_gemm_pipelined_m32.rs:345-357 |
-| `w8a16_m64_attn_chunked` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:253-285 (64-row chunks); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248,279-304 (step 64) |
-| `w8a16_full_gdn_wide` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:101-167,257-323; ml/ops/w8a16_gemm_pipelined_m32.rs:318-371 (w8a16_gemm_pipelined_by_m above 64 rows) |
-| `moe_router_gemv` | reference | ml/moe/forward/route.rs:36 |
-| `moe_topk_softmax` | reference | ml/moe/forward/route.rs:117-128 (ties go to the lower expert index) |
-| `moe_gate_up_shared_bf16` | reference | ml/moe/forward.rs:182-215 (BF16 experts, set_bf16_experts); ml/mtp_head/new_bf16_moe.rs:23-56 |
-| `moe_silu_down_shared_bf16` | reference | ml/moe/forward.rs:216-234 |
-| `moe_gate_up_shared_fp8` | reference | ml/moe/forward.rs:235-262 (grid y 0..7 routed experts, y = 8 the shared expert); ml/moe/init.rs:431-434 |
-| `moe_silu_down_shared_fp8` | reference | ml/moe/forward.rs:263-304; ml/moe/init.rs:435-438 |
-| `moe_weighted_sum_blend` | reference | ml/moe/forward.rs:446-476 (sum of w * out plus sigmoid(x . seg) * shared, rounded to BF16 once); the EP reduce is a no-op without EP, ml/moe/forward/ep_reduce.rs:12-50 |
-| `moe_grouped_router_rows` | reference | ml/moe/forward_fp8_grouped_router.rs:95-137 (the per-row router repeats the one-row router's bits, :6-12); arms ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:94-130, ml/qwen3_ssm/trait_decode_multi_seq.rs:154-170, ml/qwen3_ssm/trait_decode_batched.rs:304-320 |
-| `moe_grouped_topk_sort` | reference | ml/moe/forward_fp8_grouped_decode.rs:268-300 (FP8_GROUPED_DECODE_MAX_ROWS = 64, :28) |
-| `moe_gate_up_act_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:300-321; k/moe_shared_expert_fused_fp8_grouped.cu:17-22 (writes the FP32 SiLU product; per row equal to moe_shared_expert_fused_fp8.cu bit for bit) |
-| `moe_down_act_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:322-340 |
-| `moe_blend_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:364-380 |
-| `moe_gate_up_act_grouped_nvfp4_tc` | reference | ml/moe/forward_nvfp4_grouped_decode.rs:143-220 (admits m = 1..=256 when declared_experts), :379-397; ml/moe/forward.rs:33-37 (one row); ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:106-123, ml/qwen3_ssm/trait_decode_multi_seq.rs:144-146, ml/qwen3_ssm/trait_decode_batched.rs:308-312 (many rows); k/tc_weight_formats.cuh:101-140 (Nvfp4G16: BF16(E2M1 x E4M3) exact, s2 once) |
-| `moe_down_act_grouped_nvfp4_tc` | reference | ml/moe/forward_nvfp4_grouped_decode.rs:422-440 (the shared expert's rows in the same launch) |
-| `moe_grouped_nvfp4_tc_wide` | reference | ml/moe/forward_nvfp4_grouped_decode.rs:270-310 (per-row router and moe_fp8_grouped_sort), :379-440 (the two expert launches), :442-458 (the grouped blend); NVFP4_GROUPED_DECODE_TC_MAX_ROWS, :32 |
-| `lm_head_nvfp4_w4a16_rows` | reference | mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode) |
-| `moe_prefill_fp8_w8a8_wide` | reference | ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 and ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (forward_prefill above the grouped cap); ml/moe/forward_prefill_fp8.rs:113-165 (shared W8A8 first, input quantized once), :166-265 (router: dense_gemm_router below MOE_ROUTER_RT_MIN_ROWS = 1024, ml/moe/helpers_c.rs:246-283), :313-395; ml/moe/forward_prefill_fp8/gate_up.rs:57-160 and down.rs:40-140 (ctx.decode_step declines the adaptive and E4M3 arms, ml/moe/adaptive_fp8.rs:105-116); ml/moe/forward_prefill_fp8/combine.rs:40-60 (W8A8 activations: not row-invariant with paths A and B) |
+| `w8a16_tc_rows_16` | reference | ml/ops/w8a16_tc_rows.rs:121-142; ml/qwen3_ssm/row_tier_proj.rs:42-61,115-142; ml/qwen3_attention/decode/attention_forward/q_proj.rs:54-79; ml/ops/gemm_quant_w8a16.rs:260-298 |
+| `w8a16_tc_rows_32` | reference | ml/ops/w8a16_tc_rows.rs:121-142; ml/qwen3_ssm/row_tier_proj.rs:42-61,115-142; ml/qwen3_attention/decode/attention_forward/q_proj.rs:54-79; ml/ops/gemm_quant_w8a16.rs:260-298 |
+| `w8a16_tc_rows_64` | reference | ml/ops/w8a16_tc_rows.rs:121-142; ml/qwen3_ssm/row_tier_proj.rs:42-61,115-142; ml/qwen3_attention/decode/attention_forward/q_proj.rs:54-79; ml/ops/gemm_quant_w8a16.rs:260-298 |
+| `w8a16_tc_rows_64c_gdn` | reference | ml/qwen3_ssm/row_tier_proj.rs:42-61 (ops::w8a16_tc_rows past 64 rows: `_64c`, one launch) |
+| `w8a16_tc_rows_attn_65_80` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:282-309; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:233-248 (64-row chunks, each chunk's entry by its rows) |
+| `w8a16_tc_rows_attn_81_96` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:282-309; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:233-248 (64-row chunks, each chunk's entry by its rows) |
+| `w8a16_tc_rows_attn_97_128` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:282-309; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:233-248 (64-row chunks, each chunk's entry by its rows) |
+| `moe_router_rows` | reference | ml/moe/forward_fp8_grouped_router.rs:78-80,118-130 (dense_gemv_batchm_split, router_block_rows rows per block row; a row's bits do not depend on the grouping) |
+| `moe_router_rows_draft` | reference | ml/mtp_head/forward.rs:332 (MoeLayer::forward, one row); ml/moe/forward.rs:39 |
+| `moe_router_gemm_draft` | reference | ml/mtp_head/forward_batch_ffn.rs:132 (GroupedRouting::Batched); ml/moe/forward_fp8_grouped_router.rs:181; ml/moe/helpers_c.rs:333 (moe_router_gemm_bf16 when resolved and hidden % 16 == 0; no rule plans the dense_gemm_bf16 fallback, so a target without it refuses) |
+| `moe_topk_rows_sort` | reference | ml/moe/forward_fp8_grouped_router.rs:138 (moe_topk_softmax_rows: the lower expert index on a tie); ml/moe/forward_fp8_grouped_decode.rs:309-318 (the sort into gate_logits, grouped_sort_out) |
+| `moe_topk_rows_sort_draft` | reference | ml/moe/forward_fp8_grouped_router.rs:138; ml/moe/forward_fp8_grouped_decode.rs:309-318 |
+| `moe_topk_batched_sort_draft` | reference | ml/moe/forward_fp8_grouped_router.rs:199 (moe_topk_softmax_batched: the lower lane on a tie); ml/moe/forward_fp8_grouped_decode.rs:309-318 |
+| `moe_gate_up_act_grouped_tc_w8a8` | reference | ml/moe/fp8_grouped_tc_w8a8.rs:100-110 (the layer input quantized per (row, 128), then gate+up writing the E4M3 SiLU products with their scales: routed by sorted position, shared by token) |
+| `moe_down_act_grouped_tc_w8a8` | reference | ml/moe/fp8_grouped_tc_w8a8.rs:126 |
+| `moe_blend_grouped` | reference | ml/moe/forward_fp8_grouped_decode.rs:402 (sum of w * expert row through token_to_perm, plus sigmoid(x . seg) * shared, one BF16 rounding) |
+| `lm_head_bf16_rows_fixed` | reference | mm/impl_a3_lm_head.rs:337-345 (one row takes the batched decode head under a fixed head format); me/lm_head_batched.rs:146-167 (fixed: dense_gemv_batchm in chunks of DENSE_GEMV_BATCHM_MAX_M rows) |
+| `lm_head_nvfp4_tile` | reference | me/lm_head_batched.rs:270-309 (row_invariant: the tile GEMM at every padded_n); mm/impl_a3_lm_head.rs:57-101,140-146 (the verify heads' wide arm under row_invariant) |
+| `lm_head_nvfp4_tile_decode` | reference | mm/impl_a3_lm_head.rs:337-345 (one row takes the batched decode head under a fixed head format); me/lm_head_batched.rs:270-309 |
 | `lm_head_bf16_gemv` | reference | mm/impl_a3_lm_head.rs:392-402 (use_fp32_logits is false, mm/impl_a1/kernels.rs:200) |
 | `lm_head_bf16_batchm` | reference | me/lm_head_batched.rs:133-162 (m <= lm_head_batchm_max = 8, kernels/gb10/HARDWARE.toml:115); mm/impl_a3_lm_head.rs:150-202 (verify); per row bit-identical to dense_gemv_bf16, k/dense_gemv_bf16_batchm.cu:16 |
 | `lm_head_bf16_gemm` | reference | me/lm_head_batched.rs:133-162 |
@@ -292,9 +298,9 @@ These are facts about the code, found while encoding it. They are not changes.
 2. **Several default routes already run below the declared activation precision:**
    - The dense multi-sequence FFN takes the NVFP4 MMQ path (W4A4) with no flag: at 8 rows or more in GDN layers, and 12 or more in attention layers.
    - The tile GEMMs at 9-64 rows and above round activations to E4M3 (kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:344-347).
-3. **Canonical MoE tiers are not row-invariant above 64 rows.**
+3. **Canonical MoE tiers are not row-invariant above 64 rows** with the tensor-core expert kernels off (`METRALE_NO_MOE_FP8_TC`, the circuit's `moe_fp8_tc = "off"`). 2026-10-03: with them on, the default since 2026-09-28/29, the grouped decode serves 1..=256 rows with the per-row router, so every width keeps one row's arithmetic.
    - Batched decode at 96/128 takes the W8A8 `forward_prefill_fp8` path.
-   - In batched verify at R > 64, the GDN-layer FFN loops path A per row while the attention-layer FFN takes W8A8, so two layers of one step use different MoE arithmetic.
+   - In batched verify at R > 64, the GDN-layer FFN loops path A per row while the attention-layer FFN takes W8A8, so two layers of one step use different MoE arithmetic. No rule plans `moe_fp8_tc = "off"`; the executor refuses the kill switch.
 4. **Probable defect: FP8 KV scales are never loaded for the dense checkpoint.**
    - `load_kv_scales` looks up `{p}.k_proj.k_scale`; the checkpoint ships `self_attn.k_scale`.
    - Not exercised by the golden policy (bf16 KV). It matters for the throughput recipe's fp8 KV.

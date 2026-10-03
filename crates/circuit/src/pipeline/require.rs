@@ -57,6 +57,8 @@ pub struct Need<'a> {
     pub held: BTreeMap<EdgeIdx, Format>,
     /// 2026-10-02: Step values the plan's rules state (`steps`), by node.
     pub stated: BTreeMap<NodeIdx, BTreeMap<StepKind, Value>>,
+    /// 2026-10-03: Nodes whose rule states an `act` that departs from the policy (`departs`).
+    pub departs: std::collections::BTreeSet<NodeIdx>,
 }
 
 impl<'a> Need<'a> {
@@ -71,6 +73,7 @@ impl<'a> Need<'a> {
             edge_states: vec![None; circuit.edges.len()],
             held: BTreeMap::new(),
             stated: BTreeMap::new(),
+            departs: Default::default(),
         }
     }
 
@@ -100,6 +103,9 @@ impl<'a> Need<'a> {
                 }
                 if !p.steps.is_empty() {
                     need.stated.insert(n, p.steps.clone());
+                }
+                if p.departs {
+                    need.departs.insert(n);
                 }
             }
         }
@@ -174,13 +180,16 @@ pub fn required(need: &Need<'_>, n: NodeIdx) -> Result<NodePipeline, PipelineErr
                     Some(other) => return Err(fail(format!("a stated act `{}`", other.name()))),
                     None => None,
                 };
-                let act = super::act_policy::required_act(
-                    need.settings,
-                    &node.op,
-                    need.rows,
-                    (first("a projection")?, said, weight),
-                )
-                .map_err(fail)?;
+                let act = match said {
+                    Some(f) if need.departs.contains(&n) => f,
+                    _ => super::act_policy::required_act(
+                        need.settings,
+                        &node.op,
+                        need.rows,
+                        (first("a projection")?, said, weight),
+                    )
+                    .map_err(fail)?,
+                };
                 projection = Some((act, weight));
                 Value::Format(act)
             }

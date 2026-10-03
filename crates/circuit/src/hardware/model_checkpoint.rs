@@ -30,7 +30,7 @@ use crate::{QuantMetadata, ServePrecision, resolve_checkpoint};
 pub const KERNEL_QUANT: &str = "nvfp4";
 
 /// 2026-09-30: Where each derived setting comes from, printed in the report.
-pub const POLICY_SOURCES: [(&str, &str); 14] = [
+pub const POLICY_SOURCES: [(&str, &str); 15] = [
     (
         "row_tiers",
         "canonical for FP8 routed experts or a MoE with FP8 projections, else by_rows \
@@ -87,6 +87,10 @@ pub const POLICY_SOURCES: [(&str, &str); 14] = [
         "ffn_act_fixed",
         "off unless --activation-quantization fixes the ffn family at every row count \
          (ml/dense_ffn_fixed.rs, 2026-10-03)",
+    ),
+    (
+        "moe_fp8_tc",
+        "on unless METRALE_NO_MOE_FP8_TC (ml/moe/fp8_grouped_tc.rs)",
     ),
 ];
 
@@ -222,6 +226,7 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         ("gdn_exact_replay", "off"),
         ("gdn_verify_exact", "off"),
         ("ffn_act_fixed", "off"),
+        ("moe_fp8_tc", "on"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
