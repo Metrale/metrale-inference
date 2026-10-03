@@ -246,3 +246,39 @@ fn the_verify_verdict_needs_matching_steps_a_seen_control_and_both_commit_paths(
     assert!(bad[2].contains("detection control"), "{bad:?}");
     assert!(bad[3].contains("needs both"), "{bad:?}");
 }
+
+/// 2026-10-03: A `--prefill` prompt has exactly the asked length, stays inside the vocabulary's
+/// sampled range, and differs between lengths (so two lengths never share a prefix by accident).
+#[test]
+fn prefill_prompts_have_the_exact_length_and_differ_between_lengths() {
+    for t in [1, 16, 17, 64, 65, 4096] {
+        let p = prefill::prompt_of_len(t, 1000);
+        assert_eq!(p.len(), t);
+        assert!(p.iter().all(|&x| (64..936).contains(&x)), "{t}");
+        assert_eq!(p, prefill::prompt_of_len(t, 1000), "deterministic");
+    }
+    let (a, b) = (prefill::prompt_of_len(64, 1000), prefill::prompt_of_len(65, 1000));
+    assert_ne!(a[..], b[..64]);
+}
+
+/// 2026-10-03: The `--prefill` verdict fails on any differing run and on a control that saw
+/// nothing, and names each.
+#[test]
+fn the_prefill_verdict_needs_equal_runs_and_a_seen_control() {
+    let c = |variant: &str, equal: bool| prefill::PrefillComparison {
+        variant: variant.into(),
+        equal,
+        first_diff: (!equal).then_some(6),
+    };
+    let ok = vec![(17, prefill::PrefillPath::Single, vec![c("legacy-repeat", true)])];
+    assert!(prefill::prefill_failures(&ok, &c("control", false)).is_empty());
+    let bad = vec![
+        (17, prefill::PrefillPath::Single, vec![c("legacy-repeat", true), c("circuit", false)]),
+        (65, prefill::PrefillPath::Chunked(16), vec![c("legacy-repeat", false)]),
+    ];
+    let r = prefill::prefill_failures(&bad, &c("control", true));
+    assert_eq!(r.len(), 3, "{r:?}");
+    assert!(r[0].contains("17 tokens") && r[0].contains("circuit"), "{r:?}");
+    assert!(r[1].contains("Chunked(16)"), "{r:?}");
+    assert!(r[2].contains("detection control"), "{r:?}");
+}

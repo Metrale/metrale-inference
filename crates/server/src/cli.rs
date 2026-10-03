@@ -338,6 +338,14 @@ pub struct CircuitDiffArgs {
     /// uniform, then one ragged mix of them deepest first.
     #[arg(long, value_delimiter = ',', requires = "verify_batch")]
     pub verify_batch_ks: Vec<usize>,
+    /// 2026-10-03: Prompt lengths (comma-separated): diff the prefill instead. Each length
+    /// prefills one prompt single-pass under every forward and compares the last-position
+    /// logits; the report carries the legacy reference's launch trace per length.
+    #[arg(long, value_delimiter = ',')]
+    pub prefill: Vec<usize>,
+    /// 2026-10-03: With --prefill: also prefill in chunks of this many tokens.
+    #[arg(long, requires = "prefill")]
+    pub prefill_chunk: Option<usize>,
     /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
     #[command(flatten)]
     pub serve: ServeArgs,

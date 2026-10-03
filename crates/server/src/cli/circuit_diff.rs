@@ -277,14 +277,23 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         [
             !args.batch.is_empty(),
             !args.verify.is_empty(),
-            !args.verify_batch.is_empty()
+            !args.verify_batch.is_empty(),
+            !args.prefill.is_empty()
         ]
         .iter()
         .filter(|&&b| b)
         .count()
             <= 1,
-        "--batch, --verify and --verify-batch are separate diffs"
+        "--batch, --verify, --verify-batch and --prefill are separate diffs"
     );
+    if !args.prefill.is_empty() {
+        return prefill::prefill_report(
+            model,
+            (&args.prefill, args.prefill_chunk),
+            &forwards,
+            &args.out,
+        );
+    }
     ensure!(
         !args.mtp || !args.verify.is_empty() || !args.verify_batch.is_empty(),
         "--mtp runs the draft head of --verify or --verify-batch"
@@ -459,6 +468,9 @@ mod batch;
 
 #[path = "circuit_diff_verify.rs"]
 mod verify;
+
+#[path = "circuit_diff_prefill.rs"]
+mod prefill;
 
 #[path = "circuit_diff_verify_batch.rs"]
 mod verify_batch;

@@ -71,6 +71,22 @@ pub fn record(e: Entry) {
     }
 }
 
+/// 2026-10-03: Stop recording and return the ops recorded since [`begin`], leaving the
+/// previous trace of [`end_and_diff`] untouched: the circuit's prefill instrument keeps every
+/// trace of a run, not only the last two.
+pub fn end_and_take() -> Vec<Entry> {
+    ON.store(false, Ordering::Relaxed);
+    std::mem::take(&mut *TRACE.lock().unwrap())
+}
+
+/// 2026-10-03: The name of `e`'s op: `module::func` for a named kernel, else its kind.
+pub fn op_name(e: &Entry) -> String {
+    match e.kind {
+        "kernel" => name_of(e.func),
+        other => other.to_string(),
+    }
+}
+
 /// 2026-09-26: Stop recording and diff this trace against the previous one.
 /// Returns `None` on the first call, else a report of how many ops differ,
 /// detailing at most `max_report` of them.
