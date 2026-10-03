@@ -90,6 +90,9 @@ pub(super) struct RunOptions {
     /// 2026-09-25: A LoRA rotation queued before the loop starts; the scheduler applies it
     /// once nothing is in flight.
     pub lora_rotation: Option<String>,
+    /// 2026-10-03: Close the request channel while the loop is parked at the first model call
+    /// whose trace line starts with this prefix, then let it go on (the D15 race, forced).
+    pub close_inbox_at: Option<&'static str>,
     /// 2026-09-25: The instrument set the run feeds. The goldens are recorded with a
     /// never-configured (`Off`) one.
     pub telemetry: &'static metrale_telemetry::Telemetry,
@@ -121,6 +124,7 @@ impl Default for RunOptions {
             think_end_token: None,
             think_start_token: None,
             lora_rotation: None,
+            close_inbox_at: None,
             telemetry: &TELEMETRY_OFF,
             pipeline_faults: crate::scheduler::PipelineFaults::NONE,
         }
@@ -407,6 +411,9 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
 
     later.sort_by_key(|(t, _)| *t);
     settle(&request_tx);
+    if let Some(prefix) = sc.opts.close_inbox_at {
+        shared.park.arm(prefix);
+    }
     if let Some((t, _)) = later.first() {
         shared.gate.block_at_tick(*t);
     }
@@ -451,6 +458,15 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
             (id, out)
         })
         .collect();
+    let mut request_tx = Some(request_tx);
+    if sc.opts.close_inbox_at.is_some() {
+        shared.park.wait_parked();
+        drop(request_tx.take());
+        // 2026-10-03: Long enough for the inbox's forwarder thread to see the close; nothing
+        // makes that observable from here.
+        std::thread::sleep(Duration::from_millis(100));
+        shared.park.release();
+    }
     let rotation_result = rotation_ack.map(|rx| match rx.blocking_recv() {
         Ok(Ok(ack)) => format!("{ack:?}"),
         Ok(Err(e)) => format!("Err({e})"),
