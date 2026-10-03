@@ -190,7 +190,7 @@ fn malformed_routes_are_refused() {
         ),
         (
             "modes = [\"multi_seq\"]\nrows",
-            "modes = [\"prefill\"]\nrows",
+            "modes = [\"warmup\"]\nrows",
             "unknown mode",
         ),
         (

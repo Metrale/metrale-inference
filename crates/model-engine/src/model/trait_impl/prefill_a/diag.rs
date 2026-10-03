@@ -63,7 +63,7 @@ impl TransformerModel {
             let last_nan = last_vals.iter().filter(|v| v.is_nan()).count();
             let last_inf = last_vals.iter().filter(|v| v.is_infinite()).count();
             let lt = self.config.layer_type(i);
-            if i % 4 == 0 || i == self.layers.len() - 1 || last_nan > 0 || last_inf > 0 {
+            if i.is_multiple_of(4) || i == self.layers.len() - 1 || last_nan > 0 || last_inf > 0 {
                 tracing::warn!(
                     "DIAG L{i} ({lt:?}) last_tok: norm={last_norm:.4} nan={last_nan} inf={last_inf} first4={:.4?}",
                     &last_vals[..4.min(last_vals.len())]

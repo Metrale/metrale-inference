@@ -22,6 +22,7 @@ use crate::layers::{try_kernel, try_target_kernel};
 mod declared;
 mod draft_rows;
 mod gdn;
+mod prefill;
 mod verify_batch;
 
 /// 2026-09-28: Emitter handles by kernel id; only present kernels are kept.
@@ -429,6 +430,7 @@ impl KernelTable {
             .chain(gdn::entries(gpu, &look))
             .chain(verify_batch::entries(gpu, &look))
             .chain(draft_rows::entries(gpu, &look))
+            .chain(prefill::entries(gpu, &look))
             .filter(|(_, _, h)| h.0 != 0)
             .map(|(m, f, h)| {
                 (

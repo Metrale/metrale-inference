@@ -113,7 +113,7 @@ fn shape_errors_are_refused() {
         ("rows = [1, 128]", "rows = [0, 128]"),
         ("rows = [1, 128]", "rows = [9, 8]"),
         ("modes = [\"decode\", \"verify\"]", "modes = []"),
-        ("modes = [\"decode\", \"verify\"]", "modes = [\"prefill\"]"),
+        ("modes = [\"decode\", \"verify\"]", "modes = [\"warmup\"]"),
         ("cite = \"k/rms_norm.cu:382\"", "cite = \"  \""),
         ("repeat = \"chunk64\"", "repeat = \"chunk0\""),
         ("keep = true },", "keep = true, sibling = true },"),

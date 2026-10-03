@@ -79,4 +79,3 @@ pub trait ModelCircuit {
         bail!("this model does not digest its state")
     }
 }
-
