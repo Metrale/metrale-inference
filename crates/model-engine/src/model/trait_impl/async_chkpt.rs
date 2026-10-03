@@ -24,12 +24,12 @@ use super::super::block_mgmt::{
     extract_layer_refs, reuse_prefix_match_disk_ids,
 };
 use super::super::ssm_batched_copy::{StateCopy, run_ssm_state_copies};
-use super::super::state_run::Parts;
-use metrale_circuit::state_ops::StateProgramId;
 use super::super::ssm_pool::SsmStatePool;
 use super::super::ssm_snapshot::SsmSnapshotPool;
+use super::super::state_run::Parts;
 use super::super::types::{PinnedMetaStaging, TransformerModel};
 use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
+use metrale_circuit::state_ops::StateProgramId;
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
 };
@@ -42,7 +42,13 @@ impl TransformerModel {
         use metrale_model_layers::layer::SsmLayerState;
 
         let stream = self.secondary_stream;
-        if self.run_state_program(StateProgramId::VerifyCheckpoint, seq.slot_idx, None, Parts::ALL, stream)? {
+        if self.run_state_program(
+            StateProgramId::VerifyCheckpoint,
+            seq.slot_idx,
+            None,
+            Parts::ALL,
+            stream,
+        )? {
             return self.gpu.record_event(self.secondary_event, stream);
         }
         let mut h_plan = Vec::with_capacity(self.ssm_pool.num_ssm_layers);
@@ -97,7 +103,13 @@ impl TransformerModel {
             n => (StateProgramId::CommitAccepted, Some(n - 1)),
         };
         if self.run_state_program(back, seq.slot_idx, step, Parts::ALL, stream)? {
-            self.run_state_program(StateProgramId::VerifyCheckpoint, seq.slot_idx, None, Parts::ALL, stream)?;
+            self.run_state_program(
+                StateProgramId::VerifyCheckpoint,
+                seq.slot_idx,
+                None,
+                Parts::ALL,
+                stream,
+            )?;
             return self.gpu.record_event(self.secondary_event, stream);
         }
         let mut ssm_layer_idx = 0usize;
@@ -276,7 +288,13 @@ impl TransformerModel {
             h: !h_folded,
             conv: true,
         };
-        if self.run_state_program(StateProgramId::CommitAccepted, seq.slot_idx, Some(num_accepted - 1), parts, stream)? {
+        if self.run_state_program(
+            StateProgramId::CommitAccepted,
+            seq.slot_idx,
+            Some(num_accepted - 1),
+            parts,
+            stream,
+        )? {
             return self.gpu.record_event(self.secondary_event, stream);
         }
         let mut ssm_layer_idx = 0usize;

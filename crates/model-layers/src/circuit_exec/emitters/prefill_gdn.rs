@@ -54,17 +54,53 @@ const SYNC_ABOVE_ROWS: u32 = 4096;
 /// executor's lever table is the single classification once it covers prefill; until then this
 /// module refuses them at build.
 const SWITCHES: &[(&str, Option<&str>, &str)] = &[
-    ("METRALE_GDN_BF16_WEIGHTS", Some("1"), "BF16 GDN projections on cuBLASLt"),
-    ("METRALE_CUTLASS_NVFP4_GEMM", Some("1"), "CUTLASS NVFP4 projections"),
-    ("METRALE_CUTLASS_NVFP4_QKVZ", Some("1"), "the CUTLASS NVFP4 qkvz projection"),
-    ("METRALE_CUTLASS_NVFP4_SSM_OUT", Some("1"), "the CUTLASS NVFP4 out_proj"),
-    ("METRALE_FP8_LDMAB", Some("0"), "the FP8 GEMM without the ldmab kernel"),
-    ("METRALE_CONV1D_TP", Some("0"), "the sequential prefill conv"),
-    ("METRALE_NO_GDN_FLA", Some("1"), "the recurrence without the chunked FLA arm"),
+    (
+        "METRALE_GDN_BF16_WEIGHTS",
+        Some("1"),
+        "BF16 GDN projections on cuBLASLt",
+    ),
+    (
+        "METRALE_CUTLASS_NVFP4_GEMM",
+        Some("1"),
+        "CUTLASS NVFP4 projections",
+    ),
+    (
+        "METRALE_CUTLASS_NVFP4_QKVZ",
+        Some("1"),
+        "the CUTLASS NVFP4 qkvz projection",
+    ),
+    (
+        "METRALE_CUTLASS_NVFP4_SSM_OUT",
+        Some("1"),
+        "the CUTLASS NVFP4 out_proj",
+    ),
+    (
+        "METRALE_FP8_LDMAB",
+        Some("0"),
+        "the FP8 GEMM without the ldmab kernel",
+    ),
+    (
+        "METRALE_CONV1D_TP",
+        Some("0"),
+        "the sequential prefill conv",
+    ),
+    (
+        "METRALE_NO_GDN_FLA",
+        Some("1"),
+        "the recurrence without the chunked FLA arm",
+    ),
     ("METRALE_GDN_PIPE", Some("0"), "the vfused FLA state spine"),
-    ("METRALE_GDN_VTILE", None, "the vtile FLA state spine, or none"),
+    (
+        "METRALE_GDN_VTILE",
+        None,
+        "the vtile FLA state spine, or none",
+    ),
     ("METRALE_GDN_TMA", Some("1"), "the TMA FLA state spine"),
-    ("METRALE_NO_GDN_FWD_O_MMA8", None, "the FLA output kernel without its 8-warp twin"),
+    (
+        "METRALE_NO_GDN_FWD_O_MMA8",
+        None,
+        "the FLA output kernel without its 8-warp twin",
+    ),
 ];
 
 /// 2026-10-03: Refuse the build when a switch of [`SWITCHES`] named in `vars` is set.
@@ -116,7 +152,10 @@ fn fp8_cast(cx: &Cx<'_>, i: usize, role: LinearRole) -> Result<DevicePtr> {
     let slot = WeightSlot::PrefillCast(role);
     match cx.layer(i)?.weights.get(&slot) {
         Some(BoundWeight::Dense(d)) => Ok(d.weight),
-        Some(other) => bail!("{slot:?}: expected the E4M3 cast, the layer holds {}", other.family()),
+        Some(other) => bail!(
+            "{slot:?}: expected the E4M3 cast, the layer holds {}",
+            other.family()
+        ),
         None => bail!(
             "`{}`: its layer binds no {slot:?}; the legacy prefill takes another arm \
              (`qwen3_ssm/trait_prefill_proj.rs`, `trait_prefill_helper.rs`)",

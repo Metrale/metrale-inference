@@ -276,7 +276,12 @@ impl OpEmitter for PrefillResidualAdd {
             "group {}: the residual stream must be updated in place in `hidden`",
             cx.g.index
         );
-        let src = placed_at(cx, cx.g.input(0, 1)?, cx.arena()?.moe_output(), "FFN output")?;
+        let src = placed_at(
+            cx,
+            cx.g.input(0, 1)?,
+            cx.arena()?.moe_output(),
+            "FFN output",
+        )?;
         let (k, h) = (cx.handle(0)?, dim(cx, "hidden")?);
         cx.push(
             0,
@@ -305,8 +310,16 @@ impl OpEmitter for PrefillFinalNorm {
             "a checkpoint without a final norm copies instead"
         );
         let x = cx.ptr(cx.g.input(0, 0)?)?;
-        ensure!(x == cx.fixed.hidden, "the final norm reads the residual stream");
-        let y = placed_at(cx, cx.g.output(0, 0)?, cx.arena()?.norm_output(), "norm output")?;
+        ensure!(
+            x == cx.fixed.hidden,
+            "the final norm reads the residual stream"
+        );
+        let y = placed_at(
+            cx,
+            cx.g.output(0, 0)?,
+            cx.arena()?.norm_output(),
+            "norm output",
+        )?;
         let (k, w, h) = (cx.handle(0)?, cx.head.final_norm, dim(cx, "hidden")?);
         let eps = cx.config.rms_norm_eps as f32;
         cx.push(

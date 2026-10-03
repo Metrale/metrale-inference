@@ -62,7 +62,12 @@ fn a_mode_without_rules_is_one_bucket_and_max_zero_is_none() {
     let rules = rule("small", [1, 16], r#""multi_seq""#);
     assert_eq!(ladder(&rules, Mode::Draft, 300), [(1, 300)]);
     assert!(ladder(&rules, Mode::MultiSeq, 0).is_empty());
-    let l = bucket_ladder(&parse_rules(&format!("schema = 1\n{rules}")).unwrap(), &[], Mode::MultiSeq, 40);
+    let l = bucket_ladder(
+        &parse_rules(&format!("schema = 1\n{rules}")).unwrap(),
+        &[],
+        Mode::MultiSeq,
+        40,
+    );
     assert_eq!(bucket_of(&l, 16), Some(Bucket { lo: 1, hi: 16 }));
     assert_eq!(bucket_of(&l, 17), Some(Bucket { lo: 17, hi: 40 }));
     assert_eq!(bucket_of(&l, 41), None);

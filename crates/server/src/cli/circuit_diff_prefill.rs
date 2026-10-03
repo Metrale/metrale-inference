@@ -174,7 +174,10 @@ pub(crate) fn first_op_diff(reference: &[TracedOp], run: &[TracedOp]) -> Option<
 
 /// 2026-10-03: The label of the first state entry where `run` differs from `reference` (or a
 /// missing entry).
-pub(crate) fn first_state_diff(reference: &[(String, u64)], run: &[(String, u64)]) -> Option<String> {
+pub(crate) fn first_state_diff(
+    reference: &[(String, u64)],
+    run: &[(String, u64)],
+) -> Option<String> {
     reference
         .iter()
         .zip(run)
@@ -222,7 +225,10 @@ pub(super) fn prefill_report(
     forwards: &[(&'static str, ForwardSelect)],
     out: &Path,
 ) -> Result<()> {
-    ensure!(!lens.is_empty() && lens.iter().all(|&t| t > 0), "--prefill takes lengths >= 1");
+    ensure!(
+        !lens.is_empty() && lens.iter().all(|&t| t > 0),
+        "--prefill takes lengths >= 1"
+    );
     let paths: Vec<PrefillPath> = std::iter::once(PrefillPath::Single)
         .chain(chunks.iter().map(|&c| PrefillPath::Chunked(c)))
         .collect();

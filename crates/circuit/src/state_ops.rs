@@ -126,8 +126,14 @@ impl StateProgramId {
                 to: Live,
             },
             Self::SlotZero => StateOp::Zero,
-            Self::RingSave => StateOp::Copy { from: Live, to: Ring },
-            Self::RingRestore => StateOp::Copy { from: Ring, to: Live },
+            Self::RingSave => StateOp::Copy {
+                from: Live,
+                to: Ring,
+            },
+            Self::RingRestore => StateOp::Copy {
+                from: Ring,
+                to: Live,
+            },
             Self::PrefixSave => StateOp::Convert {
                 from: Live,
                 to: Prefix,
@@ -182,14 +188,17 @@ impl StateOpNode {
                 (StatePlace::Ring | StatePlace::Prefix, Some(c)) => {
                     circuit.states[c].dtype(formats)
                 }
-                (StatePlace::Ring | StatePlace::Prefix, None) => Err(StateError::Inputs(
-                    format!("node `{}` touches a snapshot and names no cache", self.id),
-                )),
+                (StatePlace::Ring | StatePlace::Prefix, None) => Err(StateError::Inputs(format!(
+                    "node `{}` touches a snapshot and names no cache",
+                    self.id
+                ))),
                 _ => Ok(state),
             }
         };
         match self.op {
-            StateOp::Copy { from, to } | StateOp::Convert { from, to } => Ok((side(from)?, side(to)?)),
+            StateOp::Copy { from, to } | StateOp::Convert { from, to } => {
+                Ok((side(from)?, side(to)?))
+            }
             StateOp::Zero => Ok((state, state)),
         }
     }

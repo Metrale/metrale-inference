@@ -284,10 +284,7 @@ impl ModelCircuit for TransformerModel {
         if let Some(p) = self.proposer.as_ref() {
             p.set_circuit_draft(None);
         }
-        self.install_state_programs(
-            next.as_ref()
-                .map(|e| std::sync::Arc::new(e.state.clone())),
-        );
+        self.install_state_programs(next.as_ref().map(|e| std::sync::Arc::new(e.state.clone())));
         let prev = std::mem::replace(&mut *self.circuit.write(), next);
         if let Some(prev) = prev {
             prev.free(self.gpu.as_ref())?;

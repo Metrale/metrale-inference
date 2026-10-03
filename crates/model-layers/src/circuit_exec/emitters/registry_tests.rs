@@ -14,7 +14,10 @@ fn every_emitter_id_is_registered_once() {
         *seen.entry(e.id()).or_default() += 1;
     }
     let twice: Vec<_> = seen.iter().filter(|(_, n)| **n > 1).collect();
-    assert!(twice.is_empty(), "emitter ids registered more than once: {twice:?}");
+    assert!(
+        twice.is_empty(),
+        "emitter ids registered more than once: {twice:?}"
+    );
 }
 
 #[test]

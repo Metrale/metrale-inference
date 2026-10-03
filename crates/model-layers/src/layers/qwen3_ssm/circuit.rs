@@ -126,7 +126,10 @@ impl CircuitBindings for Qwen3SsmLayer {
                 && self.out_proj_dense.is_none()
                 && self.out_proj_fp8w.is_none()
         });
-        for (role, cast) in [(LinearRole::Qkvz, qkvz_cast), (LinearRole::GdnOut, out_cast)] {
+        for (role, cast) in [
+            (LinearRole::Qkvz, qkvz_cast),
+            (LinearRole::GdnOut, out_cast),
+        ] {
             if let Some(p) = cast {
                 weights.insert(
                     WeightSlot::PrefillCast(role),

@@ -151,7 +151,13 @@ impl SsmSnapshotPool {
             // an FP32-sized pool).
             ensure_pool_format(h_is_f16, main_pool)?;
             let nodes = p.nodes(metrale_circuit::state_ops::StateProgramId::PrefixSave)?;
-            self.run_snapshot(nodes, main_pool, prefix_places(ssm_slot, snap_slot), gpu, stream)?;
+            self.run_snapshot(
+                nodes,
+                main_pool,
+                prefix_places(ssm_slot, snap_slot),
+                gpu,
+                stream,
+            )?;
         } else {
             self.save_layers(ssm_slot, snap_slot, h_is_f16, main_pool, gpu, stream)?;
         }
@@ -225,7 +231,13 @@ impl SsmSnapshotPool {
     ) -> Result<()> {
         if let Some(p) = self.programs.read().as_ref() {
             let nodes = p.nodes(metrale_circuit::state_ops::StateProgramId::PrefixRestore)?;
-            return self.run_snapshot(nodes, main_pool, prefix_places(ssm_slot, snap_slot), gpu, stream);
+            return self.run_snapshot(
+                nodes,
+                main_pool,
+                prefix_places(ssm_slot, snap_slot),
+                gpu,
+                stream,
+            );
         }
         let narrow = main_pool.h_stored_bytes < self.h_bytes;
         if narrow && self.h_f32_to_f16_k.0 == 0 {
@@ -463,4 +475,3 @@ fn ensure_pool_format(h_is_f16: bool, pool: &SsmStatePool) -> Result<()> {
     );
     Ok(())
 }
-

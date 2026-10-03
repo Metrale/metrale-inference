@@ -27,10 +27,10 @@ use super::program::{Launch, LaunchKind, Program, RunFn};
 
 #[path = "compile_place.rs"]
 mod place;
+use crate::layer::AttnMetadataDev;
 pub(super) use place::external_buffer;
 pub use place::{Placement, layout};
 use place::{segment_of, segments};
-use crate::layer::AttnMetadataDev;
 
 /// 2026-09-28: A group of the plan being compiled.
 pub(crate) struct GroupRef<'a> {
@@ -451,7 +451,10 @@ pub fn compile_placed(
                 group.emitter,
             );
         }
-        owners.extend(std::iter::repeat_n(segment_of(circuit, group), cx.launches.len()));
+        owners.extend(std::iter::repeat_n(
+            segment_of(circuit, group),
+            cx.launches.len(),
+        ));
         launches.append(&mut cx.launches);
     }
     ensure!(

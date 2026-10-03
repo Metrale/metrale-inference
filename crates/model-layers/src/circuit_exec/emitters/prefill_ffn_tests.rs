@@ -55,7 +55,11 @@ fn every_prefill_ffn_rule_launches_the_legacy_tile_at_both_ends_of_its_rows() {
             .collect();
         ranges.sort();
         assert_eq!(ranges.first().map(|r| r.0), Some(1), "{gate_up} {a4}");
-        assert_eq!(ranges.last().map(|r| r.1), Some(1_048_576), "{gate_up} {a4}");
+        assert_eq!(
+            ranges.last().map(|r| r.1),
+            Some(1_048_576),
+            "{gate_up} {a4}"
+        );
         for w in ranges.windows(2) {
             assert_eq!(w[0].1 + 1, w[1].0, "{gate_up} {a4}: {ranges:?}");
         }
@@ -65,7 +69,10 @@ fn every_prefill_ffn_rule_launches_the_legacy_tile_at_both_ends_of_its_rows() {
 #[test]
 fn the_ladder_switches_tiles_at_the_legacy_edges() {
     let at = |m: u32| legacy_tile(m).1;
-    assert_eq!([at(1), at(16), at(17), at(32), at(33), at(64)], [16, 16, 32, 32, 64, 64]);
+    assert_eq!(
+        [at(1), at(16), at(17), at(32), at(33), at(64)],
+        [16, 16, 32, 32, 64, 64]
+    );
     assert_eq!([at(65), at(8193)], [128, 128]);
 }
 

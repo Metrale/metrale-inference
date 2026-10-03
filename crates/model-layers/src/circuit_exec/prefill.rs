@@ -75,12 +75,22 @@ impl PrefillPrograms {
                     );
                     let plan = fuse(b.circuit, b.rules, b.available, &policy, mode, bucket.hi)
                         .with_context(|| {
-                            format!("fusing {} at rows {}..={}", mode.name(), bucket.lo, bucket.hi)
+                            format!(
+                                "fusing {} at rows {}..={}",
+                                mode.name(),
+                                bucket.lo,
+                                bucket.hi
+                            )
                         })?;
                     let placement = placement(b.circuit, &plan, b.arena, inputs.fixed)?;
                     let program = compile::compile_placed(b.circuit, &plan, &placement, inputs)
                         .with_context(|| {
-                            format!("compiling {} at rows {}..={}", mode.name(), bucket.lo, bucket.hi)
+                            format!(
+                                "compiling {} at rows {}..={}",
+                                mode.name(),
+                                bucket.lo,
+                                bucket.hi
+                            )
                         })?;
                     programs.push(PrefillProgram {
                         mode,
@@ -137,7 +147,11 @@ fn heads_agree(programs: &[PrefillProgram]) -> Result<()> {
             .segments
             .iter()
             .filter(|s| matches!(s.of, super::program::SegmentOf::Head(_)))
-            .flat_map(|s| p.program.launches[s.launches.clone()].iter().map(|l| l.kernel.clone()))
+            .flat_map(|s| {
+                p.program.launches[s.launches.clone()]
+                    .iter()
+                    .map(|l| l.kernel.clone())
+            })
             .collect()
     };
     for a in programs {

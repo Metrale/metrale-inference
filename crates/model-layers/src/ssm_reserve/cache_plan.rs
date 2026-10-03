@@ -50,8 +50,13 @@ impl CachePlan {
         let mut dims = state_dims(config);
         dims.insert("hidden".into(), config.hidden_size as u64);
         let transitional = (config.ssm_h_state_bytes(), config.ssm_conv_state_bytes());
-        let found = metrale_circuit::cache_states(&config.model_type, &dims)
-            .with_context(|| format!("the circuit of `{}` declares no usable cache", config.model_type))?;
+        let found =
+            metrale_circuit::cache_states(&config.model_type, &dims).with_context(|| {
+                format!(
+                    "the circuit of `{}` declares no usable cache",
+                    config.model_type
+                )
+            })?;
         let (source, layer, model) = match found {
             Some(c) => (UnitSource::Circuit, c.layer, c.model),
             None => (UnitSource::Transitional, Vec::new(), Vec::new()),
@@ -139,8 +144,13 @@ impl CachePlan {
             let snap = self
                 .layer
                 .iter()
-                .find(|d| d.kind == StateKind::PrefixSnapshot && d.copies.as_deref() == Some(of.id.as_str()))
-                .with_context(|| format!("the circuit declares no prefix snapshot of `{}`", of.id))?;
+                .find(|d| {
+                    d.kind == StateKind::PrefixSnapshot
+                        && d.copies.as_deref() == Some(of.id.as_str())
+                })
+                .with_context(|| {
+                    format!("the circuit declares no prefix snapshot of `{}`", of.id)
+                })?;
             Ok(usize::try_from(snap.unit_bytes(&self.formats)?)?)
         };
         let hidden: Vec<_> = self

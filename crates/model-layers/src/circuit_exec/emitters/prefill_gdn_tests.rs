@@ -9,7 +9,12 @@
 use super::switch_refusal;
 
 fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
-    move |v| pairs.iter().find(|(k, _)| *k == v).map(|(_, x)| x.to_string())
+    move |v| {
+        pairs
+            .iter()
+            .find(|(k, _)| *k == v)
+            .map(|(_, x)| x.to_string())
+    }
 }
 
 #[test]

@@ -123,7 +123,10 @@ fn snapshot_programs_pair_a_state_with_its_copy_and_size_by_the_op() {
         (StateDtype::F16, StateDtype::F32)
     );
     assert_eq!(ring.bytes(&c, &f16).unwrap(), 100 * 2);
-    assert_eq!(get(StateProgramId::RingRestore).bytes(&c, &f16).unwrap(), 100 * 2);
+    assert_eq!(
+        get(StateProgramId::RingRestore).bytes(&c, &f16).unwrap(),
+        100 * 2
+    );
 
     let save = get(StateProgramId::PrefixSave);
     assert_eq!(

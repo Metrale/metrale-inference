@@ -456,7 +456,11 @@ impl TransformerModel {
 
         // 2026-09-25: 6. LM head on the last token.
         if !(circuit_ran
-            && self.circuit_prefill_head(metrale_circuit::OpKind::LmHead, proc_count as u32, stream)?)
+            && self.circuit_prefill_head(
+                metrale_circuit::OpKind::LmHead,
+                proc_count as u32,
+                stream,
+            )?)
         {
             self.lm_head(normed, stream)?;
         }

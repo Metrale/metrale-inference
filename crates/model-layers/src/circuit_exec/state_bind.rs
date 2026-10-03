@@ -69,7 +69,11 @@ pub struct StatePool {
 impl StatePool {
     /// 2026-10-03: Bind `circuit`'s programs to this pool, whose recurrent layers are the
     /// linear-attention layers of `config` in layer order (the pool's order).
-    pub fn bind(&self, circuit: &Circuit, config: &metrale_config::ModelConfig) -> Result<StatePrograms> {
+    pub fn bind(
+        &self,
+        circuit: &Circuit,
+        config: &metrale_config::ModelConfig,
+    ) -> Result<StatePrograms> {
         let recurrent: Vec<usize> = (0..config.num_hidden_layers)
             .filter(|&i| config.layer_type(i) == metrale_config::LayerType::LinearAttention)
             .collect();
@@ -133,12 +137,18 @@ impl StatePrograms {
                     .iter()
                     .position(|&l| l == layer)
                     .with_context(|| {
-                        format!("state `{}` is on layer {layer}, not a recurrent one", decl.id)
+                        format!(
+                            "state `{}` is on layer {layer}, not a recurrent one",
+                            decl.id
+                        )
                     })?;
                 let part = match decl.verify {
                     Some(VerifySteps::H) => StatePart::H,
                     Some(VerifySteps::Conv) => StatePart::Conv,
-                    None => bail!("recurrent state `{}` names no verify intermediates", decl.id),
+                    None => bail!(
+                        "recurrent state `{}` names no verify intermediates",
+                        decl.id
+                    ),
                 };
                 let bytes = usize::try_from(n.bytes(circuit, formats)?)?;
                 let (src, dst) = n.dtypes(circuit, formats)?;
@@ -207,11 +217,7 @@ impl StatePrograms {
     /// 2026-10-03: The bound nodes of `id`; an error for a program the circuit leaves empty on
     /// a model with recurrent layers.
     pub fn nodes(&self, id: StateProgramId) -> Result<&[BoundStateNode]> {
-        let nodes = self
-            .by_id
-            .get(&id)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
+        let nodes = self.by_id.get(&id).map(Vec::as_slice).unwrap_or_default();
         ensure!(
             !nodes.is_empty() || self.recurrent_layers == 0,
             "the circuit declares no state for `{}` on this model",

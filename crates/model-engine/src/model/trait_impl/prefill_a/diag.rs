@@ -40,9 +40,8 @@ impl TransformerModel {
             // reference to that allocation for its whole lifetime — it is
             // last used on the `copy_d2h` line below, and `buf` is not read
             // again until after that.
-            let bytes = unsafe {
-                std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, h_sz * 2)
-            };
+            let bytes =
+                unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, h_sz * 2) };
             if self.gpu.copy_d2h(hidden.offset(last_offset), bytes).is_ok() {
                 let vals: Vec<f32> = buf
                     .iter()

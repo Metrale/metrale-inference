@@ -29,9 +29,9 @@ use super::super::ssm_batched_copy::{StateCopy, run_ssm_state_copies};
 use super::super::ssm_pool::SsmStatePool;
 use super::super::ssm_snapshot::SsmSnapshotPool;
 use super::super::state_run::Parts;
-use metrale_circuit::state_ops::StateProgramId;
 use super::super::types::{PinnedMetaStaging, TransformerModel};
 use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
+use metrale_circuit::state_ops::StateProgramId;
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
 };
@@ -44,7 +44,13 @@ impl TransformerModel {
         use metrale_model_layers::layer::SsmLayerState;
 
         let stream = self.gpu.default_stream();
-        if self.run_state_program(StateProgramId::VerifyCheckpoint, seq.slot_idx, None, Parts::ALL, stream)? {
+        if self.run_state_program(
+            StateProgramId::VerifyCheckpoint,
+            seq.slot_idx,
+            None,
+            Parts::ALL,
+            stream,
+        )? {
             return self.gpu.synchronize(stream);
         }
         let mut h_plan = Vec::with_capacity(self.ssm_pool.num_ssm_layers);

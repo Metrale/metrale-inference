@@ -165,11 +165,7 @@ impl Program {
     }
 
     /// 2026-10-03: Issue the launches of every segment `keep` selects, in order.
-    pub fn run_segments(
-        &self,
-        keep: impl Fn(SegmentOf) -> bool,
-        env: &StepEnv<'_>,
-    ) -> Result<()> {
+    pub fn run_segments(&self, keep: impl Fn(SegmentOf) -> bool, env: &StepEnv<'_>) -> Result<()> {
         for s in self.segments.iter().filter(|s| keep(s.of)) {
             self.run_launches(s.launches.clone(), env)?;
         }

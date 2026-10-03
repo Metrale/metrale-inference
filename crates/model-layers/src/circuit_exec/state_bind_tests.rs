@@ -63,7 +63,10 @@ fn every_program_covers_every_recurrent_layer_in_pool_order() {
                 "{id:?} pair {l}: {parts:?}"
             );
         }
-        assert!(nodes.iter().all(|n| n.conversion.is_none()), "{id:?} at FP32");
+        assert!(
+            nodes.iter().all(|n| n.conversion.is_none()),
+            "{id:?} at FP32"
+        );
     }
 }
 
@@ -114,11 +117,7 @@ fn a_pool_that_disagrees_with_the_plan_is_refused() {
     u.conv += 4;
     assert!(StatePrograms::bind(&c, &state_formats(false), &layers, u).is_err());
     let short = &layers[..layers.len() - 1];
-    assert!(
-        StatePrograms::bind(&c, &state_formats(false), short, units(&c, false)).is_err()
-    );
+    assert!(StatePrograms::bind(&c, &state_formats(false), short, units(&c, false)).is_err());
     let shifted: Vec<_> = layers.iter().map(|l| l + 1).collect();
-    assert!(
-        StatePrograms::bind(&c, &state_formats(false), &shifted, units(&c, false)).is_err()
-    );
+    assert!(StatePrograms::bind(&c, &state_formats(false), &shifted, units(&c, false)).is_err());
 }

@@ -54,8 +54,17 @@ fn circuit(config: &ModelConfig) -> metrale_circuit::Circuit {
 fn setup() -> (MockGpuBackend, SsmStatePool, StatePrograms) {
     let config = tiny_config();
     let gpu = MockGpuBackend::new();
-    let pool = SsmStatePool::new(&config, 4, true, 4, 3, false, SsmRollbackMode::Snapshot, &gpu)
-        .unwrap();
+    let pool = SsmStatePool::new(
+        &config,
+        4,
+        true,
+        4,
+        3,
+        false,
+        SsmRollbackMode::Snapshot,
+        &gpu,
+    )
+    .unwrap();
     let programs = StatePool {
         units: PoolUnits {
             h_stored: pool.h_stored_bytes,
@@ -72,17 +81,27 @@ fn setup() -> (MockGpuBackend, SsmStatePool, StatePrograms) {
 fn seed(gpu: &MockGpuBackend, p: &SsmStatePool, slot: usize) {
     for l in 0..p.num_ssm_layers {
         let tag = |k: usize| ((l * 131 + slot * 17 + k * 7) % 251 + 1) as u8;
-        gpu.copy_h2d(&vec![tag(0); p.h_stored_bytes], p.h_state(l, slot)).unwrap();
-        gpu.copy_h2d(&vec![tag(1); p.conv_bytes], p.conv_state(l, slot)).unwrap();
-        gpu.copy_h2d(&vec![tag(2); p.h_stored_bytes], p.h_checkpoint(l, slot)).unwrap();
-        gpu.copy_h2d(&vec![tag(3); p.conv_bytes], p.conv_checkpoint(l, slot)).unwrap();
+        gpu.copy_h2d(&vec![tag(0); p.h_stored_bytes], p.h_state(l, slot))
+            .unwrap();
+        gpu.copy_h2d(&vec![tag(1); p.conv_bytes], p.conv_state(l, slot))
+            .unwrap();
+        gpu.copy_h2d(&vec![tag(2); p.h_stored_bytes], p.h_checkpoint(l, slot))
+            .unwrap();
+        gpu.copy_h2d(&vec![tag(3); p.conv_bytes], p.conv_checkpoint(l, slot))
+            .unwrap();
         for t in 0..p.h_inter_count(slot) {
-            gpu.copy_h2d(&vec![tag(4 + t); p.h_stored_bytes], p.h_intermediate(l, slot, t))
-                .unwrap();
+            gpu.copy_h2d(
+                &vec![tag(4 + t); p.h_stored_bytes],
+                p.h_intermediate(l, slot, t),
+            )
+            .unwrap();
         }
         for t in 0..p.num_intermediates {
-            gpu.copy_h2d(&vec![tag(9 + t); p.conv_bytes], p.conv_intermediate(l, slot, t))
-                .unwrap();
+            gpu.copy_h2d(
+                &vec![tag(9 + t); p.conv_bytes],
+                p.conv_intermediate(l, slot, t),
+            )
+            .unwrap();
         }
     }
 }
@@ -119,7 +138,10 @@ fn a_commit_lands_every_layers_accepted_row_in_its_live_slot() {
             "layer {l} conv"
         );
     }
-    assert_eq!(read(&gpu, pool.h_state(3, 2), pool.h_stored_bytes), neighbour);
+    assert_eq!(
+        read(&gpu, pool.h_state(3, 2), pool.h_stored_bytes),
+        neighbour
+    );
 }
 
 /// 2026-10-03: A commit whose h the fold already placed copies conv only.
@@ -145,7 +167,10 @@ fn a_conv_only_commit_leaves_h_alone() {
         0,
     )
     .unwrap();
-    assert_eq!(read(&gpu, pool.h_state(0, 0), pool.h_stored_bytes), h_before);
+    assert_eq!(
+        read(&gpu, pool.h_state(0, 0), pool.h_stored_bytes),
+        h_before
+    );
     assert_eq!(
         read(&gpu, pool.conv_state(0, 0), pool.conv_bytes),
         read(&gpu, pool.conv_intermediate(0, 0, 0), pool.conv_bytes)
@@ -164,11 +189,24 @@ fn checkpoint_rollback_round_trips_and_an_overlong_commit_is_refused() {
         step: None,
         cache: None,
     };
-    pool.run_copies(programs.nodes(StateProgramId::VerifyCheckpoint).unwrap(), p, Parts::ALL, &gpu, 0)
+    pool.run_copies(
+        programs.nodes(StateProgramId::VerifyCheckpoint).unwrap(),
+        p,
+        Parts::ALL,
+        &gpu,
+        0,
+    )
+    .unwrap();
+    gpu.copy_h2d(&vec![0xEE; pool.conv_bytes], pool.conv_state(5, 2))
         .unwrap();
-    gpu.copy_h2d(&vec![0xEE; pool.conv_bytes], pool.conv_state(5, 2)).unwrap();
-    pool.run_copies(programs.nodes(StateProgramId::VerifyRollback).unwrap(), p, Parts::ALL, &gpu, 0)
-        .unwrap();
+    pool.run_copies(
+        programs.nodes(StateProgramId::VerifyRollback).unwrap(),
+        p,
+        Parts::ALL,
+        &gpu,
+        0,
+    )
+    .unwrap();
     assert_eq!(read(&gpu, pool.conv_state(5, 2), pool.conv_bytes), live);
 
     let too_far = Places {
@@ -177,8 +215,14 @@ fn checkpoint_rollback_round_trips_and_an_overlong_commit_is_refused() {
     };
     let before = read(&gpu, pool.conv_state(0, 2), pool.conv_bytes);
     assert!(
-        pool.run_copies(programs.nodes(StateProgramId::CommitAccepted).unwrap(), too_far, Parts::ALL, &gpu, 0)
-            .is_err()
+        pool.run_copies(
+            programs.nodes(StateProgramId::CommitAccepted).unwrap(),
+            too_far,
+            Parts::ALL,
+            &gpu,
+            0
+        )
+        .is_err()
     );
     assert_eq!(read(&gpu, pool.conv_state(0, 2), pool.conv_bytes), before);
 }
@@ -189,11 +233,24 @@ fn slot_zero_clears_only_that_slot() {
     seed(&gpu, &pool, 0);
     seed(&gpu, &pool, 1);
     let other = read(&gpu, pool.h_state(2, 0), pool.h_stored_bytes);
-    pool.run_zero(programs.nodes(StateProgramId::SlotZero).unwrap(), 1, &gpu, 0)
-        .unwrap();
+    pool.run_zero(
+        programs.nodes(StateProgramId::SlotZero).unwrap(),
+        1,
+        &gpu,
+        0,
+    )
+    .unwrap();
     for l in 0..pool.num_ssm_layers {
-        assert!(read(&gpu, pool.h_state(l, 1), pool.h_stored_bytes).iter().all(|&b| b == 0));
-        assert!(read(&gpu, pool.conv_state(l, 1), pool.conv_bytes).iter().all(|&b| b == 0));
+        assert!(
+            read(&gpu, pool.h_state(l, 1), pool.h_stored_bytes)
+                .iter()
+                .all(|&b| b == 0)
+        );
+        assert!(
+            read(&gpu, pool.conv_state(l, 1), pool.conv_bytes)
+                .iter()
+                .all(|&b| b == 0)
+        );
     }
     assert_eq!(read(&gpu, pool.h_state(2, 0), pool.h_stored_bytes), other);
 }

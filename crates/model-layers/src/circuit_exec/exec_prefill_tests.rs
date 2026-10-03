@@ -109,7 +109,12 @@ fn every_row_count_of_both_modes_and_arms_selects_a_program_holding_it() {
     }
     for p in &b.programs.programs {
         let covered: u64 = p.program.launches.iter().map(|l| l.covers as u64).sum();
-        assert_eq!(covered, p.plan.launches() + p.plan.copies(), "{:?}", p.bucket);
+        assert_eq!(
+            covered,
+            p.plan.launches() + p.plan.copies(),
+            "{:?}",
+            p.bucket
+        );
     }
 }
 

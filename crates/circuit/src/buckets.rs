@@ -42,7 +42,12 @@ pub fn bucket_ladder(
         .iter()
         .filter(|r| r.modes.contains(&mode))
         .map(|r| r.rows)
-        .chain(routes.iter().filter(|r| r.modes.contains(&mode)).map(|r| r.rows));
+        .chain(
+            routes
+                .iter()
+                .filter(|r| r.modes.contains(&mode))
+                .map(|r| r.rows),
+        );
     let mut starts: Vec<u64> = std::iter::once(1)
         .chain(ranges.flat_map(|(lo, hi)| [lo, hi.saturating_add(1)]))
         .filter(|&s| (2..=max_rows).contains(&s) || s == 1)

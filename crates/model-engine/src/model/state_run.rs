@@ -17,11 +17,11 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
+use metrale_circuit::state_ops::StatePlace;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::circuit_exec::state_bind::{
     BoundStateNode, Conversion, StatePart, StatePrograms,
 };
-use metrale_circuit::state_ops::StatePlace;
 use parking_lot::RwLock;
 
 use super::ssm_batched_copy::{StateCopy, run_ssm_state_copies};
@@ -66,12 +66,21 @@ pub(crate) struct Places {
 
 impl SsmStatePool {
     /// 2026-10-03: The address of `part` of SSM layer `layer` at a pool place.
-    fn place_ptr(&self, place: StatePlace, part: StatePart, layer: usize, p: Places) -> Result<DevicePtr> {
+    fn place_ptr(
+        &self,
+        place: StatePlace,
+        part: StatePart,
+        layer: usize,
+        p: Places,
+    ) -> Result<DevicePtr> {
         Ok(match (place, part) {
             (StatePlace::Live, StatePart::H) => self.h_state(layer, p.slot),
             (StatePlace::Live, StatePart::Conv) => self.conv_state(layer, p.slot),
             (StatePlace::Checkpoint, _) => {
-                ensure!(self.has_mtp, "no verify checkpoint pool (the serve does not speculate)");
+                ensure!(
+                    self.has_mtp,
+                    "no verify checkpoint pool (the serve does not speculate)"
+                );
                 match part {
                     StatePart::H => self.h_checkpoint(layer, p.slot),
                     StatePart::Conv => self.conv_checkpoint(layer, p.slot),
@@ -150,7 +159,13 @@ impl SsmStatePool {
 impl SsmSnapshotPool {
     /// 2026-10-03: The address of `part` of SSM layer `layer` in a ring or prefix slot: the
     /// snapshot regions are strided by the FP32 widths.
-    fn snapshot_ptr(&self, place: StatePlace, part: StatePart, layer: usize, slot: usize) -> Result<DevicePtr> {
+    fn snapshot_ptr(
+        &self,
+        place: StatePlace,
+        part: StatePart,
+        layer: usize,
+        slot: usize,
+    ) -> Result<DevicePtr> {
         let (h, conv) = match place {
             StatePlace::Ring => (&self.decode_h_snapshots, &self.decode_conv_snapshots),
             StatePlace::Prefix => (&self.h_snapshots, &self.conv_snapshots),
@@ -173,14 +188,20 @@ impl SsmSnapshotPool {
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<()> {
-        let cache = p.cache.context("a snapshot program names no snapshot slot")?;
+        let cache = p
+            .cache
+            .context("a snapshot program names no snapshot slot")?;
         for n in nodes {
             let loaded = match n.conversion {
                 Some(Conversion::Widen) => self.h_f16_to_f32_k.0 != 0,
                 Some(Conversion::Narrow) => self.h_f32_to_f16_k.0 != 0,
                 None => true,
             };
-            ensure!(loaded, "the {:?} h-state kernel is not loaded on this target", n.conversion);
+            ensure!(
+                loaded,
+                "the {:?} h-state kernel is not loaded on this target",
+                n.conversion
+            );
         }
         let at = |place: StatePlace, n: &BoundStateNode| -> Result<DevicePtr> {
             match place {
@@ -199,22 +220,26 @@ impl SsmSnapshotPool {
             let (src, dst) = (at(from, n)?, at(to, n)?);
             match n.conversion {
                 None => gpu.copy_d2d_async(src, dst, n.bytes, stream)?,
-                Some(Conversion::Widen) => metrale_model_layers::layers::ops::ssm_h_state_f16_to_f32(
-                    gpu,
-                    self.h_f16_to_f32_k,
-                    src,
-                    dst,
-                    (n.bytes / 4) as u64,
-                    stream,
-                )?,
-                Some(Conversion::Narrow) => metrale_model_layers::layers::ops::ssm_h_state_f32_to_f16(
-                    gpu,
-                    self.h_f32_to_f16_k,
-                    src,
-                    dst,
-                    (n.bytes / 2) as u64,
-                    stream,
-                )?,
+                Some(Conversion::Widen) => {
+                    metrale_model_layers::layers::ops::ssm_h_state_f16_to_f32(
+                        gpu,
+                        self.h_f16_to_f32_k,
+                        src,
+                        dst,
+                        (n.bytes / 4) as u64,
+                        stream,
+                    )?
+                }
+                Some(Conversion::Narrow) => {
+                    metrale_model_layers::layers::ops::ssm_h_state_f32_to_f16(
+                        gpu,
+                        self.h_f32_to_f16_k,
+                        src,
+                        dst,
+                        (n.bytes / 2) as u64,
+                        stream,
+                    )?
+                }
             }
         }
         Ok(())

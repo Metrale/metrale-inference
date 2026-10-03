@@ -38,7 +38,11 @@ fn the_prefix_cache_and_the_ring_equal_the_snapshot_pools_allocation() {
                 "{name} slots={slots}"
             );
         }
-        assert_eq!(plan.ring_seq_bytes().unwrap(), c.num_ssm_layers() * layer, "{name}");
+        assert_eq!(
+            plan.ring_seq_bytes().unwrap(),
+            c.num_ssm_layers() * layer,
+            "{name}"
+        );
         assert_eq!(
             plan.prefix_units(&c).unwrap(),
             PrefixUnits {
@@ -74,7 +78,11 @@ fn the_carry_equals_the_allocators_sizes() {
                 rows,
             )
             .total();
-            assert_eq!(plan.carry_bytes(slots, rows).unwrap(), legacy, "{name} slots={slots}");
+            assert_eq!(
+                plan.carry_bytes(slots, rows).unwrap(),
+                legacy,
+                "{name} slots={slots}"
+            );
         }
     }
 }
@@ -86,6 +94,9 @@ fn a_model_without_a_circuit_keeps_the_transitional_arithmetic() {
     let plan = CachePlan::new(&c, false).unwrap();
     assert_eq!(plan.source, UnitSource::Transitional);
     let layer = c.ssm_h_state_bytes() + c.ssm_conv_state_bytes();
-    assert_eq!(plan.marconi_bytes(8).unwrap(), 8 * c.num_ssm_layers() * layer);
+    assert_eq!(
+        plan.marconi_bytes(8).unwrap(),
+        8 * c.num_ssm_layers() * layer
+    );
     assert_eq!(plan.ring_seq_bytes().unwrap(), c.num_ssm_layers() * layer);
 }

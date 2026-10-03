@@ -30,7 +30,7 @@ use crate::{QuantMetadata, ServePrecision, resolve_checkpoint};
 pub const KERNEL_QUANT: &str = "nvfp4";
 
 /// 2026-09-30: Where each derived setting comes from, printed in the report.
-pub const POLICY_SOURCES: [(&str, &str); 11] = [
+pub const POLICY_SOURCES: [(&str, &str); 12] = [
     (
         "row_tiers",
         "canonical for FP8 routed experts, else by_rows (ml/row_tiers.rs:64-78)",

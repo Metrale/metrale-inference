@@ -53,7 +53,10 @@ impl OpEmitter for PrefillGdnCore {
         let fla = match cx.g.group.kernels.len() {
             8 => true,
             6 => false,
-            n => bail!("`{}` takes 8 kernels (FLA) or 6 (replay), not {n}", self.id()),
+            n => bail!(
+                "`{}` takes 8 kernels (FLA) or 6 (replay), not {n}",
+                self.id()
+            ),
         };
         let c = cx.config;
         let d = GdnDims::of(c);
@@ -86,7 +89,9 @@ impl OpEmitter for PrefillGdnCore {
         expect_kernel(cx, 1, "causal_conv1d_update_prefill_tp")?;
         expect_kernel(cx, 2, "causal_conv1d_prefill_state")?;
         let conv_w = dense(cx.weight(2, WeightSlot::GdnConv1d)?, "conv1d")?;
-        let conv_k = cx.gpu.kernel("causal_conv1d", "causal_conv1d_update_prefill")?;
+        let conv_k = cx
+            .gpu
+            .kernel("causal_conv1d", "causal_conv1d_update_prefill")?;
         let tp_k = present(
             crate::layers::try_kernel(cx.gpu, "causal_conv1d", "causal_conv1d_update_prefill_tp"),
             "causal_conv1d_update_prefill_tp",
@@ -127,7 +132,9 @@ impl OpEmitter for PrefillGdnCore {
             3,
             Box::new(move |e| {
                 let t = e.prefill()?.tokens;
-                ops::l2_norm(e.gpu, l2_k, conv_out, qk_heads, kd, 1e-6, t, conv_dim, e.stream)
+                ops::l2_norm(
+                    e.gpu, l2_k, conv_out, qk_heads, kd, 1e-6, t, conv_dim, e.stream,
+                )
             }),
         )?;
 
@@ -187,7 +194,9 @@ fn emit_ba_gates(cx: &mut Cx<'_>, d: &GdnDims, xn: DevicePtr, gates: DevicePtr) 
     let ba = dense(cx.weight(0, WeightSlot::Linear(LinearRole::Ba))?, "ba")?;
     let a_log = dense(cx.weight(1, WeightSlot::GdnALog)?, "A_log")?.weight;
     let dt_bias = dense(cx.weight(1, WeightSlot::GdnDtBias)?, "dt_bias")?.weight;
-    let base_k = cx.gpu.kernel("ssm_preprocess", "dense_gemm_ba_gates_prefill")?;
+    let base_k = cx
+        .gpu
+        .kernel("ssm_preprocess", "dense_gemm_ba_gates_prefill")?;
     let twin_k = crate::layers::try_target_kernel(
         cx.gpu,
         "ssm_ba_gates_hopper",
@@ -281,7 +290,10 @@ fn emit_fla(cx: &mut Cx<'_>, r: Recurrence, scratch: DevicePtr) -> Result<()> {
         ops::gdn_scalar_spine() == ops::GdnScalarSpine::Pipe,
         "the FLA state spine is not the pipe spine the rules name"
     );
-    ensure!(scratch.0 != 0, "the FLA scratch (`gdn_fla_scratch`) is not allocated");
+    ensure!(
+        scratch.0 != 0,
+        "the FLA scratch (`gdn_fla_scratch`) is not allocated"
+    );
     ensure!(
         cx.gpu.has_module("gdn_chunk_fwd_o_mma8"),
         "the 8-warp chunk_fwd_o twin is not compiled for this target"
@@ -293,7 +305,11 @@ fn emit_fla(cx: &mut Cx<'_>, r: Recurrence, scratch: DevicePtr) -> Result<()> {
     // 2026-10-03: The parent `chunk_fwd_o`: the twin replaces it inside the call
     // (`ops::gdn_fwd_o_mma8`), which needs the parent's handle to recognise the pick.
     let fwd_o = present(
-        crate::layers::try_kernel(cx.gpu, "gated_delta_rule_fla", "gated_delta_rule_chunk_fwd_o"),
+        crate::layers::try_kernel(
+            cx.gpu,
+            "gated_delta_rule_fla",
+            "gated_delta_rule_chunk_fwd_o",
+        ),
         "gated_delta_rule_chunk_fwd_o",
     )?;
     let none = KernelHandle(0);
@@ -374,8 +390,25 @@ fn emit_regresident(cx: &mut Cx<'_>, r: Recurrence) -> Result<()> {
             let t = e.prefill()?.tokens;
             let h = e.gdn_state(r.layer, 0)?.h;
             ops::gdn_prefill_regresident(
-                e.gpu, k, h, r.q, r.k, r.v, r.gates, r.beta, r.out, 1, t, nk, nv, kd, vd,
-                r.conv_dim, r.conv_dim, nv * 2, e.stream,
+                e.gpu,
+                k,
+                h,
+                r.q,
+                r.k,
+                r.v,
+                r.gates,
+                r.beta,
+                r.out,
+                1,
+                t,
+                nk,
+                nv,
+                kd,
+                vd,
+                r.conv_dim,
+                r.conv_dim,
+                nv * 2,
+                e.stream,
             )
         }),
     )

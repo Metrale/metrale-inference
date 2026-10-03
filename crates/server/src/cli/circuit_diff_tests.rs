@@ -257,7 +257,10 @@ fn prefill_prompts_have_the_exact_length_and_differ_between_lengths() {
         assert!(p.iter().all(|&x| (64..936).contains(&x)), "{t}");
         assert_eq!(p, prefill::prompt_of_len(t, 1000), "deterministic");
     }
-    let (a, b) = (prefill::prompt_of_len(64, 1000), prefill::prompt_of_len(65, 1000));
+    let (a, b) = (
+        prefill::prompt_of_len(64, 1000),
+        prefill::prompt_of_len(65, 1000),
+    );
     assert_ne!(a[..], b[..64]);
 }
 
@@ -272,15 +275,30 @@ fn the_prefill_verdict_needs_equal_runs_and_a_seen_control() {
         path_diff: None,
         state_diff: None,
     };
-    let ok = vec![(17, prefill::PrefillPath::Single, vec![c("legacy-repeat", true)])];
+    let ok = vec![(
+        17,
+        prefill::PrefillPath::Single,
+        vec![c("legacy-repeat", true)],
+    )];
     assert!(prefill::prefill_failures(&ok, &c("control", false)).is_empty());
     let bad = vec![
-        (17, prefill::PrefillPath::Single, vec![c("legacy-repeat", true), c("circuit", false)]),
-        (65, prefill::PrefillPath::Chunked(16), vec![c("legacy-repeat", false)]),
+        (
+            17,
+            prefill::PrefillPath::Single,
+            vec![c("legacy-repeat", true), c("circuit", false)],
+        ),
+        (
+            65,
+            prefill::PrefillPath::Chunked(16),
+            vec![c("legacy-repeat", false)],
+        ),
     ];
     let r = prefill::prefill_failures(&bad, &c("control", true));
     assert_eq!(r.len(), 3, "{r:?}");
-    assert!(r[0].contains("17 tokens") && r[0].contains("circuit"), "{r:?}");
+    assert!(
+        r[0].contains("17 tokens") && r[0].contains("circuit"),
+        "{r:?}"
+    );
     assert!(r[1].contains("Chunked(16)"), "{r:?}");
     assert!(r[2].contains("detection control"), "{r:?}");
 }
@@ -296,7 +314,10 @@ fn a_repeat_on_another_path_fails_as_a_path_difference() {
     };
     let cold = [op("a::fla"), op("b::norm")];
     assert_eq!(prefill::first_op_diff(&cold, &cold), None);
-    assert_eq!(prefill::first_op_diff(&cold, &[op("a::regresident"), op("b::norm")]), Some(0));
+    assert_eq!(
+        prefill::first_op_diff(&cold, &[op("a::regresident"), op("b::norm")]),
+        Some(0)
+    );
     assert_eq!(prefill::first_op_diff(&cold, &cold[..1]), Some(1));
     let repeat = prefill::PrefillComparison {
         variant: "legacy-repeat".into(),
@@ -312,7 +333,10 @@ fn a_repeat_on_another_path_fails_as_a_path_difference() {
         path_diff: None,
         state_diff: None,
     };
-    let r = prefill::prefill_failures(&[(300, prefill::PrefillPath::Single, vec![repeat])], &control);
+    let r = prefill::prefill_failures(
+        &[(300, prefill::PrefillPath::Single, vec![repeat])],
+        &control,
+    );
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].contains("another path"), "{r:?}");
 }
@@ -323,8 +347,14 @@ fn a_repeat_on_another_path_fails_as_a_path_difference() {
 fn equal_logits_with_a_different_state_fail_on_the_entry() {
     let st = |h: u64| vec![("ssm0.h".to_string(), 1), ("ssm0.conv".to_string(), h)];
     assert_eq!(prefill::first_state_diff(&st(2), &st(2)), None);
-    assert_eq!(prefill::first_state_diff(&st(2), &st(3)).as_deref(), Some("ssm0.conv"));
-    assert_eq!(prefill::first_state_diff(&st(2), &st(2)[..1]).as_deref(), Some("entry count"));
+    assert_eq!(
+        prefill::first_state_diff(&st(2), &st(3)).as_deref(),
+        Some("ssm0.conv")
+    );
+    assert_eq!(
+        prefill::first_state_diff(&st(2), &st(2)[..1]).as_deref(),
+        Some("entry count")
+    );
     let c = prefill::PrefillComparison {
         variant: "circuit".into(),
         equal: true,
