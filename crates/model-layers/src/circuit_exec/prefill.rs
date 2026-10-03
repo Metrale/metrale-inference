@@ -161,7 +161,12 @@ fn heads_agree(programs: &[PrefillProgram]) -> Result<()> {
 fn arena_buffer(block: &str, local: &str, arena: &BufferArena) -> Option<DevicePtr> {
     Some(match (block, local) {
         ("gdn" | "attn", "xn") => arena.norm_output(),
-        // 2026-10-03: GatedDeltaNet edges (emitters/prefill_gdn.rs).
+        // 2026-10-03: GatedDeltaNet edges (emitters/prefill_gdn.rs): the qkvz projection's
+        // `[Q | K | V | Z]` rows (`trait_prefill_block.rs:88`), the gated norm's output over the
+        // conv rows (`:318`), and out_proj's (`:365`).
+        ("gdn", "qkvz") => arena.ssm_deinterleaved(),
+        ("gdn", "gated") => arena.ssm_qkvz(),
+        ("gdn", "o") => arena.moe_output(),
         // 2026-10-03: Attention edges (emitters/prefill_attn.rs).
         // 2026-10-03: Dense FFN, embedding and head edges (emitters/prefill_ffn.rs).
         _ => return None,
