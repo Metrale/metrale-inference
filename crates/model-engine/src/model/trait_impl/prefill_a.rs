@@ -26,8 +26,7 @@ use super::super::block_mgmt::{
 use super::super::ssm_pool::SsmStatePool;
 use super::super::ssm_snapshot::SsmSnapshotPool;
 use super::super::types::{PinnedMetaStaging, TransformerModel};
-use crate::traits::ModelForward;
-use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
+use crate::traits::{ChunkedPrefillPageMetadata, Model, ModelForward, SequenceState};
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
 };
