@@ -641,16 +641,19 @@ gpu_memory_utilization = "0.85"
 
 
 scheduler = "fifo"
-# 2026-09-25: Pinned so the record states it; equal to MODEL.toml's default_num_drafts. Measured
+# 2026-09-25: Pinned so the record states it (2026-10-03: MODEL.toml stays at 1; see below). Measured
 # 2026-09-22 at C=1 on one box: --num-drafts 3 gave 62.00 tok/s, --num-drafts 1 74.83.
-
-
-
-
-
-
-
-num_drafts = "1"
+# 2026-10-03: Two drafts at one or two sequences and one from three up (`mtp_k_ladder`),
+# D-Cut off (`mtp_dcut_ratio`), the recipe's own values. Measured on dgx2 at this instrument,
+# one binary, 3 interleaved fresh serves per arm, --num-drafts 1 -> 2 at every width up to 8:
+# tok/s C1 +2.4%, C2 +3.9%, C4 +1.9%, C8 +1.6%; GPU-rail J/tok C1 -1.2%, C2 -1.8%, C4 +1.0%,
+# C8 +2.8%. Only C1-C2 improve both, so the ladder keeps one draft from C3 up.
+num_drafts = "2"
+mtp_k_ladder = "2:2,32:1"
+# 2026-10-03: D-Cut off. At two drafts its default 0.75 prunes the second draft of the least
+# confident chains, saving no verify time and losing accepted tokens; 1.0 keeps them
+# (measured at --num-drafts 3: +1.9% tok/s at C2, +4.3% at C4). Equal to the recipe's.
+mtp_dcut_ratio = "1.0"
 # 2026-09-25: Thinking off at the serve; the driver also sends reasoning_effort "none" (concurrency.rs).
 
 
