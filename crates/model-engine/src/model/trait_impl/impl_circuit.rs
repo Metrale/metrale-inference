@@ -147,17 +147,15 @@ impl TransformerModel {
                  the legacy layers under the circuit forward"
             );
         }
-        let verify_batch_rows = if !exact_verify
-            && self.proposer.is_some()
-            && self.gdn_carry_bind_now()?
-        {
-            Some(
-                (4 * metrale_model_layers::speculative::mtp_max_seqs())
-                    .min(super::verify_e2::VERIFY_ROW_CAP) as u64,
-            )
-        } else {
-            None
-        };
+        let verify_batch_rows =
+            if !exact_verify && self.proposer.is_some() && self.gdn_carry_bind_now()? {
+                Some(
+                    (4 * metrale_model_layers::speculative::mtp_max_seqs())
+                        .min(super::verify_e2::VERIFY_ROW_CAP) as u64,
+                )
+            } else {
+                None
+            };
         let layers: Vec<_> = self
             .layers
             .iter()

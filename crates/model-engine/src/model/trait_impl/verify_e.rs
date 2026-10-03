@@ -298,15 +298,17 @@ impl TransformerModel {
             // (`impl_circuit_verify_batch.rs`). It is compiled before any capture.
             let circuit = self.circuit.read();
             let circuit_program = match circuit.as_ref() {
-                Some(exec) if exec.verify_batch.is_some() => Some(self.circuit_verify_batch_prepare(
-                    exec,
-                    seqs,
-                    ks,
-                    wy_tables_base,
-                    carry,
-                    &metadata,
-                    mapped_argmax.map_or(self.buffers.scratch(), |(_, d)| d),
-                )?),
+                Some(exec) if exec.verify_batch.is_some() => {
+                    Some(self.circuit_verify_batch_prepare(
+                        exec,
+                        seqs,
+                        ks,
+                        wy_tables_base,
+                        carry,
+                        &metadata,
+                        mapped_argmax.map_or(self.buffers.scratch(), |(_, d)| d),
+                    )?)
+                }
                 _ => None,
             };
             if let Some((program, gdn)) = circuit_program {
