@@ -138,6 +138,7 @@ pub(super) fn layer_binding(circuit: &Circuit, i: usize, attn_idx: usize) -> Cir
         mixer,
         weights: w,
         unmodelled: Vec::new(),
+        moe: None,
     }
 }
 
@@ -185,6 +186,7 @@ pub(super) fn draft_binding(circuit: &Circuit) -> CircuitLayer {
         }),
         weights: w,
         unmodelled: Vec::new(),
+        moe: None,
     }
 }
 
@@ -269,8 +271,22 @@ pub(super) fn fixed(attn_layers: usize) -> Fixed {
         },
         block_size: 16,
         cache_stride: 4096,
+        moe: Some(MOE_SCRATCH),
     }
 }
+
+/// 2026-10-03: The MoE arena scratch every fixture binds: the sort at its own tag, every
+/// arena buffer wide enough for any width.
+pub(super) const MOE_SCRATCH: crate::layers::moe::MoeScratch = crate::layers::moe::MoeScratch {
+    sort: DevicePtr(0xA900_0000),
+    scratch_bytes: usize::MAX,
+    gate_logits_bytes: usize::MAX,
+    expert_gate_out_bytes: usize::MAX,
+    expert_down_out_bytes: usize::MAX,
+    logits_bytes: usize::MAX,
+    attn_output_bytes: usize::MAX,
+    moe_output_bytes: usize::MAX,
+};
 
 pub(super) fn config() -> metrale_config::ModelConfig {
     let mut c = metrale_config::ModelConfig::qwen3_next_80b_nvfp4();
@@ -461,6 +477,7 @@ pub(super) fn build_on(
         lm_head: dense(0x9100_0000),
         unmodelled: Vec::new(),
         batchm_max_rows: 8,
+        nvfp4_twin: None,
     };
     edit_head(&mut head);
     let draft = (mode == Mode::Draft).then(|| draft_binding(&loaded.circuit));

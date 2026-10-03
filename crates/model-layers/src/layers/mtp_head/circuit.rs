@@ -6,8 +6,9 @@
 //!
 //! Owner: model-layers (MTP head).
 //! Invariants:
-//! - Only the BF16 head with a dense FFN, a BF16 draft KV cache and the NVFP4 draft lm_head
-//!   is bound; every other arm of `forward_one` is reported as unmodelled.
+//! - Only the BF16 head with a dense FFN or (2026-10-03) the native FP8 MoE layer, a BF16
+//!   draft KV cache and the NVFP4 draft lm_head is bound; every other arm of `forward_one` is
+//!   reported as unmodelled.
 //! - A runner is installed only while the executor that compiled it is live
 //!   (`TransformerModel::set_forward` removes it before freeing the executor).
 
@@ -44,7 +45,10 @@ impl MtpHead {
         let arms = [
             (self.quant != MtpQuantization::Bf16, "a non-BF16 draft head"),
             (!self.kv_bf16, "an FP8 draft KV cache"),
-            (self.dense_ffn_generic.is_none(), "a MoE draft FFN"),
+            (
+                self.dense_ffn_generic.is_none() && self.moe_fp8.is_none(),
+                "a MoE draft FFN outside the native FP8 MoE layer",
+            ),
             (
                 !self.gemv_sw || !levers.gemv_sw,
                 "the draft lm_head off the single-warp GEMV",
@@ -98,6 +102,12 @@ impl MtpHead {
                 weights.insert(slot, b);
             }
         }
+        // 2026-10-03: A MoE draft FFN is the same `MoeLayer` the target's layers bind
+        // (`forward_one` runs `moe_fp8.forward`, the batched propose its grouped decode).
+        let moe = match (&self.dense_ffn_generic, &self.moe_fp8) {
+            (None, Some(m)) => m.circuit_bind(config, levers, &mut unmodelled),
+            _ => None,
+        };
         if let Some((gate, up, down)) = &self.dense_ffn_generic {
             for (slot, w, what) in [
                 (WeightSlot::FfnGate, gate, "gate"),
@@ -139,6 +149,7 @@ impl MtpHead {
                 mixer: MixerFacts::Attention(facts),
                 weights,
                 unmodelled,
+                moe,
             },
             k_pool: cache.k_pool_ptr(self.attn_layer_idx),
             v_pool: cache.v_pool_ptr(self.attn_layer_idx),

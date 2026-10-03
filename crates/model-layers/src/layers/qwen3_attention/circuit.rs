@@ -34,8 +34,15 @@ fn proj(
     match w {
         Some(QuantWeight::Nvfp4(q)) => BoundWeight::Nvfp4(*q),
         Some(QuantWeight::Dense(d)) => BoundWeight::Dense(*d),
+        Some(QuantWeight::Fp8(w))
+            if w.scale_format == crate::weight_map::WeightQuantFormat::Fp8BlockScaled =>
+        {
+            BoundWeight::Fp8(*w)
+        }
         Some(QuantWeight::Fp8(_)) => {
-            unmodelled.push(format!("an FP8 {what} projection"));
+            unmodelled.push(format!(
+                "an FP8 {what} projection without 128 x 128 block scales"
+            ));
             BoundWeight::Dense(dense)
         }
         Some(QuantWeight::PackedQ2(_)) => {
@@ -164,16 +171,45 @@ impl CircuitBindings for Qwen3AttentionLayer {
         weights.insert(WeightSlot::Linear(LinearRole::Q), q);
         weights.insert(WeightSlot::Linear(LinearRole::K), k);
         weights.insert(WeightSlot::Linear(LinearRole::V), v);
-        if matches!(
-            self.o_weight,
-            Some(QuantWeight::Fp8(_)) | Some(QuantWeight::PackedQ2(_))
-        ) {
-            unmodelled.push("an FP8 or packed-Q2 output projection".to_string());
+        if matches!(self.o_weight, Some(QuantWeight::PackedQ2(_))) {
+            unmodelled.push("a packed-Q2 output projection".to_string());
         }
         weights.insert(
             WeightSlot::Linear(LinearRole::O),
-            BoundWeight::Nvfp4(self.attn.o_proj),
+            match &self.o_weight {
+                Some(QuantWeight::Fp8(w))
+                    if w.scale_format == crate::weight_map::WeightQuantFormat::Fp8BlockScaled =>
+                {
+                    BoundWeight::Fp8(*w)
+                }
+                Some(QuantWeight::Fp8(_)) => {
+                    unmodelled.push(
+                        "an FP8 output projection without 128 x 128 block scales".to_string(),
+                    );
+                    BoundWeight::Nvfp4(self.attn.o_proj)
+                }
+                _ => BoundWeight::Nvfp4(self.attn.o_proj),
+            },
         );
+        // 2026-10-03: FP8 projections take the tensor-core row tiles at every row count only
+        // under the canonical tiers with both tile twins linked (`canonical_qkv_tiles`,
+        // `attn/o_proj.rs`), and the multi-sequence Q/K/V the batched FP8 tier
+        // (`ms_qkv_batchm_fp8_selected`: its kill switch and strided GEMV handles).
+        let fp8 = [
+            &self.q_weight,
+            &self.k_weight,
+            &self.v_weight,
+            &self.o_weight,
+        ]
+        .iter()
+        .any(|w| matches!(w, Some(QuantWeight::Fp8(_))));
+        if fp8 && !self.fp8_row_tiles_ok() {
+            unmodelled.push(
+                "FP8 projections off the canonical row tiles (tiers, tile twins or the batched \
+                 FP8 tier)"
+                    .to_string(),
+            );
+        }
         if let Some(w) = self.w8a8 {
             bind_w8a8(&w, &mut weights, &mut unmodelled);
         }
@@ -187,7 +223,9 @@ impl CircuitBindings for Qwen3AttentionLayer {
                 weights.insert(WeightSlot::Transposed(role), BoundWeight::Nvfp4(t));
             }
         }
-        self.ffn.circuit_bind(levers, &mut weights, &mut unmodelled);
+        let moe = self
+            .ffn
+            .circuit_bind(config, levers, &mut weights, &mut unmodelled);
         let nq = self
             .num_q_heads_override
             .unwrap_or(config.num_attention_heads) as u32;
@@ -219,6 +257,7 @@ impl CircuitBindings for Qwen3AttentionLayer {
             mixer: MixerFacts::Attention(facts),
             weights,
             unmodelled,
+            moe,
         })
     }
 }

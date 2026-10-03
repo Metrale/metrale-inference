@@ -95,6 +95,7 @@ pub(super) fn assert_pointers_known(f: &Fixture, gdn: &[Vec<GdnState>], launched
                 BoundWeight::Nvfp4(q) => known.extend([q.weight.0, q.weight_scale.0]),
                 BoundWeight::Mmq(p) => known.extend([p.0]),
                 BoundWeight::W8a8(..) => {}
+                BoundWeight::Fp8(w) => known.extend([w.weight.0, w.row_scale.0]),
             }
         }
     }

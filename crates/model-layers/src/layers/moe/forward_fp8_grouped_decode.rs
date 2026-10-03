@@ -75,7 +75,7 @@ impl GroupedKernels {
 /// `ModelLevers::moe_fp8_grouped_decode_target` lever
 /// (`FfnComponent::fp8_grouped_decode_ok`). 2026-09-26: It also turns off the
 /// exact routings (`GroupedRouting::PerRow` / `PerToken`), which are on by default.
-fn fp8_grouped_decode_enabled() -> bool {
+pub(super) fn fp8_grouped_decode_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_FP8_MOE_GROUPED_DECODE").is_none())
 }
@@ -141,6 +141,33 @@ pub(crate) fn grouped_decode_buffer_need(
         // 2026-09-25: Shared-expert down output and `moe_output`, `[m, hidden]` BF16.
         row_hidden: m * hidden * 2,
     }
+}
+
+/// 2026-10-03: Where `moe_fp8_grouped_sort` writes for `m` rows at `base` (the arena's
+/// `gate_logits`, free once top-k has read it), and the active-expert capacity `cap`
+/// (`fp8_grouped_active_cap`): sorted token ids, sorted expert ids `[m * top_k]` u32 each,
+/// expert offsets `[experts + 1]`, token-to-position `[m * top_k]`, the active list `[cap]`
+/// and its length. The circuit executor's MoE emitters lay the sort out with it too.
+pub(crate) fn grouped_sort_out(
+    base: DevicePtr,
+    m: u32,
+    top_k: u32,
+    num_experts: u32,
+) -> (ops::Fp8GroupedSortOut, u32) {
+    let te = (m * top_k) as usize;
+    let ne = num_experts as usize;
+    let cap = ops::fp8_grouped_active_cap(m, top_k, num_experts);
+    let token_to_perm = base.offset(te * 4 * 2 + (ne + 1) * 4);
+    let active_experts = token_to_perm.offset(te * 4);
+    let out = ops::Fp8GroupedSortOut {
+        sorted_token_ids: base,
+        sorted_expert_ids: base.offset(te * 4),
+        expert_offsets: base.offset(te * 4 * 2),
+        token_to_perm,
+        active_experts,
+        active_count: active_experts.offset(cap as usize * 4),
+    };
+    (out, cap)
 }
 
 impl MoeLayer {
@@ -275,29 +302,23 @@ impl MoeLayer {
 
         // 2026-09-25: 3. Group slots by expert. Top-k has read `gate_logits`
         //    earlier on the same stream, so the sort scratch reuses it.
-        let ne = num_experts as usize;
-        let sorted_token_ids = gate_logits;
-        let sorted_expert_ids = gate_logits.offset(te * 4);
-        let expert_offsets = gate_logits.offset(te * 4 * 2);
-        let token_to_perm = gate_logits.offset(te * 4 * 2 + (ne + 1) * 4);
         // 2026-09-25: 4. The active experts go to a list of fixed capacity `cap`
         //    (a function of `m`, so the grids are the same for a captured graph),
         //    then gate+up, silu+down and blend. 2026-09-27: One launch sorts the
         //    slots and builds the list.
-        let cap = ops::fp8_grouped_active_cap(n, top_k, num_experts);
-        let active_experts = token_to_perm.offset(te * 4);
-        let active_count = active_experts.offset(cap as usize * 4);
+        let (sort, cap) = grouped_sort_out(gate_logits, n, top_k, num_experts);
+        let ops::Fp8GroupedSortOut {
+            sorted_token_ids,
+            expert_offsets,
+            token_to_perm,
+            active_experts,
+            active_count,
+            ..
+        } = sort;
         ops::moe_fp8_grouped_sort(
             ctx.gpu,
             self.moe_fp8_grouped_sort_k,
-            ops::Fp8GroupedSortOut {
-                sorted_token_ids,
-                sorted_expert_ids,
-                expert_offsets,
-                token_to_perm,
-                active_experts,
-                active_count,
-            },
+            sort,
             indices_dev,
             te as u32,
             num_experts,

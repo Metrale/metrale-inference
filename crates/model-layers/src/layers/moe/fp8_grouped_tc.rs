@@ -55,6 +55,13 @@ fn fp8_grouped_tc_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_FP8_TC").is_none())
 }
 
+/// 2026-10-03: The process-wide half of [`MoeLayer::fp8_grouped_tc_on`]: the kill switch is
+/// absent or FP8 expert activations are published. The circuit's `moe_fp8_tc` policy setting;
+/// the per-layer half (kernels resolved, shapes) is checked where the layer binds.
+pub fn fp8_grouped_tc_setting() -> bool {
+    fp8_grouped_tc_enabled() || super::moe_expert_fp8_act()
+}
+
 /// 2026-09-28: The gate+up and down launches of one grouped decode.
 pub(super) struct Fp8GroupedExpertKernels {
     pub gate_up: KernelHandle,
@@ -73,7 +80,7 @@ impl MoeLayer {
     /// a row's bits independent of the row count.
     pub(super) fn fp8_grouped_tc_on(&self, hidden: usize, inter: usize) -> bool {
         let (h, i) = (hidden as u32, inter as u32);
-        (fp8_grouped_tc_enabled() || super::moe_expert_fp8_act())
+        fp8_grouped_tc_setting()
             && self.fp8_grouped_tc.gate_up.0 != 0
             && self.fp8_grouped_tc.down.0 != 0
             && ops::fp8_grouped_tc_shape_ok(i, h, ops::FP8_GROUPED_GATE_UP_TC)

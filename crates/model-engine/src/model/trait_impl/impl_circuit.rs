@@ -87,8 +87,22 @@ impl TransformerModel {
             ("bf16", false)
         };
         let (batchm_max_rows, m16_tc) = self.bf16_head_route();
+        // 2026-10-03: An NVFP4 head the circuit binds: its tile GEMM over the transposed twin at
+        // every row count (`lm_head_batched.rs` under the row-invariant tiers), not the lossless
+        // BF16-MMA twin (`METRALE_LMHEAD_LOSSLESS`).
+        let nvfp4 = self.lm_head_nvfp4.filter(|_| {
+            self.lm_head_q6k.is_none()
+                && self.lm_head_fp8.is_none()
+                && self.lm_head_nvfp4_t.is_some()
+                && self.w4a16_gemm_t_kernel.0 != 0
+                && self.w4a16_gemm_t_bf16_kernel.0 == 0
+                && metrale_model_layers::layers::row_invariant()
+        });
         let unmodelled = [
-            (quantized, "a quantized lm_head"),
+            (
+                quantized && nvfp4.is_none(),
+                "a quantized lm_head other than the NVFP4 tile-GEMM head",
+            ),
             (m16_tc, "the tensor-core BF16 head (lm_head_m16_tc)"),
             (self.use_fp32_logits, "FP32 logits"),
             (
@@ -111,9 +125,10 @@ impl TransformerModel {
         let head = HeadBinding {
             embed: self.embed_tokens,
             final_norm: self.final_norm,
-            lm_head: BoundWeight::Dense(self.lm_head_weight),
+            lm_head: nvfp4.map_or(BoundWeight::Dense(self.lm_head_weight), BoundWeight::Nvfp4),
             unmodelled,
             batchm_max_rows,
+            nvfp4_twin: nvfp4.and(self.lm_head_nvfp4_t),
         };
         (head, dtype)
     }
@@ -211,6 +226,9 @@ impl TransformerModel {
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),
                 block_size: u32::try_from(cache.block_size())?,
                 cache_stride: cache.cache_stride() as u64,
+                moe: Some(metrale_model_layers::layers::moe::MoeScratch::from_arena(
+                    &self.buffers,
+                )),
             }
         };
         CircuitExec::build(metrale_model_layers::circuit_exec::Boot {

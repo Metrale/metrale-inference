@@ -104,6 +104,7 @@ pub const FP8_GROUPED_SORT_MAX_EXPERTS: u32 = 1024;
 
 /// 2026-09-27: The outputs of [`moe_fp8_grouped_sort`]: `moe_sort_by_expert`'s
 /// four and the active-expert list with its length.
+#[derive(Debug, Clone, Copy)]
 pub struct Fp8GroupedSortOut {
     pub sorted_token_ids: DevicePtr,
     pub sorted_expert_ids: DevicePtr,

@@ -179,6 +179,11 @@ impl<'a> Cx<'a> {
         })
     }
 
+    /// 2026-10-03: The format the plan stores `edge` in (its buffer's size follows it).
+    pub fn edge_format(&self, edge: usize) -> metrale_circuit::Format {
+        self.formats[edge]
+    }
+
     /// 2026-09-30: The plan's row table (a batched verify's); `None` in other modes.
     pub fn table(&self) -> Option<&'a metrale_circuit::RowTable> {
         self.table
