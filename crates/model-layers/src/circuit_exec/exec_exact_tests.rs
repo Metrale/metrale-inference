@@ -4,8 +4,9 @@
 //! (`gdn_verify_exact = on`, the dense recipe's `exact_verify` variant), compiled from the real
 //! dense circuit over synthetic bindings and run on the recording mock backend: the launches per
 //! GDN layer, each chain's arguments against the legacy call shape
-//! (`trait_decode_batched_conv_gdn_exact_chain.rs`, `trait_decode_batched_conv_gdn_multi_exact.rs`),
-//! the batched runs' carried twins, exact fold and per-sequence chains, and the refusals.
+//! (`trait_decode_batched_conv_gdn_exact_chain.rs`,
+//! `trait_decode_batched_conv_gdn_multi_exact.rs`), the batched runs' carried twins, exact fold
+//! and per-sequence chains, and the refusals.
 //!
 //! Owner: model-layers circuit executor.
 //! Invariants: none beyond the types.

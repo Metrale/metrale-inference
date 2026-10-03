@@ -225,6 +225,30 @@ impl Qwen3SsmLayer {
             && !crate::layers::qwen3_ssm::gdn_fused_norm_enabled()
     }
 
+    /// 2026-10-03: Whether one run of a batched verify runs batched, as
+    /// `decode_batched_conv_gdn_multi` decides it (`gdn_verify_run_batched`): under the exact
+    /// verify when the carried exact arm takes it (the twins ready at this width, the conv
+    /// states on consecutive slots, WY tables staged; otherwise legacy folds and runs each
+    /// sequence's chain alone), else when `multi_run_arm` says Batched.
+    pub(super) fn run_batched_verdict(
+        &self,
+        states: &[&mut (dyn LayerState + 'static)],
+        kk: usize,
+        gdn_wyn: bool,
+        wy_tables: DevicePtr,
+    ) -> Result<bool> {
+        if super::verify_exact_enabled() {
+            return Ok(
+                self.exact_carry_ready(kk)
+                    && self.exact_carry_conv_base(states, wy_tables).is_some(),
+            );
+        }
+        Ok(matches!(
+            self.multi_run_arm(states, kk, gdn_wyn, wy_tables)?,
+            super::trait_decode_batched_conv_gdn_multi::RunArm::Batched(..)
+        ))
+    }
+
     /// 2026-10-03: Row 0's conv state when the carried exact arm can take the run: at least two
     /// sequences, WY tables staged, and every conv state on consecutive slots. `None` is
     /// [`Self::decode_batched_conv_gdn_multi_exact_carry`]'s decline; the circuit's run verdict

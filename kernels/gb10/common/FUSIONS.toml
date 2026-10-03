@@ -478,7 +478,7 @@ modes = ["verify_batch"]
 when = { ssm_h_dtype = "f32", gdn_verify_exact = "on" }
 numerics = "reference"
 priority = 150
-cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi.rs:89-154 (carry through the exact twins, its decline and fold); ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi_exact.rs:214-376 (the carried exact run); ml/qwen3_ssm/carry.rs:89-98 (the exact fold); ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:29-145 (a sequence alone)"
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi.rs:89-154 (carry through the exact twins, its decline and fold); ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi_exact.rs:215-400 (the carried exact run and the run verdict); ml/qwen3_ssm/carry.rs:89-98 (the exact fold); ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:29-145 (a sequence alone)"
 
 [[rule.run]]
 k = [2, 2]
@@ -839,7 +839,7 @@ modes = ["verify", "verify_batch"]
 when = { gdn_verify_exact = "on" }
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:118-135; ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi_exact.rs:350-367; ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:118-121 (the layer's norm skipped under the chain)"
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:118-135; ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi_exact.rs:374-391; ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:118-121 (the layer's norm skipped under the chain)"
 
 # 2026-09-28: Attention mixer.
 
