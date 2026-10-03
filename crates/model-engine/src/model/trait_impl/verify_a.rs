@@ -135,6 +135,7 @@ impl TransformerModel {
                         1,
                         meta_base.offset(128),
                         stream,
+                        metrale_model_layers::lora::LoraSites::PairFallback,
                     )?;
 
                     let attn_metadata = AttnMetadataDev {
@@ -343,8 +344,13 @@ impl TransformerModel {
             self.gpu
                 .copy_h2d_async(bt_bytes, meta_base.offset(256), stream)?;
 
-            let seq_slot =
-                self.upload_seq_slot_uniform(seq.adapter_slot, 1, meta_base.offset(128), stream)?;
+            let seq_slot = self.upload_seq_slot_uniform(
+                seq.adapter_slot,
+                1,
+                meta_base.offset(128),
+                stream,
+                metrale_model_layers::lora::LoraSites::PairFallback,
+            )?;
 
             let attn_metadata = AttnMetadataDev {
                 positions: meta_base,

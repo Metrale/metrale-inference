@@ -225,7 +225,13 @@ impl TransformerModel {
         // or returns `DevicePtr(0)` (the installed-pair path) when no LoRA pool is
         // loaded or the request resolves to the active adapter (`adapter_slot ==
         // -1` resolves to active).
-        let seq_slot = self.step_seq_slot(seq.adapter_slot, 1, meta_base.offset(128), stream)?;
+        let seq_slot = self.step_seq_slot(
+            seq.adapter_slot,
+            1,
+            meta_base.offset(128),
+            stream,
+            metrale_model_layers::lora::LoraSites::PairFallback,
+        )?;
 
         let attn_metadata = AttnMetadataDev {
             max_blocks_per_seq: max_blocks,

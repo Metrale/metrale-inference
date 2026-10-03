@@ -115,6 +115,7 @@ impl TransformerModel {
             r_up,
             meta_base.offset(VMETA_SEQ_SLOT),
             stream,
+            metrale_model_layers::lora::LoraSites::MultiSeq,
         )?;
 
         Ok(AttnMetadataDev {

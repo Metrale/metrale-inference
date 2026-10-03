@@ -156,7 +156,13 @@ impl TransformerModel {
         // before capture, so a graph reads a fixed address. `DevicePtr(0)` selects the
         // installed-pair path.
         debug_assert!(k <= 32, "verify seq_slot +128 gap holds K ≤ 32");
-        let seq_slot = self.step_seq_slot(seq.adapter_slot, k, meta_base.offset(128), stream)?;
+        let seq_slot = self.step_seq_slot(
+            seq.adapter_slot,
+            k,
+            meta_base.offset(128),
+            stream,
+            metrale_model_layers::lora::LoraSites::MultiSeq,
+        )?;
 
         debug_assert_eq!(meta_base, self.batch_meta_base());
         let metadata = self.verify_meta(max_blocks, k as u32, seq_slot);

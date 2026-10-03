@@ -62,16 +62,18 @@ impl TransformerModel {
 
     /// 2026-10-03: The slot buffer of a one-row decode or a `count`-row verify of a sequence
     /// whose adapter is `adapter_slot`: under the circuit always uploaded to `dst`, `-1` resolved
-    /// to the active adapter; under legacy, legacy's (`upload_seq_slot_uniform`).
+    /// to the active adapter (its attention folds are the per-row bgmv, byte-identical to the
+    /// installed pair: `lora_bgmv_pair_microtest`); under legacy, legacy's for `sites`.
     pub(super) fn step_seq_slot(
         &self,
         adapter_slot: i32,
         count: usize,
         dst: DevicePtr,
         stream: u64,
+        sites: metrale_model_layers::lora::LoraSites,
     ) -> Result<DevicePtr> {
         let (Some(lw), true) = (self.lora.as_ref(), self.circuit.read().is_some()) else {
-            return self.upload_seq_slot_uniform(adapter_slot, count, dst, stream);
+            return self.upload_seq_slot_uniform(adapter_slot, count, dst, stream, sites);
         };
         let slots = vec![adapter_slot; count];
         let host = metrale_model_layers::lora::build_seq_slot_host(&slots, count, lw.active as i32);
