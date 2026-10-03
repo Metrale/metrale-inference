@@ -188,7 +188,21 @@ pub fn build_model(
     mem.mark("load_final_norm");
     let lm_head = loader.load_lm_head(&store, &config, gpu.as_ref())?;
     mem.mark("load_lm_head");
-    let mtp_weights = loader.load_mtp_weights_multi(&store, &config, gpu.as_ref())?;
+    // 2026-10-03: The generic MTP modules load only with `--speculative`, like the GLM-5.3 and
+    // DeepSeek-V4 modules below: without it no proposer reads them (`build_mtp_proposer`), and
+    // until 2026-10-03 their load-time copies (BF16 dequants of the projections and experts,
+    // about 1.5 GiB on the FP8 35B) stayed allocated for nothing.
+    let mtp_weights = if use_speculative {
+        loader.load_mtp_weights_multi(&store, &config, gpu.as_ref())?
+    } else {
+        if metrale_model_weights::mtp_layout::detect_in_store(&store, &config).is_some() {
+            tracing::info!(
+                "the checkpoint has MTP weights, but --speculative is not set: no MTP head is \
+                 built"
+            );
+        }
+        Vec::new()
+    };
     mem.mark("load_mtp_weights_multi");
 
     // 2026-09-25: GLM-5.3 and DeepSeek-V4 have their own MTP modules, not the
