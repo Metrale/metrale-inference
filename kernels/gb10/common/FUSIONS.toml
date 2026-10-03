@@ -182,6 +182,7 @@ copies = "per_row_but_last"
 emitter = "conv1d_update_l2norm"
 rows = [2, 4]
 modes = ["verify"]
+when = { gdn_verify_exact = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:105-110 (BF16 conv rows, not bitwise equal to decode's FP32 conv), :114-331 (the conv window copied to conv_state_intermediates[t] after each row but the last)"
@@ -238,7 +239,7 @@ repeat = "once"
 emitter = "gdn_decode_wy"
 rows = [2, 2]
 modes = ["verify"]
-when = { ssm_h_dtype = "f32" }
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "off" }
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163"
@@ -251,7 +252,7 @@ repeat = "once"
 emitter = "gdn_decode_wy"
 rows = [3, 3]
 modes = ["verify"]
-when = { ssm_h_dtype = "f32" }
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "off" }
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163"
@@ -264,7 +265,7 @@ repeat = "once"
 emitter = "gdn_decode_wy"
 rows = [4, 4]
 modes = ["verify"]
-when = { ssm_h_dtype = "f32" }
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "off" }
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163"
@@ -302,7 +303,7 @@ repeat = "per_run"
 emitter = "gdn_verify_runs"
 rows = [4, 128]
 modes = ["verify_batch"]
-when = { ssm_h_dtype = "f32" }
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "off" }
 numerics = "reference"
 priority = 150
 cite = "ml/qwen3_ssm/trait_decode_batched/conv_gdn_route.rs:100-219 (the runs); ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi.rs:89-117 (carry and its decline), :394-470 (multi_run_arm); ml/qwen3_ssm/carry.rs:59-62 (lazy from 8), :164-301 (the launches); ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331 (a sequence alone)"
@@ -439,6 +440,172 @@ launches = [
 ]
 copies = "per_seq_row_but_last"
 
+# 2026-10-03: The batched MTP verify under the exact chain (`gdn_verify_exact`), one launch
+# schedule per run (`trait_decode_batched_conv_gdn_multi.rs:89-154`): a carried run whose
+# sequences sit on consecutive conv slots is `gdn_carry_conv_f32` then `gdn_exact_carry{k}`
+# (`_lazy` from 8 sequences) over the run, the accepted rows left pending in the stash
+# (`decode_batched_conv_gdn_multi_exact_carry`); any other carried run folds its pending rows with
+# the model directory's exact fold and runs each sequence's chain alone, as the single-sequence
+# exact verify does; a verify that does not carry runs each sequence's chain alone. The rows are
+# FP32 (`stored`: the conv rows the recurrence reads, the recurrence rows the norm reads).
+[[rule]]
+id = "gdn_verify_batch_runs_exact"
+pattern = [
+  { op = "conv1d_update" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", stored = true },
+  { op = "gdn_recurrence", input = "f32" },
+]
+kernels = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_f32" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry2" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry3" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry4" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry2_lazy" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry3_lazy" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry4_lazy" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry_flush" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_flush" },
+  { module = "gated_delta_rule_carry", func = "gdn_conv_chain_f32" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain2" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain3" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain4" },
+]
+repeat = "per_run"
+emitter = "gdn_verify_runs_exact"
+rows = [4, 128]
+modes = ["verify_batch"]
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "on" }
+numerics = "reference"
+priority = 150
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi.rs:89-154 (carry through the exact twins, its decline and fold); ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi_exact.rs:214-376 (the carried exact run); ml/qwen3_ssm/carry.rs:89-98 (the exact fold); ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:29-145 (a sequence alone)"
+
+[[rule.run]]
+k = [2, 2]
+n = [2, 7]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_f32", times = "once" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry2", times = "once" },
+]
+
+[[rule.run]]
+k = [2, 2]
+n = [8, 128]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_f32", times = "once" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry2_lazy", times = "once" },
+]
+
+[[rule.run]]
+k = [3, 3]
+n = [2, 7]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_f32", times = "once" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry3", times = "once" },
+]
+
+[[rule.run]]
+k = [3, 3]
+n = [8, 128]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_f32", times = "once" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry3_lazy", times = "once" },
+]
+
+[[rule.run]]
+k = [4, 4]
+n = [2, 7]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_f32", times = "once" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry4", times = "once" },
+]
+
+[[rule.run]]
+k = [4, 4]
+n = [8, 128]
+contiguous = true
+carried = true
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_f32", times = "once" },
+  { module = "gdn_exact_carry", func = "gdn_exact_carry4_lazy", times = "once" },
+]
+
+[[rule.run]]
+k = [2, 2]
+n = [1, 128]
+contiguous = false
+carried = true
+launches = [
+  { module = "gdn_exact_carry", func = "gdn_exact_carry_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_conv_chain_f32", times = "per_seq" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain2", times = "per_seq" },
+]
+
+[[rule.run]]
+k = [2, 2]
+n = [1, 128]
+contiguous = false
+carried = false
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_conv_chain_f32", times = "per_seq" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain2", times = "per_seq" },
+]
+
+[[rule.run]]
+k = [3, 3]
+n = [1, 128]
+contiguous = false
+carried = true
+launches = [
+  { module = "gdn_exact_carry", func = "gdn_exact_carry_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_conv_chain_f32", times = "per_seq" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain3", times = "per_seq" },
+]
+
+[[rule.run]]
+k = [3, 3]
+n = [1, 128]
+contiguous = false
+carried = false
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_conv_chain_f32", times = "per_seq" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain3", times = "per_seq" },
+]
+
+[[rule.run]]
+k = [4, 4]
+n = [1, 128]
+contiguous = false
+carried = true
+launches = [
+  { module = "gdn_exact_carry", func = "gdn_exact_carry_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_carry_conv_flush", times = "once" },
+  { module = "gated_delta_rule_carry", func = "gdn_conv_chain_f32", times = "per_seq" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain4", times = "per_seq" },
+]
+
+[[rule.run]]
+k = [4, 4]
+n = [1, 128]
+contiguous = false
+carried = false
+launches = [
+  { module = "gated_delta_rule_carry", func = "gdn_conv_chain_f32", times = "per_seq" },
+  { module = "gdn_exact_carry", func = "gdn_exact_chain4", times = "per_seq" },
+]
+
 # 2026-10-02: The L2 norm writes BF16 q/k/v (gdn_verify_fused_k2.cu:131) and the WY2 recurrence a
 # BF16 `core` (gated_delta_rule_wy.cu:170-171), which the norm kernel reads
 # (gdn_verify_fused_k2.cu:190-191).
@@ -459,6 +626,7 @@ repeat = "once"
 emitter = "gdn_verify_fused_k2"
 rows = [2, 2]
 modes = ["verify"]
+when = { gdn_verify_exact = "off" }
 numerics = "differs"
 lever = "gdn_fused_verify"
 priority = 200
@@ -592,9 +760,86 @@ repeat = "once"
 emitter = "gated_rms_norm"
 rows = [2, 128]
 modes = ["verify", "verify_batch"]
+when = { gdn_verify_exact = "off" }
 numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:138-157 (kill switch METRALE_NO_BATCHED_GDN_NORM)"
+
+# 2026-10-03: The exact MTP verify chain (`gdn_verify_exact`: `--exact-verify`, or a fixed GDN
+# activation format, ml/qwen3_ssm/gdn_flags.rs `verify_exact_enabled`). The verify's GDN conv,
+# recurrence and output norm run the single-token decode's FP32 arithmetic per row, so each row
+# is the bits a decode step computes. One sequence's K rows take three launches
+# (`trait_decode_batched_conv_gdn_exact_chain.rs`): the FP32 conv chain with the windows written
+# inline, the exact recurrence chain with the h states written inline, and one FP32-input
+# gated norm over the rows. Where the chain declines (a kernel missing, the fused norm, too few
+# rollback slots) legacy runs a per-row arm the circuit does not model; the emitters refuse it.
+[[rule]]
+id = "gdn_exact_conv_chain_verify"
+pattern = [{ op = "conv1d_update" }, { op = "state_snapshot" }, { op = "l2_norm" }]
+kernels = [{ module = "gated_delta_rule_carry", func = "gdn_conv_chain_f32" }]
+repeat = "once"
+emitter = "gdn_exact_conv_chain"
+rows = [2, 4]
+modes = ["verify"]
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:36-96 (one FP32 conv launch for every row, the windows after rows 0..K-2 written inline)"
+
+[[rule]]
+id = "gdn_exact_chain_k2_verify"
+pattern = [{ op = "gdn_recurrence", input = "f32" }]
+kernels = [{ module = "gdn_exact_carry", func = "gdn_exact_chain2" }]
+repeat = "once"
+emitter = "gdn_exact_chain"
+rows = [2, 2]
+modes = ["verify"]
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:97-117 (the strided decode's chain, the state read once, h after rows 0..K-2 written inline)"
+
+[[rule]]
+id = "gdn_exact_chain_k3_verify"
+pattern = [{ op = "gdn_recurrence", input = "f32" }]
+kernels = [{ module = "gdn_exact_carry", func = "gdn_exact_chain3" }]
+repeat = "once"
+emitter = "gdn_exact_chain"
+rows = [3, 3]
+modes = ["verify"]
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:97-117 (the strided decode's chain, the state read once, h after rows 0..K-2 written inline)"
+
+[[rule]]
+id = "gdn_exact_chain_k4_verify"
+pattern = [{ op = "gdn_recurrence", input = "f32" }]
+kernels = [{ module = "gdn_exact_carry", func = "gdn_exact_chain4" }]
+repeat = "once"
+emitter = "gdn_exact_chain"
+rows = [4, 4]
+modes = ["verify"]
+when = { ssm_h_dtype = "f32", gdn_verify_exact = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:97-117 (the strided decode's chain, the state read once, h after rows 0..K-2 written inline)"
+
+# 2026-10-03: The exact chain's output norm, one launch over every verify row (the
+# single-sequence chain's K rows; a batched verify's runs, which legacy norms per run and per
+# sequence, are row-local, so one launch over all rows writes the same bits).
+[[rule]]
+id = "gdn_exact_out_norm_verify"
+pattern = [{ op = "gated_rms_norm", input = "f32" }]
+kernels = [{ module = "norm", func = "gated_rms_norm_f32_input_strided" }]
+repeat = "once"
+emitter = "gated_rms_norm_strided"
+rows = [2, 128]
+modes = ["verify", "verify_batch"]
+when = { gdn_verify_exact = "on" }
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_decode_batched_conv_gdn_exact_chain.rs:118-135; ml/qwen3_ssm/trait_decode_batched_conv_gdn_multi_exact.rs:350-367; ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:118-121 (the layer's norm skipped under the chain)"
 
 # 2026-09-28: Attention mixer.
 
