@@ -48,6 +48,7 @@ REQUIRED_CONTEXTS = {
     "kernel shadow structure",
     "nvcc -> PTX (all gb10 targets)",
     "perf-path exclusivity",
+    "recipes",
     "release matrix / dry-run summary",
     "typos",
 }
