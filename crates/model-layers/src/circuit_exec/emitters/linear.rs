@@ -365,3 +365,15 @@ impl OpEmitter for HostSampling {
         Ok(())
     }
 }
+
+/// 2026-10-03: This module's emitters, for the registry in `mod.rs`.
+pub(super) static ALL: &[&dyn OpEmitter] = &[
+    &W4a16DecodeGemv,
+    &W4a16GemvDual,
+    &W4a16GemvQg,
+    &SiluMul,
+    &LmHead,
+    &ArgmaxBatch,
+    &Argmax,
+    &HostSampling,
+];

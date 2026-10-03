@@ -240,3 +240,11 @@ impl OpEmitter for GatedRmsNorm {
         Ok(())
     }
 }
+
+/// 2026-10-03: This module's emitters, for the registry in `mod.rs`.
+pub(super) static ALL: &[&dyn OpEmitter] = &[
+    &DenseGemvBaGates,
+    &Conv1dUpdateL2norm,
+    &GdnDecode,
+    &GatedRmsNorm,
+];

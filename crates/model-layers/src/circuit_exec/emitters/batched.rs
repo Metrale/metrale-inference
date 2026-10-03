@@ -325,3 +325,14 @@ impl OpEmitter for W4a16GemmN128M128 {
         tile_gemm(cx, self.id(), Tile::M128, &["w4a16_gemm_t_m128"])
     }
 }
+
+/// 2026-10-03: This module's emitters, for the registry in `mod.rs`.
+pub(super) static ALL: &[&dyn OpEmitter] = &[
+    &W4a16GemvBatchm,
+    &W4a16GemvBatch,
+    &W4a16GemvDualBatch,
+    &W4a16GemvQgBatch,
+    &W4a16GemmN128,
+    &W4a16Gemm,
+    &W4a16GemmN128M128,
+];

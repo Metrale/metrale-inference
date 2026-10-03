@@ -27,63 +27,30 @@ mod gdn_verify_batch;
 mod linear;
 mod norm;
 
-static EMITTERS: [&dyn OpEmitter; 49] = [
-    &norm::EmbedCopy,
-    &norm::RmsNormResidual,
-    &norm::ResidualAddRmsNorm,
-    &norm::ResidualAddRmsNormExact,
-    &norm::ResidualAdd,
-    &norm::RmsNorm,
-    &linear::W4a16DecodeGemv,
-    &linear::W4a16GemvDual,
-    &linear::W4a16GemvQg,
-    &linear::SiluMul,
-    &linear::LmHead,
-    &gdn::DenseGemvBaGates,
-    &gdn::Conv1dUpdateL2norm,
-    &gdn::GdnDecode,
-    &gdn::GatedRmsNorm,
-    &attn::RopeMrope,
-    &attn::KvWrite,
-    &attn::PagedDecode,
-    &attn::SigmoidGateMul,
-    &attn::DeinterleaveQg,
-    &attn::RmsNormStrided,
-    &attn::RopeStrided,
-    &batched::W4a16GemvBatchm,
-    &batched::W4a16GemvBatch,
-    &batched::W4a16GemvDualBatch,
-    &batched::W4a16GemvQgBatch,
-    &batched::W4a16GemmN128,
-    &batched::W4a16Gemm,
-    &batched::W4a16GemmN128M128,
-    &ffn::DenseFfnKm,
-    &ffn::DenseFfnMmq,
-    &gdn_verify::DenseGemmBaGates,
-    &gdn_verify::GdnDecodeWy,
-    &gdn_batched::Conv1dUpdateL2normStrided,
-    &gdn_batched::GdnDecodeStrided,
-    &gdn_batched::GatedRmsNormStrided,
-    &gdn_verify_batch::GdnVerifyRuns,
-    &linear::ArgmaxBatch,
-    &linear::Argmax,
-    &linear::HostSampling,
-    &draft::Concat,
-    &draft::DenseGemv,
-    &draft::Rope,
-    &draft::DenseGemvTc,
-    &draft::DraftLmHeadRows,
-    &declared::W8a8ActQuant,
-    &declared::W8a8Gemv,
-    &declared::W4a4ActQuant,
-    &declared::W4a4Gemv,
+/// 2026-10-03: Every emitter, as one slice per module: a module owns its own `ALL`, and adding
+/// a module adds one line here (see LIFECYCLE-DESIGN.md 15.11).
+static MODULES: [&[&dyn OpEmitter]; 11] = [
+    norm::ALL,
+    linear::ALL,
+    gdn::ALL,
+    attn::ALL,
+    batched::ALL,
+    ffn::ALL,
+    gdn_verify::ALL,
+    gdn_batched::ALL,
+    gdn_verify_batch::ALL,
+    draft::ALL,
+    declared::ALL,
 ];
+
+#[cfg(test)]
+mod registry_tests;
 
 /// 2026-09-28: The emitter named `id`.
 pub(crate) fn emitter(id: &str) -> Result<&'static dyn OpEmitter> {
-    EMITTERS
+    MODULES
         .iter()
-        .copied()
+        .flat_map(|m| m.iter().copied())
         .find(|e| e.id() == id)
         .ok_or_else(|| anyhow!("no circuit emitter `{id}` is implemented yet"))
 }

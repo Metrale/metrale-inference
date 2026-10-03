@@ -222,3 +222,13 @@ impl OpEmitter for RmsNorm {
         )
     }
 }
+
+/// 2026-10-03: This module's emitters, for the registry in `mod.rs`.
+pub(super) static ALL: &[&dyn OpEmitter] = &[
+    &EmbedCopy,
+    &RmsNormResidual,
+    &ResidualAddRmsNorm,
+    &ResidualAddRmsNormExact,
+    &ResidualAdd,
+    &RmsNorm,
+];

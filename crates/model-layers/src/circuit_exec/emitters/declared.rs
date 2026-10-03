@@ -307,3 +307,11 @@ impl OpEmitter for W4a4Gemv {
         Ok(())
     }
 }
+
+/// 2026-10-03: This module's emitters, for the registry in `mod.rs`.
+pub(super) static ALL: &[&dyn OpEmitter] = &[
+    &W8a8ActQuant,
+    &W8a8Gemv,
+    &W4a4ActQuant,
+    &W4a4Gemv,
+];

@@ -212,3 +212,10 @@ impl OpEmitter for GatedRmsNormStrided {
         )
     }
 }
+
+/// 2026-10-03: This module's emitters, for the registry in `mod.rs`.
+pub(super) static ALL: &[&dyn OpEmitter] = &[
+    &Conv1dUpdateL2normStrided,
+    &GdnDecodeStrided,
+    &GatedRmsNormStrided,
+];
