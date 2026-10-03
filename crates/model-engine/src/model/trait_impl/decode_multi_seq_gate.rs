@@ -188,19 +188,14 @@ mod tests {
     /// drafts in legacy code: the batched verify is admitted only when the executor compiles
     /// batched verifies and runs the program compiled for the batch's row table, and the batched
     /// propose runs the head's n-row draft program or declines, so each sequence drafts through
-    /// the circuit's single-row program. 2026-10-03: The one exception is a build that compiles
-    /// no verify at all (the exact MTP verify chain, not ported yet): the legacy layers verify,
-    /// batched as without a circuit.
+    /// the circuit's single-row program.
     #[test]
     fn a_circuit_forward_takes_no_batched_verify_or_propose() {
         let s = src("src/model/trait_impl/verify_e.rs");
         let gate = block(&s, "fn can_batch_verify_dispatch", "\n    pub(super) fn ");
         assert!(
-            gate.contains(
-                ".is_none_or(|e| {\n                    (e.verify.is_empty() && e.verify_batch.is_none())\n                        || e.verify_batch"
-            ),
-            "can_batch_verify_dispatch must admit a circuit forward only with batched verifies, \
-             or with no verify program at all"
+            gate.contains(".is_none_or(|e| {\n                    e.verify_batch"),
+            "can_batch_verify_dispatch must admit a circuit forward only with batched verifies"
         );
         let call = block(
             &s,

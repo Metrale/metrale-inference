@@ -161,10 +161,7 @@ impl CircuitExec {
             }
             metrale_circuit::PrecisionSpec::Table(_) => metrale_circuit::load(&served, src)?,
         };
-        let unmodelled = policy::unmodelled_switches(
-            b.levers,
-            !b.verify_rows.is_empty() || b.verify_batch_rows.is_some(),
-        );
+        let unmodelled = policy::unmodelled_switches(b.levers);
         if !unmodelled.is_empty() {
             bail!(
                 "the circuit does not model these switches: {}",

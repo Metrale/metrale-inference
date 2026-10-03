@@ -79,6 +79,13 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
         // 2026-10-03: The GDN prefill arm after a prefix-cache restore; every plan but a prefill
         // one is planned off, and the prefill build plans each arm (`prefill::EXACT_REPLAY`).
         (super::prefill::EXACT_REPLAY.to_string(), "off".to_string()),
+        // 2026-10-03: The exact MTP verify chain (`--exact-verify`, or a fixed GDN activation
+        // format): the verify's GDN conv, recurrence and norm run the decode's FP32 chain per
+        // row (`gdn_flags.rs` `verify_exact_enabled`).
+        (
+            VERIFY_EXACT.to_string(),
+            on_off(crate::layers::qwen3_ssm::verify_exact_enabled()),
+        ),
     ]);
     Policy {
         opt_in_levers: Default::default(),
@@ -136,22 +143,16 @@ pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 16] = [
     ("METRALE_W4A4_PROJ_AUDIT", "ops/w4a4_proj.rs"),
 ];
 
+/// 2026-10-03: The policy setting of the exact MTP verify chain, `on` or `off`.
+pub const VERIFY_EXACT: &str = "gdn_verify_exact";
+
 /// 2026-09-28: Switches that change legacy decode which no rule reads, when they are set.
-/// 2026-10-03: The exact MTP verify chain changes only the verify, so it is refused only by a
-/// build that compiles verify programs (`verify`); a build without them leaves the verify to
-/// the legacy layers.
-pub fn unmodelled_switches(levers: &ModelLevers, verify: bool) -> Vec<String> {
+pub fn unmodelled_switches(levers: &ModelLevers) -> Vec<String> {
     let mut out: Vec<String> = MULTI_SEQ_ENV_SWITCHES
         .iter()
         .filter(|(var, _)| std::env::var_os(var).is_some())
         .map(|(var, reader)| format!("{var} (read in {reader})"))
         .collect();
-    if verify && crate::layers::qwen3_ssm::verify_exact_enabled() {
-        out.push(
-            "the exact MTP verify chain (--exact-verify, or a fixed GDN activation format)"
-                .to_string(),
-        );
-    }
     if !levers.ffn_small_m {
         out.push("the small-M projection GEMMs off (METRALE_FFN_SMALLM)".to_string());
     }
