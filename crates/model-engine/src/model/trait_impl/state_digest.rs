@@ -13,7 +13,16 @@ use anyhow::Result;
 
 use super::super::types::TransformerModel;
 use crate::traits::SequenceState;
-use crate::traits::model::circuit::{FNV_START, fnv1a};
+
+/// 2026-10-03: 64-bit FNV-1a of `bytes`, continuing `acc` (start from [`FNV_START`]).
+fn fnv1a(acc: u64, bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .fold(acc, |a, &b| (a ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+/// 2026-10-03: The FNV-1a offset basis.
+const FNV_START: u64 = 0xcbf2_9ce4_8422_2325;
 
 impl TransformerModel {
     pub(super) fn state_digest_impl(&self, seq: &SequenceState) -> Result<Vec<(String, u64)>> {
