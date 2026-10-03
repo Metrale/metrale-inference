@@ -10,6 +10,7 @@
 //!   TOMLs and pass their text in ([`load`]).
 //! - A plan is deterministic, and its digest is recorded beside the closure hash.
 
+pub mod buckets;
 pub mod checkpoint;
 pub mod circuit_toml;
 pub mod config_map;
