@@ -172,16 +172,6 @@ pub struct ServeSchedulingArgs {
     #[arg(long)]
     pub num_drafts: Option<usize>,
 
-    /// Per-position confidence stop for MTP draft chains (default: off). The
-    /// drafter extends a chain past a draft only while that draft's top-1
-    /// probability is at least TAU, so a chain of up to `--num-drafts` ends
-    /// with its first draft below TAU (still verified). Unconfident chains
-    /// cost fewer drafter steps and fewer verify rows; confident ones run to
-    /// full depth. It changes which drafts are verified, never the emitted
-    /// tokens. 0 < TAU < 1. Requires `--speculative`; not with `--dflash`.
-    #[arg(long, value_name = "TAU")]
-    pub draft_confidence_stop: Option<f32>,
-
     /// Widest batch that speculates (the multi-sequence MTP dispatch cap): above
     /// this many active sequences a step plain-decodes. Precedence (highest wins):
     /// this flag → MODEL.toml `[behavior].mtp_max_seqs` → 32 (4 under
@@ -201,18 +191,10 @@ pub struct ServeSchedulingArgs {
     #[arg(long, default_value = "bf16")]
     pub mtp_quantization: String,
 
-    /// Draft on NVFP4 copies of a BF16 MoE MTP head's experts (default: false).
-    ///
-    /// The head's routed and shared experts are requantized from BF16 to NVFP4 at load and
-    /// run the grouped NVFP4 tensor-core decode; the router, attention, fc and draft LM head
-    /// keep the head's precision. Draft-only: the target model verifies every drafted token,
-    /// so only how many drafts are accepted moves. Under --exact-verify greedy output is
-    /// byte-identical with it on or off (measured on nvidia/Qwen3.6-35B-A3B-NVFP4); under the
-    /// default chunkwise verify, like any change in acceptance (--num-drafts included), it can
-    /// move greedy text. Refused on any other head (dense FFN, FP8 experts, or
-    /// --mtp-quantization other than bf16).
-    #[arg(long, default_value_t = false)]
-    pub mtp_experts_nvfp4: bool,
+    /// 2026-10-03: `--draft-confidence-stop` and `--mtp-experts-nvfp4`, the MTP drafter's options,
+    /// kept here so clap lists them after `--mtp-quantization`.
+    #[command(flatten)]
+    pub mtp_draft: crate::cli::serve_args_mtp_draft::ServeMtpDraftArgs,
 
     /// Run the Nemotron-H shared expert's prefill projections on the E4M3 tile GEMM
     /// (default: false).
