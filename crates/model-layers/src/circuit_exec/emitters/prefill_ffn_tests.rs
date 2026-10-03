@@ -45,9 +45,9 @@ fn every_prefill_ffn_rule_launches_the_legacy_tile_at_both_ends_of_its_rows() {
             assert_eq!(r.kernels.len(), if pipe { 2 } else { 3 }, "`{}`", r.id);
         }
     }
-    // 2026-10-03: Each of the four rule families (gate|up and act|down, with and without the
-    // declared act_quant) covers 1..=1048576 once.
-    for (gate_up, a4) in [(true, false), (false, false), (true, true), (false, true)] {
+    // 2026-10-03: Each rule family (gate|up and act|down) covers 1..=1048576 once. The declared
+    // circuit's act_quant twins come with its W8A8 FFN prefill rule.
+    for (gate_up, a4) in [(true, false), (false, false)] {
         let mut ranges: Vec<(u64, u64)> = ffn
             .iter()
             .filter(|r| r.id.ends_with("_gate_up") == gate_up && r.id.contains("_a4_") == a4)

@@ -204,14 +204,6 @@ class and exact citation.
 | `prefill_ffn_mmq64_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183 |
 | `prefill_ffn_mmq_pipe_gate_up` | reference | ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183 |
 | `prefill_ffn_mmq_pipe_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183 |
-| `prefill_ffn_mmq16_a4_gate_up` | reference | ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183 |
-| `prefill_ffn_mmq16_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183 |
-| `prefill_ffn_mmq32_a4_gate_up` | reference | ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183 |
-| `prefill_ffn_mmq32_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183 |
-| `prefill_ffn_mmq64_a4_gate_up` | reference | ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183 |
-| `prefill_ffn_mmq64_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183 |
-| `prefill_ffn_mmq_pipe_a4_gate_up` | reference | ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183 |
-| `prefill_ffn_mmq_pipe_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183 |
 | `prefill_ffn_residual_add` | reference | ml/qwen3_ssm/trait_prefill.rs:195-202; ml/qwen3_attention/trait_impl/prefill_inner/ffn_residual.rs:118-125 |
 | `prefill_final_norm` | reference | me/prefill_b/finalize_last.rs:121-137; me/prefill_a.rs:443-455; mm/impl_a3_norm.rs:23-51 |
 | `prefill_lm_head_bf16_gemv` | reference | mm/impl_a3_lm_head.rs:386-402; me/prefill_b/finalize_last.rs:192-202 |
