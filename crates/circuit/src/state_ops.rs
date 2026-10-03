@@ -235,6 +235,16 @@ impl StateProgram {
     }
 }
 
+/// 2026-10-03: The prefix-cache snapshot of the last hidden row: the target's one
+/// `prefix_snapshot` that copies no state (`head.prefix_hidden`), when the circuit declares it.
+/// Its source is the last row of the head's input, not a state, so it is a cache of its own
+/// beside the state programs.
+pub fn prefix_hidden(circuit: &Circuit) -> Option<usize> {
+    circuit.states.iter().position(|s| {
+        s.kind == StateKind::PrefixSnapshot && s.copies.is_none() && s.section == Section::Main
+    })
+}
+
 /// 2026-10-03: The snapshot of `kind` that copies state `of` (by id), when its block declares
 /// one.
 fn snapshot_of(circuit: &Circuit, kind: StateKind, of: &str) -> Option<usize> {

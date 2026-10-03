@@ -87,6 +87,9 @@ impl StatePool {
 pub struct StatePrograms {
     by_id: BTreeMap<StateProgramId, Vec<BoundStateNode>>,
     recurrent_layers: usize,
+    /// 2026-10-03: Bytes of the prefix cache's last-hidden row (`head.prefix_hidden`); `None`
+    /// when the circuit declares none.
+    prefix_hidden_bytes: Option<usize>,
 }
 
 impl StatePrograms {
@@ -176,10 +179,29 @@ impl StatePrograms {
             }
             by_id.insert(p.id, bound);
         }
+        let prefix_hidden_bytes = metrale_circuit::state_ops::prefix_hidden(circuit)
+            .map(|i| circuit.states[i].unit_bytes(formats))
+            .transpose()?
+            .map(usize::try_from)
+            .transpose()?;
         Ok(Self {
             by_id,
             recurrent_layers: recurrent_layers.len(),
+            prefix_hidden_bytes,
         })
+    }
+
+    /// 2026-10-03: Bytes of the prefix cache's last-hidden row, checked against `held`, the
+    /// bytes the snapshot pool's row holds: the copy moves the plan's bytes or refuses.
+    pub fn prefix_hidden_bytes(&self, held: usize) -> Result<usize> {
+        let bytes = self
+            .prefix_hidden_bytes
+            .context("the circuit declares no prefix-cache hidden row")?;
+        ensure!(
+            bytes == held,
+            "the circuit's prefix hidden row is {bytes} bytes; the snapshot pool holds {held}"
+        );
+        Ok(bytes)
     }
 
     /// 2026-10-03: The bound nodes of `id`; an error for a program the circuit leaves empty on

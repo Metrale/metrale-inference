@@ -154,3 +154,29 @@ fn a_snapshot_node_without_its_cache_is_refused() {
     let f32 = BTreeMap::from([("h".to_string(), StateDtype::F32)]);
     assert!(node.bytes(&c, &f32).is_err());
 }
+
+/// 2026-10-03: The hidden-row prefix snapshot is the target's prefix snapshot that copies no
+/// state; a state's own prefix copy is never taken for it.
+#[test]
+fn the_prefix_hidden_row_is_the_snapshot_that_copies_no_state() {
+    let mut c = test_toy::circuit(1);
+    c.states = vec![
+        decl("l0.gdn.h", StateKind::Recurrent, Section::Main, 100),
+        snapshot(
+            "l0.gdn.prefix_h",
+            StateKind::PrefixSnapshot,
+            "l0.gdn.h",
+            StateFormat::Fixed(StateDtype::F32),
+        ),
+    ];
+    assert_eq!(prefix_hidden(&c), None);
+    let mut hidden = snapshot(
+        "head.prefix_hidden",
+        StateKind::PrefixSnapshot,
+        "unused",
+        StateFormat::Fixed(StateDtype::Bf16),
+    );
+    hidden.copies = None;
+    c.states.push(hidden);
+    assert_eq!(prefix_hidden(&c), Some(2));
+}

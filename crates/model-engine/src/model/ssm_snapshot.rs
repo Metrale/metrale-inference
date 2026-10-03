@@ -394,10 +394,11 @@ impl SsmSnapshotPool {
         if !self.is_enabled() || self.hidden_snapshot.is_null() {
             return Ok(());
         }
+        let bytes = self.hidden_row_bytes()?;
         gpu.copy_d2d_async(
             last_hidden,
             self.hidden_snapshot.offset(snap_slot * self.hidden_bytes),
-            self.hidden_bytes,
+            bytes,
             stream,
         )?;
         self.slot_has_hidden.lock().insert(snap_slot);
@@ -420,13 +421,23 @@ impl SsmSnapshotPool {
         if self.hidden_snapshot.is_null() {
             bail!("SSM hidden snapshot region not allocated");
         }
+        let bytes = self.hidden_row_bytes()?;
         gpu.copy_d2d_async(
             self.hidden_snapshot.offset(snap_slot * self.hidden_bytes),
             dst,
-            self.hidden_bytes,
+            bytes,
             stream,
         )?;
         Ok(())
+    }
+
+    /// 2026-10-03: Bytes a hidden-row copy moves: the circuit's `head.prefix_hidden` under
+    /// `--forward circuit` (checked against the row the pool holds), else the pool's row.
+    fn hidden_row_bytes(&self) -> Result<usize> {
+        match self.programs.read().as_ref() {
+            Some(p) => p.prefix_hidden_bytes(self.hidden_bytes),
+            None => Ok(self.hidden_bytes),
+        }
     }
 }
 
