@@ -62,7 +62,8 @@ pub trait LayerWriteOnAccept {
     /// width `kk`, under the WY tables at `wy_tables`) through the batched conv and the
     /// table-form WY, as this layer's own batched verify decides it; `None` for a layer
     /// without a batched GDN verify (the default). The circuit executor picks each run's arm
-    /// with it.
+    /// with it. 2026-10-03: Under the exact verify chain, whether the run takes the carried
+    /// exact arm instead.
     fn gdn_verify_run_batched(
         &self,
         _states: &[&mut (dyn crate::layer::LayerState + 'static)],

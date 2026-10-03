@@ -275,6 +275,16 @@ impl LayerWriteOnAccept for Qwen3SsmLayer {
         gdn_wyn: bool,
         wy_tables: metrale_gpu_runtime::gpu::DevicePtr,
     ) -> anyhow::Result<Option<bool>> {
+        // 2026-10-03: Under the exact verify a run is batched when the carried exact arm takes
+        // it (`decode_batched_conv_gdn_multi`): the twins ready at this width, and the run's
+        // conv states on consecutive slots with WY tables staged. Otherwise legacy folds and
+        // runs each sequence's chain alone.
+        if super::verify_exact_enabled() {
+            return Ok(Some(
+                self.exact_carry_ready(kk)
+                    && self.exact_carry_conv_base(states, wy_tables).is_some(),
+            ));
+        }
         Ok(Some(matches!(
             self.multi_run_arm(states, kk, gdn_wyn, wy_tables)?,
             super::trait_decode_batched_conv_gdn_multi::RunArm::Batched(..)

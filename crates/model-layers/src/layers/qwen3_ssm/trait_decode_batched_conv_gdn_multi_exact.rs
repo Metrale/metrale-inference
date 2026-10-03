@@ -225,6 +225,30 @@ impl Qwen3SsmLayer {
             && !crate::layers::qwen3_ssm::gdn_fused_norm_enabled()
     }
 
+    /// 2026-10-03: Row 0's conv state when the carried exact arm can take the run: at least two
+    /// sequences, WY tables staged, and every conv state on consecutive slots. `None` is
+    /// [`Self::decode_batched_conv_gdn_multi_exact_carry`]'s decline; the circuit's run verdict
+    /// (`gdn_verify_run_batched`) reads the same check.
+    pub(super) fn exact_carry_conv_base(
+        &self,
+        states: &[&mut (dyn LayerState + 'static)],
+        h_table: DevicePtr,
+    ) -> Option<DevicePtr> {
+        if states.len() < 2 || h_table.is_null() {
+            return None;
+        }
+        let mut conv_base = DevicePtr::NULL;
+        for (i, state) in states.iter().enumerate() {
+            let st = state.as_any().downcast_ref::<SsmLayerState>()?;
+            if i == 0 {
+                conv_base = st.conv_state;
+            } else if st.conv_state.0 != conv_base.0 + (i * self.conv_state_bytes) as u64 {
+                return None;
+            }
+        }
+        Some(conv_base)
+    }
+
     /// 2026-10-01: The exact verify for one run, carried: three launches for all n sequences
     /// and K rows, `gdn_carry_conv_f32` (FP32 conv rows `b * K + t`, `qkvz_size` floats
     /// apart), `gdn_exact_carry{K}` (the strided decode's per-token chain, H read once, the
@@ -247,20 +271,9 @@ impl Qwen3SsmLayer {
         let Some(binding) = self.carry.binding.get().copied() else {
             return Ok(false);
         };
-        if n < 2 || h_table.is_null() {
+        let Some(conv_base) = self.exact_carry_conv_base(states, h_table) else {
             return Ok(false);
-        }
-        let mut conv_base = DevicePtr::NULL;
-        for (i, state) in states.iter().enumerate() {
-            let Some(st) = state.as_any().downcast_ref::<SsmLayerState>() else {
-                return Ok(false);
-            };
-            if i == 0 {
-                conv_base = st.conv_state;
-            } else if st.conv_state.0 != conv_base.0 + (i * self.conv_state_bytes) as u64 {
-                return Ok(false);
-            }
-        }
+        };
         let ConvGdnArgs {
             deinterleaved,
             gates_buf,
