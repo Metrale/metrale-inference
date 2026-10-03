@@ -28,6 +28,10 @@ use super::super::compile::{Cx, GroupRef, OpEmitter};
 use crate::layers::ops;
 use crate::layers::ops::lora_delta::{LoraKernels, LoraPair, LoraRoute};
 
+#[path = "lora_spec.rs"]
+mod spec;
+pub use spec::{AdapterTargets, spec_from_targets, targets_from_keys, targets_of_slot};
+
 /// 2026-10-03: What a build with adapters adapts: the spec `metrale_circuit::lora::adapt`
 /// rewrites the circuit with.
 #[derive(Debug, Clone, PartialEq, Eq)]

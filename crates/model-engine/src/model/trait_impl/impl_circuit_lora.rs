@@ -14,7 +14,9 @@
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::circuit_exec::CircuitLayer;
-use metrale_model_layers::circuit_exec::lora::{LoraBoot, LoraFixed, PHASE1_MAX_ROWS, spec_of};
+use metrale_model_layers::circuit_exec::lora::{
+    LoraBoot, LoraFixed, PHASE1_MAX_ROWS, spec_from_targets, spec_of, targets_of_slot,
+};
 
 use super::super::types::TransformerModel;
 
@@ -45,6 +47,17 @@ impl TransformerModel {
         let boot = spec_of(lw.max_rank as u64, layers);
         if boot.spec.layers.is_empty() {
             bail!("a LoRA pool that adapts no projection the circuit binds");
+        }
+        // 2026-10-03: The spec `met circuit memory` derives from the adapters' tensor names is
+        // this one: the bound layers must adapt exactly what the pool's targets say.
+        let pool: Vec<_> = lw.slots.iter().map(targets_of_slot).collect();
+        let want = spec_from_targets(lw.max_rank as u64, &pool, lw.active)?;
+        if want != boot.spec {
+            bail!(
+                "the circuit's bound LoRA layers ({:?}) differ from the pool's targets ({:?})",
+                boot.spec.layers,
+                want.layers
+            );
         }
         let base = self.batch_meta_base();
         let fixed = LoraFixed {
