@@ -71,6 +71,14 @@ pub(super) fn overlay(b: &Boot<'_>, circuit: &mut Circuit) -> Result<()> {
         b.lora.is_none() || b.parallel.is_none(),
         "LoRA adapters across tensor- or expert-parallel ranks"
     );
+    // 2026-10-03: The overlays' rules cover the decode, multi-sequence, verify and draft modes
+    // only; a prefill program over a rewritten circuit would fail to plan. Such a serve builds
+    // no prefill programs (its prefill runs the legacy layers, disclosed at boot).
+    anyhow::ensure!(
+        b.prefill_max_tokens.is_none() || (b.lora.is_none() && b.parallel.is_none()),
+        "circuit prefill programs with LoRA adapters or tensor/expert parallelism: the overlays \
+         plan no prefill mode; build such a serve with no prefill programs"
+    );
     if let Some(l) = &b.lora {
         *circuit = metrale_circuit::lora::adapt(circuit, &l.spec)
             .context("adapting the circuit to the LoRA pool")?;

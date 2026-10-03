@@ -55,6 +55,7 @@ fn each_group_is_timed_over_exactly_its_own_launches_and_the_step_is_unchanged()
             stream: 7,
             gdn: &gdn,
             max_blocks_per_seq: 9,
+            prefill: None,
         };
         let t = p.run(&f.program, &env, &mut |_| Ok(())).unwrap();
         assert_eq!(t.group_ms.len(), f.plan.groups.len());
@@ -100,6 +101,7 @@ fn the_layer_hook_runs_once_per_layer_after_the_layers_last_launch() {
         stream: 7,
         gdn: &gdn,
         max_blocks_per_seq: 9,
+        prefill: None,
     };
     p.run(&f.program, &env, &mut |l| {
         calls.borrow_mut().push((l, gpu.launches_snapshot().len()));

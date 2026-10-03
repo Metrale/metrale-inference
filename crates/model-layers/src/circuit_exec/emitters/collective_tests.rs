@@ -130,6 +130,7 @@ fn build(mode: Mode, rows: u64, comm: Option<Arc<dyn CommBackend>>) -> Result<Ra
             layers: &layers,
             head: &head,
             draft: None,
+            arena: None,
         },
     )?;
     Ok(Rank {
@@ -169,6 +170,7 @@ fn run(r: &Rank, rows: usize) -> Vec<metrale_gpu_runtime::gpu::mock::MockLaunch>
             stream: 7,
             gdn: &gdn,
             max_blocks_per_seq: 9,
+            prefill: None,
         })
         .unwrap();
     gpu.launches_snapshot()

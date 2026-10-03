@@ -60,16 +60,17 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 |---|---|---:|
 | moe_silu_mul::moe_silu_mul | not compiled for this class | 1 |
 | norm::gated_rms_norm_f32_input_strided | not compiled for this class | 2 |
-| nvfp4_mmq::metrale_nvfp4_gemm_pipe | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq16_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq32_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq64_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
+| nvfp4_mmq::metrale_nvfp4_gemm_pipe | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq16_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq32_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq64_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 8 |
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
-| nvfp4_mmq::metrale_nvfp4_scale_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 4 |
-| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 4 |
+| nvfp4_mmq::metrale_nvfp4_scale_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
+| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
+| w4a16::bf16_to_fp8 | not compiled for this class | 1 |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class | 4 |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class | 2 |
-| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 4 |
+| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 6 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
 | w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
@@ -83,16 +84,17 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 |---|---|---:|
 | moe_silu_mul::moe_silu_mul | not compiled for this class | 1 |
 | norm::gated_rms_norm_f32_input_strided | not compiled for this class | 2 |
-| nvfp4_mmq::metrale_nvfp4_gemm_pipe | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq16_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq32_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq64_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
+| nvfp4_mmq::metrale_nvfp4_gemm_pipe | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq16_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq32_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq64_nc | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 8 |
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
-| nvfp4_mmq::metrale_nvfp4_scale_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 4 |
-| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 4 |
+| nvfp4_mmq::metrale_nvfp4_scale_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
+| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. | 6 |
+| w4a16::bf16_to_fp8 | not compiled for this class | 1 |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class | 4 |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class | 2 |
-| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 4 |
+| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 6 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
 | w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
@@ -105,17 +107,18 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | kernel | why | models |
 |---|---|---:|
 | moe_silu_mul::moe_silu_mul | not compiled for this class | 4 |
-| nvfp4_mmq::metrale_nvfp4_gemm_pipe | not compiled for this class | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq16_nc | not compiled for this class | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq32_nc | not compiled for this class | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq64_nc | not compiled for this class | 6 |
+| nvfp4_mmq::metrale_nvfp4_gemm_pipe | not compiled for this class | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq16_nc | not compiled for this class | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq32_nc | not compiled for this class | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq64_nc | not compiled for this class | 8 |
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | not compiled for this class | 6 |
-| nvfp4_mmq::metrale_nvfp4_scale_bf16 | not compiled for this class | 4 |
-| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | not compiled for this class | 4 |
+| nvfp4_mmq::metrale_nvfp4_scale_bf16 | not compiled for this class | 6 |
+| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | not compiled for this class | 6 |
+| w4a16::bf16_to_fp8 | not compiled for this class | 4 |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class | 7 |
 | w4a16::w4a16_gemm_t_k64_p3 | not compiled for this class | 3 |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class | 5 |
-| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 7 |
+| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 9 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
 | w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 4 |
@@ -127,6 +130,8 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 
 | kernel | why | models |
 |---|---|---:|
+| attn_prefill_fa128::attn_prefill_fa128 | not compiled for this class | 5 |
+| attn_prefill_fa128::attn_prefill_fa128_paged | not compiled for this class | 5 |
 | dense_gemv_bf16_tc::dense_gemv_bf16_tc16 | not compiled for this class | 9 |
 | dense_gemv_bf16_tc::dense_gemv_bf16_tc32 | not compiled for this class | 9 |
 | dense_gemv_bf16_tc::dense_gemv_bf16_tc8 | not compiled for this class | 9 |
@@ -139,20 +144,22 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | gated_delta_rule_carry::gdn_carry_wy3_lazy | not compiled for this class | 8 |
 | gated_delta_rule_carry::gdn_carry_wy4 | not compiled for this class | 8 |
 | gated_delta_rule_carry::gdn_carry_wy4_lazy | not compiled for this class | 8 |
+| gdn_chunk_fwd_o_mma8::gated_delta_rule_chunk_fwd_o_mma8 | not compiled for this class | 5 |
 | moe_fp8_grouped_sort::moe_fp8_grouped_sort | not compiled for this class | 2 |
 | moe_unpermute_blend::moe_unpermute_blend | not compiled for this class | 2 |
-| nvfp4_mmq::metrale_nvfp4_gemm_pipe | not compiled for this class | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq16_nc | not compiled for this class | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq32_nc | not compiled for this class | 6 |
-| nvfp4_mmq::metrale_nvfp4_mmq64_nc | not compiled for this class | 6 |
+| nvfp4_mmq::metrale_nvfp4_gemm_pipe | not compiled for this class | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq16_nc | not compiled for this class | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq32_nc | not compiled for this class | 8 |
+| nvfp4_mmq::metrale_nvfp4_mmq64_nc | not compiled for this class | 8 |
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | not compiled for this class | 6 |
-| nvfp4_mmq::metrale_nvfp4_scale_bf16 | not compiled for this class | 4 |
-| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | not compiled for this class | 4 |
+| nvfp4_mmq::metrale_nvfp4_scale_bf16 | not compiled for this class | 6 |
+| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | not compiled for this class | 6 |
 | residual_add_rms_norm_exact::residual_add_rms_norm_exact | not compiled for this class | 9 |
+| w4a16::bf16_to_fp8 | not compiled for this class | 6 |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class | 7 |
 | w4a16::w4a16_gemm_t_k64_p3 | not compiled for this class | 3 |
-| w4a16::w4a16_gemm_t_m128 | not compiled for this class | 7 |
-| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 7 |
+| w4a16::w4a16_gemm_t_m128 | not compiled for this class | 9 |
+| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 9 |
 | w4a16_gemv_tc::w4a16_gemv_tc16 | not compiled for this class | 9 |
 | w4a16_gemv_tc::w4a16_gemv_tc8 | not compiled for this class | 9 |
 | w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | not compiled for this class | 4 |
@@ -177,13 +184,14 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 |---|---|---:|
 | moe_silu_mul::moe_silu_mul | not compiled for this class | 1 |
 | norm::gated_rms_norm_f32_input_strided | not compiled for this class | 2 |
-| nvfp4_mmq::metrale_nvfp4_gemm_pipe | not compiled for this class | 3 |
-| nvfp4_mmq::metrale_nvfp4_mmq16_nc | not compiled for this class | 3 |
-| nvfp4_mmq::metrale_nvfp4_mmq32_nc | not compiled for this class | 3 |
-| nvfp4_mmq::metrale_nvfp4_mmq64_nc | not compiled for this class | 3 |
+| nvfp4_mmq::metrale_nvfp4_gemm_pipe | not compiled for this class | 5 |
+| nvfp4_mmq::metrale_nvfp4_mmq16_nc | not compiled for this class | 5 |
+| nvfp4_mmq::metrale_nvfp4_mmq32_nc | not compiled for this class | 5 |
+| nvfp4_mmq::metrale_nvfp4_mmq64_nc | not compiled for this class | 5 |
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | not compiled for this class | 3 |
-| nvfp4_mmq::metrale_nvfp4_scale_bf16 | not compiled for this class | 1 |
-| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | not compiled for this class | 1 |
+| nvfp4_mmq::metrale_nvfp4_scale_bf16 | not compiled for this class | 3 |
+| nvfp4_mmq::metrale_nvfp4_silu_mul_quant | not compiled for this class | 3 |
+| w4a16::bf16_to_fp8 | not compiled for this class | 1 |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class | 4 |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class | 2 |
-| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 4 |
+| w4a16::w4a16_gemm_t_p3 | not compiled for this class | 6 |

@@ -92,6 +92,7 @@ impl TransformerModel {
                 stream,
                 gdn: &gdn,
                 max_blocks_per_seq: meta.max_blocks_per_seq,
+                prefill: None,
             },
             &mut |l| {
                 self.gpu.synchronize(stream)?;

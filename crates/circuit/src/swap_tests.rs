@@ -29,6 +29,7 @@ fn decl(
         elements,
         verify: (kind == StateKind::Recurrent).then_some(VerifySteps::H),
         lifetime: Lifetime::of_kind(kind),
+        copies: None,
     }
 }
 

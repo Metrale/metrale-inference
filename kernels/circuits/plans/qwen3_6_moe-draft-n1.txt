@@ -2,7 +2,7 @@
 # recipe: qwen3.6/qwen3.6-35b-a3b-fp8-bf16head
 # checkpoint: Qwen/Qwen3.6-35B-A3B-FP8
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=adaptive decode_split_silu=on gdn_exact_replay=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on gdn_exact_replay=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lora_active=off rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: fc0943bc31fa38686371fd31ab4b4cd86e35d8f7904f92560f612755038a4a57
 groups: 27  launches: 26  edges: 3 fused, 33 materialized

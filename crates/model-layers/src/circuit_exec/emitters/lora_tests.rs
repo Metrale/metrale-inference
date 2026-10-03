@@ -181,6 +181,7 @@ fn build(mode: Mode, rows: u64, edit: impl Fn(&mut Vec<CircuitLayer>)) -> Result
             layers: &layers,
             head: &head,
             draft: None,
+            arena: None,
         },
     )?;
     Ok(Adapted {
@@ -235,6 +236,7 @@ fn launched(a: &Adapted, rows: usize) -> Vec<(MockLaunch, String, Vec<String>, O
             stream: 7,
             gdn: &gdn,
             max_blocks_per_seq: 9,
+            prefill: None,
         })
         .unwrap();
     let kernels = a

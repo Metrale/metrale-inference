@@ -147,19 +147,18 @@ impl TransformerModel {
         }
         // 2026-10-03: LoRA phase 1 verifies each sequence alone: a batched verify's row tables
         // reach the wide FFN arms legacy leaves under an adapter (`impl_circuit_lora.rs`).
-        let verify_batch_rows =
-            if !exact_verify
-                && self.proposer.is_some()
-                && self.lora.is_none()
-                && self.gdn_carry_bind_now()?
-            {
-                Some(
-                    (4 * metrale_model_layers::speculative::mtp_max_seqs())
-                        .min(super::verify_e2::VERIFY_ROW_CAP) as u64,
-                )
-            } else {
-                None
-            };
+        let verify_batch_rows = if !exact_verify
+            && self.proposer.is_some()
+            && self.lora.is_none()
+            && self.gdn_carry_bind_now()?
+        {
+            Some(
+                (4 * metrale_model_layers::speculative::mtp_max_seqs())
+                    .min(super::verify_e2::VERIFY_ROW_CAP) as u64,
+            )
+        } else {
+            None
+        };
         let layers: Vec<_> = self
             .layers
             .iter()
