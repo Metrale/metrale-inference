@@ -225,6 +225,13 @@ class and exact citation.
 | `prefill_attention_paged_m128_fa128` | reference | ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: the paged route); ml/qwen3_attention/prefill/paged.rs:108-123,137-205,429-439,476; ml/qwen3_attention/prefill/paged/norms.rs:39-51,104-114; ml/qwen3_attention/prefill/paged/rope_cache.rs:121-137,162-179; ml/qwen3_attention/prefill/paged_attn.rs:143,379-396 (from 256 rows); ml/qwen3_attention/prefill/cache_skip_qkv.rs:317-327 (n > 128); ml/qwen3_attention/prefill_weights.rs:89-99 (below W4A16_VIA_FP8_MIN_M); ml/qwen3_attention/prefill/paged_oproj.rs:201-211 |
 | `prefill_attention_paged_fp8` | reference | ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: the paged route); ml/qwen3_attention/prefill/paged.rs:108-123,137-205,429-439,476; ml/qwen3_attention/prefill/paged/norms.rs:39-51,104-114; ml/qwen3_attention/prefill/paged/rope_cache.rs:121-137,162-179; ml/qwen3_attention/prefill/paged_attn.rs:143,379-396 (from 256 rows); ml/qwen3_attention/prefill_weights.rs:81-88 (m >= W4A16_VIA_FP8_MIN_M, K % 32 == 0); ml/ops/gemm_fp8_prefill.rs:61-130 (predequant, bf16_to_fp8, ldmab GEMM) |
 | `prefill_attn_add_post_norm` | reference | ml/qwen3_attention/trait_impl/prefill_inner.rs:302-314; k/rms_norm.cu:379-382 |
+| `prefill_input_norm_residual` | reference | ml/qwen3_ssm/trait_prefill.rs:63-112; ml/qwen3_attention/trait_impl/prefill_inner.rs:86 |
+| `prefill_residual_add_post_norm` | reference | ml/qwen3_ssm/trait_prefill.rs:169-180; ml/qwen3_attention/trait_impl/prefill_inner.rs:302 |
+| `prefill_gdn_proj_fp8` | reference | ml/qwen3_ssm/trait_prefill_proj.rs:274-288; ml/qwen3_ssm/trait_prefill_helper.rs:207-238; ml/ops/gemm_fp8_prefill.rs:29-88 |
+| `prefill_gdn_core_fla` | reference | ml/qwen3_ssm/trait_prefill_block.rs:139-327; ml/qwen3_ssm/trait_prefill_recur.rs:157-221,397-412; ml/ops/ssm_gdn_a3.rs:80-340; ml/ops/ssm_mamba.rs:149-215 |
+| `prefill_gdn_core_fla_twin` | reference | ml/qwen3_ssm/trait_prefill_block.rs:139-327; ml/qwen3_ssm/trait_prefill_recur.rs:157-221,397-412; ml/ops/ssm_gdn_a3.rs:80-340; ml/ops/ssm_mamba.rs:149-215 |
+| `prefill_gdn_core_replay` | reference | ml/qwen3_ssm/trait_prefill_block.rs:139-327; ml/qwen3_ssm/trait_prefill_recur.rs:222-262,397-412; ml/ops/ssm_mamba.rs:149-215 |
+| `prefill_gdn_core_replay_twin` | reference | ml/qwen3_ssm/trait_prefill_block.rs:139-327; ml/qwen3_ssm/trait_prefill_recur.rs:222-262,397-412; ml/ops/ssm_mamba.rs:149-215 |
 
 ## Bit-identical fusions
 
