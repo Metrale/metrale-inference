@@ -15,7 +15,7 @@ use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
 
 use super::bindings::{CircuitLayer, HeadBinding, MixerFacts};
 use super::compile::Inputs;
-use super::exec_fixture::*;
+use super::exec_fixture::{RECIPE, dense, fixed, layer_binding, ptr};
 use super::exec_fixture_run::STATE_PITCH;
 use super::kernels::KernelTable;
 use super::prefill::{PrefillBoot, PrefillPrograms};
@@ -30,6 +30,16 @@ struct Built {
     gpu: MockGpuBackend,
     programs: PrefillPrograms,
     layers: Vec<CircuitLayer>,
+}
+
+/// 2026-10-03: The served config of the dense checkpoint the instance names (its fixture), so
+/// the arena and the emitters' sizes are the circuit's dims; the decode fixture's `config()` is
+/// a smaller model whose arena rows are too narrow for a 27B prefill.
+fn dense_config() -> metrale_config::ModelConfig {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../circuit/tests/fixtures/checkpoints/unsloth--Qwen3.8-27B-NVFP4/config.json");
+    let json = std::fs::read_to_string(&path).unwrap();
+    metrale_config::parse_config(&json).unwrap()
 }
 
 fn build() -> Built {
@@ -54,7 +64,7 @@ fn build() -> Built {
         unmodelled: Vec::new(),
         batchm_max_rows: 8,
     };
-    let cfg = config();
+    let cfg = dense_config();
     let arena = BufferArena::new(&cfg, MAX_TOKENS as usize, 4096, 16, 4, &gpu).unwrap();
     let available = AvailableKernels::all_named_by(&loaded.rules);
     let table = KernelTable::resolve(&gpu, &available);

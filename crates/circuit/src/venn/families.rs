@@ -244,6 +244,8 @@ pub struct Family {
     pub emitters: Vec<String>,
     /// 2026-09-29: Inclusive range of rows one launch covers.
     pub rows: (u64, u64),
+    /// 2026-10-03: The plan modes it runs in; empty for every mode.
+    pub modes: std::collections::BTreeSet<crate::rules::Mode>,
     /// 2026-09-29: Ops it implements.
     pub ops: Vec<OpSpec>,
     /// 2026-09-29: Its parameter space.
@@ -278,6 +280,12 @@ pub struct Workspace {
 }
 
 impl Family {
+    /// 2026-10-03: It runs only in prefill modes, which the Venn and the hardware gap report do
+    /// not classify yet (their runs are decode, multi-sequence, verify and draft).
+    pub fn prefill_only(&self) -> bool {
+        !self.modes.is_empty() && self.modes.iter().all(|m| m.is_prefill())
+    }
+
     /// 2026-09-29: One launch covers more than one row.
     pub fn multi_row(&self) -> bool {
         self.rows.1 > 1

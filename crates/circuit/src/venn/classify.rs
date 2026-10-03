@@ -90,6 +90,7 @@ pub fn candidates<'f>(fams: &'f Families, c: &Circuit, n: &Node, rows: u64) -> V
     fams.families
         .iter()
         .filter(|f| (f.rows.0..=f.rows.1).contains(&rows))
+        .filter(|f| !f.prefill_only())
         .filter(|f| implements(f, c, n))
         .collect()
 }

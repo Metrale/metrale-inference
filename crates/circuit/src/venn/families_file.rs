@@ -52,6 +52,9 @@ struct FamilyFile {
     #[serde(default)]
     emitters: Vec<String>,
     rows: [u64; 2],
+    /// 2026-10-03: The plan modes it runs in (absent: every mode).
+    #[serde(default)]
+    modes: Vec<String>,
     op: Vec<OpFile>,
     #[serde(default)]
     param: Vec<ParamFile>,
@@ -229,6 +232,13 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
             func: func.to_string(),
         });
     }
+    let modes = f
+        .modes
+        .iter()
+        .map(|m| {
+            crate::rules::Mode::parse(m).ok_or_else(|| field(format!("mode `{m}` is no plan mode")))
+        })
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
     let ops =
         f.op.iter()
             .map(|o| op_spec(&f.id, o))
@@ -418,6 +428,7 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         kernels,
         emitters: f.emitters,
         rows: (f.rows[0], f.rows[1]),
+        modes,
         ops,
         params,
         points,
