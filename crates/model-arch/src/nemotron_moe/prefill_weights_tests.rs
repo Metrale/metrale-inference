@@ -27,12 +27,19 @@ fn nvfp4(gpu: &MockGpuBackend, n: usize, k: usize) -> QuantizedWeight {
     }
 }
 
-fn layer(gpu: &MockGpuBackend, config: &ModelConfig) -> NemotronMoeLayer {
+/// 2026-10-02: A two-expert layer on the mock; `gate_f32` stores the router FP32 (as
+/// Nemotron-3-Nano does) instead of BF16.
+pub(in crate::nemotron_moe) fn layer(
+    gpu: &MockGpuBackend,
+    config: &ModelConfig,
+    gate_f32: bool,
+) -> NemotronMoeLayer {
     let dense = |bytes| DenseWeight {
         weight: gpu.alloc(bytes).unwrap(),
     };
     let weights = NemotronMoeWeights {
-        gate: dense(2 * H * 2),
+        gate: dense(2 * H * if gate_f32 { 4 } else { 2 }),
+        gate_f32,
         e_score_correction_bias: dense(2 * 4),
         experts: (0..2)
             .map(|_| NemotronExpertWeight {
@@ -50,7 +57,7 @@ fn layer(gpu: &MockGpuBackend, config: &ModelConfig) -> NemotronMoeLayer {
     NemotronMoeLayer::new(weights, dense(H * 2), config, gpu, INTER, 1).unwrap()
 }
 
-fn config() -> ModelConfig {
+pub(in crate::nemotron_moe) fn config() -> ModelConfig {
     let mut c = ModelConfig::qwen3_next_80b_nvfp4();
     c.hidden_size = H;
     c.num_experts = 2;
@@ -65,7 +72,7 @@ fn config() -> ModelConfig {
 fn the_shared_expert_keeps_bf16_mma_by_default() {
     let gpu = MockGpuBackend::new();
     let config = config();
-    let mut l = layer(&gpu, &config);
+    let mut l = layer(&gpu, &config, false);
     l.prepare_prefill_weights(&gpu, &config, false);
     assert!(l.shared_up_t.is_none() && l.shared_down_t.is_none());
 }
@@ -75,7 +82,7 @@ fn the_shared_expert_keeps_bf16_mma_by_default() {
 fn the_opt_in_builds_the_e4m3_copies() {
     let gpu = MockGpuBackend::new();
     let config = config();
-    let mut l = layer(&gpu, &config);
+    let mut l = layer(&gpu, &config, false);
     l.prepare_prefill_weights(&gpu, &config, true);
     assert!(l.shared_up_t.is_some() && l.shared_down_t.is_some());
 }

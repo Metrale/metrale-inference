@@ -28,6 +28,9 @@ pub(super) struct SortedPrefillCtx {
     pub scale: f32,
     pub latent: u32,
     pub gate_logits: DevicePtr,
+    /// 2026-10-02: `indices_dev` / `weights_dev` already hold every token's routing (an FP32
+    /// router routed them).
+    pub routed: bool,
     pub indices_dev: DevicePtr,
     pub weights_dev: DevicePtr,
     pub normed: DevicePtr,
@@ -47,19 +50,21 @@ impl NemotronMoeLayer {
         let ne = p.num_experts as usize;
         let te = total_expanded as usize;
 
-        KernelLaunch::new(ctx.gpu, self.topk_sigmoid_batched_k)
-            .grid([1, p.n, 1])
-            .block([256, 1, 1])
-            .arg_ptr(p.gate_logits)
-            .arg_ptr(self.weights.e_score_correction_bias.weight)
-            .arg_ptr(p.indices_dev)
-            .arg_ptr(p.weights_dev)
-            .arg_u32(p.num_experts)
-            .arg_u32(p.top_k)
-            .arg_u32(if ctx.config.norm_topk_prob { 1 } else { 0 })
-            .arg_f32(p.scale)
-            .arg_u32(p.n)
-            .launch(stream)?;
+        if !p.routed {
+            KernelLaunch::new(ctx.gpu, self.topk_sigmoid_batched_k)
+                .grid([1, p.n, 1])
+                .block([256, 1, 1])
+                .arg_ptr(p.gate_logits)
+                .arg_ptr(self.weights.e_score_correction_bias.weight)
+                .arg_ptr(p.indices_dev)
+                .arg_ptr(p.weights_dev)
+                .arg_u32(p.num_experts)
+                .arg_u32(p.top_k)
+                .arg_u32(if ctx.config.norm_topk_prob { 1 } else { 0 })
+                .arg_f32(p.scale)
+                .arg_u32(p.n)
+                .launch(stream)?;
+        }
 
         // 2026-09-25: The sort's outputs reuse the `gate_logits` buffer, which
         // the routing launch above has consumed.

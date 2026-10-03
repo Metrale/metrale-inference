@@ -492,7 +492,7 @@ files = ["kernels/metal/*"]
 [[rule]]
 component = "moe"
 kind = "routing / top-k"
-names = ["moe_topk*", "moe_gate_topk*", "moe_hash_route*", "moe_router_*", "moe_v41_route_*", "moe_v41_router_*", "glm5next_router_topk", "nemotron_moe_topk_*", "dense_gemm_bf16_router"]
+names = ["moe_topk*", "moe_gate_topk*", "moe_hash_route*", "moe_router_*", "moe_v41_route_*", "moe_v41_router_*", "glm5next_router_topk", "nemotron_moe_topk_*", "nemotron_router_f32", "dense_gemm_bf16_router"]
 
 [[rule]]
 component = "moe"

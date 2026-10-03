@@ -49,34 +49,37 @@ impl NemotronMoeLayer {
             stream,
         )?;
 
-        let gate_logits = ctx.buffers.gate_logits();
-        ops::dense_gemv(
-            ctx.gpu,
-            self.dense_gemv_k,
-            normed,
-            &self.weights.gate,
-            gate_logits,
-            num_experts,
-            h,
-            stream,
-        )?;
-
         let scratch = ctx.buffers.scratch();
         let indices_dev = scratch;
         let weights_dev = scratch.offset(top_k as usize * 4);
-        ops::moe_topk_sigmoid(
-            ctx.gpu,
-            self.topk_sigmoid_k,
-            gate_logits,
-            self.weights.e_score_correction_bias.weight,
-            indices_dev,
-            weights_dev,
-            num_experts,
-            top_k,
-            ctx.config.norm_topk_prob,
-            scale,
-            stream,
-        )?;
+        if let Some(r) = &self.router_f32 {
+            self.route_f32(r, ctx, normed, 1, indices_dev, weights_dev, stream)?;
+        } else {
+            let gate_logits = ctx.buffers.gate_logits();
+            ops::dense_gemv(
+                ctx.gpu,
+                self.dense_gemv_k,
+                normed,
+                &self.weights.gate,
+                gate_logits,
+                num_experts,
+                h,
+                stream,
+            )?;
+            ops::moe_topk_sigmoid(
+                ctx.gpu,
+                self.topk_sigmoid_k,
+                gate_logits,
+                self.weights.e_score_correction_bias.weight,
+                indices_dev,
+                weights_dev,
+                num_experts,
+                top_k,
+                ctx.config.norm_topk_prob,
+                scale,
+                stream,
+            )?;
+        }
 
         if self.moe_latent_size > 0 {
             self.decode_latent_moe(
