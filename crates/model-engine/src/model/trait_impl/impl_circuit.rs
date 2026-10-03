@@ -311,4 +311,8 @@ impl ModelCircuit for TransformerModel {
             },
         }
     }
+
+    fn state_digest(&self, seq: &crate::traits::SequenceState) -> Result<Vec<(String, u64)>> {
+        self.state_digest_impl(seq)
+    }
 }

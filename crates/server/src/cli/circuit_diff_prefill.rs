@@ -9,7 +9,10 @@
 //! ops differ from the reference's took another path (a prefix-cache restore, a split moved) and
 //! fails as such, never as a numeric difference. Each run gets its own session hash, so a
 //! snapshot one run saved is not restored by the next. A detection control changes one prompt
-//! token and must change the logits.
+//! token and must change the logits. Every run's state is digested after the pass
+//! (`ModelCircuit::state_digest`: each recurrent layer's h and conv, each attention layer's K and
+//! V blocks); a run whose state differs from the reference's fails on the first differing entry,
+//! even when its logits agree.
 //!
 //! Owner: server CLI.
 //! Invariants:
@@ -55,14 +58,21 @@ pub(crate) struct TracedOp {
     pub block: [u32; 3],
 }
 
-/// 2026-10-03: Prefill `prompt` on a fresh sequence of session `session` along `path`; the
-/// last-position logits and the launch trace.
+/// 2026-10-03: What one prefill run leaves: the last-position logits, the launch trace and the
+/// state digest.
+pub(crate) struct PrefillRun {
+    pub logits: Vec<u8>,
+    pub ops: Vec<TracedOp>,
+    pub state: Vec<(String, u64)>,
+}
+
+/// 2026-10-03: Prefill `prompt` on a fresh sequence of session `session` along `path`.
 fn prefill_once(
     model: &dyn Model,
     prompt: &[u32],
     path: PrefillPath,
     session: u64,
-) -> Result<(Vec<u8>, Vec<TracedOp>)> {
+) -> Result<PrefillRun> {
     let mut seq = model.alloc_sequence()?;
     seq.session_hash = session;
     let result = (|| {
@@ -90,7 +100,12 @@ fn prefill_once(
                 block: e.block,
             })
             .collect();
-        Ok((super::logits(model, ptr)?, ops))
+        let logits = super::logits(model, ptr)?;
+        Ok(PrefillRun {
+            logits,
+            ops,
+            state: model.state_digest(&seq)?,
+        })
     })();
     metrale_telemetry::launch_trace::end_and_take();
     model.free_sequence(&mut seq)?;
@@ -106,6 +121,9 @@ pub(crate) struct PrefillComparison {
     /// 2026-10-03: For a legacy run, the first op where its trace leaves the reference's (a
     /// different path); `None` when the traces agree or the run is not legacy.
     pub path_diff: Option<usize>,
+    /// 2026-10-03: The first state entry that differs from the reference's; `None` when the
+    /// states agree.
+    pub state_diff: Option<String>,
 }
 
 /// 2026-10-03: One prompt length on one path.
@@ -134,6 +152,7 @@ struct Report {
 fn compare(variant: &str, reference: &[u8], run: &[u8]) -> PrefillComparison {
     PrefillComparison {
         path_diff: None,
+        state_diff: None,
         variant: variant.to_string(),
         equal: reference == run,
         first_diff: reference
@@ -153,6 +172,17 @@ pub(crate) fn first_op_diff(reference: &[TracedOp], run: &[TracedOp]) -> Option<
         .or((reference.len() != run.len()).then_some(reference.len().min(run.len())))
 }
 
+/// 2026-10-03: The label of the first state entry where `run` differs from `reference` (or a
+/// missing entry).
+pub(crate) fn first_state_diff(reference: &[(String, u64)], run: &[(String, u64)]) -> Option<String> {
+    reference
+        .iter()
+        .zip(run)
+        .find(|(a, b)| a != b)
+        .map(|(a, _)| a.0.clone())
+        .or_else(|| (reference.len() != run.len()).then(|| "entry count".to_string()))
+}
+
 /// 2026-10-03: Why a report fails; empty for a pass.
 pub(crate) fn prefill_failures(
     per_len: &[(usize, PrefillPath, Vec<PrefillComparison>)],
@@ -161,16 +191,22 @@ pub(crate) fn prefill_failures(
     let mut out: Vec<String> = per_len
         .iter()
         .flat_map(|(t, path, cs)| {
-            cs.iter().filter(|c| !c.equal || c.path_diff.is_some()).map(move |c| match c.path_diff {
-                Some(op) => format!(
-                    "{t} tokens, {path:?}, {}: took another path (ops differ from op {op})",
-                    c.variant
-                ),
-                None => format!(
-                    "{t} tokens, {path:?}, {}: logits differ at byte {:?}",
-                    c.variant, c.first_diff
-                ),
-            })
+            cs.iter()
+                .filter(|c| !c.equal || c.path_diff.is_some() || c.state_diff.is_some())
+                .map(move |c| match (c.path_diff, &c.state_diff) {
+                    (Some(op), _) => format!(
+                        "{t} tokens, {path:?}, {}: took another path (ops differ from op {op})",
+                        c.variant
+                    ),
+                    (None, Some(entry)) if c.equal => format!(
+                        "{t} tokens, {path:?}, {}: logits equal, state differs at {entry}",
+                        c.variant
+                    ),
+                    _ => format!(
+                        "{t} tokens, {path:?}, {}: logits differ at byte {:?}, state at {:?}",
+                        c.variant, c.first_diff, c.state_diff
+                    ),
+                })
         })
         .collect();
     if control.equal {
@@ -202,14 +238,15 @@ pub(super) fn prefill_report(
         let mut reports = Vec::new();
         for &path in &paths {
             model.set_forward(&ForwardSelect::Legacy)?;
-            let (reference, trace) = prefill_once(model, &prompt, path, next_session())?;
+            let reference = prefill_once(model, &prompt, path, next_session())?;
             let mut cs = Vec::new();
             for (name, sel) in forwards {
                 model.set_forward(sel)?;
-                let (run, ops) = prefill_once(model, &prompt, path, next_session())?;
-                let mut c = compare(name, &reference, &run);
+                let run = prefill_once(model, &prompt, path, next_session())?;
+                let mut c = compare(name, &reference.logits, &run.logits);
+                c.state_diff = first_state_diff(&reference.state, &run.state);
                 if matches!(sel, ForwardSelect::Legacy) {
-                    c.path_diff = first_op_diff(&trace, &ops);
+                    c.path_diff = first_op_diff(&reference.ops, &run.ops);
                 }
                 tracing::info!("circuit diff --prefill: {t} tokens {path:?} {name}: {c:?}");
                 cs.push(c);
@@ -218,7 +255,7 @@ pub(super) fn prefill_report(
             reports.push(PathReport {
                 path,
                 comparisons: cs,
-                trace,
+                trace: reference.ops,
             });
         }
         lengths.push(LenReport {
@@ -232,9 +269,10 @@ pub(super) fn prefill_report(
     let mut changed = prompt.clone();
     let at = t / 2;
     changed[at] = (changed[at] + 1) % model.vocab_size() as u32;
-    let (a, _) = prefill_once(model, &prompt, PrefillPath::Single, next_session())?;
-    let (b, _) = prefill_once(model, &changed, PrefillPath::Single, next_session())?;
-    let control = compare("legacy, prompt token changed", &a, &b);
+    let a = prefill_once(model, &prompt, PrefillPath::Single, next_session())?;
+    let b = prefill_once(model, &changed, PrefillPath::Single, next_session())?;
+    let mut control = compare("legacy, prompt token changed", &a.logits, &b.logits);
+    control.state_diff = first_state_diff(&a.state, &b.state);
     let reasons = prefill_failures(&flat, &control);
     let report = Report {
         lengths,

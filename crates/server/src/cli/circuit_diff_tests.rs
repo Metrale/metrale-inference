@@ -270,6 +270,7 @@ fn the_prefill_verdict_needs_equal_runs_and_a_seen_control() {
         equal,
         first_diff: (!equal).then_some(6),
         path_diff: None,
+        state_diff: None,
     };
     let ok = vec![(17, prefill::PrefillPath::Single, vec![c("legacy-repeat", true)])];
     assert!(prefill::prefill_failures(&ok, &c("control", false)).is_empty());
@@ -302,14 +303,43 @@ fn a_repeat_on_another_path_fails_as_a_path_difference() {
         equal: true,
         first_diff: None,
         path_diff: Some(0),
+        state_diff: None,
     };
     let control = prefill::PrefillComparison {
         variant: "control".into(),
         equal: false,
         first_diff: Some(2),
         path_diff: None,
+        state_diff: None,
     };
     let r = prefill::prefill_failures(&[(300, prefill::PrefillPath::Single, vec![repeat])], &control);
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].contains("another path"), "{r:?}");
+}
+
+/// 2026-10-03: A run whose logits agree but whose state differs fails, naming the first
+/// differing entry; agreeing states pass.
+#[test]
+fn equal_logits_with_a_different_state_fail_on_the_entry() {
+    let st = |h: u64| vec![("ssm0.h".to_string(), 1), ("ssm0.conv".to_string(), h)];
+    assert_eq!(prefill::first_state_diff(&st(2), &st(2)), None);
+    assert_eq!(prefill::first_state_diff(&st(2), &st(3)).as_deref(), Some("ssm0.conv"));
+    assert_eq!(prefill::first_state_diff(&st(2), &st(2)[..1]).as_deref(), Some("entry count"));
+    let c = prefill::PrefillComparison {
+        variant: "circuit".into(),
+        equal: true,
+        first_diff: None,
+        path_diff: None,
+        state_diff: Some("kv3".into()),
+    };
+    let control = prefill::PrefillComparison {
+        variant: "control".into(),
+        equal: false,
+        first_diff: Some(0),
+        path_diff: None,
+        state_diff: None,
+    };
+    let r = prefill::prefill_failures(&[(64, prefill::PrefillPath::Single, vec![c])], &control);
+    assert_eq!(r.len(), 1);
+    assert!(r[0].contains("state differs at kv3"), "{r:?}");
 }

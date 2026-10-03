@@ -45,6 +45,7 @@ mod impl_adapters;
 mod impl_circuit;
 mod impl_circuit_prefill;
 mod impl_circuit_run;
+mod state_digest;
 mod impl_circuit_verify_batch;
 mod impl_device_feed;
 mod impl_draft;

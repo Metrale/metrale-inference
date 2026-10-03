@@ -70,4 +70,20 @@ pub trait ModelCircuit {
     fn forward_disclosure(&self) -> ForwardDisclosure {
         ForwardDisclosure::legacy()
     }
+
+    /// 2026-10-03: A digest of `seq`'s state, after the work queued so far completes: per
+    /// recurrent layer its h and conv bytes, per attention layer the K and V bytes of the
+    /// sequence's blocks in block-table order. The parity instruments compare two runs' state
+    /// with it. Default: refused.
+    fn state_digest(&self, _seq: &crate::traits::SequenceState) -> Result<Vec<(String, u64)>> {
+        bail!("this model does not digest its state")
+    }
 }
+
+/// 2026-10-03: 64-bit FNV-1a of `bytes`, continuing `acc` (start from [`FNV_START`]).
+pub fn fnv1a(acc: u64, bytes: &[u8]) -> u64 {
+    bytes.iter().fold(acc, |a, &b| (a ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+/// 2026-10-03: The FNV-1a offset basis.
+pub const FNV_START: u64 = 0xcbf2_9ce4_8422_2325;
