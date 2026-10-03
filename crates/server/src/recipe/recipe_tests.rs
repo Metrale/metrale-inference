@@ -408,3 +408,42 @@ fn a_recipe_restating_a_boolean_default_is_refused() {
     let off = BTreeMap::from([("enable_prefix_caching".to_string(), "false".to_string())]);
     assert!(!r.argv(&off).expect("renders").contains(&flag));
 }
+
+/// 2026-09-26: Every vendored recipe under `tests/fixtures/recipes` parses and has
+/// the four required keys, with `defaults` a mapping. The fixtures are in the
+/// tree, so the test needs no network.
+#[test]
+fn all_vendored_recipes_parse() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/recipes");
+    let mut count = 0;
+    let mut stack = vec![dir.clone()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d).expect("fixtures dir exists") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "yaml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("read");
+            let y = yaml::parse(&text).unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
+            let m = y.as_map().expect("a mapping");
+            for required in ["recipe_version", "model", "container", "defaults"] {
+                assert!(
+                    m.contains_key(required),
+                    "{}: missing {required}",
+                    path.display()
+                );
+            }
+            assert!(
+                m["defaults"].as_map().is_some(),
+                "{}: defaults must be a mapping",
+                path.display()
+            );
+            count += 1;
+        }
+    }
+    assert_eq!(count, 28, "the vendored corpus is 28 recipes");
+}

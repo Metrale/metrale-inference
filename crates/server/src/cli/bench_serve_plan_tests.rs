@@ -7,7 +7,7 @@
 //! Owner: server CLI (`met benchmark`).
 //! Invariants: none beyond the types.
 
-use super::{disclosed_from, rendered_overrides};
+use super::{disclosed_from, rendered_overrides, routing_is_named};
 use crate::recipe::Recipe;
 use std::collections::BTreeMap;
 
@@ -178,8 +178,9 @@ fn the_expert_quantization_tier_is_disclosed_off_the_rendered_serve() {
 }
 
 /// 2026-09-26: Every `[benchmarks.serve_overrides]` pin in the committed `BENCH.toml` files,
-/// `--hermetic` expanded as `plan_serve` expands it, renders on a minimal recipe to a `met serve`
-/// command line that clap parses and `validate_serve_args` accepts. A pin naming a renamed or
+/// `--hermetic` expanded as `plan_serve` expands it, renders on the entry's in-tree recipe (a
+/// minimal recipe for an entry that names none; 2026-10-02) to a `met serve` command line that
+/// clap parses and `validate_serve_args` accepts. A pin naming a renamed or
 /// removed serve flag, or a value the flag refuses, fails here instead of when a gate unit
 /// starts its server.
 #[test]
@@ -198,7 +199,15 @@ fn every_committed_serve_pin_renders_a_valid_serve() {
     let mut refused = Vec::new();
     for (target, entry) in pinned {
         let overrides = crate::cli::hermetic::expand(entry.serve_overrides.clone());
-        let parsed = recipe("  max_batch_size: \"8\"\n").serve_args(&overrides);
+        let served = match &entry.recipe {
+            Some(id) => Recipe::parse(
+                id.clone(),
+                &metrale_bench::gate::recipe_closure::read_in_tree(&root, id).expect("in tree"),
+            )
+            .expect("the in-tree recipe parses"),
+            None => recipe("  max_batch_size: \"8\"\n"),
+        };
+        let parsed = served.serve_args(&overrides);
         if let Err(e) = parsed {
             refused.push(format!(
                 "{target} {} {}: {e:#}",
@@ -209,43 +218,57 @@ fn every_committed_serve_pin_renders_a_valid_serve() {
     assert!(refused.is_empty(), "{}", refused.join("\n"));
 }
 
-/// 2026-09-30: A gate serve renders a recipe that names no `activation_quantization` under
-/// `adaptive`, the routing it was measured under, and never overrides one the recipe or the
-/// requested set names; the rule is not an override, so `requested` never carries it.
+/// 2026-10-02: A gate serve adds only the port to what it was asked for, and refuses a recipe
+/// that names no `activation_quantization` unless the requested set names one; there is no gate
+/// default routing.
 #[test]
-fn a_silent_recipe_is_served_adaptive_and_a_named_value_wins() {
+fn a_gate_serve_adds_only_the_port_and_refuses_an_unnamed_routing() {
     let m = |kv: &[(&str, &str)]| -> BTreeMap<String, String> {
         kv.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
     };
-    let silent = m(&[("speculative", "true")]);
-    let r = rendered_overrides(&m(&[]), &silent, 9);
-    assert_eq!(
-        r.get("activation_quantization").map(String::as_str),
-        Some("adaptive")
-    );
-    assert_eq!(r.get("port").map(String::as_str), Some("9"));
-    let pinned = m(&[("activation_quantization", "declared")]);
-    assert!(!rendered_overrides(&m(&[]), &pinned, 9).contains_key("activation_quantization"));
     let asked = m(&[("activation_quantization", "bf16")]);
     assert_eq!(
-        rendered_overrides(&asked, &silent, 9)
-            .get("activation_quantization")
-            .map(String::as_str),
-        Some("bf16")
+        rendered_overrides(&asked, 9),
+        m(&[("activation_quantization", "bf16"), ("port", "9")])
     );
-    // 2026-09-30: The rendered argv of a silent recipe carries it.
-    let text = "recipe_version: \"2\"\nmodel: org/model\ncontainer: metrale\nruntime: metrale\n\
-                defaults:\n  speculative: \"true\"\n";
-    let silent_recipe = Recipe::parse("fam/silent", text).expect("parses");
+    assert_eq!(rendered_overrides(&m(&[]), 9), m(&[("port", "9")]));
+
+    let silent = m(&[("speculative", "true")]);
+    let refusal = format!(
+        "{:#}",
+        routing_is_named("fam/silent", &silent, &m(&[])).unwrap_err()
+    );
     assert!(
-        !silent_recipe
-            .defaults
-            .contains_key("activation_quantization")
+        refusal.contains("fam/silent") && refusal.contains("activation_quantization"),
+        "{refusal}"
     );
-    let args = silent_recipe
-        .serve_args(&rendered_overrides(&m(&[]), &silent_recipe.defaults, 9))
-        .expect("renders");
-    assert!(args.activation_quantization.is_adaptive());
+    assert!(routing_is_named("fam/silent", &silent, &asked).is_ok());
+    let pinned = m(&[("activation_quantization", "declared")]);
+    assert!(routing_is_named("fam/pinned", &pinned, &m(&[])).is_ok());
+}
+
+/// 2026-10-02: A gate plan serves the recipe committed in the tree, parsed as written, and
+/// hashes it with the requested overrides for the record (`gate::recipe_closure`).
+#[test]
+fn a_gate_plan_serves_the_in_tree_recipe_and_hashes_it() {
+    let plan = super::plan_serve("concurrency-sweep-moe", Some("gb10"), None, BTreeMap::new())
+        .expect("the MoE ladder plans");
+    let root = crate::cli::bench_run::repo_root().expect("inside the repo");
+    let text = metrale_bench::gate::recipe_closure::read_in_tree(&root, &plan.recipe_id)
+        .expect("the gate's recipe is in the tree");
+    assert_eq!(
+        plan.recipe,
+        Recipe::parse(plan.recipe_id.clone(), &text).expect("parses"),
+        "the plan serves the in-tree recipe"
+    );
+    assert_eq!(
+        plan.recipe_sha256,
+        metrale_bench::gate::recipe_closure::content_sha256(&text, &plan.requested).unwrap()
+    );
+    assert!(
+        !plan.requested.contains_key("weight_quantization"),
+        "the tier is the recipe's own, not a pin"
+    );
 }

@@ -2,7 +2,8 @@
 
 //! 2026-09-26: A small YAML reader for recipe files; the workspace has no YAML dependency.
 //!
-//! Owner: server (recipe).
+//! Owner: config (recipe YAML), read by the server's `recipe` module and the bench gate's
+//! recipe closure (`gate::recipe_closure`).
 //! Invariants:
 //! - `parse` returns `Ok` only for a document whose top level is a mapping.
 //! - A map line with no `key:` or at an unexpected indent, a list line without
@@ -227,5 +228,5 @@ fn unquote(s: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "yaml_tests.rs"]
+#[path = "recipe_yaml_tests.rs"]
 mod tests;

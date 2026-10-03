@@ -106,6 +106,12 @@ pub struct GateRecord {
     /// that declares none. Disclosure only: `check_record` does not read it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub serve_env: BTreeMap<String, String>,
+    /// 2026-10-02: Canonical content hash of the recipe the gate served, from the tree under
+    /// test with the run's serve overrides (`recipe_closure::content_sha256`). A later commit
+    /// keeps this record only while its recipe hashes the same (`recipe_closure`). Absent for an
+    /// operator's own endpoint and on records written before gates served in-tree recipes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_recipe_sha256: Option<String>,
     /// 2026-09-26: What each kernel target compiled to when this was measured.
     /// Lets a later `kernels/`-only diff keep this record for the targets whose
     /// device code did not change; see [`super::closure`]. Empty, and absent
@@ -352,6 +358,8 @@ impl GateRecord {
             // `with_serve_env`.
             serve_resolved: BTreeMap::new(),
             serve_env: BTreeMap::new(),
+            // 2026-10-02: Attached afterwards by `with_served_recipe`.
+            served_recipe_sha256: None,
         })
     }
 

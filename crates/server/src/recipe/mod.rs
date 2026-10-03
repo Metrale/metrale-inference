@@ -11,7 +11,7 @@
 pub mod fetch;
 mod fetch_github;
 pub mod schema;
-pub mod yaml;
+pub use metrale_config::recipe_yaml as yaml;
 
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
