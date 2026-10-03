@@ -24,6 +24,7 @@ use super::{DflashBuildArgs, LoraBuildArgs};
 use crate::model::TransformerModel;
 use metrale_model_layers::layers::MtpQuantization;
 
+mod alloc_digest;
 mod kv_blocks;
 mod kv_budget;
 mod kv_sizing;
