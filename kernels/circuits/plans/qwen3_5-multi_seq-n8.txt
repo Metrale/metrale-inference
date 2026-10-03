@@ -2,7 +2,7 @@
 # recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth
 # checkpoint: unsloth/Qwen3.8-27B-NVFP4
 # target: gb10/qwen3.8-27b/nvfp4
-# settings: activation_quantization=adaptive decode_split_silu=on gdn_exact_replay=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on gdn_exact_replay=off gdn_verify_exact=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 78c60d0a8c47b4e3aa00436bb3fd53e2381837ab52c7dec330e596fa7dede6d6
 groups: 741  launches: 947  edges: 144 fused, 932 materialized
@@ -1880,7 +1880,7 @@ g0740 head [argmax] (host) reference rule=argmax_host writes={token:i32}
 # recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth
 # checkpoint: unsloth/Qwen3.8-27B-NVFP4
 # target: gb10/qwen3.8-27b/nvfp4
-# settings: activation_quantization=adaptive decode_split_silu=on gdn_exact_replay=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on gdn_exact_replay=off gdn_verify_exact=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 2c1ba1b63d58620676ed225471e6c25421e572dfded0b6513e927dd20591f544
 groups: 741  launches: 2291  edges: 144 fused, 932 materialized

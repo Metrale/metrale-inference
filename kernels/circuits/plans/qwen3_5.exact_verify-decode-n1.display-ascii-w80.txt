@@ -1,0 +1,449 @@
++- unsloth/Qwen3.8-27B-NVFP4 --------------------------------------------------+
+| arch qwen3_5 . recipe qwen3.8/qwen3.8-27b-nvfp4-unsloth-exact-verify         |
+| Dense hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, S... |
+| 64 layers . hidden 5120 . ffn 17408 . attn 24q/4kvx256 . GDN 16k/48vx128     |
+| vocab 248320                                                                 |
+| qkvz/gdn_out/gate_up/down/q/k/v/o W4A16 nvfp4 . ba/lm_head W16A16 bf16       |
+| mode decode . 1 row . 755 launches/step . 757 kernel groups                  |
+| 112 fused edges . 964 materialized . plan 152bf34432db                       |
++------------------------------------------------------------------------------+
+
+Layers
+  0       8       16      24      32      40      48      56
+  GGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGAGGGA
+  dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  (3x GDN -> 1x Attention) x 16 . dense FFN on every layer
+  G GDN A attention d dense FFN m MoE FFN
+
+d embed
+    +---------------------------+
+    | embed                     |  d2d copy . [~] reference
+    +---------------------------+
+        in - . gather bf16 . out bf16
+       | v bf16 . nx5120  DRAM  stream out
+
+G GatedDeltaNet layer  layer 0
+       | v bf16 . nx5120  DRAM  stream in
+    +---------------------------+
+    | input_norm . rms_norm     |  norm::rms_norm_residual . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+       | v bf16 . nx5120  DRAM
+    #===========================#  weight nvfp4 g16
+    H qkvz . linear             H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+
+  ## ssm_preprocess::dense_gemv_ba_gates ###################### [~] reference ##
+  # #===========================#  < xn                                        #
+  # H ba . linear               H  weight bf16                                 #
+  # #===========================#                                              #
+  #     in bf16 . act bf16 . weight bf16->bf16 . mma bf16*bf16                 #
+  #     accumulate f32 . scale none . out f32 (rule)                           #
+  #    : v bf16 . nx96  on-chip                                                #
+  # +---------------------------+                                              #
+  # | gates . gdn_gates         |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out f32,f32                              #
+  ## writes decay, beta ########################################################
+
+  ## causal_conv1d::causal_conv1d_update_l2norm_f32 ########### [~] reference ##
+  # +---------------------------+  < qkvz                                      #
+  # | conv . conv1d_update      |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . state f32 . compute f32 . out f32                            #
+  #    : v f32 . nx10240  on-chip                                              #
+  # +---------------------------+                                              #
+  # | conv_ckpt . state_snap... |                                              #
+  # +---------------------------+                                              #
+  #     in f32 . state f32 . out -                                             #
+  #                                                                            #
+  # +---------------------------+  < conv                                      #
+  # | l2 . l2_norm              |                                              #
+  # +---------------------------+                                              #
+  #     in f32 . compute f32 . out f32                                         #
+  ## writes qkv ################################################################
+       | v f32 . nx10240  DRAM
+    #===========================#  < decay, beta
+    H recur . gdn_recurrence    H  gated_delta_rule::gated_delta_rule_decod...
+    #===========================#  [~] reference
+        in f32,f32,f32 . state f32 . compute f32 . out f32
+       | v f32 . nx6144  DRAM
+    +---------------------------+  < qkvz
+    | out_norm . gated_rms_norm |  norm::gated_rms_norm_f32_input
+    +---------------------------+  [~] reference
+        in f32,bf16 . compute f32 . out bf16
+       | v bf16 . nx6144  DRAM
+    #===========================#  weight nvfp4 g16
+    H out . linear              H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx5120  DRAM
+  ## norm::residual_add_rms_norm ############################## [~] reference ##
+  # +---------------------------+  < stream in                                 #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #     in bf16,bf16 . compute f32 . out bf16                                  #
+  #    : v bf16 . nx5120  on-chip                                              #
+  # +---------------------------+                                              #
+  # | post_norm . rms_norm      |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out bf16                                 #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx5120  DRAM
+    #===========================#  weight nvfp4 g16
+    H gate_up . linear          H  w4a16_gemv_fused::w4a16_gemv_dual_sw
+    #===========================#  [~] reference
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx34816  DRAM
+    +---------------------------+
+    | act . silu_mul            |  moe_silu_mul::moe_silu_mul . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+       | v bf16 . nx17408  DRAM
+    #===========================#  weight nvfp4 g16
+    H down . linear             H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx5120  DRAM  into the layer boundary
+
+| Layer boundary  x 47 boundaries  into layers 1-2, 4-6, 8-10, 12-14, 16-18, ...
+       | v bf16 . nx5120  DRAM  from the previous layer
+  ## residual_add_rms_norm_exact::residual_add_rms_no... # [ok] bit-identical ##
+  # +---------------------------+  < y                                         #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #     in bf16,bf16 . compute f32 . out bf16                                  #
+  #    : v bf16 . nx5120  on-chip                                              #
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~ layer 0 | layer 1 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+  # +---------------------------+                                              #
+  # | input_norm . rms_norm     |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . compute f32 . out bf16                                       #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx5120  DRAM  into the next layer
+
+G GatedDeltaNet layer  x 47 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-2...
+       | v bf16 . nx5120  DRAM  from the layer boundary
+    #===========================#  weight nvfp4 g16
+    H qkvz . linear             H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+
+  ## ssm_preprocess::dense_gemv_ba_gates ###################### [~] reference ##
+  # #===========================#  < xn                                        #
+  # H ba . linear               H  weight bf16                                 #
+  # #===========================#                                              #
+  #     in bf16 . act bf16 . weight bf16->bf16 . mma bf16*bf16                 #
+  #     accumulate f32 . scale none . out f32 (rule)                           #
+  #    : v bf16 . nx96  on-chip                                                #
+  # +---------------------------+                                              #
+  # | gates . gdn_gates         |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out f32,f32                              #
+  ## writes decay, beta ########################################################
+
+  ## causal_conv1d::causal_conv1d_update_l2norm_f32 ########### [~] reference ##
+  # +---------------------------+  < qkvz                                      #
+  # | conv . conv1d_update      |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . state f32 . compute f32 . out f32                            #
+  #    : v f32 . nx10240  on-chip                                              #
+  # +---------------------------+                                              #
+  # | conv_ckpt . state_snap... |                                              #
+  # +---------------------------+                                              #
+  #     in f32 . state f32 . out -                                             #
+  #                                                                            #
+  # +---------------------------+  < conv                                      #
+  # | l2 . l2_norm              |                                              #
+  # +---------------------------+                                              #
+  #     in f32 . compute f32 . out f32                                         #
+  ## writes qkv ################################################################
+       | v f32 . nx10240  DRAM
+    #===========================#  < decay, beta
+    H recur . gdn_recurrence    H  gated_delta_rule::gated_delta_rule_decod...
+    #===========================#  [~] reference
+        in f32,f32,f32 . state f32 . compute f32 . out f32
+       | v f32 . nx6144  DRAM
+    +---------------------------+  < qkvz
+    | out_norm . gated_rms_norm |  norm::gated_rms_norm_f32_input
+    +---------------------------+  [~] reference
+        in f32,bf16 . compute f32 . out bf16
+       | v bf16 . nx6144  DRAM
+    #===========================#  weight nvfp4 g16
+    H out . linear              H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx5120  DRAM
+  ## norm::residual_add_rms_norm ############################## [~] reference ##
+  # +---------------------------+  < stream in                                 #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #     in bf16,bf16 . compute f32 . out bf16                                  #
+  #    : v bf16 . nx5120  on-chip                                              #
+  # +---------------------------+                                              #
+  # | post_norm . rms_norm      |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out bf16                                 #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx5120  DRAM
+    #===========================#  weight nvfp4 g16
+    H gate_up . linear          H  w4a16_gemv_fused::w4a16_gemv_dual_sw
+    #===========================#  [~] reference
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx34816  DRAM
+    +---------------------------+
+    | act . silu_mul            |  moe_silu_mul::moe_silu_mul . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+       | v bf16 . nx17408  DRAM
+    #===========================#  weight nvfp4 g16
+    H down . linear             H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx5120  DRAM  into the layer boundary
+
+| Layer boundary  x 16 boundaries  into layers 3, 7, 11, 15, 19, 23, 27, 31, ...
+       | v bf16 . nx5120  DRAM  from the previous layer
+  ## residual_add_rms_norm_exact::residual_add_rms_no... # [ok] bit-identical ##
+  # +---------------------------+  < y                                         #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #     in bf16,bf16 . compute f32 . out bf16                                  #
+  #    : v bf16 . nx5120  on-chip                                              #
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~ layer 2 | layer 3 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+  # +---------------------------+                                              #
+  # | input_norm . rms_norm     |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . compute f32 . out bf16                                       #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx5120  DRAM  into the next layer
+
+A Full-attention layer  x 15 layers  3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43...
+       | v bf16 . nx5120  DRAM  from the layer boundary
+  ## w4a16_gemv::w4a16_gemv_qg ################################ [~] reference ##
+  # #===========================#                                              #
+  # H q . linear                H  weight nvfp4 g16                            #
+  # #===========================#                                              #
+  #     in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16            #
+  #     accumulate f32 . scale f32 . out bf16                                  #
+  #    : v bf16 . nx12288  on-chip                                             #
+  # +---------------------------+                                              #
+  # | q_split . split           |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . move bf16 . out bf16,bf16                                    #
+  ## writes q, gate ############################################################
+
+  ## w4a16_gemv_fused::w4a16_gemv_dual ######################## [~] reference ##
+  # #===========================#  < xn                                        #
+  # H k . linear                H  weight nvfp4 g16                            #
+  # #===========================#                                              #
+  #     in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16            #
+  #     accumulate f32 . scale f32 . out bf16                                  #
+  #                                                                            #
+  # #===========================#  < xn                                        #
+  # H v . linear                H  weight nvfp4 g16                            #
+  # #===========================#                                              #
+  #     in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16            #
+  #     accumulate f32 . scale f32 . out bf16                                  #
+  ## writes k, v ###############################################################
+
+    +---------------------------+  < q
+    | q_norm . qk_norm          |  norm::rms_norm . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+
+    +---------------------------+  < k
+    | k_norm . qk_norm          |  norm::rms_norm . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+       | v bf16 . nx1024  DRAM
+    +---------------------------+  < qn
+    | rope                      |  rope_mrope_interleaved::rope_forward_mro...
+    +---------------------------+  [~] reference
+        in bf16,bf16 . compute f32 . out bf16,bf16
+       | v bf16 . nx1024  DRAM
+    +---------------------------+  < v
+    | kv_write                  |  reshape_and_cache::reshape_and_cache_flash
+    +---------------------------+  [~] reference
+        in bf16,bf16 . cache bf16 . out -
+
+    #===========================#  < qr, kr, v
+    H attend . paged_attention  H  paged_decode::paged_decode_attn
+    #===========================#  [~] reference
+        in bf16,bf16,bf16 . cache bf16 . scores f32 . softmax f32
+        accumulate f32 . out bf16
+       | v bf16 . nx6144  DRAM
+    +---------------------------+  < gate
+    | gate_mul . sigmoid_gat... |  residual_add::sigmoid_gate_mul
+    +---------------------------+  [~] reference
+        in bf16,bf16 . compute f32 . out bf16
+       | v bf16 . nx6144  DRAM
+    #===========================#  weight nvfp4 g16
+    H o . linear                H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx5120  DRAM
+  ## norm::residual_add_rms_norm ############################## [~] reference ##
+  # +---------------------------+  < stream in                                 #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #     in bf16,bf16 . compute f32 . out bf16                                  #
+  #    : v bf16 . nx5120  on-chip                                              #
+  # +---------------------------+                                              #
+  # | post_norm . rms_norm      |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out bf16                                 #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx5120  DRAM
+    #===========================#  weight nvfp4 g16
+    H gate_up . linear          H  w4a16_gemv_fused::w4a16_gemv_dual_sw
+    #===========================#  [~] reference
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx34816  DRAM
+    +---------------------------+
+    | act . silu_mul            |  moe_silu_mul::moe_silu_mul . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+       | v bf16 . nx17408  DRAM
+    #===========================#  weight nvfp4 g16
+    H down . linear             H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx5120  DRAM  into the layer boundary
+
+A Full-attention layer  layer 63
+       | v bf16 . nx5120  DRAM  from the layer boundary
+  ## w4a16_gemv::w4a16_gemv_qg ################################ [~] reference ##
+  # #===========================#                                              #
+  # H q . linear                H  weight nvfp4 g16                            #
+  # #===========================#                                              #
+  #     in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16            #
+  #     accumulate f32 . scale f32 . out bf16                                  #
+  #    : v bf16 . nx12288  on-chip                                             #
+  # +---------------------------+                                              #
+  # | q_split . split           |                                              #
+  # +---------------------------+                                              #
+  #     in bf16 . move bf16 . out bf16,bf16                                    #
+  ## writes q, gate ############################################################
+
+  ## w4a16_gemv_fused::w4a16_gemv_dual ######################## [~] reference ##
+  # #===========================#  < xn                                        #
+  # H k . linear                H  weight nvfp4 g16                            #
+  # #===========================#                                              #
+  #     in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16            #
+  #     accumulate f32 . scale f32 . out bf16                                  #
+  #                                                                            #
+  # #===========================#  < xn                                        #
+  # H v . linear                H  weight nvfp4 g16                            #
+  # #===========================#                                              #
+  #     in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16            #
+  #     accumulate f32 . scale f32 . out bf16                                  #
+  ## writes k, v ###############################################################
+
+    +---------------------------+  < q
+    | q_norm . qk_norm          |  norm::rms_norm . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+
+    +---------------------------+  < k
+    | k_norm . qk_norm          |  norm::rms_norm . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+       | v bf16 . nx1024  DRAM
+    +---------------------------+  < qn
+    | rope                      |  rope_mrope_interleaved::rope_forward_mro...
+    +---------------------------+  [~] reference
+        in bf16,bf16 . compute f32 . out bf16,bf16
+       | v bf16 . nx1024  DRAM
+    +---------------------------+  < v
+    | kv_write                  |  reshape_and_cache::reshape_and_cache_flash
+    +---------------------------+  [~] reference
+        in bf16,bf16 . cache bf16 . out -
+
+    #===========================#  < qr, kr, v
+    H attend . paged_attention  H  paged_decode::paged_decode_attn
+    #===========================#  [~] reference
+        in bf16,bf16,bf16 . cache bf16 . scores f32 . softmax f32
+        accumulate f32 . out bf16
+       | v bf16 . nx6144  DRAM
+    +---------------------------+  < gate
+    | gate_mul . sigmoid_gat... |  residual_add::sigmoid_gate_mul
+    +---------------------------+  [~] reference
+        in bf16,bf16 . compute f32 . out bf16
+       | v bf16 . nx6144  DRAM
+    #===========================#  weight nvfp4 g16
+    H o . linear                H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx5120  DRAM
+  ## norm::residual_add_rms_norm ############################## [~] reference ##
+  # +---------------------------+  < stream in                                 #
+  # | add . residual_add        |                                              #
+  # +---------------------------+                                              #
+  #     in bf16,bf16 . compute f32 . out bf16                                  #
+  #    : v bf16 . nx5120  on-chip                                              #
+  # +---------------------------+                                              #
+  # | post_norm . rms_norm      |                                              #
+  # +---------------------------+                                              #
+  #     in f32 (rule) . compute f32 . out bf16                                 #
+  ## writes y, xn ##############################################################
+       | v bf16 . nx5120  DRAM
+    #===========================#  weight nvfp4 g16
+    H gate_up . linear          H  w4a16_gemv_fused::w4a16_gemv_dual_sw
+    #===========================#  [~] reference
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx34816  DRAM
+    +---------------------------+
+    | act . silu_mul            |  moe_silu_mul::moe_silu_mul . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+       | v bf16 . nx17408  DRAM
+    #===========================#  weight nvfp4 g16
+    H down . linear             H  w4a16_gemv::w4a16_gemv_sw . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight nvfp4/g16->bf16 . mma bf16*bf16
+        accumulate f32 . scale f32 . out bf16
+       | v bf16 . nx5120  DRAM
+    +---------------------------+  < y
+    | add . residual_add        |  residual_add::bf16_residual_add
+    +---------------------------+  [~] reference
+        in bf16,bf16 . compute f32 . out bf16
+       | v bf16 . nx5120  DRAM  stream out
+
+d head
+       | v bf16 . nx5120  DRAM  stream in
+    +---------------------------+
+    | final_norm                |  norm::rms_norm . [~] reference
+    +---------------------------+
+        in bf16 . compute f32 . out bf16
+       | v bf16 . nx5120  DRAM
+    #===========================#  weight bf16
+    H lm_head                   H  gemv::dense_gemv_bf16 . [~] reference
+    #===========================#
+        in bf16 . act bf16 . weight bf16->bf16 . mma bf16*bf16
+        accumulate f32 . scale none . out bf16
+       | v bf16 . nx248320  DRAM
+    +---------------------------+
+    | argmax                    |  d2d copy . [~] reference
+    +---------------------------+
+        in bf16 . compare bf16 . out i32
+
+--------------------------------------------------------------------------------
+755 launches/step . 757 groups . 112 fused . 964 materialized edges
+16.9 MiB written/step . arena 0.5 MiB
+#=# heavy op . +-+ light op . ### fused kernel . |v DRAM . :v on-chip
+[ok] bit-identical . [~] reference . [!] differs
