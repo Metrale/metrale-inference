@@ -215,6 +215,7 @@ fn build_for_draft_at(n: u64, edit: impl Fn(&mut super::DraftFixed)) -> anyhow::
             layers: &f.layers,
             head: &f.head,
             draft: f.draft.as_ref(),
+            arena: None,
         },
     )
     .map(|_| ())

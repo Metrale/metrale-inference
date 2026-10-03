@@ -207,6 +207,7 @@ fn a_contiguous_run_refuses_out_of_place_slots() {
             stream: 7,
             gdn: &gdn,
             max_blocks_per_seq: 9,
+            prefill: None,
         })
         .unwrap_err();
     assert!(format!("{e:#}").contains("conv slots on"), "{e:#}");

@@ -18,6 +18,8 @@ use anyhow::{Context, Result};
 use metrale_circuit::Mode;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
+use crate::layer::AttnMetadataDev;
+
 /// 2026-09-29: The most rollback points an MTP verify writes: one per row but the last, at
 /// K = 4.
 pub const MAX_VERIFY_STEPS: usize = 3;
@@ -36,6 +38,23 @@ pub struct GdnState {
     pub conv_steps: [DevicePtr; MAX_VERIFY_STEPS],
 }
 
+/// 2026-10-03: What a prefill pass supplies at run time (LIFECYCLE-DESIGN.md 15.4): its row
+/// count and position, and the metadata it uploaded. A prefill program is eager and compiled per
+/// row bucket, so its emitters size grids from these, as the legacy layers do.
+#[derive(Debug, Clone, Copy)]
+pub struct PrefillStep {
+    /// 2026-10-03: Rows of this pass (`T`, the legacy `proc_count`).
+    pub tokens: u32,
+    /// 2026-10-03: The absolute position of row 0 (`effective_seq_len_start`).
+    pub start: u32,
+    /// 2026-10-03: Rows below this are not written to the KV cache (the shared prefix-cache
+    /// blocks a restore recomputes over).
+    pub kv_write_floor: u32,
+    /// 2026-10-03: The pass's attention metadata: positions and slots, and on a paged pass the
+    /// block table and sequence length.
+    pub meta: AttnMetadataDev,
+}
+
 /// 2026-09-28: What varies between two runs of one program.
 pub struct StepEnv<'a> {
     /// 2026-09-28: The backend.
@@ -47,9 +66,17 @@ pub struct StepEnv<'a> {
     pub gdn: &'a [Vec<GdnState>],
     /// 2026-09-28: `AttnMetadataDev::max_blocks_per_seq` of this step.
     pub max_blocks_per_seq: u32,
+    /// 2026-10-03: A prefill pass's run-time facts; `None` for every other mode.
+    pub prefill: Option<PrefillStep>,
 }
 
 impl StepEnv<'_> {
+    /// 2026-10-03: The prefill pass this step runs; an error outside a prefill.
+    pub fn prefill(&self) -> Result<PrefillStep> {
+        self.prefill
+            .context("a prefill launch ran without the pass's rows and metadata")
+    }
+
     /// 2026-09-28: Row `row`'s GDN state in layer `layer`; an error when there is none.
     pub fn gdn_state(&self, layer: usize, row: usize) -> Result<GdnState> {
         self.gdn
@@ -93,12 +120,50 @@ pub struct Program {
     pub plan_digest: String,
     /// 2026-09-28: The launches, in order.
     pub launches: Vec<Launch>,
+    /// 2026-10-03: The launches of each layer and of the head, in order (LIFECYCLE-DESIGN.md
+    /// 15.4): what a host driver composes when it runs part of a program (a prefill pass that is
+    /// not the last runs no head).
+    pub segments: Vec<Segment>,
+}
+
+/// 2026-10-03: Where a run of launches belongs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentOf {
+    /// 2026-10-03: The embedding, before the first layer.
+    Embed,
+    /// 2026-10-03: Layer `i`.
+    Layer(usize),
+    /// 2026-10-03: The head (final norm, LM head, sampling).
+    Head,
+}
+
+/// 2026-10-03: A contiguous run of launches of one part of the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Segment {
+    pub of: SegmentOf,
+    pub launches: std::ops::Range<usize>,
 }
 
 impl Program {
     /// 2026-09-28: Issue every launch on `env.stream`.
     pub fn run(&self, env: &StepEnv<'_>) -> Result<()> {
-        for l in &self.launches {
+        self.run_launches(0..self.launches.len(), env)
+    }
+
+    /// 2026-10-03: Issue the launches of every segment `keep` selects, in order.
+    pub fn run_segments(
+        &self,
+        keep: impl Fn(SegmentOf) -> bool,
+        env: &StepEnv<'_>,
+    ) -> Result<()> {
+        for s in self.segments.iter().filter(|s| keep(s.of)) {
+            self.run_launches(s.launches.clone(), env)?;
+        }
+        Ok(())
+    }
+
+    fn run_launches(&self, range: std::ops::Range<usize>, env: &StepEnv<'_>) -> Result<()> {
+        for l in &self.launches[range] {
             (l.run)(env).with_context(|| format!("circuit group {} ({})", l.group, l.kernel))?;
         }
         Ok(())
@@ -150,6 +215,7 @@ impl DraftRunner for DraftPrograms {
             stream,
             gdn: &[],
             max_blocks_per_seq,
+            prefill: None,
         })
     }
 }

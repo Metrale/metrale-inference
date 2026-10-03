@@ -137,6 +137,7 @@ fn a_verify_state_without_rollback_slots_is_refused() {
             stream: 7,
             gdn: &gdn,
             max_blocks_per_seq: 9,
+            prefill: None,
         })
         .unwrap_err();
     assert!(format!("{err:#}").contains("rollback slots"), "{err:#}");

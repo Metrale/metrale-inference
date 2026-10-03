@@ -142,6 +142,7 @@ fn a_batched_launch_refuses_out_of_place_slots() {
             stream: 7,
             gdn: &fragmented(&f, 16),
             max_blocks_per_seq: 9,
+            prefill: None,
         })
         .unwrap_err();
     assert!(format!("{e:#}").contains("slots past row 0"), "{e:#}");

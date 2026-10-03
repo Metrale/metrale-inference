@@ -24,6 +24,12 @@ use super::emitters::emitter;
 pub use super::fixed::{DraftFixed, Fixed};
 use super::kernels::KernelTable;
 use super::program::{Launch, LaunchKind, Program, RunFn};
+
+#[path = "compile_place.rs"]
+mod place;
+pub(super) use place::external_buffer;
+pub use place::{Placement, layout};
+use place::{segment_of, segments};
 use crate::layer::AttnMetadataDev;
 
 /// 2026-09-28: A group of the plan being compiled.
@@ -86,6 +92,9 @@ pub(crate) struct Cx<'a> {
     pub layers: &'a [CircuitLayer],
     pub head: &'a HeadBinding,
     pub draft: Option<&'a CircuitLayer>,
+    /// 2026-10-03: The legacy forward's buffer arena, which a prefill plan's edges live in
+    /// (`prefill::placement`); `None` for a build without one (the mock fixtures).
+    pub arena: Option<&'a metrale_gpu_runtime::buffers::BufferArena>,
     table: Option<&'a metrale_circuit::RowTable>,
     ptrs: &'a [Option<DevicePtr>],
     strides: &'a [Option<u64>],
@@ -197,6 +206,13 @@ impl<'a> Cx<'a> {
             .position(|x| x == k)
             .with_context(|| format!("group {} does not list {k}", self.g.index))?;
         self.push(i, run)
+    }
+
+    /// 2026-10-03: The legacy buffer arena a prefill emitter writes its scratch to, as the
+    /// legacy layer it mirrors does; an error in a build without one.
+    pub fn arena(&self) -> Result<&'a metrale_gpu_runtime::buffers::BufferArena> {
+        self.arena
+            .context("a prefill plan compiled without the model's buffer arena")
     }
 
     /// 2026-09-29: The draft head's buffers; an error without a bound draft head.
@@ -311,70 +327,6 @@ pub(crate) trait OpEmitter: Sync {
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()>;
 }
 
-/// 2026-09-28: The storage constraints of `plan`.
-pub fn layout(circuit: &Circuit, plan: &FusionPlan) -> Result<Layout> {
-    let mut layout = Layout::default();
-    let materialized =
-        |e: usize| plan.edge_states[e] == Some(metrale_circuit::EdgeState::Materialized);
-    for b in &circuit.blocks {
-        for e in b.stream_in.into_iter().chain(b.stream_out) {
-            if materialized(e) {
-                layout.external.insert(e);
-            }
-        }
-    }
-    // 2026-09-30: The declared outputs (`Edge::is_output`); `external_buffer` places each by
-    // the model buffer it binds to and refuses one that binds none.
-    for (e, edge) in circuit.edges.iter().enumerate() {
-        if edge.is_output && materialized(e) {
-            layout.external.insert(e);
-        }
-    }
-    for (index, group) in plan.groups.iter().enumerate() {
-        let g = GroupRef {
-            circuit,
-            group,
-            index,
-        };
-        emitter(&group.emitter)?.constrain(&g, &mut layout)?;
-    }
-    Ok(layout)
-}
-
-/// 2026-09-29: The model buffer an external edge is: a stream edge is `hidden`; otherwise
-/// (2026-09-30) the buffer its declared output binds (`Edge::binds`, LIFECYCLE-DESIGN.md 3.4).
-/// An output that binds none is refused.
-pub(super) fn external_buffer(
-    circuit: &Circuit,
-    e: usize,
-    fixed: &Fixed,
-    mode: Mode,
-) -> Result<DevicePtr> {
-    let edge = &circuit.edges[e];
-    let stream = circuit
-        .blocks
-        .iter()
-        .any(|b| b.stream_in == Some(e) || b.stream_out == Some(e));
-    if stream {
-        return Ok(fixed.hidden);
-    }
-    use metrale_circuit::model_buffer::ModelBuffer;
-    match edge.binds {
-        Some(ModelBuffer::Logits) => Ok(fixed.logits),
-        Some(ModelBuffer::Tokens) if mode == Mode::VerifyBatch => Ok(fixed.verify_batch_tokens),
-        Some(ModelBuffer::Tokens) => Ok(fixed.tokens),
-        Some(ModelBuffer::DraftEmbed) => fixed
-            .draft
-            .as_ref()
-            .map(|d| d.embed)
-            .with_context(|| format!("`{}`: no draft embedding buffer", edge.id)),
-        None => bail!(
-            "`{}` is read outside the program but binds no model buffer: an unbound output",
-            edge.id
-        ),
-    }
-}
-
 /// 2026-09-28: Everything [`compile`] reads besides the plan.
 pub struct Inputs<'a> {
     pub gpu: &'a dyn GpuBackend,
@@ -384,6 +336,8 @@ pub struct Inputs<'a> {
     pub layers: &'a [CircuitLayer],
     pub head: &'a HeadBinding,
     pub draft: Option<&'a CircuitLayer>,
+    /// 2026-10-03: The legacy buffer arena (`Cx::arena`); `None` in the mock fixtures.
+    pub arena: Option<&'a metrale_gpu_runtime::buffers::BufferArena>,
 }
 
 /// 2026-09-28: Compile `plan` with its buffers placed by `buffers` at `workspace`.
@@ -404,7 +358,20 @@ pub fn compile(
     for &e in &layout.external {
         ptrs[e] = Some(external_buffer(circuit, e, inp.fixed, plan.mode)?);
     }
+    compile_placed(circuit, plan, &Placement { ptrs, strides }, inp)
+}
+
+/// 2026-10-03: Compile `plan` with every edge at `placement` (a prefill plan's edges live in
+/// the legacy buffer arena, `prefill::placement`).
+pub fn compile_placed(
+    circuit: &Circuit,
+    plan: &FusionPlan,
+    placement: &Placement,
+    inp: &Inputs<'_>,
+) -> Result<Program> {
+    let (ptrs, strides) = (&placement.ptrs, &placement.strides);
     let mut launches = Vec::with_capacity(plan.launches() as usize);
+    let mut owners = Vec::with_capacity(plan.launches() as usize);
     for (index, group) in plan.groups.iter().enumerate() {
         let g = GroupRef {
             circuit,
@@ -426,9 +393,10 @@ pub fn compile(
             layers: inp.layers,
             head: inp.head,
             draft: inp.draft,
+            arena: inp.arena,
             table: plan.table.as_ref(),
-            ptrs: &ptrs,
-            strides: &strides,
+            ptrs,
+            strides,
             formats: &plan.edge_formats,
             handles,
             launches: Vec::new(),
@@ -451,6 +419,7 @@ pub fn compile(
                 group.emitter,
             );
         }
+        owners.extend(std::iter::repeat_n(segment_of(circuit, group), cx.launches.len()));
         launches.append(&mut cx.launches);
     }
     ensure!(launches.len() as u64 == plan.launches() + plan.copies());
@@ -459,5 +428,6 @@ pub fn compile(
         rows: plan.rows,
         plan_digest: plan.digest.clone(),
         launches,
+        segments: segments(&owners),
     })
 }

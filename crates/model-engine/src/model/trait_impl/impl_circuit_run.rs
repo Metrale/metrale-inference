@@ -66,6 +66,7 @@ impl TransformerModel {
             stream,
             gdn,
             max_blocks_per_seq,
+            prefill: None,
         })
     }
 

@@ -76,6 +76,7 @@ pub(super) fn run_on(
             stream: 7,
             gdn,
             max_blocks_per_seq: max_blocks,
+            prefill: None,
         })
         .unwrap();
     gpu.launches_snapshot()

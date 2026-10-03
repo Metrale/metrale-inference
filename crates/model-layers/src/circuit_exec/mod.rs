@@ -191,6 +191,7 @@ impl CircuitExec {
             layers: &layers,
             head: &b.head,
             draft: b.draft.as_ref(),
+            arena: Some(b.arena),
         };
         let shapes = std::iter::once((Mode::Decode, 1))
             .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)))

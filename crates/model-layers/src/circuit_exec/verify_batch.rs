@@ -177,6 +177,7 @@ impl VerifyBatch {
             layers: &self.layers,
             head: &self.head,
             draft: None,
+            arena: None,
         };
         let program = compile::compile(
             &self.circuit,

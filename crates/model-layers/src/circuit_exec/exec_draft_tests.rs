@@ -105,6 +105,7 @@ fn compile_draft(d: CircuitLayer) -> anyhow::Result<()> {
             layers: &f.layers,
             head: &f.head,
             draft: Some(&d),
+            arena: None,
         },
     )
     .map(|_| ())

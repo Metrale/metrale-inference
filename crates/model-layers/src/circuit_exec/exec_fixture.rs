@@ -451,6 +451,7 @@ pub(super) fn build_for(
             layers: &layers,
             head: &head,
             draft: draft.as_ref(),
+            arena: None,
         },
     )?;
     Ok(Fixture {
