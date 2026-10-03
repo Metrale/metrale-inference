@@ -40,10 +40,10 @@ __device__ __forceinline__ void gtc_warp(
     void* __restrict__ out, unsigned int N, unsigned int K, unsigned int f0
 ) {
     constexpr int TILES = GATE_UP ? 2 * MT : MT;
-    constexpr unsigned int LANE_K = P::CHUNK_K / 4;   // K a lane holds per chunk
-    constexpr unsigned int XU4 = LANE_K / 8;           // activation uint4 per lane per chunk
-    constexpr unsigned int CU4 = P::CHUNK_K / 8;       // uint4 per chunk of an activation row
-    constexpr int XW = LANE_K / 2;                     // activation words per lane per chunk
+    constexpr unsigned int LANE_K = P::CHUNK_K / 4;   // 2026-10-03: K a lane holds per chunk
+    constexpr unsigned int XU4 = LANE_K / 8;           // 2026-10-03: activation uint4 per lane per chunk
+    constexpr unsigned int CU4 = P::CHUNK_K / 8;       // 2026-10-03: uint4 per chunk of an activation row
+    constexpr int XW = LANE_K / 2;                     // 2026-10-03: activation words per lane per chunk
     const unsigned int lane = threadIdx.x & 31, g = lane >> 2, t = lane & 3;
     const unsigned int ngroups = (K / P::CHUNK_K) / G;
     const __nv_bfloat162 liftx2 = __floats2bfloat162_rn(P::ACT_LIFT, P::ACT_LIFT);

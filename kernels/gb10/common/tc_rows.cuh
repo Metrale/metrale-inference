@@ -46,7 +46,7 @@ __device__ __forceinline__ void tr_block(
 ) {
     constexpr int GK = P::CHUNK_K * G;
     constexpr int MMAS = P::CHUNK_K / 16;
-    constexpr int XU4 = P::CHUNK_K / 32;   // activation uint4 per lane per chunk
+    constexpr int XU4 = P::CHUNK_K / 32;   // 2026-10-03: activation uint4 per lane per chunk
     // 2026-09-28: Shared row pitch in bytes: 16 bytes of padding keep the eight rows of one
     // 16-byte fragment load on distinct bank groups.
     constexpr int RS = GK * 2 + 16;

@@ -71,7 +71,7 @@ struct Fp8Block128 {
 // BF16 pairs: d[0] = elements 0 (low half), 1; d[1] = elements 2, 3. The magnitude picks the low
 // and high BF16 bytes from two 8-entry byte tables; the sign bit moves to bit 15 or 31.
 __device__ __forceinline__ void ntc_e2m1x4_bf16(unsigned int h, unsigned int* d) {
-    // Low bytes of |v| for magnitudes 0..7 (0, 0.5, 1, 1.5 | 2, 3, 4, 6) and high bytes.
+    // 2026-10-03: Low bytes of |v| for magnitudes 0..7 (0, 0.5, 1, 1.5 | 2, 3, 4, 6) and high bytes.
     const unsigned int L0 = 0xC0800000u, L1 = 0xC0804000u;
     const unsigned int H0 = 0x3F3F3F00u, H1 = 0x40404040u;
     const unsigned int s = h & 0x7777u;
