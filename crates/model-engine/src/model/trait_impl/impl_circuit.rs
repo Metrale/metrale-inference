@@ -133,10 +133,11 @@ impl TransformerModel {
         (head, dtype)
     }
 
-    /// 2026-09-28: Build the executor for `instance`.
+    /// 2026-09-28: Build the executor for the instance among `instances` that the live policy
+    /// states (2026-10-03).
     fn build_circuit(
         &self,
-        instance: &metrale_circuit::Instance,
+        instances: &[metrale_circuit::Instance],
         fusions: Fusions,
         modules: &TargetModules,
         config_json: &str,
@@ -231,13 +232,16 @@ impl TransformerModel {
                 )),
             }
         };
+        let policy = policy::live_policy(&self.levers, policy::kv_dtype_name(kv)?, lm_head_dtype)?;
+        let instance =
+            metrale_model_layers::circuit_exec::sources::select_instance(instances, &policy)?;
         CircuitExec::build(metrale_model_layers::circuit_exec::Boot {
             gpu: self.gpu.as_ref(),
             config: &self.config,
             config_json,
             levers: &self.levers,
-            instance,
-            policy: policy::live_policy(&self.levers, policy::kv_dtype_name(kv)?, lm_head_dtype)?,
+            instance: &instance,
+            policy,
             layers,
             head,
             fixed,
@@ -293,11 +297,11 @@ impl ModelCircuit for TransformerModel {
         let next = match sel {
             ForwardSelect::Legacy => None,
             ForwardSelect::Circuit {
-                instance,
+                instances,
                 fusions,
                 modules,
                 config_json,
-            } => Some(self.build_circuit(instance, *fusions, modules, config_json)?),
+            } => Some(self.build_circuit(instances, *fusions, modules, config_json)?),
         };
         self.destroy_lora_decode_graphs();
         // 2026-09-29: The draft head drops the previous executor's program before its
