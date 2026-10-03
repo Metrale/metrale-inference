@@ -42,11 +42,11 @@ pub(crate) const LISTENER_RCVBUF_BYTES: usize = 4 * 1024 * 1024;
 /// `tcp_rmem` default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RcvbufPlan {
-    /// The host's default is at or above the kernel's; autotuning stays on.
+    /// 2026-10-03: The host's default is at or above the kernel's; autotuning stays on.
     Keep { default_bytes: u64 },
-    /// The host's default is below the kernel's; set `bytes` on the listener.
+    /// 2026-10-03: The host's default is below the kernel's; set `bytes` on the listener.
     Set { default_bytes: u64, bytes: usize },
-    /// The default could not be read (not Linux, or `/proc` unreadable); the
+    /// 2026-10-03: The default could not be read (not Linux, or `/proc` unreadable); the
     /// listener is left alone.
     Unknown,
 }
