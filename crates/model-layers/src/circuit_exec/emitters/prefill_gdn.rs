@@ -7,9 +7,13 @@
 //! `qwen3_ssm/trait_prefill_block.rs` (the block body); the core group is
 //! `prefill_gdn_core.rs`.
 //!
-//! The input-norm and post-norm emitters serve both mixers: the attention layer's prefill runs
-//! the same two launches (`qwen3_attention/trait_impl/prefill_inner.rs`), without the
-//! synchronizes, which only a GatedDeltaNet layer issues.
+//! The input-norm and post-norm rules this module serves match GatedDeltaNet layers only (their
+//! patterns name `linear_attention`); the attention layer's pair is `prefill_attn_input_norm` and
+//! `prefill_attn_add_post_norm` (`prefill_attn.rs`), which issue no synchronize.
+//!
+//! The FP8 projections read `WeightSlot::PrefillCast`: an unscaled E4M3 cast of the BF16
+//! dequantization of the checkpoint's weight (`qwen35_dense/gdn_dequant.rs:362-389`), which the
+//! legacy load line calls "native FP8 prefill GEMM"; the GEMM takes no weight scale.
 //!
 //! Owner: model-layers circuit executor.
 //! Invariants:

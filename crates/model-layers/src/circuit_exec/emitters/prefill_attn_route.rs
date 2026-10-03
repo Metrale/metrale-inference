@@ -8,6 +8,17 @@
 //! up to 128 rows, then `w4a16_gemm_m128_dispatch` (`prefill_weights.rs:24-100`): the 128-row M
 //! tile below `W4A16_VIA_FP8_MIN_M` rows, the FP8 GEMM on the dequantized weight from there.
 //!
+//! 2026-10-03: Checked against a legacy serve of the dense 27B recipe (main 79dea21d5). Its
+//! checkpoint declares FP8 attention weights, but under `--weight-quantization nvfp4` they are
+//! requantized to NVFP4 at load (`qwen35_dense/attn_arms.rs:104-150`, the served-formats line
+//! "attention: 16 NVFP4 requantized at load"); the native FP8 overlay needs
+//! `METRALE_DENSE_FP8=1` (`qwen35_dense/attn_layer.rs:91-94`). The serve's line "attention Q/K/V
+//! prefill (chunk 0, cache-skip): W8A16 (BF16 act x FP8 weight)" is printed whenever the
+//! cuBLASLt W8A8 arm is not selected (`prefill_qkv_w8a8.rs:222-240`), whatever the weight
+//! holds; the projections take the NVFP4 twins, as this file models. The v2/v3 M128 handles are
+//! 0 unless `METRALE_W4A16_VARIANT` names them (`layers/mod.rs:76-118`), so the auto variant
+//! falls through to the arms below.
+//!
 //! Owner: model-layers circuit executor.
 //! Invariants:
 //! - A plan's projection arm is fixed by its kernels; a pass whose rows another arm serves is
