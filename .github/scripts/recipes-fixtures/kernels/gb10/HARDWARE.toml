@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-02: The fixture class's ceiling, as kernels/gb10/HARDWARE.toml declares it.
+[memory]
+util_ceiling = 0.85

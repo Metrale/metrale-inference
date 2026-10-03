@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-02: One boot's allocation ledger, for the circuit memory model's validation
+# (crates/server/src/cli/circuit_memory_ledger_tests.rs). Source: dgx1 2026-10-02, main c92e43109 + #86, /workspace/claude-state/circuit-mem/leakfix/runs/recipe-B.log.
+# The `[ledger]` rows are the boot's "by file" rollup (MiB = 2^20 bytes, allocation count), the
+# `[reserve]` rows its preflight reserve terms (MB as logged); nothing here is edited by hand.
+
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
+serve = []
+# 2026-10-02: Checkpoint tensors no weight node binds (norms, conv, gates, a vision tower),
+# measured from the safetensors headers by `met circuit memory` (totals.weights_outside).
+outside_bytes = 926794208
+kv_blocks = 8764
+draft_kv_blocks = 8764
+capture_rows = 32768
+chunk_slack_gb = 0.02
+ledger_total_gb = 107.9
+ledger_sites = 84
+
+[ledger]
+"crates/model-engine/src/model/ssm_snapshot_init.rs" = [38786.5, 97]
+"crates/model-weights/src/fast_weights/mod.rs" = [22332.5, 1968]
+"crates/cache/src/kv_cache/paged_impl.rs" = [9311.8, 34]
+"crates/model-layers/src/layers/dense_ffn_load.rs" = [9180.0, 192]
+"crates/model-layers/src/weight_map/loaders_fp8.rs" = [5698.9, 555]
+"crates/model-arch/src/weight_loader/qwen35_dense/gdn_dequant.rs" = [5280.0, 96]
+"crates/model-layers/src/weight_map/quantized/transpose.rs" = [3870.0, 320]
+"crates/gpu-runtime/src/buffers.rs" = [3719.9, 37]
+"crates/model-layers/src/weight_map/quant_helpers.rs" = [2425.0, 1]
+"crates/model-engine/src/model/ssm_pool.rs" = [1530.0, 6]
+"crates/model-engine/src/model/impl_a1_init.rs" = [355.0, 4]
+"crates/model-engine/src/model/impl_a1/spec_buffers.rs" = [322.0, 5]
+
+[reserve]
+ssm_pool = 1530
+ssm_h_stage = 0
+replay_ring = 0
+marconi = 38784
+gdn_two_phase = 355
+runtime_headroom = 3299
+per_sequence = 0
+decode_ring = 0
+gdn_carry_stash = 51
+driver_fixed = 1024
+driver_bookkeeping = 2224

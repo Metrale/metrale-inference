@@ -29,8 +29,8 @@ The `recipes (advisory)` job in `.github/workflows/ci.yml` runs
   check and `validate_serve_args`, all of which run before a model is loaded);
 - the engine's own recipe reader keeps every file (`met doctor`);
 - every `recipe = "..."` id in `kernels/**/BENCH.toml` is a file here;
-- advisory only: `gpu_memory_utilization` above 0.85 on a GB10 image is
-  reported, not refused.
+- `gpu_memory_utilization` above the image's hardware class ceiling
+  (`kernels/<hw>/HARDWARE.toml [memory] util_ceiling`; GB10 0.85) is refused.
 
 Run it locally with a built `met`:
 
@@ -49,7 +49,8 @@ recipes until the next `met sync-recipes`.
 
 ## Provenance
 
-The 32 recipe files are byte-identical to `recipes/` in
+2026-10-02: 19 GB10 recipes had `gpu_memory_utilization` above 0.85 and now
+read 0.85. Apart from that, the 32 recipe files are byte-identical to `recipes/` in
 [Metrale/metralectl](https://github.com/Metrale/metralectl) at
 `e89a8d1b7dd46cbabdf454ac3cde7a012197e3ba`.
 `qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4.yaml` and

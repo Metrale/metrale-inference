@@ -24,7 +24,7 @@ mod per_sequence_state;
 mod post_load_audit;
 mod refusal;
 pub(crate) mod reserve_plan;
-mod runtime_headroom;
+pub(crate) mod runtime_headroom;
 mod ssm_h_fp16;
 #[cfg(any(feature = "cuda", feature = "metal"))]
 pub(crate) use gpu_backend::init_gpu_backend;

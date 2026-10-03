@@ -15,11 +15,11 @@ Checks (the rules are in recipes_lib.py, which says where each comes from):
   4. every `recipe = "..."` in kernels/**/BENCH.toml names a recipe here;
   5. the engine's own reader (`met doctor` over the bundle's index.json) keeps
      every recipe;
-  6. ADVISORY: gpu_memory_utilization above the box class's ceiling. Warns,
-     never fails.
+  6. gpu_memory_utilization above the box class's ceiling
+     (kernels/<hw>/HARDWARE.toml [memory] util_ceiling) is refused.
 
 Writes to --out: recipes.tar.gz, serve-options.json, index.json, each with a
-`.sha256` sidecar. Exit 1 when any check other than 6 fails.
+`.sha256` sidecar. Exit 1 when any check fails.
 
     recipes.py mirror-needed --pinned-commit SHA --head SHA \
         --pinned-serve-options FILE --release-serve-options FILE
@@ -164,8 +164,9 @@ def check(args: argparse.Namespace) -> int:
         findings += check_met(args.met, recipes, table, home)
     ids = {r.id for r in recipes}
     findings += lib.check_bench_refs(load_bench_refs(pathlib.Path(args.kernels)), ids)
+    ceilings = lib.util_ceilings(pathlib.Path(args.kernels))
     for r in recipes:
-        findings += lib.check_util(r)
+        findings += lib.check_util(r, ceilings)
 
     tar = tarball(recipes_dir)
     commit, committed_at = commit_info(args.commit)
