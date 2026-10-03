@@ -95,6 +95,39 @@ engine = [
 opt_in_levers = []
 settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off" }
 
+# 2026-10-03: The dense agentic recipe above served under the exact MTP verify chain
+# (`gdn_verify_exact = on`: `--exact-verify`, or a fixed GDN activation format,
+# ml/qwen3_ssm/gdn_flags.rs `verify_exact_enabled`): the verify's GDN conv, recurrence and output
+# norm run the decode's FP32 chain per row. Everything else is the first instance; `variant`
+# names its golden plans, which are the verify widths and batched-verify tables the setting
+# changes. A variant and not a runtime route: the setting is fixed for a serve, not decided per
+# step, so no step ever switches arms.
+[[instance]]
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth-exact-verify"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+arch = "qwen3_5"
+variant = "exact_verify"
+target = "gb10/qwen3.8-27b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128, mtp = 1 }
+plans = { verify = [2, 3, 4] }
+verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
+
+[instance.precision]
+checkpoint_plan = "unsloth--Qwen3.8-27B-NVFP4"
+tier = "nvfp4"
+caps = []
+engine = [
+  { match = "lm_head", weight = "bf16", activation = "bf16", why = "--lm-head-dtype bf16, pinned by the recipe (the checkpoint declares an FP8 head)" },
+  { match = "mtp.lm_head", weight = "nvfp4/g16", activation = "bf16", why = "the draft head's runtime NVFP4 copy of the BF16 lm_head (crates/model-engine/src/factory/lm_head_setup.rs:116-133)" },
+  { match = "mtp.*", weight = "bf16", activation = "bf16", why = "--mtp-quantization bf16, pinned by the recipe" },
+]
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "on" }
+
 # 2026-09-28: The MoE flagship recipe (the agentic-webserver gate's default entry,
 # kernels/gb10/qwen3.6-35b-a3b/BENCH.toml). As above, except:
 # - row_tiers: canonical, the default for an FP8 MoE checkpoint (ml/row_tiers.rs:64-78,

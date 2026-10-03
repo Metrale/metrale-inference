@@ -407,6 +407,9 @@ mod exec_draft_rows_tests;
 #[path = "exec_draft_tests.rs"]
 mod exec_draft_tests;
 #[cfg(test)]
+#[path = "exec_exact_tests.rs"]
+mod exec_exact_tests;
+#[cfg(test)]
 #[path = "exec_fixture.rs"]
 mod exec_fixture;
 #[cfg(test)]

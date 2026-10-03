@@ -15,7 +15,8 @@ use super::exec_fixture::*;
 use super::program::{GdnState, StepEnv};
 
 /// 2026-09-30: The golden tables of the dense instance (INSTANCES.toml `verify_batch`).
-const TABLES: [&str; 14] = [
+/// 2026-10-03: Its exact-verify variant states the same tables (`exec_exact_tests.rs`).
+pub(super) const TABLES: [&str; 14] = [
     "2x2",
     "4x2",
     "3x3",
@@ -32,11 +33,11 @@ const TABLES: [&str; 14] = [
     "4x32",
 ];
 
-fn seqs(table: &str) -> usize {
+pub(super) fn seqs(table: &str) -> usize {
     metrale_circuit::RowTable::parse(table).unwrap().seqs() as usize
 }
 
-fn launched_kernels<'a>(
+pub(super) fn launched_kernels<'a>(
     f: &'a Fixture,
     name: &'a str,
 ) -> impl Iterator<Item = (usize, usize)> + 'a {
@@ -56,7 +57,7 @@ fn launched_kernels<'a>(
 /// 2026-09-30: `n` sequences' states per GDN layer, as [`states_rows`] lays them out, with each
 /// layer's conv windows one allocation on `gpu` (`STATE_PITCH` apart) and their rollback slots
 /// allocated too, so the per-row snapshots can copy them.
-fn states_batch_on(gpu: &MockGpuBackend, f: &Fixture, n: usize) -> Vec<Vec<GdnState>> {
+pub(super) fn states_batch_on(gpu: &MockGpuBackend, f: &Fixture, n: usize) -> Vec<Vec<GdnState>> {
     let pitch = STATE_PITCH as usize;
     states_rows(f, 0xD000_0000, n)
         .into_iter()
@@ -77,7 +78,7 @@ fn states_batch_on(gpu: &MockGpuBackend, f: &Fixture, n: usize) -> Vec<Vec<GdnSt
         .collect()
 }
 
-fn buffer(p: metrale_gpu_runtime::gpu::DevicePtr) -> MockArg {
+pub(super) fn buffer(p: metrale_gpu_runtime::gpu::DevicePtr) -> MockArg {
     MockArg::Buffer(p)
 }
 

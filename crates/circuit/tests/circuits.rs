@@ -427,5 +427,6 @@ fn both_gdn_arms_plan_and_the_route_arm_is_the_off_plan() {
         );
         checked += 1;
     }
-    assert_eq!(checked, 3, "golden instances checked");
+    // 2026-10-03: Four with the exact-verify variant of the dense recipe.
+    assert_eq!(checked, 4, "golden instances checked");
 }

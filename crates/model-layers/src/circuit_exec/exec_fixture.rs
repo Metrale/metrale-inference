@@ -368,6 +368,21 @@ pub(super) fn build_for(
     recipe: &str,
     bind: &Bind,
     fusions: Fusions,
+    plan: (Mode, u64, Arm),
+    edit: impl Fn(&mut Vec<CircuitLayer>),
+    edit_head: impl Fn(&mut HeadBinding),
+) -> anyhow::Result<Fixture> {
+    let gpu = MockGpuBackend::new();
+    build_on((&gpu, &config()), recipe, bind, fusions, plan, edit, edit_head)
+}
+
+/// 2026-10-03: [`build_for`] on `gpu` under `cfg`, for a test that denies a kernel or edits the
+/// model config before the compile.
+pub(super) fn build_on(
+    (gpu, cfg): (&MockGpuBackend, &metrale_config::ModelConfig),
+    recipe: &str,
+    bind: &Bind,
+    fusions: Fusions,
     (mode, rows, arm): (Mode, u64, Arm),
     edit: impl Fn(&mut Vec<CircuitLayer>),
     edit_head: impl Fn(&mut HeadBinding),
@@ -439,10 +454,8 @@ pub(super) fn build_for(
     edit_head(&mut head);
     let draft = (mode == Mode::Draft).then(|| draft_binding(&loaded.circuit));
     let fixed = fixed(attn);
-    let gpu = MockGpuBackend::new();
-    crate::layers::ops::w4a4_proj::prepare(&gpu)?;
-    let cfg = config();
-    let table = KernelTable::resolve(&gpu, &AvailableKernels::all_named_by(&loaded.rules));
+    crate::layers::ops::w4a4_proj::prepare(gpu)?;
+    let table = KernelTable::resolve(gpu, &AvailableKernels::all_named_by(&loaded.rules));
     let program = compile::compile(
         &loaded.circuit,
         &plan,
@@ -450,8 +463,8 @@ pub(super) fn build_for(
         &buffers,
         ptr(WORKSPACE),
         &Inputs {
-            gpu: &gpu,
-            config: &cfg,
+            gpu,
+            config: cfg,
             kernels: &table,
             fixed: &fixed,
             layers: &layers,
