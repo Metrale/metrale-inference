@@ -145,6 +145,19 @@ impl Qwen3AttentionLayer {
         Ok(true)
     }
 
+    /// 2026-10-03: Whether O is the NVFP4 `attn.o_proj`, the weight every NVFP4 O arm reads. An
+    /// NVFP4 layer leaves `o_weight` unset (`init.rs`); it holds O only for the FP8 and packed Q2
+    /// formats, which take their own arms.
+    pub(super) fn o_is_nvfp4(&self) -> bool {
+        self.mla.is_none()
+            && self.o_dense_bf16.is_none()
+            && self
+                .o_weight
+                .as_ref()
+                .is_none_or(|w| w.as_nvfp4().is_some())
+            && !self.attn.o_proj.is_null()
+    }
+
     /// 2026-09-28: O of `attn_out[rows, q_dim]` into `out[rows, hidden]`. The caller applies
     /// the o_proj adapter delta afterwards, as for its other arms. 2026-10-01: Under a fixed
     /// `nvfp4` attention format, the NVFP4 O on the row-invariant W4A4 mx path instead
@@ -160,11 +173,7 @@ impl Qwen3AttentionLayer {
         q_dim: u32,
         stream: u64,
     ) -> Result<bool> {
-        let nvfp4_o = self.mla.is_none()
-            && self.o_dense_bf16.is_none()
-            && self.o_weight.as_ref().and_then(|w| w.as_nvfp4()).is_some()
-            && !self.attn.o_proj.is_null();
-        if nvfp4_o
+        if self.o_is_nvfp4()
             && ops::w4a4_proj::fixed_nvfp4_proj(
                 ctx.gpu,
                 metrale_config::ProjFamily::Attn,
@@ -194,3 +203,7 @@ impl Qwen3AttentionLayer {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "w8a8_decode_arm_tests.rs"]
+mod tests;
