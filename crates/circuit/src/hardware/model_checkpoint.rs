@@ -73,6 +73,10 @@ pub const POLICY_SOURCES: [(&str, &str); 11] = [
         "adaptive: the per-row-count routing FUSIONS.toml encodes, which the rules plan; a fixed \
          --activation-quantization is not modelled by the rules yet (2026-10-02)",
     ),
+    (
+        "gdn_exact_replay",
+        "off: the cold prefill arm; the engine plans the after-restore arm as well (2026-10-03)",
+    ),
 ];
 
 /// 2026-09-30: The source over checkpoints, falling back to the recipes for `recipe` formats.
@@ -200,6 +204,7 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         ("decode_split_silu", "class"),
         ("rms_norm_act_quant", "off"),
         ("activation_quantization", "adaptive"),
+        ("gdn_exact_replay", "off"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))

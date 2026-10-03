@@ -76,6 +76,9 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
         ),
         // 2026-09-30: No fused norm-quantize launch exists in the engine.
         ("rms_norm_act_quant".to_string(), "off".to_string()),
+        // 2026-10-03: The GDN prefill arm after a prefix-cache restore; every plan but a prefill
+        // one is planned off, and the prefill build plans each arm (`prefill::EXACT_REPLAY`).
+        (super::prefill::EXACT_REPLAY.to_string(), "off".to_string()),
     ]);
     Policy {
         opt_in_levers: Default::default(),
