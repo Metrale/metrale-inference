@@ -81,6 +81,11 @@ impl DenseFfnLayer {
             (WeightSlot::FfnUpMmq, self.fp4mmq_up.get()),
             (WeightSlot::FfnDownMmq, self.fp4mmq_down.get()),
         ];
+        // 2026-10-03: An adapter turns the MMQ arms off (`fp4mmq_arms`), so no repack is built
+        // and no rule a LoRA plan selects reads one (they state `lora_active = "off"`).
+        if self.lora.is_some() {
+            return;
+        }
         for (slot, w) in repacked {
             match w {
                 Some(w) => {
