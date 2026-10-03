@@ -269,34 +269,30 @@ impl TransformerModel {
     /// 2026-09-25: Upload a `[count]` i32 adapter-slot buffer whose rows all
     /// carry one request's `adapter_slot` (`-1` resolves to the active
     /// adapter), for the single-request decode, prefill and verify paths.
-    /// Returns `DevicePtr(0)` without uploading when no LoRA weights are loaded
-    /// or the request resolves to the active adapter; otherwise uploads and
-    /// returns `dst`.
+    /// Returns `DevicePtr(0)` without uploading when no LoRA weights are loaded,
+    /// or for a request that resolves to the active adapter on `PairFallback`
+    /// sites; otherwise uploads and returns `dst`.
     pub(crate) fn upload_seq_slot_uniform(
         &self,
         adapter_slot: i32,
         count: usize,
         dst: DevicePtr,
         stream: u64,
+        sites: metrale_model_layers::lora::LoraSites,
     ) -> Result<DevicePtr> {
         let active = match self.lora.as_ref() {
             Some(lw) => lw.active as i32,
             None => return Ok(DevicePtr(0)),
         };
-        // 2026-09-25: A request that resolves to the active adapter keeps the
-        // installed-pair path (`apply_lora_delta`) instead of the per-row bgmv,
-        // whose numerics differ; only a request routed to another adapter
-        // uploads a slot buffer.
-        let resolved = if adapter_slot >= 0 {
-            adapter_slot
-        } else {
-            active
-        };
-        if resolved == active {
+        // 2026-09-25: A request that resolves to the active adapter keeps the installed-pair
+        // path (`apply_lora_delta`). 2026-10-03: Except on the multi-sequence sites an MTP
+        // verify runs, which have no pair fallback: they always get the slots
+        // (`metrale_model_layers::lora::uniform_seq_slots`).
+        let Some(host) =
+            metrale_model_layers::lora::uniform_seq_slots(adapter_slot, active, count, sites)
+        else {
             return Ok(DevicePtr(0));
-        }
-        let slots = vec![adapter_slot; count];
-        let host = metrale_model_layers::lora::build_seq_slot_host(&slots, count, active);
+        };
         let bytes: Vec<u8> = host.iter().flat_map(|v| v.to_le_bytes()).collect();
         self.gpu.copy_h2d_async(&bytes, dst, stream)?;
         Ok(dst)
