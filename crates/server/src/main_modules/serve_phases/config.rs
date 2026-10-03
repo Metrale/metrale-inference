@@ -213,6 +213,19 @@ pub(crate) fn publish_copy_tier(args: &cli::ServeArgs) -> anyhow::Result<()> {
     reserve::set_copy_tier(tier)
 }
 
+/// 2026-10-02: Publish `--draft-confidence-stop` before the model builds and the scheduler
+/// starts; the drafter and the scheduler's depth planner read it from
+/// `speculative::draft_stop`. Nothing is published without the flag.
+pub(crate) fn publish_draft_confidence_stop(args: &cli::ServeArgs) -> anyhow::Result<()> {
+    match args.draft_confidence_stop {
+        Some(tau) => {
+            tracing::info!("MTP draft confidence stop: tau={tau}");
+            metrale_model_layers::speculative::draft_stop::set_draft_confidence_stop(tau)
+        }
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NumDraftsSource, resolve_num_drafts};

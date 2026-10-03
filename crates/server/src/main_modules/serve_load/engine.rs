@@ -79,6 +79,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     serve_phases::apply_model_default_num_drafts(&mut args, &ptx_set);
     serve_phases::publish_mtp_max_seqs(&args, &ptx_set)?;
     serve_phases::publish_copy_tier(&args)?;
+    serve_phases::publish_draft_confidence_stop(&args)?;
     // 2026-09-30: One γ for the reserve, the pools and the scheduler.
     serve_phases::apply_dflash_gamma(&mut args, serve_phases::model_default_drafter(&ptx_set))?;
 
