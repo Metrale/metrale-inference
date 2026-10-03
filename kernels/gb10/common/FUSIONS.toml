@@ -2411,4 +2411,320 @@ cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-1
 
 # ---- prefill: attention layer -------------------------------------------------------------------
 
+# 2026-10-03: The full-attention layer's input norm with its residual copy, over the pass's rows.
+[[rule]]
+id = "prefill_attn_input_norm"
+pattern = [{ op = "rms_norm", local = "input_norm", layer_kind = "full_attention" }]
+kernels = [{ module = "norm", func = "rms_norm_residual" }]
+repeat = "once"
+emitter = "prefill_attn_input_norm"
+rows = [1, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:85-97"
+
+# 2026-10-03: The gated attention sublayer on the contiguous route, 1..128 rows: Q, K and V
+# on the p3 projection arm, the split and norms, RoPE, the K/V write, attention, the gate, O.
+[[rule]]
+id = "prefill_attention_contig_p3"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "split" },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "qk_norm", local = "q_norm" },
+  { op = "qk_norm", local = "k_norm" },
+  { op = "rope" },
+  { op = "kv_write" },
+  { op = "paged_attention" },
+  { op = "sigmoid_gate_mul" },
+  { op = "linear", role = "o", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16", func = "w4a16_gemm_t_p3" },
+  { module = "w4a16", func = "w4a16_gemm_t_p3" },
+  { module = "w4a16", func = "w4a16_gemm_t_p3" },
+  { module = "ssm_preprocess", func = "deinterleave_qg_split_qnorm" },
+  { module = "norm", func = "rms_norm" },
+  { module = "rope", func = "rope_forward" },
+  { module = "reshape_and_cache", func = "reshape_and_cache_flash" },
+  { module = "attn_prefill_fa128", func = "attn_prefill_fa128" },
+  { module = "residual_add", func = "sigmoid_gate_mul_batched" },
+  { module = "w4a16", func = "w4a16_gemm_t_p3" },
+]
+repeat = "once"
+emitter = "prefill_attention"
+rows = [1, 128]
+modes = ["prefill"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-184 (offset 0: the contiguous route); ml/qwen3_attention/prefill/cache_skip.rs:171-410; ml/qwen3_attention/prefill/cache_skip_norm_rope.rs:67-79,178-188,308-321 (plain RoPE); ml/qwen3_attention/prefill/cache_skip_attn_gates.rs:116-131,242-252; ml/qwen3_attention/prefill/cache_skip_qkv.rs:329-339 (n <= 128); ml/qwen3_attention/prefill/paged_qkv.rs:338-348; ml/qwen3_attention/prefill/paged_oproj.rs:213-223"
+
+# 2026-10-03: The gated attention sublayer on the contiguous route, 129..1023 rows: Q, K and V
+# on the m128 projection arm, the split and norms, RoPE, the K/V write, attention, the gate, O.
+[[rule]]
+id = "prefill_attention_contig_m128"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "split" },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "qk_norm", local = "q_norm" },
+  { op = "qk_norm", local = "k_norm" },
+  { op = "rope" },
+  { op = "kv_write" },
+  { op = "paged_attention" },
+  { op = "sigmoid_gate_mul" },
+  { op = "linear", role = "o", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "ssm_preprocess", func = "deinterleave_qg_split_qnorm" },
+  { module = "norm", func = "rms_norm" },
+  { module = "rope", func = "rope_forward" },
+  { module = "reshape_and_cache", func = "reshape_and_cache_flash" },
+  { module = "attn_prefill_fa128", func = "attn_prefill_fa128" },
+  { module = "residual_add", func = "sigmoid_gate_mul_batched" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+]
+repeat = "once"
+emitter = "prefill_attention"
+rows = [129, 1023]
+modes = ["prefill"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-184 (offset 0: the contiguous route); ml/qwen3_attention/prefill/cache_skip.rs:171-410; ml/qwen3_attention/prefill/cache_skip_norm_rope.rs:67-79,178-188,308-321 (plain RoPE); ml/qwen3_attention/prefill/cache_skip_attn_gates.rs:116-131,242-252; ml/qwen3_attention/prefill/cache_skip_qkv.rs:317-327 (n > 128); ml/qwen3_attention/prefill_weights.rs:89-99 (below W4A16_VIA_FP8_MIN_M); ml/qwen3_attention/prefill/paged_oproj.rs:201-211"
+
+# 2026-10-03: The gated attention sublayer on the contiguous route, from 1024 rows: Q, K and V on
+# the fp8 projection arm, the split and norms, RoPE, the K/V write, attention, the gate, O.
+[[rule]]
+id = "prefill_attention_contig_fp8"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "split" },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "qk_norm", local = "q_norm" },
+  { op = "qk_norm", local = "k_norm" },
+  { op = "rope" },
+  { op = "kv_write" },
+  { op = "paged_attention" },
+  { op = "sigmoid_gate_mul" },
+  { op = "linear", role = "o", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
+  { module = "w4a16", func = "bf16_to_fp8" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_fp8_gemm_ldmab" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
+  { module = "w4a16", func = "bf16_to_fp8" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_fp8_gemm_ldmab" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
+  { module = "w4a16", func = "bf16_to_fp8" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_fp8_gemm_ldmab" },
+  { module = "ssm_preprocess", func = "deinterleave_qg_split_qnorm" },
+  { module = "norm", func = "rms_norm" },
+  { module = "rope", func = "rope_forward" },
+  { module = "reshape_and_cache", func = "reshape_and_cache_flash" },
+  { module = "attn_prefill_fa128", func = "attn_prefill_fa128" },
+  { module = "residual_add", func = "sigmoid_gate_mul_batched" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
+  { module = "w4a16", func = "bf16_to_fp8" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_fp8_gemm_ldmab" },
+]
+repeat = "once"
+emitter = "prefill_attention"
+rows = [1024, 1048576]
+modes = ["prefill"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-184 (offset 0: the contiguous route); ml/qwen3_attention/prefill/cache_skip.rs:171-410; ml/qwen3_attention/prefill/cache_skip_norm_rope.rs:67-79,178-188,308-321 (plain RoPE); ml/qwen3_attention/prefill/cache_skip_attn_gates.rs:116-131,242-252; ml/qwen3_attention/prefill_weights.rs:81-88 (m >= W4A16_VIA_FP8_MIN_M, K % 32 == 0); ml/ops/gemm_fp8_prefill.rs:61-130 (predequant, bf16_to_fp8, ldmab GEMM)"
+
+# 2026-10-03: The gated attention sublayer on the paged route, 1..128 rows: Q, K and V
+# on the p3 projection arm, the split and norms, RoPE, the K/V write, attention, the gate, O.
+[[rule]]
+id = "prefill_attention_paged_p3"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "split" },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "qk_norm", local = "q_norm" },
+  { op = "qk_norm", local = "k_norm" },
+  { op = "rope" },
+  { op = "kv_write" },
+  { op = "paged_attention" },
+  { op = "sigmoid_gate_mul" },
+  { op = "linear", role = "o", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16", func = "w4a16_gemm_t_p3" },
+  { module = "w4a16", func = "w4a16_gemm_t_p3" },
+  { module = "w4a16", func = "w4a16_gemm_t_p3" },
+  { module = "ssm_preprocess", func = "deinterleave_qg_split_qnorm" },
+  { module = "norm", func = "rms_norm" },
+  { module = "rope_mrope_interleaved", func = "rope_forward_mrope_interleaved" },
+  { module = "reshape_and_cache", func = "reshape_and_cache_flash" },
+  { module = "prefill_paged", func = "attn_prefill_paged" },
+  { module = "residual_add", func = "sigmoid_gate_mul_batched" },
+  { module = "w4a16", func = "w4a16_gemm_t_p3" },
+]
+repeat = "once"
+copies = "once"
+emitter = "prefill_attention"
+rows = [1, 128]
+modes = ["prefill_chunk"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: the paged route); ml/qwen3_attention/prefill/paged.rs:108-123,137-205,429-439,476; ml/qwen3_attention/prefill/paged/norms.rs:39-51,104-114; ml/qwen3_attention/prefill/paged/rope_cache.rs:121-137,162-179; ml/qwen3_attention/prefill/paged_attn.rs:143,419-435 (below 256 rows); ml/qwen3_attention/prefill/cache_skip_qkv.rs:329-339 (n <= 128); ml/qwen3_attention/prefill/paged_qkv.rs:338-348; ml/qwen3_attention/prefill/paged_oproj.rs:213-223"
+
+# 2026-10-03: The gated attention sublayer on the paged route, 129..255 rows: Q, K and V
+# on the m128 projection arm, the split and norms, RoPE, the K/V write, attention, the gate, O.
+[[rule]]
+id = "prefill_attention_paged_m128"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "split" },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "qk_norm", local = "q_norm" },
+  { op = "qk_norm", local = "k_norm" },
+  { op = "rope" },
+  { op = "kv_write" },
+  { op = "paged_attention" },
+  { op = "sigmoid_gate_mul" },
+  { op = "linear", role = "o", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "ssm_preprocess", func = "deinterleave_qg_split_qnorm" },
+  { module = "norm", func = "rms_norm" },
+  { module = "rope_mrope_interleaved", func = "rope_forward_mrope_interleaved" },
+  { module = "reshape_and_cache", func = "reshape_and_cache_flash" },
+  { module = "prefill_paged", func = "attn_prefill_paged" },
+  { module = "residual_add", func = "sigmoid_gate_mul_batched" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+]
+repeat = "once"
+copies = "once"
+emitter = "prefill_attention"
+rows = [129, 255]
+modes = ["prefill_chunk"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: the paged route); ml/qwen3_attention/prefill/paged.rs:108-123,137-205,429-439,476; ml/qwen3_attention/prefill/paged/norms.rs:39-51,104-114; ml/qwen3_attention/prefill/paged/rope_cache.rs:121-137,162-179; ml/qwen3_attention/prefill/paged_attn.rs:143,419-435 (below 256 rows); ml/qwen3_attention/prefill/cache_skip_qkv.rs:317-327 (n > 128); ml/qwen3_attention/prefill_weights.rs:89-99 (below W4A16_VIA_FP8_MIN_M); ml/qwen3_attention/prefill/paged_oproj.rs:201-211"
+
+# 2026-10-03: The gated attention sublayer on the paged route, 256..1023 rows: Q, K and V
+# on the m128 projection arm, the split and norms, RoPE, the K/V write, attention, the gate, O.
+[[rule]]
+id = "prefill_attention_paged_m128_fa128"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "split" },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "qk_norm", local = "q_norm" },
+  { op = "qk_norm", local = "k_norm" },
+  { op = "rope" },
+  { op = "kv_write" },
+  { op = "paged_attention" },
+  { op = "sigmoid_gate_mul" },
+  { op = "linear", role = "o", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+  { module = "ssm_preprocess", func = "deinterleave_qg_split_qnorm" },
+  { module = "norm", func = "rms_norm" },
+  { module = "rope_mrope_interleaved", func = "rope_forward_mrope_interleaved" },
+  { module = "reshape_and_cache", func = "reshape_and_cache_flash" },
+  { module = "attn_prefill_fa128", func = "attn_prefill_fa128_paged" },
+  { module = "residual_add", func = "sigmoid_gate_mul_batched" },
+  { module = "w4a16", func = "w4a16_gemm_t_m128" },
+]
+repeat = "once"
+copies = "once"
+emitter = "prefill_attention"
+rows = [256, 1023]
+modes = ["prefill_chunk"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: the paged route); ml/qwen3_attention/prefill/paged.rs:108-123,137-205,429-439,476; ml/qwen3_attention/prefill/paged/norms.rs:39-51,104-114; ml/qwen3_attention/prefill/paged/rope_cache.rs:121-137,162-179; ml/qwen3_attention/prefill/paged_attn.rs:143,379-396 (from 256 rows); ml/qwen3_attention/prefill/cache_skip_qkv.rs:317-327 (n > 128); ml/qwen3_attention/prefill_weights.rs:89-99 (below W4A16_VIA_FP8_MIN_M); ml/qwen3_attention/prefill/paged_oproj.rs:201-211"
+
+# 2026-10-03: The gated attention sublayer on the paged route, from 1024 rows: Q, K and V on
+# the fp8 projection arm, the split and norms, RoPE, the K/V write, attention, the gate, O.
+[[rule]]
+id = "prefill_attention_paged_fp8"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "split" },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "qk_norm", local = "q_norm" },
+  { op = "qk_norm", local = "k_norm" },
+  { op = "rope" },
+  { op = "kv_write" },
+  { op = "paged_attention" },
+  { op = "sigmoid_gate_mul" },
+  { op = "linear", role = "o", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
+  { module = "w4a16", func = "bf16_to_fp8" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_fp8_gemm_ldmab" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
+  { module = "w4a16", func = "bf16_to_fp8" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_fp8_gemm_ldmab" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
+  { module = "w4a16", func = "bf16_to_fp8" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_fp8_gemm_ldmab" },
+  { module = "ssm_preprocess", func = "deinterleave_qg_split_qnorm" },
+  { module = "norm", func = "rms_norm" },
+  { module = "rope_mrope_interleaved", func = "rope_forward_mrope_interleaved" },
+  { module = "reshape_and_cache", func = "reshape_and_cache_flash" },
+  { module = "attn_prefill_fa128", func = "attn_prefill_fa128_paged" },
+  { module = "residual_add", func = "sigmoid_gate_mul_batched" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
+  { module = "w4a16", func = "bf16_to_fp8" },
+  { module = "w4a16_fp8_ldmab", func = "fp8_fp8_gemm_ldmab" },
+]
+repeat = "once"
+copies = "once"
+emitter = "prefill_attention"
+rows = [1024, 1048576]
+modes = ["prefill_chunk"]
+when = { kv_cache_dtype = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: the paged route); ml/qwen3_attention/prefill/paged.rs:108-123,137-205,429-439,476; ml/qwen3_attention/prefill/paged/norms.rs:39-51,104-114; ml/qwen3_attention/prefill/paged/rope_cache.rs:121-137,162-179; ml/qwen3_attention/prefill/paged_attn.rs:143,379-396 (from 256 rows); ml/qwen3_attention/prefill_weights.rs:81-88 (m >= W4A16_VIA_FP8_MIN_M, K % 32 == 0); ml/ops/gemm_fp8_prefill.rs:61-130 (predequant, bf16_to_fp8, ldmab GEMM)"
+
+# 2026-10-03: The attention residual add fused with the FFN's input norm (`holds`: the norm reads
+# the FP32 sum, as residual_add_post_norm states).
+[[rule]]
+id = "prefill_attn_add_post_norm"
+pattern = [
+  { op = "residual_add", local = "add", keep = true, holds = "f32", layer_kind = "full_attention" },
+  { op = "rms_norm", local = "post_norm" },
+]
+kernels = [{ module = "norm", func = "residual_add_rms_norm" }]
+repeat = "once"
+emitter = "prefill_attn_add_post_norm"
+rows = [1, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 101
+cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:302-314; k/rms_norm.cu:379-382"
+
 # ---- prefill: dense FFN, embedding and head -----------------------------------------------------
