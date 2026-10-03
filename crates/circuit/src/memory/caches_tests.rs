@@ -24,6 +24,7 @@ fn decl(id: &str, kind: StateKind, format: StateFormat, elements: u64) -> StateD
         elements,
         verify: None,
         lifetime: Lifetime::of_kind(kind),
+        copies: None,
     }
 }
 

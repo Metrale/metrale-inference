@@ -163,6 +163,7 @@ pub fn recurrent_units(c: &ModelConfig) -> Result<(Vec<StateDecl>, UnitSource)> 
         elements: (bytes / 4) as u64,
         verify: Some(verify),
         lifetime: metrale_circuit::state::Lifetime::Sequence,
+        copies: None,
     };
     Ok((
         vec![

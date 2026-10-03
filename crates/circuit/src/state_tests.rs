@@ -28,6 +28,7 @@ fn decl(id: &str, kind: StateKind, format: StateFormat, elements: u64) -> StateD
             (_, false) => Some(VerifySteps::Conv),
         },
         lifetime: Lifetime::of_kind(kind),
+        copies: None,
     }
 }
 

@@ -175,6 +175,35 @@ pub struct StateDecl {
     pub verify: Option<VerifySteps>,
     /// 2026-09-30: How long a live unit lives ([`Lifetime::of_kind`]).
     pub lifetime: Lifetime,
+    /// 2026-10-03: For a snapshot kind declared with `of`, the id of the state of its block
+    /// instance it copies (`l0.gdn.h` for `l0.gdn.prefix_h`); `None` otherwise.
+    pub copies: Option<String>,
+}
+
+impl StateDecl {
+    /// 2026-10-03: The storage element under `formats`; a keyed format `formats` does not give
+    /// is an error.
+    pub fn dtype(&self, formats: &BTreeMap<String, StateDtype>) -> Result<StateDtype, StateError> {
+        match &self.format {
+            StateFormat::Fixed(d) => Ok(*d),
+            StateFormat::Keyed(k) => {
+                formats
+                    .get(k)
+                    .copied()
+                    .ok_or_else(|| StateError::MissingFormat {
+                        state: self.id.clone(),
+                        key: k.clone(),
+                    })
+            }
+        }
+    }
+
+    /// 2026-10-03: Bytes of one unit under `formats`.
+    pub fn unit_bytes(&self, formats: &BTreeMap<String, StateDtype>) -> Result<u64, StateError> {
+        self.elements
+            .checked_mul(self.dtype(formats)?.size())
+            .ok_or_else(|| StateError::Overflow(self.id.clone()))
+    }
 }
 
 /// 2026-09-30: Why a state plan could not be made.
@@ -277,22 +306,8 @@ impl StatePlan {
     pub fn new(states: &[StateDecl], inputs: &StateInputs) -> Result<Self, StateError> {
         let mut terms = Vec::new();
         for s in states {
-            let dtype = match &s.format {
-                StateFormat::Fixed(d) => *d,
-                StateFormat::Keyed(k) => {
-                    *inputs
-                        .formats
-                        .get(k)
-                        .ok_or_else(|| StateError::MissingFormat {
-                            state: s.id.clone(),
-                            key: k.clone(),
-                        })?
-                }
-            };
-            let unit = s
-                .elements
-                .checked_mul(dtype.size())
-                .ok_or_else(|| StateError::Overflow(s.id.clone()))?;
+            let dtype = s.dtype(&inputs.formats)?;
+            let unit = s.unit_bytes(&inputs.formats)?;
             let mut push = |holding, units: u64| -> Result<(), StateError> {
                 let bytes = unit
                     .checked_mul(units)

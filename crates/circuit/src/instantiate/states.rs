@@ -114,6 +114,7 @@ pub(crate) fn state_decl(
         elements,
         verify,
         lifetime,
+        copies: sf.of.as_ref().map(|of| format!("{prefix}.{of}")),
     })
 }
 
