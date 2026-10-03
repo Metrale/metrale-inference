@@ -66,16 +66,25 @@ const SWITCHES: &[(&str, Option<&str>, &str)] = &[
 
 /// 2026-10-03: Refuse the build when a switch of [`SWITCHES`] named in `vars` is set.
 pub(super) fn refuse_switches(vars: &[&str]) -> Result<()> {
-    for (var, moves, what) in SWITCHES.iter().filter(|(v, _, _)| vars.contains(v)) {
-        let Ok(value) = std::env::var(var) else {
-            continue;
-        };
-        ensure!(
-            moves.is_some_and(|m| m != value),
-            "{var}={value} selects {what}, which the prefill rules do not model"
-        );
+    match switch_refusal(vars, |v| std::env::var(v).ok()) {
+        Some(why) => bail!("{why}"),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+/// 2026-10-03: The first switch of [`SWITCHES`] named in `vars` whose value under `value_of`
+/// moves the route, as a refusal; `None` when none does. Pure, so the table is testable without
+/// the process environment.
+fn switch_refusal(vars: &[&str], value_of: impl Fn(&str) -> Option<String>) -> Option<String> {
+    SWITCHES
+        .iter()
+        .filter(|(v, _, _)| vars.contains(v))
+        .find_map(|(var, moves, what)| {
+            let value = value_of(var)?;
+            (moves.is_none_or(|m| m == value)).then(|| {
+                format!("{var}={value} selects {what}, which the prefill rules do not model")
+            })
+        })
 }
 
 /// 2026-10-03: Push `run` as kernel `first` of the group and a marker for each of the `extra`
@@ -292,3 +301,7 @@ impl GdnDims {
         self.key_dim() * 2 + self.value_dim()
     }
 }
+
+#[cfg(test)]
+#[path = "prefill_gdn_tests.rs"]
+mod prefill_gdn_tests;
