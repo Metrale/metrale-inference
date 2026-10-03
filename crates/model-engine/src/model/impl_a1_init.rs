@@ -86,16 +86,8 @@ pub(super) fn build_mtp_proposer(
     main_kv_blocks: usize,
     levers: &metrale_model_layers::layers::ops::ModelLevers,
 ) -> Result<Option<Arc<dyn DraftProposer>>> {
-    if !use_speculative {
-        if !mtp_weights.is_empty() {
-            tracing::info!(
-                "MTP weights available ({} module(s)) but --speculative not set, skipping MTP head construction",
-                mtp_weights.len()
-            );
-        }
-        return Ok(None);
-    }
-    if mtp_weights.is_empty() {
+    // 2026-10-03: Without `--speculative` the build loads no MTP module (`factory/build.rs`).
+    if !use_speculative || mtp_weights.is_empty() {
         return Ok(None);
     }
     let lm_nvfp4 = match lm_head_nvfp4 {
