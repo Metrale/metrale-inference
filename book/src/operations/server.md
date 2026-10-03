@@ -80,9 +80,9 @@ See [FP8](../deep-dives/fp8.md) and [NVFP4](../deep-dives/nvfp4.md) for the trad
 | `--ngram-speculative` | off | CPU-side n-gram matching |
 | `--prompt-lookup-decoding` | off | With `--speculative`: a sequence whose last `--prompt-lookup-ngram` tokens occurred earlier in its prompt or output verifies the tokens that followed them, in place of the MTP chain, for that round; no match leaves the round to MTP. Per sequence inside batched verify, up to `--prompt-lookup-max-seqs` active sequences |
 | `--prompt-lookup-ngram` | `4` | Match length a copy needs |
-| `--prompt-lookup-max-drafts` | `3` | Ceiling of the copy window (doubles after a fully accepted copy, halves after a broken one), 1..=16. A lone sequence verifies a copy of up to this length in one pass; inside a batch a copy is cut to 3 drafts (the batched verify's widest 4 rows). The first `--prompt-lookup-max-seqs` verify-pool slots are sized for it: about 64 MB per slot per draft above the MTP chain on Qwen3.6-35B-A3B, 152 MB on Qwen3.8-27B |
-| `--prompt-lookup-min-match` | `4` | Tokens a match must span, counted back from the sequence's end (at least `--prompt-lookup-ngram`); longer spans copy less often on prose |
-| `--prompt-lookup-miss-backoff` | `0` | After copies that matched nothing, skip copying for 1, 2, 4… rounds up to this many; any accepted copied token clears it. 0 never skips |
+| `--prompt-lookup-max-drafts` | `8` | Ceiling of the copy window (doubles after a fully accepted copy, halves after a broken one), 1..=16. A lone sequence verifies a copy of up to this length in one pass; inside a batch a copy is cut to 3 drafts (the batched verify's widest 4 rows). The first `--prompt-lookup-max-seqs` verify-pool slots are sized for it: about 64 MB per slot per draft above the MTP chain on Qwen3.6-35B-A3B, 152 MB on Qwen3.8-27B |
+| `--prompt-lookup-min-match` | `8` | Tokens a match must span, counted back from the sequence's end (at least `--prompt-lookup-ngram`); longer spans copy less often on prose |
+| `--prompt-lookup-miss-backoff` | `16` | After copies that matched nothing, skip copying for 1, 2, 4… rounds up to this many; any accepted copied token clears it. 0 never skips |
 | `--prompt-lookup-max-seqs` | `8` | Widest batch that proposes copies |
 
 See the [MTP deep dive](../deep-dives/mtp.md). Use only one of `--speculative`,
