@@ -118,6 +118,12 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             };
             return super::circuit_hw::run(*p);
         }
+        CircuitAction::Memory(_) => {
+            let CircuitAction::Memory(m) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_memory::run(*m);
+        }
         CircuitAction::Precision(_) => {
             let CircuitAction::Precision(p) = args.action else {
                 unreachable!("matched above")
@@ -143,6 +149,7 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
         CircuitAction::Diff(_)
         | CircuitAction::Venn(_)
         | CircuitAction::Plan(_)
+        | CircuitAction::Memory(_)
         | CircuitAction::Precision(_) => {
             unreachable!("returned above")
         }

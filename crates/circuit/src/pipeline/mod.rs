@@ -154,14 +154,9 @@ pub enum Value {
     State(StateDtype),
 }
 
-/// 2026-10-02: The spelling of a state dtype (the circuit TOML's).
+/// 2026-10-02: The spelling of a state dtype (the circuit TOML's, [`StateDtype::name`]).
 pub fn state_name(d: StateDtype) -> &'static str {
-    match d {
-        StateDtype::F32 => "f32",
-        StateDtype::F16 => "f16",
-        StateDtype::Bf16 => "bf16",
-        StateDtype::Fp8 => "fp8",
-    }
+    d.name()
 }
 
 impl Value {

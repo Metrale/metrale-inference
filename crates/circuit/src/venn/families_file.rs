@@ -64,6 +64,8 @@ struct FamilyFile {
     mma: Option<String>,
     #[serde(default)]
     kernel_compute: BTreeMap<String, ComputeFile>,
+    #[serde(default)]
+    workspace: Vec<super::workspace_file::WorkspaceFile>,
     pipeline: BTreeMap<String, toml::Value>,
     #[serde(default)]
     kernel_pipeline: BTreeMap<String, BTreeMap<String, toml::Value>>,
@@ -401,6 +403,7 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         &points,
     )
     .map_err(field)?;
+    let workspace = super::workspace_file::workspaces(f.workspace).map_err(field)?;
     let pipeline = super::compute_file::family_pipelines(
         &f.pipeline,
         &f.kernel_pipeline,
@@ -421,6 +424,7 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         evidence,
         discover,
         compute,
+        workspace,
         pipeline,
     })
 }

@@ -74,3 +74,39 @@ fn nvfp4_w4a4_and_an_integer_scheme_is_refused() {
     let _ = d.linear("model.layers.0.mlp.up_proj");
     assert_eq!(d.refusals().len(), 1, "{:?}", d.refusals());
 }
+
+/// 2026-10-02: ModelOpt names the fused routed-experts module; its per-expert projections
+/// inherit it unless they are ignored, and no other undeclared module inherits anything.
+#[test]
+fn routed_expert_projections_inherit_the_fused_experts_module() {
+    let fp4 = serde_json::json!({"num_bits": 4, "type": "float", "group_size": 16});
+    let p = plan(serde_json::json!({
+        "quant_method": "modelopt",
+        "config_groups": { "group_0": {
+            "weights": fp4, "input_activations": fp4,
+            "targets": ["model.layers.0.mlp.experts", "model.layers.1.mlp.experts"],
+        } },
+        "quantized_layers": {
+            "model.layers.0.mlp.experts": {"quant_algo": "W4A16_NVFP4", "group_size": 16},
+            "model.layers.1.mlp.experts": {"quant_algo": "W4A16_NVFP4", "group_size": 16},
+        },
+        "ignore": ["model.layers.1.mlp.experts.0.down_proj"],
+    }));
+    let d = DeclaredPrecision::new(&p);
+    let up = d.linear("model.layers.0.mlp.experts.0.gate_proj");
+    assert_eq!(
+        (up.weight, up.activation),
+        (Format::Nvfp4 { group: 16 }, Format::Bf16)
+    );
+    assert_eq!(
+        d.linear("model.layers.1.mlp.experts.0.down_proj").weight,
+        Format::Bf16,
+        "an ignored projection stays 16-bit"
+    );
+    assert_eq!(
+        d.linear("model.layers.0.mlp.shared_expert.gate_proj")
+            .weight,
+        Format::Bf16,
+        "only a routed expert's projection inherits"
+    );
+}

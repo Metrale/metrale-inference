@@ -222,7 +222,15 @@ impl Builder<'_> {
         };
         let first_state = self.circuit.states.len();
         for sf in &tpl.state {
-            let decl = state_decl(template, &prefix, layer, section, sf, &self.shape.dims)?;
+            let decl = state_decl(
+                template,
+                &prefix,
+                layer,
+                section,
+                sf,
+                &tpl.state,
+                &self.shape.dims,
+            )?;
             if self.circuit.states.iter().any(|s| s.id == decl.id) {
                 return Err(dup(template, &sf.id));
             }
@@ -331,7 +339,14 @@ impl Builder<'_> {
                 (false, _) => b.clone(),
             });
         }
-        let formats = self.resolve(&id, &op, &binding, &inputs)?;
+        let formats = match nf.unquantized {
+            true => edges::unquantized(
+                &id,
+                &op,
+                inputs.first().map(|&x| self.circuit.edges[x].format),
+            )?,
+            false => self.resolve(&id, &op, &binding, &inputs)?,
+        };
         if let Some(f) = formats {
             let x = inputs[0];
             let have = self.circuit.edges[x].format;

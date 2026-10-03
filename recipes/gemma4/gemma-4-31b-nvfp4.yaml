@@ -40,7 +40,7 @@ defaults:
   host: 0.0.0.0
   max_model_len: 8192
   kv_cache_dtype: fp8
-  gpu_memory_utilization: 0.88
+  gpu_memory_utilization: 0.85
   scheduler: slai
   max_batch_size: 2
   tool_call_parser: gemma4

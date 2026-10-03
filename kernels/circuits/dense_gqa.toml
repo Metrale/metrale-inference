@@ -34,6 +34,29 @@ full_attention = ["attn", "ffn"]
 [block.embed]
 stream_out = "h"
 
+# 2026-10-02: The speculative caches over tokens (crates/circuit/src/memory/caches.rs; as in
+# blocks/qwen3_hybrid.toml): the prompt-lookup index (host), a token tree's mask, the drafted ids.
+[[block.embed.state]]
+id = "lookup_index"
+kind = "prompt_lookup_index"
+lifetime = "sequence"
+format = "u64"
+shape = "2"
+
+[[block.embed.state]]
+id = "tree_mask"
+kind = "token_tree_mask"
+lifetime = "verify"
+format = "u8"
+shape = "1"
+
+[[block.embed.state]]
+id = "draft_ids"
+kind = "draft_tokens"
+lifetime = "verify"
+format = "i32"
+shape = "1"
+
 [[block.embed.node]]
 id = "embed"
 op = "embed"

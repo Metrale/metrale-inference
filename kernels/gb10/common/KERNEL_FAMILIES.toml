@@ -583,6 +583,14 @@ rows = [1, 4096]
 pipeline.paged_attention = { in = ["bf16", "bf16", "bf16"], cache = "bf16", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
 kernel_pipeline."paged_decode_fp8::paged_decode_attn_fp8".paged_attention = { in = ["bf16", "bf16", "bf16"], cache = "fp8", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
 op = [{ op = "paged_attention" }]
+# 2026-10-02: The decode split-K partials [o, m, l] (gpu-runtime buffers.rs:154 splitk_workspace):
+# GB10's legacy policy keeps one slot per SM (buffers/sizes.rs:230-237,
+# kernels/src/attn_splitk.rs:172-185). Inside the legacy arena.
+[[family.workspace]]
+name = "splitk_partials"
+bytes = ["sm_count*head_dim*4+sm_count*8"]
+arena = true
+why = "buffers.rs:154 splitk_workspace, slots x (head_dim + 2) x 4 with one slot per SM"
 [[family.param]]
 name = "head_dim"
 kind = "compile"
@@ -1118,6 +1126,14 @@ pipeline."act_quant:nvfp4/g16" = { in = ["bf16"], compute = "f32", out = ["nvfp4
 kernel_pipeline."w4a4_gemv_mx::w4a4_quant_rows".linear = { in = ["bf16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 # 2026-10-02: `act_quant`: the A4 rules' `w4a4_quant_rows` launch.
 op = [{ op = "linear", weight = ["nvfp4/g16"], activation = ["nvfp4/g16"] }, { op = "act_quant:nvfp4/g16" }]
+# 2026-10-02: The W4A4 activation quantizer's NVFP4 rows: max_m x 32768 / 2 values, / 16 scales and
+# a F32 global per row, at max_m = 64 (the larger of the two tiers; model-layers
+# ops/w4a4_proj.rs:162-166). Its own allocation, outside the legacy arena.
+[[family.workspace]]
+name = "nvfp4_rows"
+bytes = ["64*16384+64*2048+64*4"]
+arena = false
+why = "w4a4_proj.rs:162-166 at max_m = 64"
 [[family.point]]
 values = {}
 how = "instantiation"
@@ -1237,6 +1253,14 @@ pipeline.act_quant = { in = ["bf16"], compute = "f32", out = ["{format}"] }
 pipeline.silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 # 2026-10-02: `silu_mul`: the `_silu_` kernels' first half (rule w8a8_act_quant_silu_row).
 op = [{ op = "act_quant" }, { op = "silu_mul" }]
+# 2026-10-02: The W8A8 decode quantizer's E4M3 rows and per-128 scales, 256 rows at the widest
+# input it quantizes (`k`; model-layers ops/w8a8_decode.rs:240-244). Its own allocation, outside
+# the legacy arena.
+[[family.workspace]]
+name = "fp8_rows"
+bytes = ["256*k+256*k/128*4"]
+arena = false
+why = "w8a8_decode.rs:240-244: 256 x max_k + 256 x ceil(max_k / 128) x 4"
 [[family.param]]
 name = "format"
 kind = "policy"
@@ -1508,6 +1532,20 @@ op = [
   { op = "expert_gate_up" }, { op = "expert_down" }, { op = "silu_mul" }, { op = "relu2" },
   { op = "linear", roles = ["shared_gate_up", "shared_up", "shared_down"] },
 ]
+# 2026-10-02: The grouped FP8 MoE scratch (gpu-runtime buffers.rs:205, buffers/moe_fp8_scratch.rs:
+# 30-83): the E4M3 activation of the widest projection input and its per-128 scales. The tile
+# worklist ((ceil(n x top_k / 128) + experts + 1) x ceil(width / 64) x 8 bytes, under 1 MiB) is
+# not declared: the expression language has no ceiling of a product. Inside the legacy arena.
+[[family.workspace]]
+name = "fp8_activation"
+bytes = ["n*hidden", "n*shared_inter", "n*top_k*moe_inter"]
+arena = true
+why = "moe_fp8_scratch.rs: max(M x max(hidden, shared_inter), M x top_k x moe_inter) E4M3 bytes"
+[[family.workspace]]
+name = "fp8_scales"
+bytes = ["n*hidden/128*4", "n*top_k*moe_inter/128*4"]
+arena = true
+why = "moe_fp8_scratch.rs: one F32 scale per 128 values of that activation"
 [[family.param]]
 name = "weight"
 kind = "policy"

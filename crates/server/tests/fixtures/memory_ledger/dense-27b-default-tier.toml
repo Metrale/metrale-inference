@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-02: One boot's allocation ledger, for the circuit memory model's validation
+# (crates/server/src/cli/circuit_memory_ledger_tests.rs). Source: dgx1 2026-10-02, main c92e43109 + #86 (default tier, --max-batch-size auto resolved to 128 slots), /workspace/claude-state/circuit-mem/leakfix/runs/auto-B.log.
+# The `[ledger]` rows are the boot's "by file" rollup (MiB = 2^20 bytes, allocation count), the
+# `[reserve]` rows its preflight reserve terms (MB as logged); nothing here is edited by hand.
+
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+# 2026-10-02: Served without a recipe; `serve` is its command line.
+serve = ["--disable-thinking", "--enable-prefix-caching", "--gpu-memory-utilization", "0.85", "--kv-cache-dtype", "fp8", "--max-seq-len", "2048", "--mtp-quantization", "bf16", "--num-drafts", "3", "--scheduler", "fifo", "--speculative", "--ssm-cache-slots", "8", "--weight-quantization", "declared", "--max-batch-size", "128", "--activation-quantization", "adaptive"]
+# 2026-10-02: Checkpoint tensors no weight node binds (norms, conv, gates, a vision tower),
+# measured from the safetensors headers by `met circuit memory` (totals.weights_outside).
+outside_bytes = 926794208
+kv_blocks = 34708
+draft_kv_blocks = 4128
+capture_rows = 2048
+chunk_slack_gb = 0.02
+ledger_total_gb = 106.77
+ledger_sites = 91
+
+[ledger]
+"crates/model-engine/src/model/ssm_pool.rs" = [32877.0, 6]
+"crates/model-weights/src/fast_weights/mod.rs" = [22332.5, 1968]
+"crates/cache/src/kv_cache/paged_impl.rs" = [17612.0, 34]
+"crates/model-layers/src/layers/dense_ffn_load.rs" = [8032.5, 168]
+"crates/model-layers/src/weight_map/loaders_fp8.rs" = [5698.9, 555]
+"crates/model-arch/src/weight_loader/qwen35_dense/gdn_dequant.rs" = [5280.0, 96]
+"crates/model-layers/src/weight_map/quantized/transpose.rs" = [5017.5, 368]
+"crates/model-layers/src/weight_map/quant_helpers.rs" = [2425.0, 1]
+"crates/model-engine/src/model/ssm_snapshot_init.rs" = [1212.1, 97]
+"crates/gpu-runtime/src/buffers.rs" = [1122.8, 37]
+"crates/model-engine/src/model/impl_a1_init.rs" = [88.8, 4]
+"crates/model-layers/src/weight_map/fp8_lut.rs" = [45.0, 48]
+
+[reserve]
+ssm_pool = 32877
+ssm_h_stage = 0
+replay_ring = 0
+marconi = 1212
+gdn_two_phase = 88
+runtime_headroom = 4092
+per_sequence = 0
+decode_ring = 0
+gdn_carry_stash = 843
+driver_fixed = 1024
+driver_bookkeeping = 2224

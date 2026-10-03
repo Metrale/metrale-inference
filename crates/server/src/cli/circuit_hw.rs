@@ -127,6 +127,9 @@ pub(crate) struct CheckpointTexts {
     pub(crate) id: String,
     pub(crate) config: Option<String>,
     pub(crate) hf_quant: Option<String>,
+    /// 2026-10-02: The local directory the texts were read from, when there is one (its
+    /// safetensors headers size the tensors `met circuit memory` finds outside the circuit).
+    pub(crate) dir: Option<PathBuf>,
 }
 
 fn read_optional(p: &Path) -> Result<Option<String>> {
@@ -174,6 +177,7 @@ pub(crate) fn checkpoint_texts(spec: &str, allow_network: bool) -> Result<Checkp
             id,
             config: read_optional(&d.join("config.json"))?,
             hf_quant: read_optional(&d.join("hf_quant_config.json"))?,
+            dir: Some(d.to_path_buf()),
         })
     };
     if dir.join("config.json").is_file() {
@@ -189,12 +193,14 @@ pub(crate) fn checkpoint_texts(spec: &str, allow_network: bool) -> Result<Checkp
             id: spec.to_string(),
             config: fetch(spec, "config.json")?,
             hf_quant: fetch(spec, "hf_quant_config.json")?,
+            dir: None,
         });
     }
     Ok(CheckpointTexts {
         id: spec.to_string(),
         config: None,
         hf_quant: None,
+        dir: None,
     })
 }
 
@@ -286,6 +292,7 @@ pub(crate) fn matrix(root: &Path, dir: &str, check: bool) -> Result<String> {
             id: checkpoint.to_string(),
             config: read_optional(&configs.join("config.json"))?,
             hf_quant: read_optional(&configs.join("hf_quant_config.json"))?,
+            dir: None,
         };
         for device in MATRIX_DEVICES {
             let rel = format!("{dir}/{slug}--{device}.md");

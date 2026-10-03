@@ -23,6 +23,9 @@ metadata:
         blocks), ~105 GB steady-state inside the 107.1 GB budget at 0.88
         util; serve ready in ~35 s (fast-load), coherence + tool-call
         smokes green cross-node.
+      - 2026-10-02: util lowered to the GB10 ceiling 0.85 (kernels/gb10/
+        HARDWARE.toml). `met circuit memory` puts the bf16 KV pool at
+        about 123k blocks there; 2 x 256K needs 32,771.
   maintainer: metrale
   category: agent
   model_params: 35B
@@ -61,7 +64,7 @@ defaults:
   max_prefill_tokens: 32768
   kv_cache_dtype: bf16
   kv_high_precision_layers: auto
-  gpu_memory_utilization: 0.88
+  gpu_memory_utilization: 0.85
   scheduler: slai
   speculative: true
   mtp_quantization: bf16
