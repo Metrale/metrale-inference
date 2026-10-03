@@ -23,7 +23,7 @@ pub use decode_ring::{
 mod pool_plan;
 pub use pool_plan::{
     PoolCounts, PoolPlan, PoolShape, PoolState, UnitSource, VerifyCounts, pool_counts,
-    pool_counts_with, recurrent_units, state_dims,
+    pool_counts_with, recurrent_units, state_dims, state_formats,
 };
 
 mod rollback;

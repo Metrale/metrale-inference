@@ -184,6 +184,18 @@ pub fn recurrent_units(c: &ModelConfig) -> Result<(Vec<StateDecl>, UnitSource)> 
     ))
 }
 
+/// 2026-10-03: The recurrent states' keyed formats under `--ssm-h-dtype`: h stored at FP32,
+/// or at f16 under the f16-sized pool. The pool plan and the executor's state programs both read
+/// this, so they size a unit the same way.
+pub fn state_formats(h_f16_pool: bool) -> BTreeMap<String, StateDtype> {
+    let storage = if h_f16_pool {
+        StateDtype::F16
+    } else {
+        StateDtype::F32
+    };
+    BTreeMap::from([("ssm_h_storage".to_string(), storage)])
+}
+
 /// 2026-09-30: The SSM pool of one model, sized.
 #[derive(Debug, Clone)]
 pub struct PoolPlan {
@@ -226,13 +238,10 @@ impl PoolPlan {
             return Ok(Self::empty(source, counts));
         }
         let (h, conv) = (find(VerifySteps::H)?, find(VerifySteps::Conv)?);
-        let storage = if h_f16_pool {
-            StateDtype::F16
-        } else {
-            StateDtype::F32
-        };
+        let formats = state_formats(h_f16_pool);
+        let storage = h.dtype(&formats)?;
         let inputs = StateInputs {
-            formats: BTreeMap::from([("ssm_h_storage".to_string(), storage)]),
+            formats,
             slots: counts.slots as u64,
             verify: counts.verify.as_ref().map(|v| VerifyInputs {
                 h_steps: v.h_steps.iter().map(|&n| n as u64).collect(),

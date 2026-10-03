@@ -28,6 +28,7 @@ pub mod policy;
 pub mod program;
 pub mod routes;
 pub mod sources;
+pub mod state_bind;
 pub mod verify_batch;
 
 use anyhow::{Context, Result, bail};
