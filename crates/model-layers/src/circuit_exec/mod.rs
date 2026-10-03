@@ -25,6 +25,7 @@ mod emitters;
 pub mod fixed;
 pub mod kernels;
 pub mod policy;
+pub mod prefill;
 pub mod program;
 pub mod routes;
 pub mod sources;
@@ -96,6 +97,11 @@ pub struct Boot<'a> {
     pub draft_rows: Option<u64>,
     /// 2026-10-03: The SSM pool the state programs bind to.
     pub state_pool: state_bind::StatePool,
+    /// 2026-10-03: The legacy forward's buffer arena, where prefill plans place their edges.
+    pub arena: &'a metrale_gpu_runtime::buffers::BufferArena,
+    /// 2026-10-03: The widest prefill pass to compile programs for; `None` builds none (the
+    /// serve's prefill then runs the legacy layers, disclosed).
+    pub prefill_max_tokens: Option<u64>,
 }
 
 /// 2026-09-28: A built executor: the decode program and the workspace it runs in.
@@ -121,6 +127,8 @@ pub struct CircuitExec {
     pub verify_batch: Option<verify_batch::VerifyBatch>,
     /// 2026-10-03: The state programs, bound to the SSM pool (`state_bind`).
     pub state: state_bind::StatePrograms,
+    /// 2026-10-03: The prefill programs; `None` when the build compiled none.
+    pub prefill: Option<prefill::PrefillPrograms>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml the plan was chosen from.
     pub rules_digest: String,
     /// 2026-09-28: Which rules the build allowed.
@@ -331,6 +339,24 @@ impl CircuitExec {
                 MixerFacts::Attention(_) => None,
             })
             .collect();
+        let prefill = match b.prefill_max_tokens.map(|max_tokens| {
+            let pb = prefill::PrefillBoot {
+                circuit: &loaded.circuit,
+                rules: &loaded.rules,
+                runtime: &loaded.runtime,
+                available: &available,
+                policy: &b.policy,
+                arena: b.arena,
+                max_tokens,
+            };
+            prefill::PrefillPrograms::build(&pb, &inputs)
+        }) {
+            Some(Err(e)) => {
+                b.gpu.free(workspace).ok();
+                return Err(e.context("building the prefill programs"));
+            }
+            built => built.transpose()?,
+        };
         let verify_batch = verify_batch_rows.map(|max| {
             verify_batch::VerifyBatch::new(
                 verify_batch::Parts {
@@ -359,89 +385,17 @@ impl CircuitExec {
             gdn_pitch,
             verify_batch,
             state,
+            prefill,
             rules_digest: loaded.rules_digest,
             fusions: b.fusions,
             workspace,
             workspace_bytes,
         })
     }
-
-    /// 2026-09-28: The multi-sequence program for `rows` padded rows, if one was compiled.
-    pub fn multi_seq_program(&self, rows: u64) -> Option<&Program> {
-        self.multi_seq
-            .iter()
-            .find(|(p, _)| p.rows == rows)
-            .map(|(p, _)| p)
-    }
-
-    /// 2026-09-30: The program a multi-sequence step of `rows` padded rows runs, given its GDN
-    /// states: the arm of the first runtime route whose condition holds, else the primary one.
-    pub fn multi_seq_step(&self, rows: u64, gdn: &[Vec<GdnState>]) -> Result<&Program> {
-        for r in self
-            .routes
-            .iter()
-            .filter(|r| r.program.mode == Mode::MultiSeq && r.program.rows == rows)
-        {
-            if routes::holds(&r.route, &self.gdn_pitch, gdn)? {
-                return Ok(&r.program);
-            }
-        }
-        self.multi_seq_program(rows)
-            .with_context(|| format!("no circuit program was compiled for {rows} rows"))
-    }
-
-    /// 2026-09-29: The draft head's program, if one was compiled.
-    pub fn draft_runner(&self) -> Option<std::sync::Arc<dyn DraftRunner>> {
-        self.draft
-            .as_ref()
-            .map(|d| d.clone() as std::sync::Arc<dyn DraftRunner>)
-    }
-
-    /// 2026-09-29: The verify program for `k` rows, if one was compiled.
-    pub fn verify_program(&self, k: u64) -> Option<&Program> {
-        self.verify
-            .iter()
-            .find(|(p, _)| p.rows == k)
-            .map(|(p, _)| p)
-    }
-
-    /// 2026-09-28: One digest over every compiled plan, in order (decode, then the
-    /// multi-sequence widths ascending, then the verify widths, the draft step and, 2026-09-30,
-    /// the runtime routes' arms): what a record of this forward discloses.
-    pub fn plans_digest(&self) -> String {
-        metrale_circuit::digest::plans_digest(
-            std::iter::once(self.decode_plan.digest.as_str()).chain(
-                self.multi_seq
-                    .iter()
-                    .chain(&self.verify)
-                    .map(|(_, p)| p.digest.as_str())
-                    .chain(
-                        self.draft
-                            .iter()
-                            .flat_map(|d| d.programs.iter().map(|(_, p)| p.digest.as_str())),
-                    )
-                    .chain(self.routes.iter().map(|r| r.plan.digest.as_str())),
-            ),
-        )
-    }
-
-    /// 2026-09-28: Bytes of the workspace.
-    pub fn workspace_bytes(&self) -> u64 {
-        self.workspace_bytes
-    }
-
-    /// 2026-09-28: Free the workspace. The caller must first destroy every graph that captured
-    /// a program of this executor.
-    pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
-        if let Some(p) = &self.draft {
-            anyhow::ensure!(
-                std::sync::Arc::strong_count(p) == 1,
-                "the draft program is still installed; remove it before freeing the workspace"
-            );
-        }
-        gpu.free(self.workspace)
-    }
 }
+
+#[path = "exec_access.rs"]
+mod exec_access;
 
 #[cfg(test)]
 #[path = "exec_declared_tests.rs"]

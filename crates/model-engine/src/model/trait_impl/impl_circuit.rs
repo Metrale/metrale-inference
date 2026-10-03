@@ -247,6 +247,10 @@ impl TransformerModel {
                 },
                 h_f16: self.ssm_pool.h_stored_bytes < self.ssm_pool.h_bytes,
             },
+            arena: &self.buffers,
+            // 2026-10-03: Off until the dense prefill rules cover every prefill node (M6a);
+            // until then a pass runs the legacy layers under the circuit forward.
+            prefill_max_tokens: None,
         })
     }
 
