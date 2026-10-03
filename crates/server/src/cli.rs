@@ -343,9 +343,11 @@ pub struct CircuitDiffArgs {
     /// logits; the report carries the legacy reference's launch trace per length.
     #[arg(long, value_delimiter = ',')]
     pub prefill: Vec<usize>,
-    /// 2026-10-03: With --prefill: also prefill in chunks of this many tokens.
-    #[arg(long, requires = "prefill")]
-    pub prefill_chunk: Option<usize>,
+    /// 2026-10-03: With --prefill: also prefill through `prefill_chunk` in chunks of each of
+    /// these sizes (comma-separated). A size at least the prompt is one chunk call, the path the
+    /// scheduler takes for a prompt that fits the arena (it splits the tail itself).
+    #[arg(long, value_delimiter = ',', requires = "prefill")]
+    pub prefill_chunk: Vec<usize>,
     /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
     #[command(flatten)]
     pub serve: ServeArgs,

@@ -269,6 +269,7 @@ fn the_prefill_verdict_needs_equal_runs_and_a_seen_control() {
         variant: variant.into(),
         equal,
         first_diff: (!equal).then_some(6),
+        path_diff: None,
     };
     let ok = vec![(17, prefill::PrefillPath::Single, vec![c("legacy-repeat", true)])];
     assert!(prefill::prefill_failures(&ok, &c("control", false)).is_empty());
@@ -281,4 +282,34 @@ fn the_prefill_verdict_needs_equal_runs_and_a_seen_control() {
     assert!(r[0].contains("17 tokens") && r[0].contains("circuit"), "{r:?}");
     assert!(r[1].contains("Chunked(16)"), "{r:?}");
     assert!(r[2].contains("detection control"), "{r:?}");
+}
+
+/// 2026-10-03: A legacy repeat that took another path is reported as a path difference, and the
+/// op where the traces part is the first differing op or the end of the shorter one.
+#[test]
+fn a_repeat_on_another_path_fails_as_a_path_difference() {
+    let op = |name: &str| prefill::TracedOp {
+        op: name.into(),
+        grid: [1, 1, 1],
+        block: [32, 1, 1],
+    };
+    let cold = [op("a::fla"), op("b::norm")];
+    assert_eq!(prefill::first_op_diff(&cold, &cold), None);
+    assert_eq!(prefill::first_op_diff(&cold, &[op("a::regresident"), op("b::norm")]), Some(0));
+    assert_eq!(prefill::first_op_diff(&cold, &cold[..1]), Some(1));
+    let repeat = prefill::PrefillComparison {
+        variant: "legacy-repeat".into(),
+        equal: true,
+        first_diff: None,
+        path_diff: Some(0),
+    };
+    let control = prefill::PrefillComparison {
+        variant: "control".into(),
+        equal: false,
+        first_diff: Some(2),
+        path_diff: None,
+    };
+    let r = prefill::prefill_failures(&[(300, prefill::PrefillPath::Single, vec![repeat])], &control);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].contains("another path"), "{r:?}");
 }

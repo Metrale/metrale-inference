@@ -4,9 +4,12 @@
 //! sections 7.1 and 15.4). For each prompt length it prefills one sequence single-pass and, with
 //! `--prefill-chunk`, in chunks, under legacy (twice: the reference and the repeat that shows the
 //! path is repeatable at all) and under every circuit forward, and compares the last-position
-//! logits byte for byte. The reference run of each path records its launch trace (kernel, grid,
-//! block per op), which is the map the circuit's prefill rules reproduce. A detection control
-//! changes one prompt token and must change the logits.
+//! logits byte for byte. Every run records its launch trace (kernel, grid, block per op); the
+//! reference's is reported, the map the circuit's prefill rules reproduce, and a legacy run whose
+//! ops differ from the reference's took another path (a prefix-cache restore, a split moved) and
+//! fails as such, never as a numeric difference. Each run gets its own session hash, so a
+//! snapshot one run saved is not restored by the next. A detection control changes one prompt
+//! token and must change the logits.
 //!
 //! Owner: server CLI.
 //! Invariants:
@@ -52,19 +55,18 @@ pub(crate) struct TracedOp {
     pub block: [u32; 3],
 }
 
-/// 2026-10-03: Prefill `prompt` on a fresh sequence along `path`; the last-position logits, and
-/// the launch trace when `trace`.
+/// 2026-10-03: Prefill `prompt` on a fresh sequence of session `session` along `path`; the
+/// last-position logits and the launch trace.
 fn prefill_once(
     model: &dyn Model,
     prompt: &[u32],
     path: PrefillPath,
-    trace: bool,
+    session: u64,
 ) -> Result<(Vec<u8>, Vec<TracedOp>)> {
     let mut seq = model.alloc_sequence()?;
+    seq.session_hash = session;
     let result = (|| {
-        if trace {
-            metrale_telemetry::launch_trace::begin();
-        }
+        metrale_telemetry::launch_trace::begin();
         let ptr = match path {
             PrefillPath::Single => model.prefill(prompt, &mut seq, 0)?,
             PrefillPath::Chunked(c) => {
@@ -80,23 +82,17 @@ fn prefill_once(
                 ptr
             }
         };
-        let ops = if trace {
-            metrale_telemetry::launch_trace::end_and_take()
-                .iter()
-                .map(|e| TracedOp {
-                    op: metrale_telemetry::launch_trace::op_name(e),
-                    grid: e.grid,
-                    block: e.block,
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let ops = metrale_telemetry::launch_trace::end_and_take()
+            .iter()
+            .map(|e| TracedOp {
+                op: metrale_telemetry::launch_trace::op_name(e),
+                grid: e.grid,
+                block: e.block,
+            })
+            .collect();
         Ok((super::logits(model, ptr)?, ops))
     })();
-    if trace {
-        metrale_telemetry::launch_trace::end_and_take();
-    }
+    metrale_telemetry::launch_trace::end_and_take();
     model.free_sequence(&mut seq)?;
     result
 }
@@ -107,6 +103,9 @@ pub(crate) struct PrefillComparison {
     pub variant: String,
     pub equal: bool,
     pub first_diff: Option<usize>,
+    /// 2026-10-03: For a legacy run, the first op where its trace leaves the reference's (a
+    /// different path); `None` when the traces agree or the run is not legacy.
+    pub path_diff: Option<usize>,
 }
 
 /// 2026-10-03: One prompt length on one path.
@@ -134,6 +133,7 @@ struct Report {
 
 fn compare(variant: &str, reference: &[u8], run: &[u8]) -> PrefillComparison {
     PrefillComparison {
+        path_diff: None,
         variant: variant.to_string(),
         equal: reference == run,
         first_diff: reference
@@ -144,6 +144,15 @@ fn compare(variant: &str, reference: &[u8], run: &[u8]) -> PrefillComparison {
     }
 }
 
+/// 2026-10-03: The first op where `run` leaves `reference`, or where one ends first.
+pub(crate) fn first_op_diff(reference: &[TracedOp], run: &[TracedOp]) -> Option<usize> {
+    reference
+        .iter()
+        .zip(run)
+        .position(|(a, b)| a != b)
+        .or((reference.len() != run.len()).then_some(reference.len().min(run.len())))
+}
+
 /// 2026-10-03: Why a report fails; empty for a pass.
 pub(crate) fn prefill_failures(
     per_len: &[(usize, PrefillPath, Vec<PrefillComparison>)],
@@ -152,9 +161,16 @@ pub(crate) fn prefill_failures(
     let mut out: Vec<String> = per_len
         .iter()
         .flat_map(|(t, path, cs)| {
-            cs.iter()
-                .filter(|c| !c.equal)
-                .map(move |c| format!("{t} tokens, {path:?}, {}: logits differ at byte {:?}", c.variant, c.first_diff))
+            cs.iter().filter(|c| !c.equal || c.path_diff.is_some()).map(move |c| match c.path_diff {
+                Some(op) => format!(
+                    "{t} tokens, {path:?}, {}: took another path (ops differ from op {op})",
+                    c.variant
+                ),
+                None => format!(
+                    "{t} tokens, {path:?}, {}: logits differ at byte {:?}",
+                    c.variant, c.first_diff
+                ),
+            })
         })
         .collect();
     if control.equal {
@@ -166,27 +182,35 @@ pub(crate) fn prefill_failures(
 /// 2026-10-03: The `--prefill` diff.
 pub(super) fn prefill_report(
     model: &dyn Model,
-    (lens, chunk): (&[usize], Option<usize>),
+    (lens, chunks): (&[usize], &[usize]),
     forwards: &[(&'static str, ForwardSelect)],
     out: &Path,
 ) -> Result<()> {
     ensure!(!lens.is_empty() && lens.iter().all(|&t| t > 0), "--prefill takes lengths >= 1");
     let paths: Vec<PrefillPath> = std::iter::once(PrefillPath::Single)
-        .chain(chunk.map(PrefillPath::Chunked))
+        .chain(chunks.iter().map(|&c| PrefillPath::Chunked(c)))
         .collect();
     let mut lengths = Vec::new();
     let mut flat = Vec::new();
+    let mut session = 0x00c1_4c00_0000_0000u64;
+    let mut next_session = || {
+        session += 1;
+        session
+    };
     for &t in lens {
         let prompt = prompt_of_len(t, model.vocab_size());
         let mut reports = Vec::new();
         for &path in &paths {
             model.set_forward(&ForwardSelect::Legacy)?;
-            let (reference, trace) = prefill_once(model, &prompt, path, true)?;
+            let (reference, trace) = prefill_once(model, &prompt, path, next_session())?;
             let mut cs = Vec::new();
             for (name, sel) in forwards {
                 model.set_forward(sel)?;
-                let (run, _) = prefill_once(model, &prompt, path, false)?;
-                let c = compare(name, &reference, &run);
+                let (run, ops) = prefill_once(model, &prompt, path, next_session())?;
+                let mut c = compare(name, &reference, &run);
+                if matches!(sel, ForwardSelect::Legacy) {
+                    c.path_diff = first_op_diff(&trace, &ops);
+                }
                 tracing::info!("circuit diff --prefill: {t} tokens {path:?} {name}: {c:?}");
                 cs.push(c);
             }
@@ -208,8 +232,8 @@ pub(super) fn prefill_report(
     let mut changed = prompt.clone();
     let at = t / 2;
     changed[at] = (changed[at] + 1) % model.vocab_size() as u32;
-    let (a, _) = prefill_once(model, &prompt, PrefillPath::Single, false)?;
-    let (b, _) = prefill_once(model, &changed, PrefillPath::Single, false)?;
+    let (a, _) = prefill_once(model, &prompt, PrefillPath::Single, next_session())?;
+    let (b, _) = prefill_once(model, &changed, PrefillPath::Single, next_session())?;
     let control = compare("legacy, prompt token changed", &a, &b);
     let reasons = prefill_failures(&flat, &control);
     let report = Report {

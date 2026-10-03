@@ -289,7 +289,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     if !args.prefill.is_empty() {
         return prefill::prefill_report(
             model,
-            (&args.prefill, args.prefill_chunk),
+            (&args.prefill, &args.prefill_chunk),
             &forwards,
             &args.out,
         );
