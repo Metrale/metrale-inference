@@ -1757,6 +1757,84 @@ files = ["kernels/gb10/common/relu_squared.cu"]
 # 2026-09-29: Legacy layers that loop per sequence (facts the circuit cannot show; checked by
 # crates/circuit/tests/venn.rs against the cited line).
 
+# ---- 2026-10-03: The attention prefill families (prefill_attention, FUSIONS.toml "prefill:
+# attention layer"). -----------------------------------------------------------------------------
+
+# 2026-10-03: The gated Q split fused with the per-head Q RMSNorm, one block per row
+# (ssm_preprocess.cu; ml/ops/ssm_preproc.rs:119-145).
+[[family]]
+id = "deinterleave_qg_split_qnorm"
+description = "Split the gated attention q | gate projection per head and RMS-norm each Q head"
+compute = "memory"
+kernels = ["ssm_preprocess::deinterleave_qg_split_qnorm"]
+rows = [1, 65536]
+pipeline.split = { in = ["bf16"], move = "bf16", out = ["bf16", "bf16"] }
+pipeline.qk_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }
+op = [{ op = "split", after = ["linear:q"] }, { op = "qk_norm" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/ssm_preprocess.cu"]
+
+# 2026-10-03: `w4a16_gemm_t_m128`'s product on the multistage FP8 GEMM (ml/ops/
+# gemm_fp8_prefill.rs:61-130): the transposed NVFP4 weight dequantized to E4M3 with that
+# kernel's arithmetic, the BF16 activation cast to unscaled E4M3, the ldmatrix FP8 MMA GEMM.
+# Bit-identical to `w4a16_gemm_t_m128` (its kbench), so the same pipeline.
+[[family]]
+id = "w4a16_fp8_ldmab"
+description = "NVFP4 projection through a predequantized E4M3 weight and the FP8 ldmatrix GEMM"
+compute = "tensor_core"
+mma = "mma.sync.m16n8k32.e4m3"
+kernel_compute."w4a16_fp8_ldmab::fp8_predequant_nvfp4_t" = { compute = "memory" }
+kernel_compute."w4a16::bf16_to_fp8" = { compute = "memory" }
+kernels = [
+  "w4a16_fp8_ldmab::fp8_predequant_nvfp4_t", "w4a16::bf16_to_fp8",
+  "w4a16_fp8_ldmab::fp8_fp8_gemm_ldmab",
+]
+rows = [1, 65536]
+pipeline.linear = { in = ["bf16"], act = "fp8/tensor", weight = "nvfp4/g16->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "e4m3", out = ["bf16"] }
+op = [{ op = "linear", weight = ["nvfp4/g16"], activation = ["bf16"] }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = [
+  "kernels/gb10/common/w4a16_fp8_ldmab.cu", "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu",
+]
+
+# 2026-10-03: The bit-identical 128-row twins of the BF16 prefill flash attention, contiguous and
+# paged (attn_prefill_fa128.cu; ml/ops/prefill_attn_fa128.rs): BF16 QK^T and PV MMAs with FP32
+# scores and online softmax.
+[[family]]
+id = "attn_prefill_fa128"
+description = "Causal BF16 prefill flash attention, 128 query rows per CTA (contiguous and paged)"
+compute = "tensor_core"
+mma = "mma.sync.m16n8k16.bf16"
+kernels = ["attn_prefill_fa128::attn_prefill_fa128", "attn_prefill_fa128::attn_prefill_fa128_paged"]
+rows = [1, 65536]
+pipeline.paged_attention = { in = ["bf16", "bf16", "bf16"], cache = "bf16", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
+op = [{ op = "paged_attention" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/attn_prefill_fa128.cu"]
+
+# 2026-10-03: The scalar BF16 paged prefill attention the paged route runs below 256 rows
+# (attn_prefill_paged.cu; ml/ops/prefill_attn_main_a.rs:192).
+[[family]]
+id = "attn_prefill_paged"
+description = "Causal BF16 paged prefill attention over the cache, 32 query rows per CTA"
+compute = "cuda_core"
+kernels = ["prefill_paged::attn_prefill_paged"]
+rows = [1, 65536]
+pipeline.paged_attention = { in = ["bf16", "bf16", "bf16"], cache = "bf16", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
+op = [{ op = "paged_attention" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/attn_prefill_paged.cu"]
+
+# ---- end of the attention prefill families ------------------------------------------------------
+
 # 2026-09-29: The Mamba2 layer overrides only decode, prefill and alloc_state, so a C > 1 step
 # takes the per-row `decode_multi_seq` default and a K-row verify the per-token `decode_batched`
 # default (crates/model-layers/src/layer/transformer_layer/default_loops.rs:54, :90), even though
