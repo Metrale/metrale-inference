@@ -167,6 +167,9 @@ pub struct DisplayInfo {
     /// 2026-09-28: Bytes of materialised edges per step and the arena they fit in, when the
     /// buffer planner laid the plan out.
     pub bytes: Option<(u64, u64)>,
+    /// 2026-10-02: Each node's pipeline as facts (`crate::pipeline::PlanPipelines::facts`), drawn
+    /// under its box; `None` (or an empty list) draws none.
+    pub pipelines: Vec<Option<Vec<String>>>,
 }
 
 /// 2026-09-28: Why a document was not produced.
@@ -213,7 +216,7 @@ pub fn display(
     if !layers.is_empty() {
         strip::strip(&mut doc, circuit, &layers, opts.width, &g);
     }
-    diagram::diagrams(&mut doc, circuit, plan, opts, &g);
+    diagram::diagrams(&mut doc, circuit, plan, opts, &g, &info.pipelines);
     card::footer(&mut doc, plan, info, opts.width, &g);
     for l in &mut doc.lines {
         fit(l, opts.width, &g);

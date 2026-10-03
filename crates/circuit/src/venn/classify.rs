@@ -125,7 +125,7 @@ fn op_matches(s: &OpSpec, c: &Circuit, n: &Node) -> bool {
                 .iter()
                 .any(|&k| c.nodes[k].id != n.id && names(&s.beside, &c.nodes[k].op))
         });
-    s.op == n.op.base_name()
+    s.names(&n.op)
         && after_ok
         && beside_ok
         && role_ok

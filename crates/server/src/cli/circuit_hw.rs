@@ -99,7 +99,7 @@ pub(crate) fn source(tree: &FsTree) -> impl CircuitSource + '_ {
     CheckpointSource { tree }
 }
 
-fn precision_of(p: CircuitPrecision) -> PrecisionChoice {
+pub(crate) fn precision_of(p: CircuitPrecision) -> PrecisionChoice {
     match p {
         CircuitPrecision::Recipe => PrecisionChoice::Recipe,
         CircuitPrecision::Declared => PrecisionChoice::Declared,
@@ -197,7 +197,7 @@ pub(crate) fn checkpoint_texts(spec: &str, allow_network: bool) -> Result<Checkp
     })
 }
 
-fn registry(tree: &FsTree) -> Result<Registry> {
+pub(crate) fn registry(tree: &FsTree) -> Result<Registry> {
     let text = metrale_circuit::venn::Repo::read(tree, "kernels/DEVICES.toml")
         .map_err(anyhow::Error::msg)?;
     Ok(hardware::parse_devices(&text)?)

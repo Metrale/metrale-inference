@@ -30,6 +30,7 @@ mod circuit_memory_point;
 mod circuit_memory_serve;
 mod circuit_memory_weights;
 mod circuit_paint;
+mod circuit_precision;
 mod circuit_venn;
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
@@ -135,6 +136,11 @@ pub enum CircuitAction {
     /// snapshots, speculative caches) as functions of ISL, OSL, concurrency and slots, the total
     /// against the util budget, and the largest concurrency and prompt that fit.
     Memory(Box<CircuitMemoryArgs>),
+    /// List the precision each node needs: its input formats, the steps inside it (activation
+    /// and weight preparation, multiply operands, accumulation, scales, compute, cache and state
+    /// precision) and its output formats, as the plan on a device requires them and its kernels
+    /// declare them (KERNEL_FAMILIES.toml `pipeline`).
+    Precision(Box<CircuitPrecisionArgs>),
 }
 
 /// `met circuit memory` options. Serve settings come from `--recipe` (`recipes/<id>.yaml`) and the
@@ -192,6 +198,38 @@ pub struct CircuitMemoryArgs {
     /// `met serve` flags, after `--` (e.g. `-- --max-batch-size 16 --kv-cache-dtype fp8`).
     #[arg(last = true)]
     pub serve: Vec<String>,
+}
+
+/// `met circuit precision` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct CircuitPrecisionArgs {
+    /// The model: a checkpoint id (org/name), a checkpoint directory, or a recipe id.
+    #[arg(long)]
+    pub checkpoint: String,
+    /// Formats served: the checkpoint's declared ones, or a recipe's pinned ones.
+    #[arg(long, value_enum, default_value_t = CircuitPrecision::Declared)]
+    pub precision: CircuitPrecision,
+    /// Node ids to list, as a glob (`*` matches any run, dots included), e.g. `l3.moe_ffn.*`;
+    /// every planned node when absent.
+    #[arg(long)]
+    pub node: Option<String>,
+    /// Target device id from kernels/DEVICES.toml whose class plans the model.
+    #[arg(long, default_value = "gb10")]
+    pub hardware: String,
+    /// The forward to plan.
+    #[arg(long, value_enum, default_value_t = CircuitMode::Decode)]
+    pub mode: CircuitMode,
+    /// Padded rows (required for multi_seq and verify).
+    #[arg(long)]
+    pub rows: Option<u64>,
+    /// Fetch config.json / hf_quant_config.json from huggingface.co when the checkpoint is not
+    /// in the local cache.
+    #[arg(long)]
+    pub allow_network: bool,
+    /// Repository root; by default the nearest directory above the working directory that has
+    /// kernels/circuits/INSTANCES.toml.
+    #[arg(long)]
+    pub root: Option<std::path::PathBuf>,
 }
 
 /// `met circuit plan` options.

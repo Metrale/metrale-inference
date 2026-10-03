@@ -18,25 +18,48 @@ fn families(up_unit: &str) -> Families {
     let mut s = String::from(
         "schema = 1\nhardware = \"toy\"\n[roofline]\ndram_gbps = 1.0\nbf16_tflops = 1.0\nfp8_tflops = 1.0\nnvfp4_tflops = 1.0\ncontext_tokens = 1\n",
     );
-    for (id, op, unit) in [
-        ("embed", r#"{ op = "embed" }"#, "compute = \"memory\""),
+    for (id, op, unit, ops) in [
+        (
+            "embed",
+            r#"{ op = "embed" }"#,
+            "compute = \"memory\"",
+            &["embed"][..],
+        ),
         (
             "norm",
             r#"{ op = "rms_norm" }, { op = "final_norm" }"#,
             "compute = \"memory\"",
+            &["rms_norm", "final_norm"][..],
         ),
-        ("up", r#"{ op = "linear", roles = ["gate_up"] }"#, up_unit),
-        ("act", r#"{ op = "silu_mul" }"#, "compute = \"memory\""),
+        (
+            "up",
+            r#"{ op = "linear", roles = ["gate_up"] }"#,
+            up_unit,
+            &["linear"][..],
+        ),
+        (
+            "act",
+            r#"{ op = "silu_mul" }"#,
+            "compute = \"memory\"",
+            &["silu_mul"][..],
+        ),
         (
             "down",
             r#"{ op = "linear", roles = ["down"] }"#,
             "compute = \"cuda_core\"",
+            &["linear"][..],
         ),
-        ("add", r#"{ op = "residual_add" }"#, "compute = \"memory\""),
+        (
+            "add",
+            r#"{ op = "residual_add" }"#,
+            "compute = \"memory\"",
+            &["residual_add"][..],
+        ),
         (
             "lm_head",
             r#"{ op = "lm_head" }"#,
             "compute = \"cuda_core\"",
+            &["lm_head"][..],
         ),
     ] {
         let extra = if id == "norm" {
@@ -44,8 +67,9 @@ fn families(up_unit: &str) -> Families {
         } else {
             ""
         };
+        let pipes = test_toy::pipelines(ops);
         s.push_str(&format!(
-            "[[family]]\nid = \"{id}\"\ndescription = \"toy\"\n{unit}\nkernels = [\"m::{id}\"{extra}]\nrows = [1, 128]\nop = [{op}]\n[[family.point]]\nvalues = {{}}\nhow = \"instantiation\"\nfiles = [\"k.cu\"]\n"
+            "[[family]]\nid = \"{id}\"\ndescription = \"toy\"\n{unit}\nkernels = [\"m::{id}\"{extra}]\nrows = [1, 128]\n{pipes}\nop = [{op}]\n[[family.point]]\nvalues = {{}}\nhow = \"instantiation\"\nfiles = [\"k.cu\"]\n"
         ));
     }
     parse_families(&s).unwrap_or_else(|e| panic!("toy families: {e}"))
