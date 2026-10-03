@@ -440,6 +440,12 @@ pub enum CircuitMode {
     /// The MTP draft head.
     #[value(name = "draft")]
     Draft,
+    /// A prefill pass at offset 0 (contiguous attention); --rows is the bucket's top.
+    #[value(name = "prefill")]
+    Prefill,
+    /// A prefill pass at an offset above 0 (paged attention); --rows is the bucket's top.
+    #[value(name = "prefill_chunk")]
+    PrefillChunk,
 }
 
 /// `--color`.

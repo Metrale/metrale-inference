@@ -112,6 +112,8 @@ pub(crate) fn mode_of(m: CircuitMode) -> metrale_circuit::Mode {
         CircuitMode::MultiSeq => metrale_circuit::Mode::MultiSeq,
         CircuitMode::Verify => metrale_circuit::Mode::Verify,
         CircuitMode::Draft => metrale_circuit::Mode::Draft,
+        CircuitMode::Prefill => metrale_circuit::Mode::Prefill,
+        CircuitMode::PrefillChunk => metrale_circuit::Mode::PrefillChunk,
     }
 }
 

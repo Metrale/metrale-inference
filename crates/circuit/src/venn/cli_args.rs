@@ -44,6 +44,14 @@ impl VennArgs {
                         "--mode verify_batch is not classified (its plans take a row table)".into(),
                     ));
                 }
+                // 2026-10-03: A prefill plan is keyed by a row bucket, which the Venn does not
+                // take yet.
+                Mode::Prefill | Mode::PrefillChunk => {
+                    return Err(VennError::Run(format!(
+                        "--mode {} is not classified (its plans take a row bucket)",
+                        mode.name()
+                    )));
+                }
             };
             if rows.is_empty() || rows.contains(&0) {
                 return Err(VennError::Run(format!(

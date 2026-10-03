@@ -197,7 +197,12 @@ pub enum FuseError {
 pub fn section_of(mode: Mode) -> Section {
     match mode {
         Mode::Draft => Section::Draft,
-        Mode::Decode | Mode::MultiSeq | Mode::Verify | Mode::VerifyBatch => Section::Main,
+        Mode::Decode
+        | Mode::MultiSeq
+        | Mode::Verify
+        | Mode::VerifyBatch
+        | Mode::Prefill
+        | Mode::PrefillChunk => Section::Main,
     }
 }
 

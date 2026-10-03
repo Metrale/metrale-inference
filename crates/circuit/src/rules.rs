@@ -30,6 +30,13 @@ pub enum Mode {
     /// 2026-09-30: `n` sequences' MTP verifies in one forward (`decode_verify_batched`):
     /// `R = Σ k` rows, seq-major, planned for a row table ([`crate::runs::RowTable`]).
     VerifyBatch,
+    /// 2026-10-03: One sequence's prefill pass at offset 0: `T` prompt rows, contiguous
+    /// attention over the pass itself (LIFECYCLE-DESIGN.md 15.4). Planned per row bucket
+    /// ([`crate::buckets`]); `T` is a runtime argument.
+    Prefill,
+    /// 2026-10-03: A prefill pass at an offset above 0 (a later chunk, or the tail pass of a
+    /// split): paged attention over the sequence's KV blocks.
+    PrefillChunk,
 }
 
 impl Mode {
@@ -46,7 +53,17 @@ impl Mode {
             Mode::Verify => "verify",
             Mode::Draft => "draft",
             Mode::VerifyBatch => "verify_batch",
+            Mode::Prefill => "prefill",
+            Mode::PrefillChunk => "prefill_chunk",
         }
+    }
+
+    /// 2026-10-03: The prefill modes, whose plans are keyed by a row bucket.
+    pub const PREFILL: [Mode; 2] = [Mode::Prefill, Mode::PrefillChunk];
+
+    /// 2026-10-03: A prefill mode.
+    pub fn is_prefill(self) -> bool {
+        matches!(self, Mode::Prefill | Mode::PrefillChunk)
     }
 
     /// 2026-09-28: Parse [`Mode::name`].
@@ -54,6 +71,7 @@ impl Mode {
         Mode::ALL
             .into_iter()
             .chain([Mode::VerifyBatch])
+            .chain(Mode::PREFILL)
             .find(|m| m.name() == s)
     }
 }

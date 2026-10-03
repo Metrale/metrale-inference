@@ -162,6 +162,11 @@ impl<'a> Cx<'a> {
             Mode::MultiSeq => self.fixed.batch_meta,
             Mode::Verify => self.fixed.verify_meta,
             Mode::VerifyBatch => self.fixed.verify_batch_meta,
+            // 2026-10-03: A prefill pass uploads its metadata per call; its emitters read it
+            // from the step (`StepEnv::prefill`).
+            Mode::Prefill | Mode::PrefillChunk => anyhow::bail!(
+                "a prefill plan reads its attention metadata from the step, not the build"
+            ),
         })
     }
 

@@ -29,6 +29,8 @@ fn mode_of(m: CircuitMode) -> Mode {
         CircuitMode::MultiSeq => Mode::MultiSeq,
         CircuitMode::Verify => Mode::Verify,
         CircuitMode::Draft => Mode::Draft,
+        CircuitMode::Prefill => Mode::Prefill,
+        CircuitMode::PrefillChunk => Mode::PrefillChunk,
     }
 }
 
