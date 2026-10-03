@@ -59,7 +59,16 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
         }
     }
     // 2026-09-26: `load_all` walks `kernels/<hw>/<model>` in sorted order, so qwen3.6-35b-a3b's
-    // pins come before qwen3.8-27b's.
+    // pins come before qwen3.8-27b's. 2026-10-03: the two Nemotron models' KAT pins come first.
+    let kat = |model: &str, gate: &str, key: &str, value: &str| {
+        (
+            "gb10".to_string(),
+            model.to_string(),
+            gate.to_string(),
+            key.to_string(),
+            value.to_string(),
+        )
+    };
     let moe = |key: &str, value: &str| {
         (
             "gb10".to_string(),
@@ -72,6 +81,42 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
     assert_eq!(
         observed,
         vec![
+            kat(
+                "nemotron-3-nano-30b-a3b",
+                "kat-equality-gate-nemotron-nano",
+                "max_new_tokens",
+                "1024"
+            ),
+            kat(
+                "nemotron-3-nano-30b-a3b",
+                "kat-equality-gate-nemotron-nano",
+                "orders",
+                "2"
+            ),
+            kat(
+                "nemotron-3-nano-30b-a3b",
+                "kat-equality-gate-nemotron-nano",
+                "sample_cap",
+                "64"
+            ),
+            kat(
+                "nemotron-super-120b-a12b",
+                "kat-equality-gate-nemotron-super",
+                "max_new_tokens",
+                "1024"
+            ),
+            kat(
+                "nemotron-super-120b-a12b",
+                "kat-equality-gate-nemotron-super",
+                "orders",
+                "2"
+            ),
+            kat(
+                "nemotron-super-120b-a12b",
+                "kat-equality-gate-nemotron-super",
+                "sample_cap",
+                "64"
+            ),
             moe("concurrencies", "1,2,4,8,16"),
             moe("isls", "128"),
             moe("osl", "1024"),

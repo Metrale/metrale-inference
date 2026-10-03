@@ -50,6 +50,15 @@ const ALL: &[&BenchmarkDescriptor] = &[
     // state reaches another. That one asks whether a replay changes; this one
     // whether the order matters.
     &kat_equality::DESCRIPTOR,
+    // 2026-10-03: The cheap correctness suite of the Nemotron-3 models, one gate id per model
+    // (`kat_equality::nemotron`, `bfcl::mini_descriptors`). Listed in
+    // `gate::coverage::PROMOTION_CANDIDATES` until their BENCH entries are measured.
+    &kat_equality::NEMOTRON_NANO_DESCRIPTOR,
+    &kat_equality::NEMOTRON_SUPER_DESCRIPTOR,
+    &bfcl::MINI_NEMOTRON_NANO_DESCRIPTOR,
+    &bfcl::MINI_NEMOTRON_SUPER_DESCRIPTOR,
+    // 2026-10-03: The mini draw itself, a measurement draw (`gate::coverage::NOT_REQUIRED`).
+    &bfcl::SUBSET_MINI_DESCRIPTOR,
     // 2026-09-26: The same family: does the router matter? The same draw
     // under the synchronous and the asynchronous device router. Listed in
     // `gate::coverage::PROMOTION_CANDIDATES`.

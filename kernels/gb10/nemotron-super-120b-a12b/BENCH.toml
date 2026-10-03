@@ -1,0 +1,43 @@
+# 2026-10-03: The correctness suite of this model: an order-independence (KAT) check and an
+# accuracy check on the BFCL mini draw, each under its own gate id so the model has its own
+# required subject. Both entries are UNMEASURED: measure-then-declare. Three runs per gate set
+# the bounds (KAT: the sample-count pin; BFCL mini: floors cut from the three runs, with every
+# record's dataset_fingerprint naming the draw), then a promotion PR declares them measured and
+# moves both ids from PROMOTION_CANDIDATES to REQUIRED. Speed and energy gates come later, once
+# the model beats vLLM on them.
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+gate = "kat-equality-gate-nemotron-super"
+recipe = "nemotron-3-super/nemotron-3-super-120b-a12b-nvfp4"
+label = "Nemotron-3-Super 120B-A12B (NVFP4)"
+default = true
+status = "unmeasured"
+note = "Order independence on this checkpoint: one BFCL draw capped at 64 samples, two request orders, byte-identical replies, served hermetic at the GB10 util ceiling."
+
+[benchmarks.serve_overrides]
+# 2026-10-03: The GB10 util ceiling, and the closed regime the KAT check requires (all three
+# keys, as `gate::hermetic::CLOSED_KEYS` demands).
+gpu_memory_utilization = "0.85"
+hermetic = "true"
+enable_prefix_caching = "false"
+mtp_gate = "force"
+
+[benchmarks.param_overrides]
+orders = "2"
+sample_cap = "64"
+max_new_tokens = "1024"
+
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4"
+gate = "bfcl-subset-mini-nemotron-super"
+recipe = "nemotron-3-super/nemotron-3-super-120b-a12b-nvfp4"
+label = "Nemotron-3-Super 120B-A12B (NVFP4)"
+default = true
+status = "unmeasured"
+note = "BFCL v4 single-turn on the 192-sample mini draw, run whole, scored open, at the GB10 util ceiling."
+
+[benchmarks.serve_overrides]
+gpu_memory_utilization = "0.85"
