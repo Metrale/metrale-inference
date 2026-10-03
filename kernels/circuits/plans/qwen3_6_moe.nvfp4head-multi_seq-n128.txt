@@ -2,7 +2,7 @@
 # recipe: qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head
 # checkpoint: Qwen/Qwen3.6-35B-A3B-FP8
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on gdn_exact_replay=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 34d32847c99d1e6ebbb195315ff27a6ccd62b339f0662fe64dfe66bd6a3432b5
 groups: 575  launches: 693  edges: 260 fused, 854 materialized
@@ -1694,7 +1694,7 @@ g0574 head [argmax] (host) reference rule=argmax_host writes={token:i32}
 # recipe: qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head
 # checkpoint: Qwen/Qwen3.6-35B-A3B-FP8
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on gdn_exact_replay=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 2372d70deb32bd4451fc7468e03c2b3580d9ed05944ad2b6e9cb00fd2c89b12b
 groups: 575  launches: 15933  edges: 260 fused, 854 materialized
