@@ -110,8 +110,8 @@ fn malformed_declarations_are_refused_at_load() {
             "`m::c`, which is not its kernel",
         ),
         (
-            base().replace("{weight}->bf16", "{wieght}->bf16"),
-            "`{wieght}` is no parameter of the point",
+            base().replace("{weight}->bf16", "{wgt}->bf16"),
+            "`{wgt}` is no parameter of the point",
         ),
         (
             base().replace("pipeline.relu2 = \"uninstantiated\"", "pipeline.relu2 = \"todo\""),
