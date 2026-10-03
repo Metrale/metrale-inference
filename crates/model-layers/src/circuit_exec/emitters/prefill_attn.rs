@@ -30,6 +30,9 @@ use crate::layers::ops;
 mod attn_core;
 #[path = "prefill_attn_route.rs"]
 mod attn_route;
+#[cfg(test)]
+#[path = "prefill_attn_tests.rs"]
+mod prefill_attn_tests;
 
 /// 2026-10-03: `prefill_attn_input_norm`: `ops::rms_norm_residual` over the pass's rows, the
 /// normed rows into the input norm's output edge (`norm_output`) and the input into the residual

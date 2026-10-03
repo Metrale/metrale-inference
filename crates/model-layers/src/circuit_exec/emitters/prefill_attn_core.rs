@@ -407,7 +407,7 @@ impl OpEmitter for PrefillAttention {
         )?;
         k += 1;
 
-        // 2026-10-03: The output gate (`cache_skip_attn_gates.rs:246-258`, `paged.rs:429`).
+        // 2026-10-03: The output gate (`cache_skip_attn_gates.rs:242-252`, `paged.rs:429`).
         let kh = cx.handle(k)?;
         let gate = qg.offset(q_dim as usize * 2);
         cx.push(
