@@ -202,7 +202,7 @@ impl Qwen3AttentionLayer {
 
             ctx.gpu.synchronize(stream)?;
             let moe_us = t0.elapsed().as_micros();
-            tracing::info!("  Attn-MoE: {:.1}ms", moe_us as f64 / 1000.0);
+            tracing::info!("{}", crate::circuit_exec::profile::ffn_line("Attn", moe_us));
 
             ops::residual_add(
                 ctx.gpu,

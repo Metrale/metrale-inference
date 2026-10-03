@@ -152,8 +152,7 @@ impl TransformerModel {
         // buffer at +128 uploaded before capture. `DevicePtr(0)` selects the
         // installed-pair path.
         debug_assert!(k <= 32, "verify seq_slot +128 gap holds K ≤ 32");
-        let seq_slot =
-            self.upload_seq_slot_uniform(seq.adapter_slot, k, meta_base.offset(128), stream)?;
+        let seq_slot = self.step_seq_slot(seq.adapter_slot, k, meta_base.offset(128), stream)?;
 
         debug_assert_eq!(meta_base, self.batch_meta_base());
         let metadata = self.verify_meta(max_blocks, k as u32, seq_slot);

@@ -177,7 +177,13 @@ fn every_rule_kernel_is_compiled_by_a_golden_target() {
 
 #[test]
 fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
-    let plans = common::golden_plans();
+    // 2026-10-03: The LoRA and TP goldens (tests/lora.rs, tests/parallel.rs) are golden plans
+    // too: the LoRA rules, the adapter routes and the TP reduce are selected there.
+    let plans: Vec<(String, String)> = common::golden_plans()
+        .into_iter()
+        .chain(common::lora::plans())
+        .chain(common::parallel::plans())
+        .collect();
     let used: BTreeSet<String> = plans
         .iter()
         .flat_map(|(_, text)| {

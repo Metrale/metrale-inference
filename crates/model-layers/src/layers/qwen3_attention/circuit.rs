@@ -96,7 +96,6 @@ impl CircuitBindings for Qwen3AttentionLayer {
         let mut unmodelled = Vec::new();
         let arms = [
             (self.hc.is_some(), "hyper-connections"),
-            (self.lora.is_some(), "an attention LoRA adapter"),
             (self.mla.is_some(), "multi-head latent attention"),
             (self.qsa.is_some(), "a QSA indexer"),
             (self.v_norm_weight.is_some(), "a V norm"),
@@ -215,10 +214,19 @@ impl CircuitBindings for Qwen3AttentionLayer {
                 .filter(|&r| self.bf16_decode_is_plain(nq, nkv, hd, r, levers.max_decode_seqs))
                 .fold(0u128, |m, r| m | 1 << (r - 1)),
         };
+        let lora = crate::layers::circuit_lora::bind_or_refuse(
+            crate::layers::circuit_lora::Installed {
+                attn: self.lora.as_ref(),
+                ffn: self.ffn.circuit_lora(&mut unmodelled),
+                gdn_out: None,
+            },
+            &mut unmodelled,
+        );
         Some(CircuitLayer {
             mixer: MixerFacts::Attention(facts),
             weights,
             unmodelled,
+            lora,
         })
     }
 }

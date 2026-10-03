@@ -408,6 +408,18 @@ pub trait GpuBackend: Send + Sync {
         Ok(())
     }
 
+    /// 2026-10-03: Create an event that can be timed ([`Self::event_elapsed_ms`]); destroyed
+    /// with [`Self::destroy_event`]. A backend without timed events refuses.
+    fn create_timing_event(&self) -> Result<u64> {
+        anyhow::bail!("create_timing_event: not supported by this backend")
+    }
+
+    /// 2026-10-03: Milliseconds between two recorded timing events, once `end` has completed.
+    /// A backend without timed events refuses.
+    fn event_elapsed_ms(&self, _start: u64, _end: u64) -> Result<f32> {
+        anyhow::bail!("event_elapsed_ms: not supported by this backend")
+    }
+
     /// 2026-09-25: The device address of a page-locked host pointer from
     /// [`Self::alloc_host_pinned`] (`cuMemHostGetDevicePointer_v2` on CUDA), so a
     /// kernel can write into host-visible memory. The default returns an error.

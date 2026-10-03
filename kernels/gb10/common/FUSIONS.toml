@@ -746,6 +746,7 @@ repeat = "once"
 emitter = "w4a16_gemv_qg"
 rows = [1, 1]
 modes = ["decode"]
+when = { lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/qwen3_attention/decode/attention_forward/q_proj.rs:80-118 (K walk differs from w4a16_gemv, k/w4a16_gemv.cu:1447-1449)"
@@ -804,7 +805,7 @@ repeat = "once"
 emitter = "w4a16_gemv_silu_input"
 rows = [1, 1]
 modes = ["decode"]
-when = { gemv_sw = "on" }
+when = { gemv_sw = "on", lora_active = "off" }
 numerics = "differs"
 lever = "decode_fused_silu"
 priority = 200
@@ -954,7 +955,7 @@ repeat = "once"
 emitter = "w4a16_gemv_qg_batch"
 rows = [2, 2]
 modes = ["multi_seq", "verify"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:44-159 (matches w4a16_gemv_qg bit for bit, k/w4a16_gemv.cu:1656-1658)"
@@ -967,7 +968,7 @@ repeat = "once"
 emitter = "w4a16_gemv_qg_batch"
 rows = [3, 3]
 modes = ["multi_seq", "verify"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:44-159"
@@ -1118,7 +1119,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [5, 8]
 modes = ["multi_seq"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (n >= METRALE_SSM_FFN_PREFILL_MIN_N, default 5, ahead of the km arm: :24-40); ml/dense_ffn_prefill_nvfp4.rs:51-55"
@@ -1141,7 +1142,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [5, 8]
 modes = ["multi_seq"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 (the tile path leaves the down scale to metrale_nvfp4_scale_bf16)"
@@ -1163,7 +1164,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [9, 16]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 (a dense FFN above the km band); ml/dense_ffn_prefill_nvfp4.rs:51-55"
@@ -1186,7 +1187,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [9, 16]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
@@ -1208,7 +1209,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [17, 32]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:56-60"
@@ -1231,7 +1232,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [17, 32]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:56-60,272-286,330-372"
@@ -1253,7 +1254,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [33, 64]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:61-66 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:232-235)"
@@ -1276,7 +1277,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [33, 64]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:61-66,272-286,330-372"
@@ -1298,7 +1299,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [65, 128]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:67-68; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe)"
@@ -1320,7 +1321,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [65, 128]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/ops/nvfp4_mmq.rs:175-183 (the pipe applies the down scale in its store, so no metrale_nvfp4_scale_bf16)"
@@ -2233,7 +2234,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [5, 16]
 modes = ["multi_seq"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
@@ -2257,7 +2258,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [5, 16]
 modes = ["multi_seq"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
@@ -2279,7 +2280,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [17, 32]
 modes = ["multi_seq"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
@@ -2303,7 +2304,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [17, 32]
 modes = ["multi_seq"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
@@ -2325,7 +2326,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [33, 64]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
@@ -2349,7 +2350,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [33, 64]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
@@ -2371,7 +2372,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [65, 128]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
@@ -2394,7 +2395,7 @@ repeat = "once"
 emitter = "dense_ffn_mmq"
 rows = [65, 128]
 modes = ["multi_seq", "verify_batch"]
-when = { row_tiers = "by_rows" }
+when = { row_tiers = "by_rows", lora_active = "off" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183"
@@ -3156,3 +3157,203 @@ modes = ["prefill", "prefill_chunk"]
 numerics = "reference"
 priority = 10
 cite = "me/prefill_b/finalize_last.rs:192-202 (the pass returns the logits; the scheduler samples on the host)"
+# ---- FEATURES workstream (CIRCUIT-FEAT), 2026-10-03: LoRA adapters (LIFECYCLE-DESIGN.md 15.10) ----
+# The `lora_shrink`/`lora_expand` nodes exist only in a circuit `metrale_circuit::lora::adapt` has
+# rewritten (a serve with adapters), so no rule of this section can select in a plan without them.
+# Legacy's routing: attention q/k/v/o read each row's adapter slot (`lora_bgmv`, one row and
+# multi-row alike; at one row legacy runs the active adapter as the GEMV pair, which the bgmv
+# kernel reproduces operation for operation, k/lora_bgmv.cu:17-20); the dense FFN's gate, up and
+# down and the GatedDeltaNet out_proj always apply the ACTIVE adapter's pair
+# (`ops::lora_delta::apply_lora_delta`, ml/ops/lora_delta.rs:199): one GEMV-pair-and-fold per row up
+# to METRALE_LORA_GEMV_MAX_M rows (48, ml/ops/lora_delta.rs:170), the tensor-core GEMM with the
+# fused expand-and-fold above (not ruled yet: LoRA phase 1 serves at most 4 rows a step). The MTP
+# head is never adapted.
+
+[[rule]]
+id = "lora_q_bgmv"
+pattern = [{ op = "lora_shrink", local = "q_lora_a" }, { op = "lora_expand", local = "q_lora_b" }]
+kernels = [{ module = "lora_bgmv", func = "lora_bgmv_shrink" }, { module = "lora_bgmv", func = "lora_bgmv_expand_fold" }]
+repeat = "once"
+emitter = "lora_bgmv"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+when = { lora_active = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/decode/attention_forward/lora.rs:104 (one row); ml/qwen3_attention/trait_impl/multi_seq/qkv/post.rs:46 (multi-sequence and verify rows, bgmv only); ml/ops/lora_delta.rs:347"
+
+[[rule]]
+id = "lora_k_bgmv"
+pattern = [{ op = "lora_shrink", local = "k_lora_a" }, { op = "lora_expand", local = "k_lora_b" }]
+kernels = [{ module = "lora_bgmv", func = "lora_bgmv_shrink" }, { module = "lora_bgmv", func = "lora_bgmv_expand_fold" }]
+repeat = "once"
+emitter = "lora_bgmv"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+when = { lora_active = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/decode/attention_forward/lora.rs:18 (one row); ml/qwen3_attention/trait_impl/multi_seq/qkv/post.rs:46 (multi-sequence and verify rows, bgmv only); ml/ops/lora_delta.rs:347"
+
+[[rule]]
+id = "lora_v_bgmv"
+pattern = [{ op = "lora_shrink", local = "v_lora_a" }, { op = "lora_expand", local = "v_lora_b" }]
+kernels = [{ module = "lora_bgmv", func = "lora_bgmv_shrink" }, { module = "lora_bgmv", func = "lora_bgmv_expand_fold" }]
+repeat = "once"
+emitter = "lora_bgmv"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+when = { lora_active = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/decode/attention_forward/lora.rs:18 (one row); ml/qwen3_attention/trait_impl/multi_seq/qkv/post.rs:46 (multi-sequence and verify rows, bgmv only); ml/ops/lora_delta.rs:347"
+
+[[rule]]
+id = "lora_o_bgmv"
+pattern = [{ op = "lora_shrink", local = "o_lora_a" }, { op = "lora_expand", local = "o_lora_b" }]
+kernels = [{ module = "lora_bgmv", func = "lora_bgmv_shrink" }, { module = "lora_bgmv", func = "lora_bgmv_expand_fold" }]
+repeat = "once"
+emitter = "lora_bgmv"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+when = { lora_active = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_attention/decode/attention_forward_oproj.rs:110 (one row); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:394 (multi-sequence and verify rows, bgmv only); ml/ops/lora_delta.rs:347"
+
+[[rule]]
+id = "lora_gate_up_pair_per_row"
+pattern = [{ op = "lora_shrink", local = "gate_up_lora_a" }, { op = "lora_expand", local = "gate_up_lora_b" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }, { module = "gemv", func = "dense_gemv_bf16" }, { module = "residual_add", func = "bf16_scaled_add" }, { module = "gemv", func = "dense_gemv_bf16" }, { module = "gemv", func = "dense_gemv_bf16" }, { module = "residual_add", func = "bf16_scaled_add" }]
+repeat = "per_row"
+emitter = "lora_pair"
+rows = [1, 48]
+modes = ["decode", "multi_seq", "verify"]
+when = { lora_active = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_overlays.rs:80 (the active adapter's gate pair, then its up pair, onto the dual GEMV's outputs before the activation); ml/ops/lora_delta.rs:199 (rows 2..=48 run the one-row pair per row)"
+
+[[rule]]
+id = "lora_down_pair_per_row"
+pattern = [{ op = "lora_shrink", local = "down_lora_a" }, { op = "lora_expand", local = "down_lora_b" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }, { module = "gemv", func = "dense_gemv_bf16" }, { module = "residual_add", func = "bf16_scaled_add" }]
+repeat = "per_row"
+emitter = "lora_pair"
+rows = [1, 48]
+modes = ["decode", "multi_seq", "verify"]
+when = { lora_active = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_overlays.rs:116 (the active adapter's down pair over the materialized silu(gate)*up); ml/ops/lora_delta.rs:199 (rows 2..=48 run the one-row pair per row)"
+
+[[rule]]
+id = "lora_out_pair_per_row"
+pattern = [{ op = "lora_shrink", local = "out_lora_a" }, { op = "lora_expand", local = "out_lora_b" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }, { module = "gemv", func = "dense_gemv_bf16" }, { module = "residual_add", func = "bf16_scaled_add" }]
+repeat = "per_row"
+emitter = "lora_pair"
+rows = [1, 48]
+modes = ["decode", "multi_seq", "verify"]
+when = { lora_active = "on" }
+numerics = "reference"
+priority = 100
+cite = "ml/qwen3_ssm/lora.rs:72 (the active adapter's out_proj pair, after the TP all-reduce); ml/ops/lora_delta.rs:199 (rows 2..=48 run the one-row pair per row)"
+
+[[rule]]
+id = "lora_q_gemv_sw_1row"
+pattern = [{ op = "linear", role = "q", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_sw" }]
+repeat = "once"
+emitter = "w4a16_decode_gemv"
+rows = [1, 1]
+modes = ["decode"]
+when = { gemv_sw = "on", lora_active = "on" }
+numerics = "reference"
+priority = 5
+cite = "ml/qwen3_attention/decode/attention_forward/q_proj.rs:80-96 (a q adapter splits the fused GEMV+deinterleave into the GEMV, the q fold and deinterleave_qg)"
+
+[[rule]]
+id = "lora_q_batch2"
+pattern = [{ op = "linear", role = "q", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_batch2" }]
+repeat = "once"
+emitter = "w4a16_gemv_batch"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows", lora_active = "on" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:133,146-157 (gated with a q adapter: the plain batch2 GEMV, then ms_qkv_apply_lora and ms_qkv_deinterleave_q, post.rs:21)"
+
+[[rule]]
+id = "lora_q_batch3"
+pattern = [{ op = "linear", role = "q", weight = "nvfp4/g16" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv_batch3" }]
+repeat = "once"
+emitter = "w4a16_gemv_batch"
+rows = [3, 3]
+modes = ["multi_seq", "verify"]
+when = { row_tiers = "by_rows", lora_active = "on" }
+numerics = "reference"
+priority = 20
+cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:44,57-69 (gated with a q adapter: the plain batch3 GEMV, then the fold and the per-row split)"
+
+# ---- FEATURES workstream (CIRCUIT-FEAT), 2026-10-03: tensor parallelism (crates/circuit/src/parallel.rs) ----
+# The `all_reduce` nodes exist only in a rank's circuit (`parallel::with_reduces`), after the
+# attention `o` and the GatedDeltaNet `out_proj`. The sum runs on the communicator's own stream
+# (`CommBackend::all_reduce_async`: an event fork onto the comm stream, the compute stream waits
+# for it), in place over the partial output, as legacy reduces `attn_out` and the out_proj output.
+[[rule]]
+id = "tp_all_reduce"
+pattern = [{ op = "all_reduce" }]
+kernels = []
+repeat = "once"
+copies = "once"
+emitter = "all_reduce"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_attention/trait_impl/decode_inner.rs:112-117 (attn_out, h*2 bytes); ml/qwen3_attention/trait_impl/multi_seq/mod.rs:95-100 (n*h*2); ml/qwen3_ssm/trait_prefill_helper.rs:33-48 (the out_proj output); crates/comm/src/nccl_backend/comm_impl.rs:47-90"
+
+# 2026-10-03: The vocabulary-parallel BF16 head (`parallel::shard_head`), under TP or EP: legacy's
+# `lmhead_vocab_shard` zeroes the logits, runs its slice, and all-reduces in place at 1 row and at
+# 2..=8 rows (the batched GEMV); wider, every rank runs the whole head and nothing is reduced.
+[[rule]]
+id = "par_lm_head_shard_1row"
+pattern = [{ op = "lm_head", local = "lm_head_vocab_shard", weight = "bf16", keep = true }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "once"
+copies = "once"
+emitter = "lm_head_vocab_shard"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "mm/impl_a3_lm_head.rs:380-398 (memset the logits, the slice's dense_gemv, all_reduce_async); mm/impl_a3_lm_head.rs:304-316 (lmhead_vocab_shard: rank x vocab/world)"
+
+[[rule]]
+id = "par_lm_head_shard_batchm"
+pattern = [{ op = "lm_head", local = "lm_head_vocab_shard", weight = "bf16", keep = true }]
+kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm" }]
+repeat = "once"
+copies = "once"
+emitter = "lm_head_vocab_shard"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "mm/impl_a3_lm_head.rs:150-202 (2..=DENSE_GEMV_BATCHM_DECODE_MAX_M rows: memset, the slice's batched GEMV with full-vocab row stride, all_reduce_async)"
+
+[[rule]]
+id = "par_lm_head_reduce_unsharded"
+pattern = [{ op = "all_reduce", local = "lm_head_all_reduce" }]
+kernels = []
+repeat = "once"
+emitter = "all_reduce_skipped"
+rows = [9, 128]
+modes = ["multi_seq"]
+numerics = "reference"
+priority = 20
+cite = "mm/impl_a3_lm_head.rs:268-280 (above 8 rows the BF16 head runs dense_gemm over the whole vocabulary on every rank: nothing to reduce)"

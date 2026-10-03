@@ -6,6 +6,7 @@
 //! Owner: model-layers.
 //! Invariants: none beyond the types.
 
+mod circuit_lora;
 pub mod dense_ffn;
 pub mod ep_dispatch;
 pub mod fp8_calibration;

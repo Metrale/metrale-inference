@@ -138,6 +138,7 @@ pub(super) fn layer_binding(circuit: &Circuit, i: usize, attn_idx: usize) -> Cir
         mixer,
         weights: w,
         unmodelled: Vec::new(),
+        lora: None,
     }
 }
 
@@ -185,6 +186,7 @@ pub(super) fn draft_binding(circuit: &Circuit) -> CircuitLayer {
         }),
         weights: w,
         unmodelled: Vec::new(),
+        lora: None,
     }
 }
 
@@ -269,6 +271,8 @@ pub(super) fn fixed(attn_layers: usize) -> Fixed {
         },
         block_size: 16,
         cache_stride: 4096,
+        lora: None,
+        comm: None,
     }
 }
 

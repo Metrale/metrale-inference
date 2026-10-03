@@ -348,6 +348,10 @@ pub struct CircuitDiffArgs {
     /// scheduler takes for a prompt that fits the arena (it splits the tail itself).
     #[arg(long, value_delimiter = ',', requires = "prefill")]
     pub prefill_chunk: Vec<usize>,
+    /// Spill and restore one sequence halfway through its decode (the scheduler's swap-out and
+    /// resume) under every forward, and compare the records and every step's logits.
+    #[arg(long)]
+    pub swap: bool,
     /// The serve the model is built with. `--forward` is ignored: the diff runs every forward.
     #[command(flatten)]
     pub serve: ServeArgs,

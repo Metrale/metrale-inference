@@ -225,8 +225,7 @@ impl TransformerModel {
         // or returns `DevicePtr(0)` (the installed-pair path) when no LoRA pool is
         // loaded or the request resolves to the active adapter (`adapter_slot ==
         // -1` resolves to active).
-        let seq_slot =
-            self.upload_seq_slot_uniform(seq.adapter_slot, 1, meta_base.offset(128), stream)?;
+        let seq_slot = self.step_seq_slot(seq.adapter_slot, 1, meta_base.offset(128), stream)?;
 
         let attn_metadata = AttnMetadataDev {
             max_blocks_per_seq: max_blocks,
@@ -305,7 +304,12 @@ impl TransformerModel {
         };
 
         // 2026-09-25: Profile mode: per-layer synchronised decode for a timing breakdown.
+        // 2026-10-03: Under `--forward circuit`, the decode program timed per group
+        // (`impl_circuit_profile.rs`).
         if let (true, Some(token)) = (self.profile, input.host()) {
+            if let Some(exec) = self.circuit.read().as_ref() {
+                return self.circuit_profiled(exec, token, hidden, seq, &ctx, stream);
+            }
             return self.decode_profiled(token, hidden, residual, seq, &mut kv_cache, &ctx, stream);
         }
         // 2026-09-25: Graph path: the periodic SSM normalization runs here, outside capture.

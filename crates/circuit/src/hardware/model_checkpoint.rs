@@ -76,6 +76,9 @@ pub const POLICY_SOURCES: [(&str, &str); 12] = [
     (
         "gdn_exact_replay",
         "off: the cold prefill arm; the engine plans the after-restore arm as well (2026-10-03)",
+        "lora_active",
+        "off: a serve without --lora-adapter; with adapters the circuit is rewritten \
+         (crates/circuit/src/lora.rs) and planned under on (2026-10-03)",
     ),
 ];
 
@@ -205,6 +208,7 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         ("rms_norm_act_quant", "off"),
         ("activation_quantization", "adaptive"),
         ("gdn_exact_replay", "off"),
+        ("lora_active", "off"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))

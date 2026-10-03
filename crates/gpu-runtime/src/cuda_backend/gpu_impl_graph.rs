@@ -20,10 +20,10 @@ use anyhow::{Result, bail};
 
 use super::{
     MetraleCudaBackend, cuCtxGetDevice, cuCtxSetCurrent, cuDeviceGetAttribute, cuEventCreate,
-    cuEventDestroy_v2, cuEventQuery, cuEventRecord, cuEventSynchronize, cuGraphDestroy,
-    cuGraphExecDestroy, cuGraphLaunch, cuMemAllocHost_v2, cuMemFreeHost, cuMemGetInfo_v2,
-    cuMemsetD8Async, cuStreamBeginCapture, cuStreamCreate, cuStreamEndCapture, cuStreamSynchronize,
-    cuStreamWaitEvent,
+    cuEventDestroy_v2, cuEventElapsedTime, cuEventQuery, cuEventRecord, cuEventSynchronize,
+    cuGraphDestroy, cuGraphExecDestroy, cuGraphLaunch, cuMemAllocHost_v2, cuMemFreeHost,
+    cuMemGetInfo_v2, cuMemsetD8Async, cuStreamBeginCapture, cuStreamCreate, cuStreamEndCapture,
+    cuStreamSynchronize, cuStreamWaitEvent,
 };
 use crate::gpu::{DevicePtr, GraphHandle};
 
@@ -271,6 +271,26 @@ impl MetraleCudaBackend {
             600 => Ok(false),
             status => bail!("cuEventQuery failed: status {status}"),
         }
+    }
+
+    /// 2026-10-03: An event with timing on (flag 0, `CU_EVENT_DEFAULT`).
+    pub(super) fn create_timing_event_cu(&self) -> Result<u64> {
+        let mut event: u64 = 0;
+        let status = unsafe { cuEventCreate(&mut event, 0) };
+        if status != 0 {
+            bail!("cuEventCreate (timing) failed: status {status}");
+        }
+        Ok(event)
+    }
+
+    /// 2026-10-03: `cuEventElapsedTime` between two completed timing events.
+    pub(super) fn event_elapsed_ms_cu(&self, start: u64, end: u64) -> Result<f32> {
+        let mut ms = 0f32;
+        let status = unsafe { cuEventElapsedTime(&mut ms, start, end) };
+        if status != 0 {
+            bail!("cuEventElapsedTime failed: status {status}");
+        }
+        Ok(ms)
     }
 
     pub(super) fn destroy_event_cu(&self, event: u64) -> Result<()> {

@@ -853,10 +853,16 @@ rows = [1, 65536]
 pipeline.linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 pipeline.router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
+# 2026-10-03 (CIRCUIT-FEAT): The LoRA pair's shrink and expand GEMVs (ml/ops/lora_delta.rs:199);
+# the expand's delta is rounded to BF16 and folded by `bf16_scaled_add` (family `scaled_add`).
+pipeline.lora_shrink = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
+pipeline.lora_expand = { in = ["bf16", "bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 op = [
   { op = "linear", weight = ["bf16"], activation = ["bf16"] },
   { op = "lm_head", weight = ["bf16"], activation = ["bf16"] },
   { op = "router", weight = ["bf16"], activation = ["bf16"] },
+  { op = "lora_shrink", weight = ["bf16"], activation = ["bf16"] },
+  { op = "lora_expand", weight = ["bf16"], activation = ["bf16"] },
 ]
 [[family.point]]
 values = {}
@@ -1947,3 +1953,59 @@ rows_above = 8
 cite = "crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115"
 holds = "for i in 0..n {"
 note = "BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row"
+
+# ---- FEATURES workstream (CIRCUIT-FEAT), 2026-10-03: LoRA adapters (crates/circuit/src/lora.rs) ----
+
+[[family]]
+id = "lora_bgmv"
+description = "Batched LoRA delta, one adapter slot per row: shrink x . A_s, then expand and fold y += scale_s . bf16(xa . B_s)"
+# 2026-10-03: Scalar FMA reductions, 64 threads per output (lora_bgmv.cu:9-11); per row the
+# operations of the GEMV pair at m = 1, built --fmad=false (lora_bgmv.cu:17-20).
+compute = "cuda_core"
+kernels = ["lora_bgmv::lora_bgmv_shrink", "lora_bgmv::lora_bgmv_expand_fold"]
+rows = [1, 65536]
+pipeline.lora_shrink = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
+pipeline.lora_expand = { in = ["bf16", "bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
+op = [
+  { op = "lora_shrink", weight = ["bf16"], activation = ["bf16"] },
+  { op = "lora_expand", weight = ["bf16"], activation = ["bf16"] },
+]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/lora_bgmv.cu"]
+
+[[family]]
+id = "scaled_add"
+description = "BF16 o += scale . delta in FP32, rounded once (the LoRA pair's fold)"
+compute = "memory"
+kernels = ["residual_add::bf16_scaled_add"]
+rows = [1, 65536]
+pipeline.lora_expand = { in = ["bf16", "bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
+op = [{ op = "lora_expand", weight = ["bf16"], activation = ["bf16"] }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/residual_add.cu"]
+
+
+# ---- FEATURES workstream (CIRCUIT-FEAT), 2026-10-03: tensor parallelism ----
+
+[[family]]
+id = "collective"
+description = "A sum over the tensor-parallel ranks on the communicator's stream (NCCL), in place"
+# 2026-10-03: At two ranks the backend sends, receives and adds with `bf16_add_inplace` (FP32 sum,
+# one BF16 rounding: crates/comm/src/nccl_backend.rs:352-432); NCCL's ring above.
+compute = "memory"
+# 2026-10-03: The head's in-place reduce has no output edge (the logits stay the head's), and the
+# skipped one (above 8 rows) moves nothing; `ep_reduce` sums the routed MoE output.
+emitters = ["all_reduce", "all_reduce_skipped", "ep_reduce"]
+rows = [1, 65536]
+pipeline.all_reduce = { in = ["bf16"], reduce = "f32", out = ["bf16"] }
+pipeline."all_reduce after lm_head" = { in = ["bf16"], reduce = "f32", out = [] }
+pipeline.ep_reduce = { in = ["bf16"], reduce = "f32", out = ["bf16"] }
+op = [{ op = "all_reduce" }, { op = "ep_reduce" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["crates/comm/src/nccl_backend/comm_impl.rs"]

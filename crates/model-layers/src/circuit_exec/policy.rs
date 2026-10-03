@@ -38,8 +38,14 @@ pub fn kv_dtype_name(d: KvCacheDtype) -> Result<&'static str> {
 }
 
 /// 2026-09-28: The policy of this process: `kv_cache_dtype` and `lm_head_dtype` come from the
-/// model being built, the rest from the process-wide switches.
-pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &str) -> Policy {
+/// model being built, the rest from the process-wide switches. 2026-10-03: `lora_active` from
+/// the model too: whether it holds a LoRA pool.
+pub fn live_policy(
+    levers: &ModelLevers,
+    kv_cache_dtype: &str,
+    lm_head_dtype: &str,
+    lora_active: bool,
+) -> Policy {
     let tiers = match row_tiers() {
         RowTiers::ByRows => "by_rows",
         RowTiers::Exact => "exact",
@@ -79,6 +85,11 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
         // 2026-10-03: The GDN prefill arm after a prefix-cache restore; every plan but a prefill
         // one is planned off, and the prefill build plans each arm (`prefill::EXACT_REPLAY`).
         (super::prefill::EXACT_REPLAY.to_string(), "off".to_string()),
+        // ---- FEATURES workstream (CIRCUIT-FEAT), 2026-10-03 ----
+        (
+            metrale_circuit::lora::ACTIVE_SETTING.to_string(),
+            on_off(lora_active),
+        ),
     ]);
     Policy {
         opt_in_levers: Default::default(),
@@ -136,6 +147,18 @@ pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 16] = [
     ("METRALE_W4A4_PROJ_AUDIT", "ops/w4a4_proj.rs"),
 ];
 
+// ---- FEATURES workstream (CIRCUIT-FEAT), 2026-10-03 ----
+/// 2026-10-03: LoRA levers whose set values the LoRA rules do not encode (FUSIONS.toml's LoRA
+/// section encodes the defaults: every delta applied, the 48-row GEMV band), refused when present.
+pub const LORA_ENV_SWITCHES: [(&str, &str); 3] = [
+    ("METRALE_LORA_NO_APPLY", "ops/lora_delta.rs (lora_no_apply)"),
+    ("METRALE_LORA_NO_FFN", "ops/lora_delta.rs (lora_no_ffn)"),
+    (
+        "METRALE_LORA_GEMV_MAX_M",
+        "ops/lora_delta.rs (lora_gemv_max_m)",
+    ),
+];
+
 /// 2026-09-28: Switches that change legacy decode which no rule reads, when they are set.
 /// 2026-10-03: The exact MTP verify chain changes only the verify, so it is refused only by a
 /// build that compiles verify programs (`verify`); a build without them leaves the verify to
@@ -146,6 +169,15 @@ pub fn unmodelled_switches(levers: &ModelLevers, verify: bool) -> Vec<String> {
         .filter(|(var, _)| std::env::var_os(var).is_some())
         .map(|(var, reader)| format!("{var} (read in {reader})"))
         .collect();
+    out.extend(
+        LORA_ENV_SWITCHES
+            .iter()
+            .filter(|(var, _)| std::env::var_os(var).is_some())
+            .map(|(var, reader)| format!("{var} (read in {reader})")),
+    );
+    if levers.lora_eager {
+        out.push("eager decode under LoRA (METRALE_LORA_EAGER)".to_string());
+    }
     if verify && crate::layers::qwen3_ssm::verify_exact_enabled() {
         out.push(
             "the exact MTP verify chain (--exact-verify, or a fixed GDN activation format)"

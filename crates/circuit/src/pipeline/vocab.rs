@@ -43,7 +43,12 @@ const ATTENTION: &[StepKind] = &[
 /// 2026-10-02: The steps of `op`'s pipeline, in order.
 pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
     match op {
-        OpKind::Linear(_) | OpKind::LmHead | OpKind::Router | OpKind::ExpertDown => PROJECTION,
+        OpKind::Linear(_)
+        | OpKind::LmHead
+        | OpKind::Router
+        | OpKind::ExpertDown
+        | OpKind::LoraShrink
+        | OpKind::LoraExpand => PROJECTION,
         OpKind::ExpertGateUp => GATHERED_PROJECTION,
         OpKind::Embed => &[StepKind::Gather],
         OpKind::RmsNorm
@@ -65,7 +70,7 @@ pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
         OpKind::StateSnapshot => &[StepKind::State],
         OpKind::TopK => &[StepKind::Score],
         OpKind::Blend => &[StepKind::Scatter, StepKind::Combine],
-        OpKind::EpReduce => &[StepKind::Reduce],
+        OpKind::EpReduce | OpKind::AllReduce => &[StepKind::Reduce],
         OpKind::Argmax => &[StepKind::Compare],
     }
 }

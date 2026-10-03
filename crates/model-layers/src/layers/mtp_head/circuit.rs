@@ -139,6 +139,9 @@ impl MtpHead {
                 mixer: MixerFacts::Attention(facts),
                 weights,
                 unmodelled,
+                // 2026-10-03: Legacy never adapts the MTP head (`install_lora_layers` walks the
+                // target's layers only).
+                lora: None,
             },
             k_pool: cache.k_pool_ptr(self.attn_layer_idx),
             v_pool: cache.v_pool_ptr(self.attn_layer_idx),

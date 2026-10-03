@@ -56,6 +56,11 @@ pub struct Fixed {
     pub block_size: u32,
     /// 2026-09-28: `PagedKvCache::cache_stride`.
     pub cache_stride: u64,
+    /// 2026-10-03: The LoRA launches' fixed buffers (`emitters::lora`); `None` without adapters.
+    pub lora: Option<super::emitters::lora::LoraFixed>,
+    /// 2026-10-03: The model's communicator, which the `all_reduce` groups sum over; `None`
+    /// without tensor parallelism.
+    pub comm: Option<std::sync::Arc<dyn metrale_comm::CommBackend>>,
 }
 
 /// 2026-09-29: The MTP draft head's fixed buffers.

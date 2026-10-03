@@ -22,6 +22,7 @@ pub mod bindings;
 pub mod compile;
 mod draft_rows;
 mod emitters;
+mod features;
 pub mod fixed;
 pub mod kernels;
 pub mod policy;
@@ -30,6 +31,7 @@ pub mod program;
 pub mod routes;
 pub mod sources;
 pub mod state_bind;
+pub mod swap;
 pub mod verify_batch;
 
 use anyhow::{Context, Result, bail};
@@ -43,6 +45,7 @@ pub use bindings::{
     HeadBinding, MixerFacts, RopeFacts, WeightSlot,
 };
 pub use compile::{DraftFixed, Fixed};
+pub use emitters::{lora, profile};
 pub use program::{DraftPrograms, DraftRunner, GdnState, Program, StepEnv};
 
 /// 2026-09-28: Which rules a build may select.
@@ -102,6 +105,17 @@ pub struct Boot<'a> {
     /// 2026-10-03: The widest prefill pass to compile programs for; `None` builds none (the
     /// serve's prefill then runs the legacy layers, disclosed).
     pub prefill_max_tokens: Option<u64>,
+    /// 2026-10-03: `--profile`: make the decode program's timing events
+    /// ([`profile::DecodeProfile`]).
+    pub profile: bool,
+    /// 2026-10-03: The LoRA adapters the circuit is rewritten with (`metrale_circuit::lora`);
+    /// `None` without adapters, which leaves the circuit and its plans untouched.
+    pub lora: Option<lora::LoraBoot>,
+    /// 2026-10-03: The sequence swap's binding (`swap`); `None` builds no runner.
+    pub swap: Option<swap::SwapBoot>,
+    /// 2026-10-03: This process's tensor- or expert-parallel rank (`metrale_circuit::parallel`);
+    /// `None` on one GPU.
+    pub parallel: Option<metrale_circuit::parallel::Parallel>,
 }
 
 /// 2026-09-28: A built executor: the decode program and the workspace it runs in.
@@ -135,6 +149,10 @@ pub struct CircuitExec {
     pub fusions: Fusions,
     workspace: DevicePtr,
     workspace_bytes: u64,
+    /// 2026-10-03: The decode program's timing events under `--profile`; `None` otherwise.
+    pub profile: Option<profile::DecodeProfile>,
+    /// 2026-10-03: `kv_swap_out` / `kv_swap_in` of a sequence (`swap`); `None` without a binding.
+    pub swap: Option<swap::SwapRunner>,
 }
 
 impl CircuitExec {
@@ -143,8 +161,9 @@ impl CircuitExec {
         let mut served = b.instance.clone();
         let from_checkpoint = sources::checkpoint_shape(b.config_json, b.config.vocab_size as u64)?;
         served.shape = sources::served_shape(&b.instance.shape, &from_checkpoint)?;
+        features::rank_shape(&b, &mut served.shape)?;
         let src = sources::sources(&served)?;
-        let loaded = match &served.precision {
+        let mut loaded = match &served.precision {
             // 2026-09-28: The served model's own policy: its parsed quantization_config under
             // the published tier and kernel capabilities, with the instance's engine formats.
             metrale_circuit::PrecisionSpec::Policy { engine, .. } => {
@@ -161,6 +180,7 @@ impl CircuitExec {
             }
             metrale_circuit::PrecisionSpec::Table(_) => metrale_circuit::load(&served, src)?,
         };
+        features::overlay(&b, &mut loaded.circuit)?;
         let unmodelled = policy::unmodelled_switches(
             b.levers,
             !b.verify_rows.is_empty() || b.verify_batch_rows.is_some(),
@@ -308,6 +328,7 @@ impl CircuitExec {
         }
         let mut programs = programs.into_iter();
         let (decode, plan) = programs.next().context("no decode program")?;
+        let (profile, swap) = features::build(&b, (&loaded.circuit, &plan, &decode), workspace)?;
         let (draft, rest): (Vec<_>, Vec<_>) = programs.partition(|(p, _)| p.mode == Mode::Draft);
         let (multi_seq, verify): (Vec<_>, Vec<_>) = rest
             .into_iter()
@@ -391,6 +412,8 @@ impl CircuitExec {
             prefill,
             rules_digest: loaded.rules_digest,
             fusions: b.fusions,
+            profile,
+            swap,
             workspace,
             workspace_bytes,
         })

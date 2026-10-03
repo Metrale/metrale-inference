@@ -74,6 +74,11 @@ impl DenseFfnLayer {
         Ok(())
     }
 
+    /// 2026-10-03: The installed adapter pairs, for the circuit binding (`circuit_lora.rs`).
+    pub(crate) fn lora_weights(&self) -> Option<&ops::lora_delta::LoraFfnWeights> {
+        self.lora.as_ref()
+    }
+
     /// 2026-09-25: `gate_out += ΔW_gate · x` and `up_out += ΔW_up · x` for `m` rows. Call after the
     /// gate/up projections and before the activation. No launches when the layer has no
     /// adapter or `METRALE_LORA_NO_FFN=1`.

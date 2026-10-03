@@ -247,6 +247,10 @@ name = "lora_apply_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "lora_bgmv_pair_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "metal_qwen35_inference"
 path = "examples/metal_qwen35_inference/main.rs"
 required-features = ["metal-example"]

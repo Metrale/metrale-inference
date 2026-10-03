@@ -80,7 +80,7 @@ impl Qwen3SsmLayer {
             let moe_out = self.ffn.forward(normed2, ctx, stream)?;
             ctx.gpu.synchronize(stream)?;
             let moe_us = t0.elapsed().as_micros();
-            tracing::info!("  SSM-MoE: {:.1}ms", moe_us as f64 / 1000.0);
+            tracing::info!("{}", crate::circuit_exec::profile::ffn_line("SSM", moe_us));
 
             ops::residual_add(
                 ctx.gpu,

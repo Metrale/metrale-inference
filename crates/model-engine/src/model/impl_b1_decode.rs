@@ -95,10 +95,8 @@ impl TransformerModel {
             self.gpu.synchronize(stream)?;
             let (vals, norm) = self.readback_f32(hidden, 8)?;
             tracing::info!(
-                "DIAG tok={} after_embed (FP32): norm={:.4} vals={:.4?}",
-                seq.seq_len,
-                norm,
-                &vals[..4]
+                "{}",
+                super::trait_impl::diag_embed_line(seq.seq_len, norm, &vals)
             );
         }
 
@@ -128,12 +126,8 @@ impl TransformerModel {
                 let (vals, norm) = self.readback_f32(hidden, 8)?;
                 let lt = self.config.layer_type(i);
                 tracing::info!(
-                    "DIAG tok={} after_L{} ({:?}) [FP32]: norm={:.4} vals={:.4?}",
-                    seq.seq_len,
-                    i,
-                    lt,
-                    norm,
-                    &vals[..4]
+                    "{}",
+                    super::trait_impl::diag_layer_line(seq.seq_len, i, lt, norm, &vals)
                 );
             }
         }
@@ -152,28 +146,21 @@ impl TransformerModel {
             let v = self.config.vocab_size;
             let mut logit_buf = vec![0u8; v * 2];
             self.gpu.copy_d2h(logits_ptr, &mut logit_buf)?;
-            let logits: Vec<f32> = logit_buf
-                .chunks_exact(2)
-                .map(|c| {
-                    let bits = u16::from_le_bytes([c[0], c[1]]);
-                    f32::from_bits((bits as u32) << 16)
-                })
-                .collect();
-            let mut indexed: Vec<(usize, f32)> = logits.iter().copied().enumerate().collect();
-            indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            tracing::info!("DIAG tok={} top5_logits: {:?}", seq.seq_len, &indexed[..5]);
+            tracing::info!(
+                "{}",
+                super::trait_impl::diag_top5_line(seq.seq_len, &logit_buf)
+            );
         }
 
-        let total_us = attn_us + ssm_us + head_us;
+        let ms = |us: u64| us as f64 / 1000.0;
         tracing::info!(
-            "PROFILE tok={}: total={:.1}ms attn={:.1}ms({}) ssm={:.1}ms({}) head={:.1}ms",
-            seq.seq_len,
-            total_us as f64 / 1000.0,
-            attn_us as f64 / 1000.0,
-            num_attn,
-            ssm_us as f64 / 1000.0,
-            self.layers.len() - num_attn,
-            head_us as f64 / 1000.0,
+            "{}",
+            metrale_model_layers::circuit_exec::profile::step_line(
+                seq.seq_len,
+                (ms(attn_us), num_attn),
+                (ms(ssm_us), self.layers.len() - num_attn),
+                ms(head_us),
+            )
         );
 
         seq.tokens.push(token);
