@@ -164,6 +164,12 @@ fn arena_buffer(block: &str, local: &str, arena: &BufferArena) -> Option<DeviceP
         // 2026-10-03: GatedDeltaNet edges (emitters/prefill_gdn.rs).
         // 2026-10-03: Attention edges (emitters/prefill_attn.rs).
         // 2026-10-03: Dense FFN, embedding and head edges (emitters/prefill_ffn.rs).
+        // The FFN reads the post-mixer norm from `norm_output`; gate|up lands in
+        // `expert_gate_out` (its up half in `expert_up_out`, `dense_ffn_prefill.rs:141-142`); down
+        // writes `moe_output`; the head's final norm writes `norm_output`.
+        ("dense_ffn", "xn") | ("head", "xn") => arena.norm_output(),
+        ("dense_ffn", "gu") => arena.expert_gate_out(),
+        ("dense_ffn", "d") => arena.moe_output(),
         _ => return None,
     })
 }

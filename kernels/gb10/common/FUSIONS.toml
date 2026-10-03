@@ -2412,3 +2412,398 @@ cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-1
 # ---- prefill: attention layer -------------------------------------------------------------------
 
 # ---- prefill: dense FFN, embedding and head -----------------------------------------------------
+
+# 2026-10-03: The embedding of a prefill pass stays on the host driver, which uploads the pass's
+# token ids and embeds them before the program runs (`batched_embed`, the embedding overlay and
+# scale, the vision splices: prefill_b/embed_chunk.rs, prefill_a.rs); the group launches nothing
+# and its output must be the stream it writes.
+[[rule]]
+id = "prefill_embed_host"
+pattern = [{ op = "embed" }]
+kernels = []
+repeat = "once"
+emitter = "embed_copy"
+rows = [1, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 10
+cite = "me/prefill_b/embed_chunk.rs:44-130; me/prefill_a.rs:272; mm/impl_ngram.rs:27-62"
+
+# 2026-10-03: The prefill FFN's gate and up at 1-16 rows: the legacy ladder's
+# metrale_nvfp4_mmq16_nc into expert_gate_out / expert_up_out, without the weight's global scale.
+[[rule]]
+id = "prefill_ffn_mmq16_gate_up"
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", steps = { act = "nvfp4/g16", scale = "none" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [1, 16]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The fused SiLU·mul quantize and down into moe_output; nvfp4_scale_bf16 applies down's scale.
+[[rule]]
+id = "prefill_ffn_mmq16_act_down"
+pattern = [
+  { op = "silu_mul", local = "act", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [1, 16]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The prefill FFN's gate and up at 17-32 rows: the legacy ladder's
+# metrale_nvfp4_mmq32_nc into expert_gate_out / expert_up_out, without the weight's global scale.
+[[rule]]
+id = "prefill_ffn_mmq32_gate_up"
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", steps = { act = "nvfp4/g16", scale = "none" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [17, 32]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The fused SiLU·mul quantize and down into moe_output; nvfp4_scale_bf16 applies down's scale.
+[[rule]]
+id = "prefill_ffn_mmq32_act_down"
+pattern = [
+  { op = "silu_mul", local = "act", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [17, 32]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The prefill FFN's gate and up at 33-64 rows: the legacy ladder's
+# metrale_nvfp4_mmq64_nc into expert_gate_out / expert_up_out, without the weight's global scale.
+[[rule]]
+id = "prefill_ffn_mmq64_gate_up"
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", steps = { act = "nvfp4/g16", scale = "none" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [33, 64]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The fused SiLU·mul quantize and down into moe_output; nvfp4_scale_bf16 applies down's scale.
+[[rule]]
+id = "prefill_ffn_mmq64_act_down"
+pattern = [
+  { op = "silu_mul", local = "act", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [33, 64]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The prefill FFN's gate and up at 65-up rows: the legacy ladder's
+# metrale_nvfp4_gemm_pipe into expert_gate_out / expert_up_out, without the weight's global scale.
+[[rule]]
+id = "prefill_ffn_mmq_pipe_gate_up"
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", steps = { act = "nvfp4/g16", scale = "none" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [65, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The fused SiLU·mul quantize and down into moe_output; the pipelined GEMM applies down's scale.
+[[rule]]
+id = "prefill_ffn_mmq_pipe_act_down"
+pattern = [
+  { op = "silu_mul", local = "act", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [65, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The declared circuit (A4 declared): the prefill FFN's gate and up at 1-16 rows: the declared circuit's act_quant node is the MMQ quantizer; the legacy ladder's
+# metrale_nvfp4_mmq16_nc into expert_gate_out / expert_up_out, without the weight's global scale.
+[[rule]]
+id = "prefill_ffn_mmq16_a4_gate_up"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "none" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [1, 16]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The fused SiLU·mul quantize and down into moe_output; nvfp4_scale_bf16 applies down's scale.
+[[rule]]
+id = "prefill_ffn_mmq16_a4_act_down"
+pattern = [
+  { op = "silu_mul", local = "act", holds = "f32" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "bf16" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [1, 16]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The declared circuit (A4 declared): the prefill FFN's gate and up at 17-32 rows: the declared circuit's act_quant node is the MMQ quantizer; the legacy ladder's
+# metrale_nvfp4_mmq32_nc into expert_gate_out / expert_up_out, without the weight's global scale.
+[[rule]]
+id = "prefill_ffn_mmq32_a4_gate_up"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "none" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [17, 32]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The fused SiLU·mul quantize and down into moe_output; nvfp4_scale_bf16 applies down's scale.
+[[rule]]
+id = "prefill_ffn_mmq32_a4_act_down"
+pattern = [
+  { op = "silu_mul", local = "act", holds = "f32" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "bf16" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [17, 32]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The declared circuit (A4 declared): the prefill FFN's gate and up at 33-64 rows: the declared circuit's act_quant node is the MMQ quantizer; the legacy ladder's
+# metrale_nvfp4_mmq64_nc into expert_gate_out / expert_up_out, without the weight's global scale.
+[[rule]]
+id = "prefill_ffn_mmq64_a4_gate_up"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "none" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [33, 64]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The fused SiLU·mul quantize and down into moe_output; nvfp4_scale_bf16 applies down's scale.
+[[rule]]
+id = "prefill_ffn_mmq64_a4_act_down"
+pattern = [
+  { op = "silu_mul", local = "act", holds = "f32" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "bf16" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_scale_bf16" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [33, 64]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The declared circuit (A4 declared): the prefill FFN's gate and up at 65-up rows: the declared circuit's act_quant node is the MMQ quantizer; the legacy ladder's
+# metrale_nvfp4_gemm_pipe into expert_gate_out / expert_up_out, without the weight's global scale.
+[[rule]]
+id = "prefill_ffn_mmq_pipe_a4_gate_up"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "none" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [65, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 50
+cite = "ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The fused SiLU·mul quantize and down into moe_output; the pipelined GEMM applies down's scale.
+[[rule]]
+id = "prefill_ffn_mmq_pipe_a4_act_down"
+pattern = [
+  { op = "silu_mul", local = "act", holds = "f32" },
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "bf16" } },
+]
+kernels = [
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
+  { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
+]
+repeat = "once"
+emitter = "prefill_ffn_mmq"
+rows = [65, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 100
+cite = "ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183"
+
+# 2026-10-03: The FFN's residual add over the pass's T * hidden elements, in place in `hidden`.
+[[rule]]
+id = "prefill_ffn_residual_add"
+pattern = [{ op = "residual_add", local = "add" }]
+kernels = [{ module = "residual_add", func = "bf16_residual_add" }]
+repeat = "once"
+emitter = "prefill_residual_add"
+rows = [1, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 10
+cite = "ml/qwen3_ssm/trait_prefill.rs:195-202; ml/qwen3_attention/trait_impl/prefill_inner/ffn_residual.rs:118-125"
+
+# 2026-10-03: The final norm of the pass's last row only, into norm_output.
+[[rule]]
+id = "prefill_final_norm"
+pattern = [{ op = "final_norm" }]
+kernels = [{ module = "norm", func = "rms_norm" }]
+repeat = "once"
+emitter = "prefill_final_norm"
+rows = [1, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 10
+cite = "me/prefill_b/finalize_last.rs:121-137; me/prefill_a.rs:443-455; mm/impl_a3_norm.rs:23-51"
+
+# 2026-10-03: The BF16 head on that one row into the logits buffer.
+[[rule]]
+id = "prefill_lm_head_bf16_gemv"
+pattern = [{ op = "lm_head", weight = "bf16" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "once"
+emitter = "prefill_lm_head"
+rows = [1, 1048576]
+modes = ["prefill", "prefill_chunk"]
+when = { lm_head_dtype = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "mm/impl_a3_lm_head.rs:386-402; me/prefill_b/finalize_last.rs:192-202"
+
+# 2026-10-03: A prefill pass returns the logits; the scheduler samples on the host.
+[[rule]]
+id = "prefill_argmax_host"
+pattern = [{ op = "argmax" }]
+kernels = []
+repeat = "once"
+emitter = "host_sampling"
+rows = [1, 1048576]
+modes = ["prefill", "prefill_chunk"]
+numerics = "reference"
+priority = 10
+cite = "me/prefill_b/finalize_last.rs:192-202 (the pass returns the logits; the scheduler samples on the host)"
