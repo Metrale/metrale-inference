@@ -1012,18 +1012,19 @@ jobs:
   # kernels/**/BENCH.toml. A CLI change that strands a recipe fails here, in the PR
   # that makes it. gpu_memory_utilization above a box class's ceiling (HARDWARE.toml [memory]) is refused.
   #
-  # ADVISORY: not a required check yet. The bundle it writes (recipes.tar.gz,
+  # 2026-10-02: REQUIRED (branch protection context "recipes"). Gates serve the
+  # recipe committed in the tree, so a recipe that `met` refuses would fail a
+  # campaign hours in; this job fails the PR in two minutes instead. It runs on
+  # the merge queue too: a required context that never reports on the queue
+  # commit fails the entry. It is skipped only for a book-only diff
+  # (`web_only`), which changes no recipe and no `met`, and branch protection
+  # counts that skip as satisfied. The bundle it writes (recipes.tar.gz,
   # serve-options.json, index.json, each with a .sha256) is what dev-release.yml
   # attaches to the b-release built from the same commit.
   recipes:
-    name: recipes (advisory)
+    name: recipes
     needs: [changes]
-    # Advisory twice over: not a required check, and a failure here does not
-    # fail the CI run, whose conclusion gates dev-release.yml. The job still
-    # shows red, and on main dev-release then publishes without the recipe
-    # assets.
-    continue-on-error: true
-    if: ${{ !cancelled() && github.event_name != 'merge_group' && needs.changes.outputs.web_only != 'true' }}
+    if: ${{ !cancelled() && needs.changes.outputs.web_only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
