@@ -2398,3 +2398,17 @@ when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183"
+
+# =================================================================================================
+# 2026-10-03: The prefill modes (LIFECYCLE-DESIGN.md 15.4). A pass at offset 0 is `prefill`
+# (contiguous attention), any other `prefill_chunk` (paged attention). Rows are the pass's rows T;
+# the row edges of these rules are the bucket ladder (crates/circuit/src/buckets.rs). The GDN arm
+# is the policy setting `gdn_exact_replay` (off: chunked FLA; on: the exact-replay arm after a
+# prefix-cache restore). An open-ended top bucket is written `[lo, 1048576]`: the build clips
+# the ladder at the arena's rows (`BufferArena::max_batch_tokens`).
+
+# ---- prefill: GatedDeltaNet layer ---------------------------------------------------------------
+
+# ---- prefill: attention layer -------------------------------------------------------------------
+
+# ---- prefill: dense FFN, embedding and head -----------------------------------------------------

@@ -161,6 +161,9 @@ fn heads_agree(programs: &[PrefillProgram]) -> Result<()> {
 fn arena_buffer(block: &str, local: &str, arena: &BufferArena) -> Option<DevicePtr> {
     Some(match (block, local) {
         ("gdn" | "attn", "xn") => arena.norm_output(),
+        // 2026-10-03: GatedDeltaNet edges (emitters/prefill_gdn.rs).
+        // 2026-10-03: Attention edges (emitters/prefill_attn.rs).
+        // 2026-10-03: Dense FFN, embedding and head edges (emitters/prefill_ffn.rs).
         _ => return None,
     })
 }
