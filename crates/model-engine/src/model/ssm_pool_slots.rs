@@ -109,6 +109,10 @@ impl SsmStatePool {
     /// `stream`. Sequence allocation (`trait_impl/meta.rs`) calls it before prefill
     /// so the new sequence does not start from a previous occupant's state.
     pub(super) fn zero_slot(&self, idx: usize, gpu: &dyn GpuBackend, stream: u64) -> Result<()> {
+        if let Some(p) = self.programs.read().as_ref() {
+            let nodes = p.nodes(metrale_circuit::state_ops::StateProgramId::SlotZero)?;
+            return self.run_zero(nodes, idx, gpu, stream);
+        }
         for i in 0..self.num_ssm_layers {
             gpu.memset_async(self.h_state(i, idx), 0, self.h_stored_bytes, stream)?;
             gpu.memset_async(self.conv_state(i, idx), 0, self.conv_bytes, stream)?;

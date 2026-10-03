@@ -74,6 +74,7 @@ impl SsmSnapshotPool {
                 h_f16_to_f32_k: KernelHandle(0),
                 h_f32_to_f16_k: KernelHandle(0),
                 spill_staging: Default::default(),
+                programs: Default::default(),
             });
         }
 
@@ -143,6 +144,7 @@ impl SsmSnapshotPool {
                 "ssm_h_state_f32_to_f16",
             ),
             spill_staging: Default::default(),
+            programs: Default::default(),
         })
     }
 }

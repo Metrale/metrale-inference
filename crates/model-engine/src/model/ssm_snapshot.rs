@@ -92,6 +92,9 @@ pub(crate) struct SsmSnapshotPool {
     /// paths ([`super::ssm_spill_staging::SpillStaging`]); `TransformerModel::drop`
     /// frees it through `free_staging`.
     pub(super) spill_staging: super::ssm_spill_staging::SpillStaging,
+    /// 2026-10-03: The circuit's bound state programs under `--forward circuit`
+    /// (`state_run.rs`); `None` under the legacy forward.
+    pub(crate) programs: super::state_run::ProgramsCell,
 }
 
 impl SsmSnapshotPool {
@@ -142,6 +145,32 @@ impl SsmSnapshotPool {
             Some(s) => s,
             None => return Ok(None),
         };
+        if let Some(p) = self.programs.read().as_ref() {
+            // 2026-10-03: The program converts by the pool's storage format; a sequence whose
+            // h format is not the pool's has no program (the circuit refuses an f16 h state in
+            // an FP32-sized pool).
+            ensure_pool_format(h_is_f16, main_pool)?;
+            let nodes = p.nodes(metrale_circuit::state_ops::StateProgramId::PrefixSave)?;
+            self.run_snapshot(nodes, main_pool, prefix_places(ssm_slot, snap_slot), gpu, stream)?;
+        } else {
+            self.save_layers(ssm_slot, snap_slot, h_is_f16, main_pool, gpu, stream)?;
+        }
+        if session_hash != 0 {
+            self.session_tags.lock().insert(snap_slot, session_hash);
+        }
+        Ok(Some(snap_slot))
+    }
+
+    /// 2026-10-03: The legacy copy loop of [`Self::save`], removed at the flip.
+    fn save_layers(
+        &self,
+        ssm_slot: usize,
+        snap_slot: usize,
+        h_is_f16: bool,
+        main_pool: &SsmStatePool,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
         for i in 0..self.num_ssm_layers {
             if h_is_f16 {
                 metrale_model_layers::layers::ops::ssm_h_state_f16_to_f32(
@@ -167,10 +196,7 @@ impl SsmSnapshotPool {
                 stream,
             )?;
         }
-        if session_hash != 0 {
-            self.session_tags.lock().insert(snap_slot, session_hash);
-        }
-        Ok(Some(snap_slot))
+        Ok(())
     }
 
     /// 2026-09-25: True when `session_hash` is 0, the slot is untagged, or its tag
@@ -197,6 +223,10 @@ impl SsmSnapshotPool {
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<()> {
+        if let Some(p) = self.programs.read().as_ref() {
+            let nodes = p.nodes(metrale_circuit::state_ops::StateProgramId::PrefixRestore)?;
+            return self.run_snapshot(nodes, main_pool, prefix_places(ssm_slot, snap_slot), gpu, stream);
+        }
         let narrow = main_pool.h_stored_bytes < self.h_bytes;
         if narrow && self.h_f32_to_f16_k.0 == 0 {
             bail!(
@@ -399,3 +429,27 @@ impl SsmSnapshotPool {
         Ok(())
     }
 }
+
+/// 2026-10-03: The places of a prefix program: pool slot `ssm_slot`, prefix slot `snap_slot`.
+fn prefix_places(ssm_slot: usize, snap_slot: usize) -> super::state_run::Places {
+    super::state_run::Places {
+        slot: ssm_slot,
+        step: None,
+        cache: Some(snap_slot),
+    }
+}
+
+/// 2026-10-03: A sequence's h format is the pool's storage format: f16 exactly when the pool is
+/// f16-sized.
+fn ensure_pool_format(h_is_f16: bool, pool: &SsmStatePool) -> Result<()> {
+    let f16_pool = pool.h_stored_bytes < pool.h_bytes;
+    anyhow::ensure!(
+        h_is_f16 == f16_pool,
+        "a sequence's h is {} in a pool that stores {}; the state programs convert by the \
+         pool's format",
+        if h_is_f16 { "f16" } else { "FP32" },
+        if f16_pool { "f16" } else { "FP32" },
+    );
+    Ok(())
+}
+

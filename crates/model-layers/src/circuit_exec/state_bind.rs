@@ -57,6 +57,31 @@ pub struct PoolUnits {
     pub conv: usize,
 }
 
+/// 2026-10-03: The SSM pool a build binds the state programs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatePool {
+    /// 2026-10-03: Its unit sizes, as allocated.
+    pub units: PoolUnits,
+    /// 2026-10-03: `--ssm-h-dtype f16-pool`.
+    pub h_f16: bool,
+}
+
+impl StatePool {
+    /// 2026-10-03: Bind `circuit`'s programs to this pool, whose recurrent layers are the
+    /// linear-attention layers of `config` in layer order (the pool's order).
+    pub fn bind(&self, circuit: &Circuit, config: &metrale_config::ModelConfig) -> Result<StatePrograms> {
+        let recurrent: Vec<usize> = (0..config.num_hidden_layers)
+            .filter(|&i| config.layer_type(i) == metrale_config::LayerType::LinearAttention)
+            .collect();
+        StatePrograms::bind(
+            circuit,
+            &crate::ssm_reserve::state_formats(self.h_f16),
+            &recurrent,
+            self.units,
+        )
+    }
+}
+
 /// 2026-10-03: Every state program, bound.
 #[derive(Debug, Clone, Default)]
 pub struct StatePrograms {

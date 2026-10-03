@@ -55,6 +55,10 @@ impl SsmSnapshotPool {
         stream: u64,
     ) -> Result<()> {
         let flat = self.decode_flat_index(ssm_slot, ring_slot)?;
+        if let Some(p) = self.programs.read().as_ref() {
+            let nodes = p.nodes(metrale_circuit::state_ops::StateProgramId::RingSave)?;
+            return self.run_snapshot(nodes, main_pool, ring_places(ssm_slot, flat), gpu, stream);
+        }
         for i in 0..self.num_ssm_layers {
             // 2026-09-25: Copy the pool's storage width bit for bit; the ring itself
             // is strided by the FP32 width `h_bytes`.
@@ -85,6 +89,10 @@ impl SsmSnapshotPool {
         stream: u64,
     ) -> Result<()> {
         let flat = self.decode_flat_index(ssm_slot, ring_slot)?;
+        if let Some(p) = self.programs.read().as_ref() {
+            let nodes = p.nodes(metrale_circuit::state_ops::StateProgramId::RingRestore)?;
+            return self.run_snapshot(nodes, main_pool, ring_places(ssm_slot, flat), gpu, stream);
+        }
         for i in 0..self.num_ssm_layers {
             gpu.copy_d2d_async(
                 self.decode_h_snapshots[i].offset(flat * self.h_bytes),
@@ -119,5 +127,14 @@ impl SsmSnapshotPool {
             );
         }
         Ok(ssm_slot * self.decode_ring_slots + ring_slot)
+    }
+}
+
+/// 2026-10-03: The places of a ring program: pool slot `ssm_slot`, ring flat index `flat`.
+fn ring_places(ssm_slot: usize, flat: usize) -> super::state_run::Places {
+    super::state_run::Places {
+        slot: ssm_slot,
+        step: None,
+        cache: Some(flat),
     }
 }

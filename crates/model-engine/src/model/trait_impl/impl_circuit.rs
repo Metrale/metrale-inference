@@ -238,6 +238,15 @@ impl TransformerModel {
                 .map(|p| p.propose_batch_max(&self.buffers, &self.config))
                 .filter(|&w| w >= 2)
                 .map(|w| w.min(metrale_model_layers::speculative::mtp_max_seqs()) as u64),
+            // 2026-10-03: The pool as allocated; the build refuses a circuit whose state units
+            // differ from it (`state_bind`).
+            state_pool: metrale_model_layers::circuit_exec::state_bind::StatePool {
+                units: metrale_model_layers::circuit_exec::state_bind::PoolUnits {
+                    h_stored: self.ssm_pool.h_stored_bytes,
+                    conv: self.ssm_pool.conv_bytes,
+                },
+                h_f16: self.ssm_pool.h_stored_bytes < self.ssm_pool.h_bytes,
+            },
         })
     }
 
@@ -271,6 +280,10 @@ impl ModelCircuit for TransformerModel {
         if let Some(p) = self.proposer.as_ref() {
             p.set_circuit_draft(None);
         }
+        self.install_state_programs(
+            next.as_ref()
+                .map(|e| std::sync::Arc::new(e.state.clone())),
+        );
         let prev = std::mem::replace(&mut *self.circuit.write(), next);
         if let Some(prev) = prev {
             prev.free(self.gpu.as_ref())?;

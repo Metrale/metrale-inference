@@ -114,6 +114,9 @@ pub(crate) struct SsmStatePool {
     /// snapshot mode. Nothing fills it: verify refuses in replay mode.
     pub(super) replay_input_rings: Vec<DevicePtr>,
     pub(super) free_slots: Mutex<Vec<usize>>,
+    /// 2026-10-03: The circuit's bound state programs under `--forward circuit`
+    /// (`state_run.rs`); `None` under the legacy forward.
+    pub(crate) programs: super::state_run::ProgramsCell,
 }
 
 /// 2026-09-25: Prefix-sum layout for per-slot H intermediates: returns
@@ -376,6 +379,7 @@ impl SsmStatePool {
             rollback_mode,
             replay_input_rings,
             free_slots: Mutex::new(free_slots),
+            programs: Default::default(),
         })
     }
 }

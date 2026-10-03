@@ -94,6 +94,8 @@ pub struct Boot<'a> {
     /// 2026-09-30: The widest batched propose (`propose_batch_max`), whose widths from 2 get
     /// n-row draft programs; `None` when the head proposes one sequence at a time.
     pub draft_rows: Option<u64>,
+    /// 2026-10-03: The SSM pool the state programs bind to.
+    pub state_pool: state_bind::StatePool,
 }
 
 /// 2026-09-28: A built executor: the decode program and the workspace it runs in.
@@ -117,6 +119,8 @@ pub struct CircuitExec {
     pub gdn_pitch: Vec<Option<(usize, usize)>>,
     /// 2026-09-30: The batched MTP verify's programs, compiled per row table.
     pub verify_batch: Option<verify_batch::VerifyBatch>,
+    /// 2026-10-03: The state programs, bound to the SSM pool (`state_bind`).
+    pub state: state_bind::StatePrograms,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml the plan was chosen from.
     pub rules_digest: String,
     /// 2026-09-28: Which rules the build allowed.
@@ -157,6 +161,7 @@ impl CircuitExec {
             );
         }
         let layers = bindings::check_bindings(&loaded.circuit, &b.layers, &b.head)?;
+        let state = b.state_pool.bind(&loaded.circuit, b.config)?;
         if let Some(d) = &b.draft {
             if !d.unmodelled.is_empty() {
                 bail!(
@@ -352,6 +357,7 @@ impl CircuitExec {
             routes: routed,
             gdn_pitch,
             verify_batch,
+            state,
             rules_digest: loaded.rules_digest,
             fusions: b.fusions,
             workspace,

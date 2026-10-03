@@ -24,6 +24,8 @@ use super::super::block_mgmt::{
     extract_layer_refs, reuse_prefix_match_disk_ids,
 };
 use super::super::ssm_batched_copy::{StateCopy, run_ssm_state_copies};
+use super::super::state_run::Parts;
+use metrale_circuit::state_ops::StateProgramId;
 use super::super::ssm_pool::SsmStatePool;
 use super::super::ssm_snapshot::SsmSnapshotPool;
 use super::super::types::{PinnedMetaStaging, TransformerModel};
@@ -40,6 +42,9 @@ impl TransformerModel {
         use metrale_model_layers::layer::SsmLayerState;
 
         let stream = self.secondary_stream;
+        if self.run_state_program(StateProgramId::VerifyCheckpoint, seq.slot_idx, None, Parts::ALL, stream)? {
+            return self.gpu.record_event(self.secondary_event, stream);
+        }
         let mut h_plan = Vec::with_capacity(self.ssm_pool.num_ssm_layers);
         let mut conv_plan = Vec::with_capacity(self.ssm_pool.num_ssm_layers);
         for (i, layer_state) in seq.layer_states.iter_mut().enumerate() {
@@ -87,6 +92,14 @@ impl TransformerModel {
         use metrale_model_layers::layer::SsmLayerState;
 
         let stream = self.secondary_stream;
+        let (back, step) = match num_accepted {
+            0 => (StateProgramId::VerifyRollback, None),
+            n => (StateProgramId::CommitAccepted, Some(n - 1)),
+        };
+        if self.run_state_program(back, seq.slot_idx, step, Parts::ALL, stream)? {
+            self.run_state_program(StateProgramId::VerifyCheckpoint, seq.slot_idx, None, Parts::ALL, stream)?;
+            return self.gpu.record_event(self.secondary_event, stream);
+        }
         let mut ssm_layer_idx = 0usize;
         // 2026-09-25: All rollback copies are issued before all checkpoint copies,
         // on one stream, so each checkpoint reads the state its rollback wrote.
@@ -259,6 +272,13 @@ impl TransformerModel {
         }
 
         let stream = self.secondary_stream;
+        let parts = Parts {
+            h: !h_folded,
+            conv: true,
+        };
+        if self.run_state_program(StateProgramId::CommitAccepted, seq.slot_idx, Some(num_accepted - 1), parts, stream)? {
+            return self.gpu.record_event(self.secondary_event, stream);
+        }
         let mut ssm_layer_idx = 0usize;
         // 2026-09-25: Two plans, because h and conv blobs have different widths and
         // one pitched 2-D copy carries one width. Both are in ascending layer order.
