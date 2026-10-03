@@ -410,6 +410,9 @@ mod exec_draft_tests;
 #[path = "exec_fixture.rs"]
 mod exec_fixture;
 #[cfg(test)]
+#[path = "exec_prefill_tests.rs"]
+mod exec_prefill_tests;
+#[cfg(test)]
 #[path = "exec_fixture_run.rs"]
 mod exec_fixture_run;
 #[cfg(test)]

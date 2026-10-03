@@ -93,6 +93,9 @@ pub(super) fn layer_binding(circuit: &Circuit, i: usize, attn_idx: usize) -> Cir
             WeightSlot::Transposed(LinearRole::GdnOut),
             nvfp4(tag(i, 20)),
         );
+        // 2026-10-03: The unscaled E4M3 casts the prefill projections read.
+        w.insert(WeightSlot::PrefillCast(LinearRole::Qkvz), dense(tag(i, 28)));
+        w.insert(WeightSlot::PrefillCast(LinearRole::GdnOut), dense(tag(i, 29)));
         MixerFacts::Gdn(GdnFacts {
             qkvz_deinterleaved: true,
             h_slot_bytes: STATE_PITCH,
