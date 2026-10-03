@@ -2407,6 +2407,18 @@ cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-1
 # prefix-cache restore). An open-ended top bucket is written `[lo, 1048576]`: the build clips
 # the ladder at the arena's rows (`BufferArena::max_batch_tokens`).
 
+# 2026-10-03: A prefill pass after a prefix-cache restore replays the recomputed tokens exactly:
+# its GatedDeltaNet layers take the exact-replay recurrence, never the chunked FLA one. The prefill
+# driver decides it per pass (the legacy `gdn_exact_replay`, set from `marconi_skip`).
+[[runtime]]
+id = "gdn_prefix_restored"
+when = { gdn_exact_replay = "off" }
+modes = ["prefill", "prefill_chunk"]
+rows = [1, 1048576]
+plans_as = { gdn_exact_replay = "on" }
+why = "the pass recomputes tokens after a prefix-cache (Marconi) restore, and its GatedDeltaNet layers replay them exactly"
+cite = "me/prefill_b/forward_layers.rs:120-122 (gdn_exact_replay: marconi_skip); ml/qwen3_ssm/trait_prefill_recur.rs:157-168"
+
 # ---- prefill: GatedDeltaNet layer ---------------------------------------------------------------
 
 # 2026-10-03: A GatedDeltaNet layer's input norm over the pass's rows, copying the stream into

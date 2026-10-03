@@ -19,7 +19,7 @@ use metrale_circuit::{FusionPlan, RuntimeRoute};
 use super::program::{GdnState, Program};
 
 /// 2026-09-30: The routes this executor can evaluate.
-pub const KNOWN: [&str; 1] = ["gdn_state_slots_fragmented"];
+pub const KNOWN: [&str; 2] = ["gdn_state_slots_fragmented", super::prefill::PREFIX_RESTORED];
 
 /// 2026-09-30: A route's arm, compiled.
 pub struct RoutedProgram {
@@ -51,6 +51,11 @@ pub fn holds(
 ) -> Result<bool> {
     match route.id.as_str() {
         "gdn_state_slots_fragmented" => fragmented(pitch, gdn),
+        // 2026-10-03: The prefill driver takes this arm itself (`prefill::PrefillPrograms`).
+        super::prefill::PREFIX_RESTORED => bail!(
+            "`{}` is a prefill route, which the prefill driver selects per pass",
+            route.id
+        ),
         other => bail!("runtime route `{other}` has no evaluator"),
     }
 }

@@ -18,7 +18,7 @@
 //! - Every edge a prefill plan materialises is placed in the arena or refused at build; no
 //!   prefill program reads the workspace.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::buckets::{Bucket, bucket_ladder, bucket_of};
 use metrale_circuit::{AvailableKernels, Circuit, FusionPlan, Mode, Policy, fuse};
 use metrale_gpu_runtime::buffers::BufferArena;
@@ -29,8 +29,12 @@ use super::program::Program;
 
 /// 2026-10-03: The policy setting that picks the GatedDeltaNet prefill arm: `on` after a
 /// prefix-cache restore (the exact-replay arm, legacy `gdn_exact_replay`), `off` otherwise (the
-/// chunked FLA arm).
+/// chunked FLA arm). Every policy states it `off`; the route below plans `on`.
 pub const EXACT_REPLAY: &str = "gdn_exact_replay";
+
+/// 2026-10-03: The runtime route (FUSIONS.toml `[[runtime]]`) whose arm is the after-restore
+/// plan of a prefill bucket.
+pub const PREFIX_RESTORED: &str = "gdn_prefix_restored";
 
 /// 2026-10-03: One compiled prefill program.
 pub struct PrefillProgram {
@@ -67,21 +71,29 @@ impl PrefillPrograms {
         let mut programs = Vec::new();
         for mode in Mode::PREFILL {
             for bucket in bucket_ladder(b.rules, b.runtime, mode, b.max_tokens) {
-                for exact_replay in [false, true] {
-                    let mut policy = b.policy.clone();
-                    policy.settings.insert(
-                        EXACT_REPLAY.to_string(),
-                        if exact_replay { "on" } else { "off" }.to_string(),
-                    );
-                    let plan = fuse(b.circuit, b.rules, b.available, &policy, mode, bucket.hi)
-                        .with_context(|| {
-                            format!(
-                                "fusing {} at rows {}..={}",
-                                mode.name(),
-                                bucket.lo,
-                                bucket.hi
-                            )
-                        })?;
+                let at = || format!("{} at rows {}..={}", mode.name(), bucket.lo, bucket.hi);
+                let primary = fuse(b.circuit, b.rules, b.available, b.policy, mode, bucket.hi)
+                    .with_context(|| format!("fusing {}", at()))?;
+                let arms = metrale_circuit::runtime::route_arms(
+                    b.circuit,
+                    (b.rules, b.runtime),
+                    b.available,
+                    b.policy,
+                    &primary,
+                )
+                .with_context(|| format!("fusing the routes of {}", at()))?;
+                ensure!(
+                    arms.iter().all(|(r, _)| r.id == PREFIX_RESTORED),
+                    "a prefill route other than `{PREFIX_RESTORED}` applies to {}",
+                    at()
+                );
+                // 2026-10-03: No arm means the restore plans as the cold pass (a circuit without
+                // GatedDeltaNet layers): the primary serves both.
+                let restored = arms
+                    .into_iter()
+                    .next()
+                    .map_or_else(|| primary.clone(), |(_, p)| p);
+                for (exact_replay, plan) in [(false, primary), (true, restored)] {
                     let placement = placement(b.circuit, &plan, b.arena, inputs.fixed)?;
                     let program = compile::compile_placed(b.circuit, &plan, &placement, inputs)
                         .with_context(|| {

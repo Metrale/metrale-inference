@@ -43,7 +43,7 @@ target = "gb10/qwen3.8-27b/nvfp4"
 golden = true
 layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
 dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128, mtp = 1 }
-plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32] }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32], prefill = [16, 32, 64, 95, 128, 1023, 8192], prefill_chunk = [16, 32, 64, 95, 128, 255, 1023, 8192] }
 verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
 
 # 2026-09-28: Formats from the engine's own policy (metrale_circuit::PolicyPrecision) over the
