@@ -137,14 +137,20 @@ pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 16] = [
 ];
 
 /// 2026-09-28: Switches that change legacy decode which no rule reads, when they are set.
-pub fn unmodelled_switches(levers: &ModelLevers) -> Vec<String> {
+/// 2026-10-03: The exact MTP verify chain changes only the verify, so it is refused only by a
+/// build that compiles verify programs (`verify`); a build without them leaves the verify to
+/// the legacy layers.
+pub fn unmodelled_switches(levers: &ModelLevers, verify: bool) -> Vec<String> {
     let mut out: Vec<String> = MULTI_SEQ_ENV_SWITCHES
         .iter()
         .filter(|(var, _)| std::env::var_os(var).is_some())
         .map(|(var, reader)| format!("{var} (read in {reader})"))
         .collect();
-    if crate::layers::qwen3_ssm::verify_exact_enabled() {
-        out.push("the exact MTP verify chain (--exact-verify)".to_string());
+    if verify && crate::layers::qwen3_ssm::verify_exact_enabled() {
+        out.push(
+            "the exact MTP verify chain (--exact-verify, or a fixed GDN activation format)"
+                .to_string(),
+        );
     }
     if !levers.ffn_small_m {
         out.push("the small-M projection GEMMs off (METRALE_FFN_SMALLM)".to_string());

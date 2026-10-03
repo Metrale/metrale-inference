@@ -137,7 +137,20 @@ impl TransformerModel {
         // the layers bind once (`gdn_carry.rs`); binding them now puts them in the layers'
         // circuit facts. Without them the executor compiles no batched verify and each
         // sequence verifies alone.
-        let verify_batch_rows = if self.proposer.is_some() && self.gdn_carry_bind_now()? {
+        // 2026-10-03: The exact MTP verify chain (`--exact-verify`, or a fixed GDN activation
+        // format such as `--activation-quantization declared`) has no circuit verify yet: the
+        // build compiles no verify program, so every verify runs the legacy layers, said here.
+        let exact_verify = metrale_model_layers::layers::qwen3_ssm::verify_exact_enabled();
+        if exact_verify && self.proposer.is_some() {
+            tracing::info!(
+                "circuit: the exact MTP verify chain is on; the verify (single and batched) runs \
+                 the legacy layers under the circuit forward"
+            );
+        }
+        let verify_batch_rows = if !exact_verify
+            && self.proposer.is_some()
+            && self.gdn_carry_bind_now()?
+        {
             Some(
                 (4 * metrale_model_layers::speculative::mtp_max_seqs())
                     .min(super::verify_e2::VERIFY_ROW_CAP) as u64,
@@ -225,7 +238,7 @@ impl TransformerModel {
             // 2026-09-29: The MTP verify widths the scheduler runs one sequence at
             // (`serial_verify_plan`), when a drafter is loaded.
             draft: draft.map(|d| d.layer),
-            verify_rows: if self.proposer.is_some() {
+            verify_rows: if self.proposer.is_some() && !exact_verify {
                 vec![2, 3, 4]
             } else {
                 Vec::new()

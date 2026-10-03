@@ -257,8 +257,13 @@ impl TransformerModel {
             // 2026-09-29: `--forward circuit`: the compiled verify program runs the layers, the
             // final norm, the lm_head and the argmaxes. Its build refused every feature the legacy
             // extras here serve (HSS, sliding-window layers, DFlash capture).
+            // 2026-10-03: A build that compiled no verify program for `k` (the exact MTP verify
+            // chain is on) leaves the verify to the layers below.
             let circuit = self.circuit.read();
-            if let Some(exec) = circuit.as_ref() {
+            if let Some(exec) = circuit
+                .as_ref()
+                .filter(|e| e.verify_program(k as u64).is_some())
+            {
                 self.circuit_verify_body(exec, seq, k, stream)?;
             } else {
                 for (layer_idx, layer) in self.layers.iter().enumerate() {

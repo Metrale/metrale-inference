@@ -86,15 +86,17 @@ impl TransformerModel {
             && ks.iter().sum::<usize>() <= super::verify_e2::VERIFY_ROW_CAP
             && self.comm.is_none()
             // 2026-09-30: Under `--forward circuit` only when the executor compiles batched
-            // verifies (`CircuitExec::verify_batch`).
+            // verifies (`CircuitExec::verify_batch`). 2026-10-03: or when it compiles no verify at
+            // all (the exact chain), and the legacy layers verify as without a circuit.
             && self
                 .circuit
                 .read()
                 .as_ref()
                 .is_none_or(|e| {
-                    e.verify_batch
-                        .as_ref()
-                        .is_some_and(|v| ks.iter().sum::<usize>() as u64 <= v.max_rows)
+                    (e.verify.is_empty() && e.verify_batch.is_none())
+                        || e.verify_batch
+                            .as_ref()
+                            .is_some_and(|v| ks.iter().sum::<usize>() as u64 <= v.max_rows)
                 })
             && !(self.lora.is_some() && metrale_model_layers::lora::no_batch_verify())
             && !self.verify_hidden_stash.is_null()
@@ -296,7 +298,7 @@ impl TransformerModel {
             // (`impl_circuit_verify_batch.rs`). It is compiled before any capture.
             let circuit = self.circuit.read();
             let circuit_program = match circuit.as_ref() {
-                Some(exec) => Some(self.circuit_verify_batch_prepare(
+                Some(exec) if exec.verify_batch.is_some() => Some(self.circuit_verify_batch_prepare(
                     exec,
                     seqs,
                     ks,
@@ -305,7 +307,7 @@ impl TransformerModel {
                     &metadata,
                     mapped_argmax.map_or(self.buffers.scratch(), |(_, d)| d),
                 )?),
-                None => None,
+                _ => None,
             };
             if let Some((program, gdn)) = circuit_program {
                 if capture {
