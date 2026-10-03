@@ -1,0 +1,109 @@
+# Circuit memory
+
+recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth
+
+## Per node (MiB; x = nodes folded)
+
+| node | op | x | stored | derived | activations | workspace | state |
+|---|---|---:|---:|---:|---:|---:|---:|
+| embed.embed | embed | 1 | 2425.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| gdn.input_norm | rms_norm | 48 | 0.0 | 0.0 | 1.9 | 0.0 | 0.0 |
+| gdn.qkvz | linear:qkvz | 48 | 3840.9 | 8160.0 | 6.0 | 0.0 | 0.0 |
+| gdn.ba | linear:ba | 48 | 45.0 | 45.0 | 0.0 | 0.0 | 0.0 |
+| gdn.gates | gdn_gates | 48 | 0.0 | 0.0 | 0.1 | 0.0 | 0.0 |
+| gdn.conv | conv1d_update | 48 | 0.0 | 0.0 | 0.0 | 0.0 | 90.0 |
+| gdn.l2 | l2_norm | 48 | 0.0 | 0.0 | 3.8 | 0.0 | 0.0 |
+| gdn.recur | gdn_recurrence | 48 | 0.0 | 0.0 | 2.2 | 0.0 | 1440.0 |
+| gdn.out_norm | gated_rms_norm | 48 | 0.0 | 0.0 | 2.2 | 0.0 | 0.0 |
+| gdn.out | linear:gdn_out | 48 | 1441.1 | 3060.0 | 1.9 | 0.0 | 0.0 |
+| gdn.add | residual_add | 48 | 0.0 | 0.0 | 1.9 | 0.0 | 0.0 |
+| dense_ffn.post_norm | rms_norm | 64 | 0.0 | 0.0 | 2.5 | 0.0 | 0.0 |
+| dense_ffn.gate_up | linear:gate_up | 64 | 6715.2 | 6885.0 | 17.0 | 0.0 | 0.0 |
+| dense_ffn.act | silu_mul | 64 | 0.0 | 0.0 | 8.5 | 0.0 | 0.0 |
+| dense_ffn.down | linear:down | 64 | 3358.0 | 3442.5 | 2.5 | 0.0 | 0.0 |
+| dense_ffn.add | residual_add | 64 | 0.0 | 0.0 | 2.5 | 0.0 | 0.0 |
+| attn.input_norm | rms_norm | 16 | 0.0 | 0.0 | 0.6 | 0.0 | 0.0 |
+| attn.q | linear:q | 16 | 960.3 | 1080.0 | 1.5 | 0.0 | 0.0 |
+| attn.q_split | split | 16 | 0.0 | 0.0 | 1.5 | 0.0 | 0.0 |
+| attn.k | linear:k | 16 | 80.3 | 90.0 | 0.1 | 0.0 | 0.0 |
+| attn.v | linear:v | 16 | 80.3 | 90.0 | 0.1 | 0.0 | 0.0 |
+| attn.q_norm | qk_norm | 16 | 0.0 | 0.0 | 0.8 | 0.0 | 0.0 |
+| attn.k_norm | qk_norm | 16 | 0.0 | 0.0 | 0.1 | 0.0 | 0.0 |
+| attn.rope | rope | 16 | 0.0 | 0.0 | 0.9 | 0.0 | 0.0 |
+| attn.kv_write | kv_write | 16 | 0.0 | 0.0 | 0.0 | 0.0 | 4380.0 |
+| attn.attend | paged_attention | 16 | 0.0 | 0.0 | 0.8 | 0.0 | 0.0 |
+| attn.gate_mul | sigmoid_gate_mul | 16 | 0.0 | 0.0 | 0.8 | 0.0 | 0.0 |
+| attn.o | linear:o | 16 | 480.4 | 540.0 | 0.6 | 0.0 | 0.0 |
+| attn.add | residual_add | 16 | 0.0 | 0.0 | 0.6 | 0.0 | 0.0 |
+| head.final_norm | final_norm | 1 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| head.lm_head | lm_head | 1 | 1212.5 | 2425.0 | 1.9 | 0.0 | 0.0 |
+| head.argmax | argmax | 1 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| draft.mtp_in.fc | linear:mtp_fc | 1 | 100.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| draft.attn.q | linear:q | 1 | 120.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| draft.attn.k | linear:k | 1 | 10.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| draft.attn.v | linear:v | 1 | 10.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| draft.attn.kv_write | kv_write | 1 | 0.0 | 0.0 | 0.0 | 0.0 | 273.8 |
+| draft.attn.o | linear:o | 1 | 60.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| draft.dense_ffn.gate_up | linear:gate_up | 1 | 340.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| draft.dense_ffn.down | linear:down | 1 | 170.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| draft.mtp_out.lm_head | lm_head | 1 | 0.0 | 682.0 | 0.0 | 0.0 | 0.0 |
+
+## States and caches (MiB; x = declarations folded)
+
+| state | kind | holding | lifetime | dtype | x | units each | MiB |
+|---|---|---|---|---|---:|---:|---:|
+| attn.k | paged_kv | blocks | model | bf16 | 16 | 70080 | 2190.0 |
+| attn.v | paged_kv | blocks | model | bf16 | 16 | 70080 | 2190.0 |
+| draft.attn.k | paged_kv | blocks | model | bf16 | 1 | 70080 | 136.9 |
+| draft.attn.v | paged_kv | blocks | model | bf16 | 1 | 70080 | 136.9 |
+| gdn.carry_conv | carry_stash | cache | verify | bf16 | 48 | 2 | 15.0 |
+| gdn.carry_flags | carry_table | cache | model | u32 | 48 | 128 | 0.0 |
+| gdn.carry_pend | carry_stash | cache | verify | u32 | 48 | 2 | 0.0 |
+| gdn.carry_ptrs | carry_table | cache | model | u64 | 48 | 128 | 0.1 |
+| gdn.carry_vgs | carry_stash | cache | verify | f32 | 48 | 2 | 36.1 |
+| gdn.conv | recurrent | checkpoint | verify | f32 | 48 | 2 | 15.0 |
+| gdn.conv | recurrent | live | sequence | f32 | 48 | 2 | 15.0 |
+| gdn.conv | recurrent | steps | verify | f32 | 48 | 8 | 60.0 |
+| gdn.h | recurrent | checkpoint | verify | f32 | 48 | 2 | 288.0 |
+| gdn.h | recurrent | live | sequence | f32 | 48 | 2 | 288.0 |
+| gdn.h | recurrent | steps | verify | f32 | 48 | 6 | 864.0 |
+| gdn.prefix_conv | prefix_snapshot | cache | snapshot | f32 | 48 | 256 | 1920.0 |
+| gdn.prefix_h | prefix_snapshot | cache | snapshot | f32 | 48 | 256 | 36864.0 |
+| gdn.verify_wy | verify_table | cache | model | u64 | 48 | 128 | 0.8 |
+| head.accept_hidden | accept_stash | cache | verify | bf16 | 1 | 128 | 1.2 |
+| head.capture_hidden | hidden_capture | cache | sequence | bf16 | 1 | 32768 | 320.0 |
+| head.carry_slots | carry_table | cache | model | u32 | 1 | 128 | 0.0 |
+| head.prefix_hidden | prefix_snapshot | cache | snapshot | bf16 | 1 | 256 | 2.5 |
+
+## Activation runs (planner)
+
+| run | rows | arena MiB | materialized MiB |
+|---|---:|---:|---:|
+| decode C=1 | 1 | 0.5 | 16.9 |
+| verify K=4 | 4 | 1.9 | 63.3 |
+
+## Workspaces (widest run)
+
+| family | workspace | in legacy arena | nodes | MiB |
+|---|---|---|---:|---:|
+| paged_decode_attn | splitk_partials | yes | 16 | 0.0 |
+
+## Totals (MiB)
+
+| term | MiB |
+|---|---:|
+| weights stored (declared formats) | 21449.1 |
+|   of which outside the circuit | 0.0 |
+| weights derived (load-time copies) | 26499.5 |
+|   of which leaked | 0.0 |
+| activations planned (circuit peak) | 1.9 |
+| activations charged | 1.9 |
+| workspace charged | 0.0 |
+| states (recurrent pool, KV) | 6183.8 |
+| caches (device) | 39159.8 |
+| driver | 3248.3 |
+| device total | 96542.5 |
+| budget | 105919.2 |
+| host caches | 0.0 |
+
+Headroom: 9376.7 MiB (fits).

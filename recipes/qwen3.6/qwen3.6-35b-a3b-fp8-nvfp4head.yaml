@@ -42,7 +42,7 @@ defaults:
   host: 0.0.0.0
   max_model_len: 32768
   kv_cache_dtype: bf16
-  gpu_memory_utilization: 0.90
+  gpu_memory_utilization: 0.85
   scheduler: slai
   speculative: true
   mtp_quantization: bf16

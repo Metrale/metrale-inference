@@ -47,11 +47,11 @@ use metrale_config::ModelConfig;
 
 /// 2026-10-01: The context, the loaded modules, the local-memory reservation and the CUDA
 /// graphs: 475 MiB measured without the graphs; 1 GiB.
-pub(super) const DRIVER_FIXED_BYTES: usize = 1 << 30;
+pub(crate) const DRIVER_FIXED_BYTES: usize = 1 << 30;
 
 /// 2026-10-01: The driver's bookkeeping for the allocations that fill the budget, per mille of
 /// the util budget: 21 (2.1%), so that with the fixed term it covers 3.13 GB at a 105.9 GB budget.
-pub(super) const DRIVER_BUDGET_PER_MILLE: usize = 21;
+pub(crate) const DRIVER_BUDGET_PER_MILLE: usize = 21;
 
 /// 2026-10-01: The headroom's terms, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

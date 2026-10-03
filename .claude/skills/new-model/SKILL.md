@@ -162,6 +162,15 @@ verify K), the report classifies it against the kernel families:
   `HARDWARE.toml [tensor_core_policy]` covers must plan onto a tensor-core kernel, or the
   plan (and the matrix `--check`) fails until an exemption lists it with its reason; a new
   model's CUDA-core matmul is tensor-core backlog, never a silent default.
+- every family declares the numeric pipeline each op runs at (`pipeline.<op> = { in, <steps>,
+  out }`, per point or `kernel_pipeline."<kernel>"` where they differ; the steps per op are
+  `crates/circuit/src/pipeline/vocab.rs`), read from the kernel sources: the activation and
+  weight precision at the multiply, accumulation, where scales apply, element-wise compute,
+  cache and state dtypes, and what a fused kernel hands on between ops. Every plan checks each
+  node's declared pipeline against what its circuit formats and policy require; a kernel that
+  runs another precision is refused unless its FUSIONS.toml rule states the departure
+  (`holds`, `steps`). `met circuit precision --checkpoint <id|dir> --node '<glob>'` lists what
+  a new model's nodes need before any kernel exists.
 
 The report is checked in with the architecture package and reviewed before any kernel
 work.
