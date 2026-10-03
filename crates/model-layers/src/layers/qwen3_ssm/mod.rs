@@ -41,6 +41,7 @@ mod trait_decode_batched;
 mod trait_decode_batched_conv_gdn;
 mod trait_decode_batched_conv_gdn_exact;
 mod trait_decode_batched_conv_gdn_exact_chain;
+mod trait_decode_batched_conv_gdn_exact_f16;
 mod trait_decode_batched_conv_gdn_multi;
 mod trait_decode_batched_conv_gdn_multi_exact;
 mod trait_decode_batched_conv_gdn_wyn;

@@ -44,6 +44,12 @@ pub(super) struct CarryKernels {
     /// `gdn_conv_chain_f32`), each 0 where the kernel set has none.
     pub chain: [KernelHandle; 3],
     pub conv_chain: KernelHandle,
+    /// 2026-10-01: The FP16 h-state exact verify (`gdn_exact_chain_f16_{2,3,4}`), looked up
+    /// only when the exact verify runs on an FP16 h-state, so a kernel set without it refuses
+    /// that serve at the boot audit; and the batched FP32 conv chain beside it
+    /// (`gdn_conv_chain_f32_batched`).
+    pub chain_f16: [KernelHandle; 3],
+    pub conv_chain_batched: KernelHandle,
 }
 
 pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
@@ -79,6 +85,18 @@ pub(super) fn carry_kernels(gpu: &dyn GpuBackend) -> CarryKernels {
             crate::layers::try_target_kernel(gpu, "gdn_exact_carry", "gdn_exact_chain4"),
         ],
         conv_chain: crate::layers::try_kernel(gpu, m, "gdn_conv_chain_f32"),
+        chain_f16: if super::ssm_h_fp16_enabled() && super::verify_exact_enabled() {
+            [2, 3, 4].map(|k| {
+                crate::layers::try_kernel(
+                    gpu,
+                    "gdn_exact_carry",
+                    &format!("gdn_exact_chain_f16_{k}"),
+                )
+            })
+        } else {
+            [KernelHandle(0); 3]
+        },
+        conv_chain_batched: crate::layers::try_kernel(gpu, m, "gdn_conv_chain_f32_batched"),
     }
 }
 

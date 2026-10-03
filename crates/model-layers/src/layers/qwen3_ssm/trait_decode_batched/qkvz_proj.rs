@@ -30,7 +30,7 @@ impl Qwen3SsmLayer {
             stream,
             ..
         } = *d;
-        if self.w8a8_qkvz(
+        if self.pinned_qkvz(
             ctx,
             normed,
             h as u32,

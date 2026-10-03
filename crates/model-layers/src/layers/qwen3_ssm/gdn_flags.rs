@@ -44,12 +44,13 @@ pub struct GdnFlags {
 
 impl GdnFlags {
     /// 2026-09-25: Whether the MTP-verify pass runs the exact chain:
-    /// `exact_verify` and not `h_f16`. Pure, so tests need not touch the
-    /// process-wide cell. An FP16 h-state forces the non-exact arms even when
-    /// exact was requested; the server's argument validation also rejects
-    /// that pair.
+    /// `exact_verify`. Pure, so tests need not touch the process-wide cell.
+    ///
+    /// 2026-10-01: Also under an FP16 h-state, which runs the FP16 twins of the
+    /// exact chain (`gdn_exact_chain_f16_{K}`); a kernel set without them
+    /// refuses the serve at the boot audit (`carry.rs`).
     pub fn verify_exact_active(self) -> bool {
-        self.exact_verify && !self.h_f16
+        self.exact_verify
     }
     /// 2026-09-25: The reading used when the command line published nothing.
     ///
@@ -191,17 +192,14 @@ pub fn ssm_batched_recurrent_enabled() -> bool {
     flags().batched_recurrent
 }
 
-/// 2026-09-25: `--exact-verify` given and the h-state FP32: the MTP-verify pass
-/// runs the sequential-decode-exact chain. See [`GdnFlags::verify_exact_active`].
+/// 2026-09-25: `--exact-verify` given: the MTP-verify pass runs the
+/// sequential-decode-exact chain. See [`GdnFlags::verify_exact_active`].
 ///
 /// 2026-09-30: Also on under a fixed `--activation-quantization` for the GDN family: a verify row
 /// then computes the bits a decode step computes, so a token's logits do not depend on which
-/// verify row, or which step, produced it. Not with an FP16 h-state (refused beside a fixed GDN
-/// format by `validate_serve_args`).
+/// verify row, or which step, produced it.
 pub fn verify_exact_enabled() -> bool {
-    let f = flags();
-    f.verify_exact_active()
-        || (!f.h_f16 && crate::layers::family_fixed(metrale_config::ProjFamily::Gdn))
+    flags().verify_exact_active() || crate::layers::family_fixed(metrale_config::ProjFamily::Gdn)
 }
 
 /// 2026-09-25: Batch width at which the multi-sequence decode projections switch
@@ -334,15 +332,16 @@ mod tests {
         }
     }
 
-    /// 2026-09-25: An FP16 h-state forces the non-exact arms even when exact was
-    /// requested. The argument validator rejects the explicit pair; this is the
-    /// layer beneath it.
+    /// 2026-10-01: An FP16 h-state keeps an explicit exact request (its FP16 twins
+    /// run it) and turns nothing on by itself.
     #[test]
-    fn h_f16_forces_non_exact_even_when_requested() {
+    fn h_f16_keeps_an_exact_request_and_adds_none() {
         assert!(
-            !GdnFlags {
+            GdnFlags {
                 exact_verify: true,
                 h_f16: true,
+                h_f16_pool: true,
+                fused_norm: true,
                 ..BASE
             }
             .verify_exact_active()
@@ -350,6 +349,8 @@ mod tests {
         assert!(
             !GdnFlags {
                 h_f16: true,
+                h_f16_pool: true,
+                fused_norm: true,
                 ..BASE
             }
             .verify_exact_active()

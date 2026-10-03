@@ -1513,6 +1513,6 @@ layer_kind = "full_attention"
 per_sequence = ["multi_seq"]
 sites = ["attn.q", "attn.k", "attn.v"]
 rows_above = 8
-cite = "crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115"
+cite = "crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119"
 holds = "for i in 0..n {"
 note = "BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row"

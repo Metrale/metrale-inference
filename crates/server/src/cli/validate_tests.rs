@@ -138,18 +138,22 @@ fn the_bare_gdn_switches_still_mean_on() {
     assert!(a.prefill_varlen_batch && a.prefill_codispatch);
 }
 
+/// 2026-10-01: The exact verify, asked for or implied by a fixed GDN format, runs on an FP16
+/// h-state through its FP16 twins; whether the kernel set has them is the boot audit's question.
 #[test]
-fn exact_verify_refuses_the_f16_h_state() {
-    let err = validate_serve_args(&parse(&[
-        "--exact-verify",
-        "--ssm-h-dtype",
-        "f16",
-        "--gdn-fused-norm",
-    ]))
-    .unwrap_err();
-    assert!(err.contains("--exact-verify"), "{err}");
-    assert!(validate_serve_args(&parse(&["--exact-verify"])).is_ok());
-    assert!(validate_serve_args(&parse(&["--ssm-h-dtype", "f16", "--gdn-fused-norm"])).is_ok());
+fn exact_verify_and_a_fixed_gdn_format_accept_the_f16_h_state() {
+    for extra in [
+        &["--exact-verify"][..],
+        &["--activation-quantization", "declared"][..],
+    ] {
+        for dtype in ["f16", "f16-pool"] {
+            let mut argv = vec!["--ssm-h-dtype", dtype, "--gdn-fused-norm"];
+            argv.extend_from_slice(extra);
+            assert!(validate_serve_args(&parse(&argv)).is_ok(), "{argv:?}");
+        }
+    }
+    // 2026-10-01: The FP16 twins are fused-norm kernels, so the fused-norm requirement stays.
+    assert!(validate_serve_args(&parse(&["--exact-verify", "--ssm-h-dtype", "f16"])).is_err());
 }
 
 #[test]

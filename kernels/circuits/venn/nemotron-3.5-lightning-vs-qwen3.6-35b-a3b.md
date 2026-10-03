@@ -59,10 +59,10 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 |---|---|---|---|---|---|---|---|
 | 1 | moe | multi_seq | 128 | 471689.6 µs | +351.2% | legacy: crates/model-arch/src/nemotron_moe.rs:278 | MoE layer: only single-row decode (1-row routed GEMV + ReLU²-down kernels); multi-sequence decode and verify loop per row |
 | 2 | mamba | multi_seq | 128 | 454071.5 µs | +338.1% | legacy: crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 | Mamba2 layer: only single-row decode; multi-sequence decode and verify loop per row |
-| 3 | full_attention | multi_seq | 128 | 75810.1 µs | +56.4% | legacy: crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 | BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row |
+| 3 | full_attention | multi_seq | 128 | 75810.1 µs | +56.4% | legacy: crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119 | BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row |
 | 4 | mamba | multi_seq | 16 | 53630.5 µs | +107.6% | legacy: crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 | Mamba2 layer: only single-row decode; multi-sequence decode and verify loop per row |
 | 5 | moe | multi_seq | 16 | 30698.5 µs | +61.6% | legacy: crates/model-arch/src/nemotron_moe.rs:278 | MoE layer: only single-row decode (1-row routed GEMV + ReLU²-down kernels); multi-sequence decode and verify loop per row |
-| 6 | full_attention | multi_seq | 16 | 8954.0 µs | +18.0% | legacy: crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 | BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row |
+| 6 | full_attention | multi_seq | 16 | 8954.0 µs | +18.0% | legacy: crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119 | BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row |
 | 7 | mamba | verify | 2 | 3962.8 µs | +30.0% | legacy: crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 | Mamba2 layer: only single-row decode; multi-sequence decode and verify loop per row |
 | 8 | moe | verify | 2 | 1246.2 µs | +9.4% | legacy: crates/model-arch/src/nemotron_moe.rs:278 | MoE layer: only single-row decode (1-row routed GEMV + ReLU²-down kernels); multi-sequence decode and verify loop per row |
 
