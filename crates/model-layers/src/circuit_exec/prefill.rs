@@ -162,7 +162,10 @@ fn arena_buffer(block: &str, local: &str, arena: &BufferArena) -> Option<DeviceP
     Some(match (block, local) {
         ("gdn" | "attn", "xn") => arena.norm_output(),
         // 2026-10-03: GatedDeltaNet edges (emitters/prefill_gdn.rs).
-        // 2026-10-03: Attention edges (emitters/prefill_attn.rs).
+        // 2026-10-03: Attention edges (emitters/prefill_attn.rs). The O projection writes
+        // `norm_output` (`qwen3_attention/prefill/paged_oproj.rs:31`), and the post-attention
+        // norm writes the FFN's normed input there (`trait_impl/prefill_inner.rs:302-314`).
+        ("attn", "o") | ("dense_ffn", "xn") => arena.norm_output(),
         // 2026-10-03: Dense FFN, embedding and head edges (emitters/prefill_ffn.rs).
         _ => return None,
     })
