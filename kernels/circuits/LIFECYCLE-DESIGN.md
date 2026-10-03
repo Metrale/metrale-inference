@@ -966,7 +966,7 @@ Consequences:
 
 ## 15. The circuit runs the engine: plan for M5, M6, the boot check, certification and the flip (2026-10-03)
 
-Status: PROPOSED 2026-10-03, for review before any M5/M6 code. Line numbers are origin/main at
+Status: APPROVED 2026-10-03 with the decisions in 15.10, which override the text above them. Line numbers are origin/main at
 c92e43109. This section takes precedence over sections 1 and 10 where they disagree.
 
 Owner directive (2026-10-03), condensed:
@@ -1338,3 +1338,67 @@ day). They are work time only; box queueing and campaigns come on top.
 
 With the parallel workstream, the dense critical path is about 9-10 working days plus C1 and C3.
 M7 (load plan) and M8 (the Lightning pilot) follow the flip; neither is on its critical path.
+
+### 15.10 Decisions (2026-10-03) and what they change
+
+1. **Everything is ported before the flip.** Nothing on the two families runs legacy at the
+   flip. D-B is reversed: TP/EP, LoRA adapters, KV swap-to-host and `--profile` are ported, not
+   refused. `--profile`'s behaviour (a per-op timing report, graphs off) must exist; the launch
+   trace may implement it. Every fallback in 15.1 is ported. Two-phase prefill is ported, or
+   proven dead by measurement and deleted (M6d).
+2. **D-A: DFlash2 is ported** (M6e).
+3. **The prefill bar is confirmed:** prefill compared eager; the decode, verify and draft steps
+   after it compared graphed.
+4. **D-C (a):** flip the two families and report the exact deleted-line count. The four sibling
+   hybrid families are the next milestone.
+5. **Legacy reference fixtures** at the flip commit: yes.
+6. **A second workstream takes MoE now** (MoE M1, then MoE prefill), with the interfaces in
+   15.11.
+
+**The ports added by decision 1:**
+
+| Port | Circuit shape | Parity leg |
+|---|---|---|
+| Grammar-masked draft | a `grammar_mask` node in the draft program, reading a declared device bitmask input edge | `--verify ... --mtp` with a grammar on, untimed |
+| Inter-step state copies | M5 state programs (15.3) | the verify/draft diffs |
+| LoRA | a `lora_active` route key; `lora_shrink`/`lora_expand` nodes after each adapted linear, reading the per-row adapter index. Plans without adapters stay byte-identical to today's goldens | adapter on vs legacy, every mode, untimed |
+| KV swap-to-host | `kv_swap_out`/`kv_swap_in` state ops on the copy stream; the policy stays in the scheduler | a forced-swap trace vs legacy, untimed |
+| TP/EP | per-rank plans (digest per rank); `all_reduce` next to the existing `ep_reduce`; sharded weight bindings | two boxes, so campaign gaps only |
+| `--profile` | the executor times each group with events, graphs off, and prints legacy's report shape | report fields equal, values within noise |
+
+### 15.11 Workstreams and file ownership
+
+Three owners, so no two agents edit the same file:
+
+| Owner | Owns |
+|---|---|
+| CIRCUIT (core) | `crates/circuit` modes, state, planner, segments, buckets; `ml/circuit_exec/{mod,compile,program,bindings,fixed,routes,sources,draft_rows,verify_batch}.rs`; the dense attention/GDN/norm/linear emitters and their prefill variants; the grammar mask; the engine dispatch arms in `me/model/trait_impl/` (prefill, mixed, verify, state copies); `met circuit diff`; the boot plan check; DFlash2; two-phase |
+| MOE | `ml/layers/moe*` circuit binding and prepare; `ml/circuit_exec/emitters/moe*.rs` and `kernels/moe*.rs`; `kernels/circuits/qwen3_6_moe*.toml`, its golden plans and the 35B INSTANCES rows; `exec_moe_*_tests.rs` |
+| FEATURES (if started) | `ml/circuit_exec/emitters/{lora,collective,profile}.rs`; the LoRA, comm and KV-swap circuit bindings in their own modules; each feature's refusal line in `impl_circuit.rs` (one line each) |
+
+Shared files, each with one rule:
+
+- **`crates/circuit/src/ir.rs` `OpKind`**: append-only, one block per owner with a comment
+  header, so merges are unions.
+- **`kernels/gb10/common/FUSIONS.toml`, `KERNEL_FAMILIES.toml`, `INSTANCES.toml`,
+  `policy.rs`'s lever table**: one section per owner; unions on merge.
+- **Golden plans**: regenerated after every merge (`met circuit plan` writes them), never
+  hand-merged.
+- **The emitter registry**: split per module first (below), so each owner edits only its own
+  module's list.
+
+**Interfaces CIRCUIT provides, in this order:**
+
+1. **The emitter registry split** (first commit of the M5 PR): `emitters/mod.rs` concatenates
+   per-module `ALL` slices; a new module adds one line there and owns its slice.
+2. **The binding hook**: `FfnLayer::circuit_bind`/`circuit_prepare` dispatch to
+   `MoeLayer::circuit_bind`/`circuit_prepare`, which the MoE owner implements. The emitters
+   receive `WeightSlot`s and `MixerFacts`/`AttnFacts`-style facts structs. The MoE owner
+   adds a `MoeFacts` in its own module.
+3. **The prefill `StepEnv` fields** (`tokens`, `seqs`, chunk offset, host `cu_seqlens`) and
+   `Program.segments`. These come with M6a. MoE prefill starts once M6a is on the stack branch.
+4. **The state programs** (M5): the MoE family reuses them unchanged (same GDN state).
+
+**Branch bases:** CIRCUIT's M5 and MOE's MoE M1 both branch from #82's head. They are sibling
+stacks, composed on one integration branch for the campaign (15.8: C1 + C2 merged when both
+are ready).
