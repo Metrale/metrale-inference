@@ -1756,24 +1756,6 @@ files = ["kernels/gb10/common/relu_squared.cu"]
 
 # ---- 2026-10-03: Prefill (M6a, GatedDeltaNet) -----------------------------------------------------
 
-# 2026-10-03: The dense 27B's GDN prefill projections: the activation cast to E4M3 with a
-# per-tensor scale of 1 (`bf16_to_fp8`), then the FP8 GEMM over the unscaled E4M3 cast of the
-# NVFP4 weight (`fp8_fp8_gemm_ldmab`, 128x256 tiles; ml/ops/gemm_fp8_prefill.rs:29-88).
-[[family]]
-id = "fp8_gemm_ldmab"
-description = "BF16->E4M3 activation cast and the FP8 ldmab tile GEMM (dense GDN prefill projections)"
-compute = "tensor_core"
-mma = "mma.sync.m16n8k32.e4m3"
-kernel_compute."w4a16::bf16_to_fp8" = { compute = "memory" }
-kernels = ["w4a16::bf16_to_fp8", "w4a16_fp8_ldmab::fp8_fp8_gemm_ldmab"]
-rows = [1, 65536]
-pipeline.linear = { in = ["bf16"], act = "fp8/tensor", weight = "nvfp4/g16->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "e4m3", out = ["bf16"] }
-op = [{ op = "linear", weight = ["nvfp4/g16"], activation = ["bf16"] }]
-[[family.point]]
-values = {}
-how = "instantiation"
-files = ["kernels/gb10/common/w4a16_fp8_ldmab.cu", "kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu"]
-
 # 2026-10-03: The token-parallel prefill conv and the state write after it: the window is FP32,
 # the output rounded to BF16 into the qkvz-width rows (ml/ops/ssm_mamba.rs:149-215).
 [[family]]
