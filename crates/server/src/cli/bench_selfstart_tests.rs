@@ -91,6 +91,7 @@ fn served_forever() -> (SelfServed, tokio::sync::oneshot::Receiver<()>) {
     let served = SelfServed {
         target: TargetEndpoint::local(1, "m"),
         recipe_id: "r".to_string(),
+        recipe_sha256: String::new(),
         overrides: Default::default(),
         resolved: Default::default(),
         serve_env: Default::default(),
@@ -221,7 +222,19 @@ fn a_baseline_declared_serve_pin_reaches_the_rendered_serve_args_without_cli_fla
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/recipes/qwen3.6/qwen3.6-27b-nvfp4.yaml");
     let text = std::fs::read_to_string(&fixture).expect("fixture recipe");
-    let recipe = crate::recipe::Recipe::parse("qwen3.6/qwen3.6-27b-nvfp4", &text).expect("parses");
+    let mut recipe =
+        crate::recipe::Recipe::parse("qwen3.6/qwen3.6-27b-nvfp4", &text).expect("parses");
+    // 2026-10-02: The gate's own recipe carries the `--weight-quantization` tier its W4A4 pins
+    // need; the stand-in takes that one key from it, so it still differs from the pins elsewhere.
+    let served = crate::recipe::Recipe::parse(
+        resolved.recipe_id.clone(),
+        &gate::recipe_closure::read_in_tree(&root, &resolved.recipe_id).expect("in tree"),
+    )
+    .expect("the in-tree recipe parses");
+    recipe.defaults.insert(
+        "weight_quantization".to_string(),
+        served.defaults["weight_quantization"].clone(),
+    );
     let args = recipe
         .serve_args(&merged)
         .expect("pins render to valid serve args");

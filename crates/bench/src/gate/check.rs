@@ -86,13 +86,15 @@ pub(super) fn record_still_stands(
 ///
 /// A diff whose invalidating paths are all excused by the record's closure attestation
 /// ([`super::closure::excuses`]) still stands; the closure can only narrow the path boundary.
+/// A record also needs the recipe it served to be what its gate serves at `sha`
+/// ([`super::recipe_closure::recipe_standing`]).
 pub fn record_standing(
     root: &Path,
     sha: &str,
     record: &GateRecord,
     gate: &super::coverage::GateCoverage,
 ) -> Standing {
-    match invalidating_paths(root, sha, &record.git_sha, gate) {
+    let by_paths = match invalidating_paths(root, sha, &record.git_sha, gate) {
         None => Standing::Unknown,
         Some(paths) if paths.is_empty() => Standing::Stands,
         Some(paths) => {
@@ -102,6 +104,17 @@ pub fn record_standing(
                 Standing::Invalidated(paths)
             }
         }
+    };
+    // 2026-10-02: A record that stands on its paths still falls when the recipe its gate serves
+    // is not the one it served (`recipe_closure`): recipes are outside `PERF_PATHS`.
+    match (
+        by_paths,
+        super::recipe_closure::recipe_standing(root, record),
+    ) {
+        (Standing::Stands, super::recipe_closure::RecipeStanding::Changed(path)) => {
+            Standing::Invalidated(vec![path])
+        }
+        (standing, _) => standing,
     }
 }
 

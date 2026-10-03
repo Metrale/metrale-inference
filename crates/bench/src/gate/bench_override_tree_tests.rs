@@ -259,8 +259,18 @@ fn the_moe_concurrency_entry_is_the_published_instrument_with_its_bootstrap_floo
             ("request_timeout", "0"),
             ("scheduler", "fifo"),
             ("ssm_cache_slots", "32"),
-            ("weight_quantization", "declared"),
         ])
+    );
+    // 2026-10-02: The tier is the recipe's own (`declared`), served from the tree.
+    let served = crate::gate::recipe_closure::canonical(
+        &crate::gate::recipe_closure::read_in_tree(&root, entry.recipe.as_deref().unwrap())
+            .unwrap(),
+        &entry.serve_overrides,
+    )
+    .unwrap();
+    assert_eq!(
+        served.as_map().unwrap()["defaults"].as_map().unwrap()["weight_quantization"].as_str(),
+        Some("declared")
     );
     assert!(
         !entry.serve_overrides.contains_key("lm_head_dtype"),
@@ -323,4 +333,39 @@ fn the_dense_concurrency_entry_carries_a_joule_ceiling_on_every_rung() {
             "{k} has no matching tok/s floor"
         );
     }
+}
+
+/// 2026-10-02: Every measured GB10 entry of the three models whose gates the batch certifies
+/// serves the tier [`certified_tier`] names (`declared` for the 35B FP8 checkpoint since
+/// 2026-09-29, `nvfp4` otherwise). The tier comes from the in-tree recipe, with the entry's pins
+/// applied; the serve default is `declared`, so a recipe without the key would certify a
+/// different engine configuration. The gates seen are counted, so the test cannot pass on zero
+/// entries.
+#[test]
+fn every_measured_gb10_entry_serves_the_certified_weight_quantization_tier() {
+    let root = repo_root();
+    let mut seen = 0;
+    for (target, entry) in load_all(&root).expect("tree loads") {
+        if target.hardware != "gb10"
+            || entry.status != "measured"
+            || !["qwen3.8-27b", "qwen3.6-35b-a3b", "qwen3.6-27b"].contains(&target.model.as_str())
+        {
+            continue;
+        }
+        let model = ModelBaseline {
+            recipe: entry.recipe.clone(),
+            serve_overrides: entry.serve_overrides.clone(),
+            ..ModelBaseline::default()
+        };
+        assert_eq!(
+            served_tier(&root, &model),
+            certified_tier(&entry.checkpoint),
+            "{} / {} ({}) must serve its certified tier",
+            target.model,
+            entry.gate,
+            entry.checkpoint
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, 26, "the check must not pass vacuously");
 }

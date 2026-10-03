@@ -27,6 +27,9 @@ pub(crate) async fn write_gate_record(
     url: &str,
     model: &str,
     recipe: Option<String>,
+    // 2026-10-02: The canonical content hash of that recipe as served
+    // (`gate::recipe_closure`); `None` for an operator's own endpoint.
+    served_recipe_sha256: Option<String>,
     // 2026-09-26: What that recipe resolved (`ServePlan::disclosed`); empty
     // for an operator's own endpoint.
     serve_resolved: BTreeMap<String, String>,
@@ -73,12 +76,15 @@ pub(crate) async fn write_gate_record(
     let target = TargetEndpoint::new(url, model);
     let hardware = metrale_bench::http::fetch_hardware(&target, gate::HARDWARE_TIMEOUT).await;
     let dirty = dirty_at_start;
-    let gate_record = gate::GateRecord::from_run(record, hardware, sha, dirty, recipe)?
+    let mut gate_record = gate::GateRecord::from_run(record, hardware, sha, dirty, recipe)?
         // 2026-09-26: What this binary's kernels were compiled from, baked at
         // build time rather than read from the tree now.
         .with_closure(metrale_kernels::TARGET_CLOSURES)
         .with_serve_resolved(serve_resolved)
         .with_serve_env(serve_env);
+    if let Some(sha256) = served_recipe_sha256 {
+        gate_record = gate_record.with_served_recipe(sha256);
+    }
     let path = gate::write_record(&root, &gate_record)?;
 
     // 2026-09-26: Sign it and print both filenames, so the operator commits the

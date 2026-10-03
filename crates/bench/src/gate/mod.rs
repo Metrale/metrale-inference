@@ -23,6 +23,7 @@ pub mod closure;
 pub mod codeowners;
 pub mod coverage;
 pub mod hermetic;
+pub mod recipe_closure;
 pub mod record;
 mod record_env;
 mod record_path;
@@ -287,6 +288,9 @@ mod signing_tests;
 #[cfg(test)]
 #[path = "amnesty_tests.rs"]
 mod amnesty_tests;
+#[cfg(test)]
+#[path = "recipe_closure_tests.rs"]
+mod recipe_closure_tests;
 #[cfg(test)]
 #[path = "standing_tests.rs"]
 mod standing_tests;

@@ -3,9 +3,9 @@
 //! 2026-09-26: The serve settings a gate record discloses about the server it
 //! measured (`GateRecord::serve_resolved`).
 //!
-//! `served_by` names a recipe kept in another repository, and
+//! `served_by` names the in-tree recipe (`gate::recipe_closure`), and
 //! `serve_overrides` only the keys changed for the run; neither states what
-//! the server ran with. The keys are defined here, in the crate that owns the
+//! the server resolved those settings to (2026-10-02). The keys are defined here, in the crate that owns the
 //! record, and the server CLI fills them from its rendered serve flags.
 //!
 //! Owner: bench gate (records).
