@@ -140,8 +140,9 @@ pub(super) fn compressed_tensors_arm(
         let src = if store.contains(&format!("{prefix}.weight_packed")) {
             quantized_auto(store, &prefix, gpu, variant)?
         } else {
-            let dense_bf16 = dense_auto(store, &format!("{prefix}.weight"), gpu)?;
-            quantize_to_nvfp4(
+            let name = format!("{prefix}.weight");
+            let dense_bf16 = dense_auto(store, &name, gpu)?;
+            let q = quantize_to_nvfp4(
                 &dense_bf16,
                 full_n,
                 full_k,
@@ -149,7 +150,16 @@ pub(super) fn compressed_tensors_arm(
                 absmax_k,
                 quantize_k,
                 stream,
-            )?
+            )?;
+            // 2026-10-02: Nothing reads the BF16 dequant once it is requantized (q/k/v/o are
+            // bound NVFP4, `q_proj`..`v_proj` are NULL), so it is freed: 200 MiB per layer
+            // on unsloth/Qwen3.8-27B-NVFP4, 3.1 GiB in all. A BF16 projection is the
+            // store's own tensor (`dense_auto`) and stays. `quantize_to_nvfp4` has
+            // synchronized `stream`.
+            if dense_bf16.weight != store.get(&name)?.ptr {
+                gpu.free(dense_bf16.weight)?;
+            }
+            q
         };
         if tp_size == 1 {
             return Ok(src);
