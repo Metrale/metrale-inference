@@ -20,6 +20,7 @@
 
 use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::runs::Times;
+use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::super::bindings::{MixerFacts, WeightSlot};
 use super::super::compile::{Cx, OpEmitter};
@@ -31,13 +32,119 @@ use crate::layers::ops;
 /// 2026-09-30: `gdn_verify_runs`: the conv, snapshot, L2 norm and recurrence of every run.
 pub(crate) struct GdnVerifyRuns;
 
-struct Dims {
-    nk: u32,
-    kd: u32,
-    nv: u32,
-    vd: u32,
-    conv_dim: u32,
-    key: usize,
+/// 2026-09-30: The layer's GDN dims. 2026-10-03: Shared with the exact verify's runs
+/// (`gdn_exact_batch.rs`).
+pub(super) struct Dims {
+    pub(super) nk: u32,
+    pub(super) kd: u32,
+    pub(super) nv: u32,
+    pub(super) vd: u32,
+    pub(super) conv_dim: u32,
+    pub(super) key: usize,
+}
+
+/// 2026-10-03: The bases of the rows every run slices, at the strides [`setup`] checks.
+pub(super) struct Edges {
+    pub(super) qkvz: DevicePtr,
+    pub(super) qkv: DevicePtr,
+    pub(super) decay: DevicePtr,
+    pub(super) out: DevicePtr,
+    pub(super) gb_stride: u32,
+    pub(super) out_stride: u32,
+}
+
+/// 2026-09-30: What a batched verify's runs share: the table, the dims, the layer's carry
+/// binding and WY tables, the conv weight and the row edges, checked laid out as the kernels
+/// read them. 2026-10-03: Factored out of [`GdnVerifyRuns`] for the exact verify's runs, which
+/// read the same edges at FP32.
+pub(super) fn setup(cx: &Cx<'_>, id: &str) -> Result<(Dims, Common, Edges)> {
+    cx.g.expect_ops(
+        id,
+        &[
+            "conv1d_update",
+            "state_snapshot",
+            "l2_norm",
+            "gdn_recurrence",
+        ],
+    )?;
+    let table = cx
+        .table()
+        .context("a per-run group outside a batched verify")?;
+    ensure!(
+        table.runs.len() == cx.g.group.runs.len(),
+        "the plan resolved {} runs for a table of {}",
+        cx.g.group.runs.len(),
+        table.runs.len()
+    );
+    let (nk, kd, nv, vd) = (
+        dim(cx, "lin_k_heads")?,
+        dim(cx, "lin_k_dim")?,
+        dim(cx, "lin_v_heads")?,
+        dim(cx, "lin_v_dim")?,
+    );
+    let key = (nk * kd) as usize;
+    let d = Dims {
+        nk,
+        kd,
+        nv,
+        vd,
+        conv_dim: (key * 2) as u32 + nv * vd,
+        key,
+    };
+    let layer =
+        cx.g.node(0)
+            .layer
+            .context("a GDN node outside the layers")?;
+    let (carry, conv_bytes) = match cx.layer(0)?.mixer {
+        MixerFacts::Gdn(g) => (
+            g.carry
+                .context("the batched verify runs carried; the layer has no carry binding")?,
+            usize::try_from(g.conv_state_bytes)?,
+        ),
+        MixerFacts::Attention(_) => bail!("`{}` is not a GDN layer", cx.g.node(0).id),
+    };
+    let ssm_idx = cx.g.circuit.layer_kinds[..layer]
+        .iter()
+        .filter(|k| **k == metrale_circuit::LayerKind::LinearAttention)
+        .count();
+    let tables = cx.fixed.verify_wy_tables;
+    ensure!(!tables.is_null(), "the batched verify needs the WY tables");
+    let layer_tables = tables.offset(ssm_idx * VERIFY_WY_LAYER_STRIDE_BYTES);
+    let conv_w = dense(cx.weight(0, WeightSlot::GdnConv1d)?, "conv1d")?;
+    let d_conv = u32::try_from(cx.config.linear_conv_kernel_dim)?;
+    let (qkvz, qkvz_stride) = cx.strided(cx.g.input(0, 0)?)?;
+    let (qkv, qkv_stride) = cx.strided(cx.g.output(2, 0)?)?;
+    let (decay, gb_stride) = cx.strided(cx.g.input(3, 1)?)?;
+    let (beta, _) = cx.strided(cx.g.input(3, 2)?)?;
+    let (out, out_stride) = cx.strided(cx.g.output(3, 0)?)?;
+    ensure!(
+        qkvz_stride == d.conv_dim + d.nv * d.vd
+            && qkv_stride == d.conv_dim
+            && out_stride == d.nv * d.vd
+            && gb_stride == d.nv * 2
+            && beta == decay.offset(d.nv as usize * 4),
+        "the batched verify's GDN rows are not laid out as the kernels read them (the \
+         BA-gates group packs `[decay | beta]` rows) \
+         (qkv {qkv_stride}, core {out_stride}, gates {gb_stride})"
+    );
+    let common = Common {
+        layer,
+        carry,
+        conv_bytes,
+        layer_tables,
+        conv_w,
+        d_conv,
+        qkvz_stride,
+    };
+    let edges = Edges {
+        qkvz,
+        qkv,
+        decay,
+        out,
+        gb_stride,
+        out_stride,
+    };
+    Ok((d, common, edges))
 }
 
 impl OpEmitter for GdnVerifyRuns {
@@ -46,74 +153,7 @@ impl OpEmitter for GdnVerifyRuns {
     }
 
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
-        cx.g.expect_ops(
-            self.id(),
-            &[
-                "conv1d_update",
-                "state_snapshot",
-                "l2_norm",
-                "gdn_recurrence",
-            ],
-        )?;
-        let table = cx
-            .table()
-            .context("a per-run group outside a batched verify")?;
-        ensure!(
-            table.runs.len() == cx.g.group.runs.len(),
-            "the plan resolved {} runs for a table of {}",
-            cx.g.group.runs.len(),
-            table.runs.len()
-        );
-        let d = Dims {
-            nk: dim(cx, "lin_k_heads")?,
-            kd: dim(cx, "lin_k_dim")?,
-            nv: dim(cx, "lin_v_heads")?,
-            vd: dim(cx, "lin_v_dim")?,
-            conv_dim: 0,
-            key: 0,
-        };
-        let key = (d.nk * d.kd) as usize;
-        let d = Dims {
-            conv_dim: (key * 2) as u32 + d.nv * d.vd,
-            key,
-            ..d
-        };
-        let layer =
-            cx.g.node(0)
-                .layer
-                .context("a GDN node outside the layers")?;
-        let (carry, conv_bytes) = match cx.layer(0)?.mixer {
-            MixerFacts::Gdn(g) => (
-                g.carry
-                    .context("the batched verify runs carried; the layer has no carry binding")?,
-                usize::try_from(g.conv_state_bytes)?,
-            ),
-            MixerFacts::Attention(_) => bail!("`{}` is not a GDN layer", cx.g.node(0).id),
-        };
-        let ssm_idx = cx.g.circuit.layer_kinds[..layer]
-            .iter()
-            .filter(|k| **k == metrale_circuit::LayerKind::LinearAttention)
-            .count();
-        let tables = cx.fixed.verify_wy_tables;
-        ensure!(!tables.is_null(), "the batched verify needs the WY tables");
-        let layer_tables = tables.offset(ssm_idx * VERIFY_WY_LAYER_STRIDE_BYTES);
-        let conv_w = dense(cx.weight(0, WeightSlot::GdnConv1d)?, "conv1d")?;
-        let d_conv = u32::try_from(cx.config.linear_conv_kernel_dim)?;
-        let (qkvz, qkvz_stride) = cx.strided(cx.g.input(0, 0)?)?;
-        let (qkv, qkv_stride) = cx.strided(cx.g.output(2, 0)?)?;
-        let (decay, gb_stride) = cx.strided(cx.g.input(3, 1)?)?;
-        let (beta, _) = cx.strided(cx.g.input(3, 2)?)?;
-        let (out, out_stride) = cx.strided(cx.g.output(3, 0)?)?;
-        ensure!(
-            qkvz_stride == d.conv_dim + d.nv * d.vd
-                && qkv_stride == d.conv_dim
-                && out_stride == d.nv * d.vd
-                && gb_stride == d.nv * 2
-                && beta == decay.offset(d.nv as usize * 4),
-            "the batched verify's GDN rows are not laid out as the kernels read them (the \
-             BA-gates group packs `[decay | beta]` rows) \
-             (qkv {qkv_stride}, core {out_stride}, gates {gb_stride})"
-        );
+        let (d, common, edges) = setup(cx, self.id())?;
         let runs = cx.g.group.runs.clone();
         let (mut seq, mut row) = (0usize, 0usize);
         for r in &runs {
@@ -122,19 +162,10 @@ impl OpEmitter for GdnVerifyRuns {
                 seq,
                 n,
                 k,
-                qkvz: qkvz.offset(row * qkvz_stride as usize * 2),
-                qkv: qkv.offset(row * d.conv_dim as usize * 2),
-                decay: decay.offset(row * gb_stride as usize * 4),
-                out: out.offset(row * out_stride as usize * 2),
-            };
-            let common = Common {
-                layer,
-                carry,
-                conv_bytes,
-                layer_tables,
-                conv_w,
-                d_conv,
-                qkvz_stride,
+                qkvz: edges.qkvz.offset(row * common.qkvz_stride as usize * 2),
+                qkv: edges.qkv.offset(row * d.conv_dim as usize * 2),
+                decay: edges.decay.offset(row * edges.gb_stride as usize * 4),
+                out: edges.out.offset(row * edges.out_stride as usize * 2),
             };
             if r.run.contiguous {
                 contiguous_run(cx, &d, &at, &common, &r.launches)?;
@@ -149,25 +180,25 @@ impl OpEmitter for GdnVerifyRuns {
 }
 
 /// 2026-09-30: Where one run's rows and sequences start.
-struct Run {
-    seq: usize,
-    n: usize,
-    k: usize,
-    qkvz: metrale_gpu_runtime::gpu::DevicePtr,
-    qkv: metrale_gpu_runtime::gpu::DevicePtr,
-    decay: metrale_gpu_runtime::gpu::DevicePtr,
-    out: metrale_gpu_runtime::gpu::DevicePtr,
+pub(super) struct Run {
+    pub(super) seq: usize,
+    pub(super) n: usize,
+    pub(super) k: usize,
+    pub(super) qkvz: DevicePtr,
+    pub(super) qkv: DevicePtr,
+    pub(super) decay: DevicePtr,
+    pub(super) out: DevicePtr,
 }
 
 /// 2026-09-30: What every run of the layer shares.
-struct Common {
-    layer: usize,
-    carry: GdnCarryBinding,
-    conv_bytes: usize,
-    layer_tables: metrale_gpu_runtime::gpu::DevicePtr,
-    conv_w: crate::weight_map::DenseWeight,
-    d_conv: u32,
-    qkvz_stride: u32,
+pub(super) struct Common {
+    pub(super) layer: usize,
+    pub(super) carry: GdnCarryBinding,
+    pub(super) conv_bytes: usize,
+    pub(super) layer_tables: DevicePtr,
+    pub(super) conv_w: crate::weight_map::DenseWeight,
+    pub(super) d_conv: u32,
+    pub(super) qkvz_stride: u32,
 }
 
 fn contiguous_run(
@@ -381,8 +412,10 @@ fn fragmented_run(
 }
 
 /// 2026-09-30: Fold the pending rows of the run's `n` sequences from `seq` into their h state and
-/// conv window (`carry_flush_run`), before each sequence runs alone and reads them.
-fn fold_run(
+/// conv window (`carry_flush_run`), before each sequence runs alone and reads them. 2026-10-03:
+/// Under the exact verify `flush_k` is the model directory's `gdn_exact_carry_flush`
+/// (`carry.rs` `carry_flush_kernel`), launched with the same arguments.
+pub(super) fn fold_run(
     cx: &mut Cx<'_>,
     (flush_k, conv_flush_k): (&metrale_circuit::KernelId, &metrale_circuit::KernelId),
     c: &Common,
