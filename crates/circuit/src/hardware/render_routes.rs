@@ -126,16 +126,26 @@ pub(super) fn routes_section(s: &mut String, r: &HwReport) {
 /// 2026-10-02: Each group line names the compute unit its kernels run on (`compute=`).
 pub fn plan_text(circuit: &Circuit, one: &OnePlan) -> String {
     let families = &one.resolved.families;
-    let note = |g: &crate::fuser::Group| super::tc_policy::unit_tag(families, &g.kernels);
-    let mut s = crate::render::render_noted(circuit, &one.planned.plan, &one.header, &note);
+    let group = |g: &crate::fuser::Group| super::tc_policy::unit_tag(families, &g.kernels);
+    let node = |n: crate::ir::NodeIdx| one.planned.pipelines.line(n);
+    let notes = crate::render::Notes {
+        group: &group,
+        node: &node,
+    };
+    let mut s = crate::render::render_noted(circuit, &one.planned.plan, &one.header, &notes);
     for rp in &one.planned.routes {
         let header = crate::render::with_settings(&one.header, &rp.route.policy(&one.policy));
+        let node = |n: crate::ir::NodeIdx| rp.planned.pipelines.line(n);
+        let notes = crate::render::Notes {
+            group: &group,
+            node: &node,
+        };
         s.push_str(&crate::render::route_section(
             circuit,
             &rp.route,
             &rp.planned.plan,
             &header,
-            &note,
+            &notes,
         ));
     }
     s

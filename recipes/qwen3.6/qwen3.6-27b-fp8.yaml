@@ -54,7 +54,7 @@ defaults:
   # against 145 s for either FP8 KV, decode was unchanged, and its 733,664-token KV pool
   # covers two full 262,144-token sequences.
   kv_cache_dtype: bf16
-  gpu_memory_utilization: 0.88
+  gpu_memory_utilization: 0.85
   scheduler: slai
   mtp_quantization: bf16
   enable_prefix_caching: true

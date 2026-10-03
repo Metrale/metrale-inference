@@ -2237,10 +2237,10 @@ status = "measured"
 note = """\
 High-ISL cold-TTFT gate, one-shot (owner 2026-09-27): one unmeasured warm-up request, then one \
 measured request with a fresh tag at the start of the committed 32k-token prompt \
-(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Ceiling = vLLM 0.27.1 \
+(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Reference = vLLM 0.27.1 \
 (vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, \
 vLLM commit 6e448d0e) steady one-shot TTFT on GB10 (dgx2 = spark-43fa, 2026-09-27), same \
-fixture, same request body — parity is the pass bar (owner 2026-09-27). The value is the mean \
+fixture, same request body — parity was the pass bar (owner 2026-09-27) until the owner set the tighter ceiling below on 2026-10-03. The value is the mean \
 of the two cold samples, 24448.9 and 23781.5 ms; neither was the first 32k request after a \
 boot. bench/baselines/qwen38-27b/ttft/published.json holds every pair with its source records. \
 Certified evidence (.benchmarks/high-isl-ttft-cold): Metrale Engine is 1.4x faster than this \
@@ -2266,12 +2266,16 @@ gpu_memory_utilization = "0.85"
 enable_prefix_caching = "true"
 
 [benchmarks.metrics.median_ms]
-# 2026-09-27: The ceiling of 24115.2 ms, vLLM's steady one-shot TTFT (note above).
-max = 24115.2
+# 2026-10-03: Owner ceiling of 17700 ms, below vLLM's 24115.2 ms (note above). The spark-28c2
+# history of this gate reads 16779.9-17187.6 ms over the campaigns #48-#81; 17187.6 (#81) is
+# serve-to-serve spread, not a change: in #81's own campaign the same binary and recipe read
+# 16622 and 17142 ms server-side on two serves. A host whose tcp_rmem default is below the 32k
+# request body stalls it ~210 ms (17282.3 ms on spark-43fa at #39).
+max = 17700.0
 
 [benchmarks.metrics.p90_ms]
-# 2026-09-27: The ceiling of 24115.2 ms: one sample, so p90 equals the median.
-max = 24115.2
+# 2026-10-03: Equal to the median's: one sample, so p90 equals the median.
+max = 17700.0
 
 [benchmarks.metrics.prompt_tokens]
 # 2026-09-27: The fixture's floor; both engines render it to 32,772 on both subjects.
@@ -2287,10 +2291,10 @@ status = "measured"
 note = """\
 High-ISL warm-TTFT gate, one-shot (owner 2026-09-27): one unmeasured warm-up request, then one \
 priming request and one measured byte-identical re-send of the committed 32k-token prompt \
-(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Ceiling = vLLM 0.27.1 \
+(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Reference = vLLM 0.27.1 \
 (vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, \
 vLLM commit 6e448d0e) steady one-shot TTFT on GB10 (dgx2 = spark-43fa, 2026-09-27), same \
-fixture, same request body — parity is the pass bar (owner 2026-09-27). The value is the mean \
+fixture, same request body — parity was the pass bar (owner 2026-09-27) until the owner set the tighter ceiling below on 2026-10-03. The value is the mean \
 of the two warm samples, 2135.3 and 2129.3 ms. bench/baselines/qwen38-27b/ttft/published.json \
 holds every pair with its source records. Certified evidence (.benchmarks/high-isl-ttft-warm): \
 Metrale Engine is 4.6-9.0x faster than this ceiling at every campaign since #39: 459.8 ms at \
@@ -2314,12 +2318,16 @@ gpu_memory_utilization = "0.85"
 enable_prefix_caching = "true"
 
 [benchmarks.metrics.median_ms]
-# 2026-09-27: The ceiling of 2132.3 ms, vLLM's steady one-shot TTFT (note above).
-max = 2132.3
+# 2026-10-03: Owner ceiling of 300 ms, a seventh of vLLM's 2132.3 ms (note above). The
+# spark-28c2 history of this gate reads 232.4-251.3 ms over the campaigns #48-#81; server-side
+# the warm TTFT is ~186 ms, and the rest is the client's HTTP path. A host whose tcp_rmem
+# default is below the 32k request body stalls it ~210 ms and reads ~460 ms (spark-43fa at
+# #39): this ceiling fails such a host until the listener sizes its own receive buffer.
+max = 300.0
 
 [benchmarks.metrics.p90_ms]
-# 2026-09-27: The ceiling of 2132.3 ms: one sample, so p90 equals the median.
-max = 2132.3
+# 2026-10-03: Equal to the median's: one sample, so p90 equals the median.
+max = 300.0
 
 [benchmarks.metrics.prompt_tokens]
 # 2026-09-27: The fixture's floor; both engines render it to 32,772 on both subjects.

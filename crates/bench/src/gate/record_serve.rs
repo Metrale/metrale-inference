@@ -112,11 +112,26 @@ pub struct LiveForward {
     /// count (which the rendered serve already states).
     #[serde(default)]
     pub auto_max_batch_size: Option<usize>,
+    /// 2026-10-02: The MoE expert-table decision the serve's memory plan made before load
+    /// (`build` or `skip`); `None` when the loader reads none.
+    #[serde(default)]
+    pub moe_expert_tables: Option<String>,
+    /// 2026-10-03: SHA-256 of the kernel tree the serve's memory plan was computed from
+    /// (`metrale_kernel_tree::SHA256`); `None` when the serve made no plan.
+    #[serde(default)]
+    pub kernel_tree: Option<String>,
 }
 
 /// 2026-10-01: Key for the slot count `--max-batch-size auto` resolved to, written `auto:<n>`;
 /// present only for `auto`.
 pub const MAX_BATCH_SIZE: &str = "max_batch_size";
+/// 2026-10-02: Key for the MoE expert-table decision, present (`skip`) only when the serve's
+/// memory plan dropped the transposed MoE prefill tables. Absent means built, as every serve
+/// before the decision existed did.
+pub const MOE_EXPERT_TABLES: &str = "moe_expert_tables";
+/// 2026-10-03: Key for the SHA-256 of the kernel tree the serve's memory plan read, present
+/// whenever the serve planned (every serve whose loader reads the MoE expert-table decision).
+pub const KERNEL_TREE: &str = "kernel_tree";
 
 /// 2026-09-28: Add the live forward to `resolved`: [`FORWARD`] when it is not `legacy`, and
 /// [`PLAN_DIGEST`]. `requested` is the forward the rendered serve asked for; a server running
@@ -127,6 +142,18 @@ pub fn merge_live_forward(
     requested: &str,
     live: &LiveForward,
 ) -> Result<(), String> {
+    let skipped = match live.moe_expert_tables.as_deref() {
+        None | Some("build") => false,
+        Some("skip") => true,
+        Some(other) => return Err(format!("the server reports MoE expert tables `{other}`")),
+    };
+    if let Some(d) = &live.kernel_tree
+        && !(d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err(format!(
+            "the server reports kernel tree `{d}`, not a SHA-256"
+        ));
+    }
     if live.forward != requested {
         return Err(format!(
             "the server runs forward `{}`, the rendered serve asked for `{requested}`",
@@ -144,6 +171,12 @@ pub fn merge_live_forward(
     }
     if let Some(n) = live.auto_max_batch_size {
         resolved.insert(MAX_BATCH_SIZE.to_string(), format!("auto:{n}"));
+    }
+    if skipped {
+        resolved.insert(MOE_EXPERT_TABLES.to_string(), "skip".to_string());
+    }
+    if let Some(d) = &live.kernel_tree {
+        resolved.insert(KERNEL_TREE.to_string(), d.clone());
     }
     Ok(())
 }

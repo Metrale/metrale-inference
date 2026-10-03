@@ -24,6 +24,7 @@ use super::{DflashBuildArgs, LoraBuildArgs};
 use crate::model::TransformerModel;
 use metrale_model_layers::layers::MtpQuantization;
 
+mod alloc_digest;
 mod kv_blocks;
 mod kv_budget;
 mod kv_sizing;
@@ -187,7 +188,21 @@ pub fn build_model(
     mem.mark("load_final_norm");
     let lm_head = loader.load_lm_head(&store, &config, gpu.as_ref())?;
     mem.mark("load_lm_head");
-    let mtp_weights = loader.load_mtp_weights_multi(&store, &config, gpu.as_ref())?;
+    // 2026-10-03: The generic MTP modules load only with `--speculative`, like the GLM-5.3 and
+    // DeepSeek-V4 modules below: without it no proposer reads them (`build_mtp_proposer`), and
+    // until 2026-10-03 their load-time copies (BF16 dequants of the projections and experts,
+    // about 1.5 GiB on the FP8 35B) stayed allocated for nothing.
+    let mtp_weights = if use_speculative {
+        loader.load_mtp_weights_multi(&store, &config, gpu.as_ref())?
+    } else {
+        if metrale_model_weights::mtp_layout::detect_in_store(&store, &config).is_some() {
+            tracing::info!(
+                "the checkpoint has MTP weights, but --speculative is not set: no MTP head is \
+                 built"
+            );
+        }
+        Vec::new()
+    };
     mem.mark("load_mtp_weights_multi");
 
     // 2026-09-25: GLM-5.3 and DeepSeek-V4 have their own MTP modules, not the
@@ -408,6 +423,8 @@ pub fn build_model(
     }
     // 2026-09-28: Declared-W8A8 FP8 head (model/lm_head_fp8_rows.rs).
     model.install_declared_lm_head_w8a8()?;
+    // 2026-10-02: Declared-W4A16 NVFP4 head on the row tiles (model/lm_head_nvfp4_rows.rs).
+    model.install_declared_lm_head_w4a16_rows()?;
 
     // 2026-09-25: Step 6b: the DeepSeek-V4 MTP proposer, built after `new()`
     // because it needs the model's GPU backend. `--dflash` conflicts with

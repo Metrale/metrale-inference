@@ -20,7 +20,7 @@ under.
 
 ## Checks
 
-The `recipes (advisory)` job in `.github/workflows/ci.yml` runs
+The `recipes` job in `.github/workflows/ci.yml`, a required check, runs
 `.github/scripts/recipes.py check` against the `met` built from the same commit:
 
 - every key and value is on the `met dump-serve-options` flag surface, and every
@@ -29,8 +29,8 @@ The `recipes (advisory)` job in `.github/workflows/ci.yml` runs
   check and `validate_serve_args`, all of which run before a model is loaded);
 - the engine's own recipe reader keeps every file (`met doctor`);
 - every `recipe = "..."` id in `kernels/**/BENCH.toml` is a file here;
-- advisory only: `gpu_memory_utilization` above 0.85 on a GB10 image is
-  reported, not refused.
+- `gpu_memory_utilization` above the image's hardware class ceiling
+  (`kernels/<hw>/HARDWARE.toml [memory] util_ceiling`; GB10 0.85) is refused.
 
 Run it locally with a built `met`:
 
@@ -54,7 +54,8 @@ while its recipe hashes the same (`crates/bench/src/gate/recipe_closure.rs`).
 
 ## Provenance
 
-The 32 recipe files are byte-identical to `recipes/` in
+2026-10-02: 19 GB10 recipes had `gpu_memory_utilization` above 0.85 and now
+read 0.85. Apart from that, the 32 recipe files are byte-identical to `recipes/` in
 [Metrale/metralectl](https://github.com/Metrale/metralectl) at
 `e89a8d1b7dd46cbabdf454ac3cde7a012197e3ba`.
 `qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head-experts-nvfp4.yaml` and

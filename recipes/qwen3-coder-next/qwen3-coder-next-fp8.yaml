@@ -43,7 +43,7 @@ defaults:
   max_model_len: 16384
   max_batch_size: 1
   kv_cache_dtype: bf16
-  gpu_memory_utilization: 0.92
+  gpu_memory_utilization: 0.85
   scheduler: slai
   ssm_cache_slots: 0
   oom_guard_mb: 1024

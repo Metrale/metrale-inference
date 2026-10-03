@@ -15,6 +15,7 @@ impl Variant {
             Variant::Subset => &SUBSET_DESCRIPTOR,
             Variant::SubsetEcholp => &SUBSET_ECHOLP_DESCRIPTOR,
             Variant::Full => &FULL_DESCRIPTOR,
+            Variant::SubsetMini => &SUBSET_MINI_DESCRIPTOR,
         }
     }
     pub(super) fn metadata(self) -> &'static PluginMetadata {
@@ -22,6 +23,7 @@ impl Variant {
             Variant::Subset => &SUBSET_METADATA,
             Variant::SubsetEcholp => &ECHOLP_METADATA,
             Variant::Full => &FULL_METADATA,
+            Variant::SubsetMini => &MINI_METADATA,
         }
     }
     pub(super) fn default_pct(self, category: &str) -> f64 {
@@ -32,6 +34,8 @@ impl Variant {
             (Variant::SubsetEcholp, "non_live") => 46.0,
             (Variant::SubsetEcholp, "live") => 23.0,
             (Variant::SubsetEcholp, _) => 12.0,
+            (Variant::SubsetMini, "non_live") => 12.5,
+            (Variant::SubsetMini, _) => 2.0,
         }
     }
     /// 2026-09-26: The subset floor, read from the variant's own [`DrawSpec`]
@@ -49,6 +53,7 @@ impl Variant {
             Variant::Subset => DrawSpec::golden(),
             Variant::SubsetEcholp => DrawSpec::echolp(),
             Variant::Full => DrawSpec::full(),
+            Variant::SubsetMini => DrawSpec::mini(),
         }
     }
 
@@ -59,6 +64,7 @@ impl Variant {
         match self {
             Variant::Subset => Some(995),
             Variant::SubsetEcholp => Some(1004),
+            Variant::SubsetMini => Some(super::draw::MINI_SAMPLES),
             Variant::Full => None,
         }
     }

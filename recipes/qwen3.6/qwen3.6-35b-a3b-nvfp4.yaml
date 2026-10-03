@@ -77,7 +77,7 @@ defaults:
   # margin, rather than a separate live run.
   max_model_len: 262144
   kv_cache_dtype: fp8
-  gpu_memory_utilization: 0.88
+  gpu_memory_utilization: 0.85
   scheduler: slai
   speculative: true
   # Measured optimum for this checkpoint (see description): K=1 = 116.5

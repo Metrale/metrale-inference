@@ -122,6 +122,7 @@ pub(crate) fn load_model(
         scheduler_setup::resolve_max_batch_size(&args, world_size, scheduler_model.as_ref())?;
     let (use_speculative, use_self_spec, use_ngram_spec, num_drafts, dflash_rung) =
         scheduler_setup::resolve_speculation(&args, scheduler_model.as_ref());
+    let prompt_lookup = args.prompt_lookup_config();
 
     let policy = scheduler_setup::scheduling_policy(&args)?;
 
@@ -159,6 +160,7 @@ pub(crate) fn load_model(
     // MODEL.toml `[behavior].enable_loop_watchdog`.
     let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
         args.mtp_gate_force(),
+        args.mtp_shape.mtp_dcut_ratio,
     ));
     sched_levers.set_loop_watchdog(crate::scheduler::resolve_content_loop_watchdog(
         ptx_set.behavior.enable_loop_watchdog,
@@ -209,6 +211,7 @@ pub(crate) fn load_model(
                 max_batch_tokens,
                 use_self_speculative: use_self_spec,
                 use_ngram_speculative: use_ngram_spec,
+                prompt_lookup,
                 swap_space_gb,
                 high_speed_swap_cfg,
                 block_size,
@@ -303,6 +306,10 @@ pub(crate) fn load_model(
             forward: forward.forward.to_string(),
             plan_digest: forward.plan_digest,
             auto_max_batch_size,
+            moe_expert_tables: metrale_model_layers::layers::moe_expert_tables()
+                .map(|t| t.name().to_string()),
+            kernel_tree: crate::main_modules::serve_phases::expert_tables::planned_tree()
+                .map(str::to_string),
         },
         memory,
         // 2026-09-26: `behavior` is MODEL.toml's, embedded at build time, with

@@ -48,9 +48,14 @@ pub use report::{
 };
 
 mod descriptors;
+mod mini_descriptors;
 pub use descriptors::{
     ECHOLP_METADATA, FULL_DESCRIPTOR, FULL_METADATA, SUBSET_DESCRIPTOR, SUBSET_ECHOLP_DESCRIPTOR,
     SUBSET_METADATA,
+};
+pub use mini_descriptors::{
+    MINI_METADATA, MINI_NEMOTRON_NANO_DESCRIPTOR, MINI_NEMOTRON_SUPER_DESCRIPTOR,
+    SUBSET_MINI_DESCRIPTOR,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +63,8 @@ pub enum Variant {
     Subset,
     SubsetEcholp,
     Full,
+    /// 2026-10-03: The 192-sample mini draw (`DrawSpec::mini`).
+    SubsetMini,
 }
 
 /// 2026-09-26: What `score.py` prints.
@@ -425,6 +432,16 @@ impl Benchmark for Bfcl {
                 if let Some(t) = self.table() {
                     frame = frame.with_table(t);
                 }
+                // 2026-10-03: The draw this score is for: N, the category percentages and the
+                // hash of the ordered sample ids, with the shard when this run is one.
+                let mut fp = draw::fingerprint(
+                    &self.spec,
+                    self.samples.iter().map(|s| s.sample_id.as_str()),
+                );
+                if let Some(sh) = &self.shard {
+                    fp.push_str(&format!(";shard={}/{}", sh.index, sh.count));
+                }
+                frame.dataset_fingerprint = Some(fp);
                 Ok(frame)
             }
             Phase::Done => bail!("next() was called after the run finished"),

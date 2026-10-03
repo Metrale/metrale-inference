@@ -156,8 +156,13 @@ impl TransformerModel {
         // `DevicePtr(0)` when no adapter is loaded or the sequence uses the
         // active one. The +128..+256 gap holds 32 u32 entries.
         debug_assert!(m <= 32, "fused verify seq_slot +128 gap holds M ≤ 32");
-        let seq_slot =
-            self.upload_seq_slot_uniform(seq.adapter_slot, m, meta_base.offset(128), stream)?;
+        let seq_slot = self.upload_seq_slot_uniform(
+            seq.adapter_slot,
+            m,
+            meta_base.offset(128),
+            stream,
+            metrale_model_layers::lora::LoraSites::MultiSeq,
+        )?;
 
         let metadata = AttnMetadataDev {
             positions: meta_base,

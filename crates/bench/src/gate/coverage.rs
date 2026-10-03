@@ -1020,11 +1020,29 @@ pub const PROMOTION_CANDIDATES: &[GateCoverage] = &[
         id: "default-tier-boot",
         excludes: DEFAULT_TIER_BOOT_EXCLUDES,
     },
+    // 2026-10-03: The Nemotron-3 models' cheap correctness suite, one gate id per model: the
+    // KAT driver and the BFCL driver on the mini draw, so each excludes what its gate family does.
+    GateCoverage {
+        id: "kat-equality-gate-nemotron-nano",
+        excludes: KAT_EQUALITY_EXCLUDES,
+    },
+    GateCoverage {
+        id: "kat-equality-gate-nemotron-super",
+        excludes: KAT_EQUALITY_EXCLUDES,
+    },
+    GateCoverage {
+        id: "bfcl-subset-mini-nemotron-nano",
+        excludes: BFCL_EXCLUDES,
+    },
+    GateCoverage {
+        id: "bfcl-subset-mini-nemotron-super",
+        excludes: BFCL_EXCLUDES,
+    },
 ];
 
 /// 2026-09-26: Registered benchmarks that are not required gates, each with the reason
 /// (`every_excusal_names_a_real_benchmark_and_a_reason`).
-pub const NOT_REQUIRED: [(&str, &str); 7] = [
+pub const NOT_REQUIRED: [(&str, &str); 12] = [
     (
         "quick-speed-bench",
         "a single-user speed probe with no thresholds and no baseline — a MEASUREMENT tool, \
@@ -1052,6 +1070,33 @@ pub const NOT_REQUIRED: [(&str, &str); 7] = [
          asynchronous device router against the synchronous one, and `--scheduler-config \
          async` is not the default; it becomes required when that changes, on a green run \
          on every served model",
+    ),
+    (
+        "kat-equality-gate-nemotron-nano",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the Nemotron-3-Nano \
+         correctness suite. Its BENCH.toml entry is unmeasured; it becomes required once three \
+         runs set its bounds (measure, then declare)",
+    ),
+    (
+        "kat-equality-gate-nemotron-super",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the Nemotron-3-Super \
+         correctness suite. Its BENCH.toml entry is unmeasured; it becomes required once three \
+         runs set its bounds (measure, then declare)",
+    ),
+    (
+        "bfcl-subset-mini-nemotron-nano",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the Nemotron-3-Nano \
+         accuracy check on the mini draw. Its floors are cut from three measured runs first",
+    ),
+    (
+        "bfcl-subset-mini-nemotron-super",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the Nemotron-3-Super \
+         accuracy check on the mini draw. Its floors are cut from three measured runs first",
+    ),
+    (
+        "bfcl-subset-mini",
+        "the 192-sample mini draw itself, a measurement draw with no baseline: models are gated \
+         on it through their own gate ids (bfcl-subset-mini-<model>), each with its own floors",
     ),
     (
         "default-tier-boot",
