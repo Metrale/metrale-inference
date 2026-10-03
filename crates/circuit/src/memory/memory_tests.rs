@@ -216,6 +216,8 @@ description = "toy"
 compute = "memory"
 kernels = ["m::norm", "m::final_norm"]
 rows = [1, 128]
+pipeline.rms_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }
+pipeline.final_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 op = [{ op = "rms_norm" }, { op = "final_norm" }]
 [[family.point]]
 values = {}

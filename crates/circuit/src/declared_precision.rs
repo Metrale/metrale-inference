@@ -97,9 +97,11 @@ fn activation_format(o: Operand) -> Option<Format> {
 impl EdgePrecision for DeclaredPrecision<'_> {
     fn linear(&self, module: &str) -> LinearFormats {
         // 2026-10-02: An expert projection the plan does not name is declared by its experts
-        // module, where the checkpoint quantizes that as one (`precision::expert_container`).
+        // module, where the checkpoint quantizes that as one (`precision::expert_container`); a
+        // projection the checkpoint ignores keeps its own (16-bit) answer.
         let mut declared = self.plan.resolve(module);
         if declared.weight.is_none()
+            && !self.plan.ignore.iter().any(|t| t.matches_name(module))
             && let Some(container) = crate::precision::expert_container(module)
         {
             declared = self.plan.resolve(container);
