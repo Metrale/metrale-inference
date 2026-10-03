@@ -20,6 +20,8 @@ pub use decode_ring::{
     published_decode_ring_slots, set_decode_ring_slots, watchdogs_disabled_from_value,
 };
 
+mod cache_plan;
+pub use cache_plan::{CachePlan, PrefixUnits};
 mod pool_plan;
 pub use pool_plan::{
     PoolCounts, PoolPlan, PoolShape, PoolState, UnitSource, VerifyCounts, pool_counts,

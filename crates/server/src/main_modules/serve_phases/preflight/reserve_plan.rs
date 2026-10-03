@@ -113,7 +113,7 @@ impl ReservePlan {
             gdn_two_phase: self.gdn_two_phase_bytes,
             runtime: RuntimeHeadroom::new(
                 self.budget_bytes,
-                carry_stash_bytes(&self.config, verify_slots, self.h_f16_pool),
+                carry_stash_bytes(&self.config, verify_slots, self.h_f16_pool)?,
             ),
             per_sequence: self.per_sequence_bytes * slots.max(1),
             decode_ring: self.ring_slots * slots * self.per_seq_blob,

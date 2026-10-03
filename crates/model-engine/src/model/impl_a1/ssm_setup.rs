@@ -156,17 +156,32 @@ pub(super) fn build_ssm_snapshots(
         );
     }
     let ssm_cache_slots = marconi.slots;
+    // 2026-10-03: The slot units from the circuit's cache declarations (`CachePlan`), the
+    // source the preflight reserve reads: h and conv at FP32 per layer, and the last-hidden row
+    // (BF16, `hidden_size` elements) an exact prefix hit feeds to the lm_head instead of
+    // re-running the last token.
+    let units = metrale_model_layers::ssm_reserve::CachePlan::new(
+        config,
+        ssm_pool.h_stored_bytes < ssm_pool.h_bytes,
+    )?
+    .prefix_units(config)?;
+    anyhow::ensure!(
+        (units.h, units.conv) == (ssm_pool.h_bytes, ssm_pool.conv_bytes),
+        "the circuit's prefix snapshot units ({} + {} bytes) differ from the SSM pool's \
+         ({} + {}): the snapshot copies would cut or overrun a slot",
+        units.h,
+        units.conv,
+        ssm_pool.h_bytes,
+        ssm_pool.conv_bytes
+    );
     let ssm_snapshots = SsmSnapshotPool::new(
         ssm_cache_slots,
-        ssm_pool.h_bytes,
-        ssm_pool.conv_bytes,
+        units.h,
+        units.conv,
         ssm_pool.num_ssm_layers,
         decode_ring_slots,
         max_batch_size,
-        // 2026-09-25: Bytes per slot of the last-token hidden snapshot
-        // (BF16, `hidden_size` elements), which an exact prefix hit feeds
-        // to the lm_head instead of re-running the last token.
-        config.hidden_size * 2,
+        units.hidden,
         gpu,
     )?;
     let ssm_tier_store = super::super::impl_a1_init::build_ssm_tier_store(

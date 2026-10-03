@@ -152,8 +152,12 @@ pub(crate) fn preflight_reserve(
     // 2026-09-26: One sequence's SSM state across all SSM layers. Marconi
     // reserves one per cache slot; a decode-ring slot is one per batch
     // sequence (`decode_ring::slot_bytes`).
-    let per_seq_blob = config.num_ssm_layers() * (h_state_bytes + conv_state_bytes);
-    let marconi_bytes = marconi.slots * per_seq_blob;
+    // 2026-10-03: Marconi and the decode ring from the circuit's cache declarations
+    // (`ssm_reserve::CachePlan`), the source the snapshot pool's allocation reads. Marconi now
+    // counts the last-hidden row each slot allocates (`ssm_snapshot_init.rs`).
+    let caches = metrale_model_layers::ssm_reserve::CachePlan::new(config, h_f16_pool)?;
+    let per_seq_blob = caches.ring_seq_bytes()?;
+    let marconi_bytes = caches.marconi_bytes(marconi.slots)?;
     let gdn_two_phase_bytes: usize = {
         let key_dim = config.linear_num_key_heads * config.linear_key_head_dim;
         let value_dim = config.linear_num_value_heads * config.linear_value_head_dim;

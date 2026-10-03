@@ -86,13 +86,16 @@ impl RuntimeHeadroom {
 /// slots (the MTP slots plus the dummy), or 0 when it binds nothing: no verify pools, an f16 h
 /// pool, or GDN heads other than the 128 x 128 the carry kernels serve. Assumes the target ships
 /// the carry kernels (gb10 does); without them the model binds nothing and this over-reserves.
+/// 2026-10-03: The bytes are the circuit's carry caches (`ssm_reserve::CachePlan::carry_bytes`),
+/// which `cache_plan_tests` pins equal to the allocator's `GdnCarrySizes`; a model without a
+/// circuit keeps `GdnCarrySizes`.
 pub(crate) fn carry_stash_bytes(
     config: &ModelConfig,
     verify_slots: Option<usize>,
     h_f16_pool: bool,
-) -> usize {
+) -> anyhow::Result<usize> {
     let Some(slots) = verify_slots else {
-        return 0;
+        return Ok(0);
     };
     let (nv, kd, vd) = (
         config.linear_num_value_heads,
@@ -100,19 +103,23 @@ pub(crate) fn carry_stash_bytes(
         config.linear_value_head_dim,
     );
     if h_f16_pool || nv == 0 || kd != 128 || vd != 128 {
-        return 0;
+        return Ok(0);
+    }
+    let caches = metrale_model_layers::ssm_reserve::CachePlan::new(config, h_f16_pool)?;
+    if caches.source == metrale_model_layers::ssm_reserve::UnitSource::Circuit {
+        return caches.carry_bytes(slots, metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS);
     }
     let layers = (0..config.num_hidden_layers)
         .filter(|&i| config.layer_type(i) == metrale_config::LayerType::LinearAttention)
         .count();
     let conv_dim = config.linear_num_key_heads * kd * 2 + nv * vd;
     use metrale_model_layers::layers::ops;
-    ops::GdnCarrySizes::new(
+    Ok(ops::GdnCarrySizes::new(
         layers,
         slots,
         ops::gdn_carry_seq_floats(nv, kd, vd),
         ops::gdn_carry_conv_seq_elems(conv_dim),
         metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS,
     )
-    .total()
+    .total())
 }

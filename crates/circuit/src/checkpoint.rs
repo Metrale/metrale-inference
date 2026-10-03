@@ -107,7 +107,7 @@ pub enum CheckpointError {
 }
 
 mod states;
-pub use states::recurrent_states;
+pub use states::{CacheStates, cache_states, recurrent_states};
 
 /// 2026-09-30: One architecture's embedded files.
 struct Arch {

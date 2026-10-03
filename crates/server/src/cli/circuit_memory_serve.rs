@@ -257,7 +257,7 @@ pub(crate) fn engine_facts(
             config,
             verify_slots,
             h_f16_pool,
-        ) {
+        )? {
             0 => (0, 0),
             _ => (
                 verify_slots.unwrap_or(0) as u64,
