@@ -65,6 +65,11 @@ pub enum WeightSlot {
     FinalNorm,
     /// 2026-09-29: The MTP draft head's vocabulary projection.
     LmHead,
+    // 2026-10-03: Prefill (M6a, GatedDeltaNet).
+    /// 2026-10-03: The unscaled E4M3 cast of a projection's NVFP4 weight that its prefill GEMM
+    /// reads (`Qwen3SsmLayer::qkvz_fp8`, `out_proj_fp8`), bound as a dense pointer: a derived
+    /// serving copy, not the format the node declares.
+    PrefillCast(LinearRole),
 }
 
 /// 2026-09-28: A bound weight and its storage format.

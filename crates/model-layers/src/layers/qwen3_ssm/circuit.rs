@@ -109,6 +109,31 @@ impl CircuitBindings for Qwen3SsmLayer {
                 weights.insert(WeightSlot::Transposed(role), BoundWeight::Nvfp4(t));
             }
         }
+        // 2026-10-03: Prefill (M6a). The unscaled E4M3 casts the prefill projections read, bound
+        // only where the legacy prefill takes the cast arm (`trait_prefill_proj.rs:274`,
+        // `trait_prefill_helper.rs:207`): every arm before it needs a weight this layer does not
+        // hold (a packed-Q2 or row-wise FP8 qkvz, a block-scaled FP8 or BF16 out_proj), and the
+        // qkvz arm writes `[Q | K | V | Z]` itself only on a sequential-QKVZ layer. Without a
+        // slot the prefill emitter refuses the build; decode does not read them.
+        let qkvz_cast = self.qkvz_fp8.filter(|_| {
+            self.sequential_qkvz
+                && self.qkvz_q2.is_none()
+                && self.qkvz_fp8w_rowwise.is_none()
+                && self.qkvz_fp8w.is_none()
+        });
+        let out_cast = self.out_proj_fp8.filter(|_| {
+            self.out_proj_fp8w_rowwise.is_none()
+                && self.out_proj_dense.is_none()
+                && self.out_proj_fp8w.is_none()
+        });
+        for (role, cast) in [(LinearRole::Qkvz, qkvz_cast), (LinearRole::GdnOut, out_cast)] {
+            if let Some(p) = cast {
+                weights.insert(
+                    WeightSlot::PrefillCast(role),
+                    dense(crate::weight_map::DenseWeight { weight: p }),
+                );
+            }
+        }
         self.ffn.circuit_bind(levers, &mut weights, &mut unmodelled);
         Some(CircuitLayer {
             mixer: MixerFacts::Gdn(GdnFacts {
