@@ -1,6 +1,8 @@
 # The circuit over the whole model lifecycle: design
 
-Status: REVIEWED 2026-09-29, approved with the changes recorded in section 0.
+Status: REVIEWED 2026-09-29, approved with the changes recorded in section 0. Section 15
+(2026-10-03, PROPOSED) plans the milestone that makes the circuit run the engine and takes
+precedence over sections 1 and 10 where they disagree.
 Owner: metrale-circuit (branch `feat/circuit`).
 
 Owner directive (2026-09-29): "Please make sure the circuit covers the whole lifecycle,
@@ -44,6 +46,10 @@ M5 (incl. Mamba2); the HF reference tool, then the Nano RoPE proof and fix PR; M
 for perf/moe-wide.
 
 ## 1. Where the circuit stands (M0-M1)
+
+2026-10-03: out of date. Section 15.1 has the state at c92e43109: the batched verify and the
+n-row draft also run as programs, the prefill nondeterminism is fixed, and the default mixed
+step still runs legacy decode rows under `--forward circuit`.
 
 The circuit already drives these, byte-identical to legacy, eager and graphed:
 
@@ -744,7 +750,8 @@ The rules:
 3. **Warm TTFT needs `prefix_restore`.** Until that mode exists, a warm request under
    `--forward circuit` restores with the legacy path. The record says so.
 4. **The mixed step stays opt-in**, as the codispatch lever is today (it costs about 4.8%
-   median warm TTFT).
+   median warm TTFT). 2026-10-03: wrong. The fused mixed step is the default scheduler path
+   whenever a chunk continues with decodes active; only codispatch is opt-in (section 15.4).
 5. **Prefill fusions (M2-style) are measured on these instruments first.** A fusion that helps
    decode but costs TTFT is gated per mode: rules have `modes`, so it can apply to decode and
    not to prefill.
@@ -769,6 +776,9 @@ The rules:
 - **Parity and A/B legs run outside campaigns,** on a box no campaign holds.
 
 ## 10. Milestones
+
+2026-10-03: section 15.8 replaces this table's order for M5, M6 and M3. M7 and M8 follow the
+flip.
 
 Estimates come from measured pace. M1 took about 1.5 working days for multi_seq and about one
 more for verify plus the draft head. Each estimate below separates work time from box queueing
@@ -941,7 +951,7 @@ Consequences:
 
 | Risk | Consequence | Mitigation |
 |---|---|---|
-| Legacy prefill is nondeterministic for some prompts > 64 tokens | Prefill parity cannot be claimed on the affected rows | Legacy-repeat precondition; M6 step 0 localises the cause with existing levers before any prefill parity is claimed |
+| Legacy prefill is nondeterministic for some prompts > 64 tokens | Prefill parity cannot be claimed on the affected rows | 2026-10-03: fixed on main (#67, the conv1d prefill state race; 35B evidence). M6 step 0 repeats it on the dense 27B and removes the exclusion rule if 0 rows differ (15.4) |
 | NVFP4 requantization at load may be nondeterministic (atomic absmax) | Load parity is undefined for requantized weights | Legacy-vs-legacy hash first; fix or document before M7 acceptance |
 | Two live workspaces before the flip (legacy arena + circuit prefill workspace; the 27B FFN's gate/up and activation edges alone are 0.86 GB at 8192 tokens) | KV budget shrinks, or boot refuses | Size from the `StatePlan`, bind prefill edges to arena buffers where needed, and measure the KV blocks lost; after M3 only one exists |
 | Plan count grows: modes × buckets × route keys | Boot compile time, golden-plan volume | Programs are small `Vec<Launch>`s (hundreds of closures each) compiled at boot per bucket; golden plans render one plan per bucket |
@@ -953,3 +963,378 @@ Consequences:
 | Mamba2 has no multi-row kernels (every Mamba2 and Nemotron-MoE launch is one row; verify and multi-sequence decode loop per row) | Lightning's MTP and C>1 decode are slow until written; the Venn report ranks them as the top two flags | New multi-row Mamba2 update + snapshot kernel, and a ReLU² grouped expert path via the TC-kernel parameterisation (11.5), each behind the stability gate |
 | Nemotron-H legacy bugs found by the survey (NoPE, the 0-byte conv rollback, unparseable Lightning config, a latent read/write race in `causal_conv1d_update_prefill_tp`) | Legacy is not a valid reference for this family | HF is the reference (7.2); the NoPE fix goes to main now; the others are recorded with file:line and fixed where they sit on a gated path |
 | Certification cost if landings are not batched | 5+ campaigns at ~5 GPU-hours each | Stacks per section 9; kernel-only package edits ride the closure-hash exemption where it applies |
+
+## 15. The circuit runs the engine: plan for M5, M6, the boot check, certification and the flip (2026-10-03)
+
+Status: PROPOSED 2026-10-03, for review before any M5/M6 code. Line numbers are origin/main at
+c92e43109. This section takes precedence over sections 1 and 10 where they disagree.
+
+Owner directive (2026-10-03), condensed:
+
+1. Prefill under the circuit (M5, then M6) for the dense 27B and the MoE 35B: the chunk loop,
+   prefix-cache restore (KV and SSM snapshot, including #76's single-pass in-pass snapshots),
+   batched multi-sequence prefill and the mixed step. Byte-identical prefill logits and final
+   state bytes vs legacy on every path, eager and graphed. Then the TTFT cold/warm and high-ISL
+   instruments within noise of legacy.
+2. A boot-time plan check. Every kernel the serve launches is the plan's, with #85's precision
+   pipelines and #78's tensor-core policy. A mismatch refuses to boot.
+3. Full-path certification: `--forward circuit` on every gate, at the same bounds as legacy.
+4. The flip. `--forward circuit` becomes the default, and the legacy decode, verify, draft and
+   prefill loops are deleted for the circuit-built families. The PR counts the deleted lines.
+   No deprecation window is recommended.
+
+The memory model (#82) is the single source for state sizing, and #85's pipelines are
+authoritative.
+
+### 15.1 Where the circuit stands at c92e43109 (corrects section 1)
+
+| Family | Under `--forward circuit` |
+|---|---|
+| Dense `qwen3_5` (two instances: the recipe and `-declared`) | decode (1 row); multi_seq 2..128; verify K = 2, 3, 4; **verify_batch** per row table; **draft** at 1 row and at the batched-propose widths. Byte parity eager + graphed. Draft programs run eagerly (no capture in the MTP paths). |
+| MoE `qwen3_6_moe` | Refused at boot: the MoE FFN is not bound (`ml/layers/mod.rs:232`). Golden plans exist for decode, multi_seq, verify and draft n1. The perf/moe-wide blocker has landed as #51. |
+| Nemotron-H | Refused (`mamba_num_heads > 0`, `me/model/trait_impl/impl_circuit.rs:60-63`). |
+
+Paths that still run legacy under `--forward circuit`. None is disclosed today:
+`ForwardDisclosure` carries only the forward, the plan digest and the launches per step.
+
+1. **Every prefill entry**: single-pass, chunked, two-phase, batched/varlen, prefix restore and
+   the drafter prefill. `Mode` has no prefill variant (`crates/circuit/src/rules.rs:21-33`).
+2. **The fused mixed step.** `mixed_forward_dispatch` runs `layer.decode_multi_seq` for the
+   decode rows and `layer.prefill` for the chunk, per layer (`me/model/trait_impl/
+   decode_b.rs:405-432`). The scheduler takes it **by default** whenever a chunk continues
+   while decodes are active (`run_standard.rs:98`; not EP, no spec step this tick). So every
+   concurrency gate runs legacy decode rows today, even under `--forward circuit`.
+3. **Grammar-masked draft steps** (`ml/layers/mtp_head/forward.rs:61`).
+4. **State ops between steps**: checkpoint, rollback, commit, fold, the ring. They are host
+   copies, although `crates/circuit/src/state_ops.rs` already models four of them as nodes.
+5. **Boot refusals** (`impl_circuit.rs:48-76`): TP/EP, DFlash hidden capture, LoRA, KV
+   high-speed swap, profiling, Mamba-2, latent attention, vanilla norm weights. An FP16 h state
+   is refused only at the first step (`impl_circuit_run.rs:36-39`), not at boot.
+
+**The prefill nondeterminism (section 0, decision 5) is fixed on main.** It was a race in
+`causal_conv1d_update_prefill_tp`; the state write moved to `causal_conv1d_prefill_state`
+(`ml/layers/ops/ssm_mamba.rs:199-205`, #67 at 2f66da5dd). The evidence is from the 35B only:
+5/0/12 rows of 88 differed before the fix and 0/0/0 after. M6 step 0 repeats it on the dense
+27B (15.4).
+
+### 15.2 What "runs the engine" requires: the coverage matrix
+
+The flip is per family, so every recipe of the family must boot and run under the circuit, not
+only the gate recipes. The matrix has these two axes:
+
+- **rows:** the recipes;
+- **columns:** every path the scheduler can take for that recipe's serve arguments (decode,
+  multi_seq, verify, verify_batch, draft, each prefill mode, restore, mixed, grammar draft, state
+  ops).
+
+Each cell is one of: a program with parity evidence; refused at boot with a reason; or retired by
+an owner decision. The flip needs no empty cell.
+
+| Family | Gate recipes (subject of a required gate) | Other recipes of the family |
+|---|---|---|
+| Dense 27B (`qwen3_5`) | `qwen3.8-27b-nvfp4-unsloth` (decode-floor, high-ISL cold/warm), `-unsloth-bfcl` (bfcl-subset, kat-equality, scheduler-equivalence), `-throughput` (concurrency-sweep with `prefill_codispatch = "true"`, default-tier-boot), `-dflash2` (concurrency-sweep-dflash2), `qwen3.6-27b-nvfp4-unsloth` (video-fidelity) | `qwen3.8-27b-nvfp4-latency`, `qwen3.6-27b-{nvfp4, fp8, fp8-mtp, nvfp4-prefill-record}` |
+| MoE 35B (`qwen3_6_moe`) | `qwen3.6-35b-a3b-fp8-bf16head` (ttft cold/warm, high-ISL-moe cold/warm, bfcl-echolp, agentic-webserver, ssm-poisoning, vision-fidelity), `-fp8-nvfp4head` (concurrency-sweep-moe) | `-fp8-mtp`, `-fp8-nvfp4head-experts-{nvfp4, nvfp4-gate-up}`, `-nvfp4` (the NVIDIA NVFP4 checkpoint) |
+
+Only two instances exist today (both dense). Most new instances are data: an `INSTANCES.toml`
+row plus golden plans, because the recipes differ in policy, not in blocks. Three cells are
+real work.
+
+**Owner decisions needed (D-A to D-C):**
+
+- **D-A. DFlash2.** `concurrency-sweep-dflash2` is a required gate, and the circuit refuses
+  DFlash. Two options:
+  - *Model it* (M6e below): the target forward gains declared hidden-capture outputs at the
+    capture layers (section 3.4), and the DFlash drafter becomes a draft program. About 2-3
+    days.
+  - *Keep it on legacy*: `--forward circuit` refuses `--dflash`, the gate stays a legacy gate,
+    and the verify and capture code it uses is not deleted.
+
+  Recommendation: model it. Otherwise the flip leaves one required gate on a path nobody
+  certifies under the new forward.
+- **D-B. Unmodelled features on the circuit families.** TP/EP, LoRA, KV high-speed swap and
+  `--profile`. No recipe of either family uses TP/EP, LoRA or swap (checked in
+  `recipes/qwen3.6`, `recipes/qwen3.8`). Recommendation:
+  - after the flip, refuse these four at boot for the circuit families;
+  - profiling is replaced by the launch trace (15.5);
+  - EP returns as an M-later item (`EpReduce` exists as an op).
+- **D-C. Deletion scope.** See 15.7: the honest count for a two-family flip is small.
+
+The vision and video gates need no new tower work. The vision encoder is not one of the four
+loops and stays as it is. Only the text prefill that consumes its rows runs under the circuit,
+through the `embeds_injected` route key (15.4).
+
+### 15.3 M5: state under the plan, with #82 as the single source
+
+Base: #82 (`crates/circuit/src/memory/`, `met circuit memory`, stacked on #85). M5 adds no
+second state schema. It adopts #82's kinds and lifetimes and makes the allocators and the
+executor consume them.
+
+1. **Kinds and lifetimes.** #82's `state_kinds.rs` (prefix and ring snapshots, the carry stash
+   and table, verify tables, accept stash, hidden capture and the rest) and its `Snapshot`
+   lifetime are adopted as they are. M5 adds:
+   - the `Step` lifetime;
+   - the planner checks from section 3.3: a step edge never outlives its program, a verify edge
+     is written only by `state_snapshot` and read only by commit/rollback, and a snapshot edge
+     is touched only by state ops.
+2. **Every allocator asks the plan.** Today these still allocate from their own arithmetic (the
+   KV budget in `factory/build/kv_budget.rs`, the rest at their own sites):
+
+   | Allocation | Moves to |
+   |---|---|
+   | KV pool | memory-model term |
+   | Marconi pool | memory-model term |
+   | decode ring | memory-model term |
+   | carry stash | memory-model term |
+   | h prefill staging | memory-model term |
+   | circuit workspace, including the prefill buckets at `t_max` | memory-model term |
+
+   The SSM pool already does this (`PoolPlan`, `ml/ssm_reserve/pool_plan.rs:186-290`).
+   `ReservePlan` reads the same terms (#82's `MEMORY-DESIGN.md` §3 wiring). The circuit
+   workspace enters the pre-load reserve; it is absent today.
+3. **Globals become plan inputs**: the rollback mode, the decode-ring depth and the MTP sequence
+   cap.
+4. **State ops run as programs.** The executor runs these as state programs:
+   - from `state_ops.rs`: VerifyCheckpoint, VerifyRollback, CommitAccepted, SlotZero;
+   - added: fold-accepted, prefix snapshot save/restore, ring save/restore.
+
+   The legacy host copies stay reachable under `--forward legacy` until the flip.
+
+**Acceptance:**
+
+- On every instance of 15.2, plus Nano, the boot allocation digests equal legacy byte for byte
+  (#82's ledger test, tightened from percentages to 0 bytes).
+- Preflight equals allocation exactly.
+- `met circuit diff --verify 2,3,4 --mtp` and `--verify-batch` stay byte-identical, eager and
+  graphed, with commit/rollback running as state programs.
+
+**Size:** one PR, about 1.5 days of work.
+
+### 15.4 M6: prefill under the circuit
+
+**Execution model.** This refines section 4.2; everything there stands.
+
+- **Layer segments.** A program gains layer segments (`Program.segments`, the launch range of
+  each layer). Segments are what the host drivers compose. Three compositions cover every legacy
+  prefill shape with no new plans:
+  - *chunk-major*: the chunk loop;
+  - *interleaved*: the mixed step. For layer ℓ it runs the multi_seq program's segment ℓ, then
+    the prefill program's segment ℓ, which is exactly legacy's per-layer order;
+  - *layer-major*: two-phase, if it is kept.
+
+  A fusion that crosses a segment boundary is refused in a composable mode. Legacy fuses none.
+- **Route keys.** These become plan keys, each a policy input to `fuse`:
+  - `chunk` (first or later; contiguous vs paged attention);
+  - `after_restore` (exact replay: WY4/regresident, never FLA);
+  - `tail_cut` (#76: a runtime cut row; the GDN and conv nodes emit a `Snapshot`-lifetime
+    state output at the cut, and rows past the replay point take the row-invariant tier);
+  - `varlen` (S sequences);
+  - `all_rows_logits` (prompt logprobs);
+  - `embeds_injected` (vision/video rows and mrope positions replace the token embedding).
+- **Lengths are runtime arguments** (section 4.2). Device metadata is a node: one H2D per chunk
+  from pinned staging, in legacy's layout. The batched path gets per-stream staging, so the
+  cross-stream reuse hazard in the risk table is not copied.
+- **Host code that stays**: the chunk loop, prefix lookup, snapshot scheduling, wave planning
+  and admission. They move into one driver that calls programs. The per-layer legacy calls do
+  not survive in it.
+- **Graphs.** Prefill is eager in both forwards (section 4.3); legacy never captures it. The
+  "eager and graphed" bar therefore means two things:
+  - each prefill instrument continues into decode, verify and draft steps run graphed, and those
+    must stay byte-identical;
+  - the mixed step's decode rows are compared under the same graph mode legacy uses.
+
+  Owner: please confirm this reading.
+
+**Step 0** (untimed, about 1 h of box time, no code):
+
+- **(a)** Legacy-repeat over bucket-edge prompts on the dense 27B. If 0 rows differ, as
+  expected after #67, the row-exclusion rule is removed from every instrument and the bar is
+  strict.
+- **(b)** Which arm a 32k prompt takes on each model. Two-phase falls back to chunks when the
+  prompt exceeds `max_batch_tokens` or the GDN buffer (`me/model/trait_impl/prefill_c.rs:54-90`),
+  and which one runs is not known without a serve log.
+- **(c)** Classify every prefill env lever (MMQ, FLA, small-M, two-phase, tail-split, Marconi,
+  `HOLO_*`, ...) as modelled, refused or ignorable. The executor's policy table
+  (`ml/circuit_exec/policy.rs:140-170`) covers decode switches only. An unclassified lever
+  fails a test.
+
+**The milestones, dense first:**
+
+| Step | Content | Parity instrument |
+|---|---|---|
+| M6a | `prefill` + `prefill_chunk` + the drafter prefill; the segment type | `met circuit diff --prefill` (new). Prompt lengths are t_lo and t_hi of every bucket. It compares the last-row logits, then each layer's GDN h and conv bytes, the sequence's KV blocks and the drafter's KV rows. Then 32 graphed decode/verify steps. `--prefill-chunk` repeats it with a small `max_prefill_tokens`, across many chunk boundaries |
+| M6b | `prefix_restore` + `after_restore` + `tail_cut` (#76) | primed re-sends: the restored state bytes, the in-pass snapshot bytes vs legacy's, then the logits |
+| M6c | `prefill_batch` (varlen, kernel-batched, codispatch), then `mixed` | per row, as above; the mixed step with decode rows in flight compares the decode rows' logits and the chunk's state |
+| M6d | Two-phase, decided by step 0(b) (below) | as M6a, at 32k |
+
+**Two-phase, if it is on a gated path:** measure legacy two-phase against legacy chunked at 32k
+first (timed, 2 interleaved reps). If chunked sits inside the high-ISL gate's bounds, two-phase
+is deleted at the flip without being modelled, which saves about 1.5 days. Otherwise it is
+modelled as a layer-major composition with its GDN phase split.
+
+**Corrections to section 8:**
+
+- **Rule 4 is wrong.** The fused mixed step is the default scheduler path, not opt-in, so M6c
+  is required for the flip. Only `--prefill-codispatch` is opt-in, and `concurrency-sweep`
+  pins it on.
+- **The dense model has no 256/1024/4096 TTFT gate.** The TTFT A/B below runs those lengths on
+  both models anyway.
+
+**TTFT A/B** (timed, in a campaign gap, per model):
+
+- legacy vs circuit, interleaved, 2 reps, with a same-night control;
+- instruments: cold and warm TTFT at 256, 1024 and 4096 tokens × 12, and the 32k high-ISL cold
+  and warm;
+- pass: inside each gate's own bounds against the legacy leg (median +3%, p90 +5%).
+
+The plans are byte-identical, so a difference is host enqueue time, and that is reported per
+chunk. Before the flip both the legacy prefill arena and the circuit workspace are resident.
+From M6c on, `--forward circuit` stops allocating the legacy prefill arena, because every
+prefill path is then a program. The KV blocks are compared against legacy on the same boot.
+
+**MoE (M6-MoE), after the dense pattern is set:**
+
+1. **MoE M1.** Bind the MoE FFN in decode, multi_seq, verify, verify_batch and draft:
+   - the router, top-k, the sorted grouped GEMM and the FP8 pointer tables;
+   - the W8A8 decode twin vs W8A16;
+   - the shared expert.
+
+   `--expert-quantization` and `--activation-quantization adaptive,moe:bf16` are plan inputs.
+   Parity is eager + graphed, as in M1.
+2. **MoE prefill.** The M6a-c modes over the grouped path (> 64 rows), with legacy-repeat first.
+   If the grouped sums turn out order-dependent, the MoE prefill bar becomes HF tolerance plus
+   the gates, stated as an exception (risk table). They are not shown order-independent today.
+3. **Instances** for every 35B recipe in 15.2.
+
+**Parallelism proposal (for approval).** Once M6a has merged into the stack branch, a second
+workstream takes M6-MoE. By then the segment type, the prefill `StepEnv`, the state programs and
+the `--prefill` instrument exist. The two touch different emitters (the MoE FFN vs dense
+attention/GDN). They share only `INSTANCES.toml` and the golden plans, which merge as unions.
+
+**M6e (only if D-A = model):** DFlash2. The target gains hidden-capture outputs, and the
+drafter's propose becomes a draft program. Parity runs through `met circuit diff
+--verify-batch` under `--dflash`.
+
+### 15.5 Step 2: the boot plan check
+
+In `CircuitExec::build`, right after each `fuse` (`ml/circuit_exec/mod.rs:189-235`):
+
+1. **`pipeline::check_plan` (#85)** against the pipeline the checkpoint and the settings
+   require. This is the first time it runs at serve time, which closes #85's caveat.
+2. **`tc_policy::enforce` (#78)** against `[tensor_core_policy]`.
+3. **Live digest == golden digest** for every (mode, rows or bucket, route key) of the
+   instance. The live policy comes from levers, the golden plans from the INSTANCES policy,
+   and today they can differ silently. A difference refuses boot and names the differing keys.
+4. **Coverage.** Every path the boot configuration can reach (spec method, prefix caching,
+   codispatch, varlen, chunk size, grammar, prompt logprobs, vision) maps to a compiled
+   program. Until the flip a path without a program is disclosed. From the flip on, it refuses
+   boot.
+5. **Disclosure.** `/forward` reports programs run and fallbacks taken, per path. The bench
+   record carries both, and `check_record` refuses a circuit record with a non-zero fallback
+   count. The FP16-h refusal moves to boot.
+6. **Launch audit (parity leg, not serve time).** Run the parity suite with
+   `metrale_telemetry::launch_trace` on (`crates/gpu-runtime/src/gpu.rs:110-125`). The set of
+   kernels the serve launched must be a subset of the union of the plans' kernels. A kernel
+   outside the plans fails the leg and names its call site.
+
+### 15.6 Step 3: full-path certification
+
+A gate record must carry exactly its BENCH entry's serve overrides (`check_record`). So a
+separate circuit leg would need a second set of entries. The cheaper route is that **the flip
+PR itself is the full-path certification**. With the circuit as the default:
+
+- every gate runs it at unchanged bounds;
+- the record proves it (`forward` and `plan_digest` are verified live, `bench_lease.rs:189,337`);
+- the new record check proves it ran with 0 fallbacks.
+
+Before that campaign is armed, at the final sha:
+
+- the full parity suite on an untimed box;
+- one untimed smoke per gate recipe under the circuit (boot, 0 fallbacks, the launch audit).
+
+### 15.7 Step 4: the flip and what it can delete
+
+**The flip:**
+
+- the forward becomes a property of the family: an instance with `golden = true` runs the
+  circuit, with no override;
+- `--forward` is removed;
+- the D-B features are refused for the circuit families.
+
+No deprecation window. Legacy byte parity is the only thing lost. Two things replace it:
+
+- a *reference fixture set* recorded at the flip sha: per parity prompt, the hashes of the
+  last-row logits and the state bytes, so a later circuit change can still be compared to
+  legacy's bytes offline;
+- the golden plans.
+
+**Measured non-test line counts at c92e43109:**
+
+| Code | Lines | Who else runs it |
+|---|---|---|
+| model-engine `trait_impl` loops: prefill 7,362, verify/MTP 5,653, decode 3,646, mixed 699 | 17,360 | every `TransformerModel` family |
+| `Qwen3SsmLayer` (GDN) | 14,647 | qwen3_next, qwen4_exp, qwen3_5_moe, holo3_1_moe |
+| `Qwen3AttentionLayer` | 23,637 | about 12 loaders (Nemotron, Gemma4, Mistral, MiniMax, DeepSeek-V4, ...) |
+| MoE layer, dense FFN, `MtpHead`, `ops/prefill*` | 24,546 | shared |
+| loaders `qwen35_dense`, `qwen35` | 6,007 | the two families (plus holo3_1_moe for `qwen35`); deletable only with M7's load plan |
+
+**What a two-family flip can delete** is the circuit families' legacy arms, plus the code only
+those families reach. That is small: low thousands of lines, not the roughly 75k of shared
+loops, which stay while any other family runs them. The flip PR measures it exactly:
+
+1. delete the arms;
+2. iterate the compiler's dead-code lint to a fixpoint;
+3. report `git diff --numstat` per crate.
+
+**Owner decision D-C:**
+
+- **(a)** Flip the two families and delete what they alone reach (recommended now).
+- **(b)** Then move the Qwen-hybrid siblings that share `blocks/qwen3_hybrid.toml` (qwen3_5_moe,
+  holo3_1_moe, qwen3_next, qwen4_exp). That is mostly instance data plus a parity leg per family.
+  It makes `Qwen3SsmLayer`'s legacy forward and the GDN branches of the loops deletable, about
+  15-20k lines. Recommended as the next milestone.
+- **(c)** Retire families that have no recipe in use.
+- **(d)** Delete the loops outright. This needs every `TransformerModel` family circuit-built
+  (M7/M8 and the `/new-model` method), so it is out of this milestone.
+
+### 15.8 PR boundaries, stacks and campaigns
+
+Any `crates/**` change re-opens all 17 required gates (27 units, about 2 h 15 min and 5
+GPU-hours). Everything before the flip lands behind the legacy default, so its campaigns certify
+that legacy did not move.
+
+| Stack | PRs (bottom first) | Campaign |
+|---|---|---|
+| S1 dense | 1. M5 state (on #82) · 2. M6a prefill + chunk + drafter + `--prefill` instrument + prefill lever table · 3. M6b restore + tail cut · 4. M6c batch + mixed (segments) · 5. boot plan check (disclosure mode) + every dense instance | C1, legacy default |
+| S2 MoE (+ DFlash) | 6. MoE M1 · 7. MoE prefill + every 35B instance · 8. M6e DFlash (if D-A) | C2, legacy default; **merged into C1** if S2 is ready when S1 is |
+| S3 flip | 9. flip (default circuit, coverage refusal on, `--forward` removed, record check) · 10. delete + the line count | C3, circuit default: the full-path certification (15.6) |
+
+Two or three campaigns in all, against section 9's five. Splitting C3 into a flip campaign and
+a delete campaign costs one more campaign and buys a single bisect point. It is not recommended:
+the deletion removes only code the flip made unreachable, and the coverage counters and the
+launch audit prove that before arming.
+
+Box use:
+
+- parity legs: untimed, on a box no campaign holds, after checking its lock;
+- TTFT A/Bs and the two-phase measurement: campaign gaps only.
+
+### 15.9 Estimates
+
+The estimates come from M1's measured pace (multi_seq about 1.5 days; verify plus draft about 1
+day). They are work time only; box queueing and campaigns come on top.
+
+| Item | Work |
+|---|---|
+| M5 | 1-1.5 days |
+| M6 step 0 | 1 h of box time |
+| M6a | 2 days |
+| M6b | 1.5 days |
+| M6c | 2 days |
+| M6d | 0 if deleted, 1.5 days if modelled |
+| boot check + dense instances | 1-1.5 days |
+| MoE M1 + prefill | 3.5 days (parallel workstream) |
+| M6e | 2-3 days |
+| flip + delete | 1 day |
+
+With the parallel workstream, the dense critical path is about 9-10 working days plus C1 and C3.
+M7 (load plan) and M8 (the Lightning pilot) follow the flip; neither is on its critical path.
