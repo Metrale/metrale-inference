@@ -1853,6 +1853,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "socket2",
  "tempfile",
  "thiserror",
  "tokenizers",

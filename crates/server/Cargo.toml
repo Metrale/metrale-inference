@@ -54,6 +54,8 @@ hyper = { version = "1", features = ["server", "http1", "http2", "client"] }
 hyper-util = { version = "0.1", features = ["server-auto", "client-legacy", "http1", "tokio"] }
 lazy_static = "1"
 libc = "0.2"
+# 2026-10-03: SO_RCVBUF on the serve listener (main_modules/listener_rcvbuf.rs).
+socket2 = "0.6"
 # 2026-09-30: Exactly 2.21.0. 2.22 changed how `none` and booleans render through `|string`
 # (to `None`/`True`/`False`), which changes the tool-call argument text inside the prompt the
 # model reads; `tokenizer::tests::qwen_dense_parity` pins today's rendering and fails on 2.24.
