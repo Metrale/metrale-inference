@@ -17,6 +17,7 @@
 
 pub mod compare;
 pub mod driver;
+pub mod nemotron;
 pub mod report;
 
 pub use compare::{
@@ -24,6 +25,7 @@ pub use compare::{
 };
 
 pub use driver::{DESCRIPTOR, METADATA};
+pub use nemotron::{NEMOTRON_NANO_DESCRIPTOR, NEMOTRON_SUPER_DESCRIPTOR};
 
 #[cfg(test)]
 #[path = "compare_tests.rs"]

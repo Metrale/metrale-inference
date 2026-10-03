@@ -22,7 +22,11 @@ fn every_promotion_candidate_is_a_registered_benchmark() {
         [
             "cross-contamination",
             "scheduler-equivalence",
-            "default-tier-boot"
+            "default-tier-boot",
+            "kat-equality-gate-nemotron-nano",
+            "kat-equality-gate-nemotron-super",
+            "bfcl-subset-mini-nemotron-nano",
+            "bfcl-subset-mini-nemotron-super"
         ],
         "promotion tracking must not pass vacuously or gain an unreviewed candidate"
     );
@@ -78,7 +82,11 @@ fn the_contamination_candidate_accrues_debt_for_engine_changes() {
         [
             "cross-contamination",
             "scheduler-equivalence",
-            "default-tier-boot"
+            "default-tier-boot",
+            "kat-equality-gate-nemotron-nano",
+            "kat-equality-gate-nemotron-super",
+            "bfcl-subset-mini-nemotron-nano",
+            "bfcl-subset-mini-nemotron-super"
         ],
         "a scheduler change is exactly the kind of edit that can cross-wire \
          concurrent requests, so the contamination candidate is owed — and the \
