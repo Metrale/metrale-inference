@@ -276,7 +276,9 @@ impl LayerWriteOnAccept for Qwen3SsmLayer {
         wy_tables: metrale_gpu_runtime::gpu::DevicePtr,
     ) -> anyhow::Result<Option<bool>> {
         // 2026-10-03: Under the exact verify, whether the carried exact arm takes the run.
-        Ok(Some(self.run_batched_verdict(states, kk, gdn_wyn, wy_tables)?))
+        Ok(Some(
+            self.run_batched_verdict(states, kk, gdn_wyn, wy_tables)?,
+        ))
     }
 
     fn gdn_woa_stash_seq_floats(&self) -> Option<usize> {

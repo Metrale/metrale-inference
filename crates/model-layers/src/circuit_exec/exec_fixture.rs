@@ -373,7 +373,15 @@ pub(super) fn build_for(
     edit_head: impl Fn(&mut HeadBinding),
 ) -> anyhow::Result<Fixture> {
     let gpu = MockGpuBackend::new();
-    build_on((&gpu, &config()), recipe, bind, fusions, plan, edit, edit_head)
+    build_on(
+        (&gpu, &config()),
+        recipe,
+        bind,
+        fusions,
+        plan,
+        edit,
+        edit_head,
+    )
 }
 
 /// 2026-10-03: [`build_for`] on `gpu` under `cfg`, for a test that denies a kernel or edits the

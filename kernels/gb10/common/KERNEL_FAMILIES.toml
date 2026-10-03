@@ -475,6 +475,37 @@ files = ["kernels/gb10/common/gdn_verify_fused_k2.cu"]
 
 # 2026-09-30: The carried-state GDN verify (qwen3_ssm/carry.rs): the conv and the WY over a run
 # of sequences with their pending rows folded in, and the folds a declining run runs first.
+# 2026-10-03: Listed before gdn_carry_verify: a carried exact run's group also names the
+# WY carry's conv fold, and a plan group takes the first family listing one of its kernels.
+[[family]]
+id = "gdn_exact_verify"
+description = "Exact MTP verify: the decode's FP32 conv and GDN chain per row, one sequence or a carried run"
+compute = "cuda_core"
+kernels = [
+  "gated_delta_rule_carry::gdn_conv_chain_f32", "gated_delta_rule_carry::gdn_carry_conv_f32",
+  "gdn_exact_carry::gdn_exact_chain2", "gdn_exact_carry::gdn_exact_chain3",
+  "gdn_exact_carry::gdn_exact_chain4", "gdn_exact_carry::gdn_exact_carry2",
+  "gdn_exact_carry::gdn_exact_carry3", "gdn_exact_carry::gdn_exact_carry4",
+  "gdn_exact_carry::gdn_exact_carry2_lazy", "gdn_exact_carry::gdn_exact_carry3_lazy",
+  "gdn_exact_carry::gdn_exact_carry4_lazy", "gdn_exact_carry::gdn_exact_carry_flush",
+]
+rows = [2, 256]
+pipeline.conv1d_update = { in = ["bf16"], state = "f32", compute = "f32", out = ["f32"] }
+pipeline.l2_norm = { in = ["f32"], compute = "f32", out = ["f32"] }
+pipeline.gdn_recurrence = { in = ["f32", "f32", "f32"], state = "f32", compute = "f32", out = ["f32"] }
+pipeline.state_snapshot = { in = ["f32"], state = "f32", out = [] }
+op = [
+  { op = "conv1d_update", feeds = ["l2_norm"] }, { op = "l2_norm" }, { op = "gdn_recurrence" },
+  { op = "state_snapshot", after = ["conv1d_update"], beside = ["l2_norm"] },
+]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = [
+  "kernels/gb10/common/gated_delta_rule_carry.cu", "kernels/gb10/qwen3.6-27b/nvfp4/gdn_exact_carry.cu",
+  "kernels/gb10/qwen3.6-35b-a3b/nvfp4/gdn_exact_carry.cu",
+]
+
 [[family]]
 id = "gdn_carry_verify"
 description = "Carried-state batched GDN verify: conv, WY (eager and lazy) and the pending-row folds"
@@ -505,35 +536,6 @@ files = ["kernels/gb10/common/gated_delta_rule_carry.cu"]
 # token by token inside one launch, for one sequence (`gdn_conv_chain_f32`, `gdn_exact_chain{K}`)
 # or a carried run (`gdn_carry_conv_f32`, `gdn_exact_carry{K}`), and the model directory's fold of
 # the stash (`gdn_exact_carry_flush`, the same clamp as its strided decode). FP32 rows in and out.
-[[family]]
-id = "gdn_exact_verify"
-description = "Exact MTP verify: the decode's FP32 conv and GDN chain per row, one sequence or a carried run"
-compute = "cuda_core"
-kernels = [
-  "gated_delta_rule_carry::gdn_conv_chain_f32", "gated_delta_rule_carry::gdn_carry_conv_f32",
-  "gdn_exact_carry::gdn_exact_chain2", "gdn_exact_carry::gdn_exact_chain3",
-  "gdn_exact_carry::gdn_exact_chain4", "gdn_exact_carry::gdn_exact_carry2",
-  "gdn_exact_carry::gdn_exact_carry3", "gdn_exact_carry::gdn_exact_carry4",
-  "gdn_exact_carry::gdn_exact_carry2_lazy", "gdn_exact_carry::gdn_exact_carry3_lazy",
-  "gdn_exact_carry::gdn_exact_carry4_lazy", "gdn_exact_carry::gdn_exact_carry_flush",
-]
-rows = [2, 256]
-pipeline.conv1d_update = { in = ["bf16"], state = "f32", compute = "f32", out = ["f32"] }
-pipeline.l2_norm = { in = ["f32"], compute = "f32", out = ["f32"] }
-pipeline.gdn_recurrence = { in = ["f32", "f32", "f32"], state = "f32", compute = "f32", out = ["f32"] }
-pipeline.state_snapshot = { in = ["f32"], state = "f32", out = [] }
-op = [
-  { op = "conv1d_update", feeds = ["l2_norm"] }, { op = "l2_norm" }, { op = "gdn_recurrence" },
-  { op = "state_snapshot", after = ["conv1d_update"], beside = ["l2_norm"] },
-]
-[[family.point]]
-values = {}
-how = "instantiation"
-files = [
-  "kernels/gb10/common/gated_delta_rule_carry.cu", "kernels/gb10/qwen3.6-27b/nvfp4/gdn_exact_carry.cu",
-  "kernels/gb10/qwen3.6-35b-a3b/nvfp4/gdn_exact_carry.cu",
-]
-
 [[family]]
 id = "mamba2_ssm"
 description = "Mamba2 selective state update, one row per sequence (grid over the batch)"

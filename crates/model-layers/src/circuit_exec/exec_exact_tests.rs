@@ -36,12 +36,25 @@ fn exact_on(
     rows: u64,
     arm: Arm,
 ) -> anyhow::Result<Fixture> {
-    build_on(env, EXACT, &bind, Fusions::All, (mode, rows, arm), |_| {}, |_| {})
+    build_on(
+        env,
+        EXACT,
+        &bind,
+        Fusions::All,
+        (mode, rows, arm),
+        |_| {},
+        |_| {},
+    )
 }
 
 fn verify(k: u64) -> Fixture {
-    exact_on((&MockGpuBackend::new(), &config()), Mode::Verify, k, Arm::Primary)
-        .unwrap_or_else(|e| panic!("exact verify K={k}: {e:#}"))
+    exact_on(
+        (&MockGpuBackend::new(), &config()),
+        Mode::Verify,
+        k,
+        Arm::Primary,
+    )
+    .unwrap_or_else(|e| panic!("exact verify K={k}: {e:#}"))
 }
 
 fn table(t: &'static str) -> Fixture {
@@ -71,7 +84,14 @@ fn launches_of<'a>(f: &'a Fixture, name: &'a str) -> impl Iterator<Item = (usize
     kernel_launches(f)
         .enumerate()
         .filter(move |(_, l)| l.kernel == name)
-        .map(|(j, l)| (j, f.circuit.nodes[f.plan.groups[l.group].nodes[0]].layer.unwrap()))
+        .map(|(j, l)| {
+            (
+                j,
+                f.circuit.nodes[f.plan.groups[l.group].nodes[0]]
+                    .layer
+                    .unwrap(),
+            )
+        })
 }
 
 fn gdn_layers(gdn: &[Vec<GdnState>]) -> usize {
@@ -109,7 +129,11 @@ fn each_exact_width_runs_three_gdn_launches_per_layer_and_no_legacy_verify_kerne
         let gdn = states_on(&gpu, &f);
         let launched = run_on(&gpu, &f, &gdn, 9);
         assert_eq!(launched.len() as u64, f.plan.launches(), "K={k}");
-        assert_eq!(f.plan.copies(), 0, "K={k}: the chains write their slots inline");
+        assert_eq!(
+            f.plan.copies(),
+            0,
+            "K={k}: the chains write their slots inline"
+        );
         assert_eq!(gpu.d2d_count(), 0, "K={k}");
         let layers = gdn_layers(&gdn);
         let chain = format!("gdn_exact_carry::gdn_exact_chain{k}");
@@ -144,19 +168,32 @@ fn the_exact_chains_mirror_the_legacy_call_shape() {
         let (key, nv, conv_dim) = dims(&f);
         let (mut conv_rows, mut core_rows) = (BTreeMap::new(), BTreeMap::new());
         for (j, l) in kernel_launches(&f).enumerate() {
-            let layer = f.circuit.nodes[f.plan.groups[l.group].nodes[0]].layer.unwrap();
+            // 2026-10-03: The head's launches belong to no layer.
+            let Some(layer) = f.circuit.nodes[f.plan.groups[l.group].nodes[0]].layer else {
+                continue;
+            };
             let (a, grid) = (&launched[j].args, launched[j].grid);
             let ku = k as usize;
             if l.kernel == "gated_delta_rule_carry::gdn_conv_chain_f32" {
                 let st = gdn[layer][0];
                 assert_eq!(a[0], buffer(st.conv), "K={k} layer {layer}");
                 for t in 0..3 {
-                    let want = if t + 1 < ku { st.conv_steps[t] } else { st.conv };
+                    let want = if t + 1 < ku {
+                        st.conv_steps[t]
+                    } else {
+                        st.conv
+                    };
                     assert_eq!(a[4 + t], buffer(want), "K={k} layer {layer} window {t}");
                 }
                 assert_eq!(
                     a[7..12],
-                    [word(k as u32), word(conv_dim), word(4), word(key * 2), word(128)],
+                    [
+                        word(k as u32),
+                        word(conv_dim),
+                        word(4),
+                        word(key * 2),
+                        word(128)
+                    ],
                     "K={k} layer {layer}"
                 );
                 assert_eq!(a[12], MockArg::Bytes(1e-6f32.to_le_bytes().to_vec()));
@@ -242,11 +279,14 @@ fn the_chains_require_exactly_the_rollback_slots_of_their_width() {
 // runs.
 #[test]
 fn the_exact_build_refuses_where_the_legacy_chain_declines() {
-    let refused = |gpu: &MockGpuBackend, cfg: &metrale_config::ModelConfig| {
-        match exact_on((gpu, cfg), Mode::Verify, 3, Arm::Primary) {
-            Ok(_) => panic!("the exact verify built"),
-            Err(e) => format!("{e:#}"),
-        }
+    let refused = |gpu: &MockGpuBackend, cfg: &metrale_config::ModelConfig| match exact_on(
+        (gpu, cfg),
+        Mode::Verify,
+        3,
+        Arm::Primary,
+    ) {
+        Ok(_) => panic!("the exact verify built"),
+        Err(e) => format!("{e:#}"),
     };
     for (m, func) in [
         ("causal_conv1d", "causal_conv1d_update_l2norm_f32"),
@@ -257,7 +297,10 @@ fn the_exact_build_refuses_where_the_legacy_chain_declines() {
         let gpu = MockGpuBackend::new();
         gpu.deny_kernel(m, func);
         let err = refused(&gpu, &config());
-        assert!(err.contains(&format!("`{m}::{func}` is not linked")), "{err}");
+        assert!(
+            err.contains(&format!("`{m}::{func}` is not linked")),
+            "{err}"
+        );
     }
     let gpu = MockGpuBackend::new();
     gpu.deny_kernel("gdn_exact_carry", "gdn_exact_chain3");
@@ -310,13 +353,21 @@ fn a_contiguous_exact_run_launches_the_carried_twins_on_its_own_slices() {
     let layers = gdn_layers(&gdn);
     let (_, nv, conv_dim) = dims(&f);
     let conv: Vec<_> = launches_of(&f, "gated_delta_rule_carry::gdn_carry_conv_f32").collect();
-    assert_eq!(conv.len(), 2 * layers, "one carried conv per run per GDN layer");
+    assert_eq!(
+        conv.len(),
+        2 * layers,
+        "one carried conv per run per GDN layer"
+    );
     let mut q_of = BTreeMap::new();
     for (i, &(j, layer)) in conv.iter().enumerate() {
         let (first, k, n) = if i % 2 == 0 { (0, 4, 2) } else { (2, 2, 8) };
         let a = &launched[j].args;
         assert_eq!(a[0], buffer(gdn[layer][first].conv), "run {i}: conv state");
-        assert_eq!(a[5], buffer(CARRY.slot_tab.offset(first * 4)), "run {i}: slots");
+        assert_eq!(
+            a[5],
+            buffer(CARRY.slot_tab.offset(first * 4)),
+            "run {i}: slots"
+        );
         assert_eq!(a[8], word(k), "run {i}: K");
         assert_eq!(a[16], word(u32::from(n >= 8)), "run {i}: lazy");
         assert_eq!(launched[j].grid, [conv_dim.div_ceil(256), n, 1]);
@@ -333,7 +384,11 @@ fn a_contiguous_exact_run_launches_the_carried_twins_on_its_own_slices() {
                 .fixed
                 .verify_wy_tables
                 .offset(ssm * crate::layer::VERIFY_WY_LAYER_STRIDE_BYTES);
-            assert_eq!(a[0], buffer(tables.offset(first * 8)), "layer {layer}: WY slice");
+            assert_eq!(
+                a[0],
+                buffer(tables.offset(first * 8)),
+                "layer {layer}: WY slice"
+            );
             assert_eq!(a[1], buffer(q_of[&(layer, first)]), "layer {layer}: q");
             assert_eq!(a[8], buffer(CARRY.slot_tab.offset(first * 4)));
             assert_eq!(a[11], word(n));
@@ -361,7 +416,10 @@ fn a_fragmented_exact_run_folds_exactly_then_chains_each_sequence_on_its_own_sta
         let layers = gdn_layers(&gdn);
         for (name, want) in [
             ("gdn_exact_carry::gdn_exact_carry_flush", folds * layers),
-            ("gated_delta_rule_carry::gdn_carry_conv_flush", folds * layers),
+            (
+                "gated_delta_rule_carry::gdn_carry_conv_flush",
+                folds * layers,
+            ),
             ("gated_delta_rule_carry::gdn_carry_flush", 0),
         ] {
             assert_eq!(launches_of(&f, name).count(), want, "`{t}` {name}");
@@ -381,14 +439,21 @@ fn a_fragmented_exact_run_folds_exactly_then_chains_each_sequence_on_its_own_sta
             .enumerate()
             .filter(|(_, l)| l.kernel.starts_with("gdn_exact_carry::gdn_exact_chain"));
         for (j, l) in chains {
-            let layer = f.circuit.nodes[f.plan.groups[l.group].nodes[0]].layer.unwrap();
+            // 2026-10-03: The head's launches belong to no layer.
+            let Some(layer) = f.circuit.nodes[f.plan.groups[l.group].nodes[0]].layer else {
+                continue;
+            };
             let s = seq.entry(layer).or_default();
             assert_eq!(
                 launched[j].args[0],
                 buffer(gdn[layer][*s].h),
                 "`{t}` layer {layer} sequence {s}: h"
             );
-            assert!(l.kernel.ends_with(&ks[*s].to_string()), "`{t}`: {}", l.kernel);
+            assert!(
+                l.kernel.ends_with(&ks[*s].to_string()),
+                "`{t}`: {}",
+                l.kernel
+            );
             *s += 1;
         }
         assert!(seq.values().all(|&n| n == ks.len()), "`{t}`: {seq:?}");

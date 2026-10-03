@@ -238,10 +238,8 @@ impl Qwen3SsmLayer {
         wy_tables: DevicePtr,
     ) -> Result<bool> {
         if super::verify_exact_enabled() {
-            return Ok(
-                self.exact_carry_ready(kk)
-                    && self.exact_carry_conv_base(states, wy_tables).is_some(),
-            );
+            return Ok(self.exact_carry_ready(kk)
+                && self.exact_carry_conv_base(states, wy_tables).is_some());
         }
         Ok(matches!(
             self.multi_run_arm(states, kk, gdn_wyn, wy_tables)?,
