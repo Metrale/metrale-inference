@@ -2617,17 +2617,17 @@ cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:85-97"
 [[rule]]
 id = "prefill_attention_contig_p3"
 pattern = [
-  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention", steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "split" },
-  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
-  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "qk_norm", local = "q_norm" },
   { op = "qk_norm", local = "k_norm" },
   { op = "rope" },
   { op = "kv_write" },
   { op = "paged_attention" },
   { op = "sigmoid_gate_mul" },
-  { op = "linear", role = "o", weight = "nvfp4/g16" },
+  { op = "linear", role = "o", weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
 ]
 kernels = [
   { module = "w4a16", func = "w4a16_gemm_t_p3" },
@@ -2655,17 +2655,17 @@ cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-184 (offset 0: the co
 [[rule]]
 id = "prefill_attention_contig_m128"
 pattern = [
-  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention", steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "split" },
-  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
-  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "qk_norm", local = "q_norm" },
   { op = "qk_norm", local = "k_norm" },
   { op = "rope" },
   { op = "kv_write" },
   { op = "paged_attention" },
   { op = "sigmoid_gate_mul" },
-  { op = "linear", role = "o", weight = "nvfp4/g16" },
+  { op = "linear", role = "o", weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
 ]
 kernels = [
   { module = "w4a16", func = "w4a16_gemm_t_m128" },
@@ -2693,17 +2693,17 @@ cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-184 (offset 0: the co
 [[rule]]
 id = "prefill_attention_contig_fp8"
 pattern = [
-  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention", steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "split" },
-  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
-  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "qk_norm", local = "q_norm" },
   { op = "qk_norm", local = "k_norm" },
   { op = "rope" },
   { op = "kv_write" },
   { op = "paged_attention" },
   { op = "sigmoid_gate_mul" },
-  { op = "linear", role = "o", weight = "nvfp4/g16" },
+  { op = "linear", role = "o", weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
 ]
 kernels = [
   { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },
@@ -2739,17 +2739,17 @@ cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-184 (offset 0: the co
 [[rule]]
 id = "prefill_attention_paged_p3"
 pattern = [
-  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention", steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "split" },
-  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
-  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "qk_norm", local = "q_norm" },
   { op = "qk_norm", local = "k_norm" },
   { op = "rope" },
   { op = "kv_write" },
   { op = "paged_attention" },
   { op = "sigmoid_gate_mul" },
-  { op = "linear", role = "o", weight = "nvfp4/g16" },
+  { op = "linear", role = "o", weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
 ]
 kernels = [
   { module = "w4a16", func = "w4a16_gemm_t_p3" },
@@ -2778,17 +2778,17 @@ cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: 
 [[rule]]
 id = "prefill_attention_paged_m128"
 pattern = [
-  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention", steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "split" },
-  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
-  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "qk_norm", local = "q_norm" },
   { op = "qk_norm", local = "k_norm" },
   { op = "rope" },
   { op = "kv_write" },
   { op = "paged_attention" },
   { op = "sigmoid_gate_mul" },
-  { op = "linear", role = "o", weight = "nvfp4/g16" },
+  { op = "linear", role = "o", weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
 ]
 kernels = [
   { module = "w4a16", func = "w4a16_gemm_t_m128" },
@@ -2817,17 +2817,17 @@ cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: 
 [[rule]]
 id = "prefill_attention_paged_m128_fa128"
 pattern = [
-  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention", steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "split" },
-  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
-  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "qk_norm", local = "q_norm" },
   { op = "qk_norm", local = "k_norm" },
   { op = "rope" },
   { op = "kv_write" },
   { op = "paged_attention" },
   { op = "sigmoid_gate_mul" },
-  { op = "linear", role = "o", weight = "nvfp4/g16" },
+  { op = "linear", role = "o", weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
 ]
 kernels = [
   { module = "w4a16", func = "w4a16_gemm_t_m128" },
@@ -2856,17 +2856,17 @@ cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:136-201 (offset above 0: 
 [[rule]]
 id = "prefill_attention_paged_fp8"
 pattern = [
-  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention" },
+  { op = "linear", role = "q", weight = "nvfp4/g16", layer_kind = "full_attention", steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "split" },
-  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true },
-  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
+  { op = "linear", role = "v", weight = "nvfp4/g16", sibling = true, steps = { act = "fp8/tensor", scale = "e4m3" } },
   { op = "qk_norm", local = "q_norm" },
   { op = "qk_norm", local = "k_norm" },
   { op = "rope" },
   { op = "kv_write" },
   { op = "paged_attention" },
   { op = "sigmoid_gate_mul" },
-  { op = "linear", role = "o", weight = "nvfp4/g16" },
+  { op = "linear", role = "o", weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
 ]
 kernels = [
   { module = "w4a16_fp8_ldmab", func = "fp8_predequant_nvfp4_t" },

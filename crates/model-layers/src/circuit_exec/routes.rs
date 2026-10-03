@@ -19,7 +19,10 @@ use metrale_circuit::{FusionPlan, RuntimeRoute};
 use super::program::{GdnState, Program};
 
 /// 2026-09-30: The routes this executor can evaluate.
-pub const KNOWN: [&str; 2] = ["gdn_state_slots_fragmented", super::prefill::PREFIX_RESTORED];
+pub const KNOWN: [&str; 2] = [
+    "gdn_state_slots_fragmented",
+    super::prefill::PREFIX_RESTORED,
+];
 
 /// 2026-09-30: A route's arm, compiled.
 pub struct RoutedProgram {
