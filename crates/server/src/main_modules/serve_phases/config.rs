@@ -226,6 +226,19 @@ pub(crate) fn publish_draft_confidence_stop(args: &cli::ServeArgs) -> anyhow::Re
     }
 }
 
+/// 2026-10-03: Publish `--mtp-k-ladder` before the model sizes its verify pools and the
+/// scheduler starts. Without the flag nothing is published, and `METRALE_MTP_K_LADDER`
+/// or the default ladder applies.
+pub(crate) fn publish_mtp_k_ladder(args: &cli::ServeArgs) -> anyhow::Result<()> {
+    use metrale_model_layers::speculative as spec;
+    let Some(value) = args.mtp_shape.mtp_k_ladder.as_deref() else {
+        return Ok(());
+    };
+    let steps = spec::parse_mtp_k_ladder(value)?;
+    tracing::info!("MTP K-ladder (--mtp-k-ladder): {steps:?}");
+    spec::set_mtp_k_ladder(steps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NumDraftsSource, resolve_num_drafts};

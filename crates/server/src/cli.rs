@@ -40,6 +40,7 @@ pub(crate) mod manifest;
 mod serve_args;
 mod serve_args_mtp_draft;
 mod serve_args_prompt_lookup;
+mod serve_args_mtp;
 pub(crate) mod sync_recipes;
 mod validate;
 pub use bench_args::BenchmarkArgs;
