@@ -130,6 +130,18 @@ impl EdgePrecision for PrecisionTable {
     }
 }
 
+/// 2026-10-02: The fused-experts module an expert projection belongs to: `<p>.experts` for
+/// `<p>.experts.<i>.<proj>`. A checkpoint that quantizes the routed experts as one module (a
+/// ModelOpt `quantized_layers` entry naming `...mlp.experts`, nvidia/Qwen3.6-35B-A3B-NVFP4)
+/// declares every expert projection through it; the circuit asks expert 0's projection.
+pub(crate) fn expert_container(module: &str) -> Option<&str> {
+    let at = module.rfind(".experts.")?;
+    let rest = &module[at + ".experts.".len()..];
+    let (index, proj) = rest.split_once('.')?;
+    (!index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()) && !proj.is_empty())
+        .then(|| &module[..at + ".experts".len()])
+}
+
 /// 2026-09-28: `*` matches any run of characters, dots included; everything else is literal.
 pub(crate) fn glob(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();

@@ -12,8 +12,8 @@
 
 use std::fmt::Write as _;
 
-use crate::fuser::{EdgeState, FusionPlan, Policy};
-use crate::ir::Circuit;
+use crate::fuser::{EdgeState, FusionPlan, Group, Policy};
+use crate::ir::{Circuit, NodeIdx};
 use crate::rules::Numerics;
 use crate::runtime::RuntimeRoute;
 
@@ -41,15 +41,33 @@ pub fn with_settings(header: &Header, policy: &Policy) -> Header {
         .collect()
 }
 
+/// 2026-10-02: What a rendering adds to a plan: `compute=<group>` on each group line (the compute
+/// unit its kernels run on, `venn::compute`), and under it one line per member node (its
+/// pipeline, `crate::pipeline`).
+pub struct Notes<'a> {
+    /// 2026-10-02: The group line's `compute=` value, where it answers.
+    pub group: &'a dyn Fn(&Group) -> Option<String>,
+    /// 2026-10-02: A member node's line, where it answers.
+    pub node: &'a dyn Fn(NodeIdx) -> Option<String>,
+}
+
+impl Notes<'_> {
+    /// 2026-10-02: Nothing added.
+    pub const NONE: Notes<'static> = Notes {
+        group: &|_| None,
+        node: &|_| None,
+    };
+}
+
 /// 2026-09-30: A runtime route's arm, rendered after the primary plan: a heading that names the
 /// route, its condition and the settings it plans as, then the arm's plan under `header`.
-/// 2026-10-02: Each group line carries `note`'s answer ([`render_noted`]).
+/// 2026-10-02: With `notes` ([`render_noted`]).
 pub fn route_section(
     circuit: &Circuit,
     route: &RuntimeRoute,
     plan: &FusionPlan,
     header: &Header,
-    note: &dyn Fn(&crate::fuser::Group) -> Option<String>,
+    notes: &Notes<'_>,
 ) -> String {
     format!(
         "\n# runtime route `{}`: when {}; planned as `{}` ({})\n\n{}",
@@ -57,22 +75,23 @@ pub fn route_section(
         route.why,
         route.plans_as_text(),
         route.cite,
-        render_noted(circuit, plan, header, note)
+        render_noted(circuit, plan, header, notes)
     )
 }
 
 /// 2026-09-28: Render `plan` of `circuit`.
 pub fn render(circuit: &Circuit, plan: &FusionPlan, header: &Header) -> String {
-    render_noted(circuit, plan, header, &|_| None)
+    render_noted(circuit, plan, header, &Notes::NONE)
 }
 
-/// 2026-10-02: [`render`], with `note(group)` appended to each group's line as `compute=<note>`
-/// where it answers (the compute unit the group runs on, `venn::compute`).
+/// 2026-10-02: [`render`], with `notes.group(group)` appended to each group's line as
+/// `compute=<note>` where it answers, and under it `  <node>: <notes.node(node)>` for each member
+/// node where that answers.
 pub fn render_noted(
     circuit: &Circuit,
     plan: &FusionPlan,
     header: &Header,
-    note: &dyn Fn(&crate::fuser::Group) -> Option<String>,
+    notes: &Notes<'_>,
 ) -> String {
     let mut s = String::new();
     let _ = writeln!(
@@ -138,10 +157,15 @@ pub fn render_noted(
             last_layer = Some(first.layer);
         }
         let mut line = group_line(circuit, plan, g);
-        if let Some(n) = note(grp) {
+        if let Some(n) = (notes.group)(grp) {
             let _ = write!(line, " compute={n}");
         }
         let _ = writeln!(s, "{line}");
+        for &n in &grp.nodes {
+            if let Some(p) = (notes.node)(n) {
+                let _ = writeln!(s, "  {}: {p}", circuit.nodes[n].local);
+            }
+        }
     }
     s
 }

@@ -8,7 +8,9 @@
 //! Owner: metrale-circuit (hardware).
 //! Invariants:
 //! - A rule that matches a node whose edge format it cannot read is left out of that plan and
-//!   listed ([`Planned::refused`]); the plan never fails on it and never runs it.
+//!   listed ([`Planned::refused`]); the plan never fails on it and never runs it. 2026-10-02: So
+//!   is a rule whose kernels declare another pipeline than the plan requires of a node it
+//!   covers ([`crate::pipeline`]): a kernel never runs a precision the circuit does not ask for.
 //! - A node no available rule covers is planned by a placeholder group (`emitter = "novel"`,
 //!   rule id `novel.<op>`), never by a kernel the device cannot run; the placeholder has the
 //!   lowest priority, so it never displaces a real rule.
@@ -50,6 +52,8 @@ pub struct Planned {
     /// 2026-09-30: The runtime routes that apply to this run, each with its own plan
     /// ([`crate::runtime`]).
     pub routes: Vec<RoutePlan>,
+    /// 2026-10-02: Every planned node's required pipeline, which its kernel declares too.
+    pub pipelines: crate::pipeline::PlanPipelines,
 }
 
 /// 2026-09-30: A route that applies to a run, with its arm's plan.
@@ -291,6 +295,8 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
             keep: false,
             stored: false,
             sibling: false,
+            holds: None,
+            steps: BTreeMap::new(),
         }],
         kernels: Vec::new(),
         repeat: Repeat::Once,
@@ -350,6 +356,27 @@ fn fuse_arm(
             run.rows,
         ) {
             Ok(plan) => {
+                let pipelines = match crate::pipeline::check_plan(
+                    circuit,
+                    &plan,
+                    &rules,
+                    &r.families,
+                    &policy.settings,
+                ) {
+                    Ok(p) => p,
+                    Err(crate::pipeline::PipelineError::Mismatch(ms)) => {
+                        // 2026-10-02: Refuse each rule whose kernels run another precision than
+                        // the node requires, and plan again without it.
+                        for m in ms {
+                            if rules.iter().any(|x| x.id == m.rule) {
+                                rules.retain(|x| x.id != m.rule);
+                                refused.push((m.rule.clone(), m.describe()));
+                            }
+                        }
+                        continue;
+                    }
+                    Err(e) => return Err(HwError::Plan(e.to_string())),
+                };
                 let novel = plan
                     .groups
                     .iter()
@@ -362,6 +389,7 @@ fn fuse_arm(
                     novel,
                     refused,
                     routes: Vec::new(),
+                    pipelines,
                 });
             }
             Err(FuseError::Uncovered { node, .. }) => {

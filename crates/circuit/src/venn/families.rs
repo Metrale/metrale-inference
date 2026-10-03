@@ -113,7 +113,8 @@ pub struct Param {
 /// 2026-09-29: An op a family implements, with the constraints a node must meet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpSpec {
-    /// 2026-09-29: Op base name (`linear`, `paged_attention`, ...).
+    /// 2026-09-29: Op base name (`linear`, `paged_attention`, ...). 2026-10-02: or a quantizer
+    /// with its output format (`act_quant:nvfp4/g16`).
     pub op: String,
     /// 2026-09-29: For `linear`: the roles it takes; empty is every role.
     pub roles: BTreeSet<LinearRole>,
@@ -135,6 +136,14 @@ pub struct OpSpec {
     /// `feeds`; empty is no constraint. A conv kernel that writes its window snapshot and the
     /// L2 norm of its output implements the snapshot only where the L2 norm reads beside it.
     pub beside: BTreeSet<String>,
+}
+
+impl OpSpec {
+    /// 2026-10-02: The spec names `op`: by base name, or by its qualified name (an `act_quant`
+    /// with its format).
+    pub fn names(&self, op: &OpKind) -> bool {
+        self.op == op.base_name() || self.op == op.name()
+    }
 }
 
 /// 2026-09-29: How an instantiated point is realised in the sources.
@@ -173,6 +182,9 @@ pub struct Point {
     pub files: Vec<String>,
     /// 2026-10-02: Its compute unit where it differs from the family's (`None`: the family's).
     pub compute: Option<ComputeUnit>,
+    /// 2026-10-02: Its own pipeline declarations, where they differ from the family's
+    /// ([`crate::pipeline::declare`]).
+    pub pipeline: crate::pipeline::declare::ByOp,
 }
 
 /// 2026-09-29: Where an evidence record lives.
@@ -244,6 +256,9 @@ pub struct Family {
     pub discover: Vec<Discover>,
     /// 2026-10-02: The compute units it runs on ([`super::compute`]).
     pub compute: FamilyCompute,
+    /// 2026-10-02: The numeric pipeline each op runs at, the family's and its kernels'
+    /// ([`crate::pipeline::declare`]).
+    pub pipeline: crate::pipeline::declare::FamilyPipelines,
 }
 
 impl Family {
@@ -255,6 +270,14 @@ impl Family {
     /// 2026-09-29: The parameter named `name`.
     pub fn param(&self, name: &str) -> Option<&Param> {
         self.params.iter().find(|p| p.name == name)
+    }
+
+    /// 2026-10-02: Each point's values with its own pipeline declarations.
+    pub fn point_pipelines(&self) -> Vec<(&Values, &crate::pipeline::declare::ByOp)> {
+        self.points
+            .iter()
+            .map(|p| (&p.values, &p.pipeline))
+            .collect()
     }
 }
 
@@ -331,7 +354,7 @@ impl Families {
             };
             listed
                 && f.ops.iter().any(|s| {
-                    s.op == op.base_name()
+                    s.names(op)
                         && match op {
                             OpKind::Linear(r) => s.roles.is_empty() || s.roles.contains(r),
                             _ => true,
