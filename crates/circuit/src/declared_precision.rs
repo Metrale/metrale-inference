@@ -10,13 +10,13 @@
 //! - A declared format the circuit has no edge format for (an integer scheme, an FP8 weight
 //!   with an unstated granularity, ...) is recorded, never guessed; [`DeclaredPrecision::refusals`]
 //!   lists them and the caller refuses the checkpoint.
-//! - A module the plan does not cover is 16-bit (`LayerPrecision::UNQUANTIZED`), except a routed
-//!   expert's projection, which inherits its fused experts module (`declared`).
+//! - A module the plan does not cover is 16-bit (`LayerPrecision::UNQUANTIZED`); an expert
+//!   projection is covered by its fused-experts module's declaration (2026-10-02).
 
 use std::cell::RefCell;
 
 use metrale_config::DeclaredPrecisionPlan;
-use metrale_config::precision_plan::{Granularity, LayerPrecision, NumKind, Operand};
+use metrale_config::precision_plan::{Granularity, NumKind, Operand};
 
 use crate::format::{Format, Scale};
 use crate::precision::{EdgePrecision, LinearFormats};
@@ -94,26 +94,18 @@ fn activation_format(o: Operand) -> Option<Format> {
     }
 }
 
-/// 2026-10-02: What `module` declares. A routed expert's projection
-/// (`<prefix>.experts.<i>.<proj>`) that declares nothing itself and is not ignored inherits the
-/// fused experts module's declaration: ModelOpt's `quantized_layers` names that module
-/// (`<prefix>.experts`) and not its projections (nvidia/Qwen3.6-35B-A3B-NVFP4).
-fn declared(plan: &DeclaredPrecisionPlan, module: &str) -> LayerPrecision {
-    let own = plan.resolve(module);
-    if own != LayerPrecision::UNQUANTIZED || plan.ignore.iter().any(|t| t.matches_name(module)) {
-        return own;
-    }
-    match module.split_once(".experts.") {
-        Some((prefix, rest)) if rest.split('.').count() == 2 => {
-            plan.resolve(&format!("{prefix}.experts"))
-        }
-        _ => own,
-    }
-}
-
 impl EdgePrecision for DeclaredPrecision<'_> {
     fn linear(&self, module: &str) -> LinearFormats {
-        let declared = declared(self.plan, module);
+        // 2026-10-02: An expert projection the plan does not name is declared by its experts
+        // module, where the checkpoint quantizes that as one (`precision::expert_container`); a
+        // projection the checkpoint ignores keeps its own (16-bit) answer.
+        let mut declared = self.plan.resolve(module);
+        if declared.weight.is_none()
+            && !self.plan.ignore.iter().any(|t| t.matches_name(module))
+            && let Some(container) = crate::precision::expert_container(module)
+        {
+            declared = self.plan.resolve(container);
+        }
         let weight = match declared.weight {
             None => Format::Bf16,
             Some(o) => weight_format(o).unwrap_or_else(|| {

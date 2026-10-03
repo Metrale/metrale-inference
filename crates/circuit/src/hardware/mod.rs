@@ -222,6 +222,9 @@ pub fn display_on(
         checkpoint: model.checkpoint.clone(),
         recipe: format!("{} on {}", model.label, one.resolved.device.id),
         bytes: Some((buffers.materialized_bytes, buffers.arena_bytes)),
+        pipelines: (0..model.circuit.nodes.len())
+            .map(|n| one.planned.pipelines.facts(n))
+            .collect(),
     };
     Ok(crate::display::display(&model.circuit, plan, &info, opts)?)
 }

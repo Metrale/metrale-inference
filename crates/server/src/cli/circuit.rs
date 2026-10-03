@@ -124,6 +124,12 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             };
             return super::circuit_memory::run(*m);
         }
+        CircuitAction::Precision(_) => {
+            let CircuitAction::Precision(p) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_precision::run(*p);
+        }
     };
     let inst = instance(&plan_args.recipe)?;
     let rows = rows_of(&inst, &plan_args)?;
@@ -143,7 +149,8 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
         CircuitAction::Diff(_)
         | CircuitAction::Venn(_)
         | CircuitAction::Plan(_)
-        | CircuitAction::Memory(_) => {
+        | CircuitAction::Memory(_)
+        | CircuitAction::Precision(_) => {
             unreachable!("returned above")
         }
         CircuitAction::Display(d) => {
@@ -182,7 +189,14 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
                     let one = metrale_circuit::hardware::plan_one(&reg, hw, &tree, &model, run)?;
                     metrale_circuit::hardware::display_on(&model, &one, &opts)?
                 }
-                None => metrale_circuit::display_plan(&inst, &loaded, &avail, mode, rows, &opts)?,
+                None => metrale_circuit::display_plan(
+                    &inst,
+                    &loaded,
+                    &avail,
+                    (mode, rows),
+                    &opts,
+                    &families_for(&inst)?,
+                )?,
             };
             let depth = circuit_paint::resolve_depth(
                 d.color,

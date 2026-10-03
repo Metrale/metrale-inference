@@ -19,6 +19,11 @@
 # - `[[runtime]]` routes (schema: crates/circuit/src/runtime.rs) name a condition the engine
 #   checks per step and the settings its other arm plans as; plans, reports and the executor
 #   carry both arms.
+# - 2026-10-02: A pattern element's `holds = "<format>"` is the format the kernel hands its outputs
+#   to later members of the group in, where that is not the stored format; `steps = { <step> =
+#   "<value>" }` are the steps the routing runs at another value than the reference requirement
+#   (an activation quantized inside the group, a sum rounded to BF16). Both are departures the
+#   plan prints `(rule)` and the kernel family must declare (crates/circuit/src/pipeline).
 # - `cite` abbreviations: ml/ = crates/model-layers/src/layers/, me/ =
 #   crates/model-engine/src/model/trait_impl/, mm/ = crates/model-engine/src/model/,
 #   k/ = kernels/gb10/common/. crates/circuit/tests/circuits.rs checks every cited file exists
@@ -64,10 +69,12 @@ numerics = "reference"
 priority = 5
 cite = "ml/mtp_head/forward.rs:86-96,103-113,152-162 (the residual copy is a D2D copy at :148); ml/mtp_head/forward_batch/position.rs:61-70,140-150 (n rows; the target hiddens at :84-94 are normed one row per launch there and in one n-row launch here, stacked by the host, ml/mtp_head/forward_batch/position/circuit.rs; rms_norm is one block per row)"
 
+# 2026-10-02: The norm takes its sum of squares from the FP32 sum before the BF16 rounding
+# (rms_norm.cu:409-412): `y` is stored BF16 and held as f32.
 [[rule]]
 id = "residual_add_post_norm"
 pattern = [
-  { op = "residual_add", local = "add", keep = true },
+  { op = "residual_add", local = "add", keep = true, holds = "f32" },
   { op = "rms_norm", local = "post_norm" },
 ]
 kernels = [{ module = "norm", func = "residual_add_rms_norm" }]
@@ -122,9 +129,11 @@ cite = "me/decode_a3.rs:108-111; mm/impl_a3_norm.rs:23-51; me/verify_c2.rs:341; 
 # per-row loop under `off`, or under `on` when the state slots are not contiguous (the
 # `gdn_state_slots_fragmented` route).
 
+# 2026-10-02: The b|a projection hands its FP32 sums to the gates in registers
+# (ssm_preprocess.cu:430-459): `ba` is held as f32 (crates/circuit/src/pipeline).
 [[rule]]
 id = "gdn_ba_gates_gemv_per_row"
-pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+pattern = [{ op = "linear", role = "ba", holds = "f32" }, { op = "gdn_gates" }]
 kernels = [{ module = "ssm_preprocess", func = "dense_gemv_ba_gates" }]
 repeat = "per_row"
 emitter = "dense_gemv_ba_gates"
@@ -134,9 +143,11 @@ numerics = "reference"
 priority = 100
 cite = "ml/qwen3_ssm/ssm_forward.rs:181-196; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:65-78 (the per-sequence loop: one row, the `off` arm, or the fragmented-slots route)"
 
+# 2026-10-02: The b|a projection hands its FP32 sums to the gates in registers
+# (ssm_preprocess.cu:430-459): `ba` is held as f32 (crates/circuit/src/pipeline).
 [[rule]]
 id = "gdn_ba_gates_gemm_verify"
-pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+pattern = [{ op = "linear", role = "ba", holds = "f32" }, { op = "gdn_gates" }]
 kernels = [{ module = "ssm_preprocess", func = "dense_gemm_ba_gates_prefill" }]
 repeat = "once"
 emitter = "dense_gemm_ba_gates"
@@ -428,13 +439,16 @@ launches = [
 ]
 copies = "per_seq_row_but_last"
 
+# 2026-10-02: The L2 norm writes BF16 q/k/v (gdn_verify_fused_k2.cu:131) and the WY2 recurrence a
+# BF16 `core` (gated_delta_rule_wy.cu:170-171), which the norm kernel reads
+# (gdn_verify_fused_k2.cu:190-191).
 [[rule]]
 id = "gdn_fused_conv_norm_k2_verify"
 pattern = [
   { op = "conv1d_update" },
   { op = "state_snapshot" },
-  { op = "l2_norm" },
-  { op = "gdn_recurrence" },
+  { op = "l2_norm", holds = "bf16" },
+  { op = "gdn_recurrence", holds = "bf16" },
   { op = "gated_rms_norm" },
 ]
 kernels = [
@@ -466,9 +480,11 @@ cite = "ml/qwen3_ssm/ssm_forward.rs:354-372; ml/qwen3_ssm/trait_decode_multi_seq
 # launch for all rows, each kernel a stride twin of its per-row one (same per-row arithmetic,
 # gdn_decode_strided_microtest). Moved here from kernels/hopper/common/FUSIONS.toml.
 
+# 2026-10-02: The b|a projection hands its FP32 sums to the gates in registers
+# (ssm_preprocess.cu:430-459): `ba` is held as f32 (crates/circuit/src/pipeline).
 [[rule]]
 id = "gdn_ba_gates_gemm_batched"
-pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+pattern = [{ op = "linear", role = "ba", holds = "f32" }, { op = "gdn_gates" }]
 kernels = [{ module = "ssm_preprocess", func = "dense_gemm_ba_gates_prefill" }]
 repeat = "once"
 emitter = "dense_gemm_ba_gates"
@@ -521,9 +537,11 @@ cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (on
 # 2026-09-30: The batched BA GEMM's byte-identical twin, which `ops::dense_gemm_ba_gates_prefill`
 # picks when `ssm_ba_gates_hopper` is on and the rows fill the device at two CTAs per SM: 96 rows
 # on GB10's 48 SMs (kernels/DEVICES.toml). The executor checks the pick against that guard.
+# 2026-10-02: The b|a projection hands its FP32 sums to the gates in registers
+# (ssm_preprocess.cu:430-459): `ba` is held as f32 (crates/circuit/src/pipeline).
 [[rule]]
 id = "gdn_ba_gates_gemm_batched_twin"
-pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+pattern = [{ op = "linear", role = "ba", holds = "f32" }, { op = "gdn_gates" }]
 kernels = [{ module = "ssm_ba_gates_hopper", func = "dense_gemm_ba_gates_prefill_hopper" }]
 repeat = "once"
 emitter = "dense_gemm_ba_gates"
@@ -539,9 +557,11 @@ cite = "ml/ops/ssm_preproc.rs:333-362 (the pick); ml/ops/ssm_ba_gates_hopper.rs:
 # `off`.
 
 # 2026-09-30: The batched verify's BA-gates twin: the same pick at the same row counts.
+# 2026-10-02: The b|a projection hands its FP32 sums to the gates in registers
+# (ssm_preprocess.cu:430-459): `ba` is held as f32 (crates/circuit/src/pipeline).
 [[rule]]
 id = "gdn_ba_gates_gemm_verify_twin"
-pattern = [{ op = "linear", role = "ba" }, { op = "gdn_gates" }]
+pattern = [{ op = "linear", role = "ba", holds = "f32" }, { op = "gdn_gates" }]
 kernels = [{ module = "ssm_ba_gates_hopper", func = "dense_gemm_ba_gates_prefill_hopper" }]
 repeat = "once"
 emitter = "dense_gemm_ba_gates"
@@ -771,9 +791,14 @@ numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_decode.rs:371-385 (decode_split_silu = true, kernels/gb10/HARDWARE.toml:164, kill switch METRALE_NO_DECODE_SPLIT_SILU)"
 
+# 2026-10-02: The lever keeps the SiLU product in FP32 registers into the GEMV
+# (w4a16_gemv_fused.cu:395-407): `act` is held as f32.
 [[rule]]
 id = "silu_input_down_1row"
-pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "silu_mul", local = "act", holds = "f32" },
+  { op = "linear", role = "down", weight = "nvfp4/g16" },
+]
 kernels = [{ module = "w4a16_gemv_fused", func = "w4a16_gemv_silu_input_sw" }]
 repeat = "once"
 emitter = "w4a16_gemv_silu_input"
@@ -979,9 +1004,14 @@ numerics = "reference"
 priority = 100
 cite = "ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:165-192"
 
+# 2026-10-02: The qwen3.6-27b tile GEMMs round the BF16 activation to unscaled E4M3 and the fully
+# scaled weight to E4M3, and run an FP8 MMA
+# (kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:326-342, 487-523).
 [[rule]]
 id = "w4a16_gemm_t_p3_rows"
-pattern = [{ op = "linear", roles = ["qkvz", "q", "k", "v"], weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", roles = ["qkvz", "q", "k", "v"], weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
+]
 kernels = [{ module = "w4a16", func = "w4a16_gemm_t_p3" }]
 repeat = "once"
 emitter = "w4a16_gemm_n128"
@@ -992,9 +1022,14 @@ numerics = "reference"
 priority = 50
 cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207; ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:340-441; ml/qwen3_ssm/kernel_select.rs:30-98 (E4M3 activations, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:344-347)"
 
+# 2026-10-02: The qwen3.6-27b tile GEMMs round the BF16 activation to unscaled E4M3 and the fully
+# scaled weight to E4M3, and run an FP8 MMA
+# (kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:326-342, 487-523).
 [[rule]]
 id = "w4a16_gemm_t_k64_n64_p3_rows"
-pattern = [{ op = "linear", roles = ["gdn_out", "o"], weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", roles = ["gdn_out", "o"], weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
+]
 kernels = [{ module = "w4a16", func = "w4a16_gemm_t_k64_n64_p3" }]
 repeat = "once"
 emitter = "w4a16_gemm"
@@ -1005,9 +1040,14 @@ numerics = "reference"
 priority = 50
 cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:353-370; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/mod.rs:142-179 (K = 6144 takes the k64 tile; 40 * ceil(m / 64) <= 64 picks n64)"
 
+# 2026-10-02: The qwen3.6-27b tile GEMMs round the BF16 activation to unscaled E4M3 and the fully
+# scaled weight to E4M3, and run an FP8 MMA
+# (kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:326-342, 487-523).
 [[rule]]
 id = "w4a16_gemm_t_m128_rows"
-pattern = [{ op = "linear", roles = ["qkvz", "q", "k", "v", "o"], weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", roles = ["qkvz", "q", "k", "v", "o"], weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
+]
 kernels = [{ module = "w4a16", func = "w4a16_gemm_t_m128" }]
 repeat = "once"
 emitter = "w4a16_gemm_n128_m128"
@@ -1018,9 +1058,14 @@ numerics = "reference"
 priority = 50
 cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207 (m >= 65 unless METRALE_NO_SSM_M128); ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:340-441; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366"
 
+# 2026-10-02: The qwen3.6-27b tile GEMMs round the BF16 activation to unscaled E4M3 and the fully
+# scaled weight to E4M3, and run an FP8 MMA
+# (kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:326-342, 487-523).
 [[rule]]
 id = "w4a16_gemm_t_k64_p3_gdn_out_wide"
-pattern = [{ op = "linear", role = "gdn_out", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", role = "gdn_out", weight = "nvfp4/g16", steps = { act = "fp8/tensor", scale = "e4m3" } },
+]
 kernels = [{ module = "w4a16", func = "w4a16_gemm_t_k64_p3" }]
 repeat = "once"
 emitter = "w4a16_gemm_n128"
@@ -1031,9 +1076,13 @@ numerics = "reference"
 priority = 60
 cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:353-370; ml/qwen3_ssm/kernel_select.rs:81-98 (m128 refused: 40 CTAs < 48 SMs; same bits as k64_n64_p3, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:1629-1631)"
 
+# 2026-10-02: The lever quantizes the BF16 input to NVFP4 inside the rule (w4a4_quant_rows) and
+# runs the W4A4 MMA.
 [[rule]]
 id = "w4a4_downcast_mx8"
-pattern = [{ op = "linear", roles = ["qkvz", "gdn_out", "q", "k", "v", "o", "down"], weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", roles = ["qkvz", "gdn_out", "q", "k", "v", "o", "down"], weight = "nvfp4/g16", steps = { act = "nvfp4/g16" } },
+]
 kernels = [
   { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
   { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
@@ -1052,9 +1101,14 @@ cite = "ml/ops/w4a4_proj.rs:40,191-231 (--w4a4-downcast under --weight-quantizat
 # forward_prefill quantizes the activations to NVFP4 and runs the MMQ tiles: W4A4 at these
 # row counts by default (ml/dense_ffn_prefill_nvfp4.rs:51-68,211-330).
 
+# 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
+# gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq16_gate_up_gdn"
-pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16", layer_kind = "linear_attention" }]
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", layer_kind = "linear_attention", steps = { act = "nvfp4/g16", scale = "none" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
@@ -1069,11 +1123,14 @@ numerics = "reference"
 priority = 50
 cite = "ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (n >= METRALE_SSM_FFN_PREFILL_MIN_N, default 5, ahead of the km arm: :24-40); ml/dense_ffn_prefill_nvfp4.rs:51-55"
 
+# 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
+# NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
+# to BF16 before the global scale (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq16_act_down_gdn"
 pattern = [
-  { op = "silu_mul", local = "act", layer_kind = "linear_attention" },
-  { op = "linear", role = "down", weight = "nvfp4/g16" },
+  { op = "silu_mul", local = "act", layer_kind = "linear_attention", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
@@ -1089,9 +1146,14 @@ numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 (the tile path leaves the down scale to metrale_nvfp4_scale_bf16)"
 
+# 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
+# gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq16_gate_up"
-pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", steps = { act = "nvfp4/g16", scale = "none" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
@@ -1106,9 +1168,15 @@ numerics = "reference"
 priority = 50
 cite = "ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 (a dense FFN above the km band); ml/dense_ffn_prefill_nvfp4.rs:51-55"
 
+# 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
+# NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
+# to BF16 before the global scale (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq16_act_down"
-pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "silu_mul", local = "act", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq16_nc" },
@@ -1123,9 +1191,14 @@ numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
 
+# 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
+# gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq32_gate_up"
-pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", steps = { act = "nvfp4/g16", scale = "none" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
@@ -1140,9 +1213,15 @@ numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:56-60"
 
+# 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
+# NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
+# to BF16 before the global scale (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq32_act_down"
-pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "silu_mul", local = "act", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq32_nc" },
@@ -1157,9 +1236,14 @@ numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:56-60,272-286,330-372"
 
+# 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
+# gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq64_gate_up"
-pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", steps = { act = "nvfp4/g16", scale = "none" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
@@ -1174,9 +1258,15 @@ numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:61-66 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:232-235)"
 
+# 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
+# NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
+# to BF16 before the global scale (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq64_act_down"
-pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "silu_mul", local = "act", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_mmq64_nc" },
@@ -1191,9 +1281,14 @@ numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:61-66,272-286,330-372"
 
+# 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
+# gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq_pipe_gate_up"
-pattern = [{ op = "linear", role = "gate_up", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", steps = { act = "nvfp4/g16", scale = "none" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
@@ -1208,9 +1303,15 @@ numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:67-68; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe)"
 
+# 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
+# NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
+# to BF16 before the global scale (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq_pipe_act_down"
-pattern = [{ op = "silu_mul", local = "act" }, { op = "linear", role = "down", weight = "nvfp4/g16" }]
+pattern = [
+  { op = "silu_mul", local = "act", holds = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", steps = { scale = "bf16" } },
+]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
   { module = "nvfp4_mmq", func = "metrale_nvfp4_gemm_pipe" },
@@ -1344,9 +1445,11 @@ numerics = "reference"
 priority = 100
 cite = "ml/moe/forward.rs:263-304; ml/moe/init.rs:435-438"
 
+# 2026-10-02: The shared-expert gate logit stays FP32 into the sigmoid
+# (moe_expert_gemv.cu:224-261, moe_fp8_grouped_blend.cu:47-76): `sg` is held as f32.
 [[rule]]
 id = "moe_weighted_sum_blend"
-pattern = [{ op = "linear", role = "shared_gate" }, { op = "blend" }]
+pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
 kernels = [{ module = "moe_expert_gemv", func = "moe_weighted_sum_blend" }]
 repeat = "once"
 emitter = "moe_blend"
@@ -1419,9 +1522,11 @@ numerics = "reference"
 priority = 100
 cite = "ml/moe/forward_fp8_grouped_decode.rs:322-340"
 
+# 2026-10-02: The shared-expert gate logit stays FP32 into the sigmoid
+# (moe_expert_gemv.cu:224-261, moe_fp8_grouped_blend.cu:47-76): `sg` is held as f32.
 [[rule]]
 id = "moe_blend_grouped"
-pattern = [{ op = "linear", role = "shared_gate" }, { op = "blend" }]
+pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
 kernels = [{ module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp8_grouped" }]
 repeat = "once"
 emitter = "moe_blend"
@@ -1432,19 +1537,23 @@ numerics = "reference"
 priority = 100
 cite = "ml/moe/forward_fp8_grouped_decode.rs:364-380"
 
+# 2026-10-02: W8A8 above the grouped cap: xn quantized per 128 columns once for the routed and
+# shared gate|up, each SiLU product rounded to BF16 and quantized per 128
+# (moe_silu_mul.cu:132-165), the gate logit FP32, the routed sum rounded to BF16
+# before the shared expert is added (moe_unpermute_blend.cu:75).
 [[rule]]
 id = "moe_prefill_fp8_w8a8_wide"
 pattern = [
   { op = "router" },
   { op = "top_k" },
-  { op = "expert_gate_up", weight = "fp8/block128x128" },
-  { op = "silu_mul", local = "experts_act" },
+  { op = "expert_gate_up", weight = "fp8/block128x128", steps = { gather = "fp8/g128", act = "fp8/g128" } },
+  { op = "silu_mul", local = "experts_act", holds = "fp8/g128", steps = { compute = "bf16" } },
   { op = "expert_down" },
-  { op = "linear", role = "shared_gate_up", sibling = true },
-  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_gate_up", sibling = true, steps = { act = "fp8/g128" } },
+  { op = "silu_mul", local = "shared_act", holds = "fp8/g128", steps = { compute = "bf16" } },
   { op = "linear", role = "shared_down" },
-  { op = "linear", role = "shared_gate", sibling = true },
-  { op = "blend" },
+  { op = "linear", role = "shared_gate", sibling = true, holds = "f32" },
+  { op = "blend", steps = { scatter = "bf16" } },
 ]
 kernels = [
   { module = "per_token_group_quant_fp8", func = "per_token_group_quant_fp8" },
@@ -2107,11 +2216,13 @@ cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, do
 # act_quant the declared circuit places before the projection inside the group: the MMQ quantizer
 # writes its own block layout, which no other kernel reads.
 
+# 2026-10-02: gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq16_a4_gate_up_gdn"
 pattern = [
   { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
-  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "none" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
@@ -2127,12 +2238,15 @@ numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
 
+# 2026-10-02: The SiLU product reaches the quantizer in FP32 registers (nvfp4_mmq.cu:266-313):
+# `act` is held as f32; down rounds its FP32 sum to BF16 before the global scale
+# (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq16_a4_act_down_gdn"
 pattern = [
-  { op = "silu_mul", local = "act", layer_kind = "linear_attention" },
+  { op = "silu_mul", local = "act", layer_kind = "linear_attention", holds = "f32" },
   { op = "act_quant", format = "nvfp4/g16" },
-  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "bf16" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
@@ -2148,11 +2262,13 @@ numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
 
+# 2026-10-02: gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq32_a4_gate_up_gdn"
 pattern = [
   { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
-  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "none" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
@@ -2168,12 +2284,15 @@ numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
 
+# 2026-10-02: The SiLU product reaches the quantizer in FP32 registers (nvfp4_mmq.cu:266-313):
+# `act` is held as f32; down rounds its FP32 sum to BF16 before the global scale
+# (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq32_a4_act_down_gdn"
 pattern = [
-  { op = "silu_mul", local = "act", layer_kind = "linear_attention" },
+  { op = "silu_mul", local = "act", layer_kind = "linear_attention", holds = "f32" },
   { op = "act_quant", format = "nvfp4/g16" },
-  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "bf16" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
@@ -2189,11 +2308,13 @@ numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
 
+# 2026-10-02: gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq64_a4_gate_up"
 pattern = [
   { op = "act_quant", format = "nvfp4/g16" },
-  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "none" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
@@ -2209,12 +2330,15 @@ numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
 
+# 2026-10-02: The SiLU product reaches the quantizer in FP32 registers (nvfp4_mmq.cu:266-313):
+# `act` is held as f32; down rounds its FP32 sum to BF16 before the global scale
+# (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq64_a4_act_down"
 pattern = [
-  { op = "silu_mul", local = "act" },
+  { op = "silu_mul", local = "act", holds = "f32" },
   { op = "act_quant", format = "nvfp4/g16" },
-  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "bf16" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },
@@ -2230,11 +2354,13 @@ numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
 
+# 2026-10-02: gate|up is written without the weight's global scale, which the SiLU kernel applies
+# (nvfp4_mmq.cu:266-268).
 [[rule]]
 id = "ffn_mmq_pipe_a4_gate_up"
 pattern = [
   { op = "act_quant", format = "nvfp4/g16" },
-  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "none" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_quantize_bf16" },
@@ -2250,12 +2376,15 @@ numerics = "reference"
 priority = 50
 cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
 
+# 2026-10-02: The SiLU product reaches the quantizer in FP32 registers (nvfp4_mmq.cu:266-313):
+# `act` is held as f32; down rounds its FP32 sum to BF16 before the global scale
+# (nvfp4_mmq.cu:218, 469-470).
 [[rule]]
 id = "ffn_mmq_pipe_a4_act_down"
 pattern = [
-  { op = "silu_mul", local = "act" },
+  { op = "silu_mul", local = "act", holds = "f32" },
   { op = "act_quant", format = "nvfp4/g16" },
-  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16", steps = { scale = "bf16" } },
 ]
 kernels = [
   { module = "nvfp4_mmq", func = "metrale_nvfp4_silu_mul_quant" },

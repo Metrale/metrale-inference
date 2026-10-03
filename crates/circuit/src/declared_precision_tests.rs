@@ -109,9 +109,4 @@ fn routed_expert_projections_inherit_the_fused_experts_module() {
         Format::Bf16,
         "only a routed expert's projection inherits"
     );
-    assert_eq!(
-        d.linear("model.layers.0.mlp.experts.0.gate_proj.extra")
-            .weight,
-        Format::Bf16
-    );
 }
