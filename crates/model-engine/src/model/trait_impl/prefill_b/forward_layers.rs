@@ -159,7 +159,25 @@ impl TransformerModel {
         let t_loop = host_timing.then(std::time::Instant::now);
         let mut t_in_prefill = std::time::Duration::ZERO;
         let mut t_dflash = std::time::Duration::ZERO;
-        for (i, layer) in self.layers.iter().enumerate() {
+        // 2026-10-03: Under the circuit forward the pass's layers are its prefill program
+        // (`impl_circuit_prefill.rs`); the legacy loop then runs no layer. A prefill-as-decode
+        // pass, a mid-chunk capture and a profiled pass stay legacy.
+        let circuit_ran = !use_decode_path
+            && midcap.is_none()
+            && !profile_now
+            && self.circuit_prefill_layers(
+                seq,
+                metrale_model_layers::circuit_exec::program::PrefillStep {
+                    tokens: proc_count as u32,
+                    start: effective_seq_len_start as u32,
+                    kv_write_floor: layer_kv_write_start as u32,
+                    meta: Some(attn_metadata),
+                },
+                marconi_skip,
+                stream,
+            )?;
+        let legacy_layers: &[_] = if circuit_ran { &[] } else { &self.layers };
+        for (i, layer) in legacy_layers.iter().enumerate() {
             let t_pf = host_timing.then(std::time::Instant::now);
             let lt0 = if profile_now {
                 self.gpu.synchronize(stream)?;

@@ -123,7 +123,18 @@ impl TransformerModel {
         let last_hidden = hidden.offset(last_token_offset * h * fp32);
         let normed = self.buffers.norm_output();
         let eps = self.config.rms_norm_eps as f32;
-        self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
+        // 2026-10-03: Under the circuit forward the head's final norm is the prefill program's
+        // (`impl_circuit_prefill.rs`); a batched stream (offset rows) stays legacy.
+        let circuit_head = hidden_stream_offset_tokens == 0 && logits_row == 0;
+        if !(circuit_head
+            && self.circuit_prefill_head(
+                metrale_circuit::OpKind::FinalNorm,
+                proc_count as u32,
+                stream,
+            )?)
+        {
+            self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
+        }
 
         if std::env::var("METRALE_DIAG_GEMMA4").is_ok_and(|v| v == "1" || v == "true") {
             self.gpu.synchronize(stream)?;
@@ -179,7 +190,15 @@ impl TransformerModel {
         // logits row: row 0 through `lm_head` (returning `decode_logits_ptr()`), other
         // rows through `lm_head_batched` at `logits_row * vocab_size` BF16 elements.
         let logits_ptr = if logits_row == 0 {
-            self.lm_head(normed, stream)?;
+            if !(circuit_head
+                && self.circuit_prefill_head(
+                    metrale_circuit::OpKind::LmHead,
+                    proc_count as u32,
+                    stream,
+                )?)
+            {
+                self.lm_head(normed, stream)?;
+            }
             self.decode_logits_ptr()
         } else {
             let v = self.config.vocab_size;

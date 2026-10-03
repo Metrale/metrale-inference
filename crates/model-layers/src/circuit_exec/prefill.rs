@@ -92,6 +92,7 @@ impl PrefillPrograms {
                 }
             }
         }
+        heads_agree(&programs)?;
         Ok(Self {
             programs,
             max_tokens: b.max_tokens,
@@ -118,6 +119,40 @@ impl PrefillPrograms {
             .find(|p| p.mode == mode && p.exact_replay == exact_replay && p.bucket == bucket)
             .context("a bucket of the ladder has no program")
     }
+
+    /// 2026-10-03: The program whose head a `tokens`-row last pass runs. The head reads only the
+    /// pass's last row, and its rules are the same in both prefill modes and both GDN arms, so
+    /// the offset-0, non-replay program of the bucket is the one (`heads_agree` checks it at
+    /// build).
+    pub fn head(&self, tokens: u64) -> Result<&PrefillProgram> {
+        self.select(Mode::Prefill, tokens, false)
+    }
+}
+
+/// 2026-10-03: Refuse a build whose prefill programs' head launches differ between programs of
+/// one bucket: a driver runs the head of [`PrefillPrograms::head`] after any pass of the bucket.
+fn heads_agree(programs: &[PrefillProgram]) -> Result<()> {
+    let head = |p: &PrefillProgram| -> Vec<String> {
+        p.program
+            .segments
+            .iter()
+            .filter(|s| matches!(s.of, super::program::SegmentOf::Head(_)))
+            .flat_map(|s| p.program.launches[s.launches.clone()].iter().map(|l| l.kernel.clone()))
+            .collect()
+    };
+    for a in programs {
+        for b in programs.iter().filter(|b| b.bucket == a.bucket) {
+            anyhow::ensure!(
+                head(a) == head(b),
+                "the prefill heads of {} and {} at rows {}..={} differ",
+                a.mode.name(),
+                b.mode.name(),
+                a.bucket.lo,
+                a.bucket.hi
+            );
+        }
+    }
+    Ok(())
 }
 
 /// 2026-10-03: The arena buffer of a prefill edge, by its block and template-local id: the

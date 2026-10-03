@@ -41,7 +41,7 @@ pub struct GdnState {
 /// 2026-10-03: What a prefill pass supplies at run time (LIFECYCLE-DESIGN.md 15.4): its row
 /// count and position, and the metadata it uploaded. A prefill program is eager and compiled per
 /// row bucket, so its emitters size grids from these, as the legacy layers do.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct PrefillStep {
     /// 2026-10-03: Rows of this pass (`T`, the legacy `proc_count`).
     pub tokens: u32,
@@ -51,8 +51,16 @@ pub struct PrefillStep {
     /// blocks a restore recomputes over).
     pub kv_write_floor: u32,
     /// 2026-10-03: The pass's attention metadata: positions and slots, and on a paged pass the
-    /// block table and sequence length.
-    pub meta: AttnMetadataDev,
+    /// block table and sequence length. `None` for the head's steps, which read none.
+    pub meta: Option<AttnMetadataDev>,
+}
+
+impl PrefillStep {
+    /// 2026-10-03: The pass's attention metadata; an error for a step that carries none.
+    pub fn meta(&self) -> Result<AttnMetadataDev> {
+        self.meta
+            .context("a prefill launch read attention metadata the step does not carry")
+    }
 }
 
 /// 2026-09-28: What varies between two runs of one program.
@@ -133,8 +141,10 @@ pub enum SegmentOf {
     Embed,
     /// 2026-10-03: Layer `i`.
     Layer(usize),
-    /// 2026-10-03: The head (final norm, LM head, sampling).
-    Head,
+    /// 2026-10-03: A step of the head, by its first node's op (`final_norm`, `lm_head`,
+    /// `argmax`): a driver runs host work between them (the prefix cache's exact restore puts
+    /// the snapshot's hidden row between the final norm and the LM head).
+    Head(metrale_circuit::OpKind),
 }
 
 /// 2026-10-03: A contiguous run of launches of one part of the model.

@@ -35,6 +35,7 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
+mod diag;
 mod vision;
 mod vision_sync;
 
@@ -393,7 +394,23 @@ impl TransformerModel {
             kv_write_start
         };
         let diag_prefill = self.profile && proc_count > 1;
-        for (i, layer) in self.layers.iter().enumerate() {
+        // 2026-10-03: Under the circuit forward the layers are the pass's prefill program
+        // (`impl_circuit_prefill.rs`); the legacy loop then runs no layer. A profiled pass stays
+        // legacy.
+        let circuit_ran = !self.profile
+            && self.circuit_prefill_layers(
+                seq,
+                metrale_model_layers::circuit_exec::program::PrefillStep {
+                    tokens: proc_count as u32,
+                    start: seq_len_start as u32,
+                    kv_write_floor: layer_kv_write_start as u32,
+                    meta: Some(attn_metadata),
+                },
+                marconi_skip,
+                stream,
+            )?;
+        let legacy_layers: &[_] = if circuit_ran { &[] } else { &self.layers };
+        for (i, layer) in legacy_layers.iter().enumerate() {
             layer
                 .prefill(
                     hidden,
@@ -416,53 +433,7 @@ impl TransformerModel {
             // when the model has no DFlash capture layers.
             self.try_dflash_prefill_capture_layer(seq, i, seq_len_start, proc_count, stream)?;
 
-            // 2026-09-25: Mistral diagnostic under `self.profile`: log each layer's
-            // hidden-state norm, once per model (`stats.dumped` is per model).
-            if self.profile
-                && self.config.model_type == "mistral"
-                && self.stats.dumped.keyed("mla_prefill_norms")
-            {
-                self.gpu.synchronize(stream)?;
-                let last_offset = (proc_count - 1) * self.config.hidden_size * 4;
-                let h_sz = self.config.hidden_size;
-                let mut buf = vec![0u16; h_sz];
-                // 2026-09-25: SAFETY: `buf` is `vec![0u16; h_sz]` on the line above, so it
-                // owns exactly `h_sz * size_of::<u16>()` initialised bytes and
-                // the length matches its capacity. `bytes` is the only live
-                // reference to that allocation for its whole lifetime — it is
-                // last used on the `copy_d2h` line below, and `buf` is not read
-                // again until after that.
-                let bytes = unsafe {
-                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, h_sz * 2)
-                };
-                if self.gpu.copy_d2h(hidden.offset(last_offset), bytes).is_ok() {
-                    let vals: Vec<f32> = buf
-                        .iter()
-                        .map(|&b| f32::from_bits((b as u32) << 16))
-                        .collect();
-                    let norm: f32 = vals.iter().map(|v| v * v).sum::<f32>().sqrt();
-                    tracing::info!("LAYER_NORM L{i}: hidden_norm={norm:.4}");
-                    if i == self.layers.len() - 1 {}
-                }
-            }
-
-            // 2026-09-25: Profile diagnostic: read back the last processed token's
-            // hidden state after each layer.
-            if diag_prefill {
-                self.gpu.synchronize(stream)?;
-                let last_start = (proc_count - 1) * h;
-                let (last_vals, last_norm) =
-                    self.readback_bf16(hidden.offset(last_start * fp32), h.min(64))?;
-                let last_nan = last_vals.iter().filter(|v| v.is_nan()).count();
-                let last_inf = last_vals.iter().filter(|v| v.is_infinite()).count();
-                let lt = self.config.layer_type(i);
-                if i % 4 == 0 || i == self.layers.len() - 1 || last_nan > 0 || last_inf > 0 {
-                    tracing::warn!(
-                        "DIAG L{i} ({lt:?}) last_tok: norm={last_norm:.4} nan={last_nan} inf={last_inf} first4={:.4?}",
-                        &last_vals[..4.min(last_vals.len())]
-                    );
-                }
-            }
+            self.prefill_a_layer_diag(i, proc_count, hidden, diag_prefill, stream)?;
         }
 
         // 2026-09-25: Capture the processed rows' final-layer hiddens for the
@@ -473,10 +444,22 @@ impl TransformerModel {
         let last_hidden = hidden.offset((proc_count - 1) * h * fp32);
         let normed = self.buffers.norm_output();
         let eps = self.config.rms_norm_eps as f32;
-        self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
+        if !(circuit_ran
+            && self.circuit_prefill_head(
+                metrale_circuit::OpKind::FinalNorm,
+                proc_count as u32,
+                stream,
+            )?)
+        {
+            self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
+        }
 
         // 2026-09-25: 6. LM head on the last token.
-        self.lm_head(normed, stream)?;
+        if !(circuit_ran
+            && self.circuit_prefill_head(metrale_circuit::OpKind::LmHead, proc_count as u32, stream)?)
+        {
+            self.lm_head(normed, stream)?;
+        }
 
         // 2026-09-25: 7. Update the sequence state.
         seq.tokens.extend_from_slice(tokens);

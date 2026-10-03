@@ -89,8 +89,8 @@ pub(in super::super) fn external_buffer(
     }
 }
 
-/// 2026-10-03: Where group `g`'s launches belong: its first node's layer, else the head (the
-/// `head` and `mtp_out` blocks), else the embedding.
+/// 2026-10-03: Where group `g`'s launches belong: its first node's layer, else a head step
+/// (the `head` and `mtp_out` blocks, by the node's op), else the embedding.
 pub(super) fn segment_of(circuit: &Circuit, g: &Group) -> SegmentOf {
     let Some(&first) = g.nodes.first() else {
         return SegmentOf::Embed;
@@ -98,7 +98,7 @@ pub(super) fn segment_of(circuit: &Circuit, g: &Group) -> SegmentOf {
     let n = &circuit.nodes[first];
     match (n.layer, n.block.as_str()) {
         (Some(l), _) => SegmentOf::Layer(l),
-        (None, "head" | "mtp_out") => SegmentOf::Head,
+        (None, "head" | "mtp_out") => SegmentOf::Head(n.op),
         (None, _) => SegmentOf::Embed,
     }
 }

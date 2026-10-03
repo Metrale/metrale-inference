@@ -43,6 +43,7 @@ mod gdn_woa;
 mod graph_borrow;
 mod impl_adapters;
 mod impl_circuit;
+mod impl_circuit_prefill;
 mod impl_circuit_run;
 mod impl_circuit_verify_batch;
 mod impl_device_feed;
