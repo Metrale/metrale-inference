@@ -21,6 +21,7 @@ mod model;
 mod model_feed;
 mod model_forward;
 mod model_impl;
+mod park;
 mod pipeline_tests;
 mod runner;
 mod scenarios;
