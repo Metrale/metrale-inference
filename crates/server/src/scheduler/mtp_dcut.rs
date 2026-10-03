@@ -47,13 +47,19 @@ pub(super) const WIDTH_CAP: usize = metrale_model_layers::layer::VERIFY_WY_TABLE
 /// pruning. Above the cap, [`plan`] returns the uniform ladder shape.
 pub(super) const DCUT_WIDTH_CAP_DEFAULT: usize = 8;
 
-/// 2026-09-25: Retention ratio from `METRALE_MTP_DCUT_RATIO` (default 0.75),
-/// snapped to the nearest [`BUCKETS`] entry. `SchedLevers::from_env` reads it.
-pub(crate) fn dcut_ratio_from_env() -> f32 {
+/// 2026-10-03: Retention ratio in force: `--mtp-dcut-ratio` when given, else
+/// `METRALE_MTP_DCUT_RATIO`, else 0.75; snapped to the nearest [`BUCKETS`] entry.
+/// `SchedLevers::from_env` reads it once per run.
+pub(crate) fn dcut_ratio_resolved(cli: Option<f32>) -> f32 {
+    resolve_dcut_ratio(cli, std::env::var("METRALE_MTP_DCUT_RATIO").ok().as_deref())
+}
+
+/// 2026-10-03: Pure core of [`dcut_ratio_resolved`]: the flag wins over the
+/// environment value, an unparseable environment value is ignored, and the
+/// result is snapped.
+pub(super) fn resolve_dcut_ratio(cli: Option<f32>, env: Option<&str>) -> f32 {
     snap_ratio(
-        std::env::var("METRALE_MTP_DCUT_RATIO")
-            .ok()
-            .and_then(|v| v.parse::<f32>().ok())
+        cli.or_else(|| env.and_then(|v| v.parse::<f32>().ok()))
             .unwrap_or(0.75),
     )
 }

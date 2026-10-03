@@ -297,6 +297,18 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
         ));
     }
 
+    // 2026-10-03: A ratio outside 0..=1 would snap to an end bucket silently.
+    if let Some(r) = args.mtp_shape.mtp_dcut_ratio
+        && !(0.0..=1.0).contains(&r)
+    {
+        v.push(Violation::new(
+            format!("--mtp-dcut-ratio {r} is outside 0..=1."),
+            "the ratio is the fraction of prunable draft positions kept; values snap to \
+             0.25, 0.5, 0.75 or 1.0.",
+            "pass a value from 0 to 1 (1.0 keeps every draft), or drop the flag.",
+        ));
+    }
+
     // 2026-09-26: Only an explicit --num-drafts is checked: an omitted one
     // resolves against MODEL.toml later, and a model default without a
     // speculative method is not a user error.

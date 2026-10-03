@@ -295,3 +295,26 @@ fn ragged_chunks_also_respect_the_width_bound() {
         assert!(hi > lo, "empty range");
     }
 }
+
+// 2026-10-03: `--mtp-dcut-ratio` resolution.
+
+#[test]
+fn the_dcut_flag_wins_over_the_environment_and_snaps() {
+    assert_eq!(resolve_dcut_ratio(None, None), 0.75, "default");
+    assert_eq!(
+        resolve_dcut_ratio(None, Some("1.0")),
+        1.0,
+        "environment fallback"
+    );
+    assert_eq!(
+        resolve_dcut_ratio(Some(1.0), Some("0.25")),
+        1.0,
+        "the flag wins"
+    );
+    assert_eq!(resolve_dcut_ratio(Some(0.3), None), 0.25, "snapped");
+    assert_eq!(
+        resolve_dcut_ratio(None, Some("junk")),
+        0.75,
+        "unparseable is ignored"
+    );
+}

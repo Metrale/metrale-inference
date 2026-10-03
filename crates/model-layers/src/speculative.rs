@@ -12,8 +12,9 @@ pub mod tree_shape;
 pub mod verify_key;
 
 pub use ladder::{
-    DEFAULT_MTP_MAX_SEQS, MAX_MTP_MAX_SEQS, MtpMaxSeqsSource, mtp_ladder_disabled,
-    mtp_ladder_drafts, mtp_max_seqs, resolve_mtp_max_seqs, set_mtp_max_seqs,
+    DEFAULT_MTP_MAX_SEQS, MAX_MTP_MAX_SEQS, MtpMaxSeqsSource, ladder_drafts_from_steps,
+    mtp_ladder_disabled, mtp_ladder_drafts, mtp_ladder_pinned, mtp_max_seqs, parse_mtp_k_ladder,
+    resolve_mtp_max_seqs, set_mtp_k_ladder, set_mtp_max_seqs,
 };
 mod knobs;
 pub use knobs::{
