@@ -22,6 +22,7 @@ context_tokens = 4096
 [[family]]
 id = "gemv"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::gemv"]
 rows = [1, 128]
 op = [{ op = "linear" }]
@@ -47,6 +48,7 @@ files = ["k/gemv.cu"]
 [[family]]
 id = "attn"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::attn"]
 rows = [1, 128]
 op = [{ op = "paged_attention" }]

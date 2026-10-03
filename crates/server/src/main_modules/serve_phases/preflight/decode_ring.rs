@@ -65,7 +65,7 @@ pub(super) fn requested_slots(args: &cli::ServeArgs, config: &ModelConfig) -> us
 /// per-sequence SSM state blob. Preflight passes this one value to the fit and
 /// multiplies the fitted depth by it for the reserve.
 pub(super) fn slot_bytes(args: &cli::ServeArgs, per_seq_blob: usize) -> usize {
-    args.max_batch_size * per_seq_blob
+    args.max_batch_size.ceiling() * per_seq_blob
 }
 
 /// 2026-09-26: `slots x batch x per-seq state bytes` as text. The preflight
@@ -168,7 +168,7 @@ pub(super) fn fit_ring(
             "{} (was {:.2} GB); {}. Sized from {}, not from --max-batch-size {} (#915): \
              rollback depth yields, concurrency does not. Pass --ssm-decode-ring-slots N to \
              pin a depth (and be refused rather than shrunk).",
-            formula(fitted, args.max_batch_size, per_seq_blob),
+            formula(fitted, args.max_batch_size.ceiling(), per_seq_blob),
             (requested * slot_bytes) as f64 / GIB,
             if fitted_total > limit {
                 format!(
@@ -186,7 +186,7 @@ pub(super) fn fit_ring(
                 )
             },
             yardstick.name(),
-            args.max_batch_size,
+            args.max_batch_size.ceiling(),
         )),
     }
 }

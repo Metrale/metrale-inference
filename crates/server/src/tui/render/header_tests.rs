@@ -38,7 +38,8 @@ fn the_chip_strip_describes_the_running_config_not_the_boot_argv() {
     let boot_text: String = boot_chips.iter().map(|b| b.text.clone()).collect();
 
     let mut live = crate::cli::ServeArgs::parse_from(["met", "org/loaded"]);
-    live.max_batch_size = boot.max_batch_size + 7;
+    live.max_batch_size =
+        metrale_model_engine::factory::SlotRequest::Count(boot.max_batch_size.ceiling() + 7);
     let live_chips = crate::tui::logo::badges(&live, false);
     let live_text: String = live_chips.iter().map(|b| b.text.clone()).collect();
 
@@ -48,7 +49,7 @@ fn the_chip_strip_describes_the_running_config_not_the_boot_argv() {
         "the strip must be able to differ from the boot argv"
     );
     assert!(
-        live_text.contains(&(boot.max_batch_size + 7).to_string()),
+        live_text.contains(&(boot.max_batch_size.ceiling() + 7).to_string()),
         "and it reports the live batch size: {live_text}"
     );
 }

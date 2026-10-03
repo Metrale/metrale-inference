@@ -21,18 +21,19 @@ pub(super) fn resolve_max_batch_size(
     // 2026-09-26: Multi-rank serving honours `--max-batch-size` only when the
     // model runs EP protocol v2 (`METRALE_EP_PROTOCOL=v2`); v1 forces a batch
     // of 1.
+    let built = args.built_max_batch_size()?;
     let max_batch_size = if world_size > 1 {
         if scheduler_model.ep_protocol_v2() {
             tracing::info!(target: "met::main_modules::serve_load", "EP v2 active: honoring max_batch_size={}",
-                args.max_batch_size,
+                built,
             );
-            args.max_batch_size
+            built
         } else {
             tracing::info!(target: "met::main_modules::serve_load", "EP v1 active: forcing max_batch_size=1");
             1
         }
     } else {
-        args.max_batch_size
+        built
     };
     if scheduler_model.hc_mult() > 0 && max_batch_size > 1 {
         tracing::info!(target: "met::main_modules::serve_load", "mHC highway model: concurrency {max_batch_size} via the per-seq \

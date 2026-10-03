@@ -240,6 +240,7 @@ context_tokens = 4096
 [[family]]
 id = "{id}"
 description = "test"
+compute = "cuda_core"
 kernels = ["m::{func}"{extra}]
 rows = [1, 128]
 op = [{op}]

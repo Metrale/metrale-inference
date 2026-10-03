@@ -195,6 +195,7 @@ pub async fn acquire(plan: ServePlan, owner_pid: Option<u32>) -> Result<SelfServ
                     return Ok(SelfServed::external(
                         target,
                         plan.recipe_id,
+                        plan.recipe_sha256,
                         plan.requested,
                         resolved,
                         reconciled.env,
@@ -339,6 +340,7 @@ async fn start(
     Ok(SelfServed::external(
         target,
         plan.recipe_id,
+        plan.recipe_sha256,
         plan.requested,
         resolved,
         reconciled.env,

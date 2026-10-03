@@ -28,6 +28,10 @@ The checkpoint's formats are kept; this is how the device and its class's compil
 | W16A16 | bf16 | bf16 | 56 | native bf16 |
 | W4A16 | nvfp4/g16 | bf16 | 289 | native bf16 |
 
+## Tensor-core policy
+
+kernels/b300/HARDWARE.toml states no `[tensor_core_policy]`: nothing is enforced on this class. The gap report names the compute unit of every planned group.
+
 ## Roofline estimates
 
 Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are costed per row. No launch overhead: a ceiling, not a prediction.
@@ -107,38 +111,38 @@ Estimated step 2.111 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x bf16 | native bf16 | 64 | 38.0% | Shared, unmeasured | w4a16_gemv | w4a16_gemv_fused::w4a16_gemv_dual_sw rule=w4a16_gemv_dual_sw_gate_up_1row |
-| dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 19.0% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_sw rule=w4a16_gemv_sw_1row |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 15.1% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv |
-| gdn.qkvz | linear:qkvz | nvfp4/g16 x bf16 | native bf16 | 48 | 13.4% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_sw rule=w4a16_gemv_sw_1row |
-| gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 5.0% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_sw rule=w4a16_gemv_sw_1row |
-| attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 3.4% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_qg rule=w4a16_gemv_qg_1row |
-| gdn.recur | gdn_recurrence | - | - | 48 | 1.8% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row |
-| attn.o | linear:o | nvfp4/g16 x bf16 | native bf16 | 16 | 1.7% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_sw rule=w4a16_gemv_sw_1row |
-| attn.attend | paged_attention | - | - | 16 | 1.6% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 0.3% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| attn.k | linear:k | nvfp4/g16 x bf16 | native bf16 | 16 | 0.3% | Shared, unmeasured | w4a16_gemv | w4a16_gemv_fused::w4a16_gemv_dual rule=w4a16_gemv_dual_kv_1row |
-| attn.v | linear:v | nvfp4/g16 x bf16 | native bf16 | 16 | 0.3% | Shared, unmeasured | w4a16_gemv | w4a16_gemv_fused::w4a16_gemv_dual rule=w4a16_gemv_dual_kv_1row |
-| dense_ffn.act | silu_mul | - | - | 64 | 0.0% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_split_1row |
-| gdn.l2 | l2_norm | - | - | 48 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.conv | conv1d_update | - | - | 48 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.0% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| dense_ffn.add | residual_add | - | - | 64 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
-| gdn.add | residual_add | - | - | 48 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| gdn.input_norm | rms_norm | - | - | 48 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.q_split | split | - | - | 16 | 0.0% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_qg rule=w4a16_gemv_qg_1row |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 16 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul rule=sigmoid_gate_mul |
+| dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x bf16 | native bf16 | 64 | 38.0% | Shared, unmeasured | w4a16_gemv | w4a16_gemv_fused::w4a16_gemv_dual_sw rule=w4a16_gemv_dual_sw_gate_up_1row compute=cuda_core |
+| dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 19.0% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_sw rule=w4a16_gemv_sw_1row compute=cuda_core |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 15.1% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv compute=cuda_core |
+| gdn.qkvz | linear:qkvz | nvfp4/g16 x bf16 | native bf16 | 48 | 13.4% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_sw rule=w4a16_gemv_sw_1row compute=cuda_core |
+| gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 5.0% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_sw rule=w4a16_gemv_sw_1row compute=cuda_core |
+| attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 3.4% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_qg rule=w4a16_gemv_qg_1row compute=cuda_core |
+| gdn.recur | gdn_recurrence | - | - | 48 | 1.8% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
+| attn.o | linear:o | nvfp4/g16 x bf16 | native bf16 | 16 | 1.7% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_sw rule=w4a16_gemv_sw_1row compute=cuda_core |
+| attn.attend | paged_attention | - | - | 16 | 1.6% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 0.3% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| attn.k | linear:k | nvfp4/g16 x bf16 | native bf16 | 16 | 0.3% | Shared, unmeasured | w4a16_gemv | w4a16_gemv_fused::w4a16_gemv_dual rule=w4a16_gemv_dual_kv_1row compute=cuda_core |
+| attn.v | linear:v | nvfp4/g16 x bf16 | native bf16 | 16 | 0.3% | Shared, unmeasured | w4a16_gemv | w4a16_gemv_fused::w4a16_gemv_dual rule=w4a16_gemv_dual_kv_1row compute=cuda_core |
+| dense_ffn.act | silu_mul | - | - | 64 | 0.0% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_split_1row compute=memory |
+| gdn.l2 | l2_norm | - | - | 48 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 48 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.0% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row compute=memory |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| dense_ffn.add | residual_add | - | - | 64 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add compute=memory |
+| gdn.add | residual_add | - | - | 48 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| gdn.input_norm | rms_norm | - | - | 48 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.q_split | split | - | - | 16 | 0.0% | Shared, unmeasured | w4a16_gemv | w4a16_gemv::w4a16_gemv_qg rule=w4a16_gemv_qg_1row compute=cuda_core |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 16 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul rule=sigmoid_gate_mul compute=memory |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
-| attn.add | residual_add | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.rope | rope | - | - | 16 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved |
-| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows |
-| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows |
-| attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| attn.add | residual_add | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.rope | rope | - | - | 16 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved compute=memory |
+| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows compute=memory |
+| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=qk_norm_rows compute=memory |
+| attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=16
@@ -148,37 +152,37 @@ Estimated step 3.356 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
 | dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x bf16 | native bf16 | 64 | 24.2% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
-| gdn.recur | gdn_recurrence | - | - | 48 | 18.2% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row |
-| attn.attend | paged_attention | - | - | 16 | 16.0% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
+| gdn.recur | gdn_recurrence | - | - | 48 | 18.2% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
+| attn.attend | paged_attention | - | - | 16 | 16.0% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 12.1% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 9.5% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 9.5% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | gdn.qkvz | linear:qkvz | nvfp4/g16 x bf16 | native bf16 | 48 | 8.6% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
 | gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 3.2% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 2.8% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 2.8% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
 | attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 2.1% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
 | attn.o | linear:o | nvfp4/g16 x bf16 | native bf16 | 16 | 1.1% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
-| dense_ffn.act | silu_mul | - | - | 64 | 0.4% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows |
-| gdn.l2 | l2_norm | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.conv | conv1d_update | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.2% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row |
+| dense_ffn.act | silu_mul | - | - | 64 | 0.4% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows compute=memory |
+| gdn.l2 | l2_norm | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.2% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row compute=memory |
 | attn.k | linear:k | nvfp4/g16 x bf16 | native bf16 | 16 | 0.2% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
 | attn.v | linear:v | nvfp4/g16 x bf16 | native bf16 | 16 | 0.2% | Shared, unmeasured | w4a16_gemv_wide | no rule of this class covers it; family `w4a16_gemv_wide` implements the op |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| dense_ffn.add | residual_add | - | - | 64 | 0.1% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
-| gdn.add | residual_add | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.q_split | split | - | - | 16 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 16 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| dense_ffn.add | residual_add | - | - | 64 | 0.1% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add compute=memory |
+| gdn.add | residual_add | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.q_split | split | - | - | 16 | 0.0% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 16 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched compute=memory |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
-| attn.add | residual_add | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.rope | rope | - | - | 16 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| attn.add | residual_add | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.rope | rope | - | - | 16 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
+| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Gap report: multi_seq n=128
@@ -187,38 +191,38 @@ Estimated step 13.229 ms (roofline projection, unmeasured). Shared 0.0% (measure
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| gdn.recur | gdn_recurrence | - | - | 48 | 36.9% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row |
-| attn.attend | paged_attention | - | - | 16 | 32.5% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 |
+| gdn.recur | gdn_recurrence | - | - | 48 | 36.9% | Shared, unmeasured | gdn_recurrence | gated_delta_rule::gated_delta_rule_decode_f32 rule=gdn_recurrence_f32_per_row compute=cuda_core |
+| attn.attend | paged_attention | - | - | 16 | 32.5% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | dense_ffn.gate_up | linear:gate_up | nvfp4/g16 x bf16 | native bf16 | 64 | 8.8% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
-| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 5.8% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 5.8% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
 | dense_ffn.down | linear:down | nvfp4/g16 x bf16 | native bf16 | 64 | 4.4% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
 | gdn.qkvz | linear:qkvz | nvfp4/g16 x bf16 | native bf16 | 48 | 3.1% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
-| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.5% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 2.5% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=tensor_core:mma.sync.m16n8k16.bf16 |
 | gdn.out | linear:gdn_out | nvfp4/g16 x bf16 | native bf16 | 48 | 1.2% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
-| dense_ffn.act | silu_mul | - | - | 64 | 0.8% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows |
+| dense_ffn.act | silu_mul | - | - | 64 | 0.8% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows compute=memory |
 | attn.q | linear:q | nvfp4/g16 x bf16 | native bf16 | 16 | 0.8% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
-| gdn.l2 | l2_norm | - | - | 48 | 0.5% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.conv | conv1d_update | - | - | 48 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.4% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row |
+| gdn.l2 | l2_norm | - | - | 48 | 0.5% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 48 | 0.4% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.4% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_f32_input rule=gdn_out_norm_f32_per_row compute=memory |
 | attn.o | linear:o | nvfp4/g16 x bf16 | native bf16 | 16 | 0.4% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
-| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row |
-| dense_ffn.add | residual_add | - | - | 64 | 0.2% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add |
-| gdn.add | residual_add | - | - | 48 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.q_split | split | - | - | 16 | 0.1% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg |
-| attn.gate_mul | sigmoid_gate_mul | - | - | 16 | 0.1% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.2% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
+| dense_ffn.add | residual_add | - | - | 64 | 0.2% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add compute=memory |
+| gdn.add | residual_add | - | - | 48 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.2% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| gdn.input_norm | rms_norm | - | - | 48 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.q_split | split | - | - | 16 | 0.1% | Shared, unmeasured | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 16 | 0.1% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched compute=memory |
 | attn.k | linear:k | nvfp4/g16 x bf16 | native bf16 | 16 | 0.1% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
 | attn.v | linear:v | nvfp4/g16 x bf16 | native bf16 | 16 | 0.1% | Shared, unmeasured | w4a16_gemm | no rule of this class covers it; family `w4a16_gemm` implements the op |
 | head.argmax | argmax | - | - | 1 | 0.1% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
-| attn.add | residual_add | - | - | 16 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm |
-| attn.rope | rope | - | - | 16 | 0.1% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided |
-| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual |
-| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided |
-| attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 |
-| gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row |
-| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm |
+| attn.add | residual_add | - | - | 16 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.rope | rope | - | - | 16 | 0.1% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
+| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemv | ssm_preprocess::dense_gemv_ba_gates rule=gdn_ba_gates_gemv_per_row compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Rule kernels this device cannot run

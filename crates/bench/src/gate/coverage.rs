@@ -47,7 +47,7 @@ pub const PERF_PATHS: [&str; 7] = [
 /// Every other file under `crates/bench/src/gate` is in `GATE_MACHINERY_FILES` and falls under
 /// every gate's `GATE_MACHINERY` exclusion. `every_verdict_symbol_is_defined_inside_the_boundary`
 /// fails if a verdict function it names is defined in a gate file outside this list.
-pub const BOUNDARY_FILES: [&str; 14] = [
+pub const BOUNDARY_FILES: [&str; 15] = [
     "crates/bench/src/gate/coverage.rs",
     // 2026-09-26: `required_for`, `union`, `intent_only`: what the intent half adds to the
     // path-derived floor.
@@ -89,6 +89,9 @@ pub const BOUNDARY_FILES: [&str; 14] = [
     // 2026-09-26: `select_partition`, `held_by`: whether a set of shard records forms a
     // complete partition at one commit.
     "crates/bench/src/gate/group.rs",
+    // 2026-10-02: `recipe_standing`, `canonical`: whether the recipe a record served is still
+    // what its gate serves.
+    "crates/bench/src/gate/recipe_closure.rs",
 ];
 
 /// 2026-09-26: Gate sources reviewed and found not to decide a verdict. Every non-test `.rs`
@@ -321,6 +324,10 @@ const TTFT_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change what a first-token latency probe measures",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change what a first-token latency probe measures",
+    ),
 ];
 
 const BFCL_EXCLUDES: &[Exclusion] = &[
@@ -377,6 +384,10 @@ const BFCL_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change a BFCL score",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change a tool-calling accuracy score",
+    ),
 ];
 
 const AGENTIC_EXCLUDES: &[Exclusion] = &[
@@ -432,6 +443,10 @@ const AGENTIC_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change what the agentic harness measures",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change whether the agent's webserver task succeeds",
     ),
 ];
 
@@ -493,6 +508,10 @@ const SSM_POISON_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change whether a replay poisons SSM state",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change whether an identical replay returns identical bytes",
+    ),
 ];
 
 /// 2026-09-26: The concurrency ladders measure serving latency and throughput, so every engine
@@ -524,6 +543,10 @@ const CONCURRENCY_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change a concurrency ladder's numbers",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change the server's latency/throughput curve",
     ),
 ];
 
@@ -588,6 +611,10 @@ const DECODE_FLOOR_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change the decode floor",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change the server's single-user decode rate",
+    ),
 ];
 
 /// 2026-09-26: What the KAT-equality gate ignores. The BFCL driver is not excluded: this gate's
@@ -643,6 +670,10 @@ const KAT_EQUALITY_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change whether a reply depends on what ran before it",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change whether a reply depends on what ran before it",
+    ),
 ];
 
 /// 2026-09-26: What the scheduler-equivalence candidate ignores. Neither its own driver
@@ -696,6 +727,10 @@ const SCHEDULER_EQUIVALENCE_EXCLUDES: &[Exclusion] = &[
     concurrency_driver(
         "crates/bench/src/benchmarks/concurrency_report.rs",
         "the concurrency request planner cannot change whether two routers answer a sample alike",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change whether two routers answer a sample alike",
     ),
 ];
 
@@ -751,6 +786,10 @@ const CONTAMINATION_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change whether one request's state leaks into another's output",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change whether one request's state leaks into another",
     ),
 ];
 
@@ -810,6 +849,73 @@ const VISION_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change how an image is patched or how many tokens it becomes",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/default_tier_boot",
+        "the boot memory check's driver cannot change how an image is patched or how many tokens it becomes",
+    ),
+];
+
+/// 2026-10-01: What the default-tier boot candidate ignores: gate bookkeeping and the drivers
+/// below. It reads the serve's memory plan, which every engine path can move, so nothing else
+/// is excluded; its own driver directory is not excluded either.
+const DEFAULT_TIER_BOOT_EXCLUDES: &[Exclusion] = &[
+    GATE_MACHINERY,
+    other_driver(
+        "crates/bench/src/benchmarks/ttft",
+        "the TTFT driver cannot change how much memory the serve plans or holds at boot",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/bfcl",
+        "the BFCL driver cannot change how much memory the serve plans or holds at boot",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/agentic",
+        "the agentic driver cannot change how much memory the serve plans or holds at boot",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/contamination",
+        "the contamination driver cannot change how much memory the serve plans or holds at boot",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/ssm_poison",
+        "the SSM poison driver cannot change how much memory the serve plans or holds at boot",
+    ),
+    concurrency_driver(
+        "crates/bench/src/benchmarks/concurrency.rs",
+        "the concurrency request planner cannot change how much memory the serve plans or holds at boot",
+    ),
+    concurrency_driver(
+        "crates/bench/src/benchmarks/concurrency_verdict.rs",
+        "the concurrency verdict cannot change how much memory the serve plans or holds at boot",
+    ),
+    concurrency_driver(
+        "crates/bench/src/benchmarks/concurrency_descriptors.rs",
+        "the concurrency request planner cannot change how much memory the serve plans or holds at boot",
+    ),
+    concurrency_driver(
+        "crates/bench/src/benchmarks/concurrency_prompt.rs",
+        "the concurrency request planner cannot change how much memory the serve plans or holds at boot",
+    ),
+    concurrency_driver(
+        "crates/bench/src/benchmarks/concurrency_cache.rs",
+        "the concurrency request planner cannot change how much memory the serve plans or holds at boot",
+    ),
+    concurrency_driver(
+        "crates/bench/src/benchmarks/concurrency_cell.rs",
+        "the concurrency request planner cannot change how much memory the serve plans or holds at boot",
+    ),
+    concurrency_driver(
+        "crates/bench/src/benchmarks/concurrency_report.rs",
+        "the concurrency request planner cannot change how much memory the serve plans or holds at boot",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/kat_equality",
+        "the equality driver cannot change how much memory the serve plans or holds at boot",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/scheduler_equivalence",
+        "the equivalence driver cannot change how much memory the serve plans or holds at boot",
     ),
 ];
 
@@ -908,11 +1014,17 @@ pub const PROMOTION_CANDIDATES: &[GateCoverage] = &[
         id: "scheduler-equivalence",
         excludes: SCHEDULER_EQUIVALENCE_EXCLUDES,
     },
+    // 2026-10-01: The serve's memory plan at its default precision tier, which no required
+    // gate serves.
+    GateCoverage {
+        id: "default-tier-boot",
+        excludes: DEFAULT_TIER_BOOT_EXCLUDES,
+    },
 ];
 
 /// 2026-09-26: Registered benchmarks that are not required gates, each with the reason
 /// (`every_excusal_names_a_real_benchmark_and_a_reason`).
-pub const NOT_REQUIRED: [(&str, &str); 6] = [
+pub const NOT_REQUIRED: [(&str, &str); 7] = [
     (
         "quick-speed-bench",
         "a single-user speed probe with no thresholds and no baseline — a MEASUREMENT tool, \
@@ -940,6 +1052,12 @@ pub const NOT_REQUIRED: [(&str, &str); 6] = [
          asynchronous device router against the synchronous one, and `--scheduler-config \
          async` is not the default; it becomes required when that changes, on a green run \
          on every served model",
+    ),
+    (
+        "default-tier-boot",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES). It lands \
+         informational, with no bounds, so its first records measure the default tier's memory \
+         plan; it becomes required once BENCH.toml declares bounds from them",
     ),
     (
         "mlperf-agentic-subset",

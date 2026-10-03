@@ -367,6 +367,7 @@ async fn run(args: RunArgs) -> Result<i32> {
         // the write fails: `write_gate_record` fetches the hardware fingerprint
         // from the endpoint, and without a server it records an unknown box.
         let recipe = served.as_ref().map(|s| s.recipe_id.clone());
+        let served_recipe_sha256 = served.as_ref().map(|s| s.recipe_sha256.clone());
         let serve_resolved = served
             .as_ref()
             .map(|s| s.resolved.clone())
@@ -381,6 +382,7 @@ async fn run(args: RunArgs) -> Result<i32> {
             &target.base_url,
             &target.model,
             recipe,
+            served_recipe_sha256,
             serve_resolved,
             serve_env,
             sha_at_start,

@@ -129,7 +129,10 @@ pub struct MetraleCudaBackend {
     /// FlashInfer workspaces (`ctx` in `cublaslt.rs` and `cutlass.rs`,
     /// `workspaces` in `flashinfer.rs`) call `cuMemAlloc_v2` directly, so a sweep
     /// cannot free memory a static still points at.
-    live_allocs: parking_lot::Mutex<std::collections::HashMap<u64, AllocRecord>>,
+    ///
+    /// 2026-10-01: Shared, so a [`LedgerProbe`] can read it after the backend has moved into a
+    /// model.
+    live_allocs: Arc<parking_lot::Mutex<std::collections::HashMap<u64, AllocRecord>>>,
     /// 2026-09-25: The trailing guard band of every live allocation padded by
     /// `alloc` (`METRALE_REDZONE=<bytes>` set, creation index at least
     /// `METRALE_REDZONE_MIN_IDX`). A zone covers
@@ -174,7 +177,7 @@ impl MetraleCudaBackend {
         );
 
         Ok(Self {
-            live_allocs: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            live_allocs: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
             redzones: parking_lot::Mutex::new(Vec::new()),
             registry,
             debug_sync_kernels: std::env::var("METRALE_DEBUG_SYNC_KERNELS").as_deref() == Ok("1"),
@@ -295,6 +298,7 @@ fn system_available_memory_bytes() -> Option<usize> {
 #[path = "cuda_backend/alloc_ledger.rs"]
 mod alloc_ledger;
 use alloc_ledger::AllocRecord;
+pub use alloc_ledger::LedgerProbe;
 
 #[cfg(test)]
 mod tests;

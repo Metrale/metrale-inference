@@ -156,6 +156,12 @@ verify K), the report classifies it against the kernel families:
   recorded there);
 - points that can be rediscovered from the sources (per-point copies, macro instantiations)
   get a `[[family.discover]]` rule, so drift fails the tests.
+- every family states where its arithmetic runs: `compute = "tensor_core"` with its `mma`
+  atom and format, `"cuda_core"`, or `"memory"`; `kernel_compute."<kernel>"` names a kernel
+  that runs elsewhere (a quantizer beside an MMA tile). A matmul-class op the class's
+  `HARDWARE.toml [tensor_core_policy]` covers must plan onto a tensor-core kernel, or the
+  plan (and the matrix `--check`) fails until an exemption lists it with its reason; a new
+  model's CUDA-core matmul is tensor-core backlog, never a silent default.
 
 The report is checked in with the architecture package and reviewed before any kernel
 work.

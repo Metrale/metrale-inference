@@ -63,7 +63,7 @@ pub(super) fn reserve_refusal(
             " Try --max-seq-len {} (or lower --max-batch-size / --num-drafts).",
             suggested
         )
-    } else if args.max_batch_size > 1 {
+    } else if args.max_batch_size.ceiling() > 1 {
         " Reduce --max-batch-size.".to_string()
     } else {
         " Use a smaller model or a GPU with more memory.".to_string()
@@ -74,7 +74,7 @@ pub(super) fn reserve_refusal(
         need_gb,
         free_gb,
         args.max_seq_len,
-        args.max_batch_size,
+        args.max_batch_size.ceiling(),
         hint,
         ring_note(args, &r),
     )
@@ -88,7 +88,7 @@ fn ring_note(args: &cli::ServeArgs, r: &Refusal) -> String {
     }
     format!(
         " {} — {}.",
-        decode_ring::formula(r.ring_slots, args.max_batch_size, r.per_seq_blob),
+        decode_ring::formula(r.ring_slots, args.max_batch_size.ceiling(), r.per_seq_blob),
         if r.ring_pinned {
             "an explicit --ssm-decode-ring-slots pins the depth, so it was not shrunk"
         } else {

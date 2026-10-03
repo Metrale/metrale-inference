@@ -43,6 +43,16 @@ pub fn fusions_rel(instance: &Instance) -> String {
     format!("kernels/{hw}/common/FUSIONS.toml")
 }
 
+/// 2026-10-02: The kernel families of the instance's hardware, which name each group's compute
+/// unit in a rendered plan.
+pub fn families(instance: &Instance) -> metrale_circuit::venn::Families {
+    let hw = instance.target.split('/').next().expect("target hw");
+    metrale_circuit::venn::parse_families(&read(&format!(
+        "kernels/{hw}/common/KERNEL_FAMILIES.toml"
+    )))
+    .expect("kernel families")
+}
+
 /// 2026-09-28: All instances.
 pub fn instances() -> Vec<Instance> {
     metrale_circuit::parse_instances(&read("kernels/circuits/INSTANCES.toml")).expect("instances")
@@ -210,9 +220,10 @@ pub fn golden_plans() -> Vec<(String, String)> {
     for inst in instances().iter().filter(|i| i.golden) {
         let loaded = load(inst);
         let avail = available(inst, &loaded.rules);
+        let fams = families(inst);
         for (&mode, rows) in &inst.plans {
             for &n in rows {
-                let text = metrale_circuit::render_plan(inst, &loaded, &avail, mode, n)
+                let text = metrale_circuit::render_plan(inst, &loaded, &avail, mode, n, &fams)
                     .unwrap_or_else(|e| panic!("{} {} n={n}: {e}", inst.recipe, mode.name()));
                 out.push((inst.plan_file(mode, n), text));
             }

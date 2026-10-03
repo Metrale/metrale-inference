@@ -56,6 +56,9 @@ impl ModelLifecycle for PreemptStubModel {
     fn num_total_blocks(&self) -> usize {
         self.total_blocks
     }
+    fn kv_block_bytes(&self) -> usize {
+        0
+    }
     fn reclaim_prefix_blocks(&self, num_blocks: usize) -> usize {
         let take = num_blocks.min(self.reclaimable.load(Ordering::SeqCst));
         self.reclaimable.fetch_sub(take, Ordering::SeqCst);

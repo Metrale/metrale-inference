@@ -89,10 +89,6 @@ w4a4_downcast = "true"
 # pins one pins both.
 w4a4_downcast_wide = "true"
 
-# 2026-09-28: `--w4a4-downcast` exists only under `--weight-quantization nvfp4` (the serve
-# refuses it under the `declared` default), so every entry that pins the lever pins the tier
-# beside it. The recipe pins the same tier.
-weight_quantization = "nvfp4"
 
 
 [benchmarks.metrics.followed_directions]
@@ -172,12 +168,6 @@ live_irrelevance_79-2-67, live_multiple_57-22-4, live_parallel_multiple_3-2-1 \
 (the list lives in benchmarks::bfcl::sensitive and every run reports \
 known_partition_sensitive). The floors below are therefore cut from the \
 SHARDED aggregate, never from a whole-draw run."""
-
-[benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 
 [benchmarks.metrics.samples]
 
@@ -296,12 +286,6 @@ flip-flop all over again."""
 
 # 2026-09-25: `--w4a4-downcast` is not pinned here, so this gate runs the engine default (off).
 
-
-[benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 
 [benchmarks.metrics.server_decode_tok_s]
 
@@ -694,7 +678,6 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
-weight_quantization = "nvfp4"
 
 [benchmarks.serve_env]
 
@@ -1554,7 +1537,6 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
-weight_quantization = "nvfp4"
 
 [benchmarks.param_overrides]
 
@@ -1862,7 +1844,6 @@ w4a4_downcast = "true"
 
 
 w4a4_downcast_wide = "true"
-weight_quantization = "nvfp4"
 
 
 [benchmarks.metrics.geometry_matched]
@@ -2023,12 +2004,6 @@ subset runs (measured: PASS 5/5, 4 skipped)."""
 
 # 2026-09-25: `--w4a4-downcast` is not pinned here, so this gate runs the engine default (off).
 
-[benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
-
 [benchmarks.metrics.legs_passed]
 min = 14.0
 
@@ -2093,10 +2068,6 @@ carrying three against a baseline pinning one fails after the GPU hours are \
 spent."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 
 
 
@@ -2221,10 +2192,6 @@ The serve pins are the SUBJECT: `scheduler_config = sync` names the starting \
 router, and the gate swaps routers itself per leg."""
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 hermetic = "true"
 enable_prefix_caching = "false"
 mtp_gate = "force"
@@ -2289,10 +2256,6 @@ config uses fp8 KV).\
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -2341,10 +2304,6 @@ box with no baseline yet, so each box is seeded with two runs before its first c
 """
 
 [benchmarks.serve_overrides]
-# 2026-09-28: The recipe's `--weight-quantization` tier, pinned here because the gate serves
-# the mirrored recipe index, which does not carry the key yet, and the serve default is
-# `declared`.
-weight_quantization = "nvfp4"
 # 2026-09-27: Room for the 32,772-token rendered prompt and the 8-token reply; the recipe's own
 # 32768 refuses the prompt.
 max_model_len = "40960"
@@ -2365,3 +2324,39 @@ max = 2132.3
 [benchmarks.metrics.prompt_tokens]
 # 2026-09-27: The fixture's floor; both engines render it to 32,772 on both subjects.
 min = 32768.0
+
+# 2026-10-01: default-tier-boot: the serve's memory plan at its default precision tier, read
+# from GET /memory after one warmup wave. A promotion candidate
+# (gate::coverage::PROMOTION_CANDIDATES), informational: unmeasured, so it declares no bounds
+# and gate::bench::baseline_for leaves it out until its first records set them.
+[[benchmarks]]
+quant = "nvfp4"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+gate = "default-tier-boot"
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-throughput"
+label = "Qwen3.8-27B dense (declared tier)"
+# 2026-10-01: The only default-tier-boot entry, so it is the default (gate::bench::baseline_for).
+default = true
+status = "unmeasured"
+note = """\
+Does the default precision tier still get its KV cache? Every other gate on this checkpoint \
+pins the NVFP4 weight tier and the f16-pool GDN state, so a change that shrinks the KV pool of \
+the tier the serve runs by default goes unnoticed by all of them. This entry serves the \
+throughput recipe (128 slots, MTP K=4, fp8 KV, util 0.85) at that tier: declared weights, f32 \
+GDN state, no W4A4 downcast. The check reports kv_blocks, max_batch_size, budget_mib, \
+device_footprint_mib and footprint_over_budget_mib. Bounds are declared from its first \
+records; until then it is measured by hand against a running serve of this configuration.\
+"""
+
+[benchmarks.serve_overrides]
+# 2026-10-01: The serve's default tier, pinned so the record states it whatever the recipe
+# index carries.
+weight_quantization = "declared"
+# 2026-10-01: The default GDN h-state dtype; the recipe's f16-pool halves the state and the
+# reserve with it.
+ssm_h_dtype = "f32"
+# 2026-10-01: An override of `false` removes a presence-only flag the recipe sets
+# (recipe::schema::argv_for), so these hold the downcast off even if the recipe gains it;
+# `--weight-quantization declared` refuses it in any case.
+w4a4_downcast = "false"
+w4a4_downcast_wide = "false"

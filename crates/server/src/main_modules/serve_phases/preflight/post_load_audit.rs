@@ -37,10 +37,11 @@ pub(crate) fn post_load_memory_audit(
     if available_free < total_reserve {
         let avail_gb = available_free as f64 / (1024.0 * 1024.0 * 1024.0);
         let need_gb = total_reserve as f64 / (1024.0 * 1024.0 * 1024.0);
-        let hint = if args.max_batch_size > 1 {
+        let hint = if args.max_batch_size.ceiling() > 1 {
             format!(
                 " Reduce --max-batch-size (currently {}) or --max-seq-len (currently {}).",
-                args.max_batch_size, args.max_seq_len
+                args.max_batch_size.ceiling(),
+                args.max_seq_len
             )
         } else {
             format!(
@@ -55,7 +56,7 @@ pub(crate) fn post_load_memory_audit(
             weight_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
             avail_gb,
             need_gb,
-            args.max_batch_size,
+            args.max_batch_size.ceiling(),
             config.num_ssm_layers(),
             hint,
         );

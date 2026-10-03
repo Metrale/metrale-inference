@@ -9,8 +9,9 @@
 
 use crate::benchmark::BenchmarkDescriptor;
 use crate::benchmarks::{
-    agentic, bfcl, concurrency, contamination, decode_floor, kat_equality, mlperf_agentic,
-    quick_speed, scheduler_equivalence, serve_matrix, ssm_poison, ttft, video, vision,
+    agentic, bfcl, concurrency, contamination, decode_floor, default_tier_boot, kat_equality,
+    mlperf_agentic, quick_speed, scheduler_equivalence, serve_matrix, ssm_poison, ttft, video,
+    vision,
 };
 
 /// 2026-09-26: Every benchmark, in list order. A compile-time table of
@@ -53,6 +54,9 @@ const ALL: &[&BenchmarkDescriptor] = &[
     // under the synchronous and the asynchronous device router. Listed in
     // `gate::coverage::PROMOTION_CANDIDATES`.
     &scheduler_equivalence::DESCRIPTOR,
+    // 2026-10-01: The serve's memory plan at its default precision tier, read after one
+    // warmup wave. Listed in `gate::coverage::PROMOTION_CANDIDATES`.
+    &default_tier_boot::DESCRIPTOR,
     &agentic::DESCRIPTOR,
     &bfcl::SUBSET_DESCRIPTOR,
     &bfcl::SUBSET_ECHOLP_DESCRIPTOR,

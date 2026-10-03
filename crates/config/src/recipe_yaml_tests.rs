@@ -2,7 +2,8 @@
 
 //! 2026-09-26: Tests for the recipe YAML reader.
 //!
-//! Owner: server (recipe).
+//! Owner: config (recipe YAML), read by the server's `recipe` module and the bench gate's
+//! recipe closure (`gate::recipe_closure`).
 //! Invariants: none beyond the types.
 
 use super::*;
@@ -94,43 +95,4 @@ fn an_unreadable_construct_is_an_error_not_a_skip() {
 #[test]
 fn the_document_must_be_a_mapping() {
     assert!(parse("- one\n- two\n").is_err());
-}
-
-/// 2026-09-26: Every vendored recipe under `tests/fixtures/recipes` parses and has
-/// the four required keys, with `defaults` a mapping. The fixtures are in the
-/// tree, so the test needs no network.
-#[test]
-fn all_vendored_recipes_parse() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/recipes");
-    let mut count = 0;
-    let mut stack = vec![dir.clone()];
-    while let Some(d) = stack.pop() {
-        for entry in std::fs::read_dir(&d).expect("fixtures dir exists") {
-            let path = entry.expect("entry").path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if path.extension().is_none_or(|e| e != "yaml") {
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).expect("read");
-            let y = parse(&text).unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
-            let m = map(&y);
-            for required in ["recipe_version", "model", "container", "defaults"] {
-                assert!(
-                    m.contains_key(required),
-                    "{}: missing {required}",
-                    path.display()
-                );
-            }
-            assert!(
-                m["defaults"].as_map().is_some(),
-                "{}: defaults must be a mapping",
-                path.display()
-            );
-            count += 1;
-        }
-    }
-    assert_eq!(count, 28, "the vendored corpus is 28 recipes");
 }

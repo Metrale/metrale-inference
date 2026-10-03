@@ -146,18 +146,25 @@ impl TransformerModel {
         let conv_dim = c.linear_num_key_heads * c.linear_key_head_dim * 2
             + c.linear_num_value_heads * c.linear_value_head_dim;
         let conv_seq_elems = metrale_model_layers::layers::ops::gdn_carry_conv_seq_elems(conv_dim);
-        let stash = self.gpu.alloc(layers * slots * seq_floats * 4)?;
-        let conv_stash = self.gpu.alloc(layers * slots * conv_seq_elems * 2)?;
-        let conv_tab = self.gpu.alloc(layers * VERIFY_WY_TABLE_SEQS * 8)?;
-        let flush_conv_tab = self.gpu.alloc(layers * VERIFY_WY_TABLE_SEQS * 8)?;
-        let pend = self.gpu.alloc(layers * slots * 4)?;
-        self.gpu.memset(pend, 0, layers * slots * 4)?;
-        let slot_tab = self.gpu.alloc(VERIFY_WY_TABLE_SEQS * 4)?;
-        let flags = self.gpu.alloc(layers * VERIFY_WY_TABLE_SEQS * 4)?;
-        self.gpu
-            .memset(flags, 0, layers * VERIFY_WY_TABLE_SEQS * 4)?;
-        let flush_tab = self.gpu.alloc(layers * VERIFY_WY_TABLE_SEQS * 8)?;
-        let flush_slots = self.gpu.alloc(VERIFY_WY_TABLE_SEQS * 4)?;
+        // 2026-10-01: The sizes the preflight reserve plans (`GdnCarrySizes`, one source).
+        let sz = metrale_model_layers::layers::ops::GdnCarrySizes::new(
+            layers,
+            slots,
+            seq_floats,
+            conv_seq_elems,
+            VERIFY_WY_TABLE_SEQS,
+        );
+        let stash = self.gpu.alloc(sz.stash)?;
+        let conv_stash = self.gpu.alloc(sz.conv_stash)?;
+        let conv_tab = self.gpu.alloc(sz.conv_tab)?;
+        let flush_conv_tab = self.gpu.alloc(sz.flush_conv_tab)?;
+        let pend = self.gpu.alloc(sz.pend)?;
+        self.gpu.memset(pend, 0, sz.pend)?;
+        let slot_tab = self.gpu.alloc(sz.slot_tab)?;
+        let flags = self.gpu.alloc(sz.flags)?;
+        self.gpu.memset(flags, 0, sz.flags)?;
+        let flush_tab = self.gpu.alloc(sz.flush_tab)?;
+        let flush_slots = self.gpu.alloc(sz.flush_slots)?;
         for (l, &i) in gdn.iter().enumerate() {
             self.layers[i].gdn_carry_bind(GdnCarryBinding {
                 flag: flags.offset(l * VERIFY_WY_TABLE_SEQS * 4),

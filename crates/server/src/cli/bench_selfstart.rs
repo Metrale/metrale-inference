@@ -31,6 +31,9 @@ pub struct SelfServed {
     pub target: TargetEndpoint,
     /// 2026-09-26: The recipe that produced it, for the record's provenance.
     pub recipe_id: String,
+    /// 2026-10-02: Canonical content hash of that recipe as served (`ServePlan::recipe_sha256`),
+    /// for the record's `served_recipe_sha256`.
+    pub recipe_sha256: String,
     /// 2026-09-26: The recipe keys overridden for this run (the baseline's
     /// `serve_overrides` pin merged with `--serve-override`, after `--hermetic`
     /// expansion), for the record. Empty means the recipe ran as pinned.
@@ -58,6 +61,7 @@ impl SelfServed {
     pub fn external(
         target: TargetEndpoint,
         recipe_id: String,
+        recipe_sha256: String,
         overrides: BTreeMap<String, String>,
         resolved: BTreeMap<String, String>,
         serve_env: BTreeMap<String, String>,
@@ -66,6 +70,7 @@ impl SelfServed {
         Self {
             target,
             recipe_id,
+            recipe_sha256,
             overrides,
             resolved,
             serve_env,
@@ -157,6 +162,7 @@ pub async fn serve_for(
     let mut served = SelfServed {
         target: TargetEndpoint::local(port, &model),
         recipe_id: plan.recipe_id,
+        recipe_sha256: plan.recipe_sha256,
         overrides: plan.requested,
         resolved,
         serve_env: reconciled.env,

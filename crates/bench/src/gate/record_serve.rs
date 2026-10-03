@@ -3,9 +3,9 @@
 //! 2026-09-26: The serve settings a gate record discloses about the server it
 //! measured (`GateRecord::serve_resolved`).
 //!
-//! `served_by` names a recipe kept in another repository, and
+//! `served_by` names the in-tree recipe (`gate::recipe_closure`), and
 //! `serve_overrides` only the keys changed for the run; neither states what
-//! the server ran with. The keys are defined here, in the crate that owns the
+//! the server resolved those settings to (2026-10-02). The keys are defined here, in the crate that owns the
 //! record, and the server CLI fills them from its rendered serve flags.
 //!
 //! Owner: bench gate (records).
@@ -108,7 +108,15 @@ pub struct LiveForward {
     /// 2026-09-28: The decode plan's digest; `None` under `legacy`.
     #[serde(default)]
     pub plan_digest: Option<String>,
+    /// 2026-10-01: The slot count `--max-batch-size auto` resolved to; `None` for an explicit
+    /// count (which the rendered serve already states).
+    #[serde(default)]
+    pub auto_max_batch_size: Option<usize>,
 }
+
+/// 2026-10-01: Key for the slot count `--max-batch-size auto` resolved to, written `auto:<n>`;
+/// present only for `auto`.
+pub const MAX_BATCH_SIZE: &str = "max_batch_size";
 
 /// 2026-09-28: Add the live forward to `resolved`: [`FORWARD`] when it is not `legacy`, and
 /// [`PLAN_DIGEST`]. `requested` is the forward the rendered serve asked for; a server running
@@ -133,6 +141,9 @@ pub fn merge_live_forward(
             resolved.insert(PLAN_DIGEST.to_string(), d.clone());
         }
         (other, None) => return Err(format!("forward `{other}` reports no plan digest")),
+    }
+    if let Some(n) = live.auto_max_batch_size {
+        resolved.insert(MAX_BATCH_SIZE.to_string(), format!("auto:{n}"));
     }
     Ok(())
 }

@@ -25,6 +25,7 @@ fn attn(extra: &str) -> String {
 [[family]]
 id = "attn"
 description = "toy"
+compute = "cuda_core"
 kernels = ["m::attn"]
 rows = [1, 64]
 op = [{{ op = "paged_attention" }}]
