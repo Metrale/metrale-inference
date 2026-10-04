@@ -7,8 +7,8 @@
 //! emitted, so greedy output is unchanged on row-invariant tiers.
 //!
 //! - [`propose_depth`]: before drafting, the depth `K` for width `n` that maximises
-//!   E[tokens] / E[joules] over `0..=max_k`, among the depths whose E[tokens] / E[ms] is at
-//!   least `(1 - slack)` times depth 1's. E[tokens] per sequence is `1 + Σ_{j<=K} Π_{t<=j}
+//!   `E[tokens] / E[joules]` over `0..=max_k`, among the depths whose `E[tokens] / E[ms]` is at
+//!   least `(1 - slack)` times depth 1's. `E[tokens]` per sequence is `1 + Σ_{j<=K} Π_{t<=j}
 //!   prior(t)`; a step costs `verify(n, K) + draft(n, K)` from the table. Above the serve's own
 //!   `mtp_max_seqs` (the width beyond which the scheduler plain-decodes every sequence
 //!   regardless, `sched.levers.mtp_max_seqs`), it returns `0` by construction: there is nothing
