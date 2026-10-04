@@ -67,14 +67,19 @@ pub(crate) struct PrefillRun {
 }
 
 /// 2026-10-03: Prefill `prompt` on a fresh sequence of session `session` along `path`.
-fn prefill_once(
+pub(super) fn prefill_once(
     model: &dyn Model,
     prompt: &[u32],
     path: PrefillPath,
     session: u64,
 ) -> Result<PrefillRun> {
     let mut seq = model.alloc_sequence()?;
+    // 2026-10-03: Its own prefix-cache namespace (`adapter_id`, one radix root per id) as well as
+    // its own session: no run matches another's KV blocks or snapshots, so every run of a strict
+    // leg takes the reference's cold path. The cached leg (`cached.rs`) shares a namespace on
+    // purpose.
     seq.session_hash = session;
+    seq.adapter_id = session;
     let result = (|| {
         metrale_telemetry::launch_trace::begin();
         let ptr = match path {
@@ -144,12 +149,14 @@ struct LenReport {
 #[derive(Debug, Serialize)]
 struct Report {
     lengths: Vec<LenReport>,
+    /// 2026-10-03: The cached-prefix leg (`cached.rs`).
+    cached: Vec<cached::CachedReport>,
     detection_control: PrefillComparison,
     verdict: &'static str,
     reasons: Vec<String>,
 }
 
-fn compare(variant: &str, reference: &[u8], run: &[u8]) -> PrefillComparison {
+pub(super) fn compare(variant: &str, reference: &[u8], run: &[u8]) -> PrefillComparison {
     PrefillComparison {
         path_diff: None,
         state_diff: None,
@@ -279,8 +286,12 @@ pub(super) fn prefill_report(
     let b = prefill_once(model, &changed, PrefillPath::Single, next_session())?;
     let mut control = compare("legacy, prompt token changed", &a.logits, &b.logits);
     control.state_diff = first_state_diff(&a.state, &b.state);
+    let (cached_reports, cached_flat) =
+        cached::cached_report(model, lens, &paths, forwards, &mut next_session)?;
+    flat.extend(cached_flat);
     let reasons = prefill_failures(&flat, &control);
     let report = Report {
+        cached: cached_reports,
         lengths,
         detection_control: control,
         verdict: if reasons.is_empty() { "PASS" } else { "FAIL" },
@@ -293,3 +304,6 @@ pub(super) fn prefill_report(
     }
     Ok(())
 }
+
+#[path = "circuit_diff_prefill_cached.rs"]
+mod cached;
