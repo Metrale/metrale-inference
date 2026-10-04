@@ -33,12 +33,8 @@ pub fn spec_cost_table_cmd(args: SpecCostTableArgs) -> Result<i32> {
             .with_context(|| format!("{} is not a benchmark result", path.display()))?;
         records.push((path.display().to_string(), record));
     }
-    let mut plan_digests = BTreeMap::new();
-    for (mode, digest) in args.plan_digests {
-        if plan_digests.insert(mode.clone(), digest).is_some() {
-            bail!("--plan-digest {mode} is given twice");
-        }
-    }
+    let plan_digests =
+        metrale_model_layers::circuit_exec::spec_key::spec_cost_plan_digests(&args.recipe)?;
     let key = TableKey {
         schema: SCHEMA,
         box_class: args.box_class,

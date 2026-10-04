@@ -358,12 +358,11 @@ pub struct SpecCostTableArgs {
     /// The HARDWARE.toml box class the runs were measured on, e.g. gb10.
     #[arg(long)]
     pub box_class: String,
-    /// The recipe id the measured serve ran.
+    /// The recipe id the measured serve ran. The table is keyed on the plan digests of its
+    /// circuit instance's verify, verify_batch and draft plans; a recipe without an instance
+    /// cannot use the measured cost model.
     #[arg(long)]
     pub recipe: String,
-    /// MODE=DIGEST: the plan digest of one measured mode. Repeat it per mode.
-    #[arg(long = "plan-digest", value_parser = parse_kv, required = true)]
-    pub plan_digests: Vec<(String, String)>,
     /// Where to write the table.
     #[arg(long)]
     pub out: std::path::PathBuf,
