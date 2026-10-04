@@ -125,7 +125,8 @@ fn display_flags_parse_and_conflict() {
         both.is_err(),
         "--layer and --all-layers together must be refused"
     );
-    assert!(Cli::try_parse_from(["met", "circuit", "show", r, "--mode", "prefill"]).is_err());
+    // 2026-10-03: `prefill` is a mode now; an unknown spelling is refused.
+    assert!(Cli::try_parse_from(["met", "circuit", "show", r, "--mode", "warmup"]).is_err());
 }
 
 const DENSE_CONFIG: &str = r#"{
