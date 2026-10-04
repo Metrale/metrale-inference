@@ -28,8 +28,11 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, Fp8DenseWeight, MtpWeights, QuantizedWeight};
 
+mod pinned_meta_staging;
 mod staging;
 mod teardown;
+
+pub(crate) use pinned_meta_staging::PinnedMetaStaging;
 
 #[allow(dead_code)]
 /// 2026-09-25: Rows in `mtp_catchup_ring`. Position `p` is stored in ring row
@@ -480,25 +483,3 @@ pub struct TransformerModel {
     pub(super) circuit:
         parking_lot::RwLock<Option<metrale_model_layers::circuit_exec::CircuitExec>>,
 }
-
-/// 2026-09-25: Pinned host staging buffer plus reusable metadata `Vec`s.
-pub(crate) struct PinnedMetaStaging {
-    /// 2026-09-25: Page-locked host buffer from `alloc_host_pinned`.
-    pub(super) ptr: *mut u8,
-    /// 2026-09-25: Size of `ptr`'s region in bytes.
-    pub(super) bytes: usize,
-    pub(super) positions: Vec<u32>,
-    pub(super) positions_h: Vec<u32>,
-    pub(super) positions_w: Vec<u32>,
-    pub(super) slots: Vec<i64>,
-}
-
-// 2026-09-25: SAFETY: TransformerModel is constructed on one thread and then
-// moved to the scheduler thread as a `Box<dyn Model>`; every later call
-// (prefill, decode, verify) is made from that thread. The `Model` trait
-// requires Send + Sync for the move. `UnsafeCell<PinnedMetaStaging>` is not
-// Sync, so single-thread access is an assumption of the scheduler design, not
-// something the types enforce. The pinned pointer is valid from any thread.
-unsafe impl Send for TransformerModel {}
-// 2026-09-25: SAFETY: Model methods are only called from the scheduler thread; there is no concurrent `&self` access.
-unsafe impl Sync for TransformerModel {}
