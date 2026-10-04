@@ -12,23 +12,23 @@ use anyhow::{Result, bail};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// Which primitive [`AdaptiveBackoff::pause`] should invoke next. Exposed
+/// 2026-09-29: Which primitive [`AdaptiveBackoff::pause`] should invoke next. Exposed
 /// mainly so the decision logic (`next_step`) can be unit tested without
 /// performing real spins/yields/sleeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackoffStep {
-    /// Busy-spin: the wait is expected to resolve within microseconds
+    /// 2026-09-29: Busy-spin: the wait is expected to resolve within microseconds
     /// (e.g. a small cross-node broadcast that is already in flight).
     Spin,
-    /// Give up the rest of the scheduler quantum without going to sleep.
+    /// 2026-09-29: Give up the rest of the scheduler quantum without going to sleep.
     Yield,
-    /// Sleep for the given duration. Escalates (capped) the longer the wait
+    /// 2026-09-29: Sleep for the given duration. Escalates (capped) the longer the wait
     /// continues, so a wait that turns out to be long doesn't keep a core
     /// hot forever (see [`AdaptiveBackoff`] docs).
     Sleep(Duration),
 }
 
-/// Adaptive backoff for [`poll_completion`] / [`poll_idle_command`]'s `pause`
+/// 2026-09-29: Adaptive backoff for [`poll_completion`] / [`poll_idle_command`]'s `pause`
 /// callback (A141): a fixed 1ms sleep on every non-ready poll cost +10.6
 /// ms/step on the decode hot path, because a small cross-node broadcast is
 /// essentially never ready on the very first query but usually completes
@@ -51,7 +51,7 @@ pub struct AdaptiveBackoff<E: FnMut() -> Duration> {
 }
 
 impl<E: FnMut() -> Duration> AdaptiveBackoff<E> {
-    /// Default windows: spin for ~200us, then yield_now up to ~2ms total,
+    /// 2026-09-29: Default windows: spin for ~200us, then yield_now up to ~2ms total,
     /// then sleep starting at 50us doubling up to a 1ms cap. These are
     /// starting points (per the A141 fix request), not a measured optimum.
     pub fn new(elapsed: E) -> Self {
@@ -64,7 +64,7 @@ impl<E: FnMut() -> Duration> AdaptiveBackoff<E> {
         )
     }
 
-    /// `spin_window`: how long (from creation) to busy-spin.
+    /// 2026-09-29: `spin_window`: how long (from creation) to busy-spin.
     /// `yield_total`: how long (from creation, inclusive of the spin window)
     /// to yield_now instead of sleeping. Past this, every step sleeps.
     /// `min_sleep`/`max_sleep`: first sleep duration and the cap it doubles
@@ -85,7 +85,7 @@ impl<E: FnMut() -> Duration> AdaptiveBackoff<E> {
         }
     }
 
-    /// Decide the next step without performing it. Pure given the injected
+    /// 2026-09-29: Decide the next step without performing it. Pure given the injected
     /// clock, so it is exercised directly in unit tests below.
     pub fn next_step(&mut self) -> BackoffStep {
         let elapsed = (self.elapsed)();
@@ -100,7 +100,7 @@ impl<E: FnMut() -> Duration> AdaptiveBackoff<E> {
         }
     }
 
-    /// Perform one backoff step using real OS/CPU primitives. This is what
+    /// 2026-09-29: Perform one backoff step using real OS/CPU primitives. This is what
     /// production callers pass as the `pause` argument to `poll_completion`
     /// / `poll_idle_command`.
     pub fn pause(&mut self) {
@@ -112,7 +112,7 @@ impl<E: FnMut() -> Duration> AdaptiveBackoff<E> {
     }
 }
 
-/// Convenience constructor: a real-time-clocked `AdaptiveBackoff` boxed as a
+/// 2026-09-29: Convenience constructor: a real-time-clocked `AdaptiveBackoff` boxed as a
 /// bare `FnMut()`, ready to pass directly as `poll_completion`'s or
 /// `poll_idle_command`'s `pause` argument. One instance must be created per
 /// call (its internal clock starts at construction time), not shared/reused
@@ -280,11 +280,11 @@ mod tests {
         assert!(err.to_string().contains("peer lost"));
     }
 
-    // --- AdaptiveBackoff (A141) ---
+    // 2026-09-29: AdaptiveBackoff (A141) tests.
 
     #[test]
     fn ready_immediately_never_invokes_the_backoff() {
-        // poll_completion checks `ready()` before ever calling `pause()`, so
+        // 2026-09-29: poll_completion checks `ready()` before ever calling `pause()`, so
         // a wait that is already satisfied must never spin, yield, or sleep.
         let pause_calls = Cell::new(0u32);
         poll_completion(
@@ -307,7 +307,7 @@ mod tests {
             Duration::from_micros(50),
             Duration::from_millis(1),
         );
-        // 20 polls, each 5us apart: still well under the 200us spin window.
+        // 2026-09-29: 20 polls, each 5us apart: still well under the 200us spin window.
         for i in 0..20u64 {
             micros.set(i * 5);
             assert_eq!(
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn timeout_still_fires_through_an_adaptive_backoff() {
-        // The backoff's own clock is independent of poll_completion's
+        // 2026-09-29: The backoff's own clock is independent of poll_completion's
         // deadline clock in production (both read the real Instant, but the
         // contract is that pause() never overrides poll_completion's
         // deadline check). Give the backoff a huge spin window so pause()
@@ -346,7 +346,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("deadline exceeded"));
-        // `elapsed()` (which also drives `ticks`) is called once more than
+        // 2026-09-29: `elapsed()` (which also drives `ticks`) is called once more than
         // `pause()` on the final iteration: it observes 3ms and bails before
         // `pause()` runs, so the last increment (to 4) is never paired with
         // a pause.
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(backoff.next_step(), BackoffStep::Spin);
         micros.set(300);
         assert_eq!(backoff.next_step(), BackoffStep::Yield);
-        // Past the yield window: sleeps, starting at min_sleep and doubling.
+        // 2026-09-29: Past the yield window: sleeps, starting at min_sleep and doubling.
         micros.set(600);
         assert_eq!(
             backoff.next_step(),
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn idle_command_wired_to_the_backoff_still_completes() {
-        // End-to-end: poll_idle_command driven by a real AdaptiveBackoff
+        // 2026-09-29: End-to-end: poll_idle_command driven by a real AdaptiveBackoff
         // (real spin_loop/yield_now/sleep primitives via `pause()`), proving
         // the wiring works and the idle wait still resolves once ready.
         // Windows are kept tiny so this test stays fast.
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn adaptive_pause_constructs_with_default_windows_and_does_not_panic() {
-        // Exercises the real-clock convenience constructor production code
+        // 2026-09-29: Exercises the real-clock convenience constructor production code
         // uses (adaptive_pause -> AdaptiveBackoff::new). Called once right
         // after construction, elapsed is ~0 so this is just a spin_loop().
         let mut pause = adaptive_pause();
