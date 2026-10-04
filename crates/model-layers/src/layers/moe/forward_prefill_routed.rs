@@ -91,6 +91,13 @@ impl MoeLayer {
             avg_per_expert,
             max_m_tiles,
         );
+        super::routing_record::record(
+            ctx,
+            self as *const Self as usize,
+            expert_offsets,
+            ne,
+            stream,
+        );
         prof_step!("grid_setup");
 
         let total_expanded = n * top_k;

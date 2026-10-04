@@ -19,6 +19,8 @@ metrale-config = { path = "../config", default-features = false }
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
 metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
+# 2026-10-03: The `--mock` weight store synthesizes through the pure mock planner.
+metrale-ml-utils = { path = "../ml-utils" }
 metrale-storage = { path = "../storage", default-features = false }
 metrale-telemetry = { path = "../telemetry" }
 anyhow = { workspace = true }
@@ -35,6 +37,7 @@ tracing = "0.1"
 libc = "0.2"
 
 [dev-dependencies]
+metrale-ml-utils = { path = "../ml-utils", features = ["test-utils"] }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 metrale-kernels = { path = "../kernels", default-features = false }
 tempfile = "3"
