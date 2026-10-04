@@ -3,7 +3,7 @@
   "benchmark_id": "ttft-cold-gate",
   "benchmark_name": "Cold TTFT Regression Gate",
   "git_sha": "aa64b0b99d",
-  "recorded_at": 1791081028,
+  "recorded_at": 1791097783,
   "target_model": "Qwen/Qwen3.6-35B-A3B-FP8",
   "params": {
     "median_limit_pct": "3",
@@ -41,58 +41,58 @@
   "metrale_version": "1.0.0-beta-preview",
   "hardware": {
     "gpu": "NVIDIA GB10",
-    "driver": "580.126.09",
-    "sm_clock_mhz": 2450.0,
+    "driver": "580.159.03",
+    "sm_clock_mhz": 2457.0,
     "gpu_count": 1,
     "source": "nvidia-smi"
   },
   "hardware_state": {
     "sensitivity": "speed",
     "before": {
-      "captured_at": 1791081007,
+      "captured_at": 1791097762,
       "machine": {
-        "hostname": "spark-43fa",
+        "hostname": "spark-28c2",
         "machine_id": "7af66f30966a49b6886e00e2fce4b42f",
         "gpu": "NVIDIA GB10",
-        "driver": "580.126.09"
+        "driver": "580.159.03"
       },
-      "gpu_temp_c": 63.0,
+      "gpu_temp_c": 56.0,
       "chassis_temps_c": [
         {
           "name": "acpitz",
-          "temp_c": 67.1
+          "temp_c": 60.1
         },
         {
           "name": "acpitz",
-          "temp_c": 65.5
+          "temp_c": 56.6
         },
         {
           "name": "acpitz",
-          "temp_c": 67.1
+          "temp_c": 58.5
         },
         {
           "name": "acpitz",
-          "temp_c": 65.5
+          "temp_c": 56.9
         },
         {
           "name": "acpitz",
-          "temp_c": 65.4
+          "temp_c": 60.1
         },
         {
           "name": "acpitz",
-          "temp_c": 67.0
+          "temp_c": 59.1
         },
         {
           "name": "acpitz",
-          "temp_c": 66.8
+          "temp_c": 57.6
         }
       ],
       "sm_clock_mhz": 2502.0,
       "sm_clock_max_mhz": 3003.0,
       "throttle_counters": {
-        "sw_power_cap_us": 68630279964,
-        "sw_thermal_us": 345740609,
-        "hw_thermal_us": 32421472,
+        "sw_power_cap_us": 76669337722,
+        "sw_thermal_us": 0,
+        "hw_thermal_us": 0,
         "hw_power_brake_us": 0,
         "sync_boost_us": 0
       },
@@ -102,13 +102,13 @@
         "hw_thermal": false,
         "hw_power_brake": false
       },
-      "mem_available_kb": 15336540,
-      "mem_total_kb": 127601452,
-      "page_cache_kb": 7858128,
+      "mem_available_kb": 15456884,
+      "mem_total_kb": 127600752,
+      "page_cache_kb": 7959708,
       "gpu_compute_apps": [
         {
-          "pid": 523702,
-          "name": "/home/claude/metrale/bench-cache/build/aa64b0b99dad67526bcc0de0303ceaa68715c370/met",
+          "pid": 750926,
+          "name": "/workspace/.metralectl-bench/build/aa64b0b99dad67526bcc0de0303ceaa68715c370/met",
           "used_mib": 100720
         }
       ],
@@ -121,50 +121,50 @@
       ]
     },
     "after": {
-      "captured_at": 1791081028,
+      "captured_at": 1791097783,
       "machine": {
-        "hostname": "spark-43fa",
+        "hostname": "spark-28c2",
         "machine_id": "7af66f30966a49b6886e00e2fce4b42f",
         "gpu": "NVIDIA GB10",
-        "driver": "580.126.09"
+        "driver": "580.159.03"
       },
-      "gpu_temp_c": 74.0,
+      "gpu_temp_c": 69.0,
       "chassis_temps_c": [
         {
           "name": "acpitz",
-          "temp_c": 86.2
+          "temp_c": 79.2
         },
         {
           "name": "acpitz",
-          "temp_c": 71.4
+          "temp_c": 61.2
         },
         {
           "name": "acpitz",
-          "temp_c": 80.6
+          "temp_c": 62.3
         },
         {
           "name": "acpitz",
-          "temp_c": 70.6
+          "temp_c": 61.7
         },
         {
           "name": "acpitz",
-          "temp_c": 70.1
+          "temp_c": 76.1
         },
         {
           "name": "acpitz",
-          "temp_c": 86.2
+          "temp_c": 79.2
         },
         {
           "name": "acpitz",
-          "temp_c": 75.7
+          "temp_c": 64.8
         }
       ],
-      "sm_clock_mhz": 2450.0,
+      "sm_clock_mhz": 2457.0,
       "sm_clock_max_mhz": 3003.0,
       "throttle_counters": {
-        "sw_power_cap_us": 68630279964,
-        "sw_thermal_us": 345740609,
-        "hw_thermal_us": 32421472,
+        "sw_power_cap_us": 76669337722,
+        "sw_thermal_us": 0,
+        "hw_thermal_us": 0,
         "hw_power_brake_us": 0,
         "sync_boost_us": 0
       },
@@ -174,13 +174,13 @@
         "hw_thermal": false,
         "hw_power_brake": false
       },
-      "mem_available_kb": 15560140,
-      "mem_total_kb": 127601452,
-      "page_cache_kb": 7858292,
+      "mem_available_kb": 15686804,
+      "mem_total_kb": 127600752,
+      "page_cache_kb": 7959876,
       "gpu_compute_apps": [
         {
-          "pid": 523702,
-          "name": "/home/claude/metrale/bench-cache/build/aa64b0b99dad67526bcc0de0303ceaa68715c370/met",
+          "pid": 750926,
+          "name": "/workspace/.metralectl-bench/build/aa64b0b99dad67526bcc0de0303ceaa68715c370/met",
           "used_mib": 100720
         }
       ],
@@ -198,8 +198,8 @@
       "sw_thermal_us": 0,
       "hw_thermal_us": 0,
       "hw_power_brake_us": 0,
-      "gpu_temp_delta_c": 11.0,
-      "hottest_chassis_delta_c": 19.10000000000001
+      "gpu_temp_delta_c": 13.0,
+      "hottest_chassis_delta_c": 19.1
     },
     "precheck": {
       "decision": "proceed"
@@ -210,17 +210,17 @@
         "hottest chassis zone moved +19 °C"
       ]
     },
-    "perf_class": "gb10@spark-43fa"
+    "perf_class": "gb10@spark-28c2"
   },
   "metrics": {
-    "median_ms": 301.84301849999997,
-    "p90_ms": 792.0472480000001,
+    "median_ms": 301.602531,
+    "p90_ms": 789.664025,
     "samples": 36.0
   },
   "frame_status": "Completed",
   "verdict": "PASS",
-  "verdict_reason": "median +0.4% (limit +3.0%) · p90 +0.2% (limit +5.0%)",
-  "summary": "Qwen/Qwen3.6-35B-A3B-FP8 · median_ms=301.84, p90_ms=792.05, samples=36.00 · Pass: median +0.4% (limit +3.0%) · p90 +0.2% (limit +5.0%)",
+  "verdict_reason": "median +0.3% (limit +3.0%) · p90 +0.6% (limit +5.0%)",
+  "summary": "Qwen/Qwen3.6-35B-A3B-FP8 · median_ms=301.60, p90_ms=789.66, samples=36.00 · Pass: median +0.3% (limit +3.0%) · p90 +0.6% (limit +5.0%)",
   "perf_env": {
     "METRALE_NO_BORROW_STREAK_LIMIT": "unset",
     "METRALE_NO_MTP_TC": "unset",
