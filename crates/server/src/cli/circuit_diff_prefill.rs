@@ -321,4 +321,4 @@ pub(super) fn prefill_report(
 }
 
 #[path = "circuit_diff_prefill_cached.rs"]
-mod cached;
+pub(super) mod cached;

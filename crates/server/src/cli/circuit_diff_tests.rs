@@ -373,3 +373,21 @@ fn equal_logits_with_a_different_state_fail_on_the_entry() {
     assert_eq!(r.len(), 1);
     assert!(r[0].contains("state differs at kv3"), "{r:?}");
 }
+
+// 2026-10-04: Mutation: priming `t - TAIL` tokens unrounded left the single-pass warm run no
+// snapshot to restore (its one snapshot sat mid-block, past the whole-block match).
+#[test]
+fn the_cached_leg_primes_whole_blocks_and_recomputes_at_least_the_tail() {
+    use super::prefill::cached::{TAIL, primed_len};
+    for block in [16, 32, 64] {
+        for t in [293, 512, 513, 1024, 4097, 8192] {
+            let p = primed_len(t, block);
+            assert_eq!(p % block, 0, "t={t} block={block}");
+            assert!(t - p >= TAIL, "t={t} block={block}: recomputes {}", t - p);
+            assert!(
+                t - p < TAIL + block,
+                "t={t} block={block}: primes too little"
+            );
+        }
+    }
+}
