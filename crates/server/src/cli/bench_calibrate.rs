@@ -52,6 +52,9 @@ pub async fn calibrate_cmd(args: CalibrateArgs) -> Result<i32> {
         );
         return Ok(0);
     }
+    if let Err(msg) = super::debug_build_guard::refuse_debug_build(cfg!(debug_assertions)) {
+        bail!("{msg}");
+    }
 
     let owner = std::process::id();
     let sha = gate::git_sha(&root).context("resolving the commit under test")?;

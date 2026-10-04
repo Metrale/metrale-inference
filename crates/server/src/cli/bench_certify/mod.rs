@@ -68,6 +68,9 @@ impl Emit {
 }
 
 pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
+    if let Err(msg) = super::debug_build_guard::refuse_debug_build(cfg!(debug_assertions)) {
+        bail!("{msg}");
+    }
     if let Err(msg) = args.validate() {
         bail!("{msg}");
     }
