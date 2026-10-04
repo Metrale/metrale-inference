@@ -328,6 +328,10 @@ const TTFT_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change what a first-token latency probe measures",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change what a first-token latency probe measures",
+    ),
 ];
 
 const BFCL_EXCLUDES: &[Exclusion] = &[
@@ -388,6 +392,10 @@ const BFCL_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change a tool-calling accuracy score",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change a tool-calling accuracy score",
+    ),
 ];
 
 const AGENTIC_EXCLUDES: &[Exclusion] = &[
@@ -447,6 +455,10 @@ const AGENTIC_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change whether the agent's webserver task succeeds",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change whether the agent's webserver task succeeds",
     ),
 ];
 
@@ -512,6 +524,10 @@ const SSM_POISON_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change whether an identical replay returns identical bytes",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change whether an identical replay returns identical bytes",
+    ),
 ];
 
 /// 2026-09-26: The concurrency ladders measure serving latency and throughput, so every engine
@@ -547,6 +563,10 @@ const CONCURRENCY_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change the server's latency/throughput curve",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change the server's latency/throughput curve",
     ),
 ];
 
@@ -615,6 +635,10 @@ const DECODE_FLOOR_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change the server's single-user decode rate",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change the server's single-user decode rate",
+    ),
 ];
 
 /// 2026-09-26: What the KAT-equality gate ignores. The BFCL driver is not excluded: this gate's
@@ -674,6 +698,10 @@ const KAT_EQUALITY_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change whether a reply depends on what ran before it",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change whether a reply depends on what ran before it",
+    ),
 ];
 
 /// 2026-09-26: What the scheduler-equivalence candidate ignores. Neither its own driver
@@ -731,6 +759,10 @@ const SCHEDULER_EQUIVALENCE_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change whether two routers answer a sample alike",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change whether two routers answer a sample alike",
     ),
 ];
 
@@ -790,6 +822,10 @@ const CONTAMINATION_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change whether one request's state leaks into another",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change whether one request's state leaks into another",
     ),
 ];
 
@@ -854,6 +890,10 @@ const VISION_EXCLUDES: &[Exclusion] = &[
         "crates/bench/src/benchmarks/default_tier_boot",
         "the boot memory check's driver cannot change how an image is patched or how many tokens it becomes",
     ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change how an image is patched or how many tokens it becomes",
+    ),
 ];
 
 /// 2026-10-01: What the default-tier boot candidate ignores: gate bookkeeping and the drivers
@@ -916,6 +956,10 @@ const DEFAULT_TIER_BOOT_EXCLUDES: &[Exclusion] = &[
     other_driver(
         "crates/bench/src/benchmarks/scheduler_equivalence",
         "the equivalence driver cannot change how much memory the serve plans or holds at boot",
+    ),
+    other_driver(
+        "crates/bench/src/benchmarks/spec_cost",
+        "the speculative step cost driver cannot change how much memory the serve plans or holds at boot",
     ),
 ];
 
@@ -1020,11 +1064,29 @@ pub const PROMOTION_CANDIDATES: &[GateCoverage] = &[
         id: "default-tier-boot",
         excludes: DEFAULT_TIER_BOOT_EXCLUDES,
     },
+    // 2026-10-03: The Nemotron-3 models' cheap correctness suite, one gate id per model: the
+    // KAT driver and the BFCL driver on the mini draw, so each excludes what its gate family does.
+    GateCoverage {
+        id: "kat-equality-gate-nemotron-nano",
+        excludes: KAT_EQUALITY_EXCLUDES,
+    },
+    GateCoverage {
+        id: "kat-equality-gate-nemotron-super",
+        excludes: KAT_EQUALITY_EXCLUDES,
+    },
+    GateCoverage {
+        id: "bfcl-subset-mini-nemotron-nano",
+        excludes: BFCL_EXCLUDES,
+    },
+    GateCoverage {
+        id: "bfcl-subset-mini-nemotron-super",
+        excludes: BFCL_EXCLUDES,
+    },
 ];
 
 /// 2026-09-26: Registered benchmarks that are not required gates, each with the reason
 /// (`every_excusal_names_a_real_benchmark_and_a_reason`).
-pub const NOT_REQUIRED: [(&str, &str); 7] = [
+pub const NOT_REQUIRED: [(&str, &str); 13] = [
     (
         "quick-speed-bench",
         "a single-user speed probe with no thresholds and no baseline — a MEASUREMENT tool, \
@@ -1054,10 +1116,43 @@ pub const NOT_REQUIRED: [(&str, &str); 7] = [
          on every served model",
     ),
     (
+        "kat-equality-gate-nemotron-nano",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the Nemotron-3-Nano \
+         correctness suite. Its BENCH.toml entry is unmeasured; it becomes required once three \
+         runs set its bounds (measure, then declare)",
+    ),
+    (
+        "kat-equality-gate-nemotron-super",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the Nemotron-3-Super \
+         correctness suite. Its BENCH.toml entry is unmeasured; it becomes required once three \
+         runs set its bounds (measure, then declare)",
+    ),
+    (
+        "bfcl-subset-mini-nemotron-nano",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the Nemotron-3-Nano \
+         accuracy check on the mini draw. Its floors are cut from three measured runs first",
+    ),
+    (
+        "bfcl-subset-mini-nemotron-super",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the Nemotron-3-Super \
+         accuracy check on the mini draw. Its floors are cut from three measured runs first",
+    ),
+    (
+        "bfcl-subset-mini",
+        "the 192-sample mini draw itself, a measurement draw with no baseline: models are gated \
+         on it through their own gate ids (bfcl-subset-mini-<model>), each with its own floors",
+    ),
+    (
         "default-tier-boot",
         "not required YET: a promotion candidate (see PROMOTION_CANDIDATES). It lands \
          informational, with no bounds, so its first records measure the default tier's memory \
          plan; it becomes required once BENCH.toml declares bounds from them",
+    ),
+    (
+        "spec-cost",
+        "a calibration MEASUREMENT for the speculative cost model, with no baseline and no \
+         bounds: it records the per-step verify and draft cost at each batch width so the \
+         cost table can be fitted, and a calibration has nothing to regress against",
     ),
     (
         "mlperf-agentic-subset",

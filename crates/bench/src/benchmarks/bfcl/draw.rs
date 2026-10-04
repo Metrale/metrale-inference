@@ -122,6 +122,24 @@ impl DrawSpec {
         }
     }
 
+    /// 2026-10-03: The `mini` draw for a model's cheap correctness suite: the golden draw's
+    /// three categories at about a fifth of its rates (12.5/2/2) with a floor of 5, so the
+    /// category mix stays close to golden. On `reference_subset_totals` this is
+    /// [`MINI_SAMPLES`]. Not comparable to golden or echolp; it carries its own floors.
+    pub fn mini() -> Self {
+        Self {
+            categories: Self::categories_or_all(&CATEGORIES),
+            category_pct: [
+                ("non_live".to_string(), 12.5),
+                ("live".to_string(), 2.0),
+                ("hallucination".to_string(), 2.0),
+            ]
+            .into_iter()
+            .collect(),
+            subset_floor: Some(5),
+        }
+    }
+
     /// 2026-09-26: Whether this subset is in the selection.
     pub fn includes(&self, subset: &str) -> bool {
         if self.categories.is_empty() {
@@ -155,6 +173,40 @@ pub fn plan(spec: &DrawSpec, totals: &BTreeMap<String, usize>) -> Vec<(String, u
         .map(|(subset, total)| (subset.clone(), spec.take_count(subset, *total)))
         .filter(|(_, take)| *take > 0)
         .collect()
+}
+
+/// 2026-10-03: The sample count of [`DrawSpec::mini`] on `reference_subset_totals`.
+pub const MINI_SAMPLES: usize = 192;
+
+/// 2026-10-03: The identity of the draw a run scored, for its record's `dataset_fingerprint`:
+/// `draw-sha256:<hex>;n=<N>;category_sample_pct=<cat>:<pct>,...;subset_floor=<f>`. The hash is
+/// over the run's sample ids in the order they were issued, one per line, so two runs share a
+/// fingerprint only when they scored the same samples in the same order; a BFCL score is not
+/// meaningful without it. A shard's fingerprint covers the shard's own slice.
+pub fn fingerprint<'a>(spec: &DrawSpec, sample_ids: impl IntoIterator<Item = &'a str>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let mut n = 0usize;
+    for id in sample_ids {
+        hasher.update(id.as_bytes());
+        hasher.update(b"\n");
+        n += 1;
+    }
+    let digest: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let pct = spec
+        .category_pct
+        .iter()
+        .map(|(c, p)| format!("{c}:{p}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let floor = spec
+        .subset_floor
+        .map_or_else(|| "none".to_string(), |f| f.to_string());
+    format!("draw-sha256:{digest};n={n};category_sample_pct={pct};subset_floor={floor}")
 }
 
 /// 2026-09-26: Total sample count for a plan.

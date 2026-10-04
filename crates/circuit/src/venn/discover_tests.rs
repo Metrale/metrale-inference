@@ -25,6 +25,7 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::gemv"]
 rows = [1, 128]
+pipeline.linear = { in = ["fp8/token"], act = "fp8/token", weight = "{weight}->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
 op = [{ op = "linear" }]
 [[family.param]]
 name = "weight"
@@ -51,6 +52,7 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::attn"]
 rows = [1, 128]
+pipeline.paged_attention = { in = ["bf16", "bf16", "bf16"], cache = "bf16", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
 op = [{ op = "paged_attention" }]
 [[family.param]]
 name = "head_dim"

@@ -87,6 +87,7 @@ REQUIRED_CONTEXTS = [
     ("No block_on under tui/ or recipe/", "tui-threading.yml", "no-blocking-on-the-render-thread", None),
     ("Merge-ancestry guard self-test", "merge-ancestry.yml", "self-test", None),
     ("perf-path exclusivity", "merge-queue-guard.yml", "exclusivity", None),
+    ("recipes", "ci.yml", "recipes", None),
 ]
 
 # An `if:` that names one of these suppresses the implicit `success()` that

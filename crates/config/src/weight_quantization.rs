@@ -395,6 +395,19 @@ impl<'a> WeightQuantPolicy<'a> {
                 .is_some_and(|a| a.is_fp8())
     }
 
+    /// 2026-10-03: Whether the block-scaled attention/GDN W8A8 may run although
+    /// [`KernelCaps::w8a8_block_scaled_decode`] is off. That cap is held because, stacked with
+    /// the expert W8A8 on Qwen/Qwen3.6-35B-A3B-FP8, it flipped a greedy tie. Only a MoE
+    /// checkpoint that declares FP8 activations on none of its `experts` (the NVFP4 35B,
+    /// whose experts are NVFP4) has no such stack. A dense checkpoint, or the FP8 35B with its
+    /// experts held at BF16 activations, keeps W8A16, as the combination is unvalidated there.
+    pub fn lifts_block_scaled_w8a8(&self, experts: &[String], experts_decode_fp8: bool) -> bool {
+        self.follows_plan()
+            && !experts_decode_fp8
+            && !experts.is_empty()
+            && experts.iter().all(|m| !self.declares_fp8_activations(m))
+    }
+
     /// 2026-09-28: The head `--lm-head-dtype default` takes: under `declared`, the declared
     /// format, except a declared FP8 head while [`KernelCaps::fp8_lm_head_batched`] is false;
     /// the engine's per-model default otherwise, or for a format with no head kernel.

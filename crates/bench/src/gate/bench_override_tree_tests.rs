@@ -59,7 +59,16 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
         }
     }
     // 2026-09-26: `load_all` walks `kernels/<hw>/<model>` in sorted order, so qwen3.6-35b-a3b's
-    // pins come before qwen3.8-27b's.
+    // pins come before qwen3.8-27b's. 2026-10-03: the two Nemotron models' KAT pins come first.
+    let kat = |model: &str, gate: &str, key: &str, value: &str| {
+        (
+            "gb10".to_string(),
+            model.to_string(),
+            gate.to_string(),
+            key.to_string(),
+            value.to_string(),
+        )
+    };
     let moe = |key: &str, value: &str| {
         (
             "gb10".to_string(),
@@ -72,6 +81,42 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
     assert_eq!(
         observed,
         vec![
+            kat(
+                "nemotron-3-nano-30b-a3b",
+                "kat-equality-gate-nemotron-nano",
+                "max_new_tokens",
+                "1024"
+            ),
+            kat(
+                "nemotron-3-nano-30b-a3b",
+                "kat-equality-gate-nemotron-nano",
+                "orders",
+                "2"
+            ),
+            kat(
+                "nemotron-3-nano-30b-a3b",
+                "kat-equality-gate-nemotron-nano",
+                "sample_cap",
+                "64"
+            ),
+            kat(
+                "nemotron-super-120b-a12b",
+                "kat-equality-gate-nemotron-super",
+                "max_new_tokens",
+                "1024"
+            ),
+            kat(
+                "nemotron-super-120b-a12b",
+                "kat-equality-gate-nemotron-super",
+                "orders",
+                "2"
+            ),
+            kat(
+                "nemotron-super-120b-a12b",
+                "kat-equality-gate-nemotron-super",
+                "sample_cap",
+                "64"
+            ),
             moe("concurrencies", "1,2,4,8,16"),
             moe("isls", "128"),
             moe("osl", "1024"),
@@ -210,6 +255,11 @@ fn the_moe_concurrency_entry_is_the_published_instrument_with_its_bootstrap_floo
             ("c4_aggregate_tok_s", (Some(170.0), None)),
             ("c8_aggregate_tok_s", (Some(240.0), None)),
             ("c16_aggregate_tok_s", (Some(330.0), None)),
+            ("c1_gpu_rail_joules_per_token", (None, Some(0.472))),
+            ("c2_gpu_rail_joules_per_token", (None, Some(0.308))),
+            ("c4_gpu_rail_joules_per_token", (None, Some(0.218))),
+            ("c8_gpu_rail_joules_per_token", (None, Some(0.165))),
+            ("c16_gpu_rail_joules_per_token", (None, Some(0.126))),
             ("peak_aggregate_tok_s", (Some(330.0), None)),
             ("min_completion_tokens", (Some(820.0), None)),
             ("vacuous_cells", (None, Some(0.0))),
@@ -254,7 +304,11 @@ fn the_moe_concurrency_entry_is_the_published_instrument_with_its_bootstrap_floo
             ("kv_cache_dtype", "bf16"),
             ("max_batch_size", "128"),
             ("max_model_len", "2048"),
-            ("num_drafts", "1"),
+            // 2026-10-03: Two drafts at one or two sequences, one from three up, D-Cut off:
+            // the recipe's own three keys.
+            ("mtp_dcut_ratio", "1.0"),
+            ("mtp_k_ladder", "2:2,32:1"),
+            ("num_drafts", "2"),
             // 2026-09-29: No serve-side timeout, so wide rungs are not cut (BENCH.toml).
             ("request_timeout", "0"),
             ("scheduler", "fifo"),

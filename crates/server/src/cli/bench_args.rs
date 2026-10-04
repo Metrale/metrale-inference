@@ -88,6 +88,12 @@ pub enum BenchmarkCommand {
     /// a gate record because the record carries the hardware and the commit
     /// the number belongs to, which the card prints.
     Card(CardArgs),
+    /// Build the measured speculative-cost table (`--spec-cost-model measured`) from
+    /// spec-cost runs, one per draft depth 0..=K, measured on one box.
+    ///
+    /// GPU-free. It refuses runs that were not measured alike, a vacuous width, and a grid
+    /// the serve would not load.
+    SpecCostTable(SpecCostTableArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -340,4 +346,41 @@ pub struct AggregateArgs {
     pub sha: Option<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+}
+
+/// 2026-10-04: `met benchmark spec-cost-table`.
+#[derive(clap::Args, Debug)]
+pub struct SpecCostTableArgs {
+    /// A `met benchmark run spec-cost --format json` result. Repeat it, once per draft depth
+    /// 0..=K.
+    #[arg(long = "result", required = true)]
+    pub results: Vec<std::path::PathBuf>,
+    /// The HARDWARE.toml box class the runs were measured on, e.g. gb10.
+    #[arg(long)]
+    pub box_class: String,
+    /// The recipe id the measured serve ran. The table is keyed on the plan digests of its
+    /// circuit instance's verify, verify_batch and draft plans; a recipe without an instance
+    /// cannot use the measured cost model.
+    #[arg(long)]
+    pub recipe: String,
+    /// Where to write the table.
+    #[arg(long)]
+    pub out: std::path::PathBuf,
+    /// Where to write the acceptance calibration.
+    #[arg(long)]
+    pub calibration_out: std::path::PathBuf,
+    /// The drafter the runs measured: the sha256 of its MTP head weights as the serve
+    /// reports it. A serve whose drafter differs refuses the calibration.
+    #[arg(long)]
+    pub drafter_weights_sha256: String,
+    /// The drafter's --mtp-vocab.
+    #[arg(long)]
+    pub mtp_vocab: usize,
+    /// The drafter's --mtp-quantization.
+    #[arg(long)]
+    pub mtp_quantization: String,
+    /// Set when this run's drafter had its prompt context OFF (default: context on, the
+    /// production behaviour; there is no live toggle for it today).
+    #[arg(long, default_value_t = false)]
+    pub mtp_no_context: bool,
 }

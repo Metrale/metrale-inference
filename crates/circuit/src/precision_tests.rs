@@ -87,3 +87,27 @@ fn a_bad_format_or_schema_is_refused() {
         Err(PrecisionError::Parse(_))
     ));
 }
+
+// 2026-10-02: An expert projection's fused-experts module; anything else has none. Mutation:
+// accepting a non-numeric expert index would make `shared_expert.gate_proj`-like paths match.
+#[test]
+fn an_expert_projection_names_its_experts_module() {
+    use super::expert_container;
+    assert_eq!(
+        expert_container("model.layers.3.mlp.experts.0.gate_proj"),
+        Some("model.layers.3.mlp.experts")
+    );
+    assert_eq!(
+        expert_container("mtp.layers.0.mlp.experts.17.down_proj"),
+        Some("mtp.layers.0.mlp.experts")
+    );
+    for none in [
+        "model.layers.3.mlp.experts",
+        "model.layers.3.mlp.experts.0",
+        "model.layers.3.mlp.experts.x.gate_proj",
+        "model.layers.3.mlp.shared_expert.gate_proj",
+        "model.layers.3.mlp.experts..gate_proj",
+    ] {
+        assert_eq!(expert_container(none), None, "{none}");
+    }
+}

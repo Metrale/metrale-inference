@@ -1,0 +1,282 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-02: Load-time derived weight copies: every device allocation the legacy loader makes for
+# a weight beyond the checkpoint tensors it stores (the store keeps every tensor resident:
+# fast_weights/mod.rs:323 uploads each one as on disk). `met circuit memory` sizes each copy from
+# the node's own `out x k` shape and the rule's law (schema: crates/circuit/src/memory/copies.rs).
+#
+# Owner: metrale-circuit (memory).
+# Invariants:
+# - A rule matches a node by arch, op (`OpKind::name`), section, the checkpoint's declared weight
+#   format (`stored`), the served format (`served`) and serve settings (`when`); an empty list
+#   matches any. Every rule cites the loader site that allocates the copy.
+# - `law` is a weight format (the whole weight in it), `row_scale_f32` or `block_grid_f32/<r>x<c>`.
+#   `nvfp4/g16` is `9/16 x out x k` plus a 4-byte global; the MMQ `block_nvfp4` repack and the
+#   transposed twins have the same bytes.
+# - `leaked = true` marks an allocation nothing reads and nothing frees (a loader defect): it is
+#   resident all the same, and the report totals it apart.
+# - Validated against the boot allocation ledgers of the dense 27B (nvfp4 recipe and declared
+#   tier), the FP8 35B-A3B recipe and Nemotron-3-Nano (crates/server/src/cli/circuit_memory_ledger_tests.rs).
+# - 2026-10-02: The dense 27B's three leaked copies (the attention requant's BF16 intermediates,
+#   the replaced GDN out_proj predequant, the first BA interleave) are no longer made (#86).
+# - Not modelled (each under 60 MiB on the validated serves, inside the ledger residual): the
+#   Nemotron dequant scratch (nemotron.rs:68), F32 widenings of A_log / D / dt_bias
+#   (model_a.rs), the 4-byte absmax per quantize (loaders_fp8.rs:171), expert pointer tables.
+
+schema = 1
+
+# 2026-10-02: Dense Qwen3.5 hybrid (Qwen3.8-27B), loader `Qwen35DenseWeightLoader`.
+
+[[copy]]
+id = "dense-fp8-to-nvfp4"
+arch = ["qwen3_5"]
+ops = ["linear:q", "linear:k", "linear:v", "linear:o", "linear:qkvz", "linear:gdn_out", "linear:gate_up", "linear:down"]
+section = "main"
+stored = ["fp8/channel"]
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/loaders_fp8.rs:211-212 (quantize_to_nvfp4, via qwen35_dense attn_arms.rs:143, gdn_dequant.rs:329/347, nvfp4_detect.rs:307)"
+
+[[copy]]
+id = "dense-fp8-nvfp4-twin"
+arch = ["qwen3_5"]
+ops = ["linear:q", "linear:k", "linear:v", "linear:o", "linear:qkvz", "linear:gdn_out"]
+section = "main"
+stored = ["fp8/channel"]
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized/transpose.rs:58 (qwen35_dense attn_layer.rs:142-146, gdn_dequant.rs:335/358)"
+
+[[copy]]
+id = "dense-fp8-ffn-twin"
+arch = ["qwen3_5"]
+ops = ["linear:gate_up", "linear:down"]
+section = "main"
+stored = ["fp8/channel"]
+served = ["fp8/channel"]
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized/transpose.rs:58 (fp8_lut.rs:226-335; a Wide-stamped FFN keeps its twins instead of the MMQ repack)"
+
+[[copy]]
+id = "dense-ffn-mmq-repack"
+arch = ["qwen3_5"]
+ops = ["linear:gate_up", "linear:down"]
+section = "main"
+served = ["nvfp4/g16"]
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/layers/dense_ffn_load.rs:195 (finalize_nvfp4_mmq_load; the twins it replaces are freed)"
+
+[[copy]]
+id = "dense-gdn-fp8-cast"
+arch = ["qwen3_5"]
+ops = ["linear:qkvz", "linear:gdn_out"]
+section = "main"
+stored = ["fp8/channel"]
+law = "fp8/tensor"
+count = 1
+site = "crates/model-arch/src/weight_loader/qwen35_dense/gdn_dequant.rs:365/375 (unscaled FP8 prefill casts; off under METRALE_NO_GDN_FP8_PREFILL)"
+
+[[copy]]
+id = "dense-gdn-ba-interleave"
+arch = ["qwen3_5"]
+ops = ["linear:ba"]
+section = "main"
+law = "bf16"
+count = 1
+site = "crates/model-layers/src/weight_map/fp8_lut.rs (gdn_dequant.rs:219: in_proj_b and in_proj_a interleaved per key group)"
+
+[[copy]]
+id = "dense-w8a8-row-scale"
+arch = ["qwen3_5"]
+ops = ["linear:q", "linear:k", "linear:v", "linear:o", "linear:qkvz", "linear:gdn_out", "linear:gate_up", "linear:down", "lm_head"]
+section = "main"
+stored = ["fp8/channel"]
+served = ["fp8/channel"]
+law = "row_scale_f32"
+count = 1
+site = "crates/model-arch/src/weight_loader/qwen35_dense/rowwise_fp8.rs:87 (w8a8_install.rs:121-166; lm_head_setup.rs:203 for the head)"
+
+[[copy]]
+id = "fp8-head-bf16-dequant"
+arch = ["qwen3_5"]
+ops = ["lm_head"]
+section = "main"
+stored = ["fp8/channel"]
+law = "bf16"
+count = 1
+site = "crates/model-layers/src/weight_map/quant_helpers.rs:88 (qwen35_dense/loaders_b.rs:46: an FP8 head is always dequantized, whatever --lm-head-dtype)"
+
+# 2026-10-02: Qwen3.5/3.6 MoE hybrid (Qwen3.6-35B-A3B), loader `Qwen35WeightLoader`.
+
+[[copy]]
+id = "moe-gdn-qkvz-concat"
+arch = ["qwen3_6_moe"]
+ops = ["linear:qkvz"]
+section = "main"
+stored = ["fp8/block128x128"]
+law = "fp8/block128x128"
+count = 1
+site = "crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms.rs:66,92 (the fused [qkv|z]; its sources stay in the store)"
+
+[[copy]]
+id = "moe-attn-fp8-prefill-twin"
+arch = ["qwen3_6_moe"]
+ops = ["linear:q", "linear:k", "linear:v", "linear:o"]
+section = "main"
+stored = ["fp8/block128x128"]
+law = "fp8/block128x128"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized.rs:307,320 (Fp8Weight::transpose_for_gemm via qwen35/load_layers/fp8_attention_arms.rs:198)"
+
+[[copy]]
+id = "moe-shared-expert-nvfp4"
+arch = ["qwen3_6_moe"]
+ops = ["linear:shared_gate_up", "linear:shared_down"]
+section = "main"
+stored = ["fp8/block128x128"]
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/loaders_fp8.rs:211-212 (ssm_qwen35.rs:246 via quantized_any)"
+
+[[copy]]
+id = "moe-fp8-block-scale-widen"
+arch = ["qwen3_6_moe"]
+ops = ["linear:q", "linear:k", "linear:v", "linear:o", "linear:qkvz", "linear:gdn_out", "linear:shared_gate_up", "linear:shared_down", "expert_gate_up", "expert_down"]
+section = "main"
+stored = ["fp8/block128x128"]
+law = "block_grid_f32/128x128"
+count = 1
+site = "crates/model-layers/src/weight_map/loaders_fp8.rs:92 (load_fp8_block_scaled_as_fp8weight: one FP32 grid per FP8 weight)"
+
+[[copy]]
+id = "moe-mtp-attn-bf16-dequant"
+arch = ["qwen3_6_moe"]
+ops = ["linear:q", "linear:k", "linear:v", "linear:o"]
+section = "draft"
+stored = ["fp8/block128x128"]
+law = "bf16"
+count = 1
+site = "crates/model-layers/src/weight_map/quant_helpers.rs:88 (loaders_moe.rs:196: the MTP projections kept as BF16)"
+
+# 2026-10-02: The same loader over an NVFP4 MoE checkpoint (nvidia/Qwen3.6-35B-A3B-NVFP4: NVFP4
+# routed and shared experts, FP8 per-tensor attention and GDN projections, an NVFP4 head).
+
+[[copy]]
+id = "moe-gdn-qkvz-concat-fp8-tensor"
+arch = ["qwen3_6_moe"]
+ops = ["linear:qkvz"]
+section = "main"
+stored = ["fp8/tensor"]
+law = "fp8/tensor"
+count = 1
+site = "crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms.rs:66 (the fused [qkv|z]; its sources stay in the store)"
+
+[[copy]]
+id = "moe-attn-fp8-prefill-twin-fp8-tensor"
+arch = ["qwen3_6_moe"]
+ops = ["linear:q", "linear:k", "linear:v", "linear:o"]
+section = "main"
+stored = ["fp8/tensor"]
+law = "fp8/tensor"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized.rs:307,320 (Fp8Weight::transpose_for_gemm via qwen35/load_layers/fp8_attention_arms.rs:198)"
+
+[[copy]]
+id = "moe-nvfp4-expert-twin"
+arch = ["qwen3_6_moe"]
+ops = ["expert_gate_up", "expert_down", "linear:shared_gate_up", "linear:shared_down"]
+section = "main"
+stored = ["nvfp4/g16"]
+when = { moe_expert_tables = "build" }
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized/transpose.rs:58-59 (layers/moe/helpers_a.rs:34-130 via qwen35/load_layers.rs:314-332; built when the serve's memory plan fits with them, MoeExpertTables)"
+
+[[copy]]
+id = "moe-nvfp4-shared-fp8-predequant"
+arch = ["qwen3_6_moe"]
+ops = ["linear:shared_gate_up", "linear:shared_down"]
+section = "main"
+stored = ["nvfp4/g16"]
+law = "fp8/tensor"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized.rs (layers/moe/helpers_c.rs:15-60, the prefill copy of an NVFP4 shared expert)"
+
+[[copy]]
+id = "moe-gdn-ba-interleave"
+arch = ["qwen3_6_moe"]
+ops = ["linear:ba"]
+section = "main"
+law = "bf16"
+count = 1
+site = "crates/model-layers/src/weight_map/fp8_lut.rs (in_proj_b and in_proj_a interleaved per key group)"
+
+# 2026-10-02: Nemotron-H (Nemotron-3-Nano).
+
+[[copy]]
+id = "nemotron-expert-twin"
+arch = ["nemotron_h"]
+ops = ["expert_gate_up", "expert_down"]
+section = "main"
+stored = ["nvfp4/g16"]
+when = { latent_moe = "off" }
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized/transpose.rs:58-59 (nemotron_moe/prefill_weights.rs:81-103, only when moe_latent_size == 0: never on Nemotron-3-Super)"
+
+[[copy]]
+id = "nemotron-mamba-fp8-predequant"
+arch = ["nemotron_h"]
+ops = ["linear:mamba_in", "linear:mamba_out"]
+section = "main"
+stored = ["nvfp4/g16"]
+law = "fp8/tensor"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized.rs:198 (nemotron/ssm_layer.rs:213-228; off under METRALE_NO_SSM_FP8_PREFILL)"
+
+# 2026-10-02: The LM head, every family.
+
+[[copy]]
+id = "head-bf16-to-nvfp4"
+arch = ["qwen3_5", "qwen3_6_moe", "nemotron_h", "dense_gqa"]
+ops = ["lm_head"]
+section = "main"
+stored = ["bf16"]
+served = ["nvfp4/g16"]
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/loaders_fp8.rs:211-212 (factory/lm_head_setup.rs:101)"
+
+[[copy]]
+id = "head-nvfp4-twin"
+arch = ["qwen3_5", "qwen3_6_moe", "nemotron_h", "dense_gqa"]
+ops = ["lm_head"]
+section = "main"
+served = ["nvfp4/g16"]
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/quantized/transpose.rs:192-213 (impl_a1/spec_buffers.rs:36 transpose_concat_for_gemm_padded; off under METRALE_NO_LMHEAD_TGEMM)"
+
+# 2026-10-02: The draft-only NVFP4 head when the target's head is not NVFP4 (`lm_head_dtype` is
+# the served format of the target's head); a target NVFP4 head serves the draft as is.
+[[copy]]
+id = "draft-head-nvfp4-of-bf16"
+arch = ["qwen3_5", "qwen3_6_moe"]
+ops = ["lm_head"]
+section = "draft"
+when = { speculative = "on", lm_head_dtype = "bf16" }
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/loaders_fp8.rs:211-212 (factory/lm_head_setup.rs:119)"
+
+[[copy]]
+id = "draft-head-nvfp4-of-fp8"
+arch = ["qwen3_5", "qwen3_6_moe"]
+ops = ["lm_head"]
+section = "draft"
+when = { speculative = "on", lm_head_dtype = "fp8" }
+law = "nvfp4/g16"
+count = 1
+site = "crates/model-layers/src/weight_map/loaders_fp8.rs:211-212 (factory/lm_head_setup.rs:119)"

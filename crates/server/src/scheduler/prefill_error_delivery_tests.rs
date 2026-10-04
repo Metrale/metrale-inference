@@ -24,6 +24,7 @@ macro_rules! request {
         InferenceRequest::$variant {
             prompt_tokens: Arc::new(vec![1, 2, 3]),
             session_hash: 0,
+            lookup_tenant: None,
             adapter_slot: -1,
             src_lang_id: 0,
             tgt_lang_id: 0,

@@ -175,3 +175,42 @@ fn the_parameter_defaults_reproduce_each_pinned_draw() {
         );
     }
 }
+
+/// 2026-10-03: The mini draw is [`MINI_SAMPLES`] samples, about a fifth of golden, from every
+/// subset golden draws from, with golden's category mix to within a point or two.
+#[test]
+fn the_mini_draw_is_pinned_and_keeps_every_golden_subset() {
+    let mini = plan(&DrawSpec::mini(), &real_totals());
+    assert_eq!(total(&mini), MINI_SAMPLES, "{mini:?}");
+    let golden: Vec<String> = plan(&DrawSpec::golden(), &real_totals())
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect();
+    let subsets: Vec<String> = mini.iter().map(|(s, _)| s.clone()).collect();
+    assert_eq!(
+        subsets, golden,
+        "the mini draw samples every subset golden does"
+    );
+}
+
+/// 2026-10-03: The fingerprint names the draw's spec and count, and its hash depends on which
+/// samples ran and in what order.
+#[test]
+fn the_draw_fingerprint_is_order_and_membership_sensitive() {
+    let spec = DrawSpec::mini();
+    let a = fingerprint(&spec, ["simple_0", "simple_1"]);
+    assert!(
+        a.starts_with("draw-sha256:")
+            && a.ends_with(
+                ";n=2;category_sample_pct=hallucination:2,live:2,non_live:12.5;subset_floor=5"
+            ),
+        "{a}"
+    );
+    assert_eq!(a, fingerprint(&spec, ["simple_0", "simple_1"]));
+    assert_ne!(a, fingerprint(&spec, ["simple_1", "simple_0"]));
+    assert_ne!(a, fingerprint(&spec, ["simple_0", "simple_2"]));
+    assert_ne!(
+        a,
+        fingerprint(&DrawSpec::golden(), ["simple_0", "simple_1"])
+    );
+}

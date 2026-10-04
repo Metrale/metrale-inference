@@ -70,12 +70,13 @@ pub(super) fn step_verify_k4_batched(
     // 2026-09-25: each sequence contributes the rows
     // `[last_token, d0, .., d_{ks[i]-2}]`, flat and seq-major.
     let mut drafts_per_seq: Vec<Vec<u32>> = Vec::with_capacity(n);
+    let mut conf_per_seq: Vec<Vec<f32>> = Vec::with_capacity(n);
     let mut tokens: Vec<u32> = Vec::with_capacity(r_total);
     for (i, a) in batch.iter_mut().enumerate() {
         let d = std::mem::take(&mut a.pending_drafts);
         // 2026-09-25: the confidences describe the drafts just taken, so they
-        // are cleared with them and D-Cut never ranks a stale vector.
-        a.pending_draft_conf.clear();
+        // are taken with them and D-Cut never ranks a stale vector.
+        conf_per_seq.push(std::mem::take(&mut a.pending_draft_conf));
         debug_assert!(
             d.len() + 1 == ks[i],
             "batchable classification requires exactly {} drafts",
@@ -144,10 +145,23 @@ pub(super) fn step_verify_k4_batched(
         while num_accepted < k_drafts && drafts[num_accepted] == v[num_accepted] {
             num_accepted += 1;
         }
+        // 2026-10-02: a prompt-lookup copy is not the drafter's work: it stays
+        // out of the drafter's accept statistics, which feed the adaptive rung.
+        let drafter_drafts = copy_in_flight(a) == 0;
+        // 2026-10-04: draft outcomes by confidence, for the spec-cost acceptance calibration;
+        // only when the confidences describe exactly these drafts, and excluding prompt-lookup
+        // copies for the same reason as the accept statistics above.
+        if drafter_drafts && conf_per_seq[i].len() == k_drafts {
+            for (lp, ok) in
+                crate::scheduler::mtp_dcut::reached_outcomes(&conf_per_seq[i], num_accepted)
+            {
+                sched.io.tel.spec_draft_confidence(lp, ok);
+            }
+        }
         // 2026-09-25: per-position draft match, scored for every position
         // whether or not the accept chain stopped earlier. The counters have
         // three positions, so only 3-draft sequences record them.
-        if k_drafts == 3 {
+        if drafter_drafts && k_drafts == 3 {
             crate::scheduler::verify_k4_step::stats::k4_record_positional(
                 sched,
                 drafts[0] == v[0],
@@ -158,14 +172,16 @@ pub(super) fn step_verify_k4_batched(
         }
         // 2026-09-25: accept telemetry bucketed by batch width, recorded for
         // every `k_drafts`; `METRALE_MTP_ACCEPT_DEBUG` gates its log lines.
-        sched.accept.record(
-            &sched.rung,
-            sched.levers.mtp_accept_debug,
-            n,
-            k_drafts,
-            drafts[0] == v[0],
-            num_accepted,
-        );
+        if drafter_drafts {
+            sched.accept.record(
+                &sched.rung,
+                sched.levers.mtp_accept_debug,
+                n,
+                k_drafts,
+                drafts[0] == v[0],
+                num_accepted,
+            );
+        }
         let verify_lps = if let Some(top_logprobs) = a.top_logprobs {
             extract_verify_logprobs(model, &v, top_logprobs, off[i])
         } else {
@@ -302,7 +318,8 @@ pub(super) fn step_verify_k4_batched(
     let mut groups_batched = 0usize;
     // 2026-09-25: draft confidences (the D-Cut ranking key) are requested
     // only when D-Cut is on.
-    let want_conf = sched.levers.dcut_enabled;
+    let want_conf = sched.levers.dcut_enabled
+        || metrale_model_layers::speculative::draft_stop::draft_stop_logprob().is_some();
     let mut conf: Vec<Vec<f32>> = Vec::new();
     let group_cap = model.mtp_propose_batch_max().max(1);
     if pending.len() >= 2 && group_cap >= 2 && sched.levers.mtp_batch_propose {

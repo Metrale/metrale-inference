@@ -170,11 +170,15 @@ pub(crate) fn build_linear_attention_nvfp4(
     // installed (kernels/strix-hip has no `fp8_gemm_n128`), so prefill uses the NVFP4
     // weights.
     if !cfg!(metrale_hip) {
-        layer.predequant_for_prefill(gpu, config, stream)?;
-        // 2026-09-25: After `predequant_for_prefill`, which sets `out_proj_fp8` from the
-        // NVFP4 weight, so the FP8 casts replace it. `qkvz_fp8`/`out_proj_fp8` feed the
-        // `fp8_gemm_n128` arms of prefill and of the batched decode/verify projections
-        // (`qwen3_ssm/init_fp8.rs`, `trait_decode_batched.rs`).
+        // 2026-09-25: The FP8 casts, when made, are the layer's `qkvz_fp8`/`out_proj_fp8`: they
+        // feed the `fp8_gemm_n128` arms of prefill and of the batched decode/verify projections
+        // (`qwen3_ssm/init_fp8.rs`, `trait_decode_batched.rs`). 2026-10-03: Without an
+        // `out_proj` cast, `predequant_for_prefill` dequantizes the NVFP4 `out_proj` instead.
+        // With one, the predequant is not made: the cast replaced it, and until 2026-10-03 the
+        // replaced copy stayed allocated (the qwen35_dense loader's twin of this, #86).
+        if out_proj_fp8_prefill.is_none() {
+            layer.predequant_for_prefill(gpu, config, stream)?;
+        }
         if qkvz_fp8_prefill.is_some() || out_proj_fp8_prefill.is_some() {
             layer.set_fp8_prefill_only_weights(qkvz_fp8_prefill, out_proj_fp8_prefill);
         }

@@ -128,6 +128,7 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
         let request = InferenceRequest::Blocking {
             prompt_tokens: prompt_tokens.clone(),
             session_hash,
+            lookup_tenant: req.lookup_tenant,
             adapter_slot,
             src_lang_id,
             tgt_lang_id,

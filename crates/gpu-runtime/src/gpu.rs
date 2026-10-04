@@ -61,6 +61,12 @@ pub trait GpuBackend: Send + Sync {
         None
     }
 
+    /// 2026-10-02: Every live allocation on the ledger: its address, bytes and allocating call
+    /// site (`file:line`); `None` (the default) on every backend but CUDA.
+    fn live_allocations(&self) -> Option<Vec<(DevicePtr, usize, String)>> {
+        None
+    }
+
     /// 2026-09-25: Copy from host to device; returns when the copy is done.
     fn copy_h2d(&self, src: &[u8], dst: DevicePtr) -> Result<()>;
 

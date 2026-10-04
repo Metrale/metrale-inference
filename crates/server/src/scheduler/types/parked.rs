@@ -14,6 +14,8 @@ use super::*;
 pub(in crate::scheduler) struct SwappedSeq {
     pub tokens: Vec<u32>,
     pub session_hash: u64,
+    /// 2026-10-04: `SequenceState::lookup_tenant`, restored on swap-in.
+    pub lookup_tenant: Option<u64>,
     /// 2026-09-25: Per-request LoRA slot, restored with `tokens` so a resumed sequence
     /// keeps its adapter. (`cancel_flag` is not carried: swap-in sets it to
     /// `None`.)

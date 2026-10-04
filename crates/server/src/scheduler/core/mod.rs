@@ -96,6 +96,8 @@ impl SchedulerCore {
             max_batch_tokens,
             use_self_speculative,
             use_ngram_speculative,
+            prompt_lookup,
+            shared_lookup,
             swap_space_gb,
             high_speed_swap_cfg,
             block_size,
@@ -137,7 +139,7 @@ impl SchedulerCore {
         } else {
             None
         };
-        let sched = crate::scheduler::sched_ctx::SchedCtx::new(
+        let mut sched = crate::scheduler::sched_ctx::SchedCtx::new(
             vocab_masks,
             levers,
             io::SchedIo::serving(
@@ -159,6 +161,29 @@ impl SchedulerCore {
             .bind_gpu_to_thread()
             .expect("Failed to bind CUDA context to scheduler thread");
         let use_mtp = use_speculative && sched.io.dev.model().has_proposer();
+        // 2026-10-02: Prompt lookup rides the MTP step; without MTP it has no
+        // round to take (`validate_serve_args` refuses that combination).
+        sched.prompt_lookup = prompt_lookup.filter(|_| use_mtp);
+        if let Some(pl) = sched.prompt_lookup {
+            tracing::info!(
+                "prompt-lookup decoding: ARMED (ngram={}, max_drafts={}, max_seqs={})",
+                pl.ngram,
+                pl.max_drafts,
+                pl.max_seqs
+            );
+            // 2026-10-04: The cross-request cache rides prompt lookup.
+            if let Some(setup) = shared_lookup {
+                let sl = crate::scheduler::shared_lookup_step::SharedLookup::new(setup)
+                    .expect("shared prompt-lookup cache settings are validated at serve start");
+                tracing::info!(
+                    "prompt-lookup shared cache: ARMED (budget={} MiB, scopes={}, key_len={})",
+                    setup.config.budget_bytes >> 20,
+                    setup.config.max_scopes,
+                    setup.config.key_len
+                );
+                sched.shared_lookup = Some(sl);
+            }
+        }
         let num_drafts = if use_mtp || use_self_speculative || use_ngram_speculative {
             num_drafts.max(1)
         } else {

@@ -94,7 +94,7 @@ mod mx_plan;
 pub use mx_plan::*;
 #[path = "w4a4_proj/fixed.rs"]
 mod fixed;
-pub use fixed::nvfp4_proj_mx;
+pub use fixed::{fixed_nvfp4_proj, nvfp4_proj_mx};
 #[path = "w4a4_proj/steps.rs"]
 mod steps;
 pub use steps::{Nvfp4ActBuf, W4a4Proj};

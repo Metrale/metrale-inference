@@ -35,29 +35,9 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
-/// 2026-09-25: `METRALE_REDZONE_RANGE_FILE=<path>`: a file holding "LO HI", re-read
-/// every decode step and passed to `poison_redzones`. Unset: no bisection.
-fn redzone_range_file() -> Option<&'static str> {
-    static P: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    P.get_or_init(|| std::env::var("METRALE_REDZONE_RANGE_FILE").ok())
-        .as_deref()
-}
-
-/// 2026-09-25: Scan the guard bands every `n`-th decode step: 0 (never) when
-/// `METRALE_REDZONE` is unset, else `METRALE_REDZONE_EVERY` (1 when unset or
-/// unparsable; 0 disables the scan).
-fn redzone_every() -> usize {
-    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *N.get_or_init(|| {
-        if std::env::var("METRALE_REDZONE").is_err() {
-            return 0;
-        }
-        std::env::var("METRALE_REDZONE_EVERY")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(1)
-    })
-}
+#[path = "decode_a_redzone.rs"]
+mod redzone;
+use redzone::{redzone_every, redzone_range_file};
 
 impl TransformerModel {
     /// 2026-09-25: Whether every layer that runs online FP8-KV calibration reports
@@ -225,8 +205,13 @@ impl TransformerModel {
         // or returns `DevicePtr(0)` (the installed-pair path) when no LoRA pool is
         // loaded or the request resolves to the active adapter (`adapter_slot ==
         // -1` resolves to active).
-        let seq_slot =
-            self.upload_seq_slot_uniform(seq.adapter_slot, 1, meta_base.offset(128), stream)?;
+        let seq_slot = self.upload_seq_slot_uniform(
+            seq.adapter_slot,
+            1,
+            meta_base.offset(128),
+            stream,
+            metrale_model_layers::lora::LoraSites::PairFallback,
+        )?;
 
         let attn_metadata = AttnMetadataDev {
             max_blocks_per_seq: max_blocks,
@@ -304,6 +289,9 @@ impl TransformerModel {
             moe_lora_route: self.decode_moe_route(),
         };
 
+        // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
+        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
+
         // 2026-09-25: Profile mode: per-layer synchronised decode for a timing breakdown.
         if let (true, Some(token)) = (self.profile, input.host()) {
             return self.decode_profiled(token, hidden, residual, seq, &mut kv_cache, &ctx, stream);
@@ -319,7 +307,7 @@ impl TransformerModel {
         // 2026-09-25: Graphs are keyed by the sequence's SSM slot. Positions, slot,
         // seq_len and block table are read from the buffers uploaded above.
         if let Some(ref cache) = graph_cache
-            && let Some(graph) = cache.get(&seq.slot_idx)
+            && let Some(graph) = cache.get(&graph_key)
             && graph.0 != 0
         {
             // 2026-09-25: Check room before the replay. The graph writes GLM-5.3's
@@ -432,7 +420,7 @@ impl TransformerModel {
                         graph.0
                     );
                     if let Some(ref mut cache) = graph_cache {
-                        cache.insert(seq.slot_idx, graph);
+                        cache.insert(graph_key, graph);
                     }
                     self.gpu.launch_graph(graph, stream)?;
                 }

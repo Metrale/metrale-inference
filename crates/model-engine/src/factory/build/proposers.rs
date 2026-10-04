@@ -140,6 +140,10 @@ pub(super) fn log_alloc_report(
             tracing::info!(target: "metrale_model_engine::factory::build", "{line}");
         }
     }
+    // 2026-10-02: A diagnostic: its failure is logged, never fatal to the serve.
+    if let Err(e) = super::alloc_digest::write_if_requested(model.gpu_backend()) {
+        tracing::warn!("METRALE_DEBUG_ALLOC_DIGEST: {e:#}");
+    }
     // 2026-09-25: Tracked-live bytes above the util budget mean an allocation
     // the sizing above did not reserve for. Logged as a warning; the build
     // still succeeds.

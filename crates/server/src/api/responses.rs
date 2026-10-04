@@ -50,6 +50,7 @@ use super::sanitizer::*;
 
 pub async fn responses_endpoint(
     CurrentModel(state): CurrentModel,
+    tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
     req: Result<Json<crate::openai::ResponsesRequest>, JsonRejection>,
 ) -> Response {
     let Json(r) = match req {
@@ -137,6 +138,7 @@ pub async fn responses_endpoint(
     if streaming {
         return responses_endpoint_stream(
             CurrentModel(state),
+            tenant.map(|e| e.0),
             chat_req,
             metadata,
             store_flag,
@@ -150,7 +152,14 @@ pub async fn responses_endpoint(
 
     // 2026-09-26: The lowered request goes through `chat_completions_inner`
     // with no request context and no `--dump` sequence.
-    let resp = chat_completions_inner(state.clone(), None, chat_req.into(), None).await;
+    let resp = chat_completions_inner(
+        state.clone(),
+        None,
+        tenant.map(|e| e.0),
+        chat_req.into(),
+        None,
+    )
+    .await;
     let conv_pair = conversation_id.map(|cid| (state.conversation_store.clone(), cid));
     translate_chat_response_to_responses(
         resp,

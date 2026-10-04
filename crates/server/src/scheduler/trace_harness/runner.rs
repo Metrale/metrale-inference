@@ -44,6 +44,9 @@ pub(super) struct ReqSpec {
     /// 2026-09-25: `None` means queued before the loop starts; `Some(t)` means it arrives while the
     /// loop is parked at tick `t`.
     pub arrive_at_tick: Option<usize>,
+    /// 2026-10-04: The request's tenant (`auth::LookupTenant`); the open
+    /// serve's by default.
+    pub lookup_tenant: Option<crate::auth::LookupTenant>,
 }
 
 impl ReqSpec {
@@ -64,6 +67,7 @@ impl ReqSpec {
             cancel_at: None,
             expired_deadline: false,
             arrive_at_tick: None,
+            lookup_tenant: Some(crate::auth::LookupTenant::OPEN),
         }
     }
 }
@@ -78,6 +82,9 @@ pub(super) struct RunOptions {
     pub max_batch_tokens: usize,
     pub self_speculative: bool,
     pub ngram_speculative: bool,
+    pub prompt_lookup: Option<metrale_speculative::prompt_lookup::PromptLookupConfig>,
+    /// 2026-10-04: The cross-request prompt-lookup cache; `None` when off.
+    pub shared_lookup: Option<crate::scheduler::shared_lookup_step::SharedLookupSetup>,
     pub swap_space_gb: usize,
     pub slai_policy: bool,
     pub mtp_gate_force: bool,
@@ -89,6 +96,9 @@ pub(super) struct RunOptions {
     /// 2026-09-25: A LoRA rotation queued before the loop starts; the scheduler applies it
     /// once nothing is in flight.
     pub lora_rotation: Option<String>,
+    /// 2026-10-03: Close the request channel while the loop is parked at the first model call
+    /// whose trace line starts with this prefix, then let it go on (the D15 race, forced).
+    pub close_inbox_at: Option<&'static str>,
     /// 2026-09-25: The instrument set the run feeds. The goldens are recorded with a
     /// never-configured (`Off`) one.
     pub telemetry: &'static metrale_telemetry::Telemetry,
@@ -111,6 +121,8 @@ impl Default for RunOptions {
             max_batch_tokens: 8192,
             self_speculative: false,
             ngram_speculative: false,
+            prompt_lookup: None,
+            shared_lookup: None,
             swap_space_gb: 0,
             slai_policy: false,
             mtp_gate_force: true,
@@ -119,6 +131,7 @@ impl Default for RunOptions {
             think_end_token: None,
             think_start_token: None,
             lora_rotation: None,
+            close_inbox_at: None,
             telemetry: &TELEMETRY_OFF,
             pipeline_faults: crate::scheduler::PipelineFaults::NONE,
         }
@@ -184,6 +197,7 @@ fn build_request(r: &ReqSpec, shared: &Shared) -> (InferenceRequest, Sink) {
             InferenceRequest::$variant {
                 prompt_tokens: Arc::new(prompt),
                 session_hash: r.id,
+                lookup_tenant: r.lookup_tenant,
                 adapter_slot: -1,
                 src_lang_id: 0,
                 tgt_lang_id: 0,
@@ -374,6 +388,8 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                 max_batch_tokens: opts.max_batch_tokens,
                 use_self_speculative: opts.self_speculative,
                 use_ngram_speculative: opts.ngram_speculative,
+                prompt_lookup: opts.prompt_lookup,
+                shared_lookup: opts.shared_lookup,
                 swap_space_gb: opts.swap_space_gb,
                 high_speed_swap_cfg: None,
                 block_size,
@@ -404,6 +420,9 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
 
     later.sort_by_key(|(t, _)| *t);
     settle(&request_tx);
+    if let Some(prefix) = sc.opts.close_inbox_at {
+        shared.park.arm(prefix);
+    }
     if let Some((t, _)) = later.first() {
         shared.gate.block_at_tick(*t);
     }
@@ -448,6 +467,15 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
             (id, out)
         })
         .collect();
+    let mut request_tx = Some(request_tx);
+    if sc.opts.close_inbox_at.is_some() {
+        shared.park.wait_parked();
+        drop(request_tx.take());
+        // 2026-10-03: Long enough for the inbox's forwarder thread to see the close; nothing
+        // makes that observable from here.
+        std::thread::sleep(Duration::from_millis(100));
+        shared.park.release();
+    }
     let rotation_result = rotation_ack.map(|rx| match rx.blocking_recv() {
         Ok(Ok(ack)) => format!("{ack:?}"),
         Ok(Err(e)) => format!("Err({e})"),

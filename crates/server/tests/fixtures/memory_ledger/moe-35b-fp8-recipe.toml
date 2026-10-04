@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-02: One boot's allocation ledger, for the circuit memory model's validation
+# (crates/server/src/cli/circuit_memory_ledger_tests.rs). Source: dgx2 2026-10-02 chain7, PR #72 final head kvfix6, dgx2:/home/claude/kvfix/bootcmp/final6/qwen3.6_qwen3.6-35b-a3b-fp8-bf16head.kvfix6.log.
+# The `[ledger]` rows are the boot's "by file" rollup (MiB = 2^20 bytes, allocation count), the
+# `[reserve]` rows its preflight reserve terms (MB as logged); nothing here is edited by hand.
+
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+# 2026-10-03: The boot ran one MTP draft (its log: "num_drafts: using MODEL.toml default_num_drafts=1"),
+# stated here because the recipe it served has since moved to two drafts at one or two sequences.
+serve = ["--gpu-memory-utilization", "0.85", "--num-drafts", "1"]
+# 2026-10-02: Checkpoint tensors no weight node binds (norms, conv, gates, a vision tower),
+# measured from the safetensors headers by `met circuit memory` (totals.weights_outside).
+outside_bytes = 895479776
+kv_blocks = 168652
+draft_kv_blocks = 168652
+capture_rows = 32768
+chunk_slack_gb = 0.02
+ledger_total_gb = 105.27
+ledger_sites = 89
+
+[ledger]
+"crates/cache/src/kv_cache/paged_impl.rs" = [57974.1, 22]
+"crates/model-weights/src/fast_weights/mod.rs" = [35719.7, 64196]
+"crates/gpu-runtime/src/buffers.rs" = [2123.7, 33]
+"crates/model-engine/src/model/ssm_pool.rs" = [1755.0, 6]
+"crates/model-engine/src/model/ssm_snapshot_init.rs" = [1020.1, 61]
+"crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms.rs" = [720.2, 60]
+"crates/model-layers/src/weight_map/loaders_fp8.rs" = [348.1, 32224]
+"crates/model-layers/src/weight_map/quantized.rs" = [260.1, 80]
+"crates/model-engine/src/model/impl_a1_init.rs" = [258.3, 4]
+"crates/model-engine/src/model/impl_a1/spec_buffers.rs" = [129.0, 5]
+"crates/model-layers/src/weight_map/quant_helpers.rs" = [52.0, 4]
+"crates/model-layers/src/layers/mtp_head/new.rs" = [20.0, 13]
+
+[reserve]
+ssm_pool = 1755
+ssm_h_stage = 0
+replay_ring = 0
+marconi = 1020
+gdn_two_phase = 258
+runtime_headroom = 3349
+per_sequence = 0
+decode_ring = 0
+gdn_carry_stash = 101
+driver_fixed = 1024
+driver_bookkeeping = 2224

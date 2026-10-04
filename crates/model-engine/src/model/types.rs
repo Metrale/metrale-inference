@@ -28,8 +28,11 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, Fp8DenseWeight, MtpWeights, QuantizedWeight};
 
+mod pinned_meta_staging;
 mod staging;
 mod teardown;
+
+pub(crate) use pinned_meta_staging::PinnedMetaStaging;
 
 #[allow(dead_code)]
 /// 2026-09-25: Rows in `mtp_catchup_ring`. Position `p` is stored in ring row
@@ -82,8 +85,8 @@ pub struct TransformerModel {
     /// Installed by `set_lm_head_q6k` when the store's `lm_head.weight` is
     /// Q6_K; `None` otherwise.
     pub(super) lm_head_q6k: Option<super::lm_head_q6k::LmHeadQ6k>,
-    /// 2026-09-28: Multi-row and W8A8 kernels of the FP8 head (`lm_head_fp8_rows.rs`).
-    pub(super) lm_head_fp8_rows: super::lm_head_fp8_rows::LmHeadFp8Rows,
+    /// 2026-09-28: FP8 head multi-row/W8A8 kernels; 2026-10-02 the NVFP4 W4A16 row-tile head.
+    pub(super) lm_head_rows: super::lm_head_fp8_rows::LmHeadRows,
     pub(super) layers: Vec<Box<dyn TransformerLayer>>,
     /// 2026-09-25: `true` when any layer's `decode_graph_unsupported()` is true,
     /// so decode stays eager. Computed once at construction from `layers`.
@@ -166,7 +169,8 @@ pub struct TransformerModel {
     /// 2026-09-25: CUDA graphs for n=1 decode, keyed by `seq.slot_idx`. A
     /// captured graph has the slot's SSM `h_state`/`conv_state` pointers baked
     /// in as kernel arguments, so it is only replayed for the same slot.
-    pub(super) decode_graph: Mutex<std::collections::HashMap<usize, GraphHandle>>,
+    pub(super) decode_graph:
+        Mutex<std::collections::HashMap<super::trait_impl::SlotGraphKey, GraphHandle>>,
     /// 2026-09-25: CUDA graphs for batched decode, keyed by the per-row SSM pool
     /// slot vector (`trait_impl/decode_graph_key.rs`). Value =
     /// `(graph, last_use_tick)`; the `u64` beside the map is the tick counter.
@@ -298,11 +302,14 @@ pub struct TransformerModel {
     pub(super) dflash_kgamma: usize,
     /// 2026-09-25: CUDA graphs for K=2 verify, keyed by `seq.slot_idx` for the
     /// same reason as `decode_graph`.
-    pub(super) verify2_graph: Mutex<std::collections::HashMap<usize, GraphHandle>>,
+    pub(super) verify2_graph:
+        Mutex<std::collections::HashMap<super::trait_impl::SlotGraphKey, GraphHandle>>,
     /// 2026-09-25: CUDA graphs for K=3 verify, keyed by `seq.slot_idx`.
-    pub(super) verify3_graph: Mutex<std::collections::HashMap<usize, GraphHandle>>,
+    pub(super) verify3_graph:
+        Mutex<std::collections::HashMap<super::trait_impl::SlotGraphKey, GraphHandle>>,
     /// 2026-09-25: CUDA graphs for K=4 verify, keyed by `seq.slot_idx`.
-    pub(super) verify4_graph: Mutex<std::collections::HashMap<usize, GraphHandle>>,
+    pub(super) verify4_graph:
+        Mutex<std::collections::HashMap<super::trait_impl::SlotGraphKey, GraphHandle>>,
     /// 2026-09-25: CUDA graphs for the batched verify (`verify_e.rs`), keyed by
     /// `verify_key::verify_graph_key`: each sequence's `(ssm slot, row count)`
     /// in dispatch order, then a sentinel word for the WY-tables-present and
@@ -476,25 +483,3 @@ pub struct TransformerModel {
     pub(super) circuit:
         parking_lot::RwLock<Option<metrale_model_layers::circuit_exec::CircuitExec>>,
 }
-
-/// 2026-09-25: Pinned host staging buffer plus reusable metadata `Vec`s.
-pub(crate) struct PinnedMetaStaging {
-    /// 2026-09-25: Page-locked host buffer from `alloc_host_pinned`.
-    pub(super) ptr: *mut u8,
-    /// 2026-09-25: Size of `ptr`'s region in bytes.
-    pub(super) bytes: usize,
-    pub(super) positions: Vec<u32>,
-    pub(super) positions_h: Vec<u32>,
-    pub(super) positions_w: Vec<u32>,
-    pub(super) slots: Vec<i64>,
-}
-
-// 2026-09-25: SAFETY: TransformerModel is constructed on one thread and then
-// moved to the scheduler thread as a `Box<dyn Model>`; every later call
-// (prefill, decode, verify) is made from that thread. The `Model` trait
-// requires Send + Sync for the move. `UnsafeCell<PinnedMetaStaging>` is not
-// Sync, so single-thread access is an assumption of the scheduler design, not
-// something the types enforce. The pinned pointer is valid from any thread.
-unsafe impl Send for TransformerModel {}
-// 2026-09-25: SAFETY: Model methods are only called from the scheduler thread; there is no concurrent `&self` access.
-unsafe impl Sync for TransformerModel {}

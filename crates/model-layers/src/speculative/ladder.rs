@@ -47,20 +47,65 @@ fn parse_ladder(value: &str) -> Option<Vec<(usize, usize)>> {
     Some(steps)
 }
 
+/// 2026-09-25: The default ladder. Measured 2026-07-31 on dgx1 at C=16, one binary,
+/// three reps per arm: 16:1 181.63 tok/s, 16:2 172.70, 16:3 152.97.
+const DEFAULT_LADDER: [(usize, usize); 4] = [(4, 3), (8, 3), (16, 1), (32, 1)];
+
+/// 2026-10-03: The ladder `--mtp-k-ladder` published ([`set_mtp_k_ladder`]).
+static PUBLISHED_LADDER: std::sync::OnceLock<Vec<(usize, usize)>> = std::sync::OnceLock::new();
+
 fn mtp_ladder_steps() -> &'static [(usize, usize)] {
+    if let Some(published) = PUBLISHED_LADDER.get() {
+        return published;
+    }
     static STEPS: std::sync::OnceLock<Vec<(usize, usize)>> = std::sync::OnceLock::new();
     STEPS.get_or_init(|| {
-        let parsed = std::env::var("METRALE_MTP_K_LADDER")
+        std::env::var("METRALE_MTP_K_LADDER")
             .ok()
-            .and_then(|value| parse_ladder(&value));
-        // 2026-09-25: The default ladder. Measured 2026-07-31 on dgx1 at C=16,
-        // one binary, three reps per arm: 16:1 181.63 tok/s, 16:2 172.70,
-        // 16:3 152.97.
-        parsed.unwrap_or_else(|| vec![(4, 3), (8, 3), (16, 1), (32, 1)])
+            .and_then(|value| parse_ladder(&value))
+            .unwrap_or_else(|| DEFAULT_LADDER.to_vec())
     })
 }
 
-fn ladder_drafts_from_steps(steps: &[(usize, usize)], n_active: usize, num_drafts: usize) -> usize {
+/// 2026-10-03: Parses a `--mtp-k-ladder` value (`n_max:drafts,...`); an error names
+/// what does not parse, where the environment variable falls back to the default.
+pub fn parse_mtp_k_ladder(value: &str) -> anyhow::Result<Vec<(usize, usize)>> {
+    let steps = parse_ladder(value).ok_or_else(|| {
+        anyhow::anyhow!("--mtp-k-ladder {value:?} is not a list of n_max:drafts steps")
+    })?;
+    anyhow::ensure!(
+        steps.iter().all(|&(n, k)| n >= 1 && k >= 1),
+        "--mtp-k-ladder {value:?}: widths and draft counts start at 1"
+    );
+    Ok(steps)
+}
+
+/// 2026-10-03: Publish `--mtp-k-ladder` once, before the model sizes its verify pools
+/// (`ssm_reserve::verify_slot_drafts` reads the ladder) and the scheduler starts. It wins
+/// over `METRALE_MTP_K_LADDER`. A second publication of a different ladder is refused.
+pub fn set_mtp_k_ladder(steps: Vec<(usize, usize)>) -> anyhow::Result<()> {
+    let got = PUBLISHED_LADDER.get_or_init(|| steps.clone());
+    anyhow::ensure!(
+        *got == steps,
+        "MTP K-ladder already published as {got:?}, refusing {steps:?}"
+    );
+    Ok(())
+}
+
+/// 2026-10-03: Whether the serve runs an explicit ladder (`--mtp-k-ladder`, or
+/// `METRALE_MTP_K_LADDER` present with any value): the adaptive rung then keeps the
+/// static counts, so the operator gets exactly the rungs spelled out.
+pub fn mtp_ladder_pinned() -> bool {
+    PUBLISHED_LADDER.get().is_some() || std::env::var_os("METRALE_MTP_K_LADDER").is_some()
+}
+
+/// 2026-10-03: The draft count of `steps` at `n_active` sequences under the
+/// `num_drafts` ceiling: the first step whose width covers `n_active`, else the last.
+pub fn ladder_drafts_from_steps(
+    steps: &[(usize, usize)],
+    n_active: usize,
+    num_drafts: usize,
+) -> usize {
     if num_drafts == 0 {
         return 0;
     }
@@ -182,6 +227,16 @@ mod tests {
         assert_eq!(mtp_ladder_drafts(32, 3), 1);
         assert_eq!(mtp_ladder_drafts(64, 3), 1);
         assert_eq!(mtp_ladder_drafts(16, 1), 1);
+    }
+
+    /// 2026-10-03: The flag's parser refuses what the environment variable silently
+    /// replaces with the default ladder.
+    #[test]
+    fn the_flag_parser_refuses_a_malformed_or_zero_ladder() {
+        assert_eq!(parse_mtp_k_ladder("4:1, 2:2").unwrap(), [(2, 2), (4, 1)]);
+        for bad in ["", "2", "2:x", "0:2", "2:0", "2:2,,4:1"] {
+            assert!(parse_mtp_k_ladder(bad).is_err(), "{bad:?} accepted");
+        }
     }
 
     #[test]
