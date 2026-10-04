@@ -2453,6 +2453,376 @@ numerics = "reference"
 priority = 10
 cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
 
+# 2026-10-03: The dense FFN under a fixed `--activation-quantization` for the `ffn` family
+# (`ffn_act_fixed`; the serve then publishes the canonical row tiers, so no by-rows rule
+# applies). Legacy runs `DenseFfnLayer::forward_fixed` (ml/dense_ffn_fixed.rs:61-114) at every row
+# count: gate, then up, then down through `nvfp4_proj_mx` (ml/ops/w4a4_proj/fixed.rs:22-51),
+# which quantizes each projection's input and runs the MX GEMV per chunk of the widest prepared
+# entry (64 rows under a fixed format, ml/ops/w4a4_proj.rs:182-193); the SiLU product goes
+# through memory in BF16 between them. Each chunk's entry is `mx_plan`'s
+# (ml/ops/w4a4_proj/mx_plan.rs:97-127): the persistent entries for gate|up at 9..=32 rows
+# (N = 17408 has enough tiles), the activation-reuse twins for down (N = 5120 does not), and
+# `mx64_nt2` above 32 rows. The emitter checks each launch against `mx_plan` at build.
+
+[[rule]]
+id = "ffn_fixed_gate_up_1_8"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_down_1_8"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_gate_up_9_16"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_ps" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_ps" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_down_9_16"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_nt2" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [9, 16]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_gate_up_17_32"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_ps" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_ps" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_down_17_32"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_nt4" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_gate_up_33_64"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [33, 64]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_down_33_64"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [33, 64]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_gate_up_65_72"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [65, 72]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_down_65_72"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx8" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [65, 72]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_gate_up_73_80"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_ps" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_ps" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [73, 80]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_down_73_80"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx16_nt2" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [73, 80]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_gate_up_81_96"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_ps" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_ps" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [81, 96]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_down_81_96"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx32_nt4" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [81, 96]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_gate_up_97_128"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "gate_up", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [97, 128]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+[[rule]]
+id = "ffn_fixed_down_97_128"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16" },
+  { op = "linear", role = "down", weight = "nvfp4/g16", input = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+  { module = "w4a4_gemv_mx", func = "w4a4_quant_rows" },
+  { module = "w4a4_gemv_mx", func = "w4a4_gemv_mx64_nt2" },
+]
+repeat = "once"
+emitter = "w4a4_fixed"
+rows = [97, 128]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 60
+cite = "ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127"
+
+# 2026-10-03: The fixed path's SiLU product, in BF16 through memory (ml/dense_ffn_fixed.rs:94-102),
+# at every row count including the one-row decode.
+[[rule]]
+id = "ffn_fixed_silu_mul"
+pattern = [{ op = "silu_mul" }]
+kernels = [{ module = "moe_silu_mul", func = "moe_silu_mul" }]
+repeat = "once"
+emitter = "silu_mul"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { ffn_act_fixed = "declared" }
+numerics = "reference"
+priority = 7
+cite = "ml/dense_ffn_fixed.rs:94-102 (ops::silu_mul with moe_silu_mul, ml/dense_ffn_init.rs:24-26)"
+
 # 2026-09-30: The declared W4A4 FFN where `forward_prefill` serves it: a GDN layer's FFN from
 # METRALE_SSM_FFN_PREFILL_MIN_N (5) rows (ml/qwen3_ssm/trait_decode_multi_seq.rs:201-220), every
 # layer's above the 32-row FFN edge (ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:191-222). A

@@ -193,6 +193,23 @@ class and exact citation.
 | `w4a4_down_1_8` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
 | `w4a4_down_9_16` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
 | `w4a4_down_17_32` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `ffn_fixed_gate_up_1_8` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_down_1_8` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_gate_up_9_16` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_down_9_16` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_gate_up_17_32` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_down_17_32` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_gate_up_33_64` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_down_33_64` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_gate_up_65_72` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_down_65_72` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_gate_up_73_80` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_down_73_80` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_gate_up_81_96` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_down_81_96` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_gate_up_97_128` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_down_97_128` | reference | ml/dense_ffn_fixed.rs:76-111; ml/ops/w4a4_proj/fixed.rs:22-51; ml/ops/w4a4_proj/mx_plan.rs:97-127 |
+| `ffn_fixed_silu_mul` | reference | ml/dense_ffn_fixed.rs:94-102 (ops::silu_mul with moe_silu_mul, ml/dense_ffn_init.rs:24-26) |
 | `ffn_mmq16_a4_gate_up_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
 | `ffn_mmq16_a4_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
 | `ffn_mmq32_a4_gate_up_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |

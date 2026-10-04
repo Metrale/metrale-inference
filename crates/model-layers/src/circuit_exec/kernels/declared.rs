@@ -17,7 +17,7 @@ pub(super) type Look<'a> = dyn Fn(&str, &str, &dyn Fn() -> KernelHandle) -> Kern
 pub(super) fn entries(
     gpu: &dyn GpuBackend,
     look: &Look<'_>,
-) -> [(&'static str, &'static str, KernelHandle); 13] {
+) -> [(&'static str, &'static str, KernelHandle); 14] {
     [
         (
             "w8a8_act_quant",
@@ -108,6 +108,14 @@ pub(super) fn entries(
             "w4a4_gemv_mx32_ps",
             look("w4a4_gemv_mx", "w4a4_gemv_mx32_ps", &|| {
                 try_kernel(gpu, "w4a4_gemv_mx", "w4a4_gemv_mx32_ps")
+            }),
+        ),
+        // 2026-10-03: The 33..=64-row entry of a fixed activation format (`ffn_fixed_*`).
+        (
+            "w4a4_gemv_mx",
+            "w4a4_gemv_mx64_nt2",
+            look("w4a4_gemv_mx", "w4a4_gemv_mx64_nt2", &|| {
+                try_kernel(gpu, "w4a4_gemv_mx", "w4a4_gemv_mx64_nt2")
             }),
         ),
     ]

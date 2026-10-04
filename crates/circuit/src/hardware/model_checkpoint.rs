@@ -30,7 +30,7 @@ use crate::{QuantMetadata, ServePrecision, resolve_checkpoint};
 pub const KERNEL_QUANT: &str = "nvfp4";
 
 /// 2026-09-30: Where each derived setting comes from, printed in the report.
-pub const POLICY_SOURCES: [(&str, &str); 13] = [
+pub const POLICY_SOURCES: [(&str, &str); 14] = [
     (
         "row_tiers",
         "canonical for FP8 routed experts, else by_rows (ml/row_tiers.rs:64-78)",
@@ -81,6 +81,11 @@ pub const POLICY_SOURCES: [(&str, &str); 13] = [
         "gdn_verify_exact",
         "off unless --exact-verify or a fixed GDN activation format \
          (ml/qwen3_ssm/gdn_flags.rs verify_exact_enabled, 2026-10-03)",
+    ),
+    (
+        "ffn_act_fixed",
+        "off unless --activation-quantization fixes the ffn family at every row count \
+         (ml/dense_ffn_fixed.rs, 2026-10-03)",
     ),
 ];
 
@@ -211,6 +216,7 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         ("activation_quantization", "adaptive"),
         ("gdn_exact_replay", "off"),
         ("gdn_verify_exact", "off"),
+        ("ffn_act_fixed", "off"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))

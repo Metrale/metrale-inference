@@ -1152,14 +1152,20 @@ kernels = [
   "w4a4_gemv_mx::w4a4_quant_rows", "w4a4_gemv_mx::w4a4_gemv_mx8",
   "w4a4_gemv_mx::w4a4_gemv_mx16_nt2", "w4a4_gemv_mx::w4a4_gemv_mx32_nt4",
   "w4a4_gemv_mx::w4a4_gemv_mx16_ps", "w4a4_gemv_mx::w4a4_gemv_mx32_ps",
+  "w4a4_gemv_mx::w4a4_gemv_mx64_nt2",
 ]
-rows = [1, 32]
+# 2026-10-03: To 128 rows: a fixed activation format runs the ladder in 64-row chunks
+# (`ffn_fixed_*`, ml/ops/w4a4_proj/fixed.rs), its 33..=64-row entry `mx64_nt2`.
+rows = [1, 128]
 # 2026-10-02: Per-row F32 global, E4M3 group scale, E2M1 round to nearest even
 # (w4a4_gemv_mx.cu:401-460); FP32 sums, scales applied to the FP32 sum (:189, :344). With
 # `w4a4_quant_rows` in its group a projection reads BF16 and quantizes it (the downcast).
 pipeline.linear = { in = ["nvfp4/g16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."act_quant:nvfp4/g16" = { in = ["bf16"], compute = "f32", out = ["nvfp4/g16"] }
 kernel_pipeline."w4a4_gemv_mx::w4a4_quant_rows".linear = { in = ["bf16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
+# 2026-10-03: The fixed-format rules (`ffn_fixed_*`) put the `act_quant` node in the quantizer's
+# group, so the projection reads the NVFP4 edge.
+kernel_pipeline."w4a4_gemv_mx::w4a4_quant_rows"."linear after act_quant" = { in = ["nvfp4/g16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 # 2026-10-02: `act_quant`: the A4 rules' `w4a4_quant_rows` launch.
 op = [{ op = "linear", weight = ["nvfp4/g16"], activation = ["nvfp4/g16"] }, { op = "act_quant:nvfp4/g16" }]
 # 2026-10-02: The W4A4 activation quantizer's NVFP4 rows: max_m x 32768 / 2 values, / 16 scales and

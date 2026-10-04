@@ -3,7 +3,8 @@
 //! 2026-09-30: The declared-precision emitters: `w8a8_act_quant` and `w8a8_gemv` (the W8A8 arm
 //! of `w8a8_layer.rs`, which every decode path of a declared-W8A8 layer tries first), and
 //! `w4a4_act_quant` and `w4a4_gemv` (`ops::w4a4_proj::nvfp4_proj_small_m` on its W4A4 path,
-//! from `dense_ffn_decode_batch.rs` `forward_km`).
+//! from `dense_ffn_decode_batch.rs` `forward_km`); 2026-10-03: and `w4a4_fixed`, the dense FFN
+//! under a fixed activation format (`dense_ffn_fixed.rs` `forward_fixed`).
 //!
 //! Owner: model-layers circuit executor.
 //! Invariants:
@@ -308,5 +309,85 @@ impl OpEmitter for W4a4Gemv {
     }
 }
 
+/// 2026-10-03: `w4a4_fixed`: the dense FFN's projections under a fixed activation format
+/// (`DenseFfnLayer::forward_fixed`): the quantize of the BF16 input and the MX GEMV per chunk of
+/// the widest prepared entry, for down, or for gate and then up (gate rows, then up rows), each
+/// through `nvfp4_proj_mx` as legacy calls it.
+pub(crate) struct W4a4Fixed;
+
+impl OpEmitter for W4a4Fixed {
+    fn id(&self) -> &'static str {
+        "w4a4_fixed"
+    }
+
+    fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
+        cx.g.expect_ops(self.id(), &["act_quant:nvfp4/g16", "linear"])?;
+        let OpKind::Linear(role) = cx.g.node(1).op else {
+            bail!("not a projection");
+        };
+        let (inp, out) = (cx.g.input(0, 0)?, cx.g.output(1, 0)?);
+        let (m, k, y) = (rows(cx)?, width(cx, inp)?, cx.ptr(out)?);
+        let targets: Vec<(WeightSlot, DevicePtr, u32)> = match role {
+            LinearRole::GateUp => {
+                let inter = width(cx, out)? / 2;
+                let up = y.offset(m as usize * inter as usize * 2);
+                vec![
+                    (WeightSlot::FfnGate, y, inter),
+                    (WeightSlot::FfnUp, up, inter),
+                ]
+            }
+            LinearRole::Down => vec![(WeightSlot::Linear(role), y, width(cx, out)?)],
+            other => bail!(
+                "the fixed W4A4 rules run the FFN only, not {}",
+                other.name()
+            ),
+        };
+        let p = W4a4Proj::prepared(cx.gpu)
+            .ok_or_else(|| anyhow!("the W4A4 kernels are not prepared on this backend"))?;
+        let chunk = ops::w4a4_proj::max_rows(cx.gpu);
+        ensure!(chunk > 0, "the W4A4 kernels serve no rows on this backend");
+        let x = cx.ptr(inp)?;
+        let mut j = 0;
+        for (slot, y, n) in targets {
+            let w = nvfp4(cx.weight(1, slot)?, role.name())?;
+            let first = j;
+            let mut done = 0;
+            while done < m {
+                let r = (m - done).min(chunk);
+                ensure!(
+                    cx.handle(j)?.0 == p.quant_kernel().0,
+                    "kernel {j} of the plan is not the quantizer nvfp4_proj_mx launches"
+                );
+                ensure!(
+                    cx.handle(j + 1)?.0 == p.mx_kernel(r, n, k).0,
+                    "kernel {} of the plan is not the MX entry mx_plan picks for {r}x{n}x{k} \
+                     (a {m}-row launch in chunks of {chunk})",
+                    j + 1
+                );
+                (j, done) = (j + 2, done + r);
+            }
+            cx.push_bundle(
+                first,
+                j - first,
+                Box::new(move |e| {
+                    ops::w4a4_proj::nvfp4_proj_mx(e.gpu, x, &w, y, m, n, k, e.stream)
+                }),
+            )?;
+        }
+        ensure!(
+            j == cx.g.group.kernels.len(),
+            "the plan lists {} kernels; nvfp4_proj_mx launches {j} for {m} rows",
+            cx.g.group.kernels.len()
+        );
+        Ok(())
+    }
+}
+
 /// 2026-10-03: This module's emitters, for the registry in `mod.rs`.
-pub(super) static ALL: &[&dyn OpEmitter] = &[&W8a8ActQuant, &W8a8Gemv, &W4a4ActQuant, &W4a4Gemv];
+pub(super) static ALL: &[&dyn OpEmitter] = &[
+    &W8a8ActQuant,
+    &W8a8Gemv,
+    &W4a4ActQuant,
+    &W4a4Gemv,
+    &W4a4Fixed,
+];

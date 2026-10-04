@@ -63,7 +63,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }
 
 # 2026-09-30: The dense agentic recipe above served under `--weight-quantization declared` (the
 # engine default; the recipe pins `nvfp4`, so no recipe serves this yet): the checkpoint's own
@@ -93,7 +93,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }
 
 # 2026-10-03: The dense agentic recipe above served under the exact MTP verify chain
 # (`gdn_verify_exact = on`: `--exact-verify`, or a fixed GDN activation format,
@@ -126,7 +126,39 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "on" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "on", ffn_act_fixed = "off" }
+
+# 2026-10-03: The declared instance above served under `--activation-quantization declared`
+# (the setting #79 put on the FP8 35B gate recipes; no dense recipe serves it yet). A fixed
+# activation format publishes the canonical row tiers (crates/server/src/main_modules/serve_load/
+# model_setup.rs `publish_row_tiers`), turns on the exact MTP verify chain (GDN family fixed,
+# ml/qwen3_ssm/gdn_flags.rs `verify_exact_enabled`), and runs the dense FFN through
+# `forward_fixed` at every row count (`ffn_act_fixed = declared`, ml/dense_ffn_fixed.rs).
+[[instance]]
+recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared-act"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+arch = "qwen3_5"
+variant = "declared_act"
+target = "gb10/qwen3.8-27b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 5120, inter = 17408, vocab = 248320, q_heads = 24, kv_heads = 4, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 48, lin_v_dim = 128, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4] }
+verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "3x1! 2x15", "2x36", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
+
+[instance.precision]
+checkpoint_plan = "unsloth--Qwen3.8-27B-NVFP4"
+tier = "declared"
+caps = ["w8a8_decode", "fp8_lm_head_batched"]
+engine = [
+  { match = "lm_head", weight = "bf16", activation = "bf16", why = "--lm-head-dtype bf16, pinned by the recipe (the checkpoint declares an FP8 head)" },
+  { match = "mtp.lm_head", weight = "nvfp4/g16", activation = "bf16", why = "the draft head's runtime NVFP4 copy of the BF16 lm_head (crates/model-engine/src/factory/lm_head_setup.rs:116-133)" },
+  { match = "mtp.*", weight = "bf16", activation = "bf16", why = "--mtp-quantization bf16, pinned by the recipe" },
+]
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "declared", gdn_exact_replay = "off", gdn_verify_exact = "on", ffn_act_fixed = "declared" }
 
 # 2026-09-28: The MoE flagship recipe (the agentic-webserver gate's default entry,
 # kernels/gb10/qwen3.6-35b-a3b/BENCH.toml). As above, except:
@@ -145,7 +177,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off" }
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }
 
 # 2026-09-29: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, the first model built by the
 # `new-model` method (`.claude/skills/new-model/SKILL.md`). The recipe id is the planned one: no
@@ -173,4 +205,4 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }

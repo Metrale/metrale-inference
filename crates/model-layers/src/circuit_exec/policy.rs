@@ -19,6 +19,8 @@ use std::collections::BTreeMap;
 use anyhow::{Result, bail};
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_circuit::Policy;
+use metrale_config::activation_quantization::Ladder;
+use metrale_config::{ActQuantFormat, ProjFamily};
 
 use crate::layers::ops::ModelLevers;
 use crate::layers::{RowTiers, row_tiers};
@@ -39,7 +41,12 @@ pub fn kv_dtype_name(d: KvCacheDtype) -> Result<&'static str> {
 
 /// 2026-09-28: The policy of this process: `kv_cache_dtype` and `lm_head_dtype` come from the
 /// model being built, the rest from the process-wide switches.
-pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &str) -> Policy {
+/// 2026-10-03: Fails for a fixed `ffn` activation format the rules do not plan.
+pub fn live_policy(
+    levers: &ModelLevers,
+    kv_cache_dtype: &str,
+    lm_head_dtype: &str,
+) -> Result<Policy> {
     let tiers = match row_tiers() {
         RowTiers::ByRows => "by_rows",
         RowTiers::Exact => "exact",
@@ -86,11 +93,42 @@ pub fn live_policy(levers: &ModelLevers, kv_cache_dtype: &str, lm_head_dtype: &s
             VERIFY_EXACT.to_string(),
             on_off(crate::layers::qwen3_ssm::verify_exact_enabled()),
         ),
+        (
+            FFN_ACT_FIXED.to_string(),
+            ffn_act_fixed(crate::layers::activation_quantization().ladder(ProjFamily::Ffn))?
+                .to_string(),
+        ),
     ]);
-    Policy {
+    Ok(Policy {
         opt_in_levers: Default::default(),
         settings,
+    })
+}
+
+/// 2026-10-03: The policy setting of the dense FFN's fixed-activation path
+/// (`DenseFfnLayer::forward_fixed`): `off`, or the format the `ffn` family runs at every row count.
+pub const FFN_ACT_FIXED: &str = "ffn_act_fixed";
+
+/// 2026-10-03: `ffn_act_fixed` for the `ffn` family's ladder: `off` when every rung is
+/// `adaptive` (today's arms), `declared` when every rung is `declared` (the rules plan that
+/// path, `ffn_fixed_*` in FUSIONS.toml). Any other ladder, a fixed format the rules do not plan
+/// or a ladder fixed at some row counts only, is refused rather than planned as another path.
+pub fn ffn_act_fixed(ladder: &Ladder) -> Result<&'static str> {
+    let formats: Vec<ActQuantFormat> = ladder.rungs().iter().map(|r| r.format).collect();
+    if formats.iter().all(|f| *f == ActQuantFormat::Adaptive) {
+        return Ok("off");
     }
+    if formats.iter().all(|f| *f == ActQuantFormat::Declared) {
+        return Ok("declared");
+    }
+    bail!(
+        "the circuit plans the ffn family adaptive or declared at every row count, not {}",
+        formats
+            .iter()
+            .map(|f| f.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 /// 2026-09-28: Environment switches of the multi-sequence decode and (2026-09-29) MTP verify
@@ -177,3 +215,7 @@ pub fn unmodelled_switches(levers: &ModelLevers) -> Vec<String> {
     }
     out
 }
+
+#[cfg(test)]
+#[path = "policy_tests.rs"]
+mod tests;

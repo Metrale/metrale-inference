@@ -217,16 +217,31 @@ fn a_contiguous_run_refuses_out_of_place_slots() {
 /// 2026-10-01: The boot sizes the workspace over `sizing_tables` (`CircuitExec::build`): every
 /// table must parse with exactly its row count and fuse for the dense instance, at every width
 /// the serve admits. A run of one sequence left unmarked failed the boot at 5 rows.
+/// 2026-10-03: For each dense weight tier and for `--activation-quantization declared` (the
+/// canonical tiers and the fixed FFN path): a declared serve's boot was refused at 33 rows
+/// when no fixed-path rule went above 32.
 #[test]
 fn every_sizing_table_fuses_at_its_row_count() {
-    let inst = super::sources::instance(RECIPE).unwrap();
-    let loaded = metrale_circuit::load(&inst, super::sources::sources(&inst).unwrap()).unwrap();
-    let avail = metrale_circuit::AvailableKernels::all_named_by(&loaded.rules);
     let tables = super::verify_batch::sizing_tables(128);
     assert_eq!(tables.len(), 125);
-    for (i, t) in tables.iter().enumerate() {
-        assert_eq!(t.rows(), i as u64 + 4, "`{t}`");
-        super::verify_batch::arena_bytes(&loaded.circuit, &loaded.rules, &avail, &inst.policy, t)
-            .unwrap_or_else(|e| panic!("`{t}`: {e:#}"));
+    for recipe in [
+        RECIPE,
+        "qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared",
+        "qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared-act",
+    ] {
+        let inst = super::sources::instance(recipe).unwrap();
+        let loaded = metrale_circuit::load(&inst, super::sources::sources(&inst).unwrap()).unwrap();
+        let avail = metrale_circuit::AvailableKernels::all_named_by(&loaded.rules);
+        for (i, t) in tables.iter().enumerate() {
+            assert_eq!(t.rows(), i as u64 + 4, "`{t}`");
+            super::verify_batch::arena_bytes(
+                &loaded.circuit,
+                &loaded.rules,
+                &avail,
+                &inst.policy,
+                t,
+            )
+            .unwrap_or_else(|e| panic!("{recipe} `{t}`: {e:#}"));
+        }
     }
 }

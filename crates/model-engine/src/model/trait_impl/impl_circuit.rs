@@ -215,7 +215,7 @@ impl TransformerModel {
             config_json,
             levers: &self.levers,
             instance,
-            policy: policy::live_policy(&self.levers, policy::kv_dtype_name(kv)?, lm_head_dtype),
+            policy: policy::live_policy(&self.levers, policy::kv_dtype_name(kv)?, lm_head_dtype)?,
             layers,
             head,
             fixed,
