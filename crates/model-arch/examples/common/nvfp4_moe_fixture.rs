@@ -100,7 +100,7 @@ impl Mat {
         w.weight = upload(g, &packed)?;
         w.weight_scale = upload(g, &scale)?;
         w.weight_scale_2 = s2;
-        let mut wl = w.clone();
+        let mut wl = w;
         wl.weight = upload(g, &packed)?;
         wl.weight_scale = upload(g, &scale)?;
         Ok(Self {
