@@ -57,7 +57,7 @@ const CODE_TASK: &str = "Ignore the reference text above. Task: write a complete
 /// excludes this file from every non-concurrency gate's invalidation set but
 /// does not exclude `stats.rs`, so a prompt added there would invalidate every
 /// gate.
-const ESSAY_TASK: &str = " Using the text above only as a starting point, write a long, \
+pub(crate) const ESSAY_TASK: &str = " Using the text above only as a starting point, write a long, \
     richly detailed essay that keeps introducing new specifics, examples and vocabulary. \
     Never repeat a sentence or paraphrase one you have already written. \
     Do not summarise and do not stop early.";

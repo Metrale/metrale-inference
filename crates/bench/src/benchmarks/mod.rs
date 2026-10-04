@@ -18,6 +18,7 @@ pub mod mlperf_agentic;
 pub mod quick_speed;
 pub mod scheduler_equivalence;
 pub mod serve_matrix;
+pub mod spec_cost;
 pub mod ssm_poison;
 pub mod stats;
 pub mod transcript;

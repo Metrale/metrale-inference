@@ -39,6 +39,9 @@ pub(crate) struct Engine {
     pub auto_max_batch_size: Option<usize>,
     /// 2026-10-01: The memory budget and ledger reader `GET /memory` reports.
     pub device_budget: crate::main_modules::memory_probe::DeviceBudget,
+    /// 2026-10-04: sha256 over the drafter's stored weights, `None` for a checkpoint with no
+    /// `mtp.*` tensors. `--spec-cost-model measured`'s drafter key.
+    pub drafter_weights_sha256: Option<String>,
 }
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
@@ -247,6 +250,14 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         .then_some(built.max_batch_size);
     args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(built.max_batch_size);
     let model = built.model;
+    let drafter_weights_sha256 = built.drafter_weights_sha256;
+    // 2026-10-04: Always logged, not only under --spec-cost-model measured: it is the only way
+    // to learn the value `met benchmark spec-cost-table --drafter-weights-sha256` and a future
+    // boot's `--spec-cost-calibration` must agree on.
+    match &drafter_weights_sha256 {
+        Some(h) => tracing::info!("MTP drafter weights sha256: {h} (--spec-cost-model's key)"),
+        None => tracing::info!("No MTP drafter weights (checkpoint has no mtp.* tensors)"),
+    }
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
     model.set_forward(&serve_phases::forward_select(
@@ -291,6 +302,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         forward,
         auto_max_batch_size,
         device_budget,
+        drafter_weights_sha256,
     }))
 }
 

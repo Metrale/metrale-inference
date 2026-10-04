@@ -81,6 +81,62 @@ impl WeightStore {
         self.weights.keys().map(|s| s.as_str())
     }
 
+    /// 2026-10-04: sha256 over the drafter's stored (pre-quantization, as-loaded) bytes: every
+    /// `mtp.*` tensor, plus the embedding and the shared lm_head if this checkpoint has them —
+    /// the `--spec-cost-model measured` drafter key. `None` when this checkpoint has no `mtp.*`
+    /// tensors (no drafter to key). Call before any `free_matching` of these names, or the hash
+    /// silently covers fewer tensors than the drafter actually has.
+    pub fn drafter_weights_sha256(&self, gpu: &dyn GpuBackend) -> Result<Option<String>> {
+        const LM_HEAD_KEYS: [&str; 3] = [
+            "lm_head.weight",
+            "language_model.lm_head.weight",
+            "model.lm_head.weight",
+        ];
+        const EMBED_KEYS: [&str; 3] = [
+            "model.embed_tokens.weight",
+            "language_model.model.embed_tokens.weight",
+            "model.language_model.embed_tokens.weight",
+        ];
+        let mut names: Vec<&str> = self.names().filter(|n| n.starts_with("mtp.")).collect();
+        if names.is_empty() {
+            return Ok(None);
+        }
+        names.extend(
+            LM_HEAD_KEYS
+                .into_iter()
+                .chain(EMBED_KEYS)
+                .filter(|&k| self.contains(k)),
+        );
+        names.sort_unstable();
+        names.dedup();
+        self.hash_named(gpu, &names).map(Some)
+    }
+
+    /// 2026-10-04: sha256 over `names`' device bytes, in the given order, each tensor preceded
+    /// by its name so two tensors cannot alias by concatenation. 64 MiB host chunks, the same
+    /// size `alloc_digest` uses, never one host buffer per tensor.
+    fn hash_named(&self, gpu: &dyn GpuBackend, names: &[&str]) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        const CHUNK: usize = 64 << 20;
+        let mut buf = vec![0u8; CHUNK];
+        let mut h = Sha256::new();
+        for &name in names {
+            let t = self.get(name)?;
+            h.update(name.as_bytes());
+            h.update([0u8]);
+            let bytes = t.byte_size();
+            let mut off = 0usize;
+            while off < bytes {
+                let n = CHUNK.min(bytes - off);
+                gpu.copy_d2h(DevicePtr(t.ptr.0 + off as u64), &mut buf[..n])
+                    .map_err(|e| e.context(format!("hashing weight {name}")))?;
+                h.update(&buf[..n]);
+                off += n;
+            }
+        }
+        Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    }
+
     /// Free and forget every tensor whose name matches `pred`. Returns
     /// `(tensors freed, bytes freed)`.
     ///

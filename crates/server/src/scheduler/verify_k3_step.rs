@@ -229,6 +229,12 @@ pub fn step_verify_k3(
                 tracing::error!("run_mtp_propose_multi: {e:#}");
             }
         }
+        // 2026-10-04: The serial arms time the propose too, as the batched step does, so the
+        // phase histogram (`--telemetry`) covers every draft path.
+        sched
+            .io
+            .tel
+            .mark(crate::scheduler::mtp_timing::Phase::Propose, t_propose);
         let propose_us = sched
             .io
             .clock
@@ -284,6 +290,12 @@ pub fn step_verify_k3(
                 tracing::error!("run_mtp_propose_multi: {e:#}");
             }
         }
+        // 2026-10-04: The serial arms time the propose too, as the batched step does, so the
+        // phase histogram (`--telemetry`) covers every draft path.
+        sched
+            .io
+            .tel
+            .mark(crate::scheduler::mtp_timing::Phase::Propose, t_propose);
         let propose_us = sched
             .io
             .clock
@@ -337,6 +349,12 @@ pub fn step_verify_k3(
                 tracing::error!("run_mtp_propose_multi: {e:#}");
             }
         }
+        // 2026-10-04: The serial arms time the propose too, as the batched step does, so the
+        // phase histogram (`--telemetry`) covers every draft path.
+        sched
+            .io
+            .tel
+            .mark(crate::scheduler::mtp_timing::Phase::Propose, t_propose);
         let propose_us = sched
             .io
             .clock

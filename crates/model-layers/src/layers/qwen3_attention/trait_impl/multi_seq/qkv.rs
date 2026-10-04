@@ -74,6 +74,10 @@ impl Qwen3AttentionLayer {
         )? {
             // 2026-09-28: The declared-W8A8 arm (`w8a8_decode_arm.rs`), gated deinterleave
             // included.
+        } else if self.fixed_nvfp4_qkv_serves(n) {
+            // 2026-10-01: A fixed `nvfp4` attention format: one W4A4 mx projection per weight
+            // over all n rows (`wide_verify_gemm` takes it), unfused.
+            self.ms_qkv_batchn(c)?;
         } else if n == 3
             && self.q_weight.as_ref().and_then(|w| w.as_nvfp4()).is_some()
             && self.k_weight.as_ref().and_then(|w| w.as_nvfp4()).is_some()
@@ -339,6 +343,21 @@ impl Qwen3AttentionLayer {
         // and more rows in the wide TC mode or, up to the W4A4 edge, when the
         // checkpoint declares FP4 activations for `w_base` (`w4a16_gemv_tiers.rs`);
         // otherwise it is zero and the GEMMs below run.
+        // 2026-10-01: Under a fixed `nvfp4` attention format, the row-invariant W4A4 mx path on the
+        // base weight.
+        if ops::w4a4_proj::fixed_nvfp4_proj(
+            gpu,
+            metrale_config::ProjFamily::Attn,
+            w_base,
+            input,
+            output,
+            m,
+            n,
+            k,
+            stream,
+        )? {
+            return Ok(());
+        }
         let batchm = self.w4a16_batchm.kernel_for(m, w_base);
         if batchm.0 != 0 {
             return if same_input_as_previous {

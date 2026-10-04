@@ -111,6 +111,11 @@ impl Qwen3SsmLayer {
         } = *args;
         let eps = ctx.config.rms_norm_eps as f32;
 
+        // 2026-10-01: On an FP16 h-state, the FP16 twins
+        // (`trait_decode_batched_conv_gdn_exact_f16.rs`).
+        if super::ssm_h_fp16_enabled() {
+            return self.decode_batched_conv_gdn_exact_f16(ssm_state, ctx, args);
+        }
         // 2026-10-01: The same chain in three launches where its twins are linked
         // (`trait_decode_batched_conv_gdn_exact_chain.rs`).
         if self.decode_batched_conv_gdn_exact_chain(ssm_state, ctx, args)? {

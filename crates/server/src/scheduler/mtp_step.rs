@@ -60,6 +60,27 @@ pub fn step_mtp(
     // the resolver's count.
     let ladder_nd = if dflash_verify_raw_argmax {
         num_drafts
+    } else if let Some(sc) = &sched.levers.spec_cost {
+        // 2026-10-04: `--spec-cost-model measured`'s propose-depth decision (tokens per joule,
+        // `--spec-cost-slack`-constrained), in place of the static ladder. `propose_depth`
+        // returns `0` in two distinct cases that look alike but are not: above `mtp_max_seqs`
+        // (the scheduler plain-decodes there regardless of what this picks — honoured as-is),
+        // or within the cap when the table's own energy search prefers no draft at all (not
+        // wired to suspend MTP mid-run from an energy preference alone — floored to 1, same
+        // policy as the static ladder; pass `--num-drafts 0` to turn drafting off instead).
+        // Telling them apart needs the same cap check `propose_depth` made internally.
+        let depth = metrale_speculative::spec_cost::plan::propose_depth(
+            &sc.table,
+            &sc.calibration,
+            active.len(),
+            sc.slack,
+            sched.levers.mtp_max_seqs,
+        );
+        if active.len() > sched.levers.mtp_max_seqs {
+            0
+        } else {
+            depth.clamp(1, num_drafts)
+        }
     } else {
         sched.rung.drafts_for(active.len(), num_drafts)
     };

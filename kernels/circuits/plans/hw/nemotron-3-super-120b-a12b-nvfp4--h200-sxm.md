@@ -71,10 +71,10 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 |---|---|---:|---:|---|---|
 | multi_seq n=16 | mamba | 17.701 | 45.0% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
 | multi_seq n=16 | moe | 10.665 | 27.1% | moe_latent.add, moe_latent.combine, moe_latent.eact_quant, moe_latent.experts_act, moe_latent.experts_down, moe_latent.experts_up, moe_latent.latent_in, moe_latent.latent_in_quant, moe_latent.latent_out, moe_latent.latent_out_quant, moe_latent.norm, moe_latent.routed, moe_latent.router, moe_latent.sact_quant, moe_latent.shared_act, moe_latent.shared_down, moe_latent.shared_down_quant, moe_latent.shared_up, moe_latent.shared_up_quant, moe_latent.top_k, moe_latent.xl_quant | legacy crates/model-arch/src/nemotron_moe.rs:278 |
-| multi_seq n=16 | full_attention | 0.944 | 2.4% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
+| multi_seq n=16 | full_attention | 0.944 | 2.4% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119 |
 | multi_seq n=128 | mamba | 149.871 | 47.9% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
 | multi_seq n=128 | moe | 129.355 | 41.3% | moe_latent.add, moe_latent.combine, moe_latent.eact_quant, moe_latent.experts_act, moe_latent.experts_down, moe_latent.experts_up, moe_latent.latent_in, moe_latent.latent_in_quant, moe_latent.latent_out, moe_latent.latent_out_quant, moe_latent.norm, moe_latent.routed, moe_latent.router, moe_latent.sact_quant, moe_latent.shared_act, moe_latent.shared_down, moe_latent.shared_down_quant, moe_latent.shared_up, moe_latent.shared_up_quant, moe_latent.top_k, moe_latent.xl_quant | legacy crates/model-arch/src/nemotron_moe.rs:278 |
-| multi_seq n=128 | full_attention | 7.990 | 2.6% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:115 |
+| multi_seq n=128 | full_attention | 7.990 | 2.6% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119 |
 
 ## Fused plan: decode n=1
 

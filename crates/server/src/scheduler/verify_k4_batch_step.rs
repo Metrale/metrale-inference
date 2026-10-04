@@ -70,12 +70,13 @@ pub(super) fn step_verify_k4_batched(
     // 2026-09-25: each sequence contributes the rows
     // `[last_token, d0, .., d_{ks[i]-2}]`, flat and seq-major.
     let mut drafts_per_seq: Vec<Vec<u32>> = Vec::with_capacity(n);
+    let mut conf_per_seq: Vec<Vec<f32>> = Vec::with_capacity(n);
     let mut tokens: Vec<u32> = Vec::with_capacity(r_total);
     for (i, a) in batch.iter_mut().enumerate() {
         let d = std::mem::take(&mut a.pending_drafts);
         // 2026-09-25: the confidences describe the drafts just taken, so they
-        // are cleared with them and D-Cut never ranks a stale vector.
-        a.pending_draft_conf.clear();
+        // are taken with them and D-Cut never ranks a stale vector.
+        conf_per_seq.push(std::mem::take(&mut a.pending_draft_conf));
         debug_assert!(
             d.len() + 1 == ks[i],
             "batchable classification requires exactly {} drafts",
@@ -147,6 +148,16 @@ pub(super) fn step_verify_k4_batched(
         // 2026-10-02: a prompt-lookup copy is not the drafter's work: it stays
         // out of the drafter's accept statistics, which feed the adaptive rung.
         let drafter_drafts = copy_in_flight(a) == 0;
+        // 2026-10-04: draft outcomes by confidence, for the spec-cost acceptance calibration;
+        // only when the confidences describe exactly these drafts, and excluding prompt-lookup
+        // copies for the same reason as the accept statistics above.
+        if drafter_drafts && conf_per_seq[i].len() == k_drafts {
+            for (lp, ok) in
+                crate::scheduler::mtp_dcut::reached_outcomes(&conf_per_seq[i], num_accepted)
+            {
+                sched.io.tel.spec_draft_confidence(lp, ok);
+            }
+        }
         // 2026-09-25: per-position draft match, scored for every position
         // whether or not the accept chain stopped earlier. The counters have
         // three positions, so only 3-draft sequences record them.

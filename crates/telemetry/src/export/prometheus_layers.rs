@@ -162,6 +162,25 @@ pub(super) fn render_spec_and_requests(out: &mut String, t: &Telemetry, snap: &T
             }
         }
     }
+    if !t.spec_confidence.is_empty() {
+        head(
+            out,
+            "metrale_spec_draft_confidence_total",
+            "counter",
+            "Drafts a verify step reached, by drafter top-1 log-probability bucket (upper edge \
+             `le`) and verdict",
+        );
+        for (b, edge) in crate::spec_confidence::EDGES.iter().enumerate() {
+            for accepted in [false, true] {
+                let _ = writeln!(
+                    out,
+                    "metrale_spec_draft_confidence_total{{le=\"{edge}\",accepted=\"{}\"}} {}",
+                    u8::from(accepted),
+                    t.spec_confidence.count(b, accepted)
+                );
+            }
+        }
+    }
     let r = &t.requests;
     one(
         out,

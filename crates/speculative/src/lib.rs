@@ -15,4 +15,5 @@ pub mod prompt_lookup;
 pub mod shared_lookup;
 pub mod snapshot;
 pub mod spec_capacity;
+pub mod spec_cost;
 pub mod spec_stats;
