@@ -31,6 +31,8 @@ pub(crate) mod doctor;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;
 pub(crate) mod manifest;
+pub(crate) mod ml_utils;
+pub(crate) mod ml_utils_io;
 mod serve_args;
 pub(crate) mod sync_recipes;
 mod validate;
@@ -95,6 +97,10 @@ pub enum Command {
     /// The circuits, precision tables and fusion rules are the ones this binary was built
     /// with (`kernels/circuits/`, `kernels/<hw>/common/FUSIONS.toml`).
     Circuit(CircuitArgs),
+    /// Model utilities: inspect a checkpoint from its metadata, write a mock (rehearsal)
+    /// checkpoint that keeps the architecture with fewer layers and synthetic weights, and
+    /// extrapolate full-model numbers from mock measurements.
+    MlUtils(ml_utils::MlUtilsArgs),
 }
 
 /// `met circuit`: inspect an architecture circuit.
