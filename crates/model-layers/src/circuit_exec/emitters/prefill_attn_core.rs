@@ -32,7 +32,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use super::super::super::bindings::WeightSlot;
 use super::super::super::compile::{Cx, OpEmitter};
 use super::super::{attn_facts, dense, dim, nvfp4};
-use super::attn_route::{self, Attn, Proj, check_route_levers, expected};
+use super::attn_route::{self, Attn, Proj, expected};
 use crate::layers::ops;
 
 /// 2026-10-03: The member index of each node of the group's pattern.
@@ -126,7 +126,6 @@ impl OpEmitter for PrefillAttention {
             cx.mode.name()
         );
         attn_route::check_levers(proj)?;
-        check_route_levers()?;
         let fa = ops::AttnFa128Kernels::resolve(cx.gpu);
         ensure!(
             attn == Attn::PagedSmall

@@ -22,7 +22,8 @@
 //!   kernels ([`push_bundle`], `Cx::push_bundle`), so the plan's launch count is kept and the
 //!   real launches are the legacy call's, in its order.
 //! - A route switch this module does not model, set in the environment, refuses the build
-//!   ([`refuse_switches`]); nothing here picks a kernel the plan did not name.
+//!   (`policy::PREFILL_ENV_SWITCHES`, checked once when the prefill programs are built); nothing
+//!   here picks a kernel the plan did not name.
 
 use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::LinearRole;
@@ -48,83 +49,6 @@ pub(super) static ALL: &[&dyn OpEmitter] = &[
 /// 2026-10-03: Rows above which a GatedDeltaNet prefill synchronizes at the layer's entry and
 /// after its input norm (`qwen3_ssm/trait_prefill.rs:63-68, 108-112`).
 const SYNC_ABOVE_ROWS: u32 = 4096;
-
-/// 2026-10-03: Environment switches that move a GatedDeltaNet prefill launch off the route the
-/// rules encode: `(variable, value that moves it, or None for any value, what it does)`. The
-/// executor's lever table is the single classification once it covers prefill; until then this
-/// module refuses them at build.
-const SWITCHES: &[(&str, Option<&str>, &str)] = &[
-    (
-        "METRALE_GDN_BF16_WEIGHTS",
-        Some("1"),
-        "BF16 GDN projections on cuBLASLt",
-    ),
-    (
-        "METRALE_CUTLASS_NVFP4_GEMM",
-        Some("1"),
-        "CUTLASS NVFP4 projections",
-    ),
-    (
-        "METRALE_CUTLASS_NVFP4_QKVZ",
-        Some("1"),
-        "the CUTLASS NVFP4 qkvz projection",
-    ),
-    (
-        "METRALE_CUTLASS_NVFP4_SSM_OUT",
-        Some("1"),
-        "the CUTLASS NVFP4 out_proj",
-    ),
-    (
-        "METRALE_FP8_LDMAB",
-        Some("0"),
-        "the FP8 GEMM without the ldmab kernel",
-    ),
-    (
-        "METRALE_CONV1D_TP",
-        Some("0"),
-        "the sequential prefill conv",
-    ),
-    (
-        "METRALE_NO_GDN_FLA",
-        Some("1"),
-        "the recurrence without the chunked FLA arm",
-    ),
-    ("METRALE_GDN_PIPE", Some("0"), "the vfused FLA state spine"),
-    (
-        "METRALE_GDN_VTILE",
-        None,
-        "the vtile FLA state spine, or none",
-    ),
-    ("METRALE_GDN_TMA", Some("1"), "the TMA FLA state spine"),
-    (
-        "METRALE_NO_GDN_FWD_O_MMA8",
-        None,
-        "the FLA output kernel without its 8-warp twin",
-    ),
-];
-
-/// 2026-10-03: Refuse the build when a switch of [`SWITCHES`] named in `vars` is set.
-pub(super) fn refuse_switches(vars: &[&str]) -> Result<()> {
-    match switch_refusal(vars, |v| std::env::var(v).ok()) {
-        Some(why) => bail!("{why}"),
-        None => Ok(()),
-    }
-}
-
-/// 2026-10-03: The first switch of [`SWITCHES`] named in `vars` whose value under `value_of`
-/// moves the route, as a refusal; `None` when none does. Pure, so the table is testable without
-/// the process environment.
-fn switch_refusal(vars: &[&str], value_of: impl Fn(&str) -> Option<String>) -> Option<String> {
-    SWITCHES
-        .iter()
-        .filter(|(v, _, _)| vars.contains(v))
-        .find_map(|(var, moves, what)| {
-            let value = value_of(var)?;
-            (moves.is_none_or(|m| m == value)).then(|| {
-                format!("{var}={value} selects {what}, which the prefill rules do not model")
-            })
-        })
-}
 
 /// 2026-10-03: Push `run` as one launch issuing kernel `first` and the `extra` kernels after it
 /// that the same `ops::*` call issues (`Cx::push_bundle`).
@@ -255,13 +179,6 @@ impl OpEmitter for PrefillGdnFp8Proj {
         cx.g.expect_ops(self.id(), &["linear"])?;
         super::expect_kernel(cx, 0, "bf16_to_fp8")?;
         super::expect_kernel(cx, 1, "fp8_fp8_gemm_ldmab")?;
-        refuse_switches(&[
-            "METRALE_GDN_BF16_WEIGHTS",
-            "METRALE_CUTLASS_NVFP4_GEMM",
-            "METRALE_CUTLASS_NVFP4_QKVZ",
-            "METRALE_CUTLASS_NVFP4_SSM_OUT",
-            "METRALE_FP8_LDMAB",
-        ])?;
         let MixerFacts::Gdn(facts) = cx.layer(0)?.mixer else {
             bail!("`{}` reads a GatedDeltaNet projection", self.id());
         };
@@ -339,7 +256,3 @@ impl GdnDims {
         self.key_dim() * 2 + self.value_dim()
     }
 }
-
-#[cfg(test)]
-#[path = "prefill_gdn_tests.rs"]
-mod prefill_gdn_tests;

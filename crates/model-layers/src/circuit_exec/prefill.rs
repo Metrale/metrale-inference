@@ -68,6 +68,10 @@ pub struct PrefillBoot<'a> {
 impl PrefillPrograms {
     /// 2026-10-03: Compile every (mode, bucket, arm).
     pub fn build(b: &PrefillBoot<'_>, inputs: &Inputs<'_>) -> Result<Self> {
+        // 2026-10-04: The environment switches the prefill rules do not model, all at once
+        // (`policy::PREFILL_ENV_SWITCHES`).
+        let refused = super::policy::prefill_switch_refusals(|v| std::env::var(v).ok());
+        ensure!(refused.is_empty(), "{}", refused.join("; "));
         let mut programs = Vec::new();
         for mode in Mode::PREFILL {
             for bucket in bucket_ladder(b.rules, b.runtime, mode, b.max_tokens) {

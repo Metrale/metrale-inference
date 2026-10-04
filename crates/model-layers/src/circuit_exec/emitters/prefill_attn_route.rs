@@ -93,11 +93,6 @@ pub(super) fn check_levers(proj: Proj) -> Result<()> {
         "a METRALE_CUTLASS_NVFP4_* lever routes the attention prefill projections to CUTLASS; \
          the circuit does not model that"
     );
-    ensure!(
-        std::env::var_os("METRALE_NO_TGEMM_PIPELINE3").is_none(),
-        "METRALE_NO_TGEMM_PIPELINE3 takes `w4a16_gemm_t` for the projection tile; the plan runs \
-         `w4a16_gemm_t_p3`"
-    );
     if proj != Proj::P3 {
         ensure!(
             d.w4a16_variant < 2,
@@ -191,23 +186,4 @@ pub(super) fn expected(proj: Proj, rope: (&str, &str), attn: Attn) -> Vec<(Strin
         )
         .chain(p())
         .collect()
-}
-
-/// 2026-10-03: Refuse the legacy levers that leave the modelled route (`cache_skip.rs:204`,
-/// `paged.rs:120-123`, `paged_qkv.rs:30-35`, `paged_oproj.rs:40-45`,
-/// `prefill_attn_fa128.rs:36-40`).
-pub(super) fn check_route_levers() -> Result<()> {
-    for var in ["METRALE_NO_ATTN_FA128", "METRALE_ATTN_W4A4"] {
-        ensure!(
-            std::env::var_os(var).is_none(),
-            "{var} takes an attention prefill arm the circuit does not model"
-        );
-    }
-    for var in ["METRALE_FUSED_KV", "METRALE_ATTN_PREFILL_FUSED_QROPE"] {
-        ensure!(
-            std::env::var(var).as_deref() != Ok("1"),
-            "{var}=1 takes a fused attention prefill arm the circuit does not model"
-        );
-    }
-    Ok(())
 }

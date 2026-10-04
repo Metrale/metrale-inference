@@ -24,7 +24,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use super::super::super::bindings::WeightSlot;
 use super::super::super::compile::{Cx, OpEmitter};
 use super::super::{dense, expect_kernel};
-use super::{GdnDims, layer_of, present, push_bundle, refuse_switches};
+use super::{GdnDims, layer_of, present, push_bundle};
 use crate::layers::ops;
 
 /// 2026-10-03: The group's ops, in pattern order.
@@ -85,7 +85,6 @@ impl OpEmitter for PrefillGdnCore {
 
         // 2026-10-03: The conv over `[Q | K | V]` of each `qkvz_size`-wide row, its window in the
         // sequence's conv state (`trait_prefill_recur.rs:397-412`).
-        refuse_switches(&["METRALE_CONV1D_TP"])?;
         expect_kernel(cx, 1, "causal_conv1d_update_prefill_tp")?;
         expect_kernel(cx, 2, "causal_conv1d_prefill_state")?;
         let conv_w = dense(cx.weight(2, WeightSlot::GdnConv1d)?, "conv1d")?;
@@ -268,16 +267,9 @@ struct Recurrence {
 
 /// 2026-10-03: The chunked FLA arm, `ops::gdn_prefill_fla`'s three launches: `recompute_wu`,
 /// the pipe state spine, and the 8-warp `chunk_fwd_o` twin (`trait_prefill_recur.rs:157-221`).
-/// Every other spine and twin is refused: their handles go in as 0, and the switches and the
-/// target default that would pick them refuse the build.
+/// Every other spine and twin is refused: their handles go in as 0, and the switches
+/// (`policy::PREFILL_ENV_SWITCHES`) and the target default that would pick them refuse the build.
 fn emit_fla(cx: &mut Cx<'_>, r: Recurrence, scratch: DevicePtr) -> Result<()> {
-    refuse_switches(&[
-        "METRALE_NO_GDN_FLA",
-        "METRALE_GDN_PIPE",
-        "METRALE_GDN_VTILE",
-        "METRALE_GDN_TMA",
-        "METRALE_NO_GDN_FWD_O_MMA8",
-    ])?;
     ensure!(
         !cfg!(metrale_scale),
         "a metrale_scale build runs the split4 recurrence, which no prefill rule names"

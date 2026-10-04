@@ -181,6 +181,128 @@ pub const MULTI_SEQ_ENV_SWITCHES: [(&str, &str); 16] = [
     ("METRALE_W4A4_PROJ_AUDIT", "ops/w4a4_proj.rs"),
 ];
 
+/// 2026-10-04: Environment switches that move a prefill launch off the route the prefill rules
+/// encode: `(variable, the value that moves it or None for any value, what it selects, the file
+/// that reads it)`. Moved here from the prefill emitters so one table classifies them; the
+/// switches a dispatch struct parses (`GemmDispatch`, `ModelLevers`, the target defaults) are
+/// checked through that struct where it is read.
+pub const PREFILL_ENV_SWITCHES: [(&str, Option<&str>, &str, &str); 16] = [
+    (
+        "METRALE_GDN_BF16_WEIGHTS",
+        Some("1"),
+        "BF16 GDN projections on cuBLASLt",
+        "qwen3_ssm/trait_prefill_proj.rs",
+    ),
+    (
+        "METRALE_CUTLASS_NVFP4_GEMM",
+        Some("1"),
+        "CUTLASS NVFP4 projections",
+        "ops/dispatch_config.rs",
+    ),
+    (
+        "METRALE_CUTLASS_NVFP4_QKVZ",
+        Some("1"),
+        "the CUTLASS NVFP4 qkvz projection",
+        "ops/dispatch_config.rs",
+    ),
+    (
+        "METRALE_CUTLASS_NVFP4_SSM_OUT",
+        Some("1"),
+        "the CUTLASS NVFP4 out_proj",
+        "ops/dispatch_config.rs",
+    ),
+    (
+        "METRALE_FP8_LDMAB",
+        Some("0"),
+        "the FP8 GEMM without the ldmab kernel",
+        "ops/gemm_fp8_prefill.rs",
+    ),
+    (
+        "METRALE_CONV1D_TP",
+        Some("0"),
+        "the sequential prefill conv",
+        "ops/ssm_mamba.rs",
+    ),
+    (
+        "METRALE_NO_GDN_FLA",
+        Some("1"),
+        "the recurrence without the chunked FLA arm",
+        "qwen3_ssm/trait_prefill_recur.rs",
+    ),
+    (
+        "METRALE_GDN_PIPE",
+        Some("0"),
+        "the vfused FLA state spine",
+        "ops/ssm_gdn_tc_route.rs",
+    ),
+    (
+        "METRALE_GDN_VTILE",
+        None,
+        "the vtile FLA state spine, or none",
+        "ops/ssm_gdn_tc_route.rs",
+    ),
+    (
+        "METRALE_GDN_TMA",
+        Some("1"),
+        "the TMA FLA state spine",
+        "ops/ssm_gdn_a3.rs",
+    ),
+    (
+        "METRALE_NO_GDN_FWD_O_MMA8",
+        None,
+        "the FLA output kernel without its 8-warp twin",
+        "ops/ssm_gdn_hopper_prefill.rs",
+    ),
+    (
+        "METRALE_NO_TGEMM_PIPELINE3",
+        None,
+        "`w4a16_gemm_t` for the attention projection tile",
+        "layers/mod.rs",
+    ),
+    (
+        "METRALE_NO_ATTN_FA128",
+        None,
+        "an attention prefill arm without the FA128 kernel",
+        "ops/prefill_attn_fa128.rs",
+    ),
+    (
+        "METRALE_ATTN_W4A4",
+        None,
+        "the W4A4 attention prefill projections",
+        "qwen3_attention/prefill/paged_qkv.rs, paged_oproj.rs",
+    ),
+    (
+        "METRALE_FUSED_KV",
+        Some("1"),
+        "the fused K|V attention prefill arm",
+        "qwen3_attention/prefill/paged.rs",
+    ),
+    (
+        "METRALE_ATTN_PREFILL_FUSED_QROPE",
+        Some("1"),
+        "the fused Q-RoPE attention prefill arm",
+        "qwen3_attention/prefill/cache_skip.rs",
+    ),
+];
+
+/// 2026-10-04: Every switch of [`PREFILL_ENV_SWITCHES`] whose value under `value_of` moves the
+/// route, as a refusal; empty when none does. Pure, so the table is testable without the process
+/// environment.
+pub fn prefill_switch_refusals(value_of: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    PREFILL_ENV_SWITCHES
+        .iter()
+        .filter_map(|(var, moves, what, reader)| {
+            let value = value_of(var)?;
+            moves.is_none_or(|m| m == value).then(|| {
+                format!(
+                    "{var}={value} (read in {reader}) selects {what}, which the prefill rules \
+                     do not model"
+                )
+            })
+        })
+        .collect()
+}
+
 /// 2026-10-03: The policy setting of the exact MTP verify chain, `on` or `off`.
 pub const VERIFY_EXACT: &str = "gdn_verify_exact";
 
