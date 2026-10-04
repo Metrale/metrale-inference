@@ -41,9 +41,18 @@ pub struct TableKey {
 /// 2026-10-04: One reason a table key does not match the serve's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyMismatch {
-    Schema { table: u32, serve: u32 },
-    BoxClass { table: String, serve: String },
-    Recipe { table: String, serve: String },
+    Schema {
+        table: u32,
+        serve: u32,
+    },
+    BoxClass {
+        table: String,
+        serve: String,
+    },
+    Recipe {
+        table: String,
+        serve: String,
+    },
     /// 2026-10-04: A mode whose digest differs, or is present on one side only.
     PlanDigest {
         mode: String,
@@ -178,7 +187,10 @@ impl CostTable {
                 return Err(format!("spec-cost table: bad cell {c:?}"));
             }
             if cells.insert((c.n, c.k), *c).is_some() {
-                return Err(format!("spec-cost table: duplicate cell n={} k={}", c.n, c.k));
+                return Err(format!(
+                    "spec-cost table: duplicate cell n={} k={}",
+                    c.n, c.k
+                ));
             }
         }
         let widths: Vec<usize> = {
@@ -186,7 +198,11 @@ impl CostTable {
             w.dedup();
             w
         };
-        let max_k = cells.keys().map(|&(_, k)| k).max().ok_or("spec-cost table: no cells")?;
+        let max_k = cells
+            .keys()
+            .map(|&(_, k)| k)
+            .max()
+            .ok_or("spec-cost table: no cells")?;
         for &n in &widths {
             for k in 0..=max_k {
                 if !cells.contains_key(&(n, k)) {
@@ -200,6 +216,38 @@ impl CostTable {
             max_k,
             cells,
         })
+    }
+
+    /// 2026-10-04: The table file text for `key` and `cells`, in the format [`Self::parse`]
+    /// reads; validated by parsing it back, so a grid that would be refused at serve time is
+    /// refused when written.
+    pub fn render(key: &TableKey, cells: &[Cell]) -> Result<String, String> {
+        use std::fmt::Write as _;
+        let mut s = String::new();
+        let _ = writeln!(s, "[key]\nschema = {}", key.schema);
+        let _ = writeln!(
+            s,
+            "box_class = {:?}\nrecipe = {:?}",
+            key.box_class, key.recipe
+        );
+        let _ = writeln!(s, "\n[key.plan_digests]");
+        for (mode, digest) in &key.plan_digests {
+            let _ = writeln!(s, "{mode} = {digest:?}");
+        }
+        let mut sorted = cells.to_vec();
+        sorted.sort_by_key(|c| (c.n, c.k));
+        for c in &sorted {
+            let _ = write!(
+                s,
+                "\n[[cells]]\nn = {}\nk = {}\nverify_ms = {:?}\nverify_j = {:?}\ndraft_ms = {:?}\ndraft_j = {:?}\n",
+                c.n, c.k, c.verify_ms, c.verify_j, c.draft_ms, c.draft_j
+            );
+        }
+        let parsed = Self::parse(&s)?;
+        if parsed.key != *key {
+            return Err("spec-cost table: the rendered key does not read back".into());
+        }
+        Ok(s)
     }
 
     /// 2026-10-04: Deepest draft count the table measured.

@@ -23,7 +23,11 @@ fn grid() -> String {
     let mut s = String::new();
     for n in [1usize, 4] {
         for k in 0..=2usize {
-            let (dm, dj) = if k == 0 { (0.0, 0.0) } else { (k as f64, 0.1 * k as f64) };
+            let (dm, dj) = if k == 0 {
+                (0.0, 0.0)
+            } else {
+                (k as f64, 0.1 * k as f64)
+            };
             s += &format!(
                 "[[cells]]\nn = {n}\nk = {k}\nverify_ms = {}\nverify_j = {}\ndraft_ms = {dm}\ndraft_j = {dj}\n",
                 10.0 * n as f64 + k as f64,
@@ -88,8 +92,16 @@ fn bad_costs_are_refused() {
 
 #[test]
 fn a_duplicate_cell_or_wrong_schema_is_refused() {
-    let dup = format!("{}{}", grid(), "[[cells]]\nn = 1\nk = 0\nverify_ms = 1\nverify_j = 1\ndraft_ms = 0\ndraft_j = 0\n");
-    assert!(CostTable::parse(&table_text(&dup)).unwrap_err().contains("duplicate"));
+    let dup = format!(
+        "{}{}",
+        grid(),
+        "[[cells]]\nn = 1\nk = 0\nverify_ms = 1\nverify_j = 1\ndraft_ms = 0\ndraft_j = 0\n"
+    );
+    assert!(
+        CostTable::parse(&table_text(&dup))
+            .unwrap_err()
+            .contains("duplicate")
+    );
     let v2 = table_text(&grid()).replace("schema = 1", "schema = 2");
     assert!(CostTable::parse(&v2).unwrap_err().contains("schema"));
 }
@@ -180,4 +192,29 @@ fn malformed_calibrations_are_refused() {
     ] {
         assert!(calib(e, p, pr).is_err(), "{e} {p} {pr}");
     }
+}
+
+// 2026-10-04: Writing a table.
+
+#[test]
+fn a_rendered_table_reads_back_cell_for_cell() {
+    let t = CostTable::parse(&table_text(&grid())).unwrap();
+    let cells: Vec<Cell> = [1usize, 4]
+        .iter()
+        .flat_map(|&n| (0..=2).map(move |k| (n, k)))
+        .map(|(n, k)| t.cell(n, k).unwrap())
+        .collect();
+    let text = CostTable::render(&t.key, &cells).unwrap();
+    assert_eq!(CostTable::parse(&text).unwrap(), t);
+}
+
+#[test]
+fn rendering_an_incomplete_grid_is_refused() {
+    let t = CostTable::parse(&table_text(&grid())).unwrap();
+    let cells = vec![t.cell(1, 0).unwrap(), t.cell(1, 2).unwrap()];
+    assert!(
+        CostTable::render(&t.key, &cells)
+            .unwrap_err()
+            .contains("lacks depth")
+    );
 }
