@@ -2,7 +2,7 @@
 
 //! 2026-09-25: Goldens and the round-trip property for [`super::quantize_to_nvfp4`].
 //!
-//! Owner: model-arch weight loader (GLM-5.3).
+//! Owner: metrale-core.
 //! Invariants: every expected code and value is written out from the `E2M1` and `E4M3`
 //! bit layouts, not read from the runtime tables the code under test uses.
 

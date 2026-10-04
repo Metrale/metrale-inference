@@ -2,11 +2,13 @@
 
 //! 2026-09-25: `f32` to packed NVFP4 on the host, the inverse of [`super::nvfp4_dequant`].
 //!
-//! Owner: model-arch weight loader (GLM-5.3).
+//! 2026-10-03: Moved here from the GLM-5.3 loader, which re-exports it; `metrale-ml-utils`
+//! quantizes synthetic weights with it.
 //!
-//! `bind_expert` binds a routed-expert projection stored as packed U8 directly. One stored as
-//! BF16 is quantised here, once, at load, into the same `Nvfp4Proj` triple, because
-//! `Glm5NextExpertWeights` holds only `Nvfp4Proj`.
+//! Owner: metrale-core.
+//!
+//! The GLM-5.3 loader's `bind_expert` binds a routed-expert projection stored as packed U8
+//! directly; one stored as BF16 is quantised here, once, at load.
 //!
 //! ```text
 //! weight_scale_2 = amax(tensor) / (6 * 448)            per tensor, f32
@@ -16,14 +18,14 @@
 //!
 //! Invariants:
 //! - `6` (the largest E2M1 magnitude) and `448` (the largest finite E4M3) are read from
-//!   `NVFP4_E2M1_LUT` and `e4m3_lut`, the tables `nvfp4_dequant` decodes with.
+//!   `NVFP4_E2M1_LUT` and `FP8_E4M3_LUT`, the tables `nvfp4_dequant` decodes with.
 //! - Codes are chosen against the decoded block scale, not the requested one.
 //! - Rounding is to nearest, ties to the even code index; consecutive E2M1 and E4M3 codes
 //!   differ in the mantissa's low bit, so this is round-to-nearest-even.
 //! - Even flat index is the low nibble, as in the dequantiser.
 
+use super::{FP8_E4M3_LUT, NVFP4_E2M1_LUT, NVFP4_GROUP_SIZE};
 use anyhow::{Result, bail};
-use metrale_cache::kv_dequant::{NVFP4_E2M1_LUT, NVFP4_GROUP_SIZE, e4m3_lut};
 
 /// 2026-09-25: `E4M3` codes `0x00..=0x7E`: every finite non-negative value,
 /// ascending. `0x7F` is NaN and `0x80..` are the negatives, neither of which a
@@ -38,12 +40,12 @@ fn e2m1_max() -> f32 {
 
 /// 2026-09-25: The largest finite `E4M3` value (448.0).
 fn e4m3_max() -> f32 {
-    e4m3_lut()[E4M3_FINITE_CODES - 1]
+    FP8_E4M3_LUT[E4M3_FINITE_CODES - 1]
 }
 
 /// 2026-09-25: One quantised projection, in the three pieces `Nvfp4Proj` is built from.
 #[derive(Debug)]
-pub(super) struct Nvfp4Blob {
+pub struct Nvfp4Blob {
     /// 2026-09-25: `[rows, cols / 2]` U8, two `e2m1` codes per byte.
     pub packed: Vec<u8>,
     /// 2026-09-25: `[rows, cols / 16]` `E4M3` block scales, one byte each.
@@ -56,7 +58,7 @@ pub(super) struct Nvfp4Blob {
 ///
 /// Errors on a length that is not `rows * cols`, on `cols` that is zero or not a
 /// multiple of 16, and on any non-finite value.
-pub(super) fn quantize_to_nvfp4(
+pub fn quantize_to_nvfp4(
     what: &str,
     values: &[f32],
     rows: usize,
@@ -124,7 +126,7 @@ pub(super) fn quantize_to_nvfp4(
 /// `packed` must be zeroed: codes are OR-ed in.
 fn quantize_rows(values: &[f32], packed: &mut [u8], scales: &mut [u8], cols: usize, scale_2: f32) {
     let groups_per_row = cols / NVFP4_GROUP_SIZE;
-    let e4m3 = e4m3_lut();
+    let e4m3 = &FP8_E4M3_LUT;
     for (r, row) in values.chunks(cols).enumerate() {
         for g in 0..groups_per_row {
             let base = g * NVFP4_GROUP_SIZE;
@@ -159,9 +161,10 @@ fn encode_e2m1_rne(v: f32) -> u8 {
     sign | nearest_even_code(mag, v.abs()) as u8
 }
 
-/// 2026-09-25: Nearest `E4M3` code to a non-negative `v`, ties to even.
-fn encode_e4m3_rne(v: f32) -> u8 {
-    nearest_even_code(&e4m3_lut()[..E4M3_FINITE_CODES], v) as u8
+/// 2026-09-25: Nearest `E4M3` code to a non-negative `v`, ties to even. 2026-10-03: public, so the
+/// signed FP8 weight encoder ([`super::f32_to_fp8_e4m3_rne`]) rounds by the same rule.
+pub fn encode_e4m3_rne(v: f32) -> u8 {
+    nearest_even_code(&FP8_E4M3_LUT[..E4M3_FINITE_CODES], v) as u8
 }
 
 /// 2026-09-25: Index of the entry of an ascending ladder nearest to `v`, ties

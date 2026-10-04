@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Packed NVFP4 to `f32` on the host, for the U8 tensors that
-//! [`super::LayerSource::f32`] reaches (with their `.weight_scale` and
-//! `.weight_scale_2` siblings), such as a quantised dense MLP that
-//! [`crate::glm5next_mlp::build::build_dense_mlp`] reads as `f32`.
+//! 2026-09-25: Packed NVFP4 to `f32` on the host. 2026-10-03: moved here from the GLM-5.3 loader
+//! (`model-arch/src/weight_loader/glm5_next_load/`), which re-exports it, so the loader and
+//! `metrale-ml-utils` share one host codec.
 //!
 //! `value = E2M1[nibble] * e4m3(block_scale) * weight_scale_2`, multiplied in
 //! that order, as `kernels/gb10/common/moe_w4a16_grouped_gemm.cu` does. The
-//! codebook, the block width and the scale decode are the cache crate's
-//! [`NVFP4_E2M1_LUT`], [`NVFP4_GROUP_SIZE`] and [`e4m3_lut`]. Within a byte,
-//! the even column is the low nibble and the odd column the high nibble.
+//! codebook and the block width are [`NVFP4_E2M1_LUT`] and [`NVFP4_GROUP_SIZE`]; a scale byte
+//! decodes through [`FP8_E4M3_LUT`]. Within a byte, the even column is the low nibble and the
+//! odd column the high nibble.
 //!
-//! Owner: model-arch weight loader.
+//! Owner: metrale-core.
 //! Invariants: none beyond the types.
 
+use super::{FP8_E4M3_LUT, NVFP4_E2M1_LUT, NVFP4_GROUP_SIZE};
 use anyhow::{Result, bail};
-use metrale_cache::kv_dequant::{NVFP4_E2M1_LUT, NVFP4_GROUP_SIZE, e4m3_lut};
 
 /// 2026-09-25: Packed NVFP4 `[rows, cols/2]`, E4M3 block scales
 /// `[rows, cols/16]` and one global `f32` to row-major `f32 [rows, cols]`.
@@ -23,7 +22,7 @@ use metrale_cache::kv_dequant::{NVFP4_E2M1_LUT, NVFP4_GROUP_SIZE, e4m3_lut};
 /// `packed_shape` is the stored shape, so the logical column count is
 /// `2 * packed_shape[1]`. A packed or scale length that does not match it is
 /// an error.
-pub(super) fn dequant_nvfp4_to_f32(
+pub fn dequant_nvfp4_to_f32(
     what: &str,
     packed: &[u8],
     packed_shape: &[usize],
@@ -54,7 +53,7 @@ pub(super) fn dequant_nvfp4_to_f32(
             rows * groups_per_row
         );
     }
-    let e4m3 = e4m3_lut();
+    let e4m3 = &FP8_E4M3_LUT;
     let mut out = vec![0.0f32; rows * cols];
     for r in 0..rows {
         let prow = &packed[r * packed_cols..(r + 1) * packed_cols];
