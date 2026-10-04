@@ -452,6 +452,9 @@ pub(super) fn build_on(
         .collect();
     edit(&mut layers);
     let mut head = HeadBinding {
+        embed: DenseWeight {
+            weight: ptr(0x8f00_0000),
+        },
         final_norm: DenseWeight {
             weight: ptr(0x9000_0000),
         },

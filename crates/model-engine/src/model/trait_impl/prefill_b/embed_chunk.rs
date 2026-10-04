@@ -39,7 +39,6 @@ impl TransformerModel {
         stream: u64,
     ) -> Result<()> {
         let h = self.config.hidden_size;
-        let elem_bytes = 2usize;
 
         // 2026-09-25: Token embedding: `chunk_len` rows of `hidden_size` at `hidden_dst`.
         {
@@ -135,30 +134,42 @@ impl TransformerModel {
             }
         }
 
-        // 2026-09-25: Vision splice: each image-pad or video-pad position in the chunk gets
-        // the next merged row of the encoder's packed `buf_out` (filled by
-        // `prepare_vision_embed`), starting at this request's `vision_row_base`.
+        self.prefill_vision_splice(
+            &tokens[chunk_start..chunk_start + chunk_len],
+            hidden_dst,
+            stream,
+        )
+    }
+
+    /// 2026-09-25: Vision splice: each image-pad or video-pad position in the chunk gets
+    /// the next merged row of the encoder's packed `buf_out` (filled by
+    /// `prepare_vision_embed`), starting at this request's `vision_row_base`. 2026-10-04: Split
+    /// out unchanged so the circuit's prefill pass splices after its own embedding
+    /// (`impl_circuit_prefill.rs`).
+    pub(in crate::model) fn prefill_vision_splice(
+        &self,
+        chunk_tokens: &[u32],
+        hidden_dst: metrale_gpu_runtime::gpu::DevicePtr,
+        stream: u64,
+    ) -> Result<()> {
+        let (h, elem_bytes) = (self.config.hidden_size, 2usize);
+        let pending = *self.vision_embed_patches.lock();
+        if pending > 0
+            && let Some(ve) = &self.vision_encoder
         {
-            let pending = *self.vision_embed_patches.lock();
-            if pending > 0
-                && let Some(ve) = &self.vision_encoder
-            {
-                let chunk_tokens = &tokens[chunk_start..chunk_start + chunk_len];
-                let (image_pad, video_pad) = self.vision_pad_ids();
-                let row_base = *self.vision_row_base.lock();
-                let mut img_idx = 0usize;
-                for (i, &tok) in chunk_tokens.iter().enumerate() {
-                    if tok == image_pad || tok == video_pad {
-                        let src = ve.out_row(row_base + img_idx);
-                        let dst = hidden_dst.offset(i * h * elem_bytes);
-                        self.gpu
-                            .copy_d2d_async(src, dst, ve.out_hidden_size() * 2, stream)?;
-                        img_idx += 1;
-                    }
+            let (image_pad, video_pad) = self.vision_pad_ids();
+            let row_base = *self.vision_row_base.lock();
+            let mut img_idx = 0usize;
+            for (i, &tok) in chunk_tokens.iter().enumerate() {
+                if tok == image_pad || tok == video_pad {
+                    let src = ve.out_row(row_base + img_idx);
+                    let dst = hidden_dst.offset(i * h * elem_bytes);
+                    self.gpu
+                        .copy_d2d_async(src, dst, ve.out_hidden_size() * 2, stream)?;
+                    img_idx += 1;
                 }
             }
         }
-
         Ok(())
     }
 }

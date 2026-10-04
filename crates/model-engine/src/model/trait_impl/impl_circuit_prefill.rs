@@ -31,12 +31,16 @@ pub(super) fn prefill_mode(start: u32) -> Mode {
 
 impl TransformerModel {
     /// 2026-10-03: Run the layers of a prefill pass of `seq` on the circuit; `false` when the
-    /// circuit runs no prefill (the caller runs the legacy layers).
+    /// circuit runs no prefill (the caller runs the legacy layers). 2026-10-04: The pass's
+    /// embedding first (the program's embed segment from the staged ids, then `splice`'s vision
+    /// rows when the pass covers a whole chunk), over the rows the driver embedded before it
+    /// decided the pass runs here; at the flip the driver's embedding goes, this stays.
     pub(super) fn circuit_prefill_layers(
         &self,
         seq: &SequenceState,
         step: PrefillStep,
         exact_replay: bool,
+        splice: Option<&[u32]>,
         stream: u64,
     ) -> Result<bool> {
         let guard = self.circuit.read();
@@ -45,16 +49,19 @@ impl TransformerModel {
         };
         let p = prefill.select(prefill_mode(step.start), step.tokens as u64, exact_replay)?;
         let gdn = gdn_states(self.layers.len(), &[&seq.layer_states])?;
-        p.program.run_segments(
-            |s| matches!(s, SegmentOf::Layer(_)),
-            &StepEnv {
-                gpu: self.gpu.as_ref(),
-                stream,
-                gdn: &gdn,
-                max_blocks_per_seq: step.meta()?.max_blocks_per_seq,
-                prefill: Some(step),
-            },
-        )?;
+        let env = StepEnv {
+            gpu: self.gpu.as_ref(),
+            stream,
+            gdn: &gdn,
+            max_blocks_per_seq: step.meta()?.max_blocks_per_seq,
+            prefill: Some(step),
+        };
+        p.program.run_segments(|s| s == SegmentOf::Embed, &env)?;
+        if let Some(chunk) = splice {
+            self.prefill_vision_splice(chunk, self.buffers.hidden_states(), stream)?;
+        }
+        p.program
+            .run_segments(|s| matches!(s, SegmentOf::Layer(_)), &env)?;
         Ok(true)
     }
 
@@ -75,6 +82,7 @@ impl TransformerModel {
             tokens,
             start: 0,
             kv_write_floor: 0,
+            ids_row0: 0,
             meta: None,
         };
         p.program.run_segments(

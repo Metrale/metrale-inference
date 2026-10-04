@@ -218,7 +218,7 @@ class and exact citation.
 | `ffn_mmq64_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
 | `ffn_mmq_pipe_a4_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
 | `ffn_mmq_pipe_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183 |
-| `prefill_embed_host` | reference | me/prefill_b/embed_chunk.rs:44-130; me/prefill_a.rs:272; mm/impl_ngram.rs:27-62 |
+| `prefill_embed` | reference | me/prefill_b/embed_chunk.rs:72-81; me/prefill_b/proc_range.rs:83-92,129-138; me/prefill_a.rs:272-277; mm/impl_ngram.rs:52-61 |
 | `prefill_ffn_mmq16_gate_up` | reference | ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183 |
 | `prefill_ffn_mmq16_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:73-98,317-328,391-417; ml/ops/nvfp4_mmq.rs:158-183 |
 | `prefill_ffn_mmq32_gate_up` | reference | ml/dense_ffn_prefill.rs:141-142; ml/dense_ffn_prefill_nvfp4.rs:73-98,248-258; ml/ops/nvfp4_mmq.rs:158-183 |

@@ -14,10 +14,13 @@
 //! - `prefill_lm_head`: the BF16 head on that one row into the logits buffer
 //!   (`impl_a3_lm_head.rs` `lm_head`).
 //!
-//! The embedding and the sampling of a prefill pass stay on the host driver: the driver embeds
-//! the pass's tokens before the program (the H2D uploads, `batched_embed`, the embedding overlay,
-//! the scale and the vision splices of `prefill_b/embed_chunk.rs`), and the scheduler samples the
-//! returned logits; their groups launch nothing (`embed_copy`, `host_sampling`).
+//! - `prefill_embed` (2026-10-04): the pass's token embedding gathered from the staged ids.
+//!
+//! The ids' upload, the vision splices and the sampling of a prefill pass stay on the host
+//! driver: the driver stages the chunk's ids before the program and splices vision rows after
+//! its embedding segment (`impl_circuit_prefill.rs`), and the scheduler samples the returned
+//! logits (`host_sampling`, which launches nothing). A model with an n-gram embedding, an
+//! embedding scale or an embedding overlay is refused (`impl_circuit.rs` `circuit_head`).
 //!
 //! Owner: model-layers circuit executor.
 //! Invariants:
@@ -362,8 +365,41 @@ impl OpEmitter for PrefillLmHead {
     }
 }
 
+/// 2026-10-04: `prefill_embed`: the pass's token embedding, one `batched_embed` gather of `T`
+/// rows from the ids the driver staged in the arena's `token_ids` (from row
+/// `PrefillStep::ids_row0`) into the residual stream (`prefill_b/embed_chunk.rs`,
+/// `prefill_b/proc_range.rs`, `impl_ngram.rs` `embed_tokens_fused`).
+pub(crate) struct PrefillEmbed;
+
+impl OpEmitter for PrefillEmbed {
+    fn id(&self) -> &'static str {
+        "prefill_embed"
+    }
+
+    fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
+        cx.g.expect_ops(self.id(), &["embed"])?;
+        expect_kernel(cx, 0, "batched_embed")?;
+        let y = cx.ptr(cx.g.output(0, 0)?)?;
+        ensure!(
+            y == cx.fixed.hidden,
+            "the prefill embedding writes the residual stream"
+        );
+        let (ids, k) = (cx.arena()?.token_ids(), cx.handle(0)?);
+        let (table, h) = (cx.head.embed.weight, dim(cx, "hidden")?);
+        cx.push(
+            0,
+            Box::new(move |e| {
+                let s = e.prefill()?;
+                let row0 = ids.offset(s.ids_row0 as usize * 4);
+                ops::batched_embed(e.gpu, k, row0, table, y, s.tokens, h, e.stream)
+            }),
+        )
+    }
+}
+
 /// 2026-10-03: This module's emitters, for the registry in `mod.rs`.
 pub(super) static ALL: &[&dyn OpEmitter] = &[
+    &PrefillEmbed,
     &PrefillFfnMmq,
     &PrefillResidualAdd,
     &PrefillFinalNorm,

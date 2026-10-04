@@ -404,9 +404,14 @@ impl TransformerModel {
                     tokens: proc_count as u32,
                     start: seq_len_start as u32,
                     kv_write_floor: layer_kv_write_start as u32,
+                    // 2026-10-04: The ids staged above are the processed tokens themselves.
+                    ids_row0: 0,
                     meta: Some(attn_metadata),
                 },
                 marconi_skip,
+                // 2026-10-04: A single pass splices no vision rows (vision prompts take the
+                // chunked path, `prefill_b/embed_chunk.rs`).
+                None,
                 stream,
             )?;
         let legacy_layers: &[_] = if circuit_ran { &[] } else { &self.layers };

@@ -144,6 +144,7 @@ fn a_binding_the_plan_does_not_describe_is_refused() {
         .unwrap()
         .circuit;
     let head = HeadBinding {
+        embed: DenseWeight { weight: ptr(3) },
         final_norm: DenseWeight { weight: ptr(1) },
         lm_head: dense(2),
         unmodelled: Vec::new(),

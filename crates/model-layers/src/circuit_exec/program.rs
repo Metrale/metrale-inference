@@ -53,6 +53,10 @@ pub struct PrefillStep {
     /// 2026-10-03: Rows below this are not written to the KV cache (the shared prefix-cache
     /// blocks a restore recomputes over).
     pub kv_write_floor: u32,
+    /// 2026-10-04: The row of the arena's staged token ids (`BufferArena::token_ids`) that holds
+    /// the pass's first token: the driver stages the chunk's ids, and a pass that skips a cached
+    /// prefix processes only its tail.
+    pub ids_row0: u32,
     /// 2026-10-03: The pass's attention metadata: positions and slots, and on a paged pass the
     /// block table and sequence length. `None` for the head's steps, which read none.
     pub meta: Option<AttnMetadataDev>,

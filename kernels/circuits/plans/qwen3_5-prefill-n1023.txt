@@ -4,10 +4,10 @@
 # target: gb10/qwen3.8-27b/nvfp4
 # settings: activation_quantization=adaptive decode_split_silu=on ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
-digest: 798929cbbff5f6fec79b6b72d01dd83211f8b083c5d4882418eb46bed3ff11f4
-groups: 484  launches: 1250  edges: 528 fused, 548 materialized
+digest: 3682036431b86f7a4e266c64d7963b19dd5fdb091d01fc4593f9217c1cb9c6ec
+groups: 484  launches: 1251  edges: 528 fused, 548 materialized
 == embed
-g0000 embed [embed] (host) reference rule=prefill_embed_host writes={h:bf16}
+g0000 embed [embed] embed_from_argmax::batched_embed reference rule=prefill_embed writes={h:bf16} compute=memory
   embed: - -> [gather bf16] -> bf16
 == layer 0 (linear_attention)
 g0001 l0.gdn [input_norm] norm::rms_norm_residual reference rule=prefill_input_norm_residual writes={xn:bf16} compute=memory
@@ -1625,10 +1625,10 @@ g0483 head [argmax] (host) reference rule=prefill_argmax_host writes={token:i32}
 # target: gb10/qwen3.8-27b/nvfp4
 # settings: activation_quantization=adaptive decode_split_silu=on ffn_act_fixed=off gdn_exact_replay=on gdn_verify_exact=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
-digest: 72d0212d64cf29d9e944980270327952b699133a06cfe7b682beed4db8ed3a99
-groups: 484  launches: 1154  edges: 528 fused, 548 materialized
+digest: 4b206e73b0e34c982c3df0dc96ea1439674e7d1137e8cd23f4a7662c0168b487
+groups: 484  launches: 1155  edges: 528 fused, 548 materialized
 == embed
-g0000 embed [embed] (host) reference rule=prefill_embed_host writes={h:bf16}
+g0000 embed [embed] embed_from_argmax::batched_embed reference rule=prefill_embed writes={h:bf16} compute=memory
   embed: - -> [gather bf16] -> bf16
 == layer 0 (linear_attention)
 g0001 l0.gdn [input_norm] norm::rms_norm_residual reference rule=prefill_input_norm_residual writes={xn:bf16} compute=memory

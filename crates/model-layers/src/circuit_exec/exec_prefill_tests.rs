@@ -10,8 +10,9 @@
 
 use metrale_circuit::{AvailableKernels, Mode};
 use metrale_gpu_runtime::buffers::BufferArena;
-use metrale_gpu_runtime::gpu::KernelHandle;
+use metrale_gpu_runtime::gpu::mock::MockArg;
 use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 
 use super::bindings::{CircuitLayer, HeadBinding, MixerFacts};
 use super::compile::Inputs;
@@ -30,6 +31,8 @@ struct Built {
     gpu: MockGpuBackend,
     programs: PrefillPrograms,
     layers: Vec<CircuitLayer>,
+    /// 2026-10-04: The arena's staged token ids.
+    token_ids: DevicePtr,
 }
 
 /// 2026-10-03: The served config of the dense checkpoint the instance names (its fixture), so
@@ -57,6 +60,9 @@ fn build() -> Built {
         })
         .collect();
     let head = HeadBinding {
+        embed: DenseWeight {
+            weight: ptr(0x8f00_0000),
+        },
         final_norm: DenseWeight {
             weight: ptr(0x9000_0000),
         },
@@ -96,6 +102,7 @@ fn build() -> Built {
         gpu,
         programs,
         layers,
+        token_ids: arena.token_ids(),
     }
 }
 
@@ -161,6 +168,7 @@ fn a_pass_launches_exactly_the_kernels_its_plan_counts() {
                 tokens: t as u32,
                 start: if mode == Mode::Prefill { 0 } else { 64 },
                 kv_write_floor: 0,
+                ids_row0: 0,
                 meta: Some(fixed(0).meta),
             };
             p.program
@@ -186,6 +194,44 @@ fn a_pass_launches_exactly_the_kernels_its_plan_counts() {
                 .map(|l| l.covers)
                 .sum();
             assert_eq!(launched, want, "{mode:?} {t}");
+        }
+    }
+}
+
+// 2026-10-04: The embed segment gathers the pass's rows from the staged ids at `ids_row0` into
+// the stream, with the embedding table. Mutation: ignoring `ids_row0` embeds a cached prefix's
+// tokens over the tail's rows; another table or output fails the pointer checks.
+#[test]
+fn the_embed_segment_gathers_the_pass_rows_from_the_staged_ids() {
+    let b = build();
+    for mode in Mode::PREFILL {
+        let p = b.programs.select(mode, 17, false).unwrap();
+        let before = b.gpu.launches_snapshot().len();
+        let step = PrefillStep {
+            tokens: 17,
+            start: if mode == Mode::Prefill { 0 } else { 64 },
+            kv_write_floor: 0,
+            ids_row0: 5,
+            meta: Some(fixed(0).meta),
+        };
+        p.program
+            .run_segments(
+                |s| s == SegmentOf::Embed,
+                &StepEnv {
+                    gpu: &b.gpu,
+                    stream: 7,
+                    gdn: &[],
+                    max_blocks_per_seq: 9,
+                    prefill: Some(step),
+                },
+            )
+            .unwrap();
+        let l = &b.gpu.launches_snapshot()[before..];
+        assert_eq!(l.len(), 1, "{mode:?}");
+        assert_eq!(l[0].grid, [17, 1, 1]);
+        let want = [b.token_ids.offset(5 * 4), ptr(0x8f00_0000), fixed(0).hidden];
+        for w in want {
+            assert!(l[0].args.contains(&MockArg::Buffer(w)), "{mode:?}: {w:?}");
         }
     }
 }

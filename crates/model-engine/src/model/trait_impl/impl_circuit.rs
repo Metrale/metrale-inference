@@ -96,6 +96,9 @@ impl TransformerModel {
                 "logit softcapping",
             ),
             (self.overlays.is_some(), "token overlays"),
+            // 2026-10-04: The prefill embedding is a plain gather (`prefill_embed`).
+            (self.ngram_embed.is_some(), "an n-gram embedding"),
+            (self.embed_scale_kernel.0 != 0, "an embedding scale"),
             (
                 self.config.final_norm_identity,
                 "a checkpoint without a final norm",
@@ -106,6 +109,7 @@ impl TransformerModel {
         .map(|(_, what)| what.to_string())
         .collect();
         let head = HeadBinding {
+            embed: self.embed_tokens,
             final_norm: self.final_norm,
             lm_head: BoundWeight::Dense(self.lm_head_weight),
             unmodelled,

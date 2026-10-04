@@ -247,6 +247,9 @@ pub struct DraftRows {
 /// 2026-09-28: The model's own weights the head block reads, filled by the model.
 #[derive(Debug, Clone)]
 pub struct HeadBinding {
+    /// 2026-10-04: The token embedding table (the prologue's binding), which a prefill pass
+    /// gathers from (`emitters/prefill_ffn.rs` `PrefillEmbed`).
+    pub embed: DenseWeight,
     /// 2026-09-28: The final RMSNorm.
     pub final_norm: DenseWeight,
     /// 2026-09-28: The vocabulary projection.

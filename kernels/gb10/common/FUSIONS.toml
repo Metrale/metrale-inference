@@ -3532,21 +3532,21 @@ cite = "ml/qwen3_attention/trait_impl/prefill_inner.rs:302-314; k/rms_norm.cu:37
 
 # ---- prefill: dense FFN, embedding and head -----------------------------------------------------
 
-# 2026-10-03: The embedding of a prefill pass stays on the host driver, which uploads the pass's
-# token ids and embeds them before the program runs (`batched_embed`, the embedding overlay and
-# scale, the vision splices: prefill_b/embed_chunk.rs, prefill_a.rs); the group launches nothing
-# and its output must be the stream it writes.
+# 2026-10-04: The embedding of a prefill pass: one `batched_embed` gather of the pass's rows from
+# the ids the driver staged in the arena's token_ids (a pass over a cached chunk's tail starts at
+# the tail's row) into the stream. The ids' upload and the vision splices stay on the driver; the
+# embedding overlay and scale and an n-gram embedding are refused at boot (unmodelled).
 [[rule]]
-id = "prefill_embed_host"
+id = "prefill_embed"
 pattern = [{ op = "embed" }]
-kernels = []
+kernels = [{ module = "embed_from_argmax", func = "batched_embed" }]
 repeat = "once"
-emitter = "embed_copy"
+emitter = "prefill_embed"
 rows = [1, 1048576]
 modes = ["prefill", "prefill_chunk"]
 numerics = "reference"
 priority = 10
-cite = "me/prefill_b/embed_chunk.rs:44-130; me/prefill_a.rs:272; mm/impl_ngram.rs:27-62"
+cite = "me/prefill_b/embed_chunk.rs:72-81; me/prefill_b/proc_range.rs:83-92,129-138; me/prefill_a.rs:272-277; mm/impl_ngram.rs:52-61"
 
 # 2026-10-03: The prefill FFN's gate and up at 1-16 rows: the legacy ladder's
 # metrale_nvfp4_mmq16_nc into expert_gate_out / expert_up_out, without the weight's global scale.

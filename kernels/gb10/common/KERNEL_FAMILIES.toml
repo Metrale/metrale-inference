@@ -1815,6 +1815,22 @@ values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/causal_conv1d.cu"]
 
+# 2026-10-04: The token embedding of a prefill pass: one block per row gathers that token's BF16
+# row of the table (embed_from_argmax.cu `batched_embed`).
+[[family]]
+id = "embed_gather"
+description = "BF16 token embedding gather, one block per row (prefill)"
+compute = "memory"
+kernels = ["embed_from_argmax::batched_embed"]
+rows = [1, 65536]
+modes = ["prefill", "prefill_chunk"]
+pipeline.embed = { in = [], gather = "bf16", out = ["bf16"] }
+op = [{ op = "embed" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/embed_from_argmax.cu"]
+
 # 2026-10-03: The L2 norm of the GDN Q and K heads over a prefill pass, in place on BF16 rows.
 [[family]]
 id = "l2_norm"

@@ -300,6 +300,7 @@ impl TransformerModel {
 
                 // 2026-09-25: Forward through all layers.
                 self.prefill_b_forward_layers(
+                    tokens,
                     seq,
                     &mut kv_cache,
                     chunk_start,

@@ -17,8 +17,16 @@ use crate::layers::{try_kernel, try_target_kernel};
 pub(super) fn entries(
     gpu: &dyn GpuBackend,
     look: &Look<'_>,
-) -> [(&'static str, &'static str, KernelHandle); 14] {
+) -> [(&'static str, &'static str, KernelHandle); 15] {
     [
+        // 2026-10-04: The token embedding gather (`prefill_embed`).
+        (
+            "embed_from_argmax",
+            "batched_embed",
+            look("embed_from_argmax", "batched_embed", &|| {
+                try_kernel(gpu, "embed_from_argmax", "batched_embed")
+            }),
+        ),
         (
             "attn_prefill_fa128",
             "attn_prefill_fa128",

@@ -20,6 +20,7 @@ use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext};
 impl TransformerModel {
     pub(super) fn prefill_b_forward_layers(
         &self,
+        tokens: &[u32],
         seq: &mut SequenceState,
         kv_cache: &mut PagedKvCache,
         chunk_start: usize,
@@ -171,9 +172,16 @@ impl TransformerModel {
                     tokens: proc_count as u32,
                     start: effective_seq_len_start as u32,
                     kv_write_floor: layer_kv_write_start as u32,
+                    // 2026-10-04: The chunk's ids are staged from `chunk_start`; a pass that
+                    // skips a cached prefix starts at its tail (`proc_range.rs`).
+                    ids_row0: (effective_seq_len_start - chunk_start) as u32,
                     meta: Some(attn_metadata),
                 },
                 marconi_skip,
+                // 2026-10-04: The vision splice of a whole chunk (`embed_chunk.rs`); a pass over
+                // a cached chunk's tail re-embeds without one, as `proc_range.rs` does.
+                (effective_seq_len_start == chunk_start)
+                    .then(|| &tokens[chunk_start..chunk_start + chunk_len]),
                 stream,
             )?;
         let legacy_layers: &[_] = if circuit_ran { &[] } else { &self.layers };
