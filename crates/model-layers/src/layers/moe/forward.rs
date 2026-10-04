@@ -57,6 +57,7 @@ impl MoeLayer {
             self.forward_prefill(input, 1, ctx, stream)?;
             return Ok(ctx.buffers.moe_output());
         }
+        self.refuse_lean_layout("MoeLayer::forward (legacy decode kernels)")?;
 
         let h = ctx.config.hidden_size as u32;
         let inter = ctx.config.moe_intermediate_size as u32;

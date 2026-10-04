@@ -79,24 +79,6 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             ));
         }
     }
-    if args
-        .ssm_h_dtype
-        .as_deref()
-        .is_some_and(|d| d.starts_with("f16"))
-        && args
-            .activation_quantization
-            .ladder(metrale_config::ProjFamily::Gdn)
-            .rungs()
-            .iter()
-            .any(|r| r.format != metrale_config::ActQuantFormat::Adaptive)
-    {
-        v.push(Violation::new(
-            "--ssm-h-dtype f16 with a fixed --activation-quantization for gdn",
-            "a fixed GDN format runs the MTP verify on the exact chain (the kernels decode \
-             runs), whose kernels read an FP32 h-state only",
-            "drop --ssm-h-dtype, or give gdn the adaptive ladder (e.g. `declared,gdn:adaptive`)",
-        ));
-    }
     if args.no_canonical_tiers && !args.activation_quantization.is_adaptive() {
         v.push(Violation::new(
             "--no-canonical-tiers with a fixed --activation-quantization",
@@ -206,18 +188,6 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             ),
             why,
             "use auto (default: preflight sizes the ring from free memory) or 0..=8.",
-        ));
-    }
-    // 2026-09-26: An FP16 h-state turns the exact verify chain off
-    // (`GdnFlags::verify_exact_active`), so the pair would drop an explicit
-    // `--exact-verify` without saying so.
-    if args.exact_verify && h_f16 {
-        v.push(Violation::new(
-            "--exact-verify together with --ssm-h-dtype f16",
-            "the exact MTP-verify chain (issue #435) runs FP32-reader kernels and must \
-             never read the FP16 h-state pool, so with f16 the exact request would be \
-             silently dropped and spec-on output would NOT equal spec-off",
-            "drop --ssm-h-dtype f16 (f32 is the default), or drop --exact-verify",
         ));
     }
     check_enum(

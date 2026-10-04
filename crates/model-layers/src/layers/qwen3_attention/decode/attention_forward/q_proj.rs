@@ -35,6 +35,27 @@ impl Qwen3AttentionLayer {
         if self.w8a8_qkv_m1(ctx, normed, q_out, nq, hd, stream)? {
             return Ok(());
         }
+        // 2026-10-01: A fixed `nvfp4` attention format: the row-invariant W4A4 mx projection, then
+        // the gated deinterleave the other arms run.
+        if self.fixed_nvfp4_qkv_serves(1)
+            && let Some(nvfp4) = self.q_weight.as_ref().and_then(|w| w.as_nvfp4())
+        {
+            let width = if self.gated { q_proj_dim } else { q_dim };
+            self.nvfp4_decode_gemv(ctx.gpu, false, normed, nvfp4, q_out, width, h, stream)?;
+            if self.gated {
+                ops::deinterleave_qg(
+                    ctx.gpu,
+                    self.deinterleave_qg_k,
+                    q_out,
+                    1,
+                    nq,
+                    hd,
+                    nq * hd * 2,
+                    stream,
+                )?;
+            }
+            return Ok(());
+        }
         if self.gated {
             // 2026-09-25: Q+gate projection, then deinterleave to `[Q_all | Gate_all]`.
             if let Some(q2) = self.q_weight.as_ref().and_then(|w| w.as_packed_q2()) {
