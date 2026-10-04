@@ -49,16 +49,58 @@ fn cal() -> AcceptanceCalibration {
 
 #[test]
 fn cheap_rows_go_deep_and_a_second_row_that_does_not_pay_stays_at_one() {
-    assert_eq!(propose_depth(&table(0.1, 0.01), &cal(), 2, 0.0), 3);
+    assert_eq!(
+        propose_depth(&table(0.1, 0.01), &cal(), 2, 0.0, usize::MAX),
+        3
+    );
     // 2026-10-04: At n = 2 a first draft pays (tokens per joule) and a second does not when a
     // row costs between ~0.19 and ~0.45 J; 0.3 is inside.
-    assert_eq!(propose_depth(&table(1.0, 0.3), &cal(), 2, 0.0), 1);
+    assert_eq!(
+        propose_depth(&table(1.0, 0.3), &cal(), 2, 0.0, usize::MAX),
+        1
+    );
+}
+
+#[test]
+fn above_mtp_max_seqs_the_cap_wins_by_construction() {
+    // 2026-10-04: Path B: the same table, calibration, width and slack pick a real depth
+    // (3, proven above) when the width is within the serve's own dispatch cap, and 0 — without
+    // even touching the table — once the SAME width is pushed outside it by lowering the cap
+    // alone (32 to 16, the change this test is named for; n = 20 sits between them). The cap is
+    // read from the argument every time, never a hard-coded constant: moving only `mtp_max_seqs`
+    // flips the answer with nothing else different.
+    let t = table(0.1, 0.01);
+    let c = cal();
+    assert_eq!(
+        propose_depth(&t, &c, 20, 0.0, 32),
+        3,
+        "within a 32 cap, n = 20 drafts deep"
+    );
+    assert_eq!(
+        propose_depth(&t, &c, 20, 0.0, 16),
+        0,
+        "the same n = 20 above a 16 cap returns 0 by construction"
+    );
+    // 2026-10-04: The boundary itself: at exactly the cap it is still in bounds.
+    assert_ne!(
+        propose_depth(&t, &c, 16, 0.0, 16),
+        0,
+        "n == mtp_max_seqs is within the cap"
+    );
+    assert_eq!(
+        propose_depth(&t, &c, 17, 0.0, 16),
+        0,
+        "n == mtp_max_seqs + 1 is above it"
+    );
 }
 
 #[test]
 fn no_drafting_when_it_is_neither_faster_nor_cheaper() {
     // 2026-10-04: A draft row costs a whole step: depth 0 is at least as fast and cheaper.
-    assert_eq!(propose_depth(&table(40.0, 4.0), &cal(), 1, 0.0), 0);
+    assert_eq!(
+        propose_depth(&table(40.0, 4.0), &cal(), 1, 0.0, usize::MAX),
+        0
+    );
 }
 
 #[test]
@@ -67,8 +109,8 @@ fn slack_admits_a_slower_depth_that_saves_energy() {
     // joule (2.52 / 1.25) but 2.52 / 50 tokens per ms, under depth 1's 1.8 / 24; depth 0 is
     // faster but the least per joule. Slack 0 must stop at depth 1; slack 0.9 admits depth 3.
     let t = table(12.0, 0.0);
-    assert_eq!(propose_depth(&t, &cal(), 1, 0.0), 1);
-    assert_eq!(propose_depth(&t, &cal(), 1, 0.9), 3);
+    assert_eq!(propose_depth(&t, &cal(), 1, 0.0, usize::MAX), 1);
+    assert_eq!(propose_depth(&t, &cal(), 1, 0.9, usize::MAX), 3);
 }
 
 #[test]

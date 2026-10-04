@@ -9,7 +9,13 @@
 //! - [`propose_depth`]: before drafting, the depth `K` for width `n` that maximises
 //!   E[tokens] / E[joules] over `0..=max_k`, among the depths whose E[tokens] / E[ms] is at
 //!   least `(1 - slack)` times depth 1's. E[tokens] per sequence is `1 + Σ_{j<=K} Π_{t<=j}
-//!   prior(t)`; a step costs `verify(n, K) + draft(n, K)` from the table.
+//!   prior(t)`; a step costs `verify(n, K) + draft(n, K)` from the table. Above the serve's own
+//!   `mtp_max_seqs` (the width beyond which the scheduler plain-decodes every sequence
+//!   regardless, `sched.levers.mtp_max_seqs`), it returns `0` by construction: there is nothing
+//!   to search, since the scheduler will not dispatch a draft there no matter what this picks
+//!   (2026-10-04, found measuring the published throughput recipe at C=64/128: with the
+//!   default cap of 32, `metrale_sched_phase_seconds_count{phase="step_mtp"}` fired once across
+//!   a 91 s, 32129-token run — the batch plain-decoded almost throughout).
 //! - [`sequence_depths`]: after drafting, how many of each sequence's drafts to verify. Every
 //!   sequence starts at one draft (none when `K = 0`). Which sequence a further row goes to is
 //!   still decided greedily (by chained P(accept): a sequence's own marginal token gain is
@@ -46,13 +52,23 @@ fn prior_tokens(cal: &AcceptanceCalibration, k: usize) -> f64 {
 
 /// 2026-10-04: The propose depth for a batch of `n` sequences: see the module doc. `slack` is
 /// `--spec-cost-slack`, in `0..1`. A table without depth 1 has no reference rate, so its
-/// constraint is against depth 0.
+/// constraint is against depth 0. `mtp_max_seqs` is the serve's own dispatch cap
+/// (`sched.levers.mtp_max_seqs`, SSOT — never a restated default here); `n > mtp_max_seqs`
+/// returns `0` without consulting the table (see the module doc). Within the cap the search can
+/// also return `0` on its own terms (a draft row that costs a whole step — see the
+/// `no_drafting_when_it_is_neither_faster_nor_cheaper` test) — the two `0`s mean different
+/// things to a caller that is not wired to suspend MTP from the table's energy preference
+/// alone: it must re-check the cap itself to tell them apart (`mtp_step.rs` does).
 pub fn propose_depth(
     table: &CostTable,
     cal: &AcceptanceCalibration,
     n: usize,
     slack: f64,
+    mtp_max_seqs: usize,
 ) -> usize {
+    if n > mtp_max_seqs {
+        return 0;
+    }
     let at = |k: usize| -> (f64, Cell) {
         let c = table.cell(n, k).expect("k <= max_k");
         (n as f64 * prior_tokens(cal, k), c)

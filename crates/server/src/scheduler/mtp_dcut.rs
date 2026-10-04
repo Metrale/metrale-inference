@@ -212,7 +212,11 @@ pub(super) fn plan_with_stop(
         && batchable.len() <= sched.levers.dcut_width_cap;
     let stop_on =
         measured.is_none() && stop_ln_tau.is_some() && ladder_nd >= 2 && !batchable.is_empty();
-    let measured_on = measured.is_some() && !batchable.is_empty();
+    // 2026-10-04: `ladder_nd >= 1`, not just `measured.is_some()`: `propose_depth` returns `0`
+    // above the serve's `mtp_max_seqs` (nothing to plan — `ks`'s `rows`-filled default above is
+    // already the correct plain-decode answer), and `ladder_nd.clamp(1, ladder_nd)` below would
+    // panic at `0`.
+    let measured_on = measured.is_some() && ladder_nd >= 1 && !batchable.is_empty();
     if !dcut_on && !stop_on && !measured_on {
         return ks;
     }
