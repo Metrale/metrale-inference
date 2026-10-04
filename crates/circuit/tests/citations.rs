@@ -87,3 +87,29 @@ fn the_routing_audit_lists_every_rule_with_its_class_and_citation() {
         "the audit lists a rule FUSIONS.toml does not have"
     );
 }
+
+// 2026-10-04: A rule's `scratch` regions are the memory model's workspaces (one source): each
+// name, before any `.` sub-region, is a `[[family.workspace]]` of a family that lists one of the
+// rule's kernels. Mutation: a misspelled or foreign region would order nothing against the real
+// one, and the fork/join derivation would miss the hazard.
+#[test]
+fn every_scratch_region_is_a_workspace_of_its_kernels_family() {
+    for inst in common::instances() {
+        let rules = common::load(&inst).rules;
+        let fams = common::families(&inst);
+        for r in &rules {
+            for name in &r.scratch {
+                let base = name.split('.').next().unwrap_or(name);
+                let known = fams.families.iter().any(|f| {
+                    f.kernels.iter().any(|k| r.kernels.contains(k))
+                        && f.workspace.iter().any(|w| w.name == base)
+                });
+                assert!(
+                    known,
+                    "{}: rule `{}` scratch `{name}` is no workspace of its kernels' families",
+                    inst.recipe, r.id
+                );
+            }
+        }
+    }
+}
