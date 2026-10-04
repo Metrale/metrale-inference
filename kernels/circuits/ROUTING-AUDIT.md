@@ -224,6 +224,20 @@ class and exact citation.
 | `prefill_gdn_core_fla_twin` | reference | ml/qwen3_ssm/trait_prefill_block.rs:139-327; ml/qwen3_ssm/trait_prefill_recur.rs:157-221,397-412; ml/ops/ssm_gdn_a3.rs:80-340; ml/ops/ssm_mamba.rs:149-215 |
 | `prefill_gdn_core_replay` | reference | ml/qwen3_ssm/trait_prefill_block.rs:139-327; ml/qwen3_ssm/trait_prefill_recur.rs:222-262,397-412; ml/ops/ssm_mamba.rs:149-215 |
 | `prefill_gdn_core_replay_twin` | reference | ml/qwen3_ssm/trait_prefill_block.rs:139-327; ml/qwen3_ssm/trait_prefill_recur.rs:222-262,397-412; ml/ops/ssm_mamba.rs:149-215 |
+| `lora_q_bgmv` | reference | ml/qwen3_attention/decode/attention_forward/lora.rs:104 (one row); ml/qwen3_attention/trait_impl/multi_seq/qkv/post.rs:46 (multi-sequence and verify rows, bgmv only); ml/ops/lora_delta.rs:347 |
+| `lora_k_bgmv` | reference | ml/qwen3_attention/decode/attention_forward/lora.rs:18 (one row); ml/qwen3_attention/trait_impl/multi_seq/qkv/post.rs:46 (multi-sequence and verify rows, bgmv only); ml/ops/lora_delta.rs:347 |
+| `lora_v_bgmv` | reference | ml/qwen3_attention/decode/attention_forward/lora.rs:18 (one row); ml/qwen3_attention/trait_impl/multi_seq/qkv/post.rs:46 (multi-sequence and verify rows, bgmv only); ml/ops/lora_delta.rs:347 |
+| `lora_o_bgmv` | reference | ml/qwen3_attention/decode/attention_forward_oproj.rs:110 (one row); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:394 (multi-sequence and verify rows, bgmv only); ml/ops/lora_delta.rs:347 |
+| `lora_gate_up_pair_per_row` | reference | ml/dense_ffn_overlays.rs:80 (the active adapter's gate pair, then its up pair, onto the dual GEMV's outputs before the activation); ml/ops/lora_delta.rs:199 (rows 2..=48 run the one-row pair per row) |
+| `lora_down_pair_per_row` | reference | ml/dense_ffn_overlays.rs:116 (the active adapter's down pair over the materialized silu(gate)*up); ml/ops/lora_delta.rs:199 (rows 2..=48 run the one-row pair per row) |
+| `lora_out_pair_per_row` | reference | ml/qwen3_ssm/lora.rs:72 (the active adapter's out_proj pair, after the TP all-reduce); ml/ops/lora_delta.rs:199 (rows 2..=48 run the one-row pair per row) |
+| `lora_q_gemv_sw_1row` | reference | ml/qwen3_attention/decode/attention_forward/q_proj.rs:80-96 (a q adapter splits the fused GEMV+deinterleave into the GEMV, the q fold and deinterleave_qg) |
+| `lora_q_batch2` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:133,146-157 (gated with a q adapter: the plain batch2 GEMV, then ms_qkv_apply_lora and ms_qkv_deinterleave_q, post.rs:21) |
+| `lora_q_batch3` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:44,57-69 (gated with a q adapter: the plain batch3 GEMV, then the fold and the per-row split) |
+| `tp_all_reduce` | reference | ml/qwen3_attention/trait_impl/decode_inner.rs:112-117 (attn_out, h*2 bytes); ml/qwen3_attention/trait_impl/multi_seq/mod.rs:95-100 (n*h*2); ml/qwen3_ssm/trait_prefill_helper.rs:33-48 (the out_proj output); crates/comm/src/nccl_backend/comm_impl.rs:47-90 |
+| `par_lm_head_shard_1row` | reference | mm/impl_a3_lm_head.rs:380-398 (memset the logits, the slice's dense_gemv, all_reduce_async); mm/impl_a3_lm_head.rs:304-316 (lmhead_vocab_shard: rank x vocab/world) |
+| `par_lm_head_shard_batchm` | reference | mm/impl_a3_lm_head.rs:150-202 (2..=DENSE_GEMV_BATCHM_DECODE_MAX_M rows: memset, the slice's batched GEMV with full-vocab row stride, all_reduce_async) |
+| `par_lm_head_reduce_unsharded` | reference | mm/impl_a3_lm_head.rs:268-280 (above 8 rows the BF16 head runs dense_gemm over the whole vocabulary on every rank: nothing to reduce) |
 
 ## Bit-identical fusions
 

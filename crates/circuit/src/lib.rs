@@ -18,14 +18,17 @@ pub mod declared_precision;
 pub mod digest;
 pub mod dims;
 pub mod display;
+mod follow;
 pub mod format;
 pub mod fuser;
 pub mod hardware;
 pub mod instances;
 pub mod instantiate;
 pub mod ir;
+pub mod lora;
 pub mod memory;
 pub mod model_buffer;
+pub mod parallel;
 pub mod pipeline;
 pub mod planner;
 pub mod precision;
@@ -36,6 +39,7 @@ pub mod runs;
 pub mod runtime;
 pub mod state;
 pub mod state_ops;
+pub mod swap;
 pub mod venn;
 
 #[cfg(test)]

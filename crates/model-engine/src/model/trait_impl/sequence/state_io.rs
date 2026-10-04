@@ -39,6 +39,10 @@ impl TransformerModel {
         seq: &SequenceState,
         writer: &mut dyn std::io::Write,
     ) -> Result<()> {
+        // 2026-10-03: Under the circuit, `kv_swap_out` (`impl_circuit_swap.rs`): the same record.
+        if self.circuit_save(seq, writer)? {
+            return Ok(());
+        }
         let gpu = self.gpu.as_ref();
 
         // 2026-09-25: The KV lock is held only for the device reads, not for the writes.
@@ -86,6 +90,10 @@ impl TransformerModel {
         num_blocks: usize,
         reader: &mut dyn std::io::Read,
     ) -> Result<()> {
+        // 2026-10-03: Under the circuit, `kv_swap_in` (`impl_circuit_swap.rs`): the same record.
+        if self.circuit_restore(seq, num_blocks, reader)? {
+            return Ok(());
+        }
         let gpu = self.gpu.as_ref();
 
         // 2026-09-25: Read the whole KV part before taking the KV lock.

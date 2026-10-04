@@ -351,6 +351,26 @@ rows = [9, 128]
 kernels = ["gemm::dense_gemm_bf16"]
 kind = "backlog"
 reason = "The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA GEMM. The mma.sync twin in the same source (dense_gemm_bf16_pipelined) is not selected by any rule; routing the head to it (or to dense_bf16_tc up to 32 rows) is the tensor-core path."
+# ---- FEATURES workstream (CIRCUIT-FEAT), 2026-10-03: LoRA adapters ----
+# 2026-10-03: A LoRA adapter's shrink and expand read weights like any projection, so they are held
+# to the same rule; the CUDA-core arms they run today are exempted below as backlog.
+[[tensor_core_policy.require]]
+ops = ["lora_shrink", "lora_expand"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+min_rows = 1
+weights = ["any"]
+[[tensor_core_policy.exempt]]
+ops = ["lora_shrink", "lora_expand"]
+modes = ["decode", "multi_seq", "verify"]
+rows = [1, 128]
+kernels = [
+  "lora_bgmv::lora_bgmv_shrink",
+  "lora_bgmv::lora_bgmv_expand_fold",
+  "gemv::dense_gemv_bf16",
+  "residual_add::bf16_scaled_add",
+]
+kind = "backlog"
+reason = "LoRA at its legacy routing: attention's per-row-adapter bgmv (one row per block row: rows of different adapters share no B tile) and the active adapter's GEMV pair up to 48 rows, both on CUDA cores; the rank (<= 64) is the K of the expand. Above 48 rows the pair already runs the tensor-core GEMM. Grouping rows by adapter slot into an m16n8k16 tile is the tensor-core path."
 
 # 2026-10-02: What the driver holds beyond the allocation ledger on this class, for the circuit
 # memory model (`met circuit memory`, crates/circuit/src/memory/budget.rs). Calibrated by PR #72 on

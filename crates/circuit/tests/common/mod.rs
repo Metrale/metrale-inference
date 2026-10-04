@@ -18,6 +18,11 @@ use std::path::{Path, PathBuf};
 
 use metrale_circuit::{AvailableKernels, Instance, KernelId, Loaded, Rule, Sources};
 
+/// 2026-10-03: The LoRA-adapted plans (FEATURES workstream).
+pub mod lora;
+/// 2026-10-03: The tensor-parallel rank plans (FEATURES workstream).
+pub mod parallel;
+
 /// 2026-09-28: The workspace root.
 pub fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -37,7 +37,6 @@ impl CircuitBindings for Qwen3SsmLayer {
         let arms = [
             (self.hc.is_some(), "hyper-connections"),
             (self.ple.is_some(), "per-layer embeddings"),
-            (self.lora_out_proj.is_some(), "an out_proj LoRA adapter"),
             (self.qkvz_fp8w.is_some(), "an FP8 qkvz projection"),
             (self.qkvz_q2.is_some(), "a packed-Q2 qkvz projection"),
             (self.out_proj_fp8w.is_some(), "an FP8 out_proj"),
@@ -138,6 +137,14 @@ impl CircuitBindings for Qwen3SsmLayer {
             }
         }
         self.ffn.circuit_bind(levers, &mut weights, &mut unmodelled);
+        let lora = crate::layers::circuit_lora::bind_or_refuse(
+            crate::layers::circuit_lora::Installed {
+                attn: None,
+                ffn: self.ffn.circuit_lora(&mut unmodelled),
+                gdn_out: self.lora_out_proj.as_ref(),
+            },
+            &mut unmodelled,
+        );
         Some(CircuitLayer {
             mixer: MixerFacts::Gdn(GdnFacts {
                 qkvz_deinterleaved: self.sequential_qkvz,
@@ -147,6 +154,7 @@ impl CircuitBindings for Qwen3SsmLayer {
             }),
             weights,
             unmodelled,
+            lora,
         })
     }
 }

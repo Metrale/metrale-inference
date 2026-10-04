@@ -48,22 +48,23 @@ impl TransformerModel {
     fn circuit_unmodelled(&self) -> Vec<String> {
         let kv_swap = self.kv_cache.lock().config().cache_blocks_per_seq.is_some();
         [
+            // 2026-10-04: The TP/EP overlays plan and compile (`metrale_circuit::parallel`,
+            // `emitters/collective.rs`, unit-tested), but no two-box parity run has proven
+            // them, so a parallel serve keeps the legacy forward until one does.
             (
                 self.config.tp_world_size > 1 || self.comm.is_some(),
-                "tensor or expert parallelism",
+                "tensor or expert parallelism (the overlays wait on a two-box parity run)",
             ),
             (
                 !self.dflash_capture_layers.is_empty(),
                 "DFlash hidden capture",
             ),
-            (self.lora.is_some(), "LoRA adapters"),
             (
                 self.config.mamba_num_heads > 0,
                 "Mamba-2 state normalisation",
             ),
             (self.config.kv_lora_rank > 0, "latent attention"),
             (kv_swap, "high-speed swap"),
-            (self.profile, "profiling"),
             (
                 metrale_model_layers::ships_vanilla_norm_weights(&self.config),
                 "vanilla RMSNorm weights (the rules launch the 1 + w kernels)",
@@ -147,15 +148,20 @@ impl TransformerModel {
                  the legacy layers under the circuit forward"
             );
         }
-        let verify_batch_rows =
-            if !exact_verify && self.proposer.is_some() && self.gdn_carry_bind_now()? {
-                Some(
-                    (4 * metrale_model_layers::speculative::mtp_max_seqs())
-                        .min(super::verify_e2::VERIFY_ROW_CAP) as u64,
-                )
-            } else {
-                None
-            };
+        // 2026-10-03: LoRA phase 1 verifies each sequence alone: a batched verify's row tables
+        // reach the wide FFN arms legacy leaves under an adapter (`impl_circuit_lora.rs`).
+        let verify_batch_rows = if !exact_verify
+            && self.proposer.is_some()
+            && self.lora.is_none()
+            && self.gdn_carry_bind_now()?
+        {
+            Some(
+                (4 * metrale_model_layers::speculative::mtp_max_seqs())
+                    .min(super::verify_e2::VERIFY_ROW_CAP) as u64,
+            )
+        } else {
+            None
+        };
         let layers: Vec<_> = self
             .layers
             .iter()
@@ -172,6 +178,8 @@ impl TransformerModel {
             kv_dtypes.all(|d| d == kv),
             "attention layers use different KV-cache dtypes; the circuit states one"
         );
+        let lora =
+            self.circuit_lora(&layers, self.circuit_widths().last().copied().unwrap_or(1))?;
         let (head, lm_head_dtype) = self.circuit_head();
         let draft = self
             .proposer
@@ -218,6 +226,8 @@ impl TransformerModel {
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),
                 block_size: u32::try_from(cache.block_size())?,
                 cache_stride: cache.cache_stride() as u64,
+                lora: lora.as_ref().map(|(_, f)| *f),
+                comm: self.comm.clone(),
             }
         };
         CircuitExec::build(metrale_model_layers::circuit_exec::Boot {
@@ -226,7 +236,12 @@ impl TransformerModel {
             config_json,
             levers: &self.levers,
             instance,
-            policy: policy::live_policy(&self.levers, policy::kv_dtype_name(kv)?, lm_head_dtype),
+            policy: policy::live_policy(
+                &self.levers,
+                policy::kv_dtype_name(kv)?,
+                lm_head_dtype,
+                self.lora.is_some(),
+            ),
             layers,
             head,
             fixed,
@@ -242,6 +257,12 @@ impl TransformerModel {
                 Vec::new()
             },
             verify_batch_rows,
+            profile: self.profile,
+            lora: lora.map(|(b, _)| b),
+            swap: Some(self.circuit_swap_boot(policy::kv_dtype_name(kv)?)?),
+            // 2026-10-03: The rank's share of the heads and the reduces, or the expert split
+            // (`metrale_circuit::parallel`).
+            parallel: self.circuit_parallel(),
             // 2026-09-30: The batched propose's widths, up to the sequences MTP runs at once.
             draft_rows: self
                 .proposer

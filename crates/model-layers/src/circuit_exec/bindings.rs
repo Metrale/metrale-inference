@@ -177,6 +177,8 @@ pub struct CircuitLayer {
     pub weights: BTreeMap<WeightSlot, BoundWeight>,
     /// 2026-09-28: Features present on this layer that the circuit does not model.
     pub unmodelled: Vec<String>,
+    /// 2026-10-03: The layer's LoRA adapters (`emitters::lora`); `None` without any.
+    pub lora: Option<super::emitters::lora::LoraLayer>,
 }
 
 /// 2026-09-28: A supertrait of `TransformerLayer`; see the module header.

@@ -57,6 +57,9 @@ pub struct MockGpuBackend {
     /// 2026-09-25: `copy_h2d` calls and their total bytes.
     h2d: AtomicUsize,
     h2d_bytes: AtomicUsize,
+    /// 2026-10-03: Timing events by id, each holding the launch count at its last record:
+    /// the mock's elapsed time between two events is the launches between them, in "ms".
+    timing_events: Mutex<HashMap<u64, Option<usize>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +108,7 @@ impl MockGpuBackend {
             host_pinned_allocs: AtomicUsize::new(0),
             h2d: AtomicUsize::new(0),
             h2d_bytes: AtomicUsize::new(0),
+            timing_events: Mutex::new(HashMap::new()),
         }
     }
 
@@ -375,6 +379,38 @@ impl GpuBackend for MockGpuBackend {
 
     fn default_stream(&self) -> u64 {
         0
+    }
+
+    fn create_timing_event(&self) -> Result<u64> {
+        let mut ev = self.timing_events.lock();
+        let id = 0xE000 + ev.len() as u64;
+        ev.insert(id, None);
+        Ok(id)
+    }
+
+    fn record_event(&self, event: u64, _stream: u64) -> Result<()> {
+        if let Some(at) = self.timing_events.lock().get_mut(&event) {
+            *at = Some(self.launches.lock().len());
+        }
+        Ok(())
+    }
+
+    fn event_elapsed_ms(&self, start: u64, end: u64) -> Result<f32> {
+        let ev = self.timing_events.lock();
+        let at = |e: u64| {
+            ev.get(&e)
+                .copied()
+                .flatten()
+                .ok_or_else(|| anyhow::anyhow!("timing event {e:#x} was never recorded"))
+        };
+        Ok(at(end)?.checked_sub(at(start)?).ok_or_else(|| {
+            anyhow::anyhow!("timing event {end:#x} was recorded before {start:#x}")
+        })? as f32)
+    }
+
+    fn destroy_event(&self, event: u64) -> Result<()> {
+        self.timing_events.lock().remove(&event);
+        Ok(())
     }
 
     fn has_module(&self, module: &str) -> bool {

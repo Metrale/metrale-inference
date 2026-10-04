@@ -357,9 +357,43 @@ pub fn apply_lora_bgmv(
     lora_xa: DevicePtr,
     stream: u64,
 ) -> Result<()> {
-    use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
+    lora_bgmv_shrink(
+        gpu,
+        kernels,
+        route,
+        (x, x_row_stride),
+        seq_slot,
+        n,
+        lora_xa,
+        stream,
+    )?;
+    lora_bgmv_expand_fold(
+        gpu,
+        kernels,
+        route,
+        (base_out, out_row_stride),
+        seq_slot,
+        n,
+        lora_xa,
+        stream,
+    )
+}
 
-    // 2026-09-25: Kernel 1, shrink: xa[n, max_rank] = x @ A_s^T, 4 outputs per block.
+/// 2026-10-03: [`apply_lora_bgmv`]'s first launch, the shrink: `xa[n, max_rank] = x @ A_s^T`,
+/// 4 outputs per block; `x` with its row stride in elements. Split out so the circuit executor
+/// queues each kernel as its own launch.
+#[allow(clippy::too_many_arguments)]
+pub fn lora_bgmv_shrink(
+    gpu: &dyn GpuBackend,
+    kernels: &LoraKernels,
+    route: &LoraRoute,
+    (x, x_row_stride): (DevicePtr, u32),
+    seq_slot: DevicePtr,
+    n: u32,
+    lora_xa: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
     KernelLaunch::new(gpu, kernels.bgmv_shrink_k)
         .grid([div_ceil(route.max_rank, 4), n, 1])
         .block([256, 1, 1])
@@ -371,10 +405,24 @@ pub fn apply_lora_bgmv(
         .arg_u32(route.max_rank)
         .arg_u32(route.k_in)
         .arg_u32(x_row_stride)
-        .launch(stream)?;
+        .launch(stream)
+}
 
-    // 2026-09-25: Kernel 2, expand and fold: base_out += scale_s * (xa @ B_s^T), 4 outputs per
-    // block.
+/// 2026-10-03: [`apply_lora_bgmv`]'s second launch, the expand and fold:
+/// `base_out += scale_s * (xa @ B_s^T)`, 4 outputs per block; `base_out` with its row stride in
+/// elements.
+#[allow(clippy::too_many_arguments)]
+pub fn lora_bgmv_expand_fold(
+    gpu: &dyn GpuBackend,
+    kernels: &LoraKernels,
+    route: &LoraRoute,
+    (base_out, out_row_stride): (DevicePtr, u32),
+    seq_slot: DevicePtr,
+    n: u32,
+    lora_xa: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
     KernelLaunch::new(gpu, kernels.bgmv_expand_fold_k)
         .grid([div_ceil(route.n_out, 4), n, 1])
         .block([256, 1, 1])

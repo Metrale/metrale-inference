@@ -46,7 +46,10 @@ impl Qwen3SsmLayer {
                     let t = std::time::Instant::now();
                     let r = $body;
                     ctx.gpu.synchronize(stream)?;
-                    tracing::info!("    SSM {}: {:.0}μs", $label, t.elapsed().as_micros());
+                    tracing::info!(
+                        "{}",
+                        crate::circuit_exec::profile::ssm_op_line($label, t.elapsed().as_micros())
+                    );
                     r
                 } else {
                     $body

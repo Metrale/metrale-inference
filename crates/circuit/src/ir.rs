@@ -167,9 +167,19 @@ pub enum OpKind {
     /// each row but the last into the step's checkpoint slots (the verify's rollback points).
     /// It has no output.
     StateSnapshot,
+    // ---- FEATURES workstream (CIRCUIT-FEAT), 2026-10-03 (LIFECYCLE-DESIGN.md 15.11) ----
+    /// 2026-10-03: A LoRA adapter's down-projection of a projection's input, `x · A` per row
+    /// with each row's adapter (`crate::lora`).
+    LoraShrink,
+    /// 2026-10-03: A LoRA adapter's up-projection folded into the projection's output,
+    /// `y + scale · xa · B` per row with each row's adapter (`crate::lora`).
+    LoraExpand,
+    /// 2026-10-03: The sum over tensor-parallel ranks of a row-parallel projection's partial
+    /// output (`crate::parallel`).
+    AllReduce,
 }
 
-const PLAIN_OPS: [(OpKind, &str); 29] = [
+const PLAIN_OPS: [(OpKind, &str); 32] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -199,6 +209,10 @@ const PLAIN_OPS: [(OpKind, &str); 29] = [
     (OpKind::LmHead, "lm_head"),
     (OpKind::Argmax, "argmax"),
     (OpKind::StateSnapshot, "state_snapshot"),
+    // ---- FEATURES workstream (CIRCUIT-FEAT) ----
+    (OpKind::LoraShrink, "lora_shrink"),
+    (OpKind::LoraExpand, "lora_expand"),
+    (OpKind::AllReduce, "all_reduce"),
 ];
 
 impl OpKind {
@@ -266,6 +280,8 @@ impl OpKind {
                 | OpKind::ExpertGateUp
                 | OpKind::ExpertDown
                 | OpKind::LmHead
+                | OpKind::LoraShrink
+                | OpKind::LoraExpand
         )
     }
 

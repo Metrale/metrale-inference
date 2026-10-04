@@ -78,7 +78,10 @@ pub(crate) fn prompts(n: usize, vocab: usize) -> Vec<Vec<u32>> {
         .collect()
 }
 
-fn logits(model: &dyn Model, ptr: metrale_gpu_runtime::gpu::DevicePtr) -> Result<Vec<u8>> {
+pub(crate) fn logits(
+    model: &dyn Model,
+    ptr: metrale_gpu_runtime::gpu::DevicePtr,
+) -> Result<Vec<u8>> {
     let width = if model.logits_ptr_is_fp32(ptr) { 4 } else { 2 };
     ensure!(width == 2, "the diff compares BF16 logits");
     let mut out = vec![0u8; model.vocab_size() * width];
@@ -278,13 +281,14 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             !args.batch.is_empty(),
             !args.verify.is_empty(),
             !args.verify_batch.is_empty(),
-            !args.prefill.is_empty()
+            !args.prefill.is_empty(),
+            args.swap,
         ]
         .iter()
         .filter(|&&b| b)
         .count()
             <= 1,
-        "--batch, --verify, --verify-batch and --prefill are separate diffs"
+        "--batch, --verify, --verify-batch, --prefill and --swap are separate diffs"
     );
     if !args.prefill.is_empty() {
         return prefill::prefill_report(
@@ -293,6 +297,10 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             &forwards,
             &args.out,
         );
+    }
+    if args.swap {
+        let prompt = &prompts(1, model.vocab_size())[0];
+        return swap::swap_report(model, prompt, args.steps, &forwards, &args.out);
     }
     ensure!(
         !args.mtp || !args.verify.is_empty() || !args.verify_batch.is_empty(),
@@ -471,6 +479,9 @@ mod verify;
 
 #[path = "circuit_diff_prefill.rs"]
 mod prefill;
+
+#[path = "circuit_diff_swap.rs"]
+mod swap;
 
 #[path = "circuit_diff_verify_batch.rs"]
 mod verify_batch;

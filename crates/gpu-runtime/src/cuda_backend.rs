@@ -101,6 +101,7 @@ unsafe extern "C" {
     pub(super) fn cuEventSynchronize(hEvent: u64) -> i32;
     pub(super) fn cuEventQuery(hEvent: u64) -> i32;
     pub(super) fn cuEventDestroy_v2(hEvent: u64) -> i32;
+    pub(super) fn cuEventElapsedTime(pMilliseconds: *mut f32, hStart: u64, hEnd: u64) -> i32;
 }
 
 /// 2026-09-25: The CUDA `GpuBackend`, holding one model's kernel modules.

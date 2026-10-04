@@ -420,6 +420,12 @@ impl GpuBackend for MetraleCudaBackend {
     fn destroy_event(&self, event: u64) -> Result<()> {
         self.destroy_event_cu(event)
     }
+    fn create_timing_event(&self) -> Result<u64> {
+        self.create_timing_event_cu()
+    }
+    fn event_elapsed_ms(&self, start: u64, end: u64) -> Result<f32> {
+        self.event_elapsed_ms_cu(start, end)
+    }
     fn host_ptr_to_device(&self, host: *mut u8) -> Result<DevicePtr> {
         let mut dptr: u64 = 0;
         let status =

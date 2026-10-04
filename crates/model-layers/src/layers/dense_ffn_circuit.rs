@@ -32,13 +32,16 @@ impl DenseFfnLayer {
             (self.q2_weights.is_some(), "packed-Q2 FFN weights"),
             (self.fp8_weights.is_some(), "FP8 FFN weights"),
             (self.bf16_weights.is_some(), "BF16 FFN weights"),
-            (self.lora.is_some(), "an FFN LoRA adapter"),
             (
                 self.activation != FfnActivation::SiLU,
                 "a non-SiLU FFN activation",
             ),
             (
-                self.w8a8.is_none() && !(mmq_gate_up && mmq_down && self.nvfp4_silu_quant_k.0 != 0),
+                // 2026-10-03: An adapter turns the MMQ arms off (`fp4mmq_arms`); with one, the
+                // executor serves only the narrow rows that run no wide arm (LoRA phase 1).
+                self.lora.is_none()
+                    && self.w8a8.is_none()
+                    && !(mmq_gate_up && mmq_down && self.nvfp4_silu_quant_k.0 != 0),
                 "a wide-batch FFN arm other than NVFP4 MMQ with the fused down quantize",
             ),
         ];
@@ -78,6 +81,11 @@ impl DenseFfnLayer {
             (WeightSlot::FfnUpMmq, self.fp4mmq_up.get()),
             (WeightSlot::FfnDownMmq, self.fp4mmq_down.get()),
         ];
+        // 2026-10-03: An adapter turns the MMQ arms off (`fp4mmq_arms`), so no repack is built
+        // and no rule a LoRA plan selects reads one (they state `lora_active = "off"`).
+        if self.lora.is_some() {
+            return;
+        }
         for (slot, w) in repacked {
             match w {
                 Some(w) => {

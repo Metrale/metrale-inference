@@ -93,6 +93,7 @@ impl CircuitExec {
                 "the draft program is still installed; remove it before freeing the workspace"
             );
         }
+        super::features::free(gpu, self.profile, self.swap)?;
         gpu.free(self.workspace)
     }
 }
