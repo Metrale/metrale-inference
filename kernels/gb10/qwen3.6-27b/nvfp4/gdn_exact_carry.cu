@@ -4,7 +4,9 @@
 // (gdn_exact_carry{2,3,4} and the _lazy forms), and the fold that matches it
 // (gdn_exact_carry_flush): the per-token chain of this directory's
 // gated_delta_rule_decode_f32_strided, K tokens in one launch, with the stash protocol of
-// common/gated_delta_rule_carry.cu instead of h snapshots.
+// common/gated_delta_rule_carry.cu instead of h snapshots. Also the single-sequence chain
+// (gdn_exact_chain{2,3,4}) and the FP16 h-state chain (gdn_exact_chain_f16_{2,3,4}, the
+// decode's FP16 twins); each has its own comment below.
 //
 // Owner: gb10 kernels (qwen3.6-27b).
 // Invariants:
@@ -27,6 +29,7 @@
 
 #include <cuda_bf16.h>
 #include "../../common/gdn_carry_stash.cuh"
+#include "../../common/gdn_f16_state.cuh"
 
 // 2026-10-01: gated_delta_rule.cu's clamp threshold; a different value here breaks the bit match.
 #define EXACT_MAX_NORM 1000.0f
@@ -352,3 +355,227 @@ extern "C" __global__ void __launch_bounds__(128, 1) gdn_exact_carry_flush(
     #pragma unroll
     for (int j = 0; j < CARRY_KD; j++) H[j * CARRY_VD + tid] = H_reg[j];
 }
+
+// 2026-10-01: The FP16 h-state exact verify (gdn_exact_chain_f16{2,3,4}): K rows per sequence of
+// gated_delta_rule.cu's gated_delta_rule_decode_f16_norm / _f16_strided_norm_half (the two run one
+// expression order), with the state in registers between rows.
+// - Each row widens the stored FP16 state, computes hk_dot, v_new, the update, q_dot and the clamp
+//   accumulator on the unrounded update, as the decode does, then keeps the value the decode
+//   stores: H_reg = (float)gdn_f16_store(h). The clamp rescales those stored values and rounds
+//   again, as the decode's clamp does. A widened FP16 value round-trips exactly, so the state the
+//   next row reads is the decode's stored state bit for bit.
+// - The decode's fused gated RMS norm follows per row, writing the BF16 output.
+// - The state after row t < K - 1 is stored (FP16) at that sequence's intermediate t, and the
+//   final state at its slot.
+// state_is_table: 1 when h_state and h_inter0..2 are device tables of `batch` per-sequence base
+// pointers (the verify's WY tables); 0 when they are bases of one sequence (batch 1). Row
+// r = b * K + t: q and k at r * qk_stride (FP32), v at r * v_stride, gate and beta at
+// r * gb_stride, z at r * z_stride (BF16), the BF16 output at r * out_stride.
+// Grid (num_v_heads, batch), block 128.
+
+__device__ __forceinline__ void f16x_unpack_bf16x2(unsigned int packed, float& v0, float& v1) {
+    v0 = __bfloat162float(__ushort_as_bfloat16((unsigned short)(packed & 0xFFFF)));
+    v1 = __bfloat162float(__ushort_as_bfloat16((unsigned short)(packed >> 16)));
+}
+
+__device__ __forceinline__ unsigned int f16x_pack_bf16x2(float v0, float v1) {
+    unsigned int lo = (unsigned int)__bfloat16_as_ushort(__float2bfloat16(v0));
+    unsigned int hi = (unsigned int)__bfloat16_as_ushort(__float2bfloat16(v1));
+    return lo | (hi << 16);
+}
+
+__device__ __forceinline__ float f16x_warp_reduce_sum(float val) {
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        val += __shfl_xor_sync(0xFFFFFFFF, val, offset);
+    }
+    return val;
+}
+
+template <int K>
+__device__ __forceinline__ void gdn_exact_chain_f16_body(
+    __half* __restrict__ h_state,
+    const float* __restrict__ query,
+    const float* __restrict__ key,
+    const float* __restrict__ value,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    const __nv_bfloat16* __restrict__ z_gate,
+    const __nv_bfloat16* __restrict__ norm_weight,
+    __nv_bfloat16* __restrict__ output,
+    __half* __restrict__ h_inter0,
+    __half* __restrict__ h_inter1,
+    __half* __restrict__ h_inter2,
+    unsigned int batch_size,
+    unsigned int num_k_heads,
+    unsigned int num_v_heads,
+    unsigned int k_dim,
+    unsigned int qk_stride,
+    unsigned int v_stride,
+    unsigned int gb_stride,
+    unsigned int z_stride,
+    unsigned int out_stride,
+    float eps,
+    unsigned int state_is_table
+) {
+    const unsigned int vh = blockIdx.x;
+    const unsigned int b = blockIdx.y;
+    if (vh >= num_v_heads || b >= batch_size) return;
+    const unsigned int tid = threadIdx.x;
+    const unsigned int v_dim = CARRY_VD;
+    const unsigned int kh = vh / (num_v_heads / num_k_heads);
+    const unsigned long long head = (unsigned long long)vh * CARRY_KD * CARRY_VD;
+    __half* const bases[4] = {h_state, h_inter0, h_inter1, h_inter2};
+    // 2026-10-01: Only h and intermediates 0..K-2 are read; a table past them may be unset.
+    __half* ptr[4] = {nullptr, nullptr, nullptr, nullptr};
+    #pragma unroll
+    for (int i = 0; i < K; ++i) {
+        ptr[i] = state_is_table ? ((__half* const*)bases[i])[b] + head : bases[i] + head;
+    }
+    __half* H = ptr[0];
+
+    __shared__ float sk[K][CARRY_KD], sq[K][CARRY_KD];
+    __shared__ float sums[4];
+    __shared__ float x_cache[CARRY_VD];
+    __shared__ float rms_sums[4];
+    const unsigned long long row0 = (unsigned long long)b * K;
+    #pragma unroll
+    for (int t = 0; t < K; ++t) {
+        sk[t][tid] = key[(row0 + t) * qk_stride + kh * k_dim + tid];
+        sq[t][tid] = query[(row0 + t) * qk_stride + kh * k_dim + tid];
+    }
+    __syncthreads();
+
+    float H_reg[CARRY_KD];
+    #pragma unroll
+    for (int j = 0; j < CARRY_KD; j++) H_reg[j] = __half2float(H[j * CARRY_VD + tid]);
+
+    #pragma unroll
+    for (int t = 0; t < K; ++t) {
+        const unsigned long long row = row0 + t;
+        const float g = fminf(fmaxf(gate[row * gb_stride + vh], 1e-6f), 1.0f - 1e-6f);
+        const float bt = beta[row * gb_stride + vh];
+        const float v_i = value[row * v_stride + vh * v_dim + tid];
+        const float* smem_k = sk[t];
+        const float* smem_q = sq[t];
+
+        float hk_dot = 0.0f;
+        #pragma unroll
+        for (int j = 0; j < CARRY_KD; j += 4) {
+            hk_dot += H_reg[j] * smem_k[j] + H_reg[j + 1] * smem_k[j + 1]
+                    + H_reg[j + 2] * smem_k[j + 2] + H_reg[j + 3] * smem_k[j + 3];
+        }
+        const float v_new_i = (v_i - g * hk_dot) * bt;
+
+        float q_dot = 0.0f;
+        float norm_acc = 0.0f;
+        #pragma unroll
+        for (int j = 0; j < CARRY_KD; j += 4) {
+            const float h0 = g * H_reg[j]     + smem_k[j]     * v_new_i;
+            const float h1 = g * H_reg[j + 1] + smem_k[j + 1] * v_new_i;
+            const float h2 = g * H_reg[j + 2] + smem_k[j + 2] * v_new_i;
+            const float h3 = g * H_reg[j + 3] + smem_k[j + 3] * v_new_i;
+            H_reg[j]     = __half2float(gdn_f16_store(h0));
+            H_reg[j + 1] = __half2float(gdn_f16_store(h1));
+            H_reg[j + 2] = __half2float(gdn_f16_store(h2));
+            H_reg[j + 3] = __half2float(gdn_f16_store(h3));
+            q_dot += h0 * smem_q[j] + h1 * smem_q[j + 1] + h2 * smem_q[j + 2] + h3 * smem_q[j + 3];
+            norm_acc += h0 * h0;
+            norm_acc += h1 * h1;
+            norm_acc += h2 * h2;
+            norm_acc += h3 * h3;
+        }
+        {
+            float local_sq = norm_acc;
+            for (int offset = 16; offset >= 1; offset >>= 1)
+                local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
+            if (tid % 32 == 0) sums[tid / 32] = local_sq;
+            __syncthreads();
+            if (tid == 0) {
+                float total = 0.0f;
+                for (int w = 0; w < 4; w++) total += sums[w];
+                sums[0] = total;
+            }
+            __syncthreads();
+            const float head_norm_sq = sums[0];
+            if (head_norm_sq > EXACT_MAX_NORM * EXACT_MAX_NORM) {
+                const float scale = EXACT_MAX_NORM * rsqrtf(head_norm_sq);
+                #pragma unroll
+                for (int j = 0; j < CARRY_KD; j++)
+                    H_reg[j] = __half2float(gdn_f16_store(H_reg[j] * scale));
+            }
+        }
+
+        const float inv_sqrt_d = rsqrtf((float)k_dim);
+        const float x = q_dot * inv_sqrt_d;
+        x_cache[tid] = x;
+        float sum_sq = x * x;
+        sum_sq = f16x_warp_reduce_sum(sum_sq);
+        const unsigned int warp_id = tid / 32;
+        const unsigned int lane_id = tid % 32;
+        if (lane_id == 0) rms_sums[warp_id] = sum_sq;
+        __syncthreads();
+        if (warp_id == 0) {
+            float val = (lane_id < (blockDim.x + 31) / 32) ? rms_sums[lane_id] : 0.0f;
+            val = f16x_warp_reduce_sum(val);
+            if (lane_id == 0) rms_sums[0] = val;
+        }
+        __syncthreads();
+        const float rms = rsqrtf(rms_sums[0] / (float)v_dim + eps);
+        const unsigned int quad_size = v_dim / 4;
+        const unsigned long long* g64 = (const unsigned long long*)(
+            z_gate + row * z_stride + vh * v_dim);
+        const unsigned long long* w64 = (const unsigned long long*)norm_weight;
+        unsigned long long* out64 = (unsigned long long*)(output + row * out_stride + vh * v_dim);
+        for (unsigned int i = tid; i < quad_size; i += blockDim.x) {
+            unsigned int base = i * 4;
+            float f0 = x_cache[base];
+            float f1 = x_cache[base + 1];
+            float f2 = x_cache[base + 2];
+            float f3 = x_cache[base + 3];
+            unsigned long long wv = w64[i];
+            float w0, w1, w2, w3;
+            f16x_unpack_bf16x2((unsigned int)wv, w0, w1);
+            f16x_unpack_bf16x2((unsigned int)(wv >> 32), w2, w3);
+            unsigned long long gv = g64[i];
+            float g0, g1, g2, g3;
+            f16x_unpack_bf16x2((unsigned int)gv, g0, g1);
+            f16x_unpack_bf16x2((unsigned int)(gv >> 32), g2, g3);
+            float s0 = g0 / (1.0f + expf(-g0));
+            float s1 = g1 / (1.0f + expf(-g1));
+            float s2 = g2 / (1.0f + expf(-g2));
+            float s3 = g3 / (1.0f + expf(-g3));
+            unsigned int lo = f16x_pack_bf16x2(f0 * rms * w0 * s0, f1 * rms * w1 * s1);
+            unsigned int hi = f16x_pack_bf16x2(f2 * rms * w2 * s2, f3 * rms * w3 * s3);
+            out64[i] = ((unsigned long long)hi << 32) | (unsigned long long)lo;
+        }
+        if (t + 1 < K) {
+            __half* snap = ptr[1 + t];
+            #pragma unroll
+            for (int j = 0; j < CARRY_KD; j++) snap[j * CARRY_VD + tid] = gdn_f16_store(H_reg[j]);
+        }
+        // 2026-10-01: The next row's writes to sums, x_cache and rms_sums stay behind this row's
+        // reads.
+        __syncthreads();
+    }
+    #pragma unroll
+    for (int j = 0; j < CARRY_KD; j++) H[j * CARRY_VD + tid] = gdn_f16_store(H_reg[j]);
+}
+
+#define EXACT_CHAIN_F16_ENTRY(NAME, K) \
+extern "C" __global__ void __launch_bounds__(128, 1) NAME( \
+    __half* __restrict__ h_state, const float* __restrict__ query, \
+    const float* __restrict__ key, const float* __restrict__ value, \
+    const float* __restrict__ gate, const float* __restrict__ beta, \
+    const __nv_bfloat16* __restrict__ z_gate, const __nv_bfloat16* __restrict__ norm_weight, \
+    __nv_bfloat16* __restrict__ output, __half* __restrict__ h_inter0, \
+    __half* __restrict__ h_inter1, __half* __restrict__ h_inter2, unsigned int batch_size, \
+    unsigned int num_k_heads, unsigned int num_v_heads, unsigned int k_dim, \
+    unsigned int qk_stride, unsigned int v_stride, unsigned int gb_stride, \
+    unsigned int z_stride, unsigned int out_stride, float eps, unsigned int state_is_table) { \
+    gdn_exact_chain_f16_body<K>(h_state, query, key, value, gate, beta, z_gate, norm_weight, \
+        output, h_inter0, h_inter1, h_inter2, batch_size, num_k_heads, num_v_heads, k_dim, \
+        qk_stride, v_stride, gb_stride, z_stride, out_stride, eps, state_is_table); \
+}
+EXACT_CHAIN_F16_ENTRY(gdn_exact_chain_f16_2, 2)
+EXACT_CHAIN_F16_ENTRY(gdn_exact_chain_f16_3, 3)
+EXACT_CHAIN_F16_ENTRY(gdn_exact_chain_f16_4, 4)
