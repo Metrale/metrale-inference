@@ -49,6 +49,9 @@ pub(super) struct CachedReport {
     tokens: usize,
     path: PrefillPath,
     restored: bool,
+    /// 2026-10-04: The primed snapshot's depth when it is below the restore floor, and the pair
+    /// was not run; `None` for a pair that ran.
+    not_applicable: Option<usize>,
     comparisons: Vec<PrefillComparison>,
 }
 
@@ -90,6 +93,29 @@ pub(super) fn cached_report(
         let prompt = prompt_of_len(t, model.vocab_size());
         let primed = primed_len(t, block);
         for &path in paths {
+            // 2026-10-04: A chunked prime saves its snapshot at its tail split, a block short of
+            // its end (`prefill_tail_split`); a snapshot below the restore floor restores
+            // nothing, so the pair is reported as not applicable rather than run vacuously.
+            let depth = match path {
+                PrefillPath::Single => primed,
+                PrefillPath::Chunked(_) => model
+                    .prefill_tail_split(&prompt[..primed])
+                    .unwrap_or(primed),
+            };
+            if depth < MIN_RESTORE_TOKENS {
+                tracing::info!(
+                    "circuit diff --prefill cached: {t} tokens {path:?}: the primed snapshot \
+                     sits at {depth}, below the {MIN_RESTORE_TOKENS}-token restore floor"
+                );
+                reports.push(CachedReport {
+                    tokens: t,
+                    path,
+                    restored: false,
+                    not_applicable: Some(depth),
+                    comparisons: Vec::new(),
+                });
+                continue;
+            }
             model.set_forward(&ForwardSelect::Legacy)?;
             let reference = warm_once(model, (&prompt, primed), path, next_ns())?;
             let restored = reference.ops.iter().any(|o| o.op.ends_with(RESTORE_MARK));
@@ -121,10 +147,16 @@ pub(super) fn cached_report(
                 tokens: t,
                 path,
                 restored,
+                not_applicable: None,
                 comparisons: cs,
             });
         }
     }
     model.set_forward(&ForwardSelect::Legacy)?;
+    // 2026-10-04: A leg that ran no pair proved nothing.
+    anyhow::ensure!(
+        reports.is_empty() || reports.iter().any(|r| r.not_applicable.is_none()),
+        "the cached-prefix leg ran no length and path: every primed snapshot is below the floor"
+    );
     Ok((reports, flat))
 }
