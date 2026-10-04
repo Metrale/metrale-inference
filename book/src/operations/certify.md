@@ -74,6 +74,20 @@ most headroom and the plan prints `WARNING speed-class gates BUNDLED on …`
 with the concrete mismatch. CI re-checks the same rule from the records'
 own captures (`docs/provable-benchmark-work.md` §5c).
 
+**Energy-bounded gates can be pinned to one reference box.** The GPU rail
+reads differently box to box: on identical code one GB10 read 6.6–13 % more
+J/token than another at every concurrency rung, with identical tok/s, and the
+J/token ceilings were cut from one box's history.
+`--energy-reference-node NODE` (one of `--with-nodes`, spelled as there) runs
+every energy-bounded gate on that node and nowhere else. A gate is
+energy-bounded when its default entry for the class in `BENCH.toml` bounds a
+metric ending in `gpu_rail_joules_per_token`; there is no hand-kept list.
+Other gates are placed as without the flag. A reference that is not in
+`--with-nodes`, or is not admitted, is an error before anything runs. The
+plan prints `energy-bounded gates PINNED on …` with the gates, and a `NOTE`
+when the other Speed-class gates run on a different node, because the
+verdict then judges the two boxes by the equivalence policy.
+
 **Cool-down.** Before a node takes another unit its hottest chassis zone
 and the driver's thermal-throttle flag are read. At the class's park line (**80 °C** on GB10) or above, or
 with the throttle asserted, the node is **parked**: it takes nothing until
@@ -174,7 +188,8 @@ kept outside the default directory is selected with
 ## `--json`
 
 One object per line on stdout, `event` ∈ `plan`, `preflight`, `fleet` (with
-`--with-nodes`: nodes, rejections, `speed_mode`, per-node queues, makespan),
+`--with-nodes`: nodes, rejections, `speed_mode`, `energy_pin`, per-node
+queues, makespan),
 `guard`, `start`, `line`, `done` (each with `node` under `--with-nodes`),
 `summary`, `final`, each with an `at` timestamp. The human report is
 suppressed.

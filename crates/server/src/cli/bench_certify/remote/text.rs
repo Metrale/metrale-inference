@@ -5,6 +5,9 @@
 //! Owner: server CLI (`met benchmark certify`).
 //! Invariants: none beyond the types.
 
+use metrale_bench::hardware::energy::JOULES_PER_TOKEN_KEY;
+use metrale_bench::hardware::policy::Sensitivity;
+
 use super::super::plan::Unit;
 use super::super::text::human;
 use super::Fleet;
@@ -27,6 +30,9 @@ pub fn fleet_json(f: &Fleet, units: &[Unit], plan: &Plan) -> serde_json::Value {
                 "mode": "bundle", "node": f.nodes[*node].addr, "why": why,
             }),
         },
+        "energy_pin": f.energy.as_ref().map(|p| serde_json::json!({
+            "node": f.nodes[p.node].addr, "gates": p.gates,
+        })),
         "queues": plan.queues.iter().enumerate().map(|(k, q)| serde_json::json!({
             "node": f.nodes[k].addr,
             "units": q.iter().map(|&i| units[i].label()).collect::<Vec<_>>(),
@@ -85,5 +91,50 @@ pub fn print_fleet(f: &Fleet, units: &[Unit], plan: &Plan) {
             }
         }
     }
+    for line in energy_pin_lines(f, units) {
+        eprintln!("  {line}");
+    }
     eprintln!("  makespan ~{}", human(plan.makespan_secs));
 }
+
+/// 2026-10-04: Which gates `--energy-reference-node` pinned, and why. When the
+/// pinned Speed gates and the bundled ones land on different nodes, the verdict
+/// judges the two boxes by the equivalence policy, so that is said here.
+fn energy_pin_lines(f: &Fleet, units: &[Unit]) -> Vec<String> {
+    let Some(pin) = &f.energy else {
+        return Vec::new();
+    };
+    let addr = &f.nodes[pin.node].addr;
+    if pin.gates.is_empty() {
+        return vec![format!(
+            "no energy-bounded gate in this campaign; nothing PINNED on {addr}"
+        )];
+    }
+    let mut lines = vec![format!(
+        "energy-bounded gates PINNED on {addr} (--energy-reference-node): {}. Their default \
+         entries bound a *{JOULES_PER_TOKEN_KEY} metric, and the GPU rail reads differently \
+         box to box",
+        pin.gates.iter().copied().collect::<Vec<_>>().join(", ")
+    )];
+    let speed_pinned = |pinned: bool| {
+        units
+            .iter()
+            .any(|u| u.class == Sensitivity::Speed && pin.gates.contains(u.id) == pinned)
+    };
+    if let SpeedMode::Bundle { node, .. } = &f.mode
+        && *node != pin.node
+        && speed_pinned(true)
+        && speed_pinned(false)
+    {
+        lines.push(format!(
+            "NOTE the other speed-class gates run on {}: Speed records from two signers pass \
+             the verdict only if the records show one box",
+            f.nodes[*node].addr
+        ));
+    }
+    lines
+}
+
+#[cfg(test)]
+#[path = "text_tests.rs"]
+mod text_tests;

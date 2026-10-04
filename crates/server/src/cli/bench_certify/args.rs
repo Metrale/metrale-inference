@@ -81,6 +81,14 @@ pub struct CertifyArgs {
     /// `--with-nodes` (a laptop that cannot serve a model).
     #[arg(long, requires = "with_nodes")]
     pub remote_only: bool,
+    /// Run every energy-bounded gate (its default entry bounds a
+    /// `*gpu_rail_joules_per_token` metric) on this node, one of
+    /// `--with-nodes` as written there. The GPU rail reads differently box to
+    /// box, so J/token ceilings hold only on the box they were cut from. Other
+    /// gates are placed as without it. A node that is not admitted is an
+    /// error, never a fallback.
+    #[arg(long, requires = "with_nodes", value_name = "NODE")]
+    pub energy_reference_node: Option<String>,
     /// The `metralectl` binary to drive nodes with. Default: the one on PATH.
     #[arg(long, value_name = "PATH")]
     pub metralectl: Option<PathBuf>,
@@ -105,10 +113,19 @@ pub struct CertifyArgs {
 impl CertifyArgs {
     /// 2026-09-26: Usage errors beyond clap's attributes. The `--remote-only` check
     /// repeats clap's `requires` for a `CertifyArgs` built without clap, as the
-    /// tests below build it.
+    /// tests below build it; the `--energy-reference-node` check covers it too.
     pub fn validate(&self) -> Result<(), String> {
         if self.remote_only && self.with_nodes.is_empty() {
             return Err("--remote-only needs --with-nodes: nothing would run anywhere".into());
+        }
+        if let Some(r) = &self.energy_reference_node
+            && !self.with_nodes.contains(r)
+        {
+            return Err(format!(
+                "--energy-reference-node {r} is not one of --with-nodes ({}): its energy-bounded \
+                 gates would run on another box",
+                self.with_nodes.join(", ")
+            ));
         }
         if !(self.timeout_factor.is_finite() && self.timeout_factor >= 1.0) {
             return Err(format!(
@@ -175,6 +192,24 @@ mod tests {
         let mut a = args();
         a.gates = vec!["nope".into()];
         assert!(a.validate().unwrap_err().contains("decode-floor"));
+    }
+
+    /// 2026-10-04: The reference must be one of `--with-nodes`, spelled as there;
+    /// with no node list at all it is refused too.
+    #[test]
+    fn an_energy_reference_outside_with_nodes_is_refused() {
+        let mut a = args();
+        a.energy_reference_node = Some("b:9000".into());
+        assert!(
+            a.validate()
+                .unwrap_err()
+                .contains("not one of --with-nodes")
+        );
+        a.with_nodes = vec!["a:9000".into(), "b".into()];
+        let e = a.validate().unwrap_err();
+        assert!(e.contains("b:9000") && e.contains("a:9000, b"), "{e}");
+        a.with_nodes.push("b:9000".into());
+        assert_eq!(a.validate(), Ok(()));
     }
 
     #[test]

@@ -5,6 +5,8 @@
 //! Owner: server CLI (`met benchmark certify`).
 //! - Speed mode: with more than one node, Speed-class units all go to one node
 //!   ([`speed_mode`]). Correctness-class units go to any node.
+//! - Energy pin: under `--energy-reference-node`, energy-bounded units go to
+//!   that node only ([`energy_pin`]), whatever their class.
 //! - List scheduling: a free node takes the longest pending unit it may run,
 //!   except that a shard of a group it already hosts yields to any other unit
 //!   ([`next_for`]). The fleet estimate ([`simulate`]) and the run use the
@@ -13,11 +15,13 @@
 //! Nothing here starts anything; the driver asks [`next_for`] and runs it.
 //! Invariants: none beyond the types.
 
+use std::collections::BTreeSet;
+
 use metrale_bench::hardware::equivalence::{EquivalencePolicy, equivalent};
 use metrale_bench::hardware::policy::Sensitivity;
 
 use super::super::plan::Unit;
-use super::node::Node;
+use super::node::{Node, Rejection};
 
 /// 2026-09-26: Where Speed-class units may go.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +112,55 @@ fn bundle_home(nodes: &[Node]) -> usize {
         .unwrap_or(0)
 }
 
+/// 2026-10-04: Energy-bounded gates (`plan::energy_bounded`) and the one node that
+/// runs them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnergyPin {
+    pub node: usize,
+    pub gates: BTreeSet<&'static str>,
+}
+
+/// 2026-10-04: Pin `gates` to the admitted node at `reference`.
+///
+/// # Errors
+/// When `reference` was rejected at admission (with the reason) or is not in
+/// the fleet at all: placing the gates elsewhere is what the flag exists to
+/// prevent.
+pub fn energy_pin(
+    nodes: &[Node],
+    rejected: &[Rejection],
+    reference: &str,
+    gates: BTreeSet<&'static str>,
+) -> Result<EnergyPin, String> {
+    if let Some(node) = nodes.iter().position(|n| n.addr == reference) {
+        return Ok(EnergyPin { node, gates });
+    }
+    match rejected.iter().find(|r| r.addr == reference) {
+        Some(r) => Err(format!(
+            "--energy-reference-node {reference} was not admitted ({}); its energy-bounded \
+             gates would run on another box",
+            r.why
+        )),
+        None => Err(format!(
+            "--energy-reference-node {reference} is not in the fleet ({})",
+            nodes
+                .iter()
+                .map(|n| n.addr.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// 2026-10-04: Whether `node` may run `unit`: a pinned gate only on its pin's
+/// node, otherwise the Speed rule.
+fn may_run(unit: &Unit, node: usize, mode: &SpeedMode, energy: Option<&EnergyPin>) -> bool {
+    match energy {
+        Some(pin) if pin.gates.contains(unit.id) => pin.node == node,
+        _ => unit.class != Sensitivity::Speed || mode.allows(node),
+    }
+}
+
 /// 2026-09-26: The unit `node` should take next: the longest pending unit it may run,
 /// shards of a group it already hosts yielding to every other unit.
 ///
@@ -119,6 +172,7 @@ pub fn next_for(
     pending: &[bool],
     placed: &[Option<usize>],
     mode: &SpeedMode,
+    energy: Option<&EnergyPin>,
 ) -> Option<usize> {
     let hosts_shard_of = |group: &str| {
         units
@@ -128,7 +182,7 @@ pub fn next_for(
     };
     (0..units.len())
         .filter(|&i| pending[i])
-        .filter(|&i| units[i].class != Sensitivity::Speed || mode.allows(node))
+        .filter(|&i| may_run(&units[i], node, mode, energy))
         .min_by_key(|&i| {
             let crowded = units[i].group.is_some_and(hosts_shard_of);
             // 2026-09-26: `Reverse` makes `min_by_key` pick the longest.
@@ -149,7 +203,13 @@ pub struct Plan {
 
 /// 2026-09-26: Simulate list scheduling. `build_allowance` is added once to a node that
 /// does not have the anchor built.
-pub fn simulate(units: &[Unit], nodes: &[Node], mode: &SpeedMode, build_allowance: u64) -> Plan {
+pub fn simulate(
+    units: &[Unit],
+    nodes: &[Node],
+    mode: &SpeedMode,
+    energy: Option<&EnergyPin>,
+    build_allowance: u64,
+) -> Plan {
     let n = nodes.len();
     let mut pending = vec![true; units.len()];
     let mut placed = vec![None; units.len()];
@@ -164,7 +224,7 @@ pub fn simulate(units: &[Unit], nodes: &[Node], mode: &SpeedMode, build_allowanc
         let Some(node) = (0..n).filter(|&k| !idle[k]).min_by_key(|&k| free_at[k]) else {
             break;
         };
-        match next_for(node, units, &pending, &placed, mode) {
+        match next_for(node, units, &pending, &placed, mode, energy) {
             Some(i) => {
                 pending[i] = false;
                 placed[i] = Some(node);

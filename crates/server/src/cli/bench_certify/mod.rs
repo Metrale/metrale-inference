@@ -199,7 +199,7 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
             anchor: &anchor_full,
             min_free_fraction: limits.memory.min_free_fraction,
         };
-        let f = remote::assemble(
+        let mut f = remote::assemble(
             &metralectl,
             &args.with_nodes,
             args.remote_only,
@@ -208,7 +208,20 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
             envelope,
             envelope.map(|_| EquivalencePolicy::speed(&limits)),
         )?;
-        let plan = remote::schedule::simulate(&units, &f.nodes, &f.mode, build_allowance.as_secs());
+        if let Some(r) = &args.energy_reference_node {
+            let pinned = energy_bounded_gates(&root, &gates, &hardware)?;
+            f.energy = Some(
+                remote::schedule::energy_pin(&f.nodes, &f.rejected, r, pinned)
+                    .map_err(anyhow::Error::msg)?,
+            );
+        }
+        let plan = remote::schedule::simulate(
+            &units,
+            &f.nodes,
+            &f.mode,
+            f.energy.as_ref(),
+            build_allowance.as_secs(),
+        );
         emit.event("fleet", remote::fleet_json(&f, &units, &plan));
         if !args.json {
             remote::print_fleet(&f, &units, &plan);
@@ -382,6 +395,25 @@ fn finish(emit: &Emit, root: &Path, anchor: &str, campaign: Option<&Campaign>) -
         Some(c) => c.exit_code(f.certified()),
         None => i32::from(!f.certified()) * 2,
     })
+}
+
+/// 2026-10-04: The campaign's gates that `plan::energy_bounded` holds for on
+/// `hardware`, read from the BENCH.toml files.
+fn energy_bounded_gates(
+    root: &Path,
+    gates: &[&'static str],
+    hardware: &str,
+) -> Result<std::collections::BTreeSet<&'static str>> {
+    let mut out = std::collections::BTreeSet::new();
+    for &id in gates {
+        let baseline = gate::read_baseline(root, id)?;
+        if plan::energy_bounded(&baseline, hardware)
+            .with_context(|| format!("is {id} energy-bounded on {hardware}?"))?
+        {
+            out.insert(id);
+        }
+    }
+    Ok(out)
 }
 
 /// 2026-09-26: `(secs, recorded_at)` of the newest completed run of `id` in the run
