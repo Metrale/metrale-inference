@@ -1622,11 +1622,11 @@ pipeline.expert_down = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf1
 pipeline."linear:shared_gate_up" = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 pipeline."linear:shared_down" = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 [[family.evidence]]
-point = { weight = "fp8/block128x128", activation = "bf16", epilogue = "silu_mul", down_input = "f32" }
+point = { weight = "fp8/block128x128", activation = "bf16", epilogue = "silu_mul", down_input = "f32", weight_layout = "row_major" }
 rows = [1, 2, 8, 32, 64]
 microbench = "standalone grouped decode layer (sort, gate+up, down), 256 experts top-8 uniform routing, 4 layers of distinct weights, 2026-09-28: 140 us at M=1, 822 us at M=8, 2280 us at M=32, 3150 us at M=64 (~222 GB/s, 89% of the floor); 30 W vs 43-51 W for the CUDA-core kernel"
 [[family.evidence]]
-point = { weight = "fp8/block128x128", activation = "fp8/g128", epilogue = "silu_mul", down_input = "fp8/g128" }
+point = { weight = "fp8/block128x128", activation = "fp8/g128", epilogue = "silu_mul", down_input = "fp8/g128", weight_layout = "row_major" }
 rows = [2, 8, 32]
 microbench = "same bench, W8A8 twin, 2026-09-28: 270 us at M=2, 823 us at M=8, 2266 us at M=32; 28 W"
 

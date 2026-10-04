@@ -182,7 +182,11 @@ pub const NVFP4_LEAN_REPACK_SMEM_PER_K: u32 = 9;
 /// 2026-10-04: `nvfp4_tc_lean_repack` admits whole 16-row tiles, whole 128-K chunks, and a tile
 /// that fits the default 48 KiB of shared memory.
 pub fn nvfp4_lean_repack_shape_ok(n: u32, k: u32) -> bool {
-    n > 0 && n % 16 == 0 && k > 0 && k % 128 == 0 && NVFP4_LEAN_REPACK_SMEM_PER_K * k <= 48 * 1024
+    n > 0
+        && n.is_multiple_of(16)
+        && k > 0
+        && k.is_multiple_of(128)
+        && NVFP4_LEAN_REPACK_SMEM_PER_K * k <= 48 * 1024
 }
 
 pub fn moe_expert_down_act_nvfp4_grouped(
