@@ -167,12 +167,14 @@ async fn stop_streams(tasks: Vec<JoinHandle<Result<ChatOutcome>>>) -> Vec<String
     failures
 }
 
-/// 2026-10-04: Read the serve's counters once, as a reachability check of `/metrics` before
-/// the first width.
-pub(super) async fn check_metrics(target: &TargetEndpoint, timeout: Duration) -> Result<()> {
+/// 2026-10-04: One `/metrics` page whose counters read, so the serve is a usable target. The
+/// probe takes one before the first width and the run another after the last, for the
+/// whole-run acceptance counts (`acceptance.rs`).
+pub(super) async fn scrape_metrics(target: &TargetEndpoint, timeout: Duration) -> Result<Scrape> {
     let text = http::get_text(target, METRICS_PATH, timeout)
         .await
         .with_context(|| format!("the serve must answer GET {METRICS_PATH}"))?;
-    Counters::read(&Scrape::parse(&text)?)?;
-    Ok(())
+    let scrape = Scrape::parse(&text)?;
+    Counters::read(&scrape)?;
+    Ok(scrape)
 }

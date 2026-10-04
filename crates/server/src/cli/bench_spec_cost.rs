@@ -2,7 +2,8 @@
 
 //! 2026-10-04: `met benchmark spec-cost-table`: the measured speculative-cost table from
 //! spec-cost runs, one per draft depth `0..=K`, all of them on one box against one serve
-//! configuration. GPU-free.
+//! configuration; and the drafter's acceptance calibration, fitted on the acceptance counts
+//! of every run that has them (pooled). GPU-free.
 //!
 //! Owner: server CLI (`met benchmark`).
 //! Invariants:
@@ -13,33 +14,15 @@
 //!   parameter other than `k`; a mix is refused, never merged.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
-use metrale_bench::benchmarks::spec_cost::{DESCRIPTOR, table_input};
+use metrale_bench::benchmarks::spec_cost::{DESCRIPTOR, acceptance, table_input};
 use metrale_bench::history::RunRecord;
-use metrale_speculative::spec_cost::{Cell, CostTable, SCHEMA, TableKey};
+use metrale_speculative::spec_cost::{
+    AcceptanceCalibration, Cell, CostTable, DrafterKey, SCHEMA, TableKey,
+};
 
-/// 2026-10-04: `met benchmark spec-cost-table` options.
-#[derive(clap::Args, Debug)]
-pub struct SpecCostTableArgs {
-    /// A `met benchmark run spec-cost --format json` result. Repeat it, once per draft depth
-    /// 0..=K.
-    #[arg(long = "result", required = true)]
-    pub results: Vec<PathBuf>,
-    /// The HARDWARE.toml box class the runs were measured on, e.g. gb10.
-    #[arg(long)]
-    pub box_class: String,
-    /// The recipe id the measured serve ran.
-    #[arg(long)]
-    pub recipe: String,
-    /// MODE=DIGEST: the plan digest of one measured mode. Repeat it per mode.
-    #[arg(long = "plan-digest", value_parser = super::bench_args::parse_kv, required = true)]
-    pub plan_digests: Vec<(String, String)>,
-    /// Where to write the table.
-    #[arg(long)]
-    pub out: PathBuf,
-}
+use super::bench_args::SpecCostTableArgs;
 
 pub fn spec_cost_table_cmd(args: SpecCostTableArgs) -> Result<i32> {
     let mut records = Vec::with_capacity(args.results.len());
@@ -62,10 +45,58 @@ pub fn spec_cost_table_cmd(args: SpecCostTableArgs) -> Result<i32> {
         recipe: args.recipe,
         plan_digests,
     };
-    let text = assemble(&key, &records)?;
-    std::fs::write(&args.out, &text).with_context(|| format!("writing {}", args.out.display()))?;
-    println!("wrote {} ({} runs)", args.out.display(), records.len());
+    let drafter = DrafterKey {
+        weights_sha256: args.drafter_weights_sha256,
+        vocab: args.mtp_vocab,
+        quantization: args.mtp_quantization,
+        context: args.mtp_context,
+    };
+    let table = assemble(&key, &records)?;
+    let calibration = calibrate(drafter, &records)?;
+    for (path, text) in [(&args.out, &table), (&args.calibration_out, &calibration)] {
+        std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
+        println!("wrote {} ({} runs)", path.display(), records.len());
+    }
     Ok(0)
+}
+
+/// 2026-10-04: The calibration text for `drafter`, fitted on the pooled acceptance counts of
+/// every run that has them; their bucket edges must agree. Pure.
+pub(crate) fn calibrate(drafter: DrafterKey, records: &[(String, RunRecord)]) -> Result<String> {
+    let mut pooled: Option<acceptance::AcceptanceCounts> = None;
+    for (label, record) in records {
+        let Some(c) = acceptance::read(&record.frame.metrics).with_context(|| label.clone())?
+        else {
+            continue;
+        };
+        let Some(p) = pooled.as_mut() else {
+            pooled = Some(c);
+            continue;
+        };
+        if p.edges != c.edges {
+            bail!(
+                "{label}: confidence buckets {:?}, other runs {:?}",
+                c.edges,
+                p.edges
+            );
+        }
+        for i in 0..p.edges.len() {
+            p.accepted[i] += c.accepted[i];
+            p.rejected[i] += c.rejected[i];
+        }
+        for (shape, n) in c.steps {
+            *p.steps.entry(shape).or_default() += n;
+        }
+    }
+    let Some(p) = pooled else {
+        bail!(
+            "no run carries draft-confidence counts: run spec-cost at k >= 1 with a width of 2 \
+             or more against a serve that exports metrale_spec_draft_confidence_total"
+        );
+    };
+    AcceptanceCalibration::fit(drafter, &p.edges, &p.accepted, &p.rejected, &p.steps)
+        .and_then(|c| c.render())
+        .map_err(anyhow::Error::msg)
 }
 
 /// 2026-10-04: The table text for `key` from `(label, record)` runs. Pure.

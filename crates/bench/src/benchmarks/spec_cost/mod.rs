@@ -42,6 +42,7 @@ use crate::result::{
     BenchmarkResult, Cell, CellStyle, Column, LogLine, ResultTable, RunStatus, Verdict,
 };
 
+pub mod acceptance;
 mod cell;
 mod prom;
 pub mod table_input;
@@ -98,6 +99,8 @@ pub struct SpecCost {
     window: Duration,
     settle: Duration,
     probed: bool,
+    /// 2026-10-04: The probe's `/metrics` page, the start of the acceptance counts.
+    first_scrape: Option<prom::Scrape>,
     rows: Vec<(usize, CellVerdict)>,
     /// 2026-10-04: GPU-rail sampling, started after the probe (idle baseline).
     energy: EnergyMeter,
@@ -151,8 +154,7 @@ impl SpecCost {
         t
     }
 
-    fn finish(&self) -> BenchmarkResult {
-        let mut metrics = BTreeMap::new();
+    fn finish(&self, mut metrics: BTreeMap<String, f64>) -> BenchmarkResult {
         metrics.insert(cell::KEY_K.to_string(), f64::from(self.k));
         for (n, verdict) in &self.rows {
             cell::record(*n, verdict, &mut metrics);
@@ -283,6 +285,7 @@ impl Benchmark for SpecCost {
         self.settle = Duration::from_secs(values.usize("settle_s")? as u64);
         self.timeout = Duration::from_secs(values.usize("request_timeout_s")? as u64);
         self.probed = false;
+        self.first_scrape = None;
         self.rows.clear();
         self.energy = EnergyMeter::default();
         Ok(())
@@ -298,7 +301,7 @@ impl Benchmark for SpecCost {
             http::probe(handle.target(), Duration::from_secs(10))
                 .await
                 .context("endpoint probe failed — check the target URL and port")?;
-            wave::check_metrics(handle.target(), self.timeout).await?;
+            self.first_scrape = Some(wave::scrape_metrics(handle.target(), self.timeout).await?);
             // 2026-10-04: Nothing is in flight yet, so the idle baseline is taken now.
             for line in self.energy.start(handle.target()).await {
                 handle.log(line.level, line.text);
@@ -322,7 +325,14 @@ impl Benchmark for SpecCost {
             if let Some(line) = self.energy.stop().await {
                 handle.log(line.level, line.text);
             }
-            return Ok(self.finish());
+            let last = wave::scrape_metrics(handle.target(), self.timeout).await?;
+            let first = self
+                .first_scrape
+                .take()
+                .context("no scrape before the first width")?;
+            let mut acceptance = BTreeMap::new();
+            acceptance::record(&first, &last, &mut acceptance)?;
+            return Ok(self.finish(acceptance));
         };
         handle.status(format!("width {n}: {n} concurrent streams"));
         let outcome = self.measure_width(n).await?;

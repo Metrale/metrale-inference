@@ -353,6 +353,20 @@ impl DcutTelemetry {
         }
     }
 }
+/// 2026-10-04: The drafts a verify step reached, as `(confidence, accepted)`: the first
+/// `accepted` drafts were accepted, the next one (if any) was reached and rejected, and the
+/// rest were never reached, so they are not outcomes. `conf` is the drafts' top-1
+/// log-probabilities in draft order.
+pub(super) fn reached_outcomes(
+    conf: &[f32],
+    accepted: usize,
+) -> impl Iterator<Item = (f32, bool)> + '_ {
+    conf.iter()
+        .take(accepted.saturating_add(1))
+        .enumerate()
+        .map(move |(j, &lp)| (lp, j < accepted))
+}
+
 #[cfg(test)]
 #[path = "mtp_dcut_tests.rs"]
 mod tests;

@@ -110,3 +110,58 @@ fn another_benchmark_s_result_is_refused() {
     let err = assemble(&key(), &[wrong]).unwrap_err();
     assert!(format!("{err:#}").contains("not spec-cost"), "{err:#}");
 }
+
+fn drafter() -> DrafterKey {
+    DrafterKey {
+        weights_sha256: "ab12".into(),
+        vocab: 1000,
+        quantization: "bf16".into(),
+        context: true,
+    }
+}
+
+/// 2026-10-04: `run` plus acceptance counts: one bucket per `(edge, accepted, rejected)`, and
+/// `first` verify steps of one draft accepting it.
+fn with_counts(k: usize, buckets: &[(f32, u64, u64)], first: u64) -> (String, RunRecord) {
+    let (label, mut record) = run(k, &[1], "1");
+    let m = &mut record.frame.metrics;
+    for (i, &(edge, acc, rej)) in buckets.iter().enumerate() {
+        m.insert(format!("conf{i}_le"), f64::from(edge));
+        m.insert(format!("conf{i}_accepted"), acc as f64);
+        m.insert(format!("conf{i}_rejected"), rej as f64);
+    }
+    m.insert("steps_d1_a1".into(), first as f64);
+    (label, record)
+}
+
+#[test]
+fn the_calibration_pools_every_run_with_counts() {
+    // 2026-10-04: Neither run alone reaches MIN_OUTCOMES (60 drafts, 60 steps); pooled they do,
+    // and the k = 0 run, which has no counts, is skipped.
+    let runs = vec![
+        run(0, &[1], "1"),
+        with_counts(1, &[(0.0, 45, 15)], 60),
+        with_counts(2, &[(0.0, 45, 15)], 60),
+    ];
+    let c = AcceptanceCalibration::parse(&calibrate(drafter(), &runs).unwrap()).unwrap();
+    assert_eq!(c.drafter, drafter());
+    assert_eq!(c.p_given_lp(-0.5), 0.75);
+    assert_eq!(c.prior(1), 1.0);
+    let alone = calibrate(drafter(), &runs[1..2]).unwrap_err();
+    assert!(
+        format!("{alone:#}").contains("60 reached drafts"),
+        "{alone:#}"
+    );
+}
+
+#[test]
+fn runs_with_different_buckets_or_no_counts_are_refused() {
+    let runs = vec![
+        with_counts(1, &[(0.0, 100, 0)], 100),
+        with_counts(2, &[(-1.0, 50, 0), (0.0, 50, 0)], 100),
+    ];
+    let err = calibrate(drafter(), &runs).unwrap_err();
+    assert!(format!("{err:#}").contains("confidence buckets"), "{err:#}");
+    let err = calibrate(drafter(), &[run(0, &[1], "1")]).unwrap_err();
+    assert!(format!("{err:#}").contains("no run carries"), "{err:#}");
+}

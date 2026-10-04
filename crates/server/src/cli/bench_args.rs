@@ -93,7 +93,7 @@ pub enum BenchmarkCommand {
     ///
     /// GPU-free. It refuses runs that were not measured alike, a vacuous width, and a grid
     /// the serve would not load.
-    SpecCostTable(super::bench_spec_cost::SpecCostTableArgs),
+    SpecCostTable(SpecCostTableArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -323,7 +323,7 @@ pub enum OutputFormat {
 
 /// 2026-09-26: Split `KEY=VALUE` on the first `=` only, so a value may itself contain
 /// `=`. An empty key is refused.
-pub(crate) fn parse_kv(s: &str) -> Result<(String, String), String> {
+fn parse_kv(s: &str) -> Result<(String, String), String> {
     match s.split_once('=') {
         Some((k, v)) if !k.is_empty() => Ok((k.to_string(), v.to_string())),
         _ => Err(format!(
@@ -346,4 +346,41 @@ pub struct AggregateArgs {
     pub sha: Option<String>,
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+}
+
+/// 2026-10-04: `met benchmark spec-cost-table`.
+#[derive(clap::Args, Debug)]
+pub struct SpecCostTableArgs {
+    /// A `met benchmark run spec-cost --format json` result. Repeat it, once per draft depth
+    /// 0..=K.
+    #[arg(long = "result", required = true)]
+    pub results: Vec<std::path::PathBuf>,
+    /// The HARDWARE.toml box class the runs were measured on, e.g. gb10.
+    #[arg(long)]
+    pub box_class: String,
+    /// The recipe id the measured serve ran.
+    #[arg(long)]
+    pub recipe: String,
+    /// MODE=DIGEST: the plan digest of one measured mode. Repeat it per mode.
+    #[arg(long = "plan-digest", value_parser = parse_kv, required = true)]
+    pub plan_digests: Vec<(String, String)>,
+    /// Where to write the table.
+    #[arg(long)]
+    pub out: std::path::PathBuf,
+    /// Where to write the acceptance calibration.
+    #[arg(long)]
+    pub calibration_out: std::path::PathBuf,
+    /// The drafter the runs measured: the sha256 of its MTP head weights as the serve
+    /// reports it. A serve whose drafter differs refuses the calibration.
+    #[arg(long)]
+    pub drafter_weights_sha256: String,
+    /// The drafter's --mtp-vocab.
+    #[arg(long)]
+    pub mtp_vocab: usize,
+    /// The drafter's --mtp-quantization.
+    #[arg(long)]
+    pub mtp_quantization: String,
+    /// Whether the drafter's prompt context was active (true or false).
+    #[arg(long, action = clap::ArgAction::Set)]
+    pub mtp_context: bool,
 }

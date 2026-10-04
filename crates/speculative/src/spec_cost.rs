@@ -375,6 +375,10 @@ impl AcceptanceCalibration {
     }
 }
 
+#[path = "spec_cost_fit.rs"]
+mod fit;
+pub use fit::MIN_OUTCOMES;
+
 #[cfg(test)]
 #[path = "spec_cost_tests.rs"]
 mod tests;
