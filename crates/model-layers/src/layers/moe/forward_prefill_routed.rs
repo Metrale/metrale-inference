@@ -238,6 +238,7 @@ impl MoeLayer {
                     }
                 }
             } else {
+                self.refuse_lean_layout("MoE prefill (untransposed W4A16 fallback)")?;
                 // 2026-09-25: The untransposed fallback has no E8M0 variant;
                 // `expect` panics for any expert format but NVFP4.
                 self.experts_scale_kind.expect(
@@ -423,6 +424,7 @@ impl MoeLayer {
                     }
                 }
             } else {
+                self.refuse_lean_layout("MoE prefill (untransposed W4A16 fallback)")?;
                 self.experts_scale_kind.expect(
                     crate::weight_map::WeightQuantFormat::Nvfp4,
                     "prefill non-transposed down fallback (no E8M0 variant wired)",

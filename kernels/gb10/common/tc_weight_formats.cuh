@@ -139,6 +139,73 @@ struct Nvfp4G16 {
     static __device__ __forceinline__ float out(const Tile& T, float x) { return x * T.s2; }
 };
 
+// 2026-10-04: The lean NVFP4 weight-format policy: Nvfp4G16's arithmetic on tables that nvfp4_tc_lean_repack
+// (moe_nvfp4_grouped_tc.cu) rewrote in place at load, same bytes and size:
+// - Tile-contiguous: per 16-row tile and 128-K chunk the tile's 16 rows x 64 packed bytes are one 1 KB block (row
+//   major within it) and its 16 rows x 8 scale bytes one 128 B block; tiles N/16-major, chunks K/128-minor. A warp's
+//   16-byte loads for one fragment half are then 512 contiguous bytes instead of 8 rows 1 KB apart.
+// - Each 32-bit packed word keeps its 8 E2M1 values, bit-permuted so that pair p (elements 2p, 2p + 1) comes out by
+//   rotations: rotr(w, ntc_lean_mag_rot(p)) holds the pair's magnitudes (e1 e0 m) in BF16 bits 8..6 and 24..22,
+//   rotr(w, ntc_lean_sign_rot(p)) its signs in bits 15 and 31. Masked, that is the BF16 pair E2M1 * 2^-126
+//   (subnormal for E2M1 exponent 0): 11 integer ops per word instead of byte-table lookups.
+// - Each scale byte holds c with 16c + 0x7600 the BF16 bits of E4M3 * 2^119 (E4M3 subnormals normalized; one IMAD
+//   per pair of scales); a block with a +-0 scale has its weights zeroed and c = 0.
+// A fragment pair is then BF16(E2M1 * E4M3) * 2^-7 exactly (at most 6 significant bits, in [2^-17, 21]), and
+// ACT_LIFT = 2^7 on the activations (exact) restores every MMA product bit for bit: the outputs are Nvfp4G16's bytes.
+// Needs col % 16 == 0 (every gtc_warp tile is) and K % 128 == 0.
+__host__ __device__ constexpr int ntc_lean_mag_rot(int p) { return p == 0 ? 0 : p == 1 ? 3 : p == 2 ? 6 : 9; }
+__host__ __device__ constexpr int ntc_lean_sign_rot(int p) { return p == 0 ? 4 : p == 1 ? 3 : p == 2 ? 6 : 5; }
+
+template <int P>
+__device__ __forceinline__ unsigned int ntc_lean_pair(unsigned int w) {
+    constexpr unsigned int MAG = 0x01C001C0u, SGN = 0x80008000u;
+    constexpr int A = ntc_lean_mag_rot(P), B = ntc_lean_sign_rot(P);
+    const unsigned int ra = A ? __funnelshift_r(w, w, A) : w;
+    if (A == B) return ra & (MAG | SGN);
+    const unsigned int rb = B ? __funnelshift_r(w, w, B) : w;
+    return (ra & MAG) | (rb & SGN);
+}
+
+__device__ __forceinline__ unsigned int ntc_lean_scale(unsigned int c) { return c * 0x00100010u + 0x76007600u; }
+
+struct Nvfp4G16Lean : Nvfp4G16 {
+    static constexpr float ACT_LIFT = 128.0f;
+    static __device__ __forceinline__ Tile tile(const Mat& M, unsigned int col, unsigned int g, unsigned int t, unsigned int K) {
+        Tile T;
+        const unsigned long long tb = (unsigned long long)(col / 16) * (K / 128);
+        #pragma unroll
+        for (int h = 0; h < 2; h++) {
+            T.wr[h] = M.w + tb * 1024 + (g + 8 * h) * 64 + t * 16;
+            T.sr[h] = M.s + tb * 128 + (g + 8 * h) * 8 + 2 * t;
+        }
+        T.s2 = M.s2;
+        return T;
+    }
+    static __device__ __forceinline__ uint4 load(const Tile& T, int h, unsigned int chunk) {
+        return *(const uint4*)(T.wr[h] + chunk * 1024);
+    }
+    static __device__ __forceinline__ Sc scale(const Tile& T, int h, unsigned int chunk) {
+        return *(const unsigned short*)(T.sr[h] + chunk * 128);
+    }
+    static __device__ __forceinline__ void frag(const uint4& lo, const uint4& hi, Sc sg, Sc sh, int j, unsigned int* a) {
+        const int wi = j >> 1, sb = (j >= 4) ? 8 : 0;
+        const unsigned int wg = (wi == 0) ? lo.x : (wi == 1) ? lo.y : (wi == 2) ? lo.z : lo.w;
+        const unsigned int wh = (wi == 0) ? hi.x : (wi == 1) ? hi.y : (wi == 2) ? hi.z : hi.w;
+        const unsigned int cg = ntc_lean_scale((sg >> sb) & 0xFFu), ch = ntc_lean_scale((sh >> sb) & 0xFFu);
+        if (j & 1) {
+            a[0] = ntc_hmul2(ntc_lean_pair<2>(wg), cg);
+            a[1] = ntc_hmul2(ntc_lean_pair<2>(wh), ch);
+            a[2] = ntc_hmul2(ntc_lean_pair<3>(wg), cg);
+            a[3] = ntc_hmul2(ntc_lean_pair<3>(wh), ch);
+        } else {
+            a[0] = ntc_hmul2(ntc_lean_pair<0>(wg), cg);
+            a[1] = ntc_hmul2(ntc_lean_pair<0>(wh), ch);
+            a[2] = ntc_hmul2(ntc_lean_pair<1>(wg), cg);
+            a[3] = ntc_hmul2(ntc_lean_pair<1>(wh), ch);
+        }
+    }
+};
+
 // 2026-10-02: The BF16 weight-format policy (W16A16): row-major [N, K] BF16 weights, no scales.
 // A 16-byte lane load is 8 K of a 32-K chunk; words 2j and 2j + 1 of it feed MMA j (K + 4j + {0,1}
 // and {2,3}), the activation words' K order.
