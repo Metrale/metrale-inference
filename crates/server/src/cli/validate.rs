@@ -18,6 +18,7 @@ use super::flag_values::{
     SSM_H_DTYPES, TELEMETRY_LEVELS, TOOL_CALL_PARSERS, TRISTATES,
 };
 
+mod prompt_lookup;
 mod violation;
 use violation::{Violation, check_enum, format_violations};
 
@@ -297,17 +298,7 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
         ));
     }
 
-    // 2026-10-02: Prompt lookup takes MTP's round when it matches and leaves
-    // it to MTP otherwise; with no MTP there is no round to take.
-    if args.prompt_lookup.prompt_lookup_decoding && !args.speculative {
-        v.push(Violation::new(
-            "--prompt-lookup-decoding is set without --speculative.",
-            "prompt-lookup copies are verified in the MTP speculative step, in place of \
-             the drafter's chain; without MTP that step never runs, so the flag would do \
-             nothing.",
-            "add --speculative, or drop --prompt-lookup-decoding.",
-        ));
-    }
+    prompt_lookup::check(args, &mut v);
 
     // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
     // DFlash drafts a whole block in one pass and has no chain to stop.

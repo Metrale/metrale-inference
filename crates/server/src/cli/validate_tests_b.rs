@@ -332,3 +332,18 @@ fn adaptive_levers_need_the_adaptive_routing() {
     let e = aq("bf16", &["--no-canonical-tiers"]).unwrap_err();
     assert!(e.contains("--no-canonical-tiers"), "{e}");
 }
+
+#[test]
+fn hermetic_refuses_the_shared_prompt_lookup_cache() {
+    let pl = ["--speculative", "--prompt-lookup-decoding"];
+    let cache = ["--prompt-lookup-shared-cache-mb", "64"];
+    let both = [&pl[..], &cache[..], &["--hermetic"]].concat();
+    let err =
+        validate_serve_args(&parse(&both)).expect_err("a cross-request channel under --hermetic");
+    assert!(
+        err.contains("--hermetic with --prompt-lookup-shared-cache-mb"),
+        "{err}"
+    );
+    assert!(validate_serve_args(&parse(&[&pl[..], &cache[..]].concat())).is_ok());
+    assert!(validate_serve_args(&parse(&[&pl[..], &["--hermetic"]].concat())).is_ok());
+}
