@@ -172,7 +172,11 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
         args.yes,
         args.remote_only,
         limits.memory.min_free_fraction,
+        &hardware,
     )?;
+    for warning in preflight::warnings(&facts) {
+        emit.say(&format!("preflight: {warning} (warning, not blocking)"));
+    }
     let findings = preflight::evaluate(&facts);
     emit.event(
         "preflight",

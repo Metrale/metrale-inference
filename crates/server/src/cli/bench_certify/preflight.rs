@@ -11,6 +11,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use metrale_bench::gate;
+use metrale_bench::hardware::calibration;
 
 /// 2026-09-26: What was observed.
 #[derive(Clone, Debug, Default)]
@@ -36,6 +37,13 @@ pub struct PreflightFacts {
     /// 2026-09-26: `--remote-only`: this box runs nothing, so the other-`met` and memory
     /// findings are waived. The signer finding is not.
     pub remote_only: bool,
+    /// 2026-10-04: This box's calibration profile (`BOX_PROFILES.toml`),
+    /// `None` when it was never measured (`met benchmark calibrate`) or the
+    /// box class declares no `kernels/<hw>/` directory to read one from.
+    /// Waived under `--remote-only` with the other local-box findings.
+    pub box_profile: Option<calibration::BoxProfile>,
+    /// 2026-10-04: Unix seconds at gather time, for the profile's age.
+    pub now_s: u64,
 }
 
 /// 2026-09-26: One reason not to start. The text names the remedy.
@@ -119,7 +127,47 @@ pub fn evaluate(f: &PreflightFacts) -> Vec<Finding> {
             f.needs_confirmation_units.join(", ")
         )));
     }
+    if !f.remote_only {
+        for concern in blocking_box_health(f) {
+            out.push(Finding(concern.to_string()));
+        }
+    }
     out
+}
+
+/// 2026-10-04: The box-health concerns that REFUSE a campaign: missing or
+/// stale calibration. An out-of-band ratio is recorded and printed by the
+/// caller ([`warnings`]) but does not block — Warn-by-default, per the
+/// design note. Split from [`evaluate`] only so each rule is independently
+/// testable; `evaluate` folds this in.
+fn blocking_box_health(f: &PreflightFacts) -> Vec<calibration::HealthConcern> {
+    calibration::health(f.box_profile.as_ref(), &calibration::V1_BANDS, f.now_s)
+        .into_iter()
+        .filter(|c| {
+            matches!(
+                c,
+                calibration::HealthConcern::Missing | calibration::HealthConcern::Stale { .. }
+            )
+        })
+        .collect()
+}
+
+/// 2026-10-04: Non-blocking box-health concerns (an out-of-band ratio),
+/// for the caller to print — `evaluate` itself stays pure and does no I/O.
+pub fn warnings(f: &PreflightFacts) -> Vec<String> {
+    if f.remote_only {
+        return Vec::new();
+    }
+    calibration::health(f.box_profile.as_ref(), &calibration::V1_BANDS, f.now_s)
+        .into_iter()
+        .filter(|c| {
+            !matches!(
+                c,
+                calibration::HealthConcern::Missing | calibration::HealthConcern::Stale { .. }
+            )
+        })
+        .map(|c| c.to_string())
+        .collect()
 }
 
 /// 2026-09-26: Gather the facts from this machine. Loading the signing identity
@@ -133,6 +181,7 @@ pub fn gather(
     yes: bool,
     remote_only: bool,
     min_free_fraction: f64,
+    hardware: &str,
 ) -> Result<PreflightFacts> {
     let head = gate::git_sha(root)?;
     let dirty_perf_paths = gate::dirty_perf_paths(root)?;
@@ -163,7 +212,21 @@ pub fn gather(
         needs_confirmation_units,
         yes,
         remote_only,
+        box_profile: box_profile(root, hardware),
+        now_s: gate::now_secs(),
     })
+}
+
+/// 2026-10-04: This box's profile from `kernels/<hardware>/BOX_PROFILES.toml`,
+/// `None` on any read error (no file yet, no `kernels/<hardware>/`, or this
+/// box's `perf_class` not yet in it) — absence, not a reason `gather` itself
+/// should fail.
+fn box_profile(root: &Path, hardware: &str) -> Option<calibration::BoxProfile> {
+    let perf_class = metrale_bench::hardware::HardwareState::collect()
+        .machine
+        .perf_class();
+    let profiles = calibration::load(root, hardware).ok()?;
+    profiles.profiles.get(&perf_class).map(|e| e.profile)
 }
 
 /// 2026-09-26: Every `met` process on this box other than this one, by exact process
@@ -222,6 +285,14 @@ mod tests {
             needs_confirmation_units: vec![],
             yes: false,
             remote_only: false,
+            // 2026-10-04: A fresh profile with every ratio unmeasured
+            // (`None`) is healthy by definition (`in_band(None, _)` is
+            // true) — this fixture stays a zero-finding baseline.
+            box_profile: Some(calibration::BoxProfile {
+                measured_at: 1_000_000,
+                ..calibration::BoxProfile::default()
+            }),
+            now_s: 1_000_000,
         }
     }
 
@@ -289,6 +360,16 @@ mod tests {
                 Box::new(|f| f.needs_confirmation_units = vec!["agentic-webserver"]),
                 "--yes",
             ),
+            (
+                "no calibration profile",
+                Box::new(|f| f.box_profile = None),
+                "met benchmark calibrate",
+            ),
+            (
+                "stale calibration profile",
+                Box::new(|f| f.now_s = 1_000_000 + calibration::MAX_PROFILE_AGE_S + 1),
+                "re-run `met benchmark calibrate`",
+            ),
         ];
         for (name, flip, needle) in cases {
             let mut f = clean();
@@ -307,6 +388,46 @@ mod tests {
         f.needs_confirmation_units = vec!["agentic-webserver"];
         f.yes = true;
         assert!(evaluate(&f).is_empty());
+    }
+
+    /// 2026-10-04: An out-of-band ratio is reported by `warnings`, not
+    /// `evaluate`: it does not block the campaign (Warn-by-default).
+    #[test]
+    fn an_out_of_band_ratio_warns_but_does_not_refuse() {
+        let mut f = clean();
+        f.box_profile.as_mut().unwrap().energy_c1_ratio = Some(1.09);
+        assert!(evaluate(&f).is_empty(), "{:?}", evaluate(&f));
+        let w = warnings(&f);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("C1 energy"));
+    }
+
+    /// 2026-10-04: `--remote-only` waives the box-health findings too — this
+    /// box runs nothing, so its own calibration does not matter.
+    #[test]
+    fn remote_only_also_waives_box_health() {
+        let mut f = clean();
+        f.remote_only = true;
+        f.box_profile = None;
+        assert!(evaluate(&f).is_empty());
+        assert!(warnings(&f).is_empty());
+    }
+
+    /// 2026-10-04: Missing and stale are both REFUSE, never merely a warning:
+    /// a Speed number from an uncalibrated or outdated profile is not
+    /// comparable to the fleet, which is a stronger claim than "ratio looks
+    /// off".
+    #[test]
+    fn missing_and_stale_are_refused_not_warned() {
+        let mut f = clean();
+        f.box_profile = None;
+        assert_eq!(evaluate(&f).len(), 1);
+        assert!(warnings(&f).is_empty());
+
+        let mut f = clean();
+        f.now_s = 1_000_000 + calibration::MAX_PROFILE_AGE_S + 1;
+        assert_eq!(evaluate(&f).len(), 1);
+        assert!(warnings(&f).is_empty());
     }
 
     /// 2026-09-26: The free-memory bar is the class's declared floor, inclusive.
