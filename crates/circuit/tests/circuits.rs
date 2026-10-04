@@ -441,6 +441,7 @@ fn both_gdn_arms_plan_and_the_route_arm_is_the_off_plan() {
         checked += 1;
     }
     // 2026-10-03: The dense recipe, it under `declared`, its exact-verify and declared-activation
-    // variants, and the two MoE recipes (bf16 and NVFP4 heads).
+    // variants, and the three FP8 MoE recipes (bf16 and NVFP4 heads, 2026-10-04 the long-context
+    // MTP recipe under `adaptive`).
     assert_eq!(checked, 7, "golden instances checked");
 }

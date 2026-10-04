@@ -185,7 +185,7 @@ golden = true
 layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
 dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
 plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32] }
-verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
+verify_batch = ["2x2", "3x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x32", "2x48", "4x32"]
 
 [instance.precision]
 checkpoint_plan = "Qwen--Qwen3.6-35B-A3B-FP8"
@@ -215,7 +215,7 @@ golden = true
 layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
 dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
 plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32] }
-verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
+verify_batch = ["2x2", "3x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x32", "2x48", "4x32"]
 
 [instance.precision]
 checkpoint_plan = "Qwen--Qwen3.6-35B-A3B-FP8"
@@ -256,6 +256,38 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 [instance.policy]
 opt_in_levers = []
 settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off" }
+
+# 2026-10-04: The long-context MTP recipe (qwen3.6-35b-a3b-fp8-mtp): the flagship's weights and
+# heads under `--activation-quantization adaptive` (no exact verify chain), at most two sequences
+# (`max_batch_size: 2`), so one decode row, one two-row multi-sequence step, the verify of one to
+# three drafts (#94's ladder runs two drafts at one or two sequences), the drafter's one- and
+# two-row propose, and the batched verify of two sequences at one to three drafts. Plans named
+# `qwen3_6_moe.mtp-*`.
+[[instance]]
+recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-mtp"
+variant = "mtp"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+arch = "qwen3_6_moe"
+target = "gb10/qwen3.6-35b-a3b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
+plans = { decode = [1], multi_seq = [2], verify = [2, 3, 4], draft = [1, 2] }
+verify_batch = ["2x2", "3x2", "4x2"]
+
+[instance.precision]
+checkpoint_plan = "Qwen--Qwen3.6-35B-A3B-FP8"
+tier = "declared"
+caps = ["w8a8_decode", "w8a8_moe_decode", "fp8_lm_head_batched"]
+engine = [
+  { match = "lm_head", weight = "bf16", activation = "bf16", why = "--lm-head-dtype bf16, pinned by the recipe (the checkpoint leaves lm_head unquantized)" },
+  { match = "mtp.lm_head", weight = "nvfp4/g16", activation = "bf16", why = "the draft head's runtime NVFP4 copy of the BF16 lm_head (crates/model-engine/src/factory/lm_head_setup.rs:116-133)" },
+  { match = "mtp.layers.0.self_attn.*", weight = "bf16", activation = "bf16", why = "--mtp-quantization bf16, pinned by the recipe: the loader dequantizes the draft attention (crates/model-layers/src/layers/mtp_head.rs:344-365); its experts stay FP8 (mtp_head/new_native_fp8_moe.rs)" },
+]
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", moe_fp8_tc = "on", ffn_act_fixed = "off" }
 
 # 2026-09-29: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, the first model built by the
 # `new-model` method (`.claude/skills/new-model/SKILL.md`). The recipe id is the planned one: no

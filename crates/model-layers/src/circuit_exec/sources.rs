@@ -378,6 +378,15 @@ mod instances_for_tests {
         ] {
             assert_eq!(select_instance(&hits, &live(head)).unwrap().recipe, recipe);
         }
+        // 2026-10-04: The long-context MTP recipe runs the BF16 head under `adaptive`.
+        let mut adaptive = live("bf16");
+        for (k, v) in [("activation_quantization", "adaptive"), ("gdn_verify_exact", "off")] {
+            adaptive.settings.insert(k.into(), v.into());
+        }
+        assert_eq!(
+            select_instance(&hits, &adaptive).unwrap().recipe,
+            "qwen3.6/qwen3.6-35b-a3b-fp8-mtp"
+        );
         let err = select_instance(&hits, &live("fp8"))
             .unwrap_err()
             .to_string();
