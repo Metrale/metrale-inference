@@ -88,6 +88,12 @@ pub enum BenchmarkCommand {
     /// a gate record because the record carries the hardware and the commit
     /// the number belongs to, which the card prints.
     Card(CardArgs),
+    /// Build the measured speculative-cost table (`--spec-cost-model measured`) from
+    /// spec-cost runs, one per draft depth 0..=K, measured on one box.
+    ///
+    /// GPU-free. It refuses runs that were not measured alike, a vacuous width, and a grid
+    /// the serve would not load.
+    SpecCostTable(super::bench_spec_cost::SpecCostTableArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -317,7 +323,7 @@ pub enum OutputFormat {
 
 /// 2026-09-26: Split `KEY=VALUE` on the first `=` only, so a value may itself contain
 /// `=`. An empty key is refused.
-fn parse_kv(s: &str) -> Result<(String, String), String> {
+pub(crate) fn parse_kv(s: &str) -> Result<(String, String), String> {
     match s.split_once('=') {
         Some((k, v)) if !k.is_empty() => Ok((k.to_string(), v.to_string())),
         _ => Err(format!(

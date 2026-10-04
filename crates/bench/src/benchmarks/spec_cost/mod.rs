@@ -44,6 +44,7 @@ use crate::result::{
 
 mod cell;
 mod prom;
+pub mod table_input;
 mod wave;
 
 use cell::CellVerdict;
@@ -152,7 +153,7 @@ impl SpecCost {
 
     fn finish(&self) -> BenchmarkResult {
         let mut metrics = BTreeMap::new();
-        metrics.insert("k".to_string(), f64::from(self.k));
+        metrics.insert(cell::KEY_K.to_string(), f64::from(self.k));
         for (n, verdict) in &self.rows {
             cell::record(*n, verdict, &mut metrics);
         }

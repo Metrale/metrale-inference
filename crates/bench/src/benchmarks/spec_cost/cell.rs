@@ -202,26 +202,43 @@ pub(crate) fn evaluate(w: &Window) -> CellVerdict {
 /// measured cell, and the joule keys only when the rail was sampled.
 pub(crate) fn record(n: usize, verdict: &CellVerdict, m: &mut BTreeMap<String, f64>) {
     let mut put = |key: &str, v: f64| {
-        m.insert(format!("n{n}_{key}"), v);
+        m.insert(record_key(n, key), v);
     };
     match verdict {
-        CellVerdict::Vacuous(_) => put("vacuous", 1.0),
+        CellVerdict::Vacuous(_) => put(KEY_VACUOUS, 1.0),
         CellVerdict::Measured(c) => {
-            put("vacuous", 0.0);
-            put("steps", c.steps);
-            put("wall_ms", c.wall_ms);
-            put("verify_ms", c.verify_ms);
-            put("draft_ms", c.draft_ms);
-            put("tok_per_step", c.tok_per_step);
+            put(KEY_VACUOUS, 0.0);
+            put(KEY_STEPS, c.steps);
+            put(KEY_WALL_MS, c.wall_ms);
+            put(KEY_VERIFY_MS, c.verify_ms);
+            put(KEY_DRAFT_MS, c.draft_ms);
+            put(KEY_TOK_PER_STEP, c.tok_per_step);
             if let Some(j) = c.verify_j {
-                put("verify_j", j);
+                put(KEY_VERIFY_J, j);
             }
             if let Some(j) = c.draft_j {
-                put("draft_j", j);
+                put(KEY_DRAFT_J, j);
             }
         }
     }
 }
+
+/// 2026-10-04: The record key of field `field` at width `n`; `table_input` reads with it.
+pub(crate) fn record_key(n: usize, field: &str) -> String {
+    format!("n{n}_{field}")
+}
+
+/// 2026-10-04: The record key of the draft depth the run measured.
+pub(crate) const KEY_K: &str = "k";
+// 2026-10-04: Per-width record fields, written by `record` and read by `table_input`.
+pub(crate) const KEY_VACUOUS: &str = "vacuous";
+pub(crate) const KEY_STEPS: &str = "steps";
+pub(crate) const KEY_WALL_MS: &str = "wall_ms";
+pub(crate) const KEY_VERIFY_MS: &str = "verify_ms";
+pub(crate) const KEY_DRAFT_MS: &str = "draft_ms";
+pub(crate) const KEY_TOK_PER_STEP: &str = "tok_per_step";
+pub(crate) const KEY_VERIFY_J: &str = "verify_j";
+pub(crate) const KEY_DRAFT_J: &str = "draft_j";
 
 #[cfg(test)]
 #[path = "cell_tests.rs"]

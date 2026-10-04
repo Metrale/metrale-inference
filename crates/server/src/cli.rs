@@ -21,6 +21,7 @@ mod bench_resolve;
 pub mod bench_run;
 mod bench_selfstart;
 mod bench_serve_plan;
+pub mod bench_spec_cost;
 pub(crate) mod circuit;
 mod circuit_diff;
 pub(crate) mod circuit_hw;

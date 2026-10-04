@@ -65,6 +65,10 @@ pub async fn dispatch(args: BenchmarkArgs) -> Result<()> {
             }
             Ok(())
         }
+        BenchmarkCommand::SpecCostTable(a) => {
+            let code = super::bench_spec_cost::spec_cost_table_cmd(a)?;
+            std::process::exit(code);
+        }
         BenchmarkCommand::Aggregate(a) => {
             let code = super::bench_aggregate::aggregate_cmd(a)?;
             std::process::exit(code);
