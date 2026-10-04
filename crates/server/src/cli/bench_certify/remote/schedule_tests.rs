@@ -284,98 +284,104 @@ fn sweep_pinned_to(node: usize) -> EnergyPin {
     }
 }
 
-/// 2026-10-04: The pinned gate runs on the reference only, under either Speed
-/// mode, even when it is the last unit pending; the other Speed units stay on
-/// the bundle home.
+fn bundle_on(node: usize) -> SpeedMode {
+    SpeedMode::Bundle { node, why: vec![] }
+}
+
+/// 2026-10-04: Under a pin, every Speed unit runs on the reference, whatever
+/// mode `next_for` is handed and wherever that mode would bundle; Correctness
+/// units still spread.
 #[test]
-fn energy_bounded_units_run_on_the_reference_and_nowhere_else() {
+fn every_speed_unit_runs_on_the_reference_under_either_mode() {
     let units = campaign();
     let nodes = three_nodes();
-    let bundle = SpeedMode::Bundle {
-        node: 0,
-        why: vec![],
-    };
     let pin = sweep_pinned_to(2);
-    let p = simulate(&units, &nodes, &bundle, Some(&pin), 0);
-    for (k, q) in p.queues.iter().enumerate() {
-        for &i in q {
-            if units[i].id == "concurrency-sweep" {
-                assert_eq!(k, 2, "the pinned sweep landed on node {k}");
-            } else if units[i].class == Sensitivity::Speed {
-                assert_eq!(k, 0, "{} left the bundle home", units[i].label());
+    for mode in [bundle_on(0), SpeedMode::Spread] {
+        let p = simulate(&units, &nodes, &mode, Some(&pin), 0);
+        for (k, q) in p.queues.iter().enumerate() {
+            for &i in q {
+                if units[i].class == Sensitivity::Speed {
+                    assert_eq!(k, 2, "{} on {k} under {mode:?}", units[i].label());
+                }
             }
         }
-    }
-    assert_eq!(p.queues.iter().map(Vec::len).sum::<usize>(), units.len());
-    let only_sweep: Vec<bool> = units.iter().map(|u| u.id == "concurrency-sweep").collect();
-    let placed = vec![None; units.len()];
-    for mode in [&bundle, &SpeedMode::Spread] {
+        assert_eq!(p.queues.iter().map(Vec::len).sum::<usize>(), units.len());
+        assert!(
+            p.queues[..2].iter().any(|q| !q.is_empty()),
+            "Correctness units still spread under {mode:?}"
+        );
+        let only_sweep: Vec<bool> = units.iter().map(|u| u.id == "concurrency-sweep").collect();
+        let placed = vec![None; units.len()];
         assert_eq!(
-            next_for(0, &units, &only_sweep, &placed, mode, Some(&pin)),
+            next_for(0, &units, &only_sweep, &placed, &mode, Some(&pin)),
             None
         );
         assert_eq!(
-            next_for(1, &units, &only_sweep, &placed, mode, Some(&pin)),
+            next_for(1, &units, &only_sweep, &placed, &mode, Some(&pin)),
             None
         );
-        let s = next_for(2, &units, &only_sweep, &placed, mode, Some(&pin)).unwrap();
+        let s = next_for(2, &units, &only_sweep, &placed, &mode, Some(&pin)).unwrap();
         assert_eq!(units[s].id, "concurrency-sweep");
     }
 }
 
-/// 2026-10-04: For every unit outside the pin, on every node and under every
-/// mode, the pin changes nothing about where it may run.
+/// 2026-10-04: The campaign's own path (`speed_mode`, then
+/// `bundle_on_reference`): for every choice of reference, with or without
+/// energy-bounded gates, the Speed class sits on exactly one node, the reference.
 #[test]
-fn units_outside_the_pin_keep_their_placement_rule() {
+fn with_a_reference_the_speed_class_never_spans_two_nodes() {
+    let units = campaign();
+    let nodes = three_nodes();
+    for reference in 0..3 {
+        for gates in [BTreeSet::new(), BTreeSet::from(["concurrency-sweep"])] {
+            let pin = EnergyPin {
+                node: reference,
+                gates,
+            };
+            let mode = bundle_on_reference(speed_mode(&nodes, gb10_policy()), &pin);
+            assert!(
+                matches!(&mode, SpeedMode::Bundle { node, why }
+                    if *node == reference && why.last().unwrap().contains("--energy-reference-node")),
+                "{mode:?}"
+            );
+            let p = simulate(&units, &nodes, &mode, Some(&pin), 1800);
+            let hosts: BTreeSet<usize> = p
+                .queues
+                .iter()
+                .enumerate()
+                .filter(|(_, q)| q.iter().any(|&i| units[i].class == Sensitivity::Speed))
+                .map(|(k, _)| k)
+                .collect();
+            assert_eq!(hosts, BTreeSet::from([reference]), "{:?}", pin.gates);
+        }
+    }
+    let one = [node("a", 65.0, 0.9, true)];
+    let pin = sweep_pinned_to(0);
+    assert_eq!(
+        bundle_on_reference(speed_mode(&one, gb10_policy()), &pin),
+        SpeedMode::Spread
+    );
+}
+
+/// 2026-10-04: For every Correctness unit, on every node and under every mode,
+/// the pin changes nothing about where it may run.
+#[test]
+fn correctness_units_keep_their_placement_rule_under_a_pin() {
     let units = campaign();
     let pin = sweep_pinned_to(1);
-    let modes = [
-        SpeedMode::Spread,
-        SpeedMode::Bundle {
-            node: 0,
-            why: vec![],
-        },
-        SpeedMode::Bundle {
-            node: 1,
-            why: vec![],
-        },
-    ];
-    for mode in &modes {
+    for mode in &[SpeedMode::Spread, bundle_on(0), bundle_on(1)] {
         for u in &units {
             for k in 0..3 {
                 let pinned = may_run(u, k, mode, Some(&pin));
-                if u.id == "concurrency-sweep" {
+                if u.class == Sensitivity::Speed {
                     assert_eq!(pinned, k == 1, "{} on {k} under {mode:?}", u.label());
                 } else {
-                    assert_eq!(
-                        pinned,
-                        may_run(u, k, mode, None),
-                        "{} on {k} under {mode:?}",
-                        u.label()
-                    );
+                    assert!(pinned, "{} on {k} under {mode:?}", u.label());
+                    assert_eq!(pinned, may_run(u, k, mode, None));
                 }
             }
         }
     }
-}
-
-/// 2026-10-04: A reference with nothing to pin plans exactly as no reference.
-#[test]
-fn a_reference_with_no_energy_bounded_gate_plans_as_before() {
-    let units = campaign();
-    let nodes = three_nodes();
-    let bundle = SpeedMode::Bundle {
-        node: 0,
-        why: vec![],
-    };
-    let empty = EnergyPin {
-        node: 2,
-        gates: BTreeSet::new(),
-    };
-    assert_eq!(
-        simulate(&units, &nodes, &bundle, Some(&empty), 1800),
-        simulate(&units, &nodes, &bundle, None, 1800)
-    );
 }
 
 /// 2026-10-04: The reference must be admitted, spelled as the fleet spells it.

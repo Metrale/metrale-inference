@@ -210,10 +210,10 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
         )?;
         if let Some(r) = &args.energy_reference_node {
             let pinned = energy_bounded_gates(&root, &gates, &hardware)?;
-            f.energy = Some(
-                remote::schedule::energy_pin(&f.nodes, &f.rejected, r, pinned)
-                    .map_err(anyhow::Error::msg)?,
-            );
+            let pin = remote::schedule::energy_pin(&f.nodes, &f.rejected, r, pinned)
+                .map_err(anyhow::Error::msg)?;
+            f.mode = remote::schedule::bundle_on_reference(f.mode, &pin);
+            f.energy = Some(pin);
         }
         let plan = remote::schedule::simulate(
             &units,

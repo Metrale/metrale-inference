@@ -5,8 +5,9 @@
 //! Owner: server CLI (`met benchmark certify`).
 //! - Speed mode: with more than one node, Speed-class units all go to one node
 //!   ([`speed_mode`]). Correctness-class units go to any node.
-//! - Energy pin: under `--energy-reference-node`, energy-bounded units go to
-//!   that node only ([`energy_pin`]), whatever their class.
+//! - Energy pin: under `--energy-reference-node`, every Speed-class unit and
+//!   every energy-bounded unit goes to that node only ([`energy_pin`]), so the
+//!   Speed class never spans two boxes.
 //! - List scheduling: a free node takes the longest pending unit it may run,
 //!   except that a shard of a group it already hosts yields to any other unit
 //!   ([`next_for`]). The fleet estimate ([`simulate`]) and the run use the
@@ -112,8 +113,8 @@ fn bundle_home(nodes: &[Node]) -> usize {
         .unwrap_or(0)
 }
 
-/// 2026-10-04: Energy-bounded gates (`plan::energy_bounded`) and the one node that
-/// runs them.
+/// 2026-10-04: The reference node, which runs every Speed-class unit, and the
+/// energy-bounded gates (`plan::energy_bounded`), named so the plan says why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnergyPin {
     pub node: usize,
@@ -137,8 +138,8 @@ pub fn energy_pin(
     }
     match rejected.iter().find(|r| r.addr == reference) {
         Some(r) => Err(format!(
-            "--energy-reference-node {reference} was not admitted ({}); its energy-bounded \
-             gates would run on another box",
+            "--energy-reference-node {reference} was not admitted ({}); its Speed-class and \
+             energy-bounded gates would run on another box",
             r.why
         )),
         None => Err(format!(
@@ -152,11 +153,32 @@ pub fn energy_pin(
     }
 }
 
-/// 2026-10-04: Whether `node` may run `unit`: a pinned gate only on its pin's
-/// node, otherwise the Speed rule.
+/// 2026-10-04: The Speed mode under a pin: bundled on the reference, the reason
+/// added to `why`. One node (`Spread`) is left as it is.
+pub fn bundle_on_reference(mode: SpeedMode, pin: &EnergyPin) -> SpeedMode {
+    match mode {
+        SpeedMode::Spread => SpeedMode::Spread,
+        SpeedMode::Bundle { mut why, .. } => {
+            why.push(
+                "--energy-reference-node names the box for every Speed-class and energy-bounded \
+                 gate: the boxes do not read as one, so one box takes them all"
+                    .to_string(),
+            );
+            SpeedMode::Bundle {
+                node: pin.node,
+                why,
+            }
+        }
+    }
+}
+
+/// 2026-10-04: Whether `node` may run `unit`. Under a pin, a Speed-class or
+/// energy-bounded unit runs on the reference only; otherwise the Speed rule.
 fn may_run(unit: &Unit, node: usize, mode: &SpeedMode, energy: Option<&EnergyPin>) -> bool {
     match energy {
-        Some(pin) if pin.gates.contains(unit.id) => pin.node == node,
+        Some(pin) if unit.class == Sensitivity::Speed || pin.gates.contains(unit.id) => {
+            pin.node == node
+        }
         _ => unit.class != Sensitivity::Speed || mode.allows(node),
     }
 }

@@ -9,7 +9,6 @@ use std::collections::BTreeSet;
 
 use metrale_bench::hardware::equivalence::HardwareFingerprint;
 
-use super::super::super::plan::Estimate;
 use super::super::node::Node;
 use super::super::schedule::EnergyPin;
 use super::*;
@@ -35,18 +34,6 @@ fn node(addr: &str) -> Node {
     }
 }
 
-fn unit(id: &'static str, class: Sensitivity) -> Unit {
-    Unit {
-        id,
-        group: None,
-        shard: None,
-        class,
-        estimate: Estimate::Declared(600),
-        needs_confirmation: false,
-        serve_allowance_s: 600,
-    }
-}
-
 fn fleet(home: usize, pin: Option<(usize, &[&'static str])>) -> Fleet {
     Fleet {
         nodes: vec![node("a:1"), node("b:2")],
@@ -63,41 +50,26 @@ fn fleet(home: usize, pin: Option<(usize, &[&'static str])>) -> Fleet {
     }
 }
 
-/// 2026-10-04: The pinned gates and the node are named; the two-signer note
-/// appears only when pinned and unpinned Speed gates land on different nodes.
+/// 2026-10-04: The reference is named as the host of every Speed-class gate,
+/// with the energy-bounded gates and why, or that there are none.
 #[test]
-fn the_plan_names_the_pinned_gates_and_a_split_speed_class() {
-    let units = [
-        unit("concurrency-sweep", Sensitivity::Speed),
-        unit("decode-floor", Sensitivity::Speed),
-        unit("bfcl-subset", Sensitivity::Correctness),
-    ];
-    assert!(energy_pin_lines(&fleet(0, None), &units).is_empty());
-
-    let split = energy_pin_lines(&fleet(0, Some((1, &["concurrency-sweep"]))), &units);
-    assert_eq!(split.len(), 2, "{split:?}");
+fn the_plan_names_the_reference_and_the_pinned_gates() {
+    assert!(energy_pin_lines(&fleet(0, None)).is_empty());
+    let pinned = energy_pin_lines(&fleet(1, Some((1, &["concurrency-sweep"]))));
+    assert_eq!(pinned.len(), 1, "{pinned:?}");
     assert!(
-        split[0].starts_with("energy-bounded gates PINNED on b:2")
-            && split[0].contains(": concurrency-sweep.")
-            && split[0].contains("gpu_rail_joules_per_token"),
-        "{split:?}"
+        pinned[0]
+            .starts_with("reference b:2 (--energy-reference-node) hosts every Speed-class gate")
+            && pinned[0].contains("PINNED: concurrency-sweep.")
+            && pinned[0].contains("gpu_rail_joules_per_token"),
+        "{pinned:?}"
     );
-    assert!(
-        split[1].contains("other speed-class gates run on a:1"),
-        "{split:?}"
-    );
-
-    let same_box = energy_pin_lines(&fleet(1, Some((1, &["concurrency-sweep"]))), &units);
-    assert_eq!(same_box.len(), 1, "{same_box:?}");
-    let all_speed_pinned = energy_pin_lines(
-        &fleet(0, Some((1, &["concurrency-sweep", "decode-floor"]))),
-        &units,
-    );
-    assert_eq!(all_speed_pinned.len(), 1, "{all_speed_pinned:?}");
-
-    let none = energy_pin_lines(&fleet(0, Some((1, &[]))), &units);
+    let none = energy_pin_lines(&fleet(1, Some((1, &[]))));
     assert_eq!(
         none,
-        ["no energy-bounded gate in this campaign; nothing PINNED on b:2"]
+        [
+            "reference b:2 (--energy-reference-node) hosts every Speed-class gate; no \
+          energy-bounded gate in this campaign"
+        ]
     );
 }

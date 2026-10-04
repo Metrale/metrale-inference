@@ -6,7 +6,6 @@
 //! Invariants: none beyond the types.
 
 use metrale_bench::hardware::energy::JOULES_PER_TOKEN_KEY;
-use metrale_bench::hardware::policy::Sensitivity;
 
 use super::super::plan::Unit;
 use super::super::text::human;
@@ -91,48 +90,31 @@ pub fn print_fleet(f: &Fleet, units: &[Unit], plan: &Plan) {
             }
         }
     }
-    for line in energy_pin_lines(f, units) {
+    for line in energy_pin_lines(f) {
         eprintln!("  {line}");
     }
     eprintln!("  makespan ~{}", human(plan.makespan_secs));
 }
 
-/// 2026-10-04: Which gates `--energy-reference-node` pinned, and why. When the
-/// pinned Speed gates and the bundled ones land on different nodes, the verdict
-/// judges the two boxes by the equivalence policy, so that is said here.
-fn energy_pin_lines(f: &Fleet, units: &[Unit]) -> Vec<String> {
+/// 2026-10-04: The reference `--energy-reference-node` named, and which
+/// energy-bounded gates it pins, and why.
+fn energy_pin_lines(f: &Fleet) -> Vec<String> {
     let Some(pin) = &f.energy else {
         return Vec::new();
     };
     let addr = &f.nodes[pin.node].addr;
-    if pin.gates.is_empty() {
-        return vec![format!(
-            "no energy-bounded gate in this campaign; nothing PINNED on {addr}"
-        )];
-    }
-    let mut lines = vec![format!(
-        "energy-bounded gates PINNED on {addr} (--energy-reference-node): {}. Their default \
-         entries bound a *{JOULES_PER_TOKEN_KEY} metric, and the GPU rail reads differently \
-         box to box",
-        pin.gates.iter().copied().collect::<Vec<_>>().join(", ")
-    )];
-    let speed_pinned = |pinned: bool| {
-        units
-            .iter()
-            .any(|u| u.class == Sensitivity::Speed && pin.gates.contains(u.id) == pinned)
+    let gates = if pin.gates.is_empty() {
+        "no energy-bounded gate in this campaign".to_string()
+    } else {
+        format!(
+            "energy-bounded gates PINNED: {}. Their default entries bound a \
+             *{JOULES_PER_TOKEN_KEY} metric, and the GPU rail reads differently box to box",
+            pin.gates.iter().copied().collect::<Vec<_>>().join(", ")
+        )
     };
-    if let SpeedMode::Bundle { node, .. } = &f.mode
-        && *node != pin.node
-        && speed_pinned(true)
-        && speed_pinned(false)
-    {
-        lines.push(format!(
-            "NOTE the other speed-class gates run on {}: Speed records from two signers pass \
-             the verdict only if the records show one box",
-            f.nodes[*node].addr
-        ));
-    }
-    lines
+    vec![format!(
+        "reference {addr} (--energy-reference-node) hosts every Speed-class gate; {gates}"
+    )]
 }
 
 #[cfg(test)]

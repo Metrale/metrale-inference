@@ -81,12 +81,12 @@ pub struct CertifyArgs {
     /// `--with-nodes` (a laptop that cannot serve a model).
     #[arg(long, requires = "with_nodes")]
     pub remote_only: bool,
-    /// Run every energy-bounded gate (its default entry bounds a
-    /// `*gpu_rail_joules_per_token` metric) on this node, one of
-    /// `--with-nodes` as written there. The GPU rail reads differently box to
-    /// box, so J/token ceilings hold only on the box they were cut from. Other
-    /// gates are placed as without it. A node that is not admitted is an
-    /// error, never a fallback.
+    /// Run every Speed-class gate and every energy-bounded gate (its default
+    /// entry bounds a `*gpu_rail_joules_per_token` metric) on this node, one
+    /// of `--with-nodes` as written there: the box the energy ceilings were
+    /// cut on. The boxes do not read as one, so one box takes them all.
+    /// Correctness gates are placed as without it. A node that is not
+    /// admitted is an error, never a fallback.
     #[arg(long, requires = "with_nodes", value_name = "NODE")]
     pub energy_reference_node: Option<String>,
     /// The `metralectl` binary to drive nodes with. Default: the one on PATH.
@@ -122,8 +122,8 @@ impl CertifyArgs {
             && !self.with_nodes.contains(r)
         {
             return Err(format!(
-                "--energy-reference-node {r} is not one of --with-nodes ({}): its energy-bounded \
-                 gates would run on another box",
+                "--energy-reference-node {r} is not one of --with-nodes ({}): its Speed-class and \
+                 energy-bounded gates would run on another box",
                 self.with_nodes.join(", ")
             ));
         }
