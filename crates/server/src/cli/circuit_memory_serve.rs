@@ -244,9 +244,19 @@ pub(crate) fn engine_facts(
         ),
     )
     .slots;
-    let ring_slots = ssm_reserve::decode_rollback_ring_slots(
+    // 2026-10-03: The depth this serve would get, not one this process published: a serve's
+    // preflight publishes its fitted depth once per process (`set_decode_ring_slots`), and a model
+    // of another serve must not read it (the ledger tests failed whenever a preflight test ran
+    // first in the same test process).
+    let ring_override = std::env::var("METRALE_SSM_DECODE_RING").ok();
+    let ring_slots = ssm_reserve::decode_rollback_ring_slots_with(
         config.num_ssm_layers(),
         args.speculative || args.dflash,
+        None,
+        ring_override.as_deref(),
+        ssm_reserve::watchdogs_disabled_from_value(
+            std::env::var("METRALE_DISABLE_WATCHDOGS").ok().as_deref(),
+        ),
     )
     .slots;
     // 2026-10-02: The carried-state verify binds exactly when the reserve plans its stash

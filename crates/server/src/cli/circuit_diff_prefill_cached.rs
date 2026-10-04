@@ -34,6 +34,9 @@ pub(super) const TAIL: usize = 37;
 /// warm reference's trace proves the leg ran the cached path.
 const RESTORE_MARK: &str = "gated_delta_rule_prefill_regresident";
 
+/// 2026-10-03: The comparisons of one length and path, in the shape the verdict reads.
+pub(super) type Flat = (usize, PrefillPath, Vec<PrefillComparison>);
+
 /// 2026-10-03: One length and path of the cached leg.
 #[derive(Debug, Serialize)]
 pub(super) struct CachedReport {
@@ -62,7 +65,7 @@ pub(super) fn cached_report(
     paths: &[PrefillPath],
     forwards: &[(&'static str, ForwardSelect)],
     next_ns: &mut dyn FnMut() -> u64,
-) -> Result<(Vec<CachedReport>, Vec<(usize, PrefillPath, Vec<PrefillComparison>)>)> {
+) -> Result<(Vec<CachedReport>, Vec<Flat>)> {
     let (mut reports, mut flat) = (Vec::new(), Vec::new());
     for &t in lens.iter().filter(|&&t| t >= MIN_RESTORE_TOKENS) {
         let prompt = prompt_of_len(t, model.vocab_size());
@@ -84,12 +87,18 @@ pub(super) fn cached_report(
             for (name, sel) in forwards {
                 model.set_forward(sel)?;
                 let run = warm_once(model, (&prompt, &warm), path, next_ns())?;
-                let mut c = compare(&format!("{name}, cached prefix"), &reference.logits, &run.logits);
+                let mut c = compare(
+                    &format!("{name}, cached prefix"),
+                    &reference.logits,
+                    &run.logits,
+                );
                 c.state_diff = first_state_diff(&reference.state, &run.state);
                 if matches!(sel, ForwardSelect::Legacy) {
                     c.path_diff = first_op_diff(&reference.ops, &run.ops);
                 }
-                tracing::info!("circuit diff --prefill cached: {t}+{TAIL} tokens {path:?} {name}: {c:?}");
+                tracing::info!(
+                    "circuit diff --prefill cached: {t}+{TAIL} tokens {path:?} {name}: {c:?}"
+                );
                 cs.push(c);
             }
             flat.push((t + TAIL, path, cs.clone()));
