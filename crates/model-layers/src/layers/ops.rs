@@ -194,6 +194,8 @@ mod ssm_gdn_batched;
 mod ssm_gdn_carry;
 #[path = "ops/ssm_gdn_carry_sizes.rs"]
 mod ssm_gdn_carry_sizes;
+#[path = "ops/ssm_gdn_exact_f16.rs"]
+mod ssm_gdn_exact_f16;
 #[path = "ops/ssm_gdn_hopper_prefill.rs"]
 mod ssm_gdn_hopper_prefill;
 #[path = "ops/ssm_gdn_snap.rs"]
@@ -297,6 +299,7 @@ pub use ssm_gdn_b::*;
 pub use ssm_gdn_batched::*;
 pub use ssm_gdn_carry::*;
 pub use ssm_gdn_carry_sizes::*;
+pub use ssm_gdn_exact_f16::*;
 pub(crate) use ssm_gdn_hopper_prefill::*;
 pub use ssm_gdn_snap::*;
 pub use ssm_gdn_tc_route::*;

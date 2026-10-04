@@ -144,6 +144,51 @@ pub fn moe_expert_gate_up_act_nvfp4_grouped(
 /// 2026-09-27: Grouped NVFP4 down over the SiLU product. `k` is the intermediate width; rows
 /// of `act` and `output` are sorted positions, rows of `sh_act` and `sh_down_out` tokens.
 #[allow(clippy::too_many_arguments)]
+/// 2026-10-04: Repacks one row-major NVFP4 matrix `[n, k]` (packed E2M1 `[n, k / 2]` at `packed`,
+/// E4M3 block scales `[n, k / 16]` at `scale`) in place into the lean layout the `_lean`
+/// tensor-core expert kernels read (`nvfp4_tc_lean_repack`, moe_nvfp4_grouped_tc.cu): same bytes
+/// and size, outputs byte-identical to the row-major point. Sets the device u32 at `bad` (zeroed
+/// by the caller) on a negative or NaN scale, after which the matrix is unusable. Needs
+/// [`nvfp4_lean_repack_shape_ok`].
+pub fn nvfp4_tc_lean_repack(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    packed: DevicePtr,
+    scale: DevicePtr,
+    n: u32,
+    k: u32,
+    bad: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    anyhow::ensure!(
+        nvfp4_lean_repack_shape_ok(n, k),
+        "nvfp4_tc_lean_repack: shape [{n}, {k}] not admitted"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([n / 16, 1, 1])
+        .block([256, 1, 1])
+        .shared_mem(NVFP4_LEAN_REPACK_SMEM_PER_K * k)
+        .arg_ptr(packed)
+        .arg_ptr(scale)
+        .arg_u32(k)
+        .arg_ptr(bad)
+        .launch(stream)
+}
+
+/// 2026-10-04: Shared bytes `nvfp4_tc_lean_repack` stages per unit of K: a 16-row tile's packed
+/// (16 * K / 2) and scale (16 * K / 16) bytes.
+pub const NVFP4_LEAN_REPACK_SMEM_PER_K: u32 = 9;
+
+/// 2026-10-04: `nvfp4_tc_lean_repack` admits whole 16-row tiles, whole 128-K chunks, and a tile
+/// that fits the default 48 KiB of shared memory.
+pub fn nvfp4_lean_repack_shape_ok(n: u32, k: u32) -> bool {
+    n > 0
+        && n.is_multiple_of(16)
+        && k > 0
+        && k.is_multiple_of(128)
+        && NVFP4_LEAN_REPACK_SMEM_PER_K * k <= 48 * 1024
+}
+
 pub fn moe_expert_down_act_nvfp4_grouped(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
@@ -189,3 +234,7 @@ pub fn moe_expert_down_act_nvfp4_grouped(
         .arg_u32(num_tokens)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "nvfp4_moe_grouped_tests.rs"]
+mod tests;

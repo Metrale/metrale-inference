@@ -141,6 +141,20 @@ impl Qwen3AttentionLayer {
         k: u32,
         stream: u64,
     ) -> Result<()> {
+        // 2026-10-01: Under a fixed `nvfp4` attention format, the row-invariant W4A4 mx path.
+        if ops::w4a4_proj::fixed_nvfp4_proj(
+            gpu,
+            metrale_config::ProjFamily::Attn,
+            weight,
+            input,
+            output,
+            1,
+            n,
+            k,
+            stream,
+        )? {
+            return Ok(());
+        }
         ops::w4a16_decode_gemv(
             gpu,
             self.w4a16_gemv_k,
@@ -153,6 +167,22 @@ impl Qwen3AttentionLayer {
             k,
             stream,
         )
+    }
+
+    /// 2026-10-01: Whether Q, K and V take the fixed `nvfp4` path at `rows` rows: a fixed
+    /// `nvfp4` attention format (`--activation-quantization`), NVFP4 q/k/v weights, no MLA and
+    /// no LoRA overlay (a q delta folds before the gated deinterleave the path runs itself).
+    pub(super) fn fixed_nvfp4_qkv_serves(&self, rows: usize) -> bool {
+        let nvfp4 = |w: &Option<crate::weight_map::QuantWeight>| {
+            w.as_ref().and_then(|w| w.as_nvfp4()).is_some()
+        };
+        self.mla.is_none()
+            && self.lora.is_none()
+            && nvfp4(&self.q_weight)
+            && nvfp4(&self.k_weight)
+            && nvfp4(&self.v_weight)
+            && crate::layers::fixed_act(metrale_config::ProjFamily::Attn, rows)
+                == Some(metrale_config::ActQuantFormat::Nvfp4)
     }
 
     /// 2026-09-25: Sets `k_eq_v` and installs `v_norm_weight`, a BF16

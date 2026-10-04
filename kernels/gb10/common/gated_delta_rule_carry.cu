@@ -544,34 +544,30 @@ extern "C" __global__ void gdn_carry_conv_f32(
     }
 }
 
-// 2026-10-01: The single-sequence exact verify's FP32 conv (gdn_conv_chain_f32): positions
-// 0..num_tokens-1 of causal_conv1d_update_l2norm_f32_strided in one launch for one sequence, the
-// window in registers. The window after position t < num_tokens - 1 is stored at conv_inter[t] (the
-// per-row exact arm's conv intermediates, conv_state's layout), and the final window at
-// conv_state. Position t reads new_input + t * input_stride and writes output + t * output_stride.
-// Grid (ceil(dim / 256), 1), block 256; the parent's contract on d_conv, head_dim and qk_channels.
-extern "C" __global__ void gdn_conv_chain_f32(
+// 2026-10-01: The chain of positions 0..num_tokens-1 of causal_conv1d_update_l2norm_f32_strided for
+// one sequence's window in registers: position t reads new_input + t * input_stride and writes
+// output + t * output_stride; the window after position t < num_tokens - 1 is stored at inter[t]
+// (conv_state's layout) and the final window at conv_state. Every thread of the 256-thread block
+// calls it.
+__device__ __forceinline__ void conv_chain_f32_body(
     float* __restrict__ conv_state,
     const __nv_bfloat16* __restrict__ new_input,
     const __nv_bfloat16* __restrict__ weight,
     float* __restrict__ output,
-    float* __restrict__ conv_inter0,
-    float* __restrict__ conv_inter1,
-    float* __restrict__ conv_inter2,
+    float* const (&inter)[3],
     unsigned int num_tokens,
     unsigned int dim,
     unsigned int d_conv,
     unsigned int qk_channels,
     unsigned int head_dim,
     float l2_eps,
-    unsigned int input_stride,
-    unsigned int output_stride
+    unsigned long long input_stride,
+    unsigned long long output_stride
 ) {
     const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int tid = threadIdx.x;
     const bool block_needs_l2 = (blockIdx.x * blockDim.x < qk_channels);
     const bool valid = (ch < dim);
-    float* const inter[3] = {conv_inter0, conv_inter1, conv_inter2};
 
     float win[8];
     float wcoef[8];
@@ -598,4 +594,60 @@ extern "C" __global__ void gdn_conv_chain_f32(
     if (valid) {
         for (unsigned int i = 0; i < d_conv; i++) state[i] = win[i];
     }
+}
+
+// 2026-10-01: The single-sequence exact verify's FP32 conv (gdn_conv_chain_f32):
+// conv_chain_f32_body for one sequence, its conv intermediates at conv_inter0..2. Grid
+// (ceil(dim / 256), 1), block 256; the parent's contract on d_conv, head_dim and qk_channels.
+extern "C" __global__ void gdn_conv_chain_f32(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ new_input,
+    const __nv_bfloat16* __restrict__ weight,
+    float* __restrict__ output,
+    float* __restrict__ conv_inter0,
+    float* __restrict__ conv_inter1,
+    float* __restrict__ conv_inter2,
+    unsigned int num_tokens,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    float l2_eps,
+    unsigned int input_stride,
+    unsigned int output_stride
+) {
+    float* const inter[3] = {conv_inter0, conv_inter1, conv_inter2};
+    conv_chain_f32_body(conv_state, new_input, weight, output, inter, num_tokens, dim, d_conv,
+                        qk_channels, head_dim, l2_eps, input_stride, output_stride);
+}
+
+// 2026-10-01: The batched form (gdn_conv_chain_f32_batched): conv_chain_f32_body for sequence
+// blockIdx.y. Its window is at conv_state + b * dim * d_conv (consecutive slots), its rows are
+// r = b * num_tokens + t (input at r * input_stride, output at r * output_stride), and its conv
+// intermediate t at conv_inter + b * inter_seq_stride + t * inter_t_stride floats. Grid
+// (ceil(dim / 256), batch), block 256.
+extern "C" __global__ void gdn_conv_chain_f32_batched(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ new_input,
+    const __nv_bfloat16* __restrict__ weight,
+    float* __restrict__ output,
+    float* __restrict__ conv_inter,
+    unsigned int num_tokens,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    float l2_eps,
+    unsigned int input_stride,
+    unsigned int output_stride,
+    unsigned long long inter_t_stride,
+    unsigned long long inter_seq_stride
+) {
+    const unsigned long long b = blockIdx.y;
+    float* const base = conv_inter + b * inter_seq_stride;
+    float* const inter[3] = {base, base + inter_t_stride, base + 2 * inter_t_stride};
+    const unsigned long long row0 = b * num_tokens;
+    conv_chain_f32_body(conv_state + b * dim * d_conv, new_input + row0 * input_stride, weight,
+                        output + row0 * output_stride, inter, num_tokens, dim, d_conv,
+                        qk_channels, head_dim, l2_eps, input_stride, output_stride);
 }

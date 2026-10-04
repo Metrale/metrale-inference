@@ -11,11 +11,12 @@
 //! (the control: the adapter matters); the verify must too. A repeat of the `a` verify must be
 //! byte-identical, or an apparent difference is noise.
 //!
-//! Run: `METRALE_DEBUG_NO_GRAPH=1 cargo test --release -p metrale-server --bin met lora_verify_gpu
-//! -- --ignored --nocapture` on a GPU box with `unsloth/Qwen3.8-27B-NVFP4` cached. Eager, because a
-//! captured one-row decode graph is keyed by the sequence's pool slot only and replays the LoRA
-//! route it was captured with (installed pair or slot buffer) for the next sequence on that slot,
-//! whatever its adapter: graphed, the decode control cannot see the adapter switch.
+//! Every step runs on the same pool slot. Run twice with `METRALE_LORA_GRAPH_REFERENCE=<file>`: first
+//! with `METRALE_DEBUG_NO_GRAPH=1` (eager: it writes the steps' logits), then graphed (it requires
+//! every step equal to eager's). Until 2026-10-03 the graphed run failed: the slot-keyed graphs
+//! replayed the LoRA route they were captured with for the next sequence on the slot.
+//! `cargo test --release -p metrale-server --bin met lora_verify_gpu -- --ignored --nocapture`, on
+//! a GPU box with `unsloth/Qwen3.8-27B-NVFP4` cached.
 //!
 //! Owner: server (LoRA).
 //! Invariants: none beyond the types.
@@ -110,8 +111,9 @@ fn logits(model: &dyn Model, rows: usize) -> Result<Vec<u8>> {
 
 /// 2026-10-03: Prefill `prompt` under the active adapter, then one step under `slot`: a decode
 /// of the prefill's argmax, or a K = 2 verify of it and one draft. The step's logits.
-fn step(model: &dyn Model, prompt: &[u32], slot: i32, verify: bool) -> Result<Vec<u8>> {
+fn step(model: &dyn Model, prompt: &[u32], slot: i32, verify: bool) -> Result<(usize, Vec<u8>)> {
     let mut seq = model.alloc_sequence()?;
+    let pool_slot = seq.slot_idx;
     let out = (|| -> Result<Vec<u8>> {
         seq.adapter_slot = -1;
         let p = model.prefill(prompt, &mut seq, 0)?;
@@ -137,15 +139,21 @@ fn step(model: &dyn Model, prompt: &[u32], slot: i32, verify: bool) -> Result<Ve
         }
     })();
     model.free_sequence(&mut seq)?;
-    out
+    Ok((pool_slot, out?))
+}
+
+/// 2026-10-03: The steps' logits, concatenated in a fixed order.
+fn record(steps: &[&[u8]]) -> Vec<u8> {
+    steps.concat()
 }
 
 #[test]
 #[ignore = "GPU: loads unsloth/Qwen3.8-27B-NVFP4 with two generated LoRA adapters"]
 fn an_active_adapter_verify_applies_its_attention_lora_as_decode_does() -> Result<()> {
-    anyhow::ensure!(
-        std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1"),
-        "run with METRALE_DEBUG_NO_GRAPH=1 (see the module header)"
+    let eager = std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1");
+    let reference = std::path::PathBuf::from(
+        std::env::var("METRALE_LORA_GRAPH_REFERENCE")
+            .context("METRALE_LORA_GRAPH_REFERENCE names the eager run's logits file")?,
     );
     // 2026-10-03: The CUDA backend's allocator reports through the Tokio runtime, as under
     // `met serve` and `met circuit diff`.
@@ -195,19 +203,45 @@ fn an_active_adapter_verify_applies_its_attention_lora_as_decode_does() -> Resul
     let prompt: Vec<u32> = (0..48).map(|i| 1000 + 37 * i).collect();
     // 2026-10-03: `a` loads first, so it is slot 0 and active; `z` is slot 1.
     let (active, zero) = (-1, 1);
-    let decode_a = step(model, &prompt, active, false)?;
-    let decode_z = step(model, &prompt, zero, false)?;
+    // 2026-10-03: Each step allocates and frees, so every one runs on the same pool slot: under
+    // graphs, each reuses the graph keys the step before it captured.
+    let mut slots = Vec::new();
+    let mut run = |slot: i32, verify: bool| -> Result<Vec<u8>> {
+        let (s, l) = step(model, &prompt, slot, verify)?;
+        slots.push(s);
+        Ok(l)
+    };
+    let decode_a = run(active, false)?;
+    let decode_z = run(zero, false)?;
     assert_ne!(
         decode_a, decode_z,
         "control: decode does not see the adapter at all"
     );
-    let verify_a = step(model, &prompt, active, true)?;
-    let verify_a2 = step(model, &prompt, active, true)?;
+    let verify_a = run(active, true)?;
+    let verify_a2 = run(active, true)?;
+    let verify_z = run(zero, true)?;
+    let decode_a2 = run(active, false)?;
+    assert!(
+        slots.windows(2).all(|w| w[0] == w[1]),
+        "the steps ran on different pool slots {slots:?}: no graph is reused"
+    );
     assert_eq!(verify_a, verify_a2, "control: the verify is not repeatable");
-    let verify_z = step(model, &prompt, zero, true)?;
+    assert_eq!(decode_a, decode_a2, "control: the decode is not repeatable");
     assert_ne!(
         verify_a, verify_z,
         "the verify of an active-adapter request ran its attention without the adapter"
     );
+    let got = record(&[&decode_a, &decode_z, &verify_a, &verify_z]);
+    if eager {
+        std::fs::write(&reference, &got)?;
+    } else {
+        let want = std::fs::read(&reference)
+            .with_context(|| format!("the eager run's logits at {}", reference.display()))?;
+        assert!(
+            got == want,
+            "a graphed step differs from the eager step (a slot's graph replayed another \
+             adapter's LoRA route)"
+        );
+    }
     Ok(())
 }

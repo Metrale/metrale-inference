@@ -46,6 +46,12 @@ pub(super) struct Nvfp4GroupedKernels {
     pub gate_up_tc: KernelHandle,
     pub down_tc: KernelHandle,
     pub declared_experts: bool,
+    /// 2026-10-04: The lean point's pair (`Nvfp4G16Lean`) and its load-time repack; `lean` is set
+    /// once this layer's tables were repacked (`nvfp4_lean.rs`), after which only that pair reads them.
+    pub gate_up_tc_lean: KernelHandle,
+    pub down_tc_lean: KernelHandle,
+    pub lean_repack: KernelHandle,
+    pub lean: bool,
     /// 2026-10-02: The BF16 point's pair (`moe_bf16_grouped_tc.cu`, `forward_bf16_grouped_decode.rs`).
     pub bf16_gate_up_tc: KernelHandle,
     pub bf16_down_tc: KernelHandle,
@@ -63,6 +69,10 @@ impl Nvfp4GroupedKernels {
             gate_up_tc: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc"),
             down_tc: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc"),
             declared_experts: false,
+            gate_up_tc_lean: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc_lean"),
+            down_tc_lean: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_lean"),
+            lean_repack: try_kernel(gpu, TC, "nvfp4_tc_lean_repack"),
+            lean: false,
             bf16_gate_up_tc: try_kernel(
                 gpu,
                 "moe_bf16_grouped_tc",
@@ -78,7 +88,11 @@ impl Nvfp4GroupedKernels {
 
     /// 2026-10-02: The gate+up and down launches for an `inter` x `hidden` expert: the
     /// tensor-core twins when on and the shape fits them, else the CUDA-core kernels.
+    /// 2026-10-04: Always the lean pair once the tables are lean (the repack checked the shape).
     fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
+        if let Some(lean) = self.lean_launch() {
+            return lean;
+        }
         if nvfp4_grouped_tc_enabled()
             && self.gate_up_tc.0 != 0
             && self.down_tc.0 != 0
@@ -106,19 +120,19 @@ impl Nvfp4GroupedKernels {
 
 /// 2026-10-02: The expert kernels one grouped NVFP4 decode launches, and the widest row count
 /// they admit.
-struct Nvfp4GroupedLaunch {
-    gate_up: KernelHandle,
-    gate_up_geometry: ops::Fp8GroupedGeometry,
-    down: KernelHandle,
-    down_geometry: ops::Fp8GroupedGeometry,
-    max_rows: usize,
+pub(super) struct Nvfp4GroupedLaunch {
+    pub(super) gate_up: KernelHandle,
+    pub(super) gate_up_geometry: ops::Fp8GroupedGeometry,
+    pub(super) down: KernelHandle,
+    pub(super) down_geometry: ops::Fp8GroupedGeometry,
+    pub(super) max_rows: usize,
 }
 
 /// 2026-10-02: The grouped NVFP4 decode takes the tensor-core expert kernels unless
 /// `METRALE_NO_MOE_NVFP4_TC` is present (a debugging kill switch: the CUDA-core kernels). Read
 /// once per process. The two pairs differ in summation order, and in the SiLU product's
 /// carrier (FP32 against BF16 hi + lo), so their bits differ; each is row-invariant.
-fn nvfp4_grouped_tc_enabled() -> bool {
+pub(super) fn nvfp4_grouped_tc_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_NVFP4_TC").is_none())
 }
