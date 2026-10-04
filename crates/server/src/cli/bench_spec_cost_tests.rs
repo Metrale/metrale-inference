@@ -83,13 +83,30 @@ fn a_missing_depth_is_refused() {
 }
 
 #[test]
-fn a_depth_given_twice_is_refused() {
-    let runs = vec![run(0, &[1], "1"), run(1, &[1], "1"), run(1, &[1], "1")];
-    let err = assemble(&key(), &runs).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("duplicate cell n=1 k=1"),
-        "{err:#}"
+fn repeats_of_a_depth_combine_into_their_median_and_a_file_twice_is_refused() {
+    // 2026-10-04: Three repeats of k = 1 with wall times 11, 11 + 6, 11 + 30 ms at n = 1: the
+    // median is the middle one; an even count takes the mean of the middle two.
+    let mut runs = vec![run(0, &[1], "1"), run(1, &[1], "1")];
+    for (i, extra) in [(2, 6.0), (3, 30.0)] {
+        let (_, mut r) = run(1, &[1], "1");
+        *r.frame.metrics.get_mut("n1_wall_ms").unwrap() += extra;
+        runs.push((format!("k1-rep{i}.json"), r));
+    }
+    let table = CostTable::parse(&assemble(&key(), &runs).unwrap()).unwrap();
+    assert_eq!(
+        table.cell(1, 1).unwrap().verify_ms,
+        16.0,
+        "median of 10, 16, 40"
     );
+    let even = CostTable::parse(&assemble(&key(), &runs[..3]).unwrap()).unwrap();
+    assert_eq!(
+        even.cell(1, 1).unwrap().verify_ms,
+        13.0,
+        "mean of 10 and 16"
+    );
+    let twice = vec![run(0, &[1], "1"), run(1, &[1], "1"), run(1, &[1], "1")];
+    let err = assemble(&key(), &twice).unwrap_err();
+    assert!(format!("{err:#}").contains("given twice"), "{err:#}");
 }
 
 #[test]

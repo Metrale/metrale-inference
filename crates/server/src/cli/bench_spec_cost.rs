@@ -11,7 +11,8 @@
 //!   (every width at every depth `0..=K`, no duplicate, positive finite costs), and
 //!   `table_input::read` refuses a record with a vacuous or unsampled width.
 //! - The runs must agree on the box (machine id), the served model and every benchmark
-//!   parameter other than `k`; a mix is refused, never merged.
+//!   parameter other than `k`; a mix is refused, never merged. Repeats of a depth are combined
+//!   into their per-field median; one file given twice is refused.
 
 use std::collections::BTreeMap;
 
@@ -95,11 +96,15 @@ pub(crate) fn calibrate(drafter: DrafterKey, records: &[(String, RunRecord)]) ->
         .map_err(anyhow::Error::msg)
 }
 
-/// 2026-10-04: The table text for `key` from `(label, record)` runs. Pure.
+/// 2026-10-04: The table text for `key` from `(label, record)` runs. Repeats of a depth
+/// (interleaved runs) are combined field by field into their median. Pure.
 pub(crate) fn assemble(key: &TableKey, records: &[(String, RunRecord)]) -> Result<String> {
-    let mut cells: Vec<Cell> = Vec::new();
+    let mut repeats: BTreeMap<(usize, usize), Vec<table_input::MeasuredCell>> = BTreeMap::new();
     let mut first: Option<(&str, Identity)> = None;
-    for (label, record) in records {
+    for (i, (label, record)) in records.iter().enumerate() {
+        if records[..i].iter().any(|(l, _)| l == label) {
+            bail!("{label} is given twice");
+        }
         if record.benchmark_id != DESCRIPTOR.id {
             bail!(
                 "{label}: a {} result, not {}",
@@ -116,17 +121,37 @@ pub(crate) fn assemble(key: &TableKey, records: &[(String, RunRecord)]) -> Resul
             ),
             Some(_) => {}
         }
-        let read = table_input::read(&record.frame.metrics).with_context(|| label.clone())?;
-        cells.extend(read.into_iter().map(|c| Cell {
-            n: c.n,
-            k: c.k,
-            verify_ms: c.verify_ms,
-            verify_j: c.verify_j,
-            draft_ms: c.draft_ms,
-            draft_j: c.draft_j,
-        }));
+        for c in table_input::read(&record.frame.metrics).with_context(|| label.clone())? {
+            repeats.entry((c.n, c.k)).or_default().push(c);
+        }
     }
+    let cells: Vec<Cell> = repeats
+        .into_iter()
+        .map(|((n, k), reps)| {
+            let field =
+                |f: fn(&table_input::MeasuredCell) -> f64| median(reps.iter().map(f).collect());
+            Cell {
+                n,
+                k,
+                verify_ms: field(|c| c.verify_ms),
+                verify_j: field(|c| c.verify_j),
+                draft_ms: field(|c| c.draft_ms),
+                draft_j: field(|c| c.draft_j),
+            }
+        })
+        .collect();
     CostTable::render(key, &cells).map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-04: The median of a non-empty list; the mean of the middle two for an even count.
+fn median(mut v: Vec<f64>) -> f64 {
+    v.sort_by(f64::total_cmp);
+    let m = v.len() / 2;
+    if v.len() % 2 == 1 {
+        v[m]
+    } else {
+        (v[m - 1] + v[m]) / 2.0
+    }
 }
 
 /// 2026-10-04: What must be equal across the runs of one table.
