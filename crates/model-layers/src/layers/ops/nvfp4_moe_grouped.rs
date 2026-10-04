@@ -234,3 +234,7 @@ pub fn moe_expert_down_act_nvfp4_grouped(
         .arg_u32(num_tokens)
         .launch(stream)
 }
+
+#[cfg(test)]
+#[path = "nvfp4_moe_grouped_tests.rs"]
+mod tests;
