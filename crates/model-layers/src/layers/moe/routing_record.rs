@@ -7,7 +7,7 @@
 //!
 //! Owner: model-layers (MoE).
 //! Invariants:
-//! - Unarmed (the default), [`record`] returns after one atomic load: no synchronize, no copy.
+//! - Unarmed (the default), `record` returns after one atomic load: no synchronize, no copy.
 //! - Never under graph capture: a synchronize inside a capture invalidates it.
 //! - Layers are keyed by the `MoeLayer` they belong to and listed in first-touch order, which is
 //!   layer order for the main stack (the first prefill runs every layer in order), followed by a

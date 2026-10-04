@@ -16,78 +16,7 @@ use metrale_ml_utils::extrapolate::{Scaling, extrapolate, points_of, units_of_re
 use metrale_ml_utils::{MockInputs, MockPlan, MockSpec, RoutingProfile, plan_mock, read_source};
 
 use super::ml_utils_io::{FsSink, OpenedSource, open_source};
-
-/// `met ml-utils`: model utilities.
-#[derive(clap::Args, Debug)]
-pub struct MlUtilsArgs {
-    #[command(subcommand)]
-    pub action: MlUtilsAction,
-}
-
-/// The `met ml-utils` commands.
-#[derive(clap::Subcommand, Debug)]
-pub enum MlUtilsAction {
-    /// Report a checkpoint from its config, quantization metadata and safetensors headers (no
-    /// tensor data): arch, layer signatures and their bytes, storage schemes, and for a MoE the
-    /// distinct experts a decode step touches per concurrency. With --spec, also the mock plan.
-    Inspect(InspectArgs),
-    /// Write a mock (rehearsal) checkpoint: the architecture exactly, fewer layers, synthetic
-    /// weights (deterministic by seed), in the source's own Hugging Face format.
-    Mockify(MockifyArgs),
-    /// Estimate a full-model metric from mock measurements (one per resolved spec), and its error
-    /// against a full-model measurement when given.
-    Extrapolate(ExtrapolateArgs),
-}
-
-/// `met ml-utils inspect` options.
-#[derive(clap::Args, Debug)]
-pub struct InspectArgs {
-    /// The checkpoint: a directory, or a Hub id (org/name) in the local cache.
-    #[arg(long)]
-    pub checkpoint: String,
-    /// A mock spec (TOML) to plan and report.
-    #[arg(long)]
-    pub spec: Option<PathBuf>,
-    /// Read the checkpoint's metadata and headers from huggingface.co when it is not cached.
-    #[arg(long)]
-    pub allow_network: bool,
-    /// Print JSON instead of text.
-    #[arg(long)]
-    pub json: bool,
-}
-
-/// `met ml-utils mockify` options.
-#[derive(clap::Args, Debug)]
-pub struct MockifyArgs {
-    /// The source checkpoint: a directory, or a Hub id (org/name).
-    #[arg(long)]
-    pub checkpoint: String,
-    /// The mock spec (TOML). Every key is required; see `metrale_ml_utils::spec`.
-    #[arg(long)]
-    pub spec: PathBuf,
-    /// The output directory; it must not exist.
-    #[arg(long)]
-    pub out: PathBuf,
-    /// Read the source's metadata and headers from huggingface.co when it is not cached.
-    #[arg(long)]
-    pub allow_network: bool,
-}
-
-/// `met ml-utils extrapolate` options.
-#[derive(clap::Args, Debug)]
-pub struct ExtrapolateArgs {
-    /// One mock measurement: `<mock dir or mock.resolved.toml>=<value>`. Give at least one more
-    /// than the source has layer signatures, varying each signature's count on its own.
-    #[arg(long = "point", required = true)]
-    pub points: Vec<String>,
-    /// How the metric scales with layers: `rate` (tok/s: its reciprocal is affine) or `linear`
-    /// (J/tok at a fixed concurrency, TTFT).
-    #[arg(long)]
-    pub scaling: String,
-    /// The full model's measured value, to report the estimate's error.
-    #[arg(long)]
-    pub full: Option<f64>,
-}
+use super::{ExtrapolateArgs, InspectArgs, MlUtilsAction, MlUtilsArgs, MockifyArgs};
 
 /// 2026-10-03: Run one `met ml-utils` command.
 pub(crate) fn dispatch(args: MlUtilsArgs) -> Result<()> {

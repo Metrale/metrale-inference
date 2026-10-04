@@ -173,7 +173,7 @@ pub fn unit_tensor_ids(u: &crate::plan::Unit) -> Vec<usize> {
 }
 
 /// 2026-10-03: Consecutive runs of `units` of at most `threads` units and about
-/// [`BATCH_BYTES`] bytes (a larger unit is a run of its own): the batches [`synthesize_batch`]
+/// `BATCH_BYTES` bytes (a larger unit is a run of its own): the batches [`synthesize_batch`]
 /// takes, for the writer and the `--mock` loader alike.
 pub fn batches(plan: &MockPlan, units: &[usize], threads: usize) -> Vec<Vec<usize>> {
     let threads = threads.max(1);

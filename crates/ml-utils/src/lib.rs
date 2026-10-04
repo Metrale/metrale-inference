@@ -15,7 +15,7 @@
 //! | [`schedule`], [`rename`], [`quant_meta`] | which layers are kept; renaming; metadata parity |
 //! | [`scheme`], [`values`], [`synth`], [`rng`] | storage schemes, value classes, encoding, streams |
 //! | [`routing`] | expert-load profiles reproduced in router weights |
-//! | [`plan`], [`write`] | the whole plan; writing it through a sink |
+//! | [`plan`], [`mod@write`] | the whole plan; writing it through a sink |
 //! | [`inspect`] | what `met ml-utils inspect` reports |
 //! | [`extrapolate`] | full-model estimates from mock measurements |
 //! | [`io`] | the I/O traits (SBIO) |

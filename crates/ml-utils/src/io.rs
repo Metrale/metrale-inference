@@ -2,7 +2,7 @@
 
 //! 2026-10-03: The I/O boundary (SBIO). This crate reads a checkpoint only through
 //! [`CheckpointSource`] and writes one only through [`CheckpointSink`]; the server implements
-//! both over the filesystem and the Hub, tests over memory ([`mem`]).
+//! both over the filesystem and the Hub, tests over memory (`mem`, behind `test-utils`).
 //!
 //! Owner: metrale-ml-utils.
 //! Invariants:
