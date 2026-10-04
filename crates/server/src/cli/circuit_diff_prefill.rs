@@ -80,10 +80,15 @@ pub(super) fn prefill_once(
     // purpose.
     seq.session_hash = session;
     seq.adapter_id = session;
+    // 2026-10-03: The model's default stream, the one `logits` and `state_digest` read on.
+    // `prefill_chunk` runs on the stream it is given (single-pass prefill, decode and verify pick
+    // the default stream themselves); given the legacy stream 0, nothing ordered the logits read
+    // after the chunk's LM head, and the first chunked run of a process read stale logits.
+    let stream = model.default_stream();
     let result = (|| {
         metrale_telemetry::launch_trace::begin();
         let ptr = match path {
-            PrefillPath::Single => model.prefill(prompt, &mut seq, 0)?,
+            PrefillPath::Single => model.prefill(prompt, &mut seq, stream)?,
             PrefillPath::Chunked(c) => {
                 ensure!(c > 0, "a chunk of 0 tokens");
                 let mut ptr = metrale_gpu_runtime::gpu::DevicePtr::NULL;
@@ -91,7 +96,7 @@ pub(super) fn prefill_once(
                 while off < prompt.len() {
                     let len = c.min(prompt.len() - off);
                     let last = off + len == prompt.len();
-                    ptr = model.prefill_chunk(prompt, &mut seq, off, len, last, 0)?;
+                    ptr = model.prefill_chunk(prompt, &mut seq, off, len, last, stream)?;
                     off += len;
                 }
                 ptr
@@ -286,10 +291,20 @@ pub(super) fn prefill_report(
     let b = prefill_once(model, &changed, PrefillPath::Single, next_session())?;
     let mut control = compare("legacy, prompt token changed", &a.logits, &b.logits);
     control.state_diff = first_state_diff(&a.state, &b.state);
-    let (cached_reports, cached_flat) =
-        cached::cached_report(model, lens, &paths, forwards, &mut next_session)?;
-    flat.extend(cached_flat);
-    let reasons = prefill_failures(&flat, &control);
+    // 2026-10-03: a cached leg that errors fails the diff but keeps the strict legs' report.
+    let (cached_reports, cached_error) =
+        match cached::cached_report(model, lens, &paths, forwards, &mut next_session) {
+            Ok((reports, cached_flat)) => {
+                flat.extend(cached_flat);
+                (reports, None)
+            }
+            Err(e) => (
+                Vec::new(),
+                Some(format!("the cached-prefix leg errored: {e:#}")),
+            ),
+        };
+    let mut reasons = prefill_failures(&flat, &control);
+    reasons.extend(cached_error);
     let report = Report {
         cached: cached_reports,
         lengths,

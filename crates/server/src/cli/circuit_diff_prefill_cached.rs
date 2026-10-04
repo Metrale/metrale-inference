@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-03: The cached-prefix leg of `met circuit diff --prefill`: the prefix-cache path
-//! exercised on purpose, circuit against legacy in that same mode. For each length the restore
-//! can serve (at least [`MIN_RESTORE_TOKENS`]), a run primes a fresh prefix-cache namespace with
-//! the prompt, then prefills the prompt plus a [`TAIL`]-token tail in the same namespace, so the
-//! second pass restores the primed snapshot and recomputes only the tail. Legacy runs it twice
+//! exercised on purpose, circuit against legacy in that same mode. For each length `t` whose
+//! primed part the restore can serve (at least [`MIN_RESTORE_TOKENS`]), a run primes a fresh
+//! prefix-cache namespace with the prompt's first `t - TAIL` tokens, then prefills the whole
+//! `t`-token prompt in the same namespace, so the second pass restores the primed snapshot and
+//! recomputes only the [`TAIL`]. The warm pass is exactly the strict leg's prompt, so it fits
+//! every path the strict leg ran (2026-10-03: a prompt-plus-tail warm pass overran the
+//! single-pass arena at the longest length). Legacy runs it twice
 //! (the reference and a repeat, each in a namespace of its own) and every circuit forward once;
 //! the warm passes are compared as the strict legs are (logits, state, and the repeat's path).
 //!
@@ -27,7 +30,7 @@ use super::{
 /// default, 256 tokens).
 pub(super) const MIN_RESTORE_TOKENS: usize = 256;
 
-/// 2026-10-03: Tokens the warm pass adds after the primed prompt.
+/// 2026-10-03: Tokens the warm pass recomputes after the primed part.
 pub(super) const TAIL: usize = 37;
 
 /// 2026-10-03: The kernel only the after-restore GatedDeltaNet arm launches; its presence in the
@@ -46,15 +49,16 @@ pub(super) struct CachedReport {
     comparisons: Vec<PrefillComparison>,
 }
 
-/// 2026-10-03: Prime `prompt` in namespace `ns`, then prefill `warm` there; the warm run.
+/// 2026-10-03: Prime all of `prompt` but its [`TAIL`] in namespace `ns`, then prefill the whole
+/// prompt there; the warm run.
 fn warm_once(
     model: &dyn Model,
-    (prompt, warm): (&[u32], &[u32]),
+    prompt: &[u32],
     path: PrefillPath,
     ns: u64,
 ) -> Result<super::PrefillRun> {
-    prefill_once(model, prompt, path, ns)?;
-    prefill_once(model, warm, path, ns)
+    prefill_once(model, &prompt[..prompt.len() - TAIL], path, ns)?;
+    prefill_once(model, prompt, path, ns)
 }
 
 /// 2026-10-03: The cached leg over `lens` and `paths`; its reports, and its comparisons in the
@@ -67,16 +71,11 @@ pub(super) fn cached_report(
     next_ns: &mut dyn FnMut() -> u64,
 ) -> Result<(Vec<CachedReport>, Vec<Flat>)> {
     let (mut reports, mut flat) = (Vec::new(), Vec::new());
-    for &t in lens.iter().filter(|&&t| t >= MIN_RESTORE_TOKENS) {
+    for &t in lens.iter().filter(|&&t| t >= MIN_RESTORE_TOKENS + TAIL) {
         let prompt = prompt_of_len(t, model.vocab_size());
-        let warm: Vec<u32> = prompt
-            .iter()
-            .copied()
-            .chain(prompt_of_len(TAIL, model.vocab_size()))
-            .collect();
         for &path in paths {
             model.set_forward(&ForwardSelect::Legacy)?;
-            let reference = warm_once(model, (&prompt, &warm), path, next_ns())?;
+            let reference = warm_once(model, &prompt, path, next_ns())?;
             let restored = reference.ops.iter().any(|o| o.op.ends_with(RESTORE_MARK));
             let mut cs = Vec::new();
             if !restored {
@@ -86,7 +85,7 @@ pub(super) fn cached_report(
             }
             for (name, sel) in forwards {
                 model.set_forward(sel)?;
-                let run = warm_once(model, (&prompt, &warm), path, next_ns())?;
+                let run = warm_once(model, &prompt, path, next_ns())?;
                 let mut c = compare(
                     &format!("{name}, cached prefix"),
                     &reference.logits,
@@ -97,13 +96,13 @@ pub(super) fn cached_report(
                     c.path_diff = first_op_diff(&reference.ops, &run.ops);
                 }
                 tracing::info!(
-                    "circuit diff --prefill cached: {t}+{TAIL} tokens {path:?} {name}: {c:?}"
+                    "circuit diff --prefill cached: {t} tokens ({TAIL} recomputed) {path:?} {name}: {c:?}"
                 );
                 cs.push(c);
             }
-            flat.push((t + TAIL, path, cs.clone()));
+            flat.push((t, path, cs.clone()));
             reports.push(CachedReport {
-                tokens: t + TAIL,
+                tokens: t,
                 path,
                 restored,
                 comparisons: cs,
