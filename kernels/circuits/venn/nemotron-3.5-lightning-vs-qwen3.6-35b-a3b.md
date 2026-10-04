@@ -293,7 +293,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | # | Family | Point | Sites | Max est. share |
 |---|---|---|---|---|
 | 1 | mamba2_ssm | - | `mamba.ssm` | 37.1% (multi_seq n=128) |
-| 2 | moe_grouped_tc | down_input=bf16 weight=nvfp4/g16 | `moe.experts_down` | 35.8% (multi_seq n=16) |
+| 2 | moe_grouped_tc | down_input=bf16 weight=nvfp4/g16 weight_layout=row_major | `moe.experts_down` | 35.8% (multi_seq n=16) |
 | 3 | moe_w4a16_grouped_gemm | - | `moe.experts_up` | 35.8% (multi_seq n=16) |
 | 4 | moe_nvfp4_gemv_1row | - | `moe.experts_up` | 15.3% (decode n=1) |
 | 5 | moe_bf16_1row | - | `draft.moe.experts_down` | 13.7% (draft n=1) |

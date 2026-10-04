@@ -103,6 +103,7 @@ impl MoeLayer {
                 aux,
             )?;
         } else {
+            self.refuse_lean_layout("MoE prefill (shared expert, untransposed)")?;
             ops::w4a16_gemm(
                 ctx.gpu,
                 self.w4a16_gemm,
@@ -161,6 +162,7 @@ impl MoeLayer {
                 aux,
             )?;
         } else {
+            self.refuse_lean_layout("MoE prefill (shared expert, untransposed)")?;
             ops::w4a16_gemm(
                 ctx.gpu,
                 self.w4a16_gemm,

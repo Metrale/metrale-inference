@@ -17,6 +17,8 @@ pub(crate) enum Leg {
     Nvfp4,
     Nvfp4GateUp,
     AllNvfp4Tc,
+    /// 2026-10-04: `AllNvfp4Tc` on the lean point (tables repacked in place; identical bytes).
+    AllNvfp4TcLean,
 }
 
 impl Leg {
@@ -26,6 +28,7 @@ impl Leg {
             Self::Nvfp4 => "nvfp4",
             Self::Nvfp4GateUp => "nvfp4-gate-up",
             Self::AllNvfp4Tc => "all-nvfp4-tc",
+            Self::AllNvfp4TcLean => "all-nvfp4-tc-lean",
         }
     }
     pub(crate) fn fp8_shared(self) -> bool {
@@ -35,7 +38,15 @@ impl Leg {
         self == Self::Nvfp4GateUp
     }
     pub(crate) fn tc(self) -> bool {
-        self == Self::AllNvfp4Tc
+        matches!(self, Self::AllNvfp4Tc | Self::AllNvfp4TcLean)
+    }
+    pub(crate) fn lean(self) -> bool {
+        self == Self::AllNvfp4TcLean
+    }
+    /// 2026-10-04: The factor the leg's gate+up writes its SiLU rows with: the lean point's
+    /// `Nvfp4G16Lean::ACT_LIFT` (tc_weight_formats.cuh), 1 elsewhere.
+    pub(crate) fn act_lift(self) -> f64 {
+        if self.lean() { 128.0 } else { 1.0 }
     }
     /// 2026-10-02: The widest row count production admits on this leg's kernels.
     pub(crate) fn max_m(self) -> usize {

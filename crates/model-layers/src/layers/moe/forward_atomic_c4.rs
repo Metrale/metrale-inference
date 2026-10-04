@@ -33,6 +33,7 @@ impl MoeLayer {
             self.router_logits_n as usize == ctx.config.num_experts,
             "zero-expert MoE routing is not wired on this dispatch variant yet (forward_atomic_c4)"
         );
+        self.refuse_lean_layout("MoeLayer::forward_atomic_c4_decode")?;
 
         // 2026-09-25: This path folds no LoRA delta, so `reject_decode_lora`
         // refuses an adapter-routed batch.
