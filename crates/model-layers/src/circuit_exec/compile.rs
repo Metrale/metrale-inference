@@ -23,7 +23,7 @@ use super::bindings::{BoundWeight, CircuitLayer, HeadBinding, WeightSlot};
 use super::emitters::emitter;
 pub use super::fixed::{DraftFixed, Fixed};
 use super::kernels::KernelTable;
-use super::program::{Launch, LaunchKind, Program, RunFn};
+use super::program::{Launch, LaunchKind, Program, RunFn, SideLane};
 
 #[path = "compile_place.rs"]
 mod place;
@@ -292,6 +292,7 @@ impl<'a> Cx<'a> {
             kernel: format!("{}::{}", kid.module, kid.func),
             kind: LaunchKind::Kernel,
             covers: 1,
+            lane: self.g.group.stream,
             run,
         });
         Ok(())
@@ -317,6 +318,7 @@ impl<'a> Cx<'a> {
             kernel: names.join("+"),
             kind: LaunchKind::Kernel,
             covers: n,
+            lane: self.g.group.stream,
             run,
         });
         Ok(())
@@ -334,6 +336,7 @@ impl<'a> Cx<'a> {
             kernel: "copy".to_string(),
             kind: LaunchKind::Copy,
             covers: 1,
+            lane: self.g.group.stream,
             run,
         });
         Ok(())
@@ -365,6 +368,9 @@ pub struct Inputs<'a> {
     pub draft: Option<&'a CircuitLayer>,
     /// 2026-10-03: The legacy buffer arena (`Cx::arena`); `None` in the mock fixtures.
     pub arena: Option<&'a metrale_gpu_runtime::buffers::BufferArena>,
+    /// 2026-10-04: The executor's side stream; `None` when no rule runs on one, and then a plan
+    /// with a side-stream group does not compile.
+    pub lane: Option<SideLane>,
 }
 
 /// 2026-09-28: Compile `plan` with its buffers placed by `buffers` at `workspace`.
@@ -399,7 +405,16 @@ pub fn compile_placed(
     let (ptrs, strides) = (&placement.ptrs, &placement.strides);
     let mut launches = Vec::with_capacity(plan.launches() as usize);
     let mut owners = Vec::with_capacity(plan.launches() as usize);
+    let lane = match (plan.events.is_empty(), inp.lane) {
+        (true, _) => None,
+        (false, Some(lane)) => Some(lane),
+        (false, None) => bail!("the plan runs groups on a side stream the executor did not create"),
+    };
     for (index, group) in plan.groups.iter().enumerate() {
+        for ev in plan.events.iter().filter(|e| e.before == Some(index)) {
+            launches.push(SideLane::launch(lane, ev, index)?);
+            owners.push(segment_of(circuit, group));
+        }
         let g = GroupRef {
             circuit,
             group,
@@ -457,8 +472,22 @@ pub fn compile_placed(
         ));
         launches.append(&mut cx.launches);
     }
+    if let Some(last) = plan.groups.last() {
+        for ev in plan.events.iter().filter(|e| e.before.is_none()) {
+            launches.push(SideLane::launch(lane, ev, plan.groups.len() - 1)?);
+            owners.push(segment_of(circuit, last));
+        }
+    }
     ensure!(
         launches.iter().map(|l| l.covers as u64).sum::<u64>() == plan.launches() + plan.copies()
+    );
+    ensure!(
+        launches
+            .iter()
+            .filter(|l| l.kind == LaunchKind::Event)
+            .count()
+            == plan.events.len(),
+        "the program issues another number of events than the plan derives"
     );
     Ok(Program {
         mode: plan.mode,
@@ -466,5 +495,6 @@ pub fn compile_placed(
         plan_digest: plan.digest.clone(),
         launches,
         segments: segments(&owners),
+        lane,
     })
 }

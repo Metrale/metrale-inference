@@ -88,6 +88,7 @@ fn build() -> Built {
             head: &head,
             draft: None,
             arena: Some(&arena),
+            lane: None,
         },
     )
     .unwrap();

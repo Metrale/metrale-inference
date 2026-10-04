@@ -14,6 +14,11 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+// 2026-10-04: The mock's cross-stream log ([`StreamOp`]) and its distinct-id switch.
+#[path = "mock_streams.rs"]
+mod mock_streams;
+pub use mock_streams::StreamOp;
+
 #[path = "mock_counters.rs"]
 mod mock_counters;
 
@@ -57,6 +62,12 @@ pub struct MockGpuBackend {
     /// 2026-09-25: `copy_h2d` calls and their total bytes.
     h2d: AtomicUsize,
     h2d_bytes: AtomicUsize,
+    /// 2026-10-04: When set ([`MockGpuBackend::set_distinct_streams`]), `create_stream` and
+    /// `create_event` hand out distinct ids from this counter; otherwise both return 0, as the
+    /// trait's defaults do.
+    distinct: Mutex<Option<u64>>,
+    /// 2026-10-04: Event records, stream waits and event destroys, in call order.
+    stream_ops: Mutex<Vec<StreamOp>>,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +116,8 @@ impl MockGpuBackend {
             host_pinned_allocs: AtomicUsize::new(0),
             h2d: AtomicUsize::new(0),
             h2d_bytes: AtomicUsize::new(0),
+            distinct: Mutex::new(None),
+            stream_ops: Mutex::new(Vec::new()),
         }
     }
 
@@ -375,6 +388,33 @@ impl GpuBackend for MockGpuBackend {
 
     fn default_stream(&self) -> u64 {
         0
+    }
+
+    fn create_stream(&self) -> Result<u64> {
+        Ok(self.next_distinct())
+    }
+
+    fn create_event(&self) -> Result<u64> {
+        Ok(self.next_distinct())
+    }
+
+    fn record_event(&self, event: u64, stream: u64) -> Result<()> {
+        self.stream_ops
+            .lock()
+            .push(StreamOp::Record { event, stream });
+        Ok(())
+    }
+
+    fn stream_wait_event(&self, stream: u64, event: u64) -> Result<()> {
+        self.stream_ops
+            .lock()
+            .push(StreamOp::Wait { stream, event });
+        Ok(())
+    }
+
+    fn destroy_event(&self, event: u64) -> Result<()> {
+        self.stream_ops.lock().push(StreamOp::Destroy(event));
+        Ok(())
     }
 
     fn has_module(&self, module: &str) -> bool {

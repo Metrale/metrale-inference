@@ -135,6 +135,8 @@ pub struct CircuitExec {
     pub fusions: Fusions,
     workspace: DevicePtr,
     workspace_bytes: u64,
+    /// 2026-10-04: The side stream, when a rule runs on one.
+    lane: Option<program::SideLane>,
 }
 
 impl CircuitExec {
@@ -191,6 +193,16 @@ impl CircuitExec {
             }
         }
         let table = kernels::KernelTable::resolve(b.gpu, &present);
+        // 2026-10-04: A side stream only when a rule runs a group on one.
+        let lane = if loaded
+            .rules
+            .iter()
+            .any(|r| r.stream == metrale_circuit::Stream::Side)
+        {
+            Some(program::SideLane::create(b.gpu)?)
+        } else {
+            None
+        };
         let inputs = compile::Inputs {
             gpu: b.gpu,
             config: b.config,
@@ -200,6 +212,7 @@ impl CircuitExec {
             head: &b.head,
             draft: b.draft.as_ref(),
             arena: Some(b.arena),
+            lane,
         };
         let shapes = std::iter::once((Mode::Decode, 1))
             .chain(b.multi_seq_rows.iter().map(|&r| (Mode::MultiSeq, r)))
@@ -369,6 +382,7 @@ impl CircuitExec {
                     layers: layers.clone(),
                     head: b.head.clone(),
                     config: b.config.clone(),
+                    lane,
                 },
                 workspace,
                 workspace_bytes,
@@ -390,6 +404,7 @@ impl CircuitExec {
             fusions: b.fusions,
             workspace,
             workspace_bytes,
+            lane,
         })
     }
 }

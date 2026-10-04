@@ -216,6 +216,7 @@ fn build_for_draft_at(n: u64, edit: impl Fn(&mut super::DraftFixed)) -> anyhow::
             head: &f.head,
             draft: f.draft.as_ref(),
             arena: None,
+            lane: None,
         },
     )
     .map(|_| ())

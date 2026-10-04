@@ -253,6 +253,12 @@ pub struct Rule {
     /// 2026-09-30: A `per_run` rule's selectors (`[[rule.run]]`), in file order; empty for any
     /// other repeat.
     pub runs: Vec<crate::runs::RunSelect>,
+    /// 2026-10-04: The stream its group runs on (`stream`; main when the rule names none).
+    pub stream: crate::streams::Stream,
+    /// 2026-10-04: Scratch regions its kernels read and write besides its edges (`scratch`):
+    /// `[[family.workspace]]` names of KERNEL_FAMILIES.toml, optionally `.`-qualified. The
+    /// fork/join derivation orders groups that share one ([`crate::streams`]).
+    pub scratch: Vec<String>,
 }
 
 /// 2026-09-28: Why FUSIONS.toml did not load.

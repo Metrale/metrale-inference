@@ -49,6 +49,7 @@ pub struct VerifyBatch {
     layers: Vec<CircuitLayer>,
     head: HeadBinding,
     config: ModelConfig,
+    lane: Option<super::program::SideLane>,
     workspace: DevicePtr,
     workspace_bytes: u64,
     /// 2026-09-30: The widest table admitted, in rows.
@@ -98,6 +99,8 @@ pub struct Parts {
     pub layers: Vec<CircuitLayer>,
     pub head: HeadBinding,
     pub config: ModelConfig,
+    /// 2026-10-04: The executor's side stream, when a rule runs on one.
+    pub lane: Option<super::program::SideLane>,
 }
 
 impl VerifyBatch {
@@ -114,6 +117,7 @@ impl VerifyBatch {
             layers,
             head,
             config,
+            lane,
         } = parts;
         VerifyBatch {
             circuit,
@@ -125,6 +129,7 @@ impl VerifyBatch {
             layers,
             head,
             config,
+            lane,
             workspace,
             workspace_bytes,
             max_rows,
@@ -178,6 +183,7 @@ impl VerifyBatch {
             head: &self.head,
             draft: None,
             arena: None,
+            lane: self.lane,
         };
         let program = compile::compile(
             &self.circuit,

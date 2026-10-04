@@ -14,6 +14,8 @@
 //! - An edge is live from the group that writes it to the last group that reads it; an edge
 //!   read or written outside the plan (its inputs from another section, and the declared
 //!   outputs) is live for the whole plan. An alias class is live over the union of its edges.
+//!   2026-10-04: An edge a side-stream group touches is also live over that group's window
+//!   between its fork and its join.
 //! - The edges of a pack are placed back to back, in pack order, with no padding between.
 //! - The edges of a row pack share every row: row `i` of member `j` sits at the pack's base
 //!   plus `i` pack rows plus the widths of members `0..j`; each member's `row_stride` is the
@@ -120,6 +122,18 @@ pub fn live_ranges(circuit: &Circuit, plan: &FusionPlan) -> BTreeMap<EdgeIdx, (u
                 .max(start)
         };
         out.insert(e, (start, end));
+    }
+    // 2026-10-04: A side group may run beside any main group between its fork and its join, so
+    // every edge it touches stays live over that window (`crate::streams::side_windows`).
+    if !plan.events.is_empty() {
+        let acc = crate::fuser::accesses(circuit, plan);
+        for (g, (lo, hi)) in crate::streams::side_windows(&acc, &plan.events) {
+            for e in acc[g].reads.iter().chain(&acc[g].writes) {
+                if let Some(r) = out.get_mut(e) {
+                    *r = (r.0.min(lo), r.1.max(hi));
+                }
+            }
+        }
     }
     out
 }

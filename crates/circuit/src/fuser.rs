@@ -24,6 +24,14 @@ use crate::rules::{KernelId, Mode, Numerics, Repeat, Rule};
 #[path = "fuser_match.rs"]
 mod fuser_match;
 
+// 2026-10-04: Split from this file (an exact copy): the stored formats, the read check, the
+// edge states and `group_io`.
+#[path = "fuser_edges.rs"]
+mod fuser_edges;
+
+pub use fuser_edges::group_io;
+use fuser_edges::{check_reads, edge_states, stored_formats};
+
 pub(crate) use fuser_match::fits as pattern_fits;
 
 /// 2026-09-28: The kernels and capabilities a target provides (the boot probe's answer).
@@ -91,6 +99,10 @@ pub struct Group {
     /// 2026-09-30: A `per_run` group's launches for each run of the plan's row table, in batch
     /// order; empty for any other repeat.
     pub runs: Vec<crate::runs::RunLaunches>,
+    /// 2026-10-04: Its rule's stream.
+    pub stream: crate::streams::Stream,
+    /// 2026-10-04: Its rule's scratch regions.
+    pub scratch: Vec<String>,
 }
 
 impl Group {
@@ -128,6 +140,9 @@ pub struct FusionPlan {
     pub edge_states: Vec<Option<EdgeState>>,
     /// 2026-09-28: Per edge: the format it is stored in under this plan.
     pub edge_formats: Vec<Format>,
+    /// 2026-10-04: The cross-stream events, in derivation order ([`crate::streams`]); empty
+    /// when every group runs on the main stream.
+    pub events: Vec<crate::streams::StreamEvent>,
     /// 2026-09-28: Lower-case hex SHA-256 (see [`crate::digest`]).
     pub digest: String,
 }
@@ -331,6 +346,8 @@ fn fuse_inner(
                     .and_then(|t| crate::runs::resolve_runs(t, &rule.runs))
                     .filter(|_| !rule.runs.is_empty())
                     .unwrap_or_default(),
+                stream: rule.stream,
+                scratch: rule.scratch.clone(),
             }
         })
         .collect();
@@ -357,10 +374,28 @@ fn fuse_inner(
         groups,
         edge_states,
         edge_formats,
+        events: Vec::new(),
         digest: String::new(),
     };
+    plan.events = crate::streams::derive_events(&accesses(circuit, &plan));
     plan.digest = crate::digest::plan_digest(circuit, &plan);
     Ok(plan)
+}
+
+/// 2026-10-04: What each group of `plan` touches, for the fork/join derivation and the buffer
+/// planner's side windows.
+pub fn accesses(circuit: &Circuit, plan: &FusionPlan) -> Vec<crate::streams::Access> {
+    (0..plan.groups.len())
+        .map(|g| {
+            let (reads, writes) = group_io(circuit, plan, g);
+            crate::streams::Access {
+                stream: plan.groups[g].stream,
+                reads,
+                writes,
+                scratch: plan.groups[g].scratch.clone(),
+            }
+        })
+        .collect()
 }
 
 fn applies(r: &Rule, avail: &AvailableKernels, policy: &Policy, mode: Mode, rows: u64) -> bool {
@@ -385,109 +420,6 @@ fn block_index(circuit: &Circuit) -> Vec<usize> {
         }
     }
     out
-}
-
-fn rule_of<'a>(rules: &'a [Rule], id: &str) -> Option<&'a Rule> {
-    rules.iter().find(|r| r.id == id)
-}
-
-fn stored_formats(circuit: &Circuit, groups: &[Group], rules: &[Rule]) -> Vec<Format> {
-    let mut out: Vec<Format> = circuit.edges.iter().map(|e| e.format).collect();
-    for g in groups {
-        let Some(rule) = rule_of(rules, &g.rule) else {
-            continue;
-        };
-        for (p, &n) in rule.pattern.iter().zip(&g.nodes) {
-            if let Some(f) = p.writes {
-                for &e in &circuit.nodes[n].outputs {
-                    out[e] = f;
-                }
-            }
-        }
-    }
-    out
-}
-
-fn check_reads(
-    circuit: &Circuit,
-    groups: &[Group],
-    rules: &[Rule],
-    stored: &[Format],
-) -> Result<(), FuseError> {
-    for g in groups {
-        let Some(rule) = rule_of(rules, &g.rule) else {
-            continue;
-        };
-        for (p, &n) in rule.pattern.iter().zip(&g.nodes) {
-            let (Some(want), Some(&e)) = (p.input, circuit.nodes[n].inputs.first()) else {
-                continue;
-            };
-            if stored[e] != want {
-                return Err(FuseError::FormatConflict {
-                    edge: circuit.edges[e].id.clone(),
-                    stored: stored[e].name(),
-                    rule: rule.id.clone(),
-                    expected: want.name(),
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
-fn edge_states(
-    circuit: &Circuit,
-    in_scope: &[bool],
-    owner: &[Option<usize>],
-    stored: &BTreeSet<EdgeIdx>,
-) -> Vec<Option<EdgeState>> {
-    circuit
-        .edges
-        .iter()
-        .enumerate()
-        .map(|(i, e)| {
-            let producer_in = e.producer.is_some_and(|p| in_scope[p]);
-            let read_in = e.consumers.iter().any(|&c| in_scope[c]);
-            if !producer_in && !read_in {
-                return None;
-            }
-            let g = e.producer.filter(|&p| in_scope[p]).and_then(|p| owner[p]);
-            let internal = g.is_some()
-                && !e.is_output
-                && !stored.contains(&i)
-                && !e.consumers.is_empty()
-                && e.consumers.iter().all(|&c| owner[c] == g);
-            Some(match (internal, g) {
-                (true, Some(g)) => EdgeState::Fused(g),
-                _ => EdgeState::Materialized,
-            })
-        })
-        .collect()
-}
-
-/// 2026-09-28: The edges a group reads from outside itself and the ones it writes, in edge
-/// order. Used by the renderers and the buffer planner.
-pub fn group_io(circuit: &Circuit, plan: &FusionPlan, g: usize) -> (Vec<EdgeIdx>, Vec<EdgeIdx>) {
-    let members: BTreeSet<NodeIdx> = plan.groups[g].nodes.iter().copied().collect();
-    let mut ins = BTreeSet::new();
-    let mut outs = BTreeSet::new();
-    for &n in &members {
-        let node = &circuit.nodes[n];
-        for &e in &node.inputs {
-            if circuit.edges[e]
-                .producer
-                .is_none_or(|p| !members.contains(&p))
-            {
-                ins.insert(e);
-            }
-        }
-        for &e in &node.outputs {
-            if plan.edge_states[e] == Some(EdgeState::Materialized) {
-                outs.insert(e);
-            }
-        }
-    }
-    (ins.into_iter().collect(), outs.into_iter().collect())
 }
 
 #[cfg(test)]

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-28: Two digests. `plan_digest` is SHA-256 over a canonical serialization of what a
-//! plan runs: its groups (members, kernels, repetition, emitter, numerics) and every edge's
-//! stored format and state, under the plan's arch, mode and rows. `rules_digest` is SHA-256
+//! plan runs: its groups (members, kernels, repetition, emitter, numerics; 2026-10-04: a side
+//! stream and scratch regions when present), its cross-stream events, and every edge's stored
+//! format and state, under the plan's arch, mode and rows. `rules_digest` is SHA-256
 //! over the FUSIONS.toml text the rules were parsed from.
 //!
 //! Owner: metrale-circuit.
@@ -48,9 +49,11 @@ pub fn canonical(circuit: &Circuit, plan: &FusionPlan) -> String {
             .iter()
             .map(|&n| circuit.nodes[n].id.as_str())
             .collect();
+        // 2026-10-04: A side stream and scratch regions are written only when present, so a
+        // plan without them serializes as before.
         let _ = writeln!(
             s,
-            "group {i} kernels=[{}] repeat={}{} emitter={} numerics={:?} nodes=[{}]",
+            "group {i} kernels=[{}] repeat={}{} emitter={} numerics={:?} nodes=[{}]{}{}",
             kernels.join(","),
             g.repeat.name(),
             g.copies
@@ -58,7 +61,16 @@ pub fn canonical(circuit: &Circuit, plan: &FusionPlan) -> String {
                 .unwrap_or_default(),
             g.emitter,
             g.numerics,
-            nodes.join(",")
+            nodes.join(","),
+            match g.stream {
+                crate::streams::Stream::Main => String::new(),
+                other => format!(" stream={}", other.name()),
+            },
+            if g.scratch.is_empty() {
+                String::new()
+            } else {
+                format!(" scratch=[{}]", g.scratch.join(","))
+            }
         );
         for r in &g.runs {
             let launches: Vec<String> = r
@@ -76,6 +88,9 @@ pub fn canonical(circuit: &Circuit, plan: &FusionPlan) -> String {
                 r.copies.map_or("none", |c| c.name())
             );
         }
+    }
+    for ev in &plan.events {
+        let _ = writeln!(s, "{}", crate::streams::event_text(ev));
     }
     for (e, edge) in circuit.edges.iter().enumerate() {
         let Some(state) = plan.edge_states[e] else {

@@ -479,6 +479,7 @@ pub(super) fn build_on(
             head: &head,
             draft: draft.as_ref(),
             arena: None,
+            lane: None,
         },
     )?;
     Ok(Fixture {

@@ -45,6 +45,9 @@ struct RuleFile {
     cite: String,
     #[serde(default)]
     run: Vec<RunFile>,
+    stream: Option<String>,
+    #[serde(default)]
+    scratch: Vec<String>,
 }
 
 /// 2026-09-30: `[[rule.run]]`: a per-run selector (`crate::runs::RunSelect`).
@@ -196,6 +199,19 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
     if r.pattern[0].sibling {
         return Err(shape("the first pattern element cannot be a sibling"));
     }
+    let stream = match r.stream.as_deref() {
+        None => crate::streams::Stream::Main,
+        Some(t) => crate::streams::Stream::parse(t)
+            .ok_or_else(|| shape(&format!("unknown stream `{t}` (main | side)")))?,
+    };
+    let mut seen = BTreeSet::new();
+    if let Some(bad) = r
+        .scratch
+        .iter()
+        .find(|n| n.trim().is_empty() || !seen.insert(n.as_str()))
+    {
+        return Err(shape(&format!("scratch `{bad}`: empty or listed twice")));
+    }
     let numerics = numerics(&r)?;
     let mut pattern = Vec::with_capacity(r.pattern.len());
     for p in &r.pattern {
@@ -215,6 +231,8 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
         priority: r.priority,
         cite: r.cite,
         runs,
+        stream,
+        scratch: r.scratch,
         id: r.id,
     })
 }

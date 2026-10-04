@@ -310,6 +310,8 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
         runs: Vec::new(),
         priority: i64::MIN,
         cite: "no rule of this class covers the op on this device".into(),
+        stream: crate::streams::Stream::Main,
+        scratch: Vec::new(),
     }
 }
 

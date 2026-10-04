@@ -12,7 +12,10 @@
 //!   with the same state pointers (the graph caches key on the sequence's slot).
 //! - `run` issues no synchronize and no device-to-host copy, so it may be captured.
 //! - A program holds exactly `FusionPlan::launches` kernel launches and `FusionPlan::copies`
-//!   copies.
+//!   copies, plus one event launch per `FusionPlan::events` entry (2026-10-04).
+//! - 2026-10-04: A launch of a side-stream group is issued on the executor's [`SideLane`]; the
+//!   plan's fork and join events order it against the main stream, and every program ends with
+//!   the side stream joined, whole or run by segments, so a capture never ends on an open fork.
 
 use anyhow::{Context, Result};
 use metrale_circuit::Mode;
@@ -64,6 +67,7 @@ impl PrefillStep {
 }
 
 /// 2026-09-28: What varies between two runs of one program.
+#[derive(Clone, Copy)]
 pub struct StepEnv<'a> {
     /// 2026-09-28: The backend.
     pub gpu: &'a dyn GpuBackend,
@@ -105,6 +109,75 @@ pub enum LaunchKind {
     Kernel,
     /// 2026-09-29: A copy-engine transfer.
     Copy,
+    /// 2026-10-04: A cross-stream event: a record on one stream and a wait on the other.
+    Event,
+}
+
+/// 2026-10-04: The executor's second stream and the two events that order it against the step's
+/// stream, as legacy keeps one side stream and two events for the MoE shared expert
+/// (`adaptive_fp8.rs:64-77`). Each wait is enqueued right after its record, so one event per
+/// direction serves every fork and join: a wait takes the event's state when it is enqueued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SideLane {
+    /// 2026-10-04: The side stream (non-blocking).
+    pub stream: u64,
+    /// 2026-10-04: Recorded on main, waited on by the side stream.
+    pub fork: u64,
+    /// 2026-10-04: Recorded on the side stream, waited on by main.
+    pub join: u64,
+}
+
+impl SideLane {
+    /// 2026-10-04: A side stream and its two events on `gpu`.
+    pub fn create(gpu: &dyn GpuBackend) -> Result<Self> {
+        Ok(SideLane {
+            stream: gpu.create_stream()?,
+            fork: gpu.create_event()?,
+            join: gpu.create_event()?,
+        })
+    }
+
+    /// 2026-10-04: The side stream waits for the work issued so far on `main`.
+    pub fn fork(&self, gpu: &dyn GpuBackend, main: u64) -> Result<()> {
+        gpu.record_event(self.fork, main)?;
+        gpu.stream_wait_event(self.stream, self.fork)
+    }
+
+    /// 2026-10-04: `main` waits for the work issued so far on the side stream.
+    pub fn join(&self, gpu: &dyn GpuBackend, main: u64) -> Result<()> {
+        gpu.record_event(self.join, self.stream)?;
+        gpu.stream_wait_event(main, self.join)
+    }
+
+    /// 2026-10-04: The launch of event `ev`, issued from the main stream before group `group` (or
+    /// after the last group, for a join at the end): a fork records on main and the side stream
+    /// waits; a join records on the side stream and main waits.
+    pub(crate) fn launch(
+        lane: Option<Self>,
+        ev: &metrale_circuit::StreamEvent,
+        group: usize,
+    ) -> Result<Launch> {
+        let lane = lane.context("an event without a side stream")?;
+        let kind = ev.kind;
+        Ok(Launch {
+            group,
+            kernel: metrale_circuit::streams::event_text(ev),
+            kind: LaunchKind::Event,
+            covers: 0,
+            lane: metrale_circuit::Stream::Main,
+            run: Box::new(move |e| match kind {
+                metrale_circuit::EventKind::Fork => lane.fork(e.gpu, e.stream),
+                metrale_circuit::EventKind::Join => lane.join(e.gpu, e.stream),
+            }),
+        })
+    }
+
+    /// 2026-10-04: Destroy the events. The backend has no call that destroys a stream; one side
+    /// stream outlives each executor that created one.
+    pub fn free(&self, gpu: &dyn GpuBackend) -> Result<()> {
+        gpu.destroy_event(self.fork)?;
+        gpu.destroy_event(self.join)
+    }
 }
 
 /// 2026-09-28: One kernel launch or copy.
@@ -117,8 +190,10 @@ pub struct Launch {
     pub kind: LaunchKind,
     /// 2026-10-03: The plan kernels this launch issues: 1, or several for one `ops::*` call
     /// that launches them in order (a bundle, `Cx::push_bundle`; `kernel` then names them
-    /// joined by `+`).
+    /// joined by `+`). 2026-10-04: 0 for an event.
     pub covers: usize,
+    /// 2026-10-04: The stream it is issued on: its group's.
+    pub lane: metrale_circuit::Stream,
     pub(crate) run: RunFn,
 }
 
@@ -136,6 +211,8 @@ pub struct Program {
     /// 15.4): what a host driver composes when it runs part of a program (a prefill pass that is
     /// not the last runs no head).
     pub segments: Vec<Segment>,
+    /// 2026-10-04: The side stream its side-stream groups run on; `None` when it has none.
+    pub lane: Option<SideLane>,
 }
 
 /// 2026-10-03: Where a run of launches belongs.
@@ -164,17 +241,33 @@ impl Program {
         self.run_launches(0..self.launches.len(), env)
     }
 
-    /// 2026-10-03: Issue the launches of every segment `keep` selects, in order.
+    /// 2026-10-03: Issue the launches of every segment `keep` selects, in order. 2026-10-04:
+    /// then join the side stream, whose join the skipped segments may have held.
     pub fn run_segments(&self, keep: impl Fn(SegmentOf) -> bool, env: &StepEnv<'_>) -> Result<()> {
         for s in self.segments.iter().filter(|s| keep(s.of)) {
             self.run_launches(s.launches.clone(), env)?;
         }
-        Ok(())
+        match &self.lane {
+            Some(lane) => lane.join(env.gpu, env.stream),
+            None => Ok(()),
+        }
     }
 
     fn run_launches(&self, range: std::ops::Range<usize>, env: &StepEnv<'_>) -> Result<()> {
+        // 2026-10-04: The same step on the side stream, for side-stream groups' launches.
+        let side = self.lane.map(|lane| StepEnv {
+            stream: lane.stream,
+            ..*env
+        });
         for l in &self.launches[range] {
-            (l.run)(env).with_context(|| format!("circuit group {} ({})", l.group, l.kernel))?;
+            let on = match (l.lane, &side) {
+                (metrale_circuit::Stream::Side, Some(s)) => s,
+                (metrale_circuit::Stream::Side, None) => {
+                    anyhow::bail!("group {} runs on a side stream this program lacks", l.group)
+                }
+                (metrale_circuit::Stream::Main, _) => env,
+            };
+            (l.run)(on).with_context(|| format!("circuit group {} ({})", l.group, l.kernel))?;
         }
         Ok(())
     }
@@ -229,3 +322,7 @@ impl DraftRunner for DraftPrograms {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "program_tests.rs"]
+mod tests;

@@ -156,6 +156,10 @@ pub fn render_noted(
             let _ = writeln!(s, "== {title}");
             last_layer = Some(first.layer);
         }
+        // 2026-10-04: A cross-stream wait is written above the group it waits before.
+        for ev in plan.events.iter().filter(|e| e.before == Some(g)) {
+            let _ = writeln!(s, "-- {}", crate::streams::event_text(ev));
+        }
         let mut line = group_line(circuit, plan, g);
         if let Some(n) = (notes.group)(grp) {
             let _ = write!(line, " compute={n}");
@@ -166,6 +170,9 @@ pub fn render_noted(
                 let _ = writeln!(s, "  {}: {p}", circuit.nodes[n].local);
             }
         }
+    }
+    for ev in plan.events.iter().filter(|e| e.before.is_none()) {
+        let _ = writeln!(s, "-- {}", crate::streams::event_text(ev));
     }
     s
 }
@@ -263,6 +270,13 @@ fn group_line(circuit: &Circuit, plan: &FusionPlan, g: usize) -> String {
     }
     if !writes.is_empty() {
         let _ = write!(line, " writes={{{}}}", writes.join(","));
+    }
+    // 2026-10-04: Written only when present, so a main-stream plan renders as before.
+    if grp.stream != crate::streams::Stream::Main {
+        let _ = write!(line, " stream={}", grp.stream.name());
+    }
+    if !grp.scratch.is_empty() {
+        let _ = write!(line, " scratch=[{}]", grp.scratch.join(","));
     }
     line
 }

@@ -36,6 +36,7 @@ pub mod runs;
 pub mod runtime;
 pub mod state;
 pub mod state_ops;
+pub mod streams;
 pub mod venn;
 
 #[cfg(test)]
@@ -57,6 +58,7 @@ pub use precision::{EdgePrecision, LinearFormats, PrecisionError, PrecisionTable
 pub use rules::{KernelId, Mode, Numerics, Rule, RuleError, parse_rules};
 pub use runs::{RowTable, VerifyRun};
 pub use runtime::{RuleSet, RuntimeRoute, parse_rule_set};
+pub use streams::{EventKind, Stream, StreamEvent};
 
 /// 2026-09-28: Any failure between the TOML texts and a rendered plan.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

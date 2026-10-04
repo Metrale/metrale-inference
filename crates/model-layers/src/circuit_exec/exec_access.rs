@@ -93,6 +93,9 @@ impl CircuitExec {
                 "the draft program is still installed; remove it before freeing the workspace"
             );
         }
+        if let Some(lane) = &self.lane {
+            lane.free(gpu)?;
+        }
         gpu.free(self.workspace)
     }
 }
