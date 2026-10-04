@@ -123,6 +123,23 @@ pub(crate) fn load_model(
     let (use_speculative, use_self_spec, use_ngram_spec, num_drafts, dflash_rung) =
         scheduler_setup::resolve_speculation(&args, scheduler_model.as_ref());
     let prompt_lookup = args.prompt_lookup_config();
+    // 2026-10-04: The cross-request cache is keyed by the model and the
+    // tokenizer this serve loaded (`scheduler::shared_lookup_step`).
+    let shared_lookup = match args.shared_lookup_config()? {
+        Some(config) => {
+            use crate::scheduler::shared_lookup_step::{SharedLookupSetup, fingerprint};
+            // 2026-10-04: A model dir with no tokenizer.json (SentencePiece
+            // only) is keyed by its path, which also names its tokenizer files.
+            let tokenizer_bytes = std::fs::read(model_dir.join("tokenizer.json"))
+                .unwrap_or_else(|_| model_dir.to_string_lossy().into_owned().into_bytes());
+            Some(SharedLookupSetup {
+                config,
+                model: fingerprint(format!("{model_name}\0{}", model_dir.display()).as_bytes()),
+                tokenizer: fingerprint(&tokenizer_bytes),
+            })
+        }
+        None => None,
+    };
 
     let policy = scheduler_setup::scheduling_policy(&args)?;
 
@@ -212,6 +229,7 @@ pub(crate) fn load_model(
                 use_self_speculative: use_self_spec,
                 use_ngram_speculative: use_ngram_spec,
                 prompt_lookup,
+                shared_lookup,
                 swap_space_gb,
                 high_speed_swap_cfg,
                 block_size,

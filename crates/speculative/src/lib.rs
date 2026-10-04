@@ -12,6 +12,7 @@ pub mod dflash_rung;
 pub mod mtp_gate;
 pub mod ngram;
 pub mod prompt_lookup;
+pub mod shared_lookup;
 pub mod snapshot;
 pub mod spec_capacity;
 pub mod spec_stats;

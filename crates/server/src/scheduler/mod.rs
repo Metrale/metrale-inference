@@ -64,6 +64,7 @@ mod repetition;
 mod rollback;
 mod sample_step;
 pub mod sched_ctx;
+pub(crate) mod shared_lookup_step;
 mod shutdown_drain;
 #[cfg(test)]
 mod shutdown_drain_tests;

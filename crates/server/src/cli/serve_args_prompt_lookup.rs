@@ -61,6 +61,26 @@ pub struct ServePromptLookupArgs {
     /// most where the batch is compute-bound.
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=128))]
     pub prompt_lookup_max_seqs: u32,
+
+    /// Cross-request prompt-lookup cache, in MiB of host memory (default: 0,
+    /// off). When a sequence's own history has no match, prompt lookup may copy
+    /// from the prompts and outputs of earlier finished requests of the same
+    /// model, tokenizer, LoRA adapter and tenant (the bearer token under
+    /// `--require-auth`; one tenant without it). A copy is only a draft: verify
+    /// decides, as for any copy. The memory is split evenly across
+    /// `--prompt-lookup-shared-cache-scopes` and fixed per scope; the oldest
+    /// tokens of a scope are overwritten first. A match must span
+    /// `--prompt-lookup-min-match` tokens (at least `--prompt-lookup-ngram`).
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=65536), requires = "prompt_lookup_decoding")]
+    pub prompt_lookup_shared_cache_mb: u32,
+
+    /// Scopes (adapter and tenant pairs) the cross-request prompt-lookup cache
+    /// holds at once (default: 4), each with an equal fixed share of
+    /// `--prompt-lookup-shared-cache-mb`. A new scope beyond this drops the
+    /// least recently used one whole. With no more scopes in use than this, one
+    /// tenant's traffic never evicts another's cache.
+    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=256))]
+    pub prompt_lookup_shared_cache_scopes: u32,
 }
 
 impl ServeArgs {
@@ -78,6 +98,26 @@ impl ServeArgs {
                 miss_backoff: self.prompt_lookup.prompt_lookup_miss_backoff as usize,
             }
         })
+    }
+
+    /// 2026-10-04: The cross-request cache settings; `None` when
+    /// `--prompt-lookup-shared-cache-mb` is 0 or prompt lookup is off. `Err`
+    /// when a scope's share holds too few tokens. The match length is the
+    /// longer of the n-gram and the minimum match, as for own-history copies.
+    pub fn shared_lookup_config(
+        &self,
+    ) -> anyhow::Result<Option<metrale_speculative::shared_lookup::SharedLookupConfig>> {
+        let mb = self.prompt_lookup.prompt_lookup_shared_cache_mb as usize;
+        let Some(pl) = self.prompt_lookup_config().filter(|_| mb > 0) else {
+            return Ok(None);
+        };
+        let cfg = metrale_speculative::shared_lookup::SharedLookupConfig {
+            budget_bytes: mb << 20,
+            max_scopes: self.prompt_lookup.prompt_lookup_shared_cache_scopes as usize,
+            key_len: pl.ngram.max(pl.min_match),
+        };
+        cfg.scope_geometry().map_err(anyhow::Error::msg)?;
+        Ok(Some(cfg))
     }
 
     /// 2026-10-02: Drafts the widest speculative verify can carry: the drafter's

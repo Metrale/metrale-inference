@@ -81,6 +81,7 @@ pub async fn chat_completions(
         std::sync::Arc<crate::main_modules::model_host::ModelHost>,
     >,
     req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
+    tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
     body: axum::body::Bytes,
 ) -> Response {
     // 2026-09-26: Parsed by hand so the same bytes also feed the `--dump`
@@ -167,7 +168,15 @@ pub async fn chat_completions(
     // 2026-09-26: The response-only fields are split off here; everything
     // downstream reads only the IR.
     let echo = ResponseEcho::from(&req);
-    match chat_completions_inner(state.clone(), req_ctx, req.into(), dump_seq).await {
+    match chat_completions_inner(
+        state.clone(),
+        req_ctx,
+        tenant.map(|e| e.0),
+        req.into(),
+        dump_seq,
+    )
+    .await
+    {
         ChatOutcome::Blocking(ir) => {
             crate::openai::encode_chat_response(&state, *ir, &echo, dump_seq)
         }
@@ -185,9 +194,11 @@ pub async fn chat_completions(
 pub(crate) async fn chat_completions_inner(
     state: Arc<AppState>,
     req_ctx: Option<axum::extract::Extension<crate::rate_limiter::RequestContext>>,
+    tenant: Option<crate::auth::LookupTenant>,
     mut req: crate::ir::ChatRequest,
     dump_seq: Option<u64>,
 ) -> ChatOutcome {
+    req.lookup_tenant = tenant;
     crate::metrics::REQUESTS_TOTAL.inc();
     // 2026-09-26: Decrements on drop, so on every exit path, including this
     // future being dropped when the client disconnects. A streaming request

@@ -65,6 +65,9 @@ pub enum InferenceRequest {
         /// 2026-09-26: `session_manager::compute_session_hash` of the prompt
         /// (its first 1024 tokens).
         session_hash: u64,
+        /// 2026-10-04: The tenant the request belongs to (`auth::LookupTenant`);
+        /// `None` keeps it out of the cross-request prompt-lookup cache.
+        lookup_tenant: Option<crate::auth::LookupTenant>,
         /// 2026-09-26: LoRA adapter slot; `-1` follows the active adapter.
         adapter_slot: i32,
         /// 2026-09-26: Source-language token id; 0 means the deployment default.
@@ -157,6 +160,9 @@ pub enum InferenceRequest {
     Streaming {
         prompt_tokens: std::sync::Arc<Vec<u32>>,
         session_hash: u64,
+        /// 2026-10-04: The tenant the request belongs to (`auth::LookupTenant`);
+        /// `None` keeps it out of the cross-request prompt-lookup cache.
+        lookup_tenant: Option<crate::auth::LookupTenant>,
         adapter_slot: i32,
         src_lang_id: u32,
         tgt_lang_id: u32,
