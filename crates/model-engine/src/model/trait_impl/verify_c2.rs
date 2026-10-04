@@ -154,8 +154,13 @@ impl TransformerModel {
         // buffer at +128 uploaded before capture. `DevicePtr(0)` selects the
         // installed-pair path.
         debug_assert!(k <= 32, "verify seq_slot +128 gap holds K ≤ 32");
-        let seq_slot =
-            self.upload_seq_slot_uniform(seq.adapter_slot, k, meta_base.offset(128), stream)?;
+        let seq_slot = self.upload_seq_slot_uniform(
+            seq.adapter_slot,
+            k,
+            meta_base.offset(128),
+            stream,
+            metrale_model_layers::lora::LoraSites::MultiSeq,
+        )?;
 
         debug_assert_eq!(meta_base, self.batch_meta_base());
         let metadata = self.verify_meta(max_blocks, k as u32, seq_slot);
@@ -221,9 +226,11 @@ impl TransformerModel {
         };
 
         // 2026-09-25: Replay only when this sequence's SSM slot has a captured graph.
+        // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
+        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
         let cached_for_slot = graph_cache
             .as_ref()
-            .and_then(|c| c.get(&seq.slot_idx).copied());
+            .and_then(|c| c.get(&graph_key).copied());
         if let Some(graph) = cached_for_slot
             && graph.0 != 0
         {
@@ -393,7 +400,7 @@ impl TransformerModel {
                         && !std::env::var("METRALE_GLM_VERIFY_GRAPH_NOCACHE")
                             .is_ok_and(|v| v == "1")
                     {
-                        cache.insert(seq.slot_idx, graph);
+                        cache.insert(graph_key, graph);
                     }
                     self.gpu.launch_graph(graph, stream)?;
                 }

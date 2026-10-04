@@ -275,3 +275,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         device_budget,
     }))
 }
+
+#[cfg(test)]
+#[path = "lora_verify_gpu_tests.rs"]
+mod lora_verify_gpu_tests;
