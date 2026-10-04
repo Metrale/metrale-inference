@@ -48,9 +48,12 @@ impl TransformerModel {
     fn circuit_unmodelled(&self) -> Vec<String> {
         let kv_swap = self.kv_cache.lock().config().cache_blocks_per_seq.is_some();
         [
+            // 2026-10-04: The TP/EP overlays plan and compile (`metrale_circuit::parallel`,
+            // `emitters/collective.rs`, unit-tested), but no two-box parity run has proven
+            // them, so a parallel serve keeps the legacy forward until one does.
             (
-                self.config.ep_world_size > 1 && self.config.tp_world_size > 1,
-                "tensor and expert parallelism together",
+                self.config.tp_world_size > 1 || self.comm.is_some(),
+                "tensor or expert parallelism (the overlays wait on a two-box parity run)",
             ),
             (
                 !self.dflash_capture_layers.is_empty(),
