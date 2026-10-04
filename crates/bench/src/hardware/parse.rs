@@ -33,6 +33,10 @@ pub struct GpuQuery {
     pub sm_clock_max_mhz: Option<f64>,
     pub gpu_temp_c: Option<f64>,
     pub persistence_mode: Option<bool>,
+    /// 2026-10-04: `vbios_version`, appended to the query.
+    pub vbios: Option<String>,
+    /// 2026-10-04: `power.limit`, watts; `[N/A]` on every GB10 probed so far.
+    pub power_limit_w: Option<f64>,
 }
 
 pub fn gpu_query(text: &str) -> GpuQuery {
@@ -58,7 +62,46 @@ pub fn gpu_query(text: &str) -> GpuQuery {
             "Disabled" => Some(false),
             _ => None,
         }),
+        vbios: cell(6).map(str::to_string),
+        power_limit_w: num(7),
     }
+}
+
+/// 2026-10-04: The `CUDA Version` line near the top of `nvidia-smi -q` output
+/// (present under every `-d` selector, including `PERFORMANCE`, since it is
+/// the log header, not a per-section field). `None` when the line is absent
+/// or reads one of [`value`]'s not-a-value spellings.
+pub fn cuda_version(text: &str) -> Option<String> {
+    text.lines().find_map(|l| {
+        let (key, raw) = l.split_once(':')?;
+        (key.trim() == "CUDA Version")
+            .then(|| value(raw))
+            .flatten()
+            .map(str::to_string)
+    })
+}
+
+/// 2026-10-04: The device path from `df --output=source <path>`: a header line
+/// then the source, e.g. `"/dev/nvme0n1p2"`. `None` for a blank or
+/// header-only answer.
+pub fn df_source(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .nth(1)
+        .map(str::to_string)
+}
+
+/// 2026-10-04: Sectors read and sectors written from
+/// `/sys/class/block/<dev>/stat` (`Documentation/ABI/stable/sysfs-block`):
+/// whitespace-separated fields, reads-completed/merged/**sectors-read**/
+/// time-reading/writes-completed/merged/**sectors-written**/… `None` when
+/// fewer than seven fields are present or either field does not parse.
+pub fn disk_stat(text: &str) -> Option<(u64, u64)> {
+    let fields: Vec<&str> = text.split_whitespace().collect();
+    let read_sectors = fields.get(2)?.parse().ok()?;
+    let write_sectors = fields.get(6)?.parse().ok()?;
+    Some((read_sectors, write_sectors))
 }
 
 /// 2026-09-26: The device count from `nvidia-smi -L`, one line per visible device.

@@ -100,6 +100,11 @@ pub struct GpuInfo {
     pub driver_version: String,
     #[serde(default)]
     pub cuda_version: String,
+    /// 2026-10-04: VBIOS version, for [`super::node::fingerprint_of`]'s
+    /// equivalence check. Empty (the default) until the metralectl agent
+    /// sends it — additive, forward-compatible.
+    #[serde(default)]
+    pub vbios: String,
     #[serde(default)]
     pub sm_clock_mhz: Metric,
     #[serde(default)]
