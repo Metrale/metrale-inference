@@ -15,7 +15,7 @@
 //! Invariants:
 //! - A series absent from the first page counts from 0 (the serve renders them once they
 //!   fire); one that went backwards fails the run (the serve restarted).
-//! - The record keys are written by [`record`] and read by [`read`] only.
+//! - The record keys are written by `record` and read by [`read`] only.
 
 use std::collections::BTreeMap;
 
@@ -99,7 +99,7 @@ pub(crate) fn record(first: &Scrape, last: &Scrape, m: &mut BTreeMap<String, f64
     Ok(())
 }
 
-/// 2026-10-04: The counts [`record`] wrote; `None` when the run saw no draft confidence (a
+/// 2026-10-04: The counts `record` wrote; `None` when the run saw no draft confidence (a
 /// `k = 0` serve, or one that never batched a verify).
 pub fn read(metrics: &BTreeMap<String, f64>) -> Result<Option<AcceptanceCounts>> {
     let mut c = AcceptanceCounts::default();
