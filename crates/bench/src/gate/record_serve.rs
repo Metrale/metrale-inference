@@ -112,6 +112,44 @@ pub struct LiveForward {
     /// count (which the rendered serve already states).
     #[serde(default)]
     pub auto_max_batch_size: Option<usize>,
+    /// 2026-10-03: The digest of the mock (rehearsal) checkpoint the server runs (`met serve
+    /// --mock`, or a mock checkpoint's directory); `None` for a real checkpoint.
+    #[serde(default)]
+    pub mock: Option<String>,
+}
+
+/// 2026-10-03: Key for the digest of the mock (rehearsal) checkpoint the server runs; present only
+/// for a mock. A record carrying it fails every gate ([`mock_problem`]).
+pub const MOCK: &str = "mock";
+
+/// 2026-10-03: Why a record of a mock server cannot pass a gate; `None` for a real checkpoint.
+pub fn mock_problem(record: &GateRecord) -> Option<String> {
+    record.mock.as_ref().map(|d| {
+        format!(
+            "measured on a mock (rehearsal) checkpoint {d}: synthetic weights certify no number"
+        )
+    })
+}
+
+/// 2026-10-03: Whether a run may measure the server `live` describes (`None`: not a Metrale
+/// endpoint, or one too old to say): a gate run never measures a mock, and an accuracy
+/// (`Correctness`) benchmark on synthetic weights measures nothing. Speed runs on a mock are the
+/// point of a mock and are allowed; their records are not gate records.
+pub fn mock_run_allowed(
+    live: Option<&LiveForward>,
+    correctness: bool,
+    gate: bool,
+) -> Result<(), String> {
+    match live.and_then(|l| l.mock.as_deref()) {
+        Some(d) if gate => Err(format!(
+            "the server runs mock (rehearsal) checkpoint {d}: a gate run never measures a mock"
+        )),
+        Some(d) if correctness => Err(format!(
+            "the server runs mock (rehearsal) checkpoint {d}: an accuracy benchmark on \
+             synthetic weights measures nothing (measure accuracy on the full model)"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// 2026-10-01: Key for the slot count `--max-batch-size auto` resolved to, written `auto:<n>`;
@@ -145,6 +183,9 @@ pub fn merge_live_forward(
     if let Some(n) = live.auto_max_batch_size {
         resolved.insert(MAX_BATCH_SIZE.to_string(), format!("auto:{n}"));
     }
+    if let Some(d) = &live.mock {
+        resolved.insert(MOCK.to_string(), d.clone());
+    }
     Ok(())
 }
 
@@ -152,6 +193,9 @@ impl GateRecord {
     /// 2026-09-26: Attach what the gate's serve resolved; see [`disclosure`].
     #[must_use]
     pub fn with_serve_resolved(mut self, resolved: BTreeMap<String, String>) -> Self {
+        // 2026-10-03: The mock digest is also a field of its own: `check_record` never reads
+        // `serve_resolved`, and the checks that refuse a mock read the field.
+        self.mock = resolved.get(MOCK).cloned();
         self.serve_resolved = resolved;
         self
     }

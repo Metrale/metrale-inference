@@ -44,8 +44,9 @@ mod expert_quant;
 #[cfg(test)]
 mod export_layout_tests;
 mod loader;
-mod nvfp4_dequant;
-mod nvfp4_quant;
+// 2026-10-03: The host NVFP4 codec lives in `metrale-core::numeric`, shared with
+// `metrale-ml-utils`; the loader and its tests reach it by these names.
+use metrale_core::numeric::{nvfp4_dequant, nvfp4_quant};
 #[cfg(test)]
 mod plan_cast_tests;
 mod plan_dtype;

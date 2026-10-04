@@ -123,3 +123,67 @@ fn the_field_is_absent_when_clean_and_optional_when_reading() {
     let older: GateRecord = serde_json::from_str(&json).expect("an older record still parses");
     assert!(older.dirty_paths.is_empty());
 }
+
+/// 2026-10-03: A record of a mock (rehearsal) server fails the gate although its metrics clear the
+/// baseline; the same record from a real checkpoint passes (the control). The mock digest reaches
+/// the record only through the live forward, as a gate run attaches it.
+#[test]
+fn a_record_measured_on_a_mock_fails_the_gate() {
+    let dir = tempdir::Dir::new();
+    let root = dir.path();
+    std::fs::create_dir_all(gate_dir(root, "ssm-state-poisoning-gate")).unwrap();
+    write_baseline(root, "ssm-state-poisoning-gate", &bfcl_baseline());
+    let mut metrics = BTreeMap::new();
+    metrics.insert("overall_accuracy".to_string(), 90.0);
+    let record = |mock: Option<&str>| {
+        let mut resolved = BTreeMap::new();
+        let live = super::record_serve::LiveForward {
+            forward: "legacy".into(),
+            plan_digest: None,
+            auto_max_batch_size: None,
+            mock: mock.map(str::to_string),
+        };
+        super::record_serve::merge_live_forward(&mut resolved, "legacy", &live).unwrap();
+        let mut gate = GateRecord::from_run(
+            &run_record(metrics.clone(), Verdict::pass("ok")),
+            hw(),
+            SHA.into(),
+            Vec::new(),
+            None,
+        )
+        .unwrap()
+        .with_serve_resolved(resolved);
+        gate.benchmark_id = "ssm-state-poisoning-gate".to_string();
+        gate.recorded_at = 1_785_891_382;
+        gate
+    };
+    let real = record(None);
+    assert_eq!(real.mock, None);
+    write_record(root, &real).unwrap();
+    assert!(matches!(
+        &check_gates(root, SHA)["ssm-state-poisoning-gate"],
+        GateStatus::Pass
+    ));
+
+    let dir = tempdir::Dir::new();
+    let root = dir.path();
+    std::fs::create_dir_all(gate_dir(root, "ssm-state-poisoning-gate")).unwrap();
+    write_baseline(root, "ssm-state-poisoning-gate", &bfcl_baseline());
+    let mock = record(Some("d1g35t"));
+    assert_eq!(
+        mock.serve_resolved
+            .get(super::record_serve::MOCK)
+            .map(String::as_str),
+        Some("d1g35t")
+    );
+    write_record(root, &mock).unwrap();
+    match &check_gates(root, SHA)["ssm-state-poisoning-gate"] {
+        GateStatus::Fail(reasons) => assert!(
+            reasons
+                .iter()
+                .any(|r| r.contains("mock (rehearsal) checkpoint d1g35t")),
+            "{reasons:?}"
+        ),
+        other => panic!("a mock record must not pass: {other:?}"),
+    }
+}

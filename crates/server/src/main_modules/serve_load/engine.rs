@@ -39,13 +39,22 @@ pub(crate) struct Engine {
     pub auto_max_batch_size: Option<usize>,
     /// 2026-10-01: The memory budget and ledger reader `GET /memory` reports.
     pub device_budget: crate::main_modules::memory_probe::DeviceBudget,
+    /// 2026-10-03: The digest of the mock this serve runs (`--mock`, or a mock checkpoint's
+    /// directory); `None` for a real checkpoint. `GET /forward` discloses it.
+    pub mock: Option<String>,
 }
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
 /// its command loop and has nothing to serve.
 pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     metrale_telemetry::progress::phase(1, "model resolve");
+    // 2026-10-03: `--mock` points the serve at the mock's skeleton before anything resolves it.
+    let mock = serve_phases::mock::materialize(&mut args)?;
     let model_dir = serve_phases::resolve_model_dir(&args)?;
+    let mock_digest = serve_phases::mock::disclosure(&model_dir)?;
+    if let Some(d) = &mock_digest {
+        tracing::warn!("MOCK checkpoint {d}: synthetic weights; no accuracy and no gate applies");
+    }
 
     tracing::info!("Port: {}", args.port);
 
@@ -66,6 +75,14 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         model_setup::resolve_media_policies(&args, &model_dir, &mut config)?;
 
     model_setup::log_model_config(&config);
+    serve_phases::routing_profile::start(
+        args.record_routing.as_deref(),
+        &args
+            .model
+            .clone()
+            .unwrap_or_else(|| model_dir.display().to_string()),
+        &config,
+    )?;
 
     let ptx_set = model_setup::select_kernel_target(&args, &config, &model_dir)?;
     let sampling_presets = ptx_set.sampling;
@@ -151,6 +168,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         total_reserve,
         gdn_two_phase_bytes,
         max_batch_tokens_pre,
+        mock.as_ref(),
     )?;
 
     metrale_telemetry::progress::phase(6, "kv cache");
@@ -273,5 +291,6 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         forward,
         auto_max_batch_size,
         device_budget,
+        mock: mock_digest,
     }))
 }

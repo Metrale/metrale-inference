@@ -79,17 +79,67 @@ pub(super) fn classify(repo: &str, status: u16, had_token: bool) -> DownloadErro
     }
 }
 
+/// 2026-10-03: An HTTP `Range`: open-ended (a resume) or inclusive at both ends (a header
+/// read).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ByteRange {
+    /// 2026-10-03: `bytes=<from>-`.
+    From(u64),
+    /// 2026-10-03: `bytes=<from>-<to>`, `to` inclusive.
+    Span(u64, u64),
+}
+
+impl ByteRange {
+    fn header(self) -> String {
+        match self {
+            ByteRange::From(f) => format!("bytes={f}-"),
+            ByteRange::Span(f, t) => format!("bytes={f}-{t}"),
+        }
+    }
+}
+
+/// 2026-10-03: The whole of a small file, or bytes `from..=to` of any file, at `revision`.
+/// `met ml-utils` and `--mock` read config, tokenizer and safetensors headers with it, never
+/// tensor data. A server that ignores the range (status 200) is an error for a span: the reply
+/// would be the whole file.
+pub fn fetch_bytes(
+    repo: &str,
+    revision: &str,
+    name: &str,
+    span: Option<(u64, u64)>,
+    tok: Option<&str>,
+) -> Result<Vec<u8>, DownloadError> {
+    let url = format!("{HOST}/{repo}/resolve/{revision}/{name}");
+    let resp = match get_or_anon(&url, tok, span.map(|(f, t)| ByteRange::Span(f, t))) {
+        Ok(r) => r,
+        Err((0, e)) => return Err(DownloadError::Offline(e.to_string())),
+        Err((s, _)) => return Err(classify(repo, s, tok.is_some())),
+    };
+    if span.is_some() && resp.status().as_u16() != 206 {
+        return Err(DownloadError::Io(format!(
+            "{name}: the server ignored the byte range (status {})",
+            resp.status().as_u16()
+        )));
+    }
+    let mut out = Vec::new();
+    resp.into_body()
+        .into_reader()
+        .read_to_end(&mut out)
+        .map_err(|e| DownloadError::Io(e.to_string()))?;
+    Ok(out)
+}
+
 fn get(
     url: &str,
     token: Option<&str>,
-    range_from: Option<u64>,
+    range: Option<ByteRange>,
 ) -> Result<ureq::http::Response<ureq::Body>, (u16, anyhow::Error)> {
     let mut req = agent().get(url).header("User-Agent", super::AGENT);
     if let Some(t) = token {
         req = req.header("Authorization", &format!("Bearer {t}"));
     }
-    if let Some(from) = range_from {
-        req = req.header("Range", &format!("bytes={from}-"));
+    if let Some(r) = range {
+        req = req.header("Range", &r.header());
     }
     match req.call() {
         Ok(r) => Ok(r),
@@ -105,10 +155,10 @@ fn get(
 fn get_or_anon(
     url: &str,
     token: Option<&str>,
-    range_from: Option<u64>,
+    range: Option<ByteRange>,
 ) -> Result<ureq::http::Response<ureq::Body>, (u16, anyhow::Error)> {
-    match get(url, token, range_from) {
-        Err((s @ (401 | 403), e)) if token.is_some() => match get(url, None, range_from) {
+    match get(url, token, range) {
+        Err((s @ (401 | 403), e)) if token.is_some() => match get(url, None, range) {
             Ok(r) => Ok(r),
             Err(_) => Err((s, e)),
         },
@@ -207,7 +257,7 @@ pub fn fetch_file(
     let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
     let url = format!("{HOST}/{repo}/resolve/{revision}/{name}");
-    let resp = match get_or_anon(&url, tok, (have > 0).then_some(have)) {
+    let resp = match get_or_anon(&url, tok, (have > 0).then_some(ByteRange::From(have))) {
         Ok(r) => r,
         Err((0, e)) => return Err(DownloadError::Offline(e.to_string())),
         Err((s, _)) => return Err(classify(repo, s, had)),

@@ -292,6 +292,13 @@ impl MoeLayer {
             avg_per_expert,
             max_m_tiles,
         );
+        super::routing_record::record(
+            ctx,
+            self as *const Self as usize,
+            expert_offsets,
+            ne,
+            stream,
+        );
 
         let expert_gate_out = ctx.buffers.expert_gate_out();
         let expert_up_out = ctx.buffers.expert_up_out();

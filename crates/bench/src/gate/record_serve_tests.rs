@@ -177,6 +177,7 @@ fn live(forward: &str, digest: Option<&str>) -> super::LiveForward {
         auto_max_batch_size: None,
         forward: forward.to_string(),
         plan_digest: digest.map(str::to_string),
+        mock: None,
     }
 }
 
@@ -233,5 +234,33 @@ fn an_auto_slot_count_is_disclosed_and_an_explicit_one_is_not() {
     assert_eq!(
         m.get(super::MAX_BATCH_SIZE).map(String::as_str),
         Some("auto:91")
+    );
+}
+
+#[test]
+fn a_mock_server_refuses_gate_and_accuracy_runs_but_not_speed_runs() {
+    let mut l = live("legacy", None);
+    assert!(
+        super::mock_run_allowed(Some(&l), true, true).is_ok(),
+        "a real checkpoint: all runs"
+    );
+    assert!(
+        super::mock_run_allowed(None, true, true).is_ok(),
+        "a foreign endpoint says nothing"
+    );
+    l.mock = Some("abc".into());
+    assert!(
+        super::mock_run_allowed(Some(&l), false, false).is_ok(),
+        "speed on a mock"
+    );
+    assert!(
+        super::mock_run_allowed(Some(&l), true, false)
+            .unwrap_err()
+            .contains("accuracy")
+    );
+    assert!(
+        super::mock_run_allowed(Some(&l), false, true)
+            .unwrap_err()
+            .contains("gate run")
     );
 }

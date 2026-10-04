@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: Host-side numeric conversions: the FP8 E4M3 decode table, the f32 -> BF16 cast and BF16 widening.
+//! 2026-10-03: Also the host NVFP4 codec ([`nvfp4_quant`], [`nvfp4_dequant`]) and the signed FP8
+//! E4M3 encoder, so every host quantizer shares one rounding rule.
 //!
 //! Owner: metrale-core.
 //! Invariants:
@@ -8,6 +10,61 @@
 //! - `FP8_E4M3_LUT` decodes the two NaN bytes (`0x7F`, `0xFF`) to signed zero.
 //! - `E4M3_LUT_GMOE` in `kernels/gb10/common/moe_fp8_grouped_gemm.cu` must agree with
 //!   `FP8_E4M3_LUT` element for element; it does, including the signed zeros.
+
+pub mod nvfp4_dequant;
+pub mod nvfp4_quant;
+
+pub use nvfp4_dequant::dequant_nvfp4_to_f32;
+pub use nvfp4_quant::{Nvfp4Blob, e4m3_scale_gpu, quantize_to_nvfp4};
+
+/// 2026-09-25: Elements per NVFP4 scale group. 2026-10-03: moved here from `metrale-cache`
+/// (`kv_dequant::luts`, which re-exports it); it is the `NVFP4_GROUP_SIZE` of
+/// `kernels/gb10/common/paged_decode_attn_nvfp4.cu`.
+pub const NVFP4_GROUP_SIZE: usize = 16;
+
+/// 2026-09-25: E2M1 4-bit codebook (NVFP4), as in `kernels/gb10/common/paged_decode_attn_nvfp4.cu`.
+/// 2026-10-03: moved here from `metrale-cache`, which re-exports it.
+pub const NVFP4_E2M1_LUT: [f32; 16] = [
+    0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
+];
+
+/// 2026-10-03: `v` as an FP8 E4M3 byte: the nearest finite code to `|v|`, ties to even, at most
+/// 448, with `v`'s sign bit. Never the NaN code; NaN encodes as a signed zero.
+///
+/// Bit arithmetic, because synthetic checkpoints encode billions of values; a test proves it
+/// equal to a nearest-even search over the finite E4M3 ladder on every exponent and around
+/// every tie (`fp8_encode_matches_the_ladder_rule`).
+#[inline]
+pub fn f32_to_fp8_e4m3_rne(v: f32) -> u8 {
+    let bits = v.to_bits();
+    let sign = ((bits >> 24) & 0x80) as u8;
+    let mag = f32::from_bits(bits & 0x7FFF_FFFF);
+    if mag.is_nan() {
+        return sign;
+    }
+    if mag >= 448.0 {
+        return sign | 0x7E;
+    }
+    // 2026-10-03: Below the least normal (2^-6) the codes are multiples of 2^-9: `mag * 512` is
+    // exact, and the f32 round-to-nearest-even of `x + 2^23` (then minus 2^23) rounds it to an
+    // integer with ties to even.
+    if mag < 0.015_625 {
+        let q = (mag * 512.0 + 8_388_608.0) - 8_388_608.0;
+        return sign | q as u8;
+    }
+    let mb = mag.to_bits();
+    let exp = ((mb >> 23) & 0xFF) as i32 - 127;
+    let man = mb & 0x7F_FFFF;
+    let lsb = (man >> 20) & 1;
+    let mut m3 = (man + 0x7_FFFF + lsb) >> 20;
+    let mut e = exp + 7;
+    if m3 == 8 {
+        m3 = 0;
+        e += 1;
+    }
+    let code = ((e as u32) << 3) | m3;
+    sign | code.min(0x7E) as u8
+}
 
 /// 2026-09-25: FP8 E4M3 -> f32 lookup table, one entry per byte value.
 ///
@@ -84,6 +141,14 @@ pub fn f32_to_bf16(val: f32) -> u16 {
     if *DISABLE_RNE.get_or_init(|| std::env::var("METRALE_DISABLE_RNE").is_ok()) {
         return (val.to_bits() >> 16) as u16;
     }
+    f32_to_bf16_rne(val)
+}
+
+/// 2026-10-03: f32 to BF16, round-to-nearest-even, with no escape hatch: the conversion
+/// [`f32_to_bf16`] makes when `METRALE_DISABLE_RNE` is unset. Callers whose bytes must not depend
+/// on the environment (synthetic weights) use this.
+#[inline(always)]
+pub fn f32_to_bf16_rne(val: f32) -> u16 {
     let bits = val.to_bits();
     if val.is_nan() {
         let sign = ((bits >> 16) & 0x8000) as u16;
@@ -105,6 +170,103 @@ pub fn bf16_bytes_to_f32(bytes: [u8; 2]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-10-03: Every finite byte survives decode then encode; midpoints go to the even
+    /// mantissa; magnitudes past 448 saturate; the sign bit is kept, zero included.
+    #[test]
+    fn fp8_encode_is_rne_and_inverts_the_table() {
+        for b in 0..=255u8 {
+            if b & 0x7F == 0x7F {
+                continue;
+            }
+            assert_eq!(f32_to_fp8_e4m3_rne(fp8_e4m3_to_f32(b)), b, "byte 0x{b:02X}");
+        }
+        assert_eq!(
+            f32_to_fp8_e4m3_rne(1.0625),
+            0x38,
+            "1 | 1.125 tie -> even 1.0"
+        );
+        assert_eq!(
+            f32_to_fp8_e4m3_rne(1.1875),
+            0x3A,
+            "1.125 | 1.25 tie -> even 1.25"
+        );
+        assert_eq!(f32_to_fp8_e4m3_rne(1.0e6), 0x7E);
+        assert_eq!(f32_to_fp8_e4m3_rne(-1.0e6), 0xFE);
+        assert_eq!(f32_to_fp8_e4m3_rne(-0.0), 0x80);
+        assert_eq!(
+            f32_to_fp8_e4m3_rne(2.0f32.powi(-10)),
+            0x00,
+            "half the least subnormal"
+        );
+    }
+
+    /// 2026-10-03: The bit-arithmetic encoder equals the ladder rule the NVFP4 quantizer rounds
+    /// block scales by, on every exponent and on mantissas near each tie, plus a pseudo-random
+    /// sweep.
+    /// 2026-10-04: The reference for the encoder: the nearest finite E4M3 magnitude, ties to
+    /// the even code (consecutive codes differ in the mantissa's low bit).
+    fn ladder_rne(v: f32) -> u8 {
+        let ladder = &FP8_E4M3_LUT[..0x7F];
+        let a = v.abs();
+        let idx = if a.is_nan() || a <= 0.0 {
+            0
+        } else if a >= ladder[0x7E] {
+            0x7E
+        } else {
+            let hi = ladder.partition_point(|&x| x < a);
+            let lo = hi - 1;
+            let (below, above) = (a - ladder[lo], ladder[hi] - a);
+            if below < above || (below == above && lo.is_multiple_of(2)) {
+                lo
+            } else {
+                hi
+            }
+        };
+        (if v.is_sign_negative() { 0x80u8 } else { 0 }) | idx as u8
+    }
+
+    #[test]
+    fn fp8_encode_matches_the_ladder_rule() {
+        let ladder = ladder_rne;
+        let mut checked = 0u64;
+        for exp in 0u32..=140 {
+            for man in (0u32..(1 << 23)).step_by(4093).chain((0..8).flat_map(|k| {
+                let t = (k << 20) | (1 << 19);
+                [t - 1, t, t + 1]
+            })) {
+                for sign in [0u32, 1] {
+                    let v = f32::from_bits((sign << 31) | (exp << 23) | (man & 0x7F_FFFF));
+                    assert_eq!(
+                        f32_to_fp8_e4m3_rne(v),
+                        ladder(v),
+                        "{v:e} ({:#010x})",
+                        v.to_bits()
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        let mut x = 0x9E37_79B9u32;
+        for _ in 0..1_000_000 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let v = f32::from_bits(x & 0xC3FF_FFFF);
+            if v.is_finite() {
+                assert_eq!(f32_to_fp8_e4m3_rne(v), ladder(v), "{v:e}");
+            }
+        }
+        assert!(checked > 500_000);
+    }
+
+    /// 2026-10-03: The environment-free cast is the RNE arm of `f32_to_bf16`.
+    #[test]
+    fn bf16_rne_rounds_ties_to_even() {
+        assert_eq!(f32_to_bf16_rne(f32::from_bits(0x3F80_8000)), 0x3F80);
+        assert_eq!(f32_to_bf16_rne(f32::from_bits(0x3F81_8000)), 0x3F82);
+        assert_eq!(f32_to_bf16_rne(f32::from_bits(0x3F80_8001)), 0x3F81);
+    }
 
     #[test]
     fn fp8_lut_reference_values() {

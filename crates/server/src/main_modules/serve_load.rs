@@ -62,6 +62,7 @@ pub(crate) fn load_model(
         forward,
         auto_max_batch_size,
         device_budget,
+        mock,
     }) = engine::load_engine(args)?
     else {
         // 2026-09-26: An EP worker rank ran its command loop and the head has
@@ -303,6 +304,7 @@ pub(crate) fn load_model(
             forward: forward.forward.to_string(),
             plan_digest: forward.plan_digest,
             auto_max_batch_size,
+            mock,
         },
         memory,
         // 2026-09-26: `behavior` is MODEL.toml's, embedded at build time, with

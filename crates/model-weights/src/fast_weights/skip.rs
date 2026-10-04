@@ -38,7 +38,10 @@ impl FastSafetensorsLoader {
 }
 
 impl FastSafetensorsLoader {
-    pub(super) fn should_skip_tensor(&self, name: &str) -> bool {
+    /// 2026-10-03: Whether this loader leaves `name` out (vision tower, unbuilt MTP head,
+    /// activation scales, other EP ranks' experts). Public so the `--mock` loader
+    /// (`crate::synthetic`) skips exactly what a real load skips.
+    pub fn should_skip_tensor(&self, name: &str) -> bool {
         // Checked before the EP short-circuit: a text-only port skips the
         // vision tower at tp/ep 1 too.
         if self.skip_vision && super::is_vision_tensor(name) {
