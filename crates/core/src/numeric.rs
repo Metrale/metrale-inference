@@ -15,7 +15,7 @@ pub mod nvfp4_dequant;
 pub mod nvfp4_quant;
 
 pub use nvfp4_dequant::dequant_nvfp4_to_f32;
-pub use nvfp4_quant::{Nvfp4Blob, encode_e4m3_rne, quantize_to_nvfp4};
+pub use nvfp4_quant::{Nvfp4Blob, e4m3_scale_gpu, quantize_to_nvfp4};
 
 /// 2026-09-25: Elements per NVFP4 scale group. 2026-10-03: moved here from `metrale-cache`
 /// (`kv_dequant::luts`, which re-exports it); it is the `NVFP4_GROUP_SIZE` of
@@ -31,9 +31,9 @@ pub const NVFP4_E2M1_LUT: [f32; 16] = [
 /// 2026-10-03: `v` as an FP8 E4M3 byte: the nearest finite code to `|v|`, ties to even, at most
 /// 448, with `v`'s sign bit. Never the NaN code; NaN encodes as a signed zero.
 ///
-/// Bit arithmetic rather than the ladder search of [`encode_e4m3_rne`], because synthetic
-/// checkpoints encode billions of values; a test proves the two agree on every f32 bit pattern
-/// class (`fp8_encode_matches_the_ladder_rule`).
+/// Bit arithmetic, because synthetic checkpoints encode billions of values; a test proves it
+/// equal to a nearest-even search over the finite E4M3 ladder on every exponent and around
+/// every tie (`fp8_encode_matches_the_ladder_rule`).
 #[inline]
 pub fn f32_to_fp8_e4m3_rne(v: f32) -> u8 {
     let bits = v.to_bits();
@@ -204,12 +204,31 @@ mod tests {
     /// 2026-10-03: The bit-arithmetic encoder equals the ladder rule the NVFP4 quantizer rounds
     /// block scales by, on every exponent and on mantissas near each tie, plus a pseudo-random
     /// sweep.
+    /// 2026-10-04: The reference for the encoder: the nearest finite E4M3 magnitude, ties to
+    /// the even code (consecutive codes differ in the mantissa's low bit).
+    fn ladder_rne(v: f32) -> u8 {
+        let ladder = &FP8_E4M3_LUT[..0x7F];
+        let a = v.abs();
+        let idx = if a.is_nan() || a <= 0.0 {
+            0
+        } else if a >= ladder[0x7E] {
+            0x7E
+        } else {
+            let hi = ladder.partition_point(|&x| x < a);
+            let lo = hi - 1;
+            let (below, above) = (a - ladder[lo], ladder[hi] - a);
+            if below < above || (below == above && lo.is_multiple_of(2)) {
+                lo
+            } else {
+                hi
+            }
+        };
+        (if v.is_sign_negative() { 0x80u8 } else { 0 }) | idx as u8
+    }
+
     #[test]
     fn fp8_encode_matches_the_ladder_rule() {
-        let ladder = |v: f32| {
-            let s = if v.is_sign_negative() { 0x80u8 } else { 0 };
-            s | encode_e4m3_rne(v.abs())
-        };
+        let ladder = ladder_rne;
         let mut checked = 0u64;
         for exp in 0u32..=140 {
             for man in (0u32..(1 << 23)).step_by(4093).chain((0..8).flat_map(|k| {
