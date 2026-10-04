@@ -251,6 +251,13 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(built.max_batch_size);
     let model = built.model;
     let drafter_weights_sha256 = built.drafter_weights_sha256;
+    // 2026-10-04: Always logged, not only under --spec-cost-model measured: it is the only way
+    // to learn the value `met benchmark spec-cost-table --drafter-weights-sha256` and a future
+    // boot's `--spec-cost-calibration` must agree on.
+    match &drafter_weights_sha256 {
+        Some(h) => tracing::info!("MTP drafter weights sha256: {h} (--spec-cost-model's key)"),
+        None => tracing::info!("No MTP drafter weights (checkpoint has no mtp.* tensors)"),
+    }
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
     model.set_forward(&serve_phases::forward_select(
