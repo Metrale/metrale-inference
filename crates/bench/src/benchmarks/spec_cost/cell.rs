@@ -11,9 +11,14 @@
 //!   `step_ms` = `window_ms` / `steps`; `draft_ms` = 0.
 //! - `verify_ms` = `step_ms` − `draft_ms`; `tok_per_step` = Δtokens / (`n` · `steps`);
 //!   `wall_ms` = `window_ms` / `steps`.
-//! - `step_j` = window joules / `steps`. ASSUMPTION: energy splits between draft and verify
-//!   in proportion to time, so `draft_j` = `step_j` · `draft_ms` / `step_ms` and `verify_j`
-//!   = `step_j` − `draft_j`. The rail is not sampled per phase, so the split is not measured.
+//! - `step_j` = window joules / `steps`, the joules being the change in the serve's NVML
+//!   energy counter (`metrale_gpu_energy_millijoules_total`) between the two snapshots, so they
+//!   cover the same instants as the step counts, up to one device sample period at each edge.
+//!   ASSUMPTION: energy splits between draft and verify in proportion to time, so `draft_j` =
+//!   `step_j` · `draft_ms` / `step_ms` and `verify_j` = `step_j` − `draft_j`. The rail is not
+//!   sampled per phase, so the split is not measured.
+//! - `smi_j` = the bench's own nvidia-smi power integral over the window / `steps`: recorded
+//!   beside `step_j` as a cross-check of the two instruments, never used for the split.
 //!
 //! `step_j` covers the whole window, including the scheduler loop's work between steps, while
 //! `step_ms` is the time inside `step_mtp` only; at `k > 0`, `wall_ms` − `step_ms` is that
@@ -45,6 +50,10 @@ pub(crate) const PROPOSE_PHASE: &str = "propose";
 /// 2026-10-04: Fewer steps than this in a window make the cell vacuous.
 pub(crate) const MIN_STEPS: f64 = 20.0;
 
+/// 2026-10-04: The serve's NVML energy counter (`telemetry export::prometheus`), reset- and
+/// wrap-corrected; rendered at `--telemetry basic` once the device sampler has read the GPU.
+pub(crate) const ENERGY_METRIC: &str = "metrale_gpu_energy_millijoules_total";
+
 /// 2026-10-04: One phase's histogram totals.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct PhaseTotals {
@@ -60,6 +69,8 @@ pub(crate) struct Counters {
     pub(crate) step: Option<PhaseTotals>,
     /// 2026-10-04: Zero when the page has no `propose` series (it has not fired).
     pub(crate) propose: PhaseTotals,
+    /// 2026-10-04: `None` when the page has no [`ENERGY_METRIC`] (no NVML on the serve).
+    pub(crate) energy_mj: Option<f64>,
 }
 
 impl Counters {
@@ -71,6 +82,7 @@ impl Counters {
             tokens,
             step: phase(scrape, STEP_PHASE)?,
             propose: phase(scrape, PROPOSE_PHASE)?.unwrap_or_default(),
+            energy_mj: scrape.value(ENERGY_METRIC, &[])?,
         })
     }
 }
@@ -107,8 +119,9 @@ pub(crate) struct Window {
     pub(crate) before: Counters,
     pub(crate) after: Counters,
     pub(crate) window_s: f64,
-    /// 2026-10-04: GPU-rail joules over the window; `None` when the rail was not sampled.
-    pub(crate) energy_j: Option<f64>,
+    /// 2026-10-04: The bench's nvidia-smi rail integral over the window; `None` when it was
+    /// not sampled.
+    pub(crate) smi_energy_j: Option<f64>,
     /// 2026-10-04: Streams that had finished or failed when the window closed.
     pub(crate) ended_early: usize,
 }
@@ -123,6 +136,7 @@ pub(crate) struct StepCost {
     pub(crate) draft_ms: f64,
     pub(crate) verify_j: Option<f64>,
     pub(crate) draft_j: Option<f64>,
+    pub(crate) smi_j: Option<f64>,
     pub(crate) tok_per_step: f64,
 }
 
@@ -184,7 +198,16 @@ pub(crate) fn evaluate(w: &Window) -> CellVerdict {
             "propose time {draft_ms:.3} ms per step exceeds the step's {step_ms:.3} ms"
         ));
     }
-    let step_j = w.energy_j.map(|j| j / steps);
+    let counter_j = match (w.before.energy_mj, w.after.energy_mj) {
+        (Some(a), Some(b)) if b < a => {
+            return vacuous(format!(
+                "{ENERGY_METRIC} went backwards: the serve restarted"
+            ));
+        }
+        (Some(a), Some(b)) => Some((b - a) / 1000.0),
+        _ => None,
+    };
+    let step_j = counter_j.map(|j| j / steps);
     let draft_j = step_j.map(|j| j * draft_ms / step_ms);
     CellVerdict::Measured(StepCost {
         steps,
@@ -194,6 +217,7 @@ pub(crate) fn evaluate(w: &Window) -> CellVerdict {
         draft_ms,
         verify_j: step_j.zip(draft_j).map(|(s, d)| s - d),
         draft_j,
+        smi_j: w.smi_energy_j.map(|j| j / steps),
         tok_per_step: d_tokens / (n * steps),
     })
 }
@@ -219,6 +243,9 @@ pub(crate) fn record(n: usize, verdict: &CellVerdict, m: &mut BTreeMap<String, f
             if let Some(j) = c.draft_j {
                 put(KEY_DRAFT_J, j);
             }
+            if let Some(j) = c.smi_j {
+                put(KEY_SMI_J, j);
+            }
         }
     }
 }
@@ -239,6 +266,7 @@ pub(crate) const KEY_DRAFT_MS: &str = "draft_ms";
 pub(crate) const KEY_TOK_PER_STEP: &str = "tok_per_step";
 pub(crate) const KEY_VERIFY_J: &str = "verify_j";
 pub(crate) const KEY_DRAFT_J: &str = "draft_j";
+pub(crate) const KEY_SMI_J: &str = "smi_j";
 
 #[cfg(test)]
 #[path = "cell_tests.rs"]

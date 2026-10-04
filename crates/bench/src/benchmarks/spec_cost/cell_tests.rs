@@ -15,6 +15,15 @@ fn counters(tokens: f64, step: Option<(f64, f64)>, propose: (f64, f64)) -> Count
             count: propose.0,
             sum_s: propose.1,
         },
+        energy_mj: None,
+    }
+}
+
+/// 2026-10-04: `c` with the NVML energy counter at `mj`.
+fn at_mj(c: Counters, mj: f64) -> Counters {
+    Counters {
+        energy_mj: Some(mj),
+        ..c
     }
 }
 
@@ -24,10 +33,16 @@ fn speculative() -> Window {
     Window {
         n: 4,
         k: 3,
-        before: counters(1000.0, Some((100.0, 3.0)), (100.0, 0.6)),
-        after: counters(3000.0, Some((300.0, 9.0)), (300.0, 1.8)),
+        before: at_mj(
+            counters(1000.0, Some((100.0, 3.0)), (100.0, 0.6)),
+            5_000_000.0,
+        ),
+        after: at_mj(
+            counters(3000.0, Some((300.0, 9.0)), (300.0, 1.8)),
+            5_800_000.0,
+        ),
         window_s: 8.0,
-        energy_j: Some(800.0),
+        smi_energy_j: Some(840.0),
         ended_early: 0,
     }
 }
@@ -65,9 +80,14 @@ fn energy_splits_in_proportion_to_time() {
 
 #[test]
 fn without_a_rail_reading_the_joule_fields_are_absent_and_not_recorded() {
+    let s = speculative();
     let w = Window {
-        energy_j: None,
-        ..speculative()
+        before: Counters {
+            energy_mj: None,
+            ..s.before
+        },
+        smi_energy_j: Some(840.0),
+        ..s
     };
     let c = measured(&w);
     assert_eq!((c.draft_j, c.verify_j), (None, None));
@@ -82,10 +102,10 @@ fn k0_counts_one_step_per_token_per_sequence_and_has_no_draft() {
     let w = Window {
         n: 8,
         k: 0,
-        before: counters(500.0, None, (0.0, 0.0)),
-        after: counters(2100.0, None, (0.0, 0.0)),
+        before: at_mj(counters(500.0, None, (0.0, 0.0)), 1_000.0),
+        after: at_mj(counters(2100.0, None, (0.0, 0.0)), 401_000.0),
         window_s: 8.0,
-        energy_j: Some(400.0),
+        smi_energy_j: None,
         ended_early: 0,
     };
     let c = measured(&w);
@@ -178,6 +198,7 @@ fn measured_cell_records_every_key() {
         [
             "n4_draft_j",
             "n4_draft_ms",
+            "n4_smi_j",
             "n4_steps",
             "n4_tok_per_step",
             "n4_vacuous",
@@ -196,6 +217,8 @@ metrale_generation_tokens_total 7
 metrale_decoded_tokens_total 4000
 metrale_sched_phase_seconds_sum{phase=\"step_mtp\"} 2.5
 metrale_sched_phase_seconds_count{phase=\"step_mtp\"} 100
+metrale_gpu_energy_counter_millijoules 999
+metrale_gpu_energy_millijoules_total 123456
 ";
     let c = Counters::read(&Scrape::parse(page).unwrap()).unwrap();
     assert_eq!(
@@ -210,6 +233,11 @@ metrale_sched_phase_seconds_count{phase=\"step_mtp\"} 100
         })
     );
     assert_eq!(c.propose, PhaseTotals::default(), "absent propose is zero");
+    assert_eq!(
+        c.energy_mj,
+        Some(123456.0),
+        "the corrected total, not the raw counter"
+    );
     require_step_series(3, &c).unwrap();
 }
 
@@ -229,4 +257,32 @@ fn a_page_without_the_token_counter_or_with_half_a_histogram_is_an_error() {
     let half = "metrale_decoded_tokens_total 1\n\
                 metrale_sched_phase_seconds_count{phase=\"propose\"} 3\n";
     assert!(Counters::read(&Scrape::parse(half).unwrap()).is_err());
+}
+
+#[test]
+fn joules_come_from_the_energy_counter_and_smi_is_only_recorded_beside_them() {
+    let c = measured(&speculative());
+    // 2026-10-04: The counter moved 800 J over 200 steps; nvidia-smi saw 840 J.
+    assert!(close(c.draft_j.unwrap() + c.verify_j.unwrap(), 4.0));
+    assert!(close(c.smi_j.unwrap(), 4.2));
+    let mut m = BTreeMap::new();
+    record(4, &CellVerdict::Measured(c), &mut m);
+    assert!(close(m["n4_smi_j"], 4.2));
+    assert!(close(m["n4_verify_j"] + m["n4_draft_j"], 4.0));
+}
+
+#[test]
+fn an_energy_counter_that_went_backwards_makes_the_width_vacuous() {
+    let s = speculative();
+    let w = Window {
+        after: Counters {
+            energy_mj: Some(1.0),
+            ..s.after
+        },
+        ..s
+    };
+    match evaluate(&w) {
+        CellVerdict::Vacuous(why) => assert!(why.contains("went backwards"), "{why}"),
+        CellVerdict::Measured(c) => panic!("measured {c:?}"),
+    }
 }
