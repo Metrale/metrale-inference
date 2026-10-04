@@ -6,7 +6,7 @@
 │ qkvz/gdn_out/q/k/v/o W8A8 fp8 · gate_up/down W4A4 nvfp4                      │
 │ ba/lm_head W16A16 bf16                                                       │
 │ mode decode · 1 row · 1155 launches/step · 925 kernel groups                 │
-│ 216 fused edges · 1116 materialized · plan 8044ebcdd41d                      │
+│ 216 fused edges · 1116 materialized · plan 47204e4a4b06                      │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 Layers
@@ -739,8 +739,8 @@ Layers
         in bf16 · compute f32 · out bf16
        │ ▼ bf16 · n×5120  DRAM
     ╔═══════════════════════════╗  weight bf16
-    ║ lm_head                   ║  gemv::dense_gemv_bf16 · ≈ reference
-    ╚═══════════════════════════╝
+    ║ lm_head                   ║  dense_gemv_bf16_batchm::dense_gemv_bf16_ba…
+    ╚═══════════════════════════╝  ≈ reference
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16
         accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×248320  DRAM
