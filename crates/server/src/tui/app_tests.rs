@@ -98,8 +98,12 @@ fn the_watchdog_command_toggles_the_running_run_not_a_process_global() {
     // 2026-09-26: `/watchdog on|off` sets the levers of the run in `app.run` and no other.
     use clap::Parser as _;
     let mut app = App::new(crate::cli::ServeArgs::parse_from(["met", "some/model"]));
-    let levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(None, None));
-    let other = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(None, None));
+    let levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
+        None, None, None,
+    ));
+    let other = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
+        None, None, None,
+    ));
     app.run = Some(crate::tui::RunHandles {
         levers: levers.clone(),
         snapshot: std::sync::Arc::new(metrale_speculative::snapshot::SnapshotCell::default()),

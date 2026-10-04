@@ -375,6 +375,15 @@ impl AcceptanceCalibration {
     }
 }
 
+/// 2026-10-04: `--spec-cost-model measured`'s resolved state, as the serve loaded and checked it
+/// at boot (`TableKey::check` and a `DrafterKey` comparison both empty/equal): the table, the
+/// drafter's acceptance calibration, and `--spec-cost-slack`.
+pub struct SpecCostState {
+    pub table: CostTable,
+    pub calibration: AcceptanceCalibration,
+    pub slack: f64,
+}
+
 #[path = "spec_cost_fit.rs"]
 mod fit;
 pub use fit::MIN_OUTCOMES;

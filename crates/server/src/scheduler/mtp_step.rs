@@ -60,6 +60,19 @@ pub fn step_mtp(
     // the resolver's count.
     let ladder_nd = if dflash_verify_raw_argmax {
         num_drafts
+    } else if let Some(sc) = &sched.levers.spec_cost {
+        // 2026-10-04: `--spec-cost-model measured`'s propose-depth decision (tokens per joule,
+        // `--spec-cost-slack`-constrained), in place of the static ladder; clamped to
+        // `[1, num_drafts]` like it. A K=0 recommendation (plain decode pays better than any
+        // draft) is not wired to suspend MTP mid-run: pass `--num-drafts 0` to turn drafting off
+        // instead of relying on the planner to do it per step.
+        metrale_speculative::spec_cost::plan::propose_depth(
+            &sc.table,
+            &sc.calibration,
+            active.len(),
+            sc.slack,
+        )
+        .clamp(1, num_drafts)
     } else {
         sched.rung.drafts_for(active.len(), num_drafts)
     };

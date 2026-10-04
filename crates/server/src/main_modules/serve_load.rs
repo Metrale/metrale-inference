@@ -31,6 +31,7 @@ pub(crate) mod engine;
 mod load_phases;
 mod model_setup;
 mod scheduler_setup;
+mod spec_cost_boot;
 
 pub(crate) use carried::Carried;
 
@@ -62,6 +63,7 @@ pub(crate) fn load_model(
         forward,
         auto_max_batch_size,
         device_budget,
+        drafter_weights_sha256,
     }) = engine::load_engine(args)?
     else {
         // 2026-09-26: An EP worker rank ran its command loop and the head has
@@ -154,6 +156,15 @@ pub(crate) fn load_model(
         args.max_inter_tool_prose,
         args.content_loop_min_repeats,
     );
+    // 2026-10-04: `--spec-cost-model measured`'s table, calibration and slack, loaded and
+    // checked against this serve's own key; an error here stops the boot (`load_model`'s
+    // caller surfaces it), never a silent fall-back to the static ladder.
+    let spec_cost = spec_cost_boot::resolve(
+        &args.spec_cost,
+        drafter_weights_sha256.as_deref(),
+        args.mtp_vocab,
+        &args.mtp_quantization,
+    )?;
     // 2026-09-26: The run's levers, shared with the dashboard so `/watchdog
     // on|off` toggles this run's flag. Its starting value is
     // `--content-loop-watchdog`, else `METRALE_CONTENT_LOOP_WATCHDOG`, else
@@ -161,6 +172,7 @@ pub(crate) fn load_model(
     let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
         args.mtp_gate_force(),
         args.mtp_shape.mtp_dcut_ratio,
+        spec_cost,
     ));
     sched_levers.set_loop_watchdog(crate::scheduler::resolve_content_loop_watchdog(
         ptx_set.behavior.enable_loop_watchdog,

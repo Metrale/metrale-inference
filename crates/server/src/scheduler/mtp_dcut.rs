@@ -187,6 +187,11 @@ pub(super) fn plan(
 /// and a per-sequence propose stops on its own). The canonical depth
 /// re-pairing is used only when every sequence holds the depth it is
 /// re-paired with; otherwise each keeps its own depth.
+///
+/// 2026-10-04: With `sched.levers.spec_cost` set (`--spec-cost-model measured`), D-Cut and the
+/// stop are both bypassed: the retained depths come from
+/// [`metrale_speculative::spec_cost::plan::sequence_depths`] instead, over the same per-sequence
+/// confidences and held-draft counts.
 pub(super) fn plan_with_stop(
     sched: &crate::scheduler::sched_ctx::SchedCtx,
     active: &mut [ActiveSeq],
@@ -196,12 +201,19 @@ pub(super) fn plan_with_stop(
     stop_ln_tau: Option<f32>,
 ) -> Vec<usize> {
     let mut ks: Vec<usize> = vec![rows; batchable.len()];
-    let dcut_on = sched.levers.dcut_enabled
+    // 2026-10-04: `--spec-cost-model measured` replaces D-Cut and the stop outright (they cannot
+    // both choose the verify depth; `validate_serve_args` refuses the explicit-flag combinations,
+    // but `dcut_enabled` defaults true independent of any flag, so it is forced off here too).
+    let measured = sched.levers.spec_cost.as_ref();
+    let dcut_on = measured.is_none()
+        && sched.levers.dcut_enabled
         && ladder_nd >= 2
         && !batchable.is_empty()
         && batchable.len() <= sched.levers.dcut_width_cap;
-    let stop_on = stop_ln_tau.is_some() && ladder_nd >= 2 && !batchable.is_empty();
-    if !dcut_on && !stop_on {
+    let stop_on =
+        measured.is_none() && stop_ln_tau.is_some() && ladder_nd >= 2 && !batchable.is_empty();
+    let measured_on = measured.is_some() && !batchable.is_empty();
+    if !dcut_on && !stop_on && !measured_on {
         return ks;
     }
     let confs: Vec<&[f32]> = batchable
@@ -217,6 +229,10 @@ pub(super) fn plan_with_stop(
             }
         })
         .collect();
+    let held: Vec<usize> = batchable
+        .iter()
+        .map(|&i| active[i].pending_drafts.len())
+        .collect();
     let retained = if dcut_on {
         select(
             &confs,
@@ -224,13 +240,19 @@ pub(super) fn plan_with_stop(
             VERIFY_ROW_BUDGET,
             sched.levers.dcut_ratio,
         )
+    } else if let Some(sc) = measured {
+        metrale_speculative::spec_cost::plan::sequence_depths(
+            &sc.table,
+            &sc.calibration,
+            &confs,
+            &held,
+            ladder_nd,
+            VERIFY_ROW_BUDGET,
+            sc.slack,
+        )
     } else {
         vec![ladder_nd; batchable.len()]
     };
-    let held: Vec<usize> = batchable
-        .iter()
-        .map(|&i| active[i].pending_drafts.len())
-        .collect();
     for (pos, r) in retained.iter().enumerate() {
         let mut depth = (*r).min(held[pos]);
         if let Some(ln_tau) = stop_ln_tau
@@ -276,13 +298,17 @@ pub(super) fn plan_with_stop(
         a.pending_drafts.truncate(k - 1);
         a.pending_draft_conf.truncate(k - 1);
     }
-    sched.dcut.record(
-        sched.levers.mtp_accept_debug,
-        sched.levers.dcut_ratio,
-        batchable.len() * rows,
-        ks_out.iter().sum(),
-        &ks_out,
-    );
+    // 2026-10-04: D-Cut's own telemetry names a ratio that measured mode does not have; skip it
+    // there rather than log a ratio that did not decide anything.
+    if dcut_on {
+        sched.dcut.record(
+            sched.levers.mtp_accept_debug,
+            sched.levers.dcut_ratio,
+            batchable.len() * rows,
+            ks_out.iter().sum(),
+            &ks_out,
+        );
+    }
     *batchable = reordered;
     ks_out
 }

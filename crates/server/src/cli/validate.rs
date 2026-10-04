@@ -18,7 +18,7 @@ use super::flag_values::{
     SSM_H_DTYPES, TELEMETRY_LEVELS, TOOL_CALL_PARSERS, TRISTATES,
 };
 
-mod violation;
+pub(super) mod violation;
 use violation::{Violation, check_enum, format_violations};
 
 /// 2026-09-26: Validate a `met serve` command line.
@@ -341,6 +341,8 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             "pass a value from 0 to 1 (1.0 keeps every draft), or drop the flag.",
         ));
     }
+
+    crate::cli::validate_spec_cost::check(args, &mut v); // 2026-10-04: measured's checks
 
     // 2026-09-26: Only an explicit --num-drafts is checked: an omitted one
     // resolves against MODEL.toml later, and a model default without a
