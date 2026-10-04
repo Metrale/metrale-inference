@@ -1875,6 +1875,8 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-model-layers",
  "parking_lot",
+ "serde",
+ "toml",
  "tracing",
 ]
 
