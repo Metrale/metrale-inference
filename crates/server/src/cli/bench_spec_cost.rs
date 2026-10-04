@@ -46,7 +46,7 @@ pub fn spec_cost_table_cmd(args: SpecCostTableArgs) -> Result<i32> {
         weights_sha256: args.drafter_weights_sha256,
         vocab: args.mtp_vocab,
         quantization: args.mtp_quantization,
-        context: args.mtp_context,
+        context: !args.mtp_no_context,
     };
     let table = assemble(&key, &records)?;
     let calibration = calibrate(drafter, &records)?;

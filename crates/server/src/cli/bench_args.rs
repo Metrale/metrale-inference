@@ -379,7 +379,8 @@ pub struct SpecCostTableArgs {
     /// The drafter's --mtp-quantization.
     #[arg(long)]
     pub mtp_quantization: String,
-    /// Whether the drafter's prompt context was active (true or false).
-    #[arg(long, action = clap::ArgAction::Set)]
-    pub mtp_context: bool,
+    /// Set when this run's drafter had its prompt context OFF (default: context on, the
+    /// production behaviour; there is no live toggle for it today).
+    #[arg(long, default_value_t = false)]
+    pub mtp_no_context: bool,
 }
