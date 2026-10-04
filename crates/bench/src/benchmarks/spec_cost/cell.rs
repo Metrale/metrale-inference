@@ -11,14 +11,15 @@
 //!   `step_ms` = `window_ms` / `steps`; `draft_ms` = 0.
 //! - `verify_ms` = `step_ms` − `draft_ms`; `tok_per_step` = Δtokens / (`n` · `steps`);
 //!   `wall_ms` = `window_ms` / `steps`.
-//! - `step_j` = window joules / `steps`, the joules being the change in the serve's NVML
-//!   energy counter (`metrale_gpu_energy_millijoules_total`) between the two snapshots, so they
-//!   cover the same instants as the step counts, up to one device sample period at each edge.
-//!   ASSUMPTION: energy splits between draft and verify in proportion to time, so `draft_j` =
-//!   `step_j` · `draft_ms` / `step_ms` and `verify_j` = `step_j` − `draft_j`. The rail is not
-//!   sampled per phase, so the split is not measured.
-//! - `smi_j` = the bench's own nvidia-smi power integral over the window / `steps`: recorded
-//!   beside `step_j` as a cross-check of the two instruments, never used for the split.
+//! - `step_j` = the bench's GPU-rail integral (nvidia-smi, `EnergyMeter`) over the window /
+//!   `steps`. ASSUMPTION: energy splits between draft and verify in proportion to time, so
+//!   `draft_j` = `step_j` · `draft_ms` / `step_ms` and `verify_j` = `step_j` − `draft_j`. The
+//!   rail is not sampled per phase, so the split is not measured.
+//! - `nvml_j` = the change in the serve's NVML energy counter
+//!   (`metrale_gpu_energy_millijoules_total`) between the two snapshots / `steps`: recorded as
+//!   a cross-check, never used for the split. Measured 2026-10-04 on the dense 27B (16 cells,
+//!   two interleaved rounds, dgx2): this delta repeated within 8.2 % (median, max 9.8 %) between
+//!   rounds while the integral repeated within 0.7 % (max 2.1 %), so the integral is the cost.
 //!
 //! `step_j` covers the whole window, including the scheduler loop's work between steps, while
 //! `step_ms` is the time inside `step_mtp` only; at `k > 0`, `wall_ms` − `step_ms` is that
@@ -119,9 +120,9 @@ pub(crate) struct Window {
     pub(crate) before: Counters,
     pub(crate) after: Counters,
     pub(crate) window_s: f64,
-    /// 2026-10-04: The bench's nvidia-smi rail integral over the window; `None` when it was
-    /// not sampled.
-    pub(crate) smi_energy_j: Option<f64>,
+    /// 2026-10-04: The bench's GPU-rail integral over the window; `None` when the rail was not
+    /// sampled.
+    pub(crate) energy_j: Option<f64>,
     /// 2026-10-04: Streams that had finished or failed when the window closed.
     pub(crate) ended_early: usize,
 }
@@ -136,7 +137,7 @@ pub(crate) struct StepCost {
     pub(crate) draft_ms: f64,
     pub(crate) verify_j: Option<f64>,
     pub(crate) draft_j: Option<f64>,
-    pub(crate) smi_j: Option<f64>,
+    pub(crate) nvml_j: Option<f64>,
     pub(crate) tok_per_step: f64,
 }
 
@@ -207,7 +208,7 @@ pub(crate) fn evaluate(w: &Window) -> CellVerdict {
         (Some(a), Some(b)) => Some((b - a) / 1000.0),
         _ => None,
     };
-    let step_j = counter_j.map(|j| j / steps);
+    let step_j = w.energy_j.map(|j| j / steps);
     let draft_j = step_j.map(|j| j * draft_ms / step_ms);
     CellVerdict::Measured(StepCost {
         steps,
@@ -217,7 +218,7 @@ pub(crate) fn evaluate(w: &Window) -> CellVerdict {
         draft_ms,
         verify_j: step_j.zip(draft_j).map(|(s, d)| s - d),
         draft_j,
-        smi_j: w.smi_energy_j.map(|j| j / steps),
+        nvml_j: counter_j.map(|j| j / steps),
         tok_per_step: d_tokens / (n * steps),
     })
 }
@@ -243,8 +244,8 @@ pub(crate) fn record(n: usize, verdict: &CellVerdict, m: &mut BTreeMap<String, f
             if let Some(j) = c.draft_j {
                 put(KEY_DRAFT_J, j);
             }
-            if let Some(j) = c.smi_j {
-                put(KEY_SMI_J, j);
+            if let Some(j) = c.nvml_j {
+                put(KEY_NVML_J, j);
             }
         }
     }
@@ -266,7 +267,7 @@ pub(crate) const KEY_DRAFT_MS: &str = "draft_ms";
 pub(crate) const KEY_TOK_PER_STEP: &str = "tok_per_step";
 pub(crate) const KEY_VERIFY_J: &str = "verify_j";
 pub(crate) const KEY_DRAFT_J: &str = "draft_j";
-pub(crate) const KEY_SMI_J: &str = "smi_j";
+pub(crate) const KEY_NVML_J: &str = "nvml_j";
 
 #[cfg(test)]
 #[path = "cell_tests.rs"]

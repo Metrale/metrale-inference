@@ -123,7 +123,7 @@ impl SpecCost {
             before,
             after,
             window_s: t1.duration_since(t0).as_secs_f64(),
-            smi_energy_j: self.energy.window(t0, t1).map(|w| w.energy_j),
+            energy_j: self.energy.window(t0, t1).map(|w| w.energy_j),
             ended_early,
         }))
     }

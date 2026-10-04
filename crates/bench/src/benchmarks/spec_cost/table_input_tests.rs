@@ -18,7 +18,7 @@ fn cost(wall_ms: f64, draft_ms: f64, joules: Option<(f64, f64)>) -> StepCost {
         draft_ms,
         verify_j: joules.map(|j| j.0),
         draft_j: joules.map(|j| j.1),
-        smi_j: None,
+        nvml_j: None,
         tok_per_step: 2.0,
     }
 }

@@ -63,14 +63,14 @@ pub const DESCRIPTOR: BenchmarkDescriptor = BenchmarkDescriptor {
              = osl). Once every stream has a token and settle_s has passed, it reads /metrics \
              twice, window_s apart, and integrates the GPU rail over the window. Per width it \
              records n{n}_steps, n{n}_verify_ms, n{n}_verify_j, n{n}_draft_ms, n{n}_draft_j, \
-             n{n}_tok_per_step, n{n}_wall_ms, n{n}_smi_j and n{n}_vacuous, plus k. Steps and \
+             n{n}_tok_per_step, n{n}_wall_ms, n{n}_nvml_j and n{n}_vacuous, plus k. Steps and \
              their time come from the scheduler phase histogram (phase step_mtp, its propose \
-             share from phase propose), so a speculative serve needs --telemetry basic; at k = 0 a step is \
-             one token per sequence. Joules are the change in the serve's NVML energy counter \
-             (metrale_gpu_energy_millijoules_total, --telemetry basic) between the two reads; \
-             n{n}_smi_j is the bench's own nvidia-smi integral per step, a cross-check. Energy is \
-             split between draft and verify in proportion to time (an assumption, not a \
-             measurement). A width is vacuous when a stream ends \
+             share from phase propose), so a speculative serve needs --telemetry basic; at \
+             k = 0 a step is one token per sequence. Joules are the bench's GPU-rail integral \
+             over the window; n{n}_nvml_j is the change in the serve's NVML energy counter per \
+             step, a cross-check that repeats less well. Energy is split between draft and \
+             verify in proportion to time (an assumption, not a measurement). A width is \
+             vacuous when a stream ends \
              inside the window, fewer than 20 steps were seen, or the serve did not time the \
              propose phase. Informational: no bounds.",
     duration_hint: "~2 min",

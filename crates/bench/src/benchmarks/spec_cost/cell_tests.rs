@@ -28,7 +28,8 @@ fn at_mj(c: Counters, mj: f64) -> Counters {
 }
 
 /// 2026-10-04: n = 4 at k = 3 over 8 s: 200 steps of 30 ms, of which 6 ms is propose,
-/// 2000 tokens (2.5 per sequence per step), 800 J on the rail.
+/// 2000 tokens (2.5 per sequence per step), 800 J on the rail integral and 840 J on the
+/// serve's energy counter.
 fn speculative() -> Window {
     Window {
         n: 4,
@@ -39,10 +40,10 @@ fn speculative() -> Window {
         ),
         after: at_mj(
             counters(3000.0, Some((300.0, 9.0)), (300.0, 1.8)),
-            5_800_000.0,
+            5_840_000.0,
         ),
         window_s: 8.0,
-        smi_energy_j: Some(840.0),
+        energy_j: Some(800.0),
         ended_early: 0,
     }
 }
@@ -82,11 +83,7 @@ fn energy_splits_in_proportion_to_time() {
 fn without_a_rail_reading_the_joule_fields_are_absent_and_not_recorded() {
     let s = speculative();
     let w = Window {
-        before: Counters {
-            energy_mj: None,
-            ..s.before
-        },
-        smi_energy_j: Some(840.0),
+        energy_j: None,
         ..s
     };
     let c = measured(&w);
@@ -105,7 +102,7 @@ fn k0_counts_one_step_per_token_per_sequence_and_has_no_draft() {
         before: at_mj(counters(500.0, None, (0.0, 0.0)), 1_000.0),
         after: at_mj(counters(2100.0, None, (0.0, 0.0)), 401_000.0),
         window_s: 8.0,
-        smi_energy_j: None,
+        energy_j: Some(400.0),
         ended_early: 0,
     };
     let c = measured(&w);
@@ -198,7 +195,7 @@ fn measured_cell_records_every_key() {
         [
             "n4_draft_j",
             "n4_draft_ms",
-            "n4_smi_j",
+            "n4_nvml_j",
             "n4_steps",
             "n4_tok_per_step",
             "n4_vacuous",
@@ -260,14 +257,14 @@ fn a_page_without_the_token_counter_or_with_half_a_histogram_is_an_error() {
 }
 
 #[test]
-fn joules_come_from_the_energy_counter_and_smi_is_only_recorded_beside_them() {
+fn joules_come_from_the_rail_integral_and_the_counter_is_only_recorded_beside_them() {
     let c = measured(&speculative());
-    // 2026-10-04: The counter moved 800 J over 200 steps; nvidia-smi saw 840 J.
+    // 2026-10-04: The rail integral is 800 J over 200 steps; the serve's counter moved 840 J.
     assert!(close(c.draft_j.unwrap() + c.verify_j.unwrap(), 4.0));
-    assert!(close(c.smi_j.unwrap(), 4.2));
+    assert!(close(c.nvml_j.unwrap(), 4.2));
     let mut m = BTreeMap::new();
     record(4, &CellVerdict::Measured(c), &mut m);
-    assert!(close(m["n4_smi_j"], 4.2));
+    assert!(close(m["n4_nvml_j"], 4.2));
     assert!(close(m["n4_verify_j"] + m["n4_draft_j"], 4.0));
 }
 
