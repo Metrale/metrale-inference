@@ -27,6 +27,7 @@
 //! - Synthesis is deterministic: the same spec, seed and checkpoint give the same bytes on every
 //!   platform and thread count.
 
+pub mod calibrate;
 pub mod error;
 pub mod extrapolate;
 pub mod index;
@@ -41,6 +42,7 @@ pub mod schedule;
 pub mod scheme;
 pub mod spec;
 pub mod st_format;
+pub mod stats;
 pub mod synth;
 pub mod values;
 pub mod write;

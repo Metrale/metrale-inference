@@ -38,6 +38,8 @@ fn plan_with(spec: &MockSpec, routing: Option<&RoutingProfile>) -> MockPlan {
         index: &index,
         spec,
         routing,
+        calibration: None,
+        stats: None,
     })
     .unwrap()
 }
@@ -81,7 +83,10 @@ fn routed(p: &MockPlan, layer: usize) -> Vec<u64> {
 fn the_histogram_is_reproduced_and_the_uniform_control_is_not() {
     let prof = profile();
     let skewed = plan_with(
-        &testkit::spec("1", "mode = \"histogram\"\nhistogram = \"p.json\""),
+        &testkit::spec(
+            "1",
+            "mode = \"histogram\"\nhistogram = \"p.json\"\ncalibration = \"none\"",
+        ),
         Some(&prof),
     );
     let uniform = plan_with(&testkit::spec("1", "mode = \"uniform\""), None);
@@ -123,7 +128,10 @@ fn the_histogram_is_reproduced_and_the_uniform_control_is_not() {
 fn histogram_routing_changes_values_only() {
     let prof = profile();
     let skewed = plan_with(
-        &testkit::spec("1", "mode = \"histogram\"\nhistogram = \"p.json\""),
+        &testkit::spec(
+            "1",
+            "mode = \"histogram\"\nhistogram = \"p.json\"\ncalibration = \"none\"",
+        ),
         Some(&prof),
     );
     let uniform = plan_with(&testkit::spec("1", "mode = \"uniform\""), None);
@@ -161,7 +169,10 @@ fn a_profile_that_does_not_fit_the_checkpoint_is_refused() {
     let text = r#"{"schema":1,"source":"x","experts":4,"top_k":2,"layers":[[1,1,1,1]]}"#;
     let bad = RoutingProfile::parse(text).unwrap();
     let (config, index) = testkit::moe_fp8();
-    let spec = testkit::spec("1", "mode = \"histogram\"\nhistogram = \"p.json\"");
+    let spec = testkit::spec(
+        "1",
+        "mode = \"histogram\"\nhistogram = \"p.json\"\ncalibration = \"none\"",
+    );
     let err = plan_mock(&MockInputs {
         source_id: "toy/model",
         revision: None,
@@ -170,6 +181,8 @@ fn a_profile_that_does_not_fit_the_checkpoint_is_refused() {
         index: &index,
         spec: &spec,
         routing: Some(&bad),
+        calibration: None,
+        stats: None,
     })
     .unwrap_err();
     assert!(err.to_string().contains("4 experts top-2"), "{err}");

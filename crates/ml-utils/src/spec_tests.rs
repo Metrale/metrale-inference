@@ -48,14 +48,15 @@ fn a_list_and_a_histogram_round_trip() {
         .replace("per_signature = 1", "per_signature = [2, 1]")
         .replace(
             "mode = \"uniform\"",
-            "mode = \"histogram\"\nhistogram = \"p \\\"q\\\".json\"",
+            "mode = \"histogram\"\nhistogram = \"p \\\"q\\\".json\"\ncalibration = \"none\"",
         );
     let s = MockSpec::parse(&text).expect("spec");
     assert_eq!(s.per_signature, PerSignature::Each(vec![2, 1]));
     assert_eq!(
         s.routing,
         RoutingMode::Histogram {
-            path: "p \"q\".json".into()
+            path: "p \"q\".json".into(),
+            calibration: None,
         }
     );
     assert_eq!(MockSpec::parse(&s.canonical()).unwrap(), s);
@@ -92,11 +93,6 @@ fn later_milestone_values_are_refused_with_the_reason() {
         ),
         ("kv = \"free\"", "kv = \"full-model\"", "capacity.kv"),
         (
-            "[values]\nmode = \"init\"",
-            "[values]\nmode = \"stats\"",
-            "values.mode",
-        ),
-        (
             "accept = \"natural\"",
             "accept = \"0.7\"",
             "speculative.accept",
@@ -125,4 +121,63 @@ fn routing_and_counts_are_validated() {
     assert!(MockSpec::parse(&stray).is_err());
     let other = UNIFORM.replace("mode = \"uniform\"", "mode = \"skewed\"");
     assert!(MockSpec::parse(&other).is_err());
+}
+
+#[test]
+fn stats_values_and_a_calibration_parse_and_round_trip() {
+    let text = UNIFORM
+        .replace(
+            "[values]\nmode = \"init\"",
+            "[values]\nmode = \"stats\"\nstats = \"s.json\"",
+        )
+        .replace(
+            "mode = \"uniform\"",
+            "mode = \"histogram\"\nhistogram = \"p.json\"\ncalibration = \"c.json\"",
+        );
+    let s = MockSpec::parse(&text).expect("spec");
+    assert_eq!(
+        s.values,
+        ValuesMode::Stats {
+            path: "s.json".into()
+        }
+    );
+    assert_eq!(
+        s.routing,
+        RoutingMode::Histogram {
+            path: "p.json".into(),
+            calibration: Some("c.json".into())
+        }
+    );
+    assert_eq!(MockSpec::parse(&s.canonical()).unwrap(), s);
+}
+
+#[test]
+fn stats_and_calibration_keys_are_validated() {
+    let no_file = UNIFORM.replace("[values]\nmode = \"init\"", "[values]\nmode = \"stats\"");
+    assert!(
+        MockSpec::parse(&no_file)
+            .unwrap_err()
+            .to_string()
+            .contains("values.stats")
+    );
+    let stray = UNIFORM.replace(
+        "[values]\nmode = \"init\"",
+        "[values]\nmode = \"init\"\nstats = \"s\"",
+    );
+    assert!(MockSpec::parse(&stray).is_err());
+    let no_cal = UNIFORM.replace(
+        "mode = \"uniform\"",
+        "mode = \"histogram\"\nhistogram = \"p\"",
+    );
+    assert!(
+        MockSpec::parse(&no_cal)
+            .unwrap_err()
+            .to_string()
+            .contains("calibration")
+    );
+    let cal_uniform = UNIFORM.replace(
+        "mode = \"uniform\"",
+        "mode = \"uniform\"\ncalibration = \"c\"",
+    );
+    assert!(MockSpec::parse(&cal_uniform).is_err());
 }

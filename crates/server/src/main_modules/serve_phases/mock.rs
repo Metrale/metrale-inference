@@ -45,9 +45,9 @@ pub(crate) fn materialize(args: &mut cli::ServeArgs) -> Result<Option<MockServe>
         (None, Some(m)) => m.clone(),
         (None, None) => bail!("--mock needs MODEL or --model-from-path: the checkpoint to mock"),
     };
-    let (spec, profile) = cli::ml_utils::read_spec(&spec_path)?;
+    let files = cli::ml_utils::read_spec(&spec_path)?;
     let src = open_source(&source, args.cache_dir.as_deref(), true)?;
-    let plan = cli::ml_utils::plan_of(&src, &spec, profile.as_ref())?;
+    let plan = cli::ml_utils::plan_of(&src, &files)?;
     let root =
         crate::model_resolver::resolve_cache_root(args.cache_dir.as_deref())?.join("metrale-mocks");
     std::fs::create_dir_all(&root).with_context(|| format!("creating {}", root.display()))?;

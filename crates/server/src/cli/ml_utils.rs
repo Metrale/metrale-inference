@@ -2,17 +2,21 @@
 
 //! 2026-10-03: `met ml-utils`: model utilities over the pure planner `metrale-ml-utils`.
 //! `inspect` reports a checkpoint from its metadata and headers, `mockify` writes a mock
-//! (rehearsal) checkpoint, `extrapolate` estimates the full model from mock measurements.
+//! (rehearsal) checkpoint, `extrapolate` estimates the full model from mock measurements;
+//! `value-stats` and `calibrate-routing` live in `ml_utils_calib`.
 //!
 //! Owner: server CLI.
 //! Invariants:
-//! - No tensor data is read: only config, quantization metadata, aux files and headers.
+//! - No tensor data is read here: only config, quantization metadata, aux files and headers.
 //! - Every output that depends on a spec writes the resolved spec beside it and prints its digest.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use metrale_ml_utils::extrapolate::{Scaling, extrapolate, points_of, units_of_resolved};
+use metrale_ml_utils::routing::RoutingCalibration;
+use metrale_ml_utils::spec::{RoutingMode, ValuesMode};
+use metrale_ml_utils::stats::ValueStats;
 use metrale_ml_utils::{MockInputs, MockPlan, MockSpec, RoutingProfile, plan_mock, read_source};
 
 use super::ml_utils_io::{FsSink, OpenedSource, open_source};
@@ -24,36 +28,67 @@ pub(crate) fn dispatch(args: MlUtilsArgs) -> Result<()> {
         MlUtilsAction::Inspect(a) => inspect(a),
         MlUtilsAction::Mockify(a) => mockify(a),
         MlUtilsAction::Extrapolate(a) => extrapolate_cmd(a),
+        MlUtilsAction::ValueStats(a) => super::ml_utils_calib::value_stats(a),
+        MlUtilsAction::CalibrateRouting(a) => super::ml_utils_calib::calibrate_routing(a),
     }
 }
 
-/// 2026-10-03: A spec file and the routing profile it names (a path relative to the spec's
-/// directory). Shared by `mockify`, `inspect --spec` and `met serve --mock`.
-pub(crate) fn read_spec(path: &Path) -> Result<(MockSpec, Option<RoutingProfile>)> {
+/// 2026-10-04: A spec and the files it names, each read relative to the spec's directory: the
+/// routing profile and calibration (histogram routing) and the value statistics (`stats`).
+#[derive(Debug)]
+pub(crate) struct SpecFiles {
+    pub spec: MockSpec,
+    pub profile: Option<RoutingProfile>,
+    pub calibration: Option<RoutingCalibration>,
+    pub stats: Option<ValueStats>,
+}
+
+fn read_named(spec_path: &Path, rel: &str, what: &str) -> Result<(std::path::PathBuf, String)> {
+    let full = spec_path.parent().unwrap_or(Path::new(".")).join(rel);
+    let text = std::fs::read_to_string(&full)
+        .with_context(|| format!("reading the {what} {}", full.display()))?;
+    Ok((full, text))
+}
+
+/// 2026-10-03: Read a spec file and every file it names. Shared by `mockify`, `inspect --spec`,
+/// `calibrate-routing` and `met serve --mock`.
+pub(crate) fn read_spec(path: &Path) -> Result<SpecFiles> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let spec = MockSpec::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
-    let profile = match &spec.routing {
-        metrale_ml_utils::spec::RoutingMode::Uniform => None,
-        metrale_ml_utils::spec::RoutingMode::Histogram { path: p } => {
-            let full = path.parent().unwrap_or(Path::new(".")).join(p);
-            let t = std::fs::read_to_string(&full)
-                .with_context(|| format!("reading the routing profile {}", full.display()))?;
-            Some(
-                RoutingProfile::parse(&t)
+    let (mut profile, mut calibration, mut stats) = (None, None, None);
+    if let RoutingMode::Histogram {
+        path: p,
+        calibration: c,
+    } = &spec.routing
+    {
+        let (full, t) = read_named(path, p, "routing profile")?;
+        profile = Some(
+            RoutingProfile::parse(&t).map_err(|e| anyhow::anyhow!("{}: {e}", full.display()))?,
+        );
+        if let Some(c) = c {
+            let (full, t) = read_named(path, c, "routing calibration")?;
+            calibration = Some(
+                RoutingCalibration::parse(&t)
                     .map_err(|e| anyhow::anyhow!("{}: {e}", full.display()))?,
-            )
+            );
         }
-    };
-    Ok((spec, profile))
+    }
+    if let ValuesMode::Stats { path: p } = &spec.values {
+        let (full, t) = read_named(path, p, "value statistics")?;
+        stats =
+            Some(ValueStats::parse(&t).map_err(|e| anyhow::anyhow!("{}: {e}", full.display()))?);
+    }
+    Ok(SpecFiles {
+        spec,
+        profile,
+        calibration,
+        stats,
+    })
 }
 
-/// 2026-10-03: Plan the mock of `src` under `spec`.
-pub(crate) fn plan_of(
-    src: &OpenedSource,
-    spec: &MockSpec,
-    profile: Option<&RoutingProfile>,
-) -> Result<MockPlan> {
+/// 2026-10-03: Plan the mock of `src` under `files`.
+pub(crate) fn plan_of(src: &OpenedSource, files: &SpecFiles) -> Result<MockPlan> {
     let texts = read_source(src.source.as_ref()).map_err(|e| anyhow::anyhow!("{}: {e}", src.id))?;
     plan_mock(&MockInputs {
         source_id: &src.id,
@@ -61,13 +96,15 @@ pub(crate) fn plan_of(
         config_json: &texts.config,
         hf_quant_config: texts.hf_quant.as_deref(),
         index: &texts.index,
-        spec,
-        routing: profile,
+        spec: &files.spec,
+        routing: files.profile.as_ref(),
+        calibration: files.calibration.as_ref(),
+        stats: files.stats.as_ref(),
     })
     .map_err(|e| anyhow::anyhow!("{}: {e}", src.id))
 }
 
-fn gb(b: u64) -> f64 {
+pub(crate) fn gb(b: u64) -> f64 {
     b as f64 / 1e9
 }
 
@@ -78,10 +115,7 @@ fn inspect(a: InspectArgs) -> Result<()> {
         metrale_ml_utils::inspect::inspect(&texts.config, texts.hf_quant.as_deref(), &texts.index)
             .map_err(|e| anyhow::anyhow!("{}: {e}", src.id))?;
     let plan = match &a.spec {
-        Some(p) => {
-            let (spec, profile) = read_spec(p)?;
-            Some(plan_of(&src, &spec, profile.as_ref())?)
-        }
+        Some(p) => Some(plan_of(&src, &read_spec(p)?)?),
         None => None,
     };
     if a.json {
@@ -149,8 +183,8 @@ fn inspect(a: InspectArgs) -> Result<()> {
         );
         for f in &p.routers {
             println!(
-                "  router {} <- source layer {}: fit TV {:.4}, floored {}",
-                f.tensor, f.source_layer, f.tv, f.floored
+                "  router {} <- source layer {}: fit TV {:.4}, floored {}, gain {}",
+                f.tensor, f.source_layer, f.tv, f.floored, f.gain
             );
         }
     }
@@ -158,9 +192,9 @@ fn inspect(a: InspectArgs) -> Result<()> {
 }
 
 fn mockify(a: MockifyArgs) -> Result<()> {
-    let (spec, profile) = read_spec(&a.spec)?;
+    let files = read_spec(&a.spec)?;
     let src = open_source(&a.checkpoint, None, a.allow_network)?;
-    let plan = plan_of(&src, &spec, profile.as_ref())?;
+    let plan = plan_of(&src, &files)?;
     let threads = std::thread::available_parallelism().map_or(1, |t| t.get());
     print!("{}", plan.resolved);
     eprintln!(
@@ -225,3 +259,7 @@ fn extrapolate_cmd(a: ExtrapolateArgs) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "ml_utils_tests.rs"]
+mod ml_utils_tests;

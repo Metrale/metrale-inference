@@ -22,6 +22,8 @@
 //!   same on every platform.
 //! - Not reproduced, and disclosed: token-to-token and temporal correlation of routing.
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 use crate::error::{MlError, Result};
@@ -256,6 +258,91 @@ pub fn fit(target: &[u64], k: usize, stream: Stream) -> Result<Fit> {
         bias,
         floored,
     })
+}
+
+/// 2026-10-04: Per source layer, the factor `met ml-utils calibrate-routing` measured: the router
+/// bias column of that layer is multiplied by it, so the bias stands to the noise the mock's own
+/// hidden states produce as the fit assumed (unit noise).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoutingCalibration {
+    /// 2026-10-04: Source layer -> gain.
+    pub gains: BTreeMap<usize, f32>,
+    /// 2026-10-04: sha256 of the file text.
+    pub digest: String,
+}
+
+impl RoutingCalibration {
+    /// 2026-10-04: The file text for `gains`.
+    pub fn to_text(gains: &BTreeMap<usize, f32>) -> String {
+        let g: serde_json::Map<String, serde_json::Value> = gains
+            .iter()
+            .map(|(l, v)| (l.to_string(), serde_json::json!(v)))
+            .collect();
+        serde_json::to_string_pretty(&serde_json::json!({ "schema": 1, "gains": g }))
+            .expect("a JSON value serializes")
+            + "\n"
+    }
+
+    /// 2026-10-04: Parse a calibration file.
+    pub fn parse(text: &str) -> Result<Self> {
+        use sha2::Digest;
+        let bad = |w: String| MlError::Routing(format!("calibration: {w}"));
+        let v: serde_json::Value = serde_json::from_str(text).map_err(|e| bad(e.to_string()))?;
+        if v["schema"] != 1 {
+            return Err(bad(format!("schema {}", v["schema"])));
+        }
+        let mut gains = BTreeMap::new();
+        for (k, g) in v["gains"]
+            .as_object()
+            .ok_or_else(|| bad("no gains".into()))?
+        {
+            let l: usize = k.parse().map_err(|_| bad(format!("layer `{k}`")))?;
+            let g = g.as_f64().filter(|g| g.is_finite() && *g > 0.0);
+            gains.insert(
+                l,
+                g.ok_or_else(|| bad(format!("layer {l}: a gain that is not > 0")))? as f32,
+            );
+        }
+        Ok(RoutingCalibration {
+            gains,
+            digest: crate::index::hex(&sha2::Sha256::digest(text.as_bytes())),
+        })
+    }
+}
+
+/// 2026-10-04: The bias-to-noise ratio a mock layer actually ran at: the `lambda` for which
+/// top-`k` of `lambda * bias + N(0, 1)` reproduces the `measured` expert load best (total
+/// variation, golden-section search over log lambda in [1/64, 64]), and that distance. The layer's
+/// calibration gain is `1 / lambda`. Floating-point transcendental functions are used here: the
+/// gain is written to a file once and read as data, so the mock bytes stay platform-independent.
+pub fn realized_ratio(bias: &[f32], k: usize, measured: &[u64], stream: Stream) -> (f32, f64) {
+    let noise = noise(stream, FIT_SAMPLES, bias.len());
+    let tv_at = |log_l: f64| {
+        let l = log_l.exp() as f32;
+        let scaled: Vec<f32> = bias.iter().map(|b| b * l).collect();
+        total_variation(measured, &sample_counts(&scaled, k, &noise))
+    };
+    let (mut a, mut b) = (-(64f64.ln()), 64f64.ln());
+    let phi = (5f64.sqrt() - 1.0) / 2.0;
+    let (mut c, mut d) = (b - phi * (b - a), a + phi * (b - a));
+    let (mut fc, mut fd) = (tv_at(c), tv_at(d));
+    for _ in 0..30 {
+        if fc <= fd {
+            b = d;
+            d = c;
+            fd = fc;
+            c = b - phi * (b - a);
+            fc = tv_at(c);
+        } else {
+            a = c;
+            c = d;
+            fc = fd;
+            d = a + phi * (b - a);
+            fd = tv_at(d);
+        }
+    }
+    let best = (a + b) / 2.0;
+    (best.exp() as f32, tv_at(best))
 }
 
 #[cfg(test)]

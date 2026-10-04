@@ -25,6 +25,8 @@ fn plan() -> (metrale_ml_utils::MockPlan, MemCheckpoint) {
         index: &index,
         spec: &spec,
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .unwrap();
     let src = MemCheckpoint {
@@ -67,5 +69,37 @@ fn a_mock_and_its_skeleton_round_trip_through_the_filesystem() {
     assert!(
         FsSink::create(&full).is_err(),
         "an existing directory is never written over"
+    );
+}
+
+#[test]
+fn a_range_read_at_the_header_offset_returns_the_written_tensor() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (plan, src) = plan();
+    let dir = tmp.path().join("m");
+    let mut sink = FsSink::create(&dir).unwrap();
+    write_mock(&plan, &src, &mut sink, 2).unwrap();
+    sink.commit().unwrap();
+    let fs = FsCheckpoint::new(&dir);
+    let index = read_source(&fs).unwrap().index;
+    let mut checked = 0;
+    for u in 0..plan.units.len() {
+        for (t, bytes) in metrale_ml_utils::synthesize(&plan, u).unwrap() {
+            let e = index.get(&plan.tensors[t].name).unwrap();
+            assert_eq!(
+                fs.read_range(&e.shard, e.offset, e.bytes()).unwrap(),
+                bytes,
+                "{}",
+                e.name
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, plan.tensors.len());
+    let last = index.iter().max_by_key(|e| e.offset + e.bytes()).unwrap();
+    assert!(
+        fs.read_range(&last.shard, last.offset, last.bytes() + 1)
+            .is_err(),
+        "a range past the end of the shard is refused"
     );
 }

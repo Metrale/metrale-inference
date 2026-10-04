@@ -42,6 +42,8 @@ fn write(
         index,
         spec: &spec,
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .unwrap();
     let mut sink = MemSink::default();
@@ -113,6 +115,8 @@ fn a_mock_of_a_mock_keeps_every_layer_and_tensor() {
         index: &back.index,
         spec: &spec,
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .unwrap();
     assert_eq!(again.selection.kept_layers(), plan.selection.kept_layers());

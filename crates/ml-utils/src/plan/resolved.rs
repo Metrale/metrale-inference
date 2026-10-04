@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use super::{MockInputs, MockPlan};
 use crate::index::hex;
 use crate::routing::BiasChannel;
-use crate::spec::{MockSpec, RoutingMode, toml_str};
+use crate::spec::{MockSpec, RoutingMode, ValuesMode, toml_str};
 
 fn list<T: ToString>(v: impl IntoIterator<Item = T>) -> String {
     format!(
@@ -42,8 +42,16 @@ pub(super) fn render(
     channel: Option<BiasChannel>,
 ) -> String {
     let mut spec: MockSpec = inp.spec.clone();
-    if let (RoutingMode::Histogram { path }, Some(p)) = (&mut spec.routing, inp.routing) {
+    if let (RoutingMode::Histogram { path, calibration }, Some(p)) =
+        (&mut spec.routing, inp.routing)
+    {
         *path = format!("sha256:{}", p.digest);
+        if let (Some(c), Some(cal)) = (calibration.as_mut(), inp.calibration) {
+            *c = format!("sha256:{}", cal.digest);
+        }
+    }
+    if let (ValuesMode::Stats { path }, Some(st)) = (&mut spec.values, inp.stats) {
+        *path = format!("sha256:{}", st.digest);
     }
     let mut t = String::from("# met ml-utils: a mock (rehearsal) checkpoint's resolved spec.\n");
     t.push_str(&spec.canonical());
@@ -103,8 +111,8 @@ pub(super) fn render(
         t.push_str(&format!("tensor = {}\n", toml_str(&r.tensor)));
         t.push_str(&format!("source_layer = {}\n", r.source_layer));
         t.push_str(&format!(
-            "fit_total_variation = {:.6}\nfloored = {}\n",
-            r.tv, r.floored
+            "fit_total_variation = {:.6}\nfloored = {}\ncalibration_gain = {}\n",
+            r.tv, r.floored, r.gain
         ));
     }
     t

@@ -71,6 +71,7 @@ fn the_digest_sees_shape_and_dtype_but_not_the_shard() {
         dtype,
         shape,
         shard: shard.into(),
+        offset: 0,
     };
     let d = |x| TensorIndex::from_entries(vec![x]).unwrap().digest();
     assert_eq!(d(e("a", vec![2], Dtype::U8)), d(e("b", vec![2], Dtype::U8)));

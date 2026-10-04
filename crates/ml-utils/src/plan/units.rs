@@ -18,7 +18,7 @@ use crate::error::{MlError, Result};
 use crate::index::{TensorEntry, TensorIndex};
 use crate::rename::Renamer;
 use crate::rng::Stream;
-use crate::routing::{BiasChannel, RoutingProfile, bias_channel, fit};
+use crate::routing::{BiasChannel, RoutingCalibration, RoutingProfile, bias_channel, fit};
 use crate::scheme::{QuantGroup, find_groups};
 use crate::spec::{MockSpec, RoutingMode};
 use crate::synth::GroupDtypes;
@@ -33,6 +33,7 @@ pub(super) struct Ctx<'a> {
     pub spec: &'a MockSpec,
     pub routing: Option<&'a RoutingProfile>,
     pub block: Option<(u64, u64)>,
+    pub calibration: Option<&'a RoutingCalibration>,
 }
 
 /// 2026-10-03: The units and their tensors.
@@ -44,13 +45,13 @@ pub(super) struct Built {
 }
 
 /// 2026-10-03: The routing state of one build.
-struct Routing<'a> {
-    profile: &'a RoutingProfile,
-    channel: BiasChannel,
-    hidden: u64,
-    experts: u64,
+pub(super) struct Routing<'a> {
+    pub profile: &'a RoutingProfile,
+    pub channel: BiasChannel,
+    pub hidden: u64,
+    pub experts: u64,
     /// 2026-10-03: Source layer -> its row in the profile (MoE layers in order).
-    ordinal: BTreeMap<usize, usize>,
+    pub ordinal: BTreeMap<usize, usize>,
 }
 
 fn dim(dims: &BTreeMap<String, u64>, d: &str) -> Result<u64> {
@@ -61,11 +62,11 @@ fn dim(dims: &BTreeMap<String, u64>, d: &str) -> Result<u64> {
     })
 }
 
-fn is_router(e: &TensorEntry) -> bool {
+pub(super) fn is_router(e: &TensorEntry) -> bool {
     e.name.ends_with(".mlp.gate.weight")
 }
 
-fn routing<'a>(c: &Ctx<'a>) -> Result<Option<Routing<'a>>> {
+pub(super) fn routing<'a>(c: &Ctx<'a>) -> Result<Option<Routing<'a>>> {
     let profile = match (&c.spec.routing, c.routing) {
         (RoutingMode::Uniform, None) => return Ok(None),
         (RoutingMode::Histogram { .. }, Some(p)) => p,
@@ -74,7 +75,7 @@ fn routing<'a>(c: &Ctx<'a>) -> Result<Option<Routing<'a>>> {
                 "a profile was given for uniform routing".into(),
             ));
         }
-        (RoutingMode::Histogram { path }, None) => {
+        (RoutingMode::Histogram { path, .. }, None) => {
             return Err(MlError::Routing(format!(
                 "the spec names {path}; it was not supplied"
             )));
@@ -135,7 +136,12 @@ fn out_tensor(c: &Ctx<'_>, name: &str) -> Result<OutTensor> {
 }
 
 /// 2026-10-03: The zero row of a residual writer under histogram routing.
-fn zero_row(r: &Option<Routing<'_>>, residual: bool, rows: u64, name: &str) -> Result<Option<u64>> {
+pub(super) fn zero_row(
+    r: &Option<Routing<'_>>,
+    residual: bool,
+    rows: u64,
+    name: &str,
+) -> Result<Option<u64>> {
     match r {
         Some(r) if residual => {
             if rows != r.hidden {
@@ -245,6 +251,27 @@ fn router_class(
     mock: &str,
     b: &mut Built,
 ) -> Result<ValueClass> {
+    let column = fit_router(c, r, e, layer, mock, b, 1.0 / r.channel.s)?;
+    Ok(ValueClass::Router {
+        row_len: r.hidden,
+        channel: r.channel.channel,
+        sigma: r.channel.sigma,
+        column,
+    })
+}
+
+/// 2026-10-04: Fit router `e` of source layer `layer` to its profile row and return its bias
+/// column: the unit-noise bias times `scale` times the layer's calibration gain (1 without a
+/// calibration). Records the fit in `b.routers`.
+pub(super) fn fit_router(
+    c: &Ctx<'_>,
+    r: &Routing<'_>,
+    e: &TensorEntry,
+    layer: usize,
+    mock: &str,
+    b: &mut Built,
+    scale: f32,
+) -> Result<Vec<f32>> {
     if e.shape != [r.experts, r.hidden] {
         return Err(MlError::Tensor {
             name: e.name.clone(),
@@ -257,16 +284,23 @@ fn router_class(
     let row = r.ordinal[&layer];
     let stream = Stream::for_tensor(c.spec.seed, &e.name, e.dtype.name(), &e.shape).derive(1);
     let f = fit(&r.profile.layers[row], r.profile.top_k, stream)?;
+    let gain = match c.calibration {
+        None => 1.0,
+        Some(cal) => *cal.gains.get(&layer).ok_or_else(|| {
+            MlError::Routing(format!(
+                "the calibration has no gain for source layer {layer}"
+            ))
+        })?,
+    };
+    let column = f.bias.iter().map(|x| x * scale * gain).collect();
     b.routers.push(RouterFit {
         tensor: mock.to_string(),
         source_layer: layer,
+        profile_row: row,
         tv: f.tv,
         floored: f.floored,
+        bias: f.bias,
+        gain,
     });
-    Ok(ValueClass::Router {
-        row_len: r.hidden,
-        channel: r.channel.channel,
-        sigma: r.channel.sigma,
-        column: f.bias.iter().map(|x| x / r.channel.s).collect(),
-    })
+    Ok(column)
 }

@@ -23,14 +23,17 @@ use crate::index::{Dtype, TensorIndex};
 use crate::quant_meta::{ModulePair, reconcile};
 use crate::rename::Renamer;
 use crate::rng::Stream;
-use crate::routing::RoutingProfile;
+use crate::routing::{RoutingCalibration, RoutingProfile};
 use crate::schedule::{Selection, select};
 use crate::scheme::QuantGroup;
-use crate::spec::MockSpec;
+use crate::spec::{MockSpec, RoutingMode, ValuesMode};
+use crate::stats::{Sampler, ValueStats};
 use crate::synth::{GroupDtypes, encode, quantize_group};
 use crate::values::{ValueClass, fill};
+use std::collections::BTreeMap;
 
 mod resolved;
+pub mod sampled;
 mod units;
 
 /// 2026-10-03: What a mock is planned from.
@@ -50,6 +53,10 @@ pub struct MockInputs<'a> {
     pub spec: &'a MockSpec,
     /// 2026-10-03: The routing profile the spec names (`routing.mode = "histogram"`).
     pub routing: Option<&'a RoutingProfile>,
+    /// 2026-10-04: The routing calibration the spec names.
+    pub calibration: Option<&'a RoutingCalibration>,
+    /// 2026-10-04: The value statistics the spec names (`values.mode = "stats"`).
+    pub stats: Option<&'a ValueStats>,
 }
 
 /// 2026-10-03: One tensor of the mock.
@@ -82,6 +89,16 @@ pub enum Unit {
         /// 2026-10-03: Its values.
         class: ValueClass,
     },
+    /// 2026-10-04: A tensor whose stored bit patterns are sampled from the value statistics of
+    /// `class`, then edited (the bias channel).
+    Sampled {
+        /// 2026-10-04: Index into [`MockPlan::tensors`].
+        tensor: usize,
+        /// 2026-10-04: Its statistics class (`stats::class_key` of the source tensor).
+        class: String,
+        /// 2026-10-04: What is written over the sample.
+        edit: sampled::Edit,
+    },
     /// 2026-10-03: A quantized weight: values, then the scheme's encoding.
     Group {
         /// 2026-10-03: The group (source names).
@@ -102,10 +119,16 @@ pub struct RouterFit {
     pub tensor: String,
     /// 2026-10-03: The source layer whose profile row it reproduces.
     pub source_layer: usize,
+    /// 2026-10-04: The profile row it reproduces (the source layer's MoE ordinal).
+    pub profile_row: usize,
     /// 2026-10-03: Total-variation distance of the fit on its own samples.
     pub tv: f64,
     /// 2026-10-03: Experts raised to the floor share.
     pub floored: usize,
+    /// 2026-10-04: The fitted logit bias per expert at unit noise (what calibration rescales).
+    pub bias: Vec<f32>,
+    /// 2026-10-04: The calibration gain applied (1 without a calibration).
+    pub gain: f32,
 }
 
 /// 2026-10-03: A complete mock plan.
@@ -133,6 +156,8 @@ pub struct MockPlan {
     pub pinned: usize,
     /// 2026-10-03: Router fits (histogram routing only).
     pub routers: Vec<RouterFit>,
+    /// 2026-10-04: The samplers of every class a `Sampled` unit draws from.
+    pub samplers: BTreeMap<String, Sampler>,
 }
 
 impl MockPlan {
@@ -184,7 +209,7 @@ pub fn plan_mock(inp: &MockInputs<'_>) -> Result<MockPlan> {
     }
 
     let block = declared_qc.and_then(crate::inspect::block_size);
-    let built = units::build(&units::Ctx {
+    let ctx = units::Ctx {
         index: inp.index,
         renamer: &renamer,
         schedule: &schedule,
@@ -192,7 +217,42 @@ pub fn plan_mock(inp: &MockInputs<'_>) -> Result<MockPlan> {
         spec: inp.spec,
         routing: inp.routing,
         block,
-    })?;
+        calibration: inp.calibration,
+    };
+    let named = matches!(
+        &inp.spec.routing,
+        RoutingMode::Histogram {
+            calibration: Some(_),
+            ..
+        }
+    );
+    match (named, inp.calibration.is_some()) {
+        (true, false) => {
+            return Err(MlError::Spec(
+                "the spec names a routing calibration; none was supplied".into(),
+            ));
+        }
+        (false, true) => {
+            return Err(MlError::Spec(
+                "a routing calibration was given but the spec names none".into(),
+            ));
+        }
+        _ => {}
+    }
+    let (built, samplers) = match (&inp.spec.values, inp.stats) {
+        (ValuesMode::Init, None) => (units::build(&ctx)?, BTreeMap::new()),
+        (ValuesMode::Stats { .. }, Some(stats)) => sampled::build(&ctx, stats)?,
+        (ValuesMode::Init, Some(_)) => {
+            return Err(MlError::Spec(
+                "value statistics were given for values.mode = \"init\"".into(),
+            ));
+        }
+        (ValuesMode::Stats { path }, None) => {
+            return Err(MlError::Spec(format!(
+                "the spec names statistics {path}; none were supplied"
+            )));
+        }
+    };
     let mut plan = MockPlan {
         seed: inp.spec.seed,
         resolved: String::new(),
@@ -205,6 +265,7 @@ pub fn plan_mock(inp: &MockInputs<'_>) -> Result<MockPlan> {
         layers_full: schedule.layer_kinds.len(),
         pinned,
         routers: built.routers,
+        samplers,
     };
     plan.resolved = resolved::render(inp, &mapped.arch, &plan, built.bias_channel);
     plan.digest = resolved_digest(plan.resolved.as_bytes());
@@ -254,6 +315,20 @@ pub fn synthesize(plan: &MockPlan, u: usize) -> Result<Vec<(usize, Vec<u8>)>> {
     let stream_of =
         |t: &OutTensor| Stream::for_tensor(plan.seed, &t.source, t.dtype.name(), &t.shape);
     let out = match unit {
+        Unit::Sampled {
+            tensor,
+            class,
+            edit,
+        } => {
+            let t = &plan.tensors[*tensor];
+            let sampler = plan.samplers.get(class).ok_or_else(|| MlError::Tensor {
+                name: t.source.clone(),
+                why: format!("no sampler for class `{class}`"),
+            })?;
+            let mut bytes = sampler.bytes(stream_of(t), t.bytes() as usize);
+            edit.apply(&mut bytes)?;
+            vec![(*tensor, bytes)]
+        }
         Unit::Plain { tensor, class } => {
             let t = &plan.tensors[*tensor];
             let n = t.shape.iter().product::<u64>() as usize;

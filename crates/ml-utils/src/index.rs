@@ -89,6 +89,9 @@ pub struct TensorEntry {
     pub shape: Vec<u64>,
     /// 2026-10-03: The shard file it is stored in.
     pub shard: String,
+    /// 2026-10-04: Absolute byte offset of its data in the shard (8 + header length +
+    /// `data_offsets[0]`); 0 for an entry built without a header.
+    pub offset: u64,
 }
 
 impl TensorEntry {
@@ -200,6 +203,7 @@ pub fn parse_header(shard: &str, bytes: &[u8]) -> Result<Vec<TensorEntry>> {
         .as_object()
         .ok_or_else(|| bad("the header is not an object".into()))?;
     let mut out = Vec::with_capacity(obj.len());
+    let data_start = 8 + bytes.len() as u64;
     for (name, t) in obj {
         if name == "__metadata__" {
             continue;
@@ -242,6 +246,9 @@ pub fn parse_header(shard: &str, bytes: &[u8]) -> Result<Vec<TensorEntry>> {
             dtype,
             shape,
             shard: shard.to_string(),
+            offset: data_start
+                .checked_add(start)
+                .ok_or_else(|| tbad("the offset overflows"))?,
         });
     }
     Ok(out)

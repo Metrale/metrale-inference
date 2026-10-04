@@ -80,6 +80,7 @@ fn malformed_companions_are_refused() {
         dtype: Dtype::F32,
         shape: vec![],
         shard: "s".into(),
+        offset: 0,
     }];
     let err = find_groups(&TensorIndex::from_entries(orphan).unwrap(), None).unwrap_err();
     assert!(err.to_string().contains("belongs to no"), "{err}");

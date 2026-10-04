@@ -167,7 +167,9 @@ fn emit(
 /// 2026-10-03: The tensor indices of a unit, in its byte order.
 pub fn unit_tensor_ids(u: &crate::plan::Unit) -> Vec<usize> {
     match u {
-        crate::plan::Unit::Plain { tensor, .. } => vec![*tensor],
+        crate::plan::Unit::Plain { tensor, .. } | crate::plan::Unit::Sampled { tensor, .. } => {
+            vec![*tensor]
+        }
         crate::plan::Unit::Group { tensors, .. } => tensors.clone(),
     }
 }

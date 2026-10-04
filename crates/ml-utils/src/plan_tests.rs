@@ -23,6 +23,8 @@ fn plan(config: &str, side: Option<&str>, index: &TensorIndex, spec: &MockSpec) 
         index,
         spec,
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .expect("plan")
 }
@@ -212,6 +214,8 @@ fn refusals_name_their_cause() {
         index: &index,
         spec: &testkit::spec("3", "mode = \"uniform\""),
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .unwrap_err();
     assert!(too_many.to_string().contains("has 2 units"), "{too_many}");
@@ -224,6 +228,8 @@ fn refusals_name_their_cause() {
         index: &dindex,
         spec: &testkit::spec("[1, 1, 1]", "mode = \"uniform\""),
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .unwrap_err();
     assert!(
@@ -241,6 +247,8 @@ fn refusals_name_their_cause() {
         index: &missing,
         spec: &testkit::spec("1", "mode = \"uniform\""),
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .unwrap_err();
     assert!(err.to_string().contains("q_proj.weight"), "{err}");

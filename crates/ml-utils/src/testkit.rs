@@ -13,8 +13,12 @@
 
 use serde_json::{Value, json};
 
+use metrale_core::numeric::{f32_to_bf16_rne, f32_to_fp8_e4m3_rne};
+
 use crate::index::{Dtype, TensorEntry, TensorIndex};
+use crate::rng::Stream;
 use crate::spec::MockSpec;
+use crate::stats::{Accumulator, Kind, Read, ValueStats, plan_reads};
 
 pub const LAYERS: usize = 8;
 pub const HIDDEN: u64 = 256;
@@ -96,6 +100,7 @@ fn e(name: String, dtype: Dtype, shape: Vec<u64>) -> TensorEntry {
         dtype,
         shape,
         shard: "model.safetensors".into(),
+        offset: 0,
     }
 }
 
@@ -338,10 +343,50 @@ pub fn dense_ct() -> (String, TensorIndex) {
 
 /// 2026-10-03: A spec with `per_signature` and `routing` lines substituted.
 pub fn spec(per_signature: &str, routing: &str) -> MockSpec {
+    spec_with(per_signature, routing, "mode = \"init\"")
+}
+
+/// 2026-10-04: A spec with `per_signature`, `routing` and `values` lines substituted.
+pub fn spec_with(per_signature: &str, routing: &str, values: &str) -> MockSpec {
     let text = format!(
         "schema = 1\nseed = 11\n[layers]\nper_signature = {per_signature}\n[experts]\nkeep = \"all\"\n\
          [vocab]\nkeep = \"all\"\n[mtp]\nkeep = true\n[vision]\nkeep = true\n[capacity]\nkv = \"free\"\n\
-         [routing]\n{routing}\n[values]\nmode = \"init\"\n[speculative]\naccept = \"natural\"\n"
+         [routing]\n{routing}\n[values]\n{values}\n[speculative]\naccept = \"natural\"\n"
     );
     MockSpec::parse(&text).expect("toy spec")
+}
+
+/// 2026-10-04: The bytes of a toy checkpoint's statistics read: BF16 normals of RMS
+/// [`TOY_BF16_RMS`], FP8 codes of normals, E2M1 nibbles skewed toward small codes, F32 scales.
+pub fn toy_read_bytes(r: &Read) -> Vec<u8> {
+    let s = Stream::for_tensor(5, &r.class, "toy", &[r.offset, r.len]);
+    let n = r.len as usize;
+    match r.kind {
+        Kind::Halves => (0..n as u64 / 2)
+            .flat_map(|i| f32_to_bf16_rne(s.normal12(i) * TOY_BF16_RMS).to_le_bytes())
+            .collect(),
+        Kind::Bytes => (0..n as u64)
+            .map(|i| f32_to_fp8_e4m3_rne(s.normal12(i) * 2.0))
+            .collect(),
+        Kind::Nibbles => (0..n as u64)
+            .map(|i| (s.below(2 * i, 6) | (s.below(2 * i + 1, 16) << 4)) as u8)
+            .collect(),
+        Kind::Words => (0..n as u64 / 4)
+            .flat_map(|i| (0.01 + s.normal12(i).abs() * 1e-3).to_le_bytes())
+            .collect(),
+    }
+}
+
+/// 2026-10-04: RMS of the toy statistics' BF16 values.
+pub const TOY_BF16_RMS: f32 = 0.05;
+
+/// 2026-10-04: The statistics of a toy checkpoint, read as `met ml-utils value-stats` reads a
+/// real one (the same [`plan_reads`]), with [`toy_read_bytes`] standing in for the shard bytes.
+pub fn toy_stats(config: &str, index: &TensorIndex) -> ValueStats {
+    let schedule = metrale_circuit::layer_schedule(config).expect("toy schedule");
+    let mut acc = Accumulator::default();
+    for r in plan_reads(&schedule, index) {
+        acc.add(&r, &toy_read_bytes(&r));
+    }
+    acc.finish("toy/model").0
 }

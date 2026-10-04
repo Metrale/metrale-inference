@@ -32,6 +32,7 @@ pub(crate) mod flag_values;
 pub(crate) mod hermetic;
 pub(crate) mod manifest;
 pub(crate) mod ml_utils;
+pub(crate) mod ml_utils_calib;
 pub(crate) mod ml_utils_io;
 mod serve_args;
 pub(crate) mod sync_recipes;
@@ -123,6 +124,49 @@ pub enum MlUtilsAction {
     /// Estimate a full-model metric from mock measurements (one per resolved spec), and its error
     /// against a full-model measurement when given.
     Extrapolate(ExtrapolateArgs),
+    /// Read a sample of every tensor class's stored bytes (a few tensors per class, large ones
+    /// in spaced chunks) and write the class bit-pattern statistics a `values.mode = "stats"`
+    /// mock samples from.
+    ValueStats(ValueStatsArgs),
+    /// Fit per-layer router gains from the expert loads a histogram-routed mock produced
+    /// (`met serve --mock <spec> --record-routing <file>`), so the next mock built with the
+    /// calibration reproduces the profile under its own activations.
+    CalibrateRouting(CalibrateRoutingArgs),
+}
+
+/// `met ml-utils value-stats` options.
+#[derive(clap::Args, Debug)]
+pub struct ValueStatsArgs {
+    /// The checkpoint: a directory, or a Hub id (org/name) in the local cache.
+    #[arg(long)]
+    pub checkpoint: String,
+    /// Where to write the statistics (JSON); it must not exist.
+    #[arg(long)]
+    pub out: std::path::PathBuf,
+    /// Read from huggingface.co when the checkpoint is not cached (byte ranges only).
+    #[arg(long)]
+    pub allow_network: bool,
+}
+
+/// `met ml-utils calibrate-routing` options.
+#[derive(clap::Args, Debug)]
+pub struct CalibrateRoutingArgs {
+    /// The source checkpoint the mock was made from.
+    #[arg(long)]
+    pub checkpoint: String,
+    /// The histogram-routed mock spec the loads were recorded on (its own calibration, if any,
+    /// is the starting point).
+    #[arg(long)]
+    pub spec: std::path::PathBuf,
+    /// The recorded expert loads of that mock (one row per mock MoE layer).
+    #[arg(long)]
+    pub measured: std::path::PathBuf,
+    /// Where to write the calibration (JSON); it must not exist.
+    #[arg(long)]
+    pub out: std::path::PathBuf,
+    /// Read the source's metadata and headers from huggingface.co when it is not cached.
+    #[arg(long)]
+    pub allow_network: bool,
 }
 
 /// `met ml-utils inspect` options.

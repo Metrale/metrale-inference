@@ -24,6 +24,8 @@ fn skeleton(dir: &Path) -> String {
         index: &index,
         spec: &spec,
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .unwrap();
     let src = MemCheckpoint {

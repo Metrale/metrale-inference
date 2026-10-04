@@ -20,9 +20,10 @@
 //! [capacity]
 //! kv = "free"
 //! [routing]
-//! mode = "uniform"           # or "histogram", with `histogram = "<profile.json>"`
+//! mode = "uniform"           # or "histogram", with `histogram = "<profile.json>"` and
+//!                            # `calibration = "none"` or "<calibrate-routing file>"
 //! [values]
-//! mode = "init"
+//! mode = "init"              # or "stats", with `stats = "<met ml-utils value-stats file>"`
 //! [speculative]
 //! accept = "natural"
 //! ```
@@ -32,7 +33,7 @@
 //! - [`MockSpec::canonical`] is a pure function of the parsed values, so two files that say
 //!   the same thing have the same canonical text and digest.
 //! - Values reserved for later milestones (expert, vocab, MTP or vision shrinking, a pinned KV
-//!   capacity, imported value statistics, forced acceptance) are refused with the reason.
+//!   capacity, forced acceptance) are refused with the reason.
 
 use serde::Deserialize;
 
@@ -53,9 +54,26 @@ pub enum RoutingMode {
     /// 2026-10-03: Random routers: near-uniform expert load.
     Uniform,
     /// 2026-10-03: Router weights that reproduce an imported expert-load profile (the bias
-    /// channel, `routing.rs`). The path is read by the caller, never by this crate.
+    /// channel, `routing.rs`). The paths are read by the caller, never by this crate.
     Histogram {
         /// 2026-10-03: The profile file, as the spec states it.
+        path: String,
+        /// 2026-10-04: A per-layer gain file from `met ml-utils calibrate-routing` (the bias's
+        /// scale against the noise the mock's hidden states actually produce); `None` for the
+        /// first, uncalibrated mock (`calibration = "none"`).
+        calibration: Option<String>,
+    },
+}
+
+/// 2026-10-04: Where weight values come from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValuesMode {
+    /// 2026-10-03: Analytic initialisation (`values.rs`).
+    Init,
+    /// 2026-10-04: Sampled from a checkpoint's per-class bit-pattern statistics (`stats.rs`).
+    /// The path is read by the caller.
+    Stats {
+        /// 2026-10-04: The statistics file, as the spec states it.
         path: String,
     },
 }
@@ -69,6 +87,8 @@ pub struct MockSpec {
     pub per_signature: PerSignature,
     /// 2026-10-03: Router synthesis.
     pub routing: RoutingMode,
+    /// 2026-10-04: Weight values.
+    pub values: ValuesMode,
 }
 
 #[derive(Deserialize)]
@@ -116,12 +136,14 @@ struct CapacityFile {
 struct RoutingFile {
     mode: String,
     histogram: Option<String>,
+    calibration: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ValuesFile {
     mode: String,
+    stats: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -180,9 +202,6 @@ impl MockSpec {
         if f.capacity.kv != "free" {
             return Err(later("capacity.kv", &f.capacity.kv, "\"free\""));
         }
-        if f.values.mode != "init" {
-            return Err(later("values.mode", &f.values.mode, "\"init\""));
-        }
         if f.speculative.accept != "natural" {
             return Err(later(
                 "speculative.accept",
@@ -190,9 +209,47 @@ impl MockSpec {
                 "\"natural\"",
             ));
         }
+        let values = match (f.values.mode.as_str(), f.values.stats) {
+            ("init", None) => ValuesMode::Init,
+            ("stats", Some(path)) if !path.is_empty() => ValuesMode::Stats { path },
+            ("init", Some(_)) => {
+                return Err(MlError::Spec(
+                    "values.stats is set but values.mode is \"init\"".into(),
+                ));
+            }
+            ("stats", _) => {
+                return Err(MlError::Spec(
+                    "values.mode = \"stats\" needs values.stats = \"<file>\"".into(),
+                ));
+            }
+            (other, _) => {
+                return Err(MlError::Spec(format!(
+                    "values.mode = {other:?}: expected \"init\" or \"stats\""
+                )));
+            }
+        };
+        let calibration = match (f.routing.mode.as_str(), f.routing.calibration) {
+            ("histogram", Some(c)) if c == "none" => None,
+            ("histogram", Some(c)) if !c.is_empty() => Some(c),
+            ("histogram", _) => {
+                return Err(MlError::Spec(
+                    "routing.mode = \"histogram\" needs routing.calibration = \"none\" or a \
+                     calibration file"
+                        .into(),
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(MlError::Spec(
+                    "routing.calibration is set but routing.mode is not \"histogram\"".into(),
+                ));
+            }
+            (_, None) => None,
+        };
         let routing = match (f.routing.mode.as_str(), f.routing.histogram) {
             ("uniform", None) => RoutingMode::Uniform,
-            ("histogram", Some(path)) if !path.is_empty() => RoutingMode::Histogram { path },
+            ("histogram", Some(path)) if !path.is_empty() => {
+                RoutingMode::Histogram { path, calibration }
+            }
             ("uniform", Some(_)) => {
                 return Err(MlError::Spec(
                     "routing.histogram is set but routing.mode is \"uniform\"".into(),
@@ -213,6 +270,7 @@ impl MockSpec {
             seed: f.seed,
             per_signature,
             routing,
+            values,
         })
     }
 
@@ -239,14 +297,20 @@ impl MockSpec {
         };
         let routing = match &self.routing {
             RoutingMode::Uniform => "mode = \"uniform\"\n".to_string(),
-            RoutingMode::Histogram { path } => {
-                format!("mode = \"histogram\"\nhistogram = {}\n", toml_str(path))
-            }
+            RoutingMode::Histogram { path, calibration } => format!(
+                "mode = \"histogram\"\nhistogram = {}\ncalibration = {}\n",
+                toml_str(path),
+                toml_str(calibration.as_deref().unwrap_or("none"))
+            ),
+        };
+        let values = match &self.values {
+            ValuesMode::Init => "mode = \"init\"\n".to_string(),
+            ValuesMode::Stats { path } => format!("mode = \"stats\"\nstats = {}\n", toml_str(path)),
         };
         format!(
             "schema = 1\nseed = {}\n\n[layers]\nper_signature = {per}\n\n[experts]\nkeep = \"all\"\n\n\
              [vocab]\nkeep = \"all\"\n\n[mtp]\nkeep = true\n\n[vision]\nkeep = true\n\n\
-             [capacity]\nkv = \"free\"\n\n[routing]\n{routing}\n[values]\nmode = \"init\"\n\n\
+             [capacity]\nkv = \"free\"\n\n[routing]\n{routing}\n[values]\n{values}\n\
              [speculative]\naccept = \"natural\"\n",
             self.seed
         )

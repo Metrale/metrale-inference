@@ -21,6 +21,9 @@ pub trait CheckpointSource {
     /// 2026-10-03: Each safetensors shard's header JSON (the bytes after the 8-byte length),
     /// with the shard's file name.
     fn shard_headers(&self) -> Result<Vec<(String, Vec<u8>)>>;
+    /// 2026-10-04: `len` bytes of file `rel` from `offset`: the tensor samples value statistics
+    /// read (`stats`), never a whole weight file.
+    fn read_range(&self, rel: &str, offset: u64, len: u64) -> Result<Vec<u8>>;
 }
 
 /// 2026-10-03: Write access for one output checkpoint.
@@ -83,6 +86,15 @@ pub mod mem {
                 .get(rel)
                 .cloned()
                 .ok_or_else(|| MlError::Io(format!("{rel}: no such file")))
+        }
+        fn read_range(&self, rel: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
+            let f = self
+                .files
+                .get(rel)
+                .ok_or_else(|| MlError::Io(format!("{rel}: no such file")))?;
+            f.get(offset as usize..(offset + len) as usize)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| MlError::Io(format!("{rel}: range {offset}+{len} past the end")))
         }
         fn shard_headers(&self) -> Result<Vec<(String, Vec<u8>)>> {
             let mut out = Vec::new();

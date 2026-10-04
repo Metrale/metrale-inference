@@ -15,6 +15,7 @@ fn t(name: &str, shape: Vec<u64>) -> TensorEntry {
         dtype: Dtype::Bf16,
         shape,
         shard: "s".into(),
+        offset: 0,
     }
 }
 

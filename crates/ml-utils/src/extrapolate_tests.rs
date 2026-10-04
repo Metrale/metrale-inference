@@ -72,6 +72,8 @@ fn resolved_specs_give_units_and_mismatched_sources_are_refused() {
             index: &index,
             spec: &crate::testkit::spec(per, "mode = \"uniform\""),
             routing: None,
+            calibration: None,
+            stats: None,
         })
         .unwrap()
     };

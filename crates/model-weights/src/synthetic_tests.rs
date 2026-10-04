@@ -25,6 +25,8 @@ fn the_store_holds_the_synthesized_bytes_minus_what_the_loader_skips() {
         index: &index,
         spec: &spec,
         routing: None,
+        calibration: None,
+        stats: None,
     })
     .unwrap();
     let gpu = MockGpuBackend::new();

@@ -57,6 +57,16 @@ impl CheckpointSource for FsCheckpoint {
         std::fs::read(&p).map_err(io(&p.display().to_string()))
     }
 
+    fn read_range(&self, rel: &str, offset: u64, len: u64) -> MlResult<Vec<u8>> {
+        let p = self.dir.join(rel);
+        let what = p.display().to_string();
+        let mut f = std::fs::File::open(&p).map_err(io(&what))?;
+        f.seek(SeekFrom::Start(offset)).map_err(io(&what))?;
+        let mut buf = vec![0u8; len as usize];
+        f.read_exact(&mut buf).map_err(io(&what))?;
+        Ok(buf)
+    }
+
     fn shard_headers(&self) -> MlResult<Vec<(String, Vec<u8>)>> {
         let mut out = Vec::new();
         for name in self.files()? {
@@ -126,6 +136,13 @@ impl CheckpointSource for HubCheckpoint {
 
     fn read(&self, rel: &str) -> MlResult<Vec<u8>> {
         self.fetch(rel, None)
+    }
+
+    fn read_range(&self, rel: &str, offset: u64, len: u64) -> MlResult<Vec<u8>> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        self.fetch(rel, Some((offset, offset + len - 1)))
     }
 
     fn shard_headers(&self) -> MlResult<Vec<(String, Vec<u8>)>> {
