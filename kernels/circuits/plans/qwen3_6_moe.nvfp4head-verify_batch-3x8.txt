@@ -2,10 +2,10 @@
 # recipe: qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head
 # checkpoint: Qwen/Qwen3.6-35B-A3B-FP8
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on gdn_exact_replay=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 # row table: 3x8
-digest: 7cc338d6e7a99e8caee3de940c1ccbac0851439fc8a1057c8c13e20b05891818
+digest: 6e37ecb38f9749fdf88039d6c93730ce3cb0e76ead3e28cf47a547efd1d4bb20
 groups: 545  launches: 654  edges: 260 fused, 854 materialized
 == embed
 g0000 embed [embed] (host) reference rule=embed_row_copy writes={h:bf16}
@@ -18,13 +18,13 @@ g0002 l0.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows
 g0003 l0.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0004 l0.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0004 l0.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0005 l0.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0005 l0.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0006 l0.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0007 l0.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -57,13 +57,13 @@ g0014 l1.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows
 g0015 l1.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0016 l1.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0016 l1.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0017 l1.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0017 l1.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0018 l1.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0019 l1.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -96,13 +96,13 @@ g0026 l2.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows
 g0027 l2.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0028 l2.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0028 l2.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0029 l2.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0029 l2.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0030 l2.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0031 l2.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -182,13 +182,13 @@ g0056 l4.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows
 g0057 l4.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0058 l4.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0058 l4.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0059 l4.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0059 l4.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0060 l4.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0061 l4.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -221,13 +221,13 @@ g0068 l5.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows
 g0069 l5.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0070 l5.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0070 l5.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0071 l5.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0071 l5.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0072 l5.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0073 l5.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -260,13 +260,13 @@ g0080 l6.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows
 g0081 l6.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0082 l6.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0082 l6.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0083 l6.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0083 l6.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0084 l6.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0085 l6.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -346,13 +346,13 @@ g0110 l8.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows
 g0111 l8.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0112 l8.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0112 l8.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0113 l8.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0113 l8.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0114 l8.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0115 l8.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -385,13 +385,13 @@ g0122 l9.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows
 g0123 l9.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0124 l9.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0124 l9.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0125 l9.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0125 l9.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0126 l9.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0127 l9.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -424,13 +424,13 @@ g0134 l10.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0135 l10.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0136 l10.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0136 l10.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0137 l10.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0137 l10.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0138 l10.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0139 l10.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -510,13 +510,13 @@ g0164 l12.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0165 l12.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0166 l12.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0166 l12.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0167 l12.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0167 l12.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0168 l12.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0169 l12.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -549,13 +549,13 @@ g0176 l13.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0177 l13.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0178 l13.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0178 l13.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0179 l13.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0179 l13.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0180 l13.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0181 l13.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -588,13 +588,13 @@ g0188 l14.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0189 l14.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0190 l14.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0190 l14.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0191 l14.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0191 l14.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0192 l14.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0193 l14.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -674,13 +674,13 @@ g0218 l16.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0219 l16.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0220 l16.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0220 l16.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0221 l16.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0221 l16.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0222 l16.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0223 l16.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -713,13 +713,13 @@ g0230 l17.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0231 l17.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0232 l17.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0232 l17.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0233 l17.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0233 l17.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0234 l17.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0235 l17.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -752,13 +752,13 @@ g0242 l18.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0243 l18.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0244 l18.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0244 l18.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0245 l18.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0245 l18.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0246 l18.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0247 l18.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -838,13 +838,13 @@ g0272 l20.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0273 l20.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0274 l20.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0274 l20.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0275 l20.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0275 l20.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0276 l20.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0277 l20.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -877,13 +877,13 @@ g0284 l21.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0285 l21.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0286 l21.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0286 l21.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0287 l21.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0287 l21.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0288 l21.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0289 l21.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -916,13 +916,13 @@ g0296 l22.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0297 l22.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0298 l22.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0298 l22.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0299 l22.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0299 l22.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0300 l22.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0301 l22.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1002,13 +1002,13 @@ g0326 l24.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0327 l24.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0328 l24.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0328 l24.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0329 l24.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0329 l24.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0330 l24.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0331 l24.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1041,13 +1041,13 @@ g0338 l25.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0339 l25.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0340 l25.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0340 l25.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0341 l25.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0341 l25.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0342 l25.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0343 l25.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1080,13 +1080,13 @@ g0350 l26.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0351 l26.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0352 l26.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0352 l26.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0353 l26.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0353 l26.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0354 l26.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0355 l26.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1166,13 +1166,13 @@ g0380 l28.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0381 l28.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0382 l28.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0382 l28.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0383 l28.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0383 l28.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0384 l28.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0385 l28.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1205,13 +1205,13 @@ g0392 l29.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0393 l29.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0394 l29.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0394 l29.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0395 l29.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0395 l29.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0396 l29.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0397 l29.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1244,13 +1244,13 @@ g0404 l30.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0405 l30.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0406 l30.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0406 l30.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0407 l30.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0407 l30.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0408 l30.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0409 l30.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1330,13 +1330,13 @@ g0434 l32.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0435 l32.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0436 l32.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0436 l32.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0437 l32.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0437 l32.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0438 l32.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0439 l32.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1369,13 +1369,13 @@ g0446 l33.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0447 l33.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0448 l33.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0448 l33.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0449 l33.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0449 l33.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0450 l33.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0451 l33.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1408,13 +1408,13 @@ g0458 l34.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0459 l34.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0460 l34.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0460 l34.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0461 l34.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0461 l34.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0462 l34.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0463 l34.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1494,13 +1494,13 @@ g0488 l36.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0489 l36.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0490 l36.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0490 l36.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0491 l36.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0491 l36.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0492 l36.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0493 l36.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1533,13 +1533,13 @@ g0500 l37.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0501 l37.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0502 l37.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0502 l37.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0503 l37.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0503 l37.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0504 l37.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0505 l37.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
@@ -1572,13 +1572,13 @@ g0512 l38.gdn [qkvz] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_row
 g0513 l38.gdn [ba,gates] ssm_preprocess::dense_gemm_ba_gates_prefill reference rule=gdn_ba_gates_gemm_verify fuses={ba} writes={decay:f32,beta:f32} compute=cuda_core
   ba: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   gates: f32 (rule) -> [compute f32] -> f32,f32
-g0514 l38.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv + gated_delta_rule_carry::gdn_carry_wy3_lazy] reference rule=gdn_verify_batch_runs fuses={conv} writes={qkv:bf16,core:bf16} compute=cuda_core
+g0514 l38.gdn [conv,conv_ckpt,l2,recur] [3x8: gated_delta_rule_carry::gdn_carry_conv_f32 + gdn_exact_carry::gdn_exact_carry3_lazy] reference rule=gdn_verify_batch_runs_exact fuses={conv} writes={qkv:f32,core:f32} compute=cuda_core
   conv: bf16 -> [state f32 | compute f32] -> f32
   conv_ckpt: f32 -> [state f32] -> -
-  l2: f32 -> [compute f32] -> bf16
-  recur: bf16,f32,f32 -> [state f32 | compute f32] -> bf16
-g0515 l38.gdn [out_norm] norm::gated_rms_norm_prefill reference rule=gdn_out_norm_prefill_verify writes={gated:bf16} compute=memory
-  out_norm: bf16,bf16 -> [compute f32] -> bf16
+  l2: f32 -> [compute f32] -> f32
+  recur: f32,f32,f32 -> [state f32 | compute f32] -> f32
+g0515 l38.gdn [out_norm] norm::gated_rms_norm_f32_input_strided reference rule=gdn_exact_out_norm_verify writes={gated:bf16} compute=memory
+  out_norm: f32,bf16 -> [compute f32] -> bf16
 g0516 l38.gdn [out] w8a16_tc_rows::w8a16_tc_rows_32 reference rule=w8a16_tc_rows_32 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
   out: bf16 -> [act bf16 | weight fp8/block128x128->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0517 l38.gdn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory

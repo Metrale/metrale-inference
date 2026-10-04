@@ -319,14 +319,24 @@ mod served_shape_tests {
 mod instances_for_tests {
     use super::*;
 
-    /// 2026-09-30: The dense checkpoint has an instance per tier; the executor takes the tier
-    /// from the process, so either serves it. Before `same_source` the pair was refused.
+    /// 2026-09-30: The dense checkpoint has an instance per tier (and 2026-10-03 an exact-verify
+    /// variant); the executor takes the tier and the settings from the process, so any serves
+    /// it. Before `same_source` the pair was refused.
     #[test]
     fn two_tiers_of_one_checkpoint_plan_serve_one_checkpoint() {
         let hits = instances_for("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4").unwrap();
-        assert_eq!(hits.len(), 2);
+        let recipes: Vec<&str> = hits.iter().map(|i| i.recipe.as_str()).collect();
+        assert_eq!(
+            recipes,
+            [
+                "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
+                "qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared",
+                "qwen3.8/qwen3.8-27b-nvfp4-unsloth-exact-verify",
+            ]
+        );
         // 2026-10-03: One precision source: the first serves whatever the live settings say.
-        for live in [&hits[0].policy, &hits[1].policy, &Policy::default()] {
+        let lives: Vec<&Policy> = hits.iter().map(|i| &i.policy).collect();
+        for live in lives.into_iter().chain([&Policy::default()]) {
             let got = select_instance(&hits, live).unwrap();
             assert_eq!(got.recipe, "qwen3.8/qwen3.8-27b-nvfp4-unsloth");
         }
