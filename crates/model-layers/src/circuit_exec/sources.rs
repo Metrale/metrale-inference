@@ -380,7 +380,10 @@ mod instances_for_tests {
         }
         // 2026-10-04: The long-context MTP recipe runs the BF16 head under `adaptive`.
         let mut adaptive = live("bf16");
-        for (k, v) in [("activation_quantization", "adaptive"), ("gdn_verify_exact", "off")] {
+        for (k, v) in [
+            ("activation_quantization", "adaptive"),
+            ("gdn_verify_exact", "off"),
+        ] {
             adaptive.settings.insert(k.into(), v.into());
         }
         assert_eq!(
