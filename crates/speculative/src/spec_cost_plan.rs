@@ -11,12 +11,17 @@
 //!   least `(1 - slack)` times depth 1's. E[tokens] per sequence is `1 + Σ_{j<=K} Π_{t<=j}
 //!   prior(t)`; a step costs `verify(n, K) + draft(n, K)` from the table.
 //! - [`sequence_depths`]: after drafting, how many of each sequence's drafts to verify. Every
-//!   sequence starts at one draft (none when `K = 0`); a row is added greedily to the sequence
-//!   whose next draft has the most expected accepted tokens (its chained P(accept) from its
-//!   confidences, the position prior where one is missing), while the batch's tokens per
-//!   joule rises and the time constraint holds. The drafts are already paid for, so a row's
-//!   marginal cost is verify cost only; the table is uniform in depth, so a batch of `R` rows
-//!   costs the width's cells interpolated in `R / n`.
+//!   sequence starts at one draft (none when `K = 0`). Which sequence a further row goes to is
+//!   still decided greedily (by chained P(accept): a sequence's own marginal token gain is
+//!   non-increasing in its depth, since it is a running product of probabilities `<= 1`, so for
+//!   any total row count the globally-largest-gain-first order is the tokens-maximising
+//!   allocation — an exchange argument, not an approximation). But the total number of rows `R`
+//!   the batch spends is chosen by scanning every reachable `R`, not by stopping at the first one
+//!   whose tokens per joule does not improve: the pilot measured verify cost as non-monotone in
+//!   rows per sequence (n=1 cost MORE at 3 rows than at 4, on the dense 27B, 2026-10-04), so a
+//!   row that does not pay can still be worth adding when a cheaper row lies beyond it. The
+//!   drafts are already paid for, so a row's marginal cost is verify cost only; the table is
+//!   uniform in depth, so a batch of `R` rows costs the width's cells interpolated in `R / n`.
 //!
 //! Owner: speculative.
 //! Invariants:
@@ -110,46 +115,75 @@ pub fn sequence_depths(
             .map_or_else(|| cal.prior(j), |&lp| cal.p_given_lp(lp))
     };
     let mut depth: Vec<usize> = cap.iter().map(|&c| c.min(1)).collect();
-    let mut chain: Vec<f64> = (0..n)
+    let chain: Vec<f64> = (0..n)
         .map(|i| if depth[i] == 1 { p(i, 1) } else { 1.0 })
         .collect();
-    let mut tokens: f64 = n as f64
+    let base_tokens: f64 = n as f64
         + (0..n)
             .filter(|&i| depth[i] == 1)
             .map(|i| chain[i])
             .sum::<f64>();
-    let mut rows: usize = depth.iter().sum();
-    if n == 0 || rows > row_budget {
+    let base_rows: usize = depth.iter().sum();
+    if n == 0 || base_rows > row_budget {
         return vec![0; n];
     }
-    let reference = {
-        let (ms, _) = batch_cost(table, n, rows, k_max);
-        tokens / ms
-    };
-    loop {
-        if rows >= row_budget {
-            break;
-        }
-        // 2026-10-04: The sequence whose next draft adds the most expected tokens; the first
-        // on a tie.
-        let next = (0..n)
-            .filter(|&i| depth[i] < cap[i])
-            .map(|i| (i, chain[i] * p(i, depth[i] + 1)))
-            .fold(None::<(usize, f64)>, |best, (i, gain)| match best {
-                Some((_, g)) if g >= gain => best,
-                _ => Some((i, gain)),
+    // 2026-10-04: Every row beyond a sequence's mandatory first draft, with its marginal
+    // expected-token gain, in draft order per sequence. A sequence's own gains are
+    // non-increasing (see the module doc), so sorting all of them together, across every
+    // sequence, and taking a prefix of length `R - base_rows` is the tokens-maximising way to
+    // reach any total row count `R >= base_rows`.
+    struct Extra {
+        seq: usize,
+        depth: usize,
+        gain: f64,
+    }
+    let mut extra = Vec::new();
+    for i in 0..n {
+        let mut run = chain[i];
+        for j in (depth[i] + 1)..=cap[i] {
+            run *= p(i, j);
+            extra.push(Extra {
+                seq: i,
+                depth: j,
+                gain: run,
             });
-        let Some((i, gain)) = next else { break };
-        let (_, j0) = batch_cost(table, n, rows, k_max);
-        let (ms1, j1) = batch_cost(table, n, rows + 1, k_max);
-        let t1 = tokens + gain;
-        if t1 / j1 <= tokens / j0 || t1 / ms1 < (1.0 - slack) * reference {
-            break;
         }
-        depth[i] += 1;
-        chain[i] *= p(i, depth[i]);
-        tokens = t1;
-        rows += 1;
+    }
+    extra.sort_by(|a, b| {
+        b.gain
+            .partial_cmp(&a.gain)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let reference = {
+        let (ms, _) = batch_cost(table, n, base_rows, k_max);
+        base_tokens / ms
+    };
+    // 2026-10-04: The best total row count is found by scanning every reachable `R`, not by
+    // stopping at the first `R` whose tokens per joule does not improve: the table's cost is
+    // not guaranteed monotone in rows (see the module doc), so a row that does not pay can
+    // still be worth taking when a cheaper one lies beyond it. Ties keep the shallower `R`.
+    let max_take = (row_budget - base_rows).min(extra.len());
+    let mut best_rows = base_rows;
+    let mut best_per_joule = {
+        let (_, j) = batch_cost(table, n, base_rows, k_max);
+        base_tokens / j
+    };
+    let mut tokens = base_tokens;
+    for take in 1..=max_take {
+        tokens += extra[take - 1].gain;
+        let rows = base_rows + take;
+        let (ms, j) = batch_cost(table, n, rows, k_max);
+        if tokens / ms < (1.0 - slack) * reference {
+            continue;
+        }
+        let per_joule = tokens / j;
+        if per_joule > best_per_joule {
+            best_rows = rows;
+            best_per_joule = per_joule;
+        }
+    }
+    for e in &extra[..(best_rows - base_rows)] {
+        depth[e.seq] = e.depth;
     }
     depth
 }

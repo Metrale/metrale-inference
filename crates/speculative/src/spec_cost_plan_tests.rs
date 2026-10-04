@@ -140,6 +140,83 @@ fn raising_a_sequence_s_confidence_never_shortens_it() {
     }
 }
 
+/// 2026-10-04: A single-width table whose verify cost spikes at 2 rows and drops back down at
+/// 3: `verify_j` 0.9, 1.0, 3.0, 1.1 at k = 0, 1, 2, 3 (`k` drafts = `k + 1` rows). Modelled on
+/// the dense 27B pilot (dgx2, 2026-10-04), where n = 1 verify energy rose from k = 1 to k = 2
+/// and then fell at k = 3 rather than rising further.
+fn dip_table() -> CostTable {
+    let key = TableKey {
+        schema: SCHEMA,
+        box_class: "gb10".into(),
+        recipe: "r".into(),
+        plan_digests: BTreeMap::from([("verify".to_string(), "d".to_string())]),
+    };
+    let cells = vec![
+        Cell {
+            n: 1,
+            k: 0,
+            verify_ms: 10.0,
+            verify_j: 0.9,
+            draft_ms: 0.0,
+            draft_j: 0.0,
+        },
+        Cell {
+            n: 1,
+            k: 1,
+            verify_ms: 12.0,
+            verify_j: 1.0,
+            draft_ms: 1.0,
+            draft_j: 0.1,
+        },
+        Cell {
+            n: 1,
+            k: 2,
+            verify_ms: 14.0,
+            verify_j: 3.0,
+            draft_ms: 2.0,
+            draft_j: 0.2,
+        },
+        Cell {
+            n: 1,
+            k: 3,
+            verify_ms: 15.0,
+            verify_j: 1.1,
+            draft_ms: 3.0,
+            draft_j: 0.3,
+        },
+    ];
+    CostTable::parse(&CostTable::render(&key, &cells).unwrap()).unwrap()
+}
+
+/// 2026-10-04: Buckets picked so three confidences give exact, distinct per-position
+/// probabilities: 0.9, 0.3, 0.95 at lp -10.0, -1.0, -0.5.
+fn dip_cal() -> AcceptanceCalibration {
+    AcceptanceCalibration::parse(
+        "[drafter]\nweights_sha256 = \"x\"\nvocab = 1\nquantization = \"bf16\"\ncontext = true\n\
+         [acceptance]\nedges = [-10.0, -1.0, 0.0]\np_accept = [0.9, 0.3, 0.95]\n\
+         prior_by_position = [0.5]\n",
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_row_that_does_not_pay_is_not_the_last_one_tried() {
+    // 2026-10-04: Taking the second row (k = 1 -> k = 2) alone drops tokens per joule from
+    // 1.9/1.3 to 2.17/3.3 (a worse ratio than depth 1). A greedy search that stops at the
+    // first non-improving row would return depth 1. But the third row (k = 2 -> k = 3) more
+    // than recovers: 2.4265/1.4, the best of the four, and still at least as fast as depth 1
+    // (tokens per ms 0.1348 vs 0.1267). The planner must reach it.
+    let t = dip_table();
+    let c = dip_cal();
+    let conf = vec![-10.0f32, -1.0, -0.5];
+    let d = sequence_depths(&t, &c, &[&conf], &[3], 3, 64, 0.0);
+    assert_eq!(
+        d,
+        vec![3],
+        "a mid-chain row that does not pay must not end the search"
+    );
+}
+
 #[test]
 fn rows_that_never_pay_keep_one_draft_each() {
     let t = table(8.0, 0.8);
