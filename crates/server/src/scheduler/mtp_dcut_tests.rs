@@ -412,3 +412,14 @@ fn the_dcut_flag_wins_over_the_environment_and_snaps() {
         "unparseable is ignored"
     );
 }
+
+#[test]
+fn outcomes_stop_after_the_first_rejected_draft() {
+    let conf = [-0.1, -0.2, -0.3];
+    let got: Vec<_> = reached_outcomes(&conf, 1).collect();
+    assert_eq!(got, vec![(-0.1, true), (-0.2, false)]);
+    let none: Vec<_> = reached_outcomes(&conf, 0).collect();
+    assert_eq!(none, vec![(-0.1, false)]);
+    let all: Vec<_> = reached_outcomes(&conf, 3).collect();
+    assert_eq!(all, vec![(-0.1, true), (-0.2, true), (-0.3, true)]);
+}

@@ -282,6 +282,7 @@ pub fn resume_swapped_seq(
     seq.seq_len = s.seq_len;
     seq.adapter_slot = s.adapter_slot;
     seq.adapter_id = s.adapter_id;
+    seq.lookup_tenant = s.lookup_tenant;
     // 2026-09-25: Swap-out released this sequence's adapter-slot ref (in
     // `free_sequence`) and a resume does not re-run prefill, so re-acquire
     // it here. The resolved index is stored because the release at the

@@ -49,3 +49,28 @@ pub fn nvfp4_proj_mx(
     }
     Ok(())
 }
+
+/// 2026-10-01: `[m, k] x [n, k]^T` through [`nvfp4_proj_mx`] when `family` takes a fixed `nvfp4`
+/// activation format at `m` rows (`--activation-quantization`) and `weight` is present; inputs
+/// and outputs are contiguous `[m, k]` and `[m, n]` rows. `Ok(false)` launches nothing.
+#[allow(clippy::too_many_arguments)]
+pub fn fixed_nvfp4_proj(
+    gpu: &dyn GpuBackend,
+    family: metrale_config::ProjFamily,
+    weight: &QuantizedWeight,
+    input: DevicePtr,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<bool> {
+    if weight.weight.is_null()
+        || crate::layers::fixed_act(family, m as usize)
+            != Some(metrale_config::ActQuantFormat::Nvfp4)
+    {
+        return Ok(false);
+    }
+    nvfp4_proj_mx(gpu, input, weight, output, m, n, k, stream)?;
+    Ok(true)
+}

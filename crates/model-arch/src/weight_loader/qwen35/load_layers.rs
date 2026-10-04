@@ -381,6 +381,11 @@ pub(super) fn load_layers(
             moe_experts::install_native_fp8_experts(&cx, &lp, i, &mut moe_layer);
         }
 
+        // 2026-10-04: Every load-time reader of the row-major NVFP4 experts ran above: repack them
+        // in place for the lean tensor-core decode when the layer qualifies (byte-identical outputs).
+        if moe_layer.repack_nvfp4_experts_lean(gpu, config, stream)? && i == 0 {
+            tracing::info!("NVFP4 experts repacked for the lean tensor-core decode");
+        }
         let ffn = FfnComponent::Moe(moe_layer);
 
         match lt {

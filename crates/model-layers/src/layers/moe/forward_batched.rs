@@ -350,6 +350,7 @@ impl MoeLayer {
                     stream,
                 )?;
             } else {
+                self.refuse_lean_layout("MoeLayer::forward_batched (row-major experts)")?;
                 ops::moe_expert_gate_up_shared(
                     ctx.gpu,
                     self.moe_expert_gate_up_shared,

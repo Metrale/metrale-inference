@@ -87,7 +87,7 @@ impl Qwen3SsmLayer {
             fp4_gemv_batch_k,
         } = *tier;
         // 2026-09-28: The declared-W8A8 arm first (`w8a8_decode.rs`).
-        if self.w8a8_qkvz(
+        if self.pinned_qkvz(
             ctx,
             normed_base,
             h as u32,
@@ -243,7 +243,7 @@ impl Qwen3SsmLayer {
             fp4_gemv_batch_k,
         } = *tier;
         // 2026-09-28: The declared-W8A8 arm first (`w8a8_decode.rs`).
-        if self.w8a8_out(
+        if self.pinned_out(
             ctx,
             normed_out_base,
             value_dim as u32,

@@ -94,7 +94,20 @@ pub async fn chat_stream(
     body: &Value,
     timeout: Duration,
 ) -> Result<ChatOutcome> {
-    tokio::time::timeout(timeout, chat_stream_inner(target, body))
+    chat_stream_signalled(target, body, timeout, None).await
+}
+
+/// 2026-10-04: [`chat_stream`], plus a signal: `first_token`, when given, receives the
+/// instant the first token-carrying chunk arrived (the instant `ttft_ms` is measured to)
+/// while the stream is still running. A request that ends before any token drops the
+/// sender, so the receiver sees an error instead of waiting.
+pub async fn chat_stream_signalled(
+    target: &TargetEndpoint,
+    body: &Value,
+    timeout: Duration,
+    first_token: Option<tokio::sync::oneshot::Sender<Instant>>,
+) -> Result<ChatOutcome> {
+    tokio::time::timeout(timeout, chat_stream_inner(target, body, first_token))
         .await
         .map_err(|_| {
             RequestFailure::new(
@@ -104,7 +117,11 @@ pub async fn chat_stream(
         })?
 }
 
-async fn chat_stream_inner(target: &TargetEndpoint, body: &Value) -> Result<ChatOutcome> {
+async fn chat_stream_inner(
+    target: &TargetEndpoint,
+    body: &Value,
+    mut first_token: Option<tokio::sync::oneshot::Sender<Instant>>,
+) -> Result<ChatOutcome> {
     let (host, port) = target.host_port()?;
     let payload = serde_json::to_string(body)?;
     let mut sock = TcpStream::connect((host.as_str(), port))
@@ -183,7 +200,12 @@ async fn chat_stream_inner(target: &TargetEndpoint, body: &Value) -> Result<Chat
                 .into());
             }
             if apply_chunk(&chunk, &mut out) {
-                first_delta.get_or_insert_with(Instant::now);
+                let first = *first_delta.get_or_insert_with(Instant::now);
+                if let Some(signal) = first_token.take() {
+                    // 2026-10-04: A receiver that is gone no longer wants the signal; the
+                    // stream itself is unaffected.
+                    let _ = signal.send(first);
+                }
                 carried = true;
             }
         }
@@ -375,7 +397,7 @@ mod blocking;
 pub use blocking::{BlockingOutcome, chat_blocking, responses_blocking};
 
 mod get;
-pub use get::{fetch_hardware, get_json, list_models, probe};
+pub use get::{fetch_hardware, get_json, get_text, list_models, probe};
 
 pub mod gaps;
 pub use gaps::{GapSample, GapStats, itl_ms};

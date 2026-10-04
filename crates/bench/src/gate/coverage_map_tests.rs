@@ -404,3 +404,18 @@ fn a_change_to_the_boot_driver_reopens_no_gate_and_owes_only_itself() {
         "the KV budget is what this check measures"
     );
 }
+
+/// 2026-10-04: Every gate and every promotion candidate excludes the speculative step cost
+/// driver, a calibration tool that only reads `/metrics` around its own requests, so editing
+/// it re-opens nothing and owes nothing; the scheduler it measures still re-opens the gates.
+#[test]
+fn a_change_to_the_spec_cost_driver_reopens_no_gate_and_owes_nothing() {
+    let path = "crates/bench/src/benchmarks/spec_cost/cell.rs";
+    assert_eq!(coverage::invalidated_by([path]), Vec::<&str>::new());
+    assert_eq!(coverage::promotion_debt([path]), Vec::<&str>::new());
+    assert!(
+        coverage::invalidated_by(["crates/server/src/scheduler/mtp_step.rs"])
+            .contains(&"decode-floor"),
+        "the speculative step itself must still re-open the decode gate"
+    );
+}

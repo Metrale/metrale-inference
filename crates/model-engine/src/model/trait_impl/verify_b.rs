@@ -247,9 +247,11 @@ impl TransformerModel {
         };
 
         // 2026-09-25: Replay only when this sequence's SSM slot has a captured graph.
+        // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
+        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
         let cached_for_slot = graph_cache
             .as_ref()
-            .and_then(|c| c.get(&seq.slot_idx).copied());
+            .and_then(|c| c.get(&graph_key).copied());
         if let Some(graph) = cached_for_slot
             && graph.0 != 0
         {
@@ -403,7 +405,7 @@ impl TransformerModel {
                         && !std::env::var("METRALE_GLM_VERIFY_GRAPH_NOCACHE")
                             .is_ok_and(|v| v == "1")
                     {
-                        cache.insert(seq.slot_idx, graph);
+                        cache.insert(graph_key, graph);
                     }
                     self.gpu.launch_graph(graph, stream)?;
                 }

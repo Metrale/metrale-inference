@@ -191,7 +191,7 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
         if gdn.h_f16 { "f16" } else { "f32" },
         gdn.fused_norm,
         gdn.batched_recurrent,
-        // 2026-09-26: Resolved: an FP16 h-state turns exact verify off.
+        // 2026-10-01: `--exact-verify` as given; the fixed-format verify is in `serve_resolved`.
         gdn.verify_exact_active(),
         metrale_gpu_runtime::ssm_tail_midchunk_enabled(),
         if crate::scheduler::levers::resolve_mtp_gate_force(args.mtp_gate_force()) {
