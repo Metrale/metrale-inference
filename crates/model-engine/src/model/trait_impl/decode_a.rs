@@ -309,6 +309,9 @@ impl TransformerModel {
             moe_lora_route: self.decode_moe_route(),
         };
 
+        // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
+        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
+
         // 2026-09-25: Profile mode: per-layer synchronised decode for a timing breakdown.
         if let (true, Some(token)) = (self.profile, input.host()) {
             return self.decode_profiled(token, hidden, residual, seq, &mut kv_cache, &ctx, stream);
@@ -324,7 +327,7 @@ impl TransformerModel {
         // 2026-09-25: Graphs are keyed by the sequence's SSM slot. Positions, slot,
         // seq_len and block table are read from the buffers uploaded above.
         if let Some(ref cache) = graph_cache
-            && let Some(graph) = cache.get(&seq.slot_idx)
+            && let Some(graph) = cache.get(&graph_key)
             && graph.0 != 0
         {
             // 2026-09-25: Check room before the replay. The graph writes GLM-5.3's
@@ -437,7 +440,7 @@ impl TransformerModel {
                         graph.0
                     );
                     if let Some(ref mut cache) = graph_cache {
-                        cache.insert(seq.slot_idx, graph);
+                        cache.insert(graph_key, graph);
                     }
                     self.gpu.launch_graph(graph, stream)?;
                 }

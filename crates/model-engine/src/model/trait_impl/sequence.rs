@@ -170,12 +170,24 @@ impl TransformerModel {
         // entries are dropped, and only then (`decode_graph_key` tests pin it).
         if !slot_reused_by_compact && self.layers.iter().any(|l| l.graph_stale_on_new_sequence()) {
             let slot = seq.slot_idx as u32;
-            let mut stale: Vec<metrale_gpu_runtime::gpu::GraphHandle> = self
-                .decode_graph
-                .lock()
-                .remove(&seq.slot_idx)
-                .into_iter()
-                .collect();
+            // 2026-10-03: Every route's graph of this slot (`SlotGraphKey`).
+            let of_slot = |m: &parking_lot::Mutex<
+                std::collections::HashMap<
+                    super::SlotGraphKey,
+                    metrale_gpu_runtime::gpu::GraphHandle,
+                >,
+            >| {
+                let mut m = m.lock();
+                let keys: Vec<super::SlotGraphKey> = m
+                    .keys()
+                    .filter(|k| k.slot == seq.slot_idx)
+                    .copied()
+                    .collect();
+                keys.into_iter()
+                    .filter_map(|k| m.remove(&k))
+                    .collect::<Vec<_>>()
+            };
+            let mut stale: Vec<metrale_gpu_runtime::gpu::GraphHandle> = of_slot(&self.decode_graph);
             // 2026-09-25: The K-row verify graphs are slot-keyed too and bake the same
             // per-sequence state (`Glm5NextDsaState::{k_normed, gate, valid}`).
             for m in [
@@ -183,7 +195,7 @@ impl TransformerModel {
                 &self.verify3_graph,
                 &self.verify4_graph,
             ] {
-                stale.extend(m.lock().remove(&seq.slot_idx));
+                stale.extend(of_slot(m));
             }
             {
                 // 2026-09-25: A batched graph bakes every row's state pointers, so every key
