@@ -64,9 +64,10 @@ const P1_TRIGGER: f64 = 0.08;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RungParams {
     /// 2026-09-25: Pins the static ladder. `from_env` sets it when
-    /// `METRALE_MTP_STATIC_RUNG` or `METRALE_MTP_K_LADDER` is present, whatever
-    /// the value (`0` included): an operator who spells out the rungs gets
-    /// exactly those rungs.
+    /// `METRALE_MTP_STATIC_RUNG` is present (any value) or the serve runs an explicit
+    /// ladder (`speculative::mtp_ladder_pinned`: `--mtp-k-ladder` or
+    /// `METRALE_MTP_K_LADDER`): an operator who spells out the rungs gets exactly those
+    /// rungs.
     pub disabled: bool,
     pub enter: f64,
     pub leave: f64,
@@ -93,7 +94,7 @@ impl RungParams {
     pub fn from_env() -> Self {
         Self {
             disabled: std::env::var_os("METRALE_MTP_STATIC_RUNG").is_some()
-                || std::env::var_os("METRALE_MTP_K_LADDER").is_some(),
+                || metrale_model_layers::speculative::mtp_ladder_pinned(),
             enter: tunable("METRALE_MTP_RUNG_ENTER", ENTER),
             leave: tunable("METRALE_MTP_RUNG_LEAVE", LEAVE),
             alpha: tunable("METRALE_MTP_RUNG_ALPHA", ALPHA).min(1.0),

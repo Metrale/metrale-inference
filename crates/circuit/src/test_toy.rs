@@ -112,6 +112,53 @@ activation = "bf16"
 "#;
 
 /// 2026-09-28: One rule per op, each covering every mode and row count.
+/// 2026-10-02: The pipeline each toy op runs at under [`PRECISION`] (NVFP4 W4A16 linears, a BF16
+/// head), as a `KERNEL_FAMILIES.toml` family declares it (`crate::pipeline::declare`).
+pub const PIPELINES: [(&str, &str); 7] = [
+    (
+        "embed",
+        r#"pipeline.embed = { in = [], gather = "bf16", out = ["bf16"] }"#,
+    ),
+    (
+        "rms_norm",
+        r#"pipeline.rms_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }"#,
+    ),
+    (
+        "final_norm",
+        r#"pipeline.final_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }"#,
+    ),
+    (
+        "linear",
+        r#"pipeline.linear = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }"#,
+    ),
+    (
+        "silu_mul",
+        r#"pipeline.silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }"#,
+    ),
+    (
+        "residual_add",
+        r#"pipeline.residual_add = { in = ["bf16", "bf16"], compute = "f32", out = ["bf16"] }"#,
+    ),
+    (
+        "lm_head",
+        r#"pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }"#,
+    ),
+];
+
+/// 2026-10-02: The [`PIPELINES`] lines of `ops`, one per line.
+pub fn pipelines(ops: &[&str]) -> String {
+    ops.iter()
+        .map(|o| {
+            PIPELINES
+                .iter()
+                .find(|(n, _)| n == o)
+                .map(|(_, l)| *l)
+                .unwrap_or_else(|| panic!("no toy pipeline for `{o}`"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub const BASE_RULES: &str = r#"
 schema = 1
 "#;

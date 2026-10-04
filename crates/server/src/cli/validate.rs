@@ -297,6 +297,51 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
         ));
     }
 
+    // 2026-10-02: Prompt lookup takes MTP's round when it matches and leaves
+    // it to MTP otherwise; with no MTP there is no round to take.
+    if args.prompt_lookup.prompt_lookup_decoding && !args.speculative {
+        v.push(Violation::new(
+            "--prompt-lookup-decoding is set without --speculative.",
+            "prompt-lookup copies are verified in the MTP speculative step, in place of \
+             the drafter's chain; without MTP that step never runs, so the flag would do \
+             nothing.",
+            "add --speculative, or drop --prompt-lookup-decoding.",
+        ));
+    }
+
+    // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
+    // DFlash drafts a whole block in one pass and has no chain to stop.
+    if let Some(tau) = args.mtp_draft.draft_confidence_stop {
+        if !(tau > 0.0 && tau < 1.0) {
+            v.push(Violation::new(
+                format!("--draft-confidence-stop {tau} is outside (0, 1)."),
+                "TAU is a probability threshold: 0 would never stop a chain and 1 would \
+                 stop every chain after its first draft.",
+                "pass a value strictly between 0 and 1, or drop the flag.",
+            ));
+        }
+        if !args.speculative || args.dflash {
+            v.push(Violation::new(
+                "--draft-confidence-stop needs --speculative (MTP) and is not used with --dflash.",
+                "the stop ends MTP draft chains early; without MTP there is no chain, and a \
+                 DFlash drafter proposes its whole block in one pass.",
+                "add --speculative, or drop --draft-confidence-stop.",
+            ));
+        }
+    }
+
+    // 2026-10-03: A ratio outside 0..=1 would snap to an end bucket silently.
+    if let Some(r) = args.mtp_shape.mtp_dcut_ratio
+        && !(0.0..=1.0).contains(&r)
+    {
+        v.push(Violation::new(
+            format!("--mtp-dcut-ratio {r} is outside 0..=1."),
+            "the ratio is the fraction of prunable draft positions kept; values snap to \
+             0.25, 0.5, 0.75 or 1.0.",
+            "pass a value from 0 to 1 (1.0 keeps every draft), or drop the flag.",
+        ));
+    }
+
     // 2026-09-26: Only an explicit --num-drafts is checked: an omitted one
     // resolves against MODEL.toml later, and a model default without a
     // speculative method is not a user error.

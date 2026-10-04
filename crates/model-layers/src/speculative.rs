@@ -7,19 +7,21 @@
 //! Owner: model-layers (speculative).
 //! Invariants: none beyond the types.
 
+pub mod draft_stop;
 pub mod ladder;
 pub mod tree_shape;
 pub mod verify_key;
 
 pub use ladder::{
-    DEFAULT_MTP_MAX_SEQS, MAX_MTP_MAX_SEQS, MtpMaxSeqsSource, mtp_ladder_disabled,
-    mtp_ladder_drafts, mtp_max_seqs, resolve_mtp_max_seqs, set_mtp_max_seqs,
+    DEFAULT_MTP_MAX_SEQS, MAX_MTP_MAX_SEQS, MtpMaxSeqsSource, ladder_drafts_from_steps,
+    mtp_ladder_disabled, mtp_ladder_drafts, mtp_ladder_pinned, mtp_max_seqs, parse_mtp_k_ladder,
+    resolve_mtp_max_seqs, set_mtp_k_ladder, set_mtp_max_seqs,
 };
 mod knobs;
 pub use knobs::{
-    EP_CMD_MTP_PROPOSE, draft_conf_tau, hidden_fingerprint, mtp_accept_debug, mtp_catchup_enabled,
+    EP_CMD_MTP_PROPOSE, hidden_fingerprint, mtp_accept_debug, mtp_catchup_enabled,
     mtp_ep_propose_enabled, mtp_multi_seq_mode, mtp_refeed_accepted_enabled, mtp_refeed_debug,
-    mtp_refeed_shift, parse_draft_conf_tau, shadow_topk,
+    mtp_refeed_shift, shadow_topk,
 };
 
 use std::any::Any;
@@ -62,13 +64,6 @@ pub trait DraftProposer: Send + Sync {
     /// `None` for other proposers. With `--dflash`, serve sets the draft count
     /// to γ - 1, at least 1.
     fn block_gamma(&self) -> Option<usize> {
-        None
-    }
-
-    /// 2026-09-25: Chain confidence of the latest `propose`, when the proposer
-    /// computes it; `None` otherwise. The MTP head computes it only while
-    /// `draft_conf_tau` is above 0.
-    fn last_confidence(&self) -> Option<f32> {
         None
     }
 

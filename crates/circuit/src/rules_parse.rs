@@ -93,6 +93,9 @@ struct PatternFile {
     stored: bool,
     #[serde(default)]
     sibling: bool,
+    holds: Option<String>,
+    #[serde(default)]
+    steps: BTreeMap<String, String>,
 }
 
 /// 2026-09-28: Parse FUSIONS.toml text into rules, in file order. 2026-09-30: A file that
@@ -332,6 +335,21 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         .as_deref()
         .map(|k| LayerKind::parse(k).ok_or_else(|| err(format!("unknown layer kind `{k}`"))))
         .transpose()?;
+    // 2026-10-02: A stated step is one of the op's pipeline steps, with a value of its shape.
+    let mut steps = BTreeMap::new();
+    for (name, text) in &p.steps {
+        let kind = crate::pipeline::vocab::parse_step(name)
+            .filter(|k| crate::pipeline::vocab::steps_of(&op).contains(k))
+            .ok_or_else(|| {
+                err(format!(
+                    "`{name}` is not a pipeline step of `{}`",
+                    op.name()
+                ))
+            })?;
+        let value = crate::pipeline::vocab::parse_value(kind, text)
+            .map_err(|e| err(format!("step `{name}`: {e}")))?;
+        steps.insert(kind, value);
+    }
     Ok(PatternOp {
         op,
         roles,
@@ -343,5 +361,7 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         keep: p.keep,
         stored: p.stored,
         sibling: p.sibling,
+        holds: fmt(&p.holds)?,
+        steps,
     })
 }

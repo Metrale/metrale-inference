@@ -157,17 +157,19 @@ pub struct MtpHead {
     k_norm: DenseWeight,
 
     // 2026-09-25: FFN storage. An NVFP4 MoE head uses `moe_nvfp4`; an FP8/BF16 MoE
-    // head uses `moe_fp8` when the checkpoint ships FP8 experts, else the
-    // per-expert `*_generic` weights. A dense-FFN head leaves all of them `None`.
+    // head uses `moe_grouped` when the checkpoint ships FP8 experts (2026-10-02: or a BF16
+    // head BF16 experts), else the per-expert `*_generic` weights. A dense-FFN head leaves
+    // all of them `None`.
     moe_nvfp4: Option<MoeLayer>,
     moe_experts_generic: Option<Vec<(ProjectionWeight, ProjectionWeight, ProjectionWeight)>>,
     moe_shared_generic: Option<(ProjectionWeight, ProjectionWeight, ProjectionWeight)>,
     /// 2026-09-25: The checkpoint's FP8 block-scaled routed and shared experts as a
     /// [`MoeLayer`] with FP8 pointer tables, built for an FP8/BF16 head when
-    /// `MtpWeights::fp8_experts` is present. `forward_one` runs it through
-    /// `MoeLayer::forward`, and the batched propose through
-    /// `forward_fp8_grouped_decode`. `None` means `moe_forward_generic` runs.
-    moe_fp8: Option<MoeLayer>,
+    /// `MtpWeights::fp8_experts` is present (2026-10-02: or, for a BF16 head, its BF16
+    /// experts with BF16 tables). `forward_one` runs it through `MoeLayer::forward`, and the
+    /// batched propose through `forward_grouped_decode`. `None` means `moe_forward_generic`
+    /// runs.
+    moe_grouped: Option<MoeLayer>,
     moe_gate: DenseWeight,
     shared_expert_gate: DenseWeight,
 
@@ -226,9 +228,9 @@ pub struct MtpHead {
     /// 2026-09-25: 4-byte device buffer that `embed_from_argmax` writes the draft id to,
     /// for deferred readback.
     draft_token_id_dev: DevicePtr,
-    /// 2026-09-25: Chain confidence of the last propose, as f32 bits: the minimum top-1
-    /// softmax probability across its drafts. Reset to 1.0 at each propose and
-    /// lowered by the forward when `draft_conf_tau > 0`.
+    /// 2026-10-02: Top-1 log-probability of the last single-sequence draft whose id was read
+    /// back, as f32 bits; NaN when it was not measured. Written by `forward_one` under
+    /// `--draft-confidence-stop`, read by `propose` to stop the chain.
     pub(super) last_conf_bits: std::sync::atomic::AtomicU32,
     dense_gemv_k: Option<KernelHandle>,
     dense_gemv_fp8w_k: Option<KernelHandle>,
@@ -386,6 +388,8 @@ pub(crate) use forward_batch::{LmHeadRowsArm, lm_head_rows_arm, tc_lm_head};
 mod forward_batch_ffn;
 mod moe_forward;
 mod new;
+mod new_bf16_moe;
+pub use new_bf16_moe::{mtp_experts_nvfp4, set_mtp_experts_nvfp4_from_cli};
 mod new_native_fp8_moe;
 mod prefill;
 pub(crate) mod row_dispatch;

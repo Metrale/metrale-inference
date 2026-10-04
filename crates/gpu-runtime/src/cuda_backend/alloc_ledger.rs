@@ -75,6 +75,18 @@ impl MetraleCudaBackend {
             .insert(ptr.0, AllocRecord { bytes, site });
     }
 
+    /// 2026-10-02: Every live allocation: address, bytes and call site (`file:line`).
+    pub fn live_allocations(&self) -> Vec<(crate::gpu::DevicePtr, usize, String)> {
+        self.live_allocs
+            .lock()
+            .iter()
+            .map(|(&a, r)| {
+                let site = format!("{}:{}", r.site.file(), r.site.line());
+                (crate::gpu::DevicePtr(a), r.bytes, site)
+            })
+            .collect()
+    }
+
     pub(crate) fn forget_alloc(&self, ptr: crate::gpu::DevicePtr) {
         self.live_allocs.lock().remove(&ptr.0);
     }

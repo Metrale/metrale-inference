@@ -210,23 +210,57 @@ nvfp4_tflops = 360.0
 context_tokens = 4096
 "#,
     );
-    for (id, op, func) in [
-        ("f_embed", r#"{ op = "embed" }"#, "embed"),
+    // 2026-10-02: Each family declares the toy W4A16 pipelines (`crate::test_toy::PIPELINES`); the
+    // FP4 entry `up_fp4` is the W4A16 one too (these tests care about its instruction), and
+    // `up_a4` multiplies NVFP4 activations.
+    let lin = crate::test_toy::pipelines(&["linear"]);
+    let a4 = r#"pipeline.linear = { in = ["nvfp4/g16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }"#;
+    let p = |ops: &[&str]| crate::test_toy::pipelines(ops);
+    for (id, op, func, pipes) in [
+        ("f_embed", r#"{ op = "embed" }"#, "embed", p(&["embed"])),
         (
             "f_norm",
             r#"{ op = "rms_norm" }, { op = "final_norm" }"#,
             "norm",
+            p(&["rms_norm", "final_norm"]),
         ),
-        ("f_up", r#"{ op = "linear", roles = ["gate_up"] }"#, "up"),
+        (
+            "f_up",
+            r#"{ op = "linear", roles = ["gate_up"] }"#,
+            "up",
+            lin.clone(),
+        ),
         (
             "f_up_fp4",
             r#"{ op = "linear", roles = ["gate_up"] }"#,
             "up_fp4",
+            lin.clone(),
         ),
-        ("f_act", r#"{ op = "silu_mul" }"#, "act"),
-        ("f_down", r#"{ op = "linear", roles = ["down"] }"#, "down"),
-        ("f_add", r#"{ op = "residual_add" }"#, "add"),
-        ("f_head", r#"{ op = "lm_head" }"#, "lm_head"),
+        (
+            "f_up_a4",
+            r#"{ op = "linear", roles = ["gate_up"] }"#,
+            "up_a4",
+            a4.to_string(),
+        ),
+        ("f_act", r#"{ op = "silu_mul" }"#, "act", p(&["silu_mul"])),
+        (
+            "f_down",
+            r#"{ op = "linear", roles = ["down"] }"#,
+            "down",
+            lin.clone(),
+        ),
+        (
+            "f_add",
+            r#"{ op = "residual_add" }"#,
+            "add",
+            p(&["residual_add"]),
+        ),
+        (
+            "f_head",
+            r#"{ op = "lm_head" }"#,
+            "lm_head",
+            p(&["lm_head"]),
+        ),
     ] {
         let extra = if func == "norm" {
             r#", "m::final_norm""#
@@ -243,6 +277,7 @@ description = "test"
 compute = "cuda_core"
 kernels = ["m::{func}"{extra}]
 rows = [1, 128]
+{pipes}
 op = [{op}]
 [[family.point]]
 values = {{}}
@@ -367,6 +402,10 @@ pub fn model(precision: &str) -> ModelUnderPlan {
             settings: BTreeMap::from([
                 ("kv_cache_dtype".to_string(), "bf16".to_string()),
                 ("ssm_h_dtype".to_string(), "f32".to_string()),
+                (
+                    "activation_quantization".to_string(),
+                    "adaptive".to_string(),
+                ),
             ]),
         },
         header: vec![("target".into(), "base/toy/q".into())],

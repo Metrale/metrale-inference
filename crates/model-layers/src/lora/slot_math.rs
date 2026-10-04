@@ -55,6 +55,43 @@ pub fn build_seq_slot_host(adapter_slots: &[i32], padded_n: usize, active: i32) 
         .collect()
 }
 
+/// 2026-10-03: Which attention LoRA sites a step of one sequence runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoraSites {
+    /// 2026-10-03: Sites that fold the installed pair when no slot buffer is given: one-row decode
+    /// (`apply_q_lora`, `apply_kv_lora`, the o_proj fold) and prefill (`prefill_one_proj`,
+    /// `paged_oproj`).
+    PairFallback,
+    /// 2026-10-03: The multi-sequence sites an MTP verify's K rows run (`ms_qkv_apply_lora`,
+    /// `ms_o_proj_lora`): they have no pair fallback and fold nothing without a slot buffer.
+    MultiSeq,
+}
+
+/// 2026-10-03: The `count`-row slot buffer a step of one sequence uploads, or `None` for the
+/// installed-pair path: only a request that resolves to the active adapter, on sites with a pair
+/// fallback, takes the pair. Multi-sequence sites always get their rows' slots, or the attention
+/// would run without the adapter (the active-adapter MTP verify did until 2026-10-03).
+pub fn uniform_seq_slots(
+    adapter_slot: i32,
+    active: i32,
+    count: usize,
+    sites: LoraSites,
+) -> Option<Vec<i32>> {
+    let resolved = if adapter_slot >= 0 {
+        adapter_slot
+    } else {
+        active
+    };
+    if sites == LoraSites::PairFallback && resolved == active {
+        return None;
+    }
+    Some(build_seq_slot_host(
+        &vec![adapter_slot; count],
+        count,
+        active,
+    ))
+}
+
 /// 2026-09-25: Values of the `[max_loras]` f32 scale table: entry `k` is
 /// adapter `k`'s `scaling()` (alpha/r, or alpha/√r under rsLoRA), 0.0 for
 /// `k >= adapters.len()`.

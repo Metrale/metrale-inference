@@ -202,7 +202,45 @@ fn a_state_declared_with_another_kinds_lifetime_is_refused() {
         (
             "kind = \"paged_kv\"\nlifetime = \"model\"",
             "kind = \"paged_kv\"\nlifetime = \"forever\"",
-            "is not model, sequence or verify",
+            "is not model, sequence, verify or snapshot",
+        ),
+        (
+            "kind = \"prefix_snapshot\"\nlifetime = \"snapshot\"",
+            "kind = \"prefix_snapshot\"\nlifetime = \"sequence\"",
+            "lives `snapshot`, not `sequence`",
+        ),
+    ] {
+        let e = mutated(dense, from, to);
+        assert!(e.contains(want), "`{to}`: {e}");
+    }
+}
+
+/// 2026-10-02: A cache kind outside the vocabulary is refused by name with the known kinds; a
+/// copy names a state of its own block; a cache no layer node may touch; and a non-copy kind
+/// may not name a state to copy.
+#[test]
+fn an_unknown_or_misused_cache_kind_is_refused() {
+    let dense = "qwen3.8/qwen3.8-27b-nvfp4-unsloth";
+    for (from, to, want) in [
+        (
+            "id = \"prefix_h\"\nkind = \"prefix_snapshot\"",
+            "id = \"prefix_h\"\nkind = \"acceptance_cache\"",
+            "kind `acceptance_cache` is not one of recurrent, paged_kv, prefix_snapshot",
+        ),
+        (
+            "kind = \"prefix_snapshot\"\nlifetime = \"snapshot\"\nformat = \"f32\"\nof = \"h\"",
+            "kind = \"prefix_snapshot\"\nlifetime = \"snapshot\"\nformat = \"f32\"\nof = \"hh\"",
+            "`of = \"hh\"` names no state of the block",
+        ),
+        (
+            "kind = \"carry_stash\"\nlifetime = \"verify\"\nformat = \"u32\"\nshape = \"1\"",
+            "kind = \"carry_stash\"\nlifetime = \"verify\"\nformat = \"u32\"\nof = \"h\"",
+            "a carry_stash state copies no state",
+        ),
+        (
+            "state = { conv = \"update\" }",
+            "state = { conv = \"update\", prefix_conv = \"read\" }",
+            "a prefix_snapshot cache is touched by no layer node",
         ),
     ] {
         let e = mutated(dense, from, to);

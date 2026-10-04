@@ -244,5 +244,8 @@ impl Recipe {
 }
 
 #[cfg(test)]
+#[path = "moe_ladder_tests.rs"]
+mod moe_ladder_tests;
+#[cfg(test)]
 #[path = "recipe_tests.rs"]
 mod tests;

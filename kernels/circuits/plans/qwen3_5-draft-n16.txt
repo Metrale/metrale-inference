@@ -2,34 +2,60 @@
 # recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth
 # checkpoint: unsloth/Qwen3.8-27B-NVFP4
 # target: gb10/qwen3.8-27b/nvfp4
-# settings: decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 875fa7469f5323a566c1c6b5c63ae261e14d5a2996723bbd1d5a4b55f81001b8
 groups: 25  launches: 40  edges: 0 fused, 28 materialized
 inputs: l63.dense_ffn.y bf16
 == mtp_in
 g0000 draft.mtp_in [embed] (host) reference rule=embed_row_copy writes={e:bf16}
+  embed: - -> [gather bf16] -> bf16
 g0001 draft.mtp_in [embed_norm] norm::rms_norm reference rule=draft_rms_norm writes={en:bf16} compute=memory
+  embed_norm: bf16 -> [compute f32] -> bf16
 g0002 draft.mtp_in [hidden_norm] norm::rms_norm reference rule=draft_rms_norm writes={hn:bf16} compute=memory
+  hidden_norm: bf16 -> [compute f32] -> bf16
 g0003 draft.mtp_in [concat] residual_add::bf16_concat x16 reference rule=draft_concat_rows writes={cat:bf16} compute=memory
+  concat: bf16,bf16 -> [move bf16] -> bf16
 g0004 draft.mtp_in [fc] dense_gemv_bf16_tc::dense_gemv_bf16_tc16 reference rule=draft_dense_gemv_tc16 writes={h0:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+  fc: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0005 draft.attn [input_norm] norm::rms_norm reference rule=draft_rms_norm writes={xn:bf16} compute=memory
+  input_norm: bf16 -> [compute f32] -> bf16
 g0006 draft.attn [q] dense_gemv_bf16_tc::dense_gemv_bf16_tc16 reference rule=draft_dense_gemv_tc16 writes={qg:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+  q: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0007 draft.attn [q_split] ssm_preprocess::deinterleave_qg reference rule=deinterleave_qg writes={q:bf16,gate:bf16} compute=memory
+  q_split: bf16 -> [move bf16] -> bf16,bf16
 g0008 draft.attn [k] dense_gemv_bf16_tc::dense_gemv_bf16_tc16 reference rule=draft_dense_gemv_tc16 writes={k:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+  k: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0009 draft.attn [v] dense_gemv_bf16_tc::dense_gemv_bf16_tc16 reference rule=draft_dense_gemv_tc16 writes={v:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+  v: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0010 draft.attn [q_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={qn:bf16} compute=memory
+  q_norm: bf16 -> [compute f32] -> bf16
 g0011 draft.attn [k_norm] norm::rms_norm_strided reference rule=qk_norm_strided writes={kn:bf16} compute=memory
+  k_norm: bf16 -> [compute f32] -> bf16
 g0012 draft.attn [rope] rope::rope_forward_strided reference rule=rope_strided writes={qr:bf16,kr:bf16} compute=memory
+  rope: bf16,bf16 -> [compute f32] -> bf16,bf16
 g0013 draft.attn [kv_write] reshape_and_cache::reshape_and_cache_flash reference rule=kv_write_bf16 compute=memory
+  kv_write: bf16,bf16 -> [cache bf16] -> -
 g0014 draft.attn [attend] paged_decode::paged_decode_attn reference rule=paged_attention_bf16 writes={a:bf16} compute=cuda_core
+  attend: bf16,bf16,bf16 -> [cache bf16 | scores f32 | softmax f32 | accumulate f32] -> bf16
 g0015 draft.attn [gate_mul] residual_add::sigmoid_gate_mul_batched reference rule=sigmoid_gate_mul_batched writes={ag:bf16} compute=memory
+  gate_mul: bf16,bf16 -> [compute f32] -> bf16
 g0016 draft.attn [o] dense_gemv_bf16_tc::dense_gemv_bf16_tc16 reference rule=draft_dense_gemv_tc16 writes={o:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+  o: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0017 draft.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
+  add: bf16,bf16 -> [compute f32] -> bf16
+  post_norm: f32 (rule) -> [compute f32] -> bf16
 g0018 draft.dense_ffn [gate_up] dense_gemv_bf16_tc::dense_gemv_bf16_tc16 + dense_gemv_bf16_tc::dense_gemv_bf16_tc16 reference rule=draft_dense_gate_up_tc16 writes={gu:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+  gate_up: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0019 draft.dense_ffn [act] moe_silu_mul::moe_silu_mul reference rule=silu_mul_rows writes={act:bf16} compute=memory
+  act: bf16 -> [compute f32] -> bf16
 g0020 draft.dense_ffn [down] dense_gemv_bf16_tc::dense_gemv_bf16_tc16 reference rule=draft_dense_gemv_tc16 writes={d:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+  down: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0021 draft.dense_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16} compute=memory
+  add: bf16,bf16 -> [compute f32] -> bf16
 g0022 draft.mtp_out [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16} compute=memory
+  final_norm: bf16 -> [compute f32] -> bf16
 g0023 draft.mtp_out [lm_head] w4a16_gemv_tc::w4a16_gemv_tc16 reference rule=draft_lm_head_tc16 writes={logits:bf16} compute=tensor_core:mma.sync.m16n8k16.bf16
+  lm_head: bf16 -> [act bf16 | weight nvfp4/g16->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16
 g0024 draft.mtp_out [argmax] argmax::argmax_bf16_batch_lp reference rule=draft_argmax_batch_lp writes={token:i32} compute=memory
+  argmax: bf16 -> [compare bf16] -> i32

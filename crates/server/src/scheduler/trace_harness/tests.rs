@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use super::runner::run_scenario;
+use super::runner::{Scenario, run_scenario};
 use super::scenarios;
 
 /// 2026-09-25: The scheduler keys its spill directory on the process id
@@ -22,13 +22,22 @@ pub(super) fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/scheduler/trace_harness/golden")
 }
 
-fn check(name: &str) {
-    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let sc = scenarios::all()
+fn scenario(name: &str) -> Scenario {
+    scenarios::all()
         .into_iter()
         .find(|s| s.name == name)
-        .unwrap_or_else(|| panic!("no scenario {name}"));
-    let live = run_scenario(&sc).join("\n") + "\n";
+        .unwrap_or_else(|| panic!("no scenario {name}"))
+}
+
+fn check(name: &str) {
+    check_against_golden(&scenario(name));
+}
+
+/// 2026-10-03: `sc`'s live trace must equal the golden of the scenario it is named after.
+fn check_against_golden(sc: &Scenario) {
+    let name = sc.name;
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let live = run_scenario(sc).join("\n") + "\n";
     let path = golden_dir().join(format!("{name}.trace"));
     let golden = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("golden {} unreadable: {e}", path.display()));
@@ -88,6 +97,17 @@ golden_tests! {
     trace_slai_policy => "slai_policy",
     trace_watchdog_rollback => "watchdog_rollback",
     trace_host_logits_paths => "host_logits_paths",
+}
+
+/// 2026-10-03: D15 (CI run 36999630203). The inbox closes while the loop is applying the
+/// rotation, so the close is visible to that tick's shutdown check; the harness used to close
+/// it only after the rotation ack, which races the same check. A tick that applied a rotation
+/// must not end the loop, so the trace is the golden one either way.
+#[test]
+fn trace_lora_rotation_with_the_inbox_closed_during_the_rotation() {
+    let mut sc = scenario("lora_rotation_at_quiescence");
+    sc.opts.close_inbox_at = Some("set_active_lora(");
+    check_against_golden(&sc);
 }
 
 #[test]

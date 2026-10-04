@@ -39,7 +39,9 @@ fn an_unknown_name_is_reported_not_zeroed() {
 
 #[test]
 fn syntax_errors_are_refused() {
-    for s in ["", "a+", "*a", "0", "a*0", "Hidden", "a-b", "a**b", "2x"] {
+    for s in [
+        "", "a+", "*a", "0", "a*0", "Hidden", "a-b", "a**b", "2x", "a/0", "4/2", "a/b", "a/2/2",
+    ] {
         assert!(
             matches!(DimExpr::parse(s), Err(DimError::Syntax(_))),
             "{s:?} parsed"
@@ -59,4 +61,13 @@ fn overflow_is_an_error() {
         DimExpr::parse("big+1").unwrap().eval(&d),
         Err(DimError::Overflow("big+1".into()))
     );
+}
+
+/// 2026-10-02: `name/lit` divides the dim by the literal, rounding up, and names the dim.
+#[test]
+fn a_ceil_division_rounds_up_and_names_its_dim() {
+    let e = DimExpr::parse("n*head_dim/100*4").unwrap();
+    assert_eq!(e.eval(&dims()), Ok(3 * 3 * 4));
+    assert_eq!(e.names().collect::<Vec<_>>(), ["n", "head_dim"]);
+    assert_eq!(DimExpr::parse("q_heads/24").unwrap().eval(&dims()), Ok(1));
 }

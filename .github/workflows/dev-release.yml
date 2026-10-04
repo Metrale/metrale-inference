@@ -186,7 +186,7 @@ jobs:
           echo "publishing $count artifact(s)"
           find dist -type f | sort
 
-      # 2026-09-27: The launch recipes, as ci.yml's `recipes (advisory)` job
+      # 2026-09-27: The launch recipes, as ci.yml's `recipes` job
       # checked them against this commit's own `met`: recipes.tar.gz,
       # serve-options.json and index.json, each with a .sha256. Taken from that
       # run rather than rebuilt, so what is attached is what was checked. A
@@ -265,8 +265,8 @@ jobs:
               echo "with \`index.json\` (each recipe's id, path and sha256) and"
               echo "\`serve-options.json\` (the \`met serve\` flag surface they were checked"
               echo "against). \`index.json\` is also a recipe cache: saved as"
-              echo "\`~/.metrale/metrale-recipes/index.json\`, it pins \`met benchmark\` to"
-              echo "these recipes until the next \`met sync-recipes\`."
+              echo "\`~/.metrale/metrale-recipes/index.json\`, it is what \`met\`'s recipe"
+              echo "library and launches read until the next \`met sync-recipes\`."
             fi
           } > notes.md
           gh release create "$BUILD" \

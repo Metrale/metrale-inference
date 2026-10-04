@@ -144,10 +144,13 @@ pub(super) fn step_verify_k4_batched(
         while num_accepted < k_drafts && drafts[num_accepted] == v[num_accepted] {
             num_accepted += 1;
         }
+        // 2026-10-02: a prompt-lookup copy is not the drafter's work: it stays
+        // out of the drafter's accept statistics, which feed the adaptive rung.
+        let drafter_drafts = copy_in_flight(a) == 0;
         // 2026-09-25: per-position draft match, scored for every position
         // whether or not the accept chain stopped earlier. The counters have
         // three positions, so only 3-draft sequences record them.
-        if k_drafts == 3 {
+        if drafter_drafts && k_drafts == 3 {
             crate::scheduler::verify_k4_step::stats::k4_record_positional(
                 sched,
                 drafts[0] == v[0],
@@ -158,14 +161,16 @@ pub(super) fn step_verify_k4_batched(
         }
         // 2026-09-25: accept telemetry bucketed by batch width, recorded for
         // every `k_drafts`; `METRALE_MTP_ACCEPT_DEBUG` gates its log lines.
-        sched.accept.record(
-            &sched.rung,
-            sched.levers.mtp_accept_debug,
-            n,
-            k_drafts,
-            drafts[0] == v[0],
-            num_accepted,
-        );
+        if drafter_drafts {
+            sched.accept.record(
+                &sched.rung,
+                sched.levers.mtp_accept_debug,
+                n,
+                k_drafts,
+                drafts[0] == v[0],
+                num_accepted,
+            );
+        }
         let verify_lps = if let Some(top_logprobs) = a.top_logprobs {
             extract_verify_logprobs(model, &v, top_logprobs, off[i])
         } else {
@@ -302,7 +307,8 @@ pub(super) fn step_verify_k4_batched(
     let mut groups_batched = 0usize;
     // 2026-09-25: draft confidences (the D-Cut ranking key) are requested
     // only when D-Cut is on.
-    let want_conf = sched.levers.dcut_enabled;
+    let want_conf = sched.levers.dcut_enabled
+        || metrale_model_layers::speculative::draft_stop::draft_stop_logprob().is_some();
     let mut conf: Vec<Vec<f32>> = Vec::new();
     let group_cap = model.mtp_propose_batch_max().max(1);
     if pending.len() >= 2 && group_cap >= 2 && sched.levers.mtp_batch_propose {

@@ -233,3 +233,30 @@ fn select_routed_pair_by_global_index_and_module() {
     assert!(select_routed_pair(&layers, 2, LoraModule::KProj).is_none());
     assert!(select_routed_pair(&layers, 99, LoraModule::KProj).is_none());
 }
+
+/// 2026-10-03: The active-adapter MTP verify ran its attention without the adapter: its K rows go
+/// through the multi-sequence sites, which fold nothing without a slot buffer, and it uploaded
+/// none for a request resolving to the active adapter.
+#[test]
+fn multi_sequence_sites_always_get_slots_and_pair_sites_only_off_the_active_adapter() {
+    let active = 2;
+    for slot in [-1, active] {
+        assert_eq!(
+            uniform_seq_slots(slot, active, 1, LoraSites::PairFallback),
+            None
+        );
+        assert_eq!(
+            uniform_seq_slots(slot, active, 4, LoraSites::MultiSeq),
+            Some(vec![active; 4]),
+            "slot {slot}"
+        );
+    }
+    assert_eq!(
+        uniform_seq_slots(0, active, 1, LoraSites::PairFallback),
+        Some(vec![0])
+    );
+    assert_eq!(
+        uniform_seq_slots(0, active, 3, LoraSites::MultiSeq),
+        Some(vec![0; 3])
+    );
+}
