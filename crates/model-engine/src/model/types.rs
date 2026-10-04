@@ -166,7 +166,8 @@ pub struct TransformerModel {
     /// 2026-09-25: CUDA graphs for n=1 decode, keyed by `seq.slot_idx`. A
     /// captured graph has the slot's SSM `h_state`/`conv_state` pointers baked
     /// in as kernel arguments, so it is only replayed for the same slot.
-    pub(super) decode_graph: Mutex<std::collections::HashMap<usize, GraphHandle>>,
+    pub(super) decode_graph:
+        Mutex<std::collections::HashMap<super::trait_impl::SlotGraphKey, GraphHandle>>,
     /// 2026-09-25: CUDA graphs for batched decode, keyed by the per-row SSM pool
     /// slot vector (`trait_impl/decode_graph_key.rs`). Value =
     /// `(graph, last_use_tick)`; the `u64` beside the map is the tick counter.
@@ -298,11 +299,14 @@ pub struct TransformerModel {
     pub(super) dflash_kgamma: usize,
     /// 2026-09-25: CUDA graphs for K=2 verify, keyed by `seq.slot_idx` for the
     /// same reason as `decode_graph`.
-    pub(super) verify2_graph: Mutex<std::collections::HashMap<usize, GraphHandle>>,
+    pub(super) verify2_graph:
+        Mutex<std::collections::HashMap<super::trait_impl::SlotGraphKey, GraphHandle>>,
     /// 2026-09-25: CUDA graphs for K=3 verify, keyed by `seq.slot_idx`.
-    pub(super) verify3_graph: Mutex<std::collections::HashMap<usize, GraphHandle>>,
+    pub(super) verify3_graph:
+        Mutex<std::collections::HashMap<super::trait_impl::SlotGraphKey, GraphHandle>>,
     /// 2026-09-25: CUDA graphs for K=4 verify, keyed by `seq.slot_idx`.
-    pub(super) verify4_graph: Mutex<std::collections::HashMap<usize, GraphHandle>>,
+    pub(super) verify4_graph:
+        Mutex<std::collections::HashMap<super::trait_impl::SlotGraphKey, GraphHandle>>,
     /// 2026-09-25: CUDA graphs for the batched verify (`verify_e.rs`), keyed by
     /// `verify_key::verify_graph_key`: each sequence's `(ssm slot, row count)`
     /// in dispatch order, then a sentinel word for the WY-tables-present and
