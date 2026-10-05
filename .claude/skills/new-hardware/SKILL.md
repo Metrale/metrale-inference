@@ -50,6 +50,15 @@ hardware -> first model (the best-scoped one) -> improvement loop until it wins 
 Pick the first model by least work: the one whose formats the class runs natively or by an
 existing fallback, with the fewest "novel" ops on the Venn. The target file names the order.
 
+**The meta-goal: the Latent Kernel Blueprint** (`references/lkb.md`). Parameterize hardware
+and kernel differences until an invariant kernel basis emerges (algorithm vs schedule), so
+agents work against it instead of writing kernels. Its registry is `KERNEL_FAMILIES.toml`; a
+pattern is promoted into it once two hardware/model points use it byte-identically with no
+regression; everything else is named residual. **A shrinking residual means the LKB is
+converging.** Every campaign records LKB coverage, residual, parameterization yield, TTBP,
+TTPV and zero-day readiness in its ledger, and its exit report states "Promoted into the LKB:
+..." and "Residual delta: ...".
+
 **Standing objective: less code.** A new class is the moment duplication is cheapest to remove,
 because the second point of every parameter is now in view. Every bring-up PR states a
 **code-deleted tally** (lines and files removed, lines added) and the parameterizations behind
@@ -70,6 +79,7 @@ Detail lives in the references; read each when its step comes up:
 | `references/bit-parity.md` | the three parity tiers, when the loop may start, TTBP and TTPV |
 | `references/speed-and-energy.md` | why speed does not imply energy, the arithmetic, energy accounting, trade-off levers |
 | `references/two-axis-venn.md` | the Venn on both axes, the five classes, ranking |
+| `references/lkb.md` | the Latent Kernel Blueprint: families, parameter kinds (incl. numerics), evidence, promotion, residual, convergence metrics |
 | `references/parameterization.md` | the standing objective, hardware facts as data, the stability gate, the tally |
 | `references/bring-up-order.md` | the ordered bring-up, fastest first, with commands |
 | `references/improvement-loop.md` | the loop after the baseline, its exit and stop conditions |

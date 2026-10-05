@@ -90,6 +90,10 @@ The loop ends at the first of:
 3. **the time budget** the target file states for the model (its "Loop budget" line; every
    target file states one at campaign start).
 
+Every exit (criterion met, or escalation) reports the LKB convergence lines
+(`references/lkb.md`): `Promoted into the LKB: ...` and `Residual delta: ...`, with LKB coverage
+and its measured part before and after, and updates the ledger.
+
 When 2 or 3 fires, **escalate** to whoever owns the campaign with: which objective is won and
 which is not (speed, energy, both, neither, per rung); the current scoreboard; the profile of the
 worst losing rung; the levers tried, kept and discarded, with their deltas; and the best lever

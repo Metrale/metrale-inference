@@ -25,6 +25,14 @@
 #   levers_kept, levers_discarded      one short name per lever, with the PR or commit
 #   loc_added, loc_removed             lines added and removed by the campaign's PRs
 #   loc_removed_by_parameterization    the part of loc_removed a parameterization deleted
+#   LKB convergence (references/lkb.md), each at campaign start and now:
+#   lkb_coverage_pct_start, lkb_coverage_pct      share of the step (C1 / C16 / C128) run by
+#                      LKB-registered families on the class, as "C1/C16/C128"
+#   lkb_measured_pct_start, lkb_measured_pct      the part of it inside the evidence envelope
+#   residual_count_start, residual_loc_start, residual_count, residual_loc
+#                      the class's hardware-specific kernels (own sources, shadows, copies)
+#   promoted           families, points, policies or numerics points promoted into the LKB
+#   zero_day_ttbp_h    for a model added on already-supported hardware: its TTBP (0.0 otherwise)
 #   evidence           where the records are (PR comments, files in the tree)
 #   notes              one line
 
@@ -54,6 +62,16 @@ levers_discarded = []
 loc_added = 0
 loc_removed = 0
 loc_removed_by_parameterization = 0
+lkb_coverage_pct_start = "100/100/100"
+lkb_coverage_pct = "100/100/100"
+lkb_measured_pct_start = "0/0/0"
+lkb_measured_pct = "0/0/0"
+residual_count_start = 17
+residual_loc_start = 4062
+residual_count = 17
+residual_loc = 4062
+promoted = []
+zero_day_ttbp_h = 0.0
 evidence = "the campaign PR, Hardware Beachhead Campaign: H100"
 notes = "campaign opened with code-free preparation only; nothing has run on an H100"
 
@@ -83,6 +101,16 @@ levers_discarded = []
 loc_added = 0
 loc_removed = 0
 loc_removed_by_parameterization = 0
+lkb_coverage_pct_start = ""
+lkb_coverage_pct = ""
+lkb_measured_pct_start = ""
+lkb_measured_pct = ""
+residual_count_start = 17
+residual_loc_start = 4062
+residual_count = 17
+residual_loc = 4062
+promoted = []
+zero_day_ttbp_h = 0.0
 evidence = ""
 notes = "starts after the 27B is certified"
 
@@ -112,5 +140,15 @@ levers_discarded = []
 loc_added = 0
 loc_removed = 0
 loc_removed_by_parameterization = 0
+lkb_coverage_pct_start = ""
+lkb_coverage_pct = ""
+lkb_measured_pct_start = ""
+lkb_measured_pct = ""
+residual_count_start = 17
+residual_loc_start = 4062
+residual_count = 17
+residual_loc = 4062
+promoted = []
+zero_day_ttbp_h = 0.0
 evidence = ""
 notes = "starts after the 35B FP8 is certified"
