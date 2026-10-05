@@ -18,6 +18,9 @@
 #   same-box A/B with no speed and no energy regression, with no accuracy gate
 #   (docs/adr/0018-relations-become-defaults-on-bytes-speed-and-energy.md). A `when` key that
 #   gates only `bit_identical` rules is the compiler's choice, never a recipe's (ADR-0019).
+# - 2026-10-05: A pattern element's `params = { <key> = "<value>" }` requires the node's circuit
+#   params to equal them: a kernel written for one architecture variant (a softmax router top-k)
+#   never lowers another (a sigmoid-with-bias router), whatever its formats.
 # - A `when` key must be stated by every policy (kernels/circuits/INSTANCES.toml); a rule is
 #   never selected under a setting it does not name.
 # - Priorities: 200 opt-in (`differs`) rules, 110 multi-row multi-op arms over their per-row
@@ -1791,7 +1794,7 @@ cite = "ml/mtp_head/forward_batch_ffn.rs:132 (GroupedRouting::Batched); ml/moe/f
 
 [[rule]]
 id = "moe_topk_rows_sort"
-pattern = [{ op = "top_k" }]
+pattern = [{ op = "top_k", params = { scoring = "softmax" } }]
 kernels = [
   { module = "moe_topk", func = "moe_topk_softmax_rows" },
   { module = "moe_fp8_grouped_sort", func = "moe_fp8_grouped_sort" },
@@ -1807,7 +1810,7 @@ cite = "ml/moe/forward_fp8_grouped_router.rs:138 (moe_topk_softmax_rows: the low
 
 [[rule]]
 id = "moe_topk_rows_sort_draft"
-pattern = [{ op = "top_k" }]
+pattern = [{ op = "top_k", params = { scoring = "softmax" } }]
 kernels = [
   { module = "moe_topk", func = "moe_topk_softmax_rows" },
   { module = "moe_fp8_grouped_sort", func = "moe_fp8_grouped_sort" },
@@ -1823,7 +1826,7 @@ cite = "ml/moe/forward_fp8_grouped_router.rs:138; ml/moe/forward_fp8_grouped_dec
 
 [[rule]]
 id = "moe_topk_batched_sort_draft"
-pattern = [{ op = "top_k" }]
+pattern = [{ op = "top_k", params = { scoring = "softmax" } }]
 kernels = [
   { module = "moe_topk", func = "moe_topk_softmax_batched" },
   { module = "moe_fp8_grouped_sort", func = "moe_fp8_grouped_sort" },
@@ -1980,7 +1983,7 @@ cite = "ml/moe/forward/route.rs:13-37 (decode_gate_gemv: dense_gemv without an N
 
 [[rule]]
 id = "moe_topk_softmax_draft_bf16"
-pattern = [{ op = "top_k" }]
+pattern = [{ op = "top_k", params = { scoring = "softmax" } }]
 kernels = [{ module = "moe_topk", func = "moe_topk_softmax" }]
 repeat = "once"
 emitter = "moe_topk"
@@ -2019,7 +2022,7 @@ cite = "ml/moe/forward_bf16_grouped_decode.rs:103-111 (GroupedRouting::PerRow); 
 
 [[rule]]
 id = "moe_topk_rows_sort_draft_bf16"
-pattern = [{ op = "top_k" }]
+pattern = [{ op = "top_k", params = { scoring = "softmax" } }]
 kernels = [
   { module = "moe_topk", func = "moe_topk_softmax_rows" },
   { module = "moe_fp8_grouped_sort", func = "moe_fp8_grouped_sort" },

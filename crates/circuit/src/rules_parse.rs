@@ -101,6 +101,8 @@ struct PatternFile {
     steps: BTreeMap<String, String>,
     #[serde(default)]
     departs: bool,
+    #[serde(default)]
+    params: BTreeMap<String, String>,
 }
 
 /// 2026-09-28: Parse FUSIONS.toml text into rules, in file order. 2026-09-30: A file that
@@ -391,5 +393,6 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         holds: fmt(&p.holds)?,
         steps,
         departs: p.departs,
+        params: p.params.clone(),
     })
 }

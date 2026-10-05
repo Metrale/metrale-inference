@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-05: Block families shared across architectures (book/src/architecture/lab.md): blocks
+# more than one circuit uses, parameterized by the including circuit's dims. A circuit takes them
+# with `include = ["transformer"]`. Today: the dense SwiGLU FFN of the Qwen3.5 dense hybrid
+# (qwen3_5.toml) and of dense GQA (dense_gqa.toml), which had identical copies.
+#
+# Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
+# Invariants:
+# - A block here reads only dims every including circuit declares (`hidden`, `inter`) and binds
+#   checkpoint tensors through `{L}`, the including circuit's layer module path.
+# - A block name defined here and in an including circuit is a load error.
+
+schema = 1
+description = "Shared block families: dense SwiGLU FFN"
+
+[block.dense_ffn]
+stream_in = "x"
+stream_out = "y"
+
+[[block.dense_ffn.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+
+[[block.dense_ffn.node]]
+id = "gate_up"
+op = "linear"
+role = "gate_up"
+in = ["xn"]
+out = [{ edge = "gu", format = "bf16", shape = "n x inter*2" }]
+binding = ["{L}.mlp.gate_proj", "{L}.mlp.up_proj"]
+
+[[block.dense_ffn.node]]
+id = "act"
+op = "silu_mul"
+in = ["gu"]
+out = [{ edge = "act", format = "bf16", shape = "n x inter" }]
+
+[[block.dense_ffn.node]]
+id = "down"
+op = "linear"
+role = "down"
+in = ["act"]
+out = [{ edge = "d", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.down_proj"]
+
+[[block.dense_ffn.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "d"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
