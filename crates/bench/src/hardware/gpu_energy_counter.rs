@@ -7,8 +7,8 @@
 //! boundary scrapes per measured window. Never linked into this crate: the
 //! scrape goes over the HTTP connection `metrale-bench` already holds to the
 //! target, reusing [`crate::http::get_text`] and the spec-cost benchmark's
-//! Prometheus reader ([`crate::benchmarks::spec_cost::prom::Scrape`],
-//! [`crate::benchmarks::spec_cost::cell::ENERGY_METRIC`]) rather than a
+//! Prometheus reader (`crate::benchmarks::spec_cost::prom::Scrape`,
+//! `crate::benchmarks::spec_cost::cell::ENERGY_METRIC`) rather than a
 //! second copy of either.
 //!
 //! This is a SECOND, independently-sourced energy reading beside
@@ -33,7 +33,7 @@
 //!   describe, alongside duplicating `get_text` and the Prometheus parser
 //!   that had since landed on main for spec-cost.
 //! - A scrape that cannot reach the endpoint, or whose body carries no
-//!   [`ENERGY_METRIC`] line, is absent — never a fabricated 0.0.
+//!   `ENERGY_METRIC` line, is absent — never a fabricated 0.0.
 //! - A window whose end reading is not strictly above its start reading is
 //!   `None`, never a negative or wrapped-around joule count: the server
 //!   already corrects for driver-level counter resets, so a non-increase
@@ -52,7 +52,7 @@ use crate::plugin::TargetEndpoint;
 /// 2026-10-05: Bound on the one GET this module ever makes per boundary.
 const SCRAPE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// 2026-10-05: One `/metrics` scrape's [`ENERGY_METRIC`] value, millijoules.
+/// 2026-10-05: One `/metrics` scrape's `ENERGY_METRIC` value, millijoules.
 /// `None` on any failure (unreachable endpoint, non-200, the metric absent,
 /// an unparseable page) — logged by nothing here; a caller that wants a line
 /// for its run log reads the `None` and says so itself, the same way
