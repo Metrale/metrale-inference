@@ -21,7 +21,7 @@ use crate::format::Format;
 use crate::rules::{KernelId, Mode};
 use crate::venn::{Class, Run};
 
-pub(super) const W4A16: &str = r#"
+pub(crate) const W4A16: &str = r#"
 schema = 1
 checkpoint = "toy"
 tier = "nvfp4"

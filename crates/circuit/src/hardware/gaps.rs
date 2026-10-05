@@ -54,6 +54,9 @@ pub struct GapRow {
     pub detail: String,
     /// 2026-09-30: Differing parameters of the primary finding.
     pub diffs: Vec<String>,
+    /// 2026-10-05: A placeholder group plans it: no rule of the class lowers it, whatever
+    /// family implements the op ([`crate::lkb`] counts it as uncovered).
+    pub placeholder: bool,
 }
 
 /// 2026-09-30: A group that loops per row.
@@ -254,6 +257,7 @@ pub fn gap_table(
                 family,
                 detail,
                 diffs,
+                placeholder: novel,
             },
         );
     }

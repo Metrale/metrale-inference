@@ -13,7 +13,8 @@ warn_within = "7d"
 # 2026-09-26: The four clap definition files are listed because their `///` comments are the
 # `--help` text, which must not carry a date (owner decision 2026-09-25); their few plain
 # comments are still swept, just not enforced. 2026-10-03: so are the `serve_args_*.rs` flag
-# groups split out of serve_args.rs (`serve_args_prompt_lookup.rs`).
+# groups split out of serve_args.rs (`serve_args_prompt_lookup.rs`). 2026-10-05: and the
+# `met circuit` argument structs split out of cli.rs (`circuit_lkb_args.rs`).
 # 2026-09-26: `gen_parity_fixtures.py` is listed because `scoring_tests.rs`
 # pins its SHA-256 (include_str!), so its comments are data for that test.
 # 2026-09-27: `recipes/` is listed because a launch recipe's comments are part of the recipe
@@ -34,6 +35,7 @@ exempt_paths = '''(?x)
   | ^crates/server/src/cli\.rs$
   | ^crates/server/src/cli/(serve_args|bench_args|bench_certify/args)(\.rs$|/)
   | ^crates/server/src/cli/serve_args_[a-z_]+\.rs$
+  | ^crates/server/src/cli/circuit_[a-z_]+_args\.rs$
   | ^target/
   | (^|/)node_modules/
 '''
