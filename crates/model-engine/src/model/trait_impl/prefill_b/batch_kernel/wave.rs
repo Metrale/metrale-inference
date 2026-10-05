@@ -30,6 +30,11 @@ use super::super::midchunk_capture::MidCapturePlan;
 use super::{KernelBatchResult, SetupFlow, StreamSetup};
 use crate::traits::PrefillSlice;
 
+/// 2026-10-05: Snapshot slots a wave stream may reserve: the in-pass captures at the tail
+/// boundary and one block below it (`prepare_cut_capture`, `prepare_midchunk_capture`), and the
+/// checkpoint a non-last chunk saves at its end (`prefill_b_save_checkpoint`).
+const WAVE_SNAPSHOT_SLOTS_PER_STREAM: usize = 3;
+
 /// 2026-10-05: `METRALE_PREFILL_WAVE_EXACT` (presence): batched prefill waves run the exact
 /// wave instead of the kernel-batched layers. Read once per process.
 pub(in crate::model) fn wave_exact_enabled() -> bool {
@@ -78,6 +83,13 @@ impl TransformerModel {
 
     /// 2026-10-05: The exact wave prefill of `streams` (see the module header). `NotAdmitted`
     /// leaves every sequence unchanged.
+    ///
+    /// A stream's in-pass SSM captures split its GDN recurrence at the captured points, so
+    /// its bits depend on how many snapshot slots its plan got. A single-stream pass reserves
+    /// them alone, a wave for all its streams at once. So the streams run as consecutive
+    /// sub-waves, each no larger than the free slots cover at
+    /// [`WAVE_SNAPSHOT_SLOTS_PER_STREAM`] per stream, after cached snapshots are reclaimed
+    /// for it; a sub-wave of one stream, or one the setup declines, runs single-stream.
     pub(in crate::model) fn prefill_batch_chunk_wave_exact(
         &self,
         streams: &mut [PrefillSlice<'_>],
@@ -87,6 +99,40 @@ impl TransformerModel {
         if !self.wave_exact_admits(streams) {
             return Ok(KernelBatchResult::NotAdmitted);
         }
+        if !self.ssm_snapshots.is_enabled() {
+            return self.wave_exact_pass(streams, stream, row_base);
+        }
+        let n = streams.len();
+        let mut logits = Vec::with_capacity(n);
+        let mut a = 0;
+        while a < n {
+            let want = WAVE_SNAPSHOT_SLOTS_PER_STREAM * (n - a);
+            let free = self.reclaim_snapshot_slots(want, &mut self.kv_cache.lock());
+            let k = (free / WAVE_SNAPSHOT_SLOTS_PER_STREAM).clamp(1, n - a);
+            let sub = &mut streams[a..a + k];
+            let done = if k > 1 {
+                self.wave_exact_pass(sub, stream, row_base + a)?
+            } else {
+                KernelBatchResult::NotAdmitted
+            };
+            match done {
+                KernelBatchResult::Completed(v) => logits.extend(v),
+                KernelBatchResult::NotAdmitted => {
+                    logits.extend(self.prefill_streams_serial(sub, row_base + a, stream))
+                }
+            }
+            a += k;
+        }
+        Ok(KernelBatchResult::Completed(logits))
+    }
+
+    /// 2026-10-05: One exact wave over all of `streams`.
+    fn wave_exact_pass(
+        &self,
+        streams: &mut [PrefillSlice<'_>],
+        stream: u64,
+        row_base: usize,
+    ) -> Result<KernelBatchResult> {
         let n = streams.len();
         let is_last_chunk = streams[0].is_last_chunk;
         let h = self.config.hidden_size;

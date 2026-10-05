@@ -180,8 +180,18 @@ impl TransformerModel {
             stream
         };
 
-        let mut logits_out: Vec<DevicePtr> = Vec::with_capacity(n);
+        Ok(self.prefill_streams_serial(streams, row_base, stream))
+    }
 
+    /// 2026-10-05: The streams one after another, each by the single-stream prefill into logits
+    /// row `row_base + i`. A stream that fails gets NULL logits and the others go on.
+    pub(in crate::model) fn prefill_streams_serial(
+        &self,
+        streams: &mut [PrefillSlice<'_>],
+        row_base: usize,
+        stream: u64,
+    ) -> Vec<DevicePtr> {
+        let mut logits_out: Vec<DevicePtr> = Vec::with_capacity(streams.len());
         for (stream_idx, slice) in streams.iter_mut().enumerate() {
             // 2026-09-25: A stream whose prefill fails gets NULL logits and the
             // loop goes on with the others.
@@ -214,7 +224,6 @@ impl TransformerModel {
                 }
             }
         }
-
-        Ok(logits_out)
+        logits_out
     }
 }
