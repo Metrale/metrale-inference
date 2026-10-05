@@ -243,13 +243,55 @@ fn main() -> Result<()> {
             }
             eprintln!();
         }
+        // 2026-10-05: The row tiles' N tile: each `_w2` entry (32 columns, 2 warps) against its
+        // 4-warp twin on the row-major weight, byte for byte, at every row count it serves.
+        for (four, two, rows) in [
+            ("w4a16_tc_rows_16", "w4a16_tc_rows_16_w2", 16usize),
+            ("w4a16_tc_rows_32", "w4a16_tc_rows_32_w2", 32),
+            ("w4a16_tc_rows_64", "w4a16_tc_rows_64_w2", 64),
+        ] {
+            let (Ok(k4), Ok(k2)) = (
+                g.kernel("w4a16_tc_rows", four),
+                g.kernel("w4a16_tc_rows", two),
+            ) else {
+                eprintln!("SKIP {four}/{two}: not in this target's module set");
+                continue;
+            };
+            for m in [1, rows / 2 + 1, rows] {
+                let mut out = Vec::new();
+                for (kh, cols) in [(k4, 64u32), (k2, 32)] {
+                    g.memset(c_test, 0, m * n * 2)?;
+                    KernelLaunch::new(g, kh)
+                        .grid([div_ceil(n as u32, cols), 1, 1])
+                        .block([cols * 2, 1, 1])
+                        .arg_ptr(a)
+                        .arg_ptr(b)
+                        .arg_ptr(bs)
+                        .arg_f32(0.01)
+                        .arg_ptr(c_test)
+                        .arg_u32(m as u32)
+                        .arg_u32(n as u32)
+                        .arg_u32(k as u32)
+                        .arg_u32(k as u32)
+                        .arg_u32(n as u32)
+                        .launch(0)?;
+                    g.synchronize(0)?;
+                    out.push(dn_raw(g, c_test, m * n)?);
+                }
+                xclass_digest::print(&format!("w4a16-tc-rows n={n} k={k} m={m} {four}"), &out[0]);
+                let same = out[0] == out[1];
+                tiles_identical &= same;
+                eprintln!("{label}  m={m:<3} {two} vs {four}: bytes identical={same}");
+            }
+        }
         for p in [a, b, bs, bt, bst, c_base, c_test] {
             let _ = g.free(p);
         }
     }
 
     eprintln!(
-        "W4A16 tile byte identity (every transposed tile vs w4a16_gemm_t_p3, same rows): {}",
+        "W4A16 tile byte identity (every transposed tile vs w4a16_gemm_t_p3, and every tc_rows \
+         N tile vs its 4-warp twin, same rows): {}",
         if tiles_identical {
             "IDENTICAL"
         } else {

@@ -14,7 +14,10 @@
 // - Activations are staged per load group in shared memory times P::ACT_LIFT; a row's sum
 //   order is fixed by K alone and its MMA column reads only its own activations, so a row's
 //   output bits do not depend on M, on the other rows, on NT or on G.
-// - Grid (N / TR_COLS, 1, 1), block TR_THREADS, static shared memory only.
+// - Grid (N / TR_COLS, 1, 1), block TR_THREADS, static shared memory only; with W warps per
+//   block (WARPS, the N tile of 16 * WARPS columns) grid (N / (16 * WARPS), 1, 1) and block
+//   32 * WARPS. Each warp's 16 columns are computed the same way whatever WARPS is, so it changes
+//   no output bit.
 
 #pragma once
 
@@ -38,7 +41,7 @@ __device__ __forceinline__ void tr_mma_bf16(float* c, const unsigned int* a, uns
 // lane runs), one group ahead; each group's activations are loaded one group ahead into
 // registers and stored (times P::ACT_LIFT) into the other shared buffer after the current
 // group's MMAs. G changes only how loads are batched, never the arithmetic.
-template <class P, int NT, int G, bool RAGGED = false>
+template <class P, int NT, int G, bool RAGGED = false, int WARPS = TR_WARPS>
 __device__ __forceinline__ void tr_block(
     const __nv_bfloat16* __restrict__ A, const typename P::Mat& W, __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc,
@@ -52,10 +55,11 @@ __device__ __forceinline__ void tr_block(
     constexpr int RS = GK * 2 + 16;
     constexpr int ROWS = 8 * NT;
     constexpr int U4 = ROWS * GK * 2 / 16;
-    constexpr int PER = (U4 + TR_THREADS - 1) / TR_THREADS;
+    constexpr int THREADS = WARPS * 32;
+    constexpr int PER = (U4 + THREADS - 1) / THREADS;
     __shared__ __align__(16) unsigned char xs[2][ROWS * RS];
     const unsigned int warp = threadIdx.x >> 5, lane = threadIdx.x & 31, g = lane >> 2, t = lane & 3;
-    const unsigned int f0 = col_block * TR_COLS + warp * 16;
+    const unsigned int f0 = col_block * (WARPS * 16) + warp * 16;
     const unsigned int ngroups = K / GK;
     const unsigned int nt_live = (M + 7) / 8;
     const __nv_bfloat162 liftx2 = __floats2bfloat162_rn(P::ACT_LIFT, P::ACT_LIFT);
@@ -64,7 +68,7 @@ __device__ __forceinline__ void tr_block(
     auto group_load = [&](unsigned int gi) {
         #pragma unroll
         for (int i = 0; i < PER; i++) {
-            const unsigned int u = threadIdx.x + i * TR_THREADS;
+            const unsigned int u = threadIdx.x + i * THREADS;
             const unsigned int row = u / (GK / 8), col = u % (GK / 8);
             xr[i] = (u < U4 && row < M)
                 ? *(const uint4*)(A + (unsigned long long)row * lda + gi * GK + col * 8)
@@ -74,7 +78,7 @@ __device__ __forceinline__ void tr_block(
     auto group_store = [&](unsigned int buf) {
         #pragma unroll
         for (int i = 0; i < PER; i++) {
-            const unsigned int u = threadIdx.x + i * TR_THREADS;
+            const unsigned int u = threadIdx.x + i * THREADS;
             if (u >= U4) break;
             const unsigned int row = u / (GK / 8), col = u % (GK / 8);
             if (P::ACT_LIFT != 1.0f) {

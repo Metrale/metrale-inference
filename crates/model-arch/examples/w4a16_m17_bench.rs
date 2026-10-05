@@ -55,11 +55,12 @@ enum Geom {
     /// 2026-09-25: `w4a16_gemv_batch*`, which take the same arguments as the
     /// GEMMs (`A, B_packed, B_scale, scale2, C, M, N, K`).
     GemvN4,
-    /// 2026-10-05: `w4a16_tc_rows_{16,32,64}` (`ops::w4a16_tc_rows`): grid ceil(N / 64), block
-    /// 128, arguments `A, packed, scale, s2, C, M, N, K, lda, ldc`; at most `rows` rows per
-    /// launch, so a wider M is skipped.
+    /// 2026-10-05: `w4a16_tc_rows_{16,32,64}[_w2]` (`ops::w4a16_tc_rows`): grid ceil(N / cols),
+    /// block 2 * cols (64 columns: 4 warps; `_w2`, 32 columns: 2 warps), arguments `A, packed,
+    /// scale, s2, C, M, N, K, lda, ldc`; at most `rows` rows per launch, so a wider M is skipped.
     TcRows {
         rows: u32,
+        cols: u32,
     },
 }
 
@@ -70,7 +71,7 @@ fn grid_for(g: Geom, m: u32, n: u32) -> [u32; 3] {
         Geom::N128M128 => [div_ceil(n, 128), div_ceil(m, 128), 1],
         Geom::N128M128W256 => [div_ceil(n, 128), div_ceil(m, 128), 1],
         Geom::GemvN4 => [div_ceil(n, 4), 1, 1],
-        Geom::TcRows { .. } => [div_ceil(n, 64), 1, 1],
+        Geom::TcRows { cols, .. } => [div_ceil(n, cols), 1, 1],
     }
 }
 
@@ -87,10 +88,10 @@ fn launch(
     n: u32,
     k: u32,
 ) -> Result<()> {
-    if let Geom::TcRows { .. } = geom {
+    if let Geom::TcRows { cols, .. } = geom {
         return KernelLaunch::new(g, k_h)
             .grid(grid_for(geom, m, n))
-            .block([128, 1, 1])
+            .block([cols * 2, 1, 1])
             .arg_ptr(a)
             .arg_ptr(b)
             .arg_ptr(b_scale)
@@ -185,17 +186,32 @@ fn main() -> Result<()> {
         (
             "w4a16_tc_rows_16",
             "w4a16_tc_rows_16",
-            Geom::TcRows { rows: 16 },
+            Geom::TcRows { rows: 16, cols: 64 },
         ),
         (
             "w4a16_tc_rows_32",
             "w4a16_tc_rows_32",
-            Geom::TcRows { rows: 32 },
+            Geom::TcRows { rows: 32, cols: 64 },
         ),
         (
             "w4a16_tc_rows_64",
             "w4a16_tc_rows_64",
-            Geom::TcRows { rows: 64 },
+            Geom::TcRows { rows: 64, cols: 64 },
+        ),
+        (
+            "w4a16_tc_rows_16_w2",
+            "w4a16_tc_rows_16_w2",
+            Geom::TcRows { rows: 16, cols: 32 },
+        ),
+        (
+            "w4a16_tc_rows_32_w2",
+            "w4a16_tc_rows_32_w2",
+            Geom::TcRows { rows: 32, cols: 32 },
+        ),
+        (
+            "w4a16_tc_rows_64_w2",
+            "w4a16_tc_rows_64_w2",
+            Geom::TcRows { rows: 64, cols: 32 },
         ),
         ("w4a16_gemv_batch4", "w4a16_gemv_batch4", Geom::GemvN4),
         ("w4a16_gemv_batch8", "w4a16_gemv_batch8", Geom::GemvN4),
@@ -254,7 +270,7 @@ fn main() -> Result<()> {
 
         for &(kname, kh, geom) in &kernels {
             for &m in M_SWEEP {
-                if matches!(geom, Geom::TcRows { rows } if m > rows) {
+                if matches!(geom, Geom::TcRows { rows, .. } if m > rows) {
                     continue;
                 }
                 for _ in 0..WARMUP {

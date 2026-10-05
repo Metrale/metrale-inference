@@ -1656,6 +1656,9 @@ kernels = [
   "w4a16_tc_rows::w4a16_tc_rows_16",
   "w4a16_tc_rows::w4a16_tc_rows_32",
   "w4a16_tc_rows::w4a16_tc_rows_64",
+  "w4a16_tc_rows::w4a16_tc_rows_16_w2",
+  "w4a16_tc_rows::w4a16_tc_rows_32_w2",
+  "w4a16_tc_rows::w4a16_tc_rows_64_w2",
 ]
 rows = [1, 64]
 # 2026-10-02: The FP8 point's pipeline (the NVFP4 point overrides it below): an E4M3 byte becomes
@@ -1678,9 +1681,11 @@ values = { weight = "nvfp4/g16" }
 how = "instantiation"
 files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu"]
 # 2026-10-02: BF16(E2M1 x E4M3) exactly per weight, the FP32 sum times s2 once per output
-# (Nvfp4G16 `out`), BF16 logits; only the declared NVFP4 head uses it.
+# (Nvfp4G16 `out`), BF16 logits. 2026-10-05: also the NVFP4 dense-FFN projections of 9..=128
+# rows where a class declares `ffn_w4a16_tc_rows_max_m` (hopper), in 64-row calls. The `_w2`
+# entry points are the 32-column N tile (2 warps), same bits, picked from the class's sm_count.
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
-pipeline.linear = "uninstantiated"
+pipeline.linear = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 
 [[family]]
 id = "moe_nvfp4_grouped"
