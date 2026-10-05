@@ -267,6 +267,7 @@ impl Qwen3AttentionLayer {
             paged_decode_splitk_k: dec.paged_decode_splitk_k,
             paged_decode_reduce_k: dec.paged_decode_reduce_k,
             paged_decode_bf16_gqa_k: dec.paged_decode_bf16_gqa_k,
+            paged_decode_bf16_gqa4_k: dec.paged_decode_bf16_gqa4_k,
             paged_decode_fp8_gqa_k: dec.paged_decode_fp8_gqa_k,
             paged_decode_splitk_hopper_k: dec.paged_decode_splitk_hopper_k,
             paged_decode_reduce_hopper_k: dec.paged_decode_reduce_hopper_k,

@@ -13,13 +13,14 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::super::super::Qwen3AttentionLayer;
 use super::super::splitk_dispatch::{self, SplitkPlan};
 use crate::layers::ops;
+use metrale_kernels::attn_splitk;
 
 /// 2026-09-28: The BF16 paged-decode kernel a shape takes, with its logged split count.
 pub(super) enum Bf16DecodeRoute {
     /// 2026-09-28: The split-K pair.
     Splitk(splitk_dispatch::SplitkPair, u32),
-    /// 2026-09-28: The GQA-packed non-split kernel.
-    Gqa(metrale_gpu_runtime::gpu::KernelHandle, u32),
+    /// 2026-09-28: The GQA-packed non-split kernel, 2026-10-05: with its heads per CTA.
+    Gqa(metrale_gpu_runtime::gpu::KernelHandle, u32, u32),
     /// 2026-09-28: The unpacked non-split kernel (the 512-wide one for heads over 256).
     Plain(metrale_gpu_runtime::gpu::KernelHandle, u32),
 }
@@ -87,7 +88,7 @@ impl Qwen3AttentionLayer {
                     stream,
                 )
             }
-            Bf16DecodeRoute::Gqa(gqa_k, num_splits) => {
+            Bf16DecodeRoute::Gqa(gqa_k, pack_width, num_splits) => {
                 splitk_dispatch::log_decode_route(
                     splitk_dispatch::RouteArm::Bf16,
                     splitk_dispatch::ROUTE_GQA_BF16,
@@ -111,6 +112,7 @@ impl Qwen3AttentionLayer {
                     inv_sqrt_d,
                     q_stride,
                     sliding,
+                    pack_width,
                     stream,
                 )
             }
@@ -176,7 +178,18 @@ impl Qwen3AttentionLayer {
             num_kv_heads,
             head_dim,
         ) {
-            return Bf16DecodeRoute::Gqa(gqa_k, num_splits);
+            return Bf16DecodeRoute::Gqa(gqa_k, attn_splitk::DECODE_GQA_PACK_WIDTH, num_splits);
+        }
+        // 2026-10-05: The four-wide packed entry point for a group ratio of 8 at 12 rows or more
+        // (`gqa_pack4_kernel`): two CTAs per KV head, the unpacked kernel's bits.
+        if let Some(gqa4_k) = splitk_dispatch::gqa_pack4_kernel(
+            self.paged_decode_bf16_gqa4_k,
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            num_seqs,
+        ) {
+            return Bf16DecodeRoute::Gqa(gqa4_k, attn_splitk::DECODE_GQA_PACK4_WIDTH, num_splits);
         }
         // 2026-09-25: The HDIM=512 kernel for heads wider than 256, when loaded.
         let kernel = if head_dim > 256 && self.paged_decode_512_k.0 != 0 {

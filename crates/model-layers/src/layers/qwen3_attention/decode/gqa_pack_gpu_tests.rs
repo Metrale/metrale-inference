@@ -268,6 +268,7 @@ fn gqa_packed_decode_is_byte_identical_to_unpacked() {
                 inv_sqrt_d,
                 NQ * HD,
                 case.sliding,
+                attn_splitk::DECODE_GQA_PACK_WIDTH,
                 stream,
             )
             .unwrap();

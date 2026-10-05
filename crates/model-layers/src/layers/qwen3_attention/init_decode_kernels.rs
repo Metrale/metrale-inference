@@ -58,6 +58,8 @@ pub(super) struct DecodeKernels {
     pub(super) paged_decode_splitk_k: Option<KernelHandle>,
     pub(super) paged_decode_reduce_k: Option<KernelHandle>,
     pub(super) paged_decode_bf16_gqa_k: Option<KernelHandle>,
+    /// 2026-10-05: The four-wide BF16 packed entry point (`paged_decode_attn_bf16_gqa4`).
+    pub(super) paged_decode_bf16_gqa4_k: Option<KernelHandle>,
     pub(super) paged_decode_fp8_gqa_k: Option<KernelHandle>,
     pub(super) paged_decode_splitk_hopper_k: Option<KernelHandle>,
     pub(super) paged_decode_reduce_hopper_k: Option<KernelHandle>,
@@ -270,6 +272,11 @@ impl DecodeKernels {
                 gpu,
                 "paged_decode_attn_bf16_gqa",
                 "paged_decode_attn_bf16_gqa",
+            )),
+            paged_decode_bf16_gqa4_k: present(super::super::try_target_kernel(
+                gpu,
+                "paged_decode_attn_bf16_gqa",
+                "paged_decode_attn_bf16_gqa4",
             )),
             paged_decode_fp8_gqa_k: present(super::super::try_target_kernel(
                 gpu,

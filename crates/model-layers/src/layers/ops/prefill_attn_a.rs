@@ -399,7 +399,10 @@ pub fn paged_decode_attn_fp8(
 /// `head_dim == DECODE_GQA_PACK_HEAD_DIM`. The kernel derives its heads as
 /// `kv_head * PD_GQA + h` and sizes its register arrays from `PD_GQA`. The
 /// caller checks both with `metrale_kernels::attn_splitk::gqa_pack_shape_ok`
-/// and uses the unpacked kernel when they fail.
+/// and uses the unpacked kernel when they fail. 2026-10-05: `pack_width` is the
+/// entry point's heads per CTA (`DECODE_GQA_PACK_WIDTH`, or `DECODE_GQA_PACK4_WIDTH`
+/// for `paged_decode_attn_bf16_gqa4`, `gqa_pack4_shape_ok`); the grid's x extent is
+/// `num_q_heads / pack_width`.
 #[allow(clippy::too_many_arguments)]
 pub fn paged_decode_attn_bf16_gqa(
     gpu: &dyn GpuBackend,
@@ -419,10 +422,15 @@ pub fn paged_decode_attn_bf16_gqa(
     inv_sqrt_d: f32,
     q_stride: u32,
     sliding_window: u32,
+    pack_width: u32,
     stream: u64,
 ) -> Result<()> {
+    anyhow::ensure!(
+        pack_width > 0 && num_q_heads.is_multiple_of(pack_width),
+        "paged_decode_attn_bf16_gqa: {num_q_heads} q heads are not whole CTAs of {pack_width}"
+    );
     KernelLaunch::new(gpu, kernel)
-        .grid([num_kv_heads, num_seqs, 1])
+        .grid([num_q_heads / pack_width, num_seqs, 1])
         .block([256, 1, 1])
         .arg_ptr(q)
         .arg_ptr(k_cache)

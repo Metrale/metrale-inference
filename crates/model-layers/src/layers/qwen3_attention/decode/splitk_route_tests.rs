@@ -78,7 +78,9 @@ fn the_line_names_its_lever_and_leads_with_the_kernel() {
     );
 }
 
-use super::splitk_dispatch::{ROUTE_GQA_BF16, ROUTE_GQA_FP8, gqa_pack_kernel, gqa_pack_route};
+use super::splitk_dispatch::{
+    ROUTE_GQA_BF16, ROUTE_GQA_FP8, gqa_pack_kernel, gqa_pack_route, gqa_pack4_route,
+};
 use metrale_gpu_runtime::gpu::KernelHandle;
 
 /// 2026-09-25: The packed arms name their own kernel in the route line, at `num_splits=1`. The
@@ -137,6 +139,22 @@ fn the_packed_route_needs_the_lever_the_shape_and_the_handle() {
     );
 
     assert!(gqa_pack_route(true, None, 24, 4, 256).is_none());
+}
+
+/// 2026-10-05: The four-wide route needs the same lever, its own shape and row count, and the
+/// handle; the 6-wide shape does not reach it.
+#[test]
+fn the_four_wide_route_needs_the_lever_the_shape_the_rows_and_the_handle() {
+    let handle = Some(KernelHandle(9));
+    let m = metrale_kernels::attn_splitk::DECODE_GQA_PACK4_MIN_SEQS;
+    assert!(gqa_pack4_route(false, handle, 16, 2, 256, m).is_none());
+    assert!(gqa_pack4_route(true, handle, 16, 2, 256, m - 1).is_none());
+    assert!(gqa_pack4_route(true, handle, 24, 4, 256, m).is_none());
+    assert!(gqa_pack4_route(true, None, 16, 2, 256, m).is_none());
+    assert_eq!(
+        gqa_pack4_route(true, handle, 16, 2, 256, m).map(|h| h.0),
+        Some(9)
+    );
 }
 
 /// 2026-09-25: Reads `kernels/gb10/common/<name>`, relative to this crate's manifest dir.
