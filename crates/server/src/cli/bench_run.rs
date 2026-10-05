@@ -58,6 +58,13 @@ pub async fn dispatch(args: BenchmarkArgs) -> Result<()> {
             std::process::exit(code);
         }
         BenchmarkCommand::Card(a) => super::bench_card::card_cmd(a),
+        BenchmarkCommand::Preflight(a) => {
+            let code = super::bench_preflight::preflight_cmd(a).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
         BenchmarkCommand::Certify(a) => {
             let code = super::bench_certify::certify_cmd(a).await?;
             if code != 0 {
