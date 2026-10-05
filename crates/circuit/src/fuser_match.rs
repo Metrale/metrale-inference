@@ -31,6 +31,7 @@ pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
         && reads_quantized_as(c, p, n)
         && p.layer_kind
             .is_none_or(|k| n.layer.is_some_and(|i| c.layer_kinds[i] == k))
+        && p.params.iter().all(|(k, v)| n.params.get(k) == Some(v))
 }
 
 /// 2026-09-30: A node that reads a quantized activation (an `act_quant` output) matches only

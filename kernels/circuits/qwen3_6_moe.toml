@@ -60,7 +60,7 @@ out = [
   { edge = "topk_w", format = "f32", shape = "n x top_k" },
   { edge = "topk_id", format = "i32", shape = "n x top_k" },
 ]
-params = { top_k = "8", scoring = "softmax" }
+params = { top_k = "{top_k}", scoring = "softmax" }
 
 [[block.moe_ffn.node]]
 id = "experts_gate_up"

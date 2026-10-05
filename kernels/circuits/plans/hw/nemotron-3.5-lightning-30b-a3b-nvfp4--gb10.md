@@ -139,8 +139,6 @@ Rule `deinterleave_qg` left out of this plan: l0.mamba.split (rule `deinterleave
 
 Rule `moe_router_rows` left out of this plan: l1.moe.router (rule `moe_router_rows`, family `dense_bf16`): out[0]: required f32, declared bf16.
 
-Rule `moe_topk_rows_sort` left out of this plan: l1.moe.top_k (rule `moe_topk_rows_sort`, family `moe_topk`): in[0]: required f32, declared bf16.
-
 | site | kernels | rule | groups |
 |---|---|---|---:|
 | attn [add] | residual_add::bf16_residual_add | ffn_residual_add | 6 |

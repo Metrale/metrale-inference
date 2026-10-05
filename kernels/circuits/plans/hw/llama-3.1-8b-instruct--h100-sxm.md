@@ -70,7 +70,7 @@ None.
 
 ## Fused plan: decode n=1
 
-digest f294e905408ad584fec120f47efdd3e6ecf991b4338496ab881b22d1b10d513d; 389 groups, 163 launches, 0 fused edges, 224 placeholder (novel) groups. The full plan: `met circuit plan --checkpoint NousResearch/Meta-Llama-3.1-8B-Instruct --hardware h100-sxm --precision declared --format plan`.
+digest 24fcfac52edfbc16cf00bbdd96e93b6d5c481d6d76028c7c67e6e2870537866e; 389 groups, 163 launches, 0 fused edges, 224 placeholder (novel) groups. The full plan: `met circuit plan --checkpoint NousResearch/Meta-Llama-3.1-8B-Instruct --hardware h100-sxm --precision declared --format plan`.
 
 | site | kernels | rule | groups |
 |---|---|---|---:|
@@ -83,12 +83,12 @@ digest f294e905408ad584fec120f47efdd3e6ecf991b4338496ab881b22d1b10d513d; 389 gro
 | attn [q] | (novel) | novel.linear:q | 32 |
 | attn [rope] | rope_mrope_interleaved::rope_forward_mrope_interleaved | rope_mrope_interleaved | 32 |
 | attn [v] | (novel) | novel.linear:v | 32 |
+| dense_ffn [act] | (novel) | novel.silu_mul | 32 |
+| dense_ffn [add,input_norm] | residual_add_rms_norm_exact::residual_add_rms_norm_exact | cross_layer_add_norm | 31 |
+| dense_ffn [add] | residual_add::bf16_residual_add | ffn_residual_add | 1 |
+| dense_ffn [down] | (novel) | novel.linear:down | 32 |
+| dense_ffn [gate_up] | (novel) | novel.linear:gate_up | 32 |
 | embed [embed] | (embed_copy) | embed_row_copy | 1 |
-| ffn [act] | (novel) | novel.silu_mul | 32 |
-| ffn [add,input_norm] | residual_add_rms_norm_exact::residual_add_rms_norm_exact | cross_layer_add_norm | 31 |
-| ffn [add] | residual_add::bf16_residual_add | ffn_residual_add | 1 |
-| ffn [down] | (novel) | novel.linear:down | 32 |
-| ffn [gate_up] | (novel) | novel.linear:gate_up | 32 |
 | head [argmax] | (host_sampling) | argmax_host | 1 |
 | head [final_norm] | norm::rms_norm | final_norm | 1 |
 | head [lm_head] | gemv::dense_gemv_bf16 | lm_head_bf16_gemv | 1 |
@@ -103,20 +103,20 @@ Estimated step 4.644 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
-| ffn.gate_up | linear:gate_up | bf16 x bf16 | native bf16 | 32 | 48.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| ffn.down | linear:down | bf16 x bf16 | native bf16 | 32 | 24.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dense_ffn.gate_up | linear:gate_up | bf16 x bf16 | native bf16 | 32 | 48.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dense_ffn.down | linear:down | bf16 x bf16 | native bf16 | 32 | 24.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 32 | 6.9% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.q | linear:q | bf16 x bf16 | native bf16 | 32 | 6.9% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 6.8% | Shared, unmeasured | dense_bf16 | gemv::dense_gemv_bf16 rule=lm_head_bf16_gemv compute=cuda_core |
 | attn.attend | paged_attention | - | - | 32 | 3.5% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 32 | 1.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 32 | 1.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| ffn.act | silu_mul | - | - | 32 | 0.0% | Shared, unmeasured | w4a16_gemv | no rule of this class covers it; family `w4a16_gemv` implements the op |
+| dense_ffn.act | silu_mul | - | - | 32 | 0.0% | Shared, unmeasured | w4a16_gemv | no rule of this class covers it; family `w4a16_gemv` implements the op |
 | attn.add | residual_add | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
-| ffn.add | residual_add | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| dense_ffn.add | residual_add | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | attn.rope | rope | - | - | 32 | 0.0% | Shared, unmeasured | rope | rope_mrope_interleaved::rope_forward_mrope_interleaved rule=rope_mrope_interleaved compute=memory |
 | attn.input_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
-| ffn.post_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| dense_ffn.post_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.kv_write | kv_write | - | - | 32 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
 | head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
@@ -129,19 +129,19 @@ Estimated step 7.104 ms (roofline projection, unmeasured). Shared 0.0% (measured
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
 | attn.attend | paged_attention | - | - | 32 | 36.1% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
-| ffn.gate_up | linear:gate_up | bf16 x bf16 | native bf16 | 32 | 31.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| ffn.down | linear:down | bf16 x bf16 | native bf16 | 32 | 15.9% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dense_ffn.gate_up | linear:gate_up | bf16 x bf16 | native bf16 | 32 | 31.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dense_ffn.down | linear:down | bf16 x bf16 | native bf16 | 32 | 15.9% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 32 | 4.5% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.q | linear:q | bf16 x bf16 | native bf16 | 32 | 4.5% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 4.4% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 32 | 1.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 32 | 1.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| ffn.act | silu_mul | - | - | 32 | 0.2% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
+| dense_ffn.act | silu_mul | - | - | 32 | 0.2% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
 | attn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
-| ffn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| dense_ffn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | attn.rope | rope | - | - | 32 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
 | attn.input_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
-| ffn.post_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| dense_ffn.post_norm | rms_norm | - | - | 32 | 0.0% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.kv_write | kv_write | - | - | 32 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
 | head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
@@ -154,19 +154,19 @@ Estimated step 25.465 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
 | attn.attend | paged_attention | - | - | 32 | 80.7% | Shared, unmeasured | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
-| ffn.gate_up | linear:gate_up | bf16 x bf16 | native bf16 | 32 | 9.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| ffn.down | linear:down | bf16 x bf16 | native bf16 | 32 | 4.6% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dense_ffn.gate_up | linear:gate_up | bf16 x bf16 | native bf16 | 32 | 9.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dense_ffn.down | linear:down | bf16 x bf16 | native bf16 | 32 | 4.6% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.o | linear:o | bf16 x bf16 | native bf16 | 32 | 1.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.q | linear:q | bf16 x bf16 | native bf16 | 32 | 1.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 1.3% | Shared, unmeasured | dense_bf16 | gemm::dense_gemm_bf16 rule=lm_head_bf16_gemm compute=cuda_core |
-| ffn.act | silu_mul | - | - | 32 | 0.4% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
+| dense_ffn.act | silu_mul | - | - | 32 | 0.4% | Shared, unmeasured | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op |
 | attn.k | linear:k | bf16 x bf16 | native bf16 | 32 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.v | linear:v | bf16 x bf16 | native bf16 | 32 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | attn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
-| ffn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| dense_ffn.add | residual_add | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
 | attn.rope | rope | - | - | 32 | 0.1% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
 | attn.input_norm | rms_norm | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
-| ffn.post_norm | rms_norm | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| dense_ffn.post_norm | rms_norm | - | - | 32 | 0.1% | Shared, unmeasured | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | attn.kv_write | kv_write | - | - | 32 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
 | head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |

@@ -172,6 +172,11 @@ pub struct PatternOp {
     /// legacy runs, e.g. a head kernel that casts its activations): the requirement takes the
     /// stated format instead of refusing it, and the plan marks it `(rule)` as any stated step.
     pub departs: bool,
+    /// 2026-10-05: Node params the element requires, each equal to the node's (an
+    /// architecture variant the kernel implements, e.g. `scoring = "softmax"` on a router
+    /// top-k): a rule never lowers a variant it was not written for (book/src/architecture/
+    /// lab.md).
+    pub params: BTreeMap<String, String>,
 }
 
 /// 2026-09-28: How many times a group's kernels launch per step.

@@ -58,10 +58,16 @@ pub const CHECKPOINTS: [(&str, &str); 2] = [
 ];
 
 /// 2026-09-28: Every block library a circuit can include.
-pub const BLOCKS: [(&str, &str); 1] = [(
-    "qwen3_hybrid",
-    include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
-)];
+pub const BLOCKS: [(&str, &str); 2] = [
+    (
+        "qwen3_hybrid",
+        include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
+    ),
+    (
+        "transformer",
+        include_str!("../../../../kernels/circuits/blocks/transformer.toml"),
+    ),
+];
 
 /// 2026-09-28: FUSIONS.toml per hardware.
 pub const FUSIONS: [(&str, &str); 1] = [(

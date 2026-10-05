@@ -2,7 +2,8 @@
 
 # 2026-09-28: The dense Qwen3.5-architecture circuit (Qwen3.8-27B, `qwen3_5_text`): the shared
 # GatedDeltaNet and full-attention blocks (blocks/qwen3_hybrid.toml), a dense SwiGLU FFN on
-# every layer, the final norm and lm_head, and the one-layer MTP draft head.
+# every layer, the final norm and lm_head, and the one-layer MTP draft head. 2026-10-05: The
+# FFN is the shared `dense_ffn` block of blocks/transformer.toml.
 #
 # Owner: metrale-circuit (crates/circuit/src/circuit_toml.rs is the schema).
 # Invariants:
@@ -18,7 +19,7 @@ arch = "qwen3_5"
 description = "Dense hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, SwiGLU FFN, MTP draft head"
 layer_module = "model.language_model.layers.{i}"
 draft_module = "mtp.layers.0"
-include = ["qwen3_hybrid"]
+include = ["qwen3_hybrid", "transformer"]
 dims = [
   "hidden", "inter", "vocab", "q_heads", "kv_heads", "head_dim",
   "lin_k_heads", "lin_k_dim", "lin_v_heads", "lin_v_dim", "mtp",
@@ -36,42 +37,3 @@ period = 4
 [layout.blocks]
 linear_attention = ["gdn", "dense_ffn"]
 full_attention = ["attn", "dense_ffn"]
-
-[block.dense_ffn]
-stream_in = "x"
-stream_out = "y"
-
-[[block.dense_ffn.node]]
-id = "post_norm"
-op = "rms_norm"
-in = ["x"]
-out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
-binding = ["{L}.post_attention_layernorm"]
-
-[[block.dense_ffn.node]]
-id = "gate_up"
-op = "linear"
-role = "gate_up"
-in = ["xn"]
-out = [{ edge = "gu", format = "bf16", shape = "n x inter*2" }]
-binding = ["{L}.mlp.gate_proj", "{L}.mlp.up_proj"]
-
-[[block.dense_ffn.node]]
-id = "act"
-op = "silu_mul"
-in = ["gu"]
-out = [{ edge = "act", format = "bf16", shape = "n x inter" }]
-
-[[block.dense_ffn.node]]
-id = "down"
-op = "linear"
-role = "down"
-in = ["act"]
-out = [{ edge = "d", format = "bf16", shape = "n x hidden" }]
-binding = ["{L}.mlp.down_proj"]
-
-[[block.dense_ffn.node]]
-id = "add"
-op = "residual_add"
-in = ["x", "d"]
-out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]

@@ -177,6 +177,9 @@ pub(crate) struct CircuitFile {
     /// serves a layer and a draft module).
     #[serde(default)]
     pub draft_variant: BTreeMap<String, Vec<String>>,
+    /// 2026-10-05: The circuit's own blocks; none when every block comes from its libraries
+    /// (`include`), as for a model that is a parameter point of shared block families.
+    #[serde(default)]
     pub block: BTreeMap<String, BlockFile>,
     /// 2026-09-30: The blocks the circuit file itself defines (not its libraries'); only these
     /// must all be used.

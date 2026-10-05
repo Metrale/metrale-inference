@@ -364,3 +364,26 @@ fn the_rules_digest_covers_the_whole_file() {
     assert_ne!(a, crate::digest::rules_digest("schema = 1\n# a comment\n"));
     assert_eq!(a.len(), 64);
 }
+
+// 2026-10-05: Mutation: dropping the `params` check in `fuser_match::fits` lets the guarded
+// rule take a node whose variant it was not written for; requiring params the node lacks.
+#[test]
+fn a_params_guard_matches_only_the_variant_it_names() {
+    let mut c = circuit(1);
+    let act = c.nodes.iter().position(|n| n.id.ends_with(".act")).unwrap();
+    c.nodes[act]
+        .params
+        .insert("variant".into(), "swiglu".into());
+    let guarded = |v: &str| {
+        fused(
+            "act_variant",
+            &format!(r#"{{ op = "silu_mul", params = {{ variant = "{v}" }} }}"#),
+            100,
+        )
+    };
+    let id = c.nodes[act].id.clone();
+    let p = plan(&c, &rules(&guarded("swiglu")), &policy(), 1);
+    assert_eq!(rule_of_node(&c, &p, &id), "act_variant");
+    let p = plan(&c, &rules(&guarded("geglu")), &policy(), 1);
+    assert_ne!(rule_of_node(&c, &p, &id), "act_variant");
+}

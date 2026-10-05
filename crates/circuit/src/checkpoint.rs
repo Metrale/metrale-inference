@@ -141,7 +141,10 @@ const ARCHES: [Arch; 4] = [
 ];
 
 /// 2026-09-30: The block libraries the embedded circuits include.
-const BLOCKS: [(&str, &str); 1] = [("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml"))];
+const BLOCKS: [(&str, &str); 2] = [
+    ("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml")),
+    ("transformer", circuits_file!("blocks/transformer.toml")),
+];
 
 /// 2026-09-30: The embedded config maps, parsed.
 pub fn config_maps() -> Result<Vec<ConfigMap>, ConfigMapError> {
