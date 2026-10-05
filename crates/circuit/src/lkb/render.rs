@@ -141,6 +141,7 @@ pub fn render_markdown(l: &Lkb) -> String {
     laxity_section(&mut s, l);
     promotion_section(&mut s, l);
     numerics_section(&mut s, l);
+    super::single_class::render(&mut s, &l.bundles, &l.single_class);
     s
 }
 
@@ -307,6 +308,7 @@ pub fn render_toml(l: &Lkb) -> String {
     let _ = writeln!(s, "residual_count = {}", l.residual.len());
     let _ = writeln!(s, "residual_loc = {}", l.residual_lines());
     let _ = writeln!(s, "residual_copy_points = {}", l.copy_points.len());
+    let _ = writeln!(s, "residual_single_class = {}", l.single_class.len());
     if !l.laxity.is_empty() {
         let us: Vec<String> = l
             .laxity

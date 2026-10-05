@@ -70,6 +70,53 @@ context_tokens = 4096
 
 # 2026-09-29: Host-side groups, embedding, norms, residuals, elementwise.
 
+# 2026-10-05: Atom bundles (crates/circuit/src/venn/atoms.rs): the MMA instruction, how each
+# operand reaches it, the schedule, the shared-memory swizzle and where the accumulator lives,
+# written from the kernel sources. A family point chooses one through a policy parameter of
+# `atom_bundle`. `classes`: gb10 and the classes that inherit its sources (hopper, b200).
+
+# 2026-10-05: tc_rows.cuh: weights as the MMA's M, loaded global to registers as 16-byte
+# vectors one load group ahead; activations staged in shared memory (16-byte rows, padded, no
+# swizzle), double-buffered; FP32 accumulators in registers.
+[[atom_bundle]]
+id = "mma16816_bf16_rows_smem_act"
+mma = { inst = "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32", m = 16, n = 8, k = 16, scope = "warp" }
+copy = [
+  { operand = "weight", path = "global_to_register", inst = "ld.global (uint4)", bytes = 16 },
+  { operand = "activation", path = "global_to_shared", inst = "ld.global (uint4) + st.shared", bytes = 16 },
+]
+schedule = { kind = "multistage", stages = 2 }
+swizzle = { activation = "none" }
+accumulator = "registers"
+classes = ["gb10", "hopper", "b200"]
+
+# 2026-10-05: moe_grouped_tc.cuh: weights and activations both loaded global to registers as
+# 16-byte vectors, two load groups in flight; no shared-memory operand staging.
+[[atom_bundle]]
+id = "mma16816_bf16_rows_regs"
+mma = { inst = "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32", m = 16, n = 8, k = 16, scope = "warp" }
+copy = [
+  { operand = "weight", path = "global_to_register", inst = "ld.global (uint4)", bytes = 16 },
+  { operand = "activation", path = "global_to_register", inst = "ld.global (uint4)", bytes = 16 },
+]
+schedule = { kind = "multistage", stages = 2 }
+swizzle = {}
+accumulator = "registers"
+classes = ["gb10", "hopper", "b200"]
+
+# 2026-10-05: moe_fp8_grouped_tc_w8a8.cu: the same paths with FP8 operands on the E4M3 MMA.
+[[atom_bundle]]
+id = "mma16832_e4m3_rows_regs"
+mma = { inst = "mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32", m = 16, n = 8, k = 32, scope = "warp" }
+copy = [
+  { operand = "weight", path = "global_to_register", inst = "ld.global (uint4)", bytes = 16 },
+  { operand = "activation", path = "global_to_register", inst = "ld.global (uint4)", bytes = 16 },
+]
+schedule = { kind = "multistage", stages = 2 }
+swizzle = {}
+accumulator = "registers"
+classes = ["gb10", "hopper", "b200"]
+
 # 2026-10-05: Declared reduction trees (crates/circuit/src/venn/reduction.rs;
 # book/src/appendix/lkb-math.md, section 2), written from the kernel source and its launch. A
 # family's `reduction` table names the tree each kernel runs; a kernel it does not name is
@@ -1663,12 +1710,16 @@ from = { expert_gate_up = "param:weight_layout", expert_down = "param:weight_lay
 # NVFP4 tables repacked in place at load (model-layers moe/nvfp4_lean.rs), which the loader picks
 # when the layer qualifies, not a circuit.
 absent = "row_major"
+[[family.param]]
+name = "atoms"
+kind = "policy"
+of = "atom_bundle"
 [[family.point]]
-values = { weight = "fp8/block128x128", activation = "bf16", epilogue = "silu_mul", down_input = "f32", weight_layout = "row_major" }
+values = { weight = "fp8/block128x128", activation = "bf16", epilogue = "silu_mul", down_input = "f32", weight_layout = "row_major", atoms = "mma16816_bf16_rows_regs" }
 how = "instantiation"
 files = ["kernels/gb10/common/moe_grouped_tc.cuh", "kernels/gb10/common/moe_fp8_grouped_tc.cu"]
 [[family.point]]
-values = { weight = "fp8/block128x128", activation = "fp8/g128", epilogue = "silu_mul", down_input = "fp8/g128", weight_layout = "row_major" }
+values = { weight = "fp8/block128x128", activation = "fp8/g128", epilogue = "silu_mul", down_input = "fp8/g128", weight_layout = "row_major", atoms = "mma16832_e4m3_rows_regs" }
 how = "copy"
 files = ["kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu"]
 pipeline.expert_gate_up = { in = ["fp8/g128", "i32"], gather = "fp8/g128", act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
@@ -1676,7 +1727,7 @@ pipeline.expert_down = { in = ["fp8/g128", "i32"], act = "fp8/g128", weight = "f
 pipeline."linear:shared_gate_up" = { in = ["fp8/g128"], act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."linear:shared_down" = { in = ["fp8/g128"], act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
 [[family.point]]
-values = { weight = "nvfp4/g16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16", weight_layout = "row_major" }
+values = { weight = "nvfp4/g16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16", weight_layout = "row_major", atoms = "mma16816_bf16_rows_regs" }
 how = "instantiation"
 files = ["kernels/gb10/common/moe_grouped_tc.cuh", "kernels/gb10/common/moe_nvfp4_grouped_tc.cu"]
 # 2026-10-02: The NVFP4 g16 point (the checkpoint's own experts under `declared`): an E2M1 nibble
@@ -1688,7 +1739,7 @@ pipeline.expert_down = { in = ["bf16", "i32"], act = "bf16", weight = "nvfp4/g16
 pipeline."linear:shared_gate_up" = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."linear:shared_down" = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 [[family.point]]
-values = { weight = "nvfp4/g16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16", weight_layout = "lean" }
+values = { weight = "nvfp4/g16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16", weight_layout = "lean", atoms = "mma16816_bf16_rows_regs" }
 how = "instantiation"
 files = ["kernels/gb10/common/moe_grouped_tc.cuh", "kernels/gb10/common/moe_nvfp4_grouped_tc.cu"]
 # 2026-10-04: The lean NVFP4 point (Nvfp4G16Lean, the `_lean` kernels): the same tables repacked in
@@ -1702,7 +1753,7 @@ pipeline.expert_down = { in = ["bf16", "i32"], act = "bf16", weight = "nvfp4/g16
 pipeline."linear:shared_gate_up" = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."linear:shared_down" = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
 [[family.point]]
-values = { weight = "bf16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16", weight_layout = "row_major" }
+values = { weight = "bf16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16", weight_layout = "row_major", atoms = "mma16816_bf16_rows_regs" }
 how = "instantiation"
 files = ["kernels/gb10/common/moe_grouped_tc.cuh", "kernels/gb10/common/moe_bf16_grouped_tc.cu"]
 # 2026-10-02: The BF16 point (an MTP head excluded from quantization, run grouped in the batched
@@ -1712,11 +1763,11 @@ pipeline.expert_down = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf1
 pipeline."linear:shared_gate_up" = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 pipeline."linear:shared_down" = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 [[family.evidence]]
-point = { weight = "fp8/block128x128", activation = "bf16", epilogue = "silu_mul", down_input = "f32", weight_layout = "row_major" }
+point = { weight = "fp8/block128x128", activation = "bf16", epilogue = "silu_mul", down_input = "f32", weight_layout = "row_major", atoms = "mma16816_bf16_rows_regs" }
 rows = [1, 2, 8, 32, 64]
 microbench = "standalone grouped decode layer (sort, gate+up, down), 256 experts top-8 uniform routing, 4 layers of distinct weights, 2026-09-28: 140 us at M=1, 822 us at M=8, 2280 us at M=32, 3150 us at M=64 (~222 GB/s, 89% of the floor); 30 W vs 43-51 W for the CUDA-core kernel"
 [[family.evidence]]
-point = { weight = "fp8/block128x128", activation = "fp8/g128", epilogue = "silu_mul", down_input = "fp8/g128", weight_layout = "row_major" }
+point = { weight = "fp8/block128x128", activation = "fp8/g128", epilogue = "silu_mul", down_input = "fp8/g128", weight_layout = "row_major", atoms = "mma16832_e4m3_rows_regs" }
 rows = [2, 8, 32]
 microbench = "same bench, W8A8 twin, 2026-09-28: 270 us at M=2, 823 us at M=8, 2266 us at M=32; 28 W"
 
@@ -1752,12 +1803,16 @@ op = [{ op = "linear" }, { op = "lm_head" }]
 name = "weight"
 kind = "policy"
 from = { linear = "weight", lm_head = "weight" }
+[[family.param]]
+name = "atoms"
+kind = "policy"
+of = "atom_bundle"
 [[family.point]]
-values = { weight = "fp8/block128x128" }
+values = { weight = "fp8/block128x128", atoms = "mma16816_bf16_rows_smem_act" }
 how = "instantiation"
 files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w8a16_tc_rows.cu"]
 [[family.point]]
-values = { weight = "nvfp4/g16" }
+values = { weight = "nvfp4/g16", atoms = "mma16816_bf16_rows_smem_act" }
 how = "instantiation"
 files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu"]
 # 2026-10-02: BF16(E2M1 x E4M3) exactly per weight, the FP32 sum times s2 once per output

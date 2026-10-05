@@ -16,6 +16,7 @@
 
 mod laxity;
 mod render;
+mod single_class;
 
 #[cfg(test)]
 mod lkb_tests;
@@ -32,6 +33,7 @@ use crate::venn::{Class, Run};
 
 pub use laxity::{GroupLaxity, PlanLaxity, plan_laxity};
 pub use render::{render_markdown, render_toml, report_section};
+pub use single_class::{SingleClassPoint, single_class_points};
 
 /// 2026-10-05: Coverage of one report run.
 #[derive(Debug, Clone, PartialEq)]
@@ -165,6 +167,10 @@ pub struct Lkb {
     pub promotion: Vec<Candidate>,
     /// 2026-10-05: Per generator used, its kernels' declared trees and parity verdicts.
     pub numerics: Vec<NumericsRow>,
+    /// 2026-10-05: The single-class bucket of the LKB residual ([`single_class_points`]).
+    pub single_class: Vec<SingleClassPoint>,
+    /// 2026-10-05: The atom bundles the class's manifests declare.
+    pub bundles: BTreeMap<String, crate::venn::families::atoms::AtomBundle>,
     /// 2026-10-05: The modelled fusion gain of each report run's plan, in `coverage` order
     /// (filled by [`lkb`]; [`from_report`] leaves it empty).
     pub laxity: Vec<PlanLaxity>,
@@ -294,6 +300,8 @@ pub fn from_report(report: &HwReport, shadows: &BTreeMap<String, String>, comman
         residual,
         promotion: promotion(report, &copy_points),
         numerics: numerics(report),
+        single_class: single_class_points(&resolved.families),
+        bundles: resolved.families.bundles.clone(),
         copy_points,
         laxity: Vec::new(),
         command,
