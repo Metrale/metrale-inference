@@ -792,7 +792,7 @@ max = 0.126
 quant = "nvfp4"
 checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 gate = "concurrency-sweep-moe-nvfp4"
-recipe = "qwen3.6/qwen3.6-35b-a3b-nvfp4"
+recipe = "qwen3.6/qwen3.6-35b-a3b-nvfp4-declared"
 label = "Qwen3.6-35B-A3B MoE NVFP4, published instrument"
 default = true
 status = "unmeasured"
@@ -806,29 +806,39 @@ are their own ids: a required gate has ONE declared subject per box class \
 (check.rs record_is_required_subject), baseline_for refuses two `default = \
 true` checkpoints on one gate, and `bench certify` spawns each REQUIRED id \
 with no --checkpoint, so a variant's floors could never fail a merge. \
-★ UNMEASURED ON PURPOSE: zero records of this checkpoint exist under any \
-.benchmarks/concurrency-sweep*/, and no vLLM one-shot has been measured on \
-the checked-in harness (bench/ladder38/harness_w55_conc_ladder.py or its \
-_w56 energy variant) for this checkpoint either as of 2026-10-04 — only an \
-ad hoc same-box A/B exists (driver_sha256 7b3efab2e6…, which matches NEITHER \
-harness file in this tree), so it cannot stand in as the sanctioned \
-baseline. Per the file header rule, a guessed floor a run could clear would \
-report PASS for something nobody measured, so this entry carries NO metrics \
-table. Lives in gate::coverage::PROMOTION_CANDIDATES until the bootstrap \
-`concurrency-sweep-moe` itself followed is repeated here: (1) re-measure the \
-vLLM NVFP4 leg on the checked-in harness, same box as the Metrale leg; (2) \
-hand-serve this recipe and run `met benchmark run concurrency-sweep-moe-nvfp4 \
---url <it> --model nvidia/Qwen3.6-35B-A3B-NVFP4` three times with zero \
-request errors and zero vacuous cells; (3) cut floors from that curve, \
-status -> \"measured\", and move the gate id to REQUIRED in the same PR. \
+★ RECIPE CORRECTED 2026-10-05 (CIRCUIT-MOE): the gate pointed at \
+`qwen3.6/qwen3.6-35b-a3b-nvfp4`, whose activation_quantization is `adaptive` \
+— that recipe never reaches #108's lean expert decode repack, which keys off \
+activation_quantization=declared, not just weight_quantization=declared. The \
+canonical NVFP4 line is `qwen3.6/qwen3.6-35b-a3b-nvfp4-declared` \
+(activation_quantization now fixed from adaptive to declared in the same PR), \
+matching the owner's checkpoint-declared rule and what MOENVFP4's same-box \
+A/B against vLLM (lean_ab/dgx3, 2026-10-04) actually measured. No gate other \
+than this one serves `nvfp4-declared` as of 2026-10-05, so no existing record \
+is invalidated by this correction. \
+★ UNMEASURED ON PURPOSE: zero Metrale records of this checkpoint exist under \
+any .benchmarks/concurrency-sweep*/. A sanctioned vLLM one-shot baseline on \
+the checked-in harness now DOES exist (bench/baselines/qwen36-35b-a3b-nvfp4/published.json, \
+dgx3, 2026-10-05, this same PR) — it measured vLLM v0.31.0, not the \
+ad hoc same-box A/B's driver (driver_sha256 7b3efab2e6…, which matched \
+NEITHER harness file in this tree). Per the file header rule, a guessed \
+floor a run could clear would report PASS for something nobody measured, so \
+this entry carries NO metrics table. Lives in gate::coverage::PROMOTION_CANDIDATES \
+until the bootstrap `concurrency-sweep-moe` itself followed is repeated \
+here: hand-serve the (now corrected) recipe and run `met benchmark run \
+concurrency-sweep-moe-nvfp4 --url <it> --model nvidia/Qwen3.6-35B-A3B-NVFP4` \
+three times with zero request errors and zero vacuous cells; cut floors from \
+that curve, status -> \"measured\", and move the gate id to REQUIRED in the \
+same PR. \
 ★ THE INSTRUMENT mirrors `concurrency-sweep-moe`'s so one vLLM one-shot can \
 baseline both MoE checkpoints: ISL 128 / OSL 1024, the `essay` request byte \
 for byte, C=1,2,4,8,16. ★ gpu_memory_utilization is pinned to the GB10 \
-ceiling (0.85); every other serve axis (ctx length, KV dtype, scheduler, \
-speculation) is intentionally left to the hand-measurement step below, \
-since no measured parity profile against the official harness exists yet to \
-declare one from — declaring one now would be exactly the guessed-floor \
-mistake this note is written to avoid."""
+ceiling (0.85); every other serve axis comes from the recipe's own declared \
+defaults (ctx 32768, kv_cache_dtype bf16, scheduler slai, num_drafts 1) \
+rather than being restated here, since BENCH.toml's own axes are what the \
+hand-measurement step must actually run against to set honest floors — \
+declaring a SEPARATE profile here, ahead of measurement, would be exactly \
+the guessed-floor mistake this note is written to avoid."""
 
 [benchmarks.serve_overrides]
 gpu_memory_utilization = "0.85"
