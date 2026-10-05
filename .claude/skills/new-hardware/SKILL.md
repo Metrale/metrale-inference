@@ -80,6 +80,7 @@ Detail lives in the references; read each when its step comes up:
 | `references/speed-and-energy.md` | why speed does not imply energy, the arithmetic, energy accounting, trade-off levers |
 | `references/two-axis-venn.md` | the Venn on both axes, the five classes, ranking |
 | `references/lkb.md` | the Latent Kernel Blueprint: families, parameter kinds (incl. numerics), evidence, promotion, residual, convergence metrics |
+| `references/lkb-math.md` | the LKB as engineering rules: parity = same reduction tree, composed error budgets, Para families, fusion gain as laxity, an e-graph fuser experiment |
 | `references/parameterization.md` | the standing objective, hardware facts as data, the stability gate, the tally |
 | `references/bring-up-order.md` | the ordered bring-up, fastest first, with commands |
 | `references/improvement-loop.md` | the loop after the baseline, its exit and stop conditions |

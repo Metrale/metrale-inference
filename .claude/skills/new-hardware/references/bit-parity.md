@@ -41,7 +41,9 @@ All on the new device, all byte-for-byte:
   match rate (identical transcripts, and the first divergence position of the rest), always
   beside a **same-box control** (the reference box against itself on a second fresh serve), so a
   near-tie flip is not mistaken for a defect.
-- **Where cross-hardware bit-exactness IS achievable, require it.** A kernel that runs the same
+- **Where cross-hardware bit-exactness IS achievable, require it** (the criterion: the same
+  reduction bracketing tree, rounding points and contraction, `references/lkb-math.md` §2;
+  derive the tolerance elsewhere with §3). A kernel that runs the same
   source with the same launch shape and reduction order on both classes, with the same compile
   flags (no FMA contraction differences) and no vendor library call, must produce
   byte-identical outputs to the reference box on a fixed input: a microtest whose output hash is

@@ -10,6 +10,10 @@ performance/energy victory (TTPV) toward zero-day model support.
 **A shrinking residual means the LKB is converging.** Every hardware + model campaign should
 leave the hardware-specific residual smaller than it found it.
 
+The same ideas stated as engineering rules grounded in the math (bracketing trees and bit
+parity, composable error budgets, families as parametric morphisms, fusion gain as laxity, an
+equality-saturation fuser experiment): `references/lkb-math.md`.
+
 ## The registry
 
 The LKB is not a new artifact. Its registry is **`kernels/<class>/common/KERNEL_FAMILIES.toml`**
