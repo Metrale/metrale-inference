@@ -117,6 +117,40 @@ swizzle = {}
 accumulator = "registers"
 classes = ["gb10", "hopper", "b200"]
 
+# 2026-10-05: fp8_gemm_t_blockscaled.cu: A and B staged global to shared memory by 16-byte
+# predicated asynchronous copies into unpadded 32-byte rows, fragments read with 32-bit shared
+# loads; a two-stage ring; FP32 accumulators in registers.
+[[atom_bundle]]
+id = "mma16832_e4m3_cpasync_plain"
+mma = { inst = "mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32", m = 16, n = 8, k = 32, scope = "warp" }
+copy = [
+  { operand = "a", path = "global_to_shared", inst = "cp.async.ca.shared.global", bytes = 16 },
+  { operand = "b", path = "global_to_shared", inst = "cp.async.ca.shared.global", bytes = 16 },
+  { operand = "a", path = "shared_to_register", inst = "ld.shared.b32", bytes = 4 },
+  { operand = "b", path = "shared_to_register", inst = "ld.shared.b32", bytes = 4 },
+]
+schedule = { kind = "multistage", stages = 2 }
+swizzle = { a = "none", b = "none" }
+accumulator = "registers"
+classes = ["gb10", "hopper", "b200"]
+
+# 2026-10-05: e4m3_mma_pipe.cuh on gemm_mainloop.cuh: A and B staged global to shared memory by
+# 16-byte asynchronous copies into 64-byte rows under sigma(2, 4, 3), read with ldmatrix x4; a
+# multistage ring (the point states its stages); FP32 accumulators in registers.
+[[atom_bundle]]
+id = "mma16832_e4m3_cpasync_ldsm"
+mma = { inst = "mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32", m = 16, n = 8, k = 32, scope = "warp" }
+copy = [
+  { operand = "a", path = "global_to_shared", inst = "cp.async.cg.shared.global", bytes = 16 },
+  { operand = "b", path = "global_to_shared", inst = "cp.async.cg.shared.global", bytes = 16 },
+  { operand = "a", path = "shared_to_register", inst = "ldmatrix.sync.aligned.m8n8.x4.shared.b16", bytes = 16 },
+  { operand = "b", path = "shared_to_register", inst = "ldmatrix.sync.aligned.m8n8.x4.shared.b16", bytes = 16 },
+]
+schedule = { kind = "multistage", stages = 3 }
+swizzle = { a = "2,4,3", b = "2,4,3" }
+accumulator = "registers"
+classes = ["gb10", "hopper", "b200"]
+
 # 2026-10-05: Declared reduction trees (crates/circuit/src/venn/reduction.rs;
 # book/src/appendix/lkb-math.md, section 2), written from the kernel source and its launch. A
 # family's `reduction` table names the tree each kernel runs; a kernel it does not name is
@@ -140,6 +174,23 @@ split = "none"
 round = ["f32_acc", "rsqrt_f32", "bf16_out"]
 fma = false
 mma = "none"
+
+# 2026-10-05: W8A8 block-scaled GEMM: per output element, one m16n8k32 E4M3 MMA per 32 K values
+# in ascending K into an inner F32 accumulator, folded into the outer one with a_scale * b_scale at
+# every 128-K boundary (fp8_gemm_t_blockscaled.cu; fp8_gemm_blockscaled_pipe.cu states the same
+# order and its microtest checks the two outputs byte for byte).
+[[reduction]]
+id = "e4m3_k32_fold128"
+dim = "K"
+levels = [
+  { level = "mma", width = "32", order = "mma" },
+  { level = "thread", width = "128 / 32", order = "sequential" },
+  { level = "thread", width = "K / 128", order = "sequential" },
+]
+split = "none"
+round = ["f32_acc", "f32_fold", "bf16_out"]
+fma = false
+mma = "mma.sync.m16n8k32.e4m3"
 
 [[family]]
 id = "embed_copy"
@@ -1354,18 +1405,32 @@ description = "FP8 block-128 W8A8 GEMM with its per-128 activation quantizer (Mo
 compute = "tensor_core"
 mma = "mma.sync.m16n8k32.e4m3"
 kernel_compute."per_token_group_quant_fp8::per_token_group_quant_fp8" = { compute = "memory" }
-kernels = ["fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled", "per_token_group_quant_fp8::per_token_group_quant_fp8"]
+kernels = [
+  "fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled", "per_token_group_quant_fp8::per_token_group_quant_fp8",
+  "fp8_gemm_blockscaled_pipe::fp8_gemm_blockscaled_pipe_128x64",
+]
 rows = [1, 65536]
+# 2026-10-05: The two GEMMs are one numerics point on two atom bundles; the pipe is what
+# ops::fp8_gemm_t_blockscaled launches when its module is present.
+reduction = { "fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled" = "e4m3_k32_fold128", "fp8_gemm_blockscaled_pipe::fp8_gemm_blockscaled_pipe_128x64" = "e4m3_k32_fold128" }
 # 2026-10-02: per_token_group_quant_fp8 quantizes the BF16 input per 128 columns (f32 scale,
 # IEEE division, per_token_group_quant_fp8.cu:56-93); after a SiLU the group's SiLU kernel has
 # already quantized the product (moe_silu_mul.cu:132-140).
 pipeline.linear = { in = ["bf16"], act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."linear after silu_mul" = { in = ["fp8/g128"], act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
 op = [{ op = "linear", weight = ["fp8/block128x128"], activation = ["fp8/g128"] }]
+[[family.param]]
+name = "atoms"
+kind = "policy"
+of = "atom_bundle"
 [[family.point]]
-values = {}
+values = { atoms = "mma16832_e4m3_cpasync_plain" }
 how = "instantiation"
 files = ["kernels/gb10/common/fp8_gemm_t_blockscaled.cu", "kernels/gb10/common/per_token_group_quant_fp8.cu"]
+[[family.point]]
+values = { atoms = "mma16832_e4m3_cpasync_ldsm" }
+how = "instantiation"
+files = ["kernels/gb10/common/fp8_gemm_blockscaled_pipe.cu", "kernels/gb10/common/e4m3_mma_pipe.cuh", "kernels/gb10/common/gemm_mainloop.cuh", "kernels/gb10/common/per_token_group_quant_fp8.cu"]
 
 # 2026-09-29: Dynamic activation quantizers, one CTA per row. A static per-tensor quantizer (read
 # the calibrated scale, no amax) is not instantiated anywhere.

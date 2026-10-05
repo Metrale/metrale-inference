@@ -1565,6 +1565,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-closure",
  "metrale-config",
+ "metrale-layout",
  "serde",
  "serde_json",
  "sha2",

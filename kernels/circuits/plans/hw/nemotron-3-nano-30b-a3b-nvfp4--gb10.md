@@ -206,7 +206,7 @@ Rule `deinterleave_qg` left out of this plan: l0.mamba.split (rule `deinterleave
 
 ## LKB on gb10
 
-LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 23.7 / 2.1 / 0.3% of the step, measured on this class 23.6 / 0.0 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 6 families. Relations used: none. LKB residual on gb10: 146 sources, 43523 lines; 40 copy points. Details: `met circuit lkb --checkpoint nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 --hardware gb10 --precision declared`.
+LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 23.7 / 2.1 / 0.3% of the step, measured on this class 23.6 / 0.0 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 6 families. Relations used: none. LKB residual on gb10: 145 sources, 43458 lines; 40 copy points. Details: `met circuit lkb --checkpoint nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 --hardware gb10 --precision declared`.
 
 ## Gap report: decode n=1
 

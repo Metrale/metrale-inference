@@ -167,7 +167,7 @@ digest 7d42205e4ae1d2b7c307ab780701490b8857e9782d10ace77e2afda74d2c4905; 655 gro
 
 ## LKB on gb10
 
-LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 100.0 / 100.0 / 100.0% of the step, measured on this class 63.2 / 6.9 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 20 families. Relations used: `cross_layer_add_norm`. LKB residual on gb10: 148 sources, 44208 lines; 40 copy points. Details: `met circuit lkb --checkpoint Qwen/Qwen3.6-35B-A3B-FP8 --hardware gb10 --precision declared`.
+LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 100.0 / 100.0 / 100.0% of the step, measured on this class 63.2 / 6.9 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 20 families. Relations used: `cross_layer_add_norm`. LKB residual on gb10: 147 sources, 44143 lines; 40 copy points. Details: `met circuit lkb --checkpoint Qwen/Qwen3.6-35B-A3B-FP8 --hardware gb10 --precision declared`.
 
 ## Gap report: decode n=1
 
