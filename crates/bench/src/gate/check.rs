@@ -286,6 +286,7 @@ pub(super) fn check_one(root: &Path, benchmark_id: &str, sha: &str) -> GateStatu
         )]);
     }
     let mut problems = Vec::new();
+    problems.extend(super::record_serve::mock_problem(&record));
     // 2026-09-26: A record measured with uncommitted invalidation-set changes describes no
     // commit, so it fails; the diff check above cannot see uncommitted edits. A record
     // without the field deserializes it as empty.

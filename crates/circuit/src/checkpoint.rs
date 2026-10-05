@@ -108,6 +108,8 @@ pub enum CheckpointError {
 
 mod states;
 pub use states::recurrent_states;
+mod schedule;
+pub use schedule::{LayerSchedule, layer_schedule};
 
 /// 2026-09-30: One architecture's embedded files.
 struct Arch {
