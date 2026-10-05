@@ -67,7 +67,8 @@ fn modes_key_differently_and_the_key_is_deterministic() {
 
 #[test]
 fn a_recipe_without_an_instance_has_no_key() {
-    let err = spec_cost_plan_digests("qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head").unwrap_err();
+    // 2026-10-05: The default NVFP4 35B recipe (`--weight-quantization nvfp4`) has no instance yet.
+    let err = spec_cost_plan_digests("qwen3.6/qwen3.6-35b-a3b-nvfp4").unwrap_err();
     assert!(
         format!("{err:#}").contains("needs a circuit instance"),
         "{err:#}"
@@ -76,8 +77,10 @@ fn a_recipe_without_an_instance_has_no_key() {
 
 #[test]
 fn a_mode_without_declared_plans_is_refused() {
-    // 2026-10-04: The FP8 MoE instance declares no batched-verify table today.
-    let err = spec_cost_plan_digests("qwen3.6/qwen3.6-35b-a3b-fp8-bf16head").unwrap_err();
+    // 2026-10-04: The FP8 MoE instance declares no batched-verify table today. 2026-10-05: It
+    // does now; the NVFP4 35B's row-major variant plans verify widths but no batched-verify table.
+    let err =
+        spec_cost_plan_digests("qwen3.6/qwen3.6-35b-a3b-nvfp4-declared-row-major").unwrap_err();
     assert!(
         format!("{err:#}").contains("declares no verify_batch plan"),
         "{err:#}"

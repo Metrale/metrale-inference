@@ -69,21 +69,24 @@ fn the_nvfp4_35b_moe_layer_runs_its_w4a16_experts_on_the_grouped_tensor_core_poi
             "l3.moe_ffn.experts_gate_up expert_gate_up: bf16,i32 -> [gather bf16 | {W4A16}] -> bf16"
         ),
         "l3.moe_ffn.experts_act silu_mul: bf16 -> [compute f32] -> bf16".into(),
+        format!("l3.moe_ffn.experts_down expert_down: bf16,i32 -> [{W4A16}] -> bf16"),
         format!("l3.moe_ffn.shared_gate_up linear:shared_gate_up: bf16 -> [{W4A16}] -> bf16"),
         "l3.moe_ffn.shared_act silu_mul: bf16 -> [compute f32] -> bf16".into(),
-        format!("l3.moe_ffn.experts_down expert_down: bf16,i32 -> [{W4A16}] -> bf16"),
         format!("l3.moe_ffn.shared_down linear:shared_down: bf16 -> [{W4A16}] -> bf16"),
-        format!("l3.moe_ffn.shared_gate linear:shared_gate: bf16 -> [{BF16}] -> bf16"),
-        "l3.moe_ffn.blend blend: bf16,f32,bf16,bf16 -> [scatter f32 | combine f32] -> bf16".into(),
+        format!("l3.moe_ffn.shared_gate linear:shared_gate: bf16 -> [{BF16}] -> f32 (rule)"),
+        "l3.moe_ffn.blend blend: bf16,f32,bf16,f32 (rule) -> [scatter f32 | combine f32] -> bf16"
+            .into(),
         "l3.moe_ffn.add residual_add: bf16,bf16 -> [compute f32] -> bf16".into(),
     ];
     // 2026-10-02: Plan order: the gate+up launch group (routed and shared, with both SiLUs),
-    // then the down group.
+    // then the down group. 2026-10-05: The expert step is one group (gate+up, then down, the
+    // shared expert in both launches) on the lean pair the loader leaves the declared experts
+    // in; the grouped blend reads the shared gate logit held FP32.
     assert_eq!(nodes(&text), want);
     assert_eq!(text.matches("<- gap:").count(), 0, "{text}");
     for kernel in [
-        "<- moe_gate_up_act_grouped_nvfp4_tc: moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc",
-        "<- moe_down_act_grouped_nvfp4_tc: moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc",
+        "<- moe_experts_grouped_nvfp4_lean: moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc_lean + moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc_lean",
+        "<- moe_experts_grouped_nvfp4_lean: the launch group above",
     ] {
         assert!(text.contains(kernel), "{kernel} missing:\n{text}");
     }
