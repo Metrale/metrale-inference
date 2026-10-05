@@ -52,15 +52,35 @@ anywhere, the mock optimizes the wrong thing: stop and find out why.
 - What a mock is good for on a new class: boot, kernel availability, the planned routes, the
   per-kernel timing of the kept layers (nsys), the decode and prefill step shape, and a vLLM
   load check of the same architecture.
-- **Fidelity verdict: pending.** It is being measured on the GB10 reference box (route,
-  per-rung speed, extrapolation, a known lever's relative speed and energy delta on mock vs
-  real weights); the results follow in the campaign PR and replace this paragraph. Until then:
-  - **timing** is usable for direction (an earlier fidelity round on the reference box put C1
-    tok/s and cold 8k TTFT within a few percent; wide-rung extrapolation missed by more);
-  - **energy is not trusted.** Synthetic weights switch more bits than trained ones, so a mock
-    drew more power (67-74 W against 52-62 W for the full model at C16-C64 on the reference
-    box) and extrapolated J/tok missed by 10-60 %. Never quote a mock's J/tok, and confirm
-    every energy claim on real weights.
+- **Fidelity verdict** (measured 2026-10-05 on the GB10 reference box: the dense
+  Qwen3.8-27B NVFP4, the same serve command with and without `--mock`, mock `[1, 1]` = 8 of 64
+  layers; n = 3 interleaved fresh serves per arm; die at or below 55 °C before every serve):
+  - **Route: identical.** The same 52 kernels in the same 119 launch configurations (name,
+    block, grid, shared memory) at C1 and C16 decode under nsys, and the same `--check-kernels`
+    report (325 lookups, same kernel-set hash). The mock iterates on the kernels the real model
+    runs. Check this once per model and after any routing change.
+  - **Speed: trusted for direction and ranking, scaled.** A per-layer lever
+    (`--ssm-batched-recurrent off`) moved the real model -8.1 % (C16) and -11.1 % (C32) tok/s
+    and the mock -4.9 % / -8.0 % (-5.4 % / -7.2 % on a value-statistics mock), with C1 unmoved
+    on both (the control). Relative deltas do not transfer 1:1, because fixed costs (head,
+    embedding, host) are a larger share of the mock's step: compare absolute per-step deltas
+    times the layer ratio instead, which came to 0.75-0.87 of the real one. A null lever
+    (`METRALE_NO_W4A16_TC=1`, inert in this configuration) read within ±2 % on both. Absolute
+    numbers extrapolated from mocks `[1, 1]`, `[2, 1]`, `[1, 2]` (`met ml-utils extrapolate`)
+    landed within +2.3..+4.2 % of the real tok/s at C16/C32, +3.3..+5.8 % at C1, and within
+    ±1.8 % for cold and warm 1k TTFT.
+  - **Energy: not trusted, absolute or relative.** Mock power matched the real model at
+    C16/C32 (0.99x) but read 16 % low at C1, where the real model streams 8x the weight bytes;
+    extrapolated J/tok was within -1.8 % (C16) and -4.7 % (C32) but -15 % at C1. The same lever
+    moved real J/tok +2.3 % / +3.2 % and the mock +1.8 % / -0.2 % (+0.6 % / +0.7 % on the
+    value-statistics mock): one sign wrong, magnitudes 0-1x, all inside the 1.5-3 % serve
+    spread. The value-statistics mock (`values.mode = "stats"`, on this branch) changed
+    nothing measurable for the dense model, so this gap is the mock's step mix, not its
+    weight values. (An earlier round on the MoE models found mocks drawing 67-74 W against
+    52-62 W at C16-C64 and J/tok missing by 10-60 %: there, values and routing matter.)
+  - **So, each loop iteration:** use the mock to find and rank levers and to confirm the
+    route; confirm every kept lever's speed magnitude, and every energy number, on the real
+    model by dropping `--mock`. Never quote a mock's J/tok.
 - A mock never certifies anything: `GET /forward` discloses its digest, gate records carry it
   and fail, and `met benchmark run` refuses a gate or accuracy run against a mock server.
   Accuracy is measured on the full model, at the end.

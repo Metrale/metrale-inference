@@ -146,10 +146,10 @@ Run both axes; `references/two-axis-venn.md` has the procedure.
 
 `references/bring-up-order.md` has every command. The order:
 1. **Mock**: the SAME serve command as the real model, with `--mock <spec>` added (or a
-   `met ml-utils mockify` directory). Iterate on the mock for speed (and, once its fidelity
-   verdict allows, energy), then switch to the real model by dropping `--mock`. What the loop
-   may trust from a mock, and what each iteration must confirm on real weights, is the
-   fidelity verdict in `references/bring-up-order.md` step 1.
+   `met ml-utils mockify` directory). Its route is identical to the real model's and its speed
+   ranks levers correctly, so iterate on it for speed; confirm every kept lever's magnitude and
+   every energy number on the real model by dropping `--mock` (mock energy is not trusted).
+   The measured fidelity verdict is in `references/bring-up-order.md` step 1.
 2. **Bit parity on the mock** (Tier 1); record it and `ttbp_mock` in the ledger.
 3. **Box calibration** (`met benchmark calibrate`, where the branch has it).
 4. **`met serve --check-kernels`**: re-harvest `[expected_absent]` on the real device.

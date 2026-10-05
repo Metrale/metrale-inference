@@ -20,7 +20,9 @@ where.
 All on the new device, all byte-for-byte:
 - **circuit vs legacy**: `met circuit diff` (decode logits under the legacy forward and the
   circuit forward; eager and graphed; every padded width; with its detection and repeat
-  controls);
+  controls). On a class with no circuit instance yet (the circuit executor plans with the
+  instance's own class rules), record it as N/A with that reason; modelling the class's
+  kernels (the planner's view of the class) is what makes it applicable;
 - **eager vs graphed**: the same request with and without CUDA graphs
   (`METRALE_DEBUG_NO_GRAPH=1`) produces the same bytes;
 - **run-to-run determinism**: the same request on a fresh serve twice, identical transcripts and

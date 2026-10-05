@@ -27,7 +27,10 @@ They apply to every timing, energy, TTFT or accuracy number a bring-up produces,
   (`nvmlDeviceGetTotalEnergyConsumption`), not an integral of sampled `power.draw`, which
   reads a few percent high under load. Label the result "GPU-rail energy" when the device's
   NVML covers only the GPU rail. Compare engines measured the same way only.
-- **Energy from a mock is not trusted**: synthetic weights draw more power than trained ones.
+- **Energy from a mock is not trusted**, absolute or relative: MoE mocks drew more power than
+  the real model, and on the dense 27B a lever's J/tok delta did not reproduce on the mock even
+  where its power matched (`references/bring-up-order.md` step 1). Confirm every energy number
+  on real weights.
 - On a unified-memory device, host "used" memory includes the GPU's allocations and is
   attributable to no process: not a leak, but real pressure.
 
