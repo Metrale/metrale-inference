@@ -16,6 +16,13 @@ description: The standard method for adding support for a new model or architect
 Generalization is the point: shared code at a shape nobody measured is not shared
 optimization, and a per-model copy of a kernel is a parameterization nobody did yet.
 
+**Composes with `/new-hardware`.** When the model is to run on a hardware class the engine does
+not serve well yet (a new GPU or kernel class), run this skill inside
+`.claude/skills/new-hardware/SKILL.md`: that skill opens the Hardware Beachhead Campaign, adds
+the hardware axis to the Venn (every plan and Venn here with `--hardware <device>`), starts from
+a mock checkpoint (`met ml-utils mockify`, `met serve --mock`), and owns the vLLM improvement
+loop. Steps 1-9 here are its model axis.
+
 Read before starting, and apply throughout:
 - `AGENTS.md`: the core directives and the "Big Three" invariants (SSOT, PCND, SBIO), the
   500-line cap, the local checks, and the certification rules for perf paths.
