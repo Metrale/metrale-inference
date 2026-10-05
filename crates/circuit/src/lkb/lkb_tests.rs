@@ -41,8 +41,10 @@ impl KernelTree for Own {
         let mut s = self.tree.class_sources(class, model, quant)?;
         // 2026-10-05: The entry points of the copy-point families (`COPY_FAMILY`).
         if let Some(m) = s.modules.get_mut("m") {
-            m.text
-                .push_str("__global__ void copy_k(int x) {}\n__global__ void one_k(int x) {}\n");
+            m.text.push_str(
+                "__global__ void copy_k(int x) {}\n__global__ void one_k(int x) {}\n\
+                 __global__ void bundled_k(int x) {}\n",
+            );
         }
         if class == "child" {
             for (name, path, text) in [
@@ -314,3 +316,68 @@ fn a_shadow_without_a_written_reason_is_refused() {
         "{e}"
     );
 }
+
+// 2026-10-05: Mutation: counting a bundle two classes realize, or skipping the bundle lookup,
+// changes the bucket.
+#[test]
+fn points_on_a_one_class_bundle_form_the_single_class_bucket() {
+    let mut tree = own("", SHADOW);
+    tree.tree
+        .files
+        .get_mut("kernels/base/common/KERNEL_FAMILIES.toml")
+        .expect("families")
+        .push_str(BUNDLE_FAMILY);
+    let l = lkb(&report(&tree, "nofp4").unwrap(), &tree, "c".into()).unwrap();
+    let got: Vec<(&str, &str)> = l
+        .single_class
+        .iter()
+        .map(|p| (p.family.as_str(), p.bundle.as_str()))
+        .collect();
+    assert_eq!(got, [("f_bundled", "one_class")]);
+    let doc: toml::Table = toml::from_str(&render_toml(&l)).unwrap();
+    assert_eq!(doc["residual_single_class"].as_integer(), Some(1));
+    assert!(render_markdown(&l).contains("## LKB residual, single-class bucket: 1 points"));
+}
+
+/// 2026-10-05: Two bundles, one realized by one class and one by two, and a family with a point
+/// on each.
+const BUNDLE_FAMILY: &str = r#"
+[[atom_bundle]]
+id = "one_class"
+mma = { inst = "mma.x", m = 64, n = 8, k = 16, scope = "warpgroup" }
+copy = [{ operand = "a", path = "bulk_tensor", inst = "bulk", bytes = 128 }]
+schedule = { kind = "warp_specialized", stages = 4 }
+swizzle = { a = "3,4,3" }
+accumulator = "registers"
+classes = ["child"]
+
+[[atom_bundle]]
+id = "two_classes"
+mma = { inst = "mma.y", m = 16, n = 8, k = 16, scope = "warp" }
+copy = [{ operand = "a", path = "global_to_shared", inst = "cp", bytes = 16 }]
+schedule = { kind = "multistage", stages = 2 }
+swizzle = { a = "none" }
+accumulator = "registers"
+classes = ["base", "child"]
+
+[[family]]
+id = "f_bundled"
+description = "test"
+compute = "cuda_core"
+kernels = ["m::bundled_k"]
+rows = [1, 128]
+op = [{ op = "argmax" }]
+pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
+[[family.param]]
+name = "atoms"
+kind = "policy"
+of = "atom_bundle"
+[[family.point]]
+values = { atoms = "one_class" }
+how = "instantiation"
+files = ["kernels/base/common/m.cu"]
+[[family.point]]
+values = { atoms = "two_classes" }
+how = "instantiation"
+files = ["kernels/base/common/m.cu"]
+"#;

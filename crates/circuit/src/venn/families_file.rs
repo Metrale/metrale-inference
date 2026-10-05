@@ -31,6 +31,8 @@ struct File {
     legacy_path: Vec<super::legacy_file::LegacyFile>,
     #[serde(default)]
     reduction: Vec<super::reduction::ReductionFile>,
+    #[serde(default)]
+    atom_bundle: Vec<super::atoms::AtomBundleFile>,
 }
 
 #[derive(Deserialize)]
@@ -91,6 +93,7 @@ struct ParamFile {
     kind: String,
     from: Option<FromFile>,
     absent: Option<String>,
+    of: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -182,12 +185,15 @@ pub(super) fn parse(text: &str) -> Result<Families, FamilyError> {
         .collect::<Result<_, _>>()?;
     let reductions = super::reduction::reductions(file.reduction).map_err(FamilyError::Parse)?;
     super::reduction::check_names(&families, &reductions).map_err(FamilyError::Parse)?;
+    let bundles = super::atoms::bundles(file.atom_bundle).map_err(FamilyError::Parse)?;
+    super::atoms::check_points(&families, &bundles).map_err(FamilyError::Parse)?;
     Ok(Families {
         hardware: file.hardware,
         roofline,
         families,
         legacy,
         reductions,
+        bundles,
     })
 }
 
@@ -251,6 +257,9 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
                 )));
             }
             (None, ParamKind::Numerics) => BTreeMap::new(),
+            // 2026-10-05: A policy the class's realization chooses (an atom bundle): the node
+            // does not, so it never makes a node differ from a point.
+            (None, ParamKind::Policy) if p.of.is_some() => BTreeMap::new(),
             (None, _) => return Err(field(format!("parameter `{}` needs `from`", p.name))),
             (Some(FromFile::All(e)), _) => op_names
                 .iter()
@@ -275,6 +284,7 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
             kind,
             from,
             absent: p.absent,
+            of: p.of,
         });
     }
     let pointed: BTreeSet<&str> = params

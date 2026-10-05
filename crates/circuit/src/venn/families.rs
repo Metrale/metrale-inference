@@ -126,6 +126,9 @@ pub struct Param {
     /// 2026-09-29: The value when the extractor finds nothing (a dim or parameter the circuit
     /// does not state), with the manifest's reason in a comment; `None` makes that an error.
     pub absent: Option<String>,
+    /// 2026-10-05: The declared values it takes, when they are manifest entries (`atom_bundle`):
+    /// each point's value must name one.
+    pub of: Option<String>,
 }
 
 /// 2026-09-29: An op a family implements, with the constraints a node must meet.
@@ -376,6 +379,8 @@ pub struct Families {
     pub legacy: Vec<LegacyPath>,
     /// 2026-10-05: Declared reduction trees, by id.
     pub reductions: BTreeMap<String, reduction::Reduction>,
+    /// 2026-10-05: Declared atom bundles, by id.
+    pub bundles: BTreeMap<String, atoms::AtomBundle>,
 }
 
 impl Families {
@@ -444,6 +449,8 @@ pub enum FamilyError {
     },
 }
 
+#[path = "atoms.rs"]
+pub mod atoms;
 #[path = "families_compute.rs"]
 mod compute_file;
 #[path = "families_file.rs"]
