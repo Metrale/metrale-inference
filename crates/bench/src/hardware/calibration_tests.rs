@@ -177,3 +177,90 @@ fn save_without_a_kernels_directory_is_refused_by_name() {
     let err = save(&dir, "nope", &BoxProfiles::default()).unwrap_err();
     assert!(format!("{err:#}").contains("nope"), "{err:#}");
 }
+
+/// 2026-10-04: No profile is exactly one concern, `Missing`, never anything
+/// else — there is nothing to check a ratio against.
+#[test]
+fn no_profile_is_missing_and_nothing_else() {
+    let concerns = health(None, &V1_BANDS, 1_000_000);
+    assert_eq!(concerns, vec![HealthConcern::Missing]);
+}
+
+#[test]
+fn a_fresh_in_band_profile_has_no_concerns() {
+    let p = entry(20.0, 6800.0, 340.0, 0.52, 12.4).profile;
+    let concerns = health(Some(&p), &V1_BANDS, p.measured_at + 1);
+    assert!(concerns.is_empty(), "{concerns:?}");
+}
+
+/// 2026-10-04: Explicitly the dgx2/dgx3 shape: a 9% energy ratio is outside
+/// the ±5% energy band (unlike decode/prefill at their tighter ±3%, this one
+/// alone should already catch it).
+#[test]
+fn an_out_of_band_energy_ratio_is_flagged_by_name() {
+    let mut p = entry(20.0, 6800.0, 340.0, 0.52, 12.4).profile;
+    p.energy_c1_ratio = Some(1.09);
+    let concerns = health(Some(&p), &V1_BANDS, p.measured_at);
+    assert_eq!(
+        concerns,
+        vec![HealthConcern::OutOfBand {
+            dimension: "C1 energy",
+            ratio: 1.09,
+            band: 0.05,
+        }]
+    );
+    assert!(concerns[0].to_string().contains("C1 energy"));
+    assert!(concerns[0].to_string().contains("above"));
+}
+
+#[test]
+fn a_ratio_below_one_reads_below_not_above() {
+    let mut p = entry(20.0, 6800.0, 340.0, 0.52, 12.4).profile;
+    p.decode_tok_s_ratio = Some(0.90); // 10% slower than the fleet
+    let concerns = health(Some(&p), &V1_BANDS, p.measured_at);
+    assert!(concerns[0].to_string().contains("below"), "{concerns:?}");
+}
+
+#[test]
+fn every_dimension_can_be_flagged_at_once() {
+    let mut p = entry(20.0, 6800.0, 340.0, 0.52, 12.4).profile;
+    p.decode_tok_s_ratio = Some(1.50);
+    p.prefill_cold32k_ms_ratio = Some(1.50);
+    p.restore_warm32k_ms_ratio = Some(1.50);
+    p.energy_c1_ratio = Some(1.50);
+    let concerns = health(Some(&p), &V1_BANDS, p.measured_at);
+    assert_eq!(concerns.len(), 4, "{concerns:?}");
+}
+
+/// 2026-10-04: A dimension with no ratio at all (that leg never measured) is
+/// not itself a concern — only a genuinely out-of-band ratio is.
+#[test]
+fn a_dimension_with_no_ratio_is_not_flagged() {
+    let mut p = entry(20.0, 6800.0, 340.0, 0.52, 12.4).profile;
+    p.restore_warm32k_ms_ratio = None;
+    p.restore_warm32k_ms = None;
+    let concerns = health(Some(&p), &V1_BANDS, p.measured_at);
+    assert!(concerns.is_empty(), "{concerns:?}");
+}
+
+#[test]
+fn a_profile_older_than_the_limit_is_stale() {
+    let p = entry(20.0, 6800.0, 340.0, 0.52, 12.4).profile;
+    let now = p.measured_at + MAX_PROFILE_AGE_S + 1;
+    let concerns = health(Some(&p), &V1_BANDS, now);
+    assert_eq!(
+        concerns,
+        vec![HealthConcern::Stale {
+            age_s: MAX_PROFILE_AGE_S + 1,
+            max_age_s: MAX_PROFILE_AGE_S,
+        }]
+    );
+    assert!(concerns[0].to_string().contains("30"));
+}
+
+#[test]
+fn a_profile_exactly_at_the_age_limit_is_not_yet_stale() {
+    let p = entry(20.0, 6800.0, 340.0, 0.52, 12.4).profile;
+    let now = p.measured_at + MAX_PROFILE_AGE_S;
+    assert!(health(Some(&p), &V1_BANDS, now).is_empty());
+}

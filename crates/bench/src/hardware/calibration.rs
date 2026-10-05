@@ -235,6 +235,149 @@ pub struct LegMetrics<'a> {
     pub high_isl_warm: Option<&'a BTreeMap<String, f64>>,
 }
 
+/// 2026-10-04: The per-dimension bands a box's ratio must sit inside, stated
+/// explicitly (PCND) because there is no fleet history yet to ratchet them
+/// from. Coordinator-approved 2026-10-04: narrower than a blanket figure for
+/// the dimensions the known incident (dgx2 vs dgx3, 6.6-13% apart on energy)
+/// would otherwise sail through at a wider band.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bands {
+    /// 2026-10-04: `|ratio - 1|` must be at most this for decode bandwidth.
+    pub decode: f64,
+    /// 2026-10-04: Same, for 32k cold prefill.
+    pub prefill: f64,
+    /// 2026-10-04: Same, for 32k warm restore. Wider than the others: the
+    /// restore-path ratio is the least precisely measured dimension (see
+    /// `BoxProfile::restore_warm32k_ms`'s doc — raw TTFT, not yet
+    /// warm-minus-tail-prefill).
+    pub restore: f64,
+    /// 2026-10-04: Same, for C1 energy (J/token).
+    pub energy: f64,
+    /// 2026-10-04: Ceiling (not a `|ratio - 1|` band: this is a coefficient
+    /// of variation, not a ratio-to-fleet) on `stability_sigma_pct`, once it
+    /// is measured (module doc: not yet). Reserved so a caller does not need
+    /// a second constant when it lands.
+    pub stability_cv: f64,
+}
+
+/// 2026-10-04: Coordinator-approved 2026-10-04: decode/prefill ±3%, restore
+/// ±10%, energy ±5%, stability CV ≤2%.
+pub const V1_BANDS: Bands = Bands {
+    decode: 0.03,
+    prefill: 0.03,
+    restore: 0.10,
+    energy: 0.05,
+    stability_cv: 0.02,
+};
+
+/// 2026-10-04: A profile older than this is stale and refused, not warned:
+/// a silently-stale calibration would pass a box that changed underneath it
+/// (new driver, VBIOS, thermal paste) with the OLD ratios. Stated explicitly
+/// (PCND); 30 days is a starting point pending fleet history, not a
+/// measured constant.
+pub const MAX_PROFILE_AGE_S: u64 = 30 * 24 * 3600;
+
+/// 2026-10-04: Why a box is not healthy enough on its calibration profile:
+/// one finding per failing dimension, plus the all-or-nothing missing/stale
+/// cases. The caller decides severity (PCND: missing/stale is the only
+/// REFUSE case — see the module using this, `bench_certify::preflight` —
+/// a dimension outside its band is a WARN, recorded and printed, never
+/// silently passed).
+#[derive(Clone, Debug, PartialEq)]
+pub enum HealthConcern {
+    /// 2026-10-04: No profile for this box at all: never calibrated.
+    Missing,
+    /// 2026-10-04: The profile exists but is older than `MAX_PROFILE_AGE_S`.
+    Stale { age_s: u64, max_age_s: u64 },
+    /// 2026-10-04: One dimension's ratio is outside its band.
+    OutOfBand {
+        dimension: &'static str,
+        ratio: f64,
+        band: f64,
+    },
+}
+
+impl std::fmt::Display for HealthConcern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing => write!(
+                f,
+                "no calibration profile for this box — run `met benchmark calibrate`"
+            ),
+            Self::Stale { age_s, max_age_s } => write!(
+                f,
+                "calibration profile is {:.0} day(s) old, past the {:.0}-day limit — \
+                 re-run `met benchmark calibrate`",
+                *age_s as f64 / 86_400.0,
+                *max_age_s as f64 / 86_400.0
+            ),
+            Self::OutOfBand {
+                dimension,
+                ratio,
+                band,
+            } => write!(
+                f,
+                "{dimension} reads {:.1}% {} the fleet mean, outside the ±{:.0}% band",
+                (ratio - 1.0).abs() * 100.0,
+                if *ratio >= 1.0 { "above" } else { "below" },
+                band * 100.0
+            ),
+        }
+    }
+}
+
+/// 2026-10-04: Is `ratio` within `band` of 1.0? `None` (an unmeasured
+/// dimension — the ratio itself absent) is never a concern on its own: a
+/// dimension this gate does not depend on, or one no leg has measured yet,
+/// says nothing about health. Absence becomes a concern only at the
+/// whole-profile level ([`HealthConcern::Missing`]).
+fn in_band(ratio: Option<f64>, band: f64) -> bool {
+    ratio.is_none_or(|r| (r - 1.0).abs() <= band)
+}
+
+/// 2026-10-04: Every reason this box is not calibration-healthy, checking
+/// every dimension the profile has a ratio for (not just the dimensions one
+/// gate depends on — see the module doc's note on per-gate mapping being
+/// deferred). `profile: None` yields exactly [`HealthConcern::Missing`] and
+/// nothing else: there is nothing further to check.
+pub fn health(profile: Option<&BoxProfile>, bands: &Bands, now_s: u64) -> Vec<HealthConcern> {
+    let Some(p) = profile else {
+        return vec![HealthConcern::Missing];
+    };
+    let mut out = Vec::new();
+    let age_s = now_s.saturating_sub(p.measured_at);
+    if age_s > MAX_PROFILE_AGE_S {
+        out.push(HealthConcern::Stale {
+            age_s,
+            max_age_s: MAX_PROFILE_AGE_S,
+        });
+    }
+    let dims: [(&'static str, Option<f64>, f64); 4] = [
+        ("decode bandwidth", p.decode_tok_s_ratio, bands.decode),
+        (
+            "32k cold prefill",
+            p.prefill_cold32k_ms_ratio,
+            bands.prefill,
+        ),
+        (
+            "32k warm restore",
+            p.restore_warm32k_ms_ratio,
+            bands.restore,
+        ),
+        ("C1 energy", p.energy_c1_ratio, bands.energy),
+    ];
+    for (dimension, ratio, band) in dims {
+        if !in_band(ratio, band) {
+            out.push(HealthConcern::OutOfBand {
+                dimension,
+                ratio: ratio.expect("in_band only fails on Some"),
+                band,
+            });
+        }
+    }
+    out
+}
+
 pub fn extract(legs: LegMetrics<'_>) -> Raw {
     let get = |m: Option<&BTreeMap<String, f64>>, k: &str| m.and_then(|m| m.get(k)).copied();
     Raw {

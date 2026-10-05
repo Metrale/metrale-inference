@@ -217,6 +217,11 @@ fn history_cmd(args: HistoryArgs) -> Result<()> {
 // --pull-request-gate` would take — no second serve-lifecycle/record-writing
 // implementation to keep in sync (SSOT).
 pub(crate) async fn run(args: RunArgs) -> Result<i32> {
+    if args.pull_request_gate
+        && let Err(msg) = super::debug_build_guard::refuse_debug_build(cfg!(debug_assertions))
+    {
+        bail!("{msg}");
+    }
     if let Err(msg) = args.reject_orphan_checkpoint() {
         bail!("{msg}");
     }

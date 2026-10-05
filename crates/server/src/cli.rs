@@ -35,6 +35,7 @@ mod circuit_memory_weights;
 mod circuit_paint;
 mod circuit_precision;
 mod circuit_venn;
+mod debug_build_guard;
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;
