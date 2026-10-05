@@ -15,6 +15,7 @@ pub(crate) mod bench_cause;
 pub mod bench_certify;
 mod bench_gate_check;
 pub mod bench_lease;
+pub mod bench_preflight;
 mod bench_print;
 pub mod bench_record;
 mod bench_resolve;
@@ -34,6 +35,7 @@ mod circuit_memory_weights;
 mod circuit_paint;
 mod circuit_precision;
 mod circuit_venn;
+mod debug_build_guard;
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;
@@ -46,12 +48,14 @@ pub(crate) mod serve_args_spec_cost;
 pub(crate) mod sync_recipes;
 mod validate;
 mod validate_spec_cost;
+mod version;
 pub use bench_args::BenchmarkArgs;
 pub use serve_args::{DEFAULT_KV_CACHE_DTYPE, DEFAULT_NUM_DRAFTS, ServeArgs};
 pub use validate::validate_serve_args;
+pub use version::{BUILD_GIT_DIRTY, BUILD_GIT_SHA, METRALE_LONG_VERSION};
 
 /// 2026-09-26: The release string, e.g. `1.0.0-beta-preview`: the package version from the
-/// workspace `Cargo.toml`, which `met --version` prints. Code that records which engine
+/// workspace `Cargo.toml`, which `met -V` prints. Code that records which engine
 /// build produced an artifact should read this constant rather than derive its own.
 pub const METRALE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -59,6 +63,7 @@ pub const METRALE_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[command(
     name = "met",
     version = METRALE_VERSION,
+    long_version = METRALE_LONG_VERSION,
     about = "Metrale Engine — pure Rust LLM inference server"
 )]
 pub struct Cli {

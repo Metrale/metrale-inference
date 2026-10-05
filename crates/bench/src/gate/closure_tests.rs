@@ -265,3 +265,70 @@ fn per_target_flags_are_carried_per_target() {
         "recomputation must use each target's own flags"
     );
 }
+
+/// 2026-10-05: `recompute_hash` — the public hook `met bench preflight`'s kernel-freshness
+/// check reuses. Path A: an untouched tree recomputes to exactly the attested hash.
+#[test]
+fn recompute_hash_matches_an_untouched_tree() {
+    let root = fixture("recompute-untouched");
+    let a = attest_all(&root);
+    let target = Target {
+        hardware: "gb10".into(),
+        model: "modelB".into(),
+        quant: "nvfp4".into(),
+    };
+    let recorded = &a["gb10/modelB/nvfp4"];
+    assert_eq!(
+        recorded.recompute_hash(&root, &target),
+        Some(recorded.hash.clone())
+    );
+}
+
+/// 2026-10-05: Path B — editing a source the target compiles (through the common-file
+/// inheritance the fixture sets up) moves the recomputed hash away from the one attested,
+/// the exact shape of a CARGO_TARGET_DIR-staled binary: the binary's baked hash is the OLD
+/// one, the tree's current hash is NEW, and they must compare unequal.
+#[test]
+fn recompute_hash_moves_when_a_compiled_source_changes() {
+    let root = fixture("recompute-edited");
+    let a = attest_all(&root);
+    let target = Target {
+        hardware: "gb10".into(),
+        model: "modelB".into(),
+        quant: "nvfp4".into(),
+    };
+    let recorded = a["gb10/modelB/nvfp4"].clone();
+    std::fs::write(root.join(SHARED), "__global__ void s() { int t = 128; }\n").unwrap();
+    let current = recorded.recompute_hash(&root, &target);
+    assert_ne!(
+        current,
+        Some(recorded.hash.clone()),
+        "a changed compiled source must move the recomputed hash"
+    );
+    assert!(
+        current.is_some(),
+        "the target still resolves; only its content changed"
+    );
+}
+
+/// 2026-10-05: Path C — a target whose sources no longer resolve (hardware's vendor
+/// changed to one the resolver does not know, same trigger as
+/// `a_target_whose_sources_do_not_resolve_is_not_excused`) recomputes to `None`, never to
+/// a stale `Some` that a caller could mistake for a match.
+#[test]
+fn recompute_hash_is_none_when_the_target_no_longer_resolves() {
+    let root = fixture("recompute-no-sources");
+    let a = attest_all(&root);
+    let target = Target {
+        hardware: "gb10".into(),
+        model: "modelB".into(),
+        quant: "nvfp4".into(),
+    };
+    let recorded = a["gb10/modelB/nvfp4"].clone();
+    std::fs::write(
+        root.join("kernels/gb10/HARDWARE.toml"),
+        "[hardware]\nvendor = \"quantum-abacus\"\n",
+    )
+    .unwrap();
+    assert_eq!(recorded.recompute_hash(&root, &target), None);
+}

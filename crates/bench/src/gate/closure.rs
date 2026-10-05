@@ -46,6 +46,22 @@ impl TargetClosure {
             compiler: self.compiler.clone(),
         })
     }
+
+    /// 2026-10-05: Recompute this target's closure hash from `root`'s working tree, under
+    /// this closure's own recorded arch/compiler/flags — the same recomputation
+    /// [`excuses`] and [`changed_targets`] already do internally, exposed so a caller
+    /// outside this module (the `met bench preflight` kernel-freshness check, lever
+    /// journal PR #126) can compare a *binary's* baked attestation
+    /// (`metrale_kernels::TARGET_CLOSURES`) against the tree it is about to serve from,
+    /// not just a committed record against a diff.
+    ///
+    /// `None` on exactly the cases [`excuses`] already treats as "changed": the target's
+    /// sources do not resolve, or the hash cannot be computed. A preflight caller folds
+    /// `None` into FAIL ("could not verify"), never into PASS.
+    pub fn recompute_hash(&self, root: &Path, target: &Target) -> Option<String> {
+        let inputs = self.inputs(root, target)?;
+        metrale_closure::hash(root, &inputs).ok()
+    }
 }
 
 /// 2026-09-26: Per-target attestations carried by a record, keyed by `hw/model/quant`.
