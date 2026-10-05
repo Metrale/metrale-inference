@@ -117,7 +117,10 @@ happened to fail.
 The standard method is the `new-model` skill,
 [`.claude/skills/new-model/SKILL.md`](.claude/skills/new-model/SKILL.md): describe the model as
 an architecture circuit, run `met circuit venn` against the closest supported models, share
-kernels by parameterizing them, then prove, optimize, fuse and beat vLLM. The walkthrough
+kernels by parameterizing them, then prove, optimize, fuse and beat vLLM. The vocabulary (LKB,
+LAB, lowering rule, relation, realization, LKB residual) is defined in
+[`book/src/architecture/circuit-compiler.md`](book/src/architecture/circuit-compiler.md); a
+new kernel is a family point or a named residual, never a silent copy. The walkthrough
 below is the legacy path the circuit replaces.
 
 High-level walkthrough — the patterns to follow are already in-tree.

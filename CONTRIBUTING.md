@@ -160,7 +160,15 @@ find kernels/ -name '*.cu' -print0 | xargs -0 clang-format -i
 
 ### New (H, M<sub>q</sub>) Targets
 
-Each hardware × model × quantization combination is a self-contained body of work. To add a new target:
+Each hardware × model × quantization combination is a self-contained body of work. Before
+writing a kernel, check whether the [Latent Kernel Blueprint](book/src/architecture/lkb.md)
+already has it. Every new kernel is either a point of an existing kernel family (a value of its
+compile-time, policy or numerics parameters) or a named entry in the LKB residual with its
+reason and evidence. There is no third kind
+([ADR-0020](docs/adr/0020-kernels-and-architectures-against-shared-blueprints.md)). A new
+hardware class is a new realization of the blueprint, which is data in `HARDWARE.toml` and the
+class overlays. `met circuit plan --hardware <device>` shows what it already covers. To add a
+new target:
 
 1. Add kernel variants under `kernels/<hardware>/` optimized for the target SM
    architecture — `kernels/<hw>/common/` for sources every model shares, or

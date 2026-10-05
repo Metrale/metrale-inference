@@ -4,7 +4,7 @@ A 5-minute tour of the crate graph, the build pipeline, and the request lifecycl
 
 ## Crate graph
 
-Metrale Engine is a single Cargo workspace with 21 crates (the root `Cargo.toml` `members` list):
+Metrale Engine is a single Cargo workspace with 23 crates (the root `Cargo.toml` `members` list):
 
 ```
    HTTP / scheduling / CLI     metrale-server  (the `met` binary)
@@ -26,6 +26,8 @@ Metrale Engine is a single Cargo workspace with 21 crates (the root `Cargo.toml`
                                      │
    build / foundation          metrale-kernels  (PTX embedded per (hardware, model, quant))
                                metrale-closure  (kernel layout resolver + closure hash)
+                               metrale-circuit  (circuit compiler: circuits, fuser, kernel families, plans)
+                               metrale-kernel-tree (kernel tree embedded in the binary)
                                metrale-config   (ModelConfig, parsers, environment levers)
                                metrale-gpu-sys  (raw FFI: cuFile, NVML, NCCL, RDMA verbs)
                                metrale-core     (shared types: ComputeTarget, KernelTarget, DType, …)
