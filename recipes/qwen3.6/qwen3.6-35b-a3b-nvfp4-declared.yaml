@@ -70,11 +70,6 @@ defaults:
   high_speed_swap_qd: 8
   high_speed_swap_rank: 32
   marconi_min_tokens: 256
-  # This is today's SILENTLY INHERITED clap default (8) — the exact bug this explicitness
-  # pass exists to surface (owner directive, 2026-10-05). It is written here on purpose,
-  # unfixed: feat/nvfp4-batched-prefill-identity (PR #120, MOENVFP4) sets this recipe's
-  # real measured value; this line only makes the current (wrong) behavior visible.
-  max_batch_size: 8
   max_loras: 8
   max_num_seqs: 128
   max_prefill_tokens: 8192
@@ -86,11 +81,9 @@ defaults:
   prompt_lookup_miss_backoff: 16
   prompt_lookup_ngram: 4
   prompt_lookup_shared_cache_scopes: 4
-  request_timeout: 300
   scheduler_config: sync
   spec_cost_model: off
   ssm_batched_recurrent: auto
-  ssm_cache_slots: 16
   ssm_checkpoint_interval: 256
   ssm_decode_ring_slots: auto
   ssm_rollback_mode: snapshot

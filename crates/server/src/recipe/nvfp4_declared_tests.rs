@@ -74,7 +74,17 @@ fn the_nvfp4_declared_recipe_renders_the_measured_serve() {
         .chain(RECIPE_ONLY)
         .map(|(f, v)| (f.to_string(), v.map(str::to_string)))
         .collect();
-    assert_eq!(pairs(&argv), want, "rendered: {}", argv.join(" "));
+    let got = pairs(&argv);
+    // 2026-10-05: A subset check, not set equality: feat/recipes-fully-explicit (PR #124)
+    // makes every previously-silent-default key explicit in the YAML, so the renderer now
+    // emits far more flags than the measured set names. This test's job is catching a drop
+    // or change of one of the MEASURED values, not pinning the recipe's total flag count.
+    let missing: Vec<_> = want.difference(&got).collect();
+    assert!(
+        missing.is_empty(),
+        "measured flag(s) missing or changed: {missing:?}; rendered: {}",
+        argv.join(" ")
+    );
     // 2026-10-05: And it parses to a serve the CLI accepts, with the batch cap the A/B ran.
     let args = r.serve_args(&BTreeMap::new()).expect("serve args");
     assert!(args.prefill_wave_exact && args.prefill_varlen_batch && args.prefill_codispatch);
