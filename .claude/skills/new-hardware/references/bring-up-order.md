@@ -65,6 +65,14 @@ anywhere, the mock optimizes the wrong thing: stop and find out why.
   and fail, and `met benchmark run` refuses a gate or accuracy run against a mock server.
   Accuracy is measured on the full model, at the end.
 
+## 1b. Bit parity on the mock
+
+Tier 1 of `references/bit-parity.md` on the mock: eager vs graphed, run-to-run determinism,
+batch-row invariance where the class promises it, circuit vs legacy where the arch runs on the
+circuit, and mock-byte determinism (mockify twice, same digest). Record it in the target file's
+log and set `ttbp_mock_at` / `ttbp_mock_h` in `ledger/<class>.toml`. No timing taken before this
+point is evidence of anything.
+
 ## 2. Box calibration
 
 Where the branch carries it, `met benchmark calibrate --hardware <class> --checkpoint <id>`
@@ -135,6 +143,15 @@ is rented. Boot with the same flags the mock used, re-run `--check-kernels`, and
 memory model: `met circuit memory --hardware <device> --recipe <recipe>` against the serve's
 boot ledger.
 
+## 7b. Bit parity on the real model
+
+Tiers 1 and 2 of `references/bit-parity.md` on the real model: the Tier 1 checks again, logits
+against the reference implementation within each format's declared tolerance, greedy
+transcripts against the certified reference box with a match rate and a same-box control, and
+byte identity with the reference box for every op whose arithmetic order is the same on both
+classes. Record it and set `ttbp_real_at` / `ttbp_real_h` in the ledger. **The improvement loop
+does not start before this.**
+
 ## 8. Same-box vLLM baseline
 
 - The checked-in harness (`bench/ladder38/harness_w55_conc_ladder.py`, energy with
@@ -149,9 +166,10 @@ boot ledger.
   C >= 64 on either side. A vLLM stall or crash at a rung is a result: record it with evidence,
   then a one-change mitigation ladder.
 
-## 9. Accuracy bar
+## 9. Accuracy bar (Tier 3)
 
-At the declared precision, on the full model:
+Before certification, and before any precision-changing lever is used in a published number,
+at the declared precision, on the full model:
 - BFCL: record N, the category sample pct and the SHA-256 of the ordered sample ids beside
   every score. A score without its draw is not comparable to anything.
 - agentic-webserver with a same-night control, because its pass rate is noisy.
@@ -160,7 +178,10 @@ At the declared precision, on the full model:
 
 ## 10. The improvement loop
 
-`references/improvement-loop.md`, until its exit criterion holds or its stop condition fires.
+`references/improvement-loop.md`, keeping bit parity at every iteration, until its exit
+criterion holds (set `ttpv_at` / `ttpv_h` in the ledger) or its stop condition fires. It runs
+after step 7b, and in practice before step 9: the accuracy bar is taken on the configuration
+that will be certified.
 
 ## 11. Certification
 

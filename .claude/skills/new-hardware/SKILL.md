@@ -5,6 +5,14 @@ description: The standard method for bringing up a new HARDWARE + MODEL combinat
 
 # /new-hardware: bring up a new hardware + model combination
 
+> **BIT PARITY FIRST, THEN PERFORMANCE.** Iterating on performance is useless without bit
+> parity, on the mock or on the real model. The improvement loop may not start until parity is
+> achieved and recorded, and every iteration keeps it: a lever that breaks parity is discarded,
+> or kept only behind a flag with the accuracy bar. Parity is defined in three tiers
+> (`references/bit-parity.md`): Tier 1 self-consistency on the target, bit-exact; Tier 2
+> correctness against a reference (bit-exact where the arithmetic order is the same, a declared
+> tolerance and a transcript match rate where it cannot be); Tier 3 the accuracy bar.
+
 **The standard.** A new class is brought up the same way every time:
 1. Open a **Hardware Beachhead Campaign** (below): one PR with the target's context, its
    checklist and the code-free preparation, so any session can pick the work up cold.
@@ -13,10 +21,18 @@ description: The standard method for bringing up a new HARDWARE + MODEL combinat
 3. Run the **two-axis Venn**: the new class against its nearest supported class, and each
    model against its nearest supported model. Every op lands in one of five classes.
 4. **Rehearse on a mock** first, then box calibration, kernel checks, golden-plan measurement,
-   the class's tensor-core policy and measured limits, then full weights.
+   the class's tensor-core policy and measured limits, then full weights. **Reach bit parity**
+   (Tier 1 on the mock, Tiers 1 and 2 on the real model) and record it.
 5. Measure a **same-box vLLM baseline** behind the PARITY-O.R.A.C.L.E, then run the
-   **improvement loop** until Metrale beats it on tok/s and J/tok at every rung.
-6. Certify, then rotate to the next model and repeat.
+   **improvement loop**, keeping parity, until Metrale beats it on tok/s and J/tok at every
+   rung.
+6. Pass the accuracy bar (Tier 3), certify, then rotate to the next model and repeat.
+
+**Measure the bring-up itself.** Every campaign records, per hardware + model combination, in
+`.claude/skills/new-hardware/ledger/<class>.toml`: its start, **TTBP** (time to bit parity, for
+the mock and for the real model), **TTPV** (time to performance/energy victory), the iteration
+count, the levers kept and discarded, and the lines added and removed by parameterization.
+Update it at every milestone; read every previous ledger before starting a new campaign.
 
 **The campaign workflow.** One beachhead covers many models, one at a time:
 
@@ -45,12 +61,14 @@ Detail lives in the references; read each when its step comes up:
 
 | Reference | Step |
 |---|---|
+| `references/bit-parity.md` | the three parity tiers, when the loop may start, TTBP and TTPV |
 | `references/two-axis-venn.md` | the Venn on both axes, the five classes, ranking |
 | `references/parameterization.md` | the standing objective, hardware facts as data, the stability gate, the tally |
 | `references/bring-up-order.md` | the ordered bring-up, fastest first, with commands |
 | `references/improvement-loop.md` | the loop after the baseline, its exit and stop conditions |
 | `references/measurement-discipline.md` | the rules every number must follow |
 | `.claude/agents/flag-parity-oracle.md` | PARITY-O.R.A.C.L.E, the blocking config-equivalence review |
+| `ledger/<class>.toml` | the bring-up ledger: TTBP, TTPV, iterations, levers, lines added and removed |
 
 ## The Hardware Beachhead Campaign
 
@@ -125,22 +143,25 @@ Run both axes; `references/two-axis-venn.md` has the procedure.
    verdict allows, energy), then switch to the real model by dropping `--mock`. What the loop
    may trust from a mock, and what each iteration must confirm on real weights, is the
    fidelity verdict in `references/bring-up-order.md` step 1.
-2. **Box calibration** (`met benchmark calibrate`, where the branch has it).
-3. **`met serve --check-kernels`**: re-harvest `[expected_absent]` on the real device.
-4. **Golden-plan measurement**: nsys per-kernel times of the planned groups; the class's first
+2. **Bit parity on the mock** (Tier 1); record it and `ttbp_mock` in the ledger.
+3. **Box calibration** (`met benchmark calibrate`, where the branch has it).
+4. **`met serve --check-kernels`**: re-harvest `[expected_absent]` on the real device.
+5. **Golden-plan measurement**: nsys per-kernel times of the planned groups; the class's first
    `docs/kernel-perf/measurements.toml` rows and `KERNEL_FAMILIES.toml` evidence.
-5. **`[tensor_core_policy]`** for the class: required ops, and every CUDA-core matmul an
+6. **`[tensor_core_policy]`** for the class: required ops, and every CUDA-core matmul an
    explicit exemption with its kind.
-6. **`[benchmarks.limits]`**: measured on the device, then declared. Certification refuses a
+7. **`[benchmarks.limits]`**: measured on the device, then declared. Certification refuses a
    class without them; never copy another class's numbers.
-7. **Full weights**.
-8. **Same-box vLLM baseline** on the checked-in harness, recording the exact vLLM version and
+8. **Full weights**, then **bit parity on the real model** (Tiers 1 and 2); record it and
+   `ttbp_real` in the ledger. The loop does not start before this.
+9. **Same-box vLLM baseline** on the checked-in harness, recording the exact vLLM version and
    image digest. The PARITY-O.R.A.C.L.E (`.claude/agents/flag-parity-oracle.md`) must return
    PARITY-PASS on both sides' resolved configs before the baseline is recorded.
-9. **Accuracy bar**: BFCL with N, sample pct and the draw's SHA; agentic-webserver with a
-   same-night control.
-10. **Improvement loop** (`references/improvement-loop.md`) until the exit criterion holds.
-11. **Certification**.
+10. **Improvement loop** (`references/improvement-loop.md`), keeping parity, until the exit
+    criterion holds; record `ttpv` in the ledger.
+11. **Accuracy bar** (Tier 3): BFCL with N, sample pct and the draw's SHA; agentic-webserver
+    with a same-night control.
+12. **Certification**; then the next model, from step 1.
 
 ## Step 4: parameterize as you go
 

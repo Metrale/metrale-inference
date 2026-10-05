@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# 2026-10-05: The bring-up ledger of the Hardware Beachhead Campaign: H100 (class `hopper`), one
+# [[combo]] per hardware + model combination, in campaign order. Machine-readable so later
+# campaigns can compare: read every ledger under .claude/skills/new-hardware/ledger/ before
+# starting a new one, and update this one at every milestone (bit parity on the mock, bit parity
+# on the real model, each loop iteration, victory, certification).
+#
+# Schema (every key present; a milestone not reached yet is the empty string, a count not
+# started is 0):
+#   device, class, model, checkpoint, revision  what the combo is (revision: the checkpoint commit)
+#   started            RFC 3339 UTC: the campaign start for this combo
+#   ttbp_mock_at       RFC 3339 UTC: Tier 1 parity recorded on the mock (references/bit-parity.md)
+#   ttbp_real_at       RFC 3339 UTC: Tier 1 + Tier 2 parity recorded on the real model
+#   ttpv_at            RFC 3339 UTC: the improvement loop's exit criterion met, same box, PARITY-PASS
+#   certified_at       RFC 3339 UTC: the certification campaign passed
+#   ttbp_mock_h, ttbp_real_h, ttpv_h   hours from `started` to the milestones above (0.0 until reached)
+#   iterations         improvement-loop iterations run
+#   levers_kept, levers_discarded      one short name per lever, with the PR or commit
+#   loc_added, loc_removed             lines added and removed by the campaign's PRs
+#   loc_removed_by_parameterization    the part of loc_removed a parameterization deleted
+#   evidence           where the records are (PR comments, files in the tree)
+#   notes              one line
+
+[[combo]]
+device = "h100-sxm"
+class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense, W4A16 fallback on Hopper)"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+revision = ""
+started = "2026-10-05T14:45:20Z"
+ttbp_mock_at = ""
+ttbp_real_at = ""
+ttpv_at = ""
+certified_at = ""
+ttbp_mock_h = 0.0
+ttbp_real_h = 0.0
+ttpv_h = 0.0
+iterations = 0
+levers_kept = []
+levers_discarded = []
+loc_added = 0
+loc_removed = 0
+loc_removed_by_parameterization = 0
+evidence = "the campaign PR, Hardware Beachhead Campaign: H100"
+notes = "campaign opened with code-free preparation only; nothing has run on an H100"
+
+[[combo]]
+device = "h100-sxm"
+class = "hopper"
+model = "qwen3.6-35b-a3b-fp8 (MoE)"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+revision = ""
+started = ""
+ttbp_mock_at = ""
+ttbp_real_at = ""
+ttpv_at = ""
+certified_at = ""
+ttbp_mock_h = 0.0
+ttbp_real_h = 0.0
+ttpv_h = 0.0
+iterations = 0
+levers_kept = []
+levers_discarded = []
+loc_added = 0
+loc_removed = 0
+loc_removed_by_parameterization = 0
+evidence = ""
+notes = "starts after the 27B is certified"
+
+[[combo]]
+device = "h100-sxm"
+class = "hopper"
+model = "qwen3.6-35b-a3b-nvfp4 (MoE)"
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+revision = ""
+started = ""
+ttbp_mock_at = ""
+ttbp_real_at = ""
+ttpv_at = ""
+certified_at = ""
+ttbp_mock_h = 0.0
+ttbp_real_h = 0.0
+ttpv_h = 0.0
+iterations = 0
+levers_kept = []
+levers_discarded = []
+loc_added = 0
+loc_removed = 0
+loc_removed_by_parameterization = 0
+evidence = ""
+notes = "starts after the 35B FP8 is certified"

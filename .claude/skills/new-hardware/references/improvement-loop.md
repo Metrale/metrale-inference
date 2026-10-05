@@ -1,7 +1,8 @@
 # The improvement loop: iterate until Metrale beats vLLM
 
 The bring-up does not end at "baseline measured". After the same-box vLLM baseline exists, run
-this loop. One iteration is one lever; it ends with the lever kept or discarded and the evidence
+this loop. **It may not start until bit parity is achieved and recorded** (Tiers 1 and 2 on the
+real model, `references/bit-parity.md`), and every iteration keeps it. One iteration is one lever; it ends with the lever kept or discarded and the evidence
 recorded either way.
 
 ## One iteration
@@ -29,7 +30,7 @@ For the top gap, prefer in this order:
 4. new code, last, and only for a gap the Venn classed `novel`.
 Write down, before running anything, the two legs of the A/B and the one variable that differs.
 
-**d. Prove identity.**
+**d. Prove identity (keep bit parity).**
 - A lever that keeps precision: strict prefill bits (byte-identical logits at prefill) AND
   greedy decode transcripts over the fixed prompt set, both against a control run of the
   unchanged binary in the same session. A control that changes nothing must show zero
@@ -37,6 +38,8 @@ Write down, before running anything, the two legs of the A/B and the one variabl
   the runtime predicate, not the startup log line).
 - A lever that changes precision: behind a flag, default off, and the accuracy bar (BFCL with
   its draw recorded, agentic-webserver with a same-night control) before it is used.
+- A lever that breaks any Tier 1 or Tier 2 check and is not such a flag is discarded, whatever
+  it buys.
 
 **e. Timed A/B.** Same box, same binary build directory hygiene, n = 3 interleaved fresh
 serves per arm (A B A B A B), die temperature at or below the gate before every serve, one
@@ -46,7 +49,8 @@ the control spread is no difference.
 **f. Keep or discard.** Keep only a lever that wins at its rung without losing another rung
 outside the noise band, on both axes. Record the outcome, kept or not, with its numbers, its
 profile and the commit, in the campaign PR (a table: iteration, lever, rung, before, after,
-verdict). A discarded lever's evidence is as valuable as a kept one's.
+verdict). A discarded lever's evidence is as valuable as a kept one's. Update the ledger:
+`iterations`, `levers_kept` or `levers_discarded`, and the lines added and removed.
 
 **g. Repeat** from (a): the scoreboard moved, so the worst rung may be a different one.
 

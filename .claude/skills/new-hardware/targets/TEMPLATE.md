@@ -8,9 +8,12 @@
 - **Branch / base:** <branch> on <base branch at commit>
 - **Devices** (`kernels/DEVICES.toml` ids): <ids>  ·  **Kernel class:** `kernels/<class>/`
 - **Status:** <not started | code-free prep done | on device: step N of the checklist>
-- **Done means:** the exit criterion of `references/improvement-loop.md` holds on a same-box
-  scoreboard for every model below, the accuracy bar holds, `[benchmarks.limits]` and
-  `[tensor_core_policy]` are measured and declared, and the class's gates are certified.
+- **Done means:** bit parity is recorded for every model below (`references/bit-parity.md`,
+  Tiers 1-3), the exit criterion of `references/improvement-loop.md` holds on a same-box
+  scoreboard for each, `[benchmarks.limits]` and `[tensor_core_policy]` are measured and
+  declared, and the class's gates are certified.
+- **Ledger:** `ledger/<class>.toml`, one `[[combo]]` per model (copy the schema from an existing
+  ledger); read the other ledgers first.
 
 ## 1. The class as the tree has it today
 
@@ -60,14 +63,16 @@ The duplicated constants, per-class copies and per-point kernel copies this clas
 
 - [ ] Check out the campaign PR; build with a private `CARGO_TARGET_DIR` and `METRALE_TARGET_HW=<class>`.
 - [ ] PTX gate for the class (`scripts/hopper_ptx_gate.sh --hw <class> --model all --strict`).
-- [ ] Mock each first model (`met ml-utils mockify`, `met serve --mock`); boot, chat, C1/C16 decode.
+- [ ] Mock the first model (its serve command plus `--mock`); boot, chat, C1/C16 decode; route fidelity vs the real model.
+- [ ] Bit parity on the mock (Tier 1); ledger `ttbp_mock`.
 - [ ] `met serve --check-kernels` per model; re-harvest `[expected_absent]`.
 - [ ] nsys the mock at C1/C16/C128; compare planned groups with profiled kernels.
 - [ ] Measure and declare `[benchmarks.limits]`; then box calibration where available.
 - [ ] Full weights; `--check-kernels` again; memory model vs the boot ledger.
+- [ ] Bit parity on the real model (Tiers 1 and 2); ledger `ttbp_real`. The loop waits for this.
 - [ ] vLLM baseline (PARITY-O.R.A.C.L.E first; record version and image digest).
-- [ ] Accuracy bar.
-- [ ] Improvement loop until the exit criterion; then certification.
+- [ ] Improvement loop, keeping parity, until the exit criterion; ledger `ttpv`.
+- [ ] Accuracy bar (Tier 3); certification; next model.
 
 ## 7. Log
 
