@@ -150,7 +150,12 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
                 bf[2 * i + 1] = __bfloat162float(b_hi);
             }
 
-            for (unsigned int t = 0; t < m; t++) {
+            // 2026-10-05: Unrolled over MAX_M with a predicate, so acc stays in registers (a
+            // runtime-bounded loop indexed acc[] in local memory); each row's operations and
+            // their order are unchanged.
+            #pragma unroll
+            for (int t = 0; t < MAX_M; t++) {
+                if (t >= (int)m) break;
                 uint4 a_data = As[t][lane];
                 const unsigned int a_raw[4] = {a_data.x, a_data.y, a_data.z, a_data.w};
                 float a = acc[t];
@@ -180,7 +185,9 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
         const __nv_bfloat16* B_row = B + (unsigned long long)n * K;
         for (unsigned int k = tail_start + lane; k < K; k += threads_per_out) {
             const float bfv = __bfloat162float(B_row[k]);
-            for (unsigned int t = 0; t < m; t++) {
+            #pragma unroll
+            for (int t = 0; t < MAX_M; t++) {
+                if (t >= (int)m) break;
                 acc[t] += __bfloat162float(A[(unsigned long long)t * K + k]) * bfv;
             }
         }
@@ -190,7 +197,9 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
 
     const unsigned int warp_lane = threadIdx.x % WARP_SIZE;
 
-    for (unsigned int t = 0; t < m; t++) {
+    #pragma unroll
+    for (int t = 0; t < MAX_M; t++) {
+        if (t >= (int)m) break;
         float a = acc[t];
         #pragma unroll
         for (int offset = WARP_SIZE / 2; offset > 0; offset >>= 1) {
@@ -204,7 +213,11 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
 
     if (warp_lane == 0) {
         const unsigned int smem_idx = local_out * 2 + (lane / WARP_SIZE);
-        for (unsigned int t = 0; t < m; t++) smem[t][smem_idx] = acc[t];
+        #pragma unroll
+        for (int t = 0; t < MAX_M; t++) {
+            if (t >= (int)m) break;
+            smem[t][smem_idx] = acc[t];
+        }
     }
     __syncthreads();
 

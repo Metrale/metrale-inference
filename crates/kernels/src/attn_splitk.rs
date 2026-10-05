@@ -203,6 +203,42 @@ pub fn workspace_slots(
 /// other ratio, which keeps the unpacked kernel.
 pub const DECODE_GQA_PACK_WIDTH: u32 = 6;
 
+/// 2026-10-05: Query heads per CTA of the four-wide packed BF16 entry point
+/// (`paged_decode_attn_bf16_gqa4`, `#define PD_GQA4`), for a group ratio of
+/// [`DECODE_GQA_PACK4_RATIO`]: two CTAs per KV head. A CTA of the ratio's eight heads spills
+/// registers at head dim 256.
+pub const DECODE_GQA_PACK4_WIDTH: u32 = 4;
+
+/// 2026-10-05: The group ratio the four-wide entry point serves: Qwen3.6-35B-A3B's 16 query heads
+/// over 2 KV heads.
+pub const DECODE_GQA_PACK4_RATIO: u32 = 8;
+
+/// 2026-10-05: The four-wide entry point's declared state: on. Its bits are the unpacked kernel's
+/// (`paged_decode_gqa4_microtest`: byte-identical on every case) and it was faster on every case
+/// measured on gb10 (1.15x at 256 verify rows, 1.30–1.40x at 12–32 rows). The same
+/// `METRALE_ATTN_DECODE_GQA_PACK` overrides it ([`gqa_pack4_enabled`]).
+pub const DECODE_GQA_PACK4_DECLARED: bool = true;
+
+/// 2026-10-05: Whether the four-wide entry point is armed: [`DECODE_GQA_PACK4_DECLARED`],
+/// overridden by a parseable `METRALE_ATTN_DECODE_GQA_PACK`; resolved once per process.
+pub fn gqa_pack4_enabled() -> bool {
+    static ARMED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ARMED.get_or_init(|| {
+        resolve_gqa_pack(
+            DECODE_GQA_PACK4_DECLARED,
+            std::env::var("METRALE_ATTN_DECODE_GQA_PACK")
+                .ok()
+                .as_deref(),
+        )
+    })
+}
+
+/// 2026-10-05: Fewest sequences (decode rows) for which the four-wide entry point is taken: its
+/// grid is `(num_q_heads / 4) x num_seqs`, a quarter of the unpacked one, and below 12 rows four
+/// CTAs per row leave gb10's 48 SMs idle. The kernel's bits are the unpacked kernel's, so the row
+/// count picks a speed, not a result.
+pub const DECODE_GQA_PACK4_MIN_SEQS: u32 = 12;
+
 /// 2026-09-25: The head dim the packed kernels are compiled for: both sources
 /// `#define PD_HDIM 256`, and [`gqa_pack_shape_ok`] refuses any other head dim.
 pub const DECODE_GQA_PACK_HEAD_DIM: u32 = 256;
@@ -261,6 +297,22 @@ pub fn gqa_pack_shape_ok(num_q_heads: u32, num_kv_heads: u32, head_dim: u32) -> 
     num_kv_heads > 0
         && num_q_heads == num_kv_heads.saturating_mul(DECODE_GQA_PACK_WIDTH)
         && head_dim == DECODE_GQA_PACK_HEAD_DIM
+}
+
+/// 2026-10-05: Whether the four-wide BF16 entry point serves this launch: a group ratio of
+/// [`DECODE_GQA_PACK4_RATIO`] (the kernel takes heads `blockIdx.x * 4 ..` of KV head
+/// `blockIdx.x * 4 / ratio`), head dim [`DECODE_GQA_PACK_HEAD_DIM`], and at least
+/// [`DECODE_GQA_PACK4_MIN_SEQS`] rows.
+pub fn gqa_pack4_shape_ok(
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    head_dim: u32,
+    num_seqs: u32,
+) -> bool {
+    num_kv_heads > 0
+        && num_q_heads == num_kv_heads.saturating_mul(DECODE_GQA_PACK4_RATIO)
+        && head_dim == DECODE_GQA_PACK_HEAD_DIM
+        && num_seqs >= DECODE_GQA_PACK4_MIN_SEQS
 }
 
 /// 2026-09-25: CTAs a packed launch puts on the device: `num_kv_heads *

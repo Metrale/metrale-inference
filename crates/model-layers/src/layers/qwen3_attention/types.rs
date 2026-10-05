@@ -289,6 +289,7 @@ pub struct Qwen3AttentionLayer {
     /// unless `METRALE_ATTN_DECODE_GQA_PACK` turns it on) and
     /// `attn_splitk::gqa_pack_shape_ok` accepts the shape.
     pub(super) paged_decode_bf16_gqa_k: Option<KernelHandle>,
+    pub(super) paged_decode_bf16_gqa4_k: Option<KernelHandle>,
     pub(super) paged_decode_fp8_gqa_k: Option<KernelHandle>,
     /// 2026-09-25: Hopper paged-decode split-K kernels
     /// (`kernels/hopper/common/paged_decode_{fp8,bf16}_splitk_hopper.cu`);

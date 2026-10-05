@@ -39,6 +39,10 @@ metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, featu
 metrale-kernels = { path = "../kernels", default-features = false }
 
 [[example]]
+name = "paged_decode_gqa4_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "residual_add_rms_norm_exact_microtest"
 required-features = ["cuda", "gpu-examples"]
 

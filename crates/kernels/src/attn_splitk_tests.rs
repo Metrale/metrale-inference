@@ -284,6 +284,42 @@ fn cuda_sources_declare_the_pack_width_rust_dispatches_on() {
     }
 }
 
+/// 2026-10-05: The four-wide entry point's width, declared beside PD_GQA, and its shape
+/// predicate: ratio 8, head dim 256, from DECODE_GQA_PACK4_MIN_SEQS rows.
+#[test]
+fn the_four_wide_pack_matches_its_source_and_its_shape() {
+    let src = kernel_src("paged_decode_attn_bf16_gqa.cu");
+    assert_eq!(cuda_define(&src, "PD_GQA4"), DECODE_GQA_PACK4_WIDTH);
+    assert!(
+        !src.contains("#ifndef PD_GQA4"),
+        "PD_GQA4 must not be overridable"
+    );
+    assert!(
+        src.contains("paged_decode_attn_bf16_gqa4("),
+        "the entry point the host loads"
+    );
+    assert_eq!(
+        DECODE_GQA_PACK4_RATIO % DECODE_GQA_PACK4_WIDTH,
+        0,
+        "whole CTAs per KV head"
+    );
+    let m = DECODE_GQA_PACK4_MIN_SEQS;
+    assert!(gqa_pack4_shape_ok(16, 2, 256, m));
+    assert!(gqa_pack4_shape_ok(32, 4, 256, 128));
+    for (nq, nkv, hd, seqs) in [
+        (16u32, 2u32, 256u32, m - 1),
+        (24, 4, 256, m),
+        (17, 2, 256, m),
+        (16, 2, 128, m),
+        (0, 0, 256, m),
+    ] {
+        assert!(
+            !gqa_pack4_shape_ok(nq, nkv, hd, seqs),
+            "nq={nq} nkv={nkv} hd={hd} seqs={seqs} must keep the unpacked kernel"
+        );
+    }
+}
+
 /// 2026-09-25: The packed kernels carry their own copies of the unpacked
 /// kernels' unpack helpers; this test keeps each copy identical to its source.
 #[test]

@@ -34,6 +34,10 @@
 
 #define PD_GQA 6
 
+// 2026-10-05: Query heads of the four-wide entry point `paged_decode_attn_bf16_gqa4`. attn_splitk_tests.rs checks it
+// equals `metrale_kernels::attn_splitk::DECODE_GQA_PACK4_WIDTH`.
+#define PD_GQA4 4
+
 // 2026-09-25: A copy of `paged_decode_attn.cu`'s `unpack2_pd`.
 // `attn_splitk_tests::gqa_kernels_copy_the_unpack_helpers_verbatim` checks that the two bodies are identical.
 
@@ -43,8 +47,10 @@ __device__ __forceinline__ void unpack2_pd(unsigned int packed, float& v0, float
     v1 = __bfloat162float(__ushort_as_bfloat16((unsigned short)(packed >> 16)));
 }
 
-extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
-    paged_decode_attn_bf16_gqa(
+// 2026-10-05: The packed kernel body for PD_G query heads per CTA; the two entry points below
+// instantiate it. Per head it runs the operations of `paged_decode_attn` in the same order.
+template <int PD_G>
+__device__ __forceinline__ void paged_decode_attn_bf16_gqa_body(
         const __nv_bfloat16* __restrict__ Q,        // 2026-09-25: BF16, sequence s at s * q_stride, heads contiguous
         const __nv_bfloat16* __restrict__ K_cache,  // 2026-09-25: [num_blocks, block_size, num_kv_heads, head_dim]
         const __nv_bfloat16* __restrict__ V_cache,  // 2026-09-25: [num_blocks, block_size, num_kv_heads, head_dim]
@@ -60,7 +66,10 @@ extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
         const unsigned int q_stride,
         const unsigned int sliding_window
     ) {
-    const unsigned int kv_head = blockIdx.x;
+    // 2026-10-05: The CTA's query heads are PD_G consecutive heads from blockIdx.x * PD_G, all of one
+    // KV head (the host checks num_q_heads % num_kv_heads == 0 and the group ratio % PD_G == 0).
+    const unsigned int q_head_base = blockIdx.x * PD_G;
+    const unsigned int kv_head = q_head_base / (num_q_heads / num_kv_heads);
     const unsigned int seq_idx = blockIdx.y;
     const unsigned int tid = threadIdx.x;
     const unsigned int warp_id = tid / WARP_SIZE;
@@ -73,14 +82,13 @@ extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
     const unsigned int window_start =
         (sliding_window > 0 && seq_len > sliding_window) ? (seq_len - sliding_window) : 0u;
 
-    const unsigned int q_head_base = kv_head * PD_GQA;
     const unsigned int vec_offset = lane_id * VEC_BF16;
 
     const int* my_block_table = block_tables + seq_idx * max_blocks_per_seq;
 
-    float q_reg[PD_GQA][VEC_BF16];
+    float q_reg[PD_G][VEC_BF16];
     #pragma unroll
-    for (int h = 0; h < PD_GQA; h++) {
+    for (int h = 0; h < PD_G; h++) {
         const unsigned int* q32 = (const unsigned int*)(Q
             + (unsigned long long)seq_idx * q_stride
             + (unsigned long long)(q_head_base + h) * head_dim + vec_offset);
@@ -97,11 +105,11 @@ extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
     if (my_end > seq_len) my_end = seq_len;
     if (my_start > seq_len) my_start = seq_len;
 
-    float m_acc[PD_GQA];
-    float l_acc[PD_GQA];
-    float o_reg[PD_GQA][VEC_BF16];
+    float m_acc[PD_G];
+    float l_acc[PD_G];
+    float o_reg[PD_G][VEC_BF16];
     #pragma unroll
-    for (int h = 0; h < PD_GQA; h++) {
+    for (int h = 0; h < PD_G; h++) {
         m_acc[h] = -1e30f;
         l_acc[h] = 0.0f;
         #pragma unroll
@@ -152,7 +160,7 @@ extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
             }
 
             #pragma unroll
-            for (int h = 0; h < PD_GQA; h++) {
+            for (int h = 0; h < PD_G; h++) {
                 float scores[BC];
                 #pragma unroll
                 for (int b = 0; b < BC; b++) {
@@ -213,7 +221,7 @@ extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
             for (int i = 0; i < VEC_U32; i++) v_one[i] = v32[i];
 
             #pragma unroll
-            for (int h = 0; h < PD_GQA; h++) {
+            for (int h = 0; h < PD_G; h++) {
                 float dot = 0.0f;
                 #pragma unroll
                 for (int i = 0; i < VEC_U32; i++) {
@@ -251,7 +259,7 @@ extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
     __shared__ float smem_o[NUM_WARPS][PD_HDIM];
 
     #pragma unroll
-    for (int h = 0; h < PD_GQA; h++) {
+    for (int h = 0; h < PD_G; h++) {
         __syncthreads();
 
         if (lane_id == 0) {
@@ -305,4 +313,49 @@ extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
             }
         }
     }
+}
+
+
+// 2026-09-25: PD_GQA query heads per CTA, grid (num_kv_heads, num_seqs) at a group ratio of PD_GQA.
+extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
+    paged_decode_attn_bf16_gqa(
+        const __nv_bfloat16* __restrict__ Q,        // 2026-09-25: BF16, sequence s at s * q_stride, heads contiguous
+        const __nv_bfloat16* __restrict__ K_cache,  // 2026-09-25: [num_blocks, block_size, num_kv_heads, head_dim]
+        const __nv_bfloat16* __restrict__ V_cache,  // 2026-09-25: [num_blocks, block_size, num_kv_heads, head_dim]
+        __nv_bfloat16* __restrict__ O,              // 2026-09-25: [num_seqs, num_q_heads, head_dim]
+        const int* __restrict__ block_tables,
+        const int* __restrict__ seq_lens,
+        const unsigned int max_blocks_per_seq,
+        const unsigned int num_q_heads,
+        const unsigned int num_kv_heads,
+        const unsigned int head_dim,
+        const unsigned int block_size,
+        const float inv_sqrt_d,
+        const unsigned int q_stride,
+        const unsigned int sliding_window
+    ) {
+    paged_decode_attn_bf16_gqa_body<PD_GQA>(Q, K_cache, V_cache, O, block_tables, seq_lens, max_blocks_per_seq, num_q_heads, num_kv_heads, head_dim, block_size, inv_sqrt_d, q_stride, sliding_window);
+}
+
+
+// 2026-10-05: PD_GQA4 query heads per CTA, grid (num_q_heads / PD_GQA4, num_seqs): half a group of
+// eight (Qwen3.6, 16 q / 2 kv heads); eight heads per CTA spill registers at PD_HDIM 256.
+extern "C" __global__ void __launch_bounds__(NUM_WARPS* WARP_SIZE, 1)
+    paged_decode_attn_bf16_gqa4(
+        const __nv_bfloat16* __restrict__ Q,        // 2026-09-25: BF16, sequence s at s * q_stride, heads contiguous
+        const __nv_bfloat16* __restrict__ K_cache,  // 2026-09-25: [num_blocks, block_size, num_kv_heads, head_dim]
+        const __nv_bfloat16* __restrict__ V_cache,  // 2026-09-25: [num_blocks, block_size, num_kv_heads, head_dim]
+        __nv_bfloat16* __restrict__ O,              // 2026-09-25: [num_seqs, num_q_heads, head_dim]
+        const int* __restrict__ block_tables,
+        const int* __restrict__ seq_lens,
+        const unsigned int max_blocks_per_seq,
+        const unsigned int num_q_heads,
+        const unsigned int num_kv_heads,
+        const unsigned int head_dim,
+        const unsigned int block_size,
+        const float inv_sqrt_d,
+        const unsigned int q_stride,
+        const unsigned int sliding_window
+    ) {
+    paged_decode_attn_bf16_gqa_body<PD_GQA4>(Q, K_cache, V_cache, O, block_tables, seq_lens, max_blocks_per_seq, num_q_heads, num_kv_heads, head_dim, block_size, inv_sqrt_d, q_stride, sliding_window);
 }

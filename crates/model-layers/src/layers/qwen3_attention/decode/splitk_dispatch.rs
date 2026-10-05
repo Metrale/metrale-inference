@@ -176,6 +176,40 @@ pub(super) fn gqa_pack_route(
     handle
 }
 
+/// 2026-10-05: The four-wide packed BF16 entry point for this launch, or `None`: the lever
+/// ([`attn_splitk::gqa_pack4_enabled`], declared on), the shape and row count
+/// ([`attn_splitk::gqa_pack4_shape_ok`]) and the handle.
+pub(super) fn gqa_pack4_kernel(
+    handle: Option<KernelHandle>,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    head_dim: u32,
+    num_seqs: u32,
+) -> Option<KernelHandle> {
+    gqa_pack4_route(
+        attn_splitk::gqa_pack4_enabled(),
+        handle,
+        num_q_heads,
+        num_kv_heads,
+        head_dim,
+        num_seqs,
+    )
+}
+
+/// 2026-10-05: [`gqa_pack4_kernel`] with the lever's value passed in.
+pub(super) fn gqa_pack4_route(
+    armed: bool,
+    handle: Option<KernelHandle>,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    head_dim: u32,
+    num_seqs: u32,
+) -> Option<KernelHandle> {
+    (armed && attn_splitk::gqa_pack4_shape_ok(num_q_heads, num_kv_heads, head_dim, num_seqs))
+        .then_some(handle)
+        .flatten()
+}
+
 /// 2026-09-25: Which once-flag a route line belongs to. One per KV dtype: the arms dispatch
 /// independently, and one model can run more than one of them, so a shared flag would report only
 /// the arm reached first.
