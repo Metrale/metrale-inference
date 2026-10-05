@@ -1,6 +1,6 @@
 # Workspace Layout
 
-Metrale Engine is a **twenty-one**-member Cargo workspace plus a build-time kernel tree (count them in the root `Cargo.toml` `members` list). This chapter maps every top-level directory to its role, and the crates to the axes of variation they each insulate.
+Metrale Engine is a **twenty-three**-member Cargo workspace plus a build-time kernel tree (count them in the root `Cargo.toml` `members` list). This chapter maps every top-level directory to its role, and the crates to the axes of variation they each insulate.
 
 ## Repository tree (top level)
 
@@ -37,8 +37,10 @@ members = [
     "crates/core",
     "crates/config",
     "crates/closure",
+    "crates/circuit",
     "crates/governance",
     "crates/kernels",
+    "crates/kernel-tree",
     "crates/gpu-sys",
     "crates/telemetry",
     "crates/gpu-runtime",
@@ -65,8 +67,10 @@ Each is its own crate with its own `Cargo.toml`, its own unit tests, and its own
 | `metrale-core` | Shared types (dtype, tensor, arch, device, errors, fault scopes) | `metrale-cache`, `metrale-config`, `metrale-gpu-runtime`, `metrale-kernels`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `metrale-server`, `metrale-storage` |
 | `metrale-config` | The typed model config tree (HF config.json parsing, GGUF metadata, capabilities) | `metrale-bench`, `metrale-gpu-runtime`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `metrale-server` |
 | `metrale-closure` | Content hash of a kernel target's transitive include closure | `metrale-bench`, `metrale-kernels`, `metrale-model-layers` |
+| `metrale-circuit` | The circuit compiler: architecture circuits, the fuser, kernel families and per-hardware plans (see [The Circuit Compiler](./circuit-compiler.md)) | `metrale-model-engine`, `metrale-model-layers`, `metrale-server` |
 | `metrale-governance` | The PR journey ledger: an append-only record of how a change reached main | `metrale-bench` |
 | `metrale-kernels` | Metrale Engine CUDA kernel PTX — compiled from `kernels/{hw}/{model}/{quant}/*.cu` | `metrale-gpu-runtime`, `metrale-model-engine`, `metrale-model-layers`, `metrale-server` |
+| `metrale-kernel-tree` | The repository's `kernels/` manifests and sources embedded in the binary, for code that reads the kernel tree without a checkout | `metrale-server` |
 | `metrale-gpu-sys` | Raw FFI only — cuFile (GDS) and NVML dlopen wrappers, NCCL bindings, RDMA verbs C shim | `metrale-comm`, `metrale-model-weights`, `metrale-storage`, `metrale-telemetry` |
 | `metrale-telemetry` | Run metrics, kernel audit, launch trace, progress hooks, and the metal-up instruments (NVML device sampling, energy attribution, GPU spans, scheduler/request telemetry) with their exporters | `metrale-cache`, `metrale-gpu-runtime`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-weights`, `metrale-sampling`, `metrale-server` |
 | `metrale-gpu-runtime` | GpuBackend (CUDA/Metal), streams, buffers, op cache, pinned hosts, kernel registry, cuBLASLt/CUTLASS/FlashInfer bridges | `metrale-cache`, `metrale-model-arch`, `metrale-model-engine`, `metrale-model-layers`, `metrale-model-weights`, `metrale-sampling`, `metrale-server` |
