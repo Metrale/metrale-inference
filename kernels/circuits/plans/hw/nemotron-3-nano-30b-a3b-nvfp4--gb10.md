@@ -204,9 +204,13 @@ Rule `deinterleave_qg` left out of this plan: l0.mamba.split (rule `deinterleave
 | moe [top_k] | (novel) | novel.top_k | 23 |
 | moe [xn_quant] | w4a4_gemv_mx::w4a4_quant_rows | w4a4_act_quant | 23 |
 
+## LKB on gb10
+
+LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 23.7 / 2.1 / 0.3% of the step, measured on this class 23.6 / 0.0 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 6 families. Relations used: none. LKB residual on gb10: 146 sources, 43523 lines; 40 copy points. Details: `met circuit lkb --checkpoint nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 --hardware gb10 --precision declared`.
+
 ## Gap report: decode n=1
 
-Estimated step 12.001 ms. Shared 23.6% (measured on this class), shared-unmeasured 76.4%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 12.001 ms. Shared 23.6% (measured on this class), shared-unmeasured 76.4%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -253,7 +257,7 @@ Estimated step 12.001 ms. Shared 23.6% (measured on this class), shared-unmeasur
 
 ## Gap report: multi_seq n=16
 
-Estimated step 141.616 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 141.616 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -300,7 +304,7 @@ Estimated step 141.616 ms. Shared 0.0% (measured on this class), shared-unmeasur
 
 ## Gap report: multi_seq n=128
 
-Estimated step 1109.405 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 1109.405 ms. Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|

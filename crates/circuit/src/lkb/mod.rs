@@ -28,7 +28,7 @@ use crate::venn::families::How;
 use crate::venn::repo::Repo;
 use crate::venn::{Class, Run};
 
-pub use render::{render_markdown, render_toml};
+pub use render::{render_markdown, render_toml, report_section};
 
 /// 2026-10-05: Coverage of one report run.
 #[derive(Debug, Clone, PartialEq)]
@@ -129,8 +129,21 @@ impl Lkb {
     }
 }
 
-/// 2026-10-05: The LKB of `report`'s model on its device's class.
+/// 2026-10-05: The LKB of `report`'s model on its device's class, with the shadow reasons the
+/// class's `KERNEL.toml` files give.
 pub fn lkb(report: &HwReport, repo: &dyn Repo, command: String) -> Result<Lkb, HwError> {
+    let resolved = &report.resolved;
+    let shadows = shadow_reasons(
+        repo,
+        &resolved.device.class,
+        resolved.sources.target.as_deref(),
+    )?;
+    Ok(from_report(report, &shadows, command))
+}
+
+/// 2026-10-05: The LKB of `report`'s model on its device's class; `shadows` maps a residual
+/// source's stem to its `[shadow]` reason (empty: no reasons, counts unchanged).
+pub fn from_report(report: &HwReport, shadows: &BTreeMap<String, String>, command: String) -> Lkb {
     let resolved = &report.resolved;
     let class = resolved.device.class.clone();
     let families = &resolved.families.families;
@@ -138,7 +151,6 @@ pub fn lkb(report: &HwReport, repo: &dyn Repo, command: String) -> Result<Lkb, H
         .iter()
         .flat_map(|f| f.kernels.iter().map(|k| k.module.as_str()))
         .collect();
-    let shadows = shadow_reasons(repo, &class, resolved.sources.target.as_deref())?;
     let own = format!("kernels/{class}/");
     let common = format!("{own}common/");
     let residual = resolved
@@ -213,7 +225,7 @@ pub fn lkb(report: &HwReport, repo: &dyn Repo, command: String) -> Result<Lkb, H
             groups,
         });
     }
-    Ok(Lkb {
+    Lkb {
         model: report.model.label.clone(),
         device: resolved.device.id.clone(),
         chain: resolved.chain.iter().map(|c| c.name.clone()).collect(),
@@ -225,7 +237,7 @@ pub fn lkb(report: &HwReport, repo: &dyn Repo, command: String) -> Result<Lkb, H
         residual,
         copy_points,
         command,
-    })
+    }
 }
 
 fn stem(path: &str) -> &str {
