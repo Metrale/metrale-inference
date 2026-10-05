@@ -58,13 +58,16 @@ pub fn argv_for(key: &str, value: &str) -> Option<Vec<String>> {
     }
 }
 
-/// 2026-09-26: Refuse a recipe `defaults:` entry that gives a presence-only flag
-/// anything but `true`.
+/// 2026-10-05: Refuse a recipe `defaults:` entry that gives a presence-only flag
+/// anything but `true` or `false`.
 ///
-/// `speculative: false` renders to nothing, exactly like leaving the key out, so
-/// a recipe line that writes it states a decision it does not make. Any other
-/// value is refused because the flag takes none. Keys that are not presence-only
-/// flags pass.
+/// `speculative: false` renders to nothing, exactly like leaving the key out
+/// (`argv_for`) — `false` is the explicit, intentional spelling of "off", not a
+/// restatement of a default a recipe happens to inherit (owner directive
+/// 2026-10-05: every recipe-settable variable must be named, so a presence-only
+/// flag's off state must be statable too, not only reachable by omission). Any
+/// value other than `true`/`false` is refused because the flag takes none. Keys
+/// that are not presence-only flags pass.
 ///
 /// `Recipe::argv_edited` checks only the recipe's own `defaults:`, not overrides:
 /// an override's `false` removes a `true` the recipe set, as `--hermetic` does
@@ -77,14 +80,10 @@ pub fn check_recipe_default(key: &str, value: &str) -> Result<(), String> {
         return Ok(());
     }
     match value {
-        "true" => Ok(()),
-        "false" => Err(format!(
-            "defaults.{key}: false restates the default of --{flag}; a boolean flag is \
-             off unless given, so delete the line (write `{key}: true` to turn it on)"
-        )),
+        "true" | "false" => Ok(()),
         other => Err(format!(
             "defaults.{key}: --{flag} takes no value, so {other:?} means nothing; write \
-             `{key}: true` to set it or delete the line"
+             `{key}: true` or `{key}: false`"
         )),
     }
 }
