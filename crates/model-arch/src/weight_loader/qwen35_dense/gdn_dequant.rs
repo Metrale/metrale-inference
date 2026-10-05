@@ -436,8 +436,8 @@ pub(super) fn load_gdn_dequant(
         layer.set_fp8_rowwise_prefill_weights(qkvz_rowwise, out_proj_rowwise);
         if i == 0 {
             tracing::info!(target: "metrale_model_arch::weight_loader::qwen35_dense", "SSM[{lp}] METRALE_FP8_ROWWISE: qkvz + out_proj prefill via \
-                 native per-row FP8 (no BF16 dequant, no NVFP4 requant); \
-                 decode keeps NVFP4"
+                 the per-row FP8 dequantized to BF16 (BF16 activations) where no declared \
+                 W8A8 is installed; the W8A8 arm outranks it in prefill and decode"
             );
         }
     }
