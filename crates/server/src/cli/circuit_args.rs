@@ -144,9 +144,8 @@ pub struct CircuitHwArgs {
     /// The model: a checkpoint id (org/name), a checkpoint directory, or a recipe id.
     #[arg(long, required_unless_present = "matrix")]
     pub checkpoint: Option<String>,
-    /// Target device id from kernels/DEVICES.toml (h100-sxm, h200-sxm, b200, gb300, gb10, ...).
-    #[arg(long, required_unless_present = "matrix")]
-    pub hardware: Option<String>,
+    #[command(flatten)]
+    pub device: DeviceArg,
     /// Formats served: the recipe's pinned formats or the checkpoint's declared ones.
     #[arg(long, value_enum, required_unless_present = "matrix")]
     pub precision: Option<CircuitPrecision>,
@@ -280,6 +279,19 @@ pub struct CircuitVennArgs {
     /// kernels/circuits/INSTANCES.toml.
     #[arg(long)]
     pub root: Option<std::path::PathBuf>,
+    #[command(flatten)]
+    pub device: DeviceArg,
+}
+
+/// The device a `met circuit` view plans on (`plan`, `show`, `display`, `venn`).
+#[derive(clap::Args, Debug, Clone, Default)]
+pub struct DeviceArg {
+    /// A device of kernels/DEVICES.toml (h100-sxm, h200-sxm, b200, gb300, gb10, ...): plan with
+    /// its class's rules over the kernels it can run, cost with its roofline, and count only its
+    /// class's own microbench evidence, instead of the recipe's own hardware. Reads the
+    /// repository from the working directory (or --root where the command takes one).
+    #[arg(long)]
+    pub hardware: Option<String>,
 }
 
 /// Which plan to show.
@@ -295,6 +307,8 @@ pub struct CircuitPlanArgs {
     /// modes; decode and draft plan one row.
     #[arg(long)]
     pub rows: Option<u64>,
+    #[command(flatten)]
+    pub device: DeviceArg,
 }
 
 /// `met circuit display` options.
@@ -314,11 +328,6 @@ pub struct CircuitDisplayArgs {
     /// When to colour: auto colours a terminal only; NO_COLOR always wins.
     #[arg(long, value_enum, default_value_t = ColorChoice::Auto)]
     pub color: ColorChoice,
-    /// Draw the plan for this device of kernels/DEVICES.toml (its class's rules and kernels;
-    /// ops no rule covers there are drawn as `novel` groups) instead of the recipe's own
-    /// hardware. Reads the repository from the working directory.
-    #[arg(long)]
-    pub hardware: Option<String>,
 }
 
 /// A forward `met circuit` can plan.

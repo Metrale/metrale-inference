@@ -97,3 +97,43 @@ fn check_passes_on_the_checked_in_report_and_fails_on_a_stale_one() {
         before
     );
 }
+
+/// 2026-10-05: `--hardware` plans every side on the device's class: on the H100 (class `hopper`,
+/// no microbench records of its own) no row is measured-shared and the estimate uses the H100's
+/// bandwidth; on the GB10 (whose records these are) measured-shared rows remain, so the device
+/// path does not simply drop evidence. The offline report refuses a device.
+#[test]
+fn venn_on_a_device_plans_with_its_class_and_counts_only_its_evidence() {
+    let root = repo_root();
+    let tree = super::super::circuit_hw::FsTree::new(root.clone());
+    let reg = super::super::circuit_hw::registry(&tree).unwrap();
+    let on = |device: &str| {
+        let mut a = lightning("unused.md");
+        a.device.hardware = Some(device.into());
+        let (args, _) = resolve_args(&a).unwrap();
+        metrale_circuit::hardware::venn_text(&tree, &reg, &args, None).unwrap()
+    };
+    let shared = |text: &str| text.matches("| Shared |").count();
+    let h100 = on("h100-sxm");
+    assert_eq!(shared(&h100), 0, "hopper has no records of its own");
+    assert!(h100.matches("| Shared, unmeasured |").count() > 0);
+    assert!(h100.contains("--hardware h100-sxm --out unused.md"));
+    assert!(h100.contains("| Planned on | `h100-sxm` (class `hopper`"));
+    assert!(
+        h100.contains("max(bytes / 3350.0 GB/s"),
+        "the H100's bandwidth"
+    );
+    let gb10 = on("gb10");
+    assert!(shared(&gb10) > 0, "gb10's own records still count on gb10");
+    let offline = std::fs::read_to_string(root.join(REPORT)).unwrap();
+    assert!(shared(&offline) > 0);
+    assert!(!offline.contains("| Planned on |"));
+    let mut a = lightning("unused.md");
+    a.device.hardware = Some("h100-sxm".into());
+    let (args, _) = resolve_args(&a).unwrap();
+    let repo = FsRepo { root };
+    assert!(
+        metrale_circuit::venn::report_text(&repo, &args, None).is_err(),
+        "the offline report never silently ignores --hardware"
+    );
+}
