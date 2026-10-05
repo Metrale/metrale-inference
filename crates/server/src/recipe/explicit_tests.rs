@@ -213,46 +213,179 @@ fn an_unknown_key_is_refused_not_silently_dropped() {
 }
 
 /// 2026-10-05: `required_keys()` is exactly: every flag from the manifest, minus
-/// presence-only flags, minus flags with no clap default, minus `EXCLUDED_NAMED`. A
-/// regression here (e.g. a stray filter) would silently shrink or grow the required
-/// surface without any real-recipe test catching it, since the real recipes would simply
-/// be checked against the wrong set.
+/// `EXCLUDED_NAMED`. A regression here (e.g. a stray filter reappearing) would silently
+/// shrink or grow the required surface without any real-recipe test catching it, since the
+/// real recipes would simply be checked against the wrong set.
 #[test]
-fn required_keys_is_exactly_the_manifest_minus_the_three_exclusions() {
+fn required_keys_is_exactly_the_manifest_minus_the_named_exclusions() {
     let manifest = crate::cli::manifest::build();
-    let presence_only = manifest.flags.iter().filter(|f| f.presence_only).count();
-    let no_default = manifest
-        .flags
-        .iter()
-        .filter(|f| !f.presence_only && f.default.is_none())
-        .count();
     let total = manifest.flags.len();
-    let expected = total - presence_only - no_default - EXCLUDED_NAMED.len();
+    let expected = total - EXCLUDED_NAMED.len();
     assert_eq!(
         required_keys().len(),
         expected,
-        "total={total} presence_only={presence_only} no_default={no_default} \
-         named_exclusions={}",
+        "total={total} named_exclusions={}",
         EXCLUDED_NAMED.len()
     );
 
-    // Every named exclusion must be a real flag key the manifest actually carries, and
-    // must not itself be presence-only or already no-default (otherwise it is dead,
-    // doubly-excluded weight in the list).
+    // Every named exclusion must be a real flag key the manifest actually carries, give a
+    // reason, and appear only once (a duplicate would silently inflate `expected` above).
+    let mut seen = BTreeSet::new();
     for (key, reason) in EXCLUDED_NAMED {
         assert!(!reason.is_empty(), "{key}: exclusion needs a reason");
-        let flag = manifest
-            .flags
-            .iter()
-            .find(|f| f.key == *key)
-            .unwrap_or_else(|| panic!("{key}: EXCLUDED_NAMED names a flag that does not exist"));
         assert!(
-            !flag.presence_only,
-            "{key}: already excluded as presence-only, drop it from EXCLUDED_NAMED"
+            manifest.flags.iter().any(|f| f.key == *key),
+            "{key}: EXCLUDED_NAMED names a flag that does not exist"
         );
-        assert!(
-            flag.default.is_some(),
-            "{key}: has no clap default, already excluded categorically, drop it from EXCLUDED_NAMED"
-        );
+        assert!(seen.insert(*key), "{key}: listed twice in EXCLUDED_NAMED");
     }
+}
+
+/// 2026-10-05: Presence-only (bool) flags are required too — the 2026-10-05 owner
+/// extension. `speculative` and `enable_prefix_caching` are two unrelated presence-only
+/// flags from different structs (`ServeSchedulingArgs`); both must appear.
+#[test]
+fn presence_only_flags_are_required_too() {
+    let required = required_keys();
+    assert!(required.contains("speculative"), "{required:?}");
+    assert!(required.contains("enable_prefix_caching"), "{required:?}");
+    assert!(required.contains("prompt_lookup_decoding"), "{required:?}");
+}
+
+/// 2026-10-05: Flags with no clap default are required too (pinned to their resolved
+/// value), not categorically excluded — the 2026-10-05 owner extension. `num_drafts`,
+/// `kv_cache_dtype` and `mtp_gate` are three unrelated `Option<T>` flags with different
+/// resolution chains (MODEL.toml, MODEL.toml, env-only); none are in `EXCLUDED_NAMED`.
+#[test]
+fn flags_with_no_clap_default_are_required_too() {
+    let required = required_keys();
+    assert!(required.contains("num_drafts"), "{required:?}");
+    assert!(required.contains("kv_cache_dtype"), "{required:?}");
+    assert!(required.contains("mtp_gate"), "{required:?}");
+    assert!(required.contains("ssm_h_dtype"), "{required:?}");
+    assert!(required.contains("model_name"), "{required:?}");
+}
+
+/// 2026-10-05: No recipe's `env:` block sets a GDN-family lever
+/// (`METRALE_SSM_H_FP16`/`METRALE_GDN_FUSED_NORM`/`METRALE_SSM_BATCHED_RECURRENT`). This is
+/// the load-bearing fact behind pinning `ssm_h_dtype`: pinning it seals
+/// `KernelFlagPlan`'s GDN cell (`gdn_given` flips false->true, since `ssm_h_dtype` is an
+/// `Option<T>` with no clap default), which stops a recipe's `env:` block from being able
+/// to steer the cell at serve time. If any recipe relied on that, pinning would be a real
+/// regression, not a no-op. None does, so it is not — this test is the control that keeps
+/// that true.
+#[test]
+fn no_recipe_env_block_sets_a_gdn_lever() {
+    let gdn_levers = [
+        "METRALE_SSM_H_FP16",
+        "METRALE_GDN_FUSED_NORM",
+        "METRALE_SSM_BATCHED_RECURRENT",
+    ];
+    for r in load_real_recipes().iter().filter(|r| r.is_metrale()) {
+        for lever in gdn_levers {
+            assert!(
+                !r.env.contains_key(lever),
+                "{}: env: sets {lever}, so pinning ssm_h_dtype would remove its effect — \
+                 this recipe needs a human decision before this policy can pin it",
+                r.id
+            );
+        }
+    }
+}
+
+/// 2026-10-05: Pinning the GDN quartet (`ssm_h_dtype`, `gdn_fused_norm`, `exact_verify`,
+/// with `ssm_batched_recurrent` left at its already-required "auto") seals
+/// `KernelFlagPlan`'s GDN cell — `gdn_given` flips false->true, an unavoidable consequence
+/// of `ssm_h_dtype` being an `Option<T>` with no clap default (giving ANY value, even its
+/// own no-op one, makes it `Some`). This proves the SEALED cell's bits match the UNSEALED
+/// cell's bits today (`GdnFlags::from_env`, the function `gdn_flags::flags()` falls back to
+/// on first read when nothing is published) — pinning changes WHEN the cell is decided,
+/// not WHAT it decides, given `no_recipe_env_block_sets_a_gdn_lever` above.
+///
+/// `GdnFlags::from_env()` is called directly (not `gdn_flags::flags()`), which reads the
+/// environment fresh every call and seals nothing — `flags()` would permanently pin the
+/// process-wide `FLAGS` `OnceLock` for every other test sharing this process, the same
+/// class of cross-test pollution `circuit_memory_ledger_tests` suffers from
+/// `ssm_reserve::decode_ring::DECODE_RING_SLOTS` (see the PR description).
+#[test]
+fn the_pinned_gdn_bundle_matches_the_documented_unsealed_default() {
+    use clap::Parser as _;
+
+    let today = metrale_model_layers::layers::qwen3_ssm::gdn_flags::GdnFlags::from_env();
+
+    let unpinned = crate::cli::ServeArgs::try_parse_from(["serve", "org/model"]).expect("parses");
+    assert!(
+        crate::main_modules::kernel_flag_plan::KernelFlagPlan::from_args(&unpinned)
+            .gdn
+            .is_none(),
+        "sanity: no GDN flag given must leave the cell unsealed (gdn_given == false)"
+    );
+
+    // Exactly what every recipe now pins when it has no GDN flag of its own: `ssm_h_dtype:
+    // f32` (the documented default spelling), `ssm_batched_recurrent: auto` (already
+    // required and pinned as a bucket-A flag, unaffected by this policy extension).
+    // `gdn_fused_norm: false` / `exact_verify: false` render to an OMITTED flag
+    // (`schema::argv_for`), so they are absent here too — identical argv to a recipe that
+    // never mentions them, which is the whole point of allowing an explicit `false`.
+    let pinned = crate::cli::ServeArgs::try_parse_from([
+        "serve",
+        "org/model",
+        "--ssm-h-dtype",
+        "f32",
+        "--ssm-batched-recurrent",
+        "auto",
+    ])
+    .expect("parses");
+    let plan = crate::main_modules::kernel_flag_plan::KernelFlagPlan::from_args(&pinned);
+    let gdn = plan.gdn.expect("ssm_h_dtype given seals the GDN cell");
+
+    assert_eq!(
+        gdn.h_f16, today.h_f16,
+        "h_f16 (ssm_h_dtype=f32) must match env resolution"
+    );
+    assert_eq!(gdn.h_f16_pool, today.h_f16_pool);
+    assert_eq!(
+        gdn.fused_norm, today.fused_norm,
+        "gdn_fused_norm omitted == env unset"
+    );
+    assert_eq!(
+        gdn.exact_verify, today.exact_verify,
+        "exact_verify omitted == env unset"
+    );
+    let batched_recurrent = gdn.batched_recurrent.unwrap_or(
+        metrale_model_layers::layers::ops::target_defaults::resolved()
+            .ssm_batched_recurrent
+            .value,
+    );
+    assert_eq!(
+        batched_recurrent, today.batched_recurrent,
+        "ssm_batched_recurrent=auto still defers to the HARDWARE.toml target default inside \
+         a sealed cell (serve_flags.rs's own unwrap_or), so it matches either way"
+    );
+}
+
+/// 2026-10-05: Every real `runtime: metrale` recipe parses AND produces a valid
+/// `ServeArgs` (`Recipe::serve_args`, which runs `validate_serve_args`) with no
+/// overrides. Being in `required_keys()` only proves a key is present; it says nothing
+/// about whether the VALUE a recipe was given is one `validate_serve_args` accepts in
+/// combination with the recipe's other settings (e.g. `--num-drafts` above 1 without a
+/// speculative method, or `--fp8-kv-calibration-tokens` above 0 with a non-fp8
+/// `--kv-cache-dtype`) — this is the check that catches that class of mistake.
+#[test]
+fn every_real_recipe_produces_a_valid_serve_config() {
+    let recipes = load_real_recipes();
+    let metrale: Vec<&Recipe> = recipes.iter().filter(|r| r.is_metrale()).collect();
+    assert!(metrale.len() > 10, "sanity: {}", metrale.len());
+    let mut failures = Vec::new();
+    for r in &metrale {
+        if let Err(e) = r.serve_args(&BTreeMap::new()) {
+            failures.push(format!("{}: {e:#}", r.id));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} real recipe(s) do not produce a valid serve config:\n{}",
+        failures.len(),
+        failures.join("\n---\n")
+    );
 }

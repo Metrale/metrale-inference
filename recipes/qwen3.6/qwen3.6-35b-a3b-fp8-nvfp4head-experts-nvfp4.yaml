@@ -111,3 +111,53 @@ defaults:
   vision_max_pixels: 0
   vision_remote_image_max_mb: 20
   vision_remote_image_timeout_s: 10
+  # --- explicit `met serve` state (owner directive 2026-10-05, extended): presence-only
+  # flags pinned true/false, and no-clap-default flags pinned to the value they resolve to
+  # today (MODEL.toml behavior / engine built-in constant / env-unset) -- see
+  # recipe::explicit for the SSOT list, exclusions and the byte-identical resolution proof.
+  adaptive_sampling: false
+  auto_compact: 0
+  auto_swap: false
+  check_kernels: false
+  content_loop_min_repeats: 3
+  dangerously_allow_unresolved_kernel_lookups: false
+  dflash: false
+  disable_template_overrides: false
+  disable_thinking: false
+  exact_verify: false
+  fast_load_prefetch_shards: false
+  # 0 (not the checkpoint's declared value): this recipe's kv_cache_dtype is
+  # not fp8, and calibration only feeds an FP8 KV cache -- validate_serve_args
+  # refuses a non-zero value otherwise.
+  fp8_kv_calibration_tokens: 0
+  gdn_fused_norm: false
+  hermetic: false
+  high_speed_swap: false
+  max_inter_tool_prose: 3072
+  model_name: Qwen/Qwen3.6-35B-A3B-FP8
+  mtp_experts_nvfp4: false
+  mtp_gate: auto
+  mtp_max_seqs: 128
+  nemotron_shared_expert_e4m3: false
+  ngram_speculative: false
+  no_canonical_tiers: false
+  no_fast_load: false
+  no_high_speed_swap_graph: false
+  no_ssm_tail_midchunk: false
+  no_tui: false
+  prefill_codispatch: false
+  prefill_varlen_batch: false
+  profile: false
+  prompt_lookup_decoding: false
+  require_auth: false
+  self_speculative: false
+  # Unread for this model_type (serve_load/adapters.rs::resolve_nllb_lang
+  # branches on model_type in m2m_100|nllb only); placeholder, confirmed inert.
+  src_lang: not-applicable-non-nllb-checkpoint
+  ssm_h_dtype: f32
+  tgt_lang: not-applicable-non-nllb-checkpoint
+  video_allow_ffmpeg: false
+  vision_allow_remote_images: false
+  vision_remote_image_allow_private: false
+  w4a4_downcast: false
+  w4a4_downcast_wide: false

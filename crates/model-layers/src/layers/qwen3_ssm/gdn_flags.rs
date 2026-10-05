@@ -61,7 +61,14 @@ impl GdnFlags {
     ///
     /// `METRALE_SSM_H_FP16` is presence-checked: any value, `0` included, turns
     /// it on. `METRALE_GDN_FUSED_NORM` must be exactly `1`.
-    fn from_env() -> Self {
+    ///
+    /// 2026-10-05: `pub`, not just crate-visible, so a recipe-explicitness check can
+    /// compare "what env/HARDWARE.toml would resolve today" against a pinned
+    /// `GdnFlags` WITHOUT touching the process-wide `FLAGS` cell — unlike [`flags`],
+    /// this reads the environment fresh every call and seals nothing, so it is safe
+    /// to call from a test that must not pollute the cell for tests sharing its
+    /// process (`metrale_server::recipe::explicit_tests`).
+    pub fn from_env() -> Self {
         Self {
             h_f16: std::env::var("METRALE_SSM_H_FP16").is_ok(),
             // 2026-09-25: No environment variable feeds the pool width; only
