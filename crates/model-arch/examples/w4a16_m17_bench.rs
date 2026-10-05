@@ -40,7 +40,8 @@ const SHAPES: &[(&str, u32, u32)] = &[
     ("lm_head      N=248320 K=5120", 248320, 5120),
 ];
 
-const M_SWEEP: &[u32] = &[1, 4, 8, 16, 32, 64];
+/// 2026-10-05: Up to 512 rows: a C=128 MTP verify with K=4 is 512 rows.
+const M_SWEEP: &[u32] = &[1, 4, 8, 16, 32, 64, 128, 256, 512];
 
 /// 2026-09-25: Launch geometry: N and M tile (grid), and block 256 for the two
 /// 256-thread cases, 128 otherwise.
@@ -53,6 +54,12 @@ enum Geom {
     /// 2026-09-25: `w4a16_gemv_batch*`, which take the same arguments as the
     /// GEMMs (`A, B_packed, B_scale, scale2, C, M, N, K`).
     GemvN4,
+    /// 2026-10-05: `w4a16_tc_rows_{16,32,64}` (`ops::w4a16_tc_rows`): grid ceil(N / 64), block
+    /// 128, arguments `A, packed, scale, s2, C, M, N, K, lda, ldc`; at most `rows` rows per
+    /// launch, so a wider M is skipped.
+    TcRows {
+        rows: u32,
+    },
 }
 
 fn grid_for(g: Geom, m: u32, n: u32) -> [u32; 3] {
@@ -62,6 +69,7 @@ fn grid_for(g: Geom, m: u32, n: u32) -> [u32; 3] {
         Geom::N128M128 => [div_ceil(n, 128), div_ceil(m, 128), 1],
         Geom::N128M128W256 => [div_ceil(n, 128), div_ceil(m, 128), 1],
         Geom::GemvN4 => [div_ceil(n, 4), 1, 1],
+        Geom::TcRows { .. } => [div_ceil(n, 64), 1, 1],
     }
 }
 
@@ -78,6 +86,22 @@ fn launch(
     n: u32,
     k: u32,
 ) -> Result<()> {
+    if let Geom::TcRows { .. } = geom {
+        return KernelLaunch::new(g, k_h)
+            .grid(grid_for(geom, m, n))
+            .block([128, 1, 1])
+            .arg_ptr(a)
+            .arg_ptr(b)
+            .arg_ptr(b_scale)
+            .arg_f32(1.0)
+            .arg_ptr(c)
+            .arg_u32(m)
+            .arg_u32(n)
+            .arg_u32(k)
+            .arg_u32(k)
+            .arg_u32(n)
+            .launch(0);
+    }
     KernelLaunch::new(g, k_h)
         .grid(grid_for(geom, m, n))
         .block([
@@ -142,6 +166,36 @@ fn main() -> Result<()> {
             "w4a16_gemm_t_m128_bf16_v2",
             Geom::N128M128,
         ),
+        (
+            "w4a16_gemm_t_p3  (N128,M64)",
+            "w4a16_gemm_t_p3",
+            Geom::N128M64,
+        ),
+        (
+            "w4a16_gemm_t_k64_p3 (N128,M64)",
+            "w4a16_gemm_t_k64_p3",
+            Geom::N128M64,
+        ),
+        (
+            "w4a16_gemm_t_k64_n64_p3 (N64,M64)",
+            "w4a16_gemm_t_k64_n64_p3",
+            Geom::N64M64,
+        ),
+        (
+            "w4a16_tc_rows_16",
+            "w4a16_tc_rows_16",
+            Geom::TcRows { rows: 16 },
+        ),
+        (
+            "w4a16_tc_rows_32",
+            "w4a16_tc_rows_32",
+            Geom::TcRows { rows: 32 },
+        ),
+        (
+            "w4a16_tc_rows_64",
+            "w4a16_tc_rows_64",
+            Geom::TcRows { rows: 64 },
+        ),
         ("w4a16_gemv_batch4", "w4a16_gemv_batch4", Geom::GemvN4),
         ("w4a16_gemv_batch8", "w4a16_gemv_batch8", Geom::GemvN4),
         ("w4a16_gemv_batch16", "w4a16_gemv_batch16", Geom::GemvN4),
@@ -153,6 +207,8 @@ fn main() -> Result<()> {
                 "w4a16_v2"
             } else if func.starts_with("w4a16_gemv") {
                 "w4a16_gemv"
+            } else if func.starts_with("w4a16_tc_rows") {
+                "w4a16_tc_rows"
             } else {
                 "w4a16"
             },
@@ -197,6 +253,9 @@ fn main() -> Result<()> {
 
         for &(kname, kh, geom) in &kernels {
             for &m in M_SWEEP {
+                if matches!(geom, Geom::TcRows { rows } if m > rows) {
+                    continue;
+                }
                 for _ in 0..WARMUP {
                     launch(g, kh, geom, a, b, b_scale, c, m, n, k)?;
                 }
