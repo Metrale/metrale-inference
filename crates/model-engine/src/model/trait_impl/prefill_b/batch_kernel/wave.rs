@@ -35,13 +35,6 @@ use crate::traits::PrefillSlice;
 /// checkpoint a non-last chunk saves at its end (`prefill_b_save_checkpoint`).
 const WAVE_SNAPSHOT_SLOTS_PER_STREAM: usize = 3;
 
-/// 2026-10-05: `METRALE_PREFILL_WAVE_EXACT` (presence): batched prefill waves run the exact
-/// wave instead of the kernel-batched layers. Read once per process.
-pub(in crate::model) fn wave_exact_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_PREFILL_WAVE_EXACT").is_some())
-}
-
 impl TransformerModel {
     /// 2026-10-05: Whether the exact wave can give every stream its single-stream bits.
     fn wave_exact_admits(&self, streams: &[PrefillSlice<'_>]) -> bool {

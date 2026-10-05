@@ -93,21 +93,41 @@ fn impossible_formats_are_refused() {
 /// resolved values, and never under `adaptive`.
 #[test]
 fn prefill_levers_are_refused_beside_a_fixed_format() {
-    assert!(prefill_lever_refusal(&v("adaptive"), true, true, true).is_none());
-    assert!(prefill_lever_refusal(&v("declared"), false, false, false).is_none());
+    assert!(prefill_lever_refusal(&v("adaptive"), true, true, true, false).is_none());
+    assert!(prefill_lever_refusal(&v("declared"), false, false, false, false).is_none());
     for (varlen, codispatch, first, needle) in [
         (true, false, false, "--prefill-varlen-batch"),
         (false, true, false, "--prefill-codispatch"),
         (false, false, true, "METRALE_Q12_BATCHED_FIRST_CHUNK"),
     ] {
         for s in ["declared", "adaptive,ffn:nvfp4"] {
-            let why = prefill_lever_refusal(&v(s), varlen, codispatch, first).expect(s);
+            let why = prefill_lever_refusal(&v(s), varlen, codispatch, first, false).expect(s);
             assert!(why.contains(needle), "{s}: {why}");
+            assert!(why.contains("METRALE_PREFILL_WAVE_EXACT"), "{s}: {why}");
         }
     }
     // 2026-10-01: Co-dispatch turns the batched first chunk on by itself; it is named once.
-    let why = prefill_lever_refusal(&v("declared"), false, true, true).unwrap();
+    let why = prefill_lever_refusal(&v("declared"), false, true, true, false).unwrap();
     assert!(!why.contains("Q12"), "{why}");
+}
+
+/// 2026-10-05: The exact wave lifts the refusal beside every fixed format, for each lever and
+/// all three together.
+#[test]
+fn exact_wave_admits_the_prefill_levers_beside_a_fixed_format() {
+    for s in ["declared", "adaptive,ffn:nvfp4"] {
+        for (varlen, codispatch, first) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+            (true, true, true),
+        ] {
+            assert!(
+                prefill_lever_refusal(&v(s), varlen, codispatch, first, true).is_none(),
+                "{s}: {varlen} {codispatch} {first}"
+            );
+        }
+    }
 }
 
 /// 2026-10-01: On the nvfp4 tier the dense GDN and attention projections honour a fixed `nvfp4`

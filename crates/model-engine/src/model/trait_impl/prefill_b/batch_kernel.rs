@@ -69,7 +69,7 @@ impl TransformerModel {
         // 2026-10-05: `METRALE_PREFILL_WAVE_EXACT`: the exact wave, whose rows get their
         // single-stream bits (`wave.rs`); it declines to the per-stream loop, never to the
         // kernel-batched layers below.
-        if wave::wave_exact_enabled() {
+        if metrale_model_layers::layers::ops::prefill_wave_exact_enabled() {
             return self.prefill_batch_chunk_wave_exact(streams, stream, row_base);
         }
         let n = streams.len();
