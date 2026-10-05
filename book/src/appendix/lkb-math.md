@@ -96,7 +96,7 @@ declared trade of identity for speed.
 
 ## 3. Rule: error budgets compose
 
-Give each hom-set (all kernels from `A` to `B`) a distance: `d(f, f')` = the largest output
+Give the set of all kernels from `A` to `B` a distance: `d(f, f')` = the largest output
 difference over the inputs that matter (a sup norm, in the units of `B`). This is the metric
 enrichment of a category (Lawvere 1973); Tier 1 asks `d = 0`, Tier 2 asks `d ≤ ε`.
 
