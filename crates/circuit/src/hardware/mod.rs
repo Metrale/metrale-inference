@@ -38,12 +38,12 @@ mod tc_policy_render;
 #[cfg(test)]
 mod fp4_costing_tests;
 #[cfg(test)]
-mod hardware_tests;
+pub(crate) mod hardware_tests;
 #[cfg(test)]
 #[path = "runtime_tests.rs"]
 mod runtime_tests;
 #[cfg(test)]
-mod test_fixture;
+pub(crate) mod test_fixture;
 
 use std::collections::BTreeMap;
 

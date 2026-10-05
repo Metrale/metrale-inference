@@ -30,6 +30,7 @@ fn plan_args(args: &[&str]) -> CircuitPlanArgs {
         CircuitAction::Plan(_) => panic!("parsed plan"),
         CircuitAction::Memory(_) => panic!("parsed memory"),
         CircuitAction::Precision(_) => panic!("parsed precision"),
+        CircuitAction::Lkb(_) => panic!("parsed lkb"),
     }
 }
 

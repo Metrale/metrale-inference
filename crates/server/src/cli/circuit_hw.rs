@@ -323,7 +323,7 @@ pub(crate) fn matrix(root: &Path, dir: &str, check: bool) -> Result<String> {
     Ok(summary)
 }
 
-fn print(text: &str) -> Result<()> {
+pub(crate) fn print(text: &str) -> Result<()> {
     use std::io::Write;
     match std::io::stdout().lock().write_all(text.as_bytes()) {
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
