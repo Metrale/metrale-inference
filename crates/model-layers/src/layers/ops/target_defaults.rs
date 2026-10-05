@@ -171,6 +171,8 @@ pub struct TargetLevers {
     pub ffn_gateup_fused: Resolved<bool>,
     pub w8a8_prefill_max_m_widening: Resolved<u32>,
     pub w8a8_prefill_max_m_narrowing: Resolved<u32>,
+    /// 2026-10-05: The dense FFN's `w4a16_tc_rows` row band (`layers/dense_ffn_tc_rows.rs`).
+    pub ffn_w4a16_tc_rows_max_m: Resolved<u32>,
 }
 
 /// 2026-09-25: The whole table, as a pure function of a declaration and a
@@ -195,6 +197,11 @@ pub fn resolve(
         w8a8_prefill_max_m_narrowing: resolve_max_m(
             defaults.w8a8_prefill_max_m_narrowing,
             var("METRALE_W8A8_PREFILL_MAX_M_NARROWING").as_deref(),
+        ),
+        // 2026-10-05: A parsed `0` turns the row-tile arm off on any target.
+        ffn_w4a16_tc_rows_max_m: resolve_max_m(
+            defaults.ffn_w4a16_tc_rows_max_m,
+            var("METRALE_FFN_W4A16_TC_ROWS_MAX_M").as_deref(),
         ),
         // 2026-09-25: `kernels/hopper` declares it on, the other tables off. A
         // pinned `--ssm-batched-recurrent` outranks this row (`serve_flags.rs`).
@@ -341,7 +348,8 @@ pub fn format_levers(l: &TargetLevers) -> String {
          attn_m16_tc={attn_m16_tc} lm_head_m16_tc={lm_head_m16_tc} \
          attn_ncol_gemv={attn_ncol_gemv} ffn_gateup_fused={gateup} \
          fp8_act_quant_hopper={act_quant} \
-         w8a8_prefill_max_m={w8a8_wide}/{w8a8_narrow}{w8a8_src}",
+         w8a8_prefill_max_m={w8a8_wide}/{w8a8_narrow}{w8a8_src} \
+         ffn_w4a16_tc_rows_max_m={tc_rows}{tc_rows_src}",
         hw = if l.hw.is_empty() { "unknown" } else { l.hw },
         // 2026-09-25: Not a lever: the target's `[hardware] sm_count`, which
         // `arch_preflight::check_sm_count` compares with the device at boot.
@@ -365,6 +373,8 @@ pub fn format_levers(l: &TargetLevers) -> String {
         w8a8_wide = cap(l.w8a8_prefill_max_m_widening.value),
         w8a8_narrow = cap(l.w8a8_prefill_max_m_narrowing.value),
         w8a8_src = l.w8a8_prefill_max_m_widening.source.tag(),
+        tc_rows = l.ffn_w4a16_tc_rows_max_m.value,
+        tc_rows_src = l.ffn_w4a16_tc_rows_max_m.source.tag(),
     )
 }
 

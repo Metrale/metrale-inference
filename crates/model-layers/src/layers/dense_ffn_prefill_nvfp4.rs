@@ -157,6 +157,11 @@ impl DenseFfnLayer {
                             stream,
                         )?;
                     }
+                    // 2026-10-05: The row-tile arm (`dense_ffn_tc_rows.rs`) up to the target's
+                    // `ffn_w4a16_tc_rows_max_m`; it reads the row-major weight, not `$wt`.
+                    _ if self.tc_rows_serves(ctx, m, $n, $k) => {
+                        self.w4a16_tc_rows_chunked(ctx, $w, $in, $out, m, $n, $k, stream)?
+                    }
                     Some(wt) if fp8_m64_prefill => ops::w4a16_gemm_n128(
                         ctx.gpu,
                         self.w4a16_gemm_t_k,

@@ -35,6 +35,7 @@ const GB10: TargetDefaults = TargetDefaults {
     ffn_gateup_fused: false,
     w8a8_prefill_max_m_widening: 64,
     w8a8_prefill_max_m_narrowing: 384,
+    ffn_w4a16_tc_rows_max_m: 0,
 };
 
 /// 2026-09-25: A copy of `kernels/hopper/HARDWARE.toml` `[defaults]`.
@@ -54,6 +55,7 @@ const HOPPER: TargetDefaults = TargetDefaults {
     ffn_gateup_fused: true,
     w8a8_prefill_max_m_widening: u32::MAX,
     w8a8_prefill_max_m_narrowing: u32::MAX,
+    ffn_w4a16_tc_rows_max_m: 128,
 };
 
 fn with(defaults: &TargetDefaults, env: &[(&str, &str)]) -> TargetLevers {
@@ -361,3 +363,22 @@ fn hopper_resolves_the_widened_head_band_from_its_declaration() {
 /// share the fixtures above.
 #[path = "target_defaults_gateup_tests.rs"]
 mod gateup;
+
+/// 2026-10-05: The dense FFN's row-tile band: off on GB10, 128 on hopper, and the environment
+/// sets it either way, `0` included (off), with the source tagged on the summary line.
+#[test]
+fn the_ffn_row_tile_band_is_declared_per_target_and_overridable() {
+    assert_eq!(empty(&GB10).ffn_w4a16_tc_rows_max_m.value, 0);
+    let h = empty(&HOPPER);
+    assert_eq!(h.ffn_w4a16_tc_rows_max_m.value, 128);
+    assert!(!h.ffn_w4a16_tc_rows_max_m.from_env());
+    assert!(format_levers(&h).contains("ffn_w4a16_tc_rows_max_m=128"));
+    let off = with(&HOPPER, &[("METRALE_FFN_W4A16_TC_ROWS_MAX_M", "0")]);
+    assert_eq!(off.ffn_w4a16_tc_rows_max_m.value, 0);
+    assert!(format_levers(&off).contains("ffn_w4a16_tc_rows_max_m=0 (env)"));
+    let on = with(&GB10, &[("METRALE_FFN_W4A16_TC_ROWS_MAX_M", "64")]);
+    assert_eq!(on.ffn_w4a16_tc_rows_max_m.value, 64);
+    let junk = with(&HOPPER, &[("METRALE_FFN_W4A16_TC_ROWS_MAX_M", "lots")]);
+    assert_eq!(junk.ffn_w4a16_tc_rows_max_m.value, 128);
+    assert!(!junk.ffn_w4a16_tc_rows_max_m.from_env());
+}

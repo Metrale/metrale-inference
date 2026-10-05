@@ -214,6 +214,7 @@ fn every_declaring_target_states_every_lever() {
             "fp8_act_quant_hopper",
             "w8a8_prefill_max_m_widening",
             "w8a8_prefill_max_m_narrowing",
+            "ffn_w4a16_tc_rows_max_m",
         ] {
             assert!(
                 raw.contains(&format!("\n{lever} = ")),
@@ -333,6 +334,7 @@ fn the_generated_constant_names_every_field() {
         "ffn_gateup_fused: true",
         "w8a8_prefill_max_m_widening: 4294967295",
         "w8a8_prefill_max_m_narrowing: 4294967295",
+        "ffn_w4a16_tc_rows_max_m: 128",
     ] {
         assert!(
             generated.contains(field),
@@ -365,6 +367,10 @@ fn the_baked_constant_matches_its_own_hardware_tree() {
     assert_eq!(
         baked.w8a8_prefill_max_m_narrowing,
         declared.w8a8_prefill_max_m_narrowing
+    );
+    assert_eq!(
+        baked.ffn_w4a16_tc_rows_max_m,
+        declared.ffn_w4a16_tc_rows_max_m
     );
     assert_eq!(
         metrale_kernels::TARGET_SM_COUNT,

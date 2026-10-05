@@ -35,6 +35,7 @@ pub(crate) struct Defaults {
     pub ffn_gateup_fused: bool,
     pub w8a8_prefill_max_m_widening: u32,
     pub w8a8_prefill_max_m_narrowing: u32,
+    pub ffn_w4a16_tc_rows_max_m: u32,
 }
 
 /// 2026-09-25: What a target that declares no `[defaults]` table gets, and
@@ -73,6 +74,9 @@ pub(crate) fn baseline(hw: &str) -> Defaults {
         // W8A16 at large M declares none.
         w8a8_prefill_max_m_widening: u32::MAX,
         w8a8_prefill_max_m_narrowing: u32::MAX,
+        // 2026-10-05: Off: a target that has not measured `w4a16_tc_rows` beating its NVFP4
+        // tile GEMMs on the dense FFN declares none.
+        ffn_w4a16_tc_rows_max_m: 0,
     }
 }
 
@@ -169,6 +173,7 @@ pub(crate) fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
             "w8a8_prefill_max_m_narrowing" => {
                 out.w8a8_prefill_max_m_narrowing = unsigned(key, value)
             }
+            "ffn_w4a16_tc_rows_max_m" => out.ffn_w4a16_tc_rows_max_m = unsigned(key, value),
             "ssm_batched_recurrent" => out.ssm_batched_recurrent = boolean(key, value),
             "gdn_prefill_tc" => out.gdn_prefill_tc = boolean(key, value),
             "ssm_ba_gates_hopper" => out.ssm_ba_gates_hopper = boolean(key, value),
@@ -217,6 +222,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
          \x20   ffn_gateup_fused: {gateup_fused},\n\
          \x20   w8a8_prefill_max_m_widening: {w8a8_wide},\n\
          \x20   w8a8_prefill_max_m_narrowing: {w8a8_narrow},\n\
+         \x20   ffn_w4a16_tc_rows_max_m: {tc_rows_max_m},\n\
          }};\n",
         hw = d.hw,
         batchm = d.lm_head_batchm_max,
@@ -233,6 +239,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
         gateup_fused = d.ffn_gateup_fused,
         w8a8_wide = d.w8a8_prefill_max_m_widening,
         w8a8_narrow = d.w8a8_prefill_max_m_narrowing,
+        tc_rows_max_m = d.ffn_w4a16_tc_rows_max_m,
     )
 }
 

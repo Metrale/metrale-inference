@@ -95,4 +95,9 @@ pub struct TargetDefaults {
     /// (`n <= k`: down). gb10 declares 384. See
     /// [`Self::w8a8_prefill_max_m_widening`].
     pub w8a8_prefill_max_m_narrowing: u32,
+    /// 2026-10-05: Upper `M` at which the NVFP4 dense-FFN projections run the row-tile
+    /// `w4a16_tc_rows` (BF16 activations, in 64-row calls) instead of the NVFP4 tile GEMMs, read
+    /// in metrale-model-layers `layers/dense_ffn_tc_rows.rs`. `0` means off, the baseline.
+    /// hopper declares 128; its HARDWARE.toml records the measurement.
+    pub ffn_w4a16_tc_rows_max_m: u32,
 }
