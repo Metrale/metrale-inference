@@ -267,6 +267,12 @@ impl TransformerModel {
                     stream,
                 )?;
             }
+            // 2026-10-05: `prefill_b_upload_meta_at` enqueues its copy from the pinned staging
+            // (`copy_h2d_async_retained`), which must not change before the copy runs. The
+            // next stream repacks that staging (and `stage_batched` after the loop), so wait
+            // for this stream's copy first. Without the wait a stream could read the next
+            // stream's MRoPE position streams.
+            self.gpu.synchronize(stream)?;
             // 2026-10-05: The slot holds this chunk's positions and slot table
             // (`q12_per_stream_meta_bytes`, the admission check's term). It was 16
             // bytes per token of the longest chunk, below the 20 an MRoPE chunk
