@@ -164,6 +164,8 @@ fn extract(s: &Subject<'_>, n: &Node, ex: &Extract) -> Option<String> {
 pub fn point_of(f: &Family, s: &Subject<'_>, n: &Node) -> Result<(Values, Values), VennError> {
     let (mut point, mut runtime) = (Values::new(), Values::new());
     for p in &f.params {
+        // 2026-10-05: A numerics parameter has no `from`: the node does not choose it, so it
+        // never makes a node differ from a point.
         let Some(ex) = p.from.get(n.op.base_name()) else {
             continue;
         };

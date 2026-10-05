@@ -140,7 +140,45 @@ pub fn render_markdown(l: &Lkb) -> String {
     }
     laxity_section(&mut s, l);
     promotion_section(&mut s, l);
+    numerics_section(&mut s, l);
     s
+}
+
+fn numerics_section(s: &mut String, l: &Lkb) {
+    use crate::venn::families::reduction::Verdict;
+    let all: Vec<&(String, Option<String>, Verdict)> =
+        l.numerics.iter().flat_map(|r| &r.kernels).collect();
+    let n = |f: fn(&Verdict) -> bool| all.iter().filter(|k| f(&k.2)).count();
+    let _ = writeln!(
+        s,
+        "## Numerics (reduction trees)\n\nKernels the plans run: {}. Declared tree, bytes \
+         expected on any class compiling the same source with the same flags: {}. Declared, \
+         tolerance: {}. Undeclared (parity unknown): {}. Trees: book/src/appendix/lkb-math.md, \
+         section 2.\n",
+        all.len(),
+        n(|v| *v == Verdict::Bytes),
+        n(|v| matches!(v, Verdict::Tolerance(_))),
+        n(|v| *v == Verdict::Unknown)
+    );
+    let declared: Vec<_> = l
+        .numerics
+        .iter()
+        .flat_map(|r| r.kernels.iter().map(move |k| (&r.family, k)))
+        .filter(|(_, k)| k.1.is_some())
+        .collect();
+    if declared.is_empty() {
+        return;
+    }
+    let _ = writeln!(s, "| family | kernel | tree | verdict |\n|---|---|---|---|");
+    for (f, (k, t, v)) in declared {
+        let v = match v {
+            Verdict::Bytes => "bytes".to_string(),
+            Verdict::Tolerance(why) => format!("tolerance ({why})"),
+            Verdict::Unknown => "unknown".to_string(),
+        };
+        let _ = writeln!(s, "| {f} | `{k}` | {} | {v} |", t.as_deref().unwrap_or("-"));
+    }
+    s.push('\n');
 }
 
 /// 2026-10-05: The `## LKB on <class>` section of `met circuit plan`'s report: the coverage

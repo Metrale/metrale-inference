@@ -38,15 +38,30 @@ pub enum ParamKind {
     /// 2026-09-29: A policy the code plugs in: weight format, scale layout, activation
     /// quantizer, activation epilogue, routing scoring.
     Policy,
+    /// 2026-10-05: The order and precision of the arithmetic: its values are reduction tree
+    /// ids ([`reduction`]) or `undeclared`.
+    Numerics,
 }
 
 impl ParamKind {
+    /// 2026-10-05: The manifest spelling's kind.
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "runtime" => ParamKind::Runtime,
+            "compile" => ParamKind::Compile,
+            "policy" => ParamKind::Policy,
+            "numerics" => ParamKind::Numerics,
+            _ => return None,
+        })
+    }
+
     /// 2026-09-29: The manifest and report spelling.
     pub fn name(self) -> &'static str {
         match self {
             ParamKind::Runtime => "runtime",
             ParamKind::Compile => "compile-time",
             ParamKind::Policy => "policy",
+            ParamKind::Numerics => "numerics",
         }
     }
 }
@@ -266,6 +281,9 @@ pub struct Family {
     pub pipeline: crate::pipeline::declare::FamilyPipelines,
     /// 2026-10-02: Device scratch a launch needs beyond its edges (`crate::memory`).
     pub workspace: Vec<Workspace>,
+    /// 2026-10-05: The reduction tree each kernel runs, by id; a kernel not listed is
+    /// undeclared ([`reduction`]).
+    pub reduction: BTreeMap<KernelId, String>,
 }
 
 /// 2026-10-02: One workspace of a family (`[[family.workspace]]`).
@@ -356,6 +374,8 @@ pub struct Families {
     pub families: Vec<Family>,
     /// 2026-09-29: Legacy per-sequence facts.
     pub legacy: Vec<LegacyPath>,
+    /// 2026-10-05: Declared reduction trees, by id.
+    pub reductions: BTreeMap<String, reduction::Reduction>,
 }
 
 impl Families {
@@ -430,6 +450,10 @@ mod compute_file;
 mod file;
 #[path = "families_legacy.rs"]
 mod legacy_file;
+#[path = "families_op_file.rs"]
+mod op_file;
+#[path = "reduction.rs"]
+pub mod reduction;
 #[path = "families_workspace.rs"]
 mod workspace_file;
 

@@ -26,6 +26,7 @@ use crate::hardware::plan::NOVEL_EMITTER;
 use crate::hardware::{HwError, HwReport};
 use crate::rules::Numerics;
 use crate::venn::families::How;
+use crate::venn::families::reduction::{Verdict, verdict};
 use crate::venn::repo::Repo;
 use crate::venn::{Class, Run};
 
@@ -127,6 +128,15 @@ pub enum Candidate {
     },
 }
 
+/// 2026-10-05: The numerics of the kernels one family runs in the report's plans.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumericsRow {
+    /// 2026-10-05: Family id.
+    pub family: String,
+    /// 2026-10-05: Kernels run, with the tree each runs (`None`: undeclared) and the verdict.
+    pub kernels: Vec<(String, Option<String>, Verdict)>,
+}
+
 /// 2026-10-05: The LKB of one model on one class.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lkb {
@@ -153,6 +163,8 @@ pub struct Lkb {
     /// 2026-10-05: Promotion candidates: copy-point families by count, then missing points by
     /// share of the step, largest first.
     pub promotion: Vec<Candidate>,
+    /// 2026-10-05: Per generator used, its kernels' declared trees and parity verdicts.
+    pub numerics: Vec<NumericsRow>,
     /// 2026-10-05: The modelled fusion gain of each report run's plan, in `coverage` order
     /// (filled by [`lkb`]; [`from_report`] leaves it empty).
     pub laxity: Vec<PlanLaxity>,
@@ -281,6 +293,7 @@ pub fn from_report(report: &HwReport, shadows: &BTreeMap<String, String>, comman
         coverage,
         residual,
         promotion: promotion(report, &copy_points),
+        numerics: numerics(report),
         copy_points,
         laxity: Vec::new(),
         command,
@@ -340,6 +353,40 @@ fn promotion(report: &HwReport, copies: &[CopyPoint]) -> Vec<Candidate> {
     });
     copy.extend(points);
     copy
+}
+
+fn numerics(report: &HwReport) -> Vec<NumericsRow> {
+    let fams = &report.resolved.families;
+    let mut by_family: BTreeMap<String, BTreeMap<String, (Option<String>, Verdict)>> =
+        BTreeMap::new();
+    for t in &report.tables {
+        for g in t
+            .planned
+            .plan
+            .groups
+            .iter()
+            .filter(|g| g.emitter != NOVEL_EMITTER)
+        {
+            for k in &g.kernels {
+                let Some(f) = fams.families.iter().find(|f| f.kernels.contains(k)) else {
+                    continue;
+                };
+                let tree = f.reduction.get(k).cloned();
+                let v = verdict(tree.as_ref().and_then(|id| fams.reductions.get(id)));
+                by_family
+                    .entry(f.id.clone())
+                    .or_default()
+                    .insert(k.to_string(), (tree, v));
+            }
+        }
+    }
+    by_family
+        .into_iter()
+        .map(|(family, ks)| NumericsRow {
+            family,
+            kernels: ks.into_iter().map(|(k, (t, v))| (k, t, v)).collect(),
+        })
+        .collect()
 }
 
 fn stem(path: &str) -> &str {
