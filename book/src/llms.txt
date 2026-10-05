@@ -21,6 +21,9 @@ and published alongside it.
 - [Philosophy: AI Kernel HyperCompiling](https://book.dev.metrale.ai/architecture/philosophy.html)
 - [Workspace Layout](https://book.dev.metrale.ai/architecture/workspace.html)
 - [Kernel Dispatch Pipeline](https://book.dev.metrale.ai/architecture/dispatch.html)
+- [The Circuit Compiler](https://book.dev.metrale.ai/architecture/circuit-compiler.html)
+- [The Latent Kernel Blueprint](https://book.dev.metrale.ai/architecture/lkb.html)
+- [The Latent Architecture Blueprint](https://book.dev.metrale.ai/architecture/lab.html)
 - [SBIO: Business Logic vs I/O](https://book.dev.metrale.ai/architecture/sbio.html)
 
 ## Part III — The Crates
@@ -77,6 +80,7 @@ and published alongside it.
 ## Appendix
 
 - [A Category-Theoretic Perspective](https://book.dev.metrale.ai/appendix/category-theory.html)
+- [The LKB in Mathematics](https://book.dev.metrale.ai/appendix/lkb-math.html)
 - [Glossary](https://book.dev.metrale.ai/appendix/glossary.html)
 - [Further Reading](https://book.dev.metrale.ai/appendix/reading.html)
 

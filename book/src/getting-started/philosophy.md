@@ -12,7 +12,7 @@ This is our version of **AI Kernel HyperCompiling**. Every chapter of this book 
 
 vLLM, TensorRT-LLM, SGLang, and the other mainstream engines support thousands of models across dozens of GPU generations with a single binary. That is a real, useful thing. The cost of doing it well — a cost they pay every release — is a layer of abstraction *between* the kernel and the hardware: a templating engine, a just-in-time compiler, or a broadly-parameterized CUDA kernel that branches on shape, dtype, and arch.
 
-Every one of those layers trims a few percent off peak throughput. Added up, on a specific hybrid-SSM/attention/MoE model running on a specific GPU, those trims are how a 3.6× gap opens up.
+Each of those layers can cost throughput on a given target. How much is a measurement per target, not an assumption; see [Benchmarking](../operations/benchmarks.md).
 
 Metrale Engine does not try to close that gap inside a general framework. We reject the framing — and we refuse to let specialization shrink the scope of what we support. Both at once.
 
@@ -33,7 +33,7 @@ The question this framing forces — and the question the rest of the codebase a
 The Metrale Engine answer has two parts:
 
 1. **Hyperoptimize in isolation.** Every `(H, M_q)` target lives in its own directory: `kernels/<hw>/<model>/<quant>/`. A target shares a `common/` baseline and overrides only what it needs; an override can use any tiling strategy, any shared-memory layout, any MMA instruction mix, and it cannot slow down another target because nothing else compiles it. This is the opposite of the templating approach: instead of one kernel that branches, a target that needs a different kernel gets its own file. Adding a new target is a new directory, and its overrides cannot regress an existing one.
-2. **Share abstractions, not kernels.** What *is* shared — the `GpuBackend` trait, the `ComputeTarget` build-time trait, the layer factory in `metrale-model-engine` — is abstraction *above* the kernel level. The shared code knows about "launch a kernel" and "allocate GPU memory"; it does not know, and does not want to know, what the kernel inside is doing. New hardware plugs in at the trait layer; new models plug in at the `ModelWeightLoader` trait — neither disturbs the other axis.
+2. **Share algorithms, specialize schedules.** A kernel *algorithm* is shared across targets as a family of the [Latent Kernel Blueprint](../architecture/lkb.md): each target instantiates the points it needs ahead of time, and a shared point changes only when the result stays byte-identical and no existing point regresses. A target that needs a different kernel keeps its own file, named as part of the LKB residual. The other shared layer — the `GpuBackend` trait, the `ComputeTarget` build-time trait, the layer factory in `metrale-model-engine` — is abstraction *above* the kernel level. The shared code knows about "launch a kernel" and "allocate GPU memory"; it does not know, and does not want to know, what the kernel inside is doing. New hardware plugs in at the trait layer; new models plug in at the `ModelWeightLoader` trait — neither disturbs the other axis.
 
 Adding a new model works the same way. One new `ModelWeightLoader` impl, one match arm in `crates/model-engine/src/factory.rs`. The KV cache, buffer arena, scheduler, and HTTP server are model-agnostic — they do not need to change to support a fundamentally different architecture. Qwen3.5 hybrid SSM+attention+MoE, Nemotron-H Mamba-2, MiniMax 256-expert sigmoid MoE, Gemma-4 sliding+full alternating attention, Qwen3-VL vision all coexist in one binary today, each with its own kernel overrides.
 
@@ -56,4 +56,4 @@ The next chapter gets you running on the hardware we've shipped. The rest of the
 
 ## A formal lens
 
-If you want the same argument in the language of category theory — the target matrix as a product, the kernel registry as a coproduct, the trait layer as an algebraic theory, general frameworks as a factoring Metrale Engine refuses — see the appendix [A Category-Theoretic Perspective](../appendix/category-theory.md). It is optional reading; nothing else in the book depends on it.
+If you want the same argument in the language of category theory — the target matrix as a product, the compiled registry as a coproduct, the trait layer as an algebraic theory, kernels as a factoring through the Latent Kernel Blueprint — see the appendix [A Category-Theoretic Perspective](../appendix/category-theory.md). It is optional reading; nothing else in the book depends on it.

@@ -24,6 +24,14 @@ Read before starting, and apply throughout:
   measured (`docs/kernel-perf/measurements.toml`).
 - `KERNEL_ARCH_ROADMAP.md`: which architectures are supported, which have kernels, which are
   optimized.
+- `book/src/architecture/circuit-compiler.md`, `book/src/architecture/lkb.md` and
+  `book/src/architecture/lab.md`: the vocabulary this method uses. A new model is a parameter
+  point of the Latent Architecture Blueprint plus a named architecture residual (refusals). A
+  new kernel is a point of a family in the Latent Kernel Blueprint, or a named LKB residual
+  entry with its evidence. The math behind it is in `book/src/appendix/lkb-math.md`.
+- Record the LAB and LKB metrics at the start and the exit of the work: architecture coverage,
+  models expressible as parameter points, the LAB residual, LKB coverage (with its measured
+  part), the LKB residual, and what was promoted.
 
 ## Where things live
 

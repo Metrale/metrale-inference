@@ -4,7 +4,7 @@ Part I's Philosophy chapter answered *why* Metrale Engine specializes. This chap
 
 The single design rule that every choice below derives from is:
 
-> **Specialization is a directory, not a template.** Everything that varies across `(Hardware, Model_q)` targets lives in its own directory. Everything shared across them is abstraction *above* the kernel layer, not parameters *inside* one.
+> **Share the algorithm, specialize the schedule, name every exception.** A kernel *algorithm* is shared across `(Hardware, Model_q)` targets as a family of the [Latent Kernel Blueprint](./lkb.md), and each target instantiates the points it needs ahead of time: a compile-time or policy parameter, never a runtime branch on the hardware. Where a target needs a different kernel, it gets its own file in its own directory, declared with a reason as part of the LKB residual. Everything else shared across targets is abstraction *above* the kernel layer.
 
 ## Consequence 1: the kernel tree is a coordinate system
 
@@ -62,14 +62,15 @@ Adding a model or a hardware target is, at the file-system level, *creating a ne
 
 ## Consequence 2: the runtime crate structure mirrors the axis split
 
-Read the workspace `Cargo.toml` and you'll see twenty-one workspace members. Group them by what axis of variation they insulate:
+Read the workspace `Cargo.toml` and you'll see twenty-three workspace members. Group them by what axis of variation they insulate:
 
 | Axis they insulate | Crates |
 |---|---|
 | *Hardware vendor* | `metrale-core` (`ComputeTarget`, `Vendor` enum, `KernelTarget`), `metrale-gpu-runtime` (`GpuBackend`), `metrale-comm` (`CommBackend`) |
 | *Model architecture* | `metrale-model-arch` (`ModelWeightLoader` trait, per-family loaders), `metrale-model-layers` (`TransformerLayer` trait) |
 | *Quantization format* | `crates/model-layers/src/quant_format/` (per-format modules + runtime dispatch), `crates/core/src/numeric.rs` (host-side FP8/BF16 conversions) |
-| *Compiled kernels (one artifact per axis combination)* | `metrale-kernels` (embedded PTX modules, auto-generated from the kernel tree) |
+| *Compiled kernels (one artifact per axis combination)* | `metrale-kernels` (embedded PTX modules, auto-generated from the kernel tree), `metrale-kernel-tree` (the kernel tree embedded in the binary, for code that reads it without a checkout) |
+| *Planning* | `metrale-circuit` (architecture circuits, the fuser, kernel families, plans per hardware class; see [The Circuit Compiler](./circuit-compiler.md)) |
 | *Request serving* | `metrale-server` (HTTP, tokenizer, tool parsing) |
 | *Measurement* | `metrale-bench` |
 
@@ -114,6 +115,6 @@ The deep-dive chapters in Part IV show what the kernels look like — what a han
 
 ## Reading the architecture categorically
 
-The design choices above have precise names in category theory. The target set `𝒯 = Hw × Mod × Quant` is a categorical **product**; the crate split is that product made syntactically real, which is why orthogonality of axes is a structural fact and not a convention. The kernel registry is a **coproduct** (disjoint union of per-target PTX sets), which is why adding a summand cannot regress existing summands. The `GpuBackend` trait defines an **algebraic theory** with two ship-worthy models — `MetraleCudaBackend` and `MockGpuBackend` — and that is what makes the test suite runnable without a GPU. A general framework is, in this vocabulary, an engine that factors `Kernels : 𝒯 → 𝐒𝐞𝐭` through a smaller "essence" category; Metrale Engine refuses the factoring, and the 3.6× gap against vLLM is the cost of the factoring that Metrale Engine does not pay.
+The design choices above have precise names in category theory. The target set `𝒯 = Hw × Mod × Quant` is a categorical **product**; the crate split is that product made syntactically real, which is why orthogonality of axes is a structural fact and not a convention. The kernel registry is a **coproduct** (disjoint union of per-target PTX sets), which is why adding a summand cannot regress existing summands. The `GpuBackend` trait defines an **algebraic theory** with two ship-worthy models — `MetraleCudaBackend` and `MockGpuBackend` — and that is what makes the test suite runnable without a GPU. The kernels factor through the [Latent Kernel Blueprint](./lkb.md): a theory of kernel families shared by every target, realized ahead of time on each hardware class, with a named residual for what only one class has. Performance claims stay local to a target: a shared kernel is "optimized" only where it was measured.
 
 The appendix [A Category-Theoretic Perspective](../appendix/category-theory.md) works through each of these structures at appendix length. It is a design reference, not a prerequisite.
