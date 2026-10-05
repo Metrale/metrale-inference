@@ -36,3 +36,5 @@ w8a8_prefill_max_m_widening = 4294967295
 w8a8_prefill_max_m_narrowing = 4294967295
 # 2026-10-05: Off, unmeasured on this class (layers/dense_ffn_tc_rows.rs).
 ffn_w4a16_tc_rows_max_m = 0
+# 2026-10-05: Off, unmeasured on this class (layers/dense_ffn_tc_rows.rs).
+ffn_w4a16_bf16_tile = false

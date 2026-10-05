@@ -100,4 +100,9 @@ pub struct TargetDefaults {
     /// in metrale-model-layers `layers/dense_ffn_tc_rows.rs`. `0` means off, the baseline.
     /// hopper declares 128; its HARDWARE.toml records the measurement.
     pub ffn_w4a16_tc_rows_max_m: u32,
+    /// 2026-10-05: Whether an NVFP4 dense-FFN prefill projection wider than the small-M arm and
+    /// not served by `w4a16_tc_rows` runs the BF16-activation tile `w4a16_gemm_t_m128_bf16(_v2)`
+    /// instead of the tiles that round activations to E4M3, read in metrale-model-layers
+    /// `layers/dense_ffn_tc_rows.rs`. Off is the baseline; hopper declares it on.
+    pub ffn_w4a16_bf16_tile: bool,
 }

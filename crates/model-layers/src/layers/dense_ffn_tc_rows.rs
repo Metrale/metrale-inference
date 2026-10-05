@@ -10,6 +10,11 @@
 //! weight bytes with a 64-column CTA and keeps BF16 activations (the tile GEMMs round them to
 //! E4M3), which is the W4A16 the checkpoint's NVFP4 layers take on a class without FP4 MMA.
 //!
+//! 2026-10-05: Past that band, a prefill projection wider than the small-M arm runs the
+//! BF16-activation tile `w4a16_gemm_t_m128_bf16(_v2)` when the target declares
+//! `ffn_w4a16_bf16_tile` ([`bf16_tile_route`]), so the NVFP4 FFN keeps BF16 activations at every
+//! width instead of the E4M3 rounding of `w4a16_gemm_t_m128(_v2)`.
+//!
 //! Owner: model-layers (dense FFN).
 //! Invariants:
 //! - A row's output bits depend on neither `m` nor the call its row falls in (the kernel's own
@@ -34,7 +39,26 @@ pub(crate) fn tc_rows_route(m: u32, n: u32, k: u32, max_m: u32, module_present: 
         && ops::w4a16_tc_rows_shape_ok(m.min(ops::W4A16_TC_ROWS_MAX_M), n, k, k, n)
 }
 
+/// 2026-10-05: The widest prefill the `w4_gemm!` ladder sends to `w4a16_prefill_gemm`'s small-M
+/// kernels (`dense_ffn_prefill_nvfp4.rs`).
+pub(crate) const PREFILL_SMALL_M_MAX: u32 = 64;
+
+/// 2026-10-05: Whether the wide BF16 tile serves an `m`-row prefill: the target declares it
+/// (`on`) and `m` is past the small-M arm. Rows inside the row-tile band never reach it: that arm
+/// comes first on the ladder.
+pub(crate) fn bf16_tile_route(m: u32, on: bool) -> bool {
+    on && m > PREFILL_SMALL_M_MAX
+}
+
 impl DenseFfnLayer {
+    /// 2026-10-05: [`bf16_tile_route`] under this binary's resolved `ffn_w4a16_bf16_tile`.
+    pub(super) fn bf16_tile_serves(&self, m: u32) -> bool {
+        bf16_tile_route(
+            m,
+            ops::target_defaults::resolved().ffn_w4a16_bf16_tile.value,
+        )
+    }
+
     /// 2026-10-05: [`tc_rows_route`] under this binary's resolved `ffn_w4a16_tc_rows_max_m`.
     pub(super) fn tc_rows_serves(&self, ctx: &ForwardContext, m: u32, n: u32, k: u32) -> bool {
         tc_rows_route(
@@ -85,7 +109,15 @@ impl DenseFfnLayer {
 
 #[cfg(test)]
 mod tests {
-    use super::tc_rows_route;
+    use super::{PREFILL_SMALL_M_MAX, bf16_tile_route, tc_rows_route};
+
+    #[test]
+    fn the_bf16_tile_starts_past_the_small_m_arm_and_only_when_declared() {
+        assert!(!bf16_tile_route(PREFILL_SMALL_M_MAX, true));
+        assert!(bf16_tile_route(PREFILL_SMALL_M_MAX + 1, true));
+        assert!(bf16_tile_route(2048, true));
+        assert!(!bf16_tile_route(2048, false));
+    }
 
     /// 2026-10-05: The 27B's FFN shapes: gate/up `[17408, 5120]`, down `[5120, 17408]`.
     const GATE: (u32, u32) = (17408, 5120);

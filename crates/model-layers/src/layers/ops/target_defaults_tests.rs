@@ -36,6 +36,7 @@ const GB10: TargetDefaults = TargetDefaults {
     w8a8_prefill_max_m_widening: 64,
     w8a8_prefill_max_m_narrowing: 384,
     ffn_w4a16_tc_rows_max_m: 0,
+    ffn_w4a16_bf16_tile: false,
 };
 
 /// 2026-09-25: A copy of `kernels/hopper/HARDWARE.toml` `[defaults]`.
@@ -56,6 +57,7 @@ const HOPPER: TargetDefaults = TargetDefaults {
     w8a8_prefill_max_m_widening: u32::MAX,
     w8a8_prefill_max_m_narrowing: u32::MAX,
     ffn_w4a16_tc_rows_max_m: 128,
+    ffn_w4a16_bf16_tile: true,
 };
 
 fn with(defaults: &TargetDefaults, env: &[(&str, &str)]) -> TargetLevers {
@@ -381,4 +383,22 @@ fn the_ffn_row_tile_band_is_declared_per_target_and_overridable() {
     let junk = with(&HOPPER, &[("METRALE_FFN_W4A16_TC_ROWS_MAX_M", "lots")]);
     assert_eq!(junk.ffn_w4a16_tc_rows_max_m.value, 128);
     assert!(!junk.ffn_w4a16_tc_rows_max_m.from_env());
+}
+
+/// 2026-10-05: The dense FFN's wide BF16 tile: off on GB10, on for hopper, and the environment
+/// flips it either way with the source tagged on the summary line.
+#[test]
+fn the_ffn_bf16_tile_is_declared_per_target_and_overridable() {
+    assert!(!empty(&GB10).ffn_w4a16_bf16_tile.value);
+    let h = empty(&HOPPER);
+    assert!(h.ffn_w4a16_bf16_tile.value && !h.ffn_w4a16_bf16_tile.from_env());
+    assert!(format_levers(&h).contains("ffn_w4a16_bf16_tile=true"));
+    let off = with(&HOPPER, &[("METRALE_FFN_W4A16_BF16_TILE", "0")]);
+    assert!(!off.ffn_w4a16_bf16_tile.value);
+    assert!(format_levers(&off).contains("ffn_w4a16_bf16_tile=false (env)"));
+    assert!(
+        with(&GB10, &[("METRALE_FFN_W4A16_BF16_TILE", "1")])
+            .ffn_w4a16_bf16_tile
+            .value
+    );
 }
