@@ -356,6 +356,11 @@ impl MoeLayer {
 }
 
 mod adaptive_fp8;
+mod circuit;
+mod circuit_formats;
+pub use circuit::{
+    ExpertKind, Fp8Tables, MoeBinding, MoeExperts, MoeFacts, MoeKernels, MoeScratch,
+};
 mod tables;
 pub(crate) use tables::{Bf16SharedExpert, ExpertPtrTable, Fp8ExpertPtrTable};
 
@@ -371,12 +376,14 @@ mod forward_batched_gate;
 mod forward_ep;
 mod forward_fp8_grouped_decode;
 mod fp8_grouped_tc;
+pub use fp8_grouped_tc::fp8_grouped_tc_setting;
 mod fp8_grouped_tc_w8a8;
 pub use forward_fp8_grouped_decode::fp8_grouped_decode_shape_ok;
 pub use fp8_grouped_tc_w8a8::{moe_expert_fp8_act, set_moe_expert_fp8_act};
 mod forward_fp8_grouped_router;
 pub use forward_fp8_grouped_router::GroupedRouting;
 mod forward_bf16_grouped_decode;
+pub(crate) use forward_fp8_grouped_router::router_block_rows;
 mod forward_nvfp4_grouped_decode;
 mod nvfp4_lean;
 pub use forward_nvfp4_grouped_decode::{

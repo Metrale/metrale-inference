@@ -2,9 +2,9 @@
 # recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared-act
 # checkpoint: unsloth/Qwen3.8-27B-NVFP4
 # target: gb10/qwen3.8-27b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on ffn_act_fixed=declared gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on draft_moe_experts=none ffn_act_fixed=declared gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lm_head_nvfp4_rows=off moe_fp8_tc=on moe_nvfp4_kernels=none rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
-digest: 2daa57cb0b912901f1d348cf4b5351a77a4d1700094f4134c8dc60d0a8b5d98a
+digest: 1ea44e527fedf2755ec13f0907c40d93ca05ac625b8a0d1967d5a6b02cc7b3ff
 groups: 925  launches: 1155  edges: 216 fused, 1116 materialized
 == embed
 g0000 embed [embed] (host) reference rule=embed_row_copy writes={h:bf16}
@@ -2309,7 +2309,7 @@ g0921 l63.dense_ffn [add] residual_add::bf16_residual_add reference rule=ffn_res
 == head
 g0922 head [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16} compute=memory
   final_norm: bf16 -> [compute f32] -> bf16
-g0923 head [lm_head] dense_gemv_bf16_batchm::dense_gemv_bf16_batchm reference rule=lm_head_bf16_batchm writes={logits:bf16} compute=cuda_core
+g0923 head [lm_head] dense_gemv_bf16_batchm::dense_gemv_bf16_batchm reference rule=lm_head_bf16_rows_fixed writes={logits:bf16} compute=cuda_core
   lm_head: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0924 head [argmax] (host) reference rule=argmax_host writes={token:i32}
   argmax: bf16 -> [compare bf16] -> i32
@@ -2320,9 +2320,9 @@ g0924 head [argmax] (host) reference rule=argmax_host writes={token:i32}
 # recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared-act
 # checkpoint: unsloth/Qwen3.8-27B-NVFP4
 # target: gb10/qwen3.8-27b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on ffn_act_fixed=declared gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on draft_moe_experts=none ffn_act_fixed=declared gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lm_head_nvfp4_rows=off moe_fp8_tc=on moe_nvfp4_kernels=none rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
-digest: 309e79d474bacc74f8f138c220d0222f3168ec1b3dd8bbc7eaa9140d8b603c1e
+digest: 152227e173c266f40e6cfb2da08cf38be79871b88e082e1e7ad403338d364a47
 groups: 925  launches: 1731  edges: 216 fused, 1116 materialized
 == embed
 g0000 embed [embed] (host) reference rule=embed_row_copy writes={h:bf16}
@@ -4627,7 +4627,7 @@ g0921 l63.dense_ffn [add] residual_add::bf16_residual_add reference rule=ffn_res
 == head
 g0922 head [final_norm] norm::rms_norm reference rule=final_norm writes={xn:bf16} compute=memory
   final_norm: bf16 -> [compute f32] -> bf16
-g0923 head [lm_head] dense_gemv_bf16_batchm::dense_gemv_bf16_batchm reference rule=lm_head_bf16_batchm writes={logits:bf16} compute=cuda_core
+g0923 head [lm_head] dense_gemv_bf16_batchm::dense_gemv_bf16_batchm reference rule=lm_head_bf16_rows_fixed writes={logits:bf16} compute=cuda_core
   lm_head: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0924 head [argmax] (host) reference rule=argmax_host writes={token:i32}
   argmax: bf16 -> [compare bf16] -> i32

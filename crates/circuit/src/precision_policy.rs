@@ -162,7 +162,14 @@ impl EdgePrecision for PolicyPrecision<'_> {
             };
         }
         if w.is_fp8() {
-            let activation = match self.policy.fp8_decode_act(module) {
+            // 2026-10-03: A 128x128 block-scaled FP8 weight outside the experts decodes W8A8 only
+            // under the block-scaled kernel cap, as the loader adopts it (`fp8_block_scaled_decode_act`).
+            let act = if matches!(w.granularity, Granularity::Block(..)) {
+                self.policy.fp8_block_scaled_decode_act(module)
+            } else {
+                self.policy.fp8_decode_act(module)
+            };
+            let activation = match act {
                 Some(ActFormat::Fp8) => fp8_act(declared.activation),
                 _ => Format::Bf16,
             };

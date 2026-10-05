@@ -139,7 +139,13 @@ fn frames(doc: &Document) -> Vec<(String, Vec<&metrale_circuit::display::Line>)>
 #[test]
 fn a_fused_group_is_framed_with_its_kernel_and_members_and_no_dram_edge_inside() {
     for (inst, loaded) in golden() {
-        for (mode, rows) in [(Mode::Decode, 1), (Mode::MultiSeq, 96), (Mode::Verify, 4)] {
+        // 2026-10-05: 96 rows unless the instance's multi-sequence plans stop below it, then its
+        // widest rung.
+        let wide = match inst.plans.get(&Mode::MultiSeq) {
+            Some(p) if !p.contains(&96) => *p.iter().max().expect("a planned rung"),
+            _ => 96,
+        };
+        for (mode, rows) in [(Mode::Decode, 1), (Mode::MultiSeq, wide), (Mode::Verify, 4)] {
             let doc = draw(&inst, &loaded, mode, rows, opts(140, Glyphs::Unicode)).unwrap();
             let frames = frames(&doc);
             assert!(!frames.is_empty(), "{} {mode:?}: no frames", inst.arch);

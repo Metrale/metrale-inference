@@ -85,6 +85,9 @@ pub enum BoundWeight {
     /// 2026-09-30: A declared W8A8 projection (`W8a8Mixer`, `W8a8Ffn`): the checkpoint's E4M3
     /// weight with its scales, and the kernels its layer runs it with.
     W8a8(W8a8Weight, W8a8Kernels),
+    /// 2026-10-03: An FP8 E4M3 projection with 128 x 128 block scales the layer runs W8A16
+    /// (BF16 activations): the checkpoint's own weight.
+    Fp8(crate::weight_map::Fp8Weight),
 }
 
 impl BoundWeight {
@@ -93,7 +96,7 @@ impl BoundWeight {
         match self {
             BoundWeight::Dense(_) => "bf16",
             BoundWeight::Nvfp4(_) | BoundWeight::Mmq(_) => "nvfp4",
-            BoundWeight::W8a8(..) => "fp8",
+            BoundWeight::W8a8(..) | BoundWeight::Fp8(_) => "fp8",
         }
     }
 }
@@ -177,6 +180,8 @@ pub struct CircuitLayer {
     pub weights: BTreeMap<WeightSlot, BoundWeight>,
     /// 2026-09-28: Features present on this layer that the circuit does not model.
     pub unmodelled: Vec<String>,
+    /// 2026-10-03: The layer's MoE FFN (`MoeLayer::circuit_bind`); `None` for a dense FFN.
+    pub moe: Option<crate::layers::moe::MoeBinding>,
 }
 
 /// 2026-09-28: A supertrait of `TransformerLayer`; see the module header.
@@ -260,6 +265,12 @@ pub struct HeadBinding {
     /// 2026-09-28: The widest padded batch the BF16 head serves with the batched GEMV
     /// (`dense_gemv_bf16_batchm`); 0 when that arm is off. Wider batches take the GEMM.
     pub batchm_max_rows: u32,
+    /// 2026-10-03: An NVFP4 head's transposed twin and its padded N (`lm_head_nvfp4_t`), which
+    /// its tile GEMM reads; `None` for a BF16 head.
+    pub nvfp4_twin: Option<(crate::weight_map::QuantizedWeight, u32)>,
+    /// 2026-10-05: The declared NVFP4 head runs on the W4A16 row tiles at every row count
+    /// (`install_declared_lm_head_w4a16_rows`); `lm_head` is then that NVFP4 head.
+    pub nvfp4_rows: bool,
 }
 
 /// 2026-09-28: Refuse a model the circuit misdescribes: an unbound layer, a layer or head

@@ -2,10 +2,10 @@
 │ arch qwen3_6_moe · recipe qwen3.6/qwen3.6-35b-a3b-fp8-bf16head                                                       │
 │ MoE hybrid: 3 GatedDeltaNet layers then 1 gated full-attention layer, 256-expert top-8 MoE with a shared expert, MT… │
 │ 40 layers · hidden 2048 · attn 16q/2kv×256 · GDN 16k/32v×128 · 256 experts top-8 (ffn 512) · vocab 248320            │
-│ qkvz/gdn_out/experts.gate_up/shared_gate_up/q/k/v/o W8A16 fp8 · ba/router/shared_gate/lm_head W16A16 bf16            │
-│ experts.down/shared_down W8 fp8 · f32 act in                                                                         │
-│ mode decode · 1 row · 573 launches/step · 575 kernel groups                                                          │
-│ 180 fused edges · 814 materialized · plan 31d4c6b3314d                                                               │
+│ qkvz/gdn_out/q/k/v/o W8A16 fp8 · experts.gate_up/experts.down/shared_gate_up/shared_down W8A8 fp8                    │
+│ ba/router/shared_gate/lm_head W16A16 bf16                                                                            │
+│ mode decode · 1 row · 653 launches/step · 575 kernel groups                                                          │
+│ 260 fused edges · 854 materialized · plan 7b2922011622                                                               │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
 Layers
@@ -30,7 +30,7 @@ Layers
         in bf16 · compute f32 · out bf16
        │ ▼ bf16 · n×2048  DRAM
     ╔════════════════════════════════╗  weight fp8 e4m3/128×128 blk
-    ║ qkvz · linear                  ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ qkvz · linear                  ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
 
@@ -74,7 +74,7 @@ Layers
         in f32,bf16 · compute f32 · out bf16
        │ ▼ bf16 · n×4096  DRAM
     ╔════════════════════════════════╗  weight fp8 e4m3/128×128 blk
-    ║ out · linear                   ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ out · linear                   ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
        │ ▼ bf16 · n×2048  DRAM
@@ -91,45 +91,72 @@ Layers
   ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · n×2048  DRAM
     ╔════════════════════════════════╗  weight bf16
-    ║ router                         ║  gemv::dense_gemv_bf16 · ≈ reference
+    ║ router                         ║  dense_gemv_bf16_batchm::dense_gemv_bf16_batchm · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16 · accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×256  DRAM
     ╭────────────────────────────────╮
-    │ top_k                          │  moe_topk::moe_topk_softmax · ≈ reference
-    ╰────────────────────────────────╯
+    │ top_k                          │  moe_topk::moe_topk_softmax_rows → moe_fp8_grouped_sort::moe_fp8_grouped_sort
+    ╰────────────────────────────────╯  ≈ reference
         in bf16 · score f32 · out f32,i32
-       │ ▼ i32 · n×8  DRAM
-       ├─────────────────────────────────────────────────────────┐
-       │ ▼ routed: top-8 of 256 experts  DRAM                    │ ▼ shared expert  DRAM
-  ┏━ moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮  ◂ xn                                                                           ┃
+  ┃ │ xn_quant · act_quant           │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in bf16 · compute f32 · out fp8/g128                                                                           ┃
+  ┃    ┊ ▼ fp8 e4m3/g128 · n×2048  on-chip                                                                             ┃
+  ┃    ├─────────────────────────────────────────────────────────┐                                                     ┃
+  ┃    ┊ ▼ routed: top-8 of 256 experts  on-chip                 ┊ ▼ shared expert  on-chip                            ┃
   ┃ ╔════════════════════════════════╗                        ╔════════════════════════════════╗                       ┃
   ┃ ║ experts_gate_up                ║                        ║ shared_gate_up · linear        ║                       ┃
   ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
-  ┃     experts_gate_up: in bf16,i32 · gather bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16          ┃
-  ┃     accumulate f32 · scale f32 · out bf16                                                                          ┃
-  ┃     shared_gate_up: in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32            ┃
+  ┃     experts_gate_up: in fp8/g128,i32 · gather fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3              ┃
+  ┃     mma e4m3*e4m3 · accumulate f32 · scale f32 · out bf16                                                          ┃
+  ┃     shared_gate_up: in fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32    ┃
   ┃     scale f32 · out bf16                                                                                           ┃
-  ┗━ writes egu, sgu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×1024  DRAM                                  │ ▼ bf16 · n×1024  DRAM
-  ┏━ moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃    ┊ ▼ bf16 · 8n×1024  on-chip                               ┊ ▼ bf16 · n×1024  on-chip                            ┃
   ┃ ╭────────────────────────────────╮                        ╭────────────────────────────────╮                       ┃
   ┃ │ experts_act · silu_mul         │                        │ shared_act · silu_mul          │                       ┃
   ┃ ╰────────────────────────────────╯                        ╰────────────────────────────────╯                       ┃
-  ┃     experts_act: in bf16 · compute f32 · out f32                                                                   ┃
-  ┃     shared_act: in bf16 · compute f32 · out f32                                                                    ┃
-  ┃    ┊ ▼ f32 · 8n×512  on-chip                                 ┊ ▼ f32 · n×512  on-chip                              ┃
-  ┃ ╔════════════════════════════════╗                        ╔════════════════════════════════╗                       ┃
-  ┃ ║ experts_down                   ║                        ║ shared_down · linear           ║                       ┃
-  ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
-  ┃     experts_down: in f32,i32 · act f32 · weight fp8/block128x128->f32 · mma f32*f32 · accumulate f32 · scale f32   ┃
-  ┃     out bf16                                                                                                       ┃
-  ┃     shared_down: in f32 · act f32 · weight fp8/block128x128->f32 · mma f32*f32 · accumulate f32 · scale f32        ┃
-  ┃     out bf16                                                                                                       ┃
+  ┃     experts_act: in bf16 · compute f32 · out f32 (rule)                                                            ┃
+  ┃     shared_act: in bf16 · compute f32 · out f32 (rule)                                                             ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃                                                           ╔════════════════════════════════╗                       ┃
+  ┃    ┊                                                      ║ shared_down · linear           ║                       ┃
+  ┃                                                           ╚════════════════════════════════╝                       ┃
+  ┃     shared_down: in fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32       ┃
+  ┃     scale f32 · out bf16                                                                                           ┃
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×2048  DRAM                                  │ ▼ bf16 · n×2048  DRAM
+                                                                 │ ▼ bf16 · n×2048  DRAM
        ├─────────────────────────────────────────────────────────┘
-  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ eact_quant · act_quant         │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in f32 (rule) · compute f32 · out fp8/g128                                                                     ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       ├─────────────────────────────────────────────────────────┐
+       │ ▼ routed: top-8 of 256 experts  DRAM                    │ ▼ shared expert  DRAM
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╔════════════════════════════════╗                                                                                 ┃
+  ┃ ║ experts_down                   ║                                                                                 ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃     experts_down: in fp8/g128,i32 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32  ┃
+  ┃     scale f32 · out bf16                                                                                           ┃
+  ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · 8n×2048  DRAM
+       ├─────────────────────────────────────────────────────────┘
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ sact_quant · act_quant         │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in f32 (rule) · compute f32 · out fp8/g128                                                                     ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
   ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
   ┃ ║ shared_gate · linear           ║  weight bf16                                                                    ┃
   ┃ ╚════════════════════════════════╝                                                                                 ┃
@@ -161,7 +188,7 @@ Layers
 ▰ GatedDeltaNet layer  × 29 layers  1-2, 4-6, 8-10, 12-14, 16-18, 20-22, 24-26, 28-30, 32-34, 36-38
        │ ▼ bf16 · n×2048  DRAM  from the layer boundary
     ╔════════════════════════════════╗  weight fp8 e4m3/128×128 blk
-    ║ qkvz · linear                  ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ qkvz · linear                  ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
 
@@ -205,7 +232,7 @@ Layers
         in f32,bf16 · compute f32 · out bf16
        │ ▼ bf16 · n×4096  DRAM
     ╔════════════════════════════════╗  weight fp8 e4m3/128×128 blk
-    ║ out · linear                   ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ out · linear                   ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
        │ ▼ bf16 · n×2048  DRAM
@@ -222,45 +249,72 @@ Layers
   ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · n×2048  DRAM
     ╔════════════════════════════════╗  weight bf16
-    ║ router                         ║  gemv::dense_gemv_bf16 · ≈ reference
+    ║ router                         ║  dense_gemv_bf16_batchm::dense_gemv_bf16_batchm · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16 · accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×256  DRAM
     ╭────────────────────────────────╮
-    │ top_k                          │  moe_topk::moe_topk_softmax · ≈ reference
-    ╰────────────────────────────────╯
+    │ top_k                          │  moe_topk::moe_topk_softmax_rows → moe_fp8_grouped_sort::moe_fp8_grouped_sort
+    ╰────────────────────────────────╯  ≈ reference
         in bf16 · score f32 · out f32,i32
-       │ ▼ i32 · n×8  DRAM
-       ├─────────────────────────────────────────────────────────┐
-       │ ▼ routed: top-8 of 256 experts  DRAM                    │ ▼ shared expert  DRAM
-  ┏━ moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮  ◂ xn                                                                           ┃
+  ┃ │ xn_quant · act_quant           │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in bf16 · compute f32 · out fp8/g128                                                                           ┃
+  ┃    ┊ ▼ fp8 e4m3/g128 · n×2048  on-chip                                                                             ┃
+  ┃    ├─────────────────────────────────────────────────────────┐                                                     ┃
+  ┃    ┊ ▼ routed: top-8 of 256 experts  on-chip                 ┊ ▼ shared expert  on-chip                            ┃
   ┃ ╔════════════════════════════════╗                        ╔════════════════════════════════╗                       ┃
   ┃ ║ experts_gate_up                ║                        ║ shared_gate_up · linear        ║                       ┃
   ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
-  ┃     experts_gate_up: in bf16,i32 · gather bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16          ┃
-  ┃     accumulate f32 · scale f32 · out bf16                                                                          ┃
-  ┃     shared_gate_up: in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32            ┃
+  ┃     experts_gate_up: in fp8/g128,i32 · gather fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3              ┃
+  ┃     mma e4m3*e4m3 · accumulate f32 · scale f32 · out bf16                                                          ┃
+  ┃     shared_gate_up: in fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32    ┃
   ┃     scale f32 · out bf16                                                                                           ┃
-  ┗━ writes egu, sgu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×1024  DRAM                                  │ ▼ bf16 · n×1024  DRAM
-  ┏━ moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃    ┊ ▼ bf16 · 8n×1024  on-chip                               ┊ ▼ bf16 · n×1024  on-chip                            ┃
   ┃ ╭────────────────────────────────╮                        ╭────────────────────────────────╮                       ┃
   ┃ │ experts_act · silu_mul         │                        │ shared_act · silu_mul          │                       ┃
   ┃ ╰────────────────────────────────╯                        ╰────────────────────────────────╯                       ┃
-  ┃     experts_act: in bf16 · compute f32 · out f32                                                                   ┃
-  ┃     shared_act: in bf16 · compute f32 · out f32                                                                    ┃
-  ┃    ┊ ▼ f32 · 8n×512  on-chip                                 ┊ ▼ f32 · n×512  on-chip                              ┃
-  ┃ ╔════════════════════════════════╗                        ╔════════════════════════════════╗                       ┃
-  ┃ ║ experts_down                   ║                        ║ shared_down · linear           ║                       ┃
-  ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
-  ┃     experts_down: in f32,i32 · act f32 · weight fp8/block128x128->f32 · mma f32*f32 · accumulate f32 · scale f32   ┃
-  ┃     out bf16                                                                                                       ┃
-  ┃     shared_down: in f32 · act f32 · weight fp8/block128x128->f32 · mma f32*f32 · accumulate f32 · scale f32        ┃
-  ┃     out bf16                                                                                                       ┃
+  ┃     experts_act: in bf16 · compute f32 · out f32 (rule)                                                            ┃
+  ┃     shared_act: in bf16 · compute f32 · out f32 (rule)                                                             ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃                                                           ╔════════════════════════════════╗                       ┃
+  ┃    ┊                                                      ║ shared_down · linear           ║                       ┃
+  ┃                                                           ╚════════════════════════════════╝                       ┃
+  ┃     shared_down: in fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32       ┃
+  ┃     scale f32 · out bf16                                                                                           ┃
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×2048  DRAM                                  │ ▼ bf16 · n×2048  DRAM
+                                                                 │ ▼ bf16 · n×2048  DRAM
        ├─────────────────────────────────────────────────────────┘
-  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ eact_quant · act_quant         │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in f32 (rule) · compute f32 · out fp8/g128                                                                     ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       ├─────────────────────────────────────────────────────────┐
+       │ ▼ routed: top-8 of 256 experts  DRAM                    │ ▼ shared expert  DRAM
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╔════════════════════════════════╗                                                                                 ┃
+  ┃ ║ experts_down                   ║                                                                                 ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃     experts_down: in fp8/g128,i32 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32  ┃
+  ┃     scale f32 · out bf16                                                                                           ┃
+  ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · 8n×2048  DRAM
+       ├─────────────────────────────────────────────────────────┘
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ sact_quant · act_quant         │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in f32 (rule) · compute f32 · out fp8/g128                                                                     ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
   ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
   ┃ ║ shared_gate · linear           ║  weight bf16                                                                    ┃
   ┃ ╚════════════════════════════════╝                                                                                 ┃
@@ -292,7 +346,7 @@ Layers
 ◆ Full-attention layer  × 9 layers  3, 7, 11, 15, 19, 23, 27, 31, 35
        │ ▼ bf16 · n×2048  DRAM  from the layer boundary
     ╔════════════════════════════════╗  weight fp8 e4m3/128×128 blk
-    ║ q · linear                     ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ q · linear                     ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
        │ ▼ bf16 · n×8192  DRAM
@@ -302,12 +356,12 @@ Layers
         in bf16 · move bf16 · out bf16,bf16
 
     ╔════════════════════════════════╗  ◂ xn · weight fp8 e4m3/128×128 blk
-    ║ k · linear                     ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ k · linear                     ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
 
     ╔════════════════════════════════╗  ◂ xn · weight fp8 e4m3/128×128 blk
-    ║ v · linear                     ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ v · linear                     ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
 
@@ -342,7 +396,7 @@ Layers
         in bf16,bf16 · compute f32 · out bf16
        │ ▼ bf16 · n×4096  DRAM
     ╔════════════════════════════════╗  weight fp8 e4m3/128×128 blk
-    ║ o · linear                     ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ o · linear                     ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
        │ ▼ bf16 · n×2048  DRAM
@@ -359,45 +413,72 @@ Layers
   ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · n×2048  DRAM
     ╔════════════════════════════════╗  weight bf16
-    ║ router                         ║  gemv::dense_gemv_bf16 · ≈ reference
+    ║ router                         ║  dense_gemv_bf16_batchm::dense_gemv_bf16_batchm · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16 · accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×256  DRAM
     ╭────────────────────────────────╮
-    │ top_k                          │  moe_topk::moe_topk_softmax · ≈ reference
-    ╰────────────────────────────────╯
+    │ top_k                          │  moe_topk::moe_topk_softmax_rows → moe_fp8_grouped_sort::moe_fp8_grouped_sort
+    ╰────────────────────────────────╯  ≈ reference
         in bf16 · score f32 · out f32,i32
-       │ ▼ i32 · n×8  DRAM
-       ├─────────────────────────────────────────────────────────┐
-       │ ▼ routed: top-8 of 256 experts  DRAM                    │ ▼ shared expert  DRAM
-  ┏━ moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮  ◂ xn                                                                           ┃
+  ┃ │ xn_quant · act_quant           │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in bf16 · compute f32 · out fp8/g128                                                                           ┃
+  ┃    ┊ ▼ fp8 e4m3/g128 · n×2048  on-chip                                                                             ┃
+  ┃    ├─────────────────────────────────────────────────────────┐                                                     ┃
+  ┃    ┊ ▼ routed: top-8 of 256 experts  on-chip                 ┊ ▼ shared expert  on-chip                            ┃
   ┃ ╔════════════════════════════════╗                        ╔════════════════════════════════╗                       ┃
   ┃ ║ experts_gate_up                ║                        ║ shared_gate_up · linear        ║                       ┃
   ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
-  ┃     experts_gate_up: in bf16,i32 · gather bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16          ┃
-  ┃     accumulate f32 · scale f32 · out bf16                                                                          ┃
-  ┃     shared_gate_up: in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32            ┃
+  ┃     experts_gate_up: in fp8/g128,i32 · gather fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3              ┃
+  ┃     mma e4m3*e4m3 · accumulate f32 · scale f32 · out bf16                                                          ┃
+  ┃     shared_gate_up: in fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32    ┃
   ┃     scale f32 · out bf16                                                                                           ┃
-  ┗━ writes egu, sgu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×1024  DRAM                                  │ ▼ bf16 · n×1024  DRAM
-  ┏━ moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃    ┊ ▼ bf16 · 8n×1024  on-chip                               ┊ ▼ bf16 · n×1024  on-chip                            ┃
   ┃ ╭────────────────────────────────╮                        ╭────────────────────────────────╮                       ┃
   ┃ │ experts_act · silu_mul         │                        │ shared_act · silu_mul          │                       ┃
   ┃ ╰────────────────────────────────╯                        ╰────────────────────────────────╯                       ┃
-  ┃     experts_act: in bf16 · compute f32 · out f32                                                                   ┃
-  ┃     shared_act: in bf16 · compute f32 · out f32                                                                    ┃
-  ┃    ┊ ▼ f32 · 8n×512  on-chip                                 ┊ ▼ f32 · n×512  on-chip                              ┃
-  ┃ ╔════════════════════════════════╗                        ╔════════════════════════════════╗                       ┃
-  ┃ ║ experts_down                   ║                        ║ shared_down · linear           ║                       ┃
-  ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
-  ┃     experts_down: in f32,i32 · act f32 · weight fp8/block128x128->f32 · mma f32*f32 · accumulate f32 · scale f32   ┃
-  ┃     out bf16                                                                                                       ┃
-  ┃     shared_down: in f32 · act f32 · weight fp8/block128x128->f32 · mma f32*f32 · accumulate f32 · scale f32        ┃
-  ┃     out bf16                                                                                                       ┃
+  ┃     experts_act: in bf16 · compute f32 · out f32 (rule)                                                            ┃
+  ┃     shared_act: in bf16 · compute f32 · out f32 (rule)                                                             ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃                                                           ╔════════════════════════════════╗                       ┃
+  ┃    ┊                                                      ║ shared_down · linear           ║                       ┃
+  ┃                                                           ╚════════════════════════════════╝                       ┃
+  ┃     shared_down: in fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32       ┃
+  ┃     scale f32 · out bf16                                                                                           ┃
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×2048  DRAM                                  │ ▼ bf16 · n×2048  DRAM
+                                                                 │ ▼ bf16 · n×2048  DRAM
        ├─────────────────────────────────────────────────────────┘
-  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ eact_quant · act_quant         │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in f32 (rule) · compute f32 · out fp8/g128                                                                     ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       ├─────────────────────────────────────────────────────────┐
+       │ ▼ routed: top-8 of 256 experts  DRAM                    │ ▼ shared expert  DRAM
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╔════════════════════════════════╗                                                                                 ┃
+  ┃ ║ experts_down                   ║                                                                                 ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃     experts_down: in fp8/g128,i32 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32  ┃
+  ┃     scale f32 · out bf16                                                                                           ┃
+  ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · 8n×2048  DRAM
+       ├─────────────────────────────────────────────────────────┘
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ sact_quant · act_quant         │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in f32 (rule) · compute f32 · out fp8/g128                                                                     ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
   ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
   ┃ ║ shared_gate · linear           ║  weight bf16                                                                    ┃
   ┃ ╚════════════════════════════════╝                                                                                 ┃
@@ -413,7 +494,7 @@ Layers
 ◆ Full-attention layer  layer 39
        │ ▼ bf16 · n×2048  DRAM  from the layer boundary
     ╔════════════════════════════════╗  weight fp8 e4m3/128×128 blk
-    ║ q · linear                     ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ q · linear                     ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
        │ ▼ bf16 · n×8192  DRAM
@@ -423,12 +504,12 @@ Layers
         in bf16 · move bf16 · out bf16,bf16
 
     ╔════════════════════════════════╗  ◂ xn · weight fp8 e4m3/128×128 blk
-    ║ k · linear                     ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ k · linear                     ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
 
     ╔════════════════════════════════╗  ◂ xn · weight fp8 e4m3/128×128 blk
-    ║ v · linear                     ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ v · linear                     ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
 
@@ -463,7 +544,7 @@ Layers
         in bf16,bf16 · compute f32 · out bf16
        │ ▼ bf16 · n×4096  DRAM
     ╔════════════════════════════════╗  weight fp8 e4m3/128×128 blk
-    ║ o · linear                     ║  w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32 · ≈ reference
+    ║ o · linear                     ║  w8a16_tc_rows::w8a16_tc_rows_16 · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32 · scale f32 · out bf16
        │ ▼ bf16 · n×2048  DRAM
@@ -480,45 +561,72 @@ Layers
   ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · n×2048  DRAM
     ╔════════════════════════════════╗  weight bf16
-    ║ router                         ║  gemv::dense_gemv_bf16 · ≈ reference
+    ║ router                         ║  dense_gemv_bf16_batchm::dense_gemv_bf16_batchm · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16 · accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×256  DRAM
     ╭────────────────────────────────╮
-    │ top_k                          │  moe_topk::moe_topk_softmax · ≈ reference
-    ╰────────────────────────────────╯
+    │ top_k                          │  moe_topk::moe_topk_softmax_rows → moe_fp8_grouped_sort::moe_fp8_grouped_sort
+    ╰────────────────────────────────╯  ≈ reference
         in bf16 · score f32 · out f32,i32
-       │ ▼ i32 · n×8  DRAM
-       ├─────────────────────────────────────────────────────────┐
-       │ ▼ routed: top-8 of 256 experts  DRAM                    │ ▼ shared expert  DRAM
-  ┏━ moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮  ◂ xn                                                                           ┃
+  ┃ │ xn_quant · act_quant           │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in bf16 · compute f32 · out fp8/g128                                                                           ┃
+  ┃    ┊ ▼ fp8 e4m3/g128 · n×2048  on-chip                                                                             ┃
+  ┃    ├─────────────────────────────────────────────────────────┐                                                     ┃
+  ┃    ┊ ▼ routed: top-8 of 256 experts  on-chip                 ┊ ▼ shared expert  on-chip                            ┃
   ┃ ╔════════════════════════════════╗                        ╔════════════════════════════════╗                       ┃
   ┃ ║ experts_gate_up                ║                        ║ shared_gate_up · linear        ║                       ┃
   ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
-  ┃     experts_gate_up: in bf16,i32 · gather bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16          ┃
-  ┃     accumulate f32 · scale f32 · out bf16                                                                          ┃
-  ┃     shared_gate_up: in bf16 · act bf16 · weight fp8/block128x128->bf16 · mma bf16*bf16 · accumulate f32            ┃
+  ┃     experts_gate_up: in fp8/g128,i32 · gather fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3              ┃
+  ┃     mma e4m3*e4m3 · accumulate f32 · scale f32 · out bf16                                                          ┃
+  ┃     shared_gate_up: in fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32    ┃
   ┃     scale f32 · out bf16                                                                                           ┃
-  ┗━ writes egu, sgu ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×1024  DRAM                                  │ ▼ bf16 · n×1024  DRAM
-  ┏━ moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃    ┊ ▼ bf16 · 8n×1024  on-chip                               ┊ ▼ bf16 · n×1024  on-chip                            ┃
   ┃ ╭────────────────────────────────╮                        ╭────────────────────────────────╮                       ┃
   ┃ │ experts_act · silu_mul         │                        │ shared_act · silu_mul          │                       ┃
   ┃ ╰────────────────────────────────╯                        ╰────────────────────────────────╯                       ┃
-  ┃     experts_act: in bf16 · compute f32 · out f32                                                                   ┃
-  ┃     shared_act: in bf16 · compute f32 · out f32                                                                    ┃
-  ┃    ┊ ▼ f32 · 8n×512  on-chip                                 ┊ ▼ f32 · n×512  on-chip                              ┃
-  ┃ ╔════════════════════════════════╗                        ╔════════════════════════════════╗                       ┃
-  ┃ ║ experts_down                   ║                        ║ shared_down · linear           ║                       ┃
-  ┃ ╚════════════════════════════════╝                        ╚════════════════════════════════╝                       ┃
-  ┃     experts_down: in f32,i32 · act f32 · weight fp8/block128x128->f32 · mma f32*f32 · accumulate f32 · scale f32   ┃
-  ┃     out bf16                                                                                                       ┃
-  ┃     shared_down: in f32 · act f32 · weight fp8/block128x128->f32 · mma f32*f32 · accumulate f32 · scale f32        ┃
-  ┃     out bf16                                                                                                       ┃
+  ┃     experts_act: in bf16 · compute f32 · out f32 (rule)                                                            ┃
+  ┃     shared_act: in bf16 · compute f32 · out f32 (rule)                                                             ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃                                                           ╔════════════════════════════════╗                       ┃
+  ┃    ┊                                                      ║ shared_down · linear           ║                       ┃
+  ┃                                                           ╚════════════════════════════════╝                       ┃
+  ┃     shared_down: in fp8/g128 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32       ┃
+  ┃     scale f32 · out bf16                                                                                           ┃
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×2048  DRAM                                  │ ▼ bf16 · n×2048  DRAM
+                                                                 │ ▼ bf16 · n×2048  DRAM
        ├─────────────────────────────────────────────────────────┘
-  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ eact_quant · act_quant         │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in f32 (rule) · compute f32 · out fp8/g128                                                                     ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       ├─────────────────────────────────────────────────────────┐
+       │ ▼ routed: top-8 of 256 experts  DRAM                    │ ▼ shared expert  DRAM
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┃ ╔════════════════════════════════╗                                                                                 ┃
+  ┃ ║ experts_down                   ║                                                                                 ┃
+  ┃ ╚════════════════════════════════╝                                                                                 ┃
+  ┃     experts_down: in fp8/g128,i32 · act fp8/g128 · weight fp8/block128x128->e4m3 · mma e4m3*e4m3 · accumulate f32  ┃
+  ┃     scale f32 · out bf16                                                                                           ┃
+  ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+       │ ▼ bf16 · 8n×2048  DRAM
+       ├─────────────────────────────────────────────────────────┘
+  ┏━ moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 → moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8… ━ ≈ reference ━┓
+  ┃ ╭────────────────────────────────╮                                                                                 ┃
+  ┃ │ sact_quant · act_quant         │                                                                                 ┃
+  ┃ ╰────────────────────────────────╯                                                                                 ┃
+  ┃     in f32 (rule) · compute f32 · out fp8/g128                                                                     ┃
+  ┗━ writes xn_quant, eact_quant, sact_quant ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  ┏━ moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
   ┃ ╔════════════════════════════════╗  ◂ xn                                                                           ┃
   ┃ ║ shared_gate · linear           ║  weight bf16                                                                    ┃
   ┃ ╚════════════════════════════════╝                                                                                 ┃
@@ -544,7 +652,7 @@ Layers
         in bf16 · compute f32 · out bf16
        │ ▼ bf16 · n×2048  DRAM
     ╔════════════════════════════════╗  weight bf16
-    ║ lm_head                        ║  gemv::dense_gemv_bf16 · ≈ reference
+    ║ lm_head                        ║  dense_gemv_bf16_batchm::dense_gemv_bf16_batchm · ≈ reference
     ╚════════════════════════════════╝
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16 · accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×248320  DRAM
@@ -554,5 +662,5 @@ Layers
         in bf16 · compare bf16 · out i32
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-573 launches/step · 575 groups · 180 fused · 814 materialized edges · 6.6 MiB written/step · arena 0.5 MiB
+653 launches/step · 575 groups · 260 fused · 854 materialized edges · 6.1 MiB written/step · arena 0.5 MiB
 ╔═╗ heavy op · ╭─╮ light op · ┏━┓ fused kernel · │▼ DRAM · ┊▼ on-chip · ✓ bit-identical · ≈ reference · ⚠ differs

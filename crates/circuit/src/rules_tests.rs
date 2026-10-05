@@ -181,3 +181,24 @@ fn duplicate_ids_bad_toml_and_bad_schema_are_refused() {
         Err(RuleError::Parse(_))
     ));
 }
+
+// 2026-10-03: `departs` is a reference rule's statement that its `act` step departs from the
+// policy's activation format: refused on a rule of another class, and without a stated `act`.
+#[test]
+fn a_departure_needs_a_reference_rule_and_its_stated_act() {
+    let rule = |numerics: &str, steps: &str| {
+        format!(
+            "schema = 1\n[[rule]]\nid = \"head\"\npattern = [{{ op = \"lm_head\", weight = \"nvfp4/g16\", steps = {{ {steps} }}, departs = true }}]\nkernels = [{{ module = \"w4a16\", func = \"w4a16_gemm_t\" }}]\nrepeat = \"once\"\nemitter = \"lm_head_nvfp4_tile\"\nrows = [1, 8]\nmodes = [\"decode\"]\nnumerics = \"{numerics}\"\n{}priority = 20\ncite = \"x\"\n",
+            if numerics == "differs" {
+                "lever = \"l\"\n"
+            } else {
+                ""
+            }
+        )
+    };
+    let act = "act = \"fp8/tensor\", mma = \"e4m3*e4m3\"";
+    let ok = crate::parse_rules(&rule("reference", act)).unwrap();
+    assert!(ok[0].pattern[0].departs);
+    assert!(crate::parse_rules(&rule("differs", act)).is_err());
+    assert!(crate::parse_rules(&rule("reference", "mma = \"e4m3*e4m3\"")).is_err());
+}

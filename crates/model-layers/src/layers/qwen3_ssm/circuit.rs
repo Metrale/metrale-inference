@@ -17,6 +17,12 @@ use crate::circuit_exec::{
     BoundWeight, CircuitBindings, CircuitLayer, GdnFacts, MixerFacts, WeightSlot,
 };
 
+/// 2026-10-03: An absent FP8 weight, or one with the 128 x 128 block scales the W8A16 row-tile
+/// kernels read.
+fn fp8_block_scaled(w: Option<&crate::weight_map::Fp8Weight>) -> bool {
+    w.is_none_or(|w| w.scale_format == crate::weight_map::WeightQuantFormat::Fp8BlockScaled)
+}
+
 impl CircuitBindings for Qwen3SsmLayer {
     fn circuit_prepare(
         &self,
@@ -30,7 +36,7 @@ impl CircuitBindings for Qwen3SsmLayer {
 
     fn circuit_layer(
         &self,
-        _config: &metrale_config::ModelConfig,
+        config: &metrale_config::ModelConfig,
         levers: &crate::layers::ops::ModelLevers,
     ) -> Option<CircuitLayer> {
         let mut unmodelled = Vec::new();
@@ -38,9 +44,20 @@ impl CircuitBindings for Qwen3SsmLayer {
             (self.hc.is_some(), "hyper-connections"),
             (self.ple.is_some(), "per-layer embeddings"),
             (self.lora_out_proj.is_some(), "an out_proj LoRA adapter"),
-            (self.qkvz_fp8w.is_some(), "an FP8 qkvz projection"),
+            (
+                !fp8_block_scaled(self.qkvz_fp8w.as_ref()),
+                "an FP8 qkvz projection without 128 x 128 block scales",
+            ),
             (self.qkvz_q2.is_some(), "a packed-Q2 qkvz projection"),
-            (self.out_proj_fp8w.is_some(), "an FP8 out_proj"),
+            (
+                !fp8_block_scaled(self.out_proj_fp8w.as_ref()),
+                "an FP8 out_proj without 128 x 128 block scales",
+            ),
+            (
+                (self.qkvz_fp8w.is_some() || self.out_proj_fp8w.is_some())
+                    && crate::layers::row_tiers() != crate::layers::RowTiers::Canonical,
+                "FP8 projections off the canonical row tiers",
+            ),
             (
                 levers.gdn_fused_conv,
                 "the fused GDN conv+norm kernel (METRALE_GDN_FUSED_CONV)",
@@ -84,6 +101,14 @@ impl CircuitBindings for Qwen3SsmLayer {
                 None => BoundWeight::Nvfp4(self.ssm.out_proj),
             },
         );
+        // 2026-10-03: The checkpoint's FP8 projections, which decode takes ahead of the NVFP4 and
+        // BF16 ones (`ssm_forward.rs`, `row_tier_proj.rs`).
+        if let Some(w) = self.qkvz_fp8w {
+            weights.insert(WeightSlot::Linear(LinearRole::Qkvz), BoundWeight::Fp8(w));
+        }
+        if let Some(w) = self.out_proj_fp8w {
+            weights.insert(WeightSlot::Linear(LinearRole::GdnOut), BoundWeight::Fp8(w));
+        }
         // 2026-09-30: The declared W8A8 QKV|Z and out_proj, which every decode path tries first
         // (`w8a8_decode.rs`); installed only on a sequential-QKVZ layer, the layout
         // `qkvz_deinterleaved` states.
@@ -137,7 +162,9 @@ impl CircuitBindings for Qwen3SsmLayer {
                 );
             }
         }
-        self.ffn.circuit_bind(levers, &mut weights, &mut unmodelled);
+        let moe = self
+            .ffn
+            .circuit_bind(config, levers, &mut weights, &mut unmodelled);
         Some(CircuitLayer {
             mixer: MixerFacts::Gdn(GdnFacts {
                 qkvz_deinterleaved: self.sequential_qkvz,
@@ -147,6 +174,7 @@ impl CircuitBindings for Qwen3SsmLayer {
             }),
             weights,
             unmodelled,
+            moe,
         })
     }
 }

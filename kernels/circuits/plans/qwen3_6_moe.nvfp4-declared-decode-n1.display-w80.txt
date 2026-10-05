@@ -6,8 +6,8 @@
 │ qkvz/gdn_out/q/k/v/o W8A8 fp8                                                │
 │ experts.gate_up/experts.down/shared_gate_up/shared_down/lm_head W4A16 nvfp4  │
 │ ba/router/shared_gate W16A16 bf16                                            │
-│ mode decode · 1 row · 653 launches/step · 655 kernel groups                  │
-│ 180 fused edges · 894 materialized · plan 44add2d6f4ab                       │
+│ mode decode · 1 row · 693 launches/step · 615 kernel groups                  │
+│ 260 fused edges · 814 materialized · plan cdc2e3ca21c2                       │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 Layers
@@ -106,14 +106,14 @@ Layers
   ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · n×2048  DRAM
     ╔═══════════════════════════╗  weight bf16
-    ║ router                    ║  gemv::dense_gemv_bf16 · ≈ reference
-    ╚═══════════════════════════╝
+    ║ router                    ║  dense_gemv_bf16_batchm::dense_gemv_bf16_ba…
+    ╚═══════════════════════════╝  ≈ reference
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16
         accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×256  DRAM
     ╭───────────────────────────╮
-    │ top_k                     │  moe_topk::moe_topk_softmax · ≈ reference
-    ╰───────────────────────────╯
+    │ top_k                     │  moe_topk::moe_topk_softmax_rows → moe_fp8_…
+    ╰───────────────────────────╯  ≈ reference
         in bf16 · score f32 · out f32,i32
        │ ▼ i32 · n×8  DRAM
        ├─────────────────────────────────────┐
@@ -133,9 +133,7 @@ Layers
   ┃ ╰───────────────────────────╯         ╰───────────────────────────╯        ┃
   ┃     experts_act: in bf16 · compute f32 · out bf16                          ┃
   ┃     shared_act: in bf16 · compute f32 · out bf16                           ┃
-  ┗━ writes eact, sact ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×512  DRAM               │ ▼ bf16 · n×512  DRAM
-  ┏━ moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc ━ ≈ reference ━┓
+  ┃    ┊ ▼ bf16 · 8n×512  on-chip            ┊ ▼ bf16 · n×512  on-chip         ┃
   ┃ ╔═══════════════════════════╗         ╔═══════════════════════════╗        ┃
   ┃ ║ experts_down              ║         ║ shared_down · linear      ║        ┃
   ┃ ╚═══════════════════════════╝         ╚═══════════════════════════╝        ┃
@@ -146,7 +144,7 @@ Layers
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · 8n×2048  DRAM              │ ▼ bf16 · n×2048  DRAM
        ├─────────────────────────────────────┘
-  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┏━ moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped ━━ ≈ reference ━┓
   ┃ ╔═══════════════════════════╗  ◂ xn                                        ┃
   ┃ ║ shared_gate · linear      ║  weight bf16                                 ┃
   ┃ ╚═══════════════════════════╝                                              ┃
@@ -253,14 +251,14 @@ Layers
   ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · n×2048  DRAM
     ╔═══════════════════════════╗  weight bf16
-    ║ router                    ║  gemv::dense_gemv_bf16 · ≈ reference
-    ╚═══════════════════════════╝
+    ║ router                    ║  dense_gemv_bf16_batchm::dense_gemv_bf16_ba…
+    ╚═══════════════════════════╝  ≈ reference
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16
         accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×256  DRAM
     ╭───────────────────────────╮
-    │ top_k                     │  moe_topk::moe_topk_softmax · ≈ reference
-    ╰───────────────────────────╯
+    │ top_k                     │  moe_topk::moe_topk_softmax_rows → moe_fp8_…
+    ╰───────────────────────────╯  ≈ reference
         in bf16 · score f32 · out f32,i32
        │ ▼ i32 · n×8  DRAM
        ├─────────────────────────────────────┐
@@ -280,9 +278,7 @@ Layers
   ┃ ╰───────────────────────────╯         ╰───────────────────────────╯        ┃
   ┃     experts_act: in bf16 · compute f32 · out bf16                          ┃
   ┃     shared_act: in bf16 · compute f32 · out bf16                           ┃
-  ┗━ writes eact, sact ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×512  DRAM               │ ▼ bf16 · n×512  DRAM
-  ┏━ moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc ━ ≈ reference ━┓
+  ┃    ┊ ▼ bf16 · 8n×512  on-chip            ┊ ▼ bf16 · n×512  on-chip         ┃
   ┃ ╔═══════════════════════════╗         ╔═══════════════════════════╗        ┃
   ┃ ║ experts_down              ║         ║ shared_down · linear      ║        ┃
   ┃ ╚═══════════════════════════╝         ╚═══════════════════════════╝        ┃
@@ -293,7 +289,7 @@ Layers
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · 8n×2048  DRAM              │ ▼ bf16 · n×2048  DRAM
        ├─────────────────────────────────────┘
-  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┏━ moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped ━━ ≈ reference ━┓
   ┃ ╔═══════════════════════════╗  ◂ xn                                        ┃
   ┃ ║ shared_gate · linear      ║  weight bf16                                 ┃
   ┃ ╚═══════════════════════════╝                                              ┃
@@ -408,14 +404,14 @@ Layers
   ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · n×2048  DRAM
     ╔═══════════════════════════╗  weight bf16
-    ║ router                    ║  gemv::dense_gemv_bf16 · ≈ reference
-    ╚═══════════════════════════╝
+    ║ router                    ║  dense_gemv_bf16_batchm::dense_gemv_bf16_ba…
+    ╚═══════════════════════════╝  ≈ reference
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16
         accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×256  DRAM
     ╭───────────────────────────╮
-    │ top_k                     │  moe_topk::moe_topk_softmax · ≈ reference
-    ╰───────────────────────────╯
+    │ top_k                     │  moe_topk::moe_topk_softmax_rows → moe_fp8_…
+    ╰───────────────────────────╯  ≈ reference
         in bf16 · score f32 · out f32,i32
        │ ▼ i32 · n×8  DRAM
        ├─────────────────────────────────────┐
@@ -435,9 +431,7 @@ Layers
   ┃ ╰───────────────────────────╯         ╰───────────────────────────╯        ┃
   ┃     experts_act: in bf16 · compute f32 · out bf16                          ┃
   ┃     shared_act: in bf16 · compute f32 · out bf16                           ┃
-  ┗━ writes eact, sact ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×512  DRAM               │ ▼ bf16 · n×512  DRAM
-  ┏━ moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc ━ ≈ reference ━┓
+  ┃    ┊ ▼ bf16 · 8n×512  on-chip            ┊ ▼ bf16 · n×512  on-chip         ┃
   ┃ ╔═══════════════════════════╗         ╔═══════════════════════════╗        ┃
   ┃ ║ experts_down              ║         ║ shared_down · linear      ║        ┃
   ┃ ╚═══════════════════════════╝         ╚═══════════════════════════╝        ┃
@@ -448,7 +442,7 @@ Layers
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · 8n×2048  DRAM              │ ▼ bf16 · n×2048  DRAM
        ├─────────────────────────────────────┘
-  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┏━ moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped ━━ ≈ reference ━┓
   ┃ ╔═══════════════════════════╗  ◂ xn                                        ┃
   ┃ ║ shared_gate · linear      ║  weight bf16                                 ┃
   ┃ ╚═══════════════════════════╝                                              ┃
@@ -547,14 +541,14 @@ Layers
   ┗━ writes y, xn ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · n×2048  DRAM
     ╔═══════════════════════════╗  weight bf16
-    ║ router                    ║  gemv::dense_gemv_bf16 · ≈ reference
-    ╚═══════════════════════════╝
+    ║ router                    ║  dense_gemv_bf16_batchm::dense_gemv_bf16_ba…
+    ╚═══════════════════════════╝  ≈ reference
         in bf16 · act bf16 · weight bf16->bf16 · mma bf16*bf16
         accumulate f32 · scale none · out bf16
        │ ▼ bf16 · n×256  DRAM
     ╭───────────────────────────╮
-    │ top_k                     │  moe_topk::moe_topk_softmax · ≈ reference
-    ╰───────────────────────────╯
+    │ top_k                     │  moe_topk::moe_topk_softmax_rows → moe_fp8_…
+    ╰───────────────────────────╯  ≈ reference
         in bf16 · score f32 · out f32,i32
        │ ▼ i32 · n×8  DRAM
        ├─────────────────────────────────────┐
@@ -574,9 +568,7 @@ Layers
   ┃ ╰───────────────────────────╯         ╰───────────────────────────╯        ┃
   ┃     experts_act: in bf16 · compute f32 · out bf16                          ┃
   ┃     shared_act: in bf16 · compute f32 · out bf16                           ┃
-  ┗━ writes eact, sact ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-       │ ▼ bf16 · 8n×512  DRAM               │ ▼ bf16 · n×512  DRAM
-  ┏━ moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc ━ ≈ reference ━┓
+  ┃    ┊ ▼ bf16 · 8n×512  on-chip            ┊ ▼ bf16 · n×512  on-chip         ┃
   ┃ ╔═══════════════════════════╗         ╔═══════════════════════════╗        ┃
   ┃ ║ experts_down              ║         ║ shared_down · linear      ║        ┃
   ┃ ╚═══════════════════════════╝         ╚═══════════════════════════╝        ┃
@@ -587,7 +579,7 @@ Layers
   ┗━ writes edown, sdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
        │ ▼ bf16 · 8n×2048  DRAM              │ ▼ bf16 · n×2048  DRAM
        ├─────────────────────────────────────┘
-  ┏━ moe_expert_gemv::moe_weighted_sum_blend ━━━━━━━━━━━━━━━━━━━━ ≈ reference ━┓
+  ┏━ moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped ━━ ≈ reference ━┓
   ┃ ╔═══════════════════════════╗  ◂ xn                                        ┃
   ┃ ║ shared_gate · linear      ║  weight bf16                                 ┃
   ┃ ╚═══════════════════════════╝                                              ┃
@@ -614,7 +606,7 @@ Layers
         in bf16 · compute f32 · out bf16
        │ ▼ bf16 · n×2048  DRAM
     ╔═══════════════════════════╗  weight nvfp4 g16
-    ║ lm_head                   ║  w4a16_tc_rows::w4a16_tc_rows_64
+    ║ lm_head                   ║  w4a16_tc_rows::w4a16_tc_rows_16
     ╚═══════════════════════════╝  ≈ reference
         in bf16 · act bf16 · weight nvfp4/g16->bf16 · mma bf16*bf16
         accumulate f32 · scale f32 · out bf16
@@ -625,7 +617,7 @@ Layers
         in bf16 · compare bf16 · out i32
 
 ────────────────────────────────────────────────────────────────────────────────
-653 launches/step · 655 groups · 180 fused · 894 materialized edges
-6.5 MiB written/step · arena 0.5 MiB
+693 launches/step · 615 groups · 260 fused · 814 materialized edges
+6.1 MiB written/step · arena 0.5 MiB
 ╔═╗ heavy op · ╭─╮ light op · ┏━┓ fused kernel · │▼ DRAM · ┊▼ on-chip
 ✓ bit-identical · ≈ reference · ⚠ differs

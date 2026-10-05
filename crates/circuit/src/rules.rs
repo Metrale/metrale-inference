@@ -161,6 +161,11 @@ pub struct PatternOp {
     /// the reference requirement (an activation quantized inside the group, a sum rounded to
     /// BF16), stated so the plan shows them and the kernel must declare them.
     pub steps: BTreeMap<crate::pipeline::StepKind, crate::pipeline::Value>,
+    /// 2026-10-03: The element's stated `act` step knowingly departs from the activation
+    /// format the policy's `activation_quantization` routes (a `reference` rule that pins what
+    /// legacy runs, e.g. a head kernel that casts its activations): the requirement takes the
+    /// stated format instead of refusing it, and the plan marks it `(rule)` as any stated step.
+    pub departs: bool,
 }
 
 /// 2026-09-28: How many times a group's kernels launch per step.

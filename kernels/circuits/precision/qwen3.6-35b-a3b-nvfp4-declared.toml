@@ -54,18 +54,20 @@ activation = "bf16"
 
 # 2026-10-02: The one-row drafter (the draft plan) runs the CUDA-core fused BF16 expert kernels
 # (moe_shared_expert_fused_bf16.cu, rules moe_*_shared_bf16), whose down projections read the
-# FP32 SiLU product: above the head's declared BF16. The batched propose (two or more rows, not a
-# plan of this instance) runs the BF16 point of moe_grouped_tc, whose down MMAs read the BF16
-# hi + lo pair.
+# FP32 SiLU product: above the head's declared BF16. The batched propose (two or more rows)
+# runs the BF16 point of moe_grouped_tc, whose down MMAs read the BF16 hi + lo pair.
+# 2026-10-05: Both are draft plans of the instance now, so the table states the head's declared
+# BF16 for the down projections, the reference both run at or above; the one-row rules state
+# their FP32 hand-off (`holds`). The two paths give a drafted row different bits (debt D32).
 [[linear]]
 match = "mtp.layers.0.mlp.experts.*.down_proj"
 weight = "bf16"
-activation = "f32"
+activation = "bf16"
 
 [[linear]]
 match = "mtp.layers.0.mlp.shared_expert.down_proj"
 weight = "bf16"
-activation = "f32"
+activation = "bf16"
 
 [[linear]]
 match = "mtp.*"

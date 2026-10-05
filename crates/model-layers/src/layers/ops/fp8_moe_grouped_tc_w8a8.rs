@@ -106,6 +106,7 @@ pub fn moe_act_quant_e4m3(
 
 /// 2026-09-28: The routed expert tables and the grouped decode's sort outputs the two W8A8
 /// kernels read.
+#[derive(Clone, Copy, Debug)]
 pub struct Fp8GroupedW8a8Rows {
     pub expert_offsets: DevicePtr,
     pub sorted_token_ids: DevicePtr,

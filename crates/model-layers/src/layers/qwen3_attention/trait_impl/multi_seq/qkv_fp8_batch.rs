@@ -81,6 +81,17 @@ impl Qwen3AttentionLayer {
         dims_ok && strides_ok && shapes_ok
     }
 
+    /// 2026-10-03: Whether this layer's FP8 projections take the tensor-core row tiles at every
+    /// row count: the canonical tile family (`canonical_qkv_tiles`) and the batched FP8 Q/K/V
+    /// tier the multi-sequence decode selects it through (`ms_qkv_batchm_fp8_selected`). The
+    /// circuit binding refuses FP8 projections without it.
+    pub(in crate::layers::qwen3_attention) fn fp8_row_tiles_ok(&self) -> bool {
+        self.canonical_qkv_tiles()
+            && fp8_batchm_enabled()
+            && self.w8a16_gemv_batch4_strided_k.0 != 0
+            && self.w8a16_gemv_batch16_strided_k.0 != 0
+    }
+
     /// 2026-09-27: Whether `RowTiers::Canonical` is on and both tile twins are
     /// linked, so every row count takes the tile family.
     pub(super) fn canonical_qkv_tiles(&self) -> bool {

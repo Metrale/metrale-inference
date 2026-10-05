@@ -149,6 +149,8 @@ fn a_binding_the_plan_does_not_describe_is_refused() {
         lm_head: dense(2),
         unmodelled: Vec::new(),
         batchm_max_rows: 8,
+        nvfp4_twin: None,
+        nvfp4_rows: false,
     };
     layers[5]
         .as_mut()

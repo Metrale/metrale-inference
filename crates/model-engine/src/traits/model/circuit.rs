@@ -18,10 +18,12 @@ use metrale_model_layers::circuit_exec::{Fusions, TargetModules};
 pub enum ForwardSelect {
     /// 2026-09-28: The hand-written layer loops.
     Legacy,
-    /// 2026-09-28: The program compiled from `instance`'s circuit.
+    /// 2026-09-28: The program compiled from the serving instance's circuit.
     Circuit {
-        /// 2026-09-28: The circuit instance serving this checkpoint on this target.
-        instance: Box<Instance>,
+        /// 2026-10-03: The circuit instances of this checkpoint on this target
+        /// (`sources::instances_for`); the build picks the one its live policy states
+        /// (`sources::select_instance`).
+        instances: Vec<Instance>,
         /// 2026-09-28: Which rules the plan may select.
         fusions: Fusions,
         /// 2026-09-28: The served target's compiled modules: which kernels exist.

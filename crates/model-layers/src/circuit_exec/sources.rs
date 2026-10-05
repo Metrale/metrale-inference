@@ -10,7 +10,7 @@
 //! - A lookup of a name the tables lack is an error, never a fallback to another entry.
 
 use anyhow::{Result, anyhow, bail};
-use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
+use metrale_circuit::{ArchShape, Instance, Policy, PrecisionSpec, Sources};
 
 /// 2026-09-28: kernels/circuits/INSTANCES.toml as built.
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
@@ -32,11 +32,7 @@ pub const CIRCUITS: [(&str, &str); 3] = [
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 3] = [
-    (
-        "qwen3.6-35b-a3b-fp8-bf16head",
-        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
-    ),
+pub const PRECISION: [(&str, &str); 2] = [
     (
         "qwen3.6-35b-a3b-nvfp4-declared",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-nvfp4-declared.toml"),
@@ -50,10 +46,16 @@ pub const PRECISION: [(&str, &str); 3] = [
 ];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
-pub const CHECKPOINTS: [(&str, &str); 1] = [(
-    "unsloth--Qwen3.8-27B-NVFP4",
-    include_str!("../../../../kernels/circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
-)];
+pub const CHECKPOINTS: [(&str, &str); 2] = [
+    (
+        "unsloth--Qwen3.8-27B-NVFP4",
+        include_str!("../../../../kernels/circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
+    ),
+    (
+        "Qwen--Qwen3.6-35B-A3B-FP8",
+        include_str!("../../../../kernels/circuits/checkpoints/Qwen--Qwen3.6-35B-A3B-FP8.toml"),
+    ),
+];
 
 /// 2026-09-28: Every block library a circuit can include.
 pub const BLOCKS: [(&str, &str); 1] = [(
@@ -104,11 +106,11 @@ pub fn instance(recipe: &str) -> Result<Instance> {
     })
 }
 
-/// 2026-09-28: The instance whose checkpoint and kernel target are these. Several recipes may
-/// serve one checkpoint on one target; they must then agree on the circuit and the precision
-/// source, the only parts the executor takes from an instance (the policy, and 2026-09-30 a
-/// policy precision's tier and kernel capabilities, are read live: `CircuitExec::build`).
-pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
+/// 2026-09-28: The instances whose checkpoint and kernel target are these, all of one circuit.
+/// Several recipes may serve one checkpoint on one target; 2026-10-03 the executor picks among
+/// them with the live policy ([`select_instance`]), which it knows only once the model is built
+/// (the served `--lm-head-dtype`, say, resolves at load).
+pub fn instances_for(checkpoint: &str, target: &str) -> Result<Vec<Instance>> {
     let all = metrale_circuit::parse_instances(INSTANCES)?;
     let hits: Vec<Instance> = all
         .into_iter()
@@ -120,18 +122,86 @@ pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
              (kernels/circuits/INSTANCES.toml)"
         );
     };
-    if let Some(other) = hits
-        .iter()
-        .find(|i| i.arch != first.arch || !same_source(&i.precision, &first.precision))
-    {
+    if let Some(other) = hits.iter().find(|i| i.arch != first.arch) {
         bail!(
-            "recipes `{}` and `{}` both serve `{checkpoint}` on `{target}` with different \
-             circuits or precision tables",
+            "recipes `{}` and `{}` both serve `{checkpoint}` on `{target}` with different circuits",
             first.recipe,
             other.recipe
         );
     }
-    Ok(first.clone())
+    Ok(hits)
+}
+
+/// 2026-10-03: The candidate that serves the `live` policy. Candidates reading one precision
+/// source are interchangeable: the executor takes the policy, and a policy precision's tier and
+/// kernel capabilities, from the process (`CircuitExec::build`), so the first serves. Otherwise
+/// the candidates whose settings agree with `live` on every setting the candidates disagree on
+/// (the 35B's `lm_head_dtype`, which changes its head's engine format) must read one source.
+pub fn select_instance(candidates: &[Instance], live: &Policy) -> Result<Instance> {
+    let Some(first) = candidates.first() else {
+        bail!("no circuit instance to select from");
+    };
+    if candidates
+        .iter()
+        .all(|i| same_source(&i.precision, &first.precision))
+    {
+        return Ok(first.clone());
+    }
+    let differing: Vec<&String> = first
+        .policy
+        .settings
+        .keys()
+        .filter(|k| {
+            candidates
+                .iter()
+                .any(|i| i.policy.settings.get(*k) != first.policy.settings.get(*k))
+        })
+        .collect();
+    let served: Vec<&Instance> = candidates
+        .iter()
+        .filter(|i| {
+            differing
+                .iter()
+                .all(|k| i.policy.settings.get(*k) == live.settings.get(*k))
+        })
+        .collect();
+    let stated = || {
+        differing
+            .iter()
+            .map(|k| {
+                format!(
+                    "{k}={}",
+                    live.settings.get(*k).map_or("(unset)", |v| v.as_str())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let Some(pick) = served.first() else {
+        bail!(
+            "no circuit instance for `{}` states the served {}; INSTANCES.toml has {}",
+            first.checkpoint,
+            stated(),
+            candidates
+                .iter()
+                .map(|i| i.recipe.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    };
+    if let Some(other) = served
+        .iter()
+        .find(|i| !same_source(&i.precision, &pick.precision))
+    {
+        bail!(
+            "recipes `{}` and `{}` both serve `{}` at {} with different precision sources",
+            pick.recipe,
+            other.recipe,
+            first.checkpoint,
+            stated()
+        );
+    }
+    Ok((*pick).clone())
 }
 
 /// 2026-09-30: `a` and `b` read the same precision table, or the same checkpoint plan with the
@@ -246,15 +316,90 @@ mod served_shape_tests {
 }
 
 #[cfg(test)]
-mod instance_for_tests {
+mod instances_for_tests {
     use super::*;
 
-    /// 2026-09-30: The dense checkpoint has an instance per tier; the executor takes the tier
-    /// from the process, so either serves it. Before `same_source` the pair was refused.
+    /// 2026-09-30: The dense checkpoint has an instance per tier (and 2026-10-03 its exact-verify
+    /// and declared-activation variants); the executor takes the tier and the settings from the
+    /// process, so any serves it. Before `same_source` the pair was refused.
     #[test]
     fn two_tiers_of_one_checkpoint_plan_serve_one_checkpoint() {
-        let got = instance_for("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4").unwrap();
-        assert_eq!(got.recipe, "qwen3.8/qwen3.8-27b-nvfp4-unsloth");
+        let hits = instances_for("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4").unwrap();
+        let recipes: Vec<&str> = hits.iter().map(|i| i.recipe.as_str()).collect();
+        assert_eq!(
+            recipes,
+            [
+                "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
+                "qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared",
+                "qwen3.8/qwen3.8-27b-nvfp4-unsloth-exact-verify",
+                "qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared-act",
+            ]
+        );
+        // 2026-10-03: One precision source: the first serves whatever the live settings say.
+        let lives: Vec<&Policy> = hits.iter().map(|i| &i.policy).collect();
+        for live in lives.into_iter().chain([&Policy::default()]) {
+            let got = select_instance(&hits, live).unwrap();
+            assert_eq!(got.recipe, "qwen3.8/qwen3.8-27b-nvfp4-unsloth");
+        }
+    }
+
+    /// 2026-10-03: Every golden instance, served at its own policy, resolves to an instance
+    /// reading its precision source. The 35B's NVFP4-head instance once made every 35B circuit
+    /// boot refuse: `instance_for` required all of a checkpoint's instances to agree.
+    #[test]
+    fn every_golden_instance_resolves_at_its_own_policy() {
+        let all = metrale_circuit::parse_instances(INSTANCES).unwrap();
+        for i in all.iter().filter(|i| i.golden) {
+            let hits = instances_for(&i.checkpoint, &i.target).unwrap();
+            let got =
+                select_instance(&hits, &i.policy).unwrap_or_else(|e| panic!("{}: {e:#}", i.recipe));
+            assert!(
+                same_source(&got.precision, &i.precision),
+                "{} resolved to {}",
+                i.recipe,
+                got.recipe
+            );
+        }
+    }
+
+    /// 2026-10-03: The 35B's two heads: the live `lm_head_dtype` picks the instance, and a head
+    /// no instance states is refused by name rather than served with another head's formats.
+    #[test]
+    fn the_live_head_picks_the_35b_instance() {
+        let hits = instances_for("Qwen/Qwen3.6-35B-A3B-FP8", "gb10/qwen3.6-35b-a3b/nvfp4").unwrap();
+        let live = |head: &str| {
+            let mut p = hits[0].policy.clone();
+            p.settings.insert("lm_head_dtype".into(), head.into());
+            p
+        };
+        for (head, recipe) in [
+            ("bf16", "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"),
+            ("nvfp4", "qwen3.6/qwen3.6-35b-a3b-fp8-nvfp4head"),
+        ] {
+            assert_eq!(select_instance(&hits, &live(head)).unwrap().recipe, recipe);
+        }
+        // 2026-10-04: The long-context MTP recipe runs the BF16 head under `adaptive`.
+        let mut adaptive = live("bf16");
+        for (k, v) in [
+            ("activation_quantization", "adaptive"),
+            ("gdn_verify_exact", "off"),
+        ] {
+            adaptive.settings.insert(k.into(), v.into());
+        }
+        assert_eq!(
+            select_instance(&hits, &adaptive).unwrap().recipe,
+            "qwen3.6/qwen3.6-35b-a3b-fp8-mtp"
+        );
+        let err = select_instance(&hits, &live("fp8"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("lm_head_dtype=fp8"), "{err}");
+        // 2026-10-03: Order does not decide it.
+        let rev: Vec<_> = hits.iter().rev().cloned().collect();
+        assert_eq!(
+            select_instance(&rev, &live("bf16")).unwrap().recipe,
+            "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
+        );
     }
 
     #[test]

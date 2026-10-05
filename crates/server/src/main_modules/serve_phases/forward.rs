@@ -37,9 +37,8 @@ pub(crate) fn forward_select(
         .model
         .as_deref()
         .context("--forward circuit needs the checkpoint id as the model argument")?;
-    let instance = sources::instance_for(checkpoint, &circuit_target(&ptx_set.target)?)?;
     Ok(ForwardSelect::Circuit {
-        instance: Box::new(instance),
+        instances: sources::instances_for(checkpoint, &circuit_target(&ptx_set.target)?)?,
         fusions,
         modules: TargetModules(ptx_set.modules.clone()),
         config_json: config_json.to_string(),

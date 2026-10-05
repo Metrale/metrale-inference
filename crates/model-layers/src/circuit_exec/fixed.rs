@@ -56,6 +56,10 @@ pub struct Fixed {
     pub block_size: u32,
     /// 2026-09-28: `PagedKvCache::cache_stride`.
     pub cache_stride: u64,
+    /// 2026-10-03: The arena scratch the grouped MoE decode sorts into, with the arena
+    /// capacities its width check reads (`MoeScratch::from_arena`); `None` where no layer binds
+    /// a MoE.
+    pub moe: Option<crate::layers::moe::MoeScratch>,
 }
 
 /// 2026-09-29: The MTP draft head's fixed buffers.

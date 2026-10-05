@@ -44,7 +44,7 @@ const ROUTER_ROWS_PER_BLOCK: u32 = 4;
 /// rows, up to `DENSE_GEMV_BATCHM_MAX_M`. Every block row reads the whole 1 MB router, so at a
 /// 256-row verify 64 block rows read it 64 times (7.8 ms per step on dgx2). A row's result does
 /// not depend on how rows are grouped (`dense_gemv_bf16_batchm.cu`).
-fn router_block_rows(n: u32) -> u32 {
+pub(crate) fn router_block_rows(n: u32) -> u32 {
     let per_block = n
         .div_ceil(4)
         .clamp(ROUTER_ROWS_PER_BLOCK, ops::DENSE_GEMV_BATCHM_MAX_M);

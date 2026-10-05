@@ -91,60 +91,53 @@ fn manifest() -> String {
     common::read("kernels/gb10/common/KERNEL_FAMILIES.toml")
 }
 
-// 2026-10-02: The served FP8 recipe: W8A16 experts and shared expert; the SiLU product handed to
-// the down projections in FP32 (the precision table widens `eact`/`sact`); the router and the
-// gate BF16, the gate logit held FP32 into the blend's sigmoid as the rule states.
+// 2026-10-02: The served FP8 recipe, the gate logit held FP32 into the blend's sigmoid as the
+// rule states. 2026-10-03: Under the recipe's `declared` tier the routed and shared experts run
+// W8A8 (`moe_fp8_grouped_tc_w8a8`): E4M3 MMAs on the input and the SiLU products quantized per
+// (row, 128), the products handed from FP32 to their quantizer inside the gate+up kernel; and a
+// row's arithmetic is the same at every width (the grouped decode serves 1..=256 rows).
 #[test]
-fn the_fp8_35b_recipe_runs_w8a16_experts_with_an_fp32_silu_product() {
+fn the_fp8_35b_recipe_runs_w8a8_experts_at_every_width() {
     let inst = moe_instance();
     let texts = common::Texts::of(&inst);
     let text = render(&inst, &texts, &manifest(), Mode::Decode, 1).unwrap();
-    let w8 = "weight fp8/block128x128";
+    let w8 = "weight fp8/block128x128->e4m3 | mma e4m3*e4m3 | accumulate f32 | scale f32";
     let want = [
         format!("  router: bf16 -> [{BF16}] -> bf16"),
         "  top_k: bf16 -> [score f32] -> f32,i32".into(),
         format!(
-            "  experts_gate_up: bf16,i32 -> [gather bf16 | act bf16 | {w8}->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16"
+            "  experts_gate_up: fp8/g128,i32 -> [gather fp8/g128 | act fp8/g128 | {w8}] -> bf16"
         ),
-        format!(
-            "  shared_gate_up: bf16 -> [act bf16 | {w8}->bf16 | mma bf16*bf16 | accumulate f32 | scale f32] -> bf16"
-        ),
-        "  experts_act: bf16 -> [compute f32] -> f32".into(),
-        format!(
-            "  experts_down: f32,i32 -> [act f32 | {w8}->f32 | mma f32*f32 | accumulate f32 | scale f32] -> bf16"
-        ),
-        "  shared_act: bf16 -> [compute f32] -> f32".into(),
-        format!(
-            "  shared_down: f32 -> [act f32 | {w8}->f32 | mma f32*f32 | accumulate f32 | scale f32] -> bf16"
-        ),
+        "  experts_act: bf16 -> [compute f32] -> f32 (rule)".into(),
+        format!("  shared_gate_up: fp8/g128 -> [act fp8/g128 | {w8}] -> bf16"),
+        "  shared_act: bf16 -> [compute f32] -> f32 (rule)".into(),
+        format!("  experts_down: fp8/g128,i32 -> [act fp8/g128 | {w8}] -> bf16"),
+        format!("  shared_down: fp8/g128 -> [act fp8/g128 | {w8}] -> bf16"),
         format!("  shared_gate: bf16 -> [{BF16}] -> f32 (rule)"),
         "  blend: bf16,f32,bf16,f32 (rule) -> [scatter f32 | combine f32] -> bf16".into(),
     ];
-    let body = text.split("== layer 1 ").next().expect("layer 0");
-    let got: Vec<String> = body
-        .split("== layer 0 ")
-        .nth(1)
-        .expect("layer 0")
-        .lines()
-        .filter(|l| {
-            l.starts_with("  ")
-                && ["router", "top_k", "experts_", "shared_", "blend"]
-                    .iter()
-                    .any(|p| l[2..].starts_with(p))
-        })
-        .map(str::to_string)
-        .collect();
-    assert_eq!(got, want);
-    // 2026-10-02: Above the grouped cap the rule states its W8A8 departures, marked `(rule)`, in
-    // each of the 40 layers of the primary plan and of the fragmented-slots route's arm.
+    let layer0 = |text: &str| -> Vec<String> {
+        let body = text.split("== layer 1 ").next().expect("layer 0");
+        body.split("== layer 0 ")
+            .nth(1)
+            .expect("layer 0")
+            .lines()
+            .filter(|l| {
+                l.starts_with("  ")
+                    && ["router", "top_k", "experts_", "shared_", "blend"]
+                        .iter()
+                        .any(|p| l[2..].starts_with(p))
+            })
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(layer0(&text), want);
     let wide = render(&inst, &texts, &manifest(), Mode::MultiSeq, 128).unwrap();
-    for want in [
-        "  experts_gate_up: bf16,i32 -> [gather fp8/g128 (rule) | act fp8/g128 (rule) | weight fp8/block128x128->e4m3 | mma e4m3*e4m3 | accumulate f32 | scale f32] -> bf16",
-        "  experts_act: bf16 -> [compute bf16 (rule)] -> fp8/g128 (rule)",
-        "  experts_down: fp8/g128 (rule),i32 -> [act fp8/g128 | weight fp8/block128x128->e4m3 | mma e4m3*e4m3 | accumulate f32 | scale f32] -> bf16",
-        "  blend: bf16,f32,bf16,f32 (rule) -> [scatter bf16 (rule) | combine f32] -> bf16",
-    ] {
-        assert_eq!(lines(&wide, want).len(), 80, "{want}");
+    assert_eq!(layer0(&wide), want, "128 rows run one row's arithmetic");
+    // 2026-10-03: Every one of the 40 layers, in the primary plan and the fragmented-slots
+    // route's arm, at the widest rung.
+    for w in &want[2..8] {
+        assert_eq!(lines(&wide, w).len(), 80, "{w}");
     }
 }
 
@@ -155,16 +148,16 @@ fn mismatches(e: LoadError) -> Vec<metrale_circuit::pipeline::Mismatch> {
     }
 }
 
-// 2026-10-02: Mutation of the real manifest: the one-row FP8 expert kernel declaring a BF16
-// accumulator no longer runs the experts the plan requires; the plan is refused, naming every
+// 2026-10-02: Mutation of the real manifest: the FP8 expert kernel (2026-10-03: the grouped W8A8
+// tensor-core point the recipe runs) declaring a BF16 accumulator no longer runs the experts the plan requires; the plan is refused, naming every
 // such node of the 40 layers and the step.
 #[test]
 fn a_kernel_declaring_another_accumulator_is_refused() {
     let inst = moe_instance();
     let texts = common::Texts::of(&inst);
-    let line = "pipeline.expert_gate_up = { in = [\"bf16\", \"i32\"], gather = \"bf16\", act = \"bf16\", weight = \"fp8/block128x128->bf16\", mma = \"bf16*bf16\", accumulate = \"f32\"";
+    let line = "pipeline.expert_gate_up = { in = [\"fp8/g128\", \"i32\"], gather = \"fp8/g128\", act = \"fp8/g128\", weight = \"fp8/block128x128->e4m3\", mma = \"e4m3*e4m3\", accumulate = \"f32\"";
     let text = manifest();
-    let at = text.find("id = \"moe_fp8_1row\"").expect("family");
+    let at = text.find("id = \"moe_grouped_tc\"").expect("family");
     let off = text[at..].find(line).expect("its gate_up") + at;
     let mutated = format!(
         "{}{}{}",
@@ -177,8 +170,8 @@ fn a_kernel_declaring_another_accumulator_is_refused() {
     assert!(
         m.iter()
             .all(|m| m.node.ends_with(".moe_ffn.experts_gate_up")
-                && m.rule == "moe_gate_up_shared_fp8"
-                && m.family == "moe_fp8_1row"
+                && m.rule == "moe_gate_up_act_grouped_tc_w8a8"
+                && m.family == "moe_grouped_tc"
                 && m.diffs == ["accumulate: required f32, declared bf16"])
     );
 }
@@ -190,7 +183,7 @@ fn a_kernel_declaring_another_accumulator_is_refused() {
 fn an_unstated_hand_off_at_a_fused_edge_is_refused() {
     let inst = moe_instance();
     let mut texts = common::Texts::of(&inst);
-    let stated = "pattern = [{ op = \"linear\", role = \"shared_gate\", holds = \"f32\" }, { op = \"blend\" }]\nkernels = [{ module = \"moe_expert_gemv\"";
+    let stated = "pattern = [{ op = \"linear\", role = \"shared_gate\", holds = \"f32\" }, { op = \"blend\" }]\nkernels = [{ module = \"moe_fp8_grouped_blend\"";
     assert_eq!(texts.rules.matches(stated).count(), 1);
     texts.rules = texts
         .rules

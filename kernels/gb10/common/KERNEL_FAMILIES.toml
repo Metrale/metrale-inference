@@ -881,6 +881,7 @@ compute = "cuda_core"
 kernels = [
   "gemv::dense_gemv_bf16", "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
   "gemm::dense_gemm_bf16", "gemm::dense_gemm_bf16_router",
+  "moe_router_gemm::moe_router_gemm_bf16",
 ]
 rows = [1, 65536]
 # 2026-10-02: Every kernel widens BF16 exactly and sums in FP32 (no 16-bit partials), one BF16
@@ -897,9 +898,11 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
+# 2026-10-03: moe_router_gemm.cu is the router GEMM bit-identical to dense_gemm_bf16 at small M
+# (moe_router_gemm.cu:3-10), the MTP drafter's batched router.
 files = [
   "kernels/gb10/common/dense_gemv_bf16.cu", "kernels/gb10/common/dense_gemv_bf16_batchm.cu",
-  "kernels/gb10/common/dense_gemm_bf16.cu",
+  "kernels/gb10/common/dense_gemm_bf16.cu", "kernels/gb10/common/moe_router_gemm.cu",
 ]
 [[family.evidence]]
 point = {}
@@ -1070,6 +1073,11 @@ kernel_pipeline."w4a16::w4a16_gemm_t_p3".linear = { in = ["bf16"], act = "fp8/te
 kernel_pipeline."w4a16::w4a16_gemm_t_k64_n64_p3".linear = { in = ["bf16"], act = "fp8/tensor", weight = "nvfp4/g16->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "e4m3", out = ["bf16"] }
 kernel_pipeline."w4a16::w4a16_gemm_t_k64_p3".linear = { in = ["bf16"], act = "fp8/tensor", weight = "nvfp4/g16->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "e4m3", out = ["bf16"] }
 kernel_pipeline."w4a16::w4a16_gemm_t_m128".linear = { in = ["bf16"], act = "fp8/tensor", weight = "nvfp4/g16->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "e4m3", out = ["bf16"] }
+# 2026-10-03: `w4a16_gemm_t` is planned only for the NVFP4 head of the Qwen3.6 FP8 MoE recipes
+# (FUSIONS `lm_head_nvfp4_tile`), whose kernel target (qwen3.6-35b-a3b) shadows the common kernel
+# with the FP8 pipeline (qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu:505-515: A cast to unscaled
+# saturating E4M3, the weight dequantized to E4M3, an E4M3 MMA).
+kernel_pipeline."w4a16::w4a16_gemm_t".lm_head = { in = ["bf16"], act = "fp8/tensor", weight = "nvfp4/g16->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "e4m3", out = ["bf16"] }
 op = [
   { op = "linear", weight = ["nvfp4/g16"], activation = ["bf16"] },
   { op = "lm_head", weight = ["nvfp4/g16"], activation = ["bf16"] },
@@ -1572,9 +1580,15 @@ pipeline."linear:shared_down" = { in = ["bf16"], act = "bf16", weight = "fp8/blo
 pipeline."linear:shared_up" = "uninstantiated"
 pipeline.silu_mul = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 pipeline.relu2 = "uninstantiated"
+# 2026-10-03: The W8A8 point's quantizers: the layer input by `moe_act_quant_e4m3`, the SiLU
+# product from FP32 per (row, 128) inside the gate+up kernel (moe_fp8_grouped_tc_w8a8.cu).
+pipeline."silu_mul feeds act_quant" = { in = ["bf16"], compute = "f32", out = ["f32"] }
+pipeline."act_quant:fp8/g128" = { in = ["bf16"], compute = "f32", out = ["fp8/g128"] }
+pipeline."act_quant:fp8/g128 after silu_mul" = { in = ["f32"], compute = "f32", out = ["fp8/g128"] }
 op = [
   { op = "expert_gate_up" }, { op = "expert_down" }, { op = "silu_mul" }, { op = "relu2" },
   { op = "linear", roles = ["shared_gate_up", "shared_up", "shared_down"] },
+  { op = "act_quant:fp8/g128" },
 ]
 # 2026-10-02: The grouped FP8 MoE scratch (gpu-runtime buffers.rs:205, buffers/moe_fp8_scratch.rs:
 # 30-83): the E4M3 activation of the widest projection input and its per-128 scales. The tile
@@ -1597,7 +1611,8 @@ from = { expert_gate_up = "weight", expert_down = "weight", linear = "weight" }
 [[family.param]]
 name = "activation"
 kind = "policy"
-from = { expert_gate_up = "activation" }
+# 2026-10-03: The shared expert's projections run at the routed experts' activation format.
+from = { expert_gate_up = "activation", linear = "activation" }
 [[family.param]]
 name = "epilogue"
 kind = "policy"
@@ -1626,7 +1641,6 @@ pipeline.expert_gate_up = { in = ["fp8/g128", "i32"], gather = "fp8/g128", act =
 pipeline.expert_down = { in = ["fp8/g128", "i32"], act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."linear:shared_gate_up" = { in = ["fp8/g128"], act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."linear:shared_down" = { in = ["fp8/g128"], act = "fp8/g128", weight = "fp8/block128x128->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
-pipeline.silu_mul = { in = ["bf16"], compute = "f32", out = ["fp8/g128"] }
 [[family.point]]
 values = { weight = "nvfp4/g16", activation = "bf16", epilogue = "silu_mul", down_input = "bf16", weight_layout = "row_major" }
 how = "instantiation"
@@ -1676,6 +1690,8 @@ microbench = "same bench, W8A8 twin, 2026-09-28: 270 us at M=2, 823 us at M=8, 2
 # activations staged in shared memory), one template over the weight-format policy
 # (kernels/gb10/common/tc_rows.cuh): FP8 block-128 W8A16 (w8a16_tc_rows.cu, the canonical-tier
 # W8A16 projections) and NVFP4 g16 W4A16 (w4a16_tc_rows.cu, the declared NVFP4 lm_head).
+# 2026-10-03: `_64c` runs the 64-row body per 64-row chunk in one launch
+# (ops/w8a16_tc_rows.rs:121-129), so one launch covers any row count.
 [[family]]
 id = "tc_rows"
 description = "Tensor-core row-tile dense projection (FP8 block-128 W8A16, NVFP4 g16 W4A16)"
@@ -1690,7 +1706,7 @@ kernels = [
   "w4a16_tc_rows::w4a16_tc_rows_32",
   "w4a16_tc_rows::w4a16_tc_rows_64",
 ]
-rows = [1, 64]
+rows = [1, 65536]
 # 2026-10-02: The FP8 point's pipeline (the NVFP4 point overrides it below): an E4M3 byte becomes
 # BF16 E4M3 * 2^-120 exactly, activations are staged times 2^60 (exact), each 128-K block's FP32
 # partial sum is scaled by its block scale * 2^60 (tc_weight_formats.cuh Fp8Block128); C is

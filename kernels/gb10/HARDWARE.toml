@@ -272,13 +272,14 @@ reason = "NVFP4 W4A16 CUDA-core GEMV at 1-3 rows (the 27B NVFP4 decode at C=1, t
 [[tensor_core_policy.exempt]]
 ops = ["lm_head", "router", "linear"]
 modes = ["decode", "multi_seq", "verify", "draft"]
-rows = [1, 64]
+rows = [1, 256]
 kernels = [
   "gemv::dense_gemv_bf16",
   "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
+  "moe_router_gemm::moe_router_gemm_bf16",
 ]
 kind = "backlog"
-reason = "BF16 CUDA-core GEMV and batched GEMV: the BF16 head at 1-8 rows, the MoE router at 1-64 rows, the MTP draft projections at 1 row. The tensor-core tier dense_bf16_tc (tc8/tc16/tc32) exists; measure it against these at M=1-32."
+reason = "BF16 CUDA-core GEMV, batched GEMV and the MoE router GEMM: the BF16 head at 1-128 rows (16-row chunks under a fixed head format), the MoE router at 1-256 rows (2026-10-03: the grouped decode's per-row router, and the MTP drafter's batched router GEMM), the MTP draft projections at 1 row. The tensor-core tier dense_bf16_tc (tc8/tc16/tc32) exists; measure it against these at M=1-32."
 [[tensor_core_policy.exempt]]
 ops = ["paged_attention"]
 modes = ["decode", "multi_seq", "verify", "draft"]
@@ -303,7 +304,7 @@ reason = "The GatedDeltaNet beta/decay projection (N = 2 x value heads) runs as 
 [[tensor_core_policy.exempt]]
 ops = ["linear:shared_gate"]
 modes = ["decode", "multi_seq", "verify", "draft"]
-rows = [1, 128]
+rows = [1, 256]
 kernels = [
   "moe_expert_gemv::moe_weighted_sum_blend",
   "moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped",

@@ -87,8 +87,28 @@ impl TransformerModel {
             ("bf16", false)
         };
         let (batchm_max_rows, m16_tc) = self.bf16_head_route();
+        // 2026-10-03: An NVFP4 head the circuit binds: its tile GEMM over the transposed twin at
+        // every row count (`lm_head_batched.rs` under the row-invariant tiers), not the lossless
+        // BF16-MMA twin (`METRALE_LMHEAD_LOSSLESS`).
+        // 2026-10-05: A declared NVFP4 head on the W4A16 row tiles (`lm_head_nvfp4_rows.rs`),
+        // which every head path takes first once installed.
+        let rows = self
+            .lm_head_nvfp4
+            .filter(|_| self.lm_head_rows.nvfp4_rows && self.lm_head_q6k.is_none());
+        let nvfp4 = self.lm_head_nvfp4.filter(|_| {
+            rows.is_none()
+                && self.lm_head_q6k.is_none()
+                && self.lm_head_fp8.is_none()
+                && self.lm_head_nvfp4_t.is_some()
+                && self.w4a16_gemm_t_kernel.0 != 0
+                && self.w4a16_gemm_t_bf16_kernel.0 == 0
+                && metrale_model_layers::layers::row_invariant()
+        });
         let unmodelled = [
-            (quantized, "a quantized lm_head"),
+            (
+                quantized && nvfp4.is_none() && rows.is_none(),
+                "a quantized lm_head other than the NVFP4 tile-GEMM or row-tile head",
+            ),
             (m16_tc, "the tensor-core BF16 head (lm_head_m16_tc)"),
             (self.use_fp32_logits, "FP32 logits"),
             (
@@ -111,17 +131,22 @@ impl TransformerModel {
         let head = HeadBinding {
             embed: self.embed_tokens,
             final_norm: self.final_norm,
-            lm_head: BoundWeight::Dense(self.lm_head_weight),
+            lm_head: rows
+                .or(nvfp4)
+                .map_or(BoundWeight::Dense(self.lm_head_weight), BoundWeight::Nvfp4),
             unmodelled,
             batchm_max_rows,
+            nvfp4_twin: nvfp4.and(self.lm_head_nvfp4_t),
+            nvfp4_rows: rows.is_some(),
         };
         (head, dtype)
     }
 
-    /// 2026-09-28: Build the executor for `instance`.
+    /// 2026-09-28: Build the executor for the instance among `instances` that the live policy
+    /// states (2026-10-03).
     fn build_circuit(
         &self,
-        instance: &metrale_circuit::Instance,
+        instances: &[metrale_circuit::Instance],
         fusions: Fusions,
         modules: &TargetModules,
         config_json: &str,
@@ -211,15 +236,27 @@ impl TransformerModel {
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),
                 block_size: u32::try_from(cache.block_size())?,
                 cache_stride: cache.cache_stride() as u64,
+                moe: Some(metrale_model_layers::layers::moe::MoeScratch::from_arena(
+                    &self.buffers,
+                )),
             }
         };
+        let bound = policy::bound_settings(&layers, draft.as_ref().map(|d| &d.layer), &head)?;
+        let policy = policy::live_policy(
+            &self.levers,
+            policy::kv_dtype_name(kv)?,
+            lm_head_dtype,
+            bound,
+        )?;
+        let instance =
+            metrale_model_layers::circuit_exec::sources::select_instance(instances, &policy)?;
         CircuitExec::build(metrale_model_layers::circuit_exec::Boot {
             gpu: self.gpu.as_ref(),
             config: &self.config,
             config_json,
             levers: &self.levers,
-            instance,
-            policy: policy::live_policy(&self.levers, policy::kv_dtype_name(kv)?, lm_head_dtype)?,
+            instance: &instance,
+            policy,
             layers,
             head,
             fixed,
@@ -275,11 +312,11 @@ impl ModelCircuit for TransformerModel {
         let next = match sel {
             ForwardSelect::Legacy => None,
             ForwardSelect::Circuit {
-                instance,
+                instances,
                 fusions,
                 modules,
                 config_json,
-            } => Some(self.build_circuit(instance, *fusions, modules, config_json)?),
+            } => Some(self.build_circuit(instances, *fusions, modules, config_json)?),
         };
         self.destroy_lora_decode_graphs();
         // 2026-09-29: The draft head drops the previous executor's program before its

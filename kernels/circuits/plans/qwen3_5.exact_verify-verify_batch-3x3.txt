@@ -2,7 +2,7 @@
 # recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth-exact-verify
 # checkpoint: unsloth/Qwen3.8-27B-NVFP4
 # target: gb10/qwen3.8-27b/nvfp4
-# settings: activation_quantization=adaptive decode_split_silu=on ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on draft_moe_experts=none ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lm_head_nvfp4_rows=off moe_fp8_tc=on moe_nvfp4_kernels=none rms_norm_act_quant=off row_tiers=by_rows ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 # row table: 3x3
 digest: 1581c2842abc88801c834de57933fe1161caaade5168b675ed7faca3b9ec3bb5
