@@ -22,6 +22,8 @@ fn node(addr: &str) -> Node {
         hardware: HardwareFingerprint {
             gpu: "NVIDIA GB10".into(),
             driver_major: Some(580),
+            driver_full: None,
+            vbios: None,
             sm_clock_max_mhz: Some(3003.0),
             mem_total_kb: Some(127_601_452),
             thermal_alert: Some(false),
