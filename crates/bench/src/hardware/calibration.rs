@@ -11,7 +11,7 @@
 //!   field (higher `decode_tok_s_ratio` is faster, higher `*_ms_ratio` and
 //!   `*_j_per_tok_ratio` is slower/costlier) and is stated on each field, not
 //!   implied by the sign.
-//! - [`Raw::mean`] of zero profiles is `None`: a fleet with no history is not
+//! - [`Raw::fleet_mean`] of zero profiles is `None`: a fleet with no history is not
 //!   a fleet reading zero.
 //! - A ratio is computed only when both the raw value and the fleet mean are
 //!   finite and positive; otherwise the ratio field is absent, never a
