@@ -83,7 +83,11 @@ impl Qwen3AttentionLayer {
     /// 2026-09-28: Whether [`Self::w8a8_qkv`] runs at `rows` rows (a pure function of the
     /// layer and `rows`, so the single-token Q and K/V steps agree on it).
     pub(super) fn w8a8_qkv_serves(&self, rows: usize) -> bool {
-        self.lora.is_none() && self.w8a8.is_some_and(|w| w.ctx.available(&w.input, rows))
+        self.lora.is_none()
+            && rows > 0
+            && self
+                .w8a8
+                .is_some_and(|w| w.ctx.available(&w.input, rows.min(ops::W8A8_MAX_ROWS)))
     }
 
     /// 2026-09-28: The single-token Q|K|V into the contiguous `[Q | K | V]` at `qkv`.
@@ -120,7 +124,7 @@ impl Qwen3AttentionLayer {
         if !self.w8a8_qkv_serves(rows) {
             return Ok(false);
         }
-        w.ctx.proj(
+        w.ctx.proj_rows(
             ctx.gpu,
             &w.input,
             normed,
@@ -188,8 +192,22 @@ impl Qwen3AttentionLayer {
         {
             return Ok(true);
         }
+        self.w8a8_o_rows(ctx, attn_out, rows, out, stream)
+    }
+
+    /// 2026-10-05: The W8A8 O of `attn_out[rows, q_dim]` into `out[rows, hidden]` at any row
+    /// count, or `Ok(false)` launching nothing. A prefill caller checks
+    /// [`Self::w8a8_prefill_stream`] first.
+    pub(super) fn w8a8_o_rows(
+        &self,
+        ctx: &ForwardContext,
+        attn_out: DevicePtr,
+        rows: usize,
+        out: DevicePtr,
+        stream: u64,
+    ) -> Result<bool> {
         match self.w8a8 {
-            Some(ref w) => w.ctx.proj(
+            Some(ref w) => w.ctx.proj_rows(
                 ctx.gpu,
                 &w.output,
                 attn_out,
@@ -201,6 +219,39 @@ impl Qwen3AttentionLayer {
             ),
             None => Ok(false),
         }
+    }
+
+    /// 2026-10-05: Whether a prefill on `stream` may run the W8A8 arms: only on the default
+    /// stream, where decode runs and finishes first (`mixed_forward_batch`). The model's W8A8
+    /// projections share one activation scratch (`W8a8Ctx`), so a prefill co-dispatched on
+    /// another stream keeps its other arms.
+    pub(super) fn w8a8_prefill_stream(ctx: &ForwardContext, stream: u64) -> bool {
+        stream == ctx.gpu.default_stream()
+    }
+
+    /// 2026-10-05: Segment `seg` (0 Q, 1 K, 2 V) of the W8A8 Q|K|V for `rows` rows of
+    /// `normed[rows, hidden]` into `out[rows, n_seg]`: the prefill projections at the declared
+    /// FP8, instead of an NVFP4 copy of the FP8 weight. The caller applies any adapter delta and
+    /// the gated deinterleave afterwards, as for its other arms. `Ok(false)` launches nothing,
+    /// off the default stream ([`Self::w8a8_prefill_stream`]).
+    pub(super) fn w8a8_qkv_segment(
+        &self,
+        ctx: &ForwardContext,
+        seg: usize,
+        normed: DevicePtr,
+        rows: usize,
+        out: DevicePtr,
+        stream: u64,
+    ) -> Result<bool> {
+        let Some(ref w) = self.w8a8 else {
+            return Ok(false);
+        };
+        if !Self::w8a8_prefill_stream(ctx, stream) {
+            return Ok(false);
+        }
+        let s = w.input.segment(seg)?;
+        w.ctx
+            .proj_rows(ctx.gpu, &s, normed, s.k(), rows, out, s.n(), stream)
     }
 }
 
