@@ -2,7 +2,7 @@
 # recipe: qwen3.6/qwen3.6-35b-a3b-fp8-mtp
 # checkpoint: Qwen/Qwen3.6-35B-A3B-FP8
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=adaptive decode_split_silu=on ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on draft_moe_experts=fp8 ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lm_head_nvfp4_rows=off moe_fp8_tc=on moe_nvfp4_kernels=none rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 678df672cf8cfe89e0cab5f5f12f3a6322db750f106dec3f96910e533d9d317f
 groups: 27  launches: 28  edges: 5 fused, 34 materialized
@@ -60,7 +60,7 @@ g0020 draft.moe_ffn [xn_quant,experts_gate_up,experts_act,eact_quant,shared_gate
 g0021 draft.moe_ffn [experts_down,shared_down] moe_fp8_grouped_tc_w8a8::moe_expert_down_act_fp8_grouped_tc_w8a8 reference rule=moe_down_act_grouped_tc_w8a8 writes={edown:bf16,sdown:bf16} compute=tensor_core:mma.sync.m16n8k32.e4m3
   experts_down: fp8/g128,i32 -> [act fp8/g128 | weight fp8/block128x128->e4m3 | mma e4m3*e4m3 | accumulate f32 | scale f32] -> bf16
   shared_down: fp8/g128 -> [act fp8/g128 | weight fp8/block128x128->e4m3 | mma e4m3*e4m3 | accumulate f32 | scale f32] -> bf16
-g0022 draft.moe_ffn [shared_gate,blend] moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped reference rule=moe_blend_grouped fuses={sg} writes={f:bf16} compute=cuda_core
+g0022 draft.moe_ffn [shared_gate,blend] moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped reference rule=moe_blend_grouped_draft fuses={sg} writes={f:bf16} compute=cuda_core
   shared_gate: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   blend: bf16,f32,bf16,f32 (rule) -> [scatter f32 | combine f32] -> bf16
 g0023 draft.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16} compute=memory

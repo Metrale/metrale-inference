@@ -2,9 +2,9 @@
 # recipe: qwen3.6/qwen3.6-35b-a3b-nvfp4-declared
 # checkpoint: nvidia/Qwen3.6-35B-A3B-NVFP4
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=adaptive decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on draft_moe_experts=bf16 ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=off gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 lm_head_nvfp4_rows=on moe_fp8_tc=on moe_nvfp4_kernels=lean rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
-digest: 5fe244e0dec5b54be2ffb3a0ac26b500433d366cfc65736ca5fbb05a0deb7de3
+digest: 70eb3c6ab3156bbbd56c67c0770a5baab8ba997afc7927a4e0f58ec33232ddf3
 groups: 27  launches: 26  edges: 3 fused, 33 materialized
 inputs: l39.moe_ffn.y bf16
 == mtp_in
@@ -45,19 +45,19 @@ g0016 draft.attn [o] gemv::dense_gemv_bf16 reference rule=draft_dense_gemv_bf16 
 g0017 draft.attn [add,post_norm] norm::residual_add_rms_norm reference rule=residual_add_post_norm writes={y:bf16,xn:bf16} compute=memory
   add: bf16,bf16 -> [compute f32] -> bf16
   post_norm: f32 (rule) -> [compute f32] -> bf16
-g0018 draft.moe_ffn [router] gemv::dense_gemv_bf16 reference rule=moe_router_gemv writes={router_logits:bf16} compute=cuda_core
+g0018 draft.moe_ffn [router] gemv::dense_gemv_bf16 reference rule=moe_router_gemv_draft_bf16 writes={router_logits:bf16} compute=cuda_core
   router: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
-g0019 draft.moe_ffn [top_k] moe_topk::moe_topk_softmax reference rule=moe_topk_softmax writes={topk_w:f32,topk_id:i32} compute=memory
+g0019 draft.moe_ffn [top_k] moe_topk::moe_topk_softmax reference rule=moe_topk_softmax_draft_bf16 writes={topk_w:f32,topk_id:i32} compute=memory
   top_k: bf16 -> [score f32] -> f32,i32
 g0020 draft.moe_ffn [experts_gate_up,shared_gate_up] moe_shared_expert_fused_bf16::moe_expert_gate_up_shared_bf16 reference rule=moe_gate_up_shared_bf16 writes={egu:bf16,sgu:bf16} compute=cuda_core
   experts_gate_up: bf16,i32 -> [gather bf16 | act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
   shared_gate_up: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
 g0021 draft.moe_ffn [experts_act,experts_down,shared_act,shared_down] moe_shared_expert_fused_bf16::moe_expert_silu_down_shared_bf16 reference rule=moe_silu_down_shared_bf16 fuses={eact,sact} writes={edown:bf16,sdown:bf16} compute=cuda_core
-  experts_act: bf16 -> [compute f32] -> f32
-  experts_down: f32,i32 -> [act f32 | weight bf16->f32 | mma f32*f32 | accumulate f32 | scale none] -> bf16
-  shared_act: bf16 -> [compute f32] -> f32
-  shared_down: f32 -> [act f32 | weight bf16->f32 | mma f32*f32 | accumulate f32 | scale none] -> bf16
-g0022 draft.moe_ffn [shared_gate,blend] moe_expert_gemv::moe_weighted_sum_blend reference rule=moe_weighted_sum_blend fuses={sg} writes={f:bf16} compute=cuda_core
+  experts_act: bf16 -> [compute f32] -> f32 (rule)
+  experts_down: f32 (rule),i32 -> [act f32 | weight bf16->f32 | mma f32*f32 | accumulate f32 | scale none] -> bf16
+  shared_act: bf16 -> [compute f32] -> f32 (rule)
+  shared_down: f32 (rule) -> [act f32 | weight bf16->f32 | mma f32*f32 | accumulate f32 | scale none] -> bf16
+g0022 draft.moe_ffn [shared_gate,blend] moe_expert_gemv::moe_weighted_sum_blend reference rule=moe_weighted_sum_blend_draft_bf16 fuses={sg} writes={f:bf16} compute=cuda_core
   shared_gate: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   blend: bf16,f32,bf16,f32 (rule) -> [scatter f32 | combine f32] -> bf16
 g0023 draft.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16} compute=memory

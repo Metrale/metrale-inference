@@ -2,7 +2,7 @@
 # recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared-act
 # checkpoint: unsloth/Qwen3.8-27B-NVFP4
 # target: gb10/qwen3.8-27b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on ffn_act_fixed=declared gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on draft_moe_experts=none ffn_act_fixed=declared gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lm_head_nvfp4_rows=off moe_fp8_tc=on moe_nvfp4_kernels=none rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 1a34cf9ba83f9c34e6cfd8d410c67cdc86aef452114dbe0ce098ee4ccde27486
 groups: 925  launches: 1155  edges: 216 fused, 1116 materialized
@@ -2320,7 +2320,7 @@ g0924 head [argmax] (host) reference rule=argmax_host writes={token:i32}
 # recipe: qwen3.8/qwen3.8-27b-nvfp4-unsloth-declared-act
 # checkpoint: unsloth/Qwen3.8-27B-NVFP4
 # target: gb10/qwen3.8-27b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on ffn_act_fixed=declared gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on draft_moe_experts=none ffn_act_fixed=declared gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lm_head_nvfp4_rows=off moe_fp8_tc=on moe_nvfp4_kernels=none rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 0025c722e104b1dbae6ad1324d79cf9eedb04ac609859fc90eb1ddf55b82237c
 groups: 925  launches: 4035  edges: 216 fused, 1116 materialized

@@ -2,7 +2,7 @@
 # recipe: qwen3.6/qwen3.6-35b-a3b-fp8-bf16head
 # checkpoint: Qwen/Qwen3.6-35B-A3B-FP8
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on draft_moe_experts=fp8 ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lm_head_nvfp4_rows=off moe_fp8_tc=on moe_nvfp4_kernels=none rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 3c06eccc5bd6ef7b1768c1bdfb8ca300a1cc2da5e641a9062d2de50cf700c6e4
 groups: 575  launches: 700  edges: 260 fused, 854 materialized
@@ -1694,7 +1694,7 @@ g0574 head [argmax] (host) reference rule=argmax_host writes={token:i32}
 # recipe: qwen3.6/qwen3.6-35b-a3b-fp8-bf16head
 # checkpoint: Qwen/Qwen3.6-35B-A3B-FP8
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=declared decode_split_silu=on ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 moe_fp8_tc=on rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=declared decode_split_silu=on draft_moe_experts=fp8 ffn_act_fixed=off gdn_exact_replay=off gdn_verify_exact=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=bf16 lm_head_nvfp4_rows=off moe_fp8_tc=on moe_nvfp4_kernels=none rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: c80017a70718d06b2632d4142c97c7a306e69ff1c08a196fd088ecbe73981649
 groups: 575  launches: 15940  edges: 260 fused, 854 materialized
