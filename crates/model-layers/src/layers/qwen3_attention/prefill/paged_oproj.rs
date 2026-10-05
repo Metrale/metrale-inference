@@ -73,9 +73,7 @@ impl Qwen3AttentionLayer {
                 stream,
             )?;
         // 2026-10-05: The declared-W8A8 O (`w8a8_decode_arm.rs`).
-        } else if Self::w8a8_prefill_stream(ctx, stream)
-            && self.w8a8_o_rows(ctx, attn_out, n as usize, o_out, stream)?
-        {
+        } else if self.w8a8_prefill_o(ctx, attn_out, n as usize, o_out, stream)? {
         } else if ctx.dispatch.cutlass_nvfp4_attn_o
             && let Some(ref nvfp4_t) = self.o_nvfp4_t
         {

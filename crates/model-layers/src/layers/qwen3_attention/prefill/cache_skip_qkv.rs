@@ -191,7 +191,14 @@ impl Qwen3AttentionLayer {
 
         let use_t_pipelined =
             std::env::var("METRALE_ATTN_PREFILL_T_PIPE").ok().as_deref() == Some("1");
-        if ctx.dispatch.cutlass_nvfp4_attn_qkv(label)
+        // 2026-10-05: The declared-W8A8 weights first, as in `paged_qkv.rs`.
+        let seg = match proj {
+            SkipProj::Q => 0,
+            SkipProj::K => 1,
+            SkipProj::V => 2,
+        };
+        if self.w8a8_prefill_qkv_segment(ctx, seg, normed, n as usize, out, stream)? {
+        } else if ctx.dispatch.cutlass_nvfp4_attn_qkv(label)
             && let Some(nvfp4_t) = nvfp4_t
         {
             ops::log_cutlass_nvfp4_route(ctx.gpu, label, n, out_dim, h);

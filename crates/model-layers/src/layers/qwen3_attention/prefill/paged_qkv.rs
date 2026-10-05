@@ -213,7 +213,7 @@ impl Qwen3AttentionLayer {
             Proj::K => 1,
             Proj::V => 2,
         };
-        if self.w8a8_qkv_segment(ctx, seg, normed, n as usize, out, stream)? {
+        if self.w8a8_prefill_qkv_segment(ctx, seg, normed, n as usize, out, stream)? {
         } else if ctx.dispatch.cutlass_nvfp4_attn_qkv(label)
             && let Some(nvfp4_t) = nvfp4_t
         {

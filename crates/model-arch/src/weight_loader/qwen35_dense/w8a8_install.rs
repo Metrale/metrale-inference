@@ -113,6 +113,9 @@ pub(super) fn install_w8a8_decode(
         );
         return Ok(done);
     }
+    // 2026-10-05: The attention prefill's W8A8 projections run on the prefill stream, so they
+    // get a scratch of their own (`Qwen3AttentionLayer::set_w8a8_prefill_ctx`).
+    let prefill_ctx = W8a8Ctx::new(gpu, max_k(config))?;
     let (h, inter) = (config.hidden_size as u32, config.intermediate_size as u32);
     for (i, (lt, layer)) in layer_types.iter().zip(layers.iter_mut()).enumerate() {
         let lp = config.layer_prefix(i);
@@ -148,6 +151,7 @@ pub(super) fn install_w8a8_decode(
                         h,
                         output.k(),
                     )?;
+                    l.set_w8a8_prefill_ctx(prefill_ctx);
                     done.attention += 4;
                     served.upgrade_w8a8(Group::Attention, i)?;
                 }
