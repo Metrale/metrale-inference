@@ -124,6 +124,7 @@ pub fn render_markdown(l: &Lkb) -> String {
         }
         s.push('\n');
     }
+    laxity_section(&mut s, l);
     if !l.copy_points.is_empty() {
         let _ = writeln!(s, "| family | copy point | sources |");
         let _ = writeln!(s, "|---|---|---|");
@@ -181,6 +182,44 @@ fn runs(l: &Lkb) -> String {
         .join(" / ")
 }
 
+fn laxity_section(s: &mut String, l: &Lkb) {
+    if l.laxity.is_empty() {
+        return;
+    }
+    let _ = writeln!(s, "## Laxity (modelled fusion gain)\n");
+    let _ = writeln!(
+        s,
+        "Per multi-op group: the bytes its fused edges never write to or read back from DRAM \
+         and the repeated reads of an input its ops share, at the device's bandwidth, and the \
+         launches it saves over one launch per op. Launch time is not modelled, and energy \
+         laxity is unmeasured (it is never derived from time).\n"
+    );
+    let _ = writeln!(
+        s,
+        "| run | multi-op groups | fused edges | MB kept out of DRAM | time (us) | share of step | launches saved | energy |"
+    );
+    let _ = writeln!(s, "|---|---:|---:|---:|---:|---:|---:|---|");
+    for (c, x) in l.coverage.iter().zip(&l.laxity) {
+        let _ = writeln!(
+            s,
+            "| {} n={} | {} | {} | {:.2} | {:.1} | {}% | {} | unmeasured |",
+            c.run.mode.name(),
+            c.run.rows,
+            x.groups.len(),
+            x.groups.iter().map(|g| g.fused_edges).sum::<usize>(),
+            x.bytes() / 1e6,
+            x.time_us(),
+            pct(if c.step_us > 0.0 {
+                x.time_us() / c.step_us
+            } else {
+                0.0
+            }),
+            x.launches_saved()
+        );
+    }
+    s.push('\n');
+}
+
 /// 2026-10-05: The campaign-ledger fields, as TOML.
 pub fn render_toml(l: &Lkb) -> String {
     let mut s = String::new();
@@ -192,6 +231,20 @@ pub fn render_toml(l: &Lkb) -> String {
     let _ = writeln!(s, "residual_count = {}", l.residual.len());
     let _ = writeln!(s, "residual_loc = {}", l.residual_lines());
     let _ = writeln!(s, "residual_copy_points = {}", l.copy_points.len());
+    if !l.laxity.is_empty() {
+        let us: Vec<String> = l
+            .laxity
+            .iter()
+            .map(|x| format!("{:.1}", x.time_us()))
+            .collect();
+        let _ = writeln!(s, "lkb_laxity_us = {:?}", us.join("/"));
+        let n: Vec<String> = l
+            .laxity
+            .iter()
+            .map(|x| x.launches_saved().to_string())
+            .collect();
+        let _ = writeln!(s, "lkb_launches_saved = {:?}", n.join("/"));
+    }
     let _ = writeln!(
         s,
         "lkb_relations_used = [{}]",

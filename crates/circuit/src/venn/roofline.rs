@@ -154,7 +154,7 @@ pub fn nvfp4_mma(c: &Circuit, n: &Node) -> bool {
         )
 }
 
-fn edge_bytes(c: &Circuit, n: &Node, e: usize, rows: u64) -> Result<f64, CostError> {
+pub(crate) fn edge_bytes(c: &Circuit, n: &Node, e: usize, rows: u64) -> Result<f64, CostError> {
     let edge = &c.edges[e];
     let mut dims = c.dims.clone();
     dims.insert("n".into(), rows);

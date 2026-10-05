@@ -14,6 +14,7 @@
 //! - "LKB residual" is never shortened to "residual" in names or output: the residual stream
 //!   and the `residual_add` op already own that word.
 
+mod laxity;
 mod render;
 
 #[cfg(test)]
@@ -28,6 +29,7 @@ use crate::venn::families::How;
 use crate::venn::repo::Repo;
 use crate::venn::{Class, Run};
 
+pub use laxity::{GroupLaxity, PlanLaxity, plan_laxity};
 pub use render::{render_markdown, render_toml, report_section};
 
 /// 2026-10-05: Coverage of one report run.
@@ -45,6 +47,8 @@ pub struct Coverage {
     /// those by the family that implements the op, so its "novel" share alone overstates
     /// coverage).
     pub uncovered: f64,
+    /// 2026-10-05: The estimated step, microseconds (the report's).
+    pub step_us: f64,
     /// 2026-10-05: Groups by the numerics tag of the rule that formed them, placeholder groups
     /// under `uncovered`.
     pub groups: BTreeMap<&'static str, usize>,
@@ -118,6 +122,9 @@ pub struct Lkb {
     pub residual: Vec<ResidualSource>,
     /// 2026-10-05: The class's copy points.
     pub copy_points: Vec<CopyPoint>,
+    /// 2026-10-05: The modelled fusion gain of each report run's plan, in `coverage` order
+    /// (filled by [`lkb`]; [`from_report`] leaves it empty).
+    pub laxity: Vec<PlanLaxity>,
     /// 2026-10-05: The regenerating command.
     pub command: String,
 }
@@ -138,7 +145,13 @@ pub fn lkb(report: &HwReport, repo: &dyn Repo, command: String) -> Result<Lkb, H
         &resolved.device.class,
         resolved.sources.target.as_deref(),
     )?;
-    Ok(from_report(report, &shadows, command))
+    let mut out = from_report(report, &shadows, command);
+    let gbps = resolved.roofline.roofline.dram_gbps;
+    for t in &report.tables {
+        out.laxity
+            .push(plan_laxity(&report.model.circuit, &t.planned.plan, gbps)?);
+    }
+    Ok(out)
 }
 
 /// 2026-10-05: The LKB of `report`'s model on its device's class; `shadows` maps a residual
@@ -222,6 +235,7 @@ pub fn from_report(report: &HwReport, shadows: &BTreeMap<String, String>, comman
             lkb: 1.0 - uncovered,
             measured: t.share_of(&[Class::Shared]),
             uncovered,
+            step_us: t.total_us,
             groups,
         });
     }
@@ -236,6 +250,7 @@ pub fn from_report(report: &HwReport, shadows: &BTreeMap<String, String>, comman
         coverage,
         residual,
         copy_points,
+        laxity: Vec::new(),
         command,
     }
 }
