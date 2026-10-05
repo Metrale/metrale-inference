@@ -69,19 +69,20 @@ impl TransformerModel {
         if n == 0 {
             return Ok(Vec::new());
         }
-        // 2026-09-25: `prefill_chunk_dispatch` takes no logits row, so a single
-        // stream uses it only when `row_base == 0`; otherwise it goes through
-        // the per-stream loop, which passes the row.
-        if n == 1 && row_base == 0 {
+        // 2026-10-05: A single stream runs the single-stream prefill into its logits row, then
+        // the eager drafter prefill, as `impl_forward`'s single-stream prefill does.
+        if n == 1 {
             let s = &mut streams[0];
-            let logits = self.prefill_chunk_dispatch(
+            let logits = self.prefill_chunk_dispatch_row(
                 s.prompt_tokens,
                 s.seq,
                 s.chunk_start,
                 s.chunk_len,
                 s.is_last_chunk,
+                row_base,
                 stream,
             )?;
+            self.try_eager_drafter_prefill(s.seq, s.is_last_chunk, stream);
             return Ok(vec![logits]);
         }
 
@@ -179,181 +180,29 @@ impl TransformerModel {
             stream
         };
 
-        let mut kv_cache = self.kv_cache.lock();
-
         let mut logits_out: Vec<DevicePtr> = Vec::with_capacity(n);
 
         for (stream_idx, slice) in streams.iter_mut().enumerate() {
             // 2026-09-25: A stream whose prefill fails gets NULL logits and the
-            // loop goes on with the others. Each stream has its own sequence
-            // state, and the next stream re-embeds the shared hidden buffer
-            // from row 0.
-            let stream_res: Result<DevicePtr> = (|| {
-                let tokens = slice.prompt_tokens;
-                let chunk_start = slice.chunk_start;
-                let chunk_len = slice.chunk_len;
-                let is_last_chunk = slice.is_last_chunk;
-                let total = tokens.len();
-                let seq = &mut *slice.seq;
-
-                // 2026-09-25: The same zeroing rule as `prefill_chunk_dispatch`.
-                if self.comm.is_some() {
-                    self.buffers.zero_all(self.gpu.as_ref(), stream)?;
-                } else if chunk_start == 0 {
-                    self.buffers
-                        .zero_prefill_essentials(self.gpu.as_ref(), stream)?;
-                }
-
-                // 2026-09-25: Embed at row 0 of the shared hidden buffer. This
-                // stream's layer loop consumes it before the next stream
-                // overwrites it.
-                self.prefill_b_embed_chunk(tokens, chunk_start, chunk_len, stream)?;
-
-                // 2026-09-25: Prefix cache, EP agreement and Marconi restore.
-                let (kv_write_start, marconi_skip) = self.prefill_b_prefix_lookup(
-                    tokens,
-                    seq,
-                    chunk_start,
-                    total,
-                    &mut kv_cache,
-                    stream,
-                    None,
-                )?;
-
-                let bs = kv_cache.block_size();
-                let end_pos = chunk_start + chunk_len;
-                let blocks_needed = (end_pos - 1) / bs + 1;
-                super::super::super::block_mgmt::ensure_blocks_through_prefill(
-                    seq,
-                    blocks_needed - 1,
-                    &mut kv_cache,
-                    self.prefix_cache.as_ref(),
-                    self.gpu.as_ref(),
-                    stream,
-                    self.levers.kv_poison,
-                )?;
-
-                // 2026-09-25: Processing range; a fully cached non-last chunk
-                // returns early.
-                let (proc_start, proc_count, effective_seq_len_start) = match self
-                    .prefill_b_proc_range(
-                        tokens,
-                        seq,
-                        chunk_start,
-                        chunk_len,
-                        is_last_chunk,
-                        kv_write_start,
-                        marconi_skip,
-                        // 2026-09-25: The hidden rows start at the buffer base.
-                        self.buffers.hidden_states(),
-                        stream,
-                    )? {
-                    ProcRange::Compute {
-                        proc_start,
-                        proc_count,
-                        effective_seq_len_start,
-                    } => (proc_start, proc_count, effective_seq_len_start),
-                    ProcRange::EarlyReturn(ptr) => {
-                        // 2026-09-25: A fully cached chunk still records its
-                        // tokens, as in `prefill_chunk_dispatch`.
-                        seq.tokens
-                            .extend_from_slice(&tokens[chunk_start..chunk_start + chunk_len]);
-                        seq.seq_len = chunk_start + chunk_len;
-                        seq.last_decode_ckpt_block = seq.tokens.len() / bs;
-                        return Ok(ptr);
-                    }
-                };
-
-                // 2026-09-25: Positions, MRoPE and paged metadata.
-                let MetaLayout {
-                    meta_base,
-                    slot_offset,
-                    pos_stream_bytes,
-                    use_mrope,
-                    needs_paged,
-                } = self.prefill_b_upload_meta(
-                    tokens,
-                    seq,
-                    chunk_start,
-                    chunk_len,
-                    proc_start,
-                    proc_count,
-                    effective_seq_len_start,
-                    &kv_cache,
-                    stream,
-                )?;
-
-                if needs_paged {
-                    self.prefill_b_upload_paged(
-                        seq,
-                        total,
-                        proc_start,
-                        proc_count,
-                        meta_base,
-                        slot_offset,
-                        &kv_cache,
-                        stream,
-                    )?;
-                }
-
-                self.gpu.synchronize(stream)?;
-
-                // 2026-09-25: Forward through all layers.
-                self.prefill_b_forward_layers(
-                    seq,
-                    &mut kv_cache,
-                    chunk_start,
-                    chunk_len,
-                    is_last_chunk,
-                    proc_count,
-                    effective_seq_len_start,
-                    kv_write_start,
-                    marconi_skip,
-                    meta_base,
-                    slot_offset,
-                    pos_stream_bytes,
-                    use_mrope,
-                    needs_paged,
-                    // 2026-09-25: No mid-chunk tail capture on this path.
-                    None,
-                    stream,
-                )?;
-
-                // 2026-09-25: Update the sequence state.
-                seq.tokens
-                    .extend_from_slice(&tokens[chunk_start..chunk_start + chunk_len]);
-                seq.seq_len = chunk_start + chunk_len;
-                // 2026-09-25: Prime the decode-checkpoint gate (see prefill_a.rs).
-                seq.last_decode_ckpt_block = seq.tokens.len() / bs;
-
-                let logits = if is_last_chunk {
-                    // 2026-09-25: The caller samples the logits after the whole
-                    // loop, so each stream writes its own logits row,
-                    // `row_base + stream_idx`, while its hidden row stays 0.
-                    self.prefill_b_finalize_last_at(
-                        tokens,
-                        seq,
-                        &mut kv_cache,
-                        chunk_start,
-                        chunk_len,
-                        proc_count,
-                        0,
-                        row_base + stream_idx,
-                        stream,
-                    )?
-                } else {
-                    self.prefill_b_save_checkpoint(
-                        tokens,
-                        seq,
-                        &mut kv_cache,
-                        chunk_start,
-                        chunk_len,
-                        stream,
-                    )?;
-                    DevicePtr::NULL
-                };
-                Ok(logits)
-            })();
+            // loop goes on with the others.
+            // 2026-10-05: Each stream runs the single-stream prefill
+            // (`prefill_chunk_dispatch_row`: its tail split and in-pass SSM capture included) into
+            // its own logits row, then the single-stream eager drafter prefill
+            // (`impl_forward`), so a stream's bits do not depend on how it was scheduled. This
+            // path used to re-implement the pass without the tail split.
+            let is_last_chunk = slice.is_last_chunk;
+            let stream_res = self.prefill_chunk_dispatch_row(
+                slice.prompt_tokens,
+                slice.seq,
+                slice.chunk_start,
+                slice.chunk_len,
+                is_last_chunk,
+                row_base + stream_idx,
+                stream,
+            );
+            if stream_res.is_ok() {
+                self.try_eager_drafter_prefill(slice.seq, is_last_chunk, stream);
+            }
             match stream_res {
                 Ok(l) => logits_out.push(l),
                 Err(e) => {
