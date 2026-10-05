@@ -124,7 +124,6 @@ pub fn render_markdown(l: &Lkb) -> String {
         }
         s.push('\n');
     }
-    laxity_section(&mut s, l);
     if !l.copy_points.is_empty() {
         let _ = writeln!(s, "| family | copy point | sources |");
         let _ = writeln!(s, "|---|---|---|");
@@ -139,6 +138,8 @@ pub fn render_markdown(l: &Lkb) -> String {
         }
         s.push('\n');
     }
+    laxity_section(&mut s, l);
+    promotion_section(&mut s, l);
     s
 }
 
@@ -180,6 +181,43 @@ fn runs(l: &Lkb) -> String {
         .map(|c| format!("{} n={}", c.run.mode.name(), c.run.rows))
         .collect::<Vec<_>>()
         .join(" / ")
+}
+
+fn promotion_section(s: &mut String, l: &Lkb) {
+    let _ = writeln!(s, "## Promotion candidates\n");
+    if l.promotion.is_empty() {
+        let _ = writeln!(s, "None.\n");
+        return;
+    }
+    let _ = writeln!(
+        s,
+        "A second user of a parameter has appeared (book/src/architecture/lkb.md, \
+         \"Promotion\"). Promote only when the parameterized form is byte-identical at every \
+         existing point with no microbench regression.\n"
+    );
+    let _ = writeln!(s, "| candidate | family | detail | share of step |");
+    let _ = writeln!(s, "|---|---|---|---:|");
+    for c in &l.promotion {
+        let _ = match c {
+            super::Candidate::CopyPoints { family, count } => writeln!(
+                s,
+                "| {count} copy points | {family} | one template instantiated {count} times | - |"
+            ),
+            super::Candidate::Point {
+                site,
+                family,
+                class,
+                diffs,
+                share,
+            } => writeln!(
+                s,
+                "| {site} | {family} | {class}: {} | {}% |",
+                diffs.join(", "),
+                pct(*share)
+            ),
+        };
+    }
+    s.push('\n');
 }
 
 fn laxity_section(s: &mut String, l: &Lkb) {
