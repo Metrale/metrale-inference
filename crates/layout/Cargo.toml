@@ -1,0 +1,14 @@
+[package]
+name = "metrale-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Layouts as functions from coordinates to offsets: composition, complement, tiling, XOR swizzles, and the checks kernels' index maps must pass."
+
+# 2026-10-05: Pure arithmetic. No dependencies, no I/O, no GPU: a build script or a test asks it
+# for a kernel's index maps and their checks, and emits constants (book/src/appendix/layouts.md).
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1694,6 +1694,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-layout"
+version = "1.0.0-beta-preview"
+
+[[package]]
 name = "metrale-model-arch"
 version = "1.0.0-beta-preview"
 dependencies = [
