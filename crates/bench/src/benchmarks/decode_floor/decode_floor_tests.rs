@@ -457,3 +457,28 @@ fn instrument_metrics_keep_both_clocks_and_store_joules_beside_tokens() {
     );
     assert!(bare.is_empty(), "{bare:?}");
 }
+
+/// 2026-10-05: The HTTP-scraped counter's joules add across runs exactly like
+/// the rail joules do, under its own key names, and a run whose counter
+/// scrape did not bracket (`gpu_counter_j: None`) is excluded from both the
+/// sum and the token denominator — the same rule `gpu_rail_*` follows.
+#[test]
+fn gpu_counter_joules_add_across_runs_under_their_own_keys() {
+    let mut runs = [healthy(31.5), healthy(29.6), healthy(30.5)];
+    runs[0].gpu_counter_j = Some(10.0);
+    runs[1].gpu_counter_j = Some(20.0);
+    runs[2].gpu_counter_j = None; // this run's scrape did not bracket
+    let mut m = BTreeMap::new();
+    instrument_metrics(&runs, None, &mut m);
+    assert_eq!(m.get("gpu_energy_counter_j"), Some(&30.0));
+    // 2026-10-05: Tokens from only the two runs that have a counter reading
+    // (1450 each), not all three.
+    assert_eq!(
+        m.get("gpu_energy_counter_jpt"),
+        Some(&(30.0 / (1450.0 * 2.0)))
+    );
+    assert!(
+        !m.contains_key("gpu_rail_energy_j"),
+        "no rail energy was set"
+    );
+}

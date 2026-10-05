@@ -33,3 +33,54 @@ defaults:
   gpu_memory_utilization: 0.5
   scheduler: slai
   enable_prefix_caching: true
+  # --- explicit CLI defaults (owner directive 2026-10-05): pinned to today's met-serve
+  # clap default so the resolved config is unchanged; see recipe::explicit for the SSOT list.
+  block_size: 16
+  content_loop_watchdog: auto
+  default_min_p: 0.08
+  default_top_n_sigma: 1
+  dflash_window_size: 4096
+  ep_size: 1
+  expert_quantization: fp8
+  forward: legacy
+  fp8_kv_headroom: 2
+  high_speed_swap_cache_blocks_per_seq: 64
+  high_speed_swap_qd: 8
+  high_speed_swap_rank: 32
+  kv_high_precision_layers: 0
+  lm_head_dtype: default
+  marconi_min_tokens: 256
+  max_batch_size: 8
+  max_loras: 8
+  max_num_seqs: 128
+  max_prefill_tokens: 8192
+  mtp_quantization: bf16
+  mtp_vocab: 100000
+  oom_guard_mb: 4096
+  prompt_lookup_max_drafts: 8
+  prompt_lookup_max_seqs: 8
+  prompt_lookup_min_match: 8
+  prompt_lookup_miss_backoff: 16
+  prompt_lookup_ngram: 4
+  prompt_lookup_shared_cache_scopes: 4
+  request_timeout: 300
+  scheduler_config: sync
+  spec_cost_model: off
+  ssm_batched_recurrent: auto
+  ssm_cache_slots: 16
+  ssm_checkpoint_interval: 256
+  ssm_decode_ring_slots: auto
+  ssm_rollback_mode: snapshot
+  swap_space_gb: 3
+  tbt_deadline_ms: 100
+  telemetry: off
+  tensor_parallel: 1
+  tool_grammar: auto
+  tool_max_tokens: 8192
+  video_decode_timeout_s: 120
+  video_ffmpeg_path: ffmpeg
+  video_fps: 2
+  video_max_frames: 768
+  vision_max_pixels: 0
+  vision_remote_image_max_mb: 20
+  vision_remote_image_timeout_s: 10

@@ -21,10 +21,11 @@ use crate::layers::ops;
 mod ffn_residual;
 mod hc;
 mod replay_tail;
+mod wave;
 
 impl Qwen3AttentionLayer {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn prefill_inner(
+    pub(super) fn prefill_inner_ex(
         &self,
         hidden: DevicePtr,
         residual: DevicePtr,
@@ -41,9 +42,16 @@ impl Qwen3AttentionLayer {
         // hidden/residual hold the streams' rows back to back, at the prefix
         // sums in `cu_seqlens` (or `b * chunk_len` when it is null).
         batched_meta: Option<&BatchedAttnMetadata>,
+        // 2026-10-05: Stop after the post-attention norm (`prefill_mixer`); the caller runs
+        // the FFN half.
+        defer_ffn: bool,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        anyhow::ensure!(
+            !defer_ffn || self.supports_wave_prefill_body(),
+            "prefill_inner: this layer cannot defer its FFN half"
+        );
         // 2026-09-25: Hyper-connection (mHC) layers (DeepSeek-V4, qwen4_exp) take
         // their own body.
         if self.hc.is_some() {
@@ -327,101 +335,12 @@ impl Qwen3AttentionLayer {
             )?;
         }
 
-        // 2026-09-25: `METRALE_PREFILL_HOST_TIMING=1`: host wall-clock time of this
-        // layer's FFN half, taken with no synchronize.
-        let t_ffn = (std::env::var("METRALE_PREFILL_HOST_TIMING").as_deref() == Ok("1"))
-            .then(std::time::Instant::now);
-        // 2026-09-25: LongCat shortcut MoE (producer): runs before the dense FFN
-        // (both write `moe_output`), folds the zero experts in, and stashes the
-        // result in the carry buffer.
-        if let (Some(moe_ffn), Some((carry, cap))) = (&self.moe_ffn, self.shortcut_carry_out)
-            && self.pre_moe_norm.is_none()
-        {
-            anyhow::ensure!(
-                num_tokens <= cap,
-                "shortcut carry capacity {cap} < prefill chunk {num_tokens}"
-            );
-            moe_ffn
-                .forward_prefill(ctx.buffers.norm_output(), num_tokens, ctx, stream)
-                .map_err(|e| anyhow::anyhow!("shortcut moe forward_prefill failed: {e}"))?;
-            let moe_out = ctx.buffers.moe_output();
-            if let crate::layers::FfnComponent::Moe(m) = moe_ffn {
-                m.apply_zero_expert(
-                    moe_out,
-                    ctx.buffers.norm_output(),
-                    num_tokens as u32,
-                    ctx,
-                    stream,
-                )?;
-            }
-            // 2026-09-25: `METRALE_OP_DUMP` hook: the shortcut MoE output (zero
-            // experts folded in), captured before the dense FFN reuses this
-            // buffer. Not the same as "moe_out" below, the dense FFN output.
-            if num_tokens > 0 {
-                super::super::op_dump::dump_bf16(
-                    ctx.gpu,
-                    moe_out,
-                    (num_tokens - 1) * h * bf16,
-                    h,
-                    self.attn_layer_idx,
-                    "shortcut_moe_out",
-                    stream,
-                )?;
-            }
-            ctx.gpu
-                .copy_d2d_async(moe_out, carry, num_tokens * h * 2, stream)?;
+        // 2026-10-05: A wave prefill (`LayerSplitPrefill::prefill_mixer`) stops here: the FFN
+        // half runs once over every stream's rows (`prefill_ffn_tail`, `wave.rs`).
+        if defer_ffn {
+            return Ok(());
         }
-        self.ffn
-            .forward_prefill(ctx.buffers.norm_output(), num_tokens, ctx, stream)
-            .map_err(|e| anyhow::anyhow!("ffn.forward_prefill failed: {e}"))?;
-        if let Some(t) = t_ffn {
-            crate::layers::qwen3_attention::add_ffn_host_us(t.elapsed().as_micros() as u64);
-        }
-
-        let dense_out = ctx.buffers.moe_output();
-        // 2026-09-25: `METRALE_OP_DUMP` hook: the FFN output (last token), before
-        // any post-FFN norm or residual add.
-        if num_tokens > 0 {
-            super::super::op_dump::dump_bf16(
-                ctx.gpu,
-                dense_out,
-                (num_tokens - 1) * h * bf16,
-                h,
-                self.attn_layer_idx,
-                "moe_out",
-                stream,
-            )?;
-        }
-
-        if is_mistral_diag {
-            diag_norm(
-                ctx.gpu,
-                dense_out,
-                h,
-                stream,
-                &format!("L{} moe_out", self.attn_layer_idx),
-            );
-        }
-
-        self.prefill_ffn_residual(hidden, dense_out, num_tokens, n, h, eps, ctx, stream)?;
-
-        // 2026-09-25: Gemma-4 `layer_scalar`: scale the whole hidden state at the
-        // end of the layer.
-        if let Some(scalar) = self.layer_scalar {
-            self.apply_layer_scalar(ctx.gpu, hidden, num_tokens * h, scalar, stream)?;
-        }
-
-        if is_mistral_diag {
-            diag_norm(
-                ctx.gpu,
-                hidden,
-                h,
-                stream,
-                &format!("L{} residual", self.attn_layer_idx),
-            );
-        }
-
-        Ok(())
+        self.prefill_ffn_tail(hidden, ctx.buffers.norm_output(), num_tokens, ctx, stream)
     }
 }
 

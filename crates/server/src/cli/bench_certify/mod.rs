@@ -68,6 +68,9 @@ impl Emit {
 }
 
 pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
+    if let Err(msg) = super::debug_build_guard::refuse_debug_build(cfg!(debug_assertions)) {
+        bail!("{msg}");
+    }
     if let Err(msg) = args.validate() {
         bail!("{msg}");
     }
@@ -172,7 +175,11 @@ pub async fn certify_cmd(args: CertifyArgs) -> Result<i32> {
         args.yes,
         args.remote_only,
         limits.memory.min_free_fraction,
+        &hardware,
     )?;
+    for warning in preflight::warnings(&facts) {
+        emit.say(&format!("preflight: {warning} (warning, not blocking)"));
+    }
     let findings = preflight::evaluate(&facts);
     emit.event(
         "preflight",

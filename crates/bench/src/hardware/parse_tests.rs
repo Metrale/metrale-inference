@@ -17,6 +17,9 @@ const PERFORMANCE: &str = include_str!("fixtures/gb10_performance.txt");
 const PERFORMANCE_HOT: &str = include_str!("fixtures/gb10_performance_throttling.txt");
 const PERFORMANCE_NA: &str = include_str!("fixtures/gb10_performance_unsupported.txt");
 const MEMINFO: &str = include_str!("fixtures/gb10_meminfo.txt");
+const NVSMI_HEADER: &str = include_str!("fixtures/gb10_nvsmi_header.txt");
+const DF_SOURCE: &str = include_str!("fixtures/gb10_df_source.txt");
+const BLOCK_STAT: &str = include_str!("fixtures/gb10_block_stat.txt");
 
 #[test]
 fn query_gpu_reads_every_cell_of_a_healthy_gb10() {
@@ -27,6 +30,8 @@ fn query_gpu_reads_every_cell_of_a_healthy_gb10() {
     assert_eq!(q.sm_clock_max_mhz, Some(3003.0));
     assert_eq!(q.gpu_temp_c, Some(55.0));
     assert_eq!(q.persistence_mode, Some(true));
+    assert_eq!(q.vbios.as_deref(), Some("9A.0B.1E.00.00"));
+    assert_eq!(q.power_limit_w, None, "GB10 reports [N/A] for power.limit");
 }
 
 /// 2026-09-26: Every `[N/A]` cell comes back `None`: a parser that returned 0.0
@@ -40,6 +45,36 @@ fn na_cells_are_unknown_and_never_zero() {
     assert_eq!(q.sm_clock_max_mhz, None);
     assert_eq!(q.gpu_temp_c, None);
     assert_eq!(q.persistence_mode, None);
+    assert_eq!(q.vbios, None);
+    assert_eq!(q.power_limit_w, None);
+}
+
+/// 2026-10-04: The `CUDA Version` header line, present under every `-q -d`
+/// selector (`fixtures/gb10_nvsmi_header.txt`, captured live 2026-10-04).
+#[test]
+fn cuda_version_reads_the_header_line() {
+    assert_eq!(cuda_version(NVSMI_HEADER).as_deref(), Some("13.0"));
+    assert_eq!(cuda_version(""), None);
+    assert_eq!(cuda_version("CUDA Version                  : [N/A]"), None);
+}
+
+/// 2026-10-04: `df --output=source` prints a header, then the device.
+#[test]
+fn df_source_skips_the_header_line() {
+    assert_eq!(df_source(DF_SOURCE).as_deref(), Some("/dev/nvme0n1p2"));
+    assert_eq!(df_source("Filesystem\n"), None);
+    assert_eq!(df_source(""), None);
+}
+
+/// 2026-10-04: Sectors read (field 3) and written (field 7) of
+/// `/sys/class/block/<dev>/stat`, a real capture from this box.
+#[test]
+fn disk_stat_reads_sectors_read_and_written() {
+    let (read, write) = disk_stat(BLOCK_STAT).expect("11-field stat line parses");
+    assert_eq!(read, 50_073_531_522);
+    assert_eq!(write, 15_966_063_588);
+    assert_eq!(disk_stat(""), None, "no fields at all");
+    assert_eq!(disk_stat("1 2 3 4 5 6"), None, "fewer than 7 fields");
 }
 
 #[test]

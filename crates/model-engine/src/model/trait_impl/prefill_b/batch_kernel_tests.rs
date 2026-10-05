@@ -360,6 +360,23 @@ fn rejects_scratch_footprint_overflow() {
     );
 }
 
+/// 2026-10-05: A cold MRoPE wave of 17 short prompts, one of 586 tokens and one of 1525 fits the
+/// scratch provisioned for a 4096-token arena: each stream's metadata slot is sized by its own
+/// chunk. Sized by the longest chunk (16 B per token of 1525, 19 times) it needed ~709 KB and
+/// every such wave ran per-stream.
+#[test]
+fn accepts_ragged_mrope_wave_with_one_long_stream() {
+    use metrale_gpu_runtime::buffers::{Q12_SIZING_STREAMS, q12_batched_scratch_bytes};
+    let arena = 4096;
+    let scratch =
+        q12_batched_scratch_bytes(Q12_SIZING_STREAMS, arena / Q12_SIZING_STREAMS, 8, true);
+    let mut streams = vec![s(35, 0, true); 17];
+    streams.extend([s(586, 0, true), s(1525, 0, true)]);
+    assert!(check_kernel_batched_eligible(
+        streams, 19, arena, false, 256, scratch, 8, true, true, true,
+    ));
+}
+
 /// 2026-09-25: Two 8192-token chunks charged at their raw length do not fit an
 /// 8200-token arena.
 #[test]

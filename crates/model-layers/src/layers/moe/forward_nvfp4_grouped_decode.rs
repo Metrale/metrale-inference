@@ -32,110 +32,9 @@ pub const NVFP4_GROUPED_DECODE_MAX_ROWS: usize =
 pub const NVFP4_GROUPED_DECODE_TC_MAX_ROWS: usize =
     super::forward_fp8_grouped_decode::FP8_GROUPED_DECODE_TC_MAX_ROWS;
 
-/// 2026-09-27: The two expert kernels of this path, looked up with `try_kernel`; a zero handle
-/// declines it. The sort, router and blend are the grouped FP8 decode's.
-/// 2026-10-02: `gate_up_tc` / `down_tc` are the tensor-core twins (`moe_nvfp4_grouped_tc.cu`),
-/// taken when both resolved unless `METRALE_NO_MOE_NVFP4_TC` is present. `declared_experts`: the
-/// layer's routed and shared experts are the checkpoint's own NVFP4 (declared W4A16, not a
-/// requantized copy), so decode takes this path at every width whatever the
-/// `--expert-quantization` tier (which governs FP8 checkpoints only); set by the qwen35 loader
-/// under `--weight-quantization declared` ([`MoeLayer::set_declared_nvfp4_experts`]).
-pub(super) struct Nvfp4GroupedKernels {
-    pub gate_up: KernelHandle,
-    pub down: KernelHandle,
-    pub gate_up_tc: KernelHandle,
-    pub down_tc: KernelHandle,
-    pub declared_experts: bool,
-    /// 2026-10-04: The lean point's pair (`Nvfp4G16Lean`) and its load-time repack; `lean` is set
-    /// once this layer's tables were repacked (`nvfp4_lean.rs`), after which only that pair reads them.
-    pub gate_up_tc_lean: KernelHandle,
-    pub down_tc_lean: KernelHandle,
-    pub lean_repack: KernelHandle,
-    pub lean: bool,
-    /// 2026-10-02: The BF16 point's pair (`moe_bf16_grouped_tc.cu`, `forward_bf16_grouped_decode.rs`).
-    pub bf16_gate_up_tc: KernelHandle,
-    pub bf16_down_tc: KernelHandle,
-}
-
-impl Nvfp4GroupedKernels {
-    /// 2026-09-27: One direct `try_kernel` call per kernel (`#[track_caller]` audit lines).
-    pub(super) fn resolve(gpu: &dyn GpuBackend) -> Self {
-        use super::super::try_kernel;
-        const MODULE: &str = "moe_nvfp4_grouped";
-        const TC: &str = "moe_nvfp4_grouped_tc";
-        Self {
-            gate_up: try_kernel(gpu, MODULE, "moe_expert_gate_up_act_nvfp4_grouped"),
-            down: try_kernel(gpu, MODULE, "moe_expert_down_act_nvfp4_grouped"),
-            gate_up_tc: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc"),
-            down_tc: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc"),
-            declared_experts: false,
-            gate_up_tc_lean: try_kernel(gpu, TC, "moe_expert_gate_up_act_nvfp4_grouped_tc_lean"),
-            down_tc_lean: try_kernel(gpu, TC, "moe_expert_down_act_nvfp4_grouped_tc_lean"),
-            lean_repack: try_kernel(gpu, TC, "nvfp4_tc_lean_repack"),
-            lean: false,
-            bf16_gate_up_tc: try_kernel(
-                gpu,
-                "moe_bf16_grouped_tc",
-                "moe_expert_gate_up_act_bf16_grouped_tc",
-            ),
-            bf16_down_tc: try_kernel(
-                gpu,
-                "moe_bf16_grouped_tc",
-                "moe_expert_down_act_bf16_grouped_tc",
-            ),
-        }
-    }
-
-    /// 2026-10-02: The gate+up and down launches for an `inter` x `hidden` expert: the
-    /// tensor-core twins when on and the shape fits them, else the CUDA-core kernels.
-    /// 2026-10-04: Always the lean pair once the tables are lean (the repack checked the shape).
-    fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
-        if let Some(lean) = self.lean_launch() {
-            return lean;
-        }
-        if nvfp4_grouped_tc_enabled()
-            && self.gate_up_tc.0 != 0
-            && self.down_tc.0 != 0
-            && ops::nvfp4_grouped_tc_shape_ok(inter, hidden, ops::NVFP4_GROUPED_GATE_UP_TC)
-            && ops::nvfp4_grouped_tc_shape_ok(hidden, inter, ops::NVFP4_GROUPED_DOWN_TC)
-        {
-            Nvfp4GroupedLaunch {
-                gate_up: self.gate_up_tc,
-                gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_TC,
-                down: self.down_tc,
-                down_geometry: ops::NVFP4_GROUPED_DOWN_TC,
-                max_rows: NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
-            }
-        } else {
-            Nvfp4GroupedLaunch {
-                gate_up: self.gate_up,
-                gate_up_geometry: ops::NVFP4_GROUPED_GATE_UP_SCALAR,
-                down: self.down,
-                down_geometry: ops::NVFP4_GROUPED_DOWN_SCALAR,
-                max_rows: NVFP4_GROUPED_DECODE_MAX_ROWS,
-            }
-        }
-    }
-}
-
-/// 2026-10-02: The expert kernels one grouped NVFP4 decode launches, and the widest row count
-/// they admit.
-pub(super) struct Nvfp4GroupedLaunch {
-    pub(super) gate_up: KernelHandle,
-    pub(super) gate_up_geometry: ops::Fp8GroupedGeometry,
-    pub(super) down: KernelHandle,
-    pub(super) down_geometry: ops::Fp8GroupedGeometry,
-    pub(super) max_rows: usize,
-}
-
-/// 2026-10-02: The grouped NVFP4 decode takes the tensor-core expert kernels unless
-/// `METRALE_NO_MOE_NVFP4_TC` is present (a debugging kill switch: the CUDA-core kernels). Read
-/// once per process. The two pairs differ in summation order, and in the SiLU product's
-/// carrier (FP32 against BF16 hi + lo), so their bits differ; each is row-invariant.
-pub(super) fn nvfp4_grouped_tc_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_NVFP4_TC").is_none())
-}
+pub(super) use super::forward_nvfp4_grouped_decode_kernels::{
+    Nvfp4GroupedKernels, Nvfp4GroupedLaunch, nvfp4_grouped_tc_enabled,
+};
 
 /// 2026-09-27: Shape admission without a GPU: `m` in `1..=max_rows` (2026-10-02: the selected
 /// expert kernels' widest, `NVFP4_GROUPED_DECODE_MAX_ROWS` or `NVFP4_GROUPED_DECODE_TC_MAX_ROWS`),
@@ -193,7 +92,11 @@ impl MoeLayer {
         let gate_up_ok =
             routed.is_some_and(|e| !e.gate_proj.weight.is_null() && !e.up_proj.weight.is_null());
         let native = self.nvfp4_grouped.declared_experts;
-        let launch = self.nvfp4_grouped.select(h as u32, inter as u32);
+        let launch = self.nvfp4_grouped.select(
+            h as u32,
+            inter as u32,
+            self.nvfp4_decode_fp8_down().is_some(),
+        );
         let down_ok = if tier.nvfp4_down() || native {
             !self.down_ptrs.packed_ptrs.is_null()
                 && routed.is_some_and(|e| !e.down_proj.weight.is_null())
@@ -268,6 +171,18 @@ impl MoeLayer {
     /// layer keeps its FP8 experts (`set_fp8_experts`).
     fn nvfp4_decode_fp8_shared(&self) -> Option<&Fp8ExpertWeight> {
         self.fp8_shared_expert.as_ref()
+    }
+
+    /// 2026-10-05: The FP8 down tables and shared expert the grouped FP8 down kernel runs every
+    /// down projection from, under a tier whose routed downs stay FP8 (`nvfp4-gate-up`).
+    fn nvfp4_decode_fp8_down(&self) -> Option<(&Fp8ExpertPtrTable, &Fp8ExpertWeight)> {
+        if crate::layers::expert_quantization().nvfp4_down() {
+            None
+        } else {
+            self.fp8_down_weight_ptrs
+                .as_ref()
+                .zip(self.nvfp4_decode_fp8_shared())
+        }
     }
 
     /// 2026-09-27: The NVFP4 MoE of `m` rows: `input` is `[m, H]` BF16, the output lands in
@@ -355,11 +270,7 @@ impl MoeLayer {
         // the shared expert alone and the NVFP4 one the routed experts; under `nvfp4-gate-up`
         // the grouped FP8 down kernel runs all of them from the FP8 experts.
         let fp8_shared = self.nvfp4_decode_fp8_shared();
-        let fp8_down = if crate::layers::expert_quantization().nvfp4_down() {
-            None
-        } else {
-            self.fp8_down_weight_ptrs.as_ref().zip(fp8_shared)
-        };
+        let fp8_down = self.nvfp4_decode_fp8_down();
         if let Some(fsh) = fp8_shared {
             ops::moe_expert_gate_up_act_fp8_grouped(
                 ctx.gpu,
@@ -408,7 +319,7 @@ impl MoeLayer {
             )?;
         }
         let nvfp4_shared_rows = if fp8_shared.is_some() { 0 } else { n };
-        let launch = self.nvfp4_grouped.select(h, inter);
+        let launch = self.nvfp4_grouped.select(h, inter, fp8_down.is_some());
         ops::moe_expert_gate_up_act_nvfp4_grouped(
             ctx.gpu,
             launch.gate_up,

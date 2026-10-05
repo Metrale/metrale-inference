@@ -72,6 +72,29 @@ impl TransformerModel {
         is_last_chunk: bool,
         stream: u64,
     ) -> Result<DevicePtr> {
+        self.prefill_chunk_dispatch_row(
+            tokens,
+            seq,
+            chunk_start,
+            chunk_len,
+            is_last_chunk,
+            0,
+            stream,
+        )
+    }
+
+    /// 2026-10-05: `prefill_chunk_dispatch` writing the last chunk's logits to row `logits_row`
+    /// (the batched dispatcher's per-stream path gives each stream its own row).
+    pub(super) fn prefill_chunk_dispatch_row(
+        &self,
+        tokens: &[u32],
+        seq: &mut SequenceState,
+        chunk_start: usize,
+        chunk_len: usize,
+        is_last_chunk: bool,
+        logits_row: usize,
+        stream: u64,
+    ) -> Result<DevicePtr> {
         let total = tokens.len();
         assert!(
             chunk_start + chunk_len <= total,
@@ -112,6 +135,7 @@ impl TransformerModel {
                     chunk_len,
                     true,
                     Some(cut),
+                    logits_row,
                     stream,
                 );
             }
@@ -123,7 +147,15 @@ impl TransformerModel {
                 false,
                 stream,
             )?;
-            return self.prefill_chunk_dispatch(tokens, seq, cut, total - cut, true, stream);
+            return self.prefill_chunk_dispatch_row(
+                tokens,
+                seq,
+                cut,
+                total - cut,
+                true,
+                logits_row,
+                stream,
+            );
         }
         self.prefill_chunk_pass(
             tokens,
@@ -132,6 +164,7 @@ impl TransformerModel {
             chunk_len,
             is_last_chunk,
             None,
+            logits_row,
             stream,
         )
     }
@@ -198,6 +231,7 @@ impl TransformerModel {
         chunk_len: usize,
         is_last_chunk: bool,
         cut_capture: Option<usize>,
+        logits_row: usize,
         stream: u64,
     ) -> Result<DevicePtr> {
         let total = tokens.len();
@@ -431,13 +465,15 @@ impl TransformerModel {
 
         if is_last_chunk {
             // 2026-09-25: Final norm, LM head, prefix-cache insert and snapshot save.
-            self.prefill_b_finalize_last(
+            self.prefill_b_finalize_last_at(
                 tokens,
                 seq,
                 &mut kv_cache,
                 chunk_start,
                 chunk_len,
                 proc_count,
+                0,
+                logits_row,
                 stream,
             )
         } else {

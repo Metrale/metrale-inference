@@ -105,6 +105,24 @@ impl TransformerModel {
         }
     }
 
+    /// 2026-10-05: Evict cached snapshots (`reclaim_from_cache`) until `want` Marconi slots
+    /// are free or nothing more can be evicted; returns the free count.
+    pub(in crate::model) fn reclaim_snapshot_slots(
+        &self,
+        want: usize,
+        kv_cache: &mut PagedKvCache,
+    ) -> usize {
+        while self.ssm_snapshots.free_slot_count() < want
+            && self.ssm_snapshots.reclaim_from_cache(
+                self.prefix_cache.as_ref(),
+                kv_cache,
+                self.ssm_tier_store.as_deref(),
+                self.gpu.as_ref(),
+            )
+        {}
+        self.ssm_snapshots.free_slot_count()
+    }
+
     /// 2026-10-01: Plan an in-pass capture at `cut`, the tail split point
     /// (`prefill_plan::tail_split_point`), for the pass over tokens
     /// `[proc_start, proc_start + proc_count)` of a `total`-token prompt, in place of

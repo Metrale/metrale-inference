@@ -8,6 +8,7 @@
 //! - Every argv and `ServeArgs` built here comes from `argv_edited`, which refuses a
 //!   recipe whose `runtime` is not `metrale`.
 
+pub mod explicit;
 pub mod fetch;
 mod fetch_github;
 pub mod schema;
@@ -246,6 +247,8 @@ impl Recipe {
 #[cfg(test)]
 #[path = "moe_ladder_tests.rs"]
 mod moe_ladder_tests;
+#[cfg(test)]
+mod nvfp4_declared_tests;
 #[cfg(test)]
 #[path = "recipe_tests.rs"]
 mod tests;

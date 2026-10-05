@@ -208,6 +208,7 @@ where
     let mut first: Option<(usize, usize, bool)> = None;
     let mut total = 0usize;
     let mut max_chunk_len = 0usize;
+    let mut meta_bytes = 0usize;
     for (chunk_len, eff_len, chunk_start, is_last) in streams {
         // 2026-09-25: `chunk_start` and `is_last_chunk` must match across
         // streams: the batch shares one `effective_seq_len_start`, and the
@@ -233,6 +234,8 @@ where
         }
         total += eff_len;
         max_chunk_len = max_chunk_len.max(eff_len);
+        // 2026-10-05: The setup advances its metadata cursor by this stream's slot.
+        meta_bytes += metrale_gpu_runtime::buffers::q12_per_stream_meta_bytes(chunk_len, mrope);
     }
     let Some((_chunk_len, chunk_start, _)) = first else {
         return false;
@@ -249,11 +252,7 @@ where
     // per-stream from a clean state.
     let scratch_needed = if varlen {
         metrale_gpu_runtime::buffers::q12_batched_scratch_bytes_varlen(
-            n,
-            total,
-            max_chunk_len,
-            top_k,
-            mrope,
+            n, total, meta_bytes, top_k, mrope,
         )
     } else {
         metrale_gpu_runtime::buffers::q12_batched_scratch_bytes(n, max_chunk_len, top_k, mrope)
