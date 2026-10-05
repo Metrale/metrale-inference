@@ -57,7 +57,8 @@ pattern is promoted into it once two hardware/model points use it byte-identical
 regression; everything else is named residual. **A shrinking residual means the LKB is
 converging.** Every campaign records LKB coverage, residual, parameterization yield, TTBP,
 TTPV and zero-day readiness in its ledger, and its exit report states "Promoted into the LKB:
-..." and "Residual delta: ...".
+...", "Residual delta: ..." (the single-class bucket separately), "Promoted into the LAB: ..."
+and "LAB residual delta: ...".
 
 **Standing objective: less code.** A new class is the moment duplication is cheapest to remove,
 because the second point of every parameter is now in view. Every bring-up PR states a

@@ -14,9 +14,16 @@
   declared, and the class's gates are certified.
 - **Ledger:** `ledger/<class>.toml`, one `[[combo]]` per model (copy the schema from an existing
   ledger); read the other ledgers first.
-- **LKB baseline** (`references/lkb.md`): coverage <C1/C16/C128 %> (measured <%>), residual
-  <count> kernels / <lines> lines; the exit report states "Promoted into the LKB" and
-  "Residual delta".
+- **LKB baseline** (`references/lkb.md`), read from `met circuit lkb --checkpoint <id>
+  --hardware <device> --precision <tier> --format toml`: coverage <C1/C16/C128 %> (measured
+  <%>; placeholder rows count as uncovered), residual <count> kernels / <lines> lines,
+  <copy points> copy points, single-class bucket <points> (declared points on an atom bundle
+  only this class realizes). The exit report states "Promoted into the LKB" and "Residual
+  delta" (the single-class bucket stated separately).
+- **LAB baseline** (book/src/architecture/lab.md): architecture coverage <instantiating
+  fixtures/all; executable architectures/circuit architectures>, models expressible as
+  parameter points <n>, LAB residual <refused model_types>. The exit report states "Promoted
+  into the LAB" and "LAB residual delta".
 - **Loop budget per model:** <calendar days and device-hours>; the loop escalates when it runs out.
 
 ## 1. The class as the tree has it today

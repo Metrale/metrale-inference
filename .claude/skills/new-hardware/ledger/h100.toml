@@ -27,10 +27,26 @@
 #   loc_removed_by_parameterization    the part of loc_removed a parameterization deleted
 #   LKB convergence (references/lkb.md), each at campaign start and now:
 #   lkb_coverage_pct_start, lkb_coverage_pct      share of the step (C1 / C16 / C128) run by
-#                      LKB-registered families on the class, as "C1/C16/C128"
+#                      LKB-registered families on the class, as "C1/C16/C128". 2026-10-05: read
+#                      it from `met circuit lkb --hardware <device> --format toml`, which counts
+#                      placeholder rows (ops a family implements but no rule of the class lowers)
+#                      as uncovered; 100 minus the plan report's "novel" share overstates it
 #   lkb_measured_pct_start, lkb_measured_pct      the part of it inside the evidence envelope
 #   residual_count_start, residual_loc_start, residual_count, residual_loc
 #                      the class's hardware-specific kernels (own sources, shadows, copies)
+#   residual_copy_points_start, residual_copy_points   family points realized as file copies
+#   residual_single_class_start, residual_single_class 2026-10-05 (owner): declared family
+#                      points on an atom bundle only one class realizes (cluster multicast,
+#                      tensor-memory accumulators, block-scaled FP4 MMA), counted apart until a
+#                      second class realizes the bundle
+#   LAB convergence (book/src/architecture/lab.md), each at campaign start and now:
+#   lab_arch_coverage_start, lab_arch_coverage  "<fixture checkpoints that instantiate>/<all>;
+#                      <architectures the circuit executor runs>/<circuit architectures>"
+#   lab_param_points_start, lab_param_points    checkpoints that instantiate with only a
+#                      config-map change (no circuit or block edit)
+#   lab_residual_start, lab_residual            refused model_types, each with the generator it
+#                      is missing
+#   lab_promoted       block families, parameters or variants promoted into the LAB
 #   promoted           families, points, policies or numerics points promoted into the LKB
 #   zero_day_ttbp_h    for a model added on already-supported hardware: its TTBP (0.0 otherwise)
 #   evidence           where the records are (PR comments, files in the tree)
@@ -62,14 +78,29 @@ levers_discarded = []
 loc_added = 0
 loc_removed = 0
 loc_removed_by_parameterization = 0
-lkb_coverage_pct_start = "100/100/100"
-lkb_coverage_pct = "100/100/100"
+# 2026-10-05: The coverage first recorded here (100/100/100) was 100 minus the plan report's
+# "novel" share, which files the ops no Hopper rule lowers (placeholder groups, no kernel runs
+# them) under "Shared, unmeasured". Counting them as uncovered (`met circuit lkb --checkpoint
+# unsloth/Qwen3.8-27B-NVFP4 --hardware h100-sxm --precision declared`) reads 49.8/55.3/65.3.
+lkb_coverage_pct_start = "49.8/55.3/65.3"
+lkb_coverage_pct = "49.8/55.3/65.3"
 lkb_measured_pct_start = "0/0/0"
 lkb_measured_pct = "0/0/0"
 residual_count_start = 17
 residual_loc_start = 4062
 residual_count = 17
 residual_loc = 4062
+residual_copy_points_start = 40
+residual_copy_points = 40
+residual_single_class_start = 0
+residual_single_class = 0
+lab_arch_coverage_start = "22/35; 1/4"
+lab_arch_coverage = "22/35; 1/4"
+lab_param_points_start = 22
+lab_param_points = 22
+lab_residual_start = ["qwen3_next", "qwen3_vl_moe", "gemma4", "diffusion_gemma", "minimax_m2", "deepseek_v4", "step3p7", "qwen4_exp"]
+lab_residual = ["qwen3_next", "qwen3_vl_moe", "gemma4", "diffusion_gemma", "minimax_m2", "deepseek_v4", "step3p7", "qwen4_exp"]
+lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = "the campaign PR, Hardware Beachhead Campaign: H100"
@@ -109,6 +140,17 @@ residual_count_start = 17
 residual_loc_start = 4062
 residual_count = 17
 residual_loc = 4062
+residual_copy_points_start = 0
+residual_copy_points = 0
+residual_single_class_start = 0
+residual_single_class = 0
+lab_arch_coverage_start = ""
+lab_arch_coverage = ""
+lab_param_points_start = 0
+lab_param_points = 0
+lab_residual_start = []
+lab_residual = []
+lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = ""
@@ -148,6 +190,17 @@ residual_count_start = 17
 residual_loc_start = 4062
 residual_count = 17
 residual_loc = 4062
+residual_copy_points_start = 0
+residual_copy_points = 0
+residual_single_class_start = 0
+residual_single_class = 0
+lab_arch_coverage_start = ""
+lab_arch_coverage = ""
+lab_param_points_start = 0
+lab_param_points = 0
+lab_residual_start = []
+lab_residual = []
+lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = ""
