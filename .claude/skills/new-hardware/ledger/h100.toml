@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-#
+
 # 2026-10-05: The bring-up ledger of the Hardware Beachhead Campaign: H100 (class `hopper`), one
 # [[combo]] per hardware + model combination, in campaign order. Machine-readable so later
 # campaigns can compare: read every ledger under .claude/skills/new-hardware/ledger/ before

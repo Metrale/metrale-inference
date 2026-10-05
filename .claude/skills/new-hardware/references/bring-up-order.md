@@ -166,7 +166,14 @@ does not start before this.**
   C >= 64 on either side. A vLLM stall or crash at a rung is a result: record it with evidence,
   then a one-change mitigation ladder.
 
-## 9. Accuracy bar (Tier 3)
+## 9. The improvement loop
+
+`references/improvement-loop.md`, keeping bit parity at every iteration, until its exit
+criterion holds (set `ttpv_at` / `ttpv_h` in the ledger) or its stop condition fires. It runs
+after step 7b and before step 10: the accuracy bar is taken on the configuration that will be
+certified.
+
+## 10. Accuracy bar (Tier 3)
 
 Before certification, and before any precision-changing lever is used in a published number,
 at the declared precision, on the full model:
@@ -175,13 +182,6 @@ at the declared precision, on the full model:
 - agentic-webserver with a same-night control, because its pass rate is noisy.
 - A precision-lowering lever is a flag, default off, and needs this bar before it is used in a
   published number.
-
-## 10. The improvement loop
-
-`references/improvement-loop.md`, keeping bit parity at every iteration, until its exit
-criterion holds (set `ttpv_at` / `ttpv_h` in the ledger) or its stop condition fires. It runs
-after step 7b, and in practice before step 9: the accuracy bar is taken on the configuration
-that will be certified.
 
 ## 11. Certification
 
