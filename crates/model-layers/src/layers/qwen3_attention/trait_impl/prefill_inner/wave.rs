@@ -99,13 +99,7 @@ impl Qwen3AttentionLayer {
                 .map_err(|e| anyhow::anyhow!("shortcut moe forward_prefill failed: {e}"))?;
             let moe_out = ctx.buffers.moe_output();
             if let crate::layers::FfnComponent::Moe(m) = moe_ffn {
-                m.apply_zero_expert(
-                    moe_out,
-                    ffn_in,
-                    num_tokens as u32,
-                    ctx,
-                    stream,
-                )?;
+                m.apply_zero_expert(moe_out, ffn_in, num_tokens as u32, ctx, stream)?;
             }
             // 2026-09-25: `METRALE_OP_DUMP` hook: the shortcut MoE output (zero
             // experts folded in), captured before the dense FFN reuses this

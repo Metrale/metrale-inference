@@ -66,7 +66,6 @@ impl TransformerModel {
             .max()
             .unwrap_or(chunk_len);
 
-
         // 2026-09-25: Allocation pre-flight. Setup allocates KV blocks stream by
         // stream (`ensure_blocks_through_prefill`), and an error there fails the
         // whole admitted batch (batch.rs returns it). So the batch's total block

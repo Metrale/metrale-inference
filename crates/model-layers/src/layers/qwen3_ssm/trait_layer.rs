@@ -16,8 +16,7 @@ use super::Qwen3SsmLayer;
 use super::ple_seq::ple_seq_state;
 use crate::layer::{ForwardContext, GdnPrefillBuffers, LayerState, TransformerLayer};
 use crate::layer::{
-    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerWeightSetup,
-    LayerWriteOnAccept,
+    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerWeightSetup, LayerWriteOnAccept,
 };
 
 impl TransformerLayer for Qwen3SsmLayer {
@@ -374,4 +373,3 @@ impl LayerAuxState for Qwen3SsmLayer {
         ple.restore_aux(st, blob, gpu, stream)
     }
 }
-

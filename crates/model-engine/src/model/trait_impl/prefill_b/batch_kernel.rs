@@ -27,6 +27,7 @@ use super::upload_meta::MetaLayout;
 mod eligible;
 mod phases;
 mod setup;
+mod wave;
 
 use phases::{Flow, PerStreamMeta};
 pub(in crate::model) use setup::{SetupFlow, StreamSetup};
@@ -65,6 +66,12 @@ impl TransformerModel {
         stream: u64,
         row_base: usize,
     ) -> Result<KernelBatchResult> {
+        // 2026-10-05: `METRALE_PREFILL_WAVE_EXACT`: the exact wave, whose rows get their
+        // single-stream bits (`wave.rs`); it declines to the per-stream loop, never to the
+        // kernel-batched layers below.
+        if wave::wave_exact_enabled() {
+            return self.prefill_batch_chunk_wave_exact(streams, stream, row_base);
+        }
         let n = streams.len();
         let chunk_len = streams[0].chunk_len;
         let is_last_chunk = streams[0].is_last_chunk;

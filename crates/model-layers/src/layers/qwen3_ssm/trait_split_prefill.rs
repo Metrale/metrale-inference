@@ -33,7 +33,10 @@ impl LayerSplitPrefill for Qwen3SsmLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        anyhow::ensure!(self.hc.is_none(), "prefill_mixer: the mHC body has no wave split");
+        anyhow::ensure!(
+            self.hc.is_none(),
+            "prefill_mixer: the mHC body has no wave split"
+        );
         self.prefill_inner_ex(hidden, residual, num_tokens, state, true, ctx, stream)
     }
 
