@@ -53,17 +53,9 @@ impl TransformerModel {
             self.final_norm_apply(last_hidden, prefill_normed, 1, h as u32, eps, stream)?;
 
             let prefill_logits_ptr = logits.offset(padded_n * v * bf16);
-            if let Some(ref fp8) = self.lm_head_fp8 {
-                ops::dense_gemv_fp8w(
-                    self.gpu.as_ref(),
-                    self.dense_gemv_fp8w_kernel,
-                    prefill_normed,
-                    fp8,
-                    prefill_logits_ptr,
-                    v as u32,
-                    h as u32,
-                    stream,
-                )?;
+            // 2026-10-05: The FP8 head through `lm_head_fp8_run`, as the unfused prefill's last
+            // row (`finalize_last.rs`): declared W8A8 when installed, else `dense_gemv_fp8w`.
+            if self.lm_head_fp8_run(prefill_normed, 1, prefill_logits_ptr, stream)? {
             } else if let Some(ref nvfp4) = self.lm_head_nvfp4 {
                 ops::w4a16_gemv(
                     self.gpu.as_ref(),
