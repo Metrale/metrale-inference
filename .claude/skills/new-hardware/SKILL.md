@@ -179,11 +179,12 @@ Run both axes; `references/two-axis-venn.md` has the procedure.
    image digest. The PARITY-O.R.A.C.L.E (`.claude/agents/flag-parity-oracle.md`) must return
    PARITY-PASS on both sides' resolved configs before the baseline is recorded.
 10. **Improvement loop** (`references/improvement-loop.md`), keeping parity, until the exit
-    criterion holds; record `ttpv` in the ledger. **Read `references/lever-patterns.md` BEFORE
-    choosing a lever each iteration; append a `ledger/levers.toml` entry AFTER every verdict**
-    (kept, discarded, marginal, regressed, parity-broken or failed) — a non-kept entry is as
-    valuable as a kept one and needs its failure mode, what caught it, and what would have
-    caught it sooner.
+    criterion holds; record `ttpv` in the ledger. **Run `met bench preflight` before EVERY timed
+    run** (lever-patterns.md's gates table, now automatic rather than merely documented). **Read
+    `references/lever-patterns.md` BEFORE choosing a lever each iteration; append a
+    `ledger/levers.toml` entry AFTER every verdict** (kept, discarded, marginal, regressed,
+    parity-broken or failed) — a non-kept entry is as valuable as a kept one and needs its
+    failure mode, what caught it, and what would have caught it sooner.
 11. **Accuracy bar** (Tier 3): BFCL with N, sample pct and the draw's SHA; agentic-webserver
     with a same-night control.
 12. **Certification**; then the next model, from step 1.

@@ -22,6 +22,12 @@ METRALE_TARGET_HW=<class> cargo build --release -p metrale-server --bin met
   its name it takes any class) answers "does every kernel assemble for this arch" with nvcc
   alone. It runs its self-test first; a gate whose failure path never ran is not evidence.
 - Never measure with a debug build, and never derive a gate value from one.
+- **Run `met bench preflight` before EVERY timed run from here on** (step 8's baseline, every
+  iteration of step 9's loop, step 11's certification) — `--expect-head <sha>` catches a stale
+  pre-head binary, and the kernel-freshness check recomputes this class's kernel closure hash
+  from the working tree and compares it to the binary's own baked attestation, which is exactly
+  the shared-`CARGO_TARGET_DIR` failure this section already warns about, now refused
+  automatically instead of merely hoped for.
 
 ## 1. Mock (rehearsal) checkpoint
 
@@ -179,7 +185,10 @@ does not start before this.**
   the manifest shape is `bench/baselines/<model>/published.json` (box, harness sha, engine
   build, parity note per series).
 - Record the vLLM version AND the image digest (`docker image inspect`), the launch command,
-  and the effective engine args from its log.
+  and the effective engine args from its log. `met bench preflight --vllm-image <ref>@sha256:...`
+  refuses a bare tag (`:latest` or any tag with no `@sha256:...`) and verifies the local image's
+  digest matches before the baseline leg runs — the standing defense against a `:latest` tag
+  moving versions under a baseline without anyone noticing.
 - **PARITY-O.R.A.C.L.E first** (`.claude/agents/flag-parity-oracle.md`): no vLLM number is
   recorded until both sides' resolved configs are ruled effectively equivalent.
 - C1-C128, one fresh serve per rung at high concurrency, a watchdog, no request timeout at

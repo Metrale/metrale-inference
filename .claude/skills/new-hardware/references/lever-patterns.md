@@ -132,19 +132,30 @@ at the shape that fills the device (nt=16/64 rule), since occupancy effects only
 Ordered by how early each fires (cheapest/earliest first) and mapped to the failure mode it is
 the standing defense against:
 
-| Gate | Fires at | Catches |
-|---|---|---|
-| Build-profile assertion (refuse a timed run from a debug build) | before any measurement | measurement-methodology-error (debug-timed-as-release) |
-| Nonzero-content assertion on both sides of an identity/digest check | inside the check itself | measurement-methodology-error (vacuous pass) |
-| Commit-sha stamp + verify on every A/B binary, immediately before launch | before a timed run starts | measurement-methodology-error (stale/pre-head binary) |
-| Per-worktree `CARGO_TARGET_DIR` | at build time | measurement-methodology-error (stale PTX from a shared build cache) |
-| Recipe-explicitness checker (every CLI-settable flag named, derived from the CLI's own manifest) | at recipe resolution | inherited-constant-underfill (a silent CLI default) |
-| Route proof (nsys/ncu kernel-presence check, or an explicit route assertion in code) | before trusting any A/B delta | silent-gate-bypass |
-| Identity gate run at the WIDEST concurrency the lever reaches | before the timed A/B | numerics-path-mismatch (width-dependent divergence) |
-| PARITY-O.R.A.C.L.E on the proposed baseline configuration | before iteration 0 counts | below-declared-precision / config asymmetry |
-| Full memory-ledger suite (not just the new feature's own test) | before merge | memory-waste (unconditional buffer growth) |
-| Pin comparison engine by exact version + digest, recorded on the baseline | at baseline-measurement time | config-drift |
-| Cheap decisive pre-check (draft-acceptance rate; known-good-output check right after first compile on a new target) | before building expensive correctness machinery | wasted effort on a dead end whose fate the cheap number already decided |
+**Six of these are now one command, not just a table row.** `met bench preflight` (PR
+`feat/bench-preflight`, 2026-10-05) makes the first six gates below AUTOMATIC: it refuses to let a
+timed run start rather than merely documenting that it should have been refused. Run it before
+EVERY timed A/B, ladder or benchmark (`references/improvement-loop.md`'s "One iteration" now says
+so explicitly). Its `Unavailable` status on the recipe-explicitness row is itself loud, not a
+silent pass — it names PR #124 as the still-missing real check.
+
+| Gate | Fires at | Catches | `met bench preflight` check id |
+|---|---|---|---|
+| Build-profile assertion (refuse a timed run from a debug build) | before any measurement | measurement-methodology-error (debug-timed-as-release) | `release_build` |
+| Nonzero-content assertion on both sides of an identity/digest check | inside the check itself | measurement-methodology-error (vacuous pass) | `comparison_non_vacuous` (`--compare DIR_A DIR_B`) |
+| Commit-sha stamp + verify on every A/B binary, immediately before launch | before a timed run starts | measurement-methodology-error (stale/pre-head binary) | `binary_head` (`--expect-head <sha>`) + `binary_clean` |
+| Per-worktree `CARGO_TARGET_DIR` | at build time | measurement-methodology-error (stale PTX from a shared build cache) | `kernel_freshness` (recomputes the kernel closure hash from the tree and compares it to the binary's own baked attestation — catches the shared-`CARGO_TARGET_DIR` case directly, not just the per-worktree hygiene rule) |
+| Pin comparison engine by exact version + digest, recorded on the baseline | at baseline-measurement time | config-drift (a floating `vllm:latest` tag) | `vllm_image_pinned` (`--vllm-image name@sha256:...`) |
+| Recipe-explicitness checker (every CLI-settable flag named, derived from the CLI's own manifest) | at recipe resolution | inherited-constant-underfill (a silent CLI default) | `recipe_explicit` (`--recipe <id>`) — **`Unavailable` until PR #124 lands**; not yet a real check, reported as such |
+| Route proof (nsys/ncu kernel-presence check, or an explicit route assertion in code) | before trusting any A/B delta | silent-gate-bypass | not yet automated — do this by hand |
+| Identity gate run at the WIDEST concurrency the lever reaches | before the timed A/B | numerics-path-mismatch (width-dependent divergence) | not yet automated — do this by hand |
+| PARITY-O.R.A.C.L.E on the proposed baseline configuration | before iteration 0 counts | below-declared-precision / config asymmetry | not yet automated — do this by hand |
+| Full memory-ledger suite (not just the new feature's own test) | before merge | memory-waste (unconditional buffer growth) | not yet automated — do this by hand |
+| Cheap decisive pre-check (draft-acceptance rate; known-good-output check right after first compile on a new target) | before building expensive correctness machinery | wasted effort on a dead end whose fate the cheap number already decided | not yet automated — do this by hand |
+
+`met bench preflight` also prints an environment record (every `METRALE_*` var set, and any
+mismatch against the recipe's declared `env:`) on every run, so a lever's arming is proven, not
+assumed (`a-lever-lives-in-three-places` / prove-the-lever-moved).
 
 ## Meta-metrics: how each pattern shortens TTBP / TTPV
 

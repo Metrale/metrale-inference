@@ -7,6 +7,17 @@ recorded either way.
 
 ## One iteration
 
+**Preflight, before EVERY timed run (a and e both).** Run `met bench preflight` before any
+measurement that will be quoted — the baseline in (a), the timed A/B in (e), and a re-measure
+after (g) loops back. It makes the measurement-method failures in `references/lever-patterns.md`'s
+gates table impossible rather than merely documented: a debug build, a stale pre-head binary, stale
+PTX from a shared `CARGO_TARGET_DIR`, a floating `vllm:latest` baseline image, and a vacuous
+"IDENTICAL" comparison over an empty directory. Pass `--expect-head <sha>` (the commit this run is
+supposed to measure), `--vllm-image <ref>@sha256:...` when the rung being compared is a vLLM leg,
+and `--compare <dirA> <dirB>` whenever the step is about to claim two output trees are identical.
+A FAIL refuses the run; a check it cannot run yet (recipe-explicitness, PR #124) reports
+UNAVAILABLE, loudly, never a silent pass — read it as "not yet proven", not as "fine".
+
 **a. Measure.** Same box, same harness, same instrument as the recorded vLLM baseline, at every
 rung C1, C2, C4, C8, C16, C32, C64, C128: tok/s, J/tok (NVML energy counter, GPU rail) and TTFT
 (cold and warm). Speed and energy are separate metrics (`references/speed-and-energy.md`):
