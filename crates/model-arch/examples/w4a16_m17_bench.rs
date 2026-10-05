@@ -40,8 +40,9 @@ const SHAPES: &[(&str, u32, u32)] = &[
     ("lm_head      N=248320 K=5120", 248320, 5120),
 ];
 
-/// 2026-10-05: Up to 512 rows: a C=128 MTP verify with K=4 is 512 rows.
-const M_SWEEP: &[u32] = &[1, 4, 8, 16, 32, 64, 128, 256, 512];
+/// 2026-10-05: Up to 2048 rows: a C=128 MTP verify with K=4 is 512 rows, and a prefill chunk
+/// is up to the 2048-token prefill budget.
+const M_SWEEP: &[u32] = &[1, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
 
 /// 2026-09-25: Launch geometry: N and M tile (grid), and block 256 for the two
 /// 256-thread cases, 128 otherwise.
