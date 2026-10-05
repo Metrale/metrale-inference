@@ -1,50 +1,104 @@
 # A Category-Theoretic Perspective
 
-The Metrale Engine book argues its case in prose. The prose carries the claim: for every `(Hardware, Model, Quantization)` target, there exists a kernel configuration that runs at the hardware's theoretical peak; general frameworks cannot reach that peak because they pay a genericity tax; Metrale Engine refuses the tax by specializing per target while keeping abstractions *above* the kernel layer.
+The Metrale Engine book argues its case in prose. The claim is narrower than "fast everywhere":
 
-Category theory gives precise names for the structures that claim leans on. This appendix names them. It is not a proof of performance, not a tutorial in category theory, and not required reading for anyone wanting to run or extend Metrale Engine. It is a lens. Read it if you want to see the same design with fewer words.
+- every `(Hardware, Model, Quantization)` target gets kernels chosen, compiled and measured for
+  that target;
+- the kernel *algorithms* are shared across targets wherever sharing is byte-identical and
+  costs nothing measurable;
+- what cannot be shared is kept as a named, measured exception.
 
-Standard references for the underlying mathematics: Saunders Mac Lane, *Categories for the Working Mathematician* (second edition); Emily Riehl, *Category Theory in Context* (freely available). Everything below uses only the first two chapters of either.
+Category theory gives precise names for the structures that claim relies on, and this appendix
+names them. It is not a proof of performance, not a tutorial in category theory, and not
+required reading for anyone who wants to run or extend Metrale Engine. It is a lens.
+
+Standard references for the underlying mathematics: Saunders Mac Lane, *Categories for the
+Working Mathematician* (second edition); Emily Riehl, *Category Theory in Context* (freely
+available). Sections 1–6 use only the first two chapters of either. The kernel structure in
+Section 3 is worked out at engineering length in [The LKB in Mathematics](./lkb-math.md).
 
 ---
 
-## 1. The target category `𝒯`
+## 1. Targets, and where performance claims live
 
-A **category** is a collection of objects together with arrows (morphisms) between them, closed under composition and equipped with an identity arrow on every object. In symbols: `ob(𝒯)` is a class, and for every ordered pair `A, B ∈ ob(𝒯)` there is a set `𝒯(A, B)` of arrows.
+A **category** is a collection of objects together with arrows (morphisms) between them. It is
+closed under composition and has an identity arrow on every object.
 
-Metrale Engine's target category `𝒯` has one object per supported `(H, M, q)` triple. In code, these objects are `metrale_core::target::KernelTarget` values, one per compiled `TargetPtxSet`; the leaf directories under `kernels/<hw>/` are a literal list of `ob(𝒯)`.
+Metrale Engine's targets form a collection `𝒯` with one object per supported `(H, M, q)` triple.
+In code these objects are `metrale_core::target::KernelTarget` values, one per compiled
+`TargetPtxSet`. The leaf directories `kernels/<hw>/<model>/<quant>/` list them.
 
-The non-obvious choice is the morphism set: **for every distinct pair `A ≠ B`, `𝒯(A, B) = ∅`**. The only arrows are identities. `𝒯` is a *discrete* category.
+Earlier editions of this appendix made `𝒯` *discrete*: no arrows between distinct targets, and
+no shared structure between their kernels. That is no longer how the engine is built.
 
-This choice matters. A non-identity arrow `f : A → B` would mean "a canonical way to go from kernel set `A` to kernel set `B`" — a declared compatibility. Such compatibilities are temptations that collapse specialization: the moment you posit `f : (GB10, Qwen3.5-35B, NVFP4) → (GB10, Qwen3-Next-80B, NVFP4)`, you have committed to a kernel set that serves both, or at least to a shared essence that both factor through. That is the shape of vLLM. Metrale Engine refuses by making `𝒯` discrete.
+- Kernel sources are shared through `kernels/<hw>/common/`, `[sources] use` and
+  `[hardware] inherits`.
+- The circuit compiler plans every model on every class from one set of kernel families.
 
-The specialization thesis, in one sentence: **`𝒯` is discrete, and all performance claims are local to an object**.
+What survives of the discrete reading is a statement about **evidence**, not about code:
+
+> **A performance claim is local to an object.** A kernel measured on one target is
+> "shared, unmeasured" on any other target until it is measured there.
+
+The [evidence envelope](../architecture/lkb.md#the-evidence-envelope) is that rule in data:
+`[[family.evidence]]` counts only on the class that recorded it.
 
 ## 2. `𝒯` as a product
 
-The three axes decompose: `𝒯 ≅ Hw × Mod × Quant`, where each factor is itself a discrete category (one object per supported value). The product comes with projection functors — `π_Hw : 𝒯 → Hw`, `π_Mod : 𝒯 → Mod`, `π_Quant : 𝒯 → Quant` — that read off one coordinate.
+The three axes decompose: `𝒯 ≅ Hw × Mod × Quant`. The product comes with projections
+`π_Hw`, `π_Mod` and `π_Quant`, each of which reads off one coordinate. A **functor** is a
+structure-preserving map between categories: it sends objects to objects and arrows to arrows,
+and it respects identities and composition.
 
-A **functor** is a structure-preserving map between categories: it sends objects to objects and arrows to arrows, respecting identities and composition. On discrete categories a functor is just an object-to-object function.
+The product decomposition is visible in three places:
 
-The product decomposition is visible in three places in the repo:
+- **The directory tree.** `kernels/<hw>/<model>/<quant>/` mirrors the three factors.
+- **The build-time wildcards.** `METRALE_TARGET_HW`, `METRALE_TARGET_MODEL` and
+  `METRALE_TARGET_QUANT` in `crates/kernels/build.rs` select subsets of each factor independently.
+- **The workspace crate split.**
+  - Hw axis: `metrale-gpu-runtime` and `metrale-comm`.
+  - Mod axis: `metrale-model-arch` and the architecture circuits.
+  - Quant axis: `crates/model-layers/src/quant_format/` and `metrale-kernels`.
 
-- The **directory tree**: `kernels/<hw>/<model>/<quant>/` mirrors the three-factor product exactly. A leaf is an object of `𝒯`.
-- The **build-time wildcards**: `METRALE_TARGET_HW`, `METRALE_TARGET_MODEL`, `METRALE_TARGET_QUANT` in `crates/kernels/build.rs` select subsets of each factor independently.
-- The **workspace crate split**: `metrale-gpu-runtime`/`metrale-comm` insulate the Hw axis, `metrale-model-arch` insulates the Mod axis, `crates/model-layers/src/quant_format/` + `metrale-kernels` insulate the Quant axis.
+Orthogonal axes are the defining property of a product. Adding an object to `Hw` does not
+change `Mod × Quant`.
 
-Orthogonality of axes is not a lucky accident — it is the defining property of a categorical product. Adding an object to `Hw` does not touch `Mod × Quant`; the projection `π_{Mod×Quant}` is unchanged. This is exactly the empirical fact that "adding a new hardware vendor is two trait impls and a directory".
+## 3. Kernels factor through the Latent Kernel Blueprint
 
-## 3. Kernels as a functor
+The kernel structure has two layers: a theory shared by every target, and a realization of it on
+each hardware class.
 
-The primary structure over `𝒯` is the kernel assignment:
+**The theory.** The [Latent Kernel Blueprint](../architecture/lkb.md) (LKB) is presented by:
+- **generators**: the kernel families of `KERNEL_FAMILIES.toml`, each with parameters and
+  points;
+- **relations**: the fusion rules proven bit-identical (`numerics = "bit_identical"` in
+  `FUSIONS.toml`).
+
+**Realization.** Each hardware class `H` gives a functor `F_H : LKB → Impl_H`. It turns family
+points into launchable kernels through the class chain (`HARDWARE.toml inherits`), the class's
+overlays, and the kernels it can run.
+
+**The plan.** A model's circuit is lowered onto the LKB by the fuser (`L_H`). The plan on `H` is
+`F_H ∘ L_H` applied to the circuit, and `met circuit plan --hardware` prints it.
+
+**The residual.** Not every kernel on a class is the image of a generator. The **LKB residual**
+of `H` is the part of `Impl_H` outside the image of `F_H`: shadows, class-only sources and
+per-point copies. It is kept explicit and named, with its evidence. So the kernel set of a target
+decomposes as
 
 ```text
-Kernels : 𝒯 → 𝐒𝐞𝐭
+Kernels(H, M, q)  =  F_H( points the plan of (M, q) uses )  ⊔  LKB-residual(H) used by (M, q)
 ```
 
-`𝐒𝐞𝐭` is the category of sets. `Kernels` sends each target to its set of compiled PTX modules. The auto-generated `target_ptx.rs` (in the kernels crate's `OUT_DIR`) is this functor materialised in code; each `TargetPtxSet`'s `modules` is the functor applied to an object.
+**The engine's direction** is to shrink the right-hand summand: a new class should need a new
+functor (data), not new generators (kernels). Each campaign reports the residual's size, so
+convergence is a measured trend, not an assertion.
 
-Because `𝒯` is discrete, there are no naturality squares to draw — `Kernels` has complete freedom per object, which is the whole point. The image `Kernels(H, M, q)` in the default multi-model image has ~30–40 elements; no two targets share an element by construction.
+**How exact this is.** The reading is exact for the plan's *structure*: which kernels, composed
+how. It is approximate for its *numbers*. Floating-point addition is not associative, so `F_H`
+preserves a bit-identical relation only when both sides keep the same reduction order on `H`.
+Otherwise it preserves the relation up to a derived error bound. [The LKB in
+Mathematics](./lkb-math.md) states both cases as rules (Sections 2 and 3).
 
 ## 4. Build-to-runtime as a composition of functors
 
@@ -54,87 +108,116 @@ Three categories and two functors sit in a line:
 Sources  ──[ComputeTarget.compile]──►  Binaries  ──[embed + load]──►  KernelHandles
 ```
 
-`Sources` has one object per `(H, M, q)` leaf directory whose underlying data is the set of `.cu` / `.metal` / `.hip` files inside. `Binaries` has one object per leaf whose underlying data is the set of compiled PTX / metallib / HSACO byte blobs. `KernelHandles` holds the runtime-resident entries returned by `GpuBackend::kernel(module, function)`.
+- `Sources` has one object per target. Its underlying data is the staged `.cu` / `.metal` /
+  `.hip` files: the class's `common/` layer plus the target's own leaf directory.
+- `Binaries` holds the compiled PTX / metallib / HSACO blobs.
+- `KernelHandles` holds the runtime-resident entries returned by
+  `GpuBackend::kernel(module, function)`.
 
-The first arrow is the `ComputeTarget` trait in `crates/core/src/compute.rs`. It is a **vendor-indexed family of functors** — one concrete functor per `Vendor` (`Nvidia`, `Amd`, `Apple`, `Intel`). Adding a new hardware vendor means adding a new member to the family. The rest of the diagram commutes unchanged: `Binaries → KernelHandles` doesn't care how the binaries were produced.
+The first arrow is the `ComputeTarget` trait in `crates/core/src/compute.rs`. It is a
+vendor-indexed family of functors, one per `Vendor`. The rest of the diagram does not depend on
+how the binaries were produced.
 
-This is the categorical reading of "the abstractions sit above the kernel layer, not inside it". The abstractions *are* the arrows in the diagram. The kernels *are* elements of the objects. Arrows and elements live at different levels; only arrows need to be generic.
+The factoring in Section 3 happens at the `Sources` level and in the plan, **ahead of time**.
+Every point a target uses is instantiated and compiled for that target at build time. Nothing in
+the runtime chooses among points by dispatching over shapes or types, and nothing is compiled
+just in time.
 
 ## 5. The `GpuBackend` trait as an algebraic theory
 
-An **algebraic theory** is a signature (operation symbols with arities) plus equations that any implementation must satisfy. A **model** of the theory is a set together with operations that satisfy the equations. Different sets can be different models of the same theory — this is the mathematical name for "multiple implementations of the same trait".
+An **algebraic theory** is a signature (operation symbols with arities) plus equations that every
+implementation must satisfy. A **model** of the theory is a set with operations that satisfy the
+equations.
 
-The `GpuBackend` trait in `crates/gpu-runtime/src/gpu.rs` is such a theory. Its operations are `alloc`, `free`, `kernel`, `launch`, `synchronize`, `copy_h2d`, and so on. The (unwritten, but real) equations include "`free` after `alloc` returns memory to the pool", "`synchronize` serialises previously-launched work on the given stream", and "`launch` of a kernel with pointer arguments passes the addresses unchanged to the kernel".
+The `GpuBackend` trait in `crates/gpu-runtime/src/gpu.rs` is such a theory.
+- Its operations are `alloc`, `free`, `kernel`, `launch`, `synchronize`, `copy_h2d`, and so on.
+- Its equations are unwritten but real, for example "`synchronize` serialises previously launched
+  work on the given stream".
 
 Two models ship:
+- `MetraleCudaBackend` implements the theory with the CUDA driver API;
+- `MockGpuBackend` records launches and returns the results the equations demand.
 
-- `MetraleCudaBackend` — implements the theory by delegating to the CUDA driver API.
-- `MockGpuBackend` — implements the theory by recording launches and returning the opaque successes the equations demand.
+The business logic (scheduler, engine, layer code) is polymorphic over the choice of model.
+`cargo test` evaluates it in `MockGpuBackend`, and production evaluates it in
+`MetraleCudaBackend`. This is the formal meaning of [SBIO](../architecture/sbio.md): business
+logic never performs I/O directly because it never commits to a model.
 
-The business logic — scheduler, engine, layer code — is **polymorphic over the choice of model**. In category-theoretic language, business logic is an arrow in the category of `GpuBackend`-algebras, and evaluating it requires picking a model. The `cargo test` suite evaluates in `MockGpuBackend`; production evaluates in `MetraleCudaBackend`. Both evaluations agree on all facts that depend only on the algebraic theory — sequence of launches, argument correctness, allocation hygiene. This is why ~80% of the test surface runs without a GPU.
+Section 3 uses the same idea one level down. The LKB is a theory, and each hardware class is a
+model of it.
 
-This is the formal meaning of [SBIO](../architecture/sbio.md): business logic never directly performs I/O because it never commits to a model. Commitment happens at the top of `main`.
+## 6. The compiled registry as a coproduct
 
-## 6. The kernel registry as a coproduct
-
-A **coproduct** (or disjoint union) in `𝐒𝐞𝐭` is the set-theoretic union of pairwise-disjoint copies:
+A **coproduct** in `𝐒𝐞𝐭` is a disjoint union:
 
 ```text
-all_ptx  ≅  ∐_{(H,M,q) ∈ 𝒯}  Kernels(H, M, q)
+all_ptx  ≅  ∐_{(H,M,q) ∈ 𝒯}  Binaries(H, M, q)
 ```
 
-In code, `metrale_kernels::all_ptx_sets()` returns this coproduct. Each `(H, M, q)` contributes a summand; the summands share no elements by construction, because different leaf directories produce different PTX blobs with different module names.
+`metrale_kernels::all_ptx_sets()` returns it. Each target contributes one summand of compiled
+modules, compiled for that target even where its sources are shared. Adding a target adds a
+summand and leaves the existing summands unchanged.
 
-The coproduct has a universal property that is worth stating because it matches the design discipline: for any set `S` and family of functions `f_{H,M,q} : Kernels(H, M, q) → S`, there is a unique function `f : all_ptx → S` that restricts to each `f_{H,M,q}`. The registry dispatch at runtime — "given a target, return the right PTX set" — is the inverse construction: a function out of `all_ptx` that *factors through* the target index.
-
-Adding a new target adds a new summand. The universal property says the existing `f_{H,M,q}` for other targets don't need to change. This is the formal meaning of "specialization is a directory, not a template".
+Sharing therefore lives in the sources and the plan (Section 3). The compiled artifacts stay
+per target (this section).
 
 ## 7. Where general frameworks sit in this picture
 
-A general framework — call one `𝒢` — offers a kernel assignment `Kernels_𝒢 : 𝒯 → 𝐒𝐞𝐭` that factors through a smaller "essence" category `ℰ`:
+A general framework also factors its kernels through a smaller category of shared kernels.
+Common forms:
+- shape polymorphism inside one kernel;
+- dtype dispatch on a runtime tag;
+- just-in-time specialization on first call.
 
-```text
-Kernels_𝒢  :  𝒯  ──F──►  ℰ  ──G──►  𝐒𝐞𝐭
-```
+The LKB is a factoring too. The differences are where and how it is resolved:
 
-`ℰ` has richer morphisms than `𝒯`. Examples of non-identity arrows in `ℰ`:
+1. **Ahead of time.** Every point is instantiated and compiled per target at build time, and the
+   plan is fixed per (model, class, mode, rows) before serving. No runtime dispatch chooses among
+   points.
+2. **Measured per object.** A shared point is "optimized" on a target only inside its evidence
+   envelope there (Section 1).
+3. **Opt-out per kernel.** A target may replace any point with a residual kernel. It must name
+   the kernel and give its evidence, and the replacement is counted.
+4. **Numerics are a parameter.** Where two targets share a point's reduction order, their results
+   are byte-identical. Where they do not, the difference is declared and bounded (Section 3).
 
-- Shape polymorphism (a single templated kernel covers `seq_len = 128` and `seq_len = 256` via a compile-time branch).
-- Dtype dispatch (a single kernel handles BF16 and FP16 via a runtime tag).
-- Just-in-time specialisation (a single source file JITs per shape on first call).
-
-The factoring is attractive because the image of `F` can be small: you write one kernel in `ℰ` and cover many objects of `𝒯`. The cost is paid by `G`: every time `G` realises a morphism from the `ℰ`-image down to a specific `𝒯`-object, real work happens — a branch, a dispatch, a JIT compilation, a dequant-to-BF16 fallback. Those costs are the **genericity tax**.
-
-Metrale Engine refuses the factoring. There is no `ℰ`. `Kernels : 𝒯 → 𝐒𝐞𝐭` is defined directly, object by object, with no intermediate. This is why `metrale-kernels` has no runtime compilation and no dispatch branching: there is nothing to branch over.
-
-The 3.6× gap on Qwen3.5-35B against NVIDIA's vLLM is the cost of NVIDIA's `G` on that particular object. The benchmarks in [Benchmarks](../operations/benchmarks.md) report what the cost is, per kernel and end-to-end, across the whole matrix.
+Whether a particular framework's factoring costs speed on a particular target is an empirical
+question, answered per target by [benchmarks](../operations/benchmarks.md), not by this appendix.
 
 ## 8. Reading the book through this lens
 
-The rest of the book, re-read categorically:
+- The [Part II philosophy chapter](../architecture/philosophy.md) shows the product structure in
+  code: the kernel tree is the coordinate system, and the crate split is the decomposition.
+- [The Circuit Compiler](../architecture/circuit-compiler.md) and [the
+  LKB](../architecture/lkb.md) describe Section 3 operationally: circuits, lowering, families,
+  realization, and the residual.
+- The [dispatch chapter](../architecture/dispatch.md) traces a request through the functor
+  composition of Section 4.
+- The [SBIO chapter](../architecture/sbio.md) is the operational version of Section 5.
+- The [deep-dive chapters](../deep-dives/kernels.md) describe kernels at a single object each.
 
-- The [Part I philosophy chapter](../getting-started/philosophy.md) argues the refusal of `ℰ` in operator terms: the abstractions that enable scaling to new targets live above the kernel layer, not inside kernels themselves.
-- The [Part II philosophy chapter](../architecture/philosophy.md) shows how the refusal forces specific code structure: the kernel tree *is* the coordinate system, the crate split *is* the product decomposition.
-- The [workspace chapter](../architecture/workspace.md) is a walk through `ob(𝒯)` and the trait layer above it.
-- The [dispatch chapter](../architecture/dispatch.md) traces a single request through the functor composition of Section 4.
-- The [SBIO chapter](../architecture/sbio.md) is the operational version of Section 5 — two models of one theory.
-- The [crate chapters](../crates/metrale-core.md) describe one vertex of the diagram each.
-- The [deep-dive chapters](../deep-dives/kernels.md) describe `Kernels(H, M, q)` at a single object each — the inside of one summand of the coproduct in Section 6.
-
-Nothing in the book changes when you put on the categorical lens. What changes is the vocabulary you have for arguing about proposals — "does this preserve the product structure of `𝒯`?", "does this force a factoring through `ℰ`?", "is this an arrow between models of the algebraic theory, or an operation inside one model?" These are questions a code review benefits from asking aloud.
+The lens supplies questions to ask in review:
+- "Is this new kernel the image of an existing generator, or a named residual?"
+- "Does this change keep the reduction order of a point, so parity stays byte-exact?"
+- "Does this couple two factors of `Hw × Mod × Quant`?"
 
 ## 9. What this perspective does not prove
 
-Category theory names structures. It does not measure throughput, does not verify kernel correctness, does not port Metrale Engine to a new hardware vendor, and does not write tool-call parsers. Everything the formalism claims follows from the code already being organised along these lines; the formalism is a mirror, not an engine.
-
-In particular:
+Category theory names structures. It does not measure throughput, verify kernel correctness or
+port the engine to a new vendor. Everything above follows from the code being organized along
+these lines. The formalism describes that organization and does none of the work.
 
 - **Performance** is empirical. See [Benchmarking](../operations/benchmarks.md).
-- **Correctness** is tested. See [Contributing](../project/contributing.md).
-- **Porting a vendor** is design work, not paperwork. The categorical answer ("one new `ComputeTarget` impl, one new `GpuBackend` impl, kernel source") names the files but not the effort.
-
-The formalism earns its keep when it helps catch a design drift early. When a PR proposes a cross-cutting trait that couples two axes of the product — say, a method on `GpuBackend` that only makes sense for one model family — the categorical reading surfaces it immediately: this proposal introduces an arrow between factors of `Hw × Mod × Quant`, breaking the product. That reading has saved review time in the past and will again. It is why the appendix is worth writing down.
+- **Correctness** is tested. Bit parity comes first, then accuracy. See
+  [The LKB](../architecture/lkb.md#parity-tiers) and [Contributing](../project/contributing.md).
+- **Porting a vendor** is design work. The categorical answer names the pieces (a `ComputeTarget`
+  impl, a `GpuBackend` impl, a realization of the LKB, a residual) but not the effort.
 
 ---
 
-**Further reading.** For the mathematics used above: Mac Lane, *Categories for the Working Mathematician*, chapters I–III; Riehl, *Category Theory in Context*, chapters 1–4. For the engineering the formalism describes: [Philosophy (Part I)](../getting-started/philosophy.md), [Philosophy (Part II)](../architecture/philosophy.md), [Kernel Dispatch Pipeline](../architecture/dispatch.md), [SBIO](../architecture/sbio.md).
+**Further reading.** For the mathematics: Mac Lane, *Categories for the Working
+Mathematician*, chapters I–III; Riehl, *Category Theory in Context*, chapters 1–4; and the
+sources listed in [The LKB in Mathematics](./lkb-math.md#sources). For the engineering:
+[Philosophy (Part II)](../architecture/philosophy.md), [The Circuit
+Compiler](../architecture/circuit-compiler.md), [Kernel Dispatch
+Pipeline](../architecture/dispatch.md), [SBIO](../architecture/sbio.md).
