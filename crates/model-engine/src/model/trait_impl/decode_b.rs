@@ -318,6 +318,7 @@ impl TransformerModel {
             proc_count,
             self.buffers.lora_seq_slot(),
             stream,
+            metrale_model_layers::lora::LoraSites::PairFallback,
         )?;
         let prefill_metadata = AttnMetadataDev {
             positions: prefill_meta_base,

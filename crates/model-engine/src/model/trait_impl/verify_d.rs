@@ -141,8 +141,13 @@ impl TransformerModel {
         // buffer at +128 uploaded before capture. K must stay <= 32, or the buffer would
         // overrun the slots at +256. `DevicePtr(0)` selects the installed-pair path.
         debug_assert!(k <= 32, "γ verify seq_slot +128 gap holds K ≤ 32");
-        let seq_slot =
-            self.upload_seq_slot_uniform(seq.adapter_slot, k, meta_base.offset(128), stream)?;
+        let seq_slot = self.upload_seq_slot_uniform(
+            seq.adapter_slot,
+            k,
+            meta_base.offset(128),
+            stream,
+            metrale_model_layers::lora::LoraSites::MultiSeq,
+        )?;
 
         let metadata = AttnMetadataDev {
             positions: meta_base,

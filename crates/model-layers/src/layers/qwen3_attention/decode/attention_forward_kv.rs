@@ -31,6 +31,18 @@ impl Qwen3AttentionLayer {
         if self.w8a8_qkv_serves(1) {
             return Ok(());
         }
+        // 2026-10-01: A fixed `nvfp4` attention format: K and V on the W4A4 mx path
+        // (`nvfp4_decode_gemv` takes it).
+        if self.fixed_nvfp4_qkv_serves(1)
+            && let (Some(k), Some(v)) = (
+                self.k_weight.as_ref().and_then(|w| w.as_nvfp4()),
+                self.v_weight.as_ref().and_then(|w| w.as_nvfp4()),
+            )
+        {
+            self.nvfp4_decode_gemv(ctx.gpu, false, normed, k, k_out, nkv * hd, h, stream)?;
+            self.nvfp4_decode_gemv(ctx.gpu, false, normed, v, v_out, nkv * hd, h, stream)?;
+            return Ok(());
+        }
         if self.mla.is_some() {
             // 2026-09-25: Unreachable from `attention_forward`, which returns through the MLA path
             // before calling this.

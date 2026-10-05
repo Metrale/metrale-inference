@@ -172,9 +172,14 @@ pub struct SchedLevers {
     /// 2026-09-25: `METRALE_MTP_DCUT_MAX_SEQS` (default 8): the widest
     /// verify batch D-Cut prunes.
     pub dcut_width_cap: usize,
-    /// 2026-09-25: `METRALE_MTP_DCUT_RATIO` snapped to the nearest D-Cut
+    /// 2026-10-03: `--mtp-dcut-ratio`, else `METRALE_MTP_DCUT_RATIO`, snapped to the nearest D-Cut
     /// bucket (default 0.75).
     pub dcut_ratio: f32,
+    /// 2026-10-04: `--spec-cost-model measured`'s loaded, boot-checked state; `None` when the
+    /// mode is off (the default) or the model has no `mtp.*` drafter. When `Some`, it replaces
+    /// the static K-ladder and D-Cut (`validate_serve_args` refuses them together). `SchedLevers`
+    /// is itself always behind one `Arc` (`SchedCtx::levers`), so this needs no `Arc` of its own.
+    pub spec_cost: Option<metrale_speculative::spec_cost::SpecCostState>,
     /// 2026-09-25: `METRALE_MTP_ACCEPT_FOLD_AT_16` (presence): batch widths
     /// above 16 share the accept-telemetry bucket of width 16.
     pub mtp_accept_fold_at_16: bool,
@@ -258,8 +263,15 @@ fn opt_in_lowercase(var: &str) -> bool {
 impl SchedLevers {
     /// 2026-09-25: Resolve from the environment; serve calls it once per
     /// run. `mtp_gate_force_cli` is the command line's `--mtp-gate` as
-    /// `ServeArgs::mtp_gate_force` resolved it.
-    pub fn from_env(mtp_gate_force_cli: Option<bool>) -> Self {
+    /// `ServeArgs::mtp_gate_force` resolved it; `dcut_ratio_cli` is
+    /// `--mtp-dcut-ratio`. `spec_cost` is `--spec-cost-model measured`'s state, already loaded
+    /// and checked against this serve's key (`spec_cost_boot::resolve`); there is no environment
+    /// fallback for it (CLI flags only, PCND).
+    pub fn from_env(
+        mtp_gate_force_cli: Option<bool>,
+        dcut_ratio_cli: Option<f32>,
+        spec_cost: Option<metrale_speculative::spec_cost::SpecCostState>,
+    ) -> Self {
         Self {
             fast_greedy_grammar: on_unless("METRALE_DISABLE_FAST_GREEDY"),
             fast_masked: on_unless("METRALE_DISABLE_FAST_MASKED"),
@@ -338,7 +350,8 @@ impl SchedLevers {
             mtp_batch_propose: !present("METRALE_NO_MTP_BATCH_PROPOSE"),
             dcut_enabled: !present("METRALE_NO_MTP_DCUT"),
             dcut_width_cap: num("METRALE_MTP_DCUT_MAX_SEQS", 8),
-            dcut_ratio: crate::scheduler::mtp_dcut::dcut_ratio_from_env(),
+            dcut_ratio: crate::scheduler::mtp_dcut::dcut_ratio_resolved(dcut_ratio_cli),
+            spec_cost,
             mtp_accept_fold_at_16: present("METRALE_MTP_ACCEPT_FOLD_AT_16"),
             mtp_accept_debug: metrale_model_layers::speculative::mtp_accept_debug(),
             mtp_max_seqs: metrale_model_layers::speculative::mtp_max_seqs(),
@@ -406,6 +419,7 @@ impl SchedLevers {
             dcut_enabled: true,
             dcut_width_cap: 8,
             dcut_ratio: 0.75,
+            spec_cost: None,
             mtp_accept_fold_at_16: false,
             mtp_accept_debug: false,
             // 2026-09-25: `mtp_max_seqs()` with the variable unset.

@@ -8,6 +8,7 @@
 //! Invariants: none beyond the types.
 
 pub(crate) mod attention_arms;
+mod declared;
 mod expert_plan;
 mod fp8_attention_arms;
 pub(crate) mod linear_attn_arms;
@@ -18,7 +19,7 @@ mod selectors;
 mod tq_plus_weight_rotation;
 mod w8a8_adopt;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_config::{LayerType, ModelConfig};
 use metrale_gpu_runtime::gpu::GpuBackend;
@@ -27,7 +28,7 @@ use metrale_model_weights::weights::{WeightDtype, WeightStore};
 use super::super::{ModelWeightLoader, QuantFormat, WeightFormat};
 use load_cx::{LayerIn, LoadCx};
 use metrale_model_layers::layer::TransformerLayer;
-use metrale_model_layers::layers::{FfnComponent, MoeLayer};
+use metrale_model_layers::layers::{FfnComponent, MoeExpertTables, MoeLayer};
 use metrale_model_layers::weight_map::quant_helpers::dense_auto;
 use metrale_model_layers::weight_map::{
     Nvfp4MoeCopies, Nvfp4Variant, detect_nvfp4_variant, load_moe_qwen35, quantize_to_nvfp4,
@@ -151,11 +152,13 @@ pub(super) fn load_layers(
         variant,
         quant_format,
     );
+    // 2026-10-02: The `--weight-quantization declared` answers (`declared.rs`).
+    let declared = declared::Declared::new(config, store, native_fp8, modelopt_mixed_precision);
 
-    // 2026-09-25: Bytes of the transposed MoE prefill tables: gate, up and down (packed FP4
-    // plus one scale byte per 16 values) for every expert of every layer. When they exceed
-    // free memory less 2 GiB, the transpose is skipped except on selected fast-MoE layers.
-    let skip_moe_transpose = moe_experts::moe_transpose_skipped(config, gpu, h);
+    // 2026-10-02: Whether the transposed MoE prefill tables are built: the serve's memory plan
+    // decides, once, for every layer and both the fast-MoE and the other layers
+    // (`MoeExpertTables`). Read only where a layer would build them.
+    let expert_tables = metrale_model_layers::layers::moe_expert_tables();
     if low_memory_modelopt_moe {
         if let (Some(mode), Some(spec)) = (holo_fast_moe_mode, holo_fast_moe_spec.as_deref()) {
             tracing::info!(
@@ -268,7 +271,9 @@ pub(super) fn load_layers(
         // coarse for the router. Measured 2026-05-25: at late layers the top-8 routing weights
         // sit within [0.105, 0.168], a range narrower than one NVFP4 step. Every other variant
         // quantizes the gate to NVFP4.
-        let gate_nvfp4 = if native_fp8 {
+        // 2026-10-02: Under `declared`, a router the checkpoint leaves unquantized stays BF16
+        // for every variant.
+        let gate_nvfp4 = if native_fp8 || declared.router_bf16(&lp) {
             None
         } else {
             Some(quantize_to_nvfp4(
@@ -288,6 +293,8 @@ pub(super) fn load_layers(
         // `METRALE_FRANKENSTEIN_DECODE_VIA_PREFILL=1` runs MoE decode through `forward_prefill`
         // (`moe/forward.rs`).
         moe_layer.is_dflash_capture_layer = config.dflash_capture_layers.contains(&i);
+        // 2026-10-02: The checkpoint's own NVFP4 experts under `declared`.
+        declared.mark_nvfp4_experts(&mut moe_layer, &lp, i, variant, plan.fp8_experts)?;
         if i == 0 && (holo_moe_gateup_fp4() || holo_moe_down_fp4()) && holo_fast_moe_mode.is_none()
         {
             tracing::warn!(
@@ -311,20 +318,22 @@ pub(super) fn load_layers(
                 holo_fast_moe_mode.expect("checked is_some"),
             );
         }
-        if plan.nvfp4_prefill_copies
-            && (!skip_moe_transpose || fast_holo_moe_layer)
-            && !skip_moe_prefill_copies
-        {
+        if plan.nvfp4_prefill_copies && !skip_moe_prefill_copies {
+            // 2026-10-02: The unified layout replaces the row-major experts (decode then reads
+            // the transposed ones), so it adds no table to skip.
+            let unified =
+                fast_holo_moe_layer && holo_fast_moe_mode == Some(HoloFastMoeMode::Unified);
+            let tables = expert_tables.context(
+                "no MoE expert-table decision was published before load; `met serve` publishes \
+                 it from its memory plan (MoeExpertTables)",
+            )?;
             match holo_fast_moe_mode {
+                _ if unified => moe_layer.transpose_for_prefill_unified(gpu, config)?,
+                _ if tables == MoeExpertTables::Skip => {}
                 Some(HoloFastMoeMode::GateUp) if fast_holo_moe_layer => {
                     moe_layer.transpose_gate_up_for_prefill(gpu, config)?;
                 }
-                Some(HoloFastMoeMode::Unified) if fast_holo_moe_layer => {
-                    moe_layer.transpose_for_prefill_unified(gpu, config)?;
-                }
-                _ => {
-                    moe_layer.transpose_for_prefill(gpu, config)?;
-                }
+                _ => moe_layer.transpose_for_prefill(gpu, config)?,
             }
         }
         if plan.nvfp4_prefill_copies && !skip_moe_prefill_copies {
@@ -372,6 +381,11 @@ pub(super) fn load_layers(
             moe_experts::install_native_fp8_experts(&cx, &lp, i, &mut moe_layer);
         }
 
+        // 2026-10-04: Every load-time reader of the row-major NVFP4 experts ran above: repack them
+        // in place for the lean tensor-core decode when the layer qualifies (byte-identical outputs).
+        if moe_layer.repack_nvfp4_experts_lean(gpu, config, stream)? && i == 0 {
+            tracing::info!("NVFP4 experts repacked for the lean tensor-core decode");
+        }
         let ffn = FfnComponent::Moe(moe_layer);
 
         match lt {
@@ -395,7 +409,11 @@ pub(super) fn load_layers(
             LayerType::FullAttention
                 if ((native_fp8
                     && proj_is_native_fp8(store, &format!("{lp}.self_attn.q_proj")))
-                    || native_modelopt_attn)
+                    || native_modelopt_attn
+                    || declared.fp8(
+                        &format!("{lp}.self_attn"),
+                        &["q_proj", "k_proj", "v_proj", "o_proj"],
+                    ))
                     && !(force_nvfp4_all || fp4_proj_decode) =>
             {
                 let parts = LayerIn {
@@ -435,12 +453,17 @@ pub(super) fn load_layers(
                     post_attn_norm,
                     ffn,
                 };
+                let declared_fp8_ssm = declared.fp8(
+                    &format!("{lp}.linear_attn"),
+                    &["in_proj_qkv", "in_proj_z", "out_proj"],
+                );
                 let layer = linear_attn_route::build_linear_attention(
                     &cx,
                     &lp,
                     i,
                     force_nvfp4_all,
                     fp4_proj_decode,
+                    declared_fp8_ssm,
                     parts,
                 )?;
                 layers.push(layer);

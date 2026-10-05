@@ -7,14 +7,17 @@
 //! Invariants: none beyond the types.
 
 /// 2026-09-26: One validation failure: what is wrong, why it is wrong, and how to fix it.
-pub(super) struct Violation {
+///
+/// 2026-10-04: `pub(in crate::cli)`, not `pub(super)`: `validate_spec_cost.rs` (a sibling of
+/// `validate.rs`, not a descendant) builds these too.
+pub(in crate::cli) struct Violation {
     what: String,
     why: String,
     fix: String,
 }
 
 impl Violation {
-    pub(super) fn new(
+    pub(in crate::cli) fn new(
         what: impl Into<String>,
         why: impl Into<String>,
         fix: impl Into<String>,

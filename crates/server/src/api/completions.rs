@@ -47,6 +47,7 @@ use prompts::resolve_prompts;
 
 pub async fn completions(
     CurrentModel(state): CurrentModel,
+    tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
     req: Result<Json<CompletionRequest>, JsonRejection>,
 ) -> Response {
     let Json(req) = match req {
@@ -184,6 +185,7 @@ pub async fn completions(
         repetition_detection: req.repetition_detection,
         logprobs_k,
         adapter_slot,
+        lookup_tenant: tenant.map(|e| e.0),
         src_lang_id,
         tgt_lang_id,
         num_beams,
@@ -229,6 +231,7 @@ fn build_streaming_request(
     InferenceRequest::Streaming {
         prompt_tokens,
         session_hash,
+        lookup_tenant: p.lookup_tenant,
         adapter_slot: p.adapter_slot,
         src_lang_id: p.src_lang_id,
         tgt_lang_id: p.tgt_lang_id,

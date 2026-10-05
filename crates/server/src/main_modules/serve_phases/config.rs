@@ -189,6 +189,56 @@ pub(crate) fn publish_mtp_max_seqs(
     spec::set_mtp_max_seqs(n)
 }
 
+/// 2026-10-02: Publish the prompt-lookup copy tier (`ssm_reserve::copy_tier`) after the MTP
+/// dispatch cap and before the preflight reserve: the first `--prompt-lookup-max-seqs`
+/// verify slots hold `--prompt-lookup-max-drafts` drafts. Nothing is published without
+/// `--prompt-lookup-decoding`.
+pub(crate) fn publish_copy_tier(args: &cli::ServeArgs) -> anyhow::Result<()> {
+    let Some(pl) = args.prompt_lookup_config() else {
+        return Ok(());
+    };
+    use metrale_model_layers::ssm_reserve as reserve;
+    let tier = reserve::CopyTier {
+        slots: pl
+            .max_seqs
+            .min(reserve::mtp_state_slots(args.max_batch_size.ceiling()))
+            .max(1),
+        drafts: pl.max_drafts,
+    };
+    tracing::info!(
+        "prompt-lookup copy tier: verify slots 0..{} hold {} drafts",
+        tier.slots,
+        tier.drafts
+    );
+    reserve::set_copy_tier(tier)
+}
+
+/// 2026-10-02: Publish `--draft-confidence-stop` before the model builds and the scheduler
+/// starts; the drafter and the scheduler's depth planner read it from
+/// `speculative::draft_stop`. Nothing is published without the flag.
+pub(crate) fn publish_draft_confidence_stop(args: &cli::ServeArgs) -> anyhow::Result<()> {
+    match args.mtp_draft.draft_confidence_stop {
+        Some(tau) => {
+            tracing::info!("MTP draft confidence stop: tau={tau}");
+            metrale_model_layers::speculative::draft_stop::set_draft_confidence_stop(tau)
+        }
+        None => Ok(()),
+    }
+}
+
+/// 2026-10-03: Publish `--mtp-k-ladder` before the model sizes its verify pools and the
+/// scheduler starts. Without the flag nothing is published, and `METRALE_MTP_K_LADDER`
+/// or the default ladder applies.
+pub(crate) fn publish_mtp_k_ladder(args: &cli::ServeArgs) -> anyhow::Result<()> {
+    use metrale_model_layers::speculative as spec;
+    let Some(value) = args.mtp_shape.mtp_k_ladder.as_deref() else {
+        return Ok(());
+    };
+    let steps = spec::parse_mtp_k_ladder(value)?;
+    tracing::info!("MTP K-ladder (--mtp-k-ladder): {steps:?}");
+    spec::set_mtp_k_ladder(steps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NumDraftsSource, resolve_num_drafts};

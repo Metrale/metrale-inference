@@ -47,13 +47,19 @@ pub(super) const WIDTH_CAP: usize = metrale_model_layers::layer::VERIFY_WY_TABLE
 /// pruning. Above the cap, [`plan`] returns the uniform ladder shape.
 pub(super) const DCUT_WIDTH_CAP_DEFAULT: usize = 8;
 
-/// 2026-09-25: Retention ratio from `METRALE_MTP_DCUT_RATIO` (default 0.75),
-/// snapped to the nearest [`BUCKETS`] entry. `SchedLevers::from_env` reads it.
-pub(crate) fn dcut_ratio_from_env() -> f32 {
+/// 2026-10-03: Retention ratio in force: `--mtp-dcut-ratio` when given, else
+/// `METRALE_MTP_DCUT_RATIO`, else 0.75; snapped to the nearest [`BUCKETS`] entry.
+/// `SchedLevers::from_env` reads it once per run.
+pub(crate) fn dcut_ratio_resolved(cli: Option<f32>) -> f32 {
+    resolve_dcut_ratio(cli, std::env::var("METRALE_MTP_DCUT_RATIO").ok().as_deref())
+}
+
+/// 2026-10-03: Pure core of [`dcut_ratio_resolved`]: the flag wins over the
+/// environment value, an unparseable environment value is ignored, and the
+/// result is snapped.
+pub(super) fn resolve_dcut_ratio(cli: Option<f32>, env: Option<&str>) -> f32 {
     snap_ratio(
-        std::env::var("METRALE_MTP_DCUT_RATIO")
-            .ok()
-            .and_then(|v| v.parse::<f32>().ok())
+        cli.or_else(|| env.and_then(|v| v.parse::<f32>().ok()))
             .unwrap_or(0.75),
     )
 }
@@ -161,12 +167,57 @@ pub(super) fn plan(
     ladder_nd: usize,
     rows: usize,
 ) -> Vec<usize> {
+    plan_with_stop(
+        sched,
+        active,
+        batchable,
+        ladder_nd,
+        rows,
+        metrale_model_layers::speculative::draft_stop::draft_stop_logprob(),
+    )
+}
+
+/// 2026-10-02: [`plan`] with the `--draft-confidence-stop` threshold passed in
+/// (`ln tau`), so tests need not publish the process global.
+///
+/// With a threshold, every sequence's depth is also capped at its chain depth
+/// (`draft_stop::chain_depth` of its confidences), at every width, and at the
+/// drafts it holds: under the stop a batch may arrive with fewer than
+/// `ladder_nd` drafts (the batched propose ends once every chain has stopped,
+/// and a per-sequence propose stops on its own). The canonical depth
+/// re-pairing is used only when every sequence holds the depth it is
+/// re-paired with; otherwise each keeps its own depth.
+///
+/// 2026-10-04: With `sched.levers.spec_cost` set (`--spec-cost-model measured`), D-Cut and the
+/// stop are both bypassed: the retained depths come from
+/// [`metrale_speculative::spec_cost::plan::sequence_depths`] instead, over the same per-sequence
+/// confidences and held-draft counts.
+pub(super) fn plan_with_stop(
+    sched: &crate::scheduler::sched_ctx::SchedCtx,
+    active: &mut [ActiveSeq],
+    batchable: &mut Vec<usize>,
+    ladder_nd: usize,
+    rows: usize,
+    stop_ln_tau: Option<f32>,
+) -> Vec<usize> {
     let mut ks: Vec<usize> = vec![rows; batchable.len()];
-    if !sched.levers.dcut_enabled
-        || ladder_nd < 2
-        || batchable.is_empty()
-        || batchable.len() > sched.levers.dcut_width_cap
-    {
+    // 2026-10-04: `--spec-cost-model measured` replaces D-Cut and the stop outright (they cannot
+    // both choose the verify depth; `validate_serve_args` refuses the explicit-flag combinations,
+    // but `dcut_enabled` defaults true independent of any flag, so it is forced off here too).
+    let measured = sched.levers.spec_cost.as_ref();
+    let dcut_on = measured.is_none()
+        && sched.levers.dcut_enabled
+        && ladder_nd >= 2
+        && !batchable.is_empty()
+        && batchable.len() <= sched.levers.dcut_width_cap;
+    let stop_on =
+        measured.is_none() && stop_ln_tau.is_some() && ladder_nd >= 2 && !batchable.is_empty();
+    // 2026-10-04: `ladder_nd >= 1`, not just `measured.is_some()`: `propose_depth` returns `0`
+    // above the serve's `mtp_max_seqs` (nothing to plan — `ks`'s `rows`-filled default above is
+    // already the correct plain-decode answer), and `ladder_nd.clamp(1, ladder_nd)` below would
+    // panic at `0`.
+    let measured_on = measured.is_some() && ladder_nd >= 1 && !batchable.is_empty();
+    if !dcut_on && !stop_on && !measured_on {
         return ks;
     }
     let confs: Vec<&[f32]> = batchable
@@ -182,14 +233,40 @@ pub(super) fn plan(
             }
         })
         .collect();
-    let retained = select(
-        &confs,
-        ladder_nd,
-        VERIFY_ROW_BUDGET,
-        sched.levers.dcut_ratio,
-    );
+    let held: Vec<usize> = batchable
+        .iter()
+        .map(|&i| active[i].pending_drafts.len())
+        .collect();
+    let retained = if dcut_on {
+        select(
+            &confs,
+            ladder_nd,
+            VERIFY_ROW_BUDGET,
+            sched.levers.dcut_ratio,
+        )
+    } else if let Some(sc) = measured {
+        metrale_speculative::spec_cost::plan::sequence_depths(
+            &sc.table,
+            &sc.calibration,
+            &confs,
+            &held,
+            ladder_nd,
+            VERIFY_ROW_BUDGET,
+            sc.slack,
+        )
+    } else {
+        vec![ladder_nd; batchable.len()]
+    };
     for (pos, r) in retained.iter().enumerate() {
-        ks[pos] = (*r).clamp(1, ladder_nd) + 1;
+        let mut depth = (*r).min(held[pos]);
+        if let Some(ln_tau) = stop_ln_tau
+            && !confs[pos].is_empty()
+        {
+            depth = depth.min(metrale_model_layers::speculative::draft_stop::chain_depth(
+                confs[pos], ln_tau,
+            ));
+        }
+        ks[pos] = depth.clamp(1, ladder_nd) + 1;
     }
     // 2026-09-25: Dispatch order and depth assignment, from the ordering rule
     // the graph key also uses. Canonical: `ks_out[p]` is the multiset's p-th
@@ -201,15 +278,19 @@ pub(super) fn plan(
         .iter()
         .map(|&idx| active[idx].seq.ssm_slot_idx().unwrap_or(usize::MAX))
         .collect();
-    let (order, ks_out) = metrale_model_layers::speculative::verify_key::verify_batch_order(
-        &slots,
-        &ks,
-        metrale_model_layers::speculative::verify_key::canonical_assignment(batchable.len()),
-    );
-    // 2026-09-25: Truncate to the assigned depth. Every batchable sequence
-    // enters with exactly `ladder_nd` drafts (`mtp_step` truncates the
-    // surplus) and `ks_out[p] - 1` is in `1..=ladder_nd`, so this always
-    // keeps a prefix of the proposed drafts.
+    let canonical =
+        metrale_model_layers::speculative::verify_key::canonical_assignment(batchable.len());
+    let (mut order, mut ks_out) =
+        metrale_model_layers::speculative::verify_key::verify_batch_order(&slots, &ks, canonical);
+    // 2026-10-02: A re-pairing that hands a sequence more rows than it holds
+    // drafts for is infeasible; each sequence then keeps its own depth.
+    if canonical && order.iter().zip(&ks_out).any(|(&p, &k)| k - 1 > held[p]) {
+        (order, ks_out) =
+            metrale_model_layers::speculative::verify_key::verify_batch_order(&slots, &ks, false);
+    }
+    // 2026-09-25: Truncate to the assigned depth, which never exceeds the
+    // drafts a sequence holds, so this always keeps a prefix of the proposed
+    // drafts.
     let reordered: Vec<usize> = order.iter().map(|&p| batchable[p]).collect();
     for (idx, &k) in reordered.iter().zip(&ks_out) {
         let a = &mut active[*idx];
@@ -221,13 +302,17 @@ pub(super) fn plan(
         a.pending_drafts.truncate(k - 1);
         a.pending_draft_conf.truncate(k - 1);
     }
-    sched.dcut.record(
-        sched.levers.mtp_accept_debug,
-        sched.levers.dcut_ratio,
-        batchable.len() * rows,
-        ks_out.iter().sum(),
-        &ks_out,
-    );
+    // 2026-10-04: D-Cut's own telemetry names a ratio that measured mode does not have; skip it
+    // there rather than log a ratio that did not decide anything.
+    if dcut_on {
+        sched.dcut.record(
+            sched.levers.mtp_accept_debug,
+            sched.levers.dcut_ratio,
+            batchable.len() * rows,
+            ks_out.iter().sum(),
+            &ks_out,
+        );
+    }
     *batchable = reordered;
     ks_out
 }
@@ -298,6 +383,20 @@ impl DcutTelemetry {
         }
     }
 }
+/// 2026-10-04: The drafts a verify step reached, as `(confidence, accepted)`: the first
+/// `accepted` drafts were accepted, the next one (if any) was reached and rejected, and the
+/// rest were never reached, so they are not outcomes. `conf` is the drafts' top-1
+/// log-probabilities in draft order.
+pub(super) fn reached_outcomes(
+    conf: &[f32],
+    accepted: usize,
+) -> impl Iterator<Item = (f32, bool)> + '_ {
+    conf.iter()
+        .take(accepted.saturating_add(1))
+        .enumerate()
+        .map(move |(j, &lp)| (lp, j < accepted))
+}
+
 #[cfg(test)]
 #[path = "mtp_dcut_tests.rs"]
 mod tests;

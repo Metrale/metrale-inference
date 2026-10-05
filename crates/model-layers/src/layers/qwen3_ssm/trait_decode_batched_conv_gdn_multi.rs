@@ -150,7 +150,7 @@ impl Qwen3SsmLayer {
                     states, wy_tables, slot_tab, flag, args, ctx,
                 );
             }
-            return self.decode_batched_conv_gdn_multi_exact(states, ctx, args);
+            return self.decode_batched_conv_gdn_multi_exact(states, wy_tables, ctx, args);
         }
         let (layout, wy_k) = match self.multi_run_arm(states, kk, ctx.levers.gdn_wyn, wy_tables)? {
             RunArm::Batched(layout, wy_k) => (layout, wy_k),

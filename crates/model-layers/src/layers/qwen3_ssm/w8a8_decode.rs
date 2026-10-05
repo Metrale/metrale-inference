@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-28: The declared-W8A8 arm of the GDN decode projections: `in_proj_qkv|z` (two
+//! 2026-09-28: The declared-W8A8 arm of the GDN decode projections (2026-10-01: and the fixed
+//! `nvfp4` arm, `pinned_qkvz` / `pinned_out`): `in_proj_qkv|z` (two
 //! stacked segments, the sequential `[QKV | Z]` layout) and `out_proj`, on the W8A8 decode
 //! family (`crate::layers::W8a8Mixer`). Every decode path tries it first: the single-token
 //! `ssm_forward`, the batched verify (`decode_batched`) and the multi-sequence batch
@@ -75,9 +76,11 @@ impl Qwen3SsmLayer {
     }
 
     /// 2026-09-28: `out[rows, ldc]` = W8A8 QKV|Z of `normed[rows, ldx]`; `Ok(false)` when
-    /// this layer has no W8A8 weights or `rows` is outside the family.
+    /// this layer has no W8A8 weights or `rows` is outside the family. 2026-10-01: Under a fixed
+    /// `nvfp4` GDN format (`--activation-quantization`), the NVFP4 QKV|Z of a sequential layer
+    /// instead, through the row-invariant W4A4 mx path at every row count.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn w8a8_qkvz(
+    pub(super) fn pinned_qkvz(
         &self,
         ctx: &ForwardContext,
         normed: DevicePtr,
@@ -87,6 +90,22 @@ impl Qwen3SsmLayer {
         ldc: u32,
         stream: u64,
     ) -> Result<bool> {
+        if self.sequential_qkvz
+            && let Some(ref nvfp4) = self.qkvz_nvfp4
+            && crate::layers::ops::w4a4_proj::fixed_nvfp4_proj(
+                ctx.gpu,
+                metrale_config::ProjFamily::Gdn,
+                nvfp4,
+                normed,
+                out,
+                rows as u32,
+                ldc,
+                ldx,
+                stream,
+            )?
+        {
+            return Ok(true);
+        }
         match self.w8a8 {
             Some(ref w) => w
                 .ctx
@@ -96,9 +115,10 @@ impl Qwen3SsmLayer {
     }
 
     /// 2026-09-28: `out[rows, ldc]` = W8A8 out_proj of `normed_out[rows, ldx]`, as
-    /// [`Self::w8a8_qkvz`].
+    /// [`Self::pinned_qkvz`]; under a fixed `nvfp4` GDN format, the NVFP4 out_proj on the W4A4 mx
+    /// path.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn w8a8_out(
+    pub(super) fn pinned_out(
         &self,
         ctx: &ForwardContext,
         normed_out: DevicePtr,
@@ -108,6 +128,23 @@ impl Qwen3SsmLayer {
         ldc: u32,
         stream: u64,
     ) -> Result<bool> {
+        let nvfp4 = &self.ssm.out_proj;
+        if self.out_proj_fp8w.is_none()
+            && self.out_proj_dense.is_none()
+            && crate::layers::ops::w4a4_proj::fixed_nvfp4_proj(
+                ctx.gpu,
+                metrale_config::ProjFamily::Gdn,
+                nvfp4,
+                normed_out,
+                out,
+                rows as u32,
+                ldc,
+                ldx,
+                stream,
+            )?
+        {
+            return Ok(true);
+        }
         match self.w8a8 {
             Some(ref w) => w
                 .ctx

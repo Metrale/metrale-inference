@@ -20,7 +20,7 @@ under.
 
 ## Checks
 
-The `recipes (advisory)` job in `.github/workflows/ci.yml` runs
+The `recipes` job in `.github/workflows/ci.yml`, a required check, runs
 `.github/scripts/recipes.py check` against the `met` built from the same commit:
 
 - every key and value is on the `met dump-serve-options` flag surface, and every

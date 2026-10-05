@@ -164,7 +164,7 @@ pub(crate) async fn build_and_serve(
 /// listening phase; a bind error returns before either. Kept apart from the
 /// accept loop so tests can run it without `disarm_startup_escape`, which
 /// cannot be undone.
-async fn bind_and_announce(
+pub(super) async fn bind_and_announce(
     host: &crate::main_modules::model_host::ModelHost,
     bind: &str,
     port: u16,
@@ -173,6 +173,8 @@ async fn bind_and_announce(
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
+    // 2026-10-03: Before the first accept, so every accepted socket inherits it.
+    crate::main_modules::listener_rcvbuf::size_listener_rcvbuf(&listener);
     tracing::info!("{}", ready_line(bind, port, host.live_model().as_deref()));
     metrale_telemetry::progress::phase(11, "listening");
     metrale_telemetry::progress::ready(port);

@@ -22,10 +22,12 @@ pub use decode_ring::{
 
 mod cache_plan;
 pub use cache_plan::{CachePlan, PrefixUnits};
+mod copy_tier;
+pub use copy_tier::{CopyTier, copy_tier, set_copy_tier, tier_h, tier_rows};
 mod pool_plan;
 pub use pool_plan::{
     PoolCounts, PoolPlan, PoolShape, PoolState, UnitSource, VerifyCounts, pool_counts,
-    pool_counts_with, recurrent_units, state_dims, state_formats,
+    pool_counts_tiered, pool_counts_with, recurrent_units, state_dims, state_formats,
 };
 
 mod rollback;

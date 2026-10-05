@@ -7,7 +7,9 @@
 
 checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
 recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
-serve = ["--gpu-memory-utilization", "0.85"]
+# 2026-10-03: The boot ran one MTP draft (its log: "num_drafts: using MODEL.toml default_num_drafts=1"),
+# stated here because the recipe it served has since moved to two drafts at one or two sequences.
+serve = ["--gpu-memory-utilization", "0.85", "--num-drafts", "1"]
 # 2026-10-02: Checkpoint tensors no weight node binds (norms, conv, gates, a vision tower),
 # measured from the safetensors headers by `met circuit memory` (totals.weights_outside).
 outside_bytes = 895479776

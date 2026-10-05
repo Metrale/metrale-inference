@@ -11,6 +11,8 @@
 //!   intermediates `h_bytes` apart within a sequence and evenly spaced across sequences
 //!   without overlap. Otherwise it returns `Ok(false)` having launched nothing, and each
 //!   sequence runs the per-row exact arm.
+//! - 2026-10-01: On an FP16 h-state it is the FP16 run form instead
+//!   (`decode_batched_conv_gdn_multi_exact_f16`), under that form's own checks.
 //!
 //! The launches per position are `causal_conv1d_update_l2norm_f32_strided` (the FP32
 //! conv with per-sequence row strides, also used by the batched-recurrent decode) and
@@ -39,9 +41,16 @@ impl Qwen3SsmLayer {
     pub(super) fn decode_batched_conv_gdn_multi_exact(
         &self,
         states: &mut [&mut (dyn LayerState + 'static)],
+        wy_tables: DevicePtr,
         ctx: &crate::layer::ForwardContext,
         args: &ConvGdnArgs,
     ) -> Result<bool> {
+        // 2026-10-01: On an FP16 h-state, the FP16 twins over the run's WY tables
+        // (`trait_decode_batched_conv_gdn_exact_f16.rs`). The carry never engages there
+        // (`carry_decision`), so a carried run never reaches this arm.
+        if super::ssm_h_fp16_enabled() {
+            return self.decode_batched_conv_gdn_multi_exact_f16(states, wy_tables, ctx, args);
+        }
         let n = states.len();
         let kk = args.num_tokens;
         let conv_bytes = self.conv_state_bytes;

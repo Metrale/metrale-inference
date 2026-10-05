@@ -123,6 +123,11 @@ pub struct ServeSchedulingArgs {
     #[arg(long, default_value_t = false)]
     pub ngram_speculative: bool,
 
+    /// 2026-10-02: The `--prompt-lookup-*` flags, kept here so clap lists them after
+    /// `--ngram-speculative`.
+    #[command(flatten)]
+    pub prompt_lookup: crate::cli::serve_args_prompt_lookup::ServePromptLookupArgs,
+
     /// Enable DFlash block-diffusion speculative decoding (arXiv 2602.06036).
     /// Pairs the target with a small drafter checkpoint (e.g.
     /// `z-lab/Qwen3.6-35B-A3B-DFlash`) that drafts a block of γ tokens per step
@@ -167,6 +172,15 @@ pub struct ServeSchedulingArgs {
     #[arg(long)]
     pub num_drafts: Option<usize>,
 
+    /// 2026-10-03: `--mtp-dcut-ratio` and `--mtp-k-ladder`, listed here after `--num-drafts`.
+    #[command(flatten)]
+    pub mtp_shape: crate::cli::serve_args_mtp::ServeMtpShapeArgs,
+
+    /// 2026-10-04: `--spec-cost-model` and its table/calibration/slack, listed here after
+    /// `--mtp-dcut-ratio`.
+    #[command(flatten)]
+    pub spec_cost: crate::cli::serve_args_spec_cost::ServeSpecCostArgs,
+
     /// Widest batch that speculates (the multi-sequence MTP dispatch cap): above
     /// this many active sequences a step plain-decodes. Precedence (highest wins):
     /// this flag → MODEL.toml `[behavior].mtp_max_seqs` → 32 (4 under
@@ -185,6 +199,11 @@ pub struct ServeSchedulingArgs {
     /// MTP head weight precision: bf16 (default), fp8 or nvfp4.
     #[arg(long, default_value = "bf16")]
     pub mtp_quantization: String,
+
+    /// 2026-10-03: `--draft-confidence-stop` and `--mtp-experts-nvfp4`, the MTP drafter's options,
+    /// kept here so clap lists them after `--mtp-quantization`.
+    #[command(flatten)]
+    pub mtp_draft: crate::cli::serve_args_mtp_draft::ServeMtpDraftArgs,
 
     /// Run the Nemotron-H shared expert's prefill projections on the E4M3 tile GEMM
     /// (default: false).

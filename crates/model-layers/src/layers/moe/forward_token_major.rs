@@ -29,6 +29,7 @@ impl MoeLayer {
             self.router_logits_n as usize == ctx.config.num_experts,
             "zero-expert MoE routing is not wired on this dispatch variant yet (forward_token_major)"
         );
+        self.refuse_lean_layout("MoeLayer::forward_token_major_decode")?;
 
         // 2026-09-25: The token-major kernels have no LoRA fold. With a MoE
         // adapter installed, `forward_batched` folds the router and expert deltas

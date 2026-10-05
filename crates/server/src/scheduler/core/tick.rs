@@ -125,6 +125,7 @@ impl SchedulerCore {
         // queued. A spilled sequence keeps the adapter slot and id it was
         // prefilled under (`SwappedSeq::adapter_slot`/`adapter_id`), which a
         // rotation could re-point before it resumes.
+        let mut rotated = false;
         if active.is_empty()
             && prefilling.is_empty()
             && new_reqs.is_empty()
@@ -132,12 +133,16 @@ impl SchedulerCore {
             && preempted.is_empty()
         {
             let rotations = std::mem::take(&mut pending.rotations);
+            rotated = !rotations.is_empty();
             for (cmd, ack) in rotations {
                 let res = sched.io.dev.lora(cmd);
                 sched.io.req.lora_ack(ack, res);
             }
         }
-        if new_reqs.is_empty() && active.is_empty() && prefilling.is_empty() {
+        // 2026-10-03: A tick that applied a rotation is not idle. Its ack can be what makes a
+        // client close the inbox, and whether that close lands before the check below would
+        // otherwise decide on which tick the loop stops; the next idle tick stops instead.
+        if !rotated && new_reqs.is_empty() && active.is_empty() && prefilling.is_empty() {
             // 2026-09-25: Idle tick: stop once the inbox has closed.
             pending.absorb(sched.io.req.recv(io::WaitPolicy::NoWait));
             if pending.closed {

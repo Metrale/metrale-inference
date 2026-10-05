@@ -193,6 +193,15 @@ impl InferenceRequest {
         }
     }
 
+    /// 2026-10-04: The tenant the request belongs to; `None` keeps it out of
+    /// the cross-request prompt-lookup cache.
+    pub fn lookup_tenant(&self) -> Option<crate::auth::LookupTenant> {
+        match self {
+            InferenceRequest::Blocking { lookup_tenant, .. }
+            | InferenceRequest::Streaming { lookup_tenant, .. } => *lookup_tenant,
+        }
+    }
+
     /// 2026-09-26: LoRA adapter slot; `-1` follows the active adapter. Copied
     /// onto `SequenceState.adapter_slot` at prefill.
     pub fn adapter_slot(&self) -> i32 {
