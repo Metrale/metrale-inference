@@ -4,6 +4,8 @@
 //! and build defines from `HARDWARE.toml`, its fusion rules (`FUSIONS.toml`, inherited and
 //! overridden along the chain) and its kernel families (`KERNEL_FAMILIES.toml`, with points
 //! rediscovered from the class's own resolved sources and evidence kept per class).
+//! 2026-10-05: Together these are the class's realization of the LKB (a functor `F_H`, exact
+//! for the plan's structure, approximate for its numbers: book/src/appendix/lkb-math.md).
 //!
 //! Owner: metrale-circuit (hardware).
 //! Invariants:

@@ -15,6 +15,9 @@
 //! - **Policy variant**: the same, where every differing parameter is a policy.
 //! - **Novel**: no family implements the op with the node's formats at that row count.
 //!
+//! 2026-10-05: "Novel" is an uncovered op (a gap in the LKB, fixed by a new generator), not the
+//! LKB residual (a class kernel that is no family's point; [`crate::lkb`]).
+//!
 //! Owner: metrale-circuit (venn).
 //! Invariants:
 //! - Pure: no I/O. The caller passes the circuits, plans, manifest and measurements.
@@ -147,7 +150,10 @@ pub struct Finding {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VennError {
     /// 2026-09-29: A compared node whose plan group's kernels no family lists.
-    #[error("{recipe}: node `{node}` ({op}) runs {kernels}, which no family in the manifest lists")]
+    #[error(
+        "{recipe}: node `{node}` ({op}) runs {kernels}, which no family in the manifest lists \
+         (not a generator: add it to a family as a point, or list it as LKB residual)"
+    )]
     UnmappedKernel {
         /// 2026-09-29: Recipe.
         recipe: String,

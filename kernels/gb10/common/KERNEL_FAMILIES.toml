@@ -4,6 +4,9 @@
 # varies, the points it instantiates and the points it has microbench evidence for. `met circuit
 # venn` classifies a new model's nodes against these (schema and rules:
 # crates/circuit/src/venn/families.rs; method: .claude/skills/new-model/SKILL.md).
+# 2026-10-05: Each `[[family]]` is a generator of the Latent Kernel Blueprint and each
+# `[[family.point]]` a point of it; `how = "copy"` points are LKB residual, and a kernel no
+# family lists is a named residual entry or a new generator (book/src/architecture/lkb.md).
 #
 # Owner: gb10 kernels.
 # Invariants:

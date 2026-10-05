@@ -4,6 +4,12 @@
 //! the kernel that runs it, where it applies (rows, modes, caps, policy settings) and how its
 //! numerics relate to the reference.
 //!
+//! 2026-10-05: A rule is a lowering clause. Only a `bit_identical` rule is a relation of the
+//! LKB (an equation between diagrams, proven by its microtest); a `reference` rule defines the
+//! reference numerics; a `differs` rule is another numerics point. A `bit_identical` rule may
+//! become the default on byte identity plus a same-box speed and energy A/B, with no accuracy
+//! gate (docs/adr/0018-relations-become-defaults-on-bytes-speed-and-energy.md).
+//!
 //! Owner: metrale-circuit.
 //! Invariants:
 //! - A `bit_identical` rule names its microtest, and a `differs` rule its opt-in lever; a
@@ -292,7 +298,7 @@ pub enum RuleError {
         detail: String,
     },
     /// 2026-09-28: `bit_identical` without `microtest`.
-    #[error("rule `{0}` is bit_identical but names no microtest")]
+    #[error("rule `{0}` is bit_identical but names no microtest (a relation needs its proof)")]
     MissingMicrotest(String),
     /// 2026-09-28: `differs` without `lever`.
     #[error("rule `{0}` is differs but names no opt-in lever")]

@@ -4,6 +4,9 @@
 //! circuit ops each family implements, the parameters it varies (runtime, compile-time or
 //! policy), the points it instantiates, the evidence envelope (the points with microbench
 //! records) and the rules that rediscover the instantiated points from the kernel sources.
+//! 2026-10-05: Families are the generators of the LKB, parametric morphisms in the Para sense:
+//! compile-time and policy parameters select a point, runtime ones are inputs; a `copy` point
+//! is LKB residual (book/src/architecture/lkb.md).
 //!
 //! Owner: metrale-circuit (venn).
 //! Invariants:
