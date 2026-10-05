@@ -8,6 +8,7 @@
 //! - Every argv and `ServeArgs` built here comes from `argv_edited`, which refuses a
 //!   recipe whose `runtime` is not `metrale`.
 
+pub mod explicit;
 pub mod fetch;
 mod fetch_github;
 pub mod schema;
