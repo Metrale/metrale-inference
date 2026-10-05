@@ -247,7 +247,7 @@ Rule `moe_router_rows` left out of this plan: l1.moe_latent.router (rule `moe_ro
 
 ## LKB on gb10
 
-LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 8.3 / 0.6 / 0.1% of the step, measured on this class 8.2 / 0.0 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 6 families. Relations used: none. LKB residual on gb10: 146 sources, 43523 lines; 40 copy points. Details: `met circuit lkb --checkpoint nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 --hardware gb10 --precision declared`.
+LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 8.3 / 0.6 / 0.1% of the step, measured on this class 8.2 / 0.0 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 6 families. Relations used: none. LKB residual on gb10: 145 sources, 43458 lines; 40 copy points. Details: `met circuit lkb --checkpoint nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4 --hardware gb10 --precision declared`.
 
 ## Gap report: decode n=1
 
