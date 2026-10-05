@@ -25,6 +25,7 @@ pub mod collect;
 pub mod energy;
 pub mod energy_sampler;
 pub mod equivalence;
+pub mod gpu_energy_counter;
 pub mod ids;
 pub mod limits;
 pub mod parse;
