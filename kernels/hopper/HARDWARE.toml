@@ -396,142 +396,107 @@ w8a8_prefill_max_m_narrowing = 4294967295
 # crates/kernels/tests/inherited_targets.rs checks that a replacement is
 # declared in [shadow] and an addition is not.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# 2026-10-05: The tensor-core policy (crates/circuit/src/hardware/tc_policy.rs), the class's own: it
+# is not inherited from gb10. The same ops as gb10's must plan onto tensor-core kernels from one
+# row; every covered op a Hopper plan (h100-sxm, h100-nvl, h200-sxm; every matrix model; decode,
+# multi_seq 2-128, verify 2-5, draft 1-32) runs off tensor cores today, and every rule of the
+# class's rule set that would (crates/circuit/tests/tensor_core_policy.rs), is listed below with
+# its kind, so a regression of any tensor-core group to CUDA cores fails `met circuit plan` and
+# the matrix `--check`. The `backlog` entries are Hopper's tensor-core work list.
+# Limits of what this sees: the planner models gb10's rules only. The class's own kernels
+# (`dense_gemm_m16_bf16` behind `lm_head_m16_tc`, `w8a16_gemm_m16` behind `attn_m16_tc`, the
+# split-K paged decode, `moe_w8a8_m16`, the cuBLASLt gate+up of `ffn_gateup_fused`) appear in no
+# FUSIONS.toml rule, so no plan runs them and this policy cannot hold them to tensor cores until
+# they are modelled (.claude/skills/new-hardware/targets/h100.md, audit item 6).
+[tensor_core_policy]
+
+[[tensor_core_policy.require]]
+ops = ["linear", "lm_head", "router", "expert_gate_up", "expert_down", "paged_attention"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+min_rows = 1
+weights = ["any"]
+
+[[tensor_core_policy.exempt]]
+ops = ["linear", "lm_head"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 3]
+kernels = [
+  "w4a16_gemv::w4a16_gemv_sw",
+  "w4a16_gemv::w4a16_gemv_qg",
+  "w4a16_gemv::w4a16_gemv_batch2",
+  "w4a16_gemv::w4a16_gemv_batch3",
+  "w4a16_gemv::w4a16_gemv_dual_batch2",
+  "w4a16_gemv::w4a16_gemv_dual_batch3",
+  "w4a16_gemv::w4a16_gemv_qg_batch2",
+  "w4a16_gemv::w4a16_gemv_qg_batch3",
+  "w4a16_gemv_fused::w4a16_gemv_dual",
+  "w4a16_gemv_fused::w4a16_gemv_dual_sw",
+  "w4a16_gemv_fused::w4a16_gemv_silu_input_sw",
+]
+kind = "backlog"
+reason = "NVFP4 weights run W4A16 on Hopper (no FP4 MMA). At 1-3 rows they plan onto these inherited CUDA-core GEMVs; the inherited tensor-core row tier (w4a16_tc, mma.sync.m16n8k16.bf16) starts at 4 rows. Hopper's own path is a wgmma tier, or W4A8 on the FP8 MMA through the exact E2M1->E4M3 conversion. Unmeasured on Hopper."
+[[tensor_core_policy.exempt]]
+ops = ["lm_head", "router", "linear"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 64]
+kernels = [
+  "gemv::dense_gemv_bf16",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
+]
+kind = "backlog"
+reason = "BF16 CUDA-core GEMV and batched GEMV: the BF16 head at 1-8 rows, the MoE router at 1-64 rows, the MTP draft projections at 1 row. The runtime's lm_head_m16_tc (dense_gemm_m16_bf16, tensor core) takes the head at 5-16 rows, but no rule models it yet."
+[[tensor_core_policy.exempt]]
+ops = ["paged_attention"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 128]
+kernels = ["paged_decode::paged_decode_attn"]
+kind = "backlog"
+reason = "Paged decode attention plans onto the inherited CUDA-core kernel at every row count. The class's split-K decode pair (attn_decode_splitk) is what the runtime launches and no rule models it; a tensor-core decode attention (GQA groups fill an MMA tile) does not exist on this class."
+[[tensor_core_policy.exempt]]
+ops = ["linear:ba"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 128]
+kernels = [
+  "ssm_preprocess::dense_gemv_ba_gates",
+  "ssm_preprocess::dense_gemm_ba_gates_prefill",
+]
+kind = "backlog"
+reason = "The GatedDeltaNet beta/decay projection (N = 2 x value heads) runs as a CUDA-core GEMV/GEMM fused with the gate math; gb10's batched twin rule is removed on this class (its row threshold is two CTAs per SM on 48 SMs)."
+[[tensor_core_policy.exempt]]
+ops = ["linear:shared_gate"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 64]
+kernels = [
+  "moe_expert_gemv::moe_weighted_sum_blend",
+  "moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped",
+]
+kind = "shape"
+reason = "The shared-expert gate projects to one column and is folded into the expert blend: no MMA tile to fill."
+[[tensor_core_policy.exempt]]
+ops = ["expert_gate_up", "expert_down", "linear:shared_gate_up", "linear:shared_down"]
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 64]
+kernels = [
+  "moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8",
+  "moe_shared_expert_fused_fp8::moe_expert_silu_down_shared_fp8",
+  "moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped",
+  "moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped",
+  "moe_shared_expert_fused_bf16::moe_expert_gate_up_shared_bf16",
+  "moe_shared_expert_fused_bf16::moe_expert_silu_down_shared_bf16",
+]
+kind = "backlog"
+reason = "FP8 and BF16 MoE experts on CUDA cores (1-row fused and scalar grouped). FP8 MMA is native on Hopper, so these are the FP8 35B-A3B's first tensor-core gap; the class's moe_w8a8_m16 is not modelled by any rule yet."
+[[tensor_core_policy.exempt]]
+ops = ["lm_head"]
+modes = ["draft"]
+rows = [17, 32]
+kernels = ["w4a16_gemv::w4a16_gemv_batch32"]
+kind = "backlog"
+reason = "The batched MTP draft head at 17-32 rows runs the CUDA-core W4A16 batch32 GEMV: the tensor-core row tiers stop at 16 rows."
+[[tensor_core_policy.exempt]]
+ops = ["lm_head"]
+modes = ["multi_seq", "verify_batch"]
+rows = [9, 128]
+kernels = ["gemm::dense_gemm_bf16"]
+kind = "backlog"
+reason = "The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA GEMM inherited from gb10."
