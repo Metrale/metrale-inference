@@ -75,6 +75,7 @@
 # Appendix
 
 - [A Category-Theoretic Perspective](./appendix/category-theory.md)
+- [Layouts as Functions](./appendix/layouts.md)
 - [Glossary](./appendix/glossary.md)
 - [Further Reading](./appendix/reading.md)
 

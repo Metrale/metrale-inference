@@ -8,6 +8,7 @@ members = [
     "crates/governance",
     "crates/kernels",
     "crates/kernel-tree",
+    "crates/layout",
     "crates/gpu-sys",
     "crates/telemetry",
     "crates/gpu-runtime",
