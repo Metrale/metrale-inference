@@ -290,6 +290,8 @@ pub fn class_families(
             }
         }
         out.legacy.extend(overlay.legacy);
+        // 2026-10-05: A class's own tree of an id replaces the inherited one.
+        out.reductions.extend(overlay.reductions);
     }
     let manifest = std::mem::replace(&mut out.hardware, own);
     let found = class_discovered(&out, &manifest, chain, sources);

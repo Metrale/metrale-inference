@@ -15,7 +15,11 @@
 #   `runtime` never sizes registers, shared memory or unrolling and never defines a point;
 #   `compile` does; `policy` is a plug-in (weight format, scale layout, activation quantizer,
 #   activation epilogue, routing scoring). A format the code cannot vary without a rewrite is a
-#   constraint on the op (`[[family.op]]`), not a parameter.
+#   constraint on the op (`[[family.op]]`), not a parameter. 2026-10-05: `numerics` chooses a
+#   reduction tree (its values are `[[reduction]]` ids or `undeclared`) and takes no `from`.
+# - 2026-10-05: `[[reduction]]` declares a bracketing tree by id (levels innermost first, what the
+#   split count depends on, rounding points, FMA contraction, MMA atom); a family's `reduction`
+#   table names the tree each of its kernels runs (crates/circuit/src/venn/reduction.rs).
 # - `from` reads a value from a node: `dim:<name>`, `weight`, `activation`, `output`, `op`,
 #   `consumer_op`, `param:<key>`, `setting:<key>`, `in_dim`, `out_dim`; per op when it is a table.
 #   `absent` is the value when a circuit does not state it, and says why in a comment.
@@ -65,6 +69,30 @@ nvfp4_tflops = 490.8
 context_tokens = 4096
 
 # 2026-09-29: Host-side groups, embedding, norms, residuals, elementwise.
+
+# 2026-10-05: Declared reduction trees (crates/circuit/src/venn/reduction.rs;
+# book/src/appendix/lkb-math.md, section 2), written from the kernel source and its launch. A
+# family's `reduction` table names the tree each kernel runs; a kernel it does not name is
+# undeclared, and cross-class parity for it is unknown.
+
+# 2026-10-05: H is the row length (hidden, or head_dim for the q/k norms). One block per row,
+# blockDim.x = min(H, 1024) (the launches in crates/model-layers/src/layers/ops/norm.rs). Thread
+# t sums a*a + b*b over BF16 pairs t, t + blockDim.x, ... in order (the odd tail
+# by thread 0, last); each warp reduces by XOR butterfly 16, 8, 4, 2, 1; lane 0 of each warp writes
+# its sum to shared memory, and warp 0 reduces the ceil(blockDim.x / 32) slots (zero-padded) by
+# the same butterfly. F32 throughout; no contraction (`--fmad=false`, common/KERNEL.toml).
+[[reduction]]
+id = "row_block_pairs"
+dim = "H"
+levels = [
+  { level = "thread", width = "ceil(H / 2 / min(H, 1024))", order = "sequential" },
+  { level = "warp", width = "32", order = "butterfly" },
+  { level = "cta", width = "ceil(min(H, 1024) / 32)", order = "shared_then_warp" },
+]
+split = "none"
+round = ["f32_acc", "rsqrt_f32", "bf16_out"]
+fma = false
+mma = "none"
 
 [[family]]
 id = "embed_copy"
@@ -137,6 +165,9 @@ pipeline.final_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 pipeline.qk_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 pipeline.residual_add = { in = ["bf16", "bf16"], compute = "f32", out = ["bf16"] }
 kernel_pipeline."norm::residual_add_rms_norm".rms_norm = { in = ["f32"], compute = "f32", out = ["bf16"] }
+# 2026-10-05: Every kernel sums squares over one row with the same tree (rms_norm.cu:58-93; the
+# `_exact` kernel states it is rms_norm_residual's, residual_add_rms_norm_exact.cu:17-19).
+reduction = { "norm::rms_norm" = "row_block_pairs", "norm::rms_norm_residual" = "row_block_pairs", "norm::residual_add_rms_norm" = "row_block_pairs", "norm::rms_norm_strided" = "row_block_pairs", "residual_add_rms_norm_exact::residual_add_rms_norm_exact" = "row_block_pairs" }
 op = [{ op = "rms_norm" }, { op = "final_norm" }, { op = "qk_norm" }, { op = "residual_add" }]
 [[family.param]]
 name = "weight_form"
