@@ -134,6 +134,23 @@ The residual is also not the same as an **uncovered op**. The Venn and the gap r
 generator. A residual kernel is the opposite case: a kernel that exists on the class but is not a
 generator.
 
+### The single-class bucket
+
+Some hardware features exist on one class only, for example:
+- a cluster-multicast bulk copy;
+- an accumulator in tensor memory;
+- a block-scaled FP4 MMA.
+
+A kernel built on such a feature is a **declared point**: a family point whose atom bundle (the
+MMA instruction, operand copies, schedule and accumulator location, declared once in
+`KERNEL_FAMILIES.toml`) lists the classes that realize it. It is never a silent copy.
+
+Until a second class realizes the bundle, though, the point converges nothing. `met circuit lkb`
+therefore reports these points in a separate **single-class bucket** of the LKB residual. They
+are counted apart from the shared points and apart from the class's unregistered sources, which
+keeps the convergence metric honest: moving a kernel into a family point does not shrink the
+residual unless a second class can use it.
+
 Residual is allowed, but **never silent**. Each entry is a named leaf override that records:
 - why the family's point could not serve here;
 - the measurement that shows it.
@@ -149,7 +166,7 @@ Each campaign records these metrics at its start and its exit:
 | Metric | Definition | Direction |
 |---|---|---|
 | **LKB coverage** | the share of the step (at C1, C16, C128) run by kernels of LKB-registered families on this class, and its measured part (inside the evidence envelope) | up |
-| **LKB residual** | count and lines of the class's hardware-specific kernels (its own sources, shadows, copies) | down |
+| **LKB residual** | count and lines of the class's hardware-specific kernels (its own sources, shadows, copies), and separately the single-class bucket (declared points on a bundle only this class realizes) | down |
 | **parameterization yield** | lines deleted by parameterization, and families or points promoted | up |
 | **TTBP**, **TTPV-speed**, **TTPV-energy** | time to bit parity; time to a speed win and to an energy win, measured separately | down |
 | **zero-day readiness** | TTBP for a new model on already-supported hardware (no new class work) | down |
@@ -179,10 +196,11 @@ LKB residual delta: <before count, lines> -> <after count, lines> (<+/-n>)
 
 ## Not yet built
 
-- `met circuit lkb`, which prints LKB coverage, the evidence envelope and the LKB residual for a
-  (model, hardware) pair and emits them as campaign-ledger fields. The coverage is already in the
-  gap tables; the residual needs the class's source list, which `ClassSources`
-  (`crates/circuit/src/hardware/sources.rs`) holds.
+- `met circuit lkb`, which prints LKB coverage, the evidence envelope and the LKB residual
+  (including the single-class bucket) for a (model, hardware) pair and emits them as
+  campaign-ledger fields (`residual_count`, `residual_loc`, `residual_copy_points`,
+  `residual_single_class`). The coverage is already in the gap tables; the residual needs the
+  class's source list, which `ClassSources` (`crates/circuit/src/hardware/sources.rs`) holds.
 - `numerics` as a fourth parameter kind, with the split and reduction order of each point stated.
 - A class's own kernels modelled in its `FUSIONS.toml` and `KERNEL_FAMILIES.toml` overlays. Until
   then they are residual by definition, and their share of the step is not measured.
