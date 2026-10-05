@@ -28,6 +28,7 @@ mod eligible;
 mod phases;
 mod setup;
 mod wave;
+mod wave_ctx;
 
 use phases::{Flow, PerStreamMeta};
 pub(in crate::model) use setup::{SetupFlow, StreamSetup};

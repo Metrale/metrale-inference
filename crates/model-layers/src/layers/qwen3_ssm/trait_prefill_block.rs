@@ -25,6 +25,8 @@
 
 use super::*;
 
+use super::prefill_dims::{GdnDims, ssm_prof};
+
 impl Qwen3SsmLayer {
     /// 2026-09-25: Steps 2-10: QKVZ projection, BA gates, conv1d, the Q/K L2
     /// norm, the delta-rule recurrence, the gated norm, `out_proj`, and the TP
@@ -33,6 +35,9 @@ impl Qwen3SsmLayer {
     /// `ssm_layer_idx` is passed in rather than re-fetched: it comes from a
     /// global call counter that is bumped once per layer call, and both entry
     /// paths bump it before calling here.
+    ///
+    /// 2026-10-05: The three parts run here back to back; a wave prefill runs the projections
+    /// once over all its rows and the middle part per stream (`trait_split_prefill.rs`).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn prefill_block(
         &self,
@@ -43,41 +48,49 @@ impl Qwen3SsmLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<DevicePtr> {
-        let h = ctx.config.hidden_size;
-        let eps = ctx.config.rms_norm_eps as f32;
-        let k = num_tokens as u32;
-        let bf16 = 2usize;
-        #[allow(unused_variables)]
-        let fp32 = 4usize;
+        self.prefill_block_in(normed, num_tokens, ssm_layer_idx, ctx, stream)?;
+        // 2026-09-25: The gated norm's output reuses `ssm_qkvz`, free once the recurrence has
+        // read the conv output.
+        let normed_out = ctx.buffers.ssm_qkvz();
+        self.prefill_block_core(0, num_tokens, state, ssm_layer_idx, normed_out, ctx, stream)?;
+        self.prefill_block_out(normed_out, num_tokens, ssm_layer_idx, ctx, stream)
+    }
 
-        let ssm_state = state
-            .as_any_mut()
-            .downcast_mut::<SsmLayerState>()
-            .ok_or_else(|| anyhow::anyhow!("Expected SsmLayerState"))?;
+    /// 2026-10-05: Steps 2-3 over `num_tokens` rows of `normed`: the QKVZ projection into
+    /// `ssm_deinterleaved` and the BA gates into `ssm_gates`, row `r` at row `r` of each.
+    #[allow(
+        clippy::too_many_arguments,
+        unused_variables,
+        unused_mut,
+        unused_assignments,
+        unused_macros
+    )]
+    pub(super) fn prefill_block_in(
+        &self,
+        normed: DevicePtr,
+        num_tokens: usize,
+        ssm_layer_idx: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let GdnDims {
+            h,
+            eps,
+            k,
+            bf16,
+            fp32,
+            nk,
+            kd,
+            nv,
+            vd,
+            vpg,
+            key_dim,
+            value_dim,
+            conv_dim,
+            d_conv,
+            qkvz_size,
+        } = GdnDims::of(ctx.config, num_tokens);
 
-        let nk = ctx.config.linear_num_key_heads;
-        let kd = ctx.config.linear_key_head_dim;
-        let nv = ctx.config.linear_num_value_heads;
-        let vd = ctx.config.linear_value_head_dim;
-        let vpg = nv / nk;
-        let key_dim = nk * kd;
-        let value_dim = nv * vd;
-        #[allow(unused_variables)]
-        let conv_dim = key_dim * 2 + value_dim;
-        let d_conv = ctx.config.linear_conv_kernel_dim;
-        let qkvz_size = ctx.config.ssm_qkvz_size();
-
-        macro_rules! prof {
-            ($label:expr, $t0:expr) => {
-                if ctx.profile {
-                    if let Some(t0) = $t0 {
-                        ctx.gpu.synchronize(stream)?;
-                        let elapsed = t0.elapsed().as_micros();
-                        tracing::info!("  SSM prefill [{}] N={}: {}\u{b5}s", $label, k, elapsed);
-                    }
-                }
-            };
-        }
         let mut t0 = if ctx.profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -123,7 +136,7 @@ impl Qwen3SsmLayer {
             stream,
         );
 
-        prof!("qkvz_gemm", t0);
+        ssm_prof!(ctx, stream, k, "qkvz_gemm", t0);
         t0 = if ctx.profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -163,8 +176,67 @@ impl Qwen3SsmLayer {
             num_tokens * gate_stride,
             stream,
         );
-        prof!("ba+gates", t0);
+        ssm_prof!(ctx, stream, k, "ba+gates", t0);
         t0 = if ctx.profile {
+            ctx.gpu.synchronize(stream)?;
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
+        Ok(())
+    }
+
+    /// 2026-10-05: Steps 4-8 for the `num_tokens` rows from `row0` of `ssm_deinterleaved` and
+    /// `ssm_gates`, one sequence's rows with its `state`: conv1d, the Q/K L2 norm, the delta-rule
+    /// recurrence and the gated norm, written to `normed_out_buf` rows `0..num_tokens`. The conv
+    /// and recurrence outputs use `ssm_qkvz` and `attn_output` from row 0 as scratch.
+    #[allow(
+        clippy::too_many_arguments,
+        unused_variables,
+        unused_mut,
+        unused_assignments,
+        unused_macros
+    )]
+    pub(super) fn prefill_block_core(
+        &self,
+        row0: usize,
+        num_tokens: usize,
+        state: &mut dyn LayerState,
+        ssm_layer_idx: usize,
+        normed_out_buf: DevicePtr,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let GdnDims {
+            h,
+            eps,
+            k,
+            bf16,
+            fp32,
+            nk,
+            kd,
+            nv,
+            vd,
+            vpg,
+            key_dim,
+            value_dim,
+            conv_dim,
+            d_conv,
+            qkvz_size,
+        } = GdnDims::of(ctx.config, num_tokens);
+
+        let ssm_state = state
+            .as_any_mut()
+            .downcast_mut::<SsmLayerState>()
+            .ok_or_else(|| anyhow::anyhow!("Expected SsmLayerState"))?;
+        let deinterleaved = ctx
+            .buffers
+            .ssm_deinterleaved()
+            .offset(row0 * qkvz_size * bf16);
+        let gate_stride = nv * 2;
+        let gates_buf = ctx.buffers.ssm_gates().offset(row0 * gate_stride * fp32);
+
+        let mut t0 = if ctx.profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
         } else {
@@ -219,7 +291,7 @@ impl Qwen3SsmLayer {
             &super::debug::DUMP_CONV,
             stream,
         )?;
-        prof!("conv1d", t0);
+        ssm_prof!(ctx, stream, k, "conv1d", t0);
         t0 = if ctx.profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -252,7 +324,7 @@ impl Qwen3SsmLayer {
             &super::debug::DUMP_L2,
             stream,
         )?;
-        prof!("l2_norm", t0);
+        ssm_prof!(ctx, stream, k, "l2_norm", t0);
         t0 = if ctx.profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -307,7 +379,7 @@ impl Qwen3SsmLayer {
             &super::debug::DUMP_GDN,
             stream,
         )?;
-        prof!("gdn_prefill", t0);
+        ssm_prof!(ctx, stream, k, "gdn_prefill", t0);
         t0 = if ctx.profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -315,7 +387,6 @@ impl Qwen3SsmLayer {
             None
         };
 
-        let normed_out_buf = conv_out_buf;
         let z_base = deinterleaved.offset((key_dim * 2 + value_dim) * bf16);
         ops::gated_rms_norm_prefill(
             ctx.gpu,
@@ -345,7 +416,7 @@ impl Qwen3SsmLayer {
             &super::debug::DUMP_GNORM,
             stream,
         )?;
-        prof!("gated_rms_norm", t0);
+        ssm_prof!(ctx, stream, k, "gated_rms_norm", t0);
         t0 = if ctx.profile {
             ctx.gpu.synchronize(stream)?;
             Some(std::time::Instant::now())
@@ -361,6 +432,50 @@ impl Qwen3SsmLayer {
             num_tokens * value_dim,
             stream,
         );
+        Ok(())
+    }
+
+    /// 2026-10-05: Steps 9-10 over `num_tokens` rows of `normed_out_buf`: `out_proj` into
+    /// `moe_output` and the TP reduce. Returns `moe_output`.
+    #[allow(
+        clippy::too_many_arguments,
+        unused_variables,
+        unused_mut,
+        unused_assignments,
+        unused_macros
+    )]
+    pub(super) fn prefill_block_out(
+        &self,
+        normed_out_buf: DevicePtr,
+        num_tokens: usize,
+        ssm_layer_idx: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<DevicePtr> {
+        let GdnDims {
+            h,
+            eps,
+            k,
+            bf16,
+            fp32,
+            nk,
+            kd,
+            nv,
+            vd,
+            vpg,
+            key_dim,
+            value_dim,
+            conv_dim,
+            d_conv,
+            qkvz_size,
+        } = GdnDims::of(ctx.config, num_tokens);
+
+        let mut t0 = if ctx.profile {
+            ctx.gpu.synchronize(stream)?;
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
 
         let out_proj_buf = ctx.buffers.moe_output();
         self.prefill_out_proj_dispatch(ctx, normed_out_buf, out_proj_buf, k, h, value_dim, stream)?;
@@ -379,7 +494,7 @@ impl Qwen3SsmLayer {
             stream,
         )?;
 
-        prof!("out_proj", t0);
+        ssm_prof!(ctx, stream, k, "out_proj", t0);
         Ok(out_proj_buf)
     }
 }

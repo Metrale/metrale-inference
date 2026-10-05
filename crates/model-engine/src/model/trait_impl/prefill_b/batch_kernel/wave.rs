@@ -30,6 +30,14 @@ use super::super::midchunk_capture::MidCapturePlan;
 use super::{KernelBatchResult, SetupFlow, StreamSetup};
 use crate::traits::PrefillSlice;
 
+/// 2026-10-05: `METRALE_PREFILL_WAVE_BATCHED_PROJ` (presence): exact waves run a split mixer's
+/// row-local projections once over the wave's rows (`LayerSplitPrefill::prefill_mixer_pre` /
+/// `prefill_mixer_post`) and its core per stream. Read once per process.
+fn wave_batched_proj_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("METRALE_PREFILL_WAVE_BATCHED_PROJ").is_some())
+}
+
 /// 2026-10-05: Snapshot slots a wave stream may reserve: the in-pass captures at the tail
 /// boundary and one block below it (`prepare_cut_capture`, `prepare_midchunk_capture`), and the
 /// checkpoint a non-last chunk saves at its end (`prefill_b_save_checkpoint`).
@@ -158,7 +166,15 @@ impl TransformerModel {
             SetupFlow::Return(r) => return Ok(r),
         };
         self.gpu.synchronize(stream)?;
-        let staging = self.wave_ffn_staging(running_proc_off * row_bytes)?;
+        // 2026-10-05: The staging rows hold the FFN input (`row_bytes`) or, with the batched
+        // projections, a split mixer's core output (`wave_core_row_bytes`).
+        let core_bytes = self
+            .layers
+            .iter()
+            .map(|l| l.wave_core_row_bytes(&self.config))
+            .max()
+            .unwrap_or(0);
+        let staging = self.wave_ffn_staging(running_proc_off * row_bytes.max(core_bytes))?;
 
         // 2026-10-05: Per stream, as `prefill_chunk_pass`: the tail-capture plan (in-pass cut
         // capture, else the mid-chunk capture), and whether the pass needs paged metadata.
@@ -317,7 +333,16 @@ impl TransformerModel {
             .map(|_| std::sync::atomic::AtomicUsize::new(0))
             .collect();
         let ffn_ctx = self.wave_ctx(None, None, false);
+        let batched_proj = wave_batched_proj_enabled();
         for (i, layer) in self.layers.iter().enumerate() {
+            // 2026-10-05: A split mixer runs its row-local projections once over the wave's rows
+            // and only its sequence-dependent core per stream (`METRALE_PREFILL_WAVE_BATCHED_PROJ`).
+            let split = batched_proj && layer.supports_wave_split_mixer();
+            if split {
+                layer
+                    .prefill_mixer_pre(hidden_base, residual_base, total_rows, &ffn_ctx, stream)
+                    .map_err(|e| anyhow::anyhow!("exact wave layer {i} mixer pre: {e}"))?;
+            }
             for (b, slice) in streams.iter_mut().enumerate() {
                 let m = &per_stream[b];
                 let (plan, _, needs_paged) = &plans[b];
@@ -344,6 +369,21 @@ impl TransformerModel {
                 } else {
                     m.kv_write_start
                 };
+                if split {
+                    layer
+                        .prefill_mixer_core(
+                            m.proc_off,
+                            m.proc_count,
+                            seq.layer_states[i].as_mut(),
+                            staging,
+                            &ctx,
+                            stream,
+                        )
+                        .map_err(|e| {
+                            anyhow::anyhow!("exact wave layer {i} stream {b} core: {e}")
+                        })?;
+                    continue;
+                }
                 let off = m.proc_off * row_bytes;
                 layer
                     .prefill_mixer(
@@ -368,80 +408,25 @@ impl TransformerModel {
                     stream,
                 )?;
             }
+            let ffn_in = if split {
+                layer
+                    .prefill_mixer_post(
+                        hidden_base,
+                        residual_base,
+                        total_rows,
+                        staging,
+                        &ffn_ctx,
+                        stream,
+                    )
+                    .map_err(|e| anyhow::anyhow!("exact wave layer {i} mixer post: {e}"))?;
+                self.buffers.norm_output()
+            } else {
+                staging
+            };
             layer
-                .prefill_ffn_rows(hidden_base, staging, total_rows, &ffn_ctx, stream)
+                .prefill_ffn_rows(hidden_base, ffn_in, total_rows, &ffn_ctx, stream)
                 .map_err(|e| anyhow::anyhow!("exact wave layer {i} FFN: {e}"))?;
         }
         Ok(())
-    }
-
-    /// 2026-10-05: A stream's attention metadata as `prefill_b_forward_layers` builds it, from
-    /// the stream's own metadata upload.
-    fn wave_attn_metadata(
-        &self,
-        m: &super::PerStreamMeta,
-        max_blocks_per_seq: usize,
-        needs_paged: bool,
-    ) -> AttnMetadataDev {
-        let l = &m.layout;
-        let (positions_h, positions_w) = if l.use_mrope {
-            (
-                l.meta_base.offset(l.pos_stream_bytes),
-                l.meta_base.offset(l.pos_stream_bytes * 2),
-            )
-        } else {
-            (l.meta_base, l.meta_base)
-        };
-        let (block_table, seq_len) = if needs_paged {
-            (m.block_table_dev, m.seq_len_dev)
-        } else {
-            (DevicePtr::NULL, DevicePtr::NULL)
-        };
-        AttnMetadataDev {
-            positions: l.meta_base,
-            positions_h,
-            positions_w,
-            slot: l.meta_base.offset(l.slot_offset),
-            seq_len,
-            block_table,
-            max_blocks_per_seq: max_blocks_per_seq as u32,
-            num_seqs: 1,
-            seq_slot: DevicePtr::NULL,
-            moe_row_adapter: DevicePtr::NULL,
-        }
-    }
-
-    /// 2026-10-05: The context of a wave step; a mixer passes its stream's metadata and plan,
-    /// the FFN half neither (and no token ids, so a hash-routed MoE fails instead of reading
-    /// one stream's ids for all).
-    fn wave_ctx<'a>(
-        &'a self,
-        attn_metadata: Option<AttnMetadataDev>,
-        midchunk_capture: Option<MidchunkCapture<'a>>,
-        gdn_exact_replay: bool,
-    ) -> ForwardContext<'a> {
-        let token_ids = attn_metadata.is_some().then(|| self.buffers.token_ids());
-        ForwardContext {
-            buffers: &self.buffers,
-            hc_row_offset: 0,
-            gpu: self.gpu.as_ref(),
-            config: &self.config,
-            dispatch: &self.dispatch,
-            derived: &self.derived,
-            levers: &self.levers,
-            stats: &self.stats,
-            attn_metadata,
-            profile: false,
-            comm: None,
-            graph_capture: false,
-            decode_step: false,
-            gdn_exact_replay,
-            gdn_write_on_accept: false,
-            token_ids,
-            host_token_ids: None,
-            routed_lora_layers: None,
-            midchunk_capture,
-            moe_lora_route: metrale_model_layers::layer::MoeLoraRoute::Refuse,
-        }
     }
 }

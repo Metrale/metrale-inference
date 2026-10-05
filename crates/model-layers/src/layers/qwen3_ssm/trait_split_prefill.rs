@@ -166,4 +166,81 @@ impl LayerSplitPrefill for Qwen3SsmLayer {
             stream,
         )
     }
+
+    fn supports_wave_split_mixer(&self) -> bool {
+        self.hc.is_none()
+    }
+
+    fn wave_core_row_bytes(&self, config: &metrale_config::ModelConfig) -> usize {
+        config.linear_num_value_heads * config.linear_value_head_dim * 2
+    }
+
+    fn prefill_mixer_pre(
+        &self,
+        hidden: DevicePtr,
+        residual: DevicePtr,
+        num_rows: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let idx =
+            super::debug::SSM_LAYER_CALL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::layers::ops::rms_norm_residual(
+            ctx.gpu,
+            self.rms_norm_residual_k,
+            hidden,
+            &self.input_norm,
+            ctx.buffers.norm_output(),
+            residual,
+            num_rows as u32,
+            ctx.config.hidden_size as u32,
+            ctx.config.rms_norm_eps as f32,
+            stream,
+        )?;
+        self.prefill_block_in(ctx.buffers.norm_output(), num_rows, idx, ctx, stream)
+    }
+
+    fn prefill_mixer_core(
+        &self,
+        row0: usize,
+        num_tokens: usize,
+        state: &mut dyn LayerState,
+        core_out: DevicePtr,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let idx = super::debug::SSM_LAYER_CALL_COUNTER
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .wrapping_sub(1);
+        let out = core_out.offset(row0 * self.wave_core_row_bytes(ctx.config));
+        self.prefill_block_core(row0, num_tokens, state, idx, out, ctx, stream)
+    }
+
+    fn prefill_mixer_post(
+        &self,
+        hidden: DevicePtr,
+        residual: DevicePtr,
+        num_rows: usize,
+        core_out: DevicePtr,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let idx = super::debug::SSM_LAYER_CALL_COUNTER
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .wrapping_sub(1);
+        let out_proj = self.prefill_block_out(core_out, num_rows, idx, ctx, stream)?;
+        crate::layers::ops::residual_add_rms_norm(
+            ctx.gpu,
+            self.residual_add_rms_norm_k,
+            hidden,
+            out_proj,
+            &self.post_attn_norm,
+            ctx.buffers.norm_output(),
+            residual,
+            num_rows as u32,
+            ctx.config.hidden_size as u32,
+            ctx.config.rms_norm_eps as f32,
+            stream,
+        )
+    }
 }

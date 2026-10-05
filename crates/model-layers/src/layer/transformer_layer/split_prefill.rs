@@ -194,4 +194,59 @@ pub trait LayerSplitPrefill {
     ) -> Result<()> {
         anyhow::bail!("prefill_ffn_rows: not implemented for this layer type")
     }
+
+    /// 2026-10-05: Whether this layer's wave mixer splits into row-local projections run once
+    /// over the wave's rows (`prefill_mixer_pre`, `prefill_mixer_post`) around a per-stream core
+    /// (`prefill_mixer_core`), each row keeping the bits of `prefill`. Default: no.
+    fn supports_wave_split_mixer(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-05: Bytes per row of the core's output, the buffer `prefill_mixer_core` writes and
+    /// `prefill_mixer_post` reads. Default: 0.
+    fn wave_core_row_bytes(&self, _config: &metrale_config::ModelConfig) -> usize {
+        0
+    }
+
+    /// 2026-10-05: The row-local front of the mixer over `num_rows` rows of `hidden`/`residual`.
+    /// The default returns an error.
+    fn prefill_mixer_pre(
+        &self,
+        _hidden: DevicePtr,
+        _residual: DevicePtr,
+        _num_rows: usize,
+        _ctx: &ForwardContext,
+        _stream: u64,
+    ) -> Result<()> {
+        anyhow::bail!("prefill_mixer_pre: this layer has no split wave mixer")
+    }
+
+    /// 2026-10-05: The per-stream core for `num_tokens` rows from `row0` with this stream's
+    /// `state` and context; writes rows `row0..` of `core_out`. The default returns an error.
+    #[allow(clippy::too_many_arguments)]
+    fn prefill_mixer_core(
+        &self,
+        _row0: usize,
+        _num_tokens: usize,
+        _state: &mut dyn LayerState,
+        _core_out: DevicePtr,
+        _ctx: &ForwardContext,
+        _stream: u64,
+    ) -> Result<()> {
+        anyhow::bail!("prefill_mixer_core: this layer has no split wave mixer")
+    }
+
+    /// 2026-10-05: The row-local back of the mixer over `num_rows` rows of `core_out`: leaves the
+    /// FFN input in `ctx.buffers.norm_output()` rows `0..num_rows`. The default returns an error.
+    fn prefill_mixer_post(
+        &self,
+        _hidden: DevicePtr,
+        _residual: DevicePtr,
+        _num_rows: usize,
+        _core_out: DevicePtr,
+        _ctx: &ForwardContext,
+        _stream: u64,
+    ) -> Result<()> {
+        anyhow::bail!("prefill_mixer_post: this layer has no split wave mixer")
+    }
 }
