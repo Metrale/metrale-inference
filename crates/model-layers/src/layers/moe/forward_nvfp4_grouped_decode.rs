@@ -89,11 +89,16 @@ impl Nvfp4GroupedKernels {
     /// 2026-10-02: The gate+up and down launches for an `inter` x `hidden` expert: the
     /// tensor-core twins when on and the shape fits them, else the CUDA-core kernels.
     /// 2026-10-04: Always the lean pair once the tables are lean (the repack checked the shape).
-    fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
+    /// 2026-10-05: The CUDA-core pair when the routed down runs the grouped FP8 down kernel
+    /// (`fp8_down`, the `nvfp4-gate-up` tier): that kernel reads the routed SiLU products as FP32
+    /// rows, which only the CUDA-core gate+up writes; the tensor-core one writes BF16 hi + lo
+    /// pairs, and an FP8 down over them decodes nonsense.
+    pub(super) fn select(&self, hidden: u32, inter: u32, fp8_down: bool) -> Nvfp4GroupedLaunch {
         if let Some(lean) = self.lean_launch() {
             return lean;
         }
-        if nvfp4_grouped_tc_enabled()
+        if !fp8_down
+            && nvfp4_grouped_tc_enabled()
             && self.gate_up_tc.0 != 0
             && self.down_tc.0 != 0
             && ops::nvfp4_grouped_tc_shape_ok(inter, hidden, ops::NVFP4_GROUPED_GATE_UP_TC)
@@ -193,7 +198,11 @@ impl MoeLayer {
         let gate_up_ok =
             routed.is_some_and(|e| !e.gate_proj.weight.is_null() && !e.up_proj.weight.is_null());
         let native = self.nvfp4_grouped.declared_experts;
-        let launch = self.nvfp4_grouped.select(h as u32, inter as u32);
+        let launch = self.nvfp4_grouped.select(
+            h as u32,
+            inter as u32,
+            self.nvfp4_decode_fp8_down().is_some(),
+        );
         let down_ok = if tier.nvfp4_down() || native {
             !self.down_ptrs.packed_ptrs.is_null()
                 && routed.is_some_and(|e| !e.down_proj.weight.is_null())
@@ -268,6 +277,18 @@ impl MoeLayer {
     /// layer keeps its FP8 experts (`set_fp8_experts`).
     fn nvfp4_decode_fp8_shared(&self) -> Option<&Fp8ExpertWeight> {
         self.fp8_shared_expert.as_ref()
+    }
+
+    /// 2026-10-05: The FP8 down tables and shared expert the grouped FP8 down kernel runs every
+    /// down projection from, under a tier whose routed downs stay FP8 (`nvfp4-gate-up`).
+    fn nvfp4_decode_fp8_down(&self) -> Option<(&Fp8ExpertPtrTable, &Fp8ExpertWeight)> {
+        if crate::layers::expert_quantization().nvfp4_down() {
+            None
+        } else {
+            self.fp8_down_weight_ptrs
+                .as_ref()
+                .zip(self.nvfp4_decode_fp8_shared())
+        }
     }
 
     /// 2026-09-27: The NVFP4 MoE of `m` rows: `input` is `[m, H]` BF16, the output lands in
@@ -355,11 +376,7 @@ impl MoeLayer {
         // the shared expert alone and the NVFP4 one the routed experts; under `nvfp4-gate-up`
         // the grouped FP8 down kernel runs all of them from the FP8 experts.
         let fp8_shared = self.nvfp4_decode_fp8_shared();
-        let fp8_down = if crate::layers::expert_quantization().nvfp4_down() {
-            None
-        } else {
-            self.fp8_down_weight_ptrs.as_ref().zip(fp8_shared)
-        };
+        let fp8_down = self.nvfp4_decode_fp8_down();
         if let Some(fsh) = fp8_shared {
             ops::moe_expert_gate_up_act_fp8_grouped(
                 ctx.gpu,
@@ -408,7 +425,7 @@ impl MoeLayer {
             )?;
         }
         let nvfp4_shared_rows = if fp8_shared.is_some() { 0 } else { n };
-        let launch = self.nvfp4_grouped.select(h, inter);
+        let launch = self.nvfp4_grouped.select(h, inter, fp8_down.is_some());
         ops::moe_expert_gate_up_act_nvfp4_grouped(
             ctx.gpu,
             launch.gate_up,
