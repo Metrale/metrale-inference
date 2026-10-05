@@ -143,8 +143,8 @@ fn gb10_plans_equal_the_golden_plans() {
     // the declared-activation variant's 15 (decode, 11 multi_seq rungs, 3 verify). 2026-10-04: and
     // the MoE MTP recipe's 7 (decode, one multi_seq rung, 3 verify, two draft widths). 2026-10-05:
     // and the NVFP4 35B recipe's 23 (16 plus seven n-row draft widths) and its row-major
-    // variant's 7 (decode, 3 multi_seq rungs, 3 verify).
-    assert_eq!(checked, 162, "golden plans checked");
+    // variant's 7 (decode, 3 multi_seq rungs, 3 verify), and its declared-activation variant's 23.
+    assert_eq!(checked, 185, "golden plans checked");
 }
 
 /// 2026-09-30: On `devices`, the 27B NVFP4 (recipe and declared formats) never selects a kernel

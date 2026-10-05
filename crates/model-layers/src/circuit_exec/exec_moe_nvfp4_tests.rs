@@ -23,6 +23,8 @@ use crate::layers::ops::{self, W8a8Kernels, W8a8Weight};
 use crate::weight_map::{DenseWeight, Fp8Weight, QuantizedWeight, WeightQuantFormat};
 
 const NV: &str = "qwen3.6/qwen3.6-35b-a3b-nvfp4-declared";
+/// 2026-10-05: The same recipe at the checkpoint's declared activations (exact verify chain).
+const NV_ACT: &str = "qwen3.6/qwen3.6-35b-a3b-nvfp4-declared-act";
 /// 2026-10-05: The mock backend's one kernel handle.
 const K: KernelHandle = KernelHandle(0xDEAD);
 
@@ -184,11 +186,17 @@ fn layer(c: &Circuit, i: usize, attn: usize) -> (CircuitLayer, Vec<u64>) {
     (l, ptrs)
 }
 
-fn build(mode: Mode, rows: u64, arm: Arm, kind: ExpertKind) -> anyhow::Result<Fixture> {
+fn build_of(
+    recipe: &str,
+    mode: Mode,
+    rows: u64,
+    arm: Arm,
+    kind: ExpertKind,
+) -> anyhow::Result<Fixture> {
     let gpu = MockGpuBackend::new();
     build_drafting(
         (&gpu, &config()),
-        NV,
+        recipe,
         &layer,
         Fusions::All,
         (mode, rows, arm),
@@ -214,12 +222,22 @@ fn build(mode: Mode, rows: u64, arm: Arm, kind: ExpertKind) -> anyhow::Result<Fi
     )
 }
 
-/// 2026-10-05: Every primary plan the instance checks in (decode, the multi-sequence ladder,
-/// verify K = 2..4, the drafter's one- and n-row propose) and every batched-verify table compiles
-/// to exactly its planned launches, and the non-verify ones run.
+fn build(mode: Mode, rows: u64, arm: Arm, kind: ExpertKind) -> anyhow::Result<Fixture> {
+    build_of(NV, mode, rows, arm, kind)
+}
+
+/// 2026-10-05: Every primary plan each NVFP4 instance checks in (decode, the multi-sequence
+/// ladder, verify K = 2..4, the drafter's one- and n-row propose) and every batched-verify table
+/// compiles to exactly its planned launches, and the non-verify ones run.
 #[test]
 fn every_nvfp4_35b_plan_compiles_to_the_launches_it_counts() {
-    let inst = super::sources::instance(NV).unwrap();
+    for recipe in [NV, NV_ACT] {
+        plans_compile(recipe);
+    }
+}
+
+fn plans_compile(recipe: &str) {
+    let inst = super::sources::instance(recipe).unwrap();
     let primary = inst
         .plans
         .iter()
@@ -229,8 +247,8 @@ fn every_nvfp4_35b_plan_compiles_to_the_launches_it_counts() {
         (Mode::VerifyBatch, t.rows(), Arm::Table(s))
     });
     for (mode, rows, arm) in primary.chain(tables) {
-        let f = build(mode, rows, arm, ExpertKind::Nvfp4Lean)
-            .unwrap_or_else(|e| panic!("{mode:?} at {rows} ({arm:?}): {e:#}"));
+        let f = build_of(recipe, mode, rows, arm, ExpertKind::Nvfp4Lean)
+            .unwrap_or_else(|e| panic!("{recipe} {mode:?} at {rows} ({arm:?}): {e:#}"));
         assert_eq!(
             f.program.launches.len() as u64,
             f.plan.launches() + f.plan.copies(),

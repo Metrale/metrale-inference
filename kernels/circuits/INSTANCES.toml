@@ -265,6 +265,29 @@ verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", 
 opt_in_levers = []
 settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", gdn_exact_replay = "off", gdn_verify_exact = "off", ffn_act_fixed = "off", moe_fp8_tc = "on", moe_nvfp4_kernels = "lean", draft_moe_experts = "bf16", lm_head_nvfp4_rows = "on" }
 
+# 2026-10-05: The NVFP4 recipe above at the checkpoint's declared activations too
+# (`--activation-quantization declared`, the CLI default; the formats the lean A/B against vLLM
+# measured): the fixed GDN format turns on the exact MTP verify chain (`gdn_verify_exact`), the
+# fixed ffn family states `ffn_act_fixed = declared` (no dense FFN here, so no plan reads it),
+# and the one-row head takes the batched head, which is the same row tiles. Everything else is
+# the instance above; `variant` names its golden plans.
+[[instance]]
+recipe = "qwen3.6/qwen3.6-35b-a3b-nvfp4-declared-act"
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+arch = "qwen3_6_moe"
+variant = "nvfp4-declared-act"
+precision = "qwen3.6-35b-a3b-nvfp4-declared"
+target = "gb10/qwen3.6-35b-a3b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1, 2, 5, 8, 9, 16, 17, 32] }
+verify_batch = ["2x2", "4x2", "3x3", "4x4", "2x8", "3x8", "4x8", "4x3 3x2 2x3", "4x2! 2x2", "4x8 2x24", "uncarried: 4x8! 2x8!", "uncarried: 4x8! 2x24!", "2x48", "4x32"]
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "declared", gdn_exact_replay = "off", gdn_verify_exact = "on", ffn_act_fixed = "declared", moe_fp8_tc = "on", moe_nvfp4_kernels = "lean", draft_moe_experts = "bf16", lm_head_nvfp4_rows = "on" }
+
 # 2026-10-05: The NVFP4 recipe above on a serve whose memory plan skips the experts' transposed
 # prefill tables (`moe_expert_tables = skip`, cli/circuit_memory_tables.rs): the loader keeps the
 # row-major layout (moe/nvfp4_lean.rs refuses the repack without them) and the grouped decode runs
