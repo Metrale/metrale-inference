@@ -18,19 +18,34 @@ use crate::cli;
 /// 2026-09-28: A malformed precision declaration in the sidecar is an error, like one in
 /// config.json (`DeclaredPrecisionPlan`).
 pub(crate) fn merge_sidecar_quant_config(model_dir: &Path, config: &mut ModelConfig) -> Result<()> {
-    if config.quantization_config.is_some() {
-        return Ok(());
-    }
     let hf_quant_path = model_dir.join("hf_quant_config.json");
     if !hf_quant_path.exists() {
         return Ok(());
     }
+    // 2026-10-05: With a block in config.json, the sidecar is read only for the KV-cache format
+    // that block may omit (nvidia/Qwen3.6-35B-A3B-NVFP4 declares kv_cache_quant_algo FP8 in
+    // hf_quant_config.json alone); an unreadable sidecar then changes nothing.
+    let fill_kv_only = match config.quantization_config.as_ref() {
+        Some(qc) if qc.kv_cache_format.is_some() => return Ok(()),
+        Some(_) => true,
+        None => false,
+    };
     match std::fs::read_to_string(&hf_quant_path) {
         Ok(raw_hq) => {
             let wrapped = format!(r#"{{"quantization_config":{raw_hq}}}"#);
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&wrapped) {
-                config.quantization_config = metrale_config::parse_quantization_config(&v)
-                    .with_context(|| hf_quant_path.display().to_string())?;
+                if fill_kv_only {
+                    let sidecar = metrale_config::parse_quantization_config(&v).ok().flatten();
+                    if let (Some(qc), Some(kv)) = (
+                        config.quantization_config.as_mut(),
+                        sidecar.and_then(|s| s.kv_cache_format),
+                    ) {
+                        qc.kv_cache_format = Some(kv);
+                    }
+                } else {
+                    config.quantization_config = metrale_config::parse_quantization_config(&v)
+                        .with_context(|| hf_quant_path.display().to_string())?;
+                }
             }
         }
         Err(e) => tracing::warn!("Failed to read sibling hf_quant_config.json: {e}"),
@@ -242,6 +257,47 @@ pub(crate) fn publish_mtp_k_ladder(args: &cli::ServeArgs) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::{NumDraftsSource, resolve_num_drafts};
+
+    /// 2026-10-05: A config.json block without a KV-cache format takes the sidecar's (the
+    /// nvidia/Qwen3.6-35B-A3B-NVFP4 layout); a block that has one keeps it; with no block the
+    /// sidecar is the block, as before.
+    #[test]
+    fn the_sidecar_fills_the_kv_cache_format_config_json_omits() {
+        let dir = std::env::temp_dir().join(format!("metrale-sidecar-kv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("hf_quant_config.json"),
+            r#"{"producer":{"name":"modelopt"},"quantization":{"quant_algo":"NVFP4","kv_cache_quant_algo":"FP8"}}"#,
+        )
+        .unwrap();
+        let block = |kv: Option<&str>| {
+            let mut qc = serde_json::json!({ "quant_method": "modelopt", "quant_algo": "NVFP4" });
+            if let Some(kv) = kv {
+                qc["kv_cache_quant_algo"] = serde_json::json!(kv);
+            }
+            metrale_config::parse_quantization_config(
+                &serde_json::json!({ "quantization_config": qc }),
+            )
+            .unwrap()
+            .unwrap()
+        };
+        let merged = |qc: Option<metrale_config::QuantizationConfig>| {
+            let mut c = metrale_config::ModelConfig::qwen3_next_80b_nvfp4();
+            c.quantization_config = qc;
+            super::merge_sidecar_quant_config(&dir, &mut c).unwrap();
+            c.quantization_config.and_then(|q| q.kv_cache_format)
+        };
+        assert_eq!(merged(Some(block(None))).as_deref(), Some("FP8"));
+        assert_eq!(merged(None).as_deref(), Some("FP8"));
+        std::fs::write(
+            dir.join("hf_quant_config.json"),
+            r#"{"producer":{"name":"modelopt"},"quantization":{"quant_algo":"NVFP4"}}"#,
+        )
+        .unwrap();
+        assert_eq!(merged(Some(block(Some("FP8")))).as_deref(), Some("FP8"));
+        assert_eq!(merged(Some(block(None))), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// 2026-09-26: `--num-drafts 1` (equal to `cli::DEFAULT_NUM_DRAFTS`) on a
     /// model with `default_num_drafts = 3` serves 1, not 3.

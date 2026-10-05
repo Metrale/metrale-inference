@@ -232,8 +232,14 @@ pub(crate) fn engine_facts(
             metrale_model_layers::speculative::mtp_ladder_drafts(n, num_drafts)
         }),
     });
-    let (kv_dtype, _) = crate::main_modules::serve_phases::kv_cache::resolve_kv_dtype_str(
-        args.kv_cache_dtype.as_deref(),
+    // 2026-10-05: `--kv-cache-dtype declared` plans with the checkpoint's declared format, as
+    // the serve resolves it (`declared_kv_dtype`).
+    use crate::main_modules::serve_phases::kv_cache as kvc;
+    let declared = (args.kv_cache_dtype.as_deref() == Some(kvc::KV_DTYPE_DECLARED))
+        .then(|| kvc::declared_kv_dtype(config))
+        .transpose()?;
+    let (kv_dtype, _) = kvc::resolve_kv_dtype_str(
+        declared.or(args.kv_cache_dtype.as_deref()),
         &behavior.default_kv_dtype,
     );
     let marconi_slots = ssm_reserve::marconi_snapshot_slots(

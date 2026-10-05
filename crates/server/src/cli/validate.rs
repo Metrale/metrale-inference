@@ -214,7 +214,10 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
     // `default_kv_dtype` unchecked (`build_parse_behavior.rs`), so a bad value
     // there fails only at the same parse in `serve_phases/kv_cache.rs`, during
     // the model load.
+    // 2026-10-05: `declared` is resolved against the checkpoint at load
+    // (`serve_phases::kv_cache::declared_kv_dtype`), so it is not parsed here.
     if let Some(kv_dtype) = args.kv_cache_dtype.as_deref()
+        && kv_dtype != crate::main_modules::serve_phases::kv_cache::KV_DTYPE_DECLARED
         && kv_dtype
             .parse::<metrale_cache::kv_cache::KvCacheDtype>()
             .is_err()
@@ -222,7 +225,7 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
         v.push(Violation::new(
             format!("--kv-cache-dtype '{kv_dtype}' is not a known KV cache dtype."),
             "the value does not parse to any supported KV cache format.",
-            "use one of: fp8, bf16, nvfp4 (or a turbo* TurboQuant-Plus variant).",
+            "use one of: fp8, bf16, nvfp4, declared (or a turbo* TurboQuant-Plus variant).",
         ));
     }
 

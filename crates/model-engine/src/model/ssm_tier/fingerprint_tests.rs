@@ -163,6 +163,7 @@ fn every_fingerprint_field_is_load_bearing() {
                     format: String::new(),
                     ignore_modules: Vec::new(),
                     precision: Default::default(),
+                    kv_cache_format: None,
                 });
             }),
         ),
@@ -210,6 +211,7 @@ fn string_encoding_is_injective() {
         format: String::new(),
         ignore_modules: Vec::new(),
         precision: Default::default(),
+        kv_cache_format: None,
     });
     let mut b = hybrid();
     b.model_type = "a".into();
@@ -219,6 +221,7 @@ fn string_encoding_is_injective() {
         format: String::new(),
         ignore_modules: Vec::new(),
         precision: Default::default(),
+        kv_cache_format: None,
     });
     assert_ne!(fp(&a), fp(&b));
 }

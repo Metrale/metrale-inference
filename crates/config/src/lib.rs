@@ -116,6 +116,10 @@ pub struct QuantizationConfig {
     /// 2026-09-28: What the block declares per linear layer, weights and activations: the
     /// default precision every loader and kernel dispatch follows.
     pub precision: precision_plan::DeclaredPrecisionPlan,
+    /// 2026-10-05: The KV-cache format the block declares, `FP8` or `None`: ModelOpt
+    /// `kv_cache_quant_algo` or compressed-tensors `kv_cache_scheme` (8-bit float). Another
+    /// declared format is an error at parse. `--kv-cache-dtype declared` reads it.
+    pub kv_cache_format: Option<String>,
 }
 
 /// 2026-09-26: Whether GLM-5.3's vision tower is enabled for this process

@@ -148,6 +148,41 @@ pub(crate) struct KvCacheConfig {
     pub(crate) hss_cache_blocks_per_seq: Option<u32>,
 }
 
+/// 2026-10-05: The `--kv-cache-dtype` value that takes the checkpoint's declared format.
+pub(crate) const KV_DTYPE_DECLARED: &str = "declared";
+
+/// 2026-10-05: The KV-cache dtype the checkpoint declares (`QuantizationConfig::kv_cache_format`):
+/// `fp8` for FP8. A checkpoint that declares none is refused by name: `declared` has no default.
+pub(crate) fn declared_kv_dtype(config: &ModelConfig) -> Result<&'static str> {
+    match config
+        .quantization_config
+        .as_ref()
+        .and_then(|q| q.kv_cache_format.as_deref())
+    {
+        Some("FP8") => Ok("fp8"),
+        Some(other) => anyhow::bail!(
+            "--kv-cache-dtype declared: the checkpoint declares KV-cache format {other:?}, which \
+             has no cache in the engine"
+        ),
+        None => anyhow::bail!(
+            "--kv-cache-dtype declared: the checkpoint declares no KV-cache format (no \
+             kv_cache_quant_algo or kv_cache_scheme in its quantization config); pass an \
+             explicit --kv-cache-dtype"
+        ),
+    }
+}
+
+/// 2026-10-05: The FP8 KV calibration window: an explicit `--fp8-kv-calibration-tokens`, else 0
+/// under `--kv-cache-dtype declared` (the checkpoint's scales, or 1.0 where it ships none), else
+/// MODEL.toml's `fp8_kv_calibration_tokens`.
+pub(crate) fn fp8_kv_calibration_tokens(
+    explicit: Option<usize>,
+    kv_declared: bool,
+    model_default: usize,
+) -> usize {
+    explicit.unwrap_or(if kv_declared { 0 } else { model_default })
+}
+
 /// 2026-09-26: Where the effective KV cache dtype came from
 /// (`resolve_kv_dtype_str`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,3 +361,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "kv_declared_tests.rs"]
+mod kv_declared_tests;
