@@ -10,6 +10,7 @@ use clap::Parser;
 
 pub mod bench_aggregate;
 mod bench_args;
+mod bench_calibrate;
 pub mod bench_card;
 pub(crate) mod bench_cause;
 pub mod bench_certify;

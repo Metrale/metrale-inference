@@ -20,6 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod calibration;
 pub mod collect;
 pub mod energy;
 pub mod energy_sampler;
