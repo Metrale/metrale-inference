@@ -116,7 +116,10 @@ impl TransformerModel {
                 KernelBatchResult::NotAdmitted
             };
             match done {
-                KernelBatchResult::Completed(v) => logits.extend(v),
+                KernelBatchResult::Completed(v) => {
+                    tracing::info!(target: "metrale::q12", n = k, "exact wave ran");
+                    logits.extend(v)
+                }
                 KernelBatchResult::NotAdmitted => {
                     logits.extend(self.prefill_streams_serial(sub, row_base + a, stream))
                 }
