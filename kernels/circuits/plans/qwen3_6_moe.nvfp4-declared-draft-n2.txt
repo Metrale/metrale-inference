@@ -56,7 +56,7 @@ g0020 draft.moe_ffn [experts_gate_up,experts_act,experts_down,shared_gate_up,sha
   shared_gate_up: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
   shared_act: bf16 -> [compute f32] -> bf16
   shared_down: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> bf16
-g0021 draft.moe_ffn [shared_gate,blend] moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped reference rule=moe_blend_grouped_draft_bf16 fuses={sg} writes={f:bf16} compute=cuda_core
+g0021 draft.moe_ffn [shared_gate,blend] moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped reference rule=moe_blend_grouped fuses={sg} writes={f:bf16} compute=cuda_core
   shared_gate: bf16 -> [act bf16 | weight bf16->bf16 | mma bf16*bf16 | accumulate f32 | scale none] -> f32 (rule)
   blend: bf16,f32,bf16,f32 (rule) -> [scatter f32 | combine f32] -> bf16
 g0022 draft.moe_ffn [add] residual_add::bf16_residual_add reference rule=ffn_residual_add writes={y:bf16} compute=memory

@@ -1955,7 +1955,9 @@ priority = 100
 cite = "ml/moe/forward_bf16_grouped_decode.rs:144-186 (gate+up, then down, the shared expert in the same launches)"
 
 # 2026-10-05: The BF16 drafter's router and top-k: per row at every width
-# (`GroupedRouting::PerRow`), through `MoeLayer::forward`'s legacy one-row path at one row.
+# (`GroupedRouting::PerRow`), through `MoeLayer::forward`'s legacy one-row path at one row, whose
+# blend (`moe_weighted_sum_blend`) outranks the grouped one there; from two rows the grouped blend
+# below serves it as it serves the FP8 drafter.
 [[rule]]
 id = "moe_router_gemv_draft_bf16"
 pattern = [{ op = "router" }]
@@ -1992,7 +1994,7 @@ rows = [1, 1]
 modes = ["draft"]
 when = { draft_moe_experts = "bf16" }
 numerics = "reference"
-priority = 100
+priority = 110
 cite = "ml/moe/forward.rs:446-476 (sum of w * out plus sigmoid(x . seg) * shared, rounded to BF16 once); the EP reduce is a no-op without EP"
 
 [[rule]]
@@ -2033,37 +2035,11 @@ kernels = [{ module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp
 repeat = "once"
 emitter = "moe_blend"
 rows = [1, 256]
-modes = ["decode", "multi_seq", "verify", "verify_batch"]
+modes = ["decode", "multi_seq", "verify", "verify_batch", "draft"]
 when = { row_tiers = "canonical", moe_fp8_tc = "on" }
 numerics = "reference"
 priority = 100
 cite = "ml/moe/forward_fp8_grouped_decode.rs:402 (sum of w * expert row through token_to_perm, plus sigmoid(x . seg) * shared, one BF16 rounding)"
-
-[[rule]]
-id = "moe_blend_grouped_draft"
-pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
-kernels = [{ module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp8_grouped" }]
-repeat = "once"
-emitter = "moe_blend"
-rows = [1, 256]
-modes = ["draft"]
-when = { row_tiers = "canonical", moe_fp8_tc = "on", draft_moe_experts = "fp8" }
-numerics = "reference"
-priority = 100
-cite = "ml/mtp_head/forward.rs:332 (MoeLayer::forward, one row); ml/mtp_head/forward_batch_ffn.rs:132; ml/moe/forward_fp8_grouped_decode.rs:402"
-
-[[rule]]
-id = "moe_blend_grouped_draft_bf16"
-pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
-kernels = [{ module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp8_grouped" }]
-repeat = "once"
-emitter = "moe_blend"
-rows = [2, 256]
-modes = ["draft"]
-when = { draft_moe_experts = "bf16" }
-numerics = "reference"
-priority = 100
-cite = "ml/moe/forward_bf16_grouped_decode.rs:186-200 (the grouped blend of the batched BF16 propose)"
 
 # 2026-09-28: Vocabulary heads.
 

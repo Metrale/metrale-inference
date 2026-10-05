@@ -109,20 +109,43 @@ fn lightning_experts_are_a_format_and_activation_policy_of_the_tc_grouped_kernel
         } else {
             Mode::MultiSeq
         };
-        // 2026-10-02: The family now has an NVFP4 g16 point (moe_nvfp4_grouped_tc.cu), so the
-        // weight format no longer differs; only the epilogue (ReLU² against SiLU·mul) does.
+        // 2026-10-02: The family has an NVFP4 g16 point (moe_nvfp4_grouped_tc.cu). 2026-10-05: The
+        // compared FP8 recipe runs its experts on the family's W8A8 point (`declared`), so the
+        // finding compares with that one: the weight format, the activation format and the
+        // epilogue (ReLU² against SiLU·mul) differ, each a policy of the one kernel family.
         let f = finding(row(&r, mode, rows, "moe.experts_up"), "moe_grouped_tc");
         assert_eq!(f.class, Class::PolicyVariant);
-        assert!(f.diffs.iter().all(|d| d.param != "weight"), "{:?}", f.diffs);
+        assert!(
+            f.diffs.iter().all(|d| d.kind == ParamKind::Policy),
+            "{:?}",
+            f.diffs
+        );
         assert_eq!(
             diff(f, "epilogue"),
             ("relu2".into(), "silu_mul".into(), ParamKind::Policy)
         );
-        let down = finding(row(&r, mode, rows, "moe.experts_down"), "moe_grouped_tc");
+        assert_eq!(
+            diff(f, "weight"),
+            (
+                "nvfp4/g16".into(),
+                "fp8/block128x128".into(),
+                ParamKind::Policy
+            )
+        );
+        assert_eq!(
+            diff(f, "activation"),
+            ("bf16".into(), "fp8/g128".into(), ParamKind::Policy)
+        );
+        // 2026-10-05: The down projection needs no new kernel: an instantiated point serves it
+        // (the family's NVFP4 g16 point, compared with the FP8 recipe's W8A8 experts, ranks
+        // behind a family the down node fits with no difference).
+        let down = row(&r, mode, rows, "moe.experts_down")
+            .primary
+            .as_ref()
+            .expect("classified");
         assert!(
-            down.diffs.iter().all(|d| d.param != "weight"),
-            "{:?}",
-            down.diffs
+            matches!(down.class, Class::Shared | Class::SharedUnmeasured),
+            "{down:?}"
         );
     }
 }

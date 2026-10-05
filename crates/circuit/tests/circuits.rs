@@ -396,7 +396,17 @@ fn both_gdn_arms_plan_and_the_route_arm_is_the_off_plan() {
         let rules = |p: &metrale_circuit::FusionPlan| -> BTreeSet<String> {
             p.groups.iter().map(|g| g.rule.clone()).collect()
         };
-        for rows in [16u64, 128] {
+        // 2026-10-05: 16 and 128 rows, but only widths the instance serves: an instance whose
+        // multi-sequence plans stop below them (the long-context MTP recipe runs at most two
+        // sequences) takes its widest rung. One that plans none (a verify-only variant) takes
+        // both, as the recipe it varies does.
+        let rungs: Vec<u64> = match inst.plans.get(&Mode::MultiSeq) {
+            Some(p) if !p.contains(&16) || !p.contains(&128) => {
+                p.iter().max().copied().into_iter().collect()
+            }
+            _ => vec![16, 128],
+        };
+        for rows in rungs {
             let on = fuse(&inst.policy, Mode::MultiSeq, rows);
             let r = rules(&on);
             let ba = if rows >= 96 {
@@ -442,6 +452,7 @@ fn both_gdn_arms_plan_and_the_route_arm_is_the_off_plan() {
     }
     // 2026-10-03: The dense recipe, it under `declared`, its exact-verify and declared-activation
     // variants, and the three FP8 MoE recipes (bf16 and NVFP4 heads, 2026-10-04 the long-context
-    // MTP recipe under `adaptive`).
-    assert_eq!(checked, 7, "golden instances checked");
+    // MTP recipe under `adaptive`). 2026-10-05: and the NVFP4 35B recipe with its row-major
+    // variant.
+    assert_eq!(checked, 9, "golden instances checked");
 }
