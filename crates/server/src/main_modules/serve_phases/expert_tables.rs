@@ -139,6 +139,14 @@ pub(crate) fn publish(d: Option<&TablesDecision>) -> Result<()> {
             d.describe(),
             metrale_kernel_tree::SHA256
         ),
+        MoeExpertTables::Skip if metrale_model_layers::layers::moe_prefill_tc_enabled() => {
+            tracing::info!(
+                "MoE expert tables: {} (kernel tree {}); not built: --moe-prefill-tc prefills on \
+                 the grouped tensor-core path",
+                d.describe(),
+                metrale_kernel_tree::SHA256
+            )
+        }
         MoeExpertTables::Skip => tracing::warn!(
             "MoE expert tables: {} (kernel tree {}); MoE prefill runs the grouped GEMM on the \
              row-major experts",
