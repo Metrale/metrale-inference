@@ -108,6 +108,18 @@ pub struct ServeServiceArgs {
     #[arg(long, value_name = "SPEC", default_value = "declared", value_parser = parse_activation_quantization)]
     pub activation_quantization: metrale_config::ActivationQuantization,
 
+    /// Exact prefill waves, for `--prefill-varlen-batch` / `--prefill-codispatch`: each
+    /// prompt of a wave runs its attention/GDN half with its own single-stream context and
+    /// the FFN (MoE) half runs once over the wave's rows, so every prompt keeps the bits of
+    /// its single-stream prefill while the expert weights are read once per wave. A wave that
+    /// cannot run exactly runs its prompts one by one. Unlike the plain wave, allowed beside a
+    /// fixed `--activation-quantization`.
+    ///
+    /// Environment fallback: `METRALE_PREFILL_WAVE_EXACT` (presence) turns it on when this
+    /// flag is absent; a given flag wins over it.
+    #[arg(long)]
+    pub prefill_wave_exact: bool,
+
     /// Vision input area bound in pixels, applied before patching. A non-zero
     /// value overrides the checkpoint in both directions: it may raise the bound
     /// as well as lower it.

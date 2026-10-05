@@ -16,8 +16,7 @@ use super::Qwen3SsmLayer;
 use super::ple_seq::ple_seq_state;
 use crate::layer::{ForwardContext, GdnPrefillBuffers, LayerState, TransformerLayer};
 use crate::layer::{
-    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerSplitPrefill, LayerWeightSetup,
-    LayerWriteOnAccept,
+    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerWeightSetup, LayerWriteOnAccept,
 };
 
 impl TransformerLayer for Qwen3SsmLayer {
@@ -160,20 +159,14 @@ impl TransformerLayer for Qwen3SsmLayer {
         if self.hc.is_some() {
             return self.prefill_inner_hc(hidden, num_tokens, state, seq_len_start, ctx, stream);
         }
-        self.prefill_inner(
-            hidden,
-            residual,
-            num_tokens,
-            state,
+        let _ = (
             kv_cache,
-            seq_len_start,
             block_table,
             disk_block_ids,
             disk_last_offloaded_per_layer,
             kv_write_start,
-            ctx,
-            stream,
-        )
+        );
+        self.prefill_inner(hidden, residual, num_tokens, state, ctx, stream)
     }
 
     fn prefill_phase1(
@@ -378,123 +371,5 @@ impl LayerAuxState for Qwen3SsmLayer {
             .ok_or_else(|| anyhow::anyhow!("restore_aux: no PLE on this layer"))?;
         let st = ple_seq_state(ple, state, gpu)?;
         ple.restore_aux(st, blob, gpu, stream)
-    }
-}
-
-impl LayerSplitPrefill for Qwen3SsmLayer {
-    fn prefill_phase1_proj_batched(
-        &self,
-        hidden_stacked: DevicePtr,
-        residual_stacked: DevicePtr,
-        total_tokens: usize,
-        gdn_bufs: &GdnPrefillBuffers,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        self.prefill_phase1_proj_batched_inner(
-            hidden_stacked,
-            residual_stacked,
-            total_tokens,
-            gdn_bufs,
-            ctx,
-            stream,
-        )
-    }
-
-    fn prefill_phase1_conv1d_one(
-        &self,
-        state: &mut dyn LayerState,
-        token_offset: usize,
-        len: usize,
-        gdn_bufs: &GdnPrefillBuffers,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        self.prefill_phase1_conv1d_one_inner(state, token_offset, len, gdn_bufs, ctx, stream)
-    }
-
-    fn prefill_phase1_l2_batched(
-        &self,
-        total_tokens: usize,
-        gdn_bufs: &GdnPrefillBuffers,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        self.prefill_phase1_l2_batched_inner(total_tokens, gdn_bufs, ctx, stream)
-    }
-
-    fn prefill_gdn_full(
-        &self,
-        state: &mut dyn LayerState,
-        gdn_bufs: &GdnPrefillBuffers,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        self.prefill_gdn_full_inner(state, gdn_bufs, ctx, stream)
-    }
-
-    fn prefill_gdn_full_batched(
-        &self,
-        h_state_ptrs: DevicePtr,
-        gdn_bufs: &GdnPrefillBuffers,
-        batch_size: u32,
-        chunk_len: u32,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        self.prefill_gdn_full_batched_inner(
-            h_state_ptrs,
-            gdn_bufs,
-            batch_size,
-            chunk_len,
-            ctx,
-            stream,
-        )
-    }
-
-    fn prefill_gdn_full_batched_fla_varlen(
-        &self,
-        h_state_ptrs: DevicePtr,
-        gdn_bufs: &GdnPrefillBuffers,
-        batch_size: u32,
-        cu_seqlens: DevicePtr,
-        max_num_chunks: u32,
-        total_nt: usize,
-        max_seqlen: u32,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<bool> {
-        self.prefill_gdn_full_batched_fla_varlen_inner(
-            h_state_ptrs,
-            gdn_bufs,
-            batch_size,
-            cu_seqlens,
-            max_num_chunks,
-            total_nt,
-            max_seqlen,
-            ctx,
-            stream,
-        )
-    }
-
-    fn prefill_phase3(
-        &self,
-        hidden: DevicePtr,
-        residual: DevicePtr,
-        num_tokens: usize,
-        gdn_bufs: &GdnPrefillBuffers,
-        token_offset: usize,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        self.prefill_phase3_inner(
-            hidden,
-            residual,
-            num_tokens,
-            gdn_bufs,
-            token_offset,
-            ctx,
-            stream,
-        )
     }
 }

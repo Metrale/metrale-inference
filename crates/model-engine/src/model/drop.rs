@@ -40,5 +40,8 @@ impl Drop for TransformerModel {
         // because the pool holds no `gpu` handle. It is allocated on first use,
         // so this is a no-op when the spill tier never ran.
         self.ssm_snapshots.free_staging(self.gpu.as_ref());
+        if let Some((ptr, _)) = self.wave_ffn_staging.lock().take() {
+            let _ = self.gpu.free(ptr);
+        }
     }
 }

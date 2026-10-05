@@ -131,6 +131,9 @@ pub struct SchedLevers {
     pub codispatch_window_ms: u64,
     /// 2026-09-25: `METRALE_PREFILL_CODISPATCH_SETTLE_MS` (default 10).
     pub codispatch_settle_ms: u64,
+    /// 2026-10-05: `METRALE_PREFILL_CODISPATCH_PROBE_MS` (default 1): how long a lone request waits
+    /// for a second one before the co-dispatch window gives up on it.
+    pub codispatch_probe_ms: u64,
     /// 2026-09-25: `METRALE_VISION_CODISPATCH=1|true` (default off).
     pub vision_codispatch: bool,
     /// 2026-09-25: `METRALE_BEAM_CODISPATCH` (default on; `0`/`false`
@@ -333,6 +336,7 @@ impl SchedLevers {
             prefill_varlen: metrale_model_layers::layers::ops::prefill_varlen_enabled(),
             codispatch_window_ms: num("METRALE_PREFILL_CODISPATCH_WINDOW_MS", 100),
             codispatch_settle_ms: num("METRALE_PREFILL_CODISPATCH_SETTLE_MS", 10),
+            codispatch_probe_ms: num("METRALE_PREFILL_CODISPATCH_PROBE_MS", 1),
             vision_codispatch: opt_in_word("METRALE_VISION_CODISPATCH"),
             beam_codispatch: metrale_config::levers::var("METRALE_BEAM_CODISPATCH")
                 .is_none_or(|v| v != "0" && !v.eq_ignore_ascii_case("false")),
@@ -404,6 +408,7 @@ impl SchedLevers {
             prefill_varlen: false,
             codispatch_window_ms: 100,
             codispatch_settle_ms: 10,
+            codispatch_probe_ms: 1,
             vision_codispatch: false,
             beam_codispatch: true,
             bisect_q12_disable: false,

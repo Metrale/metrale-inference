@@ -19,19 +19,27 @@ impl Qwen3SsmLayer {
         residual: DevicePtr,
         num_tokens: usize,
         state: &mut dyn LayerState,
-        _kv_cache: &mut PagedKvCache,
-        _seq_len_start: usize,
-        _block_table: &mut Vec<u32>,
-        _disk_block_ids: &mut Vec<u32>,
-        _disk_last_offloaded_per_layer: &mut Vec<u32>,
-        _kv_write_start: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        self.prefill_inner_ex(hidden, residual, num_tokens, state, false, ctx, stream)
+    }
+
+    /// 2026-10-05: The prefill body; with `defer_ffn` it stops after the post-GDN norm and the
+    /// caller runs the FFN half (`prefill_ffn_tail`) once over a wave's rows.
+    pub(super) fn prefill_inner_ex(
+        &self,
+        hidden: DevicePtr,
+        residual: DevicePtr,
+        num_tokens: usize,
+        state: &mut dyn LayerState,
+        defer_ffn: bool,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
         let h = ctx.config.hidden_size;
         let eps = ctx.config.rms_norm_eps as f32;
         let k = num_tokens as u32;
-        let bf16 = 2usize;
         let fp32 = 4usize;
 
         // 2026-09-25: The value labels this layer's `METRALE_GDN_DUMP` output;
@@ -179,19 +187,53 @@ impl Qwen3SsmLayer {
             eps,
             stream,
         )?;
-        self.ffn
-            .forward_prefill(ctx.buffers.norm_output(), num_tokens, ctx, stream)?;
-        // 2026-09-25: METRALE_GDN_DUMP tag `moe_out`: the FFN output.
-        super::debug::maybe_dump_gdn_buf(
-            ctx.gpu,
-            ctx.buffers.moe_output(),
-            (num_tokens - 1) * h * bf16,
-            h,
-            ssm_layer_idx,
-            "moe_out",
-            &super::debug::DUMP_GNORM,
+        // 2026-10-05: A wave prefill (`LayerSplitPrefill::prefill_mixer`) stops here: the FFN
+        // half runs once over every stream's rows (`prefill_ffn_tail`).
+        if defer_ffn {
+            return Ok(());
+        }
+        self.prefill_ffn_tail(
+            hidden,
+            ctx.buffers.norm_output(),
+            num_tokens,
+            Some(ssm_layer_idx),
+            ctx,
             stream,
         )?;
+
+        prof!("moe_ffn", t0);
+
+        Ok(())
+    }
+
+    /// 2026-10-05: The FFN half of `prefill_inner_ex` over `num_tokens` rows: `ffn_in` holds
+    /// their post-GDN norm output and `hidden` their residual stream. `dump_idx` labels the
+    /// `METRALE_GDN_DUMP` output of a single-stream call; a wave passes `None`.
+    pub(super) fn prefill_ffn_tail(
+        &self,
+        hidden: DevicePtr,
+        ffn_in: DevicePtr,
+        num_tokens: usize,
+        dump_idx: Option<usize>,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let h = ctx.config.hidden_size;
+        let bf16 = 2usize;
+        self.ffn.forward_prefill(ffn_in, num_tokens, ctx, stream)?;
+        // 2026-09-25: METRALE_GDN_DUMP tag `moe_out`: the FFN output.
+        if let Some(idx) = dump_idx {
+            super::debug::maybe_dump_gdn_buf(
+                ctx.gpu,
+                ctx.buffers.moe_output(),
+                (num_tokens - 1) * h * bf16,
+                h,
+                idx,
+                "moe_out",
+                &super::debug::DUMP_GNORM,
+                stream,
+            )?;
+        }
         ops::residual_add(
             ctx.gpu,
             self.residual_add_k,
@@ -199,10 +241,6 @@ impl Qwen3SsmLayer {
             ctx.buffers.moe_output(),
             (num_tokens * h) as u32,
             stream,
-        )?;
-
-        prof!("moe_ffn", t0);
-
-        Ok(())
+        )
     }
 }
