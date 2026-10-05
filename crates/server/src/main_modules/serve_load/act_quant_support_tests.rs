@@ -103,7 +103,7 @@ fn prefill_levers_are_refused_beside_a_fixed_format() {
         for s in ["declared", "adaptive,ffn:nvfp4"] {
             let why = prefill_lever_refusal(&v(s), varlen, codispatch, first, false).expect(s);
             assert!(why.contains(needle), "{s}: {why}");
-            assert!(why.contains("METRALE_PREFILL_WAVE_EXACT"), "{s}: {why}");
+            assert!(why.contains("--prefill-wave-exact"), "{s}: {why}");
         }
     }
     // 2026-10-01: Co-dispatch turns the batched first chunk on by itself; it is named once.

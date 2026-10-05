@@ -107,8 +107,15 @@ pub fn prefill_varlen_enabled() -> bool {
 /// 2026-10-05: The resolved exact-wave decision ([`prefill_wave_exact_enabled`]).
 static PREFILL_WAVE_EXACT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// 2026-10-05: Whether batched prefill waves run the exact wave: `METRALE_PREFILL_WAVE_EXACT`
-/// (presence), read once per process. Each stream of an exact wave keeps the bits of its
+/// 2026-10-05: Publish the command line's `--prefill-wave-exact`; returns the value in force
+/// (as [`set_prefill_varlen_from_cli`]).
+pub fn set_prefill_wave_exact_from_cli(enabled: bool) -> bool {
+    let _ = PREFILL_WAVE_EXACT.set(enabled);
+    *PREFILL_WAVE_EXACT.get().expect("just set")
+}
+
+/// 2026-10-05: Whether batched prefill waves run the exact wave: `--prefill-wave-exact`, else
+/// `METRALE_PREFILL_WAVE_EXACT` (presence), resolved once per process. Each stream of an exact wave keeps the bits of its
 /// single-stream prefill. The model engine's wave dispatch and the serve's check of the
 /// cross-sequence prefill levers beside a fixed `--activation-quantization` read this one value.
 pub fn prefill_wave_exact_enabled() -> bool {

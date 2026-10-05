@@ -39,6 +39,7 @@ fn an_empty_command_line_publishes_nothing_the_environment_owns() {
             expert_quantization: ExpertQuantization::Fp8,
             prefill_codispatch: None,
             prefill_varlen: None,
+            prefill_wave_exact: None,
             ssm_tail_midchunk: None,
             hermetic: false,
         }
@@ -96,11 +97,13 @@ fn each_presence_flag_publishes_its_non_default_state_only() {
     let p = plan(&[
         "--prefill-codispatch",
         "--prefill-varlen-batch",
+        "--prefill-wave-exact",
         "--no-ssm-tail-midchunk",
         "--hermetic",
     ]);
     assert_eq!(p.prefill_codispatch, Some(true));
     assert_eq!(p.prefill_varlen, Some(true));
+    assert_eq!(p.prefill_wave_exact, Some(true));
     assert_eq!(p.ssm_tail_midchunk, Some(false));
     assert!(p.hermetic);
 }

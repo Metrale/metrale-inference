@@ -151,7 +151,7 @@ pub(crate) fn support(value: &ActivationQuantization, kind: ModelKind) -> Result
 /// forward whose GEMMs are sized by the wave's total tokens, so a prompt's prefill, and from it
 /// its whole output, depends on its wave-mates. `None` under `adaptive`, or with all three off.
 ///
-/// 2026-10-05: Also `None` with `exact_wave` (`METRALE_PREFILL_WAVE_EXACT`): every wave then
+/// 2026-10-05: Also `None` with `exact_wave` (`--prefill-wave-exact`): every wave then
 /// runs the exact wave, or each of its streams the single-stream prefill, so a prompt's prefill
 /// bits are those of its single-stream prefill whatever its wave-mates (proven by the strict
 /// prefill-bits gate, PR description), and the forward sized by the wave never runs.
@@ -184,7 +184,7 @@ pub(crate) fn prefill_lever_refusal(
             "--activation-quantization {value} with {}: these prefill concurrently arriving \
              prompts in one forward sized by the wave's total tokens, so a prompt's output \
              depends on its wave-mates; drop them, add --activation-quantization adaptive, or \
-             set METRALE_PREFILL_WAVE_EXACT (each prompt keeps its single-stream prefill bits)",
+             add --prefill-wave-exact (each prompt keeps its single-stream prefill bits)",
             on.join(" and ")
         )
     })
