@@ -38,10 +38,16 @@ const SHAPES: &[(usize, usize, &str)] = &[
     // lanes with n >= N. The kernel masks them instead of returning, so they still
     // reach the shared-memory staging barriers; this shape exercises that path.
     (4098, 3072, "N not mult of 4"),
+    // 2026-10-05: The Qwen3.6-35B-A3B router (256 experts x hidden 2048), run at the decode's
+    // widths too (`MS_ROUTER`), where the launcher splits the rows over block rows.
+    (256, 2048, "qwen3.6 router"),
 ];
 // 2026-09-25: Widths up to the kernel's MAX_M (16). The GLM prefill sub-chunk
 // (`glm5next_layer::PREFILL_ROWS`) is 16 rows.
 const MS: &[usize] = &[1, 2, 4, 8, 9, 12, 15, 16];
+// 2026-10-05: The router's widths above MAX_M: one launch with ceil(M / 16) block rows of at most
+// 16 rows each (the decode's `router_gemv_batchm` at 128 sequences with one draft is 256 rows).
+const MS_ROUTER: &[usize] = &[17, 64, 128, 253, 256];
 const ITERS: usize = 50;
 const WARMUP: usize = 10;
 
@@ -107,7 +113,7 @@ fn launch_batchm(
     out_stride: usize,
 ) -> Result<()> {
     KernelLaunch::new(g, kern)
-        .grid([div_ceil(n as u32, 4), 1, 1])
+        .grid([div_ceil(n as u32, 4), div_ceil(m as u32, 16), 1])
         .block([256, 1, 1])
         .arg_ptr(a)
         .arg_ptr(b)
@@ -137,7 +143,12 @@ fn main() -> Result<()> {
         let w: Vec<bf16> = (0..n * k_dim).map(|_| bf16::from_f32(rng.r())).collect();
         let wd = up_bf16(g, &w)?;
 
-        for &m in MS {
+        let wide: &[usize] = if label == "qwen3.6 router" {
+            MS_ROUTER
+        } else {
+            &[]
+        };
+        for &m in MS.iter().chain(wide) {
             let a: Vec<bf16> = (0..m * k_dim).map(|_| bf16::from_f32(rng.r())).collect();
             let ad = up_bf16(g, &a)?;
             let c_ref = g.alloc(m * n * 2)?;
