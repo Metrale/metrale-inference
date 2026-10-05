@@ -318,7 +318,12 @@ How to split:
    energy; no request timeout at C >= 64), running vLLM's published configuration. A vLLM
    stall is a publishable result.
 2. **Win on both axes**: tok/s AND J/tok at every rung from C1 to C128. If a lever buys
-   tok/s but costs J/tok, say so.
+   tok/s but costs J/tok, say so. **Read
+   `.claude/skills/new-hardware/references/lever-patterns.md` before choosing a lever** (the
+   same (symptom -> root cause -> lever) rules and anti-patterns apply whether or not a new
+   hardware class is involved), and **append a `.claude/skills/new-hardware/ledger/levers.toml`
+   entry after every verdict** (kept, discarded, marginal, regressed, parity-broken or failed) —
+   a non-kept entry records its failure mode, what caught it and what would have caught it sooner.
 3. **Recipe and BENCH.toml entries**: measure-then-declare bounds; pin the precision tier
    explicitly (`weight_quantization`).
 4. **Certify and merge** as `AGENTS.md` and `CONTRIBUTING.md` describe: the certification

@@ -85,9 +85,11 @@ Detail lives in the references; read each when its step comes up:
 | `references/parameterization.md` | the standing objective, hardware facts as data, the stability gate, the tally |
 | `references/bring-up-order.md` | the ordered bring-up, fastest first, with commands |
 | `references/improvement-loop.md` | the loop after the baseline, its exit and stop conditions |
+| `references/lever-patterns.md` | recurring (symptom -> root cause -> lever) rules mined from the lever journal, incl. anti-patterns and the gates that catch failures early; read BEFORE choosing a lever |
 | `references/measurement-discipline.md` | the rules every number must follow |
 | `.claude/agents/flag-parity-oracle.md` | PARITY-O.R.A.C.L.E, the blocking config-equivalence review |
 | `ledger/<class>.toml` | the bring-up ledger: TTBP, TTPV, iterations, levers, lines added and removed |
+| `ledger/levers.toml` | the lever journal: one entry per optimization attempt, kept OR discarded OR failed, with its symptom, root cause and evidence |
 
 ## The Hardware Beachhead Campaign
 
@@ -177,7 +179,11 @@ Run both axes; `references/two-axis-venn.md` has the procedure.
    image digest. The PARITY-O.R.A.C.L.E (`.claude/agents/flag-parity-oracle.md`) must return
    PARITY-PASS on both sides' resolved configs before the baseline is recorded.
 10. **Improvement loop** (`references/improvement-loop.md`), keeping parity, until the exit
-    criterion holds; record `ttpv` in the ledger.
+    criterion holds; record `ttpv` in the ledger. **Read `references/lever-patterns.md` BEFORE
+    choosing a lever each iteration; append a `ledger/levers.toml` entry AFTER every verdict**
+    (kept, discarded, marginal, regressed, parity-broken or failed) — a non-kept entry is as
+    valuable as a kept one and needs its failure mode, what caught it, and what would have
+    caught it sooner.
 11. **Accuracy bar** (Tier 3): BFCL with N, sample pct and the draw's SHA; agentic-webserver
     with a same-night control.
 12. **Certification**; then the next model, from step 1.

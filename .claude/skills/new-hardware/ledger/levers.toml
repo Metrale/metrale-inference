@@ -1,0 +1,696 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-05: The LEVER JOURNAL. One [[lever]] per optimization ATTEMPT made during a
+# Hardware Beachhead Campaign or a /new-model improvement loop, whether it was kept, discarded,
+# or failed outright. `ledger/<class>.toml` tracks campaign MILESTONES (TTBP/TTPV/LKB/LAB) per
+# hardware+model combo; this file tracks the individual LEVERS behind those milestones, so a
+# later campaign can find "what worked and why" instead of re-discovering it. A failed or
+# discarded entry is as valuable as a kept one: it is the fastest way to NOT repeat a mistake.
+# Append an entry after every loop-iteration verdict (`references/improvement-loop.md` step f)
+# and after every methodology failure caught along the way, even when no code shipped.
+# Read `references/lever-patterns.md` BEFORE choosing a lever on a new campaign: it is mined
+# from this file and states the recurring (symptom -> root cause -> lever) rules.
+
+# Schema (every key present; an inapplicable field is "" / 0 / [] with a one-line reason in
+# `notes` if that is not obvious):
+#   id                 unique slug: <hardware-class>-<model-or-area>-<short-name>
+#   date               the verdict date (not the start date), YYYY-MM-DD
+#   hardware_class     kernels/<class>/ id, e.g. "gb10", "hopper"
+#   model              checkpoint id or area, with (dense/MoE) and the precision tier if relevant
+#   recipe_or_tier     the recipe name or --weight-quantization/--activation-quantization tier
+#   symptom            the PROFILE SIGNATURE that triggered the attempt (tool + shape + numbers),
+#                      e.g. "kernel X = 85% of C16 step, grid 8-136 CTAs on 132 SMs"
+#   diagnosis_tool     one of: nsys | ncu | bench | parity-oracle | roofline | microbench |
+#                      circuit-ledger-test | manual-inspection  (the tool that FOUND the gap or
+#                      the defect; for a pure methodology failure, the tool that caught it)
+#   root_cause_class   from the controlled vocabulary below
+#   lever_type         one of: data-row | parameterization | precision-fix | scheduling |
+#                      fusion | new-kernel | recipe-flag | process-fix
+#                      ("process-fix": no kernel/recipe changed; the fix is to how the campaign
+#                      measures or builds, e.g. a build-hygiene or harness defect)
+#   lkb_effect         free text: residual delta, coverage delta, family promoted (or "none yet")
+#   parity_tier_kept   "1" | "2" | "accuracy-gated" | "n/a" (bit-parity.md tiers; "n/a" only for
+#                      a pure process-fix that touches no served bits)
+#   per_rung           array of { rung, tok_s_pct, j_tok_pct, n, ttft_pct? }; tok_s_pct/j_tok_pct
+#                      are the lever's delta vs its own control, same box, same build, from the
+#                      campaign's timed A/B (never a cross-box number); [] if never timed
+#   verdict            one of:
+#                        kept          - wins without losing another rung outside noise, shipped
+#                        discarded     - correctly implemented, proven, but does not pay
+#                        marginal      - inside or barely outside the noise band; not worth a PR
+#                        regressed     - made speed OR energy worse on some rung when combined
+#                                        with other kept levers, or vs an earlier measurement
+#                        parity-broken - failed Tier 1/2 or the accuracy bar
+#                        failed        - did not build, did not route, ran on a stale binary, or
+#                                        the "pass" was a vacuous test
+#   verdict_reason     one line: why
+#   failure_mode       (non-kept only) what went wrong, precisely
+#   caught_by          (non-kept only) which gate, tool or person caught it
+#   time_lost_hours    (non-kept only) wall-clock hours burned before the catch
+#   would_catch_earlier (non-kept only) the cheapest gate that WOULD have caught it sooner, and
+#                      why it did not fire this time (missing, not run yet, or not built)
+#   effort_hours       wall-clock hours for the whole attempt (diagnosis through verdict)
+#   transferability    which other classes or models this lever, or this failure mode, likely
+#                      applies to
+#   links              { pr = "", commit = "", evidence = "" } — evidence is a public-safe
+#                      description ("same-box microbench vs the GB10 reference box's own ..."),
+#                      NEVER an internal path or hostname; "" if there is none to cite publicly
+#   notes              one or two lines of color a future reader needs
+
+# Controlled vocabulary for root_cause_class (defined here; extend by adding a bullet, never a
+# synonym of an existing one):
+#  - inherited-constant-underfill   a constant (SM-count tile width, util ceiling, buffer size,
+#                                   batch cap) sized for the PARENT class or an earlier, smaller
+#                                   model silently underfills the new one
+#  - below-declared-precision       a path runs a format BELOW what the checkpoint declares (or
+#                                   below what the comparison engine runs), found by the parity
+#                                   oracle or a Tier-2 check, not by a speed regression
+#  - phase-serialization            the prefill burst and the decode steady-state are mixed in
+#                                   one profile window, hiding which phase actually costs time
+#  - bandwidth-underutilization     a kernel leaves achievable DRAM/L2 bandwidth on the table at
+#                                   its shape (measured against the class's own roofline)
+#  - launch-overhead                too many small launches, or host-side gaps between them, at
+#                                   this concurrency
+#  - duplicate-materialization      a redundant copy of weights or activations is kept resident
+#                                   or computed (a transposed twin table, a predequant copy)
+#  - memory-waste                   a buffer or arena is sized unconditionally for a flag/feature
+#                                   every caller pays for, used or not
+#  - numerics-path-mismatch         two code paths that should compute the same bits for the same
+#                                   inputs (serial vs batched, mock vs real, old vs new kernel)
+#                                   silently diverge
+#  - silent-gate-bypass             a lever's own predicate never actually arms at the shape
+#                                   being measured (refused by a scheduler policy, routed around,
+#                                   or the env/flag is read by nothing) — the "pass" or "no
+#                                   effect" result proves nothing because the lever never ran
+#  - measurement-methodology-error  the result is an artifact of HOW it was measured (a debug
+#                                   build timed as release, a vacuous identity check comparing
+#                                   two empty things, a contaminated or stale-binary run), not of
+#                                   the code under test
+#  - config-drift                   an unpinned dependency, image tag or version moved between
+#                                   two measurements that were assumed comparable
+
+[[lever]]
+id = "gb10-moe-nvfp4-lean-expert-decode"
+date = "2026-10-04"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE, declared)"
+recipe_or_tier = "nvfp4-declared, grouped NVFP4 expert decode"
+symptom = "same-box energy microbench: the grouped-expert MoE kernel cost 12-30% more mJ/call than the comparison engine's equivalent kernel at equal time, M=8..255; SASS showed ~25 ALU ops per MMA for the E2M1/E4M3 decode vs the kept design's ~11"
+diagnosis_tool = "microbench"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "new-kernel"
+lkb_effect = "new weight_layout point on the MoE grouped-TC family (lean bit-field decode); single-class so far, no family promoted"
+parity_tier_kept = "1"
+per_rung = [
+  { rung = "C1",  tok_s_pct = 1.5,  j_tok_pct = -6.0,  n = 3 },
+  { rung = "C4",  tok_s_pct = 3.4,  j_tok_pct = -10.5, n = 3 },
+  { rung = "C8",  tok_s_pct = 4.5,  j_tok_pct = -11.0, n = 3 },
+  { rung = "C16", tok_s_pct = 3.0,  j_tok_pct = -9.0,  n = 3 },
+]
+verdict = "kept"
+verdict_reason = "bit-identical at every row count (proven by microtest across 1..256 rows, two routing distributions); cuts routed-expert energy 10-17% at equal time, reaching the comparison engine's own energy at small M and beating it 2-8% at M>=32"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 14
+transferability = "any class/model that runs this engine's NVFP4 grouped-expert MoE decode kernel family (same E2M1/E4M3 decode path); ruled out activation re-reads (L2) as the cause first, by a half-re-read variant that changed neither time nor energy"
+links = { pr = "", commit = "", evidence = "same-box microbench vs the comparison engine's own fused-MoE kernel, on the GB10 reference box, flock-held quiet window" }
+notes = "the decode ALU work, not activation bandwidth, was the power gap; ruling out bandwidth first (a byte-identical half-re-read variant) saved a wrong detour into tiling before the real cause (ALU) was found"
+
+[[lever]]
+id = "gb10-moe-nvfp4-exact-wave-prefill"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE, declared)"
+recipe_or_tier = "nvfp4-declared, --prefill-varlen-batch --prefill-codispatch --prefill-wave-exact"
+symptom = "cold/warm TTFT behind the comparison engine by 2-3x at C4+ (prefill burst never batched; batched prefill levers existed but were refused under the declared activation-quantization tier)"
+diagnosis_tool = "parity-oracle"
+root_cause_class = "phase-serialization"
+lever_type = "scheduling"
+lkb_effect = "no new kernel family; an existing per-stream fallback routed through the same single-stream pass the serial path already used (one decision site), so LKB residual is unchanged and measured coverage rose"
+parity_tier_kept = "1"
+per_rung = [
+  { rung = "C1",   tok_s_pct = 0.9, j_tok_pct = -0.6, n = 3, ttft_pct = 8.0 },
+  { rung = "C4",   tok_s_pct = 2.7, j_tok_pct = -3.0, n = 3 },
+  { rung = "C8",   tok_s_pct = 1.3, j_tok_pct = -2.4, n = 3 },
+  { rung = "C16",  tok_s_pct = 3.0, j_tok_pct = -3.5, n = 3, ttft_pct = -50.0 },
+  { rung = "C32",  tok_s_pct = 4.0, j_tok_pct = -4.3, n = 3 },
+  { rung = "C64",  tok_s_pct = 6.1, j_tok_pct = -6.4, n = 3 },
+  { rung = "C128", tok_s_pct = 6.8, j_tok_pct = -6.5, n = 3 },
+]
+verdict = "kept"
+verdict_reason = "wins tok/s and J/tok at every measured rung, halves p99 TTFT from C4 up, with a 'wave-exact' decision site that admits the batched levers only beside a FIXED format so serial bits never move"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 20
+transferability = "any model whose prefill forms a burst of same-length concurrent prompts under this engine's batched-prefill scheduler; the fixed-format admission rule is the reusable piece, independent of model"
+links = { pr = "#120", commit = "", evidence = "campaign PR #120, same-box A/B vs the comparison engine's own ladder" }
+notes = "four real identity bugs surfaced while proving this lever and are logged as their own entries below (per-stream fallback skipped the tail split, a metadata-slot size assumption, a pinned-staging upload race, and a state-pool exhaustion changing a downstream split point) — each would have shipped a silent numerics change without the strict-prefill-bits gate"
+
+[[lever]]
+id = "gb10-moe-nvfp4-first-varlen-codispatch-gate-fail"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE)"
+recipe_or_tier = "adaptive activation-quantization, --prefill-varlen-batch + --prefill-codispatch (no fixed-format admission yet)"
+symptom = "identity gate on a single request passed (0/19 differ) but the same gate at 16 concurrent requests failed: varlen alone 2/19 transcripts differ, varlen+codispatch together 15/19 differ"
+diagnosis_tool = "parity-oracle"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "scheduling"
+lkb_effect = "none (the lever was parked before productizing)"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "parity-broken"
+verdict_reason = "the batched prefill path for concurrent requests ran a format-sensitive wave (mixed attention/activation formats, a different recurrent-state split, a drafter capture skip) that was never proven bit-identical to the serial path; measured only at width 1 before this, which cannot see a width-dependent defect"
+failure_mode = "a lever proven only at concurrency 1 was assumed safe at concurrency 16+; the identity check that would have caught it was not run at the width the lever actually changes behavior at"
+caught_by = "parity-oracle identity gate at width 16 (strict transcript match), run before the timed A/B as campaign policy requires"
+time_lost_hours = 6
+would_catch_earlier = "run the identity gate at the WIDEST concurrency the lever can reach, not just width 1, before any timed A/B is scheduled"
+effort_hours = 6
+transferability = "any batched/varlen prefill lever on any class: a per-request fast path and a batched path diverging under load is the generic risk, not specific to this model"
+links = { pr = "", commit = "", evidence = "parked lever's gate output on the GB10 reference box" }
+notes = "this failure is what motivated the 'exact wave' redesign (entry above): instead of trying to make an arbitrary batched wave bit-identical to serial, admit the batched levers only beside a FIXED wave format, and refuse everything else"
+
+[[lever]]
+id = "gb10-moe-nvfp4-moe-prefill-tc"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE, declared)"
+recipe_or_tier = "nvfp4-declared + --moe-prefill-tc (grouped tensor-core MoE prefill)"
+symptom = "NVFP4 MoE prefill ran an E4M3xE4M3 path on an UNSCALED BF16->E4M3 activation cast — below the checkpoint's declared W4A16 format and different arithmetic from the (already-kept) decode kernel; it also kept ~18 GiB of transposed weight tables resident only for this path"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "below-declared-precision"
+lever_type = "new-kernel"
+lkb_effect = "prefill now reuses the decode engine's grouped-TC kernel family under a GroupedRows policy instead of a separate prefill-only kernel; duplicate-materialization removed (the transposed copies are skipped under the flag)"
+parity_tier_kept = "accuracy-gated"
+per_rung = [
+  { rung = "C1", tok_s_pct = 0.0, j_tok_pct = 0.0, n = 1, ttft_pct = -12.0 },
+]
+verdict = "kept"
+verdict_reason = "raises prefill to the DECLARED precision (same arithmetic as decode), frees ~17 GiB of duplicate weight tables, and cuts cold TTFT ~10-13%; the recipe-level flip to default-on waits on its own accuracy gate because the bits it produces are not the ones already certified"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 10
+transferability = "any declared-precision MoE model whose prefill path still runs an older, lower-precision kernel than its own decode path — check prefill and decode arithmetic for agreement as a standard audit step on a new MoE bring-up"
+links = { pr = "#121", commit = "", evidence = "campaign PR #121" }
+notes = "found by simply reading the prefill kernel's own math, not by profiling a speed gap — the lesson is to audit precision on BOTH phases explicitly, since a phase can be fast and simultaneously wrong"
+
+[[lever]]
+id = "gb10-moe-nvfp4-121-arena-growth-defect"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE)"
+recipe_or_tier = "--moe-prefill-tc (draft cut)"
+symptom = "a memory-ledger test's expected footprint for EVERY MoE model moved by 5-23% after adding an opt-in flag that only one path should need more memory for"
+diagnosis_tool = "circuit-ledger-test"
+root_cause_class = "memory-waste"
+lever_type = "parameterization"
+lkb_effect = "none (fixed before merge)"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "the new FP32 expert-product arena widened in all three buffer sizers unconditionally, instead of only when --moe-prefill-tc is actually set"
+failure_mode = "an opt-in flag's buffer sizing was written as a default-on code path and gated only at the call site that USES the buffer, not at the sizer that ALLOCATES it"
+caught_by = "the existing memory-ledger test suite, which asserts the resident-memory footprint of every model/recipe combination"
+time_lost_hours = 1
+would_catch_earlier = "run the full memory-ledger suite (not just the new flag's own test) before any resource-sizing change, since it is the one test that notices an unrelated model got bigger"
+effort_hours = 1
+transferability = "any PCND-shaped flag that changes a buffer sizer: gate the SIZER call, not only the feature's own call site, or every caller pays"
+links = { pr = "#121", commit = "", evidence = "the PR's own memory-ledger test diff" }
+notes = "fixed same-day; the fix and the lever it belongs to are recorded together under gb10-moe-nvfp4-moe-prefill-tc above"
+
+[[lever]]
+id = "gb10-moe-nvfp4-router-gemv-gqa4-pack"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE, declared)"
+recipe_or_tier = "nvfp4-declared"
+symptom = "nsys: at C128 the router GEMV took time proportional to a global-memory round trip per call despite being a tiny GEMV; paged decode attention read full per-head KV instead of exploiting a GQA group-of-4 repeat"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "new-kernel"
+lkb_effect = "two new points in existing families (register-resident router GEMV; a four-wide GQA pack for paged decode attention), both bit-identical, no family promoted yet"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "kept"
+verdict_reason = "bit-identical at every shape tested; router GEMV -25..-50% depending on M, GQA4 pack 1.15-1.40x on the attention kernel it replaces; proven in a burst trace before productizing"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 8
+transferability = "router GEMV: any MoE model's router on this class; GQA4 pack: any model with a GQA ratio of 8 using paged decode attention on this class"
+links = { pr = "#122", commit = "", evidence = "campaign PR #122, microtest + KERNEL-PERF regeneration" }
+notes = ""
+
+[[lever]]
+id = "gb10-moe-nvfp4-fp8-kv-declared"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE, declared)"
+recipe_or_tier = "nvfp4-declared + declared FP8 KV cache"
+symptom = "the comparison engine's checkpoint declares an FP8 KV cache; this engine was running it wider, so FP8 KV was tried to close the remaining attention-bandwidth gap"
+diagnosis_tool = "bench"
+root_cause_class = "below-declared-precision"
+lever_type = "precision-fix"
+lkb_effect = "none promoted; kept as a draft lever, not shipped"
+parity_tier_kept = "accuracy-gated"
+per_rung = [
+  { rung = "C32",  tok_s_pct = 0.0, j_tok_pct = 1.5, n = 3 },
+  { rung = "C64",  tok_s_pct = 0.0, j_tok_pct = 1.5, n = 3 },
+  { rung = "C128", tok_s_pct = 0.0, j_tok_pct = 1.5, n = 3 },
+]
+verdict = "discarded"
+verdict_reason = "no speed gain at any rung and J/tok got WORSE (+1.5%) at the wide rungs where the attention-bandwidth gap actually lives, despite raising precision toward the checkpoint's own declaration"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6
+transferability = "a reminder that 'closer to declared precision' and 'faster/cheaper' are independent axes — do not assume a precision-correctness fix is also a performance lever without timing it"
+links = { pr = "#123 (draft, not merged)", commit = "", evidence = "same-box A/B on the GB10 reference box" }
+notes = "kept open as a draft PR since it is still a correctness improvement toward the declared format, just not a performance one; the accuracy-gated decision about shipping it anyway is a precision/owner call, not a performance one"
+
+[[lever]]
+id = "gb10-moe-nvfp4-lever1b-batched-gdn-projections"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE, declared)"
+recipe_or_tier = "nvfp4-declared + exact-wave prefill + batched GDN/attention projections inside the wave"
+symptom = "profile of the exact-wave prefill burst: per-stream attention/GDN projections were ~34% of the burst, run once per stream instead of once per wave despite being row-invariant"
+diagnosis_tool = "nsys"
+root_cause_class = "launch-overhead"
+lever_type = "fusion"
+lkb_effect = "none promoted; the fusion did not pay, so it is not a family candidate yet"
+parity_tier_kept = "1"
+per_rung = [
+  { rung = "C1",  tok_s_pct = 0.0, j_tok_pct = 0.0, n = 2, ttft_pct = -1.1 },
+  { rung = "C16", tok_s_pct = 0.0, j_tok_pct = 0.0, n = 2 },
+]
+verdict = "marginal"
+verdict_reason = "strict-bits identity passed, but the timed screen showed C1-16 tok/s and J/tok equal within spread, and a dedicated cold-burst TTFT A/B found only -1.1% (inside twice the measured serve-to-serve spread) — not worth a PR on its own"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 5
+transferability = "batching row-invariant per-stream work inside an already-batched wave is a plausible lever shape, but this entry shows the launch-overhead share it targeted was already small enough that fusing it further is in the noise; check the PROFILED share before building the fusion, not just its plausibility"
+links = { pr = "", commit = "", evidence = "same-box screen + a dedicated burst A/B on the GB10 reference box" }
+notes = ""
+
+[[lever]]
+id = "gb10-vacuous-mockify-identical"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "dense 27B NVFP4 (mock rehearsal checkpoint)"
+recipe_or_tier = "mock fidelity check, Tier 1"
+symptom = "a mock-vs-mock 'IDENTICAL' digest comparison passed on the first run"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "measurement-methodology-error"
+lever_type = "process-fix"
+lkb_effect = "n/a"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "the 'IDENTICAL' verdict compared two EMPTY directories: an HF download made with an explicit revision did not write the ref file the mockify step reads, so there was nothing to mock and nothing to compare"
+failure_mode = "a vacuous pass: the check ran and reported success while comparing zero bytes of real content"
+caught_by = "a second look at the compared directories before trusting the first 'IDENTICAL' result"
+time_lost_hours = 1
+would_catch_earlier = "an identity check should assert a nonzero file/byte count on BOTH sides before it reports a verdict, not only that they match each other"
+effort_hours = 1
+transferability = "any identity/parity check built on a diff or digest comparison: always assert both sides are nonempty first, on any class"
+links = { pr = "", commit = "", evidence = "the PR #126 thread, mock-fidelity verdict section" }
+notes = "general pattern: 'a passing test may not have run' — the same shape of bug recurs across very different tools"
+
+[[lever]]
+id = "gb10-moe-nvfp4-stale-ptx-shared-target-dir"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE)"
+recipe_or_tier = "n/a (build infrastructure)"
+symptom = "a kernel source edit in one worktree produced no behavior change when benchmarked"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "measurement-methodology-error"
+lever_type = "process-fix"
+lkb_effect = "n/a"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "several worktrees shared one CARGO_TARGET_DIR; the kernel build script embeds the LAST worktree's absolute source paths, so a `.cu` edit made in a different worktree was never recompiled — the binary silently kept the old PTX"
+failure_mode = "an A/B between an edited kernel and its control measured two copies of the SAME unedited kernel"
+caught_by = "noticing a lever that should plausibly move something moved nothing at all, then checking build timestamps against source edit timestamps"
+time_lost_hours = 3
+would_catch_earlier = "give every worktree with kernel edits its own CARGO_TARGET_DIR (now standard practice), or print the PTX's embedded source path at startup and assert it matches the serving binary's worktree"
+effort_hours = 1
+transferability = "any multi-worktree campaign on this engine; also generalizes to any build system that bakes absolute source paths into its cache key"
+links = { pr = "", commit = "", evidence = "" }
+notes = "fixed by running `cargo clean --release -p <kernel-crate>` before building a worktree with kernel edits, and later by giving each worktree its own build directory"
+
+[[lever]]
+id = "gb10-moe-nvfp4-ab-restarted-stale-prehead-binary"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "Qwen3.6-35B-A3B-NVFP4 (MoE, declared)"
+recipe_or_tier = "n/a (A/B staging)"
+symptom = "a staged timed A/B was about to compare a binary built before the campaign's PR head landed its latest fix (missing a probe-timing change), against the current arms"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "measurement-methodology-error"
+lever_type = "process-fix"
+lkb_effect = "n/a"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "a pre-staged launch script referenced a binary stamped at an earlier commit than the arm it was meant to represent"
+failure_mode = "a timed A/B would have reported a verdict for a commit that was not actually running"
+caught_by = "a commit-sha check on the staged binary before the A/B was allowed to start"
+time_lost_hours = 0.5
+would_catch_earlier = "stamp every A/B binary with its commit sha in the filename AND assert that sha against the intended HEAD immediately before launch, not after results come back"
+effort_hours = 0.5
+transferability = "any campaign that stages a launch script ahead of a binary rebuild: the staging and the rebuild can race"
+links = { pr = "", commit = "", evidence = "" }
+notes = "the run was killed and archived as void before any wall-clock time was spent on it, which is why the catch was cheap"
+
+[[lever]]
+id = "gb10-moe-nvfp4-no-w4a16-tc-null-lever"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "dense 27B NVFP4"
+recipe_or_tier = "throughput recipe, env lever METRALE_NO_W4A16_TC=1"
+symptom = "an env lever meant to disable the W4A16 tensor-core path produced only -0.3..-1.0% on real weights, i.e. no measurable effect"
+diagnosis_tool = "bench"
+root_cause_class = "silent-gate-bypass"
+lever_type = "process-fix"
+lkb_effect = "n/a"
+parity_tier_kept = "n/a"
+per_rung = [
+  { rung = "C1",  tok_s_pct = -0.3, j_tok_pct = 0.0, n = 1 },
+  { rung = "C16", tok_s_pct = -1.0, j_tok_pct = 0.0, n = 1 },
+]
+verdict = "failed"
+verdict_reason = "the lever's own predicate did not route around the kernel it names in this configuration, so the near-zero delta measured nothing about the W4A16 TC path — it is a null control, not evidence the path is unimportant"
+failure_mode = "a lever's inertness was almost read as a performance finding ('the TC path barely matters') when it was actually a silent-gate-bypass: the flag changed nothing at runtime"
+caught_by = "the A/B's own near-zero delta looked too small to be a real kernel-removal effect, which prompted checking the runtime predicate instead of the startup log line"
+time_lost_hours = 1
+would_catch_earlier = "before trusting an A/B's delta (zero or nonzero), confirm the lever actually armed at runtime (a route-proof line, a kernel-absence check, or an nsys trace), never the startup log line alone"
+effort_hours = 1
+transferability = "any env-var or flag lever on any class: 'it measured near zero' has two causes (the path truly does not matter, or the lever never armed) and only a route proof tells them apart"
+links = { pr = "", commit = "", evidence = "" }
+notes = "kept explicitly as a NULL-LEVER CONTROL in the campaign record, which is itself useful: it calibrates what 'no effect' looks like in this harness's noise band"
+
+[[lever]]
+id = "gb10-dense-27b-recipe-max-batch-size-inherited"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "dense 27B NVFP4 / 35B NVFP4 (MoE)"
+recipe_or_tier = "nvfp4-declared recipes that do not set max_batch_size explicitly"
+symptom = "aggregate tok/s went FLAT above C8 and TTFT roughly doubled with every doubling of concurrency (textbook queueing behind a fixed capacity), while an ad hoc launch of the same build scaled fine to C128"
+diagnosis_tool = "bench"
+root_cause_class = "inherited-constant-underfill"
+lever_type = "recipe-flag"
+lkb_effect = "n/a (recipe-level fix, not a kernel)"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "the recipe set neither max_batch_size nor max_num_seqs, so the serve CLI's own default (8) silently capped concurrent decode at every rung above C8; the same default existed on OTHER recipes' concurrency gates too, masked there because the GATE's own overrides supplied an explicit value"
+failure_mode = "an implicit CLI default (PCND violation) was inherited by a recipe that never declared it, throttling every wide-rung measurement taken against that recipe"
+caught_by = "comparing a certified recipe's wide-rung numbers against an ad hoc launch of the identical binary that scaled normally, then reading the serve log's own scheduler-startup line"
+time_lost_hours = 4
+would_catch_earlier = "a recipe-explicitness checker that fails at recipe resolution when any CLI-settable flag is left at its implicit default, derived mechanically from the CLI's own argument manifest (not a hand-maintained list) — built as the direct fix for this finding"
+effort_hours = 3
+transferability = "every recipe on every class and model is at risk of the same silent inheritance; the fix (derive required keys from the CLI manifest, fail fast if any are absent) is class-independent and was applied to all recipes of this engine, not just the one that surfaced it"
+links = { pr = "#124", commit = "", evidence = "same-box wide-rung comparison, serve log's scheduler-startup line" }
+notes = "textbook PCND case: 'no implicit defaults in production config' — the fix generalizes to a standing checker, not a one-off recipe edit"
+
+[[lever]]
+id = "gb10-debug-build-false-hang"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "n/a (benchmark harness, any model)"
+recipe_or_tier = "n/a"
+symptom = "a timed gate command that normally finishes in ~18s instead ran past 600s with no error, read as a box-health incident"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "measurement-methodology-error"
+lever_type = "process-fix"
+lkb_effect = "n/a"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "the gate was launched from a DEBUG build (no release flag), not a box or scheduling defect; a release rebuild of the identical command completed in 18.4s, matching the expected time almost exactly"
+failure_mode = "~35x slowdown from an unoptimized build was mistaken for a hardware or scheduling hang, triggering a box-health investigation that found nothing wrong because there was nothing wrong with the box"
+caught_by = "rebuilding --release and re-running the exact same command before escalating further"
+time_lost_hours = 2
+would_catch_earlier = "a guard that refuses to run a timed gate from a debug build (checking the binary's build profile, not trusting `current_exe()` blindly), added directly as a result of this incident"
+effort_hours = 1
+transferability = "any timed harness on any class that self-launches `current_exe()`: always confirm the build profile before trusting a wall-clock anomaly as a hardware signal"
+links = { pr = "", commit = "", evidence = "" }
+notes = "a ~35x gap is far outside any plausible box-health noise band, which is itself a diagnostic clue: a real hardware issue rarely produces a clean order-of-magnitude multiplier"
+
+[[lever]]
+id = "gb10-vllm-latest-tag-drift"
+date = "2026-10-05"
+hardware_class = "gb10"
+model = "n/a (comparison-engine baseline, any model)"
+recipe_or_tier = "n/a"
+symptom = "a freshly pulled comparison-engine baseline reported numbers from a different engine version than the sibling baseline it was meant to match"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "config-drift"
+lever_type = "process-fix"
+lkb_effect = "n/a"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "one box's `:latest` image tag had moved to a newer comparison-engine release since the sibling baseline was pinned explicitly by version on another box; an image inspection, not the tag name, revealed the mismatch"
+failure_mode = "two 'same baseline' legs were actually two different engine versions, which would have been silently treated as comparable"
+caught_by = "inspecting the running container's actual version/digest instead of trusting the pull tag"
+time_lost_hours = 0
+would_catch_earlier = "always pin the comparison engine by exact version AND image digest in every launch script, never by a floating tag, and record the digest on every baseline record (as this campaign's harness now does)"
+effort_hours = 0.5
+transferability = "any cross-box or cross-session comparison-engine baseline on any class: a floating tag is a standing risk, not a one-time mistake"
+links = { pr = "", commit = "", evidence = "the baseline manifest disclosing both versions" }
+notes = "disclosed prominently in the baseline record rather than silently re-labeled; the owner's call was whether to re-pin to the older version for strict parity or adopt the newer one as that line's own baseline going forward"
+
+[[lever]]
+id = "gb10-trtllm-ngram-specdecode-dead-end"
+date = "2026-02-10"
+hardware_class = "gb10"
+model = "80B-class hybrid MoE (attention + Mamba), external reference engine, not this one"
+recipe_or_tier = "NGram self-speculation, 19 iterations across the external engine's SM120 codepath"
+symptom = "NGram drafts were rejected 73% of the time; verification cost (4 tokens x all recurrent-state layers per iteration) exceeded the benefit of the ~27% accepted"
+diagnosis_tool = "bench"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "scheduling"
+lkb_effect = "n/a (external engine, not this one; recorded for transferability only)"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "even after fixing every correctness defect found along the way (causal-masking gaps, missing recurrent-state rollback on rejected drafts), the fully-correct implementation was 1.5x SLOWER than no speculation at all, because per-token recurrent-state verification overhead dominates at this acceptance rate"
+failure_mode = "speculative decoding was pursued for several iterations before the draft-acceptance rate was established as the binding constraint; the drafter's quality, not the verification mechanics, was always the ceiling"
+caught_by = "bench, after a full correct implementation existed"
+time_lost_hours = 0
+would_catch_earlier = "measure draft-acceptance rate on a cheap standalone harness BEFORE building full state-checkpoint/rollback machinery for a recurrent/hybrid architecture; an acceptance rate below roughly 50% on a per-token-expensive verify step is unlikely to ever pay on this class of model"
+effort_hours = 0
+transferability = "any recurrent or hybrid (attention+SSM) architecture considering n-gram or other cheap-drafter speculative decoding on a bandwidth-bound device: check acceptance rate first, independent of hardware class"
+links = { pr = "", commit = "", evidence = "" }
+notes = "kept for transferability: a future recurrent-architecture campaign on a new class should check draft acceptance before investing in state-rollback machinery, regardless of which engine it targets"
+
+[[lever]]
+id = "gb10-flashinfer-fused-moe-garbage-dead-end"
+date = "2026-02-10"
+hardware_class = "gb10"
+model = "80B-class MoE, external reference engine, not this one"
+recipe_or_tier = "fused CUTLASS MoE kernel path on this device's compute capability"
+symptom = "after fixing four separate compilation blockers to get a fused MoE kernel running on this device's compute capability, the served output was silently wrong (not a crash)"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "new-kernel"
+lkb_effect = "n/a (external engine)"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "the fused kernel's TMA/scheduling assumptions did not hold on this compute capability even though it compiled and ran; output was garbage and throughput was also 30-40% worse than the baseline it was meant to replace"
+failure_mode = "a kernel path built for one compute capability was ported to an adjacent one by fixing compile errors only; the silent data corruption was found by reading output quality, not by any build or gate signal"
+caught_by = "manual output inspection after the kernel ran successfully"
+time_lost_hours = 0
+would_catch_earlier = "a byte-identity or known-good-output check run immediately after FIRST successful compile on a new compute capability, before any performance measurement — compiling is necessary, not sufficient, evidence that a ported kernel is correct on a new target"
+effort_hours = 0
+transferability = "any kernel ported across adjacent compute capabilities with TMA, warp-specialization, or scheduling assumptions baked in: compiling clean is not evidence of correctness on the new target"
+links = { pr = "", commit = "", evidence = "" }
+notes = ""
+
+[[lever]]
+id = "gb10-gdn-spine-five-dead-ends"
+date = "2026-08-22"
+hardware_class = "gb10"
+model = "n/a (GDN/Mamba recurrent spine microkernel, model-independent)"
+recipe_or_tier = "n/a"
+symptom = "five plausible micro-optimizations of the GDN prefill spine kernels, each measured in isolation with a standalone benchmark harness"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "scheduling"
+lkb_effect = "none; all five discarded"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "five separate ideas each lost to the unmodified kernel: a shared-memory accumulator cost occupancy (0.92x, confirmed after a first mismeasurement from a bank-conflicting layout); splitting an inner accumulation 4 ways was neutral (the dependent FMA chain, not parallelism, was the constraint); an explicit triangular-inversion rewrite cut total FMAs 4x but left per-thread work unchanged on a load-bound kernel (killed by arithmetic before being built); a DV-split variant lost 0.34-0.71x at every width tried, proportionally the same at short and long sequences; a 16-warp variant of a 4-warp-fenced primitive lost to redundant fragment reloads across warp groups despite being verified bit-identical"
+failure_mode = "n/a — these are correctly-measured negative results, not process failures"
+caught_by = "a standalone nvcc + cudaEvent benchmark harness"
+time_lost_hours = 5
+would_catch_earlier = "measure at the WIDE shape (large batch) as well as the narrow one before committing effort: one of the five looked like a 1.60x win at a narrow, GPU-underfilled shape and only 0.92x at the wide, filled shape that matters in production"
+effort_hours = 12
+transferability = "any load-bound recurrent-spine kernel on any class: occupancy loss from added shared memory, and redundant fragment reloads from widening warp count without widening the matching dimension, are generic enough to check before building an unfamiliar-looking kernel"
+links = { pr = "", commit = "", evidence = "" }
+notes = "paired with the two levers that DID work on the same spine (next entry); five cycles were separately lost to an in-serve profiler that would not reproduce, until a standalone micro-benchmark answered the same question in about ten minutes — use the smallest tool that answers the question"
+
+[[lever]]
+id = "gb10-gdn-spine-gc-scan-and-blocked-substitution"
+date = "2026-08-22"
+hardware_class = "gb10"
+model = "n/a (GDN/Mamba recurrent spine microkernel, model-independent)"
+recipe_or_tier = "n/a"
+symptom = "same GDN prefill spine kernels as the five dead ends above, profiled at the production (wide) shape"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "scheduling"
+lkb_effect = "none promoted yet; recorded against the model-independent spine kernel"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "kept"
+verdict_reason = "a parallel prefix-scan reformulation gained 7-10% isolated; a right-looking blocked triangular substitution gained 1.95x isolated and 2.20x measured IN-SERVE (one kernel's wall time dropped from 87.5ms to 39.7ms)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 8
+transferability = "blocked substitution and parallel-scan reformulations of a sequential recurrence are reusable techniques for any recurrent-spine kernel (GDN/Mamba/SSM-shaped) on any class"
+links = { pr = "", commit = "", evidence = "" }
+notes = "measured at nt=16 and nt=64 only, per the same lesson as the dead-ends entry: at nt=1 the grid underfills the device and occupancy effects do not show"
+
+[[lever]]
+id = "hopper-dense27b-l1-tc-rows-band"
+date = "2026-10-05"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense, W4A16 fallback)"
+recipe_or_tier = "declared, util 0.95"
+symptom = "nsys: C16 decode step was 85% one inherited tensor-core row-tile kernel, launched as 1 CTA per 128-N tile with grids of 8-136 CTAs on 132 SMs — the tile-fill band (the row count at which this class should switch between CUDA-core and tensor-core tiles) was still the parent class's own cutoff"
+diagnosis_tool = "nsys"
+root_cause_class = "inherited-constant-underfill"
+lever_type = "data-row"
+lkb_effect = "no new kernel; an existing family point routed by a per-class [defaults] row instead of the inherited one — residual unchanged, measured LKB coverage rose"
+parity_tier_kept = "1"
+per_rung = [
+  { rung = "C4",  tok_s_pct = 207.0, j_tok_pct = -51.0, n = 3 },
+  { rung = "C8",  tok_s_pct = 136.0, j_tok_pct = -37.0, n = 3 },
+  { rung = "C16", tok_s_pct = 152.0, j_tok_pct = -37.0, n = 3 },
+  { rung = "C32", tok_s_pct = 74.0,  j_tok_pct = -23.0, n = 3 },
+]
+verdict = "kept"
+verdict_reason = "one data-row change (raising the tensor-core row-tile band from the parent class's row-count cutoff to this class's own, derived from its own SM count) wins tok/s and J/tok at every affected rung, C1/C2 untouched by construction; Tier 2 vs a reference also IMPROVED (argmax match rose) because a correctly-filled tile also rounds less"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 6
+transferability = "any new class bringing up a model that inherits a row-tile band from its parent class: check the band against THIS class's own SM count and tile-fill arithmetic before profiling anything else — it is usually the single biggest inherited-constant-underfill lever available on day one"
+links = { pr = "", commit = "", evidence = "same-box A/B, one binary, one env variable between arms, n=3 interleaved, on the H100 SXM test box" }
+notes = "this was iteration 1 of the class's improvement loop and the single largest lever found in the whole campaign so far; it is the seed case for the 'inherited constants underfill a new class' pattern"
+
+[[lever]]
+id = "hopper-dense27b-w8a8-attention-first-cut-gated-off"
+date = "2026-10-05"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense)"
+recipe_or_tier = "declared, W8A8 attention at every row count including prefill"
+symptom = "a lever meant to route prefill attention through the declared W8A8 path showed no measurable change at any rung"
+diagnosis_tool = "nsys"
+root_cause_class = "silent-gate-bypass"
+lever_type = "precision-fix"
+lkb_effect = "n/a (superseded by the fixed version below before shipping)"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "the scheduler prefills on its own dedicated stream, which the first cut's route did not target, so prefill attention kept running its old path regardless of the flag"
+failure_mode = "the lever's code path existed and was reachable, but the scheduler's own prefill stream never dispatched into it — a classic silent-gate-bypass, distinguishable from 'this lever does not matter' only by profiling, not by the delta alone"
+caught_by = "nsys, which showed the old kernel still running on the prefill stream regardless of the flag"
+time_lost_hours = 2
+would_catch_earlier = "profile the route BEFORE timing a precision/format lever that touches prefill specifically, since this engine's prefill runs on its own stream/scratch by design and is a standing place for a lever to miss"
+effort_hours = 2
+transferability = "any lever targeting prefill specifically on this engine: always verify the route with a profiler, not a log line, because prefill's own stream is a recurring place for a flag to be reachable but not dispatched"
+links = { pr = "", commit = "", evidence = "" }
+notes = "fixed same-day by giving prefill its own W8A8-aware scratch context; see the next entry"
+
+[[lever]]
+id = "hopper-dense27b-w8a8-attention-and-prefill-fixed"
+date = "2026-10-05"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense, declared)"
+recipe_or_tier = "declared, W8A8 attention + GDN projections + FFN prompt prefill at every row count, on a prefill-own scratch context"
+symptom = "same as the prior entry, now routed correctly: profile confirmed the old below-declared prefill kernels (an unscaled-cast or NVFP4-copy path for groups the checkpoint declares FP8) no longer dispatch"
+diagnosis_tool = "nsys"
+root_cause_class = "below-declared-precision"
+lever_type = "precision-fix"
+lkb_effect = "no new kernel family; an existing W8A8 family point extended to prefill and to every row count via its own scratch context"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "kept"
+verdict_reason = "route-proof confirmed via nsys before timing; Tier 1 passes (determinism, eager=graphed byte-identical); Tier 2 vs a reference IMPROVED (argmax match rose) because prefill now runs the checkpoint's own declared format instead of a below-declared stand-in"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 5
+transferability = "any class/model where the checkpoint declares FP8 (or another native format) for attention/GDN/FFN groups but the bring-up's prefill path still runs an older below-declared stand-in for those groups — a standard audit item for a new class, not specific to Hopper"
+links = { pr = "", commit = "", evidence = "PR #127 (campaign branch)" }
+notes = "paired finding: the fix applies to EVERY dense/attention-bearing model on this class, not only this checkpoint, since the predicate it closes is general"
+
+[[lever]]
+id = "hopper-dense27b-util-ceiling-0.85-inherited"
+date = "2026-10-05"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense, declared)"
+recipe_or_tier = "declared"
+symptom = "the recipe's --gpu-memory-utilization 0.85 (a ceiling discovered and certified on the GB10 class) failed to boot on this class's 80 GB device: 'budget 67.3 GB, 49.5 GB already consumed + 21.2 GB inference reserve = 70.7 GB'"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "inherited-constant-underfill"
+lever_type = "parameterization"
+lkb_effect = "n/a (a per-class serving default, not a kernel); flagged the duplicate-materialization it exposed (raw checkpoint kept resident alongside transposed and requantized copies) as an early loop lever candidate"
+parity_tier_kept = "n/a (does not change served bits)"
+per_rung = []
+verdict = "kept"
+verdict_reason = "0.85 is a UNIFIED-MEMORY ceiling specific to the GB10 class (where host and device share one memory pool); it does not apply to this class's discrete HBM. At 0.95 both the comparison engine and this engine boot with the fully reachable KV cache and `--check-kernels` passes on real weights"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 1
+transferability = "any new discrete-HBM class inheriting a unified-memory class's util ceiling: check whether the ceiling's own rationale (shared host/device pool) applies to the new class's memory architecture before reusing the number"
+links = { pr = "", commit = "", evidence = "boot-failure message and a successful boot at 0.95, both on the H100 SXM test box" }
+notes = "both engines must use the SAME util for a fair ladder; proposed and used 0.95 for both rather than carrying over the GB10 number for only one side"
+
+[[lever]]
+id = "hopper-dense27b-nvfp4-tier-below-declared-precision"
+date = "2026-10-05"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense)"
+recipe_or_tier = "the GB10-certified 'nvfp4' tier (--weight-quantization nvfp4)"
+symptom = "Tier 2 vs a reference showed the recipe's nvfp4 tier requantizing ALL FP8 attention/GDN/FFN layers down to NVFP4 (W4A16 on this class), running below both the checkpoint's own declared precision AND below what the comparison engine executes (FP8 + its own W4A16 path); none of this class's native FP8 kernels ran at all under this tier"
+diagnosis_tool = "parity-oracle"
+root_cause_class = "below-declared-precision"
+lever_type = "precision-fix"
+lkb_effect = "n/a (a tier/baseline decision, not a kernel change)"
+parity_tier_kept = "accuracy-gated"
+per_rung = []
+verdict = "parity-broken"
+verdict_reason = "the PARITY-O.R.A.C.L.E returned a blocking result on this baseline configuration: comparing this tier against the comparison engine's own (higher-precision) execution is not an apples-to-apples performance comparison until the precision asymmetry is named or removed"
+failure_mode = "a tier certified on one class (where it was the fastest option available) was carried over to a new class as the default baseline without checking it was still the right precision choice there"
+caught_by = "the PARITY-O.R.A.C.L.E config-equivalence review, required before any baseline counts"
+time_lost_hours = 2
+would_catch_earlier = "run the parity oracle on the PROPOSED baseline configuration before measuring a single data point, not after a round of iteration-0 numbers already exists; this campaign's iteration-0 numbers were explicitly logged as diagnostic-only for exactly this reason"
+effort_hours = 4
+transferability = "any class bringing up a model whose fastest-known tier on a DIFFERENT class happens to be a precision-lowering one: re-derive the right default tier (usually 'declared', precision follows the checkpoint) for the new class rather than inheriting the old class's tier choice"
+links = { pr = "", commit = "", evidence = "PARITY-O.R.A.C.L.E ruling on PR #126/#127" }
+notes = "resolved by switching the campaign's canonical baseline to 'declared' (precision follows the checkpoint on every class), kept 'nvfp4' tier numbers only as an annotation, not the ladder's baseline"

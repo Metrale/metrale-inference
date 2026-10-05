@@ -21,9 +21,12 @@ J/tok). nsys at that rung on a fresh serve:
 - host gaps: time between kernel launches with the device idle (scheduler, sampling, Python-free
   but still serial host work).
 
-**c. Rank and choose the lever.** Rank the gaps by the time (or energy) they cost at that rung.
-A rung that is faster but loses J/tok needs a lever that reduces power (bytes moved, MMA width,
-switching activity), not time.
+**c. Rank and choose the lever.** **Read `references/lever-patterns.md` first**: check the
+profiled symptom against its (symptom -> root cause -> lever) rules and its anti-patterns before
+assuming the gap is novel — an inherited constant, a below-declared path or a silently-unarmed
+lever from a prior campaign is often the cheaper answer than a new kernel. Rank the gaps by the
+time (or energy) they cost at that rung. A rung that is faster but loses J/tok needs a lever that
+reduces power (bytes moved, MMA width, switching activity), not time.
 For the top gap, prefer in this order:
 1. a **parameterization** of an existing kernel the Venn already lists (a new point of a
    template, a policy of the WxAy engine, a tile tier extended to these rows);
@@ -55,7 +58,11 @@ silently and never becomes a default: record both deltas and offer it as a flagg
 recipe-level choice (default off, disclosed on records). Record the outcome, kept or not, with its numbers, its
 profile and the commit, in the campaign PR (a table: iteration, lever, rung, before, after,
 verdict). A discarded lever's evidence is as valuable as a kept one's. Update the ledger:
-`iterations`, `levers_kept` or `levers_discarded`, and the lines added and removed.
+`iterations`, `levers_kept` or `levers_discarded`, and the lines added and removed. **Append a
+`ledger/levers.toml` entry for every verdict** (`references/lever-patterns.md`'s schema): kept,
+discarded, marginal, regressed, parity-broken or failed. A non-kept entry additionally records
+its failure mode, what caught it, the time lost, and the cheapest gate that would have caught it
+sooner — that is what lets the next campaign not repeat it.
 
 **g. Repeat** from (a): the scoreboard moved, so the worst rung may be a different one.
 
