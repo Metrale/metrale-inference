@@ -35,7 +35,7 @@ pub struct PromptLookupIndex {
 
 /// 2026-10-02: Key of an n-gram. Collisions are harmless (every hit is
 /// re-checked against the history); the mix only keeps them rare.
-fn ngram_key(gram: &[u32]) -> u64 {
+pub(crate) fn ngram_key(gram: &[u32]) -> u64 {
     gram.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &t| {
         (h ^ u64::from(t))
             .wrapping_mul(0x0000_0100_0000_01b3)
@@ -210,6 +210,9 @@ pub struct PromptLookupSeq {
     misses: u32,
     /// 2026-10-02: Rounds left to skip copying.
     cooldown: usize,
+    /// 2026-10-04: The in-flight copy came from the cross-request cache
+    /// ([`crate::shared_lookup`]), not this sequence's own history.
+    in_flight_shared: bool,
 }
 
 impl PromptLookupSeq {
@@ -225,6 +228,7 @@ impl PromptLookupSeq {
             miss_backoff: cfg.miss_backoff,
             misses: 0,
             cooldown: 0,
+            in_flight_shared: false,
         }
     }
 
@@ -238,21 +242,47 @@ impl PromptLookupSeq {
     /// counts one round), or when the match spans fewer than `min_match`
     /// tokens.
     pub fn propose(&mut self, history: &[u32], max_len: usize) -> Option<Vec<u32>> {
+        self.propose_with(history, max_len, |_, _| None)
+    }
+
+    /// 2026-10-04: [`propose`](Self::propose), but when the sequence's own
+    /// history has no match, asks `shared` (the cross-request cache) for a
+    /// copy of at most `max_len` tokens. The own history is asked first; the
+    /// cooldown applies to both; a shared copy is settled like an own one.
+    pub fn propose_with(
+        &mut self,
+        history: &[u32],
+        max_len: usize,
+        shared: impl FnOnce(&[u32], usize) -> Option<Vec<u32>>,
+    ) -> Option<Vec<u32>> {
         self.in_flight = 0;
+        self.in_flight_shared = false;
         self.index.observe(history);
         if self.cooldown > 0 {
             self.cooldown -= 1;
             return None;
         }
-        let start = self.index.continuation_start(history)?;
-        if max_len == 0
-            || PromptLookupIndex::match_len(history, start, self.min_match) < self.min_match
-        {
+        if max_len == 0 {
             return None;
         }
-        let copy = history[start..history.len().min(start + max_len)].to_vec();
+        let own = self.index.continuation_start(history).filter(|&start| {
+            PromptLookupIndex::match_len(history, start, self.min_match) >= self.min_match
+        });
+        let copy = match own {
+            Some(start) => history[start..history.len().min(start + max_len)].to_vec(),
+            None => {
+                let copy = shared(history, max_len).filter(|c| !c.is_empty())?;
+                self.in_flight_shared = true;
+                copy[..copy.len().min(max_len)].to_vec()
+            }
+        };
         self.in_flight = copy.len();
         Some(copy)
+    }
+
+    /// 2026-10-04: The in-flight copy came from the cross-request cache.
+    pub fn in_flight_shared(&self) -> bool {
+        self.in_flight > 0 && self.in_flight_shared
     }
 
     /// 2026-10-02: Length of the copy awaiting verification; 0 when none.

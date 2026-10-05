@@ -11,8 +11,9 @@ use anyhow::{Result, ensure};
 use half::bf16;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops;
-use metrale_model_layers::weight_map::{Fp8Weight, QuantizedWeight, WeightQuantFormat};
+use metrale_model_layers::weight_map::QuantizedWeight;
 
+pub(crate) use super::fp8::{Fp8Mat, fp8_table};
 use super::legs::{Leg, hi_lo_rows};
 use super::{H, INTER, TOP_K};
 
@@ -54,7 +55,7 @@ const E2M1: [f64; 16] = [
 ];
 
 /// 2026-09-27: E4M3 byte to value (no NaN bytes are drawn).
-fn e4m3(b: u8) -> f64 {
+pub(crate) fn e4m3(b: u8) -> f64 {
     let (s, e, m) = ((b >> 7) & 1, (b >> 3) & 0xF, b & 7);
     let v = if e == 0 {
         m as f64 / 8.0 * 2f64.powi(-6)
@@ -75,28 +76,66 @@ pub(crate) struct Mat {
     scale: Vec<u8>,
     pub(crate) s2: f32,
     pub(crate) w: QuantizedWeight,
+    /// 2026-10-04: A second device copy, repacked in place for the lean point by `repack_lean`.
+    pub(crate) wl: QuantizedWeight,
     k: usize,
 }
 
 impl Mat {
     pub(crate) fn new(g: &dyn GpuBackend, rng: &mut Rng, n: usize, k: usize) -> Result<Self> {
         let packed: Vec<u8> = (0..n * k / 2).map(|_| rng.next() as u8).collect();
-        // 2026-09-27: Scale bytes 0x28..0x3f: E4M3 values 1/32 .. 15/16.
+        // 2026-09-27: Scale bytes 0x28..0x3f: E4M3 values 1/32 .. 15/16. 2026-10-04: plus, each
+        // 1 in 64, the edges of the lean point's scale code: +0, -0, every subnormal, 448.
         let scale: Vec<u8> = (0..n * k / 16)
-            .map(|_| 0x28 + (rng.next() % 24) as u8)
+            .map(|_| match rng.next() % 64 {
+                0 => 0x00,
+                1 => 0x80,
+                2 => 1 + (rng.next() % 7) as u8,
+                3 => 0x7E,
+                _ => 0x28 + (rng.next() % 24) as u8,
+            })
             .collect();
         let s2 = 0.02 + 0.01 * rng.unit() as f32;
         let mut w = QuantizedWeight::null();
         w.weight = upload(g, &packed)?;
         w.weight_scale = upload(g, &scale)?;
         w.weight_scale_2 = s2;
+        let mut wl = w;
+        wl.weight = upload(g, &packed)?;
+        wl.weight_scale = upload(g, &scale)?;
         Ok(Self {
             packed,
             scale,
             s2,
             w,
+            wl,
             k,
         })
+    }
+
+    /// 2026-10-04: Repacks `wl` in place with the production repack (`nvfp4_tc_lean_repack`).
+    pub(crate) fn repack_lean(
+        &self,
+        g: &dyn GpuBackend,
+        kernel: KernelHandle,
+        bad: DevicePtr,
+    ) -> Result<()> {
+        let n = (self.scale.len() * 16 / self.k) as u32;
+        ops::nvfp4_tc_lean_repack(
+            g,
+            kernel,
+            self.wl.weight,
+            self.wl.weight_scale,
+            n,
+            self.k as u32,
+            bad,
+            g.default_stream(),
+        )
+    }
+
+    /// 2026-10-04: The device weights `leg`'s kernels read.
+    pub(crate) fn on(&self, leg: Leg) -> &QuantizedWeight {
+        if leg.lean() { &self.wl } else { &self.w }
     }
 }
 
@@ -115,63 +154,18 @@ impl HostDot for Mat {
     }
 }
 
-/// 2026-09-27: One FP8 E4M3 matrix `[n, k]` with f32 block scales `[ceil(n/128), ceil(k/128)]`.
-pub(crate) struct Fp8Mat {
-    bytes: Vec<u8>,
-    scales: Vec<f32>,
-    pub(crate) w: Fp8Weight,
-    k: usize,
-}
-
-impl Fp8Mat {
-    pub(crate) fn new(g: &dyn GpuBackend, rng: &mut Rng, n: usize, k: usize) -> Result<Self> {
-        let bytes: Vec<u8> = (0..n * k)
-            .map(|_| {
-                let x = rng.next();
-                ((x % 120) as u8) | (((x >> 7) & 1) as u8 * 128)
-            })
-            .collect();
-        let scales: Vec<f32> = (0..n.div_ceil(128) * k.div_ceil(128))
-            .map(|_| ((rng.next() % 16 + 1) as f32) / 4096.0)
-            .collect();
-        let scale_bytes: Vec<u8> = scales.iter().flat_map(|s| s.to_le_bytes()).collect();
-        let w = Fp8Weight {
-            weight: upload(g, &bytes)?,
-            row_scale: upload(g, &scale_bytes)?,
-            n: n as u32,
-            k: k as u32,
-            scale_format: WeightQuantFormat::Fp8BlockScaled,
-        };
-        Ok(Self {
-            bytes,
-            scales,
-            w,
-            k,
-        })
-    }
-}
-
-impl HostDot for Fp8Mat {
-    fn dot(&self, row: usize, x: &[f64]) -> f64 {
-        let kb = self.k.div_ceil(128);
-        (0..self.k)
-            .map(|c| {
-                e4m3(self.bytes[row * self.k + c])
-                    * self.scales[(row / 128) * kb + c / 128] as f64
-                    * x[c]
-            })
-            .sum()
-    }
-}
-
 /// 2026-09-27: Device pointer tables of NVFP4 projections, one entry per expert.
-pub(crate) fn nvfp4_table(g: &dyn GpuBackend, mats: &[&Mat]) -> Result<ops::Nvfp4ExpertTables> {
+pub(crate) fn nvfp4_table(
+    g: &dyn GpuBackend,
+    mats: &[&Mat],
+    leg: Leg,
+) -> Result<ops::Nvfp4ExpertTables> {
     let ptrs = |f: &dyn Fn(&Mat) -> u64| -> Vec<u8> {
         mats.iter().flat_map(|m| f(m).to_le_bytes()).collect()
     };
     Ok(ops::Nvfp4ExpertTables {
-        packed_ptrs: upload(g, &ptrs(&|m| m.w.weight.0))?,
-        scale_ptrs: upload(g, &ptrs(&|m| m.w.weight_scale.0))?,
+        packed_ptrs: upload(g, &ptrs(&|m| m.on(leg).weight.0))?,
+        scale_ptrs: upload(g, &ptrs(&|m| m.on(leg).weight_scale.0))?,
         scale2_vals: upload(
             g,
             &mats
@@ -180,18 +174,6 @@ pub(crate) fn nvfp4_table(g: &dyn GpuBackend, mats: &[&Mat]) -> Result<ops::Nvfp
                 .collect::<Vec<u8>>(),
         )?,
     })
-}
-
-/// 2026-09-27: Device pointer tables (weights, scales) of FP8 projections, one entry per
-/// expert.
-pub(crate) fn fp8_table(g: &dyn GpuBackend, mats: &[&Fp8Mat]) -> Result<(DevicePtr, DevicePtr)> {
-    let ptrs = |f: &dyn Fn(&Fp8Mat) -> u64| -> Vec<u8> {
-        mats.iter().flat_map(|m| f(m).to_le_bytes()).collect()
-    };
-    Ok((
-        upload(g, &ptrs(&|m| m.w.weight.0))?,
-        upload(g, &ptrs(&|m| m.w.row_scale.0))?,
-    ))
 }
 
 pub(crate) fn bf16_to_f64(b: &[u8]) -> Vec<f64> {
@@ -240,6 +222,8 @@ pub(crate) struct Kernels {
     pub(crate) down: KernelHandle,
     pub(crate) gate_up_tc: KernelHandle,
     pub(crate) down_tc: KernelHandle,
+    pub(crate) gate_up_tc_lean: KernelHandle,
+    pub(crate) down_tc_lean: KernelHandle,
     pub(crate) fp8_gate_up: KernelHandle,
     pub(crate) fp8_down: KernelHandle,
     pub(crate) sort: KernelHandle,
@@ -258,6 +242,9 @@ pub(crate) struct Weights {
     pub(crate) gate_t: ops::Nvfp4ExpertTables,
     pub(crate) up_t: ops::Nvfp4ExpertTables,
     pub(crate) down_t: ops::Nvfp4ExpertTables,
+    pub(crate) gate_l: ops::Nvfp4ExpertTables,
+    pub(crate) up_l: ops::Nvfp4ExpertTables,
+    pub(crate) down_l: ops::Nvfp4ExpertTables,
     pub(crate) down8_t: (DevicePtr, DevicePtr),
 }
 
@@ -321,7 +308,14 @@ fn experts(
         )?;
     }
     let nv_shared = if leg.fp8_shared() { 0 } else { n };
-    let (gu, gu_geo, dn, dn_geo) = if leg.tc() {
+    let (gu, gu_geo, dn, dn_geo) = if leg.lean() {
+        (
+            k.gate_up_tc_lean,
+            ops::NVFP4_GROUPED_GATE_UP_TC,
+            k.down_tc_lean,
+            ops::NVFP4_GROUPED_DOWN_TC,
+        )
+    } else if leg.tc() {
         (
             k.gate_up_tc,
             ops::NVFP4_GROUPED_GATE_UP_TC,
@@ -341,15 +335,15 @@ fn experts(
         gu,
         gu_geo,
         b.input,
-        w.gate_t,
-        w.up_t,
+        if leg.lean() { w.gate_l } else { w.gate_t },
+        if leg.lean() { w.up_l } else { w.up_t },
         b.act,
         so.expert_offsets,
         so.sorted_token_ids,
         so.active_experts,
         so.active_count,
-        &w.sh[0].w,
-        &w.sh[1].w,
+        w.sh[0].on(leg),
+        w.sh[1].on(leg),
         b.sh_act,
         INTER as u32,
         H as u32,
@@ -406,13 +400,13 @@ fn experts(
         dn,
         dn_geo,
         b.act,
-        w.down_t,
+        if leg.lean() { w.down_l } else { w.down_t },
         b.down_out,
         so.expert_offsets,
         so.active_experts,
         so.active_count,
         b.sh_act,
-        &w.sh[2].w,
+        w.sh[2].on(leg),
         b.sh_out,
         H as u32,
         INTER as u32,
@@ -479,6 +473,9 @@ pub(crate) fn run(
         read(g, b.output, m * H * 2)?,
         if leg.tc() {
             hi_lo_rows(&read(g, b.act, te * INTER * 4)?, INTER)
+                .into_iter()
+                .map(|v| v / leg.act_lift())
+                .collect()
         } else {
             f32s(&read(g, b.act, te * INTER * 4)?)
         },

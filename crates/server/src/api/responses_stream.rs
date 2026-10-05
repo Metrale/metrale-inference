@@ -53,6 +53,7 @@ use super::sanitizer::*;
 
 pub(super) async fn responses_endpoint_stream(
     CurrentModel(state): CurrentModel,
+    tenant: Option<crate::auth::LookupTenant>,
     mut chat_req: ChatCompletionRequest,
     metadata: Option<std::collections::HashMap<String, String>>,
     store_flag: bool,
@@ -90,7 +91,7 @@ pub(super) async fn responses_endpoint_stream(
         Vec::new()
     };
 
-    let deltas = match chat_completions_inner(state, None, chat_req.into(), None).await {
+    let deltas = match chat_completions_inner(state, None, tenant, chat_req.into(), None).await {
         super::chat::ChatOutcome::Streaming(d) => d,
         super::chat::ChatOutcome::Http(r) => return r,
         // 2026-09-26: Not reached: `chat_req.stream` is true, so a success is

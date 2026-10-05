@@ -39,6 +39,8 @@ pub(super) struct CompletionParams {
     pub logprobs_k: Option<u8>,
     /// 2026-09-26: Resolved LoRA adapter slot; `-1` follows the active adapter.
     pub adapter_slot: i32,
+    /// 2026-10-04: The tenant the auth middleware attached (`auth::LookupTenant`).
+    pub lookup_tenant: Option<crate::auth::LookupTenant>,
     /// 2026-09-26: Source-language token id; 0 means the deployment default.
     pub src_lang_id: u32,
     /// 2026-09-26: Target-language token id; 0 means the deployment default.
@@ -78,6 +80,7 @@ pub(super) async fn run_blocking(
             let request = InferenceRequest::Blocking {
                 prompt_tokens: Arc::new(prompt_tokens.clone()),
                 session_hash,
+                lookup_tenant: p.lookup_tenant,
                 adapter_slot: p.adapter_slot,
                 src_lang_id: p.src_lang_id,
                 tgt_lang_id: p.tgt_lang_id,
@@ -255,6 +258,7 @@ impl CompletionParams {
             repetition_detection: None,
             logprobs_k: None,
             adapter_slot: -1,
+            lookup_tenant: None,
             src_lang_id: 0,
             tgt_lang_id: 0,
             num_beams: 1,

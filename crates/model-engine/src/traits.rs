@@ -85,6 +85,10 @@ pub struct SequenceState {
     /// tagged with it and a snapshot is restored only for a matching tag
     /// (`SsmSnapshotPool::session_matches`); `0` skips the check.
     pub session_hash: u64,
+    /// 2026-10-04: Tenant for the scheduler's cross-request prompt-lookup cache, set by the
+    /// scheduler before prefill and carried across preemption and swap. `None` keeps the
+    /// sequence out of that cache (neither read nor written).
+    pub lookup_tenant: Option<u64>,
     /// 2026-09-25: This sequence's claim on the single shared whole-prompt hidden capture
     /// (`mtp_prefill_hidden`). `try_mtp_prefill_capture` sets it to a new capture generation when
     /// it writes this sequence's rows from row 0. `ensure_drafter_context` prefills the drafter
@@ -203,6 +207,7 @@ impl SequenceState {
             marconi_skip_to: 0,
             marconi_exact_snap: None,
             session_hash: 0,
+            lookup_tenant: None,
             mtp_capture_gen: 0,
             mtp_store_gen: 0,
             adapter_id: 0,

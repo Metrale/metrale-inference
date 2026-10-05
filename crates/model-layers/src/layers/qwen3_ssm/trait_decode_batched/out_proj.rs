@@ -29,7 +29,7 @@ impl Qwen3SsmLayer {
             stream,
             ..
         } = *d;
-        if self.w8a8_out(
+        if self.pinned_out(
             ctx,
             normed_out_buf,
             value_dim as u32,

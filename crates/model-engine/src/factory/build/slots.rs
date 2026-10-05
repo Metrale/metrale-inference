@@ -74,6 +74,10 @@ pub struct SlotPlan<'a> {
 pub struct BuiltModel {
     pub model: Box<dyn crate::traits::Model>,
     pub max_batch_size: usize,
+    /// 2026-10-04: sha256 over the drafter's stored weights (`WeightStore::drafter_weights_sha256`),
+    /// `None` for a checkpoint with no `mtp.*` tensors. The `--spec-cost-model measured` drafter
+    /// key.
+    pub drafter_weights_sha256: Option<String>,
 }
 
 /// 2026-10-01: One candidate slot count's outcome.

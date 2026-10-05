@@ -8,6 +8,11 @@
 //! - `nvfp4`: routed experts NVFP4, the shared expert FP8 (`--expert-quantization nvfp4`);
 //! - `nvfp4-gate-up`: routed gate/up NVFP4, routed down and the shared expert FP8
 //!   (`--expert-quantization nvfp4-gate-up`).
+//! - `all-nvfp4-tc` / `all-nvfp4-tc-lean`: `all-nvfp4` on the tensor-core kernels, row-major and
+//!   (2026-10-04) on the lean point, whose tables `nvfp4_tc_lean_repack` rewrote in place: its
+//!   blended output must equal the row-major tensor-core leg's byte for byte at M = 256 (and so,
+//!   by (a), at every M), with block scales that include +-0, every E4M3 subnormal and 448; the
+//!   repack must refuse a negative and a NaN scale.
 //!
 //! Owner: model-arch examples.
 //! Invariants:
@@ -36,6 +41,8 @@ use metrale_model_layers::layers::ops;
 
 #[path = "common/nvfp4_moe_fixture.rs"]
 mod fixture;
+#[path = "common/nvfp4_moe_fp8.rs"]
+mod fp8;
 #[path = "common/nvfp4_moe_legs.rs"]
 mod legs;
 use fixture::*;
@@ -114,6 +121,14 @@ fn main() -> Result<()> {
             "moe_nvfp4_grouped_tc",
             "moe_expert_down_act_nvfp4_grouped_tc",
         )?,
+        gate_up_tc_lean: g.kernel(
+            "moe_nvfp4_grouped_tc",
+            "moe_expert_gate_up_act_nvfp4_grouped_tc_lean",
+        )?,
+        down_tc_lean: g.kernel(
+            "moe_nvfp4_grouped_tc",
+            "moe_expert_down_act_nvfp4_grouped_tc_lean",
+        )?,
         fp8_gate_up: g.kernel(FP8, "moe_expert_gate_up_act_fp8_grouped")?,
         fp8_down: g.kernel(FP8, "moe_expert_down_act_fp8_grouped")?,
         sort: g.kernel("moe_fp8_grouped_sort", "moe_fp8_grouped_sort")?,
@@ -143,10 +158,38 @@ fn main() -> Result<()> {
         Fp8Mat::new(g, &mut rng, INTER, H)?,
         Fp8Mat::new(g, &mut rng, H, INTER)?,
     ];
+    // 2026-10-04: The lean point's tables, repacked in place on the device by the production
+    // repack; then its guard: a negative and a NaN scale must each be refused.
+    let repack = g.kernel("moe_nvfp4_grouped_tc", "nvfp4_tc_lean_repack")?;
+    let bad = upload(g, &[0u8; 4])?;
+    for m in gate.iter().chain(&up).chain(&down).chain(&sh) {
+        m.repack_lean(g, repack, bad)?;
+    }
+    g.synchronize(g.default_stream())?;
+    anyhow::ensure!(
+        read(g, bad, 4)? == [0u8; 4],
+        "nvfp4_tc_lean_repack refused a valid scale"
+    );
+    for refused in [0x81u8, 0x7F] {
+        let (packed, scale, flag) = (
+            upload(g, &[0x5Au8; 1024])?,
+            upload(g, &[refused; 128])?,
+            upload(g, &[0u8; 4])?,
+        );
+        ops::nvfp4_tc_lean_repack(g, repack, packed, scale, 16, 128, flag, g.default_stream())?;
+        g.synchronize(g.default_stream())?;
+        anyhow::ensure!(
+            read(g, flag, 4)? != [0u8; 4],
+            "nvfp4_tc_lean_repack accepted scale byte {refused:#04x}"
+        );
+    }
     let w = Weights {
-        gate_t: nvfp4_table(g, &gate.iter().collect::<Vec<_>>())?,
-        up_t: nvfp4_table(g, &up.iter().collect::<Vec<_>>())?,
-        down_t: nvfp4_table(g, &down.iter().collect::<Vec<_>>())?,
+        gate_t: nvfp4_table(g, &gate.iter().collect::<Vec<_>>(), Leg::AllNvfp4Tc)?,
+        gate_l: nvfp4_table(g, &gate.iter().collect::<Vec<_>>(), Leg::AllNvfp4TcLean)?,
+        up_t: nvfp4_table(g, &up.iter().collect::<Vec<_>>(), Leg::AllNvfp4Tc)?,
+        up_l: nvfp4_table(g, &up.iter().collect::<Vec<_>>(), Leg::AllNvfp4TcLean)?,
+        down_t: nvfp4_table(g, &down.iter().collect::<Vec<_>>(), Leg::AllNvfp4Tc)?,
+        down_l: nvfp4_table(g, &down.iter().collect::<Vec<_>>(), Leg::AllNvfp4TcLean)?,
         down8_t: fp8_table(g, &down8.iter().collect::<Vec<_>>())?,
         gate,
         up,
@@ -231,9 +274,30 @@ fn main() -> Result<()> {
         (seen.iter().filter(|s| **s).count() + 1) as f64 * expert_bytes
     };
     let mut blended: Vec<(Leg, Vec<u8>)> = Vec::new();
-    for leg in [Leg::AllNvfp4, Leg::Nvfp4, Leg::Nvfp4GateUp, Leg::AllNvfp4Tc] {
+    let mut tc_full: Vec<u8> = Vec::new();
+    for leg in [
+        Leg::AllNvfp4,
+        Leg::Nvfp4,
+        Leg::Nvfp4GateUp,
+        Leg::AllNvfp4Tc,
+        Leg::AllNvfp4TcLean,
+    ] {
         let max_m = leg.max_m();
         let full = run(g, &k, &w, &b, leg, max_m, num_experts, 0)?.0;
+        // 2026-10-04: The lean point must return the row-major tensor-core point's blended bytes
+        // exactly, every row of the widest launch (and, below, every width's rows equal these).
+        match leg {
+            Leg::AllNvfp4Tc => tc_full = full.clone(),
+            Leg::AllNvfp4TcLean => {
+                let same = full == tc_full;
+                println!(
+                    "all-nvfp4-tc vs all-nvfp4-tc-lean blended, rows 0..{max_m}: {}",
+                    if same { "IDENTICAL" } else { "DIFFERENT" }
+                );
+                failures += usize::from(!same);
+            }
+            _ => {}
+        }
         let mut bad_widths = Vec::new();
         let mut times = Vec::new();
         for &m in WIDTHS.iter().filter(|&&m| m <= max_m) {

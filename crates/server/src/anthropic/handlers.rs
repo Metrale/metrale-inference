@@ -19,7 +19,11 @@ use super::types::*;
 /// (`From<MessagesRequest> for ir::ChatRequest`), runs
 /// `api::chat_completions_inner`, and encodes the outcome in Anthropic's
 /// shape. It makes no sampling or prompt decision of its own.
-pub async fn messages(CurrentModel(state): CurrentModel, body: axum::body::Bytes) -> Response {
+pub async fn messages(
+    CurrentModel(state): CurrentModel,
+    tenant: Option<axum::extract::Extension<crate::auth::LookupTenant>>,
+    body: axum::body::Bytes,
+) -> Response {
     let req: MessagesRequest = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => {
@@ -59,7 +63,14 @@ pub async fn messages(CurrentModel(state): CurrentModel, body: axum::body::Bytes
         }
     });
 
-    let outcome = crate::api::chat_completions_inner(state.clone(), None, req.into(), None).await;
+    let outcome = crate::api::chat_completions_inner(
+        state.clone(),
+        None,
+        tenant.map(|e| e.0),
+        req.into(),
+        None,
+    )
+    .await;
 
     let chat_resp = match outcome {
         crate::api::ChatOutcome::Blocking(ir) => {

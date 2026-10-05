@@ -56,6 +56,7 @@ pub fn prefill_request(
     let logit_bias = req.logit_bias().to_vec();
     let req_min_tokens = req.min_tokens();
     let req_session_hash = req.session_hash();
+    let req_lookup_tenant = req.lookup_tenant().map(|t| t.0);
     let req_adapter_slot = req.adapter_slot();
     let req_src_lang = req.src_lang_id();
     let req_tgt_lang = req.tgt_lang_id();
@@ -127,6 +128,7 @@ pub fn prefill_request(
         }
     };
     seq.session_hash = req_session_hash;
+    seq.lookup_tenant = req_lookup_tenant;
     seq.adapter_slot = req_adapter_slot;
     seq.src_lang_id = req_src_lang;
     seq.tgt_lang_id = req_tgt_lang;

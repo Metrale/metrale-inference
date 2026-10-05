@@ -81,11 +81,19 @@ pub(super) fn take_rounds_with_copies(
             ))
         });
         let cap = slot_cap.min(pl.window().max(chain));
+        // 2026-10-04: With no own match, the cross-request cache of this
+        // sequence's scope may supply the copy (`shared_lookup_step`).
+        let shared = sched
+            .shared_lookup
+            .as_ref()
+            .and_then(|sl| Some((sl, sl.scope(&a.seq)?)));
         // 2026-10-02: The lookup history is everything the sequence holds plus
         // `last_token`, which the verify feeds as its first row and which is
         // not in `seq.tokens` yet.
         a.seq.tokens.push(a.last_token);
-        let copy = pl.propose(&a.seq.tokens, cap);
+        let copy = pl.propose_with(&a.seq.tokens, cap, |h, m| {
+            shared.and_then(|(sl, scope)| sl.propose(&scope, h, m))
+        });
         a.seq.tokens.pop();
         match copy.map(bucket_copy) {
             Some(copy) if copy.len() >= chain => {
@@ -131,7 +139,11 @@ pub(super) fn settle_copies(
             continue;
         };
         let accepted = advanced.saturating_sub(1);
+        let shared = pl.in_flight_shared();
         let proposed = pl.settle(accepted);
+        if let Some(sl) = sched.shared_lookup.as_ref().filter(|_| shared) {
+            sl.record(proposed, accepted);
+        }
         let [n, p, acc] = sched.prompt_lookup_stats.get();
         let stats = [
             n + 1,
@@ -140,10 +152,17 @@ pub(super) fn settle_copies(
         ];
         sched.prompt_lookup_stats.set(stats);
         if stats[0] % LOG_EVERY == 1 {
+            let [sn, sp, sa] = sched
+                .shared_lookup
+                .as_ref()
+                .map_or([0; 3], |sl| sl.stats.get());
             tracing::info!(
                 copies = stats[0],
                 proposed = stats[1],
                 accepted = stats[2],
+                shared_copies = sn,
+                shared_proposed = sp,
+                shared_accepted = sa,
                 window = pl.window(),
                 "prompt-lookup: copies verified"
             );

@@ -71,6 +71,10 @@ pub struct SchedCtx {
     /// verified, tokens they proposed, tokens accepted
     /// (`prompt_lookup_step::settle_copies`).
     pub prompt_lookup_stats: std::cell::Cell<[u64; 3]>,
+    /// 2026-10-04: The cross-request prompt-lookup cache
+    /// (`--prompt-lookup-shared-cache-mb`); `None` when off. Set once by
+    /// `SchedulerCore::new`, only alongside `prompt_lookup`.
+    pub shared_lookup: Option<crate::scheduler::shared_lookup_step::SharedLookup>,
 }
 
 impl SchedCtx {
@@ -101,6 +105,7 @@ impl SchedCtx {
             think_mask_fallbacks: std::cell::Cell::new(0),
             prompt_lookup: None,
             prompt_lookup_stats: std::cell::Cell::new([0; 3]),
+            shared_lookup: None,
         }
     }
 

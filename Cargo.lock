@@ -1790,6 +1790,7 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tracing",
 ]
@@ -1875,6 +1876,8 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-model-layers",
  "parking_lot",
+ "serde",
+ "toml",
  "tracing",
 ]
 

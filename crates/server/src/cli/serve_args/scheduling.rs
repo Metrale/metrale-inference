@@ -176,6 +176,11 @@ pub struct ServeSchedulingArgs {
     #[command(flatten)]
     pub mtp_shape: crate::cli::serve_args_mtp::ServeMtpShapeArgs,
 
+    /// 2026-10-04: `--spec-cost-model` and its table/calibration/slack, listed here after
+    /// `--mtp-dcut-ratio`.
+    #[command(flatten)]
+    pub spec_cost: crate::cli::serve_args_spec_cost::ServeSpecCostArgs,
+
     /// Widest batch that speculates (the multi-sequence MTP dispatch cap): above
     /// this many active sequences a step plain-decodes. Precedence (highest wins):
     /// this flag → MODEL.toml `[behavior].mtp_max_seqs` → 32 (4 under

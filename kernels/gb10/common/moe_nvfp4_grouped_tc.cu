@@ -16,7 +16,9 @@
 // Invariants:
 // - Weights are row-major NVFP4: packed E2M1 [N, K / 2] (element 2j in the low nibble of byte
 //   j), E4M3 block scales [N, K / 16], a per-tensor FP32 scale s2 (per expert for the routed
-//   tables). K % 256 == 0 and N a multiple of the CTA's columns (the host checks
+//   tables). The `_lean` kernels (2026-10-04, Nvfp4G16Lean) read the same tables after
+//   nvfp4_tc_lean_repack rewrote them in place (tc_weight_formats.cuh) and return the row-major
+//   kernels' bytes. K % 256 == 0 and N a multiple of the CTA's columns (the host checks
 //   `nvfp4_grouped_tc_shape_ok`).
 // - A weight enters the MMA as the BF16 E2M1 * E4M3: exact, since the product has at most five
 //   significant bits and lies in [2^-10, 2688]. s2 multiplies the FP32 sum once per output.
@@ -61,7 +63,7 @@
 // 2026-10-02: Gate+up and SiLU of the routed experts and the shared expert. A: [num_tokens, K]
 // BF16. act: routed hi|lo rows [pos, 2N] BF16 by sorted position; sh_act: shared hi|lo rows
 // [token, 2N]; both in FP32-sized buffers. Arguments as moe_expert_gate_up_act_nvfp4_grouped.
-extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act_nvfp4_grouped_tc(
+template <class WF> __device__ __forceinline__ void ntc_gate_up(
     const __nv_bfloat16* __restrict__ A,
     const unsigned long long* __restrict__ gate_packed_ptrs,
     const unsigned long long* __restrict__ gate_scale_ptrs,
@@ -89,7 +91,7 @@ extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act
                        &is_shared, &expert, &begin, &end)) return;
     const unsigned int f0 = blockIdx.x * NTC_GU_COLS + (threadIdx.x >> 5) * 16 * NTC_GU_MT;
     if (is_shared) {
-        gtc_warp<Nvfp4G16, true, NTC_GU_MT, 1, NTC_GU_G>(
+        gtc_warp<WF, true, NTC_GU_MT, 1, NTC_GU_G>(
             A, sorted_token_ids, true, begin, end, {sh_gate_packed, sh_gate_scale, sh_gate_s2},
             {sh_up_packed, sh_up_scale, sh_up_s2}, sh_act, N, K, f0);
         return;
@@ -103,7 +105,7 @@ extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act
                     act[(unsigned long long)pos * 2 * N + hl * N + blockIdx.x * NTC_GU_COLS + i] = __float2bfloat16(0.0f);
         return;
     }
-    gtc_warp_routed<Nvfp4G16, true, NTC_GU_MT, NTC_GU_G>(
+    gtc_warp_routed<WF, true, NTC_GU_MT, NTC_GU_G>(
         A, sorted_token_ids, false, begin, end,
         {Pg, (const unsigned char*)gate_scale_ptrs[expert], gate_scale2[expert]},
         {Pu, (const unsigned char*)up_scale_ptrs[expert], up_scale2[expert]}, act, N, K, f0);
@@ -112,7 +114,7 @@ extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act
 // 2026-10-02: Down projection of the hi|lo SiLU rows (act routed by position, sh_act shared by
 // token) into C [pos, N] and sh_down_out [token, N] BF16. Arguments as
 // moe_expert_down_act_nvfp4_grouped.
-extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nvfp4_grouped_tc(
+template <class WF> __device__ __forceinline__ void ntc_down(
     const __nv_bfloat16* __restrict__ act,
     const unsigned long long* __restrict__ packed_ptrs,
     const unsigned long long* __restrict__ scale_ptrs,
@@ -134,7 +136,7 @@ extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nv
                        &is_shared, &expert, &begin, &end)) return;
     const unsigned int f0 = blockIdx.x * NTC_DOWN_COLS + (threadIdx.x >> 5) * 16 * NTC_DOWN_MT;
     if (is_shared) {
-        gtc_warp<Nvfp4G16, false, NTC_DOWN_MT, 1, NTC_DOWN_G>(
+        gtc_warp<WF, false, NTC_DOWN_MT, 1, NTC_DOWN_G>(
             sh_act, nullptr, true, begin, end, {sh_down_packed, sh_down_scale, sh_down_s2},
             {nullptr, nullptr, 0.f}, sh_down_out, N, K, f0);
         return;
@@ -146,7 +148,102 @@ extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nv
                 C[(unsigned long long)pos * N + blockIdx.x * NTC_DOWN_COLS + i] = __float2bfloat16(0.0f);
         return;
     }
-    gtc_warp_routed<Nvfp4G16, false, NTC_DOWN_MT, NTC_DOWN_G>(
+    gtc_warp_routed<WF, false, NTC_DOWN_MT, NTC_DOWN_G>(
         act, nullptr, true, begin, end, {P, (const unsigned char*)scale_ptrs[expert], scale2[expert]},
         {nullptr, nullptr, 0.f}, C, N, K, f0);
 }
+
+// 2026-10-04: The entry points: the row-major point (Nvfp4G16) and the lean point (Nvfp4G16Lean, tables repacked in
+// place at load by nvfp4_tc_lean_repack; byte-identical outputs).
+#define NTC_GU_ARGS const __nv_bfloat16* __restrict__ A, const unsigned long long* __restrict__ gate_packed_ptrs, \
+    const unsigned long long* __restrict__ gate_scale_ptrs, const float* __restrict__ gate_scale2, \
+    const unsigned long long* __restrict__ up_packed_ptrs, const unsigned long long* __restrict__ up_scale_ptrs, \
+    const float* __restrict__ up_scale2, __nv_bfloat16* __restrict__ act, const int* __restrict__ expert_offsets, \
+    const int* __restrict__ sorted_token_ids, const int* __restrict__ active_experts, const int* __restrict__ active_count, \
+    const unsigned char* __restrict__ sh_gate_packed, const unsigned char* __restrict__ sh_gate_scale, float sh_gate_s2, \
+    const unsigned char* __restrict__ sh_up_packed, const unsigned char* __restrict__ sh_up_scale, float sh_up_s2, \
+    __nv_bfloat16* __restrict__ sh_act, unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
+#define NTC_GU_PASS A, gate_packed_ptrs, gate_scale_ptrs, gate_scale2, up_packed_ptrs, up_scale_ptrs, up_scale2, act, \
+    expert_offsets, sorted_token_ids, active_experts, active_count, sh_gate_packed, sh_gate_scale, sh_gate_s2, \
+    sh_up_packed, sh_up_scale, sh_up_s2, sh_act, N, K, cap, num_tokens
+#define NTC_DN_ARGS const __nv_bfloat16* __restrict__ act, const unsigned long long* __restrict__ packed_ptrs, \
+    const unsigned long long* __restrict__ scale_ptrs, const float* __restrict__ scale2, __nv_bfloat16* __restrict__ C, \
+    const int* __restrict__ expert_offsets, const int* __restrict__ active_experts, const int* __restrict__ active_count, \
+    const __nv_bfloat16* __restrict__ sh_act, const unsigned char* __restrict__ sh_down_packed, \
+    const unsigned char* __restrict__ sh_down_scale, float sh_down_s2, __nv_bfloat16* __restrict__ sh_down_out, \
+    unsigned int N, unsigned int K, unsigned int cap, unsigned int num_tokens
+#define NTC_DN_PASS act, packed_ptrs, scale_ptrs, scale2, C, expert_offsets, active_experts, active_count, sh_act, \
+    sh_down_packed, sh_down_scale, sh_down_s2, sh_down_out, N, K, cap, num_tokens
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act_nvfp4_grouped_tc(NTC_GU_ARGS) { ntc_gate_up<Nvfp4G16>(NTC_GU_PASS); }
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nvfp4_grouped_tc(NTC_DN_ARGS) { ntc_down<Nvfp4G16>(NTC_DN_PASS); }
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_gate_up_act_nvfp4_grouped_tc_lean(NTC_GU_ARGS) { ntc_gate_up<Nvfp4G16Lean>(NTC_GU_PASS); }
+extern "C" __global__ void __launch_bounds__(NTC_THREADS) moe_expert_down_act_nvfp4_grouped_tc_lean(NTC_DN_ARGS) { ntc_down<Nvfp4G16Lean>(NTC_DN_PASS); }
+
+// 2026-10-04: One NVFP4 block (scale byte s, its 16 weights in packed words w[0], w[1]) of a row-major table in the
+// lean layout. Returns false on a negative or NaN scale. A +-0 scale zeroes the weights (code 0): every product is
+// still a zero, so the sums keep their bytes.
+__device__ __forceinline__ unsigned int ntc_lean_word(unsigned int w) {
+    unsigned int o = 0u;
+    #pragma unroll
+    for (int p = 0; p < 4; p++) {
+        const unsigned int x = (w >> (8 * p)) & 0xFu, y = (w >> (8 * p + 4)) & 0xFu;
+        const int a = ntc_lean_mag_rot(p), b = ntc_lean_sign_rot(p);
+        #pragma unroll
+        for (int i = 0; i < 3; i++) {
+            o |= ((x >> i) & 1u) << ((6 + i + a) & 31);
+            o |= ((y >> i) & 1u) << ((22 + i + a) & 31);
+        }
+        o |= (x >> 3) << ((15 + b) & 31);
+        o |= (y >> 3) << ((31 + b) & 31);
+    }
+    return o;
+}
+
+__device__ __forceinline__ bool ntc_lean_block(unsigned int s, unsigned int* w, unsigned char* c) {
+    if ((s & 0x7Fu) == 0x7Fu || s > 0x80u) return false;
+    if ((s & 0x7Fu) == 0u) {
+        w[0] = w[1] = 0u;
+        *c = 0u;
+        return true;
+    }
+    const unsigned int e = s >> 3, m = s & 7u;
+    if (e > 0u) {
+        *c = (unsigned char)(s + 24u);                              // ((E + 3) << 3) | M
+    } else {
+        // E4M3 subnormal m * 2^-9, normalized: E = -2 (m = 1), -1 (m = 2, 3), 0 (m = 4..7).
+        const unsigned int ex = m >= 4u ? 3u : m >= 2u ? 2u : 1u;   // E + 3
+        *c = (unsigned char)((ex << 3) | ((m << (4u - ex)) & 7u));
+    }
+    w[0] = ntc_lean_word(w[0]);
+    w[1] = ntc_lean_word(w[1]);
+    return true;
+}
+
+// 2026-10-04: Repacks one row-major NVFP4 matrix [N, K] (packed [N, K / 2], scales [N, K / 16]) in place into the
+// lean layout of Nvfp4G16Lean. One CTA per 16-row tile stages the tile's 16 * K / 2 packed and 16 * K / 16 scale bytes
+// in shared memory (9 * K bytes, dynamic), then writes them back over the same bytes in tile order with the lean
+// encoding. Grid (N / 16), any block size; N % 16 == 0, K % 128 == 0. A negative or NaN scale sets *bad (the
+// matrix is then unusable: the caller must fail the load).
+extern "C" __global__ void nvfp4_tc_lean_repack(unsigned char* __restrict__ packed, unsigned char* __restrict__ scale,
+                                                unsigned int K, unsigned int* __restrict__ bad) {
+    extern __shared__ unsigned int ntc_lean_smem[];
+    const unsigned int row_w = K / 8, row_s = K / 16;              // packed words and scale bytes per row
+    unsigned int* sw = ntc_lean_smem;
+    unsigned char* ss = (unsigned char*)(ntc_lean_smem + 16 * row_w);
+    unsigned int* gw = (unsigned int*)packed + (unsigned long long)blockIdx.x * 16 * row_w;
+    unsigned char* gs = scale + (unsigned long long)blockIdx.x * 16 * row_s;
+    for (unsigned int i = threadIdx.x; i < 16 * row_w; i += blockDim.x) sw[i] = gw[i];
+    for (unsigned int i = threadIdx.x; i < 16 * row_s; i += blockDim.x) ss[i] = gs[i];
+    __syncthreads();
+    // Tile order: chunk c (128 K) major, then row r, then block b (16 K) of the chunk: block i = (c * 16 + r) * 8 + b.
+    for (unsigned int i = threadIdx.x; i < 16 * row_s; i += blockDim.x) {
+        const unsigned int c = i / 128, r = (i / 8) % 16, b = i % 8, src = r * row_s + c * 8 + b;
+        unsigned int w[2] = {sw[2 * src], sw[2 * src + 1]};
+        unsigned char code;
+        if (!ntc_lean_block(ss[src], w, &code)) { atomicOr(bad, 1u); continue; }
+        gw[2 * i] = w[0];
+        gw[2 * i + 1] = w[1];
+        gs[i] = code;
+    }
+}
+

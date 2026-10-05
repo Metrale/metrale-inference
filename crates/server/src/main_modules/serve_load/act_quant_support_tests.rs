@@ -109,3 +109,35 @@ fn prefill_levers_are_refused_beside_a_fixed_format() {
     let why = prefill_lever_refusal(&v("declared"), false, true, true).unwrap();
     assert!(!why.contains("Q12"), "{why}");
 }
+
+/// 2026-10-01: On the nvfp4 tier the dense GDN and attention projections honour a fixed `nvfp4`
+/// (their weights are NVFP4) and nothing else; on another model kind `nvfp4` for those families
+/// is refused, so the attention and GDN layers' mx arms engage only where every decode site
+/// has one.
+#[test]
+fn nvfp4_attention_and_gdn_are_honoured_on_the_dense_nvfp4_tier_only() {
+    for s in [
+        "adaptive,gdn:nvfp4",
+        "adaptive,attn:nvfp4",
+        "nvfp4,lm_head:declared",
+    ] {
+        assert!(support(&v(s), DENSE_NVFP4).unwrap().is_empty(), "{s}");
+    }
+    assert_eq!(
+        support(&v("adaptive,gdn:bf16"), DENSE_NVFP4).unwrap(),
+        vec![ProjFamily::Gdn]
+    );
+    let other = ModelKind {
+        qwen_hybrid: false,
+        fp8_moe: false,
+        ..DENSE_NVFP4
+    };
+    for (s, fam) in [
+        ("adaptive,gdn:nvfp4", "gdn"),
+        ("adaptive,attn:nvfp4", "attn"),
+    ] {
+        let e = format!("{:#}", support(&v(s), other).expect_err(s));
+        assert!(e.contains(fam), "{s}: {e}");
+    }
+    assert_eq!(support(&v("declared"), other).unwrap().len(), 4);
+}
