@@ -91,6 +91,19 @@ impl TransformerModel {
         let is_last_chunk = streams[0].is_last_chunk;
         let h = self.config.hidden_size;
         let row_bytes = h * 2;
+        // 2026-10-05: The tail split points, before the KV lock: `prefill_tail_split_dispatch`
+        // takes that lock itself.
+        let cuts: Vec<Option<usize>> = streams
+            .iter()
+            .map(|s| {
+                if is_last_chunk {
+                    self.prefill_tail_split_dispatch(s.prompt_tokens)
+                        .filter(|&c| c > s.chunk_start)
+                } else {
+                    None
+                }
+            })
+            .collect();
         let mut kv_cache = self.kv_cache.lock();
         let StreamSetup {
             per_stream,
@@ -112,12 +125,7 @@ impl TransformerModel {
             let m = &per_stream[b];
             let tokens = slice.prompt_tokens;
             let total = tokens.len();
-            let cut = if is_last_chunk {
-                self.prefill_tail_split_dispatch(tokens)
-                    .filter(|&c| c > slice.chunk_start)
-            } else {
-                None
-            };
+            let cut = cuts[b];
             anyhow::ensure!(
                 m.proc_count > 1 || m.effective_seq_len_start == 0,
                 "exact wave: stream {b} is a single-token pass after position 0"
