@@ -64,6 +64,17 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     );
 
     let (mut config, config_json) = model_setup::configure_model(&args, &model_dir)?;
+    // 2026-10-05: `--kv-cache-dtype declared` becomes the checkpoint's declared KV-cache format
+    // here, before anything reads the flag (`serve_phases::kv_cache::declared_kv_dtype`).
+    let kv_declared =
+        args.kv_cache_dtype.as_deref() == Some(serve_phases::kv_cache::KV_DTYPE_DECLARED);
+    if kv_declared {
+        let dtype = serve_phases::kv_cache::declared_kv_dtype(&config)?;
+        tracing::info!(
+            "KV cache dtype: {dtype} (--kv-cache-dtype declared: the checkpoint's declared format)"
+        );
+        args.kv_cache_dtype = Some(dtype.to_string());
+    }
 
     let (vision_max_pixels, remote_image_policy, video_ffmpeg) =
         model_setup::resolve_media_policies(&args, &model_dir, &mut config)?;
@@ -136,9 +147,15 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // 2026-09-26: An explicit `--fp8-kv-calibration-tokens` wins, including 0,
     // which turns calibration off for a model whose MODEL.toml enables it.
     // Omitted: MODEL.toml `[behavior].fp8_kv_calibration_tokens`, 0 when absent.
-    config.fp8_kv_calibration_tokens = args
-        .fp8_kv_calibration_tokens
-        .unwrap_or(ptx_set.behavior.fp8_kv_calibration_tokens);
+    // 2026-10-05: Under `--kv-cache-dtype declared` the scales follow the checkpoint too: its
+    // k/v scales, or 1.0 where it ships none (as vLLM serves an FP8 cache without scales), never
+    // a calibration window that would tie the scales to whichever prompts came first; an explicit
+    // `--fp8-kv-calibration-tokens` still wins.
+    config.fp8_kv_calibration_tokens = serve_phases::kv_cache::fp8_kv_calibration_tokens(
+        args.fp8_kv_calibration_tokens,
+        kv_declared,
+        ptx_set.behavior.fp8_kv_calibration_tokens,
+    );
     // 2026-09-26: Set on every load: config parsing leaves it at 0.0
     // (`#[serde(skip)]`), and `validate_serve_args` has checked the flag is at
     // least 1.0.

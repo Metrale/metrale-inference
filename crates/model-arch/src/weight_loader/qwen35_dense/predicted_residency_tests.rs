@@ -50,6 +50,7 @@ fn qwen38_27b() -> ModelConfig {
         format: String::new(),
         ignore_modules: Vec::new(),
         precision: Default::default(),
+        kv_cache_format: None,
     });
     c
 }

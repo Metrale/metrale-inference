@@ -91,6 +91,7 @@ pub fn parse_quantization_config(raw: &serde_json::Value) -> Result<Option<Quant
     }
     let precision = crate::precision_plan::DeclaredPrecisionPlan::from_quantization_config(qc_raw)
         .context("quantization_config")?;
+    let kv_cache_format = declared_kv_cache_format(qc)?;
 
     Ok(Some(QuantizationConfig {
         quant_method,
@@ -98,7 +99,33 @@ pub fn parse_quantization_config(raw: &serde_json::Value) -> Result<Option<Quant
         format,
         ignore_modules,
         precision,
+        kv_cache_format,
     }))
+}
+
+/// 2026-10-05: The KV-cache format a (normalised) quantization block declares: compressed-tensors
+/// `kv_cache_scheme` with 8-bit float numbers, or ModelOpt `kv_cache_quant_algo: FP8`, is `FP8`;
+/// neither key (or a null) is `None`; any other declared format is an error, never a guess.
+fn declared_kv_cache_format(qc: &serde_json::Value) -> Result<Option<String>> {
+    if let Some(s) = qc.get("kv_cache_scheme").filter(|v| !v.is_null()) {
+        let bits = s.get("num_bits").and_then(serde_json::Value::as_u64);
+        let ty = s.get("type").and_then(serde_json::Value::as_str);
+        return match (bits, ty) {
+            (Some(8), Some("float")) => Ok(Some("FP8".to_string())),
+            _ => anyhow::bail!(
+                "kv_cache_scheme {s} declares a KV-cache format the engine has no cache for"
+            ),
+        };
+    }
+    match qc.get("kv_cache_quant_algo").filter(|v| !v.is_null()) {
+        None => Ok(None),
+        Some(v) => match v.as_str() {
+            Some("FP8") => Ok(Some("FP8".to_string())),
+            _ => anyhow::bail!(
+                "kv_cache_quant_algo {v} declares a KV-cache format the engine has no cache for"
+            ),
+        },
+    }
 }
 
 /// 2026-09-26: Flatten a ModelOpt `hf_quant_config.json` payload into the shape
@@ -224,5 +251,53 @@ mod tests {
         assert_eq!(qc.quant_method, "modelopt");
         assert_eq!(qc.quant_algo, "MIXED_PRECISION");
         assert!(qc.ignore_modules.is_empty());
+        assert_eq!(qc.kv_cache_format.as_deref(), Some("FP8"));
+    }
+
+    /// 2026-10-05: The declared KV-cache format: ModelOpt `kv_cache_quant_algo` (nested or flat)
+    /// and compressed-tensors `kv_cache_scheme` (8-bit float) are `FP8`; no key, or a null, is
+    /// `None`; any other declared format fails the parse rather than being guessed.
+    #[test]
+    fn the_declared_kv_cache_format_is_read_or_refused() {
+        let parse = |qc: serde_json::Value| {
+            parse_quantization_config(&serde_json::json!({ "quantization_config": qc }))
+        };
+        let fmt = |qc| {
+            parse(qc)
+                .expect("parses")
+                .expect("declares")
+                .kv_cache_format
+        };
+        assert_eq!(
+            fmt(
+                serde_json::json!({ "quant_method": "modelopt", "quant_algo": "NVFP4", "kv_cache_quant_algo": "FP8" })
+            ),
+            Some("FP8".to_string())
+        );
+        assert_eq!(
+            fmt(
+                serde_json::json!({ "quant_method": "compressed-tensors", "quant_algo": "FP8",
+                "kv_cache_scheme": { "num_bits": 8, "type": "float" } })
+            ),
+            Some("FP8".to_string())
+        );
+        assert_eq!(
+            fmt(serde_json::json!({ "quant_method": "modelopt", "quant_algo": "NVFP4" })),
+            None
+        );
+        assert_eq!(
+            fmt(
+                serde_json::json!({ "quant_method": "modelopt", "quant_algo": "NVFP4", "kv_cache_quant_algo": null })
+            ),
+            None
+        );
+        assert!(parse(serde_json::json!({ "quant_method": "modelopt", "quant_algo": "NVFP4", "kv_cache_quant_algo": "INT8" })).is_err());
+        assert!(
+            parse(
+                serde_json::json!({ "quant_method": "compressed-tensors", "quant_algo": "FP8",
+            "kv_cache_scheme": { "num_bits": 4, "type": "int" } })
+            )
+            .is_err()
+        );
     }
 }

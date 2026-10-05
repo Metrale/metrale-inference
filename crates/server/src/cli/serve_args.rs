@@ -127,7 +127,7 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = 16)]
     pub block_size: usize,
 
-    /// KV cache dtype (fp8, bf16, or nvfp4).
+    /// KV cache dtype (fp8, bf16, nvfp4, or `declared`: the checkpoint's declared format).
     /// Precedence (highest wins): this flag → MODEL.toml
     /// `[behavior].default_kv_dtype` → fp8 (`DEFAULT_KV_CACHE_DTYPE`). An
     /// explicitly passed value always wins, including `fp8` itself.

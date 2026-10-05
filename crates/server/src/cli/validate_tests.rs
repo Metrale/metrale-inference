@@ -81,6 +81,15 @@ fn every_documented_kv_high_precision_layers_form_is_accepted() {
     }
 }
 
+/// 2026-10-05: `declared` passes validation (the checkpoint resolves it at load); a value that is
+/// neither a cache format nor `declared` is still refused.
+#[test]
+fn the_declared_kv_cache_dtype_is_accepted_and_garbage_is_not() {
+    assert!(validate_serve_args(&parse(&["--kv-cache-dtype", "declared"])).is_ok());
+    let err = validate_serve_args(&parse(&["--kv-cache-dtype", "declard"])).unwrap_err();
+    assert!(err.contains("is not a known KV cache dtype"), "{err}");
+}
+
 #[test]
 fn fp8_calibration_requires_fp8_kv() {
     let err = validate_serve_args(&parse(&[
