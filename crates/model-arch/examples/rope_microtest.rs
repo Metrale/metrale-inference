@@ -10,6 +10,9 @@
 //!   reference is at least 0.999.
 //!
 //!   cargo run -p metrale-model-arch --release --example rope_microtest --features cuda,gpu-examples -- [seq] [seed]
+#[path = "common/xclass_digest.rs"]
+mod xclass_digest;
+
 use anyhow::Result;
 use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
@@ -132,6 +135,9 @@ fn main() -> Result<()> {
     g.synchronize(st)?;
     let qg = db(g, qp, seq * NQ * HD)?;
     let kg = db(g, kp, seq * NKV * HD)?;
+    let le = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+    xclass_digest::print(&format!("rope q seq={seq} seed={seed:#x}"), &le(&qg));
+    xclass_digest::print(&format!("rope k seq={seq} seed={seed:#x}"), &le(&kg));
     let _ = (&q, &k, &q0, &k0);
     let cq = cosf2(&qg, &qc);
     let ck = cosf2(&kg, &kc);

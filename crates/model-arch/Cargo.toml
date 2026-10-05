@@ -36,6 +36,7 @@ memmap2 = { version = "0.9", optional = true }
 safetensors = { version = "0.8", optional = true }
 
 [dev-dependencies]
+sha2.workspace = true
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 metrale-kernels = { path = "../kernels", default-features = false }
 
