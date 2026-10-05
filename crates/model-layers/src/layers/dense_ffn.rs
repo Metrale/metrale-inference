@@ -144,6 +144,8 @@ pub struct DenseFfnLayer {
     /// 2026-09-28: W8A8 gate, up and down (`set_w8a8_decode_weights`), for a checkpoint that
     /// declares them FP8 W8A8; run ahead of every other arm at 1..=64 decode rows.
     pub(crate) w8a8: Option<crate::layers::W8a8Ffn>,
+    /// 2026-10-05: The prefill's W8A8 context (`set_w8a8_prefill_ctx`), read by `forward_prompt`.
+    pub(crate) w8a8_prefill: Option<crate::layers::W8a8Ctx>,
     w8a16_gemv_k: KernelHandle,
     w8a16_gemm_k: KernelHandle,
     w8a16_gemv_batch4_k: KernelHandle,

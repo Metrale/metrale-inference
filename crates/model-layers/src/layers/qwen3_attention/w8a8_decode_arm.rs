@@ -73,9 +73,19 @@ impl Qwen3AttentionLayer {
 
     /// 2026-09-28: Install W8A8 gate/up/down on this layer's dense FFN
     /// (`DenseFfnLayer::set_w8a8_decode_weights`); refuses a MoE or absent FFN.
-    pub fn set_w8a8_ffn_weights(&mut self, w: W8a8Ffn, hidden: u32, inter: u32) -> Result<()> {
+    pub fn set_w8a8_ffn_weights(
+        &mut self,
+        w: W8a8Ffn,
+        prefill: crate::layers::W8a8Ctx,
+        hidden: u32,
+        inter: u32,
+    ) -> Result<()> {
         match self.ffn {
-            FfnComponent::Dense(ref mut d) => d.set_w8a8_decode_weights(w, hidden, inter),
+            FfnComponent::Dense(ref mut d) => {
+                d.set_w8a8_decode_weights(w, hidden, inter)?;
+                d.set_w8a8_prefill_ctx(prefill);
+                Ok(())
+            }
             _ => anyhow::bail!("W8A8 FFN weights need a dense FFN"),
         }
     }

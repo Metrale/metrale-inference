@@ -372,8 +372,8 @@ impl Qwen3AttentionLayer {
                 .copy_d2d_async(moe_out, carry, num_tokens * h * 2, stream)?;
         }
         self.ffn
-            .forward_prefill(ctx.buffers.norm_output(), num_tokens, ctx, stream)
-            .map_err(|e| anyhow::anyhow!("ffn.forward_prefill failed: {e}"))?;
+            .forward_prompt(ctx.buffers.norm_output(), num_tokens, ctx, stream)
+            .map_err(|e| anyhow::anyhow!("ffn.forward_prompt failed: {e}"))?;
         if let Some(t) = t_ffn {
             crate::layers::qwen3_attention::add_ffn_host_us(t.elapsed().as_micros() as u64);
         }

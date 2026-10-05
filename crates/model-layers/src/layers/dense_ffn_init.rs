@@ -107,6 +107,7 @@ impl DenseFfnLayer {
             act_mul,
             bf16_weights: None,
             w8a8: None,
+            w8a8_prefill: None,
             dense_gemv_bf16_k,
             dense_gemm_bf16_k,
             dense_gemm_tc_k,

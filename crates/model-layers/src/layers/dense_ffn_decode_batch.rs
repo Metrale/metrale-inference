@@ -66,7 +66,7 @@ impl DenseFfnLayer {
     /// `forward_prefill`, and to `forward_km` when `small_batch_w4a4` and `can_forward_km(2)`; otherwise NVFP4 runs `w4a16_gemv_dual_batch2`, `act_mul` and `w4a16_gemv_batch2`, plus the
     /// LoRA deltas.
     pub fn forward_k2(&self, input: DevicePtr, ctx: &ForwardContext, stream: u64) -> Result<()> {
-        if self.forward_w8a8(input, 2, ctx, stream)? {
+        if self.forward_w8a8(input, 2, ctx, stream, false)? {
             return Ok(());
         }
         if let Some(ref q2w) = self.q2_weights {
@@ -128,7 +128,7 @@ impl DenseFfnLayer {
 
     /// 2026-09-25: FFN for 3 rows; the same routing as `forward_k2`, with the batch3 kernels.
     pub fn forward_k3(&self, input: DevicePtr, ctx: &ForwardContext, stream: u64) -> Result<()> {
-        if self.forward_w8a8(input, 3, ctx, stream)? {
+        if self.forward_w8a8(input, 3, ctx, stream, false)? {
             return Ok(());
         }
         if let Some(ref q2w) = self.q2_weights {
@@ -242,7 +242,7 @@ impl DenseFfnLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        if self.forward_w8a8(input, m as usize, ctx, stream)? {
+        if self.forward_w8a8(input, m as usize, ctx, stream, false)? {
             return Ok(());
         }
         if native_small_batch_uses_prefill(self.bf16_weights.is_some(), self.fp8_weights.is_some())

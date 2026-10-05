@@ -48,6 +48,14 @@ impl Qwen3SsmLayer {
             self.qkvz_q2_prefill_gemm(ctx.gpu, normed, proj_dst, scratch, act_q8, k, stream)?;
             return Ok(());
         }
+        // 2026-10-05: The declared W8A8 first (`w8a8_decode.rs`), ahead of every arm that runs
+        // the FP8 weight another way (BF16 dequant, unscaled E4M3 casts) or an NVFP4 copy of it.
+        // Only on a sequential layer, whose projection lands deinterleaved (as the Q2 arm above).
+        if self.sequential_qkvz
+            && self.w8a8_prefill_proj(ctx, false, normed, k as usize, proj_dst, stream)?
+        {
+            return Ok(());
+        }
         let force_bf16 = matches!(
             std::env::var("METRALE_GDN_BF16_WEIGHTS").ok().as_deref(),
             Some("1")

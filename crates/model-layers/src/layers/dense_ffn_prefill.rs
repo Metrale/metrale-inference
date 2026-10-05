@@ -108,11 +108,34 @@ impl DenseFfnLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        self.forward_prefill_timed(input, num_tokens, ctx, stream, false)
+    }
+
+    /// 2026-10-05: [`Self::forward_prefill`] for a prompt's prefill (the layer prefill passes,
+    /// on the scheduler's prefill stream): its W8A8 arm runs on the prefill's own context.
+    pub fn forward_prompt(
+        &self,
+        input: DevicePtr,
+        num_tokens: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        self.forward_prefill_timed(input, num_tokens, ctx, stream, true)
+    }
+
+    fn forward_prefill_timed(
+        &self,
+        input: DevicePtr,
+        num_tokens: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+        prompt: bool,
+    ) -> Result<()> {
         if !ctx.profile {
-            return self.forward_prefill_inner(input, num_tokens, ctx, stream);
+            return self.forward_prefill_inner(input, num_tokens, ctx, stream, prompt);
         }
         let t0 = std::time::Instant::now();
-        let r = self.forward_prefill_inner(input, num_tokens, ctx, stream);
+        let r = self.forward_prefill_inner(input, num_tokens, ctx, stream, prompt);
         // 2026-09-25: Synchronize so the time covers the kernels, not just their launch.
         ctx.gpu.synchronize(stream)?;
         tracing::info!(target: "metrale_model_layers::layers::dense_ffn", "  FFN prefill [dense_total] N={}: {}µs",
@@ -128,10 +151,12 @@ impl DenseFfnLayer {
         num_tokens: usize,
         ctx: &ForwardContext,
         stream: u64,
+        prompt: bool,
     ) -> Result<()> {
-        // 2026-09-28: The declared-W8A8 arm for up to `ops::W8A8_MAX_ROWS` rows
-        // (`dense_ffn_w8a8.rs`): the wide decode batches that land here, and short prefill tails.
-        if self.forward_w8a8(input, num_tokens, ctx, stream)? {
+        // 2026-09-28: The declared-W8A8 arm (`dense_ffn_w8a8.rs`): the wide decode batches that
+        // land here, and (2026-10-05) every prompt prefill, in calls of at most
+        // `ops::W8A8_MAX_ROWS` rows.
+        if self.forward_w8a8(input, num_tokens, ctx, stream, prompt)? {
             return Ok(());
         }
         let h = ctx.config.hidden_size as u32;
