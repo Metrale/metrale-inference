@@ -29,7 +29,8 @@ pub use moe_fp8_scratch::MoeFp8Scratch;
 pub use sizes::{BufferSizes, GATEUP_FUSED_MAX_M, VERIFY_ROW_CAP};
 pub use sizes_q2::q2_dequant_scratch_bytes;
 pub use sizes_q12::{
-    Q12_SIZING_STREAMS, q12_batched_scratch_bytes, q12_batched_scratch_bytes_varlen,
+    Q12_SIZING_STREAMS, prefill_meta_slot_offset, q12_batched_scratch_bytes,
+    q12_batched_scratch_bytes_varlen, q12_per_stream_meta_bytes,
 };
 pub use sizes_rowwise::{
     ssm_rowwise_w_bf16_bytes, ssm_rowwise_w_bf16_bytes_for, ssm_rowwise_w_bf16_layer_bytes,

@@ -58,8 +58,8 @@ impl TransformerModel {
         // each setup iteration.
         let mut running_proc_off = 0usize;
         let arena_cap_tokens = self.buffers.max_batch_tokens();
-        // 2026-09-25: Per-stream scratch slots are sized for the longest chunk,
-        // so a longer stream's metadata fits its slot.
+        // 2026-09-25: Without varlen the MoE top-k area is sized for n times the
+        // longest chunk.
         let max_chunk_len = streams
             .iter()
             .map(|s| s.chunk_len)
@@ -112,10 +112,6 @@ impl TransformerModel {
         let mut use_mrope: Option<bool> = None;
         let mut needs_paged: Option<bool> = None;
 
-        // 2026-09-25: Per-stream metadata slot: 16 bytes per token of the
-        // longest chunk plus 64, and at least 4096 bytes. The admission sizing
-        // (`q12_batched_scratch_bytes_varlen`) uses the same formula.
-        let per_stream_meta_bytes = ((max_chunk_len * 16) + 64).max(4096);
         // 2026-09-25: The scratch cursor starts after the MoE top-k staging
         // area, sized for Σ `chunk_len` with varlen (packed like the hidden rows)
         // and for n times the longest chunk otherwise.
@@ -244,7 +240,7 @@ impl TransformerModel {
 
             let meta_base = self.buffers.scratch().offset(scratch_cursor);
             // 2026-09-25: The upload may use scratch from `scratch_cursor` to its
-            // end; the cursor then advances by `per_stream_meta_bytes`.
+            // end; the cursor then advances by this stream's metadata slot.
             let meta_region_bytes = self.buffers.scratch_bytes().saturating_sub(scratch_cursor);
             let layout = self.prefill_b_upload_meta_at(
                 tokens,
@@ -271,7 +267,14 @@ impl TransformerModel {
                     stream,
                 )?;
             }
-            scratch_cursor += per_stream_meta_bytes;
+            // 2026-10-05: The slot holds this chunk's positions and slot table
+            // (`q12_per_stream_meta_bytes`, the admission check's term). It was 16
+            // bytes per token of the longest chunk, below the 20 an MRoPE chunk
+            // uploads, so a long stream's slot table could run into the next stream's slot.
+            scratch_cursor += metrale_gpu_runtime::buffers::q12_per_stream_meta_bytes(
+                cl,
+                self.config.mrope_interleaved,
+            );
 
             // 2026-09-25: Stream 0 sets the MRoPE and paged flags; a later stream
             // that differs fails the batch.
