@@ -175,6 +175,20 @@ pub struct TargetLevers {
     pub ffn_w4a16_tc_rows_max_m: Resolved<u32>,
     /// 2026-10-05: The dense FFN's wide BF16-activation tile (`layers/dense_ffn_tc_rows.rs`).
     pub ffn_w4a16_bf16_tile: Resolved<bool>,
+    /// 2026-10-05: The W8A8 GEMV entry per token-tile band (`ops::W8a8Kernels::load`).
+    pub w8a8_gemv_entries: Resolved<[&'static str; 5]>,
+}
+
+/// 2026-10-05: The W8A8 GEMV entries: the environment's five comma-separated points when each
+/// is a compiled point of its band (`metrale_kernels::w8a8_gemv_entries`), else the declaration.
+pub fn resolve_w8a8_gemv_entries(
+    declared: [&'static str; 5],
+    raw: Option<&str>,
+) -> Resolved<[&'static str; 5]> {
+    match raw.and_then(|v| metrale_kernels::w8a8_gemv_entries::w8a8_gemv_entries(v.split(','))) {
+        Some(e) => Resolved::env(e),
+        None => Resolved::target(declared),
+    }
 }
 
 /// 2026-09-25: The whole table, as a pure function of a declaration and a
@@ -209,6 +223,10 @@ pub fn resolve(
             defaults.ffn_w4a16_bf16_tile,
             var("METRALE_FFN_W4A16_BF16_TILE").as_deref(),
             false,
+        ),
+        w8a8_gemv_entries: resolve_w8a8_gemv_entries(
+            defaults.w8a8_gemv_entries,
+            var("METRALE_W8A8_GEMV_ENTRIES").as_deref(),
         ),
         // 2026-09-25: `kernels/hopper` declares it on, the other tables off. A
         // pinned `--ssm-batched-recurrent` outranks this row (`serve_flags.rs`).
@@ -357,7 +375,8 @@ pub fn format_levers(l: &TargetLevers) -> String {
          fp8_act_quant_hopper={act_quant} \
          w8a8_prefill_max_m={w8a8_wide}/{w8a8_narrow}{w8a8_src} \
          ffn_w4a16_tc_rows_max_m={tc_rows}{tc_rows_src} \
-         ffn_w4a16_bf16_tile={bf16_tile}{bf16_tile_src}",
+         ffn_w4a16_bf16_tile={bf16_tile} \
+         w8a8_gemv_entries={w8a8_entries}{w8a8_entries_src}",
         hw = if l.hw.is_empty() { "unknown" } else { l.hw },
         // 2026-09-25: Not a lever: the target's `[hardware] sm_count`, which
         // `arch_preflight::check_sm_count` compares with the device at boot.
@@ -383,8 +402,9 @@ pub fn format_levers(l: &TargetLevers) -> String {
         w8a8_src = l.w8a8_prefill_max_m_widening.source.tag(),
         tc_rows = l.ffn_w4a16_tc_rows_max_m.value,
         tc_rows_src = l.ffn_w4a16_tc_rows_max_m.source.tag(),
-        bf16_tile = l.ffn_w4a16_bf16_tile.value,
-        bf16_tile_src = l.ffn_w4a16_bf16_tile.source.tag(),
+        bf16_tile = onoff(l.ffn_w4a16_bf16_tile),
+        w8a8_entries = l.w8a8_gemv_entries.value.join("/"),
+        w8a8_entries_src = l.w8a8_gemv_entries.source.tag(),
     )
 }
 

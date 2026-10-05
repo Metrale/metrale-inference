@@ -156,8 +156,10 @@ struct W8A8 {
 
 }
 
-#define W8A8_TPL(NAME, BLK, LAZY, MB, KU)                                                                          \
-    extern "C" __global__ __launch_bounds__(256) void NAME(                                                        \
+// 2026-10-05: LB is the launch-bounds list: (256) for one block per SM as before, (256, B) to ask
+// for B blocks per SM (fewer registers per thread). It does not change the arithmetic either.
+#define W8A8_TPL(NAME, BLK, LAZY, MB, KU, LB)                                                                      \
+    extern "C" __global__ __launch_bounds__ LB void NAME(                                                          \
         const unsigned char* __restrict__ Aq, const float* __restrict__ As, const unsigned char* __restrict__ W0, \
         const float* __restrict__ S0, const unsigned char* __restrict__ W1, const float* __restrict__ S1,         \
         const unsigned char* __restrict__ W2, const float* __restrict__ S2, __nv_bfloat16* __restrict__ C,        \
@@ -168,13 +170,27 @@ struct W8A8 {
 
 // 2026-09-28: (MB, KU) per token-tile width. KU does not change the arithmetic (a KU2 twin of the MB 1 entry was
 // measured bit-identical, and no faster at any decode shape on dgx1, so it is not built).
-W8A8_TPL(w8a8_gemv_rowscale_mb1_ku8, false, false, 1, 8)
-W8A8_TPL(w8a8_gemv_rowscale_mb2, false, false, 2, 4)
-W8A8_TPL(w8a8_gemv_rowscale_mb4, false, true, 4, 4)
-W8A8_TPL(w8a8_gemv_rowscale_mb8, false, true, 8, 2)
-W8A8_TPL(w8a8_gemv_rowscale_mb16, false, true, 16, 2)
-W8A8_TPL(w8a8_gemv_blk128_mb1_ku8, true, false, 1, 8)
-W8A8_TPL(w8a8_gemv_blk128_mb2, true, false, 2, 4)
-W8A8_TPL(w8a8_gemv_blk128_mb4, true, true, 4, 4)
-W8A8_TPL(w8a8_gemv_blk128_mb8, true, true, 8, 2)
-W8A8_TPL(w8a8_gemv_blk128_mb16, true, true, 16, 1)
+W8A8_TPL(w8a8_gemv_rowscale_mb1_ku8, false, false, 1, 8, (256))
+W8A8_TPL(w8a8_gemv_rowscale_mb2, false, false, 2, 4, (256))
+W8A8_TPL(w8a8_gemv_rowscale_mb4, false, true, 4, 4, (256))
+W8A8_TPL(w8a8_gemv_rowscale_mb8, false, true, 8, 2, (256))
+W8A8_TPL(w8a8_gemv_rowscale_mb16, false, true, 16, 2, (256))
+W8A8_TPL(w8a8_gemv_blk128_mb1_ku8, true, false, 1, 8, (256))
+W8A8_TPL(w8a8_gemv_blk128_mb2, true, false, 2, 4, (256))
+W8A8_TPL(w8a8_gemv_blk128_mb4, true, true, 4, 4, (256))
+W8A8_TPL(w8a8_gemv_blk128_mb8, true, true, 8, 2, (256))
+W8A8_TPL(w8a8_gemv_blk128_mb16, true, true, 16, 1, (256))
+
+// 2026-10-05: The occupancy points (crates/kernels/src/w8a8_gemv_entries.rs), both layouts: K unroll
+// 2 (1 at 16 tiles) and 2-4 blocks per SM. A class selects them per band in `[defaults]
+// w8a8_gemv_entries`; on the H100 SXM test box they cut the 1-128-row GEMV by 31-49 %.
+W8A8_TPL(w8a8_gemv_rowscale_mb1_ku2_o4, false, false, 1, 2, (256, 4))
+W8A8_TPL(w8a8_gemv_rowscale_mb2_ku2_o2, false, false, 2, 2, (256, 2))
+W8A8_TPL(w8a8_gemv_rowscale_mb4_ku2_o2, false, true, 4, 2, (256, 2))
+W8A8_TPL(w8a8_gemv_rowscale_mb8_ku2_o2, false, true, 8, 2, (256, 2))
+W8A8_TPL(w8a8_gemv_rowscale_mb16_ku1_o2, false, true, 16, 1, (256, 2))
+W8A8_TPL(w8a8_gemv_blk128_mb1_ku2_o4, true, false, 1, 2, (256, 4))
+W8A8_TPL(w8a8_gemv_blk128_mb2_ku2_o2, true, false, 2, 2, (256, 2))
+W8A8_TPL(w8a8_gemv_blk128_mb4_ku2_o2, true, true, 4, 2, (256, 2))
+W8A8_TPL(w8a8_gemv_blk128_mb8_ku2_o2, true, true, 8, 2, (256, 2))
+W8A8_TPL(w8a8_gemv_blk128_mb16_ku1_o2, true, true, 16, 1, (256, 2))

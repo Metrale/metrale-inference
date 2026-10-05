@@ -37,6 +37,7 @@ const GB10: TargetDefaults = TargetDefaults {
     w8a8_prefill_max_m_narrowing: 384,
     ffn_w4a16_tc_rows_max_m: 0,
     ffn_w4a16_bf16_tile: false,
+    w8a8_gemv_entries: ["mb1_ku8", "mb2", "mb4", "mb8", "mb16"],
 };
 
 /// 2026-09-25: A copy of `kernels/hopper/HARDWARE.toml` `[defaults]`.
@@ -58,6 +59,13 @@ const HOPPER: TargetDefaults = TargetDefaults {
     w8a8_prefill_max_m_narrowing: u32::MAX,
     ffn_w4a16_tc_rows_max_m: 128,
     ffn_w4a16_bf16_tile: true,
+    w8a8_gemv_entries: [
+        "mb1_ku2_o4",
+        "mb2_ku2_o2",
+        "mb4_ku2_o2",
+        "mb8_ku2_o2",
+        "mb16_ku1_o2",
+    ],
 };
 
 fn with(defaults: &TargetDefaults, env: &[(&str, &str)]) -> TargetLevers {
@@ -392,13 +400,71 @@ fn the_ffn_bf16_tile_is_declared_per_target_and_overridable() {
     assert!(!empty(&GB10).ffn_w4a16_bf16_tile.value);
     let h = empty(&HOPPER);
     assert!(h.ffn_w4a16_bf16_tile.value && !h.ffn_w4a16_bf16_tile.from_env());
-    assert!(format_levers(&h).contains("ffn_w4a16_bf16_tile=true"));
+    assert!(format_levers(&h).contains("ffn_w4a16_bf16_tile=on"));
     let off = with(&HOPPER, &[("METRALE_FFN_W4A16_BF16_TILE", "0")]);
     assert!(!off.ffn_w4a16_bf16_tile.value);
-    assert!(format_levers(&off).contains("ffn_w4a16_bf16_tile=false (env)"));
+    assert!(format_levers(&off).contains("ffn_w4a16_bf16_tile=off (env)"));
     assert!(
         with(&GB10, &[("METRALE_FFN_W4A16_BF16_TILE", "1")])
             .ffn_w4a16_bf16_tile
             .value
     );
+}
+
+/// 2026-10-05: The W8A8 GEMV entries: each target's declaration, an environment list of five
+/// compiled points of their bands in band order, and the declaration kept for any other input
+/// (a wrong count, a point of another band, an unknown name).
+#[test]
+fn the_w8a8_gemv_entries_are_declared_per_target_and_overridable() {
+    assert_eq!(
+        empty(&GB10).w8a8_gemv_entries.value,
+        ["mb1_ku8", "mb2", "mb4", "mb8", "mb16"]
+    );
+    let h = empty(&HOPPER);
+    assert_eq!(
+        h.w8a8_gemv_entries.value,
+        [
+            "mb1_ku2_o4",
+            "mb2_ku2_o2",
+            "mb4_ku2_o2",
+            "mb8_ku2_o2",
+            "mb16_ku1_o2"
+        ]
+    );
+    assert!(format_levers(&h).contains("w8a8_gemv_entries=mb1_ku2_o4/mb2_ku2_o2/"));
+    let base = with(
+        &HOPPER,
+        &[("METRALE_W8A8_GEMV_ENTRIES", "mb1_ku8,mb2,mb4,mb8,mb16")],
+    );
+    assert_eq!(
+        base.w8a8_gemv_entries.value,
+        ["mb1_ku8", "mb2", "mb4", "mb8", "mb16"]
+    );
+    assert!(format_levers(&base).contains("w8a8_gemv_entries=mb1_ku8/mb2/mb4/mb8/mb16 (env)"));
+    let mixed = with(
+        &GB10,
+        &[("METRALE_W8A8_GEMV_ENTRIES", " mb1_ku2_o4, mb2,mb4,mb8,mb16")],
+    );
+    assert_eq!(mixed.w8a8_gemv_entries.value[0], "mb1_ku2_o4");
+    for junk in [
+        "mb1_ku8,mb2,mb4,mb8",
+        "mb1_ku8,mb2,mb4,mb8,mb16,mb16",
+        "mb2,mb1_ku8,mb4,mb8,mb16",
+        "mb1_ku8,mb2,mb4,mb8,mb16_ku9",
+        "",
+    ] {
+        let j = with(&HOPPER, &[("METRALE_W8A8_GEMV_ENTRIES", junk)]);
+        assert_eq!(
+            j.w8a8_gemv_entries.value,
+            [
+                "mb1_ku2_o4",
+                "mb2_ku2_o2",
+                "mb4_ku2_o2",
+                "mb8_ku2_o2",
+                "mb16_ku1_o2"
+            ],
+            "{junk:?}"
+        );
+        assert!(!j.w8a8_gemv_entries.from_env(), "{junk:?}");
+    }
 }

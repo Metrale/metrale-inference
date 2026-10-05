@@ -38,8 +38,6 @@ const QUANT_THREADS: u32 = 256;
 const GEMV_THREADS: u32 = 256;
 /// 2026-09-28: Weight rows per CTA.
 const GEMV_ROWS: u32 = 16;
-/// 2026-09-28: Entry name suffixes, indexed by [`entry_index`].
-const ENTRIES: [&str; 5] = ["mb1_ku8", "mb2", "mb4", "mb8", "mb16"];
 
 /// 2026-09-28: How a W8A8 weight carries its scales, and so how the
 /// activation is quantized: one scale per output row with one per token, or
@@ -170,7 +168,8 @@ impl W8a8Weight {
 }
 
 /// 2026-09-28: The quantizers and the ten GEMV entry points (2 scale layouts
-/// x the five row entries, `mb1_ku8` to `mb16`). A handle is 0 when its module is not compiled.
+/// x the five row bands' entries, the class's `[defaults] w8a8_gemv_entries`). A handle is 0
+/// when its module is not compiled.
 #[derive(Clone, Copy, Debug)]
 pub struct W8a8Kernels {
     quant_row: KernelHandle,
@@ -183,8 +182,10 @@ pub struct W8a8Kernels {
 
 impl W8a8Kernels {
     pub fn load(gpu: &dyn GpuBackend) -> Self {
+        // 2026-10-05: The class's schedule point per band (`[defaults] w8a8_gemv_entries`).
+        let entries = super::target_defaults::resolved().w8a8_gemv_entries.value;
         let tiles = |layout: &str| {
-            ENTRIES.map(|e| try_kernel(gpu, GEMV_MODULE, &format!("w8a8_gemv_{layout}_{e}")))
+            entries.map(|e| try_kernel(gpu, GEMV_MODULE, &format!("w8a8_gemv_{layout}_{e}")))
         };
         Self {
             quant_row: try_kernel(gpu, QUANT_MODULE, "w8a8_act_quant_row"),
@@ -253,7 +254,7 @@ impl W8a8Scratch {
     }
 }
 
-/// 2026-09-28: The GEMV entry (index into [`ENTRIES`]) for a launch of `rows` tokens: 1, 2,
+/// 2026-09-28: The GEMV entry (band index into `w8a8_gemv_entries`) for a launch of `rows` tokens: 1, 2,
 /// 4, 8 and 16 token tiles up to 8, 16, 32, 64 and 128 rows. Every entry sums in the same
 /// order, so the choice changes speed only.
 fn entry_index(rows: usize) -> usize {

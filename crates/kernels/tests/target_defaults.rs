@@ -216,6 +216,7 @@ fn every_declaring_target_states_every_lever() {
             "w8a8_prefill_max_m_narrowing",
             "ffn_w4a16_tc_rows_max_m",
             "ffn_w4a16_bf16_tile",
+            "w8a8_gemv_entries",
         ] {
             assert!(
                 raw.contains(&format!("\n{lever} = ")),
@@ -337,6 +338,7 @@ fn the_generated_constant_names_every_field() {
         "w8a8_prefill_max_m_narrowing: 4294967295",
         "ffn_w4a16_tc_rows_max_m: 128",
         "ffn_w4a16_bf16_tile: true",
+        "w8a8_gemv_entries: [\"mb1_ku2_o4\", \"mb2_ku2_o2\", \"mb4_ku2_o2\", \"mb8_ku2_o2\", \"mb16_ku1_o2\"]",
     ] {
         assert!(
             generated.contains(field),
@@ -375,6 +377,7 @@ fn the_baked_constant_matches_its_own_hardware_tree() {
         declared.ffn_w4a16_tc_rows_max_m
     );
     assert_eq!(baked.ffn_w4a16_bf16_tile, declared.ffn_w4a16_bf16_tile);
+    assert_eq!(baked.w8a8_gemv_entries, declared.w8a8_gemv_entries);
     assert_eq!(
         metrale_kernels::TARGET_SM_COUNT,
         read_sm_count(&kernels_root(), baked.hw),

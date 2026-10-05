@@ -78,7 +78,7 @@ class and exact citation.
 | `gdn_ba_gates_gemm_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-96 (enabled, the strided GDN kernel loaded, n > 1), :155-171 |
 | `gdn_conv_l2_f32_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:182-199 (one launch when the strided kernel is loaded) |
 | `gdn_recurrence_f32_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-222 (the fused-norm arm needs --gdn-fused-norm, default off), :328-350 |
-| `gdn_out_norm_f32_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (one launch when the strided gated norm is loaded: not for sigmoid-gated norms, ml/qwen3_ssm/init.rs:96-100) |
+| `gdn_out_norm_f32_batched` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (one launch when the strided gated norm is loaded: not for sigmoid-gated norms, ml/qwen3_ssm/init.rs:97-101) |
 | `gdn_ba_gates_gemm_batched_twin` | reference | ml/ops/ssm_preproc.rs:333-362 (the pick); ml/ops/ssm_ba_gates_hopper.rs:88-112 (the guard: 2 CTAs per SM) |
 | `gdn_ba_gates_gemm_verify_twin` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:37-59 (the batched verify's BA gates go through the same pick); ml/ops/ssm_preproc.rs:333-362 (the pick); ml/ops/ssm_ba_gates_hopper.rs:88-112 (the guard: 2 CTAs per SM) |
 | `gdn_out_norm_prefill_verify` | reference | ml/qwen3_ssm/trait_decode_batched/gates_norm.rs:138-157 (kill switch METRALE_NO_BATCHED_GDN_NORM) |
@@ -98,11 +98,11 @@ class and exact citation.
 | `w4a16_gemv_dual_sw_gate_up_1row` | reference | ml/dense_ffn_decode.rs:335-362 |
 | `silu_mul_split_1row` | reference | ml/dense_ffn_decode.rs:371-385 (decode_split_silu = true, kernels/gb10/HARDWARE.toml:164, kill switch METRALE_NO_DECODE_SPLIT_SILU) |
 | `silu_input_down_1row` | differs (decode_fused_silu) | ml/dense_ffn_decode.rs:407-433; ml/dense_ffn_fp8_down.rs:28-31 (keeps the SiLU product in FP32 where moe_silu_mul rounds it to BF16) |
-| `silu_mul_rows` | reference | ml/dense_ffn_decode_batch.rs:91-123,238-307 (forward_k2/k3/km); ml/mtp_head/moe_forward.rs:50-63 |
-| `w4a16_tc8_multi_seq` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207,353-370; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:257-316; ml/dense_ffn_decode_batch.rs:238-307; ml/ops/quant_dispatch.rs:183-205; ml/ops/gemv_tc.rs:56-74,137-148 (tc8 rounds differently from the CUDA-core tiers, k/w4a16_gemv_tc.cu:26-29) |
-| `w4a16_tc8_verify_k4` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307 |
-| `w4a16_tc8_verify_batch` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307 |
-| `w4a16_tc8_gate_up_km` | reference | ml/dense_ffn_decode_batch.rs:238-307 (try_forward_km: gate and up are two launches); arms: ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:178-208 (4..=ffn_proj_max_rows() = 8), ml/qwen3_ssm/trait_decode_multi_seq.rs:211-230, ml/qwen3_ssm/trait_decode_batched.rs:348-365 |
+| `silu_mul_rows` | reference | ml/dense_ffn_decode_batch.rs:91-123,238-303 (forward_k2/k3/km); ml/mtp_head/moe_forward.rs:50-63 |
+| `w4a16_tc8_multi_seq` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207,353-370; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:257-316; ml/dense_ffn_decode_batch.rs:238-303; ml/ops/quant_dispatch.rs:183-205; ml/ops/gemv_tc.rs:56-74,137-148 (tc8 rounds differently from the CUDA-core tiers, k/w4a16_gemv_tc.cu:26-29) |
+| `w4a16_tc8_verify_k4` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-303 |
+| `w4a16_tc8_verify_batch` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-303 |
+| `w4a16_tc8_gate_up_km` | reference | ml/dense_ffn_decode_batch.rs:238-303 (try_forward_km: gate and up are two launches); arms: ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:178-208 (4..=ffn_proj_max_rows() = 8), ml/qwen3_ssm/trait_decode_multi_seq.rs:211-230, ml/qwen3_ssm/trait_decode_batched.rs:348-365 |
 | `w4a16_batch2_verify` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:251-262; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:202-212; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/dense_ffn_decode_batch.rs:91-123 (bit-identical per row to w4a16_gemv, k/w4a16_gemv.cu:454) |
 | `w4a16_batch2_ms_o_down` | reference | ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366; ml/dense_ffn_decode_batch.rs:91-123 (forward_k2 down) |
 | `w4a16_batch3_verify` | reference | ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:225-236; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:191-201; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-340; ml/dense_ffn_decode_batch.rs:125-188 |
@@ -117,15 +117,15 @@ class and exact citation.
 | `w4a16_gemm_t_m128_rows` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207 (m >= 65 unless METRALE_NO_SSM_M128); ml/qwen3_attention/trait_impl/multi_seq/qkv.rs:340-441; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:341-366 |
 | `w4a16_gemm_t_k64_p3_gdn_out_wide` | reference | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:353-370; ml/qwen3_ssm/kernel_select.rs:81-98 (m128 refused: 40 CTAs < 48 SMs; same bits as k64_n64_p3, kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu:1629-1631) |
 | `w4a4_downcast_mx8` | differs (w4a4_downcast) | ml/ops/w4a4_proj.rs:40,191-231 (--w4a4-downcast under --weight-quantization nvfp4, default off: crates/server/src/cli/serve_args.rs:285-306; an accuracy change, w4a4_proj.rs:6-10) |
-| `ffn_mmq16_gate_up_gdn` | reference | ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (n >= METRALE_SSM_FFN_PREFILL_MIN_N, default 5, ahead of the km arm: :24-40); ml/dense_ffn_prefill_nvfp4.rs:51-55 |
-| `ffn_mmq16_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 (the tile path leaves the down scale to metrale_nvfp4_scale_bf16) |
-| `ffn_mmq16_gate_up` | reference | ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 (a dense FFN above the km band); ml/dense_ffn_prefill_nvfp4.rs:51-55 |
-| `ffn_mmq16_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
-| `ffn_mmq32_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:56-60 |
-| `ffn_mmq32_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:56-60,272-286,330-372 |
-| `ffn_mmq64_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:61-66 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:232-235) |
-| `ffn_mmq64_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:61-66,272-286,330-372 |
-| `ffn_mmq_pipe_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:67-68; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe) |
+| `ffn_mmq16_gate_up_gdn` | reference | ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (n >= METRALE_SSM_FFN_PREFILL_MIN_N, default 5, ahead of the km arm: :24-40); ml/dense_ffn_prefill_nvfp4.rs:52-56 |
+| `ffn_mmq16_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378 (the tile path leaves the down scale to metrale_nvfp4_scale_bf16) |
+| `ffn_mmq16_gate_up` | reference | ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 (a dense FFN above the km band); ml/dense_ffn_prefill_nvfp4.rs:52-56 |
+| `ffn_mmq16_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378 |
+| `ffn_mmq32_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:57-61 |
+| `ffn_mmq32_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:57-61,278-292,336-378 |
+| `ffn_mmq64_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:62-67 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:234-237) |
+| `ffn_mmq64_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:62-67,278-292,336-378 |
+| `ffn_mmq_pipe_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:68-69; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe) |
 | `ffn_mmq_pipe_act_down` | reference | ml/ops/nvfp4_mmq.rs:175-183 (the pipe applies the down scale in its store, so no metrale_nvfp4_scale_bf16) |
 | `w8a16_m32` | reference | ml/qwen3_ssm/row_tier_proj.rs:64-117; ml/qwen3_attention/decode/attention_forward/q_proj.rs:54-66; ml/qwen3_attention/decode/attention_forward_kv.rs:49-76; ml/ops/gemm_quant_w8a16.rs:272-274; ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248; ml/ops/w8a16_gemm_pipelined_m32.rs:318-344 |
 | `w8a16_m64` | reference | ml/qwen3_attention/trait_impl/multi_seq/qkv_fp8_batch.rs:200-212,253-258 (canonical chunk 64); ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:235-248; ml/ops/w8a16_gemm_pipelined_m32.rs:345-357 |
@@ -174,39 +174,39 @@ class and exact citation.
 | `rms_norm_quant_fp8_row` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then quant_rowwise_fp8 (k/quant_rowwise_fp8.cu, ml/ops/dispatch_proj_rowwise.rs) |
 | `rms_norm_quant_fp8_g128` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then per_token_group_quant_fp8 (k/per_token_group_quant_fp8.cu, ml/ops/fp8_act_quant.rs) |
 | `rms_norm_quant_nvfp4` | bit_identical | k/rms_norm_act_quant.cu (new); the chain rms_norm then w4a4_quant_rows (k/w4a4_gemv_mx.cu, ml/ops/w4a4_proj.rs) |
-| `w8a8_act_quant_row` | reference | ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV) |
-| `w8a8_act_quant_silu_row` | reference | ml/dense_ffn_w8a8.rs:72-74; ml/w8a8_layer.rs:82-116 (silu_proj: bf16(silu(gate) * up) quantized in one launch) |
-| `w8a8_act_quant_g128` | reference | ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant, Block128 at :308: one scale per row and 128-K group) |
-| `w8a8_gemv_blk128_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
-| `w8a8_gemv_blk128_mb2` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
-| `w8a8_gemv_blk128_mb4` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
-| `w8a8_gemv_blk128_mb8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
-| `w8a8_gemv_blk128_mb16` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267) |
-| `w8a8_gemv_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
-| `w8a8_gemv_gate_up_mb1_ku8` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
-| `w8a8_gemv_mb2` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
-| `w8a8_gemv_gate_up_mb2` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
-| `w8a8_gemv_mb4` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
-| `w8a8_gemv_gate_up_mb4` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
-| `w8a8_gemv_mb8` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
-| `w8a8_gemv_gate_up_mb8` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
-| `w8a8_gemv_mb16` | reference | ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale |
-| `w8a8_gemv_gate_up_mb16` | reference | ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input) |
+| `w8a8_act_quant_row` | reference | ml/ops/w8a8_decode.rs:284-328 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV) |
+| `w8a8_act_quant_silu_row` | reference | ml/dense_ffn_w8a8.rs:102-112; ml/w8a8_layer.rs:119-152 (silu_proj: bf16(silu(gate) * up) quantized in one launch) |
+| `w8a8_act_quant_g128` | reference | ml/ops/w8a8_decode.rs:284-328 (w8a8_act_quant, Block128 at :309: one scale per row and 128-K group) |
+| `w8a8_gemv_blk128_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268) |
+| `w8a8_gemv_blk128_mb2` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268) |
+| `w8a8_gemv_blk128_mb4` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268) |
+| `w8a8_gemv_blk128_mb8` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268) |
+| `w8a8_gemv_blk128_mb16` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268) |
+| `w8a8_gemv_mb1_ku8` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb1_ku8` | reference | ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input) |
+| `w8a8_gemv_mb2` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb2` | reference | ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input) |
+| `w8a8_gemv_mb4` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb4` | reference | ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input) |
+| `w8a8_gemv_mb8` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb8` | reference | ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input) |
+| `w8a8_gemv_mb16` | reference | ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale |
+| `w8a8_gemv_gate_up_mb16` | reference | ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input) |
 | `w4a4_act_quant` | reference | ml/ops/w4a4_proj.rs:331-347 (the quantize launch of nvfp4_proj_small_m, skipped for up's same input) |
-| `w4a4_gate_up_1_8` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
-| `w4a4_gate_up_9_16` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
-| `w4a4_gate_up_17_32` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
-| `w4a4_down_1_8` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
-| `w4a4_down_9_16` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
-| `w4a4_down_17_32` | reference | ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
-| `ffn_mmq16_a4_gate_up_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
-| `ffn_mmq16_a4_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
-| `ffn_mmq32_a4_gate_up_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
-| `ffn_mmq32_a4_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
-| `ffn_mmq64_a4_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
-| `ffn_mmq64_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
-| `ffn_mmq_pipe_a4_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
-| `ffn_mmq_pipe_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183 |
+| `w4a4_gate_up_1_8` | reference | ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_gate_up_9_16` | reference | ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_gate_up_17_32` | reference | ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_down_1_8` | reference | ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_down_9_16` | reference | ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `w4a4_down_17_32` | reference | ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins) |
+| `ffn_mmq16_a4_gate_up_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:52-69 (the M tile by rows) |
+| `ffn_mmq16_a4_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378 |
+| `ffn_mmq32_a4_gate_up_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:52-69 (the M tile by rows) |
+| `ffn_mmq32_a4_act_down_gdn` | reference | ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378 |
+| `ffn_mmq64_a4_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:52-69 (the M tile by rows) |
+| `ffn_mmq64_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378 |
+| `ffn_mmq_pipe_a4_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:52-69 (the M tile by rows) |
+| `ffn_mmq_pipe_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378; ml/ops/nvfp4_mmq.rs:175-183 |
 
 ## Bit-identical fusions
 

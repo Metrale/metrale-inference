@@ -105,4 +105,9 @@ pub struct TargetDefaults {
     /// instead of the tiles that round activations to E4M3, read in metrale-model-layers
     /// `layers/dense_ffn_tc_rows.rs`. Off is the baseline; hopper declares it on.
     pub ffn_w4a16_bf16_tile: bool,
+    /// 2026-10-05: The W8A8 GEMV entry per token-tile band (8, 16, 32, 64, 128 rows), each a point
+    /// of [`crate::w8a8_gemv_entries::W8A8_GEMV_POINTS`], read by metrale-model-layers
+    /// `ops::W8a8Kernels::load`. The points of a band give the same bits. The baseline is
+    /// [`crate::w8a8_gemv_entries::W8A8_GEMV_BASELINE`]; hopper declares the measured points.
+    pub w8a8_gemv_entries: [&'static str; 5],
 }

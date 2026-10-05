@@ -1181,6 +1181,11 @@ kernels = [
   "w8a8_gemv::w8a8_gemv_rowscale_mb16", "w8a8_gemv::w8a8_gemv_blk128_mb1_ku8",
   "w8a8_gemv::w8a8_gemv_blk128_mb2", "w8a8_gemv::w8a8_gemv_blk128_mb4",
   "w8a8_gemv::w8a8_gemv_blk128_mb8", "w8a8_gemv::w8a8_gemv_blk128_mb16",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb1_ku2_o4", "w8a8_gemv::w8a8_gemv_rowscale_mb2_ku2_o2",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb4_ku2_o2", "w8a8_gemv::w8a8_gemv_rowscale_mb8_ku2_o2",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb16_ku1_o2", "w8a8_gemv::w8a8_gemv_blk128_mb1_ku2_o4",
+  "w8a8_gemv::w8a8_gemv_blk128_mb2_ku2_o2", "w8a8_gemv::w8a8_gemv_blk128_mb4_ku2_o2",
+  "w8a8_gemv::w8a8_gemv_blk128_mb8_ku2_o2", "w8a8_gemv::w8a8_gemv_blk128_mb16_ku1_o2",
 ]
 rows = [1, 128]
 pipeline.linear = { in = ["{activation}"], act = "{activation}", weight = "{weight}->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
@@ -1212,6 +1217,10 @@ files = ["kernels/gb10/common/w8a8_gemv.cu"]
 point = { weight = "fp8/channel", activation = "fp8/token" }
 rows = [1, 4, 16, 64]
 microbench = "standalone W8A8 GEMV, 10 dense-27B and 35B projection shapes, 2026-09-28: 181-255 GB/s (73-102% of the 249 GB/s floor)"
+[[family.evidence]]
+point = { weight = "fp8/channel", activation = "fp8/token" }
+rows = [1, 8, 16, 32, 64, 128]
+microbench = "H100 SXM test box, w8a8_gemv_bench raw entries, 2026-10-05: the occupancy points (KU2/KU1, 2-4 blocks per SM) vs the baseline entries cut the 27B projections 31-49 % at 1-128 rows (gdn qkv|z 54.5 -> 36.4 us at 8 rows, 85.1 -> 43.8 at 32, 267.6 -> 184.8 at 128); selected per class by [defaults] w8a8_gemv_entries"
 [[family.evidence]]
 point = { weight = "fp8/block128x128", activation = "fp8/g128" }
 rows = [1, 4, 16, 64]

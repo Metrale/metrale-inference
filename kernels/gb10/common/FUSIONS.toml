@@ -532,7 +532,7 @@ modes = ["multi_seq"]
 when = { ssm_batched_recurrent = "on" }
 numerics = "reference"
 priority = 20
-cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (one launch when the strided gated norm is loaded: not for sigmoid-gated norms, ml/qwen3_ssm/init.rs:96-100)"
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:354-376 (one launch when the strided gated norm is loaded: not for sigmoid-gated norms, ml/qwen3_ssm/init.rs:97-101)"
 
 # 2026-09-30: The batched BA GEMM's byte-identical twin, which `ops::dense_gemm_ba_gates_prefill`
 # picks when `ssm_ba_gates_hopper` is on and the rows fill the device at two CTAs per SM: 96 rows
@@ -820,7 +820,7 @@ rows = [1, 128]
 modes = ["multi_seq", "verify", "draft", "verify_batch"]
 numerics = "reference"
 priority = 5
-cite = "ml/dense_ffn_decode_batch.rs:91-123,238-307 (forward_k2/k3/km); ml/mtp_head/moe_forward.rs:50-63"
+cite = "ml/dense_ffn_decode_batch.rs:91-123,238-303 (forward_k2/k3/km); ml/mtp_head/moe_forward.rs:50-63"
 
 [[rule]]
 id = "w4a16_tc8_multi_seq"
@@ -833,7 +833,7 @@ modes = ["multi_seq"]
 when = { row_tiers = "by_rows", w4a16_tc = "on" }
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207,353-370; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:257-316; ml/dense_ffn_decode_batch.rs:238-307; ml/ops/quant_dispatch.rs:183-205; ml/ops/gemv_tc.rs:56-74,137-148 (tc8 rounds differently from the CUDA-core tiers, k/w4a16_gemv_tc.cu:26-29)"
+cite = "ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_proj.rs:168-207,353-370; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:257-316; ml/dense_ffn_decode_batch.rs:238-303; ml/ops/quant_dispatch.rs:183-205; ml/ops/gemv_tc.rs:56-74,137-148 (tc8 rounds differently from the CUDA-core tiers, k/w4a16_gemv_tc.cu:26-29)"
 
 [[rule]]
 id = "w4a16_tc8_verify_k4"
@@ -846,7 +846,7 @@ modes = ["verify"]
 when = { row_tiers = "by_rows", w4a16_tc = "on" }
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307"
+cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-303"
 
 
 # 2026-09-30: The batched verify's projections at 4..8 rows: `nvfp4_proj_small_m` on the batchm
@@ -863,7 +863,7 @@ modes = ["verify_batch"]
 when = { row_tiers = "by_rows", w4a16_tc = "on" }
 numerics = "reference"
 priority = 10
-cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307"
+cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-303"
 
 [[rule]]
 id = "w4a16_tc8_gate_up_km"
@@ -879,7 +879,7 @@ modes = ["multi_seq", "verify", "verify_batch"]
 when = { row_tiers = "by_rows", w4a16_tc = "on" }
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_decode_batch.rs:238-307 (try_forward_km: gate and up are two launches); arms: ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:178-208 (4..=ffn_proj_max_rows() = 8), ml/qwen3_ssm/trait_decode_multi_seq.rs:211-230, ml/qwen3_ssm/trait_decode_batched.rs:348-365"
+cite = "ml/dense_ffn_decode_batch.rs:238-303 (try_forward_km: gate and up are two launches); arms: ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:178-208 (4..=ffn_proj_max_rows() = 8), ml/qwen3_ssm/trait_decode_multi_seq.rs:211-230, ml/qwen3_ssm/trait_decode_batched.rs:348-365"
 
 [[rule]]
 id = "w4a16_batch2_verify"
@@ -1099,7 +1099,7 @@ cite = "ml/ops/w4a4_proj.rs:40,191-231 (--w4a4-downcast under --weight-quantizat
 
 # 2026-09-28: Dense FFN, NVFP4 MMQ (W4A4).
 # forward_prefill quantizes the activations to NVFP4 and runs the MMQ tiles: W4A4 at these
-# row counts by default (ml/dense_ffn_prefill_nvfp4.rs:51-68,211-330).
+# row counts by default (ml/dense_ffn_prefill_nvfp4.rs:52-69,217-336).
 
 # 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
 # gate|up is written without the weight's global scale, which the SiLU kernel applies
@@ -1121,7 +1121,7 @@ modes = ["multi_seq"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (n >= METRALE_SSM_FFN_PREFILL_MIN_N, default 5, ahead of the km arm: :24-40); ml/dense_ffn_prefill_nvfp4.rs:51-55"
+cite = "ml/qwen3_ssm/trait_decode_multi_seq.rs:196-210 (n >= METRALE_SSM_FFN_PREFILL_MIN_N, default 5, ahead of the km arm: :24-40); ml/dense_ffn_prefill_nvfp4.rs:52-56"
 
 # 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
 # NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
@@ -1144,7 +1144,7 @@ modes = ["multi_seq"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
-cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 (the tile path leaves the down scale to metrale_nvfp4_scale_bf16)"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378 (the tile path leaves the down scale to metrale_nvfp4_scale_bf16)"
 
 # 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
 # gate|up is written without the weight's global scale, which the SiLU kernel applies
@@ -1166,7 +1166,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 (a dense FFN above the km band); ml/dense_ffn_prefill_nvfp4.rs:51-55"
+cite = "ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:233-260 (a dense FFN above the km band); ml/dense_ffn_prefill_nvfp4.rs:52-56"
 
 # 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
 # NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
@@ -1189,7 +1189,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
-cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378"
 
 # 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
 # gate|up is written without the weight's global scale, which the SiLU kernel applies
@@ -1211,7 +1211,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/dense_ffn_prefill_nvfp4.rs:56-60"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:57-61"
 
 # 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
 # NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
@@ -1234,7 +1234,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
-cite = "ml/dense_ffn_prefill_nvfp4.rs:56-60,272-286,330-372"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:57-61,278-292,336-378"
 
 # 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
 # gate|up is written without the weight's global scale, which the SiLU kernel applies
@@ -1256,7 +1256,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/dense_ffn_prefill_nvfp4.rs:61-66 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:232-235)"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:62-67 (METRALE_NO_MMQ_TILE64 unset, ml/dense_ffn.rs:234-237)"
 
 # 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
 # NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
@@ -1279,7 +1279,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
-cite = "ml/dense_ffn_prefill_nvfp4.rs:61-66,272-286,330-372"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:62-67,278-292,336-378"
 
 # 2026-10-02: W4A4 inside the rule: the BF16 input is quantized to NVFP4 (no F32 global) and
 # gate|up is written without the weight's global scale, which the SiLU kernel applies
@@ -1301,7 +1301,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/dense_ffn_prefill_nvfp4.rs:67-68; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe)"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:68-69; ml/ops/nvfp4_mmq.rs:175-183 (the 128 tile with K % 256 == 0 runs metrale_nvfp4_gemm_pipe)"
 
 # 2026-10-02: The SiLU kernel scales gate and up, multiplies in FP32 and quantizes straight to
 # NVFP4 (nvfp4_mmq.cu:266-313): `act` is held as nvfp4/g16; down rounds its FP32 sum
@@ -2076,7 +2076,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV)"
+cite = "ml/ops/w8a8_decode.rs:284-328 (w8a8_act_quant: one launch, one scale per row); ml/w8a8_layer.rs:50-80 (proj: quantize, then the GEMV)"
 
 [[rule]]
 id = "w8a8_act_quant_silu_row"
@@ -2088,7 +2088,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 60
-cite = "ml/dense_ffn_w8a8.rs:72-74; ml/w8a8_layer.rs:82-116 (silu_proj: bf16(silu(gate) * up) quantized in one launch)"
+cite = "ml/dense_ffn_w8a8.rs:102-112; ml/w8a8_layer.rs:119-152 (silu_proj: bf16(silu(gate) * up) quantized in one launch)"
 
 # 2026-10-02: The same W8A8 decode on 128x128 block-scaled FP8 weights (or a per-tensor scale the
 # loader repeats over that grid) with per-token, per-128 activation groups: the attention and GDN
@@ -2104,7 +2104,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:283-327 (w8a8_act_quant, Block128 at :308: one scale per row and 128-K group)"
+cite = "ml/ops/w8a8_decode.rs:284-328 (w8a8_act_quant, Block128 at :309: one scale per row and 128-K group)"
 
 [[rule]]
 id = "w8a8_gemv_blk128_mb1_ku8"
@@ -2116,7 +2116,7 @@ rows = [1, 8]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267)"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268)"
 
 [[rule]]
 id = "w8a8_gemv_blk128_mb2"
@@ -2128,7 +2128,7 @@ rows = [9, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267)"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268)"
 
 [[rule]]
 id = "w8a8_gemv_blk128_mb4"
@@ -2140,7 +2140,7 @@ rows = [17, 32]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267)"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268)"
 
 [[rule]]
 id = "w8a8_gemv_blk128_mb8"
@@ -2152,7 +2152,7 @@ rows = [33, 64]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267)"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268)"
 
 [[rule]]
 id = "w8a8_gemv_blk128_mb16"
@@ -2164,7 +2164,7 @@ rows = [65, 128]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv, Block128 tiles at :402; entry_index at :256-267)"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv, Block128 tiles at :403; entry_index at :257-268)"
 
 [[rule]]
 id = "w8a8_gemv_mb1_ku8"
@@ -2176,7 +2176,7 @@ rows = [1, 8]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale"
 
 [[rule]]
 id = "w8a8_gemv_gate_up_mb1_ku8"
@@ -2191,7 +2191,7 @@ rows = [1, 8]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+cite = "ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input)"
 
 [[rule]]
 id = "w8a8_gemv_mb2"
@@ -2203,7 +2203,7 @@ rows = [9, 16]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale"
 
 [[rule]]
 id = "w8a8_gemv_gate_up_mb2"
@@ -2218,7 +2218,7 @@ rows = [9, 16]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+cite = "ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input)"
 
 [[rule]]
 id = "w8a8_gemv_mb4"
@@ -2230,7 +2230,7 @@ rows = [17, 32]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale"
 
 [[rule]]
 id = "w8a8_gemv_gate_up_mb4"
@@ -2245,7 +2245,7 @@ rows = [17, 32]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+cite = "ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input)"
 
 [[rule]]
 id = "w8a8_gemv_mb8"
@@ -2257,7 +2257,7 @@ rows = [33, 64]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale"
 
 [[rule]]
 id = "w8a8_gemv_gate_up_mb8"
@@ -2272,7 +2272,7 @@ rows = [33, 64]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+cite = "ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input)"
 
 [[rule]]
 id = "w8a8_gemv_mb16"
@@ -2284,7 +2284,7 @@ rows = [65, 128]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/ops/w8a8_decode.rs:372-430 (w8a8_gemv; entry_index at :256-267); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:103-147 runs here as one launch per projection: an output row reads only its own weight row and scale"
+cite = "ml/ops/w8a8_decode.rs:373-431 (w8a8_gemv; entry_index at :257-268); the stacked Q|K|V launch of ml/qwen3_attention/w8a8_decode_arm.rs:117-161 runs here as one launch per projection: an output row reads only its own weight row and scale"
 
 [[rule]]
 id = "w8a8_gemv_gate_up_mb16"
@@ -2299,7 +2299,7 @@ rows = [65, 128]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_w8a8.rs:40-71 (gate, then up on gate's quantized input)"
+cite = "ml/dense_ffn_w8a8.rs:46-101 (gate, then up on gate's quantized input)"
 
 # 2026-09-30: The declared W4A4 dense FFN (NVFP4 weights with FP4 activations: unsloth/Qwen3.8-27B's
 # FFN of layers 0-55) at the rows `forward_km` serves, 1..=32 (the FFN edge,
@@ -2335,7 +2335,7 @@ rows = [1, 8]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+cite = "ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
 
 [[rule]]
 id = "w4a4_gate_up_9_16"
@@ -2350,7 +2350,7 @@ rows = [9, 16]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+cite = "ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
 
 [[rule]]
 id = "w4a4_gate_up_17_32"
@@ -2365,7 +2365,7 @@ rows = [17, 32]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+cite = "ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
 
 [[rule]]
 id = "w4a4_down_1_8"
@@ -2377,7 +2377,7 @@ rows = [1, 8]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+cite = "ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
 
 [[rule]]
 id = "w4a4_down_9_16"
@@ -2389,7 +2389,7 @@ rows = [9, 16]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+cite = "ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
 
 [[rule]]
 id = "w4a4_down_17_32"
@@ -2401,7 +2401,7 @@ rows = [17, 32]
 modes = ["decode", "multi_seq", "verify", "verify_batch"]
 numerics = "reference"
 priority = 10
-cite = "ml/dense_ffn_decode_batch.rs:238-307 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
+cite = "ml/dense_ffn_decode_batch.rs:238-303 (forward_km: gate, up, silu_mul, down through nvfp4_proj_small_m); ml/ops/w4a4_proj.rs:348-373 (the mx launch); ml/ops/w4a4_proj/mx_plan.rs:96-127 (the entry: gate/up N = 17408 takes the persistent entries at 9..=32 rows on 48 SMs, down N = 5120 the activation-reuse twins)"
 
 # 2026-09-30: The declared W4A4 FFN where `forward_prefill` serves it: a GDN layer's FFN from
 # METRALE_SSM_FFN_PREFILL_MIN_N (5) rows (ml/qwen3_ssm/trait_decode_multi_seq.rs:201-220), every
@@ -2431,7 +2431,7 @@ modes = ["multi_seq"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:52-69 (the M tile by rows)"
 
 # 2026-10-02: The SiLU product reaches the quantizer in FP32 registers (nvfp4_mmq.cu:266-313):
 # `act` is held as f32; down rounds its FP32 sum to BF16 before the global scale
@@ -2455,7 +2455,7 @@ modes = ["multi_seq"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
-cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378"
 
 # 2026-10-02: gate|up is written without the weight's global scale, which the SiLU kernel applies
 # (nvfp4_mmq.cu:266-268).
@@ -2477,7 +2477,7 @@ modes = ["multi_seq"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:52-69 (the M tile by rows)"
 
 # 2026-10-02: The SiLU product reaches the quantizer in FP32 registers (nvfp4_mmq.cu:266-313):
 # `act` is held as f32; down rounds its FP32 sum to BF16 before the global scale
@@ -2501,7 +2501,7 @@ modes = ["multi_seq"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
-cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378"
 
 # 2026-10-02: gate|up is written without the weight's global scale, which the SiLU kernel applies
 # (nvfp4_mmq.cu:266-268).
@@ -2523,7 +2523,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:52-69 (the M tile by rows)"
 
 # 2026-10-02: The SiLU product reaches the quantizer in FP32 registers (nvfp4_mmq.cu:266-313):
 # `act` is held as f32; down rounds its FP32 sum to BF16 before the global scale
@@ -2547,7 +2547,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
-cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378"
 
 # 2026-10-02: gate|up is written without the weight's global scale, which the SiLU kernel applies
 # (nvfp4_mmq.cu:266-268).
@@ -2569,7 +2569,7 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 50
-cite = "ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows)"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:52-69 (the M tile by rows)"
 
 # 2026-10-02: The SiLU product reaches the quantizer in FP32 registers (nvfp4_mmq.cu:266-313):
 # `act` is held as f32; down rounds its FP32 sum to BF16 before the global scale
@@ -2592,4 +2592,4 @@ modes = ["multi_seq", "verify_batch"]
 when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
-cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183"
+cite = "ml/dense_ffn_prefill_nvfp4.rs:278-292,336-378; ml/ops/nvfp4_mmq.rs:175-183"

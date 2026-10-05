@@ -37,7 +37,12 @@ pub(crate) struct Defaults {
     pub w8a8_prefill_max_m_narrowing: u32,
     pub ffn_w4a16_tc_rows_max_m: u32,
     pub ffn_w4a16_bf16_tile: bool,
+    pub w8a8_gemv_entries: [&'static str; 5],
 }
+
+// 2026-10-05: The W8A8 GEMV schedule points (`src/w8a8_gemv_entries.rs`), one table for this
+// parse and the runtime resolver.
+include!("src/w8a8_gemv_entries.rs");
 
 /// 2026-09-25: What a target that declares no `[defaults]` table gets, and
 /// what each key a table omits falls back to.
@@ -80,6 +85,7 @@ pub(crate) fn baseline(hw: &str) -> Defaults {
         ffn_w4a16_tc_rows_max_m: 0,
         // 2026-10-05: Off: wide NVFP4 dense-FFN projections keep the inherited tile ladder.
         ffn_w4a16_bf16_tile: false,
+        w8a8_gemv_entries: W8A8_GEMV_BASELINE,
     }
 }
 
@@ -178,6 +184,19 @@ pub(crate) fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
             }
             "ffn_w4a16_tc_rows_max_m" => out.ffn_w4a16_tc_rows_max_m = unsigned(key, value),
             "ffn_w4a16_bf16_tile" => out.ffn_w4a16_bf16_tile = boolean(key, value),
+            "w8a8_gemv_entries" => {
+                let names = value
+                    .as_array()
+                    .map(|a| a.iter().map(|v| v.as_str()).collect());
+                out.w8a8_gemv_entries = names
+                    .and_then(|n: Option<Vec<&str>>| w8a8_gemv_entries(n?))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "kernels/{hw}/HARDWARE.toml: [defaults] {key} must list five points, \
+                             one per band in band order: {W8A8_GEMV_POINTS:?}"
+                        )
+                    })
+            }
             "ssm_batched_recurrent" => out.ssm_batched_recurrent = boolean(key, value),
             "gdn_prefill_tc" => out.gdn_prefill_tc = boolean(key, value),
             "ssm_ba_gates_hopper" => out.ssm_ba_gates_hopper = boolean(key, value),
@@ -228,6 +247,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
          \x20   w8a8_prefill_max_m_narrowing: {w8a8_narrow},\n\
          \x20   ffn_w4a16_tc_rows_max_m: {tc_rows_max_m},\n\
          \x20   ffn_w4a16_bf16_tile: {bf16_tile},\n\
+         \x20   w8a8_gemv_entries: {w8a8_entries:?},\n\
          }};\n",
         hw = d.hw,
         batchm = d.lm_head_batchm_max,
@@ -246,6 +266,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
         w8a8_narrow = d.w8a8_prefill_max_m_narrowing,
         tc_rows_max_m = d.ffn_w4a16_tc_rows_max_m,
         bf16_tile = d.ffn_w4a16_bf16_tile,
+        w8a8_entries = d.w8a8_gemv_entries,
     )
 }
 
