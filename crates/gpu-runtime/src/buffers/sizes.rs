@@ -458,4 +458,17 @@ impl BufferSizes {
             ssm_rowwise_w_bf16,
         }
     }
+
+    /// 2026-10-05: These sizes for a serve whose MoE prefill runs the grouped tensor-core path
+    /// (`moe_prefill_tc`, `--moe-prefill-tc`): that path's routed SiLU product is FP32
+    /// (`[te, inter]` hi|lo, `grouped_decode_buffer_need`), so a MoE model's
+    /// `expert_gate_out` / `expert_up_out` take four bytes per element instead of two and a
+    /// prefill pass holds twice the rows. Off, or on a dense model, the sizes are unchanged.
+    pub fn with_moe_prefill_tc(mut self, config: &ModelConfig, moe_prefill_tc: bool) -> Self {
+        if moe_prefill_tc && config.num_experts > 0 {
+            self.expert_gate_out *= 2;
+            self.expert_up_out *= 2;
+        }
+        self
+    }
 }

@@ -13,7 +13,7 @@
 use anyhow::Result;
 use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype, PagedKvCache};
 use metrale_config::ModelConfig;
-use metrale_gpu_runtime::buffers::BufferArena;
+use metrale_gpu_runtime::buffers::{BufferArena, BufferSizes};
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_weights::weights::WeightStore;
 use metrale_telemetry::prefix_cache::PrefixCache;
@@ -296,11 +296,21 @@ pub fn build_model(
 
     // 2026-09-25: Step 4: the buffer arena. 2026-10-01: Sized for the slot ceiling (`auto` resolves
     // after it, at KV sizing); the preflight sized the arena reserve for the same ceiling.
-    let buffers = BufferArena::new(
+    // 2026-10-05: `--moe-prefill-tc` widens the MoE expert products (`with_moe_prefill_tc`).
+    let buffers = BufferArena::from_sizes(
         &config,
+        BufferSizes::from_config(
+            &config,
+            max_batch_tokens,
+            max_seq_len,
+            kv_block_size,
+            slots.request.ceiling(),
+        )
+        .with_moe_prefill_tc(
+            &config,
+            metrale_model_layers::layers::moe_prefill_tc_enabled(),
+        ),
         max_batch_tokens,
-        max_seq_len,
-        kv_block_size,
         slots.request.ceiling(),
         gpu.as_ref(),
     )?;

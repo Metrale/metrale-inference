@@ -251,6 +251,7 @@ impl MoeLayer {
             GroupedRouting::Batched => "log:moe_fp8_grouped_decode",
             GroupedRouting::PerRow => "log:moe_fp8_grouped_decode_per_row",
             GroupedRouting::PerToken => "log:moe_fp8_grouped_decode_per_token",
+            GroupedRouting::Prefill => "log:moe_fp8_grouped_decode_prefill",
         };
         if ctx.stats.once(log_key) {
             let family = if self.fp8_grouped_tc_on(h as usize, inter as usize) {

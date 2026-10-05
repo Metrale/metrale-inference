@@ -120,6 +120,16 @@ pub struct ServeServiceArgs {
     #[arg(long)]
     pub prefill_wave_exact: bool,
 
+    /// NVFP4 MoE prefill on the grouped tensor-core expert kernels of the decode: the
+    /// checkpoint's declared W4A16 products (BF16 activations, FP32 sums) from its own NVFP4
+    /// tables, row-invariant, instead of E4M3 x E4M3 products on transposed copies. The
+    /// copies are then not built (the memory plan skips them). Changes prefill bits.
+    ///
+    /// Environment fallback: `METRALE_MOE_PREFILL_TC` (presence) turns it on when this flag
+    /// is absent; a given flag wins over it.
+    #[arg(long)]
+    pub moe_prefill_tc: bool,
+
     /// Vision input area bound in pixels, applied before patching. A non-zero
     /// value overrides the checkpoint in both directions: it may raise the bound
     /// as well as lower it.

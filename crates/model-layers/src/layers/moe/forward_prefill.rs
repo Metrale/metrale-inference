@@ -47,6 +47,11 @@ impl MoeLayer {
             return self.forward_batched(input, num_tokens, ctx, stream);
         }
 
+        // 2026-10-05: NVFP4 experts on the grouped tensor-core path (`METRALE_MOE_PREFILL_TC`).
+        if self.nvfp4_grouped_prefill_ok(num_tokens, ctx) {
+            return self.forward_nvfp4_grouped_prefill(input, num_tokens, ctx, stream);
+        }
+
         if self.fp8_gate_weight_ptrs.is_some() {
             let grouped_rows =
                 num_tokens > 64 || (!ctx.decode_step && crate::layers::prefill_row_invariant());

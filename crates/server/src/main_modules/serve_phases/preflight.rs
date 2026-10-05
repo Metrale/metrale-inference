@@ -125,6 +125,10 @@ pub(crate) fn preflight_reserve(
         args.block_size,
         ceiling,
     )
+    .with_moe_prefill_tc(
+        config,
+        metrale_model_layers::layers::moe_prefill_tc_enabled(),
+    )
     .total_bytes();
     // 2026-09-26: Marconi snapshot slots, from
     // `ssm_reserve::marconi_snapshot_slots`, which `TransformerModel::new` also

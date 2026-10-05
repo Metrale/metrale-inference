@@ -91,13 +91,16 @@ impl MoeLayer {
                 "shape",
             ),
             (
-                self.gate_ptrs_t.is_some()
-                    && self.up_ptrs_t.is_some()
-                    && self.down_ptrs_t.is_some()
-                    && self.shared_gate_t.is_some()
-                    && self.shared_up_t.is_some()
-                    && self.shared_down_t.is_some(),
-                "prefill reads the row-major tables (no transposed copies)",
+                // 2026-10-05: Under `--moe-prefill-tc` prefill reads the experts through the
+                // grouped tensor-core path, which takes the lean pair once the tables are lean.
+                super::moe_prefill_tc_enabled()
+                    || (self.gate_ptrs_t.is_some()
+                        && self.up_ptrs_t.is_some()
+                        && self.down_ptrs_t.is_some()
+                        && self.shared_gate_t.is_some()
+                        && self.shared_up_t.is_some()
+                        && self.shared_down_t.is_some()),
+                "prefill reads the row-major tables (no transposed copies, no --moe-prefill-tc)",
             ),
             (
                 self.cutlass_grouped_host.is_none() && !self.unified_layout,

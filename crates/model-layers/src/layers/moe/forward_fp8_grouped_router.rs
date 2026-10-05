@@ -33,6 +33,10 @@ pub enum GroupedRouting {
     PerRow,
     /// 2026-09-27: The router of `MoeLayer::forward_batched` with BF16 logits.
     PerToken,
+    /// 2026-10-05: The prefill router (`router_gate_gemm_dense`): the bits of `PerToken`
+    /// (`dense_gemm_bf16`'s ascending-k FP32 chain) on the kernel tier for the row count, so a
+    /// wave's thousands of rows do not take the per-row GEMV.
+    Prefill,
 }
 
 /// 2026-09-27: Rows per block row of the per-row router GEMV
@@ -74,7 +78,7 @@ impl MoeLayer {
             && self.moe_topk_softmax_rows_k.0 != 0;
         match routing {
             GroupedRouting::Batched => true,
-            GroupedRouting::PerToken => exact_router,
+            GroupedRouting::PerToken | GroupedRouting::Prefill => exact_router,
             GroupedRouting::PerRow => {
                 exact_router
                     && self.router_gemv_batchm_k.0 != 0
@@ -123,6 +127,17 @@ impl MoeLayer {
             }
             GroupedRouting::PerToken => {
                 self.router_gemm_bf16(router_in, gate_logits, n, num_experts, h, ctx, stream)?;
+            }
+            GroupedRouting::Prefill => {
+                self.router_gate_gemm_dense(
+                    router_in,
+                    gate_logits,
+                    n,
+                    num_experts,
+                    h,
+                    ctx,
+                    stream,
+                )?;
             }
             GroupedRouting::Batched => {
                 return self.grouped_route_batched(

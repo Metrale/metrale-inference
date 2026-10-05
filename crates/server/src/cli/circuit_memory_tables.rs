@@ -90,7 +90,11 @@ pub(crate) fn decide(p: &mut Point<'_>) -> Result<Option<TablesDecision>> {
             headroom_without: None,
             workload,
         };
-        if d.headroom_with < 0 {
+        // 2026-10-05: `--moe-prefill-tc` prefills on the grouped tensor-core path, which reads
+        // the row-major experts: the tables are never read, so they are not built.
+        let tc_prefill =
+            p.args.moe_prefill_tc || metrale_model_layers::layers::moe_prefill_tc_enabled();
+        if d.headroom_with < 0 || tc_prefill {
             d.tables = MoeExpertTables::Skip;
             d.headroom_without = Some(eval(p, MoeExpertTables::Skip)?.headroom());
         }

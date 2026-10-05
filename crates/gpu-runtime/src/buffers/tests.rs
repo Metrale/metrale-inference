@@ -26,6 +26,34 @@ fn mixed_dense_moe_sizes_for_widest_ffn() {
     assert_eq!(sizes.expert_gate_out, rows * 12_288 * 2);
     assert_eq!(sizes.expert_up_out, rows * 12_288 * 2);
 }
+
+/// 2026-10-05: `--moe-prefill-tc` widens exactly the MoE expert products to FP32 and nothing
+/// else; off, or on a dense model, the arena is the one `from_config` sizes.
+#[test]
+fn moe_prefill_tc_widens_only_the_moe_expert_products() {
+    let dense = ModelConfig::qwen3_next_80b_nvfp4();
+    let mut moe = dense.clone();
+    moe.num_experts = 256;
+    moe.num_experts_per_tok = 8;
+    moe.moe_intermediate_size = 512;
+    moe.intermediate_size = 512;
+    let base = BufferSizes::from_config(&moe, 2048, 4096, 16, 128);
+    let off = BufferSizes::from_config(&moe, 2048, 4096, 16, 128).with_moe_prefill_tc(&moe, false);
+    assert_eq!(off.total_bytes(), base.total_bytes());
+    let on = BufferSizes::from_config(&moe, 2048, 4096, 16, 128).with_moe_prefill_tc(&moe, true);
+    assert_eq!(on.expert_gate_out, 2 * base.expert_gate_out);
+    assert_eq!(on.expert_up_out, 2 * base.expert_up_out);
+    assert_eq!(
+        on.total_bytes() - base.total_bytes(),
+        base.expert_gate_out + base.expert_up_out
+    );
+    let mut dense = dense;
+    dense.num_experts = 0;
+    let d = BufferSizes::from_config(&dense, 2048, 4096, 16, 128);
+    let d_on =
+        BufferSizes::from_config(&dense, 2048, 4096, 16, 128).with_moe_prefill_tc(&dense, true);
+    assert_eq!(d_on.total_bytes(), d.total_bytes());
+}
 use crate::gpu::mock::MockGpuBackend;
 use std::collections::HashSet;
 

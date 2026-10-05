@@ -205,14 +205,19 @@ __device__ __forceinline__ void gtc_warp(
 
 // 2026-10-02: gtc_warp for a routed expert's rows: RG = 2 (one weight pass per 16 rows) when the
 // expert has more than TC_ROWS rows, else RG = 1. The shared expert's block rows hold at most
-// TC_ROWS rows and keep RG = 1.
+// TC_ROWS rows and keep RG = 1. 2026-10-05: RG = 4 (one weight pass per 32 rows) above 2 * TC_ROWS
+// rows: a prefill expert's tens to hundreds of rows decode each weight fragment half as often
+// (nvfp4_moe_grouped_microtest, lean, GB10: 2048 rows 4.93 -> 3.43 ms, 255 rows 0.73 -> 0.51 ms);
+// RG = 8 was slower (3.80 ms). A row's bits do not depend on RG.
 template <class P, bool GATE_UP, int MT, int G>
 __device__ __forceinline__ void gtc_warp_routed(
     const void* __restrict__ X, const int* __restrict__ sorted_token_ids, bool by_pos,
     unsigned int begin, unsigned int end, const typename P::Mat& M0, const typename P::Mat& M1,
     void* __restrict__ out, unsigned int N, unsigned int K, unsigned int f0
 ) {
-    if (end - begin > TC_ROWS)
+    if (end - begin > 2 * TC_ROWS)
+        gtc_warp<P, GATE_UP, MT, 4, G>(X, sorted_token_ids, by_pos, begin, end, M0, M1, out, N, K, f0);
+    else if (end - begin > TC_ROWS)
         gtc_warp<P, GATE_UP, MT, 2, G>(X, sorted_token_ids, by_pos, begin, end, M0, M1, out, N, K, f0);
     else
         gtc_warp<P, GATE_UP, MT, 1, G>(X, sorted_token_ids, by_pos, begin, end, M0, M1, out, N, K, f0);
