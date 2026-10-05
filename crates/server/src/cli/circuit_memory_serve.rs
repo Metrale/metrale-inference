@@ -281,6 +281,10 @@ pub(crate) fn engine_facts(
         args.block_size,
         slots,
     )
+    .with_moe_prefill_tc(
+        config,
+        args.moe_prefill_tc || metrale_model_layers::layers::moe_prefill_tc_enabled(),
+    )
     .total_bytes()
         + gdn;
     Ok(EngineFacts {

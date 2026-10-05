@@ -199,13 +199,8 @@ impl BufferSizes {
         } else {
             k_max * config.intermediate_size
         };
-        // 2026-10-05: A MoE model's routed SiLU product is FP32 on the grouped tensor-core path
-        // (`[te, inter]` hi|lo, `grouped_decode_buffer_need`), which a `--moe-prefill-tc`
-        // prefill runs over a whole wave; four bytes per element hold the wave in one pass.
-        // `expert_up_out` keeps the same size (`expert_gate_out_bytes`).
-        let expert_elem = if config.num_experts > 0 { 4 } else { bf16 };
-        let expert_gate_out = expert_inter * expert_elem;
-        let expert_up_out = expert_inter * expert_elem;
+        let expert_gate_out = expert_inter * bf16;
+        let expert_up_out = expert_inter * bf16;
         // 2026-09-25: A LatentMoE model's routed experts write `moe_latent_size`
         // wide rows (`moe_input_size`).
         let moe_out_dim = config.moe_input_size();
@@ -462,5 +457,18 @@ impl BufferSizes {
             q2_act_q8,
             ssm_rowwise_w_bf16,
         }
+    }
+
+    /// 2026-10-05: These sizes for a serve whose MoE prefill runs the grouped tensor-core path
+    /// (`moe_prefill_tc`, `--moe-prefill-tc`): that path's routed SiLU product is FP32
+    /// (`[te, inter]` hi|lo, `grouped_decode_buffer_need`), so a MoE model's
+    /// `expert_gate_out` / `expert_up_out` take four bytes per element instead of two and a
+    /// prefill pass holds twice the rows. Off, or on a dense model, the sizes are unchanged.
+    pub fn with_moe_prefill_tc(mut self, config: &ModelConfig, moe_prefill_tc: bool) -> Self {
+        if moe_prefill_tc && config.num_experts > 0 {
+            self.expert_gate_out *= 2;
+            self.expert_up_out *= 2;
+        }
+        self
     }
 }
