@@ -39,6 +39,11 @@ impl Repo for Own {
 impl KernelTree for Own {
     fn class_sources(&self, class: &str, model: &str, quant: &str) -> Result<ClassSources, String> {
         let mut s = self.tree.class_sources(class, model, quant)?;
+        // 2026-10-05: The entry points of the copy-point families (`COPY_FAMILY`).
+        if let Some(m) = s.modules.get_mut("m") {
+            m.text
+                .push_str("__global__ void copy_k(int x) {}\n__global__ void one_k(int x) {}\n");
+        }
         if class == "child" {
             for (name, path, text) in [
                 ("extra", "kernels/child/common/extra.cu", EXTRA),
@@ -220,6 +225,82 @@ fn the_ledger_toml_parses_back_to_the_same_numbers() {
         "{md}"
     );
 }
+
+// 2026-10-05: Mutation: listing a family with one copy point, or none, as a candidate; or a
+// placeholder row (a point no rule of the class runs) as a missing point.
+#[test]
+fn promotion_lists_copy_families_and_missing_points_only() {
+    let tree = own("", SHADOW);
+    let l = lkb(&report(&tree, "nofp4").unwrap(), &tree, "c".into()).unwrap();
+    let copies = l
+        .promotion
+        .iter()
+        .filter(|c| matches!(c, super::Candidate::CopyPoints { .. }))
+        .count();
+    assert_eq!(
+        copies, 0,
+        "the toy families have no copy points: {:?}",
+        l.promotion
+    );
+    assert!(render_markdown(&l).contains("## Promotion candidates\n\nNone."));
+
+    let mut tree = own("", SHADOW);
+    tree.tree
+        .files
+        .get_mut("kernels/base/common/KERNEL_FAMILIES.toml")
+        .expect("families")
+        .push_str(COPY_FAMILY);
+    let l = lkb(&report(&tree, "nofp4").unwrap(), &tree, "c".into()).unwrap();
+    assert_eq!(
+        l.promotion,
+        [super::Candidate::CopyPoints {
+            family: "f_copies".into(),
+            count: 2
+        }]
+    );
+}
+
+/// 2026-10-05: A family whose two points are per-point copies (`t` = 1 and 2), and one with a
+/// single copy point, which is no candidate.
+const COPY_FAMILY: &str = r#"
+[[family]]
+id = "f_copies"
+description = "test"
+compute = "cuda_core"
+kernels = ["m::copy_k"]
+rows = [1, 128]
+op = [{ op = "argmax" }]
+pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
+[[family.param]]
+name = "t"
+kind = "compile"
+from = "dim:hidden"
+[[family.point]]
+values = { t = "1" }
+how = "copy"
+files = ["kernels/base/common/m.cu"]
+[[family.point]]
+values = { t = "2" }
+how = "copy"
+files = ["kernels/base/common/m.cu"]
+
+[[family]]
+id = "f_one_copy"
+description = "test"
+compute = "cuda_core"
+kernels = ["m::one_k"]
+rows = [1, 128]
+op = [{ op = "argmax" }]
+pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
+[[family.param]]
+name = "t"
+kind = "compile"
+from = "dim:hidden"
+[[family.point]]
+values = { t = "1" }
+how = "copy"
+files = ["kernels/base/common/m.cu"]
+"#;
 
 // 2026-10-05: Mutation: accepting a non-string reason would let a table or a number stand in
 // for the evidence a shadow must carry.

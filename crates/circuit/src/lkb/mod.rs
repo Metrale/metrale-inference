@@ -99,6 +99,34 @@ pub struct CopyPoint {
     pub files: Vec<String>,
 }
 
+/// 2026-10-05: A place where the LKB could grow by promotion (book/src/architecture/lkb.md,
+/// "Promotion"): a second user of a parameter has appeared.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Candidate {
+    /// 2026-10-05: A family realizes several points as per-point file copies: one template
+    /// instantiated at each would delete the copies.
+    CopyPoints {
+        /// 2026-10-05: Family id.
+        family: String,
+        /// 2026-10-05: Its copy points.
+        count: usize,
+    },
+    /// 2026-10-05: This model runs a family at a point it lacks (a parameterization
+    /// opportunity or a policy variant in the report's gap table).
+    Point {
+        /// 2026-10-05: `block.node`.
+        site: String,
+        /// 2026-10-05: Family id.
+        family: String,
+        /// 2026-10-05: The report class name.
+        class: &'static str,
+        /// 2026-10-05: Differing parameters, `param other->target`.
+        diffs: Vec<String>,
+        /// 2026-10-05: Largest share of the step over the report runs.
+        share: f64,
+    },
+}
+
 /// 2026-10-05: The LKB of one model on one class.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lkb {
@@ -122,6 +150,9 @@ pub struct Lkb {
     pub residual: Vec<ResidualSource>,
     /// 2026-10-05: The class's copy points.
     pub copy_points: Vec<CopyPoint>,
+    /// 2026-10-05: Promotion candidates: copy-point families by count, then missing points by
+    /// share of the step, largest first.
+    pub promotion: Vec<Candidate>,
     /// 2026-10-05: The modelled fusion gain of each report run's plan, in `coverage` order
     /// (filled by [`lkb`]; [`from_report`] leaves it empty).
     pub laxity: Vec<PlanLaxity>,
@@ -249,10 +280,66 @@ pub fn from_report(report: &HwReport, shadows: &BTreeMap<String, String>, comman
         relations_used,
         coverage,
         residual,
+        promotion: promotion(report, &copy_points),
         copy_points,
         laxity: Vec::new(),
         command,
     }
+}
+
+fn promotion(report: &HwReport, copies: &[CopyPoint]) -> Vec<Candidate> {
+    let mut by_family: BTreeMap<&str, usize> = BTreeMap::new();
+    for c in copies {
+        *by_family.entry(c.family.as_str()).or_insert(0) += 1;
+    }
+    let mut copy: Vec<Candidate> = by_family
+        .into_iter()
+        .filter(|(_, n)| *n >= 2)
+        .map(|(f, n)| Candidate::CopyPoints {
+            family: f.to_string(),
+            count: n,
+        })
+        .collect();
+    copy.sort_by_key(|c| match c {
+        Candidate::CopyPoints { count, .. } => std::cmp::Reverse(*count),
+        Candidate::Point { .. } => std::cmp::Reverse(0),
+    });
+    let mut points: BTreeMap<(String, String), Candidate> = BTreeMap::new();
+    for t in &report.tables {
+        for r in &t.rows {
+            let (Some(family), false) = (&r.family, r.placeholder) else {
+                continue;
+            };
+            if !matches!(
+                r.class,
+                Class::ParameterizationOpportunity | Class::PolicyVariant
+            ) {
+                continue;
+            }
+            let e = points
+                .entry((r.site.clone(), family.clone()))
+                .or_insert(Candidate::Point {
+                    site: r.site.clone(),
+                    family: family.clone(),
+                    class: r.class.name(),
+                    diffs: r.diffs.clone(),
+                    share: 0.0,
+                });
+            if let Candidate::Point { share, .. } = e {
+                *share = share.max(r.share);
+            }
+        }
+    }
+    let mut points: Vec<Candidate> = points.into_values().collect();
+    points.sort_by(|a, b| {
+        let s = |c: &Candidate| match c {
+            Candidate::Point { share, .. } => *share,
+            Candidate::CopyPoints { .. } => 0.0,
+        };
+        s(b).total_cmp(&s(a))
+    });
+    copy.extend(points);
+    copy
 }
 
 fn stem(path: &str) -> &str {
