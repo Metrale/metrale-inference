@@ -31,6 +31,10 @@ const ALL: &[&BenchmarkDescriptor] = &[
     // 2026-09-26: The MoE flagship's concurrency ladder, listed in
     // `gate::coverage::REQUIRED`; see `concurrency::MOE_DESCRIPTOR`.
     &concurrency::MOE_DESCRIPTOR,
+    // 2026-10-04: The MoE family's native NVFP4 checkpoint, its own gate id for the same reason
+    // `concurrency::MOE_DESCRIPTOR` is one. Listed in `gate::coverage::PROMOTION_CANDIDATES`
+    // until it is hand-measured and its floors are committed (it cannot bootstrap itself).
+    &concurrency::NVFP4_MOE_DESCRIPTOR,
     &ttft::WARM_DESCRIPTOR,
     &ttft::COLD_DESCRIPTOR,
     // 2026-09-27: Listed in `gate::coverage::REQUIRED`: the 32k-prompt pair on
