@@ -46,7 +46,7 @@ impl MtpHead {
             (self.quant != MtpQuantization::Bf16, "a non-BF16 draft head"),
             (!self.kv_bf16, "an FP8 draft KV cache"),
             (
-                self.dense_ffn_generic.is_none() && self.moe_fp8.is_none(),
+                self.dense_ffn_generic.is_none() && self.moe_grouped.is_none(),
                 "a MoE draft FFN outside the native FP8 MoE layer",
             ),
             (
@@ -103,8 +103,8 @@ impl MtpHead {
             }
         }
         // 2026-10-03: A MoE draft FFN is the same `MoeLayer` the target's layers bind
-        // (`forward_one` runs `moe_fp8.forward`, the batched propose its grouped decode).
-        let moe = match (&self.dense_ffn_generic, &self.moe_fp8) {
+        // (`forward_one` runs `moe_grouped.forward`, the batched propose its grouped decode).
+        let moe = match (&self.dense_ffn_generic, &self.moe_grouped) {
             (None, Some(m)) => m.circuit_bind(config, levers, &mut unmodelled),
             _ => None,
         };
