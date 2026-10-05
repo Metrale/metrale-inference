@@ -11,6 +11,13 @@
 # - `numerics = "reference"` marks today's default, grandfathered as the reference even where
 #   it rounds differently from the unfused chain. `bit_identical` needs a `microtest`;
 #   `differs` needs the opt-in `lever` and is never selected without it.
+# - 2026-10-05: Each rule is a lowering clause (book/src/architecture/circuit-compiler.md).
+#   Only `bit_identical` rules are relations of the LKB; `reference` rules define the reference
+#   numerics; `differs` rules are another numerics point. A `bit_identical` rule may become the
+#   default (its `when` setting on in every policy that can use it) on byte identity plus a
+#   same-box A/B with no speed and no energy regression, with no accuracy gate
+#   (docs/adr/0018-relations-become-defaults-on-bytes-speed-and-energy.md). A `when` key that
+#   gates only `bit_identical` rules is the compiler's choice, never a recipe's (ADR-0019).
 # - A `when` key must be stated by every policy (kernels/circuits/INSTANCES.toml); a rule is
 #   never selected under a setting it does not name.
 # - Priorities: 200 opt-in (`differs`) rules, 110 multi-row multi-op arms over their per-row

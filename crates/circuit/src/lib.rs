@@ -4,6 +4,11 @@
 //! whose edges the fuser marks fused or materialised by applying the hardware's fusion rules
 //! (`kernels/<hw>/common/FUSIONS.toml`) for one mode and row count.
 //!
+//! 2026-10-05: In the vocabulary of book/src/architecture/circuit-compiler.md: a circuit is a
+//! string diagram over the op signature ([`ir::OpKind`]); [`fuser`] is the lowering onto the
+//! Latent Kernel Blueprint (families: [`venn::families`]); [`hardware`] is its realization on a
+//! kernel class; [`lkb`] reports coverage and the LKB residual.
+//!
 //! Owner: metrale-circuit.
 //! Invariants:
 //! - Pure: no GPU, no file I/O, no environment, no clock and no randomness. Callers read the

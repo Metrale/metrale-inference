@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-28: The fuser: cover a circuit's nodes with rule groups for one mode and row count.
+//! 2026-10-05: This is the lowering of the circuit onto the LKB, by a greedy cover; an
+//! equality-saturation planner would be a sibling (book/src/appendix/lkb-math.md, section 6).
 //!
 //! Greedy and deterministic. Rules are tried by priority (highest first, then id), and each
 //! rule scans the nodes in execution order; a node joins at most one group. A rule is skipped
@@ -163,7 +165,10 @@ impl FusionPlan {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FuseError {
     /// 2026-09-28: No applicable rule covers a node.
-    #[error("no applicable rule covers node `{node}` ({op}) in {mode} at {rows} rows")]
+    #[error(
+        "no applicable rule covers node `{node}` ({op}) in {mode} at {rows} rows (an uncovered \
+         op: add a lowering rule naming a family point, or build a new generator)"
+    )]
     Uncovered {
         /// 2026-09-28: Node id.
         node: String,

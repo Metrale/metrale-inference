@@ -15,6 +15,8 @@
 //!   FP8 / NVFP4 MMA; anything else (W4A16, W8A16, BF16) runs the BF16 MMA.
 //! - Not counted: launch overhead, conv windows, KV writes beyond their input edges. A dim an op
 //!   needs that the circuit lacks is an error, never a guess.
+//! - 2026-10-05: The cost is per node, not per group: a fused edge's round trip is still
+//!   counted, so a plan's cost does not show a fusion's gain (its laxity).
 
 use std::collections::BTreeMap;
 
