@@ -158,12 +158,16 @@ How to read them today, per (model, device):
 
 - **LKB coverage.** `met circuit plan --checkpoint <id> --hardware <device> --precision declared`
   prints a line per gap table: "Shared X% (measured on this class), shared-unmeasured Y%,
-  parameterisation Z%, policy variant W%, novel V% of the step". Coverage is `100 - V`, and its
-  measured part is `X`.
-  - Only planned kernels count. A class kernel that no lowering rule names is invisible to the
-    plan.
-  - So a class with a large residual can still show high coverage. Read the two metrics together
-    until residual kernels are modelled in the class overlays.
+  parameterisation Z%, policy variant W%, novel V% of the step". The measured part of coverage
+  is `X`. Coverage itself is **not** `100 - V`:
+  - `V` counts only ops that no family implements.
+  - An op that a family implements but no lowering rule of this class covers is planned by a
+    placeholder. Its row is filed under "Shared, unmeasured" with the detail "no rule of this
+    class covers it". No kernel runs it, so it is uncovered too.
+  - Coverage is therefore `100 - V - (those rows)`.
+- **Two blind spots.** Only planned kernels count, and a class kernel that no lowering rule names
+  is invisible to the plan. So a class with a large residual can still show high coverage. Read
+  the two metrics together until residual kernels are modelled in the class overlays.
 - **LKB residual.** The class's `common/` sources and their lines, plus its `[shadow]` and `copy`
   entries.
 

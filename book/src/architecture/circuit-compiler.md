@@ -95,7 +95,7 @@ plan's numbers only where a class keeps the same reduction order as the referenc
 |---|---|---|
 | `met circuit show` | the plan as stable text, one group per line, with rule, numerics tag, compute unit and numeric pipeline | the lowering, realized on the default class |
 | `met circuit display` | the layer strip and diagrams with fused groups framed | the string diagram |
-| `met circuit plan --hardware <device>` | fused plan, gap report, roofline estimates, memory fit, tensor-core audit | the realization on the device's class. "Novel" rows are **uncovered ops** (no generator yet). LKB coverage is `100 − novel` |
+| `met circuit plan --hardware <device>` | fused plan, gap report, roofline estimates, memory fit, tensor-core audit | the realization on the device's class. "Novel" rows are **uncovered ops** (no generator yet). Rows whose detail reads "no rule of this class covers it" are uncovered on this class too. See [LKB coverage](./lkb.md#convergence-metrics) |
 | `met circuit venn` | one model's ops classified against another's kernels: shared, shared-unmeasured, parameterization, policy variant, novel | two models' lowerings compared in one LKB. Parameterization rows are promotion opportunities |
 | `met circuit diff` | logits byte parity, legacy vs circuit, reference rules vs all rules | the realization respects the relations it exercises |
 | `met circuit memory` | memory per node, state and cache, and the largest concurrency that fits | — |
