@@ -336,7 +336,7 @@ pub struct HardwareStateDelta {
     /// (`sectors * 512`, the fixed sysfs sector unit regardless of the
     /// device's real block size). `None` when either capture lacks
     /// [`DiskIoCounters`], the two captures name different devices, or the
-    /// counter went backwards (see [`advance`]).
+    /// counter went backwards (see `advance`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disk_read_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

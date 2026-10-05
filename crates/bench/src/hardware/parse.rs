@@ -70,7 +70,7 @@ pub fn gpu_query(text: &str) -> GpuQuery {
 /// 2026-10-04: The `CUDA Version` line near the top of `nvidia-smi -q` output
 /// (present under every `-d` selector, including `PERFORMANCE`, since it is
 /// the log header, not a per-section field). `None` when the line is absent
-/// or reads one of [`value`]'s not-a-value spellings.
+/// or reads one of `value`'s not-a-value spellings.
 pub fn cuda_version(text: &str) -> Option<String> {
     text.lines().find_map(|l| {
         let (key, raw) = l.split_once(':')?;
