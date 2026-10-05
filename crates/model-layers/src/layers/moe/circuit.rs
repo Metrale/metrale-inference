@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-03: The MoE FFN as the circuit executor binds it: the router, the FP8 routed and
-//! shared experts' tables, the shared-expert gate, the kernels this layer's own dispatch would
-//! launch (the emitters refuse a plan whose kernel differs), and the arena scratch the grouped
-//! decode sorts its slots into, which is no circuit edge.
+//! 2026-10-03: The MoE FFN as the circuit executor binds it: the router, the routed and shared
+//! experts' tables, the shared-expert gate, the kernels this layer's own dispatch would launch
+//! (the emitters refuse a plan whose kernel differs), and the arena scratch the grouped decode
+//! sorts its slots into, which is no circuit edge.
 //!
-//! Bound arm: the grouped FP8 decode with the per-row router (`GroupedRouting::PerRow`,
+//! Bound arms: the grouped FP8 decode with the per-row router (`GroupedRouting::PerRow`,
 //! `forward_fp8_grouped_router.rs`), which the target model takes at every row count under the
 //! tensor-core expert kernels (`fp8_grouped_tc.rs`, one row through `MoeLayer::forward`) and
 //! under a row-invariant tier policy, with its W8A8 expert step when the serve published FP8
 //! expert activations (`fp8_grouped_tc_w8a8.rs`); and the batched router
-//! (`GroupedRouting::Batched`) the MTP drafter's n-row propose runs.
+//! (`GroupedRouting::Batched`) the MTP drafter's n-row propose runs. 2026-10-05: the grouped
+//! NVFP4 decode of a checkpoint's declared NVFP4 experts on the lean or row-major tensor-core
+//! pair, and BF16 experts (an MTP drafter excluded from quantization): one row through
+//! `MoeLayer::forward`'s fused BF16 kernels, more through the grouped BF16 point
+//! (`circuit_formats.rs`).
 //!
 //! Owner: model-layers (MoE).
 //! Invariants:
@@ -29,7 +33,7 @@ use super::forward_fp8_grouped_decode::{
     fp8_grouped_decode_rows_ok, grouped_decode_buffer_need, grouped_sort_out,
 };
 use crate::layers::ops;
-use crate::weight_map::{DenseWeight, Fp8ExpertWeight};
+use crate::weight_map::{DenseWeight, Fp8ExpertWeight, QuantizedWeight};
 
 /// 2026-10-03: One FP8 routed projection's per-expert tables: a u64 device pointer per expert
 /// to its E4M3 weight and to its block scales.
@@ -55,7 +59,9 @@ pub struct MoeKernels {
     /// 2026-10-03: `moe_fp8_grouped_sort`.
     pub sort: KernelHandle,
     /// 2026-10-03: The W8A16 grouped gate+up and down `fp8_grouped_expert_kernels` picks
-    /// (tensor-core or scalar) and their launch shapes.
+    /// (tensor-core or scalar) and their launch shapes. 2026-10-05: For NVFP4 experts the pair
+    /// `Nvfp4GroupedKernels::select` picks (lean or row-major tensor-core), for BF16 experts the
+    /// grouped BF16 tensor-core pair.
     pub gate_up: KernelHandle,
     pub gate_up_geometry: ops::Fp8GroupedGeometry,
     pub down: KernelHandle,
@@ -66,6 +72,81 @@ pub struct MoeKernels {
     pub down_w8a8: KernelHandle,
     /// 2026-10-03: `moe_weighted_sum_blend_fp8_grouped`.
     pub blend: KernelHandle,
+    /// 2026-10-05: `MoeLayer::forward`'s one-row path over BF16 experts: the router GEMV
+    /// (`dense_gemv_bf16`), top-k (`moe_topk_softmax`), the two fused expert kernels and the
+    /// blend (`moe_weighted_sum_blend`).
+    pub router_gemv: KernelHandle,
+    pub topk_one_row: KernelHandle,
+    pub fused_gate_up_bf16: KernelHandle,
+    pub fused_down_bf16: KernelHandle,
+    pub blend_one_row: KernelHandle,
+}
+
+/// 2026-10-05: The weight format of a layer's routed and shared experts, and for NVFP4 which
+/// layout its tables are in, which selects the expert kernels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpertKind {
+    /// 2026-10-05: FP8 block-scaled (`set_fp8_experts`).
+    Fp8,
+    /// 2026-10-05: The checkpoint's declared NVFP4, repacked in place for the lean pair
+    /// (`nvfp4_lean.rs`).
+    Nvfp4Lean,
+    /// 2026-10-05: The checkpoint's declared NVFP4 in the row-major layout.
+    Nvfp4TensorCore,
+    /// 2026-10-05: BF16 (`set_bf16_experts`).
+    Bf16,
+}
+
+impl ExpertKind {
+    /// 2026-10-05: The `moe_nvfp4_kernels` policy value this layer states.
+    pub fn nvfp4_kernels(self) -> &'static str {
+        match self {
+            ExpertKind::Nvfp4Lean => "lean",
+            ExpertKind::Nvfp4TensorCore => "tensor_core",
+            ExpertKind::Fp8 | ExpertKind::Bf16 => "none",
+        }
+    }
+
+    /// 2026-10-05: The `draft_moe_experts` policy value a drafter with these experts states.
+    pub fn draft_name(self) -> &'static str {
+        match self {
+            ExpertKind::Fp8 => "fp8",
+            ExpertKind::Nvfp4Lean | ExpertKind::Nvfp4TensorCore => "nvfp4",
+            ExpertKind::Bf16 => "bf16",
+        }
+    }
+
+    /// 2026-10-05: A drafter's propose of two or more rows routes batched
+    /// (`GroupedRouting::Batched`) only through the grouped FP8 decode; the grouped NVFP4 and BF16
+    /// decodes route per row.
+    pub fn draft_routes_batched(self) -> bool {
+        self == ExpertKind::Fp8
+    }
+}
+
+/// 2026-10-05: The routed experts' per-expert pointer tables and the shared expert, by format.
+#[derive(Debug, Clone, Copy)]
+pub enum MoeExperts {
+    Fp8 {
+        gate: Fp8Tables,
+        up: Fp8Tables,
+        down: Fp8Tables,
+        shared: Fp8ExpertWeight,
+    },
+    Nvfp4 {
+        gate: ops::Nvfp4ExpertTables,
+        up: ops::Nvfp4ExpertTables,
+        down: ops::Nvfp4ExpertTables,
+        shared: [QuantizedWeight; 3],
+    },
+    /// 2026-10-05: Device tables of each expert's BF16 weight pointer; the shared expert's
+    /// gate, up and down.
+    Bf16 {
+        gate: DevicePtr,
+        up: DevicePtr,
+        down: DevicePtr,
+        shared: [DenseWeight; 3],
+    },
 }
 
 /// 2026-10-03: The shape and routing facts the bound kernels read.
@@ -83,6 +164,8 @@ pub struct MoeFacts {
     /// 2026-10-03: The grouped decode runs the W8A8 expert step
     /// (`MoeLayer::fp8_grouped_tc_w8a8_on`).
     pub w8a8: bool,
+    /// 2026-10-05: The experts' format and layout.
+    pub kind: ExpertKind,
 }
 
 /// 2026-10-03: One layer's MoE FFN, bound.
@@ -92,10 +175,7 @@ pub struct MoeBinding {
     pub router: DenseWeight,
     /// 2026-10-03: The BF16 shared-expert gate `[1, hidden]`.
     pub shared_gate: DenseWeight,
-    pub gate: Fp8Tables,
-    pub up: Fp8Tables,
-    pub down: Fp8Tables,
-    pub shared: Fp8ExpertWeight,
+    pub experts: MoeExperts,
     pub facts: MoeFacts,
     pub kernels: MoeKernels,
 }
@@ -108,6 +188,10 @@ pub struct MoeBinding {
 pub struct MoeScratch {
     /// 2026-10-03: Where the sort writes (`BufferArena::gate_logits`).
     pub sort: DevicePtr,
+    /// 2026-10-05: Where the grouped NVFP4 and BF16 gate+up write the routed and the shared SiLU
+    /// products for the down kernel (`expert_gate_out`, `logits`), as legacy lays them out.
+    pub routed_act: DevicePtr,
+    pub shared_act: DevicePtr,
     pub scratch_bytes: usize,
     pub gate_logits_bytes: usize,
     pub expert_gate_out_bytes: usize,
@@ -122,6 +206,8 @@ impl MoeScratch {
     pub fn from_arena(b: &BufferArena) -> Self {
         MoeScratch {
             sort: b.gate_logits(),
+            routed_act: b.expert_gate_out(),
+            shared_act: b.logits(),
             scratch_bytes: b.scratch_bytes(),
             gate_logits_bytes: b.gate_logits_bytes(),
             expert_gate_out_bytes: b.expert_gate_out_bytes(),
@@ -148,6 +234,14 @@ impl MoeFacts {
     pub fn check_rows(&self, m: u64, scratch: &MoeScratch) -> anyhow::Result<()> {
         let f = self;
         let m = usize::try_from(m)?;
+        if f.kind != ExpertKind::Fp8 {
+            anyhow::ensure!(
+                (1..=super::NVFP4_GROUPED_DECODE_TC_MAX_ROWS).contains(&m),
+                "the grouped {:?} decode does not take {m} rows",
+                f.kind
+            );
+            return f.check_arena(m, scratch);
+        }
         anyhow::ensure!(
             fp8_grouped_decode_rows_ok(m, f.tensor_core),
             "the grouped MoE decode does not take {m} rows with the {} expert kernels",
@@ -157,6 +251,24 @@ impl MoeFacts {
                 "scalar"
             }
         );
+        f.check_arena(m, scratch)?;
+        if f.w8a8 {
+            ops::Fp8GroupedW8a8Layout::new(
+                m,
+                f.top_k as usize,
+                f.hidden as usize,
+                f.inter as usize,
+                scratch.expert_gate_out_bytes,
+                scratch.logits_bytes,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 2026-10-05: The arena capacities every grouped decode checks for `m` rows
+    /// (`grouped_decode_buffer_need`).
+    fn check_arena(&self, m: usize, scratch: &MoeScratch) -> anyhow::Result<()> {
+        let f = self;
         let need = grouped_decode_buffer_need(
             m,
             f.hidden as usize,
@@ -188,16 +300,6 @@ impl MoeFacts {
                  holds {have}; legacy declines this width"
             );
         }
-        if f.w8a8 {
-            ops::Fp8GroupedW8a8Layout::new(
-                m,
-                f.top_k as usize,
-                f.hidden as usize,
-                f.inter as usize,
-                s.expert_gate_out_bytes,
-                s.logits_bytes,
-            )?;
-        }
         Ok(())
     }
 }
@@ -205,13 +307,14 @@ impl MoeFacts {
 impl MoeLayer {
     /// 2026-10-03: This layer for the circuit executor, or `None` with the reasons in
     /// `unmodelled`. `levers` and `config` are the model's, as its decode reads them.
+    /// 2026-10-05: The format arms are `bind_fp8`, `bind_nvfp4` and `bind_bf16`; this checks the
+    /// features every arm shares.
     pub fn circuit_bind(
         &self,
         config: &metrale_config::ModelConfig,
         levers: &ops::ModelLevers,
         unmodelled: &mut Vec<String>,
     ) -> Option<MoeBinding> {
-        let (h, inter) = (config.hidden_size, config.moe_intermediate_size);
         let arms = [
             (self.lora.is_some(), "a MoE LoRA adapter"),
             (self.pre_expert_norm.is_some(), "a pre-expert norm"),
@@ -225,17 +328,6 @@ impl MoeLayer {
             (
                 self.router_logits_n as usize != config.num_experts,
                 "zero-computation experts",
-            ),
-            (
-                self.bf16_gate_weight_ptrs.is_some() || self.bf16_shared_expert.is_some(),
-                "BF16 experts or a BF16 shared expert",
-            ),
-            (
-                self.fp8_gate_weight_ptrs.is_none()
-                    || self.fp8_up_weight_ptrs.is_none()
-                    || self.fp8_down_weight_ptrs.is_none()
-                    || self.fp8_shared_expert.is_none(),
-                "experts that are not FP8 (NVFP4 experts are not bound yet)",
             ),
             (
                 crate::layers::expert_quantization().nvfp4_decode(),
@@ -253,10 +345,6 @@ impl MoeLayer {
             (levers.fp32_gate, "an FP32 router GEMM (METRALE_FP32_GATE)"),
             (config.ep_world_size > 1, "expert parallelism"),
             (
-                !super::forward_fp8_grouped_decode::fp8_grouped_decode_enabled(),
-                "the grouped MoE decode off (METRALE_NO_FP8_MOE_GROUPED_DECODE)",
-            ),
-            (
                 super::dump::enabled(),
                 "expert-id dumps (METRALE_DUMP_EXPERT_IDS)",
             ),
@@ -269,20 +357,12 @@ impl MoeLayer {
                 "an ungated shared expert",
             ),
             (
-                !self.fp8_grouped_tc_on(h, inter),
-                "the grouped MoE decode off its tensor-core expert kernels (METRALE_NO_MOE_FP8_TC, \
-                 or the kernels or shapes refused): the scalar arms are not bound",
-            ),
-            (
                 config.num_experts > ops::FP8_GROUPED_SORT_MAX_EXPERTS as usize,
                 "more experts than the grouped sort takes",
             ),
             (
-                !super::forward_fp8_grouped_decode::fp8_grouped_decode_dims_ok(
-                    h as u32,
-                    inter as u32,
-                ) || !h.is_multiple_of(8),
-                "a hidden or expert width the grouped decode refuses",
+                !config.hidden_size.is_multiple_of(8),
+                "a hidden width the grouped decode refuses",
             ),
         ];
         let before = unmodelled.len();
@@ -291,7 +371,7 @@ impl MoeLayer {
                 unmodelled.push(what.to_string());
             }
         }
-        let kernels = [
+        let common = [
             (self.router_gemv_batchm_k, "dense_gemv_bf16_batchm"),
             (self.moe_topk_softmax_rows_k, "moe_topk_softmax_rows"),
             (self.moe_fp8_grouped_sort_k, "moe_fp8_grouped_sort"),
@@ -299,55 +379,52 @@ impl MoeLayer {
                 self.moe_weighted_sum_blend_fp8_grouped_k,
                 "moe_weighted_sum_blend_fp8_grouped",
             ),
-            (
-                self.moe_expert_gate_up_act_fp8_grouped_k,
-                "moe_expert_gate_up_act_fp8_grouped",
-            ),
-            (
-                self.moe_expert_down_act_fp8_grouped_k,
-                "moe_expert_down_act_fp8_grouped",
-            ),
         ];
-        for (k, name) in kernels {
+        for (k, name) in common {
             if k.0 == 0 {
                 unmodelled.push(format!("the grouped MoE decode without `{name}`"));
             }
         }
+        let bound = if self.nvfp4_grouped.declared_experts {
+            self.bind_nvfp4(config, unmodelled)
+        } else if self.fp8_gate_weight_ptrs.is_some() {
+            self.bind_fp8(config, unmodelled)
+        } else if self.bf16_gate_weight_ptrs.is_some() {
+            self.bind_bf16(config, unmodelled)
+        } else {
+            unmodelled.push(
+                "experts in no bound format (the per-expert NVFP4 decode of a checkpoint not \
+                 served at its declared formats)"
+                    .to_string(),
+            );
+            None
+        };
         if unmodelled.len() > before {
             return None;
         }
-        let (gp, up, dp, sh) = (
-            self.fp8_gate_weight_ptrs.as_ref()?,
-            self.fp8_up_weight_ptrs.as_ref()?,
-            self.fp8_down_weight_ptrs.as_ref()?,
-            self.fp8_shared_expert?,
-        );
-        let tables = |t: &super::Fp8ExpertPtrTable| Fp8Tables {
-            weights: t.weight_ptrs,
-            scales: t.scale_ptrs,
-        };
-        let experts = self.fp8_grouped_expert_kernels(h, inter);
-        let router_gemm = if self.moe_router_gemm_k.0 != 0 && (h as u32).is_multiple_of(16) {
-            self.moe_router_gemm_k
-        } else {
-            self.dense_gemm
-        };
+        let (experts, kind, pair) = bound?;
+        let router_gemm =
+            if self.moe_router_gemm_k.0 != 0 && (config.hidden_size as u32).is_multiple_of(16) {
+                self.moe_router_gemm_k
+            } else {
+                self.dense_gemm
+            };
+        let (h, inter) = (config.hidden_size, config.moe_intermediate_size);
         let tc = &self.fp8_grouped_tc;
+        let fp8 = kind == ExpertKind::Fp8;
         Some(MoeBinding {
             router: self.weights.gate,
             shared_gate: self.weights.shared_expert_gate,
-            gate: tables(gp),
-            up: tables(up),
-            down: tables(dp),
-            shared: sh,
+            experts,
             facts: MoeFacts {
                 num_experts: config.num_experts as u32,
                 top_k: config.num_experts_per_tok as u32,
                 hidden: h as u32,
                 inter: inter as u32,
                 norm_topk_prob: config.norm_topk_prob,
-                tensor_core: self.fp8_grouped_tc_on(h, inter),
-                w8a8: self.fp8_grouped_tc_w8a8_on(h, inter),
+                tensor_core: !fp8 || self.fp8_grouped_tc_on(h, inter),
+                w8a8: fp8 && self.fp8_grouped_tc_w8a8_on(h, inter),
+                kind,
             },
             kernels: MoeKernels {
                 router_rows: self.router_gemv_batchm_k,
@@ -355,14 +432,19 @@ impl MoeLayer {
                 topk_rows: self.moe_topk_softmax_rows_k,
                 topk_batched: self.moe_topk_batched,
                 sort: self.moe_fp8_grouped_sort_k,
-                gate_up: experts.gate_up,
-                gate_up_geometry: experts.gate_up_geometry,
-                down: experts.down,
-                down_geometry: experts.down_geometry,
+                gate_up: pair.gate_up,
+                gate_up_geometry: pair.gate_up_geometry,
+                down: pair.down,
+                down_geometry: pair.down_geometry,
                 quant_w8a8: tc.quant_w8a8,
                 gate_up_w8a8: tc.gate_up_w8a8,
                 down_w8a8: tc.down_w8a8,
                 blend: self.moe_weighted_sum_blend_fp8_grouped_k,
+                router_gemv: self.dense_gemv,
+                topk_one_row: self.moe_topk,
+                fused_gate_up_bf16: self.moe_expert_gate_up_shared_bf16_k,
+                fused_down_bf16: self.moe_expert_silu_down_shared_bf16_k,
+                blend_one_row: self.moe_weighted_sum_blend,
             },
         })
     }

@@ -39,13 +39,52 @@ pub fn kv_dtype_name(d: KvCacheDtype) -> Result<&'static str> {
     })
 }
 
+/// 2026-10-05: The settings the bound model states itself: which expert kernels its MoE layers'
+/// dispatch picked, its drafter's expert format, and whether its head runs the declared NVFP4
+/// row tiles ([`bound_settings`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundSettings {
+    pub moe_nvfp4_kernels: &'static str,
+    pub draft_moe_experts: &'static str,
+    pub lm_head_nvfp4_rows: bool,
+}
+
+/// 2026-10-05: [`BoundSettings`] of the target's bound layers, the drafter's layer and the head.
+/// The MoE layers must agree on their expert kernels (a model whose layers differ has no one
+/// plan); an unbound layer states nothing (the build refuses it by its own reasons).
+pub fn bound_settings(
+    layers: &[Option<super::CircuitLayer>],
+    draft: Option<&super::CircuitLayer>,
+    head: &super::HeadBinding,
+) -> Result<BoundSettings> {
+    let mut kinds = layers
+        .iter()
+        .flatten()
+        .filter_map(|l| l.moe.as_ref().map(|m| m.facts.kind.nvfp4_kernels()));
+    let first = kinds.next().unwrap_or("none");
+    if let Some(other) = kinds.find(|k| *k != first) {
+        bail!(
+            "the MoE layers run different expert kernels ({first} and {other}); the circuit states one"
+        );
+    }
+    Ok(BoundSettings {
+        moe_nvfp4_kernels: first,
+        draft_moe_experts: draft
+            .and_then(|d| d.moe.as_ref())
+            .map_or("none", |m| m.facts.kind.draft_name()),
+        lm_head_nvfp4_rows: head.nvfp4_rows,
+    })
+}
+
 /// 2026-09-28: The policy of this process: `kv_cache_dtype` and `lm_head_dtype` come from the
 /// model being built, the rest from the process-wide switches.
 /// 2026-10-03: Fails for a fixed `ffn` activation format the rules do not plan.
+/// 2026-10-05: `bound`, from the bound model.
 pub fn live_policy(
     levers: &ModelLevers,
     kv_cache_dtype: &str,
     lm_head_dtype: &str,
+    bound: BoundSettings,
 ) -> Result<Policy> {
     let tiers = match row_tiers() {
         RowTiers::ByRows => "by_rows",
@@ -107,6 +146,18 @@ pub fn live_policy(
         (
             "moe_fp8_tc".to_string(),
             on_off(crate::layers::moe::fp8_grouped_tc_setting()),
+        ),
+        (
+            "moe_nvfp4_kernels".to_string(),
+            bound.moe_nvfp4_kernels.to_string(),
+        ),
+        (
+            "draft_moe_experts".to_string(),
+            bound.draft_moe_experts.to_string(),
+        ),
+        (
+            "lm_head_nvfp4_rows".to_string(),
+            on_off(bound.lm_head_nvfp4_rows),
         ),
     ]);
     Ok(Policy {

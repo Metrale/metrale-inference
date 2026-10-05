@@ -357,7 +357,10 @@ impl MoeLayer {
 
 mod adaptive_fp8;
 mod circuit;
-pub use circuit::{Fp8Tables, MoeBinding, MoeFacts, MoeKernels, MoeScratch};
+mod circuit_formats;
+pub use circuit::{
+    ExpertKind, Fp8Tables, MoeBinding, MoeExperts, MoeFacts, MoeKernels, MoeScratch,
+};
 mod tables;
 pub(crate) use tables::{Bf16SharedExpert, ExpertPtrTable, Fp8ExpertPtrTable};
 

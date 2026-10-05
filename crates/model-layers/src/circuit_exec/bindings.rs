@@ -268,6 +268,9 @@ pub struct HeadBinding {
     /// 2026-10-03: An NVFP4 head's transposed twin and its padded N (`lm_head_nvfp4_t`), which
     /// its tile GEMM reads; `None` for a BF16 head.
     pub nvfp4_twin: Option<(crate::weight_map::QuantizedWeight, u32)>,
+    /// 2026-10-05: The declared NVFP4 head runs on the W4A16 row tiles at every row count
+    /// (`install_declared_lm_head_w4a16_rows`); `lm_head` is then that NVFP4 head.
+    pub nvfp4_rows: bool,
 }
 
 /// 2026-09-28: Refuse a model the circuit misdescribes: an unbound layer, a layer or head

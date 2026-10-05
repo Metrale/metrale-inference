@@ -5,6 +5,9 @@
 //! router GEMV, or the batched router GEMM of the drafter's n-row propose), `moe_grouped_route`
 //! (top-k and the slot sort), `moe_grouped_fp8_w8a8` (the W8A8 expert step: quantize the input, gate+up with a re-quantized
 //! SiLU product, down) and `moe_blend` (the shared-expert gate and the weighted sum).
+//! 2026-10-05: The router and blend also run `MoeLayer::forward`'s one-row path of a BF16-expert
+//! drafter (`dense_gemv_bf16`, `moe_weighted_sum_blend`); the NVFP4 and BF16 expert steps and the
+//! one-row top-k are in `moe_experts.rs`.
 //!
 //! Owner: model-layers (MoE) circuit emitters.
 //! Invariants:
@@ -25,11 +28,11 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 
 use super::super::compile::{Cx, OpEmitter};
 use super::{expect_kernel, rows};
-use crate::layers::moe::{MoeBinding, MoeScratch, router_block_rows};
+use crate::layers::moe::{ExpertKind, MoeBinding, MoeExperts, MoeScratch, router_block_rows};
 use crate::layers::ops;
 
 /// 2026-10-03: Member `i`'s layer's MoE binding.
-fn binding(cx: &Cx<'_>, i: usize) -> Result<MoeBinding> {
+pub(super) fn binding(cx: &Cx<'_>, i: usize) -> Result<MoeBinding> {
     cx.layer(i)?
         .moe
         .clone()
@@ -38,7 +41,7 @@ fn binding(cx: &Cx<'_>, i: usize) -> Result<MoeBinding> {
 
 /// 2026-10-03: Member `i`'s layer's MoE binding and the arena scratch, after checking that the
 /// plan's rows are a width the grouped decode takes.
-fn bound(cx: &Cx<'_>, i: usize) -> Result<(MoeBinding, MoeScratch)> {
+pub(super) fn bound(cx: &Cx<'_>, i: usize) -> Result<(MoeBinding, MoeScratch)> {
     let b = binding(cx, i)?;
     let s = cx
         .fixed
@@ -50,13 +53,20 @@ fn bound(cx: &Cx<'_>, i: usize) -> Result<(MoeBinding, MoeScratch)> {
 
 /// 2026-10-03: The drafter's propose of two or more rows routes batched
 /// (`MoeLayer::forward_fp8_grouped_decode`, `mtp_head/forward_batch_ffn.rs`); every other step,
-/// one drafter row included (`MoeLayer::forward`), routes per row.
-fn batched_routing(cx: &Cx<'_>) -> bool {
-    cx.mode == Mode::Draft && cx.rows >= 2
+/// one drafter row included (`MoeLayer::forward`), routes per row. 2026-10-05: Only FP8 experts
+/// route a propose batched; the grouped NVFP4 and BF16 decodes route it per row.
+pub(super) fn batched_routing(cx: &Cx<'_>, b: &MoeBinding) -> bool {
+    cx.mode == Mode::Draft && cx.rows >= 2 && b.facts.kind.draft_routes_batched()
+}
+
+/// 2026-10-05: `MoeLayer::forward`'s one-row path, which BF16 experts take at one row (the FP8
+/// and NVFP4 layers delegate their one row to the grouped decode).
+pub(super) fn one_row_path(cx: &Cx<'_>, b: &MoeBinding) -> bool {
+    cx.rows == 1 && b.facts.kind == ExpertKind::Bf16
 }
 
 /// 2026-10-03: Refuse a plan kernel `k` that is not `want`, the handle legacy launches.
-fn same_kernel(cx: &Cx<'_>, k: usize, want: KernelHandle, what: &str) -> Result<()> {
+pub(super) fn same_kernel(cx: &Cx<'_>, k: usize, want: KernelHandle, what: &str) -> Result<()> {
     let h = cx.handle(k)?;
     ensure!(
         want.0 != 0 && h.0 == want.0,
@@ -84,7 +94,17 @@ impl OpEmitter for MoeRouter {
         let m = rows(cx)?;
         let w = b.router;
         let k = cx.handle(0)?;
-        if batched_routing(cx) {
+        if one_row_path(cx, &b) {
+            expect_kernel(cx, 0, "dense_gemv_bf16")?;
+            same_kernel(cx, 0, b.kernels.router_gemv, "one-row router")?;
+            return cx.push(
+                0,
+                Box::new(move |e| {
+                    ops::dense_gemv(e.gpu, k, x, &w, y, f.num_experts, f.hidden, e.stream)
+                }),
+            );
+        }
+        if batched_routing(cx, &b) {
             expect_kernel(cx, 0, "moe_router_gemm_bf16")?;
             same_kernel(cx, 0, b.kernels.router_gemm, "router GEMM")?;
             return cx.push(
@@ -131,7 +151,7 @@ impl OpEmitter for MoeGroupedRoute {
         let (b, s) = bound(cx, 0)?;
         let f = b.facts;
         expect_kernel(cx, 1, "moe_fp8_grouped_sort")?;
-        let topk_want = if batched_routing(cx) {
+        let topk_want = if batched_routing(cx, &b) {
             b.kernels.topk_batched
         } else {
             b.kernels.topk_rows
@@ -221,6 +241,15 @@ impl OpEmitter for MoeGroupedFp8W8a8 {
             "the MoE layer runs W8A16 experts (no FP8 expert activations published, or the W8A8 \
              kernels did not resolve); this W8A8 plan does not describe it"
         );
+        let MoeExperts::Fp8 {
+            gate,
+            up,
+            down,
+            shared: sh,
+        } = b.experts
+        else {
+            bail!("the W8A8 expert step over a layer whose experts are not FP8");
+        };
         let f = b.facts;
         let m = rows(cx)?;
         let (sort, cap) = b.sort_out(&s, m);
@@ -263,7 +292,6 @@ impl OpEmitter for MoeGroupedFp8W8a8 {
                     ops::moe_act_quant_e4m3(e.gpu, kq, x, xq, xs, m, f.hidden, e.stream)
                 }),
             )?;
-            let (gate, up, sh) = (b.gate, b.up, b.shared);
             return cx.push(
                 1,
                 Box::new(move |e| {
@@ -292,7 +320,6 @@ impl OpEmitter for MoeGroupedFp8W8a8 {
         let sh_act = fp8_g128(cx, cx.g.input(1, 0)?)?;
         let out = cx.ptr(cx.g.output(0, 0)?)?;
         let sh_out = cx.ptr(cx.g.output(1, 0)?)?;
-        let (down, sh) = (b.down, b.shared);
         let k = cx.handle(0)?;
         cx.push(
             0,
@@ -328,8 +355,14 @@ impl OpEmitter for MoeBlend {
     fn emit(&self, cx: &mut Cx<'_>) -> Result<()> {
         cx.g.expect_ops(self.id(), &["linear:shared_gate", "blend"])?;
         let (b, s) = bound(cx, 0)?;
-        expect_kernel(cx, 0, "moe_weighted_sum_blend_fp8_grouped")?;
-        same_kernel(cx, 0, b.kernels.blend, "blend")?;
+        let one_row = one_row_path(cx, &b);
+        if one_row {
+            expect_kernel(cx, 0, "moe_weighted_sum_blend")?;
+            same_kernel(cx, 0, b.kernels.blend_one_row, "one-row blend")?;
+        } else {
+            expect_kernel(cx, 0, "moe_weighted_sum_blend_fp8_grouped")?;
+            same_kernel(cx, 0, b.kernels.blend, "blend")?;
+        }
         let f = b.facts;
         let m = rows(cx)?;
         let (sort, _) = b.sort_out(&s, m);
@@ -346,6 +379,27 @@ impl OpEmitter for MoeBlend {
         let out = cx.ptr(cx.g.output(1, 0)?)?;
         let gate = b.shared_gate;
         let k = cx.handle(0)?;
+        if one_row {
+            return cx.push(
+                0,
+                Box::new(move |e| {
+                    ops::moe_weighted_sum_blend(
+                        e.gpu,
+                        k,
+                        out,
+                        edown,
+                        topk_w,
+                        sdown,
+                        x,
+                        gate.weight,
+                        f.hidden,
+                        f.top_k,
+                        f.hidden,
+                        e.stream,
+                    )
+                }),
+            );
+        }
         cx.push(
             0,
             Box::new(move |e| {

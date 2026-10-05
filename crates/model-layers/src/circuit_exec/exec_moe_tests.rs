@@ -17,7 +17,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use super::Fusions;
 use super::bindings::*;
 use super::exec_fixture::*;
-use crate::layers::moe::{Fp8Tables, MoeBinding, MoeFacts, MoeKernels};
+use crate::layers::moe::{ExpertKind, Fp8Tables, MoeBinding, MoeExperts, MoeFacts, MoeKernels};
 use crate::layers::ops;
 use crate::weight_map::{DenseWeight, Fp8ExpertWeight, Fp8Weight, WeightQuantFormat};
 
@@ -56,13 +56,15 @@ fn moe_binding(c: &Circuit, i: usize, w8a8: bool, tensor_core: bool) -> MoeBindi
         shared_gate: DenseWeight {
             weight: ptr(tag(i, 51)),
         },
-        gate: tables(52),
-        up: tables(54),
-        down: tables(56),
-        shared: Fp8ExpertWeight {
-            gate_proj: fp8(tag(i, 58), d("shared_inter"), h),
-            up_proj: fp8(tag(i, 60), d("shared_inter"), h),
-            down_proj: fp8(tag(i, 62), h, d("shared_inter")),
+        experts: MoeExperts::Fp8 {
+            gate: tables(52),
+            up: tables(54),
+            down: tables(56),
+            shared: Fp8ExpertWeight {
+                gate_proj: fp8(tag(i, 58), d("shared_inter"), h),
+                up_proj: fp8(tag(i, 60), d("shared_inter"), h),
+                down_proj: fp8(tag(i, 62), h, d("shared_inter")),
+            },
         },
         facts: MoeFacts {
             num_experts: d("experts"),
@@ -72,6 +74,7 @@ fn moe_binding(c: &Circuit, i: usize, w8a8: bool, tensor_core: bool) -> MoeBindi
             norm_topk_prob: true,
             tensor_core,
             w8a8,
+            kind: ExpertKind::Fp8,
         },
         kernels: MoeKernels {
             router_rows: K,
@@ -87,6 +90,11 @@ fn moe_binding(c: &Circuit, i: usize, w8a8: bool, tensor_core: bool) -> MoeBindi
             gate_up_w8a8: K,
             down_w8a8: K,
             blend: K,
+            router_gemv: K,
+            topk_one_row: K,
+            fused_gate_up_bf16: K,
+            fused_down_bf16: K,
+            blend_one_row: K,
         },
     }
 }

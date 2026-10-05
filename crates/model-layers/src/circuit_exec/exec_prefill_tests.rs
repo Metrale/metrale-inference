@@ -70,6 +70,7 @@ fn build() -> Built {
         unmodelled: Vec::new(),
         batchm_max_rows: 8,
         nvfp4_twin: None,
+        nvfp4_rows: false,
     };
     let cfg = dense_config();
     let arena = BufferArena::new(&cfg, MAX_TOKENS as usize, 4096, 16, 4, &gpu).unwrap();

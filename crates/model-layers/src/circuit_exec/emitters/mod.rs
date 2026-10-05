@@ -29,6 +29,7 @@ mod gdn_verify_batch;
 mod head;
 mod linear;
 mod moe;
+mod moe_experts;
 mod norm;
 mod prefill_attn;
 mod prefill_ffn;
@@ -36,7 +37,7 @@ mod prefill_gdn;
 
 /// 2026-10-03: Every emitter, as one slice per module: a module owns its own `ALL`, and adding
 /// a module adds one line here (see LIFECYCLE-DESIGN.md 15.11).
-static MODULES: [&[&dyn OpEmitter]; 18] = [
+static MODULES: [&[&dyn OpEmitter]; 19] = [
     norm::ALL,
     linear::ALL,
     gdn::ALL,
@@ -53,6 +54,7 @@ static MODULES: [&[&dyn OpEmitter]; 18] = [
     prefill_attn::ALL,
     prefill_ffn::ALL,
     moe::ALL,
+    moe_experts::ALL,
     fp8_linear::ALL,
     head::ALL,
 ];

@@ -89,7 +89,7 @@ impl Nvfp4GroupedKernels {
     /// 2026-10-02: The gate+up and down launches for an `inter` x `hidden` expert: the
     /// tensor-core twins when on and the shape fits them, else the CUDA-core kernels.
     /// 2026-10-04: Always the lean pair once the tables are lean (the repack checked the shape).
-    fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
+    pub(super) fn select(&self, hidden: u32, inter: u32) -> Nvfp4GroupedLaunch {
         if let Some(lean) = self.lean_launch() {
             return lean;
         }

@@ -30,7 +30,7 @@ use crate::{QuantMetadata, ServePrecision, resolve_checkpoint};
 pub const KERNEL_QUANT: &str = "nvfp4";
 
 /// 2026-09-30: Where each derived setting comes from, printed in the report.
-pub const POLICY_SOURCES: [(&str, &str); 15] = [
+pub const POLICY_SOURCES: [(&str, &str); 18] = [
     (
         "row_tiers",
         "canonical for FP8 routed experts or a MoE with FP8 projections, else by_rows \
@@ -223,9 +223,10 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         None => "bf16",
         Some(f) => dtype_name(f)?,
     };
-    let nvfp4_experts = c.nodes.iter().any(|n| {
-        n.op == OpKind::ExpertGateUp && matches!(n.weight, Some(Format::Nvfp4 { .. }))
-    });
+    let nvfp4_experts = c
+        .nodes
+        .iter()
+        .any(|n| n.op == OpKind::ExpertGateUp && matches!(n.weight, Some(Format::Nvfp4 { .. })));
     // 2026-10-05: The drafter's experts: the first expert node of a draft block.
     let draft_experts = c
         .blocks
@@ -255,7 +256,10 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         ("gdn_verify_exact", "off"),
         ("ffn_act_fixed", "off"),
         ("moe_fp8_tc", "on"),
-        ("moe_nvfp4_kernels", if nvfp4_experts { "lean" } else { "none" }),
+        (
+            "moe_nvfp4_kernels",
+            if nvfp4_experts { "lean" } else { "none" },
+        ),
         ("draft_moe_experts", draft_experts),
         ("lm_head_nvfp4_rows", if head_rows { "on" } else { "off" }),
     ]

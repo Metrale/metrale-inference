@@ -17,7 +17,7 @@ pub(super) type Look<'a> = dyn Fn(&str, &str, &dyn Fn() -> KernelHandle) -> Kern
 pub(super) fn entries(
     gpu: &dyn GpuBackend,
     look: &Look<'_>,
-) -> [(&'static str, &'static str, KernelHandle); 14] {
+) -> [(&'static str, &'static str, KernelHandle); 20] {
     [
         (
             "w8a8_act_quant",
@@ -116,6 +116,50 @@ pub(super) fn entries(
             "w4a4_gemv_mx64_nt2",
             look("w4a4_gemv_mx", "w4a4_gemv_mx64_nt2", &|| {
                 try_kernel(gpu, "w4a4_gemv_mx", "w4a4_gemv_mx64_nt2")
+            }),
+        ),
+        // 2026-10-05: The block-128 W8A8 arm (per-row, per-128 activation scales): the adopted
+        // FP8 attention and GDN projections of nvidia/Qwen3.6-35B-A3B-NVFP4 (`w8a8_adopt.rs`).
+        (
+            "w8a8_act_quant",
+            "w8a8_act_quant_g128",
+            look("w8a8_act_quant", "w8a8_act_quant_g128", &|| {
+                try_kernel(gpu, "w8a8_act_quant", "w8a8_act_quant_g128")
+            }),
+        ),
+        (
+            "w8a8_gemv",
+            "w8a8_gemv_blk128_mb1_ku8",
+            look("w8a8_gemv", "w8a8_gemv_blk128_mb1_ku8", &|| {
+                try_kernel(gpu, "w8a8_gemv", "w8a8_gemv_blk128_mb1_ku8")
+            }),
+        ),
+        (
+            "w8a8_gemv",
+            "w8a8_gemv_blk128_mb2",
+            look("w8a8_gemv", "w8a8_gemv_blk128_mb2", &|| {
+                try_kernel(gpu, "w8a8_gemv", "w8a8_gemv_blk128_mb2")
+            }),
+        ),
+        (
+            "w8a8_gemv",
+            "w8a8_gemv_blk128_mb4",
+            look("w8a8_gemv", "w8a8_gemv_blk128_mb4", &|| {
+                try_kernel(gpu, "w8a8_gemv", "w8a8_gemv_blk128_mb4")
+            }),
+        ),
+        (
+            "w8a8_gemv",
+            "w8a8_gemv_blk128_mb8",
+            look("w8a8_gemv", "w8a8_gemv_blk128_mb8", &|| {
+                try_kernel(gpu, "w8a8_gemv", "w8a8_gemv_blk128_mb8")
+            }),
+        ),
+        (
+            "w8a8_gemv",
+            "w8a8_gemv_blk128_mb16",
+            look("w8a8_gemv", "w8a8_gemv_blk128_mb16", &|| {
+                try_kernel(gpu, "w8a8_gemv", "w8a8_gemv_blk128_mb16")
             }),
         ),
     ]

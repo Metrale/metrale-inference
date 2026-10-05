@@ -29,8 +29,8 @@ pub mod prefill;
 pub mod program;
 pub mod routes;
 pub mod sources;
-pub mod state_bind;
 pub mod spec_key;
+pub mod state_bind;
 pub mod verify_batch;
 
 use anyhow::{Context, Result, bail};
@@ -429,8 +429,14 @@ mod exec_exact_tests;
 #[path = "exec_fixture.rs"]
 mod exec_fixture;
 #[cfg(test)]
+#[path = "exec_fixture_build.rs"]
+mod exec_fixture_build;
+#[cfg(test)]
 #[path = "exec_fixture_run.rs"]
 mod exec_fixture_run;
+#[cfg(test)]
+#[path = "exec_moe_nvfp4_tests.rs"]
+mod exec_moe_nvfp4_tests;
 #[cfg(test)]
 #[path = "exec_moe_tests.rs"]
 mod exec_moe_tests;

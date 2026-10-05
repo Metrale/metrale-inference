@@ -18,6 +18,7 @@ fn facts(tensor_core: bool, w8a8: bool) -> MoeFacts {
         norm_topk_prob: true,
         tensor_core,
         w8a8,
+        kind: ExpertKind::Fp8,
     }
 }
 
@@ -32,6 +33,8 @@ fn arena_for(f: &MoeFacts, m: usize) -> MoeScratch {
     );
     MoeScratch {
         sort: DevicePtr::NULL,
+        routed_act: DevicePtr::NULL,
+        shared_act: DevicePtr::NULL,
         scratch_bytes: need.scratch,
         gate_logits_bytes: need.gate_logits,
         expert_gate_out_bytes: need.expert_gate_out,

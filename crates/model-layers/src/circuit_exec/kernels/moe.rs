@@ -2,7 +2,9 @@
 
 //! 2026-10-03: The MoE FFN's kernels the executor launches (the grouped FP8 decode's router,
 //! top-k, sort, expert and blend kernels, and the drafter's batched router), looked up literally
-//! as `MoeLayer`'s `init` does, so a handle equals the layer's own.
+//! as `MoeLayer`'s `init` does, so a handle equals the layer's own. 2026-10-05: And the grouped
+//! NVFP4 (lean and row-major) and BF16 expert pairs, the one-row BF16 path's kernels, and the
+//! declared NVFP4 head's row tiles.
 //!
 //! Owner: model-layers (MoE) circuit emitters.
 //! Invariants: as the parent's.
@@ -16,7 +18,7 @@ use crate::layers::try_kernel;
 pub(super) fn entries(
     gpu: &dyn GpuBackend,
     look: &Look<'_>,
-) -> [(&'static str, &'static str, KernelHandle); 13] {
+) -> [(&'static str, &'static str, KernelHandle); 26] {
     [
         (
             "moe_topk",
@@ -163,6 +165,161 @@ pub(super) fn entries(
             "dense_gemm_bf16",
             look("gemm", "dense_gemm_bf16", &|| {
                 try_kernel(gpu, "gemm", "dense_gemm_bf16")
+            }),
+        ),
+        (
+            "moe_nvfp4_grouped_tc",
+            "moe_expert_gate_up_act_nvfp4_grouped_tc",
+            look(
+                "moe_nvfp4_grouped_tc",
+                "moe_expert_gate_up_act_nvfp4_grouped_tc",
+                &|| {
+                    try_kernel(
+                        gpu,
+                        "moe_nvfp4_grouped_tc",
+                        "moe_expert_gate_up_act_nvfp4_grouped_tc",
+                    )
+                },
+            ),
+        ),
+        (
+            "moe_nvfp4_grouped_tc",
+            "moe_expert_down_act_nvfp4_grouped_tc",
+            look(
+                "moe_nvfp4_grouped_tc",
+                "moe_expert_down_act_nvfp4_grouped_tc",
+                &|| {
+                    try_kernel(
+                        gpu,
+                        "moe_nvfp4_grouped_tc",
+                        "moe_expert_down_act_nvfp4_grouped_tc",
+                    )
+                },
+            ),
+        ),
+        (
+            "moe_nvfp4_grouped_tc",
+            "moe_expert_gate_up_act_nvfp4_grouped_tc_lean",
+            look(
+                "moe_nvfp4_grouped_tc",
+                "moe_expert_gate_up_act_nvfp4_grouped_tc_lean",
+                &|| {
+                    try_kernel(
+                        gpu,
+                        "moe_nvfp4_grouped_tc",
+                        "moe_expert_gate_up_act_nvfp4_grouped_tc_lean",
+                    )
+                },
+            ),
+        ),
+        (
+            "moe_nvfp4_grouped_tc",
+            "moe_expert_down_act_nvfp4_grouped_tc_lean",
+            look(
+                "moe_nvfp4_grouped_tc",
+                "moe_expert_down_act_nvfp4_grouped_tc_lean",
+                &|| {
+                    try_kernel(
+                        gpu,
+                        "moe_nvfp4_grouped_tc",
+                        "moe_expert_down_act_nvfp4_grouped_tc_lean",
+                    )
+                },
+            ),
+        ),
+        (
+            "moe_bf16_grouped_tc",
+            "moe_expert_gate_up_act_bf16_grouped_tc",
+            look(
+                "moe_bf16_grouped_tc",
+                "moe_expert_gate_up_act_bf16_grouped_tc",
+                &|| {
+                    try_kernel(
+                        gpu,
+                        "moe_bf16_grouped_tc",
+                        "moe_expert_gate_up_act_bf16_grouped_tc",
+                    )
+                },
+            ),
+        ),
+        (
+            "moe_bf16_grouped_tc",
+            "moe_expert_down_act_bf16_grouped_tc",
+            look(
+                "moe_bf16_grouped_tc",
+                "moe_expert_down_act_bf16_grouped_tc",
+                &|| {
+                    try_kernel(
+                        gpu,
+                        "moe_bf16_grouped_tc",
+                        "moe_expert_down_act_bf16_grouped_tc",
+                    )
+                },
+            ),
+        ),
+        (
+            "moe_shared_expert_fused_bf16",
+            "moe_expert_gate_up_shared_bf16",
+            look(
+                "moe_shared_expert_fused_bf16",
+                "moe_expert_gate_up_shared_bf16",
+                &|| {
+                    try_kernel(
+                        gpu,
+                        "moe_shared_expert_fused_bf16",
+                        "moe_expert_gate_up_shared_bf16",
+                    )
+                },
+            ),
+        ),
+        (
+            "moe_shared_expert_fused_bf16",
+            "moe_expert_silu_down_shared_bf16",
+            look(
+                "moe_shared_expert_fused_bf16",
+                "moe_expert_silu_down_shared_bf16",
+                &|| {
+                    try_kernel(
+                        gpu,
+                        "moe_shared_expert_fused_bf16",
+                        "moe_expert_silu_down_shared_bf16",
+                    )
+                },
+            ),
+        ),
+        (
+            "moe_topk",
+            "moe_topk_softmax",
+            look("moe_topk", "moe_topk_softmax", &|| {
+                try_kernel(gpu, "moe_topk", "moe_topk_softmax")
+            }),
+        ),
+        (
+            "moe_expert_gemv",
+            "moe_weighted_sum_blend",
+            look("moe_expert_gemv", "moe_weighted_sum_blend", &|| {
+                try_kernel(gpu, "moe_expert_gemv", "moe_weighted_sum_blend")
+            }),
+        ),
+        (
+            "w4a16_tc_rows",
+            "w4a16_tc_rows_16",
+            look("w4a16_tc_rows", "w4a16_tc_rows_16", &|| {
+                try_kernel(gpu, "w4a16_tc_rows", "w4a16_tc_rows_16")
+            }),
+        ),
+        (
+            "w4a16_tc_rows",
+            "w4a16_tc_rows_32",
+            look("w4a16_tc_rows", "w4a16_tc_rows_32", &|| {
+                try_kernel(gpu, "w4a16_tc_rows", "w4a16_tc_rows_32")
+            }),
+        ),
+        (
+            "w4a16_tc_rows",
+            "w4a16_tc_rows_64",
+            look("w4a16_tc_rows", "w4a16_tc_rows_64", &|| {
+                try_kernel(gpu, "w4a16_tc_rows", "w4a16_tc_rows_64")
             }),
         ),
     ]
