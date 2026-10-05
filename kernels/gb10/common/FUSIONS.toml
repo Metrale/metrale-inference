@@ -1764,7 +1764,7 @@ repeat = "once"
 emitter = "moe_router"
 rows = [1, 1]
 modes = ["draft"]
-when = { row_tiers = "canonical", moe_fp8_tc = "on" }
+when = { row_tiers = "canonical", moe_fp8_tc = "on", draft_moe_experts = "fp8" }
 numerics = "reference"
 priority = 10
 cite = "ml/mtp_head/forward.rs:332 (MoeLayer::forward, one row); ml/moe/forward.rs:39"
@@ -1777,7 +1777,7 @@ repeat = "once"
 emitter = "moe_router"
 rows = [2, 256]
 modes = ["draft"]
-when = { row_tiers = "canonical" }
+when = { row_tiers = "canonical", draft_moe_experts = "fp8" }
 numerics = "reference"
 priority = 20
 cite = "ml/mtp_head/forward_batch_ffn.rs:132 (GroupedRouting::Batched); ml/moe/forward_fp8_grouped_router.rs:181; ml/moe/helpers_c.rs:333 (moe_router_gemm_bf16 when resolved and hidden % 16 == 0; no rule plans the dense_gemm_bf16 fallback, so a target without it refuses)"
@@ -1809,7 +1809,7 @@ repeat = "once"
 emitter = "moe_grouped_route"
 rows = [1, 1]
 modes = ["draft"]
-when = { row_tiers = "canonical", moe_fp8_tc = "on" }
+when = { row_tiers = "canonical", moe_fp8_tc = "on", draft_moe_experts = "fp8" }
 numerics = "reference"
 priority = 10
 cite = "ml/moe/forward_fp8_grouped_router.rs:138; ml/moe/forward_fp8_grouped_decode.rs:309-318"
@@ -1825,7 +1825,7 @@ repeat = "once"
 emitter = "moe_grouped_route"
 rows = [2, 256]
 modes = ["draft"]
-when = { row_tiers = "canonical" }
+when = { row_tiers = "canonical", draft_moe_experts = "fp8" }
 numerics = "reference"
 priority = 10
 cite = "ml/moe/forward_fp8_grouped_router.rs:199 (moe_topk_softmax_batched: the lower lane on a tie); ml/moe/forward_fp8_grouped_decode.rs:309-318"
@@ -1870,74 +1870,159 @@ numerics = "reference"
 priority = 100
 cite = "ml/moe/fp8_grouped_tc_w8a8.rs:126"
 
-# 2026-10-02: The checkpoint's own NVFP4 experts under `--weight-quantization declared`
-# (nvidia/Qwen3.6-35B-A3B-NVFP4): the grouped NVFP4 decode on the tensor-core point of the
-# moe_grouped_tc family at every width 1..=256 (these per-op rules to 64 rows, the whole-block
-# rule `moe_grouped_nvfp4_tc_wide` above), one row's bits at every row count.
+# 2026-10-05: The checkpoint's own NVFP4 experts under `--weight-quantization declared`
+# (nvidia/Qwen3.6-35B-A3B-NVFP4): every decode, multi-sequence, verify and batched-verify width
+# takes the grouped NVFP4 decode (moe/forward_nvfp4_grouped_decode.rs, admitted to 256 rows when
+# the experts are declared) with the per-row router, top-k, sort and blend above. Its expert step
+# is one group: gate+up writes each SiLU product as a BF16 hi + lo pair in the FP32 row space
+# of the arena's `expert_gate_out` (routed, by sorted position) and `logits` (shared, by
+# token), which only the down kernel reads, as legacy lays them out; no edge carries them.
+# The pair is the one the layer's own dispatch picks (`Nvfp4GroupedKernels::select`): the lean
+# pair once the loader repacked the tables in place (moe/nvfp4_lean.rs, byte-identical outputs),
+# else the row-major tensor-core pair. `moe_nvfp4_kernels` states which, read from the bound
+# layers; `cuda_core` (METRALE_NO_MOE_NVFP4_TC) has no rule and is refused.
 [[rule]]
-id = "moe_gate_up_act_grouped_nvfp4_tc"
+id = "moe_experts_grouped_nvfp4_lean"
 pattern = [
-  { op = "expert_gate_up", weight = "nvfp4/g16" },
-  { op = "silu_mul", local = "experts_act", keep = true },
-  { op = "linear", role = "shared_gate_up", sibling = true },
-  { op = "silu_mul", local = "shared_act" },
-]
-kernels = [{ module = "moe_nvfp4_grouped_tc", func = "moe_expert_gate_up_act_nvfp4_grouped_tc" }]
-repeat = "once"
-emitter = "moe_grouped_nvfp4"
-rows = [1, 64]
-modes = ["decode", "multi_seq", "verify"]
-numerics = "reference"
-priority = 100
-cite = "ml/moe/forward_nvfp4_grouped_decode.rs:143-220 (admits m = 1..=256 when declared_experts), :379-397; ml/moe/forward.rs:33-37 (one row); ml/qwen3_attention/trait_impl/multi_seq/ffn.rs:106-123, ml/qwen3_ssm/trait_decode_multi_seq.rs:144-146, ml/qwen3_ssm/trait_decode_batched.rs:308-312 (many rows); k/tc_weight_formats.cuh:101-140 (Nvfp4G16: BF16(E2M1 x E4M3) exact, s2 once)"
-
-[[rule]]
-id = "moe_down_act_grouped_nvfp4_tc"
-pattern = [
-  { op = "expert_down", weight = "nvfp4/g16", keep = true },
-  { op = "linear", role = "shared_down", sibling = true },
-]
-kernels = [{ module = "moe_nvfp4_grouped_tc", func = "moe_expert_down_act_nvfp4_grouped_tc" }]
-repeat = "once"
-emitter = "moe_grouped_nvfp4"
-rows = [1, 64]
-modes = ["decode", "multi_seq", "verify"]
-numerics = "reference"
-priority = 100
-cite = "ml/moe/forward_nvfp4_grouped_decode.rs:422-440 (the shared expert's rows in the same launch)"
-
-# 2026-10-02: Above 64 rows the grouped router, top-k and blend rules stop (the FP8 MoE takes its
-# prefill-shaped group there), but the declared NVFP4 decode keeps its grouped path to 256 rows:
-# the whole MoE block as one group, the same kernels as the per-op rules below 65 rows.
-[[rule]]
-id = "moe_grouped_nvfp4_tc_wide"
-pattern = [
-  { op = "router" },
-  { op = "top_k" },
   { op = "expert_gate_up", weight = "nvfp4/g16" },
   { op = "silu_mul", local = "experts_act" },
-  { op = "expert_down" },
+  { op = "expert_down", weight = "nvfp4/g16" },
   { op = "linear", role = "shared_gate_up", sibling = true },
   { op = "silu_mul", local = "shared_act" },
   { op = "linear", role = "shared_down" },
-  { op = "linear", role = "shared_gate", sibling = true, holds = "f32" },
-  { op = "blend" },
 ]
 kernels = [
-  { module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm" },
-  { module = "moe_topk", func = "moe_topk_softmax_rows" },
-  { module = "moe_fp8_grouped_sort", func = "moe_fp8_grouped_sort" },
-  { module = "moe_nvfp4_grouped_tc", func = "moe_expert_gate_up_act_nvfp4_grouped_tc" },
-  { module = "moe_nvfp4_grouped_tc", func = "moe_expert_down_act_nvfp4_grouped_tc" },
-  { module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp8_grouped" },
+  { module = "moe_nvfp4_grouped_tc", func = "moe_expert_gate_up_act_nvfp4_grouped_tc_lean" },
+  { module = "moe_nvfp4_grouped_tc", func = "moe_expert_down_act_nvfp4_grouped_tc_lean" },
 ]
 repeat = "once"
-emitter = "moe_grouped_nvfp4"
-rows = [65, 256]
-modes = ["multi_seq", "verify"]
+emitter = "moe_grouped_experts"
+rows = [1, 256]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { moe_nvfp4_kernels = "lean" }
 numerics = "reference"
 priority = 100
-cite = "ml/moe/forward_nvfp4_grouped_decode.rs:270-310 (per-row router and moe_fp8_grouped_sort), :379-440 (the two expert launches), :442-458 (the grouped blend); NVFP4_GROUPED_DECODE_TC_MAX_ROWS, :32"
+cite = "ml/moe/forward_nvfp4_grouped_decode.rs:410-474 (gate+up, then down; the shared expert's rows in the same launches); ml/moe/nvfp4_lean.rs:28-39 (the lean pair once repacked)"
+
+[[rule]]
+id = "moe_experts_grouped_nvfp4_tc"
+pattern = [
+  { op = "expert_gate_up", weight = "nvfp4/g16" },
+  { op = "silu_mul", local = "experts_act" },
+  { op = "expert_down", weight = "nvfp4/g16" },
+  { op = "linear", role = "shared_gate_up", sibling = true },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down" },
+]
+kernels = [
+  { module = "moe_nvfp4_grouped_tc", func = "moe_expert_gate_up_act_nvfp4_grouped_tc" },
+  { module = "moe_nvfp4_grouped_tc", func = "moe_expert_down_act_nvfp4_grouped_tc" },
+]
+repeat = "once"
+emitter = "moe_grouped_experts"
+rows = [1, 256]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { moe_nvfp4_kernels = "tensor_core" }
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward_nvfp4_grouped_decode.rs:92-118 (the tensor-core pair while the tables stay row-major), :410-474"
+
+# 2026-10-05: The BF16 MoE drafter (the MTP head of nvidia/Qwen3.6-35B-A3B-NVFP4, excluded from
+# quantization) in a batched propose of two or more rows: the grouped BF16 point with the
+# per-row router (moe/forward_bf16_grouped_decode.rs via mtp_head/forward_batch_ffn.rs:127), its
+# SiLU products laid out as the NVFP4 step's.
+[[rule]]
+id = "moe_experts_grouped_bf16_tc"
+pattern = [
+  { op = "expert_gate_up", weight = "bf16" },
+  { op = "silu_mul", local = "experts_act" },
+  { op = "expert_down", weight = "bf16" },
+  { op = "linear", role = "shared_gate_up", sibling = true },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down" },
+]
+kernels = [
+  { module = "moe_bf16_grouped_tc", func = "moe_expert_gate_up_act_bf16_grouped_tc" },
+  { module = "moe_bf16_grouped_tc", func = "moe_expert_down_act_bf16_grouped_tc" },
+]
+repeat = "once"
+emitter = "moe_grouped_experts"
+rows = [2, 256]
+modes = ["draft"]
+when = { draft_moe_experts = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward_bf16_grouped_decode.rs:144-186 (gate+up, then down, the shared expert in the same launches)"
+
+# 2026-10-05: The BF16 drafter's router and top-k: per row at every width
+# (`GroupedRouting::PerRow`), through `MoeLayer::forward`'s legacy one-row path at one row.
+[[rule]]
+id = "moe_router_gemv_draft_bf16"
+pattern = [{ op = "router" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "once"
+emitter = "moe_router"
+rows = [1, 1]
+modes = ["draft"]
+when = { draft_moe_experts = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "ml/moe/forward/route.rs:13-37 (decode_gate_gemv: dense_gemv without an NVFP4 router); ml/moe/forward.rs:88-92"
+
+[[rule]]
+id = "moe_topk_softmax_draft_bf16"
+pattern = [{ op = "top_k" }]
+kernels = [{ module = "moe_topk", func = "moe_topk_softmax" }]
+repeat = "once"
+emitter = "moe_topk"
+rows = [1, 1]
+modes = ["draft"]
+when = { draft_moe_experts = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "ml/moe/forward/route.rs:117-128 (no correction bias: moe_topk_softmax, ties to the lower expert index)"
+
+[[rule]]
+id = "moe_weighted_sum_blend_draft_bf16"
+pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
+kernels = [{ module = "moe_expert_gemv", func = "moe_weighted_sum_blend" }]
+repeat = "once"
+emitter = "moe_blend"
+rows = [1, 1]
+modes = ["draft"]
+when = { draft_moe_experts = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward.rs:446-476 (sum of w * out plus sigmoid(x . seg) * shared, rounded to BF16 once); the EP reduce is a no-op without EP"
+
+[[rule]]
+id = "moe_router_rows_draft_bf16"
+pattern = [{ op = "router" }]
+kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm" }]
+repeat = "once"
+emitter = "moe_router"
+rows = [2, 256]
+modes = ["draft"]
+when = { draft_moe_experts = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "ml/moe/forward_bf16_grouped_decode.rs:103-111 (GroupedRouting::PerRow); ml/moe/forward_fp8_grouped_router.rs:78-80,118-130"
+
+[[rule]]
+id = "moe_topk_rows_sort_draft_bf16"
+pattern = [{ op = "top_k" }]
+kernels = [
+  { module = "moe_topk", func = "moe_topk_softmax_rows" },
+  { module = "moe_fp8_grouped_sort", func = "moe_fp8_grouped_sort" },
+]
+repeat = "once"
+emitter = "moe_grouped_route"
+rows = [2, 256]
+modes = ["draft"]
+when = { draft_moe_experts = "bf16" }
+numerics = "reference"
+priority = 10
+cite = "ml/moe/forward_fp8_grouped_router.rs:138; ml/moe/forward_bf16_grouped_decode.rs:112-142 (the sort into gate_logits)"
 
 # 2026-10-02: The shared-expert gate logit stays FP32 into the sigmoid
 # (moe_expert_gemv.cu:224-261, moe_fp8_grouped_blend.cu:47-76): `sg` is held as f32.
@@ -1948,28 +2033,138 @@ kernels = [{ module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp
 repeat = "once"
 emitter = "moe_blend"
 rows = [1, 256]
-modes = ["decode", "multi_seq", "verify", "verify_batch", "draft"]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
 when = { row_tiers = "canonical", moe_fp8_tc = "on" }
 numerics = "reference"
 priority = 100
 cite = "ml/moe/forward_fp8_grouped_decode.rs:402 (sum of w * expert row through token_to_perm, plus sigmoid(x . seg) * shared, one BF16 rounding)"
 
+[[rule]]
+id = "moe_blend_grouped_draft"
+pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
+kernels = [{ module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp8_grouped" }]
+repeat = "once"
+emitter = "moe_blend"
+rows = [1, 256]
+modes = ["draft"]
+when = { row_tiers = "canonical", moe_fp8_tc = "on", draft_moe_experts = "fp8" }
+numerics = "reference"
+priority = 100
+cite = "ml/mtp_head/forward.rs:332 (MoeLayer::forward, one row); ml/mtp_head/forward_batch_ffn.rs:132; ml/moe/forward_fp8_grouped_decode.rs:402"
+
+[[rule]]
+id = "moe_blend_grouped_draft_bf16"
+pattern = [{ op = "linear", role = "shared_gate", holds = "f32" }, { op = "blend" }]
+kernels = [{ module = "moe_fp8_grouped_blend", func = "moe_weighted_sum_blend_fp8_grouped" }]
+repeat = "once"
+emitter = "moe_blend"
+rows = [2, 256]
+modes = ["draft"]
+when = { draft_moe_experts = "bf16" }
+numerics = "reference"
+priority = 100
+cite = "ml/moe/forward_bf16_grouped_decode.rs:186-200 (the grouped blend of the batched BF16 propose)"
+
 # 2026-09-28: Vocabulary heads.
 
 # 2026-10-02: A declared W4A16 NVFP4 head (`install_declared_lm_head_w4a16_rows`): the NVFP4 point
-# of the tensor-core row tiles at every row count, in 64-row launches.
+# of the tensor-core row tiles at every row count. 2026-10-05: in calls of at most 64 rows, each
+# call's entry by its own rows (`ops::w4a16_tc_rows`: `_16` to 16 rows, `_32` to 32, else `_64`),
+# one rule per band of the plans' row counts; `lm_head_nvfp4_rows` is on exactly when the model
+# installed it.
 [[rule]]
-id = "lm_head_nvfp4_w4a16_rows"
+id = "lm_head_nvfp4_w4a16_rows_16"
 pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
-kernels = [{ module = "w4a16_tc_rows", func = "w4a16_tc_rows_64" }]
+kernels = [
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_16" },
+]
 repeat = "once"
-emitter = "lm_head"
-rows = [1, 256]
-modes = ["decode", "multi_seq", "verify"]
-when = { lm_head_dtype = "nvfp4" }
+emitter = "lm_head_nvfp4_rows"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { lm_head_dtype = "nvfp4", lm_head_nvfp4_rows = "on" }
 numerics = "reference"
-priority = 10
-cite = "mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode)"
+priority = 30
+cite = "mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); ml/ops/w4a16_tc_rows.rs:60-66 (the entry by rows); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode)"
+
+[[rule]]
+id = "lm_head_nvfp4_w4a16_rows_32"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_32" },
+]
+repeat = "once"
+emitter = "lm_head_nvfp4_rows"
+rows = [17, 32]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { lm_head_dtype = "nvfp4", lm_head_nvfp4_rows = "on" }
+numerics = "reference"
+priority = 30
+cite = "mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); ml/ops/w4a16_tc_rows.rs:60-66 (the entry by rows); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode)"
+
+[[rule]]
+id = "lm_head_nvfp4_w4a16_rows_64"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_64" },
+]
+repeat = "once"
+emitter = "lm_head_nvfp4_rows"
+rows = [33, 64]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { lm_head_dtype = "nvfp4", lm_head_nvfp4_rows = "on" }
+numerics = "reference"
+priority = 30
+cite = "mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); ml/ops/w4a16_tc_rows.rs:60-66 (the entry by rows); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode)"
+
+[[rule]]
+id = "lm_head_nvfp4_w4a16_rows_65_80"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_64" },
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_16" },
+]
+repeat = "once"
+emitter = "lm_head_nvfp4_rows"
+rows = [65, 80]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { lm_head_dtype = "nvfp4", lm_head_nvfp4_rows = "on" }
+numerics = "reference"
+priority = 30
+cite = "mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); ml/ops/w4a16_tc_rows.rs:60-66 (the entry by rows); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode)"
+
+[[rule]]
+id = "lm_head_nvfp4_w4a16_rows_81_96"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_64" },
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_32" },
+]
+repeat = "once"
+emitter = "lm_head_nvfp4_rows"
+rows = [81, 96]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { lm_head_dtype = "nvfp4", lm_head_nvfp4_rows = "on" }
+numerics = "reference"
+priority = 30
+cite = "mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); ml/ops/w4a16_tc_rows.rs:60-66 (the entry by rows); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode)"
+
+[[rule]]
+id = "lm_head_nvfp4_w4a16_rows_97_128"
+pattern = [{ op = "lm_head", weight = "nvfp4/g16" }]
+kernels = [
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_64" },
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_64" },
+]
+repeat = "once"
+emitter = "lm_head_nvfp4_rows"
+rows = [97, 128]
+modes = ["decode", "multi_seq", "verify", "verify_batch"]
+when = { lm_head_dtype = "nvfp4", lm_head_nvfp4_rows = "on" }
+numerics = "reference"
+priority = 30
+cite = "mm/lm_head_nvfp4_rows.rs:55-89 (64-row calls); ml/ops/w4a16_tc_rows.rs:60-66 (the entry by rows); mm/impl_a3_lm_head.rs:136-140 (verify), :338-341 (one row); me/lm_head_batched.rs:238-239 (multi-sequence decode)"
+
 # 2026-10-03: A fixed `--activation-quantization` for the head (`declared` on the Qwen3.6 FP8
 # recipes): the decode and multi-sequence BF16 head takes the batched GEMV at every row count,
 # one row included, in 16-row chunks (owner: the MoE circuit workstream). The verify heads keep
@@ -2004,7 +2199,7 @@ repeat = "once"
 emitter = "lm_head_nvfp4_tile"
 rows = [1, 256]
 modes = ["multi_seq", "verify", "verify_batch"]
-when = { lm_head_dtype = "nvfp4", row_tiers = "canonical" }
+when = { lm_head_dtype = "nvfp4", row_tiers = "canonical", lm_head_nvfp4_rows = "off" }
 numerics = "reference"
 priority = 20
 cite = "me/lm_head_batched.rs:270-309 (row_invariant: the tile GEMM at every padded_n); mm/impl_a3_lm_head.rs:57-101,140-146 (the verify heads' wide arm under row_invariant)"
@@ -2017,7 +2212,7 @@ repeat = "once"
 emitter = "lm_head_nvfp4_tile"
 rows = [1, 1]
 modes = ["decode"]
-when = { lm_head_dtype = "nvfp4", row_tiers = "canonical", activation_quantization = "declared" }
+when = { lm_head_dtype = "nvfp4", row_tiers = "canonical", activation_quantization = "declared", lm_head_nvfp4_rows = "off" }
 numerics = "reference"
 priority = 20
 cite = "mm/impl_a3_lm_head.rs:337-345 (one row takes the batched decode head under a fixed head format); me/lm_head_batched.rs:270-309"

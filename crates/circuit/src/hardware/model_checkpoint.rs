@@ -92,6 +92,20 @@ pub const POLICY_SOURCES: [(&str, &str); 15] = [
         "moe_fp8_tc",
         "on unless METRALE_NO_MOE_FP8_TC (ml/moe/fp8_grouped_tc.rs)",
     ),
+    (
+        "moe_nvfp4_kernels",
+        "lean for NVFP4 experts (the tables the gb10 loader repacks in place, \
+         ml/moe/nvfp4_lean.rs), none without NVFP4 experts (2026-10-05)",
+    ),
+    (
+        "draft_moe_experts",
+        "the MTP head's expert weight format, none without a MoE drafter (2026-10-05)",
+    ),
+    (
+        "lm_head_nvfp4_rows",
+        "on for a declared NVFP4 head with 16-bit activations \
+         (model-engine lm_head_nvfp4_rows.rs), else off (2026-10-05)",
+    ),
 ];
 
 /// 2026-09-30: The source over checkpoints, falling back to the recipes for `recipe` formats.
@@ -209,6 +223,20 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         None => "bf16",
         Some(f) => dtype_name(f)?,
     };
+    let nvfp4_experts = c.nodes.iter().any(|n| {
+        n.op == OpKind::ExpertGateUp && matches!(n.weight, Some(Format::Nvfp4 { .. }))
+    });
+    // 2026-10-05: The drafter's experts: the first expert node of a draft block.
+    let draft_experts = c
+        .blocks
+        .iter()
+        .filter(|b| b.section == crate::ir::Section::Draft)
+        .flat_map(|b| &c.nodes[b.first..b.end])
+        .find(|n| n.op == OpKind::ExpertGateUp)
+        .map(|n| n.weight.map_or(Ok("bf16"), dtype_name))
+        .transpose()?
+        .unwrap_or("none");
+    let head_rows = head == (Format::Nvfp4 { group: 16 });
     // 2026-09-30: The two class settings are re-read from the device's class before any plan;
     // "class" never reaches a rule (policy_on_class refuses a class that does not state them).
     let settings: BTreeMap<String, String> = [
@@ -227,6 +255,9 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
         ("gdn_verify_exact", "off"),
         ("ffn_act_fixed", "off"),
         ("moe_fp8_tc", "on"),
+        ("moe_nvfp4_kernels", if nvfp4_experts { "lean" } else { "none" }),
+        ("draft_moe_experts", draft_experts),
+        ("lm_head_nvfp4_rows", if head_rows { "on" } else { "off" }),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
