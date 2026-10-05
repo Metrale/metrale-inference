@@ -378,9 +378,14 @@ mod forward_fp8_grouped_router;
 pub use forward_fp8_grouped_router::GroupedRouting;
 mod forward_bf16_grouped_decode;
 mod forward_nvfp4_grouped_decode;
+mod forward_nvfp4_grouped_prefill;
 mod nvfp4_lean;
 pub use forward_nvfp4_grouped_decode::{
-    NVFP4_GROUPED_DECODE_MAX_ROWS, NVFP4_GROUPED_DECODE_TC_MAX_ROWS, nvfp4_grouped_decode_shape_ok,
+    NVFP4_GROUPED_DECODE_MAX_ROWS, NVFP4_GROUPED_DECODE_TC_MAX_ROWS,
+};
+use forward_nvfp4_grouped_prefill::GroupedRows;
+pub use forward_nvfp4_grouped_prefill::{
+    moe_prefill_tc_enabled, nvfp4_grouped_decode_shape_ok, set_moe_prefill_tc_from_cli,
 };
 mod forward_k2;
 mod forward_k3;

@@ -137,26 +137,6 @@ pub(super) fn nvfp4_grouped_tc_enabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("METRALE_NO_MOE_NVFP4_TC").is_none())
 }
 
-/// 2026-09-27: Shape admission without a GPU: `m` in `1..=max_rows` (2026-10-02: the selected
-/// expert kernels' widest, `NVFP4_GROUPED_DECODE_MAX_ROWS` or `NVFP4_GROUPED_DECODE_TC_MAX_ROWS`),
-/// `hidden % 32 == 0` (gate+up reads 32-element chunks) and `inter % 16 == 0` (down reads
-/// 16-element blocks), and a shared expert as wide as a routed one (the shared SiLU product
-/// shares the routed layout).
-pub fn nvfp4_grouped_decode_shape_ok(
-    m: usize,
-    max_rows: usize,
-    hidden: usize,
-    inter: usize,
-    shared_inter: usize,
-) -> bool {
-    (1..=max_rows).contains(&m)
-        && hidden >= 32
-        && hidden.is_multiple_of(32)
-        && inter >= 16
-        && inter.is_multiple_of(16)
-        && shared_inter == inter
-}
-
 impl MoeLayer {
     /// 2026-09-27: Whether `forward_nvfp4_grouped_decode` serves `m` rows on this layer: an
     /// NVFP4 `--expert-quantization` tier is in force or (2026-10-02) the experts are the
@@ -168,6 +148,16 @@ impl MoeLayer {
     /// the shape is admitted, the arena is wide enough, and there is no LoRA, pre-expert norm,
     /// hash routing or expert parallelism.
     pub fn nvfp4_grouped_decode_ok(&self, m: usize, ctx: &ForwardContext) -> bool {
+        self.nvfp4_grouped_ok(m, ctx, GroupedRows::Decode)
+    }
+
+    /// 2026-10-05: [`Self::nvfp4_grouped_decode_ok`] under `rows` (`GroupedRows`).
+    pub(super) fn nvfp4_grouped_ok(
+        &self,
+        m: usize,
+        ctx: &ForwardContext,
+        rows: GroupedRows,
+    ) -> bool {
         let cfg = ctx.config;
         let (h, inter) = (cfg.hidden_size, cfg.moe_intermediate_size);
         let need = super::forward_fp8_grouped_decode::grouped_decode_buffer_need(
@@ -203,7 +193,7 @@ impl MoeLayer {
         (tier.nvfp4_decode() || native)
             && nvfp4_grouped_decode_shape_ok(
                 m,
-                launch.max_rows,
+                rows.max_rows(&launch),
                 h,
                 inter,
                 cfg.shared_expert_intermediate_size,
@@ -241,7 +231,7 @@ impl MoeLayer {
             && b.gate_logits_bytes() >= need.gate_logits
             && b.expert_gate_out_bytes() >= need.expert_gate_out
             && b.expert_down_out_bytes() >= need.expert_down_out
-            && b.logits_bytes() >= need.shared_act
+            && rows.shared_act_bytes(b) >= need.shared_act
             && b.attn_output_bytes() >= need.row_hidden
             && b.moe_output_bytes() >= need.row_hidden
     }
@@ -284,6 +274,18 @@ impl MoeLayer {
             self.nvfp4_grouped_decode_ok(m, ctx),
             "forward_nvfp4_grouped_decode: predicate false for m={m} (caller must gate on it)"
         );
+        self.nvfp4_grouped_rows(input, m, GroupedRows::Decode, ctx, stream)
+    }
+
+    /// 2026-10-05: The body of [`Self::forward_nvfp4_grouped_decode`], its scratch per `rows`.
+    pub(super) fn nvfp4_grouped_rows(
+        &self,
+        input: DevicePtr,
+        m: usize,
+        rows: GroupedRows,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
         let h = ctx.config.hidden_size as u32;
         let inter = ctx.config.moe_intermediate_size as u32;
         let num_experts = ctx.config.num_experts as u32;
@@ -303,7 +305,7 @@ impl MoeLayer {
         self.grouped_route(
             input,
             m,
-            GroupedRouting::PerRow,
+            rows.routing(),
             indices_dev,
             weights_dev,
             ctx,
@@ -341,7 +343,7 @@ impl MoeLayer {
 
         let act = ctx.buffers.expert_gate_out();
         let expert_down_out = ctx.buffers.expert_down_out();
-        let shared_act = ctx.buffers.logits();
+        let shared_act = rows.shared_act(ctx.buffers);
         let shared_out = ctx.buffers.attn_output();
         let tables = |t: &ExpertPtrTable| ops::Nvfp4ExpertTables {
             packed_ptrs: t.packed_ptrs,
@@ -475,7 +477,7 @@ impl MoeLayer {
         ops::moe_weighted_sum_blend_fp8_grouped(
             ctx.gpu,
             self.moe_weighted_sum_blend_fp8_grouped_k,
-            ctx.buffers.moe_output(),
+            rows.output(ctx.buffers, h as usize),
             expert_down_out,
             weights_dev,
             token_to_perm,

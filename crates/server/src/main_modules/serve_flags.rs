@@ -180,6 +180,17 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             );
         }
     }
+    // 2026-10-05: `--moe-prefill-tc`, published only when given; otherwise
+    // `METRALE_MOE_PREFILL_TC` decides.
+    if let Some(tc) = plan.moe_prefill_tc {
+        let in_force = metrale_model_layers::layers::set_moe_prefill_tc_from_cli(tc);
+        if in_force != tc {
+            tracing::warn!(
+                "moe-prefill-tc was already resolved ({in_force}); the command line's ({tc}) \
+                 did NOT take effect"
+            );
+        }
+    }
     // 2026-09-26: `None` unless `--no-ssm-tail-midchunk` was given. `None`
     // publishes nothing, so `METRALE_SSM_TAIL_MIDCHUNK` decides.
     metrale_gpu_runtime::set_ssm_tail_midchunk(plan.ssm_tail_midchunk);
