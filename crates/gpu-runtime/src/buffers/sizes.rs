@@ -199,8 +199,13 @@ impl BufferSizes {
         } else {
             k_max * config.intermediate_size
         };
-        let expert_gate_out = expert_inter * bf16;
-        let expert_up_out = expert_inter * bf16;
+        // 2026-10-05: A MoE model's routed SiLU product is FP32 on the grouped tensor-core path
+        // (`[te, inter]` hi|lo, `grouped_decode_buffer_need`), which a `--moe-prefill-tc`
+        // prefill runs over a whole wave; four bytes per element hold the wave in one pass.
+        // `expert_up_out` keeps the same size (`expert_gate_out_bytes`).
+        let expert_elem = if config.num_experts > 0 { 4 } else { bf16 };
+        let expert_gate_out = expert_inter * expert_elem;
+        let expert_up_out = expert_inter * expert_elem;
         // 2026-09-25: A LatentMoE model's routed experts write `moe_latent_size`
         // wide rows (`moe_input_size`).
         let moe_out_dim = config.moe_input_size();

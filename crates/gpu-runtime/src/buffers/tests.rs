@@ -23,8 +23,10 @@ fn mixed_dense_moe_sizes_for_widest_ffn() {
     // Rows are `k_max` in `sizes.rs`: max(M, 3) rounded up to 16.
     let rows = 4_usize.div_ceil(16) * 16;
     assert!(cfg.intermediate_size > cfg.num_experts_per_tok * cfg.moe_intermediate_size);
-    assert_eq!(sizes.expert_gate_out, rows * 12_288 * 2);
-    assert_eq!(sizes.expert_up_out, rows * 12_288 * 2);
+    // 2026-10-05: Four bytes per element on a MoE model: the grouped tensor-core path's FP32
+    // SiLU product (`--moe-prefill-tc` runs it over a whole prefill pass).
+    assert_eq!(sizes.expert_gate_out, rows * 12_288 * 4);
+    assert_eq!(sizes.expert_up_out, rows * 12_288 * 4);
 }
 use crate::gpu::mock::MockGpuBackend;
 use std::collections::HashSet;
