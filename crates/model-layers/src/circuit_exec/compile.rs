@@ -15,7 +15,7 @@
 
 use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::planner::{BufferPlan, Layout};
-use metrale_circuit::{Circuit, FusionPlan, Group, Mode};
+use metrale_circuit::{Circuit, FusionPlan, Mode};
 use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
@@ -31,55 +31,9 @@ use crate::layer::AttnMetadataDev;
 pub(super) use place::external_buffer;
 pub use place::{Placement, layout};
 use place::{segment_of, segments};
-
-/// 2026-09-28: A group of the plan being compiled.
-pub(crate) struct GroupRef<'a> {
-    pub circuit: &'a Circuit,
-    pub group: &'a Group,
-    pub index: usize,
-}
-
-impl<'a> GroupRef<'a> {
-    /// 2026-09-28: Member `i`, in pattern order.
-    pub fn node(&self, i: usize) -> &'a metrale_circuit::ir::Node {
-        &self.circuit.nodes[self.group.nodes[i]]
-    }
-
-    /// 2026-09-28: Input `j` of member `i`.
-    pub fn input(&self, i: usize, j: usize) -> Result<usize> {
-        let n = self.node(i);
-        n.inputs
-            .get(j)
-            .copied()
-            .with_context(|| format!("`{}` has no input {j}", n.id))
-    }
-
-    /// 2026-09-28: Output `j` of member `i`.
-    pub fn output(&self, i: usize, j: usize) -> Result<usize> {
-        let n = self.node(i);
-        n.outputs
-            .get(j)
-            .copied()
-            .with_context(|| format!("`{}` has no output {j}", n.id))
-    }
-
-    /// 2026-09-28: Refuse a group whose members are not exactly `ops`, in order.
-    pub fn expect_ops(&self, emitter: &str, ops: &[&str]) -> Result<()> {
-        let got: Vec<String> = self
-            .group
-            .nodes
-            .iter()
-            .map(|&n| self.circuit.nodes[n].op.name())
-            .collect();
-        ensure!(
-            got.len() == ops.len() && got.iter().zip(ops).all(|(g, w)| g.starts_with(w)),
-            "emitter `{emitter}` cannot launch group {} ({:?}); it takes {ops:?}",
-            self.index,
-            got
-        );
-        Ok(())
-    }
-}
+#[path = "compile_group.rs"]
+mod group;
+pub(crate) use group::GroupRef;
 
 /// 2026-09-28: What an emitter reads while compiling one group.
 pub(crate) struct Cx<'a> {
