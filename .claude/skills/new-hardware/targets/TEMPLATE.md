@@ -14,6 +14,7 @@
   declared, and the class's gates are certified.
 - **Ledger:** `ledger/<class>.toml`, one `[[combo]]` per model (copy the schema from an existing
   ledger); read the other ledgers first.
+- **Loop budget per model:** <calendar days and device-hours>; the loop escalates when it runs out.
 
 ## 1. The class as the tree has it today
 

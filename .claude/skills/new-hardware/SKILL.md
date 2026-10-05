@@ -12,6 +12,12 @@ description: The standard method for bringing up a new HARDWARE + MODEL combinat
 > (`references/bit-parity.md`): Tier 1 self-consistency on the target, bit-exact; Tier 2
 > correctness against a reference (bit-exact where the arithmetic order is the same, a declared
 > tolerance and a transcript match rate where it cannot be); Tier 3 the accuracy bar.
+>
+> **SPEED AND ENERGY ARE SEPARATE METRICS.** Finishing sooner does not mean using less energy:
+> `J/tok = P̄ / (tok/s)`, so a faster engine is cheaper only if its average power rises less
+> than its speed. Measure and report both (tok/s, TTFT, and J/tok from the energy counter),
+> record victory per objective, and never fold a lever that trades one for the other into a
+> default (`references/speed-and-energy.md`).
 
 **The standard.** A new class is brought up the same way every time:
 1. Open a **Hardware Beachhead Campaign** (below): one PR with the target's context, its
@@ -30,7 +36,7 @@ description: The standard method for bringing up a new HARDWARE + MODEL combinat
 
 **Measure the bring-up itself.** Every campaign records, per hardware + model combination, in
 `.claude/skills/new-hardware/ledger/<class>.toml`: its start, **TTBP** (time to bit parity, for
-the mock and for the real model), **TTPV** (time to performance/energy victory), the iteration
+the mock and for the real model), **TTPV** (time to performance/energy victory, split into TTPV-speed and TTPV-energy), the iteration
 count, the levers kept and discarded, and the lines added and removed by parameterization.
 Update it at every milestone; read every previous ledger before starting a new campaign.
 
@@ -62,6 +68,7 @@ Detail lives in the references; read each when its step comes up:
 | Reference | Step |
 |---|---|
 | `references/bit-parity.md` | the three parity tiers, when the loop may start, TTBP and TTPV |
+| `references/speed-and-energy.md` | why speed does not imply energy, the arithmetic, energy accounting, trade-off levers |
 | `references/two-axis-venn.md` | the Venn on both axes, the five classes, ranking |
 | `references/parameterization.md` | the standing objective, hardware facts as data, the stability gate, the tally |
 | `references/bring-up-order.md` | the ordered bring-up, fastest first, with commands |
@@ -175,13 +182,15 @@ Run both axes; `references/two-axis-venn.md` has the procedure.
 
 ## Step 5: beat vLLM, then certify
 
-The improvement loop runs after the baseline and repeats until Metrale is faster on tok/s at
-EVERY rung C1-C128 AND cheaper on J/tok at every rung but at most one mid-ladder rung lost by a
-small margin. An edge rung (C1/C2 or C64/C128) lost, or two rungs lost, keeps it going. It
-stops and reports, with the profile, after three iterations without progress. Every
-iteration's comparison against vLLM, and every A/B whose arms differ in any serve or bench
-setting beyond the lever, gets a PARITY-O.R.A.C.L.E ruling first. Then: recipes that set every variable explicitly,
-measure-then-declare bounds, certification as `AGENTS.md` describes.
+The improvement loop runs after the baseline, keeping bit parity, until Metrale is faster on
+tok/s at EVERY rung C1-C128 AND cheaper on J/tok at every rung but at most one mid-ladder rung
+lost by a small margin; an edge rung (C1/C2 or C64/C128) lost, or two rungs lost, keeps it going.
+It is bounded: it also ends at the stall limit (three iterations without improving the worst
+rung) or at the target file's loop budget, and then escalates with which objective is won,
+which is not, the worst rung's profile and the best levers left. Every comparison against vLLM,
+and every A/B whose arms differ in any setting beyond the lever, gets a PARITY-O.R.A.C.L.E
+ruling first. Then: recipes that set every variable explicitly, measure-then-declare bounds,
+certification as `AGENTS.md` describes.
 
 ## Rules that always apply
 

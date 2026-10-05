@@ -12,9 +12,15 @@
 #   started            RFC 3339 UTC: the campaign start for this combo
 #   ttbp_mock_at       RFC 3339 UTC: Tier 1 parity recorded on the mock (references/bit-parity.md)
 #   ttbp_real_at       RFC 3339 UTC: Tier 1 + Tier 2 parity recorded on the real model
-#   ttpv_at            RFC 3339 UTC: the improvement loop's exit criterion met, same box, PARITY-PASS
+#   ttpv_speed_at      RFC 3339 UTC: first same-box scoreboard faster (tok/s) at every rung C1-C128
+#   ttpv_energy_at     RFC 3339 UTC: first same-box scoreboard cheaper (J/tok) at every rung but at
+#                      most one mid-ladder rung lost by a small margin
+#   ttpv_at            RFC 3339 UTC: the later of the two (the loop's exit criterion), PARITY-PASS
 #   certified_at       RFC 3339 UTC: the certification campaign passed
-#   ttbp_mock_h, ttbp_real_h, ttpv_h   hours from `started` to the milestones above (0.0 until reached)
+#   ttbp_mock_h, ttbp_real_h, ttpv_speed_h, ttpv_energy_h, ttpv_h
+#                      hours from `started` to the milestones above (0.0 until reached)
+#   loop_budget        the improvement loop's time budget for this combo (the target file's)
+#   escalations        one line per escalation: when, why (stall limit or budget), objectives won
 #   iterations         improvement-loop iterations run
 #   levers_kept, levers_discarded      one short name per lever, with the PR or commit
 #   loc_added, loc_removed             lines added and removed by the campaign's PRs
@@ -31,11 +37,17 @@ revision = ""
 started = "2026-10-05T14:45:20Z"
 ttbp_mock_at = ""
 ttbp_real_at = ""
+ttpv_speed_at = ""
+ttpv_energy_at = ""
 ttpv_at = ""
 certified_at = ""
 ttbp_mock_h = 0.0
 ttbp_real_h = 0.0
+ttpv_speed_h = 0.0
+ttpv_energy_h = 0.0
 ttpv_h = 0.0
+loop_budget = "3 calendar days or 40 device-hours of loop measurement, whichever comes first"
+escalations = []
 iterations = 0
 levers_kept = []
 levers_discarded = []
@@ -54,11 +66,17 @@ revision = ""
 started = ""
 ttbp_mock_at = ""
 ttbp_real_at = ""
+ttpv_speed_at = ""
+ttpv_energy_at = ""
 ttpv_at = ""
 certified_at = ""
 ttbp_mock_h = 0.0
 ttbp_real_h = 0.0
+ttpv_speed_h = 0.0
+ttpv_energy_h = 0.0
 ttpv_h = 0.0
+loop_budget = "3 calendar days or 40 device-hours of loop measurement, whichever comes first"
+escalations = []
 iterations = 0
 levers_kept = []
 levers_discarded = []
@@ -77,11 +95,17 @@ revision = ""
 started = ""
 ttbp_mock_at = ""
 ttbp_real_at = ""
+ttpv_speed_at = ""
+ttpv_energy_at = ""
 ttpv_at = ""
 certified_at = ""
 ttbp_mock_h = 0.0
 ttbp_real_h = 0.0
+ttpv_speed_h = 0.0
+ttpv_energy_h = 0.0
 ttpv_h = 0.0
+loop_budget = "3 calendar days or 40 device-hours of loop measurement, whichever comes first"
+escalations = []
 iterations = 0
 levers_kept = []
 levers_discarded = []

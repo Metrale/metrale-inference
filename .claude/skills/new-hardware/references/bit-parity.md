@@ -70,7 +70,9 @@ Measured per hardware + model combination, so later campaigns can learn what was
 - **TTBP (time to bit parity)**: campaign start to Tier 1 + Tier 2 passing; recorded separately
   for the mock (Tier 1 only) and for the real model.
 - **TTPV (time to performance/energy victory)**: campaign start to the improvement loop's exit
-  criterion met on a same-box scoreboard with a PARITY-PASS from the PARITY-O.R.A.C.L.E.
+  criterion met on a same-box scoreboard with a PARITY-PASS from the PARITY-O.R.A.C.L.E,
+  recorded per objective: TTPV-speed and TTPV-energy (`references/speed-and-energy.md`); TTPV
+  is the later of the two.
 
 Both live in `ledger/<class>.toml`, beside the iteration count, the levers kept and discarded,
 and the lines added and removed by parameterization. Update the ledger at every milestone, and

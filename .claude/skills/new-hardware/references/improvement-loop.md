@@ -9,7 +9,8 @@ recorded either way.
 
 **a. Measure.** Same box, same harness, same instrument as the recorded vLLM baseline, at every
 rung C1, C2, C4, C8, C16, C32, C64, C128: tok/s, J/tok (NVML energy counter, GPU rail) and TTFT
-(cold and warm). The PARITY-O.R.A.C.L.E rules on the configs before the numbers count. Write
+(cold and warm). Speed and energy are separate metrics (`references/speed-and-energy.md`):
+never infer one from the other. The PARITY-O.R.A.C.L.E rules on the configs before the numbers count. Write
 the scoreboard: one row per rung, Metrale vs vLLM, ratio, win or loss on each axis.
 
 **b. Profile the worst losing rung.** Pick the rung with the largest loss (tok/s first, then
@@ -21,6 +22,8 @@ J/tok). nsys at that rung on a fresh serve:
   but still serial host work).
 
 **c. Rank and choose the lever.** Rank the gaps by the time (or energy) they cost at that rung.
+A rung that is faster but loses J/tok needs a lever that reduces power (bytes moved, MMA width,
+switching activity), not time.
 For the top gap, prefer in this order:
 1. a **parameterization** of an existing kernel the Venn already lists (a new point of a
    template, a policy of the WxAy engine, a tile tier extended to these rows);
@@ -47,7 +50,9 @@ fresh serve per rung at C >= 64 with a watchdog. Report median and spread; a dif
 the control spread is no difference.
 
 **f. Keep or discard.** Keep only a lever that wins at its rung without losing another rung
-outside the noise band, on both axes. Record the outcome, kept or not, with its numbers, its
+outside the noise band, on both axes. A lever that wins one axis and costs the other is not kept
+silently and never becomes a default: record both deltas and offer it as a flagged,
+recipe-level choice (default off, disclosed on records). Record the outcome, kept or not, with its numbers, its
 profile and the commit, in the campaign PR (a table: iteration, lever, rung, before, after,
 verdict). A discarded lever's evidence is as valuable as a kept one's. Update the ledger:
 `iterations`, `levers_kept` or `levers_discarded`, and the lines added and removed.
@@ -72,12 +77,22 @@ evidence recorded (launch command, image digest, time at zero tok/s with request
 logs) and only if a fresh vLLM serve at the same configuration reproduces it; one stall in two
 attempts is reported as "intermittent", not as a loss for vLLM.
 
-## Stop and report
+Record the two objectives separately in the ledger: **TTPV-speed** when tok/s first wins at
+every rung, **TTPV-energy** when J/tok first wins at every rung but at most one mid-ladder
+rung; TTPV is the later of the two.
 
-Do not loop forever. After **three consecutive iterations without progress**, stop and report
-to whoever owns the campaign, with the current scoreboard, the profile of the worst rung, the
-levers tried and why each was discarded, and the next candidates. "Progress" means a kept lever,
-or a losing rung's margin reduced by more than the noise band. Also stop and report when the
-top gap needs a decision you cannot make alone: a precision change, a new kernel family, a
-measurement-definition change (those ride their own PR), or a change to another class's
-kernels.
+## The loop is bounded
+
+The loop ends at the first of:
+1. **the exit criterion** above;
+2. **the stall limit**: three consecutive iterations that do not improve the worst losing rung
+   (on the axis being worked) by more than the noise band;
+3. **the time budget** the target file states for the model (its "Loop budget" line; every
+   target file states one at campaign start).
+
+When 2 or 3 fires, **escalate** to whoever owns the campaign with: which objective is won and
+which is not (speed, energy, both, neither, per rung); the current scoreboard; the profile of the
+worst losing rung; the levers tried, kept and discarded, with their deltas; and the best lever
+candidates left, ranked. Also escalate when the top gap needs a decision you cannot make alone:
+a precision change, a new kernel family, a measurement-definition change (those ride their own
+PR), or a change to another class's kernels.
