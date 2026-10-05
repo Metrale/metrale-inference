@@ -85,6 +85,11 @@ impl ConcurrencySweep {
         handle.check_cancelled()?;
         handle.status(format!("isl {isl} · conc {conc} · {conc} in flight"));
 
+        // 2026-10-05: Scraped strictly outside the timed section: `batch_start`/
+        // `batch_end` are captured only after/before these awaits return, so
+        // the counter-boundary reads never delay, or run concurrently with,
+        // the traffic being measured.
+        let before_mj = crate::hardware::gpu_energy_counter::read_mj(handle.target()).await;
         let batch_start = Instant::now();
         let futures: Vec<_> = plan
             .measured
@@ -93,6 +98,8 @@ impl ConcurrencySweep {
             .collect();
         let outcomes = futures::future::join_all(futures).await;
         let batch_end = Instant::now();
+        let after_mj = crate::hardware::gpu_energy_counter::read_mj(handle.target()).await;
+        let gpu_counter_j = crate::hardware::gpu_energy_counter::window_joules(before_mj, after_mj);
         let wall = batch_end
             .duration_since(batch_start)
             .as_secs_f64()
@@ -197,6 +204,7 @@ impl ConcurrencySweep {
             cache_uncontrolled,
             gaps: gaps.stats(),
             energy,
+            gpu_counter_j,
         })
     }
 }
