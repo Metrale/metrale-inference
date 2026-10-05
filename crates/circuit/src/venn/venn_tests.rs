@@ -40,6 +40,7 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::embed"]
 rows = [1, 128]
+pipeline.embed = {{ in = [], gather = "bf16", out = ["bf16"] }}
 op = [{{ op = "embed" }}]
 [[family.point]]
 values = {{}}
@@ -52,6 +53,8 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::norm", "m::final_norm"]
 rows = [1, 128]
+pipeline.rms_norm = {{ in = ["bf16"], compute = "f32", out = ["bf16"] }}
+pipeline.final_norm = {{ in = ["bf16"], compute = "f32", out = ["bf16"] }}
 op = [{{ op = "rms_norm" }}, {{ op = "final_norm" }}]
 [[family.param]]
 name = "width"
@@ -72,6 +75,7 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::up", "m::down"]
 rows = [1, 128]
+pipeline.linear = {{ in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }}
 op = [{{ op = "linear", weight = ["nvfp4/g16"] }}]
 [[family.param]]
 name = "hidden"
@@ -85,6 +89,7 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::act"]
 rows = [1, 128]
+pipeline.silu_mul = {{ in = ["bf16"], compute = "f32", out = ["bf16"] }}
 op = [{{ op = "silu_mul" }}]
 [[family.point]]
 values = {{}}
@@ -97,6 +102,7 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::add"]
 rows = [1, 128]
+pipeline.residual_add = {{ in = ["bf16", "bf16"], compute = "f32", out = ["bf16"] }}
 op = [{{ op = "residual_add" }}]
 [[family.point]]
 values = {{}}
@@ -109,6 +115,7 @@ description = "toy"
 compute = "cuda_core"
 kernels = ["m::lm_head"]
 rows = [1, 128]
+pipeline.lm_head = {{ in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }}
 op = [{{ op = "lm_head" }}]
 [[family.point]]
 values = {{}}

@@ -42,6 +42,9 @@ pub(crate) struct Engine {
     /// 2026-10-03: The digest of the mock this serve runs (`--mock`, or a mock checkpoint's
     /// directory); `None` for a real checkpoint. `GET /forward` discloses it.
     pub mock: Option<String>,
+    /// 2026-10-04: sha256 over the drafter's stored weights, `None` for a checkpoint with no
+    /// `mtp.*` tensors. `--spec-cost-model measured`'s drafter key.
+    pub drafter_weights_sha256: Option<String>,
 }
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
@@ -95,6 +98,9 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // `args.resolved_num_drafts()` is valid.
     serve_phases::apply_model_default_num_drafts(&mut args, &ptx_set);
     serve_phases::publish_mtp_max_seqs(&args, &ptx_set)?;
+    serve_phases::publish_copy_tier(&args)?;
+    serve_phases::publish_draft_confidence_stop(&args)?;
+    serve_phases::publish_mtp_k_ladder(&args)?;
     // 2026-09-30: One γ for the reserve, the pools and the scheduler.
     serve_phases::apply_dflash_gamma(&mut args, serve_phases::model_default_drafter(&ptx_set))?;
 
@@ -222,6 +228,21 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let dflash_args = adapters::dflash_build_args(&args, &dflash_drafter_state);
     let nllb_lang = adapters::resolve_nllb_lang(&args, &config, &model_dir)?;
     let (nllb_lora_dir, nllb_adapter_name) = adapters::resolve_nllb_adapter(&args, is_nllb)?;
+    // 2026-10-02: The MoE expert-table decision, from the memory plan, before the loader reads
+    // it (`serve_phases::expert_tables`).
+    if metrale_model_engine::factory::loader_for_config(&config)?.reads_expert_table_plan() {
+        let live = serve_phases::expert_tables::LiveDevice {
+            arch: ptx_set.target.arch,
+            sms: gpu.sm_count()?,
+            total_memory: gpu.total_memory()? as u64,
+        };
+        let id = args
+            .model
+            .clone()
+            .unwrap_or_else(|| model_dir.display().to_string());
+        let d = serve_phases::expert_tables::plan(&args, &id, &model_dir, &live)?;
+        serve_phases::expert_tables::publish(d.as_ref())?;
+    }
     let built = serve_phases::build_model(
         &args,
         &config,
@@ -247,6 +268,14 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         .then_some(built.max_batch_size);
     args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(built.max_batch_size);
     let model = built.model;
+    let drafter_weights_sha256 = built.drafter_weights_sha256;
+    // 2026-10-04: Always logged, not only under --spec-cost-model measured: it is the only way
+    // to learn the value `met benchmark spec-cost-table --drafter-weights-sha256` and a future
+    // boot's `--spec-cost-calibration` must agree on.
+    match &drafter_weights_sha256 {
+        Some(h) => tracing::info!("MTP drafter weights sha256: {h} (--spec-cost-model's key)"),
+        None => tracing::info!("No MTP drafter weights (checkpoint has no mtp.* tensors)"),
+    }
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
     model.set_forward(&serve_phases::forward_select(
@@ -292,5 +321,10 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         auto_max_batch_size,
         device_budget,
         mock: mock_digest,
+        drafter_weights_sha256,
     }))
 }
+
+#[cfg(test)]
+#[path = "lora_verify_gpu_tests.rs"]
+mod lora_verify_gpu_tests;

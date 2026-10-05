@@ -431,10 +431,10 @@ status = "measured"
 note = """\
 High-ISL cold-TTFT gate, one-shot (owner 2026-09-27): one unmeasured warm-up request, then one \
 measured request with a fresh tag at the start of the committed 32k-token prompt \
-(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Ceiling = vLLM 0.27.1 \
+(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Reference = vLLM 0.27.1 \
 (vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, \
 vLLM commit 6e448d0e) steady one-shot TTFT on GB10 (dgx3 = spark-28c2, 2026-09-27), same \
-fixture, same request body — parity is the pass bar (owner 2026-09-27). The value is the \
+fixture, same request body — parity was the pass bar (owner 2026-09-27) until the owner set the tighter ceiling below on 2026-10-03. The value is the \
 median of the three steady cold samples, 9265.4 / 9214.7 / 9231.9 ms. The first request after \
 each of two vLLM boots (cold 41976.1 and 39349.3 ms, warm 1972.2 and 1713.3 ms) paid one-time \
 JIT and autotune and is excluded. bench/baselines/qwen36-35b-a3b/ttft/published.json holds \
@@ -459,12 +459,17 @@ gpu_memory_utilization = "0.85"
 enable_prefix_caching = "true"
 
 [benchmarks.metrics.median_ms]
-# 2026-09-27: The ceiling of 9231.9 ms, vLLM's steady one-shot TTFT (note above).
-max = 9231.9
+# 2026-10-03: Owner ceiling of 6600 ms, below vLLM's 9231.9 ms (note above), cut from the
+# spark-28c2 history of this gate, 6339.9-6444.3 ms over the campaigns #48-#81 and the
+# 2026-10-03 same-box A/B (adaptive 6352.4-6408.9, declared 6339.9-6437.8 ms). A host whose
+# tcp_rmem default is below the 32k request body stalls it ~210 ms and reads ~6670 ms
+# (spark-43fa at #39 and #79): this ceiling fails such a host until the listener sizes its own
+# receive buffer.
+max = 6600.0
 
 [benchmarks.metrics.p90_ms]
-# 2026-09-27: The ceiling of 9231.9 ms: one sample, so p90 equals the median.
-max = 9231.9
+# 2026-10-03: Equal to the median's: one sample, so p90 equals the median.
+max = 6600.0
 
 [benchmarks.metrics.prompt_tokens]
 # 2026-09-27: The fixture's floor; both engines render it to 32,772 on both subjects.
@@ -480,10 +485,10 @@ status = "measured"
 note = """\
 High-ISL warm-TTFT gate, one-shot (owner 2026-09-27): one unmeasured warm-up request, then one \
 priming request and one measured byte-identical re-send of the committed 32k-token prompt \
-(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Ceiling = vLLM 0.27.1 \
+(crates/bench/src/benchmarks/ttft/prompts/long-32k.txt). Reference = vLLM 0.27.1 \
 (vllm/vllm-openai@sha256:0a51ea5b4ae2dc5d81890e5173f54203d2a3ae0cfffe51b8fd2afd4391bfd967, \
 vLLM commit 6e448d0e) steady one-shot TTFT on GB10 (dgx3 = spark-28c2, 2026-09-27), same \
-fixture, same request body — parity is the pass bar (owner 2026-09-27). The value is the \
+fixture, same request body — parity was the pass bar (owner 2026-09-27) until the owner set the tighter ceiling below on 2026-10-03. The value is the \
 median of the three steady warm samples, 579.4 / 581.8 / 566.0 ms. The first request after \
 each of two vLLM boots (cold 41976.1 and 39349.3 ms, warm 1972.2 and 1713.3 ms) paid one-time \
 JIT and autotune and is excluded. bench/baselines/qwen36-35b-a3b/ttft/published.json holds \
@@ -508,12 +513,17 @@ gpu_memory_utilization = "0.85"
 enable_prefix_caching = "true"
 
 [benchmarks.metrics.median_ms]
-# 2026-09-27: The ceiling of 579.4 ms, vLLM's steady one-shot TTFT (note above).
-max = 579.4
+# 2026-10-03: Owner ceiling of 180 ms, a third of vLLM's 579.4 ms (note above). The
+# spark-28c2 history of this gate reads 130.6-137.4 ms over the campaigns #48-#81, and
+# the 2026-10-03 same-box A/B 130.4-147.5 ms (adaptive) and 130.7-145.9 ms (declared). A host
+# whose tcp_rmem default is below the 32k request body stalls it ~210 ms and reads ~342 ms
+# (spark-43fa at #39 and #79): this ceiling fails such a host until the listener sizes its own
+# receive buffer.
+max = 180.0
 
 [benchmarks.metrics.p90_ms]
-# 2026-09-27: The ceiling of 579.4 ms: one sample, so p90 equals the median.
-max = 579.4
+# 2026-10-03: Equal to the median's: one sample, so p90 equals the median.
+max = 180.0
 
 [benchmarks.metrics.prompt_tokens]
 # 2026-09-27: The fixture's floor; both engines render it to 32,772 on both subjects.
@@ -641,16 +651,19 @@ gpu_memory_utilization = "0.85"
 
 
 scheduler = "fifo"
-# 2026-09-25: Pinned so the record states it; equal to MODEL.toml's default_num_drafts. Measured
+# 2026-09-25: Pinned so the record states it (2026-10-03: MODEL.toml stays at 1; see below). Measured
 # 2026-09-22 at C=1 on one box: --num-drafts 3 gave 62.00 tok/s, --num-drafts 1 74.83.
-
-
-
-
-
-
-
-num_drafts = "1"
+# 2026-10-03: Two drafts at one or two sequences and one from three up (`mtp_k_ladder`),
+# D-Cut off (`mtp_dcut_ratio`), the recipe's own values. Measured on dgx2 at this instrument,
+# one binary, 3 interleaved fresh serves per arm, --num-drafts 1 -> 2 at every width up to 8:
+# tok/s C1 +2.4%, C2 +3.9%, C4 +1.9%, C8 +1.6%; GPU-rail J/tok C1 -1.2%, C2 -1.8%, C4 +1.0%,
+# C8 +2.8%. Only C1-C2 improve both, so the ladder keeps one draft from C3 up.
+num_drafts = "2"
+mtp_k_ladder = "2:2,32:1"
+# 2026-10-03: D-Cut off. At two drafts its default 0.75 prunes the second draft of the least
+# confident chains, saving no verify time and losing accepted tokens; 1.0 keeps them
+# (measured at --num-drafts 3: +1.9% tok/s at C2, +4.3% at C4). Equal to the recipe's.
+mtp_dcut_ratio = "1.0"
 # 2026-09-25: Thinking off at the serve; the driver also sends reasoning_effort "none" (concurrency.rs).
 
 
@@ -745,6 +758,35 @@ min = 820
 # 2026-09-25: No cell of the 2026-09-23 reps or of the committed records of 2026-09-24 was
 # vacuous; the ceiling of 0 keeps it so.
 max = 0
+
+# 2026-10-03: J/token ceilings, one per rung (owner). c<C>_gpu_rail_joules_per_token is the
+# cell's GPU-rail joules over the output tokens delivered in the same window
+# (hardware/energy.rs joules_per_token), as on the dense ladder. A missing key fails.
+# The boxes differ on identical code: the 2026-09-24 records of one commit read 6.6-11.6% more
+# J/token on spark-43fa than on spark-28c2 at every rung. Each ceiling is therefore spark-43fa's
+# record of the current engine (.benchmarks/concurrency-sweep-moe/2026-10-03-21be256b19.json,
+# C1/2/4/8/16: 0.4486/0.2927/0.2070/0.1568/0.1199 J/token) x 1.05, rounded up to 0.001. Current
+# engine = from #51 (4e2523ca9c), where the level stepped down at every rung. spark-28c2's six
+# records of it read 0.4066-0.4275/0.2675-0.2910/0.1903-0.2009/0.1400-0.1462/0.1082-0.1110, so
+# on that box each ceiling sits 11.7-15.9% above the mean and catches a regression past that.
+# spark-43fa has one record of the current engine and spark-28c2's same-code spread is 2.7-8.8%
+# per rung, so the margin is 5% (owner: a loose bound now, not a flaky one). Per-box ceilings
+# tighten these once the box-calibration work lands.
+
+[benchmarks.metrics.c1_gpu_rail_joules_per_token]
+max = 0.472
+
+[benchmarks.metrics.c2_gpu_rail_joules_per_token]
+max = 0.308
+
+[benchmarks.metrics.c4_gpu_rail_joules_per_token]
+max = 0.218
+
+[benchmarks.metrics.c8_gpu_rail_joules_per_token]
+max = 0.165
+
+[benchmarks.metrics.c16_gpu_rail_joules_per_token]
+max = 0.126
 
 [[benchmarks]]
 quant = "nvfp4"

@@ -75,6 +75,10 @@ pub struct ChatRequest {
     pub timeout_secs: Option<f32>,
     /// 2026-09-26: Put the streamed tokens' ids on the stream chunks.
     pub return_token_ids: bool,
+    /// 2026-10-04: The tenant the auth middleware attached; lowering leaves it
+    /// `None` and the handler sets it. `None` keeps the request out of the
+    /// cross-request prompt-lookup cache.
+    pub lookup_tenant: Option<crate::auth::LookupTenant>,
 }
 
 /// 2026-09-26: Client sampling parameters. `None` = the client did not set

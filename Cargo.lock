@@ -1675,6 +1675,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-kernel-tree"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "sha2",
+]
+
+[[package]]
 name = "metrale-kernels"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -1747,6 +1756,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "sha2",
  "tracing",
 ]
 
@@ -1795,6 +1805,7 @@ dependencies = [
  "safetensors",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tracing",
 ]
@@ -1840,6 +1851,7 @@ dependencies = [
  "metrale-core",
  "metrale-gpu-runtime",
  "metrale-grammar",
+ "metrale-kernel-tree",
  "metrale-kernels",
  "metrale-ml-utils",
  "metrale-model-arch",
@@ -1858,6 +1870,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "socket2",
  "tempfile",
  "thiserror",
  "tokenizers",
@@ -1879,6 +1892,8 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-model-layers",
  "parking_lot",
+ "serde",
+ "toml",
  "tracing",
 ]
 

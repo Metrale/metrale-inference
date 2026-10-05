@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-02: One boot's allocation ledger, for the circuit memory model's validation
+# (crates/server/src/cli/circuit_memory_ledger_tests.rs). Source: dgx2 2026-10-02, the MOENVFP4 branch binary (feat/moe-nvfp4-checkpoint, not main), /workspace/claude-state/moenvfp4/step/runs/be1_MN/serve.log.
+# The `[ledger]` rows are the boot's "by file" rollup (MiB = 2^20 bytes, allocation count), the
+# `[reserve]` rows its preflight reserve terms (MB as logged); nothing here is edited by hand.
+
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+# 2026-10-02: Served without a recipe; `serve` is its command line.
+serve = ["--disable-thinking", "--enable-prefix-caching", "--gpu-memory-utilization", "0.85", "--kv-cache-dtype", "bf16", "--kv-high-precision-layers", "auto", "--lm-head-dtype", "nvfp4", "--max-batch-size", "128", "--max-seq-len", "2048", "--mtp-quantization", "bf16", "--num-drafts", "1", "--scheduler", "fifo", "--speculative", "--ssm-cache-slots", "32", "--weight-quantization", "declared"]
+# 2026-10-02: Checkpoint tensors no weight node binds (norms, conv, gates, a vision tower),
+# measured from the safetensors headers by `met circuit memory` (totals.weights_outside).
+outside_bytes = 895479776
+kv_blocks = 104260
+draft_kv_blocks = 16512
+capture_rows = 2048
+chunk_slack_gb = 0.0
+ledger_total_gb = 107.08
+ledger_sites = 94
+
+[ledger]
+"crates/cache/src/kv_cache/paged_impl.rs" = [33097.2, 22]
+"crates/model-engine/src/model/ssm_pool.rs" = [25155.0, 6]
+"crates/model-weights/src/fast_weights/mod.rs" = [22323.2, 124468]
+"crates/model-layers/src/weight_map/quantized/transpose.rs" = [17620.2, 61682]
+"crates/model-engine/src/model/ssm_snapshot_init.rs" = [2040.1, 61]
+"crates/model-arch/src/weight_loader/qwen35/load_layers/linear_attn_arms.rs" = [720.2, 60]
+"crates/gpu-runtime/src/buffers.rs" = [681.7, 33]
+"crates/model-layers/src/weight_map/quantized.rs" = [380.1, 200]
+"crates/model-engine/src/model/impl_a1_init.rs" = [64.5, 4]
+"crates/model-layers/src/layers/mtp_head/new.rs" = [19.3, 13]
+"crates/model-engine/src/model/impl_a1/spec_buffers.rs" = [9.0, 5]
+"crates/model-layers/src/weight_map/fp8_lut.rs" = [7.5, 30]
+
+[reserve]

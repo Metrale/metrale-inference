@@ -299,8 +299,9 @@ pub fn class_families(
                     values: d.values.clone(),
                     how: How::Copy,
                     files: vec![d.file.clone()],
-                    // 2026-10-02: A discovered copy runs on its family's unit.
+                    // 2026-10-02: A discovered copy runs on its family's unit and pipeline.
                     compute: None,
+                    pipeline: Default::default(),
                 });
             }
         }
@@ -400,6 +401,7 @@ pub fn class_points(points: &[Point], chain: &[ClassInfo], sources: &ClassSource
                 how: p.how,
                 files,
                 compute: p.compute.clone(),
+                pipeline: p.pipeline.clone(),
             })
         })
         .collect()

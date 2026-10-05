@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-26: Plain GET requests: `/v1/models` (`list_models`, `probe`),
-//! `get_json` and `fetch_hardware`.
+//! `get_json`, `get_text` and `fetch_hardware`.
 //!
 //! Owner: bench (HTTP client).
 //! Invariants:
 //! - Every request sends `Connection: close` and is bounded by the caller's
 //!   `timeout`.
 //! - Every read loop stops at EOF or once past a byte bound (512 B for
-//!   `probe`, 64 KiB for `/hardware`, 1 MiB otherwise).
+//!   `probe`, 64 KiB for `/hardware`, `TEXT_BODY_LIMIT` for `get_text`, 1 MiB
+//!   otherwise). `get_text` fails past its bound rather than truncate.
 
 use super::*;
 
@@ -153,6 +154,56 @@ pub async fn get_json(
         anyhow::bail!("{path} answered {status}: {doc}");
     }
     Ok(doc)
+}
+
+/// 2026-10-04: The most bytes `get_text` reads. A telemetry-on `/metrics` page carries
+/// one histogram per scheduler phase, so it is larger than the JSON documents above.
+const TEXT_BODY_LIMIT: usize = 8 << 20;
+
+/// 2026-10-04: `GET <path>` and return the body as text, chunked framing decoded, lines
+/// joined with `\n` and each trimmed. A status other than 200 is an error that quotes the
+/// body (the streaming client's `Reader` does both). A body past `TEXT_BODY_LIMIT` is an
+/// error, so a cut-off page never reads as a page without the series that were cut.
+pub async fn get_text(target: &TargetEndpoint, path: &str, timeout: Duration) -> Result<String> {
+    let (host, port) = target.host_port()?;
+    let fut = async {
+        let mut sock = TcpStream::connect((host.as_str(), port)).await?;
+        let req =
+            format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+        sock.write_all(req.as_bytes()).await?;
+        let mut reader = Reader::default();
+        let mut lines = Vec::new();
+        let mut read = 0usize;
+        let mut buf = [0u8; 16 * 1024];
+        loop {
+            let n = sock.read(&mut buf).await?;
+            if n == 0 {
+                reader.finish()?;
+                break;
+            }
+            read += n;
+            if read > TEXT_BODY_LIMIT {
+                bail!("{path} is larger than {TEXT_BODY_LIMIT} bytes");
+            }
+            lines.extend(reader.push(&buf[..n])?);
+        }
+        // 2026-10-04: A last line with no newline stays in the reader's buffer.
+        let tail = String::from_utf8_lossy(&reader.body).trim().to_string();
+        if !tail.is_empty() {
+            lines.push(tail);
+        }
+        anyhow::Ok(lines.join("\n"))
+    };
+    tokio::time::timeout(timeout, fut)
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "{} did not answer {path} within {:?}",
+                target.base_url,
+                timeout
+            )
+        })?
+        .with_context(|| format!("reading {path} from {}", target.base_url))
 }
 
 /// 2026-09-26: `GET /hardware`: the serving box's hardware fingerprint.

@@ -32,6 +32,9 @@ schema = 1
 # - w4a16_tc: on unless METRALE_NO_W4A16_TC (ml/ops/gemv_tc.rs:79-82).
 # - decode_split_silu: on, kernels/gb10/HARDWARE.toml:168.
 # - rms_norm_act_quant: off, the engine has no fused norm-quantize launch (2026-09-30).
+# - activation_quantization: adaptive, today's per-row-count routing that FUSIONS.toml encodes;
+#   every committed recipe pins it (--activation-quantization, crates/config/src/
+#   activation_quantization.rs). The node pipelines' `act` requirement reads it (2026-10-02).
 [[instance]]
 recipe = "qwen3.8/qwen3.8-27b-nvfp4-unsloth"
 checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
@@ -60,7 +63,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
 
 # 2026-09-30: The dense agentic recipe above served under `--weight-quantization declared` (the
 # engine default; the recipe pins `nvfp4`, so no recipe serves this yet): the checkpoint's own
@@ -90,7 +93,7 @@ engine = [
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
 
 # 2026-09-28: The MoE flagship recipe (the agentic-webserver gate's default entry,
 # kernels/gb10/qwen3.6-35b-a3b/BENCH.toml). As above, except:
@@ -109,7 +112,33 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-02: nvidia/Qwen3.6-35B-A3B-NVFP4 under `--weight-quantization declared`: NVFP4 W4A16
+# routed and shared experts and lm_head (the grouped NVFP4 decode on the tensor-core kernels,
+# moe/forward_nvfp4_grouped_decode.rs), FP8 attention and GDN projections served W8A16 at the
+# checkpoint's weights, BF16 router and MTP head (precision/qwen3.6-35b-a3b-nvfp4-declared.toml).
+# Settings as the FP8 MoE flagship above, except:
+# - row_tiers: canonical, the default for a MoE whose projections are served FP8
+#   (serve_load/model_setup.rs `publish_row_tiers`); the grouped NVFP4 decode is row-invariant
+#   either way.
+# - lm_head_dtype: nvfp4, the checkpoint's declared head (`--lm-head-dtype nvfp4`).
+# Golden: FUSIONS.toml covers every node (the NVFP4 grouped experts and head, the BF16 drafter).
+[[instance]]
+recipe = "qwen3.6/qwen3.6-35b-a3b-nvfp4-declared"
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+arch = "qwen3_6_moe"
+variant = "nvfp4-declared"
+precision = "qwen3.6-35b-a3b-nvfp4-declared"
+target = "gb10/qwen3.6-35b-a3b/nvfp4"
+golden = true
+layer_kinds = "GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA GGGA"
+dims = { hidden = 2048, vocab = 248320, q_heads = 16, kv_heads = 2, head_dim = 256, lin_k_heads = 16, lin_k_dim = 128, lin_v_heads = 32, lin_v_dim = 128, experts = 256, top_k = 8, moe_inter = 512, shared_inter = 512, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
 
 # 2026-09-29: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, the first model built by the
 # `new-model` method (`.claude/skills/new-model/SKILL.md`). The recipe id is the planned one: no
@@ -137,4 +166,4 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }

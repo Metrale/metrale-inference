@@ -91,6 +91,7 @@ pub(super) fn spill_out_sequence(
     Ok(SwappedSeq {
         tokens,
         session_hash: a.session_hash,
+        lookup_tenant: a.seq.lookup_tenant,
         adapter_slot: a.seq.adapter_slot,
         adapter_id: a.seq.adapter_id,
         seq_len,
@@ -198,6 +199,7 @@ pub(super) fn resume_preempted_seq(
         }
     };
     seq.session_hash = a.session_hash;
+    seq.lookup_tenant = a.seq.lookup_tenant;
     seq.adapter_slot = a.seq.adapter_slot;
     // 2026-09-25: Re-acquire the adapter slot the preempt-time release
     // gave up. LoRA rotations wait while `preempted` is non-empty

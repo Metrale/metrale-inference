@@ -48,6 +48,9 @@ pub trait TelemetryIo: Send + Sync + std::fmt::Debug {
     /// 2026-09-25: A verify step checked `drafts` drafts and accepted
     /// `accepted`.
     fn spec_verified(&self, drafts: usize, accepted: usize);
+    /// 2026-10-04: A verify step reached a draft of drafter top-1 log-probability `lp`, and
+    /// accepted it or not.
+    fn spec_draft_confidence(&self, lp: f32, accepted: bool);
     /// 2026-09-25: `n` tokens were emitted to clients (the J/token
     /// denominator).
     fn tokens(&self, n: u64);
@@ -159,6 +162,9 @@ impl TelemetryIo for SysTelemetry {
     }
     fn spec_verified(&self, drafts: usize, accepted: usize) {
         self.tel.spec_verified(drafts, accepted);
+    }
+    fn spec_draft_confidence(&self, lp: f32, accepted: bool) {
+        self.tel.spec_draft_confidence(lp, accepted);
     }
     fn tokens(&self, n: u64) {
         self.tel.tokens(n);

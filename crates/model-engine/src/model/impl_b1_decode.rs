@@ -246,8 +246,13 @@ impl TransformerModel {
         // 2026-09-25: Route the draft through the request's adapter, at the
         // same `+128` offset as `decode_a`, so drafts come from the adapter the
         // verify uses.
-        let seq_slot =
-            self.upload_seq_slot_uniform(seq.adapter_slot, 1, meta_base.offset(128), stream)?;
+        let seq_slot = self.upload_seq_slot_uniform(
+            seq.adapter_slot,
+            1,
+            meta_base.offset(128),
+            stream,
+            metrale_model_layers::lora::LoraSites::PairFallback,
+        )?;
 
         let attn_metadata = AttnMetadataDev {
             positions: meta_base,

@@ -5,6 +5,8 @@
 //! Owner: server CLI (`met benchmark certify`).
 //! Invariants: none beyond the types.
 
+use metrale_bench::hardware::energy::JOULES_PER_TOKEN_KEY;
+
 use super::super::plan::Unit;
 use super::super::text::human;
 use super::Fleet;
@@ -27,6 +29,9 @@ pub fn fleet_json(f: &Fleet, units: &[Unit], plan: &Plan) -> serde_json::Value {
                 "mode": "bundle", "node": f.nodes[*node].addr, "why": why,
             }),
         },
+        "energy_pin": f.energy.as_ref().map(|p| serde_json::json!({
+            "node": f.nodes[p.node].addr, "gates": p.gates,
+        })),
         "queues": plan.queues.iter().enumerate().map(|(k, q)| serde_json::json!({
             "node": f.nodes[k].addr,
             "units": q.iter().map(|&i| units[i].label()).collect::<Vec<_>>(),
@@ -85,5 +90,33 @@ pub fn print_fleet(f: &Fleet, units: &[Unit], plan: &Plan) {
             }
         }
     }
+    for line in energy_pin_lines(f) {
+        eprintln!("  {line}");
+    }
     eprintln!("  makespan ~{}", human(plan.makespan_secs));
 }
+
+/// 2026-10-04: The reference `--energy-reference-node` named, and which
+/// energy-bounded gates it pins, and why.
+fn energy_pin_lines(f: &Fleet) -> Vec<String> {
+    let Some(pin) = &f.energy else {
+        return Vec::new();
+    };
+    let addr = &f.nodes[pin.node].addr;
+    let gates = if pin.gates.is_empty() {
+        "no energy-bounded gate in this campaign".to_string()
+    } else {
+        format!(
+            "energy-bounded gates PINNED: {}. Their default entries bound a \
+             *{JOULES_PER_TOKEN_KEY} metric, and the GPU rail reads differently box to box",
+            pin.gates.iter().copied().collect::<Vec<_>>().join(", ")
+        )
+    };
+    vec![format!(
+        "reference {addr} (--energy-reference-node) hosts every Speed-class gate; {gates}"
+    )]
+}
+
+#[cfg(test)]
+#[path = "text_tests.rs"]
+mod text_tests;

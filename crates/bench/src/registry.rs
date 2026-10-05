@@ -10,8 +10,8 @@
 use crate::benchmark::BenchmarkDescriptor;
 use crate::benchmarks::{
     agentic, bfcl, concurrency, contamination, decode_floor, default_tier_boot, kat_equality,
-    mlperf_agentic, quick_speed, scheduler_equivalence, serve_matrix, ssm_poison, ttft, video,
-    vision,
+    mlperf_agentic, quick_speed, scheduler_equivalence, serve_matrix, spec_cost, ssm_poison, ttft,
+    video, vision,
 };
 
 /// 2026-09-26: Every benchmark, in list order. A compile-time table of
@@ -23,6 +23,9 @@ const ALL: &[&BenchmarkDescriptor] = &[
     // 2026-09-26: The gate counterpart of the probe above, judged against a
     // BENCH.toml floor and listed in `gate::coverage::REQUIRED`.
     &decode_floor::DESCRIPTOR,
+    // 2026-10-04: A measurement tool for the speculative cost model, excused from the PR gate
+    // set in `gate::coverage::NOT_REQUIRED`.
+    &spec_cost::DESCRIPTOR,
     &concurrency::DESCRIPTOR,
     &concurrency::DFLASH2_DESCRIPTOR,
     // 2026-09-26: The MoE flagship's concurrency ladder, listed in
@@ -50,6 +53,15 @@ const ALL: &[&BenchmarkDescriptor] = &[
     // state reaches another. That one asks whether a replay changes; this one
     // whether the order matters.
     &kat_equality::DESCRIPTOR,
+    // 2026-10-03: The cheap correctness suite of the Nemotron-3 models, one gate id per model
+    // (`kat_equality::nemotron`, `bfcl::mini_descriptors`). Listed in
+    // `gate::coverage::PROMOTION_CANDIDATES` until their BENCH entries are measured.
+    &kat_equality::NEMOTRON_NANO_DESCRIPTOR,
+    &kat_equality::NEMOTRON_SUPER_DESCRIPTOR,
+    &bfcl::MINI_NEMOTRON_NANO_DESCRIPTOR,
+    &bfcl::MINI_NEMOTRON_SUPER_DESCRIPTOR,
+    // 2026-10-03: The mini draw itself, a measurement draw (`gate::coverage::NOT_REQUIRED`).
+    &bfcl::SUBSET_MINI_DESCRIPTOR,
     // 2026-09-26: The same family: does the router matter? The same draw
     // under the synchronous and the asynchronous device router. Listed in
     // `gate::coverage::PROMOTION_CANDIDATES`.

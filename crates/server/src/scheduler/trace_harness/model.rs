@@ -198,6 +198,7 @@ pub(super) struct Shared {
     pub cancel_flags: Mutex<HashMap<u64, Arc<AtomicBool>>>,
     pub state: Mutex<State>,
     pub gate: Gate,
+    pub park: super::park::LinePark,
 }
 
 pub(super) struct RecordingModel {
@@ -222,6 +223,7 @@ impl Shared {
     }
 
     pub fn rec(&self, line: String) {
+        self.park.check(&line);
         self.trace.lock().unwrap().push(line);
     }
 

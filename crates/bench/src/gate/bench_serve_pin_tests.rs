@@ -256,35 +256,36 @@ fn the_trees_serve_pins_sit_on_the_gates_that_need_them() {
 }
 
 /// 2026-09-27: The high-ISL TTFT gates: each subject's default entry pins the context that holds
-/// the 32k prompt, the util ceiling and prefix caching; its ceilings are vLLM's steady one-shot
-/// TTFT on the same fixture (both statistics one bound), and the fixture's token floor.
+/// the 32k prompt, the util ceiling and prefix caching; its ceilings (both statistics one bound)
+/// are the owner's of 2026-10-03, below vLLM's steady one-shot TTFT on the same fixture; and the
+/// fixture's token floor.
 #[test]
-fn the_high_isl_gates_pin_their_serve_and_vllm_ceilings() {
+fn the_high_isl_gates_pin_their_serve_and_owner_ceilings() {
     let root = repo_root();
     for (id, checkpoint, recipe, ceiling) in [
         (
             "high-isl-ttft-cold",
             "unsloth/Qwen3.8-27B-NVFP4",
             "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
-            24115.2,
+            17700.0,
         ),
         (
             "high-isl-ttft-warm",
             "unsloth/Qwen3.8-27B-NVFP4",
             "qwen3.8/qwen3.8-27b-nvfp4-unsloth",
-            2132.3,
+            300.0,
         ),
         (
             "high-isl-ttft-cold-moe",
             "Qwen/Qwen3.6-35B-A3B-FP8",
             "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head",
-            9231.9,
+            6600.0,
         ),
         (
             "high-isl-ttft-warm-moe",
             "Qwen/Qwen3.6-35B-A3B-FP8",
             "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head",
-            579.4,
+            180.0,
         ),
     ] {
         let b = baseline_for(&root, id).unwrap();

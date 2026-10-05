@@ -95,7 +95,6 @@ pub(super) fn load_gdn_dequant(
     // 2026-09-25: `dense_f32_safe`: an FP32 norm is truncated to BF16, a BF16 one
     // passed through.
     let norm = dense_f32_safe(store, &format!("{la}.norm.weight"), gpu)?;
-    let ba_dense = interleave_ba(&in_proj_a, &in_proj_b, nv, nk, h, gpu)?;
     let qkvz_size = config.ssm_qkvz_size();
 
     // 2026-09-25: When `in_proj_qkv`, `in_proj_z` and `out_proj` all have a UInt8
@@ -158,7 +157,10 @@ pub(super) fn load_gdn_dequant(
             in_proj_qkvz: DenseWeight {
                 weight: metrale_gpu_runtime::gpu::DevicePtr::NULL,
             },
-            in_proj_ba: ba_dense,
+            // 2026-10-02: Interleaved here, on the one path that reads it; the path below
+            // interleaves its own (until 2026-10-02 this copy was made for every layer and
+            // leaked on that path: 0.9 MiB per layer).
+            in_proj_ba: interleave_ba(&in_proj_a, &in_proj_b, nv, nk, h, gpu)?,
             conv1d,
             a_log,
             dt_bias,
@@ -415,11 +417,15 @@ pub(super) fn load_gdn_dequant(
         config,
         gpu,
     )?;
-    layer.predequant_for_prefill(gpu, config, stream)?;
-    // 2026-09-25: After `predequant_for_prefill`, which sets `out_proj_fp8` from
-    // the NVFP4 weight, so the FP8 casts replace it. `qkvz_fp8`/`out_proj_fp8` feed
-    // the `fp8_gemm_n128` arms of prefill and of the batched decode/verify
-    // projections (`qwen3_ssm/init_fp8.rs`, `trait_decode_batched.rs`).
+    // 2026-09-25: The FP8 casts, when made, are the layer's `qkvz_fp8`/`out_proj_fp8`: they
+    // feed the `fp8_gemm_n128` arms of prefill and of the batched decode/verify projections
+    // (`qwen3_ssm/init_fp8.rs`, `trait_decode_batched.rs`). 2026-10-02: Without an
+    // `out_proj` cast, `predequant_for_prefill` dequantizes the NVFP4 `out_proj` instead.
+    // With one, the predequant is not made: the cast replaced it, and until 2026-10-02 the
+    // replaced copy stayed allocated (30 MiB per layer, 1.4 GiB on the dense 27B).
+    if out_proj_fp8_prefill.is_none() {
+        layer.predequant_for_prefill(gpu, config, stream)?;
+    }
     if qkvz_fp8_prefill.is_some() || out_proj_fp8_prefill.is_some() {
         layer.set_fp8_prefill_only_weights(qkvz_fp8_prefill, out_proj_fp8_prefill);
     }

@@ -31,7 +31,14 @@ fn draw(
     opts: DisplayOpts,
 ) -> Result<Document, LoadError> {
     let avail = common::available(inst, &loaded.rules);
-    metrale_circuit::display_plan(inst, loaded, &avail, mode, rows, &opts)
+    metrale_circuit::display_plan(
+        inst,
+        loaded,
+        &avail,
+        (mode, rows),
+        &opts,
+        &common::families(inst),
+    )
 }
 
 fn opts(width: usize, glyphs: Glyphs) -> DisplayOpts {

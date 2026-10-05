@@ -18,7 +18,8 @@ use super::flag_values::{
     SSM_H_DTYPES, TELEMETRY_LEVELS, TOOL_CALL_PARSERS, TRISTATES,
 };
 
-mod violation;
+mod prompt_lookup;
+pub(super) mod violation;
 use violation::{Violation, check_enum, format_violations};
 
 /// 2026-09-26: Validate a `met serve` command line.
@@ -78,24 +79,6 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
                  nvfp4 in the ladder (e.g. 1-32=nvfp4;33-=adaptive)",
             ));
         }
-    }
-    if args
-        .ssm_h_dtype
-        .as_deref()
-        .is_some_and(|d| d.starts_with("f16"))
-        && args
-            .activation_quantization
-            .ladder(metrale_config::ProjFamily::Gdn)
-            .rungs()
-            .iter()
-            .any(|r| r.format != metrale_config::ActQuantFormat::Adaptive)
-    {
-        v.push(Violation::new(
-            "--ssm-h-dtype f16 with a fixed --activation-quantization for gdn",
-            "a fixed GDN format runs the MTP verify on the exact chain (the kernels decode \
-             runs), whose kernels read an FP32 h-state only",
-            "drop --ssm-h-dtype, or give gdn the adaptive ladder (e.g. `declared,gdn:adaptive`)",
-        ));
     }
     if args.no_canonical_tiers && !args.activation_quantization.is_adaptive() {
         v.push(Violation::new(
@@ -208,18 +191,6 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             "use auto (default: preflight sizes the ring from free memory) or 0..=8.",
         ));
     }
-    // 2026-09-26: An FP16 h-state turns the exact verify chain off
-    // (`GdnFlags::verify_exact_active`), so the pair would drop an explicit
-    // `--exact-verify` without saying so.
-    if args.exact_verify && h_f16 {
-        v.push(Violation::new(
-            "--exact-verify together with --ssm-h-dtype f16",
-            "the exact MTP-verify chain (issue #435) runs FP32-reader kernels and must \
-             never read the FP16 h-state pool, so with f16 the exact request would be \
-             silently dropped and spec-on output would NOT equal spec-off",
-            "drop --ssm-h-dtype f16 (f32 is the default), or drop --exact-verify",
-        ));
-    }
     check_enum(
         &mut v,
         "--mtp-quantization",
@@ -296,6 +267,43 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             "pass --auth-tokens-file <path> (preferred, 0600) or --auth-token <token>.",
         ));
     }
+
+    prompt_lookup::check(args, &mut v);
+
+    // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
+    // DFlash drafts a whole block in one pass and has no chain to stop.
+    if let Some(tau) = args.mtp_draft.draft_confidence_stop {
+        if !(tau > 0.0 && tau < 1.0) {
+            v.push(Violation::new(
+                format!("--draft-confidence-stop {tau} is outside (0, 1)."),
+                "TAU is a probability threshold: 0 would never stop a chain and 1 would \
+                 stop every chain after its first draft.",
+                "pass a value strictly between 0 and 1, or drop the flag.",
+            ));
+        }
+        if !args.speculative || args.dflash {
+            v.push(Violation::new(
+                "--draft-confidence-stop needs --speculative (MTP) and is not used with --dflash.",
+                "the stop ends MTP draft chains early; without MTP there is no chain, and a \
+                 DFlash drafter proposes its whole block in one pass.",
+                "add --speculative, or drop --draft-confidence-stop.",
+            ));
+        }
+    }
+
+    // 2026-10-03: A ratio outside 0..=1 would snap to an end bucket silently.
+    if let Some(r) = args.mtp_shape.mtp_dcut_ratio
+        && !(0.0..=1.0).contains(&r)
+    {
+        v.push(Violation::new(
+            format!("--mtp-dcut-ratio {r} is outside 0..=1."),
+            "the ratio is the fraction of prunable draft positions kept; values snap to \
+             0.25, 0.5, 0.75 or 1.0.",
+            "pass a value from 0 to 1 (1.0 keeps every draft), or drop the flag.",
+        ));
+    }
+
+    crate::cli::validate_spec_cost::check(args, &mut v); // 2026-10-04: measured's checks
 
     // 2026-09-26: Only an explicit --num-drafts is checked: an omitted one
     // resolves against MODEL.toml later, and a model default without a

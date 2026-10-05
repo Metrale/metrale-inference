@@ -126,6 +126,7 @@ fn f16_pool_is_a_published_dtype_and_inherits_every_f16_rule() {
         "the supported stage-3 pairing"
     );
     assert!(validate_serve_args(&parse(&["--ssm-h-dtype", "f16-pool"])).is_err());
+    // 2026-10-01: The exact verify runs on the FP16 pool through its FP16 twins.
     assert!(
         validate_serve_args(&parse(&[
             "--exact-verify",
@@ -133,7 +134,7 @@ fn f16_pool_is_a_published_dtype_and_inherits_every_f16_rule() {
             "f16-pool",
             "--gdn-fused-norm",
         ]))
-        .is_err()
+        .is_ok()
     );
     assert!(validate_serve_args(&parse(&["--ssm-h-dtype", "f16pool"])).is_err());
     assert_eq!(ssm_h_dtype_bits(Some("f16pool")), (false, false));
@@ -318,18 +319,35 @@ fn adaptive_levers_need_the_adaptive_routing() {
     );
     assert!(aq("adaptive,ffn:1-4=nvfp4;5-=adaptive", &w4a4).is_err());
 
+    // 2026-10-01: An FP16 h-state is not a routing lever: a fixed GDN format runs its exact
+    // verify on the FP16 twins.
     let f16 = ["--ssm-h-dtype", "f16", "--gdn-fused-norm"];
     assert!(aq("adaptive,attn:bf16", &f16).is_ok());
-    let e = aq("declared", &f16).unwrap_err();
-    assert!(e.contains("--ssm-h-dtype f16") && e.contains("gdn"), "{e}");
-    let e = aq(
-        "adaptive,gdn:1=bf16;2-=adaptive",
-        &["--ssm-h-dtype", "f16-pool", "--gdn-fused-norm"],
-    )
-    .unwrap_err();
-    assert!(e.contains("gdn"), "{e}");
+    assert!(aq("declared", &f16).is_ok());
+    assert!(
+        aq(
+            "adaptive,gdn:1=bf16;2-=adaptive",
+            &["--ssm-h-dtype", "f16-pool", "--gdn-fused-norm"],
+        )
+        .is_ok()
+    );
 
     assert!(aq("adaptive", &["--no-canonical-tiers"]).is_ok());
     let e = aq("bf16", &["--no-canonical-tiers"]).unwrap_err();
     assert!(e.contains("--no-canonical-tiers"), "{e}");
+}
+
+#[test]
+fn hermetic_refuses_the_shared_prompt_lookup_cache() {
+    let pl = ["--speculative", "--prompt-lookup-decoding"];
+    let cache = ["--prompt-lookup-shared-cache-mb", "64"];
+    let both = [&pl[..], &cache[..], &["--hermetic"]].concat();
+    let err =
+        validate_serve_args(&parse(&both)).expect_err("a cross-request channel under --hermetic");
+    assert!(
+        err.contains("--hermetic with --prompt-lookup-shared-cache-mb"),
+        "{err}"
+    );
+    assert!(validate_serve_args(&parse(&[&pl[..], &cache[..]].concat())).is_ok());
+    assert!(validate_serve_args(&parse(&[&pl[..], &["--hermetic"]].concat())).is_ok());
 }

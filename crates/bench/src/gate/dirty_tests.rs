@@ -141,6 +141,8 @@ fn a_record_measured_on_a_mock_fails_the_gate() {
             forward: "legacy".into(),
             plan_digest: None,
             auto_max_batch_size: None,
+            moe_expert_tables: None,
+            kernel_tree: None,
             mock: mock.map(str::to_string),
         };
         super::record_serve::merge_live_forward(&mut resolved, "legacy", &live).unwrap();

@@ -113,7 +113,8 @@ pub(super) fn k4_apply_verdict(
         for _ in 0..(nd - na) {
             a.seq.tokens.pop();
         }
-        if let Err(e) = model.trim_proposer_state(&mut a.seq, na, 0) {
+        let drafter_na = drafter_accepted(a, na);
+        if let Err(e) = model.trim_proposer_state(&mut a.seq, drafter_na, 0) {
             tracing::error!("trim_proposer_state: {e:#}");
         }
         // 2026-09-25: commit rows `0..=na` (the last verified token plus
@@ -146,7 +147,8 @@ pub(super) fn k4_apply_verdict(
     }
     if na == nd {
         // 2026-09-25: On a full accept the proposer is trimmed only after the hidden state above is saved.
-        if let Err(e) = model.trim_proposer_state(&mut a.seq, na, 0) {
+        let drafter_na = drafter_accepted(a, na);
+        if let Err(e) = model.trim_proposer_state(&mut a.seq, drafter_na, 0) {
             tracing::error!("trim_proposer_state: {e:#}");
         }
     }
@@ -167,6 +169,12 @@ pub(super) fn k4_apply_verdict(
                 tracing::error!("run_mtp_propose_multi: {e:#}");
             }
         }
+        // 2026-10-04: The serial arms time the propose too, as the batched step does, so the
+        // phase histogram (`--telemetry`) covers every draft path.
+        sched
+            .io
+            .tel
+            .mark(crate::scheduler::mtp_timing::Phase::Propose, t_propose);
         let propose_us = sched
             .io
             .clock

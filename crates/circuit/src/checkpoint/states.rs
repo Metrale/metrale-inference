@@ -60,8 +60,9 @@ pub fn recurrent_states(
         }
     };
     let mut out = Vec::new();
-    for sf in &file.block[template].state {
-        let d = state_decl(template, template, None, Section::Main, sf, dims)?;
+    let block = &file.block[template].state;
+    for sf in block {
+        let d = state_decl(template, template, None, Section::Main, sf, block, dims)?;
         if d.kind == StateKind::Recurrent {
             out.push(d);
         }

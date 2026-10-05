@@ -6,6 +6,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use metrale_bench::gate::Bound;
 
 /// 2026-09-26: The GB10 timing limits committed in `kernels/gb10/HARDWARE.toml`.
 fn timing() -> TimingLimits {
@@ -310,4 +311,99 @@ fn a_measured_shard_run_is_scaled_to_the_whole_draw() {
     assert_eq!(whole_draw_secs(300, &p), 300);
     p.insert("shard".to_string(), "inherit".to_string());
     assert_eq!(whole_draw_secs(300, &p), 300);
+}
+
+/// 2026-10-04: One gate on `gb10`: `default` bounds `default_metrics`, a second
+/// checkpoint bounds `other_metrics`.
+fn baseline(
+    default_metrics: &[(&str, Bound)],
+    other_metrics: &[(&str, Bound)],
+) -> gate::GateBaseline {
+    let model = |m: &[(&str, Bound)]| gate::ModelBaseline {
+        metrics: m.iter().map(|(k, b)| (k.to_string(), b.clone())).collect(),
+        ..gate::ModelBaseline::default()
+    };
+    gate::GateBaseline {
+        schema: 2,
+        hardware: BTreeMap::from([(
+            "gb10".to_string(),
+            gate::HardwareBaseline {
+                default: "default-ckpt".into(),
+                models: BTreeMap::from([
+                    ("default-ckpt".to_string(), model(default_metrics)),
+                    ("other-ckpt".to_string(), model(other_metrics)),
+                ]),
+            },
+        )]),
+    }
+}
+
+fn ceiling(max: f64) -> Bound {
+    Bound {
+        max: Some(max),
+        ..Bound::default()
+    }
+}
+
+#[test]
+fn a_gate_is_energy_bounded_when_its_default_entry_bounds_joules_per_token() {
+    let floor = (
+        "c1_tokens_per_sec",
+        Bound {
+            min: Some(20.0),
+            ..Bound::default()
+        },
+    );
+    let rung = baseline(
+        &[
+            floor.clone(),
+            ("c1_gpu_rail_joules_per_token", ceiling(1.7)),
+        ],
+        &[],
+    );
+    assert!(energy_bounded(&rung, "gb10").unwrap());
+    let bare = baseline(&[("gpu_rail_joules_per_token", ceiling(1.7))], &[]);
+    assert!(
+        energy_bounded(&bare, "gb10").unwrap(),
+        "decode-floor's key has no rung prefix"
+    );
+    let speed_only = baseline(std::slice::from_ref(&floor), &[]);
+    assert!(!energy_bounded(&speed_only, "gb10").unwrap());
+    // 2026-10-04: A recorded-only key with neither min nor max bounds nothing.
+    let unbounded = baseline(
+        &[
+            floor.clone(),
+            ("c1_gpu_rail_joules_per_token", Bound::default()),
+        ],
+        &[],
+    );
+    assert!(!energy_bounded(&unbounded, "gb10").unwrap());
+    // 2026-10-04: Only the default checkpoint counts.
+    let other = baseline(&[floor], &[("c1_gpu_rail_joules_per_token", ceiling(1.7))]);
+    assert!(!energy_bounded(&other, "gb10").unwrap());
+    // 2026-10-04: A class with no entry for the gate bounds nothing.
+    assert!(!energy_bounded(&rung, "h100-sxm").unwrap());
+}
+
+#[test]
+fn a_class_whose_default_is_missing_is_an_error_not_a_no() {
+    let mut b = baseline(&[("c1_gpu_rail_joules_per_token", ceiling(1.7))], &[]);
+    b.hardware.get_mut("gb10").unwrap().default = "gone".into();
+    assert!(energy_bounded(&b, "gb10").is_err());
+}
+
+/// 2026-10-04: The committed tree: the dense sweep's GB10 default bounds J/token
+/// per rung; gates that bound only speed or accuracy do not.
+#[test]
+fn the_committed_dense_sweep_is_energy_bounded_on_gb10() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the workspace root");
+    let bounded =
+        |id: &str| energy_bounded(&gate::read_baseline(root, id).unwrap(), "gb10").unwrap();
+    assert!(bounded("concurrency-sweep"));
+    for id in ["ttft-warm-gate", "bfcl-subset", "kat-equality-gate"] {
+        assert!(!bounded(id), "{id}");
+    }
 }

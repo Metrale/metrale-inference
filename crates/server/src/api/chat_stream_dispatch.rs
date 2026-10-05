@@ -83,6 +83,7 @@ pub(super) async fn dispatch_streaming(
         state,
         prompt_tokens,
         session_hash,
+        req.lookup_tenant,
         adapter_slot,
         src_lang_id,
         tgt_lang_id,

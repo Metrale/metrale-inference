@@ -315,6 +315,7 @@ impl TransformerModel {
         // count, so the offload helper never grows it.
         let num_attn_layers = self.config.num_attention_layers();
         Ok(SequenceState {
+            lookup_tenant: None,
             adapter_id: 0,
             adapter_slot: -1,
             acquired_adapter_slot: -1,

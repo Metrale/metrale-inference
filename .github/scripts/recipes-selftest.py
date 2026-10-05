@@ -80,7 +80,7 @@ def c_positive() -> None:
     assert [r.id for r in rs] == ["fam/good", "fam/other"], [r.id for r in rs]
     for r in rs:
         assert surface(r) == [], (r.id, surface(r))
-        assert lib.check_util(r) == [], (r.id, lib.check_util(r))
+        assert lib.check_util(r, ceilings()) == [], (r.id, lib.check_util(r, ceilings()))
     refs = recipes.load_bench_refs(FIX / "kernels")
     assert refs == {"kernels/gb10/model/BENCH.toml": ["fam/good", "fam/good"]}, refs
     assert bench_kinds(refs) == []
@@ -124,12 +124,29 @@ def c_bench_missing() -> None:
         assert bench_kinds(recipes.load_bench_refs(pathlib.Path(d, "kernels"))) == ["bench-missing"]
 
 
+def ceilings() -> dict[str, float]:
+    return lib.util_ceilings(FIX / "kernels")
+
+
 def c_util() -> None:
-    over = lib.check_util(edited(gpu_memory_utilization="0.90"))
-    assert [(f.kind, f.error) for f in over] == [("util-ceiling", False)], over
-    assert lib.check_util(edited(gpu_memory_utilization="0.85")) == []
+    assert ceilings() == {"gb10": 0.85}, ceilings()
+    over = lib.check_util(edited(gpu_memory_utilization="0.90"), ceilings())
+    assert [(f.kind, f.error) for f in over] == [("util-ceiling", True)], over
+    assert lib.check_util(edited(gpu_memory_utilization="0.85"), ceilings()) == []
     other = next(r for r in corpus() if r.id == "fam/other")
-    assert lib.check_util(other) == [], "a container with no hardware class is not judged"
+    assert lib.check_util(other, ceilings()) == [], "a container with no hardware class is not judged"
+    # 2026-10-02: The ceiling is the class's, not a constant here: a class declaring 0.95 admits 0.90.
+    assert lib.check_util(edited(gpu_memory_utilization="0.90"), {"gb10": 0.95}) == []
+    with tempfile.TemporaryDirectory() as d:
+        k = pathlib.Path(d, "gb10")
+        k.mkdir()
+        (k / "HARDWARE.toml").write_text("[memory]\nother = 1\n")
+        try:
+            lib.util_ceilings(pathlib.Path(d))
+        except ValueError as e:
+            assert "util_ceiling" in str(e), e
+        else:
+            raise AssertionError("a [memory] table without util_ceiling was accepted")
 
 
 def c_parse() -> None:
