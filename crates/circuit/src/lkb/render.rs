@@ -141,6 +141,46 @@ pub fn render_markdown(l: &Lkb) -> String {
     s
 }
 
+/// 2026-10-05: The `## LKB on <class>` section of `met circuit plan`'s report: the coverage
+/// line and the residual's size; `met circuit lkb` prints the details.
+pub fn report_section(s: &mut String, r: &crate::hardware::HwReport) {
+    let l = super::from_report(r, &std::collections::BTreeMap::new(), String::new());
+    let class = &l.chain[0];
+    let inherits = if l.chain.len() > 1 {
+        format!(" (realization inherits {})", l.chain[1..].join(" → "))
+    } else {
+        String::new()
+    };
+    let _ = writeln!(
+        s,
+        "## LKB on {class}{inherits}
+
+LKB coverage {}: {}% of the step, measured on this class \
+         {}% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators \
+         used: {} families. Relations used: {}. LKB residual on {class}: {} sources, {} lines; \
+         {} copy points. Details: `met circuit lkb --checkpoint {} --hardware {} --precision {}`.\n",
+        runs(&l),
+        joined(&l, |c| c.lkb).replace('/', " / "),
+        joined(&l, |c| c.measured).replace('/', " / "),
+        l.generators_used.len(),
+        list(l.relations_used.iter().cloned()),
+        l.residual.len(),
+        l.residual_lines(),
+        l.copy_points.len(),
+        r.model.checkpoint,
+        r.resolved.device.id,
+        r.model.precision_choice.name()
+    );
+}
+
+fn runs(l: &Lkb) -> String {
+    l.coverage
+        .iter()
+        .map(|c| format!("{} n={}", c.run.mode.name(), c.run.rows))
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
 /// 2026-10-05: The campaign-ledger fields, as TOML.
 pub fn render_toml(l: &Lkb) -> String {
     let mut s = String::new();

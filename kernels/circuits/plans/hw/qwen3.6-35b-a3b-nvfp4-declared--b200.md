@@ -115,9 +115,13 @@ digest 2703ff9ab2d9dc03a853c84e2bbe575e9228ead4d50336f6088c0625f2f5071c; 635 gro
 | moe_ffn [shared_gate,blend] | moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped | moe_blend_grouped | 40 |
 | moe_ffn [top_k] | moe_topk::moe_topk_softmax_rows + moe_fp8_grouped_sort::moe_fp8_grouped_sort | moe_topk_rows_sort | 40 |
 
+## LKB on b200 (realization inherits gb10)
+
+LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 48.4 / 89.6 / 96.9% of the step, measured on this class 0.0 / 0.0 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 17 families. Relations used: `cross_layer_add_norm`. LKB residual on b200: 0 sources, 0 lines; 40 copy points. Details: `met circuit lkb --checkpoint nvidia/Qwen3.6-35B-A3B-NVFP4 --hardware b200 --precision declared`.
+
 ## Gap report: decode n=1
 
-Estimated step 0.322 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 48.4%, parameterisation 0.0%, policy variant 51.6%, novel 0.0% of the step.
+Estimated step 0.322 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 48.4%, parameterization 0.0%, policy variant 51.6%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -170,7 +174,7 @@ Estimated step 0.322 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 1.648 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 89.6%, parameterisation 0.0%, policy variant 10.4%, novel 0.0% of the step.
+Estimated step 1.648 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 89.6%, parameterization 0.0%, policy variant 10.4%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -223,7 +227,7 @@ Estimated step 1.648 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 ## Gap report: multi_seq n=128
 
-Estimated step 6.489 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 96.9%, parameterisation 0.0%, policy variant 3.1%, novel 0.0% of the step.
+Estimated step 6.489 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 96.9%, parameterization 0.0%, policy variant 3.1%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|

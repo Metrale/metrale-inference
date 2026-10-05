@@ -148,9 +148,13 @@ digest f294e905408ad584fec120f47efdd3e6ecf991b4338496ab881b22d1b10d513d; 389 gro
 | head [final_norm] | norm::rms_norm | final_norm | 1 |
 | head [lm_head] | gemv::dense_gemv_bf16 | lm_head_bf16_gemv | 1 |
 
+## LKB on gb10
+
+LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 10.2 / 40.8 / 82.5% of the step, measured on this class 6.8 / 0.0 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 7 families. Relations used: `cross_layer_add_norm`. LKB residual on gb10: 145 sources, 42942 lines; 40 copy points. Details: `met circuit lkb --checkpoint NousResearch/Meta-Llama-3.1-8B-Instruct --hardware gb10 --precision declared`.
+
 ## Gap report: decode n=1
 
-Estimated step 62.484 ms. Shared 6.8% (measured on this class), shared-unmeasured 93.2%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 62.484 ms. Shared 6.8% (measured on this class), shared-unmeasured 93.2%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -175,7 +179,7 @@ Estimated step 62.484 ms. Shared 6.8% (measured on this class), shared-unmeasure
 
 ## Gap report: multi_seq n=16
 
-Estimated step 95.569 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 95.569 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -200,7 +204,7 @@ Estimated step 95.569 ms. Shared 0.0% (measured on this class), shared-unmeasure
 
 ## Gap report: multi_seq n=128
 
-Estimated step 342.605 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 342.605 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|

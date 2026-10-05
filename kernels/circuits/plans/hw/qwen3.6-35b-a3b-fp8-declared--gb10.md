@@ -165,9 +165,13 @@ digest 7d42205e4ae1d2b7c307ab780701490b8857e9782d10ace77e2afda74d2c4905; 655 gro
 | moe_ffn [top_k] | moe_topk::moe_topk_softmax_rows + moe_fp8_grouped_sort::moe_fp8_grouped_sort | moe_topk_rows_sort | 40 |
 | moe_ffn [xn_quant,experts_gate_up,experts_act,eact_quant,shared_gate_up,shared_act,sact_quant] | moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3 + moe_fp8_grouped_tc_w8a8::moe_expert_gate_up_act_fp8_grouped_tc_w8a8 | moe_gate_up_act_grouped_tc_w8a8 | 40 |
 
+## LKB on gb10
+
+LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 100.0 / 100.0 / 100.0% of the step, measured on this class 63.2 / 6.9 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 20 families. Relations used: `cross_layer_add_norm`. LKB residual on gb10: 148 sources, 44208 lines; 40 copy points. Details: `met circuit lkb --checkpoint Qwen/Qwen3.6-35B-A3B-FP8 --hardware gb10 --precision declared`.
+
 ## Gap report: decode n=1
 
-Estimated step 14.897 ms. Shared 63.2% (measured on this class), shared-unmeasured 36.8%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 14.897 ms. Shared 63.2% (measured on this class), shared-unmeasured 36.8%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -221,7 +225,7 @@ Estimated step 14.897 ms. Shared 63.2% (measured on this class), shared-unmeasur
 
 ## Gap report: multi_seq n=16
 
-Estimated step 76.240 ms. Shared 6.9% (measured on this class), shared-unmeasured 93.1%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 76.240 ms. Shared 6.9% (measured on this class), shared-unmeasured 93.1%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -275,7 +279,7 @@ Estimated step 76.240 ms. Shared 6.9% (measured on this class), shared-unmeasure
 
 ## Gap report: multi_seq n=128
 
-Estimated step 255.285 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 255.285 ms. Shared 0.0% (measured on this class), shared-unmeasured 100.0%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|

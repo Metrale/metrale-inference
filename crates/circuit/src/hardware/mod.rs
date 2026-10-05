@@ -157,8 +157,10 @@ pub struct HwReport {
 }
 
 impl HwReport {
-    /// 2026-09-30: Share of the step at `table` covered by shared kernels (measured, or any).
-    pub fn covered(&self, table: usize, measured_only: bool) -> f64 {
+    /// 2026-09-30: Share of the step at `table` run by shared kernels (measured, or any).
+    /// 2026-10-05: Renamed from `covered`: it is the Shared share, not LKB coverage
+    /// ([`crate::lkb`]).
+    pub fn shared_share(&self, table: usize, measured_only: bool) -> f64 {
         let classes: &[Class] = if measured_only {
             &[Class::Shared]
         } else {

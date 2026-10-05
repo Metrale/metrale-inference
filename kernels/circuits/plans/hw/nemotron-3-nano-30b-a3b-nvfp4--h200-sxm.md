@@ -126,9 +126,13 @@ Rule `deinterleave_qg` left out of this plan: l0.mamba.split (rule `deinterleave
 | moe [top_k] | (novel) | novel.top_k | 23 |
 | moe [xn_quant] | (novel) | novel.act_quant:nvfp4/g16 | 23 |
 
+## LKB on hopper (realization inherits gb10)
+
+LKB coverage decode n=1 / multi_seq n=16 / multi_seq n=128: 23.6 / 2.1 / 0.3% of the step, measured on this class 0.0 / 0.0 / 0.0% (book/src/architecture/lkb.md; placeholder rows count as uncovered). Generators used: 5 families. Relations used: none. LKB residual on hopper: 14 sources, 3390 lines; 40 copy points. Details: `met circuit lkb --checkpoint nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 --hardware h200-sxm --precision declared`.
+
 ## Gap report: decode n=1
 
-Estimated step 0.623 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+Estimated step 0.623 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterization 0.0%, policy variant 0.0%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -175,7 +179,7 @@ Estimated step 0.623 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 7.346 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterisation 0.0%, policy variant 0.1%, novel 0.0% of the step.
+Estimated step 7.346 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterization 0.0%, policy variant 0.1%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -222,7 +226,7 @@ Estimated step 7.346 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 ## Gap report: multi_seq n=128
 
-Estimated step 57.550 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterisation 0.0%, policy variant 0.1%, novel 0.0% of the step.
+Estimated step 57.550 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 99.9%, parameterization 0.0%, policy variant 0.1%, novel 0.0% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|

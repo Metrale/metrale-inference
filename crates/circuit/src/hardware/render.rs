@@ -64,6 +64,7 @@ pub fn render_report(r: &HwReport) -> String {
     if let Some(t) = r.tables.first() {
         plan_sites(&mut s, t, r);
     }
+    crate::lkb::report_section(&mut s, r);
     for t in &r.tables {
         gap_rows(&mut s, t, projection(r));
     }
@@ -410,7 +411,7 @@ fn plan_sites(s: &mut String, t: &GapTable, r: &HwReport) {
 fn gap_rows(s: &mut String, t: &GapTable, projection: &str) {
     let _ = writeln!(
         s,
-        "## Gap report: {}\n\nEstimated step {:.3} ms{projection}. Shared {} (measured on this class), shared-unmeasured {}, parameterisation {}, policy variant {}, novel {} of the step.\n",
+        "## Gap report: {}\n\nEstimated step {:.3} ms{projection}. Shared {} (measured on this class), shared-unmeasured {}, parameterization {}, policy variant {}, novel {} of the step.\n",
         run_name(t),
         t.total_us / 1e3,
         pct(t.share_of(&[Class::Shared])),
