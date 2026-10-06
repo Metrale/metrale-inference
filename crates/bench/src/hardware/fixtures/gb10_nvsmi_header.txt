@@ -1,0 +1,7 @@
+==============NVSMI LOG==============
+
+Timestamp                                              : Sun Oct  4 10:34:02 2026
+Driver Version                                         : 580.126.09
+CUDA Version                                           : 13.0
+
+Attached GPUs                                          : 1

@@ -93,6 +93,62 @@ pub struct GpuComputeApp {
     pub used_mib: Option<u64>,
 }
 
+/// 2026-10-04: Facts that do not fit the nvidia-smi/procfs/sysfs triad above:
+/// firmware and kernel identity, the two tcp buffer defaults behind the PR #99
+/// listener fix, and one point-in-time CPU clock reading (the governor is
+/// already on [`HardwareState::cpu_governor`]).
+///
+/// Fan speed is deliberately absent: checked 2026-10-04 on a live GB10 box,
+/// `nvidia-smi --query-gpu=fan.speed` reads `[N/A]` (also true of `-q`'s `Fan
+/// Speed` field, `fixtures/gb10_performance.txt`) and no `hwmon` chip names a
+/// GPU fan (`acpitz`, `nvme`, four `mlx5`, `mt7925_phy0` — chassis, NIC and
+/// Wi-Fi sensors only). Re-probe before adding the field rather than shipping
+/// a key that is always absent.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ExtendedTelemetry {
+    /// 2026-10-04: `nvidia-smi --query-gpu=vbios_version`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vbios: Option<String>,
+    /// 2026-10-04: The `CUDA Version` line of `nvidia-smi -q` output (the
+    /// toolkit version the driver answers for, not a package version).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cuda_version: Option<String>,
+    /// 2026-10-04: `nvidia-smi --query-gpu=power.limit`, watts. `[N/A]` on
+    /// every GB10 probed so far; kept for hardware classes that report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_limit_w: Option<f64>,
+    /// 2026-10-04: `/proc/sys/kernel/osrelease` (`uname -r`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kernel_release: Option<String>,
+    /// 2026-10-04: cpu0's current frequency, MHz
+    /// (`/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq`, kHz / 1000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_freq_mhz: Option<f64>,
+    /// 2026-10-04: The raw `min default max` triplet from
+    /// `/proc/sys/net/ipv4/tcp_rmem` — the PR #99 story (+210 ms on large
+    /// local request bodies traced to this host setting).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_rmem: Option<String>,
+    /// 2026-10-04: `/proc/sys/net/ipv4/tcp_wmem`, same form.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_wmem: Option<String>,
+}
+
+/// 2026-10-04: Cumulative sector counters for the block device backing the
+/// checkpoint path (`$HOME/.cache/huggingface`, the volume every serve config
+/// mounts), from `/sys/class/block/<dev>/stat`. Counters, not a rate — see
+/// [`HardwareStateDelta`] for the per-run throughput.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiskIoCounters {
+    /// 2026-10-04: The block device's name under `/sys/class/block`, e.g.
+    /// `"nvme0n1p2"`.
+    pub device: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_sectors: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_sectors: Option<u64>,
+}
+
 /// 2026-09-26: Which individual box this is. [`super::Hardware::gate_key`] gives
 /// the silicon class (`"gb10"`) that baselines are keyed by; this tells two boxes
 /// of one class apart.
@@ -171,6 +227,18 @@ pub struct HardwareState {
     pub cpu_governor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persistence_mode: Option<bool>,
+    /// 2026-10-04: Firmware/kernel identity and the tcp/cpu facts; see
+    /// [`ExtendedTelemetry`]. Always present as a value (never `None`): a
+    /// collector that fails leaves its own field `None`, the same rule as
+    /// every other reading here.
+    #[serde(default)]
+    pub extended: ExtendedTelemetry,
+    /// 2026-10-04: The checkpoint volume's block-device counters at capture
+    /// time. `None` when `$HOME` is unset, `$HOME/.cache/huggingface` does not
+    /// exist yet, or the device could not be resolved — not a disk with zero
+    /// traffic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_io: Option<DiskIoCounters>,
     /// 2026-09-26: Which collectors answered, from `"nvidia-smi"`, `"procfs"` and
     /// `"sysfs"`. Empty means none did.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -264,7 +332,21 @@ pub struct HardwareStateDelta {
     pub gpu_temp_delta_c: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hottest_chassis_delta_c: Option<f64>,
+    /// 2026-10-04: Bytes read from the checkpoint device during the run
+    /// (`sectors * 512`, the fixed sysfs sector unit regardless of the
+    /// device's real block size). `None` when either capture lacks
+    /// [`DiskIoCounters`], the two captures name different devices, or the
+    /// counter went backwards (see `advance`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_read_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_write_bytes: Option<u64>,
 }
+
+/// 2026-10-04: The sysfs block-stat sector unit: always 512 bytes, independent
+/// of the device's actual logical block size (Linux
+/// `Documentation/ABI/stable/sysfs-block`).
+pub const DISK_SECTOR_BYTES: u64 = 512;
 
 /// 2026-09-26: `after - before`; `None` when either is missing or the counter went
 /// backwards (a driver reload mid-run), which is an unusable reading, not zero.
@@ -274,6 +356,21 @@ fn advance(before: Option<u64>, after: Option<u64>) -> Option<u64> {
     // `then_some` is evaluated eagerly, so the backwards case would panic in a
     // debug build before the guard runs.
     a.checked_sub(b)
+}
+
+/// 2026-10-04: `after.field - before.field` in bytes, only when both captures
+/// named the same device: a device swap mid-run (an unplugged drive, a
+/// different mount) is not a throughput reading.
+fn disk_delta(
+    before: &Option<DiskIoCounters>,
+    after: &Option<DiskIoCounters>,
+    field: impl Fn(&DiskIoCounters) -> Option<u64>,
+) -> Option<u64> {
+    let (b, a) = (before.as_ref()?, after.as_ref()?);
+    if b.device != a.device {
+        return None;
+    }
+    advance(field(b), field(a)).map(|sectors| sectors * DISK_SECTOR_BYTES)
 }
 
 impl HardwareStateDelta {
@@ -291,6 +388,8 @@ impl HardwareStateDelta {
                 after.hottest_chassis_c(),
             )
             .map(|(b, a)| a - b),
+            disk_read_bytes: disk_delta(&before.disk_io, &after.disk_io, |d| d.read_sectors),
+            disk_write_bytes: disk_delta(&before.disk_io, &after.disk_io, |d| d.write_sectors),
         }
     }
 
