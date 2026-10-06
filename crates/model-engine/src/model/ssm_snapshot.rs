@@ -255,6 +255,11 @@ impl SsmSnapshotPool {
     /// 2026-09-25: Clear the slot's side tables and push it on the free list. A tag
     /// left behind would make [`Self::session_has_history`] count a slot that holds
     /// no restorable state.
+    /// 2026-10-05: Slots on the free list now.
+    pub(crate) fn free_slot_count(&self) -> usize {
+        self.free_slots.lock().len()
+    }
+
     pub(super) fn free(&self, snap_slot: usize) {
         self.clear_slot_bookkeeping(snap_slot);
         self.free_slots.lock().push(snap_slot);

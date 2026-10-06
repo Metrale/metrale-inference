@@ -169,6 +169,17 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             );
         }
     }
+    // 2026-10-05: `--prefill-wave-exact`, published only when given; otherwise
+    // `METRALE_PREFILL_WAVE_EXACT` decides.
+    if let Some(exact) = plan.prefill_wave_exact {
+        let in_force = metrale_model_layers::layers::ops::set_prefill_wave_exact_from_cli(exact);
+        if in_force != exact {
+            tracing::warn!(
+                "prefill-wave-exact was already resolved ({in_force}); the command line's \
+                 ({exact}) did NOT take effect"
+            );
+        }
+    }
     // 2026-09-26: `None` unless `--no-ssm-tail-midchunk` was given. `None`
     // publishes nothing, so `METRALE_SSM_TAIL_MIDCHUNK` decides.
     metrale_gpu_runtime::set_ssm_tail_midchunk(plan.ssm_tail_midchunk);
@@ -187,7 +198,7 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
     tracing::info!(
         "kernel flags: ssm_h_dtype={} gdn_fused_norm={} ssm_batched_recurrent={} \
          exact_verify={} ssm_tail_midchunk={} mtp_gate={} ssm_rollback_mode={:?} \
-         ssm_decode_ring_slots={} prefill_varlen_batch={}",
+         ssm_decode_ring_slots={} prefill_varlen_batch={} prefill_wave_exact={}",
         if gdn.h_f16 { "f16" } else { "f32" },
         gdn.fused_norm,
         gdn.batched_recurrent,
@@ -208,6 +219,7 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
         },
         // 2026-09-26: Resolved, so it may come from the environment.
         metrale_model_layers::layers::ops::prefill_varlen_enabled(),
+        metrale_model_layers::layers::ops::prefill_wave_exact_enabled(),
     );
 }
 

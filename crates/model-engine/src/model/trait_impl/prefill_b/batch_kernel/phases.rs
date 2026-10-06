@@ -17,7 +17,7 @@ use crate::traits::{PrefillSlice, SequenceState};
 use metrale_model_layers::layer::{BatchedAttnMetadata, ForwardContext, GdnPrefillBuffers};
 
 /// 2026-09-26: One stream's setup result, read by the layer loop and the finalize step.
-pub(super) struct PerStreamMeta {
+pub(in crate::model) struct PerStreamMeta {
     pub(super) chunk_start: usize,
     pub(super) proc_start: usize,
     pub(super) proc_count: usize,
@@ -29,6 +29,11 @@ pub(super) struct PerStreamMeta {
     // 2026-09-25: Σ proc_count of earlier streams: this stream's hidden-row
     // offset, read by the finalize step.
     pub(super) proc_off: usize,
+    // 2026-10-05: The prefix lookup's results and the metadata upload's layout, read by the
+    // exact wave (`wave.rs`), which builds each stream's single-stream context from them.
+    pub(super) kv_write_start: usize,
+    pub(super) marconi_skip: bool,
+    pub(super) layout: super::super::upload_meta::MetaLayout,
 }
 
 /// 2026-09-26: Whether the caller goes on (`Proceed`) or returns the carried result.
