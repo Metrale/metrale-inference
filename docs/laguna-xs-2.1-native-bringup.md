@@ -46,9 +46,12 @@ it establishes a restricted operating mode, not working batched inference.
 
 Before this diagnostic, arithmetic, a forced lookup_part tool round trip and SSE
 completion passed. The first six-hour campaign stopped at its first C2 failure
-(max_tokens 512). A replacement six-hour campaign is running with GPU batch limit
-1 and HTTP concurrency 1/2/4. Its completion is pending; retain the failed campaign
-separately rather than replacing it with the restricted result.
+(max_tokens 512). The replacement six-hour campaign used GPU batch limit 1 and HTTP concurrency
+1/2/4, but stopped during cycle 10 at concurrency 4: the model returned
+`33 + 7 = 40\n\n40` when the exact-format oracle required `40`. The arithmetic
+was correct; this is an instruction/output-format failure, distinct from the
+repeated-digit batching failure. Neither soak completed. Preserve both failures
+and test arithmetic correctness and instruction compliance separately in the next run.
 
 ## Remaining acceptance
 
