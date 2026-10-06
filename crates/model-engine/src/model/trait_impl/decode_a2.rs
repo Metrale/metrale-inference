@@ -22,6 +22,7 @@ use crate::traits::{ModelEp, ModelForward};
 use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState};
 use metrale_model_layers::layers::ops;
 
+mod diagnostics;
 mod pad_states;
 mod perseq;
 
@@ -177,7 +178,14 @@ impl TransformerModel {
         // 2026-09-25: The per-layer graph veto, as in `decode_a` (QSA's host top-k,
         // PLE's host hash on the hc multi-seq path).
         let layer_veto = self.decode_graph_veto;
-        let graph_key = if !ms_profile && !lora_eager && !layer_veto && multiseq_graphs_enabled() {
+        // 2026-10-06: Hidden-state diagnostics synchronize and copy to the host, so
+        // they cannot execute inside CUDA stream capture.
+        let graph_key = if !ms_profile
+            && !self.levers.conc_hsd
+            && !lora_eager
+            && !layer_veto
+            && multiseq_graphs_enabled()
+        {
             self.batch_decode_graph_key(&*seqs, padded_n)
         } else {
             None
@@ -339,28 +347,23 @@ impl TransformerModel {
             }
 
             // 2026-09-25: `METRALE_CONC_HSD`: after the embed and after each layer,
-            // log the first 16 bytes of each row's hidden state read as 4 f32
-            // values.
+            // log the first eight BF16 hidden values of each row as f32.
             let conc_hsd = self.levers.conc_hsd && padded_n >= 2 && self.comm.is_none();
             let dump_hidden = |label: &str, stream: u64| -> Result<()> {
                 if !conc_hsd {
                     return Ok(());
                 }
                 self.gpu.synchronize(stream)?;
-                let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(padded_n);
+                let mut bufs: Vec<[f32; 8]> = Vec::with_capacity(padded_n);
                 for i in 0..padded_n {
-                    let mut buf = vec![0u8; 4 * 4];
-                    let _ = self.gpu.copy_d2h(hidden.offset(i * h * fp32), &mut buf);
-                    let vals: Vec<f32> = buf
-                        .chunks_exact(4)
-                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                        .collect();
-                    bufs.push(vals);
+                    let mut buf = [0u8; 16];
+                    self.gpu.copy_d2h(hidden.offset(i * h * fp32), &mut buf)?;
+                    bufs.push(diagnostics::bf16_hidden_preview(&buf));
                 }
                 let pretty: Vec<String> = bufs
                     .iter()
                     .enumerate()
-                    .map(|(i, v)| format!("s{i}=[{:.4},{:.4},{:.4},{:.4}]", v[0], v[1], v[2], v[3]))
+                    .map(|(i, v)| format!("s{i}={v:?}"))
                     .collect();
                 tracing::info!("CONC_HSD {label}: {}", pretty.join(" "));
                 Ok(())
@@ -412,7 +415,7 @@ impl TransformerModel {
                     // or off a capture layer.
                     self.try_dflash_capture_all(layer_idx, padded_n, stream)?;
                     if conc_hsd {
-                        let _ = dump_hidden(&format!("after_L{:02}", layer_idx), stream);
+                        dump_hidden(&format!("after_L{:02}", layer_idx), stream)?;
                     }
                 }
                 if ms_profile {
