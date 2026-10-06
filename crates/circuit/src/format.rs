@@ -102,7 +102,7 @@ impl Format {
     pub fn is_edge_format(&self) -> bool {
         match self {
             Format::Bf16 | Format::F32 | Format::I32 | Format::Nvfp4 { .. } => true,
-            // Storage-only until the circuit has an E8M0 activation quantizer/lowering.
+            // 2026-10-06: Storage-only until the circuit has an E8M0 activation quantizer/lowering.
             Format::Mxfp4 => false,
             Format::Fp8E4m3 { scale } => {
                 matches!(scale, Scale::PerTensor | Scale::PerToken | Scale::Group(_))

@@ -210,7 +210,7 @@ fn path_c_an_unmapped_math_key_or_a_missing_quant_group_is_refused() {
     assert!(e.to_string().contains("'-'"), "{e}");
 }
 
-/// The refusal must exercise the archived revision, not a toy stand-in or mutable main.
+/// 2026-10-06: The refusal must exercise the archived revision, not a toy stand-in or mutable main.
 #[test]
 fn gpt_oss_fixture_matches_the_recorded_revision_and_checksum() {
     use sha2::{Digest, Sha256};

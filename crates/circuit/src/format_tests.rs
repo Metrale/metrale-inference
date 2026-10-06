@@ -101,7 +101,7 @@ fn a_dim_off_the_scale_group_has_no_size() {
     assert_eq!(Format::Bf16.bytes(u64::MAX, 2), None);
 }
 
-/// MXFP4 has no global multiplier, unlike NVFP4. Catch both scale-size and
+/// 2026-10-06: MXFP4 has no global multiplier, unlike NVFP4. Catch both scale-size and
 /// accidental format-alias regressions with multi-row expert-shaped matrices.
 #[test]
 fn mxfp4_counts_e8m0_groups_without_an_nvfp4_global() {
