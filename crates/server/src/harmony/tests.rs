@@ -137,3 +137,36 @@ fn header_text_can_arrive_one_character_at_a_time() {
         Some("functions.lookup")
     );
 }
+
+#[test]
+fn checkpoint_tool_header_preserves_json_content_type() {
+    let mut d = decoder();
+    d.seed_assistant_header("assistant to=functions.lookup")
+        .unwrap();
+    d.push(Token::Channel).unwrap();
+    d.push(Token::Text("commentary json")).unwrap();
+    d.push(Token::Separator).unwrap();
+    d.push(Token::Text("{\"id\":17}")).unwrap();
+    let message = d.push(Token::Handoff).unwrap().unwrap();
+    assert_eq!(message.content_type.as_deref(), Some("json"));
+    assert_eq!(message.recipient.as_deref(), Some("functions.lookup"));
+    assert_eq!(message.body, "{\"id\":17}");
+    d.finish().unwrap();
+}
+
+#[test]
+fn ambiguous_content_type_is_rejected() {
+    for (header, meta) in [
+        ("assistant to=functions.lookup", "commentary json json"),
+        ("assistant to=functions.lookup", "commentary xml"),
+        ("assistant json to=functions.lookup", "commentary"),
+        ("assistant", "final json"),
+    ] {
+        let mut d = decoder();
+        d.seed_assistant_header(header).unwrap();
+        d.push(Token::Channel).unwrap();
+        d.push(Token::Text(meta)).unwrap();
+        assert!(d.push(Token::Separator).is_err());
+        assert!(d.push(Token::Finish).is_err());
+    }
+}

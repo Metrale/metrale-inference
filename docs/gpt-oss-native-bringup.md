@@ -91,11 +91,45 @@ Existing architecture coverage and performance claims are unchanged.
 It preserves message-end, assistant-turn-end and tool-handoff as distinct typed
 values, keeps channel and recipient separate from body text, supports either
 header ordering and a prompt-seeded partial header, and rejects malformed or
-truncated streams. Errors poison the stream. Seven standalone tests cover these
-boundaries, including Unicode chunk splits and undeclared recipients.
+truncated streams. Errors poison the stream. Tests cover these boundaries,
+including Unicode chunk splits and undeclared recipients. The checkpoint tool
+header `commentary json` preserves a separate JSON content type; duplicates,
+unknown types and JSON metadata without a tool recipient are refused.
 
 This decoder is deliberately not connected to serving yet. Next steps are
-checkpoint-specific special-token mapping, preserving developer messages during
-prompt rendering, scheduler termination metadata, shared API IR conversion,
+preserving developer messages during prompt rendering, scheduler termination
+metadata, shared API IR conversion,
 JSON/tool-schema validation, and blocking/streaming/Anthropic parity. No native
 tool-use result is claimed by these framing tests.
+
+### Checkpoint token identity adapter
+
+`harmony::adapter::TokenMap` reads supplied tokenizer JSON without performing I/O.
+It derives IDs from metadata, validates unique vocabulary/added-token identities,
+and requires the six exact special-token declarations used by the pinned template:
+
+| Token | Pinned ID | Decoder event |
+| --- | --- | --- |
+| `<|start|>` | 200006 | Start |
+| `<|channel|>` | 200005 | Channel |
+| `<|message|>` | 200008 | Separator |
+| `<|end|>` | 200007 | Message end |
+| `<|return|>` | 200002 | Assistant turn end |
+| `<|call|>` | 200012 | Tool handoff |
+
+These are the checkpoint's actual spellings, not aliases inferred from another
+Harmony release. Runtime dispatch uses token identity only. Ordinary text that
+spells a delimiter stays text. Padding, reserved tokens, unsupported specials and
+IDs absent from the tokenizer are errors, not successful completion. The
+classifier must precede skip-special-token decoding and scheduler EOS filtering.
+Ordinary token runs still need byte-safe incremental decoding before their text
+enters the framing decoder; that serving integration is not implemented here.
+
+The fixture at `crates/server/src/harmony/fixtures/gpt-oss-token-metadata.json`
+contains all 21 added-token records and only the two boundary ordinary vocabulary
+entries, selected without modification from the pinned tokenizer. It is a compact
+metadata test fixture, not a usable tokenizer. The complete source tokenizer's
+SHA-256 is `0614fe83cadab421296e664e1f48f4261fa8fef6e03e63bb75c20f38e37d07d3`.
+An independent adapter run against that complete file classified 199,998 ordinary
+IDs and six framing IDs; across the 201,088 model logits, 1,084 unsupported or
+unassigned IDs were refused. This validates metadata handling only, not inference.

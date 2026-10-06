@@ -7,10 +7,12 @@
 //! Callers seed the exact unfinished assistant header from the rendered prompt and
 //! carry Finish/Handoff before the scheduler discards an EOS token.
 
+pub mod adapter;
+
 use std::collections::BTreeSet;
 
 /// 2026-10-06: Token classes supplied by the checkpoint-specific tokenizer adapter.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Token<'a> {
     Start,
     Channel,
@@ -34,6 +36,7 @@ pub enum Ending {
 pub struct Message {
     pub channel: Option<String>,
     pub recipient: Option<String>,
+    pub content_type: Option<String>,
     pub body: String,
     pub ending: Ending,
 }
@@ -55,6 +58,7 @@ pub struct Decoder {
     meta: Option<String>,
     channel: Option<String>,
     recipient: Option<String>,
+    content_type: Option<String>,
     body: String,
     tools: BTreeSet<String>,
     header_limit: usize,
@@ -74,6 +78,7 @@ impl Decoder {
             meta: None,
             channel: None,
             recipient: None,
+            content_type: None,
             body: String::new(),
             tools: tools.into_iter().collect(),
             header_limit,
@@ -114,6 +119,7 @@ impl Decoder {
                 self.meta = None;
                 self.channel = None;
                 self.recipient = None;
+                self.content_type = None;
                 self.body.clear();
                 self.phase = Phase::Header;
             }
@@ -171,6 +177,7 @@ impl Decoder {
                 return Ok(Some(Message {
                     channel: self.channel.take(),
                     recipient: self.recipient.take(),
+                    content_type: self.content_type.take(),
                     body: std::mem::take(&mut self.body),
                     ending,
                 }));
@@ -193,7 +200,16 @@ impl Decoder {
                 return Err("unsupported Harmony channel");
             }
             self.channel = Some(channel.into());
-            fields.extend(words);
+            for word in words {
+                if word == "json" {
+                    if self.content_type.is_some() {
+                        return Err("duplicate Harmony content type");
+                    }
+                    self.content_type = Some(word.into());
+                } else {
+                    fields.push(word);
+                }
+            }
         }
         for field in fields {
             let recipient = field
@@ -207,9 +223,15 @@ impl Decoder {
             }
             self.recipient = Some(recipient.into());
         }
+        if self.content_type.is_some() && self.recipient.is_none() {
+            return Err("Harmony JSON content type requires tool recipient");
+        }
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod adapter_tests;
