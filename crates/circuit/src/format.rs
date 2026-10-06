@@ -40,6 +40,8 @@ pub enum Format {
         /// 2026-09-28: Scale sharing.
         scale: Scale,
     },
+    /// 2026-10-06: MXFP4: E2M1 values with one E8M0 scale per 32 values, no global scale.
+    Mxfp4,
     /// 2026-09-28: NVFP4: E2M1 values, one E4M3 scale per `group` values, one F32 global.
     Nvfp4 {
         /// 2026-09-28: Values per scale.
@@ -50,7 +52,7 @@ pub enum Format {
 /// 2026-09-28: A format string that is not one of the spellings [`Format::parse`] accepts.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "unknown format `{0}` (expected bf16, f32, i32, fp8/<token|tensor|channel|g<n>|block<r>x<c>> or nvfp4/g<n>)"
+    "unknown format `{0}` (expected bf16, f32, i32, fp8/<token|tensor|channel|g<n>|block<r>x<c>>, nvfp4/g<n> or mxfp4/g32)"
 )]
 pub struct FormatError(pub String);
 
@@ -63,6 +65,7 @@ impl Format {
             "bf16" => return Ok(Format::Bf16),
             "f32" => return Ok(Format::F32),
             "i32" => return Ok(Format::I32),
+            "mxfp4/g32" => return Ok(Format::Mxfp4),
             _ => {}
         }
         let (head, tail) = s.split_once('/').ok_or_else(bad)?;
@@ -84,6 +87,7 @@ impl Format {
             Format::Bf16 => "bf16".into(),
             Format::F32 => "f32".into(),
             Format::I32 => "i32".into(),
+            Format::Mxfp4 => "mxfp4/g32".into(),
             Format::Fp8E4m3 { scale } => format!("fp8/{}", scale_name(*scale)),
             Format::Nvfp4 { group } => format!("nvfp4/g{group}"),
         }
@@ -98,6 +102,8 @@ impl Format {
     pub fn is_edge_format(&self) -> bool {
         match self {
             Format::Bf16 | Format::F32 | Format::I32 | Format::Nvfp4 { .. } => true,
+            // Storage-only until the circuit has an E8M0 activation quantizer/lowering.
+            Format::Mxfp4 => false,
             Format::Fp8E4m3 { scale } => {
                 matches!(scale, Scale::PerTensor | Scale::PerToken | Scale::Group(_))
             }
@@ -142,6 +148,12 @@ impl Format {
                     }
                 };
                 elems.checked_add(scales.checked_mul(4)?)
+            }
+            Format::Mxfp4 => {
+                if !dim.is_multiple_of(32) {
+                    return None;
+                }
+                (elems / 2).checked_add(elems / 32)
             }
             Format::Nvfp4 { group } => {
                 let g = u64::from(*group);
