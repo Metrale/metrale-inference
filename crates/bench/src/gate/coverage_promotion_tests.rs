@@ -26,7 +26,8 @@ fn every_promotion_candidate_is_a_registered_benchmark() {
             "kat-equality-gate-nemotron-nano",
             "kat-equality-gate-nemotron-super",
             "bfcl-subset-mini-nemotron-nano",
-            "bfcl-subset-mini-nemotron-super"
+            "bfcl-subset-mini-nemotron-super",
+            "concurrency-sweep-moe-nvfp4"
         ],
         "promotion tracking must not pass vacuously or gain an unreviewed candidate"
     );
@@ -86,7 +87,8 @@ fn the_contamination_candidate_accrues_debt_for_engine_changes() {
             "kat-equality-gate-nemotron-nano",
             "kat-equality-gate-nemotron-super",
             "bfcl-subset-mini-nemotron-nano",
-            "bfcl-subset-mini-nemotron-super"
+            "bfcl-subset-mini-nemotron-super",
+            "concurrency-sweep-moe-nvfp4"
         ],
         "a scheduler change is exactly the kind of edit that can cross-wire \
          concurrent requests, so the contamination candidate is owed — and the \
@@ -97,7 +99,8 @@ fn the_contamination_candidate_accrues_debt_for_engine_changes() {
          concurrency-sweep-moe from 2026-09-20 to 2026-09-23; both are REQUIRED \
          now, and a required gate is owed as a gate, never as debt — \
          `every_promotion_candidate_is_a_registered_benchmark` refuses both at \
-         once; got {owed:?}"
+         once; concurrency-sweep-moe-nvfp4 is owed the same as the other two \
+         concurrency gate ids, being a candidate still; got {owed:?}"
     );
     assert!(
         coverage::promotion_debt(["docs/adr/README.md", "site/index.html"]).is_empty(),

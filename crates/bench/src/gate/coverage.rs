@@ -1082,11 +1082,17 @@ pub const PROMOTION_CANDIDATES: &[GateCoverage] = &[
         id: "bfcl-subset-mini-nemotron-super",
         excludes: BFCL_EXCLUDES,
     },
+    // 2026-10-04: The MoE family's native NVFP4 checkpoint, a candidate until it is hand-measured
+    // and its floors are committed (`concurrency-sweep-moe` itself followed this path).
+    GateCoverage {
+        id: "concurrency-sweep-moe-nvfp4",
+        excludes: CONCURRENCY_EXCLUDES,
+    },
 ];
 
 /// 2026-09-26: Registered benchmarks that are not required gates, each with the reason
 /// (`every_excusal_names_a_real_benchmark_and_a_reason`).
-pub const NOT_REQUIRED: [(&str, &str); 13] = [
+pub const NOT_REQUIRED: [(&str, &str); 14] = [
     (
         "quick-speed-bench",
         "a single-user speed probe with no thresholds and no baseline — a MEASUREMENT tool, \
@@ -1153,6 +1159,14 @@ pub const NOT_REQUIRED: [(&str, &str); 13] = [
         "a calibration MEASUREMENT for the speculative cost model, with no baseline and no \
          bounds: it records the per-step verify and draft cost at each batch width so the \
          cost table can be fitted, and a calibration has nothing to regress against",
+    ),
+    (
+        "concurrency-sweep-moe-nvfp4",
+        "not required YET: a promotion candidate (see PROMOTION_CANDIDATES), the MoE family's \
+         native NVFP4 checkpoint. Its BENCH.toml entry is unmeasured (no vLLM one-shot baseline \
+         has yet been measured on the checked-in harness for this checkpoint either); it becomes \
+         required once a hand-measured run sets its floors, the same bootstrap \
+         `concurrency-sweep-moe` followed",
     ),
     (
         "mlperf-agentic-subset",

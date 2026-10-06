@@ -78,6 +78,15 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
             value.to_string(),
         )
     };
+    let moe_nvfp4 = |key: &str, value: &str| {
+        (
+            "gb10".to_string(),
+            "qwen3.6-35b-a3b".to_string(),
+            "concurrency-sweep-moe-nvfp4".to_string(),
+            key.to_string(),
+            value.to_string(),
+        )
+    };
     assert_eq!(
         observed,
         vec![
@@ -121,6 +130,10 @@ fn every_committed_param_override_parses_against_its_gates_schema() {
             moe("isls", "128"),
             moe("osl", "1024"),
             moe("prompt_mode", "essay"),
+            moe_nvfp4("concurrencies", "1,2,4,8,16"),
+            moe_nvfp4("isls", "128"),
+            moe_nvfp4("osl", "1024"),
+            moe_nvfp4("prompt_mode", "essay"),
             (
                 "gb10".into(),
                 "qwen3.8-27b".into(),
