@@ -40,6 +40,14 @@ fn reference_layer_mix_bindings_and_storage_survive_instantiation() {
             attention.binding,
             [format!("model.layers.{layer}.self_attn.sinks")]
         );
+        let routing = c
+            .nodes
+            .iter()
+            .find(|n| n.layer == Some(layer) && n.local == "top_k")
+            .unwrap();
+        assert_eq!(c.edges[routing.outputs[0]].format, Format::Bf16);
+        assert_eq!(routing.params["output_rounding"], "bf16");
+        assert_eq!(routing.params["unlowered"], "selected_logits_softmax");
         let gate = c
             .nodes
             .iter()

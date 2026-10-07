@@ -231,8 +231,8 @@ params = { bias = "true", unlowered = "router_bias" }
 id = "top_k"
 op = "top_k"
 in = ["router_logits"]
-out = [{ edge = "topk_w", format = "f32", shape = "n x top_k" }, { edge = "topk_id", format = "i32", shape = "n x top_k" }]
-params = { top_k = "4", scoring = "topk_then_softmax", unlowered = "selected_logits_softmax" }
+out = [{ edge = "topk_w", format = "bf16", shape = "n x top_k" }, { edge = "topk_id", format = "i32", shape = "n x top_k" }]
+params = { top_k = "4", scoring = "topk_then_softmax", output_rounding = "bf16", unlowered = "selected_logits_softmax" }
 
 [[block.moe.node]]
 id = "gate_up"
