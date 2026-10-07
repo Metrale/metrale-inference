@@ -114,7 +114,11 @@ def main():
             entry = dict(position=current_position[0],layer=layer_index,stage=stage)
             if stage == 'router':
                 scores, indices = output
-                entry.update(indices=indices.cpu().tolist(), scores=scores.float().cpu().tolist())
+                router_input = inputs[0].reshape(-1, module.hidden_dim)
+                logits = torch.nn.functional.linear(router_input, module.weight, module.bias)
+                entry.update(indices=indices.cpu().tolist(), scores=scores.float().cpu().tolist(),
+                             router_logits_bf16_bits=logits.contiguous().view(torch.int16).cpu().reshape(-1).tolist(),
+                             input_bf16_bits=router_input.contiguous().view(torch.int16).cpu().reshape(-1).tolist())
             else:
                 value = output[0] if isinstance(output, tuple) else output
                 entry['bf16_bits'] = value.detach().contiguous().view(torch.int16).cpu().reshape(-1).tolist()
