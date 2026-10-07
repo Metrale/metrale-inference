@@ -63,3 +63,24 @@ Offline replay evidence is `offline-id-comparison.json` in the same private
 package, with raw IDs, renderer source hashes and the native oracle binary hash.
 The CPU-only reference container used no GPU, model weights or network. Original
 semantic and formatting scores are unchanged.
+
+## Private tensor-core diagnostic follow-up
+
+The original private packed tensor-core path was also run on the exact same
+12 request JSON objects, with the same 2,048 context and generation policy.
+Its full-128 gate/down dispatch marker was observed. It passed **6/12 complete
+task attempts and 78/93 repeated semantic checks**, with **0/12 strict format**.
+It still failed retry-delay and dependency-order tasks in every repeat, although
+generated code differed from the accepted native path. The three additional
+individual checks do not repair either complete task or establish broader quality.
+
+This used binary
+`ad473b4507a1201150d56fb9d9cc5e50ad2ccb8eb3fdf97ba64d1f3e379bd0d3`,
+source base `6d75fdc6ee4574b295b76410486625e15bd095ad` plus the frozen private
+CLI/runtime overlay in its identity receipt. The separate rejected sparse-gate
+variant was not used. Private collection hash:
+`2f0751ece08c0d5bff5daa54674e9b96c08a5ed5f9979ca318842586a5fb07ad`.
+The original failed 251-token numerical comparison remains failed; this diagnostic
+has not been promoted or admitted as supported. `comparison-three-arms.json`
+retains all original scores and per-case results. No performance claim derives
+from these correctness runs.
