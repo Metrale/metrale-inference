@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import time
+import types
 
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['TRANSFORMERS_OFFLINE'] = '1'
@@ -36,6 +37,7 @@ def main():
     parser.add_argument('--input-ids', default='1,2,3,4')
     parser.add_argument('--input-ids-file', type=Path)
     parser.add_argument('--inspect-only', action='store_true')
+    parser.add_argument('--attention-policy', choices=['pinned-bf16','diagnostic-fp32'], default='pinned-bf16')
     args = parser.parse_args()
     if transformers.__version__ != '4.55.0':
         raise RuntimeError('reference requires Transformers 4.55.0')
@@ -50,7 +52,7 @@ def main():
         raise RuntimeError('unexpected checkpoint revision')
     provenance = dict(scope='Transformers eager reference; MXFP4 weights explicitly dequantized to BF16',
                       revision=REVISION, torch=torch.__version__, transformers=transformers.__version__,
-                      input_ids=ids, attention_implementation='eager', gpu_memory_fraction=0.85,
+                      input_ids=ids, attention_implementation='eager', attention_policy=args.attention_policy, gpu_memory_fraction=0.85,
                       source_hashes={str(p):sha(p) for p in [Path(__file__),Path(inspect.getfile(modeling_gpt_oss)),Path(inspect.getfile(mxfp4))]},
                       backup_manifest_sha256=sha(args.backup_manifest), layer_trace='after complete decoder layer including post-MoE residual, before final norm',
                       logits_trace='LM head after final norm, stored BF16', inspection_only=args.inspect_only)
@@ -70,6 +72,18 @@ def main():
         if name not in records or actual != records[name]['sha256']:
             raise RuntimeError(f'checkpoint digest mismatch: {name}')
         provenance['checkpoint_sha256'][name] = actual
+    # 2026-10-07: Optional reference-only ablation promotes inputs to the unchanged pinned eager body.
+    # Dense FP32 reduction is not the native online reduction; this isolates dtype effects only.
+    if args.attention_policy == 'diagnostic-fp32':
+        original = modeling_gpt_oss.eager_attention_forward
+        def fp32_attention(module, query, key, value, attention_mask, scaling, dropout=0.0, **kwargs):
+            proxy = types.SimpleNamespace(num_key_value_groups=module.num_key_value_groups,
+                                          sinks=module.sinks.float(), training=module.training)
+            output, weights = original(proxy, query.float(), key.float(), value.float(),
+                                       None if attention_mask is None else attention_mask.float(),
+                                       scaling, dropout=dropout, **kwargs)
+            return output.to(query.dtype), weights
+        modeling_gpt_oss.eager_attention_forward = fp32_attention
     torch.cuda.set_per_process_memory_fraction(0.85, 0)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
