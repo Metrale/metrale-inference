@@ -620,3 +620,9 @@ kind = "image temporal sinusoidal embedding (diagnostic residual)"
 component = "vision"
 kind = "image VAE diagnostic FP32 convolution / channel norm"
 names = ["image_vae_conv2d_f32", "image_vae_norm_f32"]
+
+# 2026-10-06: Wide-head original-FP32 VAE residual; no existing dispatch changes.
+[[rule]]
+component = "attention"
+kind = "image VAE D1152 noncausal FP32 (diagnostic residual)"
+names = ["image_vae_attention_f32"]
