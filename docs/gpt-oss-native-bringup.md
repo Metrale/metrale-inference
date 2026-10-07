@@ -192,3 +192,26 @@ exercise valid binding, each missing tensor, every shape/dtype mutation and
 boundary controls, using inert addresses. These tests do not read learned values
 or execute a GPU. ModelWeightLoader construction, matching kernels and the actual
 forward path are still absent; the factory remains intentionally unsupported.
+
+## Projection bias GPU primitive
+
+The `projection_bias_bf16` CUDA epilogue consumes FP32 projection accumulators,
+adds the checkpoint's BF16 bias in FP32, and rounds once to BF16. It is intended
+for Q/K/V/O/router projections after the existing `dense_gemv_bf16_fp32out`.
+Expert `bmm` plus bias has a different intermediate rounding contract and is
+not assigned this primitive. The Rust launcher rejects empty or overflowing
+geometry, null or misaligned addresses, address overflow and overlapping output.
+
+The standalone CUDA harness at
+`crates/model-layers/tests/cuda/projection_bias.cu` passed on GB10 with CUDA 13,
+`--fmad=false -arch=sm_121`: all 777 outputs matched an independent integer-bit
+round-to-nearest-even oracle. The corpus includes odd column counts, row bias
+broadcasting, tail threads, signed zero, subnormals, cancellation, infinities and
+NaNs. A known-bad early accumulator rounding control differs on 180 elements.
+Optional JSON output retains operand and result bits for independent replay.
+Two host launcher tests also passed; they establish ABI/refusal behavior only.
+
+This is a named LKB residual, `projection_bias_before_cast`, with primitive GPU
+parity. The common source is inherited by GB10, Hopper and B200; the addition
+changes no existing kernel entry point or caller. There is no GPT kernel target,
+forward-path linkage, full `F.linear` parity or measured performance yet.

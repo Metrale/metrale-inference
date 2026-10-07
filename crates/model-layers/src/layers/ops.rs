@@ -9,6 +9,9 @@
 
 #[path = "ops/activations.rs"]
 mod activations;
+#[path = "ops/projection_bias.rs"]
+mod projection_bias;
+pub use projection_bias::projection_bias_bf16;
 #[path = "ops/derived_weights.rs"]
 mod derived_weights;
 #[path = "ops/dispatch_config.rs"]
