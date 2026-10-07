@@ -280,7 +280,7 @@ fn chunk_scratch_budget_matches_allocation_and_bound_release() {
     let gpu = MockGpuBackend::new();
     let before = gpu.live_bytes().unwrap();
     let expected = PrefillScratch::required_bytes(16, 8192).unwrap();
-    assert_eq!(expected, 1_268_224);
+    assert_eq!(expected, 2_834_944);
     let mut scratch = PrefillScratch::new(&gpu, 16, 8192).unwrap();
     assert_eq!(gpu.live_bytes().unwrap() - before, expected);
     scratch.admit(16, 8192, 7).unwrap();

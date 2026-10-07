@@ -73,3 +73,32 @@ extern "C" __global__ void gpt_oss_mxfp4_selected_bf16(
         scales + expert * rows * (cols / 32), input + size_t(slot) * input_stride,
         output + size_t(slot) * rows, rows, cols);
 }
+
+// 2026-10-07: Token-grid composition reuses the identical dot helper. Outputs
+// are [4,tokens,rows], matching the existing expert reduction. Input is either
+// [tokens,cols] (slot stride0) or [4,tokens,cols] (slot stride tokens*cols).
+extern "C" __global__ void gpt_oss_mxfp4_selected_tokens_bf16(
+    const unsigned char* blocks, const unsigned char* scales,
+    const __nv_bfloat16* input, const unsigned* ids, __nv_bfloat16* output,
+    unsigned rows, unsigned cols, unsigned tokens, unsigned input_slot_stride) {
+    const unsigned slot = blockIdx.y, token = blockIdx.z;
+    if (slot >= 4 || token >= tokens) return;
+    const unsigned* token_ids = ids + size_t(token) * 4;
+    const unsigned row = blockIdx.x * 4 + threadIdx.x / 32;
+    const size_t output_base = (size_t(slot) * tokens + token) * rows;
+    bool valid = true;
+    for (unsigned a = 0; a < 4; ++a) {
+        valid &= token_ids[a] < 32;
+        for (unsigned b = 0; b < a; ++b) valid &= token_ids[a] != token_ids[b];
+    }
+    if (!valid) {
+        if (row < rows && !(threadIdx.x & 31))
+            output[output_base + row] = __float2bfloat16_rn(nanf(""));
+        return;
+    }
+    const size_t expert = token_ids[slot];
+    gpt_oss_mxfp4_rows(blocks + expert * rows * (cols / 2),
+        scales + expert * rows * (cols / 32),
+        input + size_t(slot) * input_slot_stride + size_t(token) * cols,
+        output + output_base, rows, cols);
+}

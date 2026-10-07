@@ -82,3 +82,22 @@ extern "C" __global__ void gpt_oss_selected_bias_bf16(
     values[i] = __float2bfloat16_rn(__bfloat162float(values[i]) +
         __bfloat162float(bias[size_t(expert) * rows + i % rows]));
 }
+
+// 2026-10-07: Separate BF16 bias for slot-major [4,tokens,rows]. Expert IDs
+// are token-major [tokens,4]; sharing one expert across tokens is valid.
+extern "C" __global__ void gpt_oss_selected_bias_tokens_bf16(
+    __nv_bfloat16* values, const __nv_bfloat16* bias, const unsigned* ids,
+    unsigned rows, unsigned tokens) {
+    const unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= size_t(4) * tokens * rows) return;
+    const unsigned slot = i / (tokens * rows), token = (i / rows) % tokens;
+    const unsigned* token_ids = ids + size_t(token) * 4;
+    bool valid = true;
+    for (unsigned a = 0; a < 4; ++a) {
+        valid &= token_ids[a] < 32;
+        for (unsigned b = 0; b < a; ++b) valid &= token_ids[a] != token_ids[b];
+    }
+    if (!valid) { values[i] = __float2bfloat16_rn(nanf("")); return; }
+    values[i] = __float2bfloat16_rn(__bfloat162float(values[i]) +
+        __bfloat162float(bias[size_t(token_ids[slot]) * rows + i % rows]));
+}

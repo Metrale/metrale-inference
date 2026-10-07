@@ -189,3 +189,65 @@ native packed MXFP4, BF16 KV/head, greedy low reasoning, localhost and a 0.85
 memory-utilization ceiling on one GB10. Raw SSE, source hashes, startup logs,
 predeclared plans and failures are retained privately. No learned weights or
 weight-derived fixture tensors are published here.
+
+## Token-grid experts inside explicit chunks
+
+The next increment groups the MoE work across up to sixteen tokens, as well as
+four selected experts. Gate/down projections reuse the unchanged packed MXFP4
+dot helper; bias and activation retain their separate BF16 stages. Intermediates
+are slot-major `[4,tokens,width]`, with token-major IDs/scores. The existing
+ascending-expert-ID reduction is unchanged. The host still validates every token's
+four IDs; repeated experts across different tokens are valid. Scalar prefill and
+decode remain unchanged, and the chunk serving flag remains explicit.
+
+Persistent scratch increases to 2,834,944 bytes per layer at the maximum page
+capacity, or 68,038,656 bytes for 24 layers. The same allocation-size function
+charges that reserve before KV-pool sizing; this does not raise the 0.85 memory
+budget or admit additional concurrent sequences.
+
+The constructed gate covers 48 serial/token-grid BF16-exact comparisons,
+36 isolated invalid-ID cases, and an adversarial weighted-reduction case.
+Wrong slot/token strides and wrong reduction order are detected. The independent
+reduction oracle preserves BF16 products followed by ordered FP32 addition; the
+projection comparison establishes equality to the existing native operator,
+not new equivalence to a different reference GEMM. Full-model widths 1/2/8/16/15
+match every scalar hidden/cache byte over 251 prompt tokens and the following
+decode, including nonzero positions, partial pages and the sliding boundary.
+NaN-filled future cache, stream/refusal/poison controls and the original scalar
+hidden SHA above remain unchanged. Linux CUDA wrapper tests and scoped Clippy
+pass; SM90/SM100 compilation passes without a hardware-performance claim.
+
+The release API gates pass lifecycle 7/7, text quality 12/12, current blocking
+tools 9/9 and streamed tools 5/5. The successor blocking probe checks unsupported
+Anthropic tool streaming instead of the historical OpenAI streaming refusal;
+the original obsolete-expectation failure remains retained separately.
+
+Two idle-host sessions reverse the order of the frozen incumbent chunk and
+candidate chunk binaries. Each arm has the same warmup and three interleaved
+repeats; all output counts, final texts and terminal checks match. The unchanged
+predeclared regression/speedup gate passes both sessions, with 5.71% and 5.60%
+lower geometric-mean total latency. Combined six-request medians per arm are:
+
+| Workload | Incumbent TTFT | Token-grid TTFT | Incumbent total | Token-grid total | Token-grid first visible |
+|---|---:|---:|---:|---:|---:|
+| Integer arithmetic | 1.065 s | 0.976 s | 1.540 s | 1.451 s | 1.424 s |
+| Count 1–16 | 1.139 s | 1.042 s | 2.672 s | 2.576 s | 1.441 s |
+| Early identifier retrieval | 3.931 s | 3.595 s | 4.508 s | 4.172 s | 4.096 s |
+
+This is an additional **5.64% total-latency reduction** (1.0597×) over the prior
+chunk implementation. Decode remains approximately 40.35–40.57 tokens/s; it is
+not a decode-speed improvement. The optimized serving reference remains faster.
+Numerical qualification, energy, batching and general support certification
+remain open.
+
+The incumbent binary SHA is
+`a6d3747502364d8bc54c51a989b1859ab3be31ea9720d7c292f48b6d1db9da5d`;
+the token-grid binary is
+`36fa12529b5b0e2916faa38ce78de452a509bc64c7074febba6c6905c23b3b0a`.
+The latter uses source base `50d49ae` plus the hashed token-grid overlay; final
+comment corrections and generated documentation were not part of that build.
+Source/PTX hashes, exact commands, raw arrays, full traces, API responses and
+both-order timings are retained in the source-bound receipts. A pre-GPU relative
+library-path failure and a stopped build with the wrong target-variable name are
+also retained; the accepted build explicitly selects GB10/GPT-OSS-20B/MXFP4 and
+checks staged-source hashes plus the required PTX entry points before startup.

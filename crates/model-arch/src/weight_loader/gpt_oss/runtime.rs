@@ -13,6 +13,7 @@ mod diagnostics;
 pub use diagnostics::DiagnosticTensor;
 mod forward;
 mod prefill;
+mod prefill_experts;
 mod prefill_scratch;
 mod serving_prefill;
 pub use prefill_scratch::PrefillScratch;

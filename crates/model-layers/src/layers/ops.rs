@@ -26,6 +26,11 @@ pub use gpt_oss_staged_attention::gpt_oss_staged_attention_bf16;
 #[path = "ops/gpt_oss_router.rs"]
 mod gpt_oss_router;
 pub use gpt_oss_router::gpt_oss_router_bf16;
+#[path = "ops/gpt_oss_token_experts.rs"]
+mod gpt_oss_token_experts;
+pub use gpt_oss_token_experts::{
+    GptOssTokenExperts, gpt_oss_mxfp4_token_experts, gpt_oss_token_expert_bias,
+};
 #[path = "ops/gpt_oss_mxfp4_gemv.rs"]
 mod gpt_oss_mxfp4_gemv;
 pub use gpt_oss_mxfp4_gemv::gpt_oss_mxfp4_gemv_bf16;

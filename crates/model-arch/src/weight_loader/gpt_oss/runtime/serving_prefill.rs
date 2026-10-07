@@ -6,6 +6,8 @@ impl GptOssLayer {
     pub(crate) fn set_chunk_prefill(&mut self, enabled: bool, gpu: &dyn GpuBackend) -> Result<()> {
         if enabled {
             gpu.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm_fp32out")?;
+            gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_selected_tokens_bf16")?;
+            gpu.kernel("gpt_oss_expert_ops", "gpt_oss_selected_bias_tokens_bf16")?;
         }
         self.chunk_prefill = enabled;
         Ok(())

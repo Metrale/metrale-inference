@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! 2026-10-07: Explicit C1 chunk experiment. Not a TransformerLayer::prefill override.
+//! 2026-10-07: Bounded C1 chunks used by explicit experimental serving admission.
 use super::prefill_scratch::PrefillScratch;
 use super::*;
 use weights::Linear;
 impl GptOssLayer {
-    /// 2026-10-07: Diagnostic one-sequence chunk; scalar decode remains production.
+    /// 2026-10-07: One-sequence chunk; scalar prefill remains the default serving policy.
     /// hidden holds rows contiguous BF16 vectors. Scratch is exclusively borrowed.
     #[allow(clippy::too_many_arguments)]
     pub fn forward_chunk(
@@ -281,18 +281,7 @@ impl GptOssLayer {
                 "GPT chunk invalid/duplicate experts"
             );
         }
-        // 2026-10-07: Grouped four-expert scalar path is unchanged; only its inputs move.
-        for t in 0..rows {
-            self.expert_forward(
-                hidden.offset(t * 5760),
-                s.norm.offset(t * 5760),
-                s.ids.offset(t * 16),
-                s.scores.offset(t * 64),
-                state,
-                gpu,
-                stream,
-            )?;
-        }
+        self.chunk_experts(hidden, rows as u32, s, gpu, stream)?;
         Ok(())
     }
 }
