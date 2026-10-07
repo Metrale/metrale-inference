@@ -17,6 +17,9 @@ mod gpt_oss_expert_ops;
 pub use gpt_oss_expert_ops::{
     gpt_oss_expert_bias_bf16, gpt_oss_expert_reduce_bf16, gpt_oss_swiglu_bf16,
 };
+#[path = "ops/gpt_oss_staged_attention.rs"]
+mod gpt_oss_staged_attention;
+pub use gpt_oss_staged_attention::gpt_oss_staged_attention_bf16;
 #[path = "ops/gpt_oss_router.rs"]
 mod gpt_oss_router;
 pub use gpt_oss_router::gpt_oss_router_bf16;

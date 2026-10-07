@@ -1,8 +1,9 @@
 # GPT-OSS-20B native bring-up
 
-Status: architecture foundation only. No native serving, correctness, performance,
-or tool-use pass is claimed. The downloaded checkpoint and backup are separate
-from engine qualification. Owner: investor-mvp issue #43.
+Status: native eager C1 prototype executes the packed checkpoint and bounded
+Harmony generation. Factory/API serving is not registered. Full-model numerical
+differences remain unresolved; no broad correctness, performance or tool-use
+qualification is claimed. Verified backups are complete. Owner: investor-mvp #43.
 
 ## Reproducible inputs
 
@@ -52,15 +53,14 @@ golden instance or complete native lowering is claimed.
 
 ## Explicit architecture and kernel residuals
 
-| Residual | Existing reusable work | Required evidence / change |
+| Area | Implemented and observed | Still open |
 | --- | --- | --- |
-| MXFP4 precision declaration | Native rank2 E8M0 pointer helper in model-layers | Preserve scale encoding through declared precision; never infer MXFP4 from group32 alone. Validate packed expert block views and shard binding. |
-| Attention sinks at HD64 | DeepSeek HD512 sink attention | Generic GQA decode/prefill, sliding/full and batching; sink affects denominator only. |
-| Biased attention and experts | dense_gqa circuit describes QKV bias | O/router/expert bias bindings and lowering; weighted down bias included. |
-| Nonstandard gated activation | Shared SiLU families | Explicit alpha, clamp and offset policy plus exact interleaved layout; no plain-SiLU substitution. |
-| YaRN | Existing rope/table utilities | Half-split positions, continuous correction boundaries with truncate=false, scale parity. |
-| Routing and norm precision | Shared routing/RMS kernels | Selected-logit softmax and FP32 scale-before-cast reference parity. |
-| Harmony serving | Existing request/streaming/parser framework | Separate channel/recipient boundaries, tool handoff, turn completion, round trips and cancellation. |
+| MXFP4 storage | Strict precision/config, 459 bindings, packed expert GEMV and native full forward | Executable circuit lowering and broader numerical qualification |
+| Attention | Parameterized online FP32 sink kernel; bounded staged-BF16 diagnostic kernel | Full-model parity, prefill/batching, optimization |
+| Bias and activation | Projection bias, expert bias, asymmetric interleaved activation and weighted reduction | Broader checkpoint mixtures and full-model acceptance |
+| YaRN | Continuous half-split kernel with large-position CUDA comparisons | Full-model long-context qualification |
+| Routing/norm | Selected-logit BF16 scores and plain norm; same-operand probes | Accumulated numerical differences and expert decision sensitivity |
+| Harmony | Token-aware parser tests and one bounded native final response | Factory/API wiring, tools, streaming, cancellation and broader quality |
 
 Initial comparison candidates are `dense_gqa` for attention structure and golden
 `qwen3_6_moe` instances for shared MoE operations. `dense_gqa` itself has executor
@@ -71,16 +71,14 @@ policies; do not publish misleading full-coverage counts before then.
 
 ## Next acceptance gates
 
-1. Extend circuit/config mapping and numeric pipeline vocabulary without silently
-   dropping any listed semantic field; declare all remaining lowering gaps.
-2. Test primitive parity: sink logits and zero-value mass, window128/129,
-   large/negative gate inputs, biased expert mixtures, MXFP4 extreme codes/scales,
-   and YaRN beyond4096. Test existing parameter points for regressions.
-3. Load exact checkpoint, compare layer outputs and logits against a pinned
-   reference, with numerical tolerances stated before execution.
-4. Validate native text generation and Harmony API/tool behavior before a soak.
-5. Record native runtime/commit/model identity and real integration outcomes;
-   download completion and reference-engine output do not pass this gate.
+1. Resolve the observed full-model numerical differences using frozen traces and
+   identical-operand probes. Preserve failed candidates and original baselines.
+2. Complete executable circuit lowering and explicit native target/factory wiring
+   without substituting NVFP4 for MXFP4 or omitting semantic fields.
+3. Expand native generation checks to reasoning, tool use, streaming, cancellation,
+   longer contexts and concurrent serving; one arithmetic answer is insufficient.
+4. Measure sustained prefill/decode, throughput and energy against a pinned
+   same-device baseline, then perform required certification on a frozen build.
 
 The new-model skill's LAB/LKB start state for this target is an explicit residual:
 a strict pure architecture mapping exists, but there is no registered executable
@@ -190,8 +188,8 @@ or quantization substitutions occur.
 The fixture matches the captured pinned safetensors headers. Four host tests
 exercise valid binding, each missing tensor, every shape/dtype mutation and
 boundary controls, using inert addresses. These tests do not read learned values
-or execute a GPU. ModelWeightLoader construction, matching kernels and the actual
-forward path are still absent; the factory remains intentionally unsupported.
+or execute a GPU. Native loader/layer construction and the standalone forward
+path are now implemented and exercised below; factory serving remains unsupported.
 
 ## Projection bias GPU primitive
 
@@ -263,11 +261,11 @@ precision must therefore stay explicit. The actual checkpoint scale census
 covered 48 tensors / 597,196,800 bytes, all between 115 and 136, with no 0/255.
 Constructed boundary tests still cover those bytes' pinned unpack behavior.
 
-This is an unoptimized GEMV primitive, not the complete routed MoE or native
-model. No throughput or energy improvement is claimed. Attention reference
-precision, YaRN, selected-logit routing, expert bias/activation/reduction and the
-full loader/layer/factory/serving integration remain open. Routing weights in the
-circuit retain the reference BF16 output precision and remain explicitly unlowered.
+This GEMV measurement is primitive evidence, not a full-model qualification.
+Later sections record its composition with YaRN, routing, bias, activation and
+reduction into native forward execution. No throughput or energy improvement is
+claimed. Circuit routing remains explicitly unlowered; factory/API integration
+and full-model qualification are open.
 
 ## Staged arithmetic and routing (October 6 continuation)
 
@@ -337,3 +335,27 @@ The original pinned BF16 reference is preserved. A separately labeled FP32
 attention ablation and selected intermediate traces are being used to locate
 the differences. No tolerance has been widened and no serving-speed or quality
 qualification is inferred from the debug harness timings.
+
+
+## Attention precision investigation and rejected full-model candidate
+
+On identical native layer-9 Q/K/V operands at positions 49 and 215, the online
+attention output differs from pinned BF16 eager attention in 2,124 and 2,230
+values. It differs from FP32 eager attention in zero and one value respectively.
+The same-input norm, projections and routing are otherwise nearly bit-exact.
+
+An explicit staged-BF16 attention residual reproduces QK rounding, scaling,
+max subtraction, softmax probability rounding and AV output rounding. Its exact
+GPU gate passes ten captured/constructed/boundary cases, with missing-sink,
+window and precision controls. The correctness-only policy is limited to HD64,
+finite Q/K/V and at most 4096 tokens. Masked nonfinite operands are outside its
+reference-equivalence claim. Existing online attention is unchanged.
+
+A separate, source-hash-bound PTX package tested this policy through all 251
+tokens. Full-model agreement worsened: 243/251 next-token matches versus 244,
+mean normalized logit RMS 0.02651 versus 0.02339, and maximum 0.27724 versus
+0.26940. The candidate is **not promoted**. Exact sampled primitive agreement
+does not establish full-model agreement; expert decisions and accumulated
+rounding remain under investigation. All original, ablation and candidate
+traces are retained. Diagnostic snapshot reruns reproduced their baseline
+logits/layer traces byte-for-byte, with KV export layout controls passing.

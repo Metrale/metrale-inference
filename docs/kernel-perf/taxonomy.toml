@@ -609,3 +609,9 @@ names = ["gpt_oss_yarn_frequencies", "gpt_oss_rope_bf16"]
 component = "moe"
 kind = "staged BF16 expert activation / reduction"
 names = ["gpt_oss_swiglu_bf16", "gpt_oss_expert_reduce_bf16"]
+
+# 2026-10-07: Bounded diagnostic policy; existing online attention is unchanged.
+[[rule]]
+component = "attention"
+kind = "staged BF16 sink attention (correctness residual)"
+names = ["gpt_oss_staged_attention_bf16"]
