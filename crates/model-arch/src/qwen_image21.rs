@@ -329,3 +329,6 @@ impl Drop for DiagnosticImagePrelude<'_> {
         let _ = self.gpu.free(self.allocation);
     }
 }
+
+#[cfg(feature = "qwen-image-text")]
+pub mod prompt;
