@@ -390,5 +390,9 @@ extraction (`ZX-204`) passed exact output checks. Numeric sorting returned the
 correct sequence but surrounded the requested JSON array with Markdown fences;
 that case fails the strict format check. All three outputs contained a Harmony
 final channel and terminated with return token 200002. The aggregate is **2/3**,
-not a clean pass. Reference comparison is pending. Load and trace I/O remain in
-the harness timings, which are not serving performance measurements.
+not a clean pass. The pinned eager BF16 reference produces the same three final
+outputs, including the fenced-JSON failure. Multiplication and sorting have
+identical complete generated token sequences; extraction differs only in its
+analysis wording. This small comparison does not resolve longer-context
+numerical differences or establish broad quality. Load and trace I/O remain in
+the native harness timings, which are not serving performance measurements.
