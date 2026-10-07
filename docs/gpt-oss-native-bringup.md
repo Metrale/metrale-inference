@@ -381,3 +381,14 @@ this row. Reference internal accumulation is not exposed. The exact-reference
 gate remains recorded as failed, but changing this correct native result to
 match the reference is not justified. This one-row finding neither qualifies
 the full model nor resolves its remaining output differences.
+
+## Additional bounded native generation checks
+
+A three-case greedy smoke run used the frozen diagnostic binary and original
+online-attention package. Multiplication (`17 * 6` → `102`) and identifier
+extraction (`ZX-204`) passed exact output checks. Numeric sorting returned the
+correct sequence but surrounded the requested JSON array with Markdown fences;
+that case fails the strict format check. All three outputs contained a Harmony
+final channel and terminated with return token 200002. The aggregate is **2/3**,
+not a clean pass. Reference comparison is pending. Load and trace I/O remain in
+the harness timings, which are not serving performance measurements.
