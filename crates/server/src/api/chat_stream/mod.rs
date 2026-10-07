@@ -27,6 +27,7 @@ mod ctx;
 mod handle_done;
 mod handle_error;
 mod handle_token;
+mod harmony;
 mod state;
 mod strip;
 mod token_ids;
@@ -98,11 +99,16 @@ pub(crate) async fn run_chat_stream(
     dump_seq: Option<u64>,
     active_guard: crate::metrics::ActiveRequestGuard,
 ) -> Result<crate::ir::DeltaStream, (StatusCode, String)> {
-    // 2026-10-07: Scheduler streaming drops terminal IDs; do not expose undecoded frames.
-    if state.tokenizer.harmony().is_some() {
-        return Err((StatusCode::BAD_REQUEST,
-            "Experimental GPT-OSS requires stream:false until token-aware terminal streaming is available".into()));
-    }
+    let harmony_parser = state
+        .tokenizer
+        .shared_harmony()
+        .map(|tokenizer| crate::harmony::text_stream::TextStream::new(tokenizer, &prompt_tokens))
+        .transpose()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.into()))?;
+    let stop_tokens = state
+        .tokenizer
+        .harmony()
+        .map_or(stop_tokens, |h| h.stop_ids());
 
     // 2026-09-26: The scheduler thread sends with `bounded_stream_send`, which gives up
     // on a full channel after `METRALE_STREAM_SEND_DEADLINE_MS` (5000 ms when unset);
@@ -228,6 +234,11 @@ pub(crate) async fn run_chat_stream(
         _active_guard: active_guard,
     };
 
+    if let Some(parser) = harmony_parser {
+        let events = super::stream_terminal::terminated(ReceiverStream::new(token_rx));
+        return Ok(harmony::adapt(events, parser, ctx, cancel_flag));
+    }
+
     let mut stream_state = StreamState::new(
         tools_active,
         enable_thinking,
@@ -257,6 +268,7 @@ pub(crate) async fn run_chat_stream(
             // 2026-09-26: The request sets `prompt_logprobs: None`; nothing to emit.
             StreamEvent::PromptLogprobs(_) => Vec::new(),
             StreamEvent::Done {
+                terminal_token_id: _,
                 finish_reason,
                 prompt_tokens: _,
                 completion_tokens,

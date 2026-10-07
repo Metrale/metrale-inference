@@ -116,9 +116,23 @@ impl ByteTokenizer {
     }
 }
 
+enum TokenizerRef<'a> {
+    Borrowed(&'a ByteTokenizer),
+    Shared(std::sync::Arc<ByteTokenizer>),
+}
+impl std::ops::Deref for TokenizerRef<'_> {
+    type Target = ByteTokenizer;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(t) => t,
+            Self::Shared(t) => t,
+        }
+    }
+}
+
 /// 2026-10-06: Request-local state; incomplete UTF-8 may never cross a delimiter.
 pub struct Stream<'a> {
-    tokenizer: &'a ByteTokenizer,
+    tokenizer: TokenizerRef<'a>,
     decoder: Decoder,
     pending: Vec<u8>,
     failed: bool,
@@ -126,9 +140,33 @@ pub struct Stream<'a> {
 }
 
 impl<'a> Stream<'a> {
+    /// 2026-10-07: Request streams own shared metadata without copying the vocabulary.
+    pub fn shared(
+        tokenizer: std::sync::Arc<ByteTokenizer>,
+        prompt: &[u32],
+    ) -> Result<Stream<'static>, &'static str> {
+        let seeded = tokenizer.assistant_stream(prompt)?;
+        let decoder = seeded.decoder;
+        Ok(Stream {
+            tokenizer: TokenizerRef::Shared(tokenizer),
+            decoder,
+            pending: vec![],
+            failed: false,
+            terminated: false,
+        })
+    }
+
+    /// 2026-10-07: Only validated final headers permit incremental visible UTF-8.
+    pub fn visible_body(&self) -> Option<&str> {
+        (self.decoder.phase == super::Phase::Body
+            && self.decoder.recipient.is_none()
+            && matches!(self.decoder.channel.as_deref(), None | Some("final")))
+        .then_some(self.decoder.body.as_str())
+    }
+
     pub fn new(tokenizer: &'a ByteTokenizer, decoder: Decoder) -> Self {
         Self {
-            tokenizer,
+            tokenizer: TokenizerRef::Borrowed(tokenizer),
             decoder,
             pending: Vec::new(),
             failed: false,

@@ -10,6 +10,7 @@
 pub mod adapter;
 pub mod api;
 pub mod stream;
+pub mod text_stream;
 
 #[cfg(test)]
 mod stream_tests;

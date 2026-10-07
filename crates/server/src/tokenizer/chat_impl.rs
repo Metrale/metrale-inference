@@ -48,12 +48,12 @@ impl ChatTokenizer {
         disable_template_overrides: bool,
     ) -> Result<Self> {
         let harmony = if model_type == "gpt_oss" {
-            Some(
+            Some(std::sync::Arc::new(
                 crate::harmony::stream::ByteTokenizer::from_tokenizer_json(
                     &std::fs::read_to_string(model_dir.join("tokenizer.json"))?,
                 )
                 .map_err(anyhow::Error::msg)?,
-            )
+            ))
         } else {
             None
         };
@@ -135,7 +135,13 @@ impl ChatTokenizer {
     }
 
     pub(crate) fn harmony(&self) -> Option<&crate::harmony::stream::ByteTokenizer> {
-        self.harmony.as_ref()
+        self.harmony.as_deref()
+    }
+
+    pub(crate) fn shared_harmony(
+        &self,
+    ) -> Option<std::sync::Arc<crate::harmony::stream::ByteTokenizer>> {
+        self.harmony.clone()
     }
 
     pub(crate) fn uses_native_qwen_tool_template(&self) -> bool {

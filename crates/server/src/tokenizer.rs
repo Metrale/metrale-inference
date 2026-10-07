@@ -73,7 +73,7 @@ enum ChatEncoding {
 }
 
 pub struct ChatTokenizer {
-    harmony: Option<crate::harmony::stream::ByteTokenizer>,
+    harmony: Option<std::sync::Arc<crate::harmony::stream::ByteTokenizer>>,
     tokenizer: Tokenizer,
     eos_token_id: u32,
     supports_thinking: bool,

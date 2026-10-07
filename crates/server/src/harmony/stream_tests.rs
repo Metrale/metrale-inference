@@ -201,3 +201,61 @@ fn blocking_refuses_tool_handoff_and_invalid_prompt_prefix() {
         "ok"
     );
 }
+
+#[test]
+fn incremental_final_text_arrives_before_terminal_and_analysis_never_arrives() {
+    let tokenizer = std::sync::Arc::new(ByteTokenizer::from_tokenizer_json(FIXTURE).unwrap());
+    let prompt = [vec![200006], ids("assistant")].concat();
+    let mut stream = super::text_stream::TextStream::new(tokenizer, &prompt).unwrap();
+    for id in [
+        vec![200005],
+        ids("analysis"),
+        vec![200008],
+        ids("private 😀"),
+        vec![200007, 200006],
+        ids("assistant"),
+        vec![200005],
+        ids("final"),
+        vec![200008],
+    ]
+    .concat()
+    {
+        assert_eq!(stream.push(id).unwrap(), "");
+    }
+    let mut chunks = vec![];
+    for id in ids("café 日本 😀 <|return|>") {
+        chunks.push(stream.push(id).unwrap());
+    }
+    assert_eq!(chunks.concat(), "café 日本 😀 <|return|>");
+    assert!(
+        chunks.iter().any(String::is_empty),
+        "split UTF8 bytes must remain buffered"
+    );
+    assert!(
+        stream.finish().is_err(),
+        "visible content is not proof of completion"
+    );
+    assert_eq!(stream.push(200002).unwrap(), "");
+    stream.finish().unwrap();
+    assert!(
+        stream.push(200002).is_err(),
+        "duplicate terminal cannot be consumed"
+    );
+}
+
+#[test]
+fn incremental_invalid_utf8_and_wrong_endings_fail_closed() {
+    let tokenizer = std::sync::Arc::new(ByteTokenizer::from_tokenizer_json(FIXTURE).unwrap());
+    let prompt = [vec![200006], ids("assistant"), vec![200005], ids("final")].concat();
+    for ending in [200007, 200012] {
+        let mut stream = super::text_stream::TextStream::new(tokenizer.clone(), &prompt).unwrap();
+        stream.push(200008).unwrap();
+        assert!(stream.push(ending).is_err());
+        assert!(stream.finish().is_err());
+    }
+    let mut stream = super::text_stream::TextStream::new(tokenizer, &prompt).unwrap();
+    stream.push(200008).unwrap();
+    assert_eq!(stream.push(ids("é")[0]).unwrap(), "");
+    assert!(stream.push(200002).is_err());
+    assert!(stream.finish().is_err());
+}
