@@ -1,0 +1,9 @@
+# GPT-OSS prefill screens retained without promotion
+
+Updated 2026-10-07. These experiments use [openai/gpt-oss-20b at 6cee5e81ee83917806bbde320786a8fb61efebee](https://huggingface.co/openai/gpt-oss-20b/tree/6cee5e81ee83917806bbde320786a8fb61efebee) on GB10. Neither changed the accepted runtime. Existing numerical qualification limits remain.
+
+An eight-accumulator expert-reuse candidate preserved each token's FMA, shuffle and BF16 store order. All 168 constructed projection/control cases and the 251-token hidden/cache gate passed, including the following decode and partial chunks. It used 64 registers without spilling, versus 40 for the incumbent. However, every one of eight warm projection cases using retained actual router distributions regressed by approximately 1–8%. The candidate was rejected before a serving build. Small improvements under an artificial shared-expert distribution were not treated as representative of model routing.
+
+A separate candidate kept the accepted four-accumulator CUDA kernel unchanged. It derived the maximum expert count from the same validated plan uploaded to the GPU, reducing the launch extent instead of scheduling inactive groups. Full-model byte parity, lifecycle, text quality, blocking tools and streamed tools passed. A constructed negative control demonstrated that a plausible but underestimated bound can omit output rows: the complete-plan proof must remain a host invariant; the device does not detect every omitted launch.
+
+Warm projection screening improved all eight representative cases by approximately 1–4%, but isolated opposite-order full-request sessions improved geometric latency by only **0.60% and 1.06%**. Both failed the predeclared 2% minimum. Prompt/generated counts and quality remained equal. The candidate patch and raw results were preserved privately and its runtime changes reverted. No threshold was relaxed to turn these microbenchmark results into a production win.
