@@ -12,7 +12,12 @@
 pub mod adapter;
 pub mod api;
 pub mod stream;
+pub(crate) mod strict_json;
 pub mod text_stream;
+pub mod tool_response;
+pub mod tool_schema;
+#[cfg(test)]
+mod tool_tests;
 
 #[cfg(test)]
 mod stream_tests;

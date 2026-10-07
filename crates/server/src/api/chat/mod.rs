@@ -10,6 +10,7 @@
 //! Invariants: none beyond the types.
 
 pub(crate) mod echo;
+pub(super) mod harmony;
 pub(crate) mod levers;
 mod loop_detect;
 mod msg_entry;
@@ -154,6 +155,12 @@ pub async fn chat_completions(
         );
     };
 
+    if state.tokenizer.harmony().is_some()
+        && let Err(error) = harmony::validate_wire(&req, &body)
+    {
+        return openai_error_response(StatusCode::BAD_REQUEST, error.into());
+    }
+
     let dump_seq = state.dump_writer.as_ref().and_then(|d| {
         match serde_json::from_slice::<serde_json::Value>(&body) {
             Ok(v) => {
@@ -200,10 +207,9 @@ pub(crate) async fn chat_completions_inner(
 ) -> ChatOutcome {
     // 2026-10-07: Refuse before template/grammar work and scheduler dispatch.
     if state.tokenizer.harmony().is_some()
-        && (!req.tools.is_empty()
+        && ((req.stream && !req.tools.is_empty())
             || req.response_format.is_some()
             || !req.stop.is_empty()
-            || req.tool_choice.is_some()
             || req.top_logprobs.is_some()
             || req.return_token_ids
             || req.min_tokens != 0
@@ -216,7 +222,12 @@ pub(crate) async fn chat_completions_inner(
             || matches!(req.reasoning_effort, Some(crate::ir::ReasoningEffort::Max)))
     {
         return ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST,
-            "Experimental GPT-OSS supports text only; tools, structured output, stop overrides, logprobs, raw token IDs minimum-token overrides, thinking budgets, thinking-off and loop overrides are unavailable".into()));
+            "Experimental GPT-OSS does not support streaming tools, structured output, stop overrides, logprobs, raw token IDs, minimum-token overrides, thinking budgets, thinking-off or loop overrides".into()));
+    }
+    if state.tokenizer.harmony().is_some()
+        && let Err(error) = harmony::validate_request(&req)
+    {
+        return ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST, error.into()));
     }
     req.lookup_tenant = tenant;
     crate::metrics::REQUESTS_TOTAL.inc();

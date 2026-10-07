@@ -114,14 +114,13 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
 
     // 2026-10-07: Generic grammar and stop filters cannot preserve Harmony framing.
     if state.tokenizer.harmony().is_some()
-        && (!req.tools.is_empty()
-            || grammar_spec.is_some()
+        && (grammar_spec.is_some()
             || req.response_format.is_some()
             || !req.stop.is_empty()
             || top_logprobs.is_some())
     {
         return super::chat::ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST,
-            "Experimental GPT-OSS supports blocking text only; tools, structured output, stop overrides and logprobs are unavailable".into()));
+            "Experimental GPT-OSS does not support generic output grammar, structured output, stop overrides or logprobs".into()));
     }
     let stop_tokens = state
         .tokenizer
@@ -223,24 +222,17 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
         // 2026-09-26: Shared-prompt usage reports the largest per-choice cache hit.
         total_cached_prompt_tokens = total_cached_prompt_tokens.max(response.cached_prompt_tokens);
 
-        if let Some(harmony) = state.tokenizer.harmony() {
-            match crate::harmony::api::text_response(
-                harmony,
+        if state.tokenizer.harmony().is_some() {
+            match super::chat::harmony::choice(
+                &state.tokenizer,
+                &req,
                 &prompt_tokens,
                 &response.output_tokens,
+                choice_idx,
             ) {
-                Ok(parsed) => {
-                    total_reasoning_tokens += parsed.reasoning_tokens;
-                    all_choices.push(ir::Choice {
-                        index: choice_idx,
-                        content: Some(parsed.content),
-                        reasoning: None,
-                        tool_calls: vec![],
-                        refusal: None,
-                        finish_reason: ir::FinishReason::Stop,
-                        matched_stop: None,
-                        logprobs: None,
-                    });
+                Ok((choice, reasoning)) => {
+                    total_reasoning_tokens += reasoning;
+                    all_choices.push(choice);
                 }
                 Err(error) => {
                     return super::chat::ChatOutcome::Http(openai_error_response(

@@ -92,7 +92,14 @@ impl ChatTokenizer {
         if harmony.is_some() && !checkpoint_template {
             anyhow::bail!("GPT-OSS requires its checkpoint-native Harmony chat template");
         }
-        let mut jinja_env = super::jinja_helpers::build_jinja_env(&chat_template)?;
+        let mut jinja_env = if harmony.is_some() {
+            super::jinja_helpers::build_jinja_env_with(
+                &chat_template,
+                super::jinja_helpers::ToolJsonStyle::HfSpaced,
+            )?
+        } else {
+            super::jinja_helpers::build_jinja_env(&chat_template)?
+        };
         // 2026-10-07: Only Harmony requires the clock helper; preserve other templates' globals.
         if harmony.is_some() {
             jinja_env.add_function("strftime_now", super::strftime::now);
@@ -250,10 +257,6 @@ impl ChatTokenizer {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
         // 2026-10-07: Harmony owns role/channel syntax; never apply ChatML rewrites.
         if self.harmony.is_some() {
-            anyhow::ensure!(
-                tools.is_none_or(|t| t.is_empty()),
-                "GPT-OSS tool rendering is unavailable"
-            );
             let effort = reasoning_effort
                 .map(minijinja::Value::from)
                 .unwrap_or(minijinja::Value::UNDEFINED);
@@ -265,7 +268,8 @@ impl ChatTokenizer {
                 .jinja_env
                 .get_template("chat")?
                 .render(minijinja::context! {
-                    messages => messages, add_generation_prompt => true, reasoning_effort => effort,
+                    messages => messages, tools => tools.map(minijinja::Value::from_serialize).unwrap_or(minijinja::Value::UNDEFINED),
+                add_generation_prompt => true, reasoning_effort => effort,
                 })?;
             let ids = self.encode(&rendered)?;
             self.harmony

@@ -7,6 +7,7 @@ use serde::Deserialize;
 struct Case {
     messages: Vec<serde_json::Value>,
     reasoning_effort: Option<String>,
+    tools: Option<Vec<serde_json::Value>>,
     input_ids: Vec<u32>,
 }
 fn main() -> Result<()> {
@@ -29,7 +30,7 @@ fn main() -> Result<()> {
         let actual = tokenizer
             .apply_chat_template_jinja_with_effort(
                 &case.messages,
-                None,
+                case.tools.as_deref(),
                 true,
                 false,
                 case.reasoning_effort.as_deref(),

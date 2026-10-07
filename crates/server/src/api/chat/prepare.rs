@@ -32,6 +32,9 @@ pub(crate) fn prepare_chat_prompt(
     state: &Arc<AppState>,
     req: &mut ChatRequest,
 ) -> Result<PreparedChat, Response> {
+    if state.tokenizer.harmony().is_some() {
+        return super::harmony::prepare(state, req);
+    }
     // 2026-09-26: Tools are active when a parser is configured, the request
     // declares tools, and `tool_choice` is not `none`.
     let tools_active = state.tool_call_parser.is_some()

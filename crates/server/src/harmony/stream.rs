@@ -23,11 +23,19 @@ impl ByteTokenizer {
 
     /// 2026-10-07: Seed from actual prompt tokens, never guessed delimiter spellings.
     pub fn assistant_stream(&self, prompt: &[u32]) -> Result<Stream<'_>, &'static str> {
+        self.assistant_stream_with_tools(prompt, [])
+    }
+
+    pub fn assistant_stream_with_tools(
+        &self,
+        prompt: &[u32],
+        tools: impl IntoIterator<Item = String>,
+    ) -> Result<Stream<'_>, &'static str> {
         let start = prompt
             .iter()
             .rposition(|id| self.map.classify(*id) == Ok(TokenClass::Framing(Token::Start)))
             .ok_or("missing assistant prompt header")?;
-        let mut stream = Stream::new(self, Decoder::new([], 1024, 1_048_576));
+        let mut stream = Stream::new(self, Decoder::new(tools, 1024, 1_048_576));
         for id in &prompt[start..] {
             if stream.push(*id)?.is_some() {
                 return Err("completed assistant prompt header");
