@@ -45,8 +45,10 @@ reports do not claim NVFP4 emulation or a BF16 native path for these weights.
 
 The real checkpoint remains refused by `resolve_checkpoint` with `gpt_oss` named
 in the error. A regression test makes accidental generic-model dispatch visible.
-No golden instance or complete circuit is added: the remaining semantics below
-cannot yet be represented and lowered faithfully by the existing package.
+A pure architecture package now represents these semantics explicitly, including
+sliding/full layer kinds and MXFP4 precision. It is not registered as a runnable
+checkpoint: marked lowering gaps cannot match generic fusion rules. No executable
+golden instance or complete native lowering is claimed.
 
 ## Explicit architecture and kernel residuals
 
@@ -81,8 +83,9 @@ policies; do not publish misleading full-coverage counts before then.
    download completion and reference-engine output do not pass this gate.
 
 The new-model skill's LAB/LKB start state for this target is an explicit residual:
-no registered circuit mapping, no executed golden plan, and no new measured kernel
-points. This foundation removes only the storage-format representation gap.
+a strict pure architecture mapping exists, but there is no registered executable
+checkpoint, no executed golden plan, and no new measured kernel points. The
+architecture and storage descriptions do not establish native execution.
 Existing architecture coverage and performance claims are unchanged.
 
 ## Harmony foundation
@@ -122,8 +125,23 @@ Harmony release. Runtime dispatch uses token identity only. Ordinary text that
 spells a delimiter stays text. Padding, reserved tokens, unsupported specials and
 IDs absent from the tokenizer are errors, not successful completion. The
 classifier must precede skip-special-token decoding and scheduler EOS filtering.
-Ordinary token runs still need byte-safe incremental decoding before their text
-enters the framing decoder; that serving integration is not implemented here.
+`harmony::stream::{ByteTokenizer, Stream}` now translates ordinary token IDs
+through the checkpoint ByteLevel byte alphabet, retains incomplete UTF-8 across
+tokens, and feeds complete Unicode into the framing decoder. Invalid bytes or
+incomplete sequences at a framing boundary/EOF are explicit errors. U+FFFD is
+preserved when genuinely encoded, not treated as an incomplete-token heuristic.
+This strict adapter is necessary because tokenizers 0.23 DecodeStream uses lossy
+decoding and exposes no final flush/pending-byte check. ID classification always
+precedes byte decoding; decoded delimiter spellings never become control events.
+It remains a tested foundation, not wired into serving or scheduler termination.
+
+`fixtures/gpt-oss-byte-vocab.json` is a compact decoder fixture: the original
+first 256 byte-vocabulary entries, added tokens and decoder metadata, with no
+merges or pre/post processing. It supports byte-level decoder tests, not production
+encoding. Tests compare valid Unicode against the real tokenizers ByteLevel
+decoder and demonstrate its lossy behavior on an incomplete byte sequence as a
+known-bad control. The strict adapter rejects that sequence rather than reporting
+a successful completion.
 
 The fixture at `crates/server/src/harmony/fixtures/gpt-oss-token-metadata.json`
 contains all 21 added-token records and only the two boundary ordinary vocabulary
@@ -133,3 +151,29 @@ SHA-256 is `0614fe83cadab421296e664e1f48f4261fa8fef6e03e63bb75c20f38e37d07d3`.
 An independent adapter run against that complete file classified 199,998 ordinary
 IDs and six framing IDs; across the 201,088 model logits, 1,084 unsupported or
 unassigned IDs were refused. This validates metadata handling only, not inference.
+
+## Packed expert bindings and architecture package
+
+`metrale_circuit::gpt_oss::architecture` constructs the pinned 24-layer graph with
+48 KV states, biased projections, denominator-only sinks, YaRN policy and the
+interleaved clipped expert activation. Required math fields are checked; missing
+and changed policies are refused. An `unlowered` node cannot match generic fusion
+rules. Three focused controls validate the graph, config mutations and refusal.
+
+`PackedMxfp4Experts` binds exact U8 rank4 blocks and rank3 E8M0 scales, validates
+expert extents and pointer arithmetic, and exposes typed per-expert views without
+copying or transcoding. Five controls cover checkpoint dimensions, actual byte
+readback through the mock GPU backend, malformed layouts and overflow. This is
+host binding evidence, not GPU arithmetic. The loader still needs to use these
+views in an actual model with matching kernels, biases and scale policy.
+
+## Runtime config parsing
+
+The runtime now parses the pinned GPT-OSS-20B config with explicit typed policies
+for selected-logit routing, sink attention, interleaved asymmetric SwiGLU, biased
+expert reduction, FP32 normalization and nontruncated YaRN. Missing, changed and
+unknown math keys fail closed; conflicting expert-count aliases are refused.
+The precision plan identifies MXFP4 experts and preserves the excluded BF16 head.
+All 193 config tests passed, including the new policy and mutation controls.
+The model factory still refuses GPT-OSS until native weight assembly and matching
+forward kernels exist. Parsing a config is not loading or serving the model.
