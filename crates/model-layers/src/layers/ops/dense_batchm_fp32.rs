@@ -16,7 +16,7 @@ fn validate(
 ) -> Result<()> {
     ensure!(
         kernel.0 != 0
-            && (1..=16).contains(&m)
+            && (1..=128).contains(&m)
             && n > 0
             && n.is_multiple_of(4)
             && k > 0
@@ -54,7 +54,7 @@ fn validate(
     Ok(())
 }
 /// 2026-10-07: `A[M,K]` and `B[N,K]` BF16 to `C[M,stride]` FP32. No bias or cast.
-/// Requires M in1..=16, N divisible by4, K divisible by8, and stride>=N.
+/// Requires M in1..=128 with at most16 rows per CTA, N divisible by4, K divisible by8, and stride>=N.
 /// N%4 refusal avoids the existing partial-CTA barrier path; BF16 admission is unchanged.
 /// Exact scalar reduction policy; callers supply buffers of the validated sizes.
 #[allow(clippy::too_many_arguments)]
@@ -72,7 +72,7 @@ pub fn dense_gemv_batchm_fp32(
 ) -> Result<()> {
     validate(kernel, [input, weight, output], m, n, k, stride)?;
     KernelLaunch::new(gpu, kernel)
-        .grid([n / 4, 1, 1])
+        .grid([n / 4, m.div_ceil(super::DENSE_GEMV_BATCHM_MAX_M), 1])
         .block([256, 1, 1])
         .arg_ptr(input)
         .arg_ptr(weight)
@@ -89,12 +89,12 @@ mod tests {
     #[test]
     fn refuses_truncation_partial_barrier_and_alignment() {
         let p = [DevicePtr(0x10000), DevicePtr(0x20000), DevicePtr(0x30000)];
-        for m in [1, 2, 8, 16] {
+        for m in [1, 2, 8, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128] {
             assert!(validate(KernelHandle(1), p, m, 32, 64, 36).is_ok());
         }
         for (m, n, k, s) in [
             (0, 32, 64, 32),
-            (17, 32, 64, 32),
+            (129, 32, 64, 32),
             (2, 31, 64, 32),
             (2, 32, 63, 32),
             (2, 32, 64, 31),
