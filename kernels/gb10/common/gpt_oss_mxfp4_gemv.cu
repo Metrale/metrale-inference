@@ -115,6 +115,8 @@ __device__ __forceinline__ void gpt_oss_mxfp4_reuse_body(
     unsigned count=plan[expert*(tokens+1)];
     unsigned row=blockIdx.x*4+threadIdx.x/32,lane=threadIdx.x&31;
     bool valid=count<=tokens;
+    // 2026-10-07: Uniform inactive groups skip validation; invalid counts still poison.
+    if (Cooperative && valid && group>=count) return;
     if (Cooperative) {
         // 2026-10-07: All threads validate before any partial-row return.
         __shared__ unsigned invalid;

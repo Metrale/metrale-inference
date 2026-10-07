@@ -26,7 +26,7 @@ The same release binary ran capacities 16→64→128, then 128→64→16 on an i
 | 64 | 10.49% | 10.24% |
 | 128 | 12.03% | 11.85% |
 
-Reductions are geometric across the three case medians, relative to capacity16 in the same session. Both orders pass the complete gate. First-session capacity128 medians:
+Reductions are geometric across the three case medians, relative to capacity16 in the same session. Both orders pass the complete gate. First-session capacity 128 medians:
 
 | Case | Capacity16 total | Capacity128 total | First generated | First visible | Decode tokens/s |
 |---|---:|---:|---:|---:|---:|
@@ -35,3 +35,11 @@ Reductions are geometric across the three case medians, relative to capacity16 i
 | Retrieval | 2.6710s | 2.2395s | 1.6586s | 2.1574s | 40.33 |
 
 First-generated timing is the server boundary, first-visible timing is the first client-visible SSE text, and total is client request completion. Hidden reasoning explains why the first two boundaries differ. These are bounded native-to-native C1 improvements, not a claim of competitive speed, energy superiority, reference-logit equivalence or certification. The separate optimized-reference gap remains open. Select this route explicitly with `--experimental-gpt-oss --experimental-gpt-oss-chunk-prefill --experimental-gpt-oss-chunk-tokens 128`; omitted capacity retains16.
+
+## Inactive-group follow-up
+
+A separate candidate lets a block-uniform, valid-count inactive group return before cooperative validation and barriers. Invalid counts still reach poisoning; complete host-plan validation remains mandatory. The 168-case primitive gate and malformed controls pass. All twelve full251 hidden/KV files are SHA-identical to the prior candidate. Capacity128 again passes lifecycle 7, text 12, blocking tools 9 and streamed tools 5.
+
+Two opposite-order release comparisons at capacity 128 show another **3.42% / 2.99% lower total latency**, with identical prompt/completion counts and expected answers, and every individual total/first-generated gate passing the unchanged thresholds. First-session arithmetic/counting/retrieval totals are 0.9105/1.9955/2.1360s; first-generated 0.4327/0.4616/1.5548s, first-visible 0.8779/0.8593/2.0539s and decode 40.34–40.69 tokens/s. No default, precision or reduction-order change accompanies this optimization.
+
+Candidate binary: `e52eef8199a0afbb84dd5ea04b0891c5780b93b81bbaa12e08d22e26f1f82fbc`, source 6be4eaa plus the recorded two-line kernel overlay; PTX `5562945064eecd7a14bd40185ad708ff3f3e2f4f8fd200a108fa02bc58207865`, kernel source `a48f910c4f3ed86acead23e1ed4bd404849fc6feadbefc2051a7087ddc28beb5`. The prior binary remains the comparison baseline. A first baseline attempt refused stale Cargo dependency metadata before server launch: a hard-linked target copy had rewritten `met.d`. That failure is retained. The replacement launcher requires the exact previously recorded binary, PTX and source hashes; no artifact or hash fallback is permitted, and no failed-arm timing samples were collected. Subsequent paired sessions ran without other host jobs or profiler injection.
