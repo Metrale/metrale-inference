@@ -584,6 +584,45 @@ kind = "argmax / top-p"
 names = ["argmax_*", "softmax_topp", "feed_resolve"]
 
 [[rule]]
+names = ["image_silu_staged_mul_bf16"]
+component = "elementwise"
+kind = "image BF16 staged SiLU product residual"
+
+[[rule]]
 component = "elementwise"
 kind = "activation / gate / residual"
 names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "vector_add", "bf16_residual_add", "f32_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]
+
+# 2026-10-07: Isolated Qwen-image component parity; no model linkage or speed claim.
+[[rule]]
+component = "elementwise"
+kind = "image scale / tanh residual (staged BF16 residual)"
+names = ["image_modulation_scale_bf16", "image_modulation_residual_bf16"]
+
+# 2026-10-07: Additive staged head norm and image complex rotation; unregistered.
+[[rule]]
+component = "norm"
+kind = "image BF16 post-normalization weight multiply"
+names = ["image_head_weight_bf16"]
+
+[[rule]]
+component = "rope"
+kind = "three-axis image complex rotation (diagnostic residual)"
+names = ["image_rope_complex_bf16", "image_text_rope_bf16"]
+
+
+[[rule]]
+names = ["image_timestep_bf16"]
+component = "rope"
+kind = "image temporal sinusoidal embedding (diagnostic residual)"
+
+[[rule]]
+component = "vision"
+kind = "image VAE diagnostic FP32 convolution / channel norm"
+names = ["image_vae_conv2d_f32", "image_vae_norm_f32", "image_vae_upsample_f32"]
+
+# 2026-10-06: Wide-head original-FP32 VAE residual; no existing dispatch changes.
+[[rule]]
+component = "attention"
+kind = "image VAE D1152 noncausal FP32 (diagnostic residual)"
+names = ["image_vae_attention_f32"]

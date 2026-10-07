@@ -13,9 +13,11 @@ cuda = ["metrale-model-layers/cuda"]
 metal = ["metrale-model-layers/metal"]
 metal-example = ["metal", "dep:tokenizers", "dep:memmap2", "dep:safetensors"]
 gpu-examples = []
+qwen-image-text = ["dep:tokenizers", "dep:sha2"]
 
 [dependencies]
 metrale-cache = { path = "../cache", default-features = false }
+metrale-circuit = { path = "../circuit" }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
@@ -29,11 +31,14 @@ parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = "0.1"
+sha2 = { workspace = true, optional = true }
 tokenizers = { version = "0.23", optional = true, default-features = false, features = ["onig"] }
 memmap2 = { version = "0.9", optional = true }
 safetensors = { version = "0.8", optional = true }
 
 [dev-dependencies]
+png = "=0.18.1"
+sha2 = { workspace = true }
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 metrale-kernels = { path = "../kernels", default-features = false }
@@ -430,3 +435,27 @@ required-features = ["cuda", "gpu-examples"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "qwen_image21_block_native"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "qwen_image21_visual_native"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "qwen_image21_encoder_native"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "qwen_image21_prompt_capture"
+required-features = ["qwen-image-text"]
+
+[[example]]
+name = "qwen_image21_vae_native"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "qwen_image21_pipeline_native"
+required-features = ["qwen-image-text"]

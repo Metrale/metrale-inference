@@ -1,0 +1,115 @@
+{
+  "seed": 2126,
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "source_sha256": "80a916be44af1695e91c8773674d0c725e97b9f5f034bb130514f9ff7c609309",
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "compile_command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/rope-4-independent/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/rope-4-independent/rope.so"
+  ],
+  "criterion": "exact BF16 outputs",
+  "results": [
+    {
+      "layout": "saved",
+      "case": "q",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0,
+      "frequency_bit_mismatches": 4,
+      "frequency_max_abs_error": 3.725290298461914e-09,
+      "table_sha256": "4a2efc4840447916a176c9f5e21e3e34e350db4509ea656d89bcedb925e7b9d0",
+      "same_frequency_bf16_mismatches": 0
+    },
+    {
+      "layout": "saved",
+      "case": "k",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0,
+      "frequency_bit_mismatches": 4,
+      "frequency_max_abs_error": 3.725290298461914e-09,
+      "table_sha256": "4a2efc4840447916a176c9f5e21e3e34e350db4509ea656d89bcedb925e7b9d0",
+      "same_frequency_bf16_mismatches": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "random",
+      "elements": 98304,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0,
+      "frequency_bit_mismatches": 14,
+      "frequency_max_abs_error": 1.4901161193847656e-08,
+      "table_sha256": "c8e7ccdb2662d610471c6824ccfc9d636922c8b948f9eaed0b605b55e494b6b1",
+      "same_frequency_bf16_mismatches": 0
+    },
+    {
+      "layout": "mixed",
+      "case": "tiny",
+      "elements": 98304,
+      "bf16_bit_mismatches": 1,
+      "max_abs_error": 4.76837158203125e-07,
+      "frequency_bit_mismatches": 14,
+      "frequency_max_abs_error": 1.4901161193847656e-08,
+      "table_sha256": "c8e7ccdb2662d610471c6824ccfc9d636922c8b948f9eaed0b605b55e494b6b1",
+      "same_frequency_bf16_mismatches": 1
+    },
+    {
+      "layout": "mixed",
+      "case": "large",
+      "elements": 98304,
+      "bf16_bit_mismatches": 1,
+      "max_abs_error": 1.0,
+      "frequency_bit_mismatches": 14,
+      "frequency_max_abs_error": 1.4901161193847656e-08,
+      "table_sha256": "c8e7ccdb2662d610471c6824ccfc9d636922c8b948f9eaed0b605b55e494b6b1",
+      "same_frequency_bf16_mismatches": 1
+    },
+    {
+      "layout": "wide",
+      "case": "random",
+      "elements": 2179072,
+      "bf16_bit_mismatches": 46,
+      "max_abs_error": 0.0078125,
+      "frequency_bit_mismatches": 752,
+      "frequency_max_abs_error": 4.76837158203125e-07,
+      "table_sha256": "818423153c68d3188bea6c9b32a3e8e575c2453f6c63c9db76a9b707944ddc23",
+      "same_frequency_bf16_mismatches": 20
+    },
+    {
+      "layout": "wide",
+      "case": "tiny",
+      "elements": 2179072,
+      "bf16_bit_mismatches": 40,
+      "max_abs_error": 9.5367431640625e-07,
+      "frequency_bit_mismatches": 752,
+      "frequency_max_abs_error": 4.76837158203125e-07,
+      "table_sha256": "818423153c68d3188bea6c9b32a3e8e575c2453f6c63c9db76a9b707944ddc23",
+      "same_frequency_bf16_mismatches": 18
+    },
+    {
+      "layout": "wide",
+      "case": "large",
+      "elements": 2179072,
+      "bf16_bit_mismatches": 44,
+      "max_abs_error": 256.0,
+      "frequency_bit_mismatches": 752,
+      "frequency_max_abs_error": 4.76837158203125e-07,
+      "table_sha256": "818423153c68d3188bea6c9b32a3e8e575c2453f6c63c9db76a9b707944ddc23",
+      "same_frequency_bf16_mismatches": 23
+    }
+  ],
+  "known_bad_controls": {
+    "conjugate_frequency": 6425596,
+    "split_half_pairing": 6604378
+  },
+  "scope": "three-axis rotation only; no attention/block qualification"
+}

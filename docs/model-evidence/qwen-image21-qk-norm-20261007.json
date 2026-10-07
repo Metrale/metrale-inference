@@ -1,0 +1,114 @@
+{
+  "reference_source_sha256": "a3c40cee9308a0e339cca21c14bf51f394c61ae68e5b9a578e5636441f5eaa84",
+  "checkpoint_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "source_hashes": {
+    "rms_norm_vanilla.cu": "f609fbea84429efbf8b1cb95ce7eb3f8cb9ccec3050ceb8589341f6e62433501",
+    "image_modulation.cu": "834872d979c239f029ceb0871ecf7220231526a75fbfb2bf2eeafc4e07aa5365"
+  },
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "compile_command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/qk-norm-1/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/qk-norm-1/qknorm.so"
+  ],
+  "criterion": "exact BF16 bits",
+  "results": [
+    {
+      "head": "q",
+      "case": "saved_projection",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "q",
+      "case": "random",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "q",
+      "case": "tiny",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "q",
+      "case": "large",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "q",
+      "case": "constant",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "q",
+      "case": "small_variance",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "k",
+      "case": "saved_projection",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "k",
+      "case": "random",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "k",
+      "case": "tiny",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "k",
+      "case": "large",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "k",
+      "case": "constant",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    },
+    {
+      "head": "k",
+      "case": "small_variance",
+      "elements": 24704,
+      "bf16_bit_mismatches": 0,
+      "max_abs_error": 0.0
+    }
+  ],
+  "known_bad_controls": {
+    "fused_weight_before_rounding": 53006,
+    "wrong_epsilon": 49429
+  },
+  "scope": "staged QK normalization only; no RoPE/attention/block qualification"
+}

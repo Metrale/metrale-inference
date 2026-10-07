@@ -1,0 +1,233 @@
+{
+  "seed": 2131,
+  "checkpoint_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "source_hashes": {
+    "nllb_encoder.cu": "c0a43f2dfa9af46d85257eb4f72e1a9e3b08d89b16c6cec0dfe8114a6048165a",
+    "image_modulation.cu": "67080d94629cec868b5a83ec13f0a3b5878feb9eeb090b30e41c3bd2a704bd8a",
+    "dense_gemm_bf16.cu": "a1d6b9fa47260286f146b7efd2291fd323da9914fb7b3887afea88b5fef3a70c",
+    "embed_from_argmax.cu": "e19dd954624331a375db17d2a3c039fcae1f039712a577e73fadbb4182d71d59",
+    "rms_norm_vanilla.cu": "f609fbea84429efbf8b1cb95ce7eb3f8cb9ccec3050ceb8589341f6e62433501"
+  },
+  "weight_sha256": {
+    "attn.to_q": "85e6a209b9f8ae553f4cf569fe12a6a3eb319a285691aa61951583879379ab89",
+    "attn.to_k": "778f605c4bda4725b00be4bc29ad0efdab564197fa14c73d6bf406e68168f276",
+    "attn.to_v": "4a3bd26615db1eb1fbf9de97c8a87516e3a8e967a038add9e2935a5cbaf56fa8",
+    "attn.to_out.0": "9f1fae2da843d19d222cb5e542fa78097d3605411d9a08f258565dbd5b8d009a",
+    "attn.norm_q": "3faf374413f8b2585700421c2f9bb39c1e846227f105e3ff10e1a8220ffde022",
+    "attn.norm_k": "572f201a7f1f0eb25c33d65be6a3afc6e237af9753c94cb0c924c54622d33277",
+    "img_mlp.gate_layer": "a64f445d9dc5d3c6ff4888d18605eb32cc4d4abf1bba4a2d191eef002f3194a2",
+    "img_mlp.proj": "41f2381489bad58208272e46d88409c0a212746ab603ea7883feaedfee76e715",
+    "img_mlp.out": "09ecd39bf22ad4e8ed88b45deb01f65d78d643a17ee18b0fa3d4f848e46a999c"
+  },
+  "compile_command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/block-3/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/block-3/block.so"
+  ],
+  "results": [
+    {
+      "stage": "norm1",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "scale1",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "q",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "qnorm",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "qrope",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "k",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "knorm",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "krope",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "v",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "attention",
+      "elements": 24576,
+      "bf16_bit_mismatches": 1771,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.03125,
+      "relative_l2_finite": 0.0007589482574284691
+    },
+    {
+      "stage": "output_projection",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "residual1",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "norm2",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "scale2",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "gate",
+      "elements": 73728,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "up",
+      "elements": 73728,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "activation",
+      "elements": 73728,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "down",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "residual2",
+      "elements": 24576,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    },
+    {
+      "stage": "complete_block",
+      "elements": 24576,
+      "bf16_bit_mismatches": 9916,
+      "nonfinite_pairs": 0,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 16.0,
+      "relative_l2_finite": 0.0031924771509037842
+    },
+    {
+      "stage": "activation_all_finite",
+      "elements": 65280,
+      "bf16_bit_mismatches": 0,
+      "nonfinite_pairs": 24,
+      "nonfinite_bit_mismatches": 0,
+      "max_abs_error_finite": 0.0,
+      "relative_l2_finite": 0.0
+    }
+  ],
+  "known_bad_controls": {
+    "missing_activation_rounding": 19341
+  },
+  "qualified": false,
+  "scope": "complete block-0 diagnostic with exact stage characterization; no transformer/image/performance qualification"
+}
