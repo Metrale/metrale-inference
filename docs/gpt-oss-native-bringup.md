@@ -313,3 +313,27 @@ failed execution poisons its state. Duplicate physical cache blocks are refused.
 Linux tests cover these admissions and
 argmax behavior. Original sequential teacher-forced traces are retained. Quality,
 Harmony serving, concurrency and certification remain open.
+
+
+## Native Harmony generation and longer-context diagnostics
+
+The bounded greedy example now accepts an explicit maximum generation length and
+stop-token IDs. A pinned-tokenizer, low-reasoning arithmetic prompt produced 16
+native tokens: an analysis message followed by final answer `4`, terminated by
+`<|return|>` (200002). The stop token is recorded and not fed back into the cache.
+This is actual packed-checkpoint native execution, but one elementary answer does
+not establish broader reasoning, tool use or API compatibility.
+
+A 251-token teacher-forced Harmony fixture completed with finite outputs across
+block and sliding-window boundaries. Against the pinned eager BF16 reference,
+244 of 251 next-token choices match. Differences occur at positions 47, 48, 58,
+164, 180, 231 and 249; three reference maxima are tied. Numerical differences
+remain material: position 215 has logit normalized RMS 0.2694 and maximum absolute
+difference 7.787. Positions 49 and 215 first show a large layer-level divergence
+at layer 9. Boundary positions 127–130 do not show an abrupt error increase.
+These observations are diagnostic, not a correctness acceptance.
+
+The original pinned BF16 reference is preserved. A separately labeled FP32
+attention ablation and selected intermediate traces are being used to locate
+the differences. No tolerance has been widened and no serving-speed or quality
+qualification is inferred from the debug harness timings.
