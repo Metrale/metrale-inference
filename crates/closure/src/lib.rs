@@ -73,6 +73,9 @@ impl std::fmt::Display for ClosureError {
 pub struct Closure {
     /// 2026-09-26: Lower-case hex SHA-256.
     pub digest: String,
+    /// 2026-10-07: Canonical files hashed by content, including transitive quoted
+    /// includes and configs. Build systems must watch these, not only source roots.
+    pub files: BTreeSet<PathBuf>,
     /// 2026-09-26: Quoted includes naming a file that is not on disk, as
     /// `including-file -> include`, the including file relative to `root`.
     pub unresolved: BTreeSet<String>,
@@ -180,6 +183,7 @@ pub fn hash_with_report(root: &Path, inputs: &ClosureInputs) -> Result<Closure> 
 
     Ok(Closure {
         digest: hex_lower(&digest.finalize()),
+        files: closure,
         unresolved,
     })
 }

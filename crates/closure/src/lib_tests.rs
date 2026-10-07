@@ -364,3 +364,31 @@ fn the_hash_does_not_depend_on_the_checkout_location() {
         "the same commit checked out twice must hash the same"
     );
 }
+
+// 2026-10-07: Cargo must watch the exact resolved files whose contents are attested.
+#[test]
+fn closure_reports_transitive_files_and_configs_for_rebuilds() {
+    let d = tmp();
+    let top = d.join("model/nvfp4/top.cu");
+    let mid = d.join("common/mid.cuh");
+    let deep = d.join("common/deep.cuh");
+    let config = d.join("MODEL.toml");
+    write(&top, "#include \"../../common/mid.cuh\"\n");
+    write(&mid, "#include \"deep.cuh\"\n");
+    write(&deep, "#include \"mid.cuh\"\n#define VALUE 1\n");
+    write(&config, "id = 1\n");
+    let mut request = inputs(vec![top.clone()]);
+    request.configs.push(config.clone());
+    let before = hash_with_report(&d, &request).unwrap();
+    assert_eq!(
+        before.files,
+        [top, mid, deep.clone(), config]
+            .into_iter()
+            .map(|p| p.canonicalize().unwrap())
+            .collect()
+    );
+    write(&deep, "#include \"mid.cuh\"\n#define VALUE 2\n");
+    let after = hash_with_report(&d, &request).unwrap();
+    assert_eq!(before.files, after.files);
+    assert_ne!(before.digest, after.digest);
+}

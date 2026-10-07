@@ -48,3 +48,27 @@ fn diagnostic_experts_do_not_shadow_the_common_experts() {
     }
     assert_eq!(common_alias.as_deref(), Some("moe_w4a16"));
 }
+
+// 2026-10-07: The thin module's shared implementation is outside GPT's layout inputs.
+#[test]
+fn diagnostic_rebuild_inputs_include_the_shared_implementation() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let thin = root.join("kernels/gb10/gpt-oss-20b/mxfp4/gpt_oss_mxfp4_mma.cu");
+    let shared = root.join("kernels/gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu");
+    let closure = metrale_closure::hash_with_report(
+        &root,
+        &metrale_closure::ClosureInputs {
+            sources: vec![thin.clone()],
+            configs: vec![],
+            flags: vec![],
+            arch: "sm_121a".into(),
+            compiler: "dependency-only fixture, no compiler invoked".into(),
+        },
+    )
+    .unwrap();
+    assert!(closure.files.contains(&thin));
+    assert!(closure.files.contains(&shared));
+}
