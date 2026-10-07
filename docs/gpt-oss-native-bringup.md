@@ -98,11 +98,11 @@ including Unicode chunk splits and undeclared recipients. The checkpoint tool
 header `commentary json` preserves a separate JSON content type; duplicates,
 unknown types and JSON metadata without a tool recipient are refused.
 
-This decoder is deliberately not connected to serving yet. Next steps are
-preserving developer messages during prompt rendering, scheduler termination
-metadata, shared API IR conversion,
-JSON/tool-schema validation, and blocking/streaming/Anthropic parity. No native
-tool-use result is claimed by these framing tests.
+Blocking text API composition is now implemented, with actual HTTP validation
+pending. Streaming foundations retain terminal-token evidence and incremental
+UTF-8 delivery, but admission remains closed until live validation. JSON/tool
+schema handling and broader API parity remain open. No native tool-use result
+is claimed by these framing tests.
 
 ### Checkpoint token identity adapter
 
@@ -132,7 +132,8 @@ preserved when genuinely encoded, not treated as an incomplete-token heuristic.
 This strict adapter is necessary because tokenizers 0.23 DecodeStream uses lossy
 decoding and exposes no final flush/pending-byte check. ID classification always
 precedes byte decoding; decoded delimiter spellings never become control events.
-It remains a tested foundation, not wired into serving or scheduler termination.
+The adapter now feeds blocking API composition and a gated streaming candidate;
+framing tests alone do not establish working HTTP inference.
 
 `fixtures/gpt-oss-byte-vocab.json` is a compact decoder fixture: the original
 first 256 byte-vocabulary entries, added tokens and decoder metadata, with no
@@ -414,5 +415,28 @@ single-device execution, memory utilization in `(0, 0.85]`, and no prefix reuse,
 swap, speculative decoding, LoRA or batched prefill. Circuit lowering remains
 unsupported. Layer capabilities independently refuse graphs and multi-sequence
 execution. Factory/CLI controls and a Metal-feature server check pass. The full
-Linux target/server build and actual HTTP/cache-lifecycle tests remain pending;
-Harmony API composition is still in progress. This admission is not certification.
+Linux target/server build succeeds. Actual HTTP/cache-lifecycle tests remain
+pending while startup integration gaps are resolved. This admission is not
+certification.
+
+
+## Server integration boundaries
+
+Actual startup exposed three gaps that standalone forward tests could not:
+missing MXFP4 quant-format preflight, a tokenizer cap conflicting with physical
+checkpoint vocabulary, and an unreachable NVFP4 head-kernel probe under explicit
+BF16 head policy. Their failed startup logs are retained. The format validator
+now reuses packed tensor contracts; its legacy NVFP4 mapping is explicitly absent.
+The parsed policy retains 201,088 physical embedding/head rows while sampling,
+projection output and logits allocation use the 200,019-token logical cap.
+Invalid input IDs are refused before embedding/state mutation. The unused head
+probe is policy-gated rather than hidden from the kernel audit.
+
+Blocking Harmony returns only validated final text. API usage categorizes
+ordinary token IDs in analysis bodies as reasoning tokens, excluding framing
+headers/delimiters. Total completion tokens remain all sampled output IDs;
+subtracting reasoning therefore still includes protocol overhead, not just
+visible-text tokens. This is an engine accounting convention, not provider
+billing parity. Scheduler reasoning/budget logic still uses generic markers;
+API accounting does not establish Harmony-aware scheduler budget enforcement.
+Live HTTP/SSE and accounting validation remain open.
