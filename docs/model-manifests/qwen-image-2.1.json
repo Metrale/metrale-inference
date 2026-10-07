@@ -78,6 +78,10 @@
         {
           "path": "src/diffusers/schedulers/scheduling_flow_match_euler_discrete.py",
           "sha256": "5448bbfe15324ea8034470e742c7782b1de3864c0836d98ef3dade65e30df6a7"
+        },
+        {
+          "path": "src/diffusers/models/normalization.py",
+          "sha256": "a3c40cee9308a0e339cca21c14bf51f394c61ae68e5b9a578e5636441f5eaa84"
         }
       ]
     },

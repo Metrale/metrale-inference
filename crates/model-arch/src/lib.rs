@@ -28,6 +28,7 @@ pub mod nemotron_moe;
 #[cfg(test)]
 pub mod ple_tests;
 pub mod precision_schedule;
+pub mod qwen_image21;
 pub mod seq_state_reserve;
 pub mod tp_shard;
 pub mod weight_loader;

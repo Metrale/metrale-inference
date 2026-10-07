@@ -252,3 +252,28 @@ The pinned Torch build's LayerNorm uses a vectorized Welford reduction; the
 existing native NLLB kernel uses a two-pass sum/variance reduction. Any new
 precision policy must retain the old kernel's behavior and be separately tested.
 This is a lowering gap, not permission to widen the criterion after seeing data.
+
+### Diagnostic native block prelude
+
+`model-arch::qwen_image21::DiagnosticImagePrelude` now composes the unchanged
+LayerNorm candidate, exact native scale modulation and existing tensor-core BF16
+GEMMs for raw Q/K/V projections. It borrows projection weights, owns/reclaims one
+scratch allocation and immutable uploaded row selection, and refuses invalid
+weights, missing kernels or null input pointers. This separate diagnostic type
+is not a `TransformerLayer` implementation or model-factory entry.
+
+A bounded CUDA test used the real pinned block-0 projection weights with fixed
+BF16 inputs (seed 2123, two samples × three tokens, width 4096). All 73,728 raw
+Q/K/V output values matched the reference exactly, including this case's norm
+and modulation intermediates. Transposed-weight controls detected differences.
+The receipt records weight-content and native-source hashes; raw output pairs
+were retained. The known three LayerNorm adversarial mismatches remain unchanged,
+so this finite test does not qualify the general norm policy or complete block.
+Rust tests verify the five-launch composition, storage lifetime and refusal paths.
+
+The next boundaries are Q/K normalization, three-axis RoPE and image-block
+attention. The pinned Diffusers `RMSNorm` rounds normalized Q/K activation to
+BF16 **before** multiplying its BF16 weight. Existing `rms_norm_vanilla` multiplies
+the weight in FP32 before the final cast and cannot be silently substituted.
+The additional reference normalization source/hash is now included in the
+component manifest. Encoder/VAE/scheduler and image serving remain unimplemented.
