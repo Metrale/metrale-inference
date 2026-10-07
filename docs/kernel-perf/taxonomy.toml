@@ -593,3 +593,14 @@ names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_ad
 component = "elementwise"
 kind = "image scale / tanh residual (staged BF16 residual)"
 names = ["image_modulation_scale_bf16", "image_modulation_residual_bf16"]
+
+# 2026-10-07: Additive staged head norm and image complex rotation; unregistered.
+[[rule]]
+component = "norm"
+kind = "image BF16 post-normalization weight multiply"
+names = ["image_head_weight_bf16"]
+
+[[rule]]
+component = "rope"
+kind = "three-axis image complex rotation (diagnostic residual)"
+names = ["image_rope_complex_bf16"]

@@ -52,3 +52,21 @@ fn selected_component_and_abi_are_explicit() {
     expected.extend([6u32, 4096, 16384, 8192].map(|v| MockArg::Bytes(v.to_ne_bytes().to_vec())));
     assert_eq!(launch.args, expected);
 }
+
+#[test]
+fn head_and_rotary_geometry_refuse_before_launch() {
+    use metrale_model_layers::layers::ops::{image_head_weight_bf16, image_rope_complex_bf16};
+    let gpu = MockGpuBackend::new();
+    let kernel = gpu
+        .kernel("image_modulation", "image_rope_complex_bf16")
+        .unwrap();
+    let ptrs = [DevicePtr(4096), DevicePtr(8192), DevicePtr(12288)];
+    assert!(image_head_weight_bf16(&gpu, kernel, ptrs, 0, 0).is_err());
+    assert!(image_rope_complex_bf16(&gpu, kernel, ptrs, 0, 3, 0).is_err());
+    assert!(image_rope_complex_bf16(&gpu, kernel, ptrs, u32::MAX, u32::MAX, 0).is_err());
+    assert!(
+        image_rope_complex_bf16(&gpu, kernel, [ptrs[0], DevicePtr(8193), ptrs[2]], 2, 3, 0)
+            .is_err()
+    );
+    assert!(gpu.launches_snapshot().is_empty());
+}

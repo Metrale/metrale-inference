@@ -31,3 +31,31 @@ extern "C" __global__ void image_modulation_residual_bf16(
     const float product = __bfloat162float(__float2bfloat16_rn(activated * __bfloat162float(branch[i])));
     output[i] = __float2bfloat16_rn(__bfloat162float(hidden[i]) + product);
 }
+
+// 2026-10-07: Separate BF16 weight multiplication after a normalized row has
+// already rounded to BF16. This preserves Diffusers RMSNorm's storage boundary.
+extern "C" __global__ void image_head_weight_bf16(
+    const __nv_bfloat16* normalized, const __nv_bfloat16* weight,
+    __nv_bfloat16* output, uint32_t rows, uint32_t width) {
+    const uint64_t i = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= uint64_t(rows) * width) return;
+    output[i] = __float2bfloat16_rn(__bfloat162float(normalized[i]) * __bfloat162float(weight[i % width]));
+}
+
+// 2026-10-07: Adjacent real/imaginary pairs, shared FP32 cis[sequence,64,2].
+// Axes partition the 64 pairs as 8 frame / 28 height / 28 width.
+// Pinned Torch CUDA contracts opposite products for real/imaginary components.
+// Identical-operand controls distinguish this ordering; native CPU cis generation
+// still differs, so the overall rotary gate remains diagnostic.
+extern "C" __global__ void image_rope_complex_bf16(
+    const __nv_bfloat16* input, const float* cis, __nv_bfloat16* output,
+    uint32_t samples, uint32_t sequence, uint32_t heads) {
+    const uint64_t i = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= uint64_t(samples) * sequence * heads * 64) return;
+    const uint64_t token = (i / (heads * 64)) % sequence;
+    const uint64_t pair = i % 64;
+    const float c = cis[(token * 64 + pair) * 2], s = cis[(token * 64 + pair) * 2 + 1];
+    const float x = __bfloat162float(input[2*i]), y = __bfloat162float(input[2*i+1]);
+    output[2*i] = __float2bfloat16_rn(__fmaf_rn(x,c,-__fmul_rn(y,s)));
+    output[2*i+1] = __float2bfloat16_rn(__fmaf_rn(y,c,__fmul_rn(x,s)));
+}

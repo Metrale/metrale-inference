@@ -319,5 +319,6 @@ pub use wide_prefill::*;
 #[path = "ops/image_modulation.rs"]
 mod image_modulation;
 pub use image_modulation::{
-    ImageModulationLayout, image_modulation_residual_bf16, image_modulation_scale_bf16,
+    ImageModulationLayout, image_head_weight_bf16, image_modulation_residual_bf16,
+    image_modulation_scale_bf16, image_rope_complex_bf16,
 };

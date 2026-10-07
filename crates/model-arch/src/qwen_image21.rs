@@ -2,6 +2,7 @@
 //! 2026-10-07: Diagnostic native visual-block prelude; not a serving model.
 //! LayerNorm uses the existing two-pass NLLB kernel, whose exact-reference gate
 //! has three recorded near-zero BF16 mismatches. This path does not qualify it.
+pub mod rope;
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::{
     gpu::{DevicePtr, GpuBackend, KernelHandle},
@@ -17,12 +18,21 @@ use metrale_model_weights::{
 };
 
 /// Outputs remain owned by the prelude and are overwritten on the next call.
-/// They are raw projections: no Q/K norm, RoPE, attention or KV reuse is implied.
+/// The producing method states whether Q/K normalization has run. No rotary
+/// transform, attention or KV reuse is implied.
 #[derive(Clone, Copy)]
-pub struct RawImageQkv {
+pub struct ImageQkvBuffers {
     pub q: DevicePtr,
     pub k: DevicePtr,
     pub v: DevicePtr,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum QkvStage {
+    Empty,
+    Raw,
+    Normalized,
+    Rotated,
 }
 
 /// Fixed-shape diagnostic composition of non-affine LayerNorm, exact native
@@ -34,11 +44,14 @@ pub struct DiagnosticImagePrelude<'a> {
     allocation: DevicePtr,
     normalized: DevicePtr,
     modulated: DevicePtr,
-    qkv: RawImageQkv,
+    qkv: ImageQkvBuffers,
     ones: DevicePtr,
     zeros: DevicePtr,
     selection: DevicePtr,
     rows: u32,
+    samples: u32,
+    tokens: u32,
+    stage: QkvStage,
     layout: ImageModulationLayout,
     norm: KernelHandle,
     scale: KernelHandle,
@@ -86,7 +99,7 @@ impl<'a> DiagnosticImagePrelude<'a> {
             allocation,
             normalized: allocation,
             modulated: allocation.offset(row_bytes),
-            qkv: RawImageQkv {
+            qkv: ImageQkvBuffers {
                 q: allocation.offset(2 * row_bytes),
                 k: allocation.offset(3 * row_bytes),
                 v: allocation.offset(4 * row_bytes),
@@ -95,6 +108,9 @@ impl<'a> DiagnosticImagePrelude<'a> {
             zeros: allocation.offset(5 * row_bytes + width * 2),
             selection: allocation.offset(5 * row_bytes + width * 4),
             rows,
+            samples,
+            tokens,
+            stage: QkvStage::Empty,
             layout,
             norm,
             scale,
@@ -120,7 +136,7 @@ impl<'a> DiagnosticImagePrelude<'a> {
         hidden: DevicePtr,
         modulation: DevicePtr,
         stream: u64,
-    ) -> Result<RawImageQkv> {
+    ) -> Result<ImageQkvBuffers> {
         ensure!(
             !hidden.is_null()
                 && hidden.0.is_multiple_of(16)
@@ -128,6 +144,7 @@ impl<'a> DiagnosticImagePrelude<'a> {
                 && modulation.0.is_multiple_of(2),
             "invalid Qwen prelude input pointers"
         );
+        self.stage = QkvStage::Empty;
         KernelLaunch::new(self.gpu, self.norm)
             .grid([self.rows, 1, 1])
             .block([256, 1, 1])
@@ -164,6 +181,96 @@ impl<'a> DiagnosticImagePrelude<'a> {
                 stream,
             )?;
         }
+        self.stage = QkvStage::Raw;
+        Ok(self.qkv)
+    }
+    /// 2026-10-07: Normalize each 128-wide head, rounding its activation to BF16
+    /// before the separate BF16 weight multiplication. Must follow project once.
+    /// Returned Q/K have no rotary transform yet; V is untouched.
+    pub fn normalize_qk(
+        &mut self,
+        q_weight: &WeightTensor,
+        k_weight: &WeightTensor,
+        stream: u64,
+    ) -> Result<ImageQkvBuffers> {
+        ensure!(
+            self.stage == QkvStage::Raw,
+            "Qwen QK normalization requires fresh raw projections"
+        );
+        for weight in [q_weight, k_weight] {
+            ensure!(
+                weight.dtype == WeightDtype::BF16
+                    && weight.shape == [128]
+                    && !weight.ptr.is_null()
+                    && weight.ptr.0.is_multiple_of(4),
+                "invalid Qwen head norm weight"
+            );
+        }
+        let rows = self
+            .rows
+            .checked_mul(32)
+            .ok_or_else(|| anyhow::anyhow!("Qwen head row count overflow"))?;
+        let norm = self.gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?;
+        let apply = self
+            .gpu
+            .kernel("image_modulation", "image_head_weight_bf16")?;
+        self.stage = QkvStage::Empty;
+        for (input, weight) in [(self.qkv.q, q_weight), (self.qkv.k, k_weight)] {
+            ops::rms_norm(
+                self.gpu,
+                norm,
+                input,
+                &DenseWeight { weight: self.ones },
+                self.normalized,
+                rows,
+                128,
+                1e-6,
+                stream,
+            )?;
+            ops::image_head_weight_bf16(
+                self.gpu,
+                apply,
+                [self.normalized, weight.ptr, input],
+                rows,
+                stream,
+            )?;
+        }
+        self.stage = QkvStage::Normalized;
+        Ok(self.qkv)
+    }
+    /// 2026-10-07: Apply native three-axis complex RoPE after staged Q/K norm.
+    /// Geometry must describe the exact projected sequence shared by samples.
+    pub fn rotate_qk(
+        &mut self,
+        layout: &rope::ImageRopeLayout,
+        stream: u64,
+    ) -> Result<ImageQkvBuffers> {
+        ensure!(
+            self.stage == QkvStage::Normalized,
+            "image RoPE requires normalized fresh QK"
+        );
+        ensure!(
+            layout.positions().len() == self.tokens as usize,
+            "image rotary sequence differs from projections"
+        );
+        let kernel = self
+            .gpu
+            .kernel("image_modulation", "image_rope_complex_bf16")?;
+        let table = layout.frequencies();
+        let bytes: Vec<u8> = table.iter().flat_map(|f| f.to_le_bytes()).collect();
+        self.gpu.copy_h2d_async(&bytes, self.normalized, stream)?;
+        self.stage = QkvStage::Empty;
+        for qk in [self.qkv.q, self.qkv.k] {
+            ops::image_rope_complex_bf16(
+                self.gpu,
+                kernel,
+                [qk, self.normalized, qk],
+                self.samples,
+                self.tokens,
+                stream,
+            )?;
+        }
+        self.stage = QkvStage::Rotated;
         Ok(self.qkv)
     }
 }

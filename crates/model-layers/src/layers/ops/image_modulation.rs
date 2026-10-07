@@ -138,3 +138,76 @@ pub fn image_modulation_residual_bf16(
         .arg_u32(layout.offset)
         .launch(stream)
 }
+
+/// 2026-10-07: Preserve the BF16 intermediate before applying a shared per-head
+/// norm weight. `buffers` = normalized rows, BF16 weight vector, output. Output
+/// may alias normalized. Width 128 is the pinned Qwen image head dimension.
+pub fn image_head_weight_bf16(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    buffers: [DevicePtr; 3],
+    rows: u32,
+    stream: u64,
+) -> Result<()> {
+    let [normalized, weight, out] = buffers;
+    ensure!(
+        rows > 0 && rows <= i32::MAX as u32,
+        "invalid image head row count"
+    );
+    ensure!(
+        buffers
+            .iter()
+            .all(|p| !p.is_null() && p.0.is_multiple_of(2)),
+        "invalid image head buffer"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([(u64::from(rows) * 128).div_ceil(256) as u32, 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(normalized)
+        .arg_ptr(weight)
+        .arg_ptr(out)
+        .arg_u32(rows)
+        .arg_u32(128)
+        .launch(stream)
+}
+
+/// 2026-10-07: Complex-pair rotation for 32 heads of width128; cis is FP32
+/// `[sequence,64,2]`, shared by samples. `buffers` = input, cis, output.
+pub fn image_rope_complex_bf16(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    buffers: [DevicePtr; 3],
+    samples: u32,
+    sequence: u32,
+    stream: u64,
+) -> Result<()> {
+    let [input, cis, out] = buffers;
+    ensure!(samples > 0 && sequence > 0, "empty image rotary shape");
+    let pairs = u64::from(samples)
+        .checked_mul(u64::from(sequence))
+        .and_then(|n| n.checked_mul(32 * 64))
+        .ok_or_else(|| anyhow::anyhow!("image rotary size overflow"))?;
+    ensure!(
+        pairs.div_ceil(256) <= i32::MAX as u64,
+        "image rotary grid overflow"
+    );
+    ensure!(
+        !input.is_null()
+            && input.0.is_multiple_of(2)
+            && !out.is_null()
+            && out.0.is_multiple_of(2)
+            && !cis.is_null()
+            && cis.0.is_multiple_of(4),
+        "invalid image rotary pointers"
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([pairs.div_ceil(256) as u32, 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(input)
+        .arg_ptr(cis)
+        .arg_ptr(out)
+        .arg_u32(samples)
+        .arg_u32(sequence)
+        .arg_u32(32)
+        .launch(stream)
+}

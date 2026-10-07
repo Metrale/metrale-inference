@@ -277,3 +277,71 @@ BF16 **before** multiplying its BF16 weight. Existing `rms_norm_vanilla` multipl
 the weight in FP32 before the final cast and cannot be silently substituted.
 The additional reference normalization source/hash is now included in the
 component manifest. Encoder/VAE/scheduler and image serving remain unimplemented.
+
+### Staged Q/K normalization and three-axis rotation
+
+The diagnostic prelude now continues through per-head Q/K normalization. It
+reuses unchanged `rms_norm_vanilla` with explicit unit weights, then separately
+multiplies the rounded BF16 row by its real BF16 norm weights. The saved real
+Q/K projections and random, tiny, large, constant and small-variance inputs
+matched exactly for 296,192 BF16 outputs. Fusing the weight before the rounding
+boundary caused 53,006 differences; the wrong epsilon caused 49,429. No existing
+RMSNorm behavior was modified.
+
+`ImageRopeLayout` implements the pinned frame/height/width geometry and rejects
+unsupported multi-frame shapes, noncontiguous blocks, unaccounted image tokens
+and positions outside the pinned table range. Odd grids retain the reference's
+asymmetric centred coordinates. Text advances all axes; an image holds the frame
+position and advances subsequent text by its maximum spatial dimension. The
+native table export example runs the production Rust geometry/math for replay.
+
+The native complex-pair CUDA transform follows the `[16,56,56]` axis partition
+and shared sequence frequencies. Initial split multiply/add failed one tiny
+near-cancellation value; the failure persisted with identical reference
+frequencies, isolating arithmetic contraction. Explicit FMA follows the pinned
+one CUDA contraction candidate and passed all 344,064 BF16 outputs of
+that corpus. The rejected receipt is retained. Conjugated-frequency and split-
+half pairing controls detect 173,070 and 222,430 differences respectively.
+Native Rust tables still differ from the reference at 4/14 FP32 frequency values
+in those two layouts (maximum absolute error `1.4901161193847656e-8`); this did not
+change the final BF16 results in the passing cases. This is bounded evidence,
+not a claim of bit-identical tables across platforms or all positions.
+
+The prelude rejects Q/K normalization before projection, repeated normalization,
+rotation before normalization and a rotary sequence of the wrong length. Four
+Rust tests cover composition, ownership, geometry and refusal paths. The earlier
+LayerNorm discrepancy remains open. Full image-block attention, complete block
+residual/FFN execution and native generation are still unqualified.
+
+A fresh seed (2126) plus a 266-token layout **failed** that exact gate: 132 of
+6,881,280 BF16 outputs differed; using identical reference cis bits still left
+63 differences. The longer layout has 752 FP32 frequency differences (maximum
+`4.76837158203125e-7`). Thus both complex contraction and native frequency
+generation remain diagnostic candidates. The independent failure receipt is
+retained alongside the earlier bounded pass; no tolerance was widened.
+
+An identical-operand contraction probe (fresh seed 2127; 266 tokens; random,
+tiny and large inputs) evaluated all four fused-product choices and split
+operations. The corrected imaginary component `fma(y, cos, x*sin)`, paired
+with real `fma(x, cos, -y*sin)`, matched all 6,537,216 BF16 outputs; the previous
+imaginary order differed at 47 values. Inputs, cis bits, reference and every
+variant output were saved. The explicit order was corrected. This isolates
+arithmetic only: the native frequency-table gate remains open, and the earlier
+independent rejection is preserved.
+
+Reuse accounting: LAB coverage and model registration are unchanged. Q/K norm
+reuses the existing RMSNorm family plus one named BF16 storage-boundary residual;
+complex image RoPE is a second unregistered residual. Kernel inventory now
+contains 1,398 entry points. CHKI reaches GB10, B200 and Hopper; the change is
+additive, leaves existing dispatch unchanged and is measured only on GB10.
+Scoped integration tests, Clippy, rustdoc, formatting and inventory checks pass.
+Broad host `--tests` Clippy remains blocked by existing CUDA-gated tests and
+macOS dependency-stub lint errors; it is not reported as passing.
+
+Final corrected production-kernel replay, fresh seed 2128: all 6,881,280 BF16
+outputs match when given the identical reference cis table. Native Rust cis
+tables still produce 55 differences in the 266-token layout (24 random, 11
+tiny, 20 large), so the overall exact rotary gate remains **failed**. The saved
+real Q/K and shorter mixed-image cases are exact. Every input, reference/native
+cis table, source snapshot and output pair is retained for this replay. This
+separates the remaining frequency-generation issue from complex multiplication.
