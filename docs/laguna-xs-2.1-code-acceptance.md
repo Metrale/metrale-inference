@@ -115,3 +115,15 @@ container. No generated code ran in the host interpreter. This establishes a
 bounded one-shot coding result, not broad coding or agentic qualification.
 See [`laguna-post-soak-U.json`](model-evidence/laguna-post-soak-U.json) for the
 exact checkpoint, executable identity and raw evidence hashes.
+
+### Explicit-feedback repair — 2026-10-07
+
+On fixed native source `020057a` using the default async route, three repair
+turns supply the original retry-delay requirements, each original generated
+solution, and the three failing counterexamples. All return identical plain code
+without Markdown fences. The isolated grader now passes 10/11 cases for each:
+bool attempts and Unicode headers are corrected, but 5,000 leading zeros still
+trigger Python's integer-string conversion limit. Therefore **0/3 repaired task
+passes**, distinct from the original 9/12 aggregate task result. This partial
+repair evidence does not establish general coding/agent capability. Source and
+raw-receipt hashes are in `model-evidence/laguna-eos-capture-followup.json`.

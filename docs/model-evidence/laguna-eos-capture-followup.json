@@ -1,0 +1,192 @@
+{
+  "schema": 1,
+  "model": "poolside/Laguna-XS-2.1-NVFP4",
+  "revision": "d32afde8b09af1539b49ff96ff5551c674485f8e",
+  "capture_phases": {
+    "A": {
+      "binary_sha256": "39c570b06ba5ba9fa1e9da9ee281d33a9eb5ee5416415e7c882e0abafd6ce32d",
+      "source_identity": "522e99294ee6a9b8c6db81a481d5d3b2d101fe20",
+      "capture_enabled": false,
+      "requests": 66,
+      "verdicts": {
+        "exact": 17,
+        "unscored_format": 49
+      },
+      "variable_groups": 5,
+      "responses_sha256": "83b273a810bb6af5296de2da399b15a96462935d52b0df94d576ce06362ce05b"
+    },
+    "B": {
+      "binary_sha256": "39c570b06ba5ba9fa1e9da9ee281d33a9eb5ee5416415e7c882e0abafd6ce32d",
+      "source_identity": "522e99294ee6a9b8c6db81a481d5d3b2d101fe20",
+      "capture_enabled": true,
+      "requests": 66,
+      "verdicts": {
+        "exact": 19,
+        "unscored_format": 47
+      },
+      "variable_groups": 4,
+      "responses_sha256": "72834575ad758c137bfcb0424f8aa586684e6d4899f716144f8d0ca2e4d9b5f9"
+    },
+    "A2": {
+      "binary_sha256": "39c570b06ba5ba9fa1e9da9ee281d33a9eb5ee5416415e7c882e0abafd6ce32d",
+      "source_identity": "522e99294ee6a9b8c6db81a481d5d3b2d101fe20",
+      "capture_enabled": false,
+      "requests": 66,
+      "verdicts": {
+        "exact": 21,
+        "unscored_format": 45
+      },
+      "variable_groups": 3,
+      "responses_sha256": "e8f5a6e3632dc4bad96eb8627ebf558eba1ca692c582702018e4d1de07abdc10"
+    }
+  },
+  "capture_analysis": {
+    "records": 64,
+    "rows": 129,
+    "batch_row_histogram": {
+      "1": 29,
+      "2": 38,
+      "4": 56,
+      "3": 6
+    },
+    "tie_rows": 0,
+    "first_max_mismatches": 0,
+    "last_max_mismatches": 0,
+    "all_selected_ids_are_finite_maxima": true,
+    "scope": "actual captured device candidates; not final tokens or HTTP identities; first prefill token not captured so equal prompt/position does not establish identical prior generated prefix"
+  },
+  "fixed_routes": {
+    "sync_diagnostic": {
+      "binary_sha256": "13732afc36bec64b878157c2bf2f5608a1913bf086901d9e0954dc1eac45b989",
+      "source_identity": "020057a974f1da08a8bef4fd8a1974edf524b0dd",
+      "strict_schema_passes": 6,
+      "strict_schema_requests": 6,
+      "extra_live_checks": [
+        {
+          "test": "json-stream",
+          "actual_emitted_token_ids": [
+            6003,
+            9295,
+            1034,
+            290,
+            89,
+            162
+          ],
+          "content": "{\"answer\": 4}",
+          "finish_reason": "stop",
+          "passed": true
+        },
+        {
+          "test": "forced-tool",
+          "passed": true
+        },
+        {
+          "test": "tool-result",
+          "passed": true
+        },
+        {
+          "test": "json-tools-none",
+          "passed": true
+        }
+      ],
+      "raw_schema_responses_sha256": "2182ce5bc1a5d49aa4f2f1b4dcc6045e5e7cbb23294ec215704823b685ff729b",
+      "raw_stream_sha256": "ecb97a0f550463b5d8ff6632146e8fd49dd573a2e318aef83b25935fc57b6a6b"
+    },
+    "default_async": {
+      "binary_sha256": "13732afc36bec64b878157c2bf2f5608a1913bf086901d9e0954dc1eac45b989",
+      "source_identity": "020057a974f1da08a8bef4fd8a1974edf524b0dd",
+      "strict_schema_passes": 6,
+      "strict_schema_requests": 6,
+      "extra_live_checks": [
+        {
+          "test": "json-stream",
+          "actual_emitted_token_ids": [
+            6003,
+            9295,
+            1034,
+            290,
+            89,
+            162
+          ],
+          "content": "{\"answer\": 4}",
+          "finish_reason": "stop",
+          "passed": true
+        },
+        {
+          "test": "forced-tool",
+          "passed": true
+        },
+        {
+          "test": "tool-result",
+          "passed": true
+        },
+        {
+          "test": "json-tools-none",
+          "passed": true
+        }
+      ],
+      "raw_schema_responses_sha256": "ba3b3946fa090c272adebfcfe8b1a0de3f9fb059bb59fae6460ce3b526b70b58",
+      "raw_stream_sha256": "4fef56a66d29f65ffbd2d7c0203196f26e66d05a859c53c13ce4a81f00bad48e"
+    }
+  },
+  "coding_repair": {
+    "scope": "explicit requirement-counterexample feedback; initial failures unchanged",
+    "repeats": 3,
+    "source_sha256": "866d515fe8692ecda37aaea222fcafa563742f0a9a7b49b1906fe7a03422c57d",
+    "grades": [
+      {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    ],
+    "format": "plain code all3",
+    "remaining_failure": "5000 leading zeros trigger Python integer-string conversion limit"
+  }
+}
