@@ -213,6 +213,28 @@ def run_source(source, arguments):
         process.wait(timeout=5)
     finally:
         selector.close()
+        # 2026-10-07: Preserve the owned container's exit cause before cleanup.
+        # Exit 137 alone does not distinguish an OOM kill from another signal.
+        try:
+            state = json.loads(
+                subprocess.check_output(
+                    ["docker", "inspect", "--format", "{{json .State}}", name],
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+            )
+            result["container_exit_state"] = {
+                key: state.get(key)
+                for key in ("ExitCode", "OOMKilled", "Error", "Status")
+            }
+        except (
+            OSError,
+            subprocess.SubprocessError,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ) as error:
+            result["container_exit_state_unavailable"] = type(error).__name__
         subprocess.run(
             ["docker", "rm", "-f", name],
             stdout=subprocess.DEVNULL,

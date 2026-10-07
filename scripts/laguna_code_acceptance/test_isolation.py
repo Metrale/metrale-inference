@@ -80,6 +80,11 @@ def main():
         ),
         ("wall_bound", "def solve():\n import time\n time.sleep(60)\n", "wall_timeout"),
         ("cpu_bound", "def solve():\n while True: pass\n", None),
+        (
+            "memory_bound",
+            "def solve():\n return len(bytearray(512 * 1024 * 1024))\n",
+            None,
+        ),
     ]:
         receipt = run_source(source, [[]])
         receipt["control"] = name
@@ -88,10 +93,14 @@ def main():
         ]
         if expected_failure:
             assert receipt["failure"] == expected_failure, receipt
+        elif name == "memory_bound":
+            assert receipt["exit_code"] != 0, receipt
+            assert receipt["container_exit_state"]["OOMKilled"] is True, receipt
         elif name == "cpu_bound":
             assert receipt["exit_code"] != 0 and receipt["elapsed_seconds"] < 12, (
                 receipt
             )
+            assert receipt["container_exit_state"]["OOMKilled"] is False, receipt
         else:
             assert receipt["exit_code"] == 0 and receipt["failure"] is None, receipt
         assert len(receipt["stdout"].encode()) <= MAX_OUTPUT

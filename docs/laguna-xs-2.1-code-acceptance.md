@@ -127,3 +127,21 @@ trigger Python's integer-string conversion limit. Therefore **0/3 repaired task
 passes**, distinct from the original 9/12 aggregate task result. This partial
 repair evidence does not establish general coding/agent capability. Source and
 raw-receipt hashes are in `model-evidence/laguna-eos-capture-followup.json`.
+
+### Exit-cause evidence
+
+The grader now records the owned container's Docker exit state before cleanup.
+An exit code alone is insufficient to distinguish an OOM kill from another
+signal. Eight isolation controls pass, including a bounded memory-allocation
+control with `OOMKilled=true` and a CPU-bound control with `OOMKilled=false`;
+source-size refusal and cleanup checks remain intact. Missing exit-state data is
+reported explicitly, and semantic admission is unchanged.
+
+An initial optimized NVIDIA vLLM reference on the same pinned checkpoint also
+passes 9/12 tasks, with three retry-delay failures. This is a separate W4A4
+execution policy, not numerical parity evidence for native execution. One retry
+fails the same three semantic cases; two generate an unbounded huge power and
+exit 137 before observations. Replaying those identical source bytes in the
+same isolated grader confirms `OOMKilled=true` for both. Initial and replay
+receipts remain separate; infrastructure success never turns missing semantic
+observations into a pass.
