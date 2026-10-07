@@ -50,11 +50,20 @@ def main():
         if m==17:
             for name,tensor in [('integer_input',x),('integer_weight',w),('integer_expected',expected),('integer_actual',batch),('truncated_bad',bad)]:
                 (a.output/(name+'.bin')).write_bytes(tensor.contiguous().view(torch.uint8).cpu().numpy().tobytes())
+    # 2026-10-07: Direct kernel controls supplement the stricter production wrapper.
+    grid=ctypes.CDLL(str(a.library.resolve())).compare_fp32_grid
+    grid.argtypes=[ctypes.c_void_p]*4+[ctypes.c_uint]*2;grid.restype=ctypes.c_int
+    report['direct_grid_cases']=[]
+    for m,y in [(0,1),(0,5),(16,1),(16,2),(16,17),(32,2),(32,3),(32,33),(47,3),(48,3),(128,8),(128,129)]:
+        x=torch.randn(max(m,1),64,device='cuda',dtype=torch.bfloat16);w=torch.randn(8,64,device='cuda',dtype=torch.bfloat16)
+        batch=torch.full((max(m,1),12),123.,device='cuda');scalar=batch.clone()
+        assert grid(*(ctypes.c_void_p(v.data_ptr()) for v in [x,w,batch,scalar]),m,y)==0;torch.cuda.synchronize()
+        report['direct_grid_cases'].append(dict(m=m,y=y,mismatches=int((batch.view(torch.int32)!=scalar.view(torch.int32)).sum())))
     report['refusals']=[]
     for m,n,k,stride in [(0,8,64,12),(129,8,64,12),(17,7,64,12),(17,8,63,12),(17,8,64,7)]:
         # 2026-10-07: Null pointers are never dereferenced when geometry refuses before launch.
         code=f(*([ctypes.c_void_p(0)]*6),m,n,k,stride)
         report['refusals'].append(dict(m=m,n=n,k=k,stride=stride,refused=code!=0))
-    report['passed']=all(r['refused'] for r in report['refusals']) and all(r['integer_oracle_mismatches']==0 and r['truncation_detected']>0 and r['padding_ok'] for r in report['split_controls']) and all(r['mismatches']==0 for r in report['legacy_split_cases']) and all(r['fp32_mismatches']==r['legacy_mismatches']==0 and r['padding_ok'] for r in report['cases']) and sum(r['early_round_control'] for r in report['cases'])>0
+    report['passed']=all(r['mismatches']==0 for r in report['direct_grid_cases']) and all(r['refused'] for r in report['refusals']) and all(r['integer_oracle_mismatches']==0 and r['truncation_detected']>0 and r['padding_ok'] for r in report['split_controls']) and all(r['mismatches']==0 for r in report['legacy_split_cases']) and all(r['fp32_mismatches']==r['legacy_mismatches']==0 and r['padding_ok'] for r in report['cases']) and sum(r['early_round_control'] for r in report['cases'])>0
     (a.output/'receipt.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2));return 0 if report['passed'] else 1
 if __name__=='__main__':raise SystemExit(main())

@@ -32,3 +32,11 @@ extern "C" int truncated_batch(const __nv_bfloat16* a,const __nv_bfloat16* b,
     dense_gemv_bf16_batchm_fp32out<<<n/4,256>>>(a,b,output,m,n,k,stride);
     return int(cudaGetLastError());
 }
+
+// 2026-10-07: Empty and overprovisioned direct grids preserve output sentinels.
+extern "C" int compare_fp32_grid(const __nv_bfloat16* a,const __nv_bfloat16* b,float* out,float* scalar,unsigned m,unsigned y){
+ if(!y||m>128||(m+y-1)/y>16)return int(cudaErrorInvalidValue);
+ dense_gemv_bf16_batchm_fp32out<<<dim3(2,y),256>>>(a,b,out,m,8,64,12);
+ for(unsigned t=0;t<m;++t)dense_gemv_bf16_fp32out<<<2,256>>>(a+size_t(t)*64,b,scalar+size_t(t)*12,8,64);
+ return int(cudaGetLastError());
+}
