@@ -58,7 +58,8 @@ and test arithmetic correctness and instruction compliance separately in the nex
 - [x] Locate the Q/K normalization dispatch defect with alternating failure/pass controls.
 - [ ] Complete intermediate-output parity against a pinned reference.
 - [ ] Review existing shared NVFP4 fixes before introducing another kernel change.
-- [ ] Add a regression that fails on this baseline and passes with the correction.
+- [x] Add focused dispatch regressions and reproduce the baseline/fixed GPU response difference.
+      Broader live intermediate parity remains open.
 - [ ] Repeat sequential and concurrent generation, tools, streaming and cancellation.
 - [ ] Complete unrestricted soak, numerical parity and required benchmark certification.
 - [ ] Record throughput, latency, memory and energy with exact hardware/build identity.
@@ -84,10 +85,22 @@ exact patch and binary digest were retained with operational evidence.
 
 A new six-hour batch-four campaign exercises arithmetic, tools, SSE and HTTP
 concurrency 1/2/4. It retains full arithmetic responses, reports format failures
-separately, and stops on wrong last-line arithmetic or abnormal termination. A
-correct last line cannot erase an exact-format failure or turn the whole campaign
-into a pass. Completion, full numerical parity and speed qualification remain open.
+separately, and stops on wrong integer-only answers or abnormal termination.
+Explanatory responses remain numerically unscored and fail the format check;
+they cannot turn the whole campaign into a pass. Completion, full numerical parity and speed qualification remain open.
 
 The source guard fixes correctness through an existing scalar fallback; no speed
 improvement is claimed. A matching parameterized strided vanilla kernel remains
 a possible optimization after profiling and parity tests.
+
+Current version-three soak snapshot: 302 arithmetic responses, 218 exact-format
+answers and 84 explanatory responses classified `unscored_format`. Of 129
+concurrency cycles, 80 met every exact-format check and 49 did not. Arithmetic,
+forced tool round-trip and streaming initial checks passed. The process remains
+running; this snapshot is neither a completed soak nor clean quality qualification.
+
+A separate constructed GB10 kernel experiment confirmed the policy distinction:
+for two rows, two 128-wide heads, weights -1/0/1 and all-one inputs, the unchanged
+plain and additive kernels differ at all 512 active coordinates while leaving
+padding unchanged. Both kernels agree with their own equations. This supports
+the dispatch diagnosis but is not a capture of the model's actual Q/K activations.
