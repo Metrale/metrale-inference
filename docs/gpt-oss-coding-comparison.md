@@ -153,3 +153,27 @@ explain the entire coding failure. Original scores and qualification gates remai
 The source-bound hook, actual shape/dtype checks, control responses and filtered
 comparison are in `gpt/topology-first-divergence/reference-head-hook`; learned
 vectors and head rows remain private on the device.
+
+A further compiled-graph diagnostic localized the last matching boundary to the
+first layer's initial RMSNorm. For logical position 149 of the same 150-token
+prefix, the embedding and initial normalized vector matched native in all 2,880
+BF16 values. By the first layer's post-attention output projection, 2,642 values
+differed (maximum absolute difference 0.078125); the post-attention norm differed
+in 2,114 values and router logits in 24 of 32. This identifies an interval spanning
+QKV projection, positional encoding, attention and output projection; it does not
+assign the cause to any one of them or explain the entire coding failure.
+
+The reference executed 25 piecewise CUDA graphs with 152 padded tokens. A private
+loader hook retained bounded graph buffers and read logical row 149 after replay.
+The active capture cohort was selected by its unique exact embedding match;
+inactive buffers were retained. Every post-attention norm also matched its
+separately captured router input. The hook preserved the original 32 generated IDs,
+the one-token decision, all 201,088 final BF16 logits and the final normalized
+vector byte for byte. Native snapshots independently preserved the full 150-row
+hidden/logit traces. Source insertion controls removed only snapshot calls to
+recover the original wrapper AST; embedded kernel source was unchanged. Editing
+the loader changed compilation-cache identity, so these are explicit diagnostic
+controls, not a claim of universally transparent instrumentation. Two earlier
+unsuccessful wrapper-hook attempts remain recorded. Private evidence is under
+`gpt/topology-first-divergence/reference-layer-hook4`; original scores, numerical
+gates and production arithmetic remain unchanged.
