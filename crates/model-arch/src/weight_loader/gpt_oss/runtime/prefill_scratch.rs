@@ -216,6 +216,11 @@ impl PrefillScratch {
         ensure!(token < rows, "Expert snapshot follows chunk");
         [
             ("expert_norm", self.norm, 2880usize, "BF16", 2usize, 1usize),
+            ("attention_pre_o", self.attn, 4096, "BF16", 2, 1),
+            ("attention_post_o", self.projection, 2880, "BF16", 2, 1),
+            ("q_post_rope", self.q, 4096, "BF16", 2, 1),
+            ("k_post_rope", self.k, 512, "BF16", 2, 1),
+            ("v", self.v, 512, "BF16", 2, 1),
             ("expert_ids", self.ids, 4, "U32", 4, 1),
             ("expert_gate_after_bias", self.gate_up, 5760, "BF16", 2, 4),
             ("expert_activation", self.activation, 2880, "BF16", 2, 4),
