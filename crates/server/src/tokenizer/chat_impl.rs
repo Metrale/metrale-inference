@@ -244,9 +244,11 @@ impl ChatTokenizer {
                 tools.is_none_or(|t| t.is_empty()),
                 "GPT-OSS tool rendering is unavailable"
             );
-            let effort = reasoning_effort.unwrap_or("low");
+            let effort = reasoning_effort
+                .map(minijinja::Value::from)
+                .unwrap_or(minijinja::Value::UNDEFINED);
             anyhow::ensure!(
-                matches!(effort, "low" | "medium" | "high"),
+                reasoning_effort.is_none_or(|value| matches!(value, "low" | "medium" | "high")),
                 "unsupported GPT-OSS reasoning effort"
             );
             let rendered = self
