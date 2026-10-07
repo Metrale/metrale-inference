@@ -27,3 +27,10 @@ Frozen identities:
 - Actual sampled-ID control SHA-256: `1dc25ead6e7c27a4f0dc65163eff5d1c0f9ba53bee521267ac82cc4fb8cf075c`.
 
 Private raw requests, logs, source/module identities, failed decision and complete numerical controls are retained. Original numerical qualification remains open; this experiment neither fixes nor relaxes that gate.
+
+A separate group-fast mapping was screened against the original accepted kernel, not stacked onto the expert-last candidate. The first 64-bit mapping passed 295 correctness records but introduced a 32-byte stack frame. A separately frozen variant uses 32-bit mapping only when the complete grid product fits `UINT_MAX`, otherwise preserving the original mapping. It passed the same controls with 40 registers and zero stack/spills, but its eight-case warm screen improved only **0.601867%/0.814050%**, below 2% in both cohorts. Gate projection regressed while down projection improved; the combined predeclared gate remains failed. No whole-model or serving gain is claimed for either group-fast variant.
+
+Safe32 candidate source SHA-256: `cdd637033a418194a0cd226743d5cf36130b3c8f181794fdbe0484ab49d9f7ad`; failed micro decision SHA-256: `74e763af4565c07571ca711013f050fa31623570627804a9e1266316fdc8e762`.
+
+A separate two-tile loop unroll preserved each accumulator's column/FMA order, guarded odd final tiles, passed 295 primitive records and all eight distribution outputs, and kept four legacy PTX entry bodies identical after compiler-label/comment normalization. Its 40-register, zero-stack resource report did not predict its performance: the warm screen was approximately **39.35%/39.28% slower**. It is rejected without a full-model or serving run. Source SHA-256: `f8cbf16a0f3160f6f91f0298d7893cce929a86496c7190fdab1b0146213a96b0`.
+Decision SHA-256: `62e79411cf0c2a118205e3bdcfd0af167a8ae7c2552df7d5c2aaef6c077e7392`.

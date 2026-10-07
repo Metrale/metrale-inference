@@ -63,3 +63,30 @@ logs, tests and the rejected patch under `gpt/device-plan-private`.
 The original 244/251 sequential-reference agreement remains an open numerical
 qualification limitation. This experiment neither changes that reference nor
 promotes any alternate tensor-core, normalization or rotary policy.
+
+## Final-chunk fence placement control
+
+A separate private candidate checked the same sticky routing-error flag immediately after the final chunk's plan builder and **before** its expert projections, instead of waiting until the layer's expert work finished. Earlier builders remain ordered before this check on the same stream. The purpose was to test whether fence placement, rather than fence count alone, explained the first candidate's regression. It did not meet the unchanged performance gate and is also **rejected**.
+
+Thirteen runtime tests pass, including errors injected at the first and final builders across two chunks, sticky refusal before the final expert launches, poisoned-state retry at the correct next position, all-valid completion, and bound-stream cleanup. Faults execute two expert projections from the first chunk; the valid case executes four. An initial immutable-borrow compile failure is retained, then fixed by using the already exclusively borrowed mutable scratch.
+
+All twelve full251 hidden/cache hashes match the accepted baseline. Text quality (12), blocking tools (9), streamed tools (5), lifecycle (7), and 128/129/255/256 boundaries pass. The same opposite-order raw-ID and secondary chat campaigns were repeated without concurrent work. All 120 actual first sampled IDs also match across arms, independently correlated from server logs.
+
+The primary geometric reductions were **−0.188295% and −0.130396%** (small regressions), below the predeclared positive 2% requirement in both sessions. Moving the fence is not accepted as a speed improvement. The measurements include head/sampling/protocol and do not independently isolate host planning cost.
+
+| Prompt tokens | Session 1 baseline/candidate ms | Session 2 baseline/candidate ms |
+|---|---:|---:|
+| 64 | 340.16 / 339.98 | 340.57 / 340.73 |
+| 128 | 622.90 / 623.37 | 623.11 / 623.28 |
+| 256 | 1225.37 / 1227.37 | 1225.44 / 1227.32 |
+| 512 | 2423.77 / 2426.94 | 2424.54 / 2427.43 |
+| 1024 | 4841.76 / 4854.91 | 4850.80 / 4856.57 |
+
+Candidate release: `0fa94b01cbc394c7b2d53dbe3682ce36911a3430041805ed273a96d320fcb6d3`; accepted release and exact model pin are unchanged from above. The plan-builder PTX is unchanged from the first device-plan diagnostic; only the host control boundary and its tests changed.
+
+- `comparison.json` SHA-256: `943dceef2f3f114a4c816c8cf107bab89b77b313ac489ec488a4423a0daec623`.
+- `source-identity.json` SHA-256: `c4ee95b03dde952c8e008e211c3d9fef0d8e99cc7a6fd77799e9b8ee3928b1ae`.
+- `sampled-id-log-control.json` SHA-256: `a53b7e2ebb8ae26371bb90c316689a63020470f76dcc8c946466ed002a581671`.
+- `full251-comparison.json` SHA-256: `a47788a6a6c26d4afd3c1f1c9c29e335352fe3665a8f2c60411d88fd11373a88`.
+
+All private source overlays, raw requests, logs and failures remain retained. No runtime, kernel, admission or default change is promoted.
