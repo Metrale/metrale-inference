@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 use crate::recipe::{self, Recipe};
 
-/// 2026-10-06: Everything [`render`] is allowed to see. No path, no clock.
+/// 2026-10-06: Everything the dump renderer is allowed to see. No path, no clock.
 #[derive(Debug, Clone, Copy)]
 pub struct DumpInput<'a> {
     pub case_id: &'a str,

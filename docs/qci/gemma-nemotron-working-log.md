@@ -100,6 +100,51 @@ Distinct from `NVIDIA-Nemotron-3-Nano` and from the H100 and H200 Nano numbers.
 
 `support_label` stays `withheld`. `live_qci_acceptance` stays `not-claimed`.
 
+## Host attempts after the first dump
+
+### Weight search
+
+Looked for `gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`, `mmproj-F16.gguf`, and
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf` under `O:\Metrale`,
+`O:\CDrive_Archive\huggingface`, `D:\`, `C:\Users\alexa\.cache`,
+`C:\Users\alexa\AppData\Local`, `Documents`, `Downloads`, `Desktop`, and `V:\`.
+Every name was a miss. No download was started. `--weights` was not pointed
+at a real file, so the receipts stay on `WEIGHTS_ABSENT`.
+
+### `met circuit venn`
+
+One attempt per pinned id, against the closest recipe already in this tree:
+
+```
+met circuit venn --target unsloth/gemma-4-26B-A4B-it-GGUF --against gemma4/gemma-4-26b-a4b-nvfp4 --out kernels/circuits/venn/gemma-pin-vs-closest.md
+met circuit venn --target ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF --against nemotron-3-nano/nemotron-3-nano-30b-a3b-nvfp4 --out kernels/circuits/venn/nemotron-pin-vs-closest.md
+```
+
+The binary was not produced. With `METRALE_SKIP_BUILD=1` and
+`CUDARC_CUDA_VERSION=13000`, `cargo build -p metrale-server --bin met --offline`
+stopped at the link:
+
+```
+LINK : fatal error LNK1181: cannot open input file 'cuda.lib'
+```
+
+Blocker: `MET_LINK_CUDA_LIB`. No venn report was written. The in-tree
+Nemotron 3.5 Lightning NVFP4 instance is a different artifact from the Q4_0
+pin and was not substituted for it.
+
+### Checks on the first head
+
+`Build mdBook + rustdoc` failed because the public docs for `DumpInput`
+linked the private function `render` (`crates/qci-dump/src/dump.rs`). The
+link was removed. Receipt text did not change.
+
+`PR benchmark gate` is red because `STAMPED=false`. That hold stays. Do not
+comment `/stamp`.
+
+`comments` is red on undated lines in
+`kernels/gb10/common/moe_nvfp4_grouped_tc.cu` (`Tile order: chunk c...`).
+That file is already on `origin/main` and is not in this branch's diff.
+
 ## What the next agent should not do
 
 - Do not mark investor-mvp #44 or #58 done from this log.
