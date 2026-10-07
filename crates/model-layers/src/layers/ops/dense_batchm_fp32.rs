@@ -53,7 +53,7 @@ fn validate(
     }
     Ok(())
 }
-/// 2026-10-07: A[M,K] and B[N,K] BF16 to C[M,stride] FP32. No bias or cast.
+/// 2026-10-07: `A[M,K]` and `B[N,K]` BF16 to `C[M,stride]` FP32. No bias or cast.
 /// Requires M in1..=16, N divisible by4, K divisible by8, and stride>=N.
 /// N%4 refusal avoids the existing partial-CTA barrier path; BF16 admission is unchanged.
 /// Exact scalar reduction policy; callers supply buffers of the validated sizes.
