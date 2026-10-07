@@ -154,7 +154,16 @@ impl<'a> Stream<'a> {
         tokenizer: std::sync::Arc<ByteTokenizer>,
         prompt: &[u32],
     ) -> Result<Stream<'static>, &'static str> {
-        let seeded = tokenizer.assistant_stream(prompt)?;
+        Self::shared_with_tools(tokenizer, prompt, [])
+    }
+
+    // 2026-10-07: Allowed recipients remain exact even while arguments are buffered.
+    pub fn shared_with_tools(
+        tokenizer: std::sync::Arc<ByteTokenizer>,
+        prompt: &[u32],
+        tools: impl IntoIterator<Item = String>,
+    ) -> Result<Stream<'static>, &'static str> {
+        let seeded = tokenizer.assistant_stream_with_tools(prompt, tools)?;
         let decoder = seeded.decoder;
         Ok(Stream {
             tokenizer: TokenizerRef::Shared(tokenizer),

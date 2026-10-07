@@ -47,6 +47,18 @@ pub async fn messages(
         }
     };
 
+    // 2026-10-07: Native tool SSE is qualified only on Chat Completions.
+    if state.tokenizer.harmony().is_some()
+        && req.stream
+        && req.tools.as_ref().is_some_and(|tools| !tools.is_empty())
+    {
+        return anthropic_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "Harmony streaming tools are supported only on Chat Completions".into(),
+        );
+    }
+
     tracing::info!(
         "Anthropic request: max_tokens={}, thinking={:?}, tools={}, model={}, stream={}",
         req.max_tokens,

@@ -485,3 +485,25 @@ and 304-token prompts was 1.740, 1.868 and 6.499 seconds. Corresponding client
 first-visible medians were 2.223, 2.295 and 7.036 seconds. These bounded results
 exclude certification and energy qualification; profiling and optimization
 remain in progress.
+
+### Blocking tool roundtrip qualification (2026-10-07)
+
+The controlled localhost C1 gate passed **9/9 cases**, backed by **18 independent
+probe-grader controls**. Both Chat Completions and Anthropic Messages emitted an
+exact `lookup_part({"part_id":"A-42"})` call and answered `7` after a fixed local
+stock-result fixture. No requested external tool was executed. Wrong result IDs,
+duplicate argument keys, unsupported schema keywords, streaming tools and
+Responses tools were refused. The first run failed closed on checkpoint token
+200003 (`<|constrain|>`); the corrected strict format-header parser passed the
+second run. No reserved-token wildcard was added.
+
+Tested debug binary SHA-256:
+`c32201291c7729c9b1ffdf675fcd67c94b6ef9ba7030178ed00c13d7ad679ae8`.
+The tested source archive, exact overlay/file hashes, requests/responses, failed
+first run and private controlled diagnostic are retained with the integration
+receipts. This qualifies the narrow blocking protocol path, not general tool
+quality or optimized throughput. Allowed schemas are explicitly bounded;
+unsupported JSON Schema features fail admission. Calls require an exact declared
+recipient, unique JSON keys, valid typed arguments and a completed handoff.
+Analysis-channel handoffs remain unsupported. API analysis-token accounting is
+separate from scheduler thought budgets and provider billing conventions.

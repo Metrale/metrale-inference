@@ -161,3 +161,51 @@ fn constrained_json_header_is_token_aware_and_fail_closed() {
         assert!(tool_response::response(&tokenizer, &prompt, &output, &[tool()]).is_err());
     }
 }
+
+#[test]
+fn stream_withholds_tool_until_valid_terminal_and_preserves_unicode() {
+    use super::text_stream::TextStream;
+    use std::sync::Arc;
+    let tokenizer = Arc::new(
+        ByteTokenizer::from_tokenizer_json(include_str!("fixtures/gpt-oss-byte-vocab.json"))
+            .unwrap(),
+    );
+    let prompt = [vec![200006], ids("assistant")].concat();
+    for (body, valid) in [
+        (r#"{"part_id":"café 日本 😀","count":2}"#, true),
+        (r#"{"part_id":"A","count":true}"#, false),
+        (r#"{"part_id":"A","count":2,"count":3}"#, false),
+        (r#"{"part_id":"A","count":2"#, false),
+        (r#"{"part_id":"A","count":2,"extra":0}"#, false),
+    ] {
+        let mut parser = TextStream::with_tools(tokenizer.clone(), &prompt, vec![tool()]).unwrap();
+        let tokens = [
+            vec![200005],
+            ids("commentary to=functions.lookup_part "),
+            vec![200003],
+            ids("json"),
+            vec![200008],
+            ids(body),
+        ]
+        .concat();
+        for token in tokens {
+            assert_eq!(parser.push(token).unwrap(), "");
+            assert!(
+                parser.take_tool_call().is_none(),
+                "call leaked before validated terminal"
+            );
+        }
+        assert!(parser.finish().is_err(), "truncated handoff accepted");
+        assert_eq!(parser.push(200012).is_ok(), valid);
+        if valid {
+            parser.finish().unwrap();
+            let call = parser.take_tool_call().unwrap();
+            assert_eq!(call.arguments["part_id"], "café 日本 😀");
+            assert!(parser.take_tool_call().is_none());
+            assert!(parser.push(200012).is_err());
+        } else {
+            assert!(parser.take_tool_call().is_none());
+            assert!(parser.finish().is_err());
+        }
+    }
+}

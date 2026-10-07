@@ -35,20 +35,10 @@ pub fn response(
                 (Some("commentary"), Ending::Tool)
                     if matches!(message.content_type.as_deref(), None | Some("json")) =>
                 {
-                    let tool = tools
-                        .iter()
-                        .find(|tool| {
-                            Some(tool.recipient().as_str()) == message.recipient.as_deref()
-                        })
-                        .ok_or("undeclared tool recipient")?;
-                    let arguments = super::strict_json::parse(&message.body)?;
-                    tool.validate(&arguments)?;
+                    let call = validated_call(&message, tools)?;
                     result = Some(Response {
                         content: None,
-                        tool_call: Some(ToolCall {
-                            name: tool.name.clone(),
-                            arguments,
-                        }),
+                        tool_call: Some(call),
                         reasoning_tokens: 0,
                     });
                 }
@@ -60,4 +50,21 @@ pub fn response(
     let mut response = result.ok_or("missing final answer or tool handoff")?;
     response.reasoning_tokens = stream.reasoning_tokens();
     Ok(response)
+}
+
+// 2026-10-07: Blocking and streaming share exactly the same no-repair argument gate.
+pub(super) fn validated_call(
+    message: &super::Message,
+    tools: &[ToolSchema],
+) -> Result<ToolCall, &'static str> {
+    let tool = tools
+        .iter()
+        .find(|tool| Some(tool.recipient().as_str()) == message.recipient.as_deref())
+        .ok_or("undeclared tool recipient")?;
+    let arguments = super::strict_json::parse(&message.body)?;
+    tool.validate(&arguments)?;
+    Ok(ToolCall {
+        name: tool.name.clone(),
+        arguments,
+    })
 }

@@ -84,8 +84,23 @@ pub(super) fn adapt(
                                 .saturating_sub((ctx.prompt_len + completion_tokens) as u64),
                         );
                     }
+                    let reason = if let Some(call) = parser.take_tool_call() {
+                        out.push(StreamDelta::ToolCallStart {
+                            index: 0,
+                            id: format!("call_{}", crate::ids::uuid_v4()),
+                            name: call.name,
+                        });
+                        out.push(StreamDelta::ToolCallArgs {
+                            index: 0,
+                            fragment: call.arguments.to_string(),
+                            token_ids: vec![],
+                        });
+                        crate::ir::FinishReason::ToolCalls
+                    } else {
+                        crate::ir::FinishReason::Stop
+                    };
                     out.push(StreamDelta::Finish {
-                        reason: crate::ir::FinishReason::Stop,
+                        reason,
                         usage,
                         token_ids: vec![],
                     });

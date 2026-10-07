@@ -102,7 +102,12 @@ pub(crate) async fn run_chat_stream(
     let harmony_parser = state
         .tokenizer
         .shared_harmony()
-        .map(|tokenizer| crate::harmony::text_stream::TextStream::new(tokenizer, &prompt_tokens))
+        .map(|tokenizer| {
+            let schemas = if tools_active {
+                tool_defs.iter().map(|t| crate::harmony::tool_schema::ToolSchema::new(&t.function.name, t.function.parameters.clone().unwrap_or_else(|| serde_json::json!({"type":"object","properties":{},"additionalProperties":false})))).collect::<Result<Vec<_>, _>>()?
+            } else {vec![]};
+            crate::harmony::text_stream::TextStream::with_tools(tokenizer, &prompt_tokens, schemas)
+        })
         .transpose()
         .map_err(|e| (StatusCode::BAD_REQUEST, e.into()))?;
     let stop_tokens = state
