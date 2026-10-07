@@ -256,7 +256,7 @@ impl ChatTokenizer {
     ) -> Result<Vec<u32>> {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
         // 2026-10-07: Harmony owns role/channel syntax; never apply ChatML rewrites.
-        if self.harmony.is_some() {
+        if let Some(harmony) = &self.harmony {
             let effort = reasoning_effort
                 .map(minijinja::Value::from)
                 .unwrap_or(minijinja::Value::UNDEFINED);
@@ -272,11 +272,7 @@ impl ChatTokenizer {
                 add_generation_prompt => true, reasoning_effort => effort,
                 })?;
             let ids = self.encode(&rendered)?;
-            self.harmony
-                .as_ref()
-                .unwrap()
-                .assistant_stream(&ids)
-                .map_err(anyhow::Error::msg)?;
+            harmony.assistant_stream(&ids).map_err(anyhow::Error::msg)?;
             return Ok(ids);
         }
 

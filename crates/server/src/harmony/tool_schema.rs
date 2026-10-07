@@ -70,13 +70,12 @@ fn schema(s: &Value, depth: usize) -> Result<(), &'static str> {
     {
         return Err("unsupported tool schema type");
     }
-    if let Some(values) = s.get("enum") {
-        if values
+    if let Some(values) = s.get("enum")
+        && values
             .as_array()
             .is_none_or(|v| v.is_empty() || v.len() > 128)
-        {
-            return Err("invalid tool enum");
-        }
+    {
+        return Err("invalid tool enum");
     }
     if kind == "object" {
         let props = s

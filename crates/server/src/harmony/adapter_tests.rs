@@ -16,6 +16,7 @@ fn checkpoint_ids_keep_three_ending_meanings_distinct() {
     for (id, token) in [
         (200006, Token::Start),
         (200005, Token::Channel),
+        (200003, Token::Constrain),
         (200008, Token::Separator),
         (200007, Token::End),
         (200002, Token::Finish),
@@ -30,16 +31,7 @@ fn checkpoint_ids_keep_three_ending_meanings_distinct() {
 #[test]
 fn padding_reserved_and_unassigned_logits_are_not_text_or_eos() {
     let map = TokenMap::from_tokenizer_json(METADATA).unwrap();
-    for id in [
-        199998,
-        199999,
-        200000,
-        200003,
-        200018,
-        200019,
-        201087,
-        u32::MAX,
-    ] {
+    for id in [199998, 199999, 200000, 200018, 200019, 201087, u32::MAX] {
         assert!(map.classify(id).is_err(), "accepted unsupported ID {id}");
     }
 }

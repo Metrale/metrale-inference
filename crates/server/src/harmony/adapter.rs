@@ -42,7 +42,7 @@ impl TokenMap {
         ids
     }
 
-    /// 2026-10-06: Require all six checkpoint-native framing tokens, declared special.
+    /// 2026-10-06: Require all seven checkpoint-native framing tokens, declared special.
     /// Full tokenizer metadata is required in production, not just added_tokens.
     /// Token spellings belong to this checkpoint dialect; IDs come only from metadata.
     pub fn from_tokenizer_json(json: &str) -> Result<Self, &'static str> {
@@ -102,7 +102,7 @@ impl TokenMap {
                 },
             );
         }
-        if framing.len() != 6 {
+        if framing.len() != 7 {
             return Err("checkpoint lacks required Harmony framing tokens");
         }
         Ok(Self { classes })
@@ -129,6 +129,7 @@ fn token_id(value: &Value) -> Result<u32, &'static str> {
 fn delimiter(name: &str) -> Option<Token<'static>> {
     match name {
         "<|start|>" => Some(Token::Start),
+        "<|constrain|>" => Some(Token::Constrain),
         "<|channel|>" => Some(Token::Channel),
         "<|message|>" => Some(Token::Separator),
         "<|end|>" => Some(Token::End),

@@ -3,7 +3,8 @@
 //!
 //! Owner: server protocol. Blocking and streaming text responses use the strict token-aware adapters.
 //! The tokenizer must supply actual special-token events, not match text spellings.
-//! Message boundaries are not EOS. Tool handoffs remain unavailable in serving.
+//! Message boundaries are not EOS. Blocking tool handoffs require exact declared schemas.
+//! Streaming tools and analysis-channel handoffs remain unsupported.
 //! API reasoning usage counts generated analysis-body IDs, excluding protocol overhead;
 //! scheduler thought budgets and provider billing conventions are separate contracts.
 //! Callers seed the exact unfinished assistant header from the rendered prompt and
@@ -29,6 +30,7 @@ use std::collections::BTreeSet;
 pub enum Token<'a> {
     Start,
     Channel,
+    Constrain,
     Separator,
     End,
     Finish,
@@ -69,6 +71,7 @@ pub struct Decoder {
     phase: Phase,
     head: String,
     meta: Option<String>,
+    constraint: Option<String>,
     channel: Option<String>,
     recipient: Option<String>,
     content_type: Option<String>,
@@ -89,6 +92,7 @@ impl Decoder {
             phase: Phase::AwaitStart,
             head: String::new(),
             meta: None,
+            constraint: None,
             channel: None,
             recipient: None,
             content_type: None,
@@ -130,6 +134,7 @@ impl Decoder {
             (Phase::AwaitStart, Token::Start) => {
                 self.head.clear();
                 self.meta = None;
+                self.constraint = None;
                 self.channel = None;
                 self.recipient = None;
                 self.content_type = None;
@@ -141,18 +146,27 @@ impl Decoder {
                     .head
                     .len()
                     .checked_add(self.meta.as_ref().map_or(0, String::len))
+                    .and_then(|n| n.checked_add(self.constraint.as_ref().map_or(0, String::len)))
                     .and_then(|n| n.checked_add(s.len()))
                     .ok_or("header size overflow")?;
                 if size > self.header_limit {
                     return Err("Harmony header exceeds configured limit");
                 }
-                match self.meta.as_mut() {
-                    Some(meta) => meta.push_str(s),
-                    None => self.head.push_str(s),
+                if let Some(constraint) = &mut self.constraint {
+                    constraint.push_str(s);
+                } else {
+                    match self.meta.as_mut() {
+                        Some(meta) => meta.push_str(s),
+                        None => self.head.push_str(s),
+                    }
                 }
             }
-            (Phase::Header, Token::Channel) if self.meta.is_none() => {
+            (Phase::Header, Token::Channel) if self.meta.is_none() && self.constraint.is_none() => {
                 self.meta = Some(String::new())
+            }
+            // 2026-10-07: Checkpoint format metadata is distinct from channel text.
+            (Phase::Header, Token::Constrain) if self.constraint.is_none() => {
+                self.constraint = Some(String::new());
             }
             (Phase::Header, Token::Separator) => {
                 self.parse_header()?;
@@ -235,6 +249,12 @@ impl Decoder {
                 return Err("undeclared Harmony tool recipient");
             }
             self.recipient = Some(recipient.into());
+        }
+        if let Some(constraint) = &self.constraint {
+            if constraint.trim() != "json" || self.content_type.is_some() {
+                return Err("unsupported or duplicate Harmony constrained format");
+            }
+            self.content_type = Some("json".into());
         }
         if self.content_type.is_some() && self.recipient.is_none() {
             return Err("Harmony JSON content type requires tool recipient");

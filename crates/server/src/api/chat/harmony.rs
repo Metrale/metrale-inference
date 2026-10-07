@@ -31,10 +31,10 @@ pub(crate) fn validate_wire(
 }
 
 pub(crate) fn validate_request(req: &ir::ChatRequest) -> Result<(), &'static str> {
-    if let Some(choice) = &req.tool_choice {
-        if !matches!(choice,ToolChoice::Mode(mode) if mode=="auto" || mode=="none") {
-            return Err("Harmony tool_choice supports only auto or none");
-        }
+    if let Some(choice) = &req.tool_choice
+        && !matches!(choice,ToolChoice::Mode(mode) if mode=="auto" || mode=="none")
+    {
+        return Err("Harmony tool_choice supports only auto or none");
     }
     let tools = schemas(req)?;
     let mut pending: Option<(&str, &str)> = None;
@@ -97,6 +97,8 @@ pub(crate) fn validate_request(req: &ir::ChatRequest) -> Result<(), &'static str
     Ok(())
 }
 
+// 2026-10-07: Match the existing prompt-admission Response error contract.
+#[allow(clippy::result_large_err)]
 pub(crate) fn prepare(
     state: &Arc<crate::AppState>,
     req: &ir::ChatRequest,

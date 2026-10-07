@@ -113,3 +113,51 @@ fn numeric_enum_is_exact_without_boolean_or_large_integer_coercion() {
     assert!(t.validate(&json!({"n":9007199254740992u64})).is_err());
     assert!(t.validate(&json!({"n":9007199254740992.0})).is_err());
 }
+
+#[test]
+fn constrained_json_header_is_token_aware_and_fail_closed() {
+    let tokenizer =
+        ByteTokenizer::from_tokenizer_json(include_str!("fixtures/gpt-oss-byte-vocab.json"))
+            .unwrap();
+    let prompt = [vec![200006], ids("assistant")].concat();
+    for (format, duplicate, valid) in [
+        ("json", false, true),
+        ("xml", false, false),
+        ("", false, false),
+        ("json", true, false),
+        ("json to=functions.other", false, false),
+    ] {
+        let mut output = [
+            vec![200005],
+            ids("commentary to=functions.lookup_part "),
+            vec![200003],
+            ids(format),
+        ]
+        .concat();
+        if duplicate {
+            output.extend([200003]);
+            output.extend(ids("json"));
+        }
+        output.extend([200008]);
+        output.extend(ids(r#"{"part_id":"A-42","count":2}"#));
+        output.push(200012);
+        assert_eq!(
+            tool_response::response(&tokenizer, &prompt, &output, &[tool()]).is_ok(),
+            valid
+        );
+    }
+    // 2026-10-07: Format delimiters in body and tool-free constrained output are refused.
+    for output in [
+        [vec![200008, 200003], ids("json"), vec![200002]].concat(),
+        [
+            vec![200003],
+            ids("json"),
+            vec![200008],
+            ids("{}"),
+            vec![200002],
+        ]
+        .concat(),
+    ] {
+        assert!(tool_response::response(&tokenizer, &prompt, &output, &[tool()]).is_err());
+    }
+}
