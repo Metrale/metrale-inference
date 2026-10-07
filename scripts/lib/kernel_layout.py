@@ -114,6 +114,19 @@ def _kernel_source(model_dir: Path) -> str | None:
     return src
 
 
+def supports_quant(model_dir: Path, quant: str) -> bool:
+    """2026-10-07: Match the Rust optional precision allowlist, retaining legacy absence."""
+    path = model_dir / "MODEL.toml"
+    if not path.is_file():
+        return True
+    value = tomllib.loads(path.read_text()).get("model", {}).get("supported_quants")
+    if value is None:
+        return True
+    if not isinstance(value, list) or not value or any(not isinstance(x, str) or not x.strip() for x in value):
+        raise LayoutError(f"{path}: model.supported_quants must be a nonempty array of nonempty quant names")
+    return quant in value
+
+
 def kernel_source_dir(model_dir: Path) -> Path:
     src = _kernel_source(model_dir)
     if src is None:
@@ -325,6 +338,9 @@ def discover(root: Path, hw: str, model: str, quant: str) -> Layout:
     if not model_dir.is_dir():
         raise LayoutError(f"{model_dir}: no such model directory")
     own_src = kernel_source_dir(model_dir)
+    for candidate in (model_dir, own_src):
+        if not supports_quant(candidate, quant):
+            raise LayoutError(f"{candidate}/MODEL.toml: quant {quant!r} is not in model.supported_quants; refusing common-only fallback")
     source_model = own_src.name
     layers = [Layer("leaf", "own", hw, own_src / quant, None)]
     if h.inherits:

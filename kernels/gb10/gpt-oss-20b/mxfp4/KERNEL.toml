@@ -1,0 +1,3 @@
+# 2026-10-07: True MXFP4 leaf; preserves the independently tested FP32 attention policy.
+[shadow]
+paged_decode_attn = "Parameterizes the shared BF16 paged sink attention implementation for GPT-OSS head dimension 64."
