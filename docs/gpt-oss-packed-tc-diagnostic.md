@@ -27,4 +27,22 @@ Warm projection-only screening suggested an M128 opportunity, but excluded plan 
 
 Targeted reference hooks at positions 1, 12, 29, 35, 47, 48, 52 and 70 reproduced the original complete reference hidden/logit hashes. In the combined tensor-core/staged-attention arm, all eight layer-0 router logits and selected IDs match the reference exactly. Positions 29 and 70 nevertheless have 236 and 253 differing layer-0 hidden values. Positions 29, 35 and 52 retain the reference selected-expert sets through all 24 layers despite their final next-token mismatches. Thus routing crossings explain only part of the divergence; equal router logits alone do not prove equal full router inputs. Bounded expert-stage captures and identical-input replay remain necessary.
 
-Identical-operand follow-up narrowed the first-layer differences further. At positions 29 and 70, a single upstream normalized-input value differs; passing that same native input through the pinned reference expert operator changes 76 and 214 gate-after-bias values. The selected tensor-core expert stages reproduce the reference on identical inputs. The native O projection differs from reference `F.linear` by 1–3 BF16 values at several sampled positions. At position 12, this changed O input explains the normalized-output difference. At positions 29 and 70, however, reference normalization on the native O-plus-embedding input reproduces the original reference norm while native normalization differs by one value. This isolates a same-input normalization arithmetic difference before MoE. Reduction/reciprocal-square-root rounding remains to be discriminated; no speculative correction was applied.
+Identical-operand follow-up narrowed the first-layer differences further. At positions 29 and 70, a single upstream normalized-input value differs; passing that same native input through the pinned reference expert operator changes 76 and 214 gate-after-bias values. The selected tensor-core expert stages reproduce the reference on identical inputs. The native O projection differs from reference `F.linear` by 1–3 BF16 values at several sampled positions. At position 12, this changed O input explains the normalized-output difference. At positions 29 and 70, however, reference normalization on the native O-plus-embedding input reproduces the original reference norm while native normalization differs by one value. This isolates a same-input normalization arithmetic difference before MoE. Subsequent normalization experiments below distinguish reduction policy without changing the accepted path.
+
+
+## Normalization policy experiments were not promoted
+
+The installed pinned Torch source uses a vectorized FP32 mean reduction and multiplication by a pre-rounded `1/N`. The accepted native norm uses a different reduction tree and FP32 division by `N`. Exact rational analysis also separates ideal mathematical RMS normalization from the pinned staged FP32 policy: at one captured midpoint the native result matches the ideal rounding, while at another the reference does. Ideal rounding is therefore not a universal substitute for the pinned execution contract.
+
+Two private PTX overrides changed only the norm module. Reciprocal scaling alone reproduced the sampled normalization outputs, but reduced the original whole-model next-token agreement. A second override reproduced the pinned reduction tree, mean, reciprocal square root and output bits across 39 identical-input cases, including fresh constructed inputs and zero. Its whole-model results also failed to improve qualification:
+
+| Norm policy | Attention | Accepted experts /251 | Packed tensor-core experts /251 |
+|---|---|---:|---:|
+| Existing | FP32 online | 244 | 232 |
+| Reciprocal scaling only | FP32 online | 238 | 237 |
+| Pinned reduction tree | FP32 online | 237 | 236 |
+| Existing | Staged BF16 | 243 | 236 |
+| Reciprocal scaling only | Staged BF16 | 233 | 237 |
+| Pinned reduction tree | Staged BF16 | 236 | 234 |
+
+All runs used the same 251 input IDs, checkpoint, reference traces and frozen native executable. The module manifests verified every unchanged PTX hash. Neither the reference nor acceptance criterion was regenerated. The reduction-tree source SHA-256 is `d5adb4266a54586a047f33453cd95f30a904dcc7a158084588cfaea71a196f13`; the complete factorial comparison receipt is `680c21c9cceb796f105685758153ea52e0b3c062a1faea374b3a4ee9881fe45d`. These failures show why a same-input primitive improvement cannot establish whole-model numerical equivalence. Both overrides remain private diagnostics; shared normalization and serving defaults are unchanged.
