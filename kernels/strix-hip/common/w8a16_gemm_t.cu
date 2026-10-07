@@ -188,7 +188,7 @@ extern "C" __global__ void w8a16_gemm_t(
     for (int nb = 0; nb < 4; nb++) {
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int row = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int col = cta_n + nb * 16 + (lane_id & 15);
             if (row < M && col < N) C[row * N + col] = __float2bfloat16(acc[nb][e]);
         }

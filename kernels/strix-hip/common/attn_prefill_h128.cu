@@ -12,7 +12,8 @@
 
 #include <cuda_bf16.h>
 
-typedef __bf16 v16bf __attribute__((ext_vector_type(16)));
+#include "wmma_rdna.cuh"
+typedef wmma_bf16x v16bf;  // 2026-10-07: WMMA_FRAG_K wide (16 on gfx11, 8 on gfx12), see wmma_rdna.cuh
 typedef float  v8f   __attribute__((ext_vector_type(8)));
 
 #define BR 32
@@ -119,17 +120,17 @@ __device__ __forceinline__ float sw_exp_h(float x) {
             for (unsigned int ks = 0; ks < WMMA_K_STEPS; ks++) {                       \
                 unsigned int k_off = ks * K16;                                         \
                 v16bf a;                                                               \
-                for (int i = 0; i < 16; i++) a[i] = (__bf16)(float)smem_Q[qk_m + lane_lo][k_off + i]; \
+                for (int i = 0; i < WMMA_FRAG_K; i++) a[i] = (__bf16)(float)smem_Q[qk_m + lane_lo][k_off + wmma_k0(lane_id) + i]; \
                 for (int nt = 0; nt < QK_N_TILES; nt++) {                              \
                     unsigned int key_row = nt * 16 + lane_lo;                          \
                     v16bf bb;                                                          \
-                    for (int k = 0; k < 16; k++) bb[k] = (__bf16)(float)smem_K[key_row][k_off + k]; \
-                    acc_s[nt] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, bb, acc_s[nt]); \
+                    for (int k = 0; k < WMMA_FRAG_K; k++) bb[k] = (__bf16)(float)smem_K[key_row][k_off + wmma_k0(lane_id) + k]; \
+                    acc_s[nt] = wmma_bf16(a, bb, acc_s[nt]); \
                 }                                                                      \
             }                                                                          \
             for (int nt = 0; nt < QK_N_TILES; nt++) {                                  \
                 unsigned int col = nt * 16 + lane_lo;                                  \
-                for (int e = 0; e < 8; e++) { unsigned int row = qk_m + 2 * e + lane_hi; smem_S[row][col] = acc_s[nt][e]; } \
+                for (int e = 0; e < 8; e++) { unsigned int row = qk_m + WMMA_ACC_ROW_TERMS(e, lane_hi); smem_S[row][col] = acc_s[nt][e]; } \
             }                                                                          \
         }                                                                              \
         __syncthreads();                                                               \
@@ -151,18 +152,18 @@ __device__ __forceinline__ float sw_exp_h(float x) {
         }                                                                              \
         __syncthreads();                                                               \
         { float resc_e[8];                                                             \
-          for (int e = 0; e < 8; e++) resc_e[e] = smem_resc[pv_warp_m + 2 * e + lane_hi]; \
+          for (int e = 0; e < 8; e++) resc_e[e] = smem_resc[pv_warp_m + WMMA_ACC_ROW_TERMS(e, lane_hi)]; \
           for (int nt = 0; nt < PV_N_TILES; nt++) for (int e = 0; e < 8; e++) acc_o[nt][e] *= resc_e[e]; } \
         {                                                                              \
             for (unsigned int ks = 0; ks < PV_K_STEPS; ks++) {                         \
                 unsigned int k_off = ks * K16;                                         \
                 v16bf a;                                                               \
-                for (int i = 0; i < 16; i++) a[i] = (__bf16)(float)smem_P[pv_warp_m + lane_lo][k_off + i]; \
+                for (int i = 0; i < WMMA_FRAG_K; i++) a[i] = (__bf16)(float)smem_P[pv_warp_m + lane_lo][k_off + wmma_k0(lane_id) + i]; \
                 for (int nt = 0; nt < PV_N_TILES; nt++) {                              \
                     unsigned int d_col = (pv_n_start + nt) * 16 + lane_lo;             \
                     v16bf bb;                                                          \
-                    for (int k = 0; k < 16; k++) bb[k] = (__bf16)(float)smem_V[k_off + k][d_col]; \
-                    acc_o[nt] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, bb, acc_o[nt]); \
+                    for (int k = 0; k < WMMA_FRAG_K; k++) bb[k] = (__bf16)(float)smem_V[k_off + wmma_k0(lane_id) + k][d_col]; \
+                    acc_o[nt] = wmma_bf16(a, bb, acc_o[nt]); \
                 }                                                                      \
             }                                                                          \
         }                                                                              \
@@ -173,7 +174,7 @@ __device__ __forceinline__ float sw_exp_h(float x) {
         for (int nt = 0; nt < PV_N_TILES; nt++) {                                      \
             unsigned int col = (pv_n_start + nt) * 16 + lane_lo;                       \
             for (int e = 0; e < 8; e++) {                                              \
-                unsigned int row = pv_warp_m + 2 * e + lane_hi; unsigned int gr = q_start + row; \
+                unsigned int row = pv_warp_m + WMMA_ACC_ROW_TERMS(e, lane_hi); unsigned int gr = q_start + row; \
                 if (gr < seq_len && row < q_len && col < head_dim) {                   \
                     float l = smem_ml[row][1]; float inv_l = (l > 0.0f) ? (1.0f / l) : 0.0f; \
                     o_base[gr * q_seq_stride + col] = __float2bfloat16(acc_o[nt][e] * inv_l); \

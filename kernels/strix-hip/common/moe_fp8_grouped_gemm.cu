@@ -27,7 +27,7 @@
 //
 // WMMA fragments, lane l: a[i] = smem_A[warp_m_offset + (l & 15)][k0 + i],
 // b[k] = smem_B[k0 + k][nb*16 + (l & 15)], i, k < WMMA_FRAG_K, k0 = wmma_k0(l);
-// accumulator element e goes to row warp_m_offset + wmma_acc_row(l, e), column
+// accumulator element e goes to row warp_m_offset + WMMA_ACC_ROW_TERMS(e, (l >> 4)), column
 // nb*16 + (l & 15) (2026-10-07: wmma_rdna.cuh; gfx11 unchanged).
 //
 // Owner: strix-hip kernels.
@@ -380,7 +380,7 @@ extern "C" __global__ void __launch_bounds__(PM4_THREADS, 2) moe_fp8_grouped_gem
             unsigned int nb = n_sub_base + j;
             #pragma unroll
             for (int e = 0; e < 8; e++) {
-                unsigned int row_local = cta_m_local + warp_m_offset + wmma_acc_row(lane_id, e);
+                unsigned int row_local = cta_m_local + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
                 unsigned int col = cta_n + nb * 16 + (lane_id & 15);
                 if (row_local < M_expert && col < N) {
                     unsigned int out_row = (unsigned int)m_start + row_local;

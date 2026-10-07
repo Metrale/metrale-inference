@@ -10,7 +10,7 @@
 // Grid: (ceil(N/64), ceil(M/16), 1).
 //
 // WMMA fragments, lane l: a[i] = smem_A[l & 15][k0 + i], b[k] = smem_B[k0 + k][n + (l & 15)],
-// i, k < WMMA_FRAG_K; accumulator element e goes to C[row + wmma_acc_row(l, e)][col + (l & 15)].
+// i, k < WMMA_FRAG_K; accumulator element e goes to C[row + WMMA_ACC_ROW_TERMS(e, (l >> 4))][col + (l & 15)].
 // 2026-10-07: fragments through wmma_rdna.cuh, so gfx1201 (RDNA4) runs the same source;
 // on gfx1151 k0 = 0, WMMA_FRAG_K = 16 and the row is 2e + (l >> 4), as before.
 //
@@ -93,7 +93,7 @@ extern "C" __global__ void dense_gemm_tc(
 
     #pragma unroll
     for (int e = 0; e < 8; e++) {
-        unsigned int r = m_block + wmma_acc_row(lane_id, e);
+        unsigned int r = m_block + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
         unsigned int c = n_block + n_warp_base + (lane_id & 15);
         if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc[e]);
     }
