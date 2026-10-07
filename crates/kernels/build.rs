@@ -179,7 +179,7 @@ fn main() {
             // 2026-09-25: HIP compiles a mask-widened mirror of the source
             // (`hip_mirror_source`); the other vendors compile the staged copy.
             let compile_source = if is_hip {
-                hip_mirror_source(cu_file, &hip_mirror_dir, source_ext)
+                hip_mirror_source(cu_file, &hip_mirror_dir, &stage_root, source_ext)
             } else {
                 cu_file.clone()
             };
