@@ -198,6 +198,17 @@ pub(crate) async fn chat_completions_inner(
     mut req: crate::ir::ChatRequest,
     dump_seq: Option<u64>,
 ) -> ChatOutcome {
+    // 2026-10-07: Refuse before template/grammar work and scheduler dispatch.
+    if state.tokenizer.harmony().is_some()
+        && (req.stream
+            || !req.tools.is_empty()
+            || req.response_format.is_some()
+            || !req.stop.is_empty()
+            || req.tool_choice.is_some())
+    {
+        return ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST,
+            "Experimental GPT-OSS supports blocking text only; streaming, tools, structured output and stop overrides are unavailable".into()));
+    }
     req.lookup_tenant = tenant;
     crate::metrics::REQUESTS_TOTAL.inc();
     // 2026-09-26: Decrements on drop, so on every exit path, including this

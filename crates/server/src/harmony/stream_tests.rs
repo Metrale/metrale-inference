@@ -147,3 +147,57 @@ fn tool_handoff_preserves_unicode_json_and_requires_explicit_end() {
     assert_eq!(message.ending, Ending::Tool);
     s.finish().unwrap();
 }
+
+// 2026-10-07: Blocking serving must consume terminal IDs without exposing private analysis.
+#[test]
+fn blocking_final_is_separated_from_analysis_and_requires_terminal() {
+    let tokenizer = ByteTokenizer::from_tokenizer_json(FIXTURE).unwrap();
+    assert_eq!(tokenizer.stop_ids(), vec![200002, 200012]);
+    let prompt = [vec![200006], ids("assistant")].concat();
+    let output = [
+        vec![200005],
+        ids("analysis"),
+        vec![200008],
+        ids("private"),
+        vec![200007, 200006],
+        ids("assistant"),
+        vec![200005],
+        ids("final"),
+        vec![200008],
+        ids("4 <|return|>"),
+        vec![200002],
+    ]
+    .concat();
+    assert_eq!(
+        super::api::text_choice(&tokenizer, &prompt, &output).unwrap(),
+        "4 <|return|>"
+    );
+    assert!(super::api::text_choice(&tokenizer, &prompt, &output[..output.len() - 1]).is_err());
+    let mut trailing = output.clone();
+    trailing.extend(ids("unexpected"));
+    assert!(super::api::text_choice(&tokenizer, &prompt, &trailing).is_err());
+}
+
+#[test]
+fn blocking_refuses_tool_handoff_and_invalid_prompt_prefix() {
+    let tokenizer = ByteTokenizer::from_tokenizer_json(FIXTURE).unwrap();
+    let prompt = [vec![200006], ids("assistant")].concat();
+    let tool = [
+        ids(" to=functions.lookup"),
+        vec![200008],
+        ids("{}"),
+        vec![200012],
+    ]
+    .concat();
+    assert!(super::api::text_choice(&tokenizer, &prompt, &tool).is_err());
+    let output = [vec![200008], ids("ok"), vec![200002]].concat();
+    let user_prefix = [vec![200006], ids("user")].concat();
+    assert!(super::api::text_choice(&tokenizer, &user_prefix, &output).is_err());
+    let body_prefix = [prompt.clone(), vec![200008]].concat();
+    assert!(super::api::text_choice(&tokenizer, &body_prefix, &output).is_err());
+    let final_prefix = [prompt, vec![200005], ids("final")].concat();
+    assert_eq!(
+        super::api::text_choice(&tokenizer, &final_prefix, &output).unwrap(),
+        "ok"
+    );
+}

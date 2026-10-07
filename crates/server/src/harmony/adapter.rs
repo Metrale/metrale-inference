@@ -26,6 +26,22 @@ pub struct TokenMap {
 }
 
 impl TokenMap {
+    pub(super) fn terminal_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<_> = self
+            .classes
+            .iter()
+            .filter_map(|(&id, class)| {
+                matches!(
+                    class,
+                    Some(TokenClass::Framing(Token::Finish | Token::Handoff))
+                )
+                .then_some(id)
+            })
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// 2026-10-06: Require all six checkpoint-native framing tokens, declared special.
     /// Full tokenizer metadata is required in production, not just added_tokens.
     /// Token spellings belong to this checkpoint dialect; IDs come only from metadata.

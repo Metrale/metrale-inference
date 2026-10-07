@@ -16,6 +16,29 @@ pub struct ByteTokenizer {
 }
 
 impl ByteTokenizer {
+    /// 2026-10-07: Only turn completion and handoff stop generation; End is a message boundary.
+    pub fn stop_ids(&self) -> Vec<u32> {
+        self.map.terminal_ids()
+    }
+
+    /// 2026-10-07: Seed from actual prompt tokens, never guessed delimiter spellings.
+    pub fn assistant_stream(&self, prompt: &[u32]) -> Result<Stream<'_>, &'static str> {
+        let start = prompt
+            .iter()
+            .rposition(|id| self.map.classify(*id) == Ok(TokenClass::Framing(Token::Start)))
+            .ok_or("missing assistant prompt header")?;
+        let mut stream = Stream::new(self, Decoder::new([], 1024, 1_048_576));
+        for id in &prompt[start..] {
+            if stream.push(*id)?.is_some() {
+                return Err("completed assistant prompt header");
+            }
+        }
+        if stream.decoder.phase != super::Phase::Header || !stream.pending.is_empty() {
+            return Err("prompt must end with unfinished assistant header");
+        }
+        Ok(stream)
+    }
+
     pub fn from_tokenizer_json(json: &str) -> Result<Self, &'static str> {
         let map = TokenMap::from_tokenizer_json(json)?;
         let data: serde_json::Value =

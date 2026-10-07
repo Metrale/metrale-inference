@@ -112,6 +112,22 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
         prompt_len,
     } = args;
 
+    // 2026-10-07: Generic grammar and stop filters cannot preserve Harmony framing.
+    if state.tokenizer.harmony().is_some()
+        && (!req.tools.is_empty()
+            || grammar_spec.is_some()
+            || req.response_format.is_some()
+            || !req.stop.is_empty()
+            || top_logprobs.is_some())
+    {
+        return super::chat::ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST,
+            "Experimental GPT-OSS supports blocking text only; tools, structured output, stop overrides and logprobs are unavailable".into()));
+    }
+    let stop_tokens = state
+        .tokenizer
+        .harmony()
+        .map_or(stop_tokens, |h| h.stop_ids());
+
     let n = req.n.max(1);
     let mut all_choices: Vec<ir::Choice> = Vec::with_capacity(n);
     let mut total_completion_tokens = 0usize;
@@ -207,6 +223,29 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
         // 2026-09-26: Every choice sends the same prompt, so usage reports the largest
         // per-choice prefix-cache hit, not the sum.
         total_cached_prompt_tokens = total_cached_prompt_tokens.max(response.cached_prompt_tokens);
+
+        if let Some(harmony) = state.tokenizer.harmony() {
+            match crate::harmony::api::text_choice(harmony, &prompt_tokens, &response.output_tokens)
+            {
+                Ok(content) => all_choices.push(ir::Choice {
+                    index: choice_idx,
+                    content: Some(content),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    refusal: None,
+                    finish_reason: ir::FinishReason::Stop,
+                    matched_stop: None,
+                    logprobs: None,
+                }),
+                Err(error) => {
+                    return super::chat::ChatOutcome::Http(openai_error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Invalid or incomplete Harmony response: {error}"),
+                    ));
+                }
+            }
+            continue;
+        }
 
         let (reasoning_content_i, output_text_i) =
             decode_response_text(&state, &response, enable_thinking);

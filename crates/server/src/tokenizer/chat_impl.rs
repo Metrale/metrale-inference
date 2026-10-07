@@ -47,6 +47,16 @@ impl ChatTokenizer {
         repo_root: Option<&Path>,
         disable_template_overrides: bool,
     ) -> Result<Self> {
+        let harmony = if model_type == "gpt_oss" {
+            Some(
+                crate::harmony::stream::ByteTokenizer::from_tokenizer_json(
+                    &std::fs::read_to_string(model_dir.join("tokenizer.json"))?,
+                )
+                .map_err(anyhow::Error::msg)?,
+            )
+        } else {
+            None
+        };
         let official_k3 = super::kimi_k3::uses_xtml(model_dir, model_type)?;
         let tokenizer_path = model_dir.join("tokenizer.json");
         let mut tokenizer = Tokenizer::from_file(&tokenizer_path)
@@ -59,7 +69,7 @@ impl ChatTokenizer {
         // no chat template; then `jinja-templates/{model_type}.jinja` when the file exists and
         // `--disable-template-overrides` is off; then the model's own template
         // (`load_config_template`); then the ChatML default.
-        let override_tmpl = if disable_template_overrides {
+        let override_tmpl = if disable_template_overrides || harmony.is_some() {
             None
         } else {
             super::jinja_helpers::load_override_template(model_type, repo_root)
@@ -79,14 +89,20 @@ impl ChatTokenizer {
             )
         };
 
+        if harmony.is_some() && !checkpoint_template {
+            anyhow::bail!("GPT-OSS requires its checkpoint-native Harmony chat template");
+        }
         let jinja_env = super::jinja_helpers::build_jinja_env(&chat_template)?;
 
         // 2026-09-26: A variant template that fails to compile is dropped without a log line.
-        let openai_jinja_env = super::jinja_helpers::load_openai_template(model_type, repo_root)
-            .and_then(|tmpl| {
+        let openai_jinja_env = if harmony.is_some() {
+            None
+        } else {
+            super::jinja_helpers::load_openai_template(model_type, repo_root).and_then(|tmpl| {
                 tracing::info!("Loaded OpenAI-variant Jinja template for {model_type}");
                 super::jinja_helpers::build_jinja_env(&tmpl).ok()
-            });
+            })
+        };
         let chat_encoding = if official_k3 {
             ChatEncoding::KimiK3XtmlUnsupported
         } else if model_type == "deepseek_v4" || model_type == "deepseek_v41" {
@@ -106,6 +122,7 @@ impl ChatTokenizer {
             .contains("tools");
         tracing::info!("Loaded tokenizer from {}", tokenizer_path.display());
         Ok(Self {
+            harmony,
             tokenizer,
             eos_token_id,
             supports_thinking,
@@ -115,6 +132,10 @@ impl ChatTokenizer {
             jinja_env,
             openai_jinja_env,
         })
+    }
+
+    pub(crate) fn harmony(&self) -> Option<&crate::harmony::stream::ByteTokenizer> {
+        self.harmony.as_ref()
     }
 
     pub(crate) fn uses_native_qwen_tool_template(&self) -> bool {
@@ -217,6 +238,32 @@ impl ChatTokenizer {
         preserve_thinking: Option<bool>,
     ) -> Result<Vec<u32>> {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
+        // 2026-10-07: Harmony owns role/channel syntax; never apply ChatML rewrites.
+        if self.harmony.is_some() {
+            anyhow::ensure!(
+                tools.is_none_or(|t| t.is_empty()),
+                "GPT-OSS tool rendering is unavailable"
+            );
+            let effort = reasoning_effort.unwrap_or("low");
+            anyhow::ensure!(
+                matches!(effort, "low" | "medium" | "high"),
+                "unsupported GPT-OSS reasoning effort"
+            );
+            let rendered = self
+                .jinja_env
+                .get_template("chat")?
+                .render(minijinja::context! {
+                    messages => messages, add_generation_prompt => true, reasoning_effort => effort,
+                })?;
+            let ids = self.encode(&rendered)?;
+            self.harmony
+                .as_ref()
+                .unwrap()
+                .assistant_stream(&ids)
+                .map_err(anyhow::Error::msg)?;
+            return Ok(ids);
+        }
+
         if self.chat_encoding == ChatEncoding::DeepseekV4 {
             let rendered = super::deepseek_v4::encode_messages(
                 messages,

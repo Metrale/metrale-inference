@@ -98,6 +98,12 @@ pub(crate) async fn run_chat_stream(
     dump_seq: Option<u64>,
     active_guard: crate::metrics::ActiveRequestGuard,
 ) -> Result<crate::ir::DeltaStream, (StatusCode, String)> {
+    // 2026-10-07: Scheduler streaming drops terminal IDs; do not expose undecoded frames.
+    if state.tokenizer.harmony().is_some() {
+        return Err((StatusCode::BAD_REQUEST,
+            "Experimental GPT-OSS requires stream:false until token-aware terminal streaming is available".into()));
+    }
+
     // 2026-09-26: The scheduler thread sends with `bounded_stream_send`, which gives up
     // on a full channel after `METRALE_STREAM_SEND_DEADLINE_MS` (5000 ms when unset);
     // 1024 events of buffer ride out a client that reads late.
