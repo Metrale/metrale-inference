@@ -166,8 +166,11 @@ met circuit venn --check --target nemotron-3.5/nemotron-3.5-lightning-30b-a3b-nv
 
 The first `--check` exited 1: the file was stale at the end. Regenerating
 with the same flags and no `--check` exited 0 and wrote that path. A second
-`--check` exited 0 and printed `current`. `git diff` of the report is empty
-once line endings are ignored, so the report was not committed. This result
+`--check` exited 0 and printed `current`. The regenerated file's git blob
+is `874bef9b4f580ca13986cef6d4576ae9a7e11c4c`, the same as `HEAD`, so there
+is no report delta to commit. `cargo test -p metrale-circuit --test venn`
+passes after the test lists paths with `/`, the same way the CLI does.
+This result
 is the NVFP4 instance `nemotron-3.5/nemotron-3.5-lightning-30b-a3b-nvfp4`.
 It is not the Q4_0 pin `ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF`.
 No tok/s, J/tok, LKB, or LAB number from it was copied onto the GGUF rows.
