@@ -1,0 +1,46 @@
+# 2026-10-07: gfx1151 (HIP) packaging of the GPT-OSS-20B MXFP4 target. Host-side
+# resolution only: no hipcc compile, launch or numerics has been run on gfx1151.
+# The model fields mirror kernels/gb10/gpt-oss-20b/MODEL.toml.
+[model]
+name = "gpt-oss-20b"
+hf_id = "openai/gpt-oss-20b"
+architecture = "GPT-OSS alternating full/sliding attention with interleaved MXFP4 experts"
+supported_quants = ["mxfp4"]
+layers_total = 24
+hidden_dim = 2880
+head_dim = 64
+q_heads = 64
+kv_heads = 8
+moe_experts = 32
+moe_top_k = 4
+intermediate_size = 2880
+vocab_size = 201088
+sliding_window = 128
+
+[[model_types]]
+model_type = "gpt_oss"
+hidden_size = 2880
+
+[behavior]
+default_kv_dtype = "bf16"
+thinking_default = true
+thinking_in_tools = false
+
+# 2026-10-07: Kernel lookups this model's dispatch may issue that this target
+# does not ship. The boot kernel gate refuses to serve on any other unresolved
+# lookup (server serve_phases/kernel_gate.rs, audit_and_gate). Both entries are
+# issued only by the explicit diagnostic constructor
+# PrefillScratch::new_packed_tc_diagnostic (model-arch gpt_oss/runtime/tc_scratch.rs);
+# the serving constructors never look them up.
+
+[expected_absent.gpt_oss_mxfp4_mma]
+moe_w4a16_grouped_gemm_ptrtable_e8m0_gpt = """
+Diagnostic packed tensor-core MoE. Its source uses inline PTX (mma.sync,
+cp.async) that hipcc cannot compile, so this target does not build the
+module. The diagnostic constructor returns an error on handle 0; serving
+uses gpt_oss_mxfp4_gemv, which resolves here."""
+
+[expected_absent.moe_v41]
+moe_v41_gather_rows = """
+Row reorder used only by the same packed tensor-core diagnostic. Without the
+diagnostic GEMM it has no caller, so this target does not build it."""
