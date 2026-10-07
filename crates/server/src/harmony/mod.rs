@@ -4,7 +4,8 @@
 //! Owner: server protocol. Blocking and streaming text responses use the strict token-aware adapters.
 //! The tokenizer must supply actual special-token events, not match text spellings.
 //! Message boundaries are not EOS. Blocking tool handoffs require exact declared schemas.
-//! Streaming tools and analysis-channel handoffs remain unsupported.
+//! Chat Completions tool SSE buffers arguments until validation; other tool SSE surfaces
+//! and analysis-channel handoffs remain unsupported.
 //! API reasoning usage counts generated analysis-body IDs, excluding protocol overhead;
 //! scheduler thought budgets and provider billing conventions are separate contracts.
 //! Callers seed the exact unfinished assistant header from the rendered prompt and

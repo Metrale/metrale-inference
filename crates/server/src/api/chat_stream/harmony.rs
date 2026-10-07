@@ -112,7 +112,8 @@ pub(super) fn adapt(
             failed = true;
             cancel.store(true, Ordering::Release);
             out.clear();
-            out.push(StreamDelta::Error { message });
+            // 2026-10-07: Reuse the wire-ready error envelope and reservation refund.
+            out.extend(super::handle_error::handle_error(&ctx, message));
         }
         futures::stream::iter(out)
     }))

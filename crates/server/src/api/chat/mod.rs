@@ -207,8 +207,7 @@ pub(crate) async fn chat_completions_inner(
 ) -> ChatOutcome {
     // 2026-10-07: Refuse before template/grammar work and scheduler dispatch.
     if state.tokenizer.harmony().is_some()
-        && ((req.stream && !req.tools.is_empty())
-            || req.response_format.is_some()
+        && (req.response_format.is_some()
             || !req.stop.is_empty()
             || req.top_logprobs.is_some()
             || req.return_token_ids
@@ -222,7 +221,7 @@ pub(crate) async fn chat_completions_inner(
             || matches!(req.reasoning_effort, Some(crate::ir::ReasoningEffort::Max)))
     {
         return ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST,
-            "Experimental GPT-OSS does not support streaming tools, structured output, stop overrides, logprobs, raw token IDs, minimum-token overrides, thinking budgets, thinking-off or loop overrides".into()));
+            "Experimental GPT-OSS does not support structured output, stop overrides, logprobs, raw token IDs, minimum-token overrides, thinking budgets, thinking-off or loop overrides".into()));
     }
     if state.tokenizer.harmony().is_some()
         && let Err(error) = harmony::validate_request(&req)

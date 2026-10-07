@@ -507,3 +507,28 @@ unsupported JSON Schema features fail admission. Calls require an exact declared
 recipient, unique JSON keys, valid typed arguments and a completed handoff.
 Analysis-channel handoffs remain unsupported. API analysis-token accounting is
 separate from scheduler thought budgets and provider billing conventions.
+
+### Chat Completions tool SSE gate (2026-10-07)
+
+The subsequent Chat Completions tool-stream gate passed **5/5 cases** with **16
+independent grader controls**: declared tool call, Unicode arguments (`café 日本
+😀`), truncated generation producing an error with no tool call, disconnect
+before a call and a valid subsequent request. Separate live checks confirmed
+Anthropic and Responses tool-stream requests remain HTTP 400. CPU Harmony tests
+passed 37 cases; scoped server Clippy passed.
+
+Tool arguments are intentionally buffered. Only after the handoff token, strict
+JSON parsing and schema validation succeed does the adapter emit a call-start
+delta, a complete UTF-8 argument delta and `finish_reason: tool_calls`. Final text
+continues to stream incrementally. There is no incremental tool-argument latency
+claim and no external tool execution. The cancellation trace recorded receiver
+closure, two generated tokens before stopping, then successful request reuse;
+cancellation does not preempt an already running prefill kernel.
+
+The first gate exposed invalid raw-text SSE error data on truncation. That failure
+and raw response were retained; the corrected adapter reuses the shared JSON error
+envelope and rate-limit refund handler. Tested debug binary SHA-256:
+`11873e8c8d6ad21b8519e277c22167cbf24143388e2935f4192df55d44f45267`.
+Exact tested source hashes, event timing, usage and failure receipts are retained
+privately. This is a bounded protocol/cancellation qualification, not broader
+model-quality, throughput, billing or multi-request concurrency qualification.
