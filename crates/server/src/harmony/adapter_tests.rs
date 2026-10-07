@@ -99,7 +99,7 @@ fn decoded_literal_delimiters_do_not_become_control_events() {
         panic!()
     };
     decoder.push(separator).unwrap();
-    // The ordinary token decoder owns byte/Unicode assembly. Its output is never reparsed.
+    // 2026-10-07: The ordinary token decoder owns byte/Unicode assembly. Its output is never reparsed.
     assert_eq!(map.classify(0).unwrap(), TokenClass::Ordinary);
     decoder
         .push(Token::Text("<|return|><|call|>analysis"))

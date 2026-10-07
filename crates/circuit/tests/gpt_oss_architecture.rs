@@ -131,7 +131,7 @@ numerics = "reference"
     let rules = metrale_circuit::parse_rules(rule).unwrap();
     let available = AvailableKernels::all_named_by(&rules);
     assert!(fuse(&c, &rules, &available, &Policy::default(), Mode::Decode, 1).is_err());
-    // Valid control: identical graph and rule without a residual must fuse.
+    // 2026-10-07: Valid control: identical graph and rule without a residual must fuse.
     c.nodes[0].params.remove("unlowered");
     assert!(fuse(&c, &rules, &available, &Policy::default(), Mode::Decode, 1).is_ok());
 }

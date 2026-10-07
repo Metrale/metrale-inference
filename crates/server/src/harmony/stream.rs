@@ -23,7 +23,7 @@ impl ByteTokenizer {
         if data["model"]["type"] != "BPE" || data["decoder"]["type"] != "ByteLevel" {
             return Err("Harmony byte stream requires BPE with ByteLevel decoder");
         }
-        // ByteLevel's bijection maps printable Latin-1 directly, all remaining
+        // 2026-10-07: ByteLevel's bijection maps printable Latin-1 directly, all remaining
         // bytes to successive codepoints starting at U+0100 (not token IDs).
         let mut alphabet = HashMap::new();
         let mut extra = 256;
@@ -65,7 +65,7 @@ impl ByteTokenizer {
                 bytes.insert(id, value);
             }
         }
-        // Added ordinary tokens also pass through the ByteLevel decoder.
+        // 2026-10-07: Added ordinary tokens also pass through the ByteLevel decoder.
         for entry in data["added_tokens"]
             .as_array()
             .ok_or("missing added tokens")?
