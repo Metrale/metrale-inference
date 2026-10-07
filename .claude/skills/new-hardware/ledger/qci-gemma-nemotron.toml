@@ -52,7 +52,7 @@ lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = "docs/qci/gemma-nemotron-working-log.md"
-notes = "supplement to Strix. Vision mmproj-F16.gguf measured at 1193058784 bytes. Language GGUF was still open, so WEIGHTS_ABSENT stays. PARITY_UNMEASURED, VRAM_UNMEASURED, LICENSE_GOVERNING_TEXT_UNDECIDED, NATIVE_GEMMA4_CIRCUIT_REFUSED. rtx-3090 is not a kernels/DEVICES.toml id. No kernels/ampere on this tree."
+notes = "supplement to Strix. Closed files: gemma-4-26B-A4B-it-UD-Q4_K_M.gguf 16947541728 bytes, mmproj-F16.gguf 1193058784 bytes. Receipt recorded both lengths. PARITY_UNMEASURED, VRAM_UNMEASURED, COHERENCE_UNMEASURED, LICENSE_GOVERNING_TEXT_UNDECIDED, NATIVE_GEMMA4_CIRCUIT_REFUSED. rtx-3090 is not a kernels/DEVICES.toml id. No kernels/ampere on this tree."
 
 [[combo]]
 device = "strix-halo"
@@ -152,7 +152,7 @@ lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = "docs/qci/gemma-nemotron-working-log.md"
-notes = "P1. Does not block the four-model P0 exit. Distinct from Nemotron-3-Nano. MTP off. NVFP4 kernels are not assumed on this GPU. WEIGHTS_ABSENT, PARITY_UNMEASURED."
+notes = "P1. Does not block the four-model P0 exit. Distinct from Nemotron-3-Nano. MTP off. NVFP4 kernels are not assumed on this GPU. Closed file NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf 18898091584 bytes. Receipt recorded that length. PARITY_UNMEASURED, VRAM_UNMEASURED, COHERENCE_UNMEASURED, NATIVE_GGUF_Q4_0_UNSERVED, TEMPLATE_BYTE_IDENTITY_UNMEASURED."
 
 [[combo]]
 device = "strix-halo"

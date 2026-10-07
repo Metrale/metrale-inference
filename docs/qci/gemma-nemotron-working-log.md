@@ -238,18 +238,23 @@ on that file printed `vision_weights: present`,
 `support_label: withheld`, and no tok/s or J/tok number. It still names
 `VRAM_UNMEASURED`, `PARITY_UNMEASURED`, and `COHERENCE_UNMEASURED`.
 
-The two language files were still open for writing when this note was
-added. Their headers are already GGUF version 3. Gemma:
-`general.architecture=gemma4`, `general.name=Gemma-4-26B-A4B-It`,
-`general.quantized_by=Unsloth`, `general.file_type=15`
-(`LLAMA_FTYPE_MOSTLY_Q4_K_M` in that same llama.cpp header). Nemotron:
-`general.architecture=nemotron_h_moe`,
-`general.name=NVIDIA-Nemotron-3.5-Lightning-30B-A3B`,
-`general.license.name=openmdw-1.1`, `general.file_type=2`
-(`LLAMA_FTYPE_MOSTLY_Q4_0`). They have not been passed to
-`qci-dump --weights`. A length read while curl still holds the file is not
-the closed length, so `WEIGHTS_ABSENT` stays until that closed file is
-passed. The pinned closed lengths remain 16947541728 and 18898091584.
+Both language files later closed at the pinned lengths. Gemma
+`gemma-4-26B-A4B-it-UD-Q4_K_M.gguf` is 16947541728 bytes. Nemotron
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf` is 18898091584 bytes.
+The headers already recorded above match those closed files. Neither file
+is in git.
+
+Shipped `qci-dump` was run twice on `rtx-3090` for each case, with
+`--weights` pointed at the closed file. The Gemma runs also passed
+`--vision-weights` for the closed `mmproj-F16.gguf`. The two Gemma runs
+matched each other. The two Nemotron runs matched each other. Neither
+receipt printed the path. Gemma printed `weights: present`,
+`weights_file_bytes: 16947541728`, `vision_weights: present`, and
+`vision_file_bytes: 1193058784`. Nemotron printed `weights: present`,
+`weights_file_bytes: 18898091584`, and
+`vision_weights: not-part-of-this-pin`. Both kept
+`support_label: withheld` and printed no tok/s or J/tok number. Both still
+name `VRAM_UNMEASURED`, `PARITY_UNMEASURED`, and `COHERENCE_UNMEASURED`.
 
 #### First session, this host
 
@@ -258,16 +263,23 @@ passed. The pinned closed lengths remain 16947541728 and 18898091584.
    The shipped binary is `target\debug\qci-dump.exe`.
 2. Missing-path receipts for both cases match and do not print the path.
    `support_label` is `withheld`.
-3. Vision file: the receipt above. Language weights: the fetch is still
-   open, so `WEIGHTS_ABSENT` stays until the closed file is passed.
+3. Vision file and both language files: the receipts above. A present
+   file records its byte length and does not clear VRAM, parity, or
+   coherence.
 4. An already-installed `llama-cli` is version 9637 (`aedb2a5e9`), built
    with Clang 20.1.8 for Windows x86_64. No installer was launched.
    `--list-devices` printed
    `Vulkan0: NVIDIA GeForce RTX 3090 (24540 MiB, 23755 MiB free)`.
-   The model was not loaded, because the language file is still open.
-   That attempt belongs on the reference row (`ggml-gguf`), not the native
-   row. Recipe `runtime` stays `gguf-reference`. No `INSTANCES.toml` row
-   was added for either GGUF pin.
+   It was invoked once against the closed Gemma pin, with `-n 0`,
+   `-c 512`, `-ngl 99`, `--no-warmup`, and `--no-perf`. The binary said
+   `--no-conversation` is not supported by `llama-cli` and to use
+   `llama-completion` instead, then printed the Gemma file name and
+   `modalities : text` and entered interactive mode. That process was
+   stopped. It was not a server and it was not left running. Any timing
+   line it printed is not a beachhead result and was not copied onto a
+   receipt or into this log. The attempt belongs on the reference row
+   (`ggml-gguf`), not the native row. Recipe `runtime` stays
+   `gguf-reference`. No `INSTANCES.toml` row was added for either GGUF pin.
 5. Strix stays `TARGET_NOT_MEASURED`. This host is not a Strix Halo.
 6. Bit parity stays `PARITY_UNMEASURED`. tok/s and J/tok stay withheld.
    No number was copied from another device or from the NVFP4 Lightning
