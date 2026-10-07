@@ -164,6 +164,7 @@ impl DeviceIo for SyncDeviceIo {
                         .iter()
                         .map(|seq| Row {
                             slot: seq.slot_idx,
+                            allocation_generation: seq.mtp_store_gen,
                             seq_len: seq.seq_len,
                             prompt_len: seq.prompt_len,
                             prompt_sha256: if seq.prompt_len > 0

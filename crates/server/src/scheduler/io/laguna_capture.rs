@@ -34,6 +34,8 @@ pub struct Plan {
 #[derive(Clone, Serialize)]
 pub struct Row {
     pub slot: usize,
+    /// Per-model allocation ticket, not HTTP identity across reallocation.
+    pub allocation_generation: u64,
     pub seq_len: usize,
     pub prompt_len: usize,
     pub prompt_sha256: String,
@@ -163,6 +165,19 @@ impl Capture {
             rows.iter().map(|r| r.slot).collect::<BTreeSet<_>>().len() == rows.len(),
             "duplicate physical slot"
         );
+        ensure!(
+            rows.iter()
+                .all(|r| r.slot != usize::MAX && r.allocation_generation != 0),
+            "capture requires allocated live sequence identities"
+        );
+        ensure!(
+            rows.iter()
+                .map(|r| r.allocation_generation)
+                .collect::<BTreeSet<_>>()
+                .len()
+                == rows.len(),
+            "duplicate allocation generation"
+        );
         let mut bytes = vec![0; rows.len() * vocab * 2];
         read(&mut bytes)?;
         let stem = format!("{:03}-ticket-{ticket}", self.written);
@@ -176,7 +191,8 @@ impl Capture {
         let receipt = serde_json::json!({
             "schema":1, "route":"sync_decode_batch/native_argmax/post_argmax_copy",
             "timing_intervention":true, "device_candidates_not_final_tokens":true,
-            "ticket":ticket, "rows":rows, "selected_ids":ids, "vocab":vocab,
+            "ticket":ticket, "rows":rows,
+            "identity_scope":"model allocation within this process; not cross-reallocation HTTP identity", "selected_ids":ids, "vocab":vocab,
             "dtype":"BF16-little-endian", "logits_sha256":digest,
             "model_revision_asserted":self.plan.model_revision,
             "source_commit_asserted":self.plan.asserted_source_commit,

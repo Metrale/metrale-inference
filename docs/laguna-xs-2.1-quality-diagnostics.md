@@ -100,9 +100,19 @@ exist. There may be at most eight prompt hashes, sixteen positions (1–128), an
 number of generated tokens **already processed after this decode forward**.
 Every live batch row must match an allowlisted prompt; an unrelated row skips
 the whole capture without copying it. Receipt row order is the router's actual
-order, including slot, sequence length, prompt hash/length and prefix-lookup
-flag. It does not infer padded rows from HTTP concurrency. Reused slots are
-qualified by ticket, prompt hash and sequence position. No raw prompt is saved.
+order, including pool slot, allocation generation, sequence length, prompt hash/length
+and prefix-lookup flag. It does not infer padded rows from HTTP concurrency. Reused slots are
+qualified by the nonzero `SequenceState::mtp_store_gen` allocation generation.
+`TransformerModel::alloc_sequence_dispatch` unconditionally claims a guarded pool
+slot (`model/trait_impl/meta.rs`) and draws this generation from the model's
+atomic counter, including for dense Laguna without MTP. The pool's free list
+exists independently of its SSM layer count. Compaction can move the slot;
+reallocation receives a fresh generation. The capture refuses missing/duplicate
+generations and detached slots. This is **per-process model-allocation identity**,
+not HTTP-request identity across preemption/reallocation. A same-prompt request
+reusing a slot must not be joined to the old allocation. Neither `session_hash`
+(which may be zero or shared) nor prompt hashes establish request identity.
+No raw prompt is saved.
 
 Each successful capture saves unchanged BF16 bytes, their SHA-256, unchanged
 selected IDs and its exact router label. Startup also saves the running binary's
@@ -120,7 +130,7 @@ and the controlled diagnostic deployment is reviewed.
 
 Validation uses `METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo test -p
 metrale-server --no-default-features --features metal,laguna-diagnostic-capture
---test laguna_capture_diagnostic` on the local Mac; six controls pass. Scoped
+--test laguna_capture_diagnostic` on the local Mac; eight controls pass. Scoped
 Clippy covers that test and the feature-enabled `met` binary. The initial
 backend-free invocation failed because the existing server binary imports GPU
 initialization symbols without a backend; enabling its normal Metal backend

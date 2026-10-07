@@ -25,6 +25,7 @@ fn fixture() -> (Plan, Row) {
         },
         Row {
             slot: 7,
+            allocation_generation: 41,
             seq_len: 4,
             prompt_len: 3,
             prompt_sha256: hash,
@@ -88,6 +89,7 @@ fn freezes_same_step_bits_and_preserves_native_ids_and_router_order() {
     let dir = plan.output.clone();
     let mut second = row.clone();
     second.slot = 3;
+    second.allocation_generation = 42;
     second.prefix_lookup_skip = true;
     plan.max_records = 2;
     let mut cap = Capture::create(plan).unwrap();
@@ -198,4 +200,68 @@ fn unsupported_execution_modes_refuse_instead_of_falling_back() {
     ] {
         assert!(validate_mode(sync, ranks, batch, spec, codispatch, no_mix).is_err());
     }
+}
+
+#[test]
+fn reused_slot_and_prompt_are_distinguished_by_allocation_generation() {
+    let (mut plan, row) = fixture();
+    let dir = plan.output.clone();
+    plan.max_records = 2;
+    let mut cap = Capture::create(plan).unwrap();
+    let mut reused = row.clone();
+    reused.allocation_generation += 1;
+    for (ticket, member) in [(1, row), (2, reused)] {
+        assert!(
+            cap.record(ticket, &[member], Some(&[9]), 100352, false, |b| {
+                b.fill(0);
+                Ok(())
+            })
+            .unwrap()
+        );
+    }
+    let a: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("000-ticket-1.json")).unwrap()).unwrap();
+    let b: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("001-ticket-2.json")).unwrap()).unwrap();
+    assert_eq!(a["rows"][0]["slot"], b["rows"][0]["slot"]);
+    assert_eq!(a["rows"][0]["prompt_sha256"], b["rows"][0]["prompt_sha256"]);
+    assert_ne!(
+        a["rows"][0]["allocation_generation"],
+        b["rows"][0]["allocation_generation"]
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn absent_or_duplicate_allocation_identity_refuses_before_readback() {
+    let (plan, row) = fixture();
+    let dir = plan.output.clone();
+    let mut cap = Capture::create(plan).unwrap();
+    let mut bad = row.clone();
+    bad.allocation_generation = 0;
+    assert!(
+        cap.record(0, &[bad], Some(&[0]), 100352, false, |_| panic!())
+            .is_err()
+    );
+    let mut detached = row.clone();
+    detached.slot = usize::MAX;
+    assert!(
+        cap.record(0, &[detached], Some(&[0]), 100352, false, |_| panic!())
+            .is_err()
+    );
+    let mut duplicate = row.clone();
+    duplicate.slot = 8;
+    assert!(
+        cap.record(
+            0,
+            &[row, duplicate],
+            Some(&[0, 0]),
+            100352,
+            false,
+            |_| panic!()
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    std::fs::remove_dir_all(dir).unwrap();
 }
