@@ -33,6 +33,10 @@ def main():
     tested = gate.get('source_receipt', {}).get('sources', {}).get('new/kernels/gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu')
     if not tested or identity.get('tested_source_sha256') != tested or identity.get('primitive_receipt_sha256') != sha(a.primitive_receipt):
         raise ValueError('Identity is not bound to this exact primitive receipt/tested source')
+    helper = a.root / 'kernels/gb10/common/mx_block_scale.cuh'
+    expected_helper = gate.get('source_receipt', {}).get('sources', {}).get('new/kernels/gb10/common/mx_block_scale.cuh')
+    if not expected_helper or sha(helper) != expected_helper:
+        raise ValueError('Scale helper changed since the primitive gate')
     a.output.mkdir(parents=True, exist_ok=False)
     for module in baseline['modules']:
         old = a.baseline.parent / module['ptx']
