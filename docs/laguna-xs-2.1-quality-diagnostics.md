@@ -186,3 +186,30 @@ tokens or persisted mask state. The ignored `pinned_laguna_json_completion_stop_
 test reads `LAGUNA_TOKENIZER_JSON` explicitly and downloads nothing. Its scoped
 server test passes. Binary Clippy passes; broad Metal `--tests` Clippy remains
 blocked by the existing CUDA-only integration helper.
+
+## Short JSON EOS correction — 2026-10-07
+
+A source-bound sync/no-mix diagnostic baseline reproduced all six failures.
+Its actual streamed content IDs `[6003,9295,1034,290,89,162]` produced
+`{"answer": 4}`; server logs then showed EOS24 suppressed solely by the
+post-think tool guard, while the grammar permitted stopping. All five sequence
+construction paths had treated any attached grammar as a tool request, including
+JSON response-format grammars. The correction requires declared tools for the
+grammar branch and preserves the existing legacy required-tool fallback.
+
+Release source `020057a974f1da08a8bef4fd8a1974edf524b0dd`, binary SHA-256
+`13732afc36bec64b878157c2bf2f5608a1913bf086901d9e0954dc1eac45b989`, passes
+**6/6** strict schema arithmetic cases on the same diagnostic route. Four more
+live checks pass: JSON streaming with those same six content IDs and `stop`, a
+forced tool call, its tool-result response, and JSON with declared tools but
+`tool_choice:none`. Three tests invoke the actual decoder and preserve the
+incomplete-grammar, minimum-token, real-tool, legacy and sticky-tool guards;
+the old classification is a failing control. Independent review found no blocker.
+
+Three fixed-stream diagnostic observations separate content completion from
+HTTP completion: complete JSON at 399–415ms, final finish event at 418–435ms,
+and 18.5–19.5ms between them. These client-boundary observations are not kernel
+throughput qualification. The original async six-hour run, arithmetic-format
+failures and initial coding failures remain unchanged evidence. Formatting and
+scoped tests pass; fresh scoped Clippy attempts are blocked by existing Metal
+GPU-runtime lints or Linux-specific storage symbols on macOS, with logs retained.
