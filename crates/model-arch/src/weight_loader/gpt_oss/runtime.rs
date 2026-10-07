@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! 2026-10-07: Native GPT-OSS decode with explicit experimental chunk prefill.
-//! No factory registration. Host expert-ID readback vetoes CUDA graphs; this is
+//! Explicit experimental admission only. Host expert-ID readback vetoes CUDA graphs; this is
 //! not a throughput-qualified route. Weight pointers stay owned by the model store.
 use super::GptOssLayerWeights;
 use anyhow::{Context, Result, ensure};
