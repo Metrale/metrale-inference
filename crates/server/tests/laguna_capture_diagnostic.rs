@@ -101,7 +101,7 @@ fn freezes_same_step_bits_and_preserves_native_ids_and_router_order() {
         Ok(())
     })
     .unwrap();
-    device.fill(0); // Simulated next forward cannot alter the saved same-step bytes.
+    device.fill(0); // 2026-10-07: Simulated next forward cannot alter the saved same-step bytes.
     assert_eq!(
         std::fs::read(dir.join("000-ticket-12.bf16")).unwrap(),
         vec![0x7b; device.len()]

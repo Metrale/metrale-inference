@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Bounded, opt-in synchronous-router diagnostic. It changes timing, never sampling.
+//! 2026-10-07: Bounded, opt-in synchronous-router diagnostic. It changes timing, never sampling.
 //! Records device argmax candidates, not necessarily subsequently emitted tokens.
 
 use std::collections::BTreeSet;
@@ -23,10 +23,10 @@ static CAPTURE: OnceLock<Mutex<Option<Capture>>> = OnceLock::new();
 pub struct Plan {
     pub output: PathBuf,
     pub model_revision: String,
-    /// Operator assertion, not a runtime proof of source or checkpoint identity.
+    /// 2026-10-07: Operator assertion, not a runtime proof of source or checkpoint identity.
     pub asserted_source_commit: String,
     pub prompt_sha256: BTreeSet<String>,
-    /// Number of generated tokens already processed, after this decode forward.
+    /// 2026-10-07: Number of generated tokens already processed, after this decode forward.
     pub generated_positions: BTreeSet<usize>,
     pub max_records: usize,
 }
@@ -34,7 +34,7 @@ pub struct Plan {
 #[derive(Clone, Serialize)]
 pub struct Row {
     pub slot: usize,
-    /// Per-model allocation ticket, not HTTP identity across reallocation.
+    /// 2026-10-07: Per-model allocation ticket, not HTTP identity across reallocation.
     pub allocation_generation: u64,
     pub seq_len: usize,
     pub prompt_len: usize,
@@ -120,7 +120,7 @@ impl Capture {
         Ok(Self { plan, written: 0 })
     }
 
-    /// All live rows must be allowlisted. No callback (and therefore no GPU copy)
+    /// 2026-10-07: All live rows must be allowlisted. No callback (and therefore no GPU copy)
     /// occurs for an unrelated batch, an unselected position, or an exhausted cap.
     pub fn record(
         &mut self,
@@ -225,7 +225,7 @@ pub fn validate_mode(
     Ok(())
 }
 
-/// Called before scheduler startup. Unsupported modes are errors, never silent fallbacks.
+/// 2026-10-07: Called before scheduler startup. Unsupported modes are errors, never silent fallbacks.
 pub fn initialize(
     sync: bool,
     ranks: usize,

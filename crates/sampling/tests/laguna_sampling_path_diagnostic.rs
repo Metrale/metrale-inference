@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! 2026-10-07: CPU diagnostic of existing sampler contracts; not a GPU capture
 //! and not an explanation of Laguna's observed response variability.
 use metrale_sampling::{
@@ -16,12 +17,12 @@ fn host(row: &[f32]) -> u32 {
 }
 #[test]
 fn logit_readback_route_is_not_transparent_at_exact_bf16_ties() {
-    // Exactly BF16-representable inputs. The plain kernel reference simulates
+    // 2026-10-07: Exactly BF16-representable inputs. The plain kernel reference simulates
     // the checked-in1024-thread scan/tree, while production host sampling runs.
     let row = [2.0, 2.0, -1.0];
     assert_eq!(plain_kernel_argmax(&row), 0);
     assert_eq!(host(&row), 1);
-    // Three existing policies can all disagree, not merely first vs last.
+    // 2026-10-07: Three existing policies can all disagree, not merely first vs last.
     let mut wide = vec![-1.0; 1026];
     wide[1] = 3.0;
     wide[2] = 3.0;
