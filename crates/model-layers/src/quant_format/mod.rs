@@ -16,6 +16,8 @@ use crate::weight_map::Nvfp4Variant;
 mod compressed_tensors;
 mod fp8_blockscaled;
 mod modelopt;
+mod mxfp4;
+pub use mxfp4::Mxfp4Format;
 
 pub use compressed_tensors::CompressedTensorsFormat;
 pub use fp8_blockscaled::Fp8BlockScaledFormat;
@@ -29,17 +31,17 @@ pub trait QuantFormat: Send + Sync + std::fmt::Debug {
     /// 2026-09-25: Name for logs.
     fn name(&self) -> &'static str;
 
-    /// 2026-09-25: The [`Nvfp4Variant`] this layout maps to.
-    fn base_variant(&self) -> Nvfp4Variant;
+    /// 2026-10-07: Legacy mapping; native MXFP4 has no NVFP4 equivalent and returns None.
+    fn base_variant(&self) -> Option<Nvfp4Variant>;
 
     /// 2026-09-30: Whether the ignore list names the module `module_path` (a module path,
     /// not a tensor name: no `.weight`), under the format's own matching ([`IgnoreList`]).
     fn is_ignored(&self, module_path: &str) -> bool;
 
     /// 2026-09-25: `Bf16Raw` for an ignored module, else [`Self::base_variant`].
-    fn variant_for(&self, module_path: &str) -> Nvfp4Variant {
+    fn variant_for(&self, module_path: &str) -> Option<Nvfp4Variant> {
         if self.is_ignored(module_path) {
-            Nvfp4Variant::Bf16Raw
+            Some(Nvfp4Variant::Bf16Raw)
         } else {
             self.base_variant()
         }
@@ -69,6 +71,7 @@ pub fn detect_quant_format(
         let ignore = qc.ignore_modules.clone();
 
         match method {
+            "mxfp4" => return Ok(Box::new(Mxfp4Format::from_checkpoint(config, store)?)),
             "modelopt" => {
                 tracing::info!(
                     "QuantFormat: modelopt (algo={algo:?}), {} ignored module(s)",
