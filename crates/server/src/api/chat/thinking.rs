@@ -26,6 +26,7 @@ pub(super) fn resolve_thinking(
     resolve(
         directive,
         Policy {
+            harmony: state.tokenizer.harmony().is_some(),
             disable_thinking: state.disable_thinking,
             model_default: state.behavior.thinking_default,
             thinking_in_tools: state.behavior.thinking_in_tools,
@@ -58,6 +59,8 @@ pub(super) fn generation_max_tokens(
 /// pure function.
 #[derive(Clone, Copy)]
 struct Policy {
+    /// 2026-10-07: Harmony effort is a template hint; generic marker budgets do not apply.
+    harmony: bool,
     disable_thinking: bool,
     model_default: bool,
     thinking_in_tools: bool,
@@ -78,7 +81,7 @@ fn resolve(
     max_tokens: u32,
     tools_active: bool,
 ) -> (bool, Option<u32>) {
-    if policy.disable_thinking {
+    if policy.harmony || policy.disable_thinking {
         return (false, None);
     }
     let (et, tb) = match directive {
@@ -156,6 +159,7 @@ mod tests {
 
     fn policy() -> Policy {
         Policy {
+            harmony: false,
             disable_thinking: false,
             model_default: false,
             thinking_in_tools: true,
@@ -163,6 +167,36 @@ mod tests {
             effort_capped_at_ceiling: false,
             cap_at_max_tokens: true,
         }
+    }
+
+    #[test]
+    fn harmony_never_maps_template_effort_or_model_default_to_generic_marker_budget() {
+        let harmony_policy = Policy {
+            harmony: true,
+            model_default: true,
+            ..policy()
+        };
+        for directive in [
+            ThinkingDirective::Unspecified,
+            ThinkingDirective::On { budget: None },
+            ThinkingDirective::OnEffort(crate::ir::EffortLevel::Low),
+            ThinkingDirective::OnEffort(crate::ir::EffortLevel::High),
+        ] {
+            assert_eq!(
+                resolve(directive, harmony_policy, 256, false),
+                (false, None)
+            );
+            assert_eq!(resolve(directive, harmony_policy, 256, true), (false, None));
+        }
+        assert_eq!(
+            resolve(
+                ThinkingDirective::OnEffort(crate::ir::EffortLevel::Low),
+                policy(),
+                4096,
+                false
+            ),
+            (true, Some(1024))
+        );
     }
 
     #[test]
