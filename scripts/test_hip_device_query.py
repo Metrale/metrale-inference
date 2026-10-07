@@ -65,7 +65,7 @@ def main():
         name_forward = "return hipDeviceGetName(name, len, device);"
         assert definitions.count(name_forward) == 1
         fixed_name = definitions.replace(name_forward,
-            'if (name && len > 0) std::snprintf(name, len, "AMD-gfx1151"); return 0;')
+            'if (name && len > 0) { std::snprintf(name, len, "AMD-gfx1151"); }\n    return 0;')
         wrong_name = run(fixed_name, "fixed_name")
         assert wrong_name.returncode != 0 and "strcmp(name, expected)" in wrong_name.stderr
         print("PASS fixed-name control rejected:", wrong_name.stderr.strip())
