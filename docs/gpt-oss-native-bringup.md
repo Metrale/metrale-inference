@@ -439,4 +439,23 @@ subtracting reasoning therefore still includes protocol overhead, not just
 visible-text tokens. This is an engine accounting convention, not provider
 billing parity. Scheduler reasoning/budget logic still uses generic markers;
 API accounting does not establish Harmony-aware scheduler budget enforcement.
-Live HTTP/SSE and accounting validation remain open.
+Live SSE and accounting validation remain open.
+
+## First native HTTP lifecycle result
+
+A frozen Linux build passed all eight bounded HTTP checks: multiplication,
+identifier extraction, early-identifier recall across a 420-token prompt,
+the same short response before and after refused requests, and explicit HTTP400
+refusals for streaming, schema and tools in that blocking-only build. Successful
+responses contain final text without analysis or framing, stop normally, and
+conserve reported total usage. Eleven independent grader controls include wrong
+answers, framing/analysis leakage, truncation, invalid usage and unrelated errors.
+
+The 420-token case crosses both block and sliding-window boundaries. These
+sequential checks exercise state reuse but do not qualify concurrency, long
+contexts generally or sustained stability. The frozen build excludes the later
+reasoning-accounting and streaming changes. Its binary SHA-256 is
+`d854034d586b0d10a8a100a7aa5251a9d57a6e45529a132f9e1ecea7d7367f60`.
+Client times were 2.125–2.482 seconds for the short successful requests and
+9.499 seconds for the 420-token request; this debug-build smoke is not a
+performance or energy certification. Broader quality and optimization remain open.
