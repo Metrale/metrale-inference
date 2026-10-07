@@ -28,7 +28,14 @@ static bool decode_test() {
     float* out; CUDA(cudaMalloc(&out,4096*4));
     probe<<<16,256>>>(out); CUDA(cudaGetLastError()); CUDA(cudaDeviceSynchronize());
     std::vector<float> got(4096); CUDA(cudaMemcpy(got.data(),out,4096*4,cudaMemcpyDeviceToHost));
-    for(unsigned i=0;i<4096;++i){float want=decode(i%16,i/16); if(!(got[i]==want || (std::isnan(got[i])&&std::isnan(want)))){fprintf(stderr,"decode mismatch %u\n",i);return false;}}
+    // 2026-10-07: Compare bits so signed zero and boundary exponents cannot hide behind float equality.
+    for(unsigned i=0;i<4096;++i){
+        float want=decode(i%16,i/16);uint32_t observed,expected;
+        memcpy(&observed,&got[i],4);memcpy(&expected,&want,4);
+        if(observed!=expected){fprintf(stderr,"decode bits mismatch %u expected %08x got %08x\n",i,expected,observed);return false;}
+    }
+    uint32_t negative_zero;memcpy(&negative_zero,&got[127*16+8],4);
+    if(negative_zero!=0x80000000U)return false;
     if(got[2]==0 || !std::isinf(got[255*16+2]))return false;
     CUDA(cudaFree(out)); printf("all 4096 code/scale pairs pass pinned-unpack oracle\n"); return true;
 }

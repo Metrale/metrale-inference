@@ -251,3 +251,24 @@ both-order timings are retained in the source-bound receipts. A pre-GPU relative
 library-path failure and a stopped build with the wrong target-variable name are
 also retained; the accepted build explicitly selects GB10/GPT-OSS-20B/MXFP4 and
 checks staged-source hashes plus the required PTX entry points before startup.
+
+## Rejected inline exponent decoder
+
+A separate private candidate replaced `ldexp`/BF16 conversion with exact bit
+construction for scales 2–252, retaining the original fallback at boundary
+scales. All 4,096 code/scale bits, including signed zero, and ten grouped
+projection cases matched. All six full-model chunk/scalar paths preserved every
+hidden/cache byte; the same release API gates passed. The checked-in decoder
+regression now compares bits rather than float equality so signed-zero mistakes
+cannot escape that test.
+
+The candidate nevertheless **regressed total latency by 25.11% and 25.20%** in
+two opposite-order sessions against the token-grid baseline, with unchanged
+outputs/counts. Candidate decode fell to approximately 35.3–35.7 tokens/s; TTFT
+also worsened. It was rejected: production retains the original unpack helper.
+The rejected binary SHA is
+`95300199cd3a1372d27afc86d87768e56c28ec97c12577d72c6dfa4bb78723d7`;
+its helper-only source overlay, matching full traces, passing API receipts and
+both failed timing gates are retained. No resource or instruction-cost cause is
+claimed without a separate profile. Primitive equivalence alone does not
+establish a useful performance change.
