@@ -55,7 +55,8 @@ and test arithmetic correctness and instruction compliance separately in the nex
 
 ## Remaining acceptance
 
-- [ ] Locate the batching defect using intermediate-output parity and pinned reference outputs.
+- [x] Locate the Q/K normalization dispatch defect with alternating failure/pass controls.
+- [ ] Complete intermediate-output parity against a pinned reference.
 - [ ] Review existing shared NVFP4 fixes before introducing another kernel change.
 - [ ] Add a regression that fails on this baseline and passes with the correction.
 - [ ] Repeat sequential and concurrent generation, tools, streaming and cancellation.
@@ -64,3 +65,29 @@ and test arithmetic correctness and instruction compliance separately in the nex
 
 All correctness fixes and their evidence stay on this model PR. A workaround or
 a reference-engine result must not be described as native batched qualification.
+
+## Q/K dispatch correction, October 6
+
+The scalar path selects vanilla RMS normalization for Laguna (`weight`), but the
+strided batched kernel implements additive weights (`1 + weight`). Disabling
+strided Q/K norm passed all 12 diagnostic responses; restoring the unchanged
+baseline reproduced all six C2 failures. Disabling batched BF16 projections had
+not helped. This isolates a normalization-policy mismatch.
+
+Commit `d9d9879` prevents plain-weight models from selecting the additive strided
+kernel. Existing additive-model admission is unchanged; Laguna uses the existing
+per-sequence vanilla norm. Two focused dispatch tests passed on Spark2. The rebuilt
+CUDA server, with no diagnostic environment override and GPU batch limit 4, passed
+all 12 original reproducer responses, including six concurrent ones. Source was
+baseline `3e954ac` plus this guard and BF16 diagnostic correction `b59ab41`; the
+exact patch and binary digest were retained with operational evidence.
+
+A new six-hour batch-four campaign exercises arithmetic, tools, SSE and HTTP
+concurrency 1/2/4. It retains full arithmetic responses, reports format failures
+separately, and stops on wrong last-line arithmetic or abnormal termination. A
+correct last line cannot erase an exact-format failure or turn the whole campaign
+into a pass. Completion, full numerical parity and speed qualification remain open.
+
+The source guard fixes correctness through an existing scalar fallback; no speed
+improvement is claimed. A matching parameterized strided vanilla kernel remains
+a possible optimization after profiling and parity tests.
