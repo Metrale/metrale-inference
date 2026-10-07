@@ -12,10 +12,10 @@
 // - Every GEMM stores only rows below M and columns below N.
 // - Global-to-shared copies are synchronous.
 //
-// WMMA fragments, lane l = 0..31: A (M x K smem) a[i] = smem_A[m_row + (l&15)][i];
-// B from K x N smem b[k] = smem_B[k][n + (l&15)], or from N x K smem
-// b[k] = smem_B[n + (l&15)][k]; element e (0..7) of C is row 2*e + (l>>4),
-// column l&15.
+// WMMA fragments, lane l = 0..31, k0 = wmma_k0(l), i, k < WMMA_FRAG_K: A (M x K smem)
+// a[i] = smem_A[m_row + (l&15)][k0 + i]; B from K x N smem b[k] = smem_B[k0 + k][n + (l&15)],
+// or from N x K smem b[k] = smem_B[n + (l&15)][k0 + k]; element e (0..7) of C is row
+// wmma_acc_row(l, e), column l&15 (2026-10-07: wmma_rdna.cuh; gfx11 unchanged).
 
 
 #include <cuda_bf16.h>
