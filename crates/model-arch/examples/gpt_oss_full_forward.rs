@@ -92,6 +92,7 @@ fn run() -> anyhow::Result<()> {
     let prompt_tokens = tokens.clone();
     let capacity = tokens.len() + generation.as_ref().map_or(0, |g| g.policy.max_new_tokens);
     let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
+    validate_policy_bound(&manifest, capacity)?;
     let modules = manifest["modules"]
         .as_array()
         .context("module manifest needs modules array")?;
@@ -340,6 +341,22 @@ fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
+// 2026-10-07: Diagnostic overrides must declare a fail-closed context ceiling.
+#[cfg(any(test, feature = "cuda"))]
+fn validate_policy_bound(manifest: &serde_json::Value, capacity: usize) -> anyhow::Result<()> {
+    if let Some(policy) = manifest.get("policy_override") {
+        let bound = policy
+            .get("max_context_tokens")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| anyhow::anyhow!("override requires max_context_tokens"))?;
+        anyhow::ensure!(
+            bound > 0 && capacity as u64 <= bound,
+            "context exceeds diagnostic policy bound"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(feature = "cuda")]
 #[derive(serde::Deserialize)]
 struct DiagnosticsPolicy {
@@ -395,6 +412,16 @@ fn greedy_argmax(values: &[f32]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn policy_override_bound_is_required_and_enforced() {
+        let manifest = serde_json::json!({"policy_override":{"max_context_tokens":4096}});
+        assert!(super::validate_policy_bound(&manifest, 4096).is_ok());
+        assert!(super::validate_policy_bound(&manifest, 4097).is_err());
+        assert!(
+            super::validate_policy_bound(&serde_json::json!({"policy_override":{}}), 1).is_err()
+        );
+        assert!(super::validate_policy_bound(&serde_json::json!({}), 8192).is_ok());
+    }
     #[test]
     fn generation_records_stop_and_limit_without_extra_feedback() {
         let mut g = super::Generation {
