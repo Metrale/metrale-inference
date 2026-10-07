@@ -15,7 +15,7 @@
 // WMMA fragments, lane l = 0..31, k0 = wmma_k0(l), i, k < WMMA_FRAG_K: A (M x K smem)
 // a[i] = smem_A[m_row + (l&15)][k0 + i]; B from K x N smem b[k] = smem_B[k0 + k][n + (l&15)],
 // or from N x K smem b[k] = smem_B[n + (l&15)][k0 + k]; element e (0..7) of C is row
-// wmma_acc_row(l, e), column l&15 (2026-10-07: wmma_rdna.cuh; gfx11 unchanged).
+// WMMA_ACC_ROW_TERMS(e, (l >> 4)), column l&15 (2026-10-07: wmma_rdna.cuh; gfx11 unchanged).
 
 
 #include <cuda_bf16.h>
@@ -165,7 +165,7 @@ extern "C" __global__ void w4a16_gemm(
     for (int nb = 0; nb < 4; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc[nb][e]);
         }
@@ -310,7 +310,7 @@ extern "C" __global__ void w4a16_gemm_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc[nb][e]);
         }
@@ -406,7 +406,7 @@ extern "C" __global__ void fp8_gemm_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc[nb][e]);
         }
@@ -552,7 +552,7 @@ extern "C" __global__ void fp8_fp8_gemm_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc[nb][e]);
         }
@@ -708,7 +708,7 @@ extern "C" __global__ void w4a16_gemm_t_k64(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc[nb][e]);
         }
@@ -854,7 +854,7 @@ void w4a16_gemm_t_m128(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc0[nb][e]);
         }
@@ -863,7 +863,7 @@ void w4a16_gemm_t_m128(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + M_TILE + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + M_TILE + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc1[nb][e]);
         }
@@ -968,7 +968,7 @@ void fp8_gemm_t_m128(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc0[nb][e]);
         }
@@ -976,7 +976,7 @@ void fp8_gemm_t_m128(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + M_TILE + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + M_TILE + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc1[nb][e]);
         }
@@ -1080,7 +1080,7 @@ void fp8_fp8_gemm_t_m128(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc0[nb][e]);
         }
@@ -1088,7 +1088,7 @@ void fp8_fp8_gemm_t_m128(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + M_TILE + warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int r = cta_m + M_TILE + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[r * N + c] = __float2bfloat16(acc1[nb][e]);
         }

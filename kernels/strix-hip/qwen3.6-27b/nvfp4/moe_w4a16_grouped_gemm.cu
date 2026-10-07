@@ -165,7 +165,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable(
     for (int nb = 0; nb < 4; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int row_local = warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -322,7 +322,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int row_local = warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -497,7 +497,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_t_k64(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int row_local = warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -691,7 +691,7 @@ extern "C" __global__ void moe_w4a16_fused_gate_up_t_k64(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int row_local = warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -867,7 +867,7 @@ extern "C" __global__ void moe_w4a16_fused_gate_up_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int row_local = warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -1023,7 +1023,7 @@ extern "C" __global__ void moe_fp8_grouped_gemm_ptrtable_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
+            unsigned int row_local = warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);

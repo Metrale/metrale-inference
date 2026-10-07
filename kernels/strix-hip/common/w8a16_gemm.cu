@@ -13,7 +13,7 @@
 // C[M,N] = A[M,K] (BF16) x dequant(B[N,K]), value = E4M3_LUT[byte] *
 // block_scale[n/128][k/128], with block_scale FP32 [N/128, K/128].
 //
-// WMMA store mapping: lane l, element e (0..7) -> row wmma_acc_row(l, e) of the
+// WMMA store mapping: lane l, element e (0..7) -> row WMMA_ACC_ROW_TERMS(e, (l >> 4)) of the
 // warp's 16 rows (2*e + (l>>4) on gfx11, e + 8*(l>>4) on gfx12), column l&15 of a
 // 16-column tile.
 
@@ -138,7 +138,7 @@ __device__ __forceinline__ void w8a16_wmma_store(
     for (int nb = 0; nb < N_SUBTILES; nb++) {
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row = cta_m + warp_m_offset + wmma_acc_row(lane, e);
+            unsigned int row = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane >> 4));
             unsigned int col = cta_n + nb * 16 + (lane & 15);
             if (row < M && col < N) C[row * N + col] = __float2bfloat16(acc[nb][e]);
         }
