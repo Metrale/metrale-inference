@@ -76,6 +76,11 @@ fn one_token_composes_stages_and_uses_its_actual_position() {
     let hidden = gpu.alloc(5760).unwrap();
     let mut cache = cache(&gpu, KvCacheDtype::Bf16);
     let mut blocks = vec![];
+    assert!(
+        layer
+            .diagnostic_snapshot(state.as_ref(), 0, &gpu, 0)
+            .is_err()
+    );
     layer
         .forward_token(hidden, state.as_mut(), &mut cache, 0, &mut blocks, &gpu, 0)
         .unwrap();
@@ -118,6 +123,18 @@ fn one_token_composes_stages_and_uses_its_actual_position() {
             )
             .unwrap();
     }
+    let snapshot = layer
+        .diagnostic_snapshot(state.as_ref(), 17, &gpu, 0)
+        .unwrap();
+    let captured_ids = snapshot.iter().find(|t| t.name == "router_ids").unwrap();
+    assert_eq!(captured_ids.dtype, "U32");
+    assert_eq!(captured_ids.shape, [4]);
+    assert_eq!(captured_ids.bytes, ids);
+    assert!(
+        layer
+            .diagnostic_snapshot(state.as_ref(), 16, &gpu, 0)
+            .is_err()
+    );
     let original = blocks[0];
     blocks[0] = blocks[1];
     assert!(
@@ -159,6 +176,11 @@ fn one_token_composes_stages_and_uses_its_actual_position() {
     assert!(
         layer
             .forward_token(hidden, state.as_mut(), &mut cache, 18, &mut blocks, &gpu, 0)
+            .is_err()
+    );
+    assert!(
+        layer
+            .diagnostic_snapshot(state.as_ref(), 17, &gpu, 0)
             .is_err()
     );
     gpu.free(hidden).unwrap();

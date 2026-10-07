@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! 2026-10-07: Standalone eager native GPT-OSS teacher-forced full forward.
-//! Usage: MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON [GENERATION_JSON]
+//! Usage: MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON [GENERATION_JSON_OR_DASH] [DIAGNOSTICS_JSON]
 //! Emits BF16 logits/hidden traces, not a serving or performance certification.
 #[cfg(not(feature = "cuda"))]
 fn main() -> anyhow::Result<()> {
@@ -27,8 +27,8 @@ fn run() -> anyhow::Result<()> {
     use std::{path::PathBuf, time::Instant};
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     ensure!(
-        args.len() == 4 || args.len() == 5,
-        "expected MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON [GENERATION_JSON]"
+        (4..=6).contains(&args.len()),
+        "expected MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON [GENERATION_JSON_OR_DASH] [DIAGNOSTICS_JSON]"
     );
     let model = PathBuf::from(&args[0]);
     let manifest_path = PathBuf::from(&args[1]);
@@ -47,6 +47,7 @@ fn run() -> anyhow::Result<()> {
     );
     let mut generation = args
         .get(4)
+        .filter(|path| *path != "-")
         .map(|path| -> anyhow::Result<Generation> {
             let policy: GenerationPolicy = serde_json::from_slice(&std::fs::read(path)?)?;
             ensure!(
@@ -68,6 +69,22 @@ fn run() -> anyhow::Result<()> {
             })
         })
         .transpose()?;
+    let diagnostics: Option<DiagnosticsPolicy> = args
+        .get(5)
+        .map(|path| -> anyhow::Result<_> { Ok(serde_json::from_slice(&std::fs::read(path)?)?) })
+        .transpose()?;
+    if let Some(policy) = &diagnostics {
+        ensure!(
+            policy.layers.iter().all(|&l| l < 24),
+            "diagnostic layer outside model"
+        );
+        ensure!(
+            policy.positions.iter().all(|&p| p < 768),
+            "diagnostic position outside harness bound"
+        );
+        std::fs::create_dir(output.with_extension("diagnostics"))?;
+    }
+    let mut diagnostic_records = vec![];
     let prompt_tokens = tokens.clone();
     let capacity = tokens.len() + generation.as_ref().map_or(0, |g| g.policy.max_new_tokens);
     let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
@@ -168,7 +185,15 @@ fn run() -> anyhow::Result<()> {
             2880 * 2,
             stream,
         )?;
-        for (layer, state) in layers.iter().zip(states.iter_mut()) {
+        for (layer_index, (layer, state)) in layers.iter().zip(states.iter_mut()).enumerate() {
+            let inspect = diagnostics.as_ref().is_some_and(|p| {
+                p.layers.contains(&layer_index) && p.positions.contains(&position)
+            });
+            let mut incoming = vec![];
+            if inspect {
+                incoming.resize(2880 * 2, 0);
+                gpu.copy_d2h_on_stream(hidden, &mut incoming, stream)?;
+            }
             layer.forward_token(
                 hidden,
                 state.as_mut(),
@@ -178,6 +203,29 @@ fn run() -> anyhow::Result<()> {
                 &gpu,
                 stream,
             )?;
+            if inspect {
+                let mut snapshots =
+                    layer.diagnostic_snapshot(state.as_ref(), position, &gpu, stream)?;
+                snapshots.push(
+                    metrale_model_arch::weight_loader::gpt_oss::runtime::DiagnosticTensor {
+                        name: "incoming_hidden",
+                        dtype: "BF16",
+                        shape: vec![2880],
+                        bytes: incoming,
+                    },
+                );
+                for snapshot in snapshots {
+                    let path = output
+                        .with_extension("diagnostics")
+                        .join(format!("p{position}-l{layer_index}-{}.bin", snapshot.name));
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&path)?;
+                    file.write_all(&snapshot.bytes)?;
+                    diagnostic_records.push(serde_json::json!({"position":position,"layer":layer_index,"name":snapshot.name,"dtype":snapshot.dtype,"shape":snapshot.shape,"path":path}));
+                }
+            }
             let mut row = vec![0u8; 2880 * 2];
             gpu.copy_d2h_on_stream(hidden, &mut row, stream)?;
             hidden_file.write_all(&row)?;
@@ -237,7 +285,7 @@ fn run() -> anyhow::Result<()> {
     }
     logits_file.sync_all()?;
     hidden_file.sync_all()?;
-    let receipt = serde_json::json!({"kind":if generation.is_some() {"native_eager_greedy_generation"} else {"native_eager_teacher_forced_forward"},"prompt_tokens":prompt_tokens,"generation":generation,"expected_model_revision":"6cee5e81ee83917806bbde320786a8fb61efebee","tokens":tokens,"layers":24,"load_seconds":load_seconds,"per_token_seconds_including_trace_copies":times,"next_token_ids":next_ids,"logits":{"path":logits_path,"dtype":"BF16","shape":[tokens.len(),config.vocab_size]},"hidden":{"path":hidden_path,"dtype":"BF16","shape":[tokens.len(),24,2880]},"module_manifest":manifest,"gpu_memory_fraction_limit":0.85,"limitations":["host expert ID readback","scalar prefill","trace I/O included in times","not serving or speed certification"]});
+    let receipt = serde_json::json!({"kind":if generation.is_some() {"native_eager_greedy_generation"} else {"native_eager_teacher_forced_forward"},"diagnostics":diagnostic_records,"prompt_tokens":prompt_tokens,"generation":generation,"expected_model_revision":"6cee5e81ee83917806bbde320786a8fb61efebee","tokens":tokens,"layers":24,"load_seconds":load_seconds,"per_token_seconds_including_trace_copies":times,"next_token_ids":next_ids,"logits":{"path":logits_path,"dtype":"BF16","shape":[tokens.len(),config.vocab_size]},"hidden":{"path":hidden_path,"dtype":"BF16","shape":[tokens.len(),24,2880]},"module_manifest":manifest,"gpu_memory_fraction_limit":0.85,"limitations":["host expert ID readback","scalar prefill","trace I/O included in times","not serving or speed certification"]});
     let mut receipt_file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -251,6 +299,13 @@ fn run() -> anyhow::Result<()> {
     gpu.free(normed)?;
     gpu.free(logits)?;
     Ok(())
+}
+
+#[cfg(feature = "cuda")]
+#[derive(serde::Deserialize)]
+struct DiagnosticsPolicy {
+    positions: Vec<usize>,
+    layers: Vec<usize>,
 }
 
 // A generated stop token is recorded but never fed back into the cache.
