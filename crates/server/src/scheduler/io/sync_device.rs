@@ -155,9 +155,47 @@ impl DeviceIo for SyncDeviceIo {
                     .decode_batch(&tokens, rows, 0)
                     .map_err(DeviceError::Forward)?;
                 commit_decode_ctx(m, ctx, rows);
-                let rows = execute_readback(m, logits, tokens.len(), readback)
+                let decoded_rows = execute_readback(m, logits, tokens.len(), readback)
                     .map_err(DeviceError::Readback)?;
-                StepOutcome::Decode { logits, rows }
+                #[cfg(feature = "laguna-diagnostic-capture")]
+                super::laguna_capture::with_capture(|capture| {
+                    use super::laguna_capture::{Row, prompt_digest};
+                    let membership: Vec<Row> = rows
+                        .iter()
+                        .map(|seq| Row {
+                            slot: seq.slot_idx,
+                            seq_len: seq.seq_len,
+                            prompt_len: seq.prompt_len,
+                            prompt_sha256: if seq.prompt_len > 0
+                                && seq.prompt_len <= 4096
+                                && seq.tokens.len() >= seq.prompt_len
+                            {
+                                prompt_digest(&seq.tokens[..seq.prompt_len])
+                            } else {
+                                String::new()
+                            },
+                            prefix_lookup_skip: seq.prefix_lookup_skip,
+                        })
+                        .collect();
+                    let selected = match &decoded_rows {
+                        DecodeRows::Tokens(ids) => Some(ids.as_slice()),
+                        _ => None,
+                    };
+                    capture.record(
+                        self.next_ticket.get(),
+                        &membership,
+                        selected,
+                        m.vocab_size(),
+                        m.decode_logits_fp32(),
+                        |bytes| m.copy_logits_to_host(logits, bytes),
+                    )?;
+                    Ok(())
+                })
+                .map_err(DeviceError::Readback)?;
+                StepOutcome::Decode {
+                    logits,
+                    rows: decoded_rows,
+                }
             }
             StepPlan::DecodeFed { .. } => {
                 return Err(DeviceError::Forward(anyhow::anyhow!(

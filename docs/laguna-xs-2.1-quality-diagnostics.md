@@ -62,3 +62,66 @@ logprobs transparency is the problem, preserve the eligible device path's token
 choice while extracting probabilities independently. Do not silently normalize
 all host/device/verify policies or declare output variability solved from these
 constructed tests.
+
+### Bounded post-soak capture candidate
+
+The optional server feature `laguna-diagnostic-capture` adds a hook immediately
+**after the synchronous router's existing native argmax** and before its next
+forward can reuse the logits buffer. Normal builds exclude that hook. Even a
+feature-enabled build performs no copies or writes without
+`METRALE_LAGUNA_CAPTURE_PLAN=/absolute/plan.json`.
+
+This is a separate **timing intervention**, not an observation of the original
+async soak. Preserve the uninstrumented results and run an explicit sync/no-mix
+baseline first. Startup refuses async, multiple ranks, batch sizes above four,
+speculation, and prefill codispatch/varlen; it requires
+both `METRALE_BISECT_NO_MIX=1` and `METRALE_BISECT_Q12_DISABLE=1`
+(the second also disables the separate batched-mixed lane). Only BF16 native-argmax decode rows are captured;
+host/logprobs or masked sampling is refused for selected fixtures. Prefill's first
+generated token is outside this hook. Device IDs are pre-postprocessing
+candidates, not a claim about the final streamed token.
+
+The JSON plan has exactly these fields:
+
+```json
+{
+  "output": "/absolute/new-private-directory",
+  "model_revision": "d32afde8b09af1539b49ff96ff5551c674485f8e",
+  "asserted_source_commit": "FULL_40_CHARACTER_COMMIT",
+  "prompt_sha256": ["SHA256_OF_EXACT_PROMPT_U32_LITTLE_ENDIAN_BYTES"],
+  "generated_positions": [1, 2, 3],
+  "max_records": 16
+}
+```
+
+Replace the explicit placeholders before use. The output directory must not
+exist. There may be at most eight prompt hashes, sixteen positions (1–128), and
+64 records, bounding logits payloads to 51,380,224 bytes. A position means the
+number of generated tokens **already processed after this decode forward**.
+Every live batch row must match an allowlisted prompt; an unrelated row skips
+the whole capture without copying it. Receipt row order is the router's actual
+order, including slot, sequence length, prompt hash/length and prefix-lookup
+flag. It does not infer padded rows from HTTP concurrency. Reused slots are
+qualified by ticket, prompt hash and sequence position. No raw prompt is saved.
+
+Each successful capture saves unchanged BF16 bytes, their SHA-256, unchanged
+selected IDs and its exact router label. Startup also saves the running binary's
+actual SHA-256. Source/checkpoint fields are explicitly operator assertions;
+the surrounding immutable deployment receipt must verify them. Files without a
+matching JSON receipt are incomplete captures, not evidence. The directory is
+owner-only on Unix. This implementation does not change any tie policy.
+
+The local test harness uses synthetic row bytes and callback counters to verify
+same-step preservation, unchanged selected IDs, live membership order, unknown
+batch/position/cap exclusion, duplicate-slot and precision/mode refusals, and
+new-directory enforcement. **No live GPU capture or Spark2 restart has been
+performed for this candidate.** It must remain unused until the soak completes
+and the controlled diagnostic deployment is reviewed.
+
+Validation uses `METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo test -p
+metrale-server --no-default-features --features metal,laguna-diagnostic-capture
+--test laguna_capture_diagnostic` on the local Mac; six controls pass. Scoped
+Clippy covers that test and the feature-enabled `met` binary. The initial
+backend-free invocation failed because the existing server binary imports GPU
+initialization symbols without a backend; enabling its normal Metal backend
+resolved that build configuration. These are host/mock checks, not CUDA evidence.

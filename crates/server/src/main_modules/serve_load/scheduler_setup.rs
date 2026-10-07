@@ -50,6 +50,17 @@ pub(super) fn resolve_max_batch_size(
          ceiling of {} rows (DECODE_META_MAX_ROWS)",
         metrale_gpu_runtime::buffers::DECODE_META_MAX_ROWS
     );
+    #[cfg(feature = "laguna-diagnostic-capture")]
+    scheduler::io::laguna_capture::initialize(
+        args.scheduler_config == "sync",
+        world_size,
+        max_batch_size,
+        args.speculative || args.dflash || args.self_speculative || args.ngram_speculative,
+        args.prefill_codispatch
+            || args.prefill_varlen_batch
+            || metrale_model_layers::layers::ops::prefill_codispatch_enabled()
+            || metrale_model_layers::layers::ops::prefill_varlen_enabled(),
+    )?;
     Ok(max_batch_size)
 }
 

@@ -26,6 +26,8 @@
 //!   pairs; `no_scheduler_business_file_does_its_own_io` checks it.
 
 pub mod async_device;
+#[cfg(feature = "laguna-diagnostic-capture")]
+pub mod laguna_capture;
 pub mod no_device;
 pub mod request;
 pub mod spill;
