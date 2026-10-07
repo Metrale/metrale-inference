@@ -300,3 +300,8 @@ the same constructed controls, but only improved the half-overlap case about
 4% while regressing the no-overlap kernel about 10% at the actual 128-thread
 shape. It was not promoted or subjected to a blind full-model campaign. Neither
 prototype changes the checked-in default dispatch.
+
+
+## Exact minimum-token greedy readback
+
+The subsequent default-off sampling path preserves host EOS/post-thinking masks and finite highest-index ties while copying only chosen IDs. Constructed controls, live serving checks and a separate kernel-dispatch witness pass. Four unprofiled opposite-order sessions improve C2/C4 fixed64-output total latency by 2.52–3.62% beyond the qualified LUT binary; C1 and prefill are flat. Four distinct C4/128-output prompts improve 3.16–3.55%, with pre-existing output variation explicitly retained and no semantic pass inferred. See [the masked-greedy contract and complete boundaries](laguna-xs-2.1-masked-greedy.md). The older Marlin comparison is not a comparison of this candidate.

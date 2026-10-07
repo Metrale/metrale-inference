@@ -14,6 +14,33 @@ use std::sync::Mutex;
 use super::runner::{Scenario, run_scenario};
 use super::scenarios;
 
+#[test]
+fn masked_greedy_unsupported_model_retains_exact_host_rows() {
+    use super::model::{ModelCfg, RecordingModel};
+    use crate::scheduler::io::{DecodeRows, Readback, sync_device::execute_readback};
+    use metrale_model_engine::traits::ModelLogits;
+    let model = RecordingModel::new(ModelCfg::default());
+    model.state.lock().unwrap().rows = vec![3, 7];
+    let ptr = model.row_ptr(0);
+    let masks = vec![vec![3], vec![7]];
+    assert_eq!(model.argmax_batch_masked(ptr, 2, &masks, 0).unwrap(), None);
+    let mut expected = vec![0; model.vocab_size() * 2 * 2];
+    model.copy_logits_to_host(ptr, &mut expected).unwrap();
+    let mut actual = vec![99; 5];
+    let result = execute_readback(
+        &model,
+        ptr,
+        2,
+        Readback::MaskedGreedy {
+            masks,
+            into: &mut actual,
+        },
+    )
+    .unwrap();
+    assert!(matches!(result, DecodeRows::HostLogits { elem_bytes: 2 }));
+    assert_eq!(actual, expected);
+}
+
 /// 2026-09-25: The scheduler keys its spill directory on the process id
 /// (`core/mod.rs`), so scenarios must not run concurrently.
 pub(super) static SERIAL: Mutex<()> = Mutex::new(());

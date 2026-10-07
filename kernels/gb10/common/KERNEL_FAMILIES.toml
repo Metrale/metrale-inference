@@ -95,7 +95,7 @@ description = "Row-wise BF16 argmax over the logits"
 compute = "memory"
 # 2026-09-30: `argmax_bf16_batch` is every row in one launch (the batched MTP verify);
 # `argmax_bf16_batch_lp` also writes each row's top-1 log-probability (the batched propose).
-kernels = ["argmax::argmax_bf16", "argmax::argmax_bf16_batch", "argmax::argmax_bf16_batch_lp"]
+kernels = ["argmax::argmax_bf16", "argmax::argmax_bf16_batch", "argmax::argmax_bf16_batch_lp", "argmax_feed::argmax_bf16_batch_masked_host"]
 rows = [1, 65536]
 pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
 op = [{ op = "argmax" }]

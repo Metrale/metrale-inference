@@ -104,6 +104,20 @@ pub(crate) fn execute_readback(
 ) -> anyhow::Result<DecodeRows> {
     Ok(match readback {
         Readback::Argmax => DecodeRows::Tokens(model.argmax_batch(logits, rows, 0)?),
+        Readback::MaskedGreedy { masks, into } => {
+            match model.argmax_batch_masked(logits, rows, &masks, 0)? {
+                Some(tokens) => {
+                    anyhow::ensure!(
+                        tokens.len() == rows,
+                        "masked greedy returned wrong row count"
+                    );
+                    DecodeRows::Tokens(tokens)
+                }
+                None => DecodeRows::HostLogits {
+                    elem_bytes: read_logits_to_host(model, logits, rows, into)?,
+                },
+            }
+        }
         Readback::HostLogits { into } => DecodeRows::HostLogits {
             elem_bytes: read_logits_to_host(model, logits, rows, into)?,
         },
