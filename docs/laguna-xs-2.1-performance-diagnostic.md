@@ -265,3 +265,38 @@ subsequent C1 request pass. All twelve generated coding outputs have the same
 hashes as the incumbent; isolated semantic grading remains **9/12**, with the
 same three retry-delay failures. The prefill improvement does not establish
 general coding quality, energy efficiency, or competitive concurrent decoding.
+
+## Dense precision audit and bounded pair reuse
+
+CPU-only reads of the pinned checkpoint headers confirm **284 selected tensors**
+(attention projections/norms, first-layer dense FFN and output head) are BF16.
+The declared quantization configuration explicitly excludes attention Q/K/V/O,
+the head, first-layer FFN and router from NVFP4. Representative shapes are
+Q `[6144,2048]` / `[8192,2048]`, O `[2048,6144]` / `[2048,8192]`, and head
+`[100352,2048]`. The native dense path is not expanding packed versions of those
+weights. The reference trace's dominant dense entry is explicitly CUTLASS BF16
+WMMA, accounting for 1004.925 ms across 7750 calls in the recorded C4 region.
+Dense bandwidth remains relevant, but a checkpoint precision mismatch does not
+explain this comparison. Trace regions include prompt processing; names alone
+must not be used to classify individual launches as steady decode.
+
+A separate private graph-compatible candidate reused gate/up weights when the
+two routed rows selected the same expert in the same slot. Twenty-eight
+constructed comparisons, duplicate/partial/null/non-null-shared controls and an
+independent staged-FP32 oracle passed. A separate trace observed 4914 calls to
+its new entry. This proves dispatch, not the fraction of matched experts.
+
+Against qualified LUT binary `a9f01a…`, candidate `f9039fea…` completed four quiet
+sessions: 160 cohorts and 400 fixed-count requests. C2 total latency for 64 output
+tokens improved 2.53/2.59%; C4 was flat (-0.37/+0.07%). Four distinct rendered
+prompts at C4/128 outputs were also flat (-0.327/+0.054%). Actual token fixtures
+matched across all arms. Fixed-workload text hashes matched; diverse text varied
+on both arms, without establishing a cause. Coding outputs remained identical
+and isolated grading stayed 9/12. The candidate remains private: a narrow C2 win
+does not resolve the C4 objective.
+
+An occurrence-rank extension preserved one-to-one duplicate handling and passed
+the same constructed controls, but only improved the half-overlap case about
+4% while regressing the no-overlap kernel about 10% at the actual 128-thread
+shape. It was not promoted or subjected to a blind full-model campaign. Neither
+prototype changes the checked-in default dispatch.
