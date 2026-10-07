@@ -117,55 +117,32 @@ fn freezes_same_step_bits_and_preserves_native_ids_and_router_order() {
 }
 #[test]
 fn refuses_wrong_precision_host_route_duplicate_slots_and_bad_ids_before_copy() {
-    let (plan, row) = fixture();
-    let dir = plan.output.clone();
-    let mut cap = Capture::create(plan).unwrap();
-    assert!(
-        cap.record(
-            0,
-            std::slice::from_ref(&row),
-            Some(&[0]),
-            100352,
-            true,
-            |_| panic!()
-        )
-        .is_err()
-    );
-    assert!(
-        cap.record(
-            0,
-            std::slice::from_ref(&row),
-            None,
-            100352,
-            false,
-            |_| panic!()
-        )
-        .is_err()
-    );
-    assert!(
-        cap.record(
-            0,
-            std::slice::from_ref(&row),
-            Some(&[100352]),
-            100352,
-            false,
-            |_| panic!()
-        )
-        .is_err()
-    );
-    assert!(
-        cap.record(
-            0,
-            &[row.clone(), row],
-            Some(&[0, 1]),
-            100352,
-            false,
-            |_| panic!()
-        )
-        .is_err()
-    );
-    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
-    std::fs::remove_dir_all(dir).unwrap();
+    for variant in 0..4 {
+        let (plan, row) = fixture();
+        let dir = plan.output.clone();
+        let mut cap = Capture::create(plan).unwrap();
+        let rows = if variant == 3 {
+            vec![row.clone(), row]
+        } else {
+            vec![row]
+        };
+        let ids = if variant == 2 {
+            vec![100352]
+        } else {
+            vec![0; rows.len()]
+        };
+        let selected = if variant == 1 {
+            None
+        } else {
+            Some(ids.as_slice())
+        };
+        assert!(
+            cap.record(0, &rows, selected, 100352, variant == 0, |_| panic!())
+                .is_err()
+        );
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 #[test]
 fn plan_bounds_and_existing_directory_refuse() {
@@ -234,34 +211,138 @@ fn reused_slot_and_prompt_are_distinguished_by_allocation_generation() {
 
 #[test]
 fn absent_or_duplicate_allocation_identity_refuses_before_readback() {
+    for variant in 0..3 {
+        let (plan, row) = fixture();
+        let dir = plan.output.clone();
+        let mut cap = Capture::create(plan).unwrap();
+        let mut bad = row.clone();
+        let rows = match variant {
+            0 => {
+                bad.allocation_generation = 0;
+                vec![bad]
+            }
+            1 => {
+                bad.slot = usize::MAX;
+                vec![bad]
+            }
+            _ => {
+                bad.slot = 8;
+                vec![row, bad]
+            }
+        };
+        let ids = vec![0; rows.len()];
+        assert!(
+            cap.record(0, &rows, Some(&ids), 100352, false, |_| panic!())
+                .is_err()
+        );
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn read_failure_permanently_refuses_later_readbacks() {
     let (plan, row) = fixture();
     let dir = plan.output.clone();
     let mut cap = Capture::create(plan).unwrap();
-    let mut bad = row.clone();
-    bad.allocation_generation = 0;
-    assert!(
-        cap.record(0, &[bad], Some(&[0]), 100352, false, |_| panic!())
-            .is_err()
-    );
-    let mut detached = row.clone();
-    detached.slot = usize::MAX;
-    assert!(
-        cap.record(0, &[detached], Some(&[0]), 100352, false, |_| panic!())
-            .is_err()
-    );
-    let mut duplicate = row.clone();
-    duplicate.slot = 8;
     assert!(
         cap.record(
             0,
-            &[row, duplicate],
-            Some(&[0, 0]),
+            std::slice::from_ref(&row),
+            Some(&[9]),
             100352,
             false,
-            |_| panic!()
+            |_| Err(anyhow::anyhow!("injected GPU read failure"))
         )
         .is_err()
     );
+    assert!(
+        cap.record(1, &[row], Some(&[9]), 100352, false, |_| panic!(
+            "retry read after failure"
+        ))
+        .is_err()
+    );
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn file_failure_is_sticky_and_never_overwrites_existing_bytes() {
+    let (plan, row) = fixture();
+    let dir = plan.output.clone();
+    let mut cap = Capture::create(plan).unwrap();
+    std::fs::write(dir.join("000-ticket-0.bf16"), b"sentinel").unwrap();
+    assert!(
+        cap.record(
+            0,
+            std::slice::from_ref(&row),
+            Some(&[9]),
+            100352,
+            false,
+            |bytes| {
+                bytes.fill(3);
+                Ok(())
+            }
+        )
+        .is_err()
+    );
+    assert!(
+        cap.record(1, &[row], Some(&[9]), 100352, false, |_| panic!(
+            "retry after I/O failure"
+        ))
+        .is_err()
+    );
+    assert_eq!(
+        std::fs::read(dir.join("000-ticket-0.bf16")).unwrap(),
+        b"sentinel"
+    );
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn plan_reader_stops_at_limit_even_for_an_unbounded_source() {
+    struct Endless<'a>(&'a std::cell::Cell<usize>);
+    impl std::io::Read for Endless<'_> {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            bytes.fill(b' ');
+            self.0.set(self.0.get() + bytes.len());
+            Ok(bytes.len())
+        }
+    }
+    let count = std::cell::Cell::new(0);
+    assert!(capture::read_plan(Endless(&count)).is_err());
+    assert_eq!(count.get(), 32769);
+    assert_eq!(
+        capture::hash_reader(&b"abc"[..]).unwrap(),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+}
+
+#[test]
+fn regular_plan_file_parses_but_devices_and_fifos_refuse() {
+    let (plan, _) = fixture();
+    let dir = plan.output.clone();
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("plan.json");
+    let value = serde_json::json!({"output":dir.join("out"), "model_revision":plan.model_revision,
+        "asserted_source_commit":plan.asserted_source_commit, "prompt_sha256":plan.prompt_sha256,
+        "generated_positions":plan.generated_positions,"max_records":1});
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(capture::read_plan_file(&path).is_ok());
+    assert!(capture::read_plan_file(&dir).is_err());
+    #[cfg(unix)]
+    {
+        assert!(capture::read_plan_file(std::path::Path::new("/dev/zero")).is_err());
+        let fifo = dir.join("pipe");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(capture::read_plan_file(&fifo).is_err());
+    }
     std::fs::remove_dir_all(dir).unwrap();
 }

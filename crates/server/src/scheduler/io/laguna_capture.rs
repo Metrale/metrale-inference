@@ -4,9 +4,9 @@
 //! Records device argmax candidates, not necessarily subsequently emitted tokens.
 
 use std::collections::BTreeSet;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::PathBuf;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, ensure};
@@ -103,6 +103,7 @@ impl Plan {
 pub struct Capture {
     plan: Plan,
     written: usize,
+    failed: bool,
 }
 
 impl Capture {
@@ -117,12 +118,36 @@ impl Capture {
         builder
             .create(&plan.output)
             .context("capture output must be new")?;
-        Ok(Self { plan, written: 0 })
+        Ok(Self {
+            plan,
+            written: 0,
+            failed: false,
+        })
     }
 
     /// 2026-10-07: All live rows must be allowlisted. No callback (and therefore no GPU copy)
     /// occurs for an unrelated batch, an unselected position, or an exhausted cap.
     pub fn record(
+        &mut self,
+        ticket: u32,
+        rows: &[Row],
+        selected: Option<&[u32]>,
+        vocab: usize,
+        fp32: bool,
+        read: impl FnOnce(&mut [u8]) -> Result<()>,
+    ) -> Result<bool> {
+        ensure!(
+            !self.failed,
+            "capture failed previously; restart the diagnostic process"
+        );
+        let result = self.record_inner(ticket, rows, selected, vocab, fp32, read);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn record_inner(
         &mut self,
         ticket: u32,
         rows: &[Row],
@@ -210,6 +235,47 @@ impl Capture {
     }
 }
 
+/// 2026-10-07: Read at most32KiB plus one refusal byte, even if a file grows after metadata.
+pub fn read_plan(reader: impl Read) -> Result<Plan> {
+    let mut bytes = Vec::with_capacity(32769);
+    reader.take(32769).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 32768, "capture plan too large");
+    let plan: Plan = serde_json::from_slice(&bytes)?;
+    plan.validate()?;
+    Ok(plan)
+}
+
+/// 2026-10-07: Refuse devices/FIFOs and open nonblocking before descriptor metadata validation.
+pub fn read_plan_file(path: &Path) -> Result<Plan> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "capture plan must be a regular file"
+    );
+    read_plan(file)
+}
+
+/// 2026-10-07: Binary identity hashing uses fixed memory, independent of executable size.
+pub fn hash_reader(mut reader: impl Read) -> Result<String> {
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hash.update(&buffer[..count]);
+    }
+    Ok(encode_hex(&hash.finalize()))
+}
+
 pub fn validate_mode(
     sync: bool,
     ranks: usize,
@@ -250,13 +316,9 @@ pub fn initialize(
             Ok("1" | "true")
         ),
     )?;
-    ensure!(
-        fs::metadata(&path)?.len() <= 32768,
-        "capture plan too large"
-    );
-    let plan: Plan = serde_json::from_slice(&fs::read(path)?)?;
+    let plan = read_plan_file(Path::new(&path))?;
     let capture = Capture::create(plan)?;
-    let binary_sha256 = encode_hex(&Sha256::digest(fs::read(std::env::current_exe()?)?));
+    let binary_sha256 = hash_reader(File::open(std::env::current_exe()?)?)?;
     fs::write(capture.plan.output.join("binary-sha256.txt"), binary_sha256)?;
     CAPTURE
         .set(Mutex::new(Some(capture)))

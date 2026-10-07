@@ -130,8 +130,26 @@ and the controlled diagnostic deployment is reviewed.
 
 Validation uses `METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo test -p
 metrale-server --no-default-features --features metal,laguna-diagnostic-capture
---test laguna_capture_diagnostic` on the local Mac; eight controls pass. Scoped
+--test laguna_capture_diagnostic` on the local Mac; twelve controls pass. Scoped
 Clippy covers that test and the feature-enabled `met` binary. The initial
 backend-free invocation failed because the existing server binary imports GPU
 initialization symbols without a backend; enabling its normal Metal backend
 resolved that build configuration. These are host/mock checks, not CUDA evidence.
+
+
+### Capture failure and input-bound review
+
+The plan reader now consumes at most32KiB plus one refusal byte, independent of
+an earlier file-size observation. On Unix it opens nonblocking and validates the
+opened descriptor is a regular file, refusing devices and FIFOs without waiting
+for a writer. Executable hashing streams through a fixed64KiB buffer. These
+changes close the plan-growth race and avoid buffering the complete executable.
+
+Any capture validation, GPU-read or file-write failure is sticky: later calls
+refuse before further readbacks or writes until the diagnostic process restarts.
+Existing bytes are never overwritten. Additional controls inject GPU-read and
+file-collision failures, prove later readback callbacks do not run, check a
+never-ending plan reader stops at32769 bytes, verify a known SHA256 vector, and
+reject directories/devices/FIFOs. Earlier refusal controls each use fresh capture
+state so the sticky error cannot hide a missing individual check. All12 local
+controls pass; this remains host/mock evidence, with no live capture claim.
