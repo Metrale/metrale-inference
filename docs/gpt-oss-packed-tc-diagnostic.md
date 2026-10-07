@@ -60,3 +60,20 @@ Separate API checks passed 12 text cases, nine blocking-tool cases and five stre
 An idle-host A→B then B→A latency campaign compared accepted wide reuse with the private alternate policy. Each arm used three measured repetitions after warmup and unchanged output graders. Prompt/generated counts were identical in every arm: 225/15, 231/63 and 448/29. Geometric total request latency was **19.40% and 19.22% lower** for the diagnostic. First-generated latency ratios were 1.28–1.65×; decode remained approximately 40.3–40.7 tokens/s. This measures speed potential, not numerical equivalence or certification.
 
 The candidate was based on source `6d75fdc` plus a hash-recorded private admission overlay and module packaging `7b8a998`. The accepted executable SHA-256 was `e52eef8199a0afbb84dd5ea04b0891c5780b93b81bbaa12e08d22e26f1f82fbc`. Complete source identities, raw requests/responses, server logs and opposite-order receipts are retained. The original 251-token qualification failure remains authoritative, and no alternate numerical path is promoted.
+
+## Reference batch self-consistency does not waive qualification
+
+A pinned-reference self-consistency diagnostic completed on the unchanged 251-token corpus/checkpoint. The scalar rerun reproduced the original complete hidden/logit SHA-256 values exactly. Changing only input batching to 128+123 tokens or a single 251-token batch produced **238/251** and **239/251** matching next-token IDs versus scalar. Pinned Transformers4.55 eager BF16 math/cache settings and model files were unchanged.
+
+All native policies were then compared to all three reference geometries, without substituting a favorable oracle:
+
+| Native policy | Scalar reference | 128+123 reference | Full251 reference |
+|---|---:|---:|---:|
+| Accepted experts, FP32 attention |244|241|242|
+| Private packed TC, FP32 attention |232|241|240|
+| Accepted experts, staged BF16 attention |243|240|243|
+| Private packed TC, staged BF16 attention |236|239|240|
+
+Counts are matching next IDs /251. Native TC uses a full128 TC chunk followed by a123-token accepted-expert tail, while the reference batches all operations; these execution policies are explicitly distinct. Complete next-ID vectors, per-token/per-layer NRMS, first differing coordinates and source/output hashes are retained. TC does not become a numerical winner: its logit mean NRMS versus the batched references is ~0.0267–0.0300, compared with accepted FP32 ~0.0237–0.0241.
+
+This identifies real reference batching variability, **not a relaxed acceptance threshold**. The original scalar-reference244/251 limitation and all failed TC/norm gates remain unchanged; no default or serving promotion. Checkpoint: [openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee](https://huggingface.co/openai/gpt-oss-20b/tree/6cee5e81ee83917806bbde320786a8fb61efebee).
