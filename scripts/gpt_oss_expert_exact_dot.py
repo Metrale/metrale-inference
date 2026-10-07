@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT OR Apache-2.0
-"""2026-10-07: Exact rational oracle for a failed packed-expert gate row.
+"""2026-10-07: Exact rational oracle for a packed-expert gate or raw down-projection row.
 
 Run beside private checkpoints. Output includes one learned row and must remain
 private; it is not a redistributable constructed fixture or a CUDA bmm oracle.
@@ -20,10 +20,12 @@ def main():
         p.add_argument('--'+field, type=Path, required=True)
     for field in ['position', 'layer', 'expert', 'row']:
         p.add_argument('--'+field, type=int, required=True)
+    p.add_argument('--projection', choices=['gate', 'down'], default='gate')
     a = p.parse_args()
     a.output.mkdir(exist_ok=False)
     index = json.loads((a.checkpoint/'model.safetensors.index.json').read_text())['weight_map']
-    prefix = f'model.layers.{a.layer}.mlp.experts.gate_up_proj_'
+    projection = 'gate_up_proj' if a.projection == 'gate' else 'down_proj'
+    prefix = f'model.layers.{a.layer}.mlp.experts.{projection}_'
     values = {}
     for suffix in ['blocks', 'scales']:
         name = prefix + suffix
@@ -40,7 +42,7 @@ def main():
     assert np.isfinite(as_fp32).all()
     assert np.all((as_fp32.view(np.uint32) & 0xffff) == 0), "unpack requires BF16 rounding; unsupported oracle operands"
     assert np.array_equal(as_fp32.astype(float), weights)
-    source = a.snapshots/f'p{a.position}-l{a.layer}-post_attention_norm.bin'
+    source = (a.snapshots/f'p{a.position}-l{a.layer}-post_attention_norm.bin') if a.projection == 'gate' else (a.replay/f'p{a.position}-l{a.layer}-e{a.expert}-activation-isolated-native.bin')
     input_bytes = source.read_bytes()
     (a.output/'input.bf16').write_bytes(input_bytes)
     bits = np.frombuffer(input_bytes, dtype='<u2')
@@ -49,7 +51,8 @@ def main():
     exact = sum((Fraction(float(w))*Fraction(float(v)) for w, v in zip(weights, x)), Fraction())
     def decode(n):
         return float(np.array([int(n) << 16], dtype=np.uint32).view(np.float32)[0])
-    name = f'p{a.position}-l{a.layer}-e{a.expert}-gate-bmm32'
+    stage = 'gate-bmm32' if a.projection == 'gate' else 'down-raw-bmm32'
+    name = f'p{a.position}-l{a.layer}-e{a.expert}-{stage}'
     native = int(np.fromfile(a.replay/(name+'-native.bin'), dtype='<u2')[a.row])
     reference = int(np.fromfile(a.replay/(name+'-reference.bin'), dtype='<u2')[a.row])
     assert abs(native-reference) <= 1, "oracle neighborhood requires adjacent observed BF16 outputs"
@@ -68,7 +71,7 @@ def main():
         old = lanes.copy()
         for lane in range(32-shift):
             lanes[lane] = np.float32(float(old[lane])+float(old[lane+shift]))
-    report = dict(position=a.position, layer=a.layer, expert=a.expert, row=a.row,
+    report = dict(projection=a.projection, position=a.position, layer=a.layer, expert=a.expert, row=a.row,
                   exact_numerator=str(exact.numerator), exact_denominator=str(exact.denominator),
                   exact_float=float(exact), native_bf16_bits=native, reference_bf16_bits=reference,
                   correctly_rounded_bf16_bits=nearest, native_warp_fp32_bits=int(lanes[:1].view(np.uint32)[0]),

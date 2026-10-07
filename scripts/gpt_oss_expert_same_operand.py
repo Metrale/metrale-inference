@@ -35,7 +35,11 @@ def main():
     p.add_argument('--snapshots', type=Path, required=True)
     p.add_argument('--modules', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
+    p.add_argument('--cases', default='215:6,49:9', help='Explicit position:layer pairs from retained snapshots')
     a = p.parse_args()
+    cases = [tuple(int(part) for part in item.split(':')) for item in a.cases.split(',')]
+    if not cases or any(len(case) != 2 or case[0] < 0 or not 0 <= case[1] < 24 for case in cases):
+        p.error('cases require nonnegative position and layer0..23')
     a.output.mkdir(exist_ok=False)
     assert transformers.__version__ == '4.55.0'
     reference_hashes = {name: hashlib.sha256(inspect.getsource(fn).encode()).hexdigest() for name, fn in [('unpack', convert_moe_packed_tensors), ('experts', GptOssExperts.forward)]}
@@ -106,7 +110,7 @@ def main():
             x = x.view(torch.bfloat16)
         return x.reshape(shape).cuda()
     try:
-        for position, layer in [(215, 6), (49, 9)]:
+        for position, layer in cases:
             prefix = f'p{position}-l{layer}'
             x = snapshot(position, layer, 'post_attention_norm', (2880,))
             ids = snapshot(position, layer, 'router_ids', (4,), '<i4').tolist()
@@ -156,8 +160,22 @@ def main():
             for slot, expert in enumerate(ids):
                 name = f'{prefix}-e{expert}'
                 compare(name+'-down-bmm4-vs32', down4[slot], down32[expert])
+                _, _, db, ds = packed[slot]
+                compare(name+'-down-raw-bmm32', gemv(db, ds, native_acts[slot], 2880), down32[expert])
                 compare(name+'-down-bmm32-isolated', native_downs[slot], down32[expert]+biases[slot][1])
                 compare(name+'-full-reference', native_downs[slot], full_reference[expert]+biases[slot][1])
+            # 2026-10-07: Isolate selected-output reduction from upstream expert arithmetic.
+            scores = snapshot(position, layer, 'router_scores', (32,))
+            native32 = torch.zeros((32, 2880), dtype=torch.bfloat16, device='cuda')
+            reference32 = torch.zeros_like(native32)
+            native32[ids] = torch.stack(native_downs)
+            reference32[ids] = torch.stack([full_reference[expert]+biases[slot][1] for slot, expert in enumerate(ids)])
+            native_reduced = (native32 * scores[:, None]).sum(0)
+            reference_reduced = (reference32 * scores[:, None]).sum(0)
+            captured_moe = snapshot(position, layer, 'moe', (2880,))
+            compare(prefix+'-weighted-reduce-isolated', captured_moe, native_reduced)
+            compare(prefix+'-full-moe-reference', captured_moe, reference_reduced)
+            del native32, reference32, native_reduced, reference_reduced, captured_moe
             del gate_weights, down_weights, packed, biases, gate32, gate4, native_acts, reference_acts, native_downs, input32, down32, down4, full_reference
             torch.cuda.empty_cache()
         report['passed'] = all(row['mismatches'] == 0 for row in report['comparisons'] if row['role'] == 'exact_gate')
