@@ -190,3 +190,32 @@ These are profiler-injected traces, not timing replacements for the longer
 uninstrumented comparison. Kernel sums may overlap; the uncovered GPU interval
 is not automatically CPU work or an attributable scheduler delay. No energy or
 new quality qualification follows from attribution.
+
+## Rejected follow-up screens
+
+The following private experiments were retained as diagnostics and did not change
+the production math or default dispatch:
+
+- Loading 32 K values into shared memory before two ordered K16 BF16 MMA steps
+  matched 31 constructed/learned comparisons, including the independent integer
+  oracle and wrong-gather/grid controls. Eight microcases with captured expert
+  load distributions were 31–51% slower than the qualified K16 hybrid; rejected.
+- Direct activation loads in the capacity-four dense family preserved 63
+  constructed and 27 legacy comparisons plus oracle/refusal controls. Actual C4
+  shape screens regressed at N256/K2048 and N1024/K2048, with the other sampled
+  shapes approximately flat; no general C4 promotion.
+- Combining two independent batch-two routed-expert launches into one batch-four
+  launch passed constructed same/distinct/partial expert-ID controls. It was
+  restricted to exactly four live eager rows. The actual default-route profile
+  observed **zero** new batch-four gate/down calls: graph execution correctly
+  retained the original path. Twelve fixed-count C4 controls passed, but this
+  does not qualify the unused candidate. Graph policy and live-row guards were
+  not weakened to produce a speed result.
+
+The last bounded run used binary
+`a2017dff0afbdaffcdf22f6b08a99464f32ceb37ad5e65f70b129ec5a4414cd8`
+from a new empty working directory. It also verified startup with the embedded
+reviewed Laguna template added in `e9eefb6`; no working-directory template file
+was present. Its profiler injection and private kernel overlay exclude it from
+the frozen `5784c0fe…` speed comparisons above. The private overlay was restored
+to its known parent files after capture, and the owned server stopped.
