@@ -132,6 +132,46 @@ Blocker: `MET_LINK_CUDA_LIB`. No venn report was written. The in-tree
 Nemotron 3.5 Lightning NVFP4 instance is a different artifact from the Q4_0
 pin and was not substituted for it.
 
+### CUDA 12.6 link
+
+`cuda.lib` is present at
+`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\lib\x64\cuda.lib`.
+`nvcc` there is release 12.6, V12.6.85. This host has no `nccl.lib`, so the
+link was:
+
+```
+METRALE_SKIP_BUILD=1
+CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6
+cargo build -p metrale-server --bin met --offline --no-default-features --features cuda
+```
+
+`CUDARC_CUDA_VERSION` was not set. Exit 0. `target\debug\met.exe` was
+produced. It was not started as a serve. Port 8888 was already refusing
+connections before the build and still refused afterward. Nothing was
+started there.
+
+The binary as linked overflows the default 1MB Windows main stack
+(`thread 'main' has overflowed its stack`, exit `0xC00000FD`).
+`editbin /STACK:16777216` on that exe made `met circuit venn --help` print
+usage and exit 0. No source change.
+
+### Venn after the link
+
+Same two pins, same closest recipes:
+
+```
+met circuit venn --target unsloth/gemma-4-26B-A4B-it-GGUF --against gemma4/gemma-4-26b-a4b-nvfp4 --out kernels/circuits/venn/gemma-4-26b-a4b-gguf-vs-nvfp4.md
+met circuit venn --target ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF --against nemotron-3-nano/nemotron-3-nano-30b-a3b-nvfp4 --out kernels/circuits/venn/nemotron-3.5-lightning-gguf-vs-nano.md
+```
+
+Both exited 1. Neither wrote a report. The tool said each target is no
+recipe, checkpoint, or arch in `kernels/circuits/INSTANCES.toml`. The
+instances it listed are the two Qwen 3.8 rows, the two Qwen 3.6 rows, and
+`nemotron-3.5/nemotron-3.5-lightning-30b-a3b-nvfp4`. That last id is the
+NVFP4 circuit, not the Q4_0 GGUF pin, and it was not substituted.
+
+Blocker: `VENN_PIN_NOT_AN_INSTANCE`.
+
 ### Checks on the first head
 
 `Build mdBook + rustdoc` failed because the public docs for `DumpInput`
