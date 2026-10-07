@@ -1,0 +1,131 @@
+{
+  "seed": 2161,
+  "precision": "original FP32; TF32 disabled",
+  "reference_source_sha256": "1e29f252dbddd044b84c8b794589001ce94bb125a8f13eb5b226ef30c1e2ea11",
+  "kernel_source_sha256": {
+    "image_vae": "62c635b6f6ee0a865a02dcc10884bfb422aa8f12ace588240520bf393c05b32d",
+    "nllb_encoder": "c0a43f2dfa9af46d85257eb4f72e1a9e3b08d89b16c6cec0dfe8114a6048165a"
+  },
+  "weight_sha256": {
+    "decoder.mid_block.resnets.0.norm1.gamma": "291ad70f0662b1a7e1f9cbadf6f74104389d12d9469e5a49334f6ff6d3e09f44",
+    "decoder.mid_block.resnets.0.conv1.weight": "4be3803caae3cdaab3c58d9dcc4b8b43cb46943926475f731a557fb37a60ec97",
+    "decoder.mid_block.resnets.0.conv1.bias": "6672e50832518c53b405f1df7b1c1a24a2d0b07c726a712d73baa94f6bd7b361",
+    "decoder.mid_block.resnets.0.norm2.gamma": "9fce7771de3432cfa9aa90b0aae5ddc03bbb3c646229571957eb0a59dae16a11",
+    "decoder.mid_block.resnets.0.conv2.weight": "eeddecea4fafff592e90a6ff2e376da3d69e73474f351db8ba834f61df1605a3",
+    "decoder.mid_block.resnets.0.conv2.bias": "91613460e31c1cb110df442d4d06d64b4847db008b230745666e9fda755c2aad"
+  },
+  "command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/vae-components-1/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/vae-components-1/components.so"
+  ],
+  "results": [
+    {
+      "stage": "norm1",
+      "elements": 6912,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.0,
+      "relative_l2": 0.0
+    },
+    {
+      "stage": "silu1",
+      "elements": 6912,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.0,
+      "relative_l2": 0.0
+    },
+    {
+      "stage": "conv1",
+      "elements": 6912,
+      "bit_mismatches": 6842,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.000171661376953125,
+      "relative_l2": 3.504121440534364e-06
+    },
+    {
+      "stage": "norm2",
+      "elements": 6912,
+      "bit_mismatches": 893,
+      "nonfinite_pairs": 0,
+      "max_abs": 4.76837158203125e-07,
+      "relative_l2": 3.1344804562647377e-08
+    },
+    {
+      "stage": "silu2",
+      "elements": 6912,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.0,
+      "relative_l2": 0.0
+    },
+    {
+      "stage": "conv2",
+      "elements": 6912,
+      "bit_mismatches": 6829,
+      "nonfinite_pairs": 0,
+      "max_abs": 6.961822509765625e-05,
+      "relative_l2": 3.7202146768472297e-06
+    },
+    {
+      "stage": "residual",
+      "elements": 6912,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.0,
+      "relative_l2": 0.0
+    },
+    {
+      "stage": "full_block",
+      "elements": 6912,
+      "bit_mismatches": 6752,
+      "nonfinite_pairs": 0,
+      "max_abs": 8.0108642578125e-05,
+      "relative_l2": 2.5949541552697567e-06
+    },
+    {
+      "stage": "up_1152_1152_2",
+      "elements": 69120,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.0,
+      "relative_l2": 0.0
+    },
+    {
+      "stage": "up_1152_576_2",
+      "elements": 34560,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.0,
+      "relative_l2": 0.0
+    },
+    {
+      "stage": "up_576_288_1",
+      "elements": 17280,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.0,
+      "relative_l2": 0.0
+    },
+    {
+      "stage": "up_288_288_1",
+      "elements": 17280,
+      "bit_mismatches": 0,
+      "nonfinite_pairs": 0,
+      "max_abs": 0.0,
+      "relative_l2": 0.0
+    }
+  ],
+  "known_bad_controls": {
+    "wrong_first_temporal_subframe": 34560
+  },
+  "scope": "residual and first-frame upsample only; numerical exact failures retained"
+}

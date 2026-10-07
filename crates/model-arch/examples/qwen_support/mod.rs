@@ -50,11 +50,31 @@ struct TensorHeader {
     shape: Vec<usize>,
     data_offsets: [u64; 2],
 }
+#[allow(dead_code)] // BF16 and FP32 diagnostics share this strict reader.
 pub fn read_tensor(
     component: &Path,
     index: &BTreeMap<String, String>,
     name: &str,
     expected_shape: &[usize],
+) -> Result<(Vec<u8>, Vec<usize>)> {
+    read_typed_tensor(component, index, name, expected_shape, "BF16", 2)
+}
+#[allow(dead_code)] // Used by the separate FP32 decoder diagnostic.
+pub fn read_tensor_f32(
+    component: &Path,
+    index: &BTreeMap<String, String>,
+    name: &str,
+    expected_shape: &[usize],
+) -> Result<(Vec<u8>, Vec<usize>)> {
+    read_typed_tensor(component, index, name, expected_shape, "F32", 4)
+}
+fn read_typed_tensor(
+    component: &Path,
+    index: &BTreeMap<String, String>,
+    name: &str,
+    expected_shape: &[usize],
+    dtype: &str,
+    element_bytes: usize,
 ) -> Result<(Vec<u8>, Vec<usize>)> {
     let shard = index.get(name).context("missing tensor index")?;
     ensure!(
@@ -76,13 +96,13 @@ pub fn read_tensor(
     let tensor: TensorHeader =
         serde_json::from_value(header.get(name).context("missing tensor header")?.clone())?;
     ensure!(
-        tensor.dtype == "BF16" && tensor.shape == expected_shape,
+        tensor.dtype == dtype && tensor.shape == expected_shape,
         "tensor precision/shape differs"
     );
     let count = tensor
         .shape
         .iter()
-        .try_fold(2usize, |n, d| n.checked_mul(*d))
+        .try_fold(element_bytes, |n, d| n.checked_mul(*d))
         .context("tensor size overflow")?;
     let [start, end] = tensor.data_offsets;
     ensure!(

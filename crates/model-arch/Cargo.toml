@@ -37,6 +37,7 @@ memmap2 = { version = "0.9", optional = true }
 safetensors = { version = "0.8", optional = true }
 
 [dev-dependencies]
+png = "=0.18.1"
 sha2 = { workspace = true }
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
@@ -449,4 +450,12 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "qwen_image21_prompt_capture"
+required-features = ["qwen-image-text"]
+
+[[example]]
+name = "qwen_image21_vae_native"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "qwen_image21_pipeline_native"
 required-features = ["qwen-image-text"]

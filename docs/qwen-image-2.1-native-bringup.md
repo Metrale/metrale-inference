@@ -549,3 +549,42 @@ schedule bits and staged BF16 update hashes pass their scoped controls. Full
 native prompt-to-image generation, the remaining VAE decoder, image-conditioned
 encoder support, exact numerical admission and production performance remain
 unfinished; no model factory registration has been added.
+
+
+### Complete single-frame native decoder diagnostic (2026-10-07)
+
+The Rust decoder now executes original FP32 post-quant/input convolutions,
+17 residual blocks, the [D1152 attention residual](qwen-image-2.1-vae-attention.md),
+four spatial/channel upsample branches, and final norm/SiLU/convolution/clamp.
+An actual-checkpoint run maps a 64×2×2 latent to 4×32×32 RGBA values; all eleven
+saved intermediate stages are finite. `qwen-image21-rust-vae-gb10.json` records
+weight, module, input and output hashes. This proves composition/execution, not
+numerical qualification: the complete FP32 reference replay is prepared but
+**has not run**. No visual-quality or timing claim follows from random latents.
+
+Independent component evidence retains the exact failures: first residual
+block has 6,752/6,912 differing FP32 values, relative L2 `2.5949541552697567e-6`.
+Same-input SiLU and residual addition are exact. All four first-frame upsample
+geometry cases are exact (138,240 values); selecting the wrong temporal subframe
+detects 34,560 differences. The single kernel implements both nearest-exact2×
+and the pinned repeat-interleave/channel-shuffle policy. Input/output overlap,
+non-integral channel repeats, wrong weights and malformed geometry are refused.
+The primitive evidence is `qwen-image21-vae-components-gb10.json`.
+
+`qwen_image21_pipeline_native` is a compiled, **unexecuted** native diagnostic
+orchestrator. It connects pinned prompt tokenization, dense encoder/prefix drop,
+arbitrary bounded visual fixtures, host scheduler/staged BF16 CFG, latent
+unpacking/FP32 denormalization, native decoder and RGBA PNG encoding. Initial
+noise uses a recorded SplitMix64/Box-Muller fixture generator; it does not claim
+Torch seed identity. Every component runs sequentially as a native binary,
+with exact initial noise, per-step outputs, module identities and binary hashes
+saved for replay. This intentionally slow path reloads weights and copies
+intermediate buffers; it is not a production serving or speed implementation.
+The old fixed visual fixture remains the default for regression replay.
+
+Qwen remote compute is paused at this safe checkpoint to prioritize GPT-OSS
+and Laguna. Next checks are the prepared complete FP32 decoder reference,
+first small end-to-end native PNG, independent same-noise pipeline comparison,
+then resident weights and practical-resolution performance. All prior visual,
+encoder, frequency, LayerNorm and attention exact-gate failures remain open;
+no supported-model registration or native image-generation qualification exists.

@@ -1712,6 +1712,7 @@ dependencies = [
  "metrale-storage",
  "metrale-telemetry",
  "parking_lot",
+ "png",
  "safetensors",
  "serde",
  "serde_json",

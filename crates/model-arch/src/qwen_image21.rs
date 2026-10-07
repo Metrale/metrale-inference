@@ -338,3 +338,6 @@ pub mod vae;
 
 #[cfg(feature = "qwen-image-text")]
 pub mod prompt;
+pub mod vae_attention;
+pub mod vae_layout;
+pub mod vae_residual;

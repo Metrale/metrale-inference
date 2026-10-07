@@ -44,3 +44,17 @@ extern "C" __global__ void image_vae_silu_f32(const float* x,float* y,uint32_t c
     const uint32_t i=blockIdx.x*blockDim.x+threadIdx.x;
     if(i<count)y[i]=x[i]/(1.0f+expf(-x[i]));
 }
+
+// First-frame DupUp3D: channel repeat_interleave, pixel shuffle, last temporal
+// subframe. Equal input/output channels with temporal_factor=1 is nearest2x.
+extern "C" __global__ void image_vae_upsample_f32(
+    const float* x,float* y,uint32_t input_channels,uint32_t output_channels,
+    uint32_t height,uint32_t width,uint32_t temporal_factor){
+    const uint64_t i=uint64_t(blockIdx.x)*blockDim.x+threadIdx.x;
+    const uint64_t out_pixels=uint64_t(height)*width*4;
+    if(i>=out_pixels*output_channels)return;
+    const uint32_t c=i/out_pixels,py=(i%out_pixels)/(width*2),px=i%(width*2);
+    const uint32_t repeats=output_channels*temporal_factor*4/input_channels;
+    const uint32_t ic=(((c*temporal_factor+temporal_factor-1)*2+py%2)*2+px%2)/repeats;
+    y[i]=x[(uint64_t(ic)*height+py/2)*width+px/2];
+}

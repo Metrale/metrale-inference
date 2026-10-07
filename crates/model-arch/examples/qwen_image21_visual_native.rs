@@ -19,6 +19,28 @@ use std::{
 };
 mod qwen_support;
 use qwen_support::{Modules, Owned, read_tensor, sha};
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct Fixture {
+    samples: u32,
+    text_tokens: u32,
+    image_slots: Vec<bool>,
+    image_shapes: Vec<[usize; 3]>,
+    text_key_valid: Vec<bool>,
+    timesteps: Vec<f32>,
+}
+impl Default for Fixture {
+    fn default() -> Self {
+        Self {
+            samples: 2,
+            text_tokens: 3,
+            image_slots: vec![false, true, false, true],
+            image_shapes: vec![[1, 2, 2], [1, 2, 2]],
+            text_key_valid: vec![true, true, false, false, true, true],
+            timesteps: vec![0.731, 0.019],
+        }
+    }
+}
 fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let model = PathBuf::from(args.next().context("model directory")?);
@@ -60,11 +82,11 @@ fn main() -> Result<()> {
     }
     let gpu = MetraleCudaBackend::new(0, &ptx)?;
     let stream = gpu.default_stream();
-    // One layer is loaded at a time, below 512 MiB; reserve 1 GiB for all buffers.
+    // One layer is loaded at a time; bounded dynamic fixtures reserve scratch too.
     let total = gpu.total_memory()?;
     let used = total.saturating_sub(gpu.device_free_memory()?);
     ensure!(
-        used.saturating_add(2 << 30) <= total / 100 * 85,
+        used.saturating_add(6 << 30) <= total / 100 * 85,
         "GPU memory would exceed 85 percent"
     );
     let component = model.join("transformer");
@@ -73,13 +95,29 @@ fn main() -> Result<()> {
         component.join("diffusion_pytorch_model.safetensors.index.json"),
     )?)?;
     let index: BTreeMap<String, String> = serde_json::from_value(index["weight_map"].clone())?;
+    let specification: Fixture = if fixture.join("fixture.json").exists() {
+        serde_json::from_slice(&std::fs::read(fixture.join("fixture.json"))?)?
+    } else {
+        Fixture::default()
+    };
+    ensure!(
+        (1..=2).contains(&specification.samples)
+            && specification.text_tokens <= 4096
+            && specification.timesteps.len() == specification.samples as usize,
+        "invalid bounded fixture"
+    );
     let layout = JointLayout::new(
-        2,
-        3,
-        &[false, true, false, true],
-        &[[1, 2, 2], [1, 2, 2]],
-        &[true, true, false, false, true, true],
+        specification.samples,
+        specification.text_tokens,
+        &specification.image_slots,
+        &specification.image_shapes,
+        &specification.text_key_valid,
     )?;
+    let (samples, text_tokens, image_tokens, joint_tokens, target_tokens) = layout.geometry();
+    ensure!(
+        joint_tokens <= 4096,
+        "diagnostic joint token capacity exceeded"
+    );
     let mut global_buffers = Vec::new();
     let mut global_tensors = Vec::new();
     let mut global_hashes = BTreeMap::new();
@@ -113,7 +151,7 @@ fn main() -> Result<()> {
     }
     let mut conditioning = DiagnosticConditioning::new(
         &gpu,
-        2,
+        samples,
         ConditioningWeights {
             time_in: &global_tensors[0],
             time_out: &global_tensors[1],
@@ -135,25 +173,26 @@ fn main() -> Result<()> {
     let image = std::fs::read(fixture.join("image-input.bf16"))?;
     let text = std::fs::read(fixture.join("text-input.bf16"))?;
     ensure!(
-        image.len() == 2 * 8 * 64 * 2 && text.len() == 2 * 3 * 4096 * 2,
+        image.len() == samples as usize * image_tokens as usize * 64 * 2
+            && text.len() == samples as usize * text_tokens as usize * 4096 * 2,
         "IO fixture shape differs"
     );
     let fixture_hashes = serde_json::json!({"image":sha(&image),"text":sha(&text)});
     let image = Owned::upload(&gpu, &image)?;
     let text = Owned::upload(&gpu, &text)?;
-    let conditioning_output = conditioning.forward(&[0.731, 0.019], stream)?;
+    let conditioning_output = conditioning.forward(&specification.timesteps, stream)?;
     let initial = io.input_project(image.ptr, text.ptr, stream)?;
     gpu.synchronize(stream)?;
-    let mut hidden = vec![0u8; 2 * 10 * 4096 * 2];
+    let mut hidden = vec![0u8; samples as usize * joint_tokens as usize * 4096 * 2];
     gpu.copy_d2h(initial, &mut hidden)?;
     std::fs::write(out.join("joint-input.bf16"), &hidden)?;
     let input = Owned::upload(&gpu, &hidden)?;
     let input_hash = sha(&hidden);
-    let mut modulation = vec![0u8; 3 * 16384 * 2];
+    let mut modulation = vec![0u8; (samples as usize + 1) * 16384 * 2];
     gpu.copy_d2h(conditioning_output.modulation, &mut modulation)?;
     std::fs::write(out.join("modulation.bf16"), &modulation)?;
     let modulation_hash = sha(&modulation);
-    let mut final_scale = vec![0u8; 3 * 4096 * 2];
+    let mut final_scale = vec![0u8; (samples as usize + 1) * 4096 * 2];
     gpu.copy_d2h(conditioning_output.final_scale, &mut final_scale)?;
     std::fs::write(out.join("final-scale.bf16"), &final_scale)?;
     let suffixes = [
@@ -205,7 +244,7 @@ fn main() -> Result<()> {
             &config,
             &weights,
             &gpu,
-            2,
+            samples,
             layout.image_ids(),
             layout.key_valid(),
             Some(layout.target_mask()),
@@ -232,7 +271,7 @@ fn main() -> Result<()> {
     }
     let target = io.output_project(input.ptr, conditioning_output.final_scale, stream)?;
     gpu.synchronize(stream)?;
-    let mut target_bytes = vec![0u8; 2 * 4 * 64 * 2];
+    let mut target_bytes = vec![0u8; samples as usize * target_tokens as usize * 64 * 2];
     gpu.copy_d2h(target, &mut target_bytes)?;
     ensure!(
         target_bytes
@@ -241,7 +280,7 @@ fn main() -> Result<()> {
         "nonfinite target output"
     );
     std::fs::write(out.join("target-latents.bf16"), &target_bytes)?;
-    let receipt = serde_json::json!({"checkpoint_revision":"d26bb61231c349cf6b7896fa83353113880e1ba3","module_manifest_sha256":sha(&source),"input_sha256":input_hash,"modulation_sha256":modulation_hash,"results":results,"global_weight_sha256":global_hashes,"fixture_sha256":fixture_hashes,"target_sha256":sha(&target_bytes),"scope":"native Rust visual transformer with external encoder inputs; no encoder/VAE/denoising or qualification","qualified":false});
+    let receipt = serde_json::json!({"checkpoint_revision":"d26bb61231c349cf6b7896fa83353113880e1ba3","module_manifest_sha256":sha(&source),"input_sha256":input_hash,"modulation_sha256":modulation_hash,"results":results,"global_weight_sha256":global_hashes,"fixture_sha256":fixture_hashes,"fixture_geometry":specification,"target_sha256":sha(&target_bytes),"scope":"native Rust visual transformer with external encoder inputs; no encoder/VAE/denoising or qualification","qualified":false});
     std::fs::write(
         out.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,

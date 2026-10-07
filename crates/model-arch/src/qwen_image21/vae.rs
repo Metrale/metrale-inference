@@ -125,6 +125,19 @@ impl<'a> DiagnosticVaeConv<'a> {
     pub fn output_shape(&self) -> ImageShape {
         self.output
     }
+    pub(crate) fn overlaps_output(&self, input: DevicePtr, elements: u32) -> bool {
+        let Some(end) = input.0.checked_add(u64::from(elements) * 4) else {
+            return true;
+        };
+        let Some(out_end) = self
+            .allocation
+            .0
+            .checked_add(u64::from(self.output.elements) * 4)
+        else {
+            return true;
+        };
+        input.0 < out_end && self.allocation.0 < end
+    }
 }
 impl Drop for DiagnosticVaeConv<'_> {
     fn drop(&mut self) {
