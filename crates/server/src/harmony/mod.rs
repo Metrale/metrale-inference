@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! 2026-10-06: Token-aware framing for GPT-OSS assistant generation.
 //!
-//! Owner: server protocol. Blocking text responses use the strict adapter; streaming is not admitted.
+//! Owner: server protocol. Blocking and streaming text responses use the strict token-aware adapters.
 //! The tokenizer must supply actual special-token events, not match text spellings.
-//! Message boundaries are not EOS. Tool JSON validation belongs to the shared API IR.
+//! Message boundaries are not EOS. Tool handoffs remain unavailable in serving.
+//! API reasoning usage counts generated analysis-body IDs, excluding protocol overhead;
+//! scheduler thought budgets and provider billing conventions are separate contracts.
 //! Callers seed the exact unfinished assistant header from the rendered prompt and
 //! carry Finish/Handoff before the scheduler discards an EOS token.
 
