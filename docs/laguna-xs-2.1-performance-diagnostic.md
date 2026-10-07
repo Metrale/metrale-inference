@@ -97,7 +97,8 @@ The official NVIDIA 26.09 ARM64 image remains pinned to
 An independent interval sweep verifies GPU/API unions and overlap. Kernel sums
 exceed union because work overlaps; these quantities must not be added together.
 The actual kernel `globalPid=281483314987008` joins the SQLite process table to
-PID497, `VLLM::EngineCor`, context1/device0, rather than frontend PID253. Graph-node
+container-namespace PID497, `VLLM::EngineCor`, context1/device0, rather than
+frontend PID253. These are not host PIDs. Graph-node
 kernel events are retained. Raw SSE confirms exact prompt IDs, usage64/64,
 length termination, and overlapping client request intervals at C4. Client
 concurrency is not proof of actual GPU batch membership.
@@ -120,3 +121,72 @@ Raw SQLite SHA-256 receipts:
 
 - C1: `401db4522c79bb977a4937e9a57d32c668855db3c504b2e322aa495493e56359`
 - C4: `b2a067876a60d24565e3de25513239a276c4c9c2c0b9bb5dd2c4710e9b459f0a`
+
+## Longer fixed-count decode: current combined native
+
+The current combined candidate, binary SHA-256
+`5784c0fe1064b2dd7ab55dca39823d7ec3fef0c1ea205f6943edc783b63451b5`,
+ran with both default-off small-row options explicitly enabled. Its source/build
+receipt SHA-256 is
+`13f6b248e09009e1af94d746c17c0c9a6f25844d4ffd497eb8f2d40bf9c8005f`.
+The same pinned Marlin image and checkpoint above were used. Current checkpoint
+config/index hashes matched the previously verified backup manifest; shard sizes
+were checked without claiming a new full-weight checksum pass.
+
+Native-A / Marlin-B / Marlin-B2 / native-A2 used fresh owned servers, identical
+64 input IDs, temperature zero, and exactly 256 or 512 output tokens. Every
+case and C1/C2/C4 rung was warmed before three measured repetitions. All
+96 cohorts / 224 requests, including warmups, passed count and terminal admission.
+No profiling, builds, downloads or remote probes overlapped timed requests.
+
+| 512-output case | Native client TPOT, ms | Marlin client TPOT, ms | Native cohort tokens/s | Marlin cohort tokens/s |
+|---|---:|---:|---:|---:|
+| C1 | 20.550–20.651 | 23.274–23.330 | 47.23–47.47 | 42.69–42.79 |
+| C2 | 24.621–25.049 | 22.221–23.914 | 77.45–78.69 | 82.93–89.57 |
+| C4 | 31.505–32.210 | 23.989–24.010 | 117.56–120.97 | 164.89–165.11 |
+
+Ranges retain both session orders. Across both lengths/orders, native C1 total
+latency was 9.1–10.1% lower. C2 total latency was 5.5–19.1% higher and C4 was
+36.4–45.4% higher. The reference's C2 variation remains visible; no run was
+removed. Longer output amortizes prefill but does not eliminate the concurrent
+serving gap. These client metrics retain final drain/interleaving, and actual
+GPU batch membership is not inferred. This is a bounded C1 win, not overall
+competitive serving, numerical equivalence, energy efficiency or broad quality
+qualification. Coding remains 9/12.
+
+The first orchestration attempt failed before requests because launching from
+the SSH home directory selected the checkpoint template, whose `generation`
+statement is unsupported by this native template parser. The successful sequence
+retained the previously qualified repository working directory and bundled
+`jinja-templates/laguna.jinja`, SHA-256
+`cfa2d32aa24e16f63133abbe5b22fe8db06b9b4254feed1fe5abf0c8f6f72d9c`.
+The startup refusal and corrected launch identity are preserved. This working
+directory dependency remains a packaging limitation; no template fallback was
+changed within the comparison.
+
+## Current combined native attribution
+
+A separate capture now verifies the same `5784c0fe…` combined executable with
+both options enabled. Exact 64-input/64-output C1 and C4 requests, warmups and
+collection-off controls passed. The profiled native host PID was 3330353;
+SQLite global PID 337349028347904 joins that process, CUDA context 1/device 0,
+and its recorded `/proc` executable hash. This replaces the older `020057a`
+trace only for attribution of the current combined implementation.
+
+| Profiled region | Kernel extent, ms | GPU active union, ms | Extent outside GPU union, ms |
+|---|---:|---:|---:|
+| Native combined C1 | 1577.67 | 1507.09 | 70.58 |
+| Native combined C4 | 3015.59 | 2815.35 | 200.24 |
+
+C4 kernel-duration sums include 937.37 ms in the capacity-four dense GEMV,
+630.65 ms in the M16 expert-prefill entry, 172.35 ms in its M64 fallback,
+252.13 ms in routed batch-two gate/up and 187.79 ms in routed batch-two down.
+The two batch-two dispatches do not demonstrate shared expert IDs across requests;
+source indexing treats each routed token/slot separately. Combining launches and
+reusing weights are distinct opportunities. Dense and expert work both remain
+material, and the prefill pair remains part of this 64-output region.
+
+These are profiler-injected traces, not timing replacements for the longer
+uninstrumented comparison. Kernel sums may overlap; the uncovered GPU interval
+is not automatically CPU work or an attributable scheduler delay. No energy or
+new quality qualification follows from attribution.
