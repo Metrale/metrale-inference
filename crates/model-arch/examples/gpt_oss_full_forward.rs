@@ -190,12 +190,7 @@ fn run() -> anyhow::Result<()> {
             values.iter().all(|v| v.is_finite()),
             "nonfinite native logits at token position {position}"
         );
-        let next = values
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.total_cmp(b.1))
-            .unwrap()
-            .0;
+        let next = greedy_argmax(&values).context("empty vocabulary")?;
         next_ids.push(next);
         logits_file.write_all(&result)?;
         times.push(start.elapsed().as_secs_f64());
@@ -220,4 +215,37 @@ fn run() -> anyhow::Result<()> {
     gpu.free(normed)?;
     gpu.free(logits)?;
     Ok(())
+}
+
+// 2026-10-07: Match reference argmax's first/lower vocabulary index on ties.
+#[cfg(any(test, feature = "cuda"))]
+fn greedy_argmax(values: &[f32]) -> Option<usize> {
+    values
+        .iter()
+        .enumerate()
+        .max_by(|a, b| {
+            a.1.partial_cmp(b.1)
+                .expect("caller validated finite logits")
+                .then_with(|| b.0.cmp(&a.0))
+        })
+        .map(|(index, _)| index)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn argmax_uses_first_index_on_equal_logits() {
+        assert_eq!(super::greedy_argmax(&[1.0, 1.0]), Some(0));
+        assert_eq!(super::greedy_argmax(&[-2.0, 5.0, 5.0, 4.0]), Some(1));
+        assert_eq!(super::greedy_argmax(&[-0.0, 0.0]), Some(0));
+        assert_eq!(super::greedy_argmax(&[]), None);
+        // Known-bad former implementation picks the last equal maximum.
+        let bad = [1.0f32, 1.0]
+            .into_iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap()
+            .0;
+        assert_ne!(bad, super::greedy_argmax(&[1.0, 1.0]).unwrap());
+    }
 }

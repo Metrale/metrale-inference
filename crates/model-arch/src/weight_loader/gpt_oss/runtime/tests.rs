@@ -79,9 +79,51 @@ fn one_token_composes_stages_and_uses_its_actual_position() {
     layer
         .forward_token(hidden, state.as_mut(), &mut cache, 0, &mut blocks, &gpu, 0)
         .unwrap();
-    layer
-        .forward_token(hidden, state.as_mut(), &mut cache, 17, &mut blocks, &gpu, 0)
-        .unwrap();
+    assert!(
+        layer
+            .forward_token(hidden, state.as_mut(), &mut cache, 17, &mut blocks, &gpu, 0)
+            .is_err()
+    );
+    assert!(
+        layer
+            .forward_token(hidden, state.as_mut(), &mut cache, 0, &mut blocks, &gpu, 0)
+            .is_err()
+    );
+    for position in 1..=17 {
+        layer
+            .forward_token(
+                hidden,
+                state.as_mut(),
+                &mut cache,
+                position,
+                &mut blocks,
+                &gpu,
+                0,
+            )
+            .unwrap();
+    }
+    let original = blocks[0];
+    blocks[0] = blocks[1];
+    assert!(
+        layer
+            .forward_token(hidden, state.as_mut(), &mut cache, 18, &mut blocks, &gpu, 0)
+            .is_err()
+    );
+    blocks[0] = original;
+    let mut other_pool = self::cache(&gpu, KvCacheDtype::Bf16);
+    assert!(
+        layer
+            .forward_token(
+                hidden,
+                state.as_mut(),
+                &mut other_pool,
+                18,
+                &mut blocks,
+                &gpu,
+                0
+            )
+            .is_err()
+    );
     let s = state.as_any().downcast_ref::<State>().unwrap();
     let mut bytes = [0u8; 4];
     gpu.copy_d2h(s.position, &mut bytes).unwrap();

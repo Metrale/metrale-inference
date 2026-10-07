@@ -107,7 +107,7 @@ impl GptOssLayer {
         ensure!(!state.allocation.is_null(), "GPT layer state was released");
         ensure!(
             cache.config().dims_for_layer(self.index) == (8, 64),
-            "GPT cache geometry must be8 KV heads of width64"
+            "GPT cache geometry must be 8 KV heads of width 64"
         );
         ensure!(
             cache.config().cache_blocks_per_seq.is_none(),
@@ -117,7 +117,29 @@ impl GptOssLayer {
             !hidden.is_null() && hidden.0.is_multiple_of(4),
             "GPT hidden row is null or misaligned"
         );
-        self.forward(hidden, state, cache, position, blocks, gpu, stream)
+        // 2026-10-07: A state owns one contiguous cache prefix. Reset/rewind and
+        // restored-cache adoption require a fresh state; never read unwritten KV.
+        ensure!(!state.failed, "GPT state failed; allocate a fresh state");
+        ensure!(
+            position == state.next_position,
+            "GPT requires sequential positions; reset/rewind unsupported"
+        );
+        ensure!(
+            blocks.starts_with(&state.prefix_blocks),
+            "GPT cache prefix mapping changed"
+        );
+        let pools = (cache.k_pool_ptr(self.index), cache.v_pool_ptr(self.index));
+        ensure!(
+            state.cache_pools.is_none_or(|previous| previous == pools),
+            "GPT cache pool changed"
+        );
+        state.failed = true;
+        self.forward(hidden, state, cache, position, blocks, gpu, stream)?;
+        state.next_position += 1;
+        state.prefix_blocks.clone_from(blocks);
+        state.cache_pools = Some(pools);
+        state.failed = false;
+        Ok(())
     }
 }
 impl LayerCapabilities for GptOssLayer {

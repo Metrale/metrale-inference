@@ -6,6 +6,10 @@ use metrale_model_layers::layer::LayerState;
 use std::any::Any;
 
 pub(super) struct State {
+    pub next_position: usize,
+    pub failed: bool,
+    pub prefix_blocks: Vec<u32>,
+    pub cache_pools: Option<(DevicePtr, DevicePtr)>,
     pub allocation: DevicePtr,
     pub frequencies: DevicePtr,
     pub accum: DevicePtr,
@@ -63,6 +67,10 @@ impl State {
             })
             .collect();
         Ok(Self {
+            next_position: 0,
+            failed: false,
+            prefix_blocks: Vec::new(),
+            cache_pools: None,
             allocation,
             norm: p[0],
             q: p[1],
