@@ -366,7 +366,7 @@ struct DiagnosticsPolicy {
     cache_layers: Vec<usize>,
 }
 
-// A generated stop token is recorded but never fed back into the cache.
+// 2026-10-06: A generated stop token is recorded but never fed back into the cache.
 #[cfg(any(test, feature = "cuda"))]
 #[derive(serde::Deserialize, serde::Serialize)]
 struct GenerationPolicy {
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(super::greedy_argmax(&[-2.0, 5.0, 5.0, 4.0]), Some(1));
         assert_eq!(super::greedy_argmax(&[-0.0, 0.0]), Some(0));
         assert_eq!(super::greedy_argmax(&[]), None);
-        // Known-bad former implementation picks the last equal maximum.
+        // 2026-10-06: Known-bad former implementation picks the last equal maximum.
         let bad = [1.0f32, 1.0]
             .into_iter()
             .enumerate()

@@ -9,7 +9,7 @@ __device__ __forceinline__ float gpt_expert_bf16(float value) {
     return __bfloat162float(__float2bfloat16_rn(value));
 }
 
-// Interleaved gate/up -> BF16 intermediate activation. Each reference tensor
+// 2026-10-06: Interleaved gate/up -> BF16 intermediate activation. Each reference tensor
 // operation rounds separately: alpha multiply, sigmoid, gate multiply, up+1,
 // final multiply. NaNs propagate through clamp rather than becoming bounds.
 extern "C" __global__ void gpt_oss_swiglu_bf16(
@@ -28,7 +28,7 @@ extern "C" __global__ void gpt_oss_swiglu_bf16(
     output[i] = __float2bfloat16_rn(up * glu);
 }
 
-// Selected outputs [4,tokens,hidden]; router scores [tokens,32] BF16 and device
+// 2026-10-06: Selected outputs [4,tokens,hidden]; router scores [tokens,32] BF16 and device
 // IDs [tokens,4]. Multiply rounds to BF16 before FP32 reduction. IDs are sorted
 // locally so slot order does not change summation order. Unselected experts are
 // omitted only under the runtime's finite-expert-output contract; dense NaN*0

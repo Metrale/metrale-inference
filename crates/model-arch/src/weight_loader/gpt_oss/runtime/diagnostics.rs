@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Read-only host snapshots of existing live buffers; no diagnostic math path.
+//! 2026-10-06: Read-only host snapshots of existing live buffers; no diagnostic math path.
 use super::*;
 
-/// Owned little-endian bytes copied after a successful forward on its stream.
+/// 2026-10-06: Owned little-endian bytes copied after a successful forward on its stream.
 pub struct DiagnosticTensor {
     pub name: &'static str,
     pub dtype: &'static str,
@@ -10,7 +10,7 @@ pub struct DiagnosticTensor {
     pub bytes: Vec<u8>,
 }
 impl GptOssLayer {
-    /// Inspect the latest completed token before the state is reused or released.
+    /// 2026-10-06: Inspect the latest completed token before the state is reused or released.
     /// The caller supplies the same backend and stream used by `forward_token`.
     pub fn diagnostic_snapshot(
         &self,

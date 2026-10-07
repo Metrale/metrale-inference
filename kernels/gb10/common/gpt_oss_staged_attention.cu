@@ -53,7 +53,7 @@ extern "C" __global__ void gpt_oss_staged_attention_bf16(
         maximum = m;
     }
     __syncthreads();
-    // torch subtracts max in BF16 before its FP32 softmax implementation.
+    // 2026-10-06: torch subtracts max in BF16 before its FP32 softmax implementation.
     for (unsigned int t = lane; t <= length; t += blockDim.x)
         scores[t] = expf(staged_bf16(scores[t] - maximum));
     __syncthreads();

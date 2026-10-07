@@ -88,7 +88,7 @@ def main():
             assert all(entry["known_bad"].values()), entry
         report["cases"].append(entry)
 
-    # Nontrivial BF16 rounding, sink, window and reversed physical block mapping.
+    # 2026-10-06: Nontrivial BF16 rounding, sink, window and reversed physical block mapping.
     q = torch.randn((8, 64), device="cuda").bfloat16()
     k = torch.randn((145, 2, 64), device="cuda").bfloat16()
     v = torch.randn_like(k)
@@ -99,7 +99,7 @@ def main():
     run("constructed-nan-sink", q, k, v, torch.full_like(sinks, float("nan")))
     run("constructed-one-token", q, k[:1].contiguous(), v[:1].contiguous(), sinks)
     run("constructed-max-context", q[:2].contiguous(), torch.randn((4096, 1, 64), device="cuda").bfloat16(), torch.randn((4096, 1, 64), device="cuda").bfloat16(), sinks[:2].contiguous())
-    # Empty and raw-device over-cap lengths must overwrite the output safely.
+    # 2026-10-06: Empty and raw-device over-cap lengths must overwrite the output safely.
     for length in [0, 4097]:
         output = torch.ones_like(q)
         table = torch.zeros(1, dtype=torch.int32, device="cuda")

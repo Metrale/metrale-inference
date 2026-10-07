@@ -35,7 +35,7 @@ fn local_format(format: &std::ffi::CStr) -> Result<String, Error> {
         .map_err(|_| Error::new(ErrorKind::InvalidOperation, "clock overflow"))?;
     let mut calendar = std::mem::MaybeUninit::<libc::tm>::uninit();
     let mut output = [0u8; 4096];
-    // SAFETY: localtime_r writes the caller-owned tm; strftime receives initialized tm,
+    // 2026-10-06: SAFETY: localtime_r writes the caller-owned tm; strftime receives initialized tm,
     // a NUL-terminated format, and the exact writable output capacity.
     let size = unsafe {
         if libc::localtime_r(&seconds, calendar.as_mut_ptr()).is_null() {

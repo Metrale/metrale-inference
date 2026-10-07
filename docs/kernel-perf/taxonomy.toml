@@ -101,6 +101,14 @@ components = ["kda", "short-conv", "mla", "moe", "dense-ffn"]
 shared_engine = true
 
 [[family]]
+id = "gpt-oss"
+label = "GPT-OSS"
+name = "GPT-OSS (experimental eager C1, sink attention + MXFP4 MoE)"
+models = ["gpt-oss-20b"]
+components = ["moe"]
+shared_engine = false
+
+[[family]]
 id = "laguna"
 label = "Laguna"
 name = "Laguna (full/sliding attention + MoE)"
@@ -349,6 +357,10 @@ families = ["nemotron-h"]
 [[family_site]]
 paths = ["crates/model-arch/src/weight_loader/gemma4"]
 families = ["gemma4"]
+
+[[family_site]]
+paths = ["crates/model-arch/src/weight_loader/gpt_oss", "crates/model-layers/src/layers/ops/gpt_oss_"]
+families = ["gpt-oss"]
 
 [[family_site]]
 paths = ["crates/model-arch/src/weight_loader/laguna"]

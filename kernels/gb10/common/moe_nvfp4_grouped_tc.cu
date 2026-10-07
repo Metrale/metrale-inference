@@ -208,10 +208,10 @@ __device__ __forceinline__ bool ntc_lean_block(unsigned int s, unsigned int* w, 
     }
     const unsigned int e = s >> 3, m = s & 7u;
     if (e > 0u) {
-        *c = (unsigned char)(s + 24u);                              // ((E + 3) << 3) | M
+        *c = (unsigned char)(s + 24u);                              // 2026-10-06: ((E + 3) << 3) | M
     } else {
-        // E4M3 subnormal m * 2^-9, normalized: E = -2 (m = 1), -1 (m = 2, 3), 0 (m = 4..7).
-        const unsigned int ex = m >= 4u ? 3u : m >= 2u ? 2u : 1u;   // E + 3
+        // 2026-10-06: E4M3 subnormal m * 2^-9, normalized: E = -2 (m = 1), -1 (m = 2, 3), 0 (m = 4..7).
+        const unsigned int ex = m >= 4u ? 3u : m >= 2u ? 2u : 1u;   // 2026-10-06: E + 3
         *c = (unsigned char)((ex << 3) | ((m << (4u - ex)) & 7u));
     }
     w[0] = ntc_lean_word(w[0]);
@@ -227,7 +227,7 @@ __device__ __forceinline__ bool ntc_lean_block(unsigned int s, unsigned int* w, 
 extern "C" __global__ void nvfp4_tc_lean_repack(unsigned char* __restrict__ packed, unsigned char* __restrict__ scale,
                                                 unsigned int K, unsigned int* __restrict__ bad) {
     extern __shared__ unsigned int ntc_lean_smem[];
-    const unsigned int row_w = K / 8, row_s = K / 16;              // packed words and scale bytes per row
+    const unsigned int row_w = K / 8, row_s = K / 16;              // 2026-10-06: packed words and scale bytes per row
     unsigned int* sw = ntc_lean_smem;
     unsigned char* ss = (unsigned char*)(ntc_lean_smem + 16 * row_w);
     unsigned int* gw = (unsigned int*)packed + (unsigned long long)blockIdx.x * 16 * row_w;
@@ -235,7 +235,7 @@ extern "C" __global__ void nvfp4_tc_lean_repack(unsigned char* __restrict__ pack
     for (unsigned int i = threadIdx.x; i < 16 * row_w; i += blockDim.x) sw[i] = gw[i];
     for (unsigned int i = threadIdx.x; i < 16 * row_s; i += blockDim.x) ss[i] = gs[i];
     __syncthreads();
-    // Tile order: chunk c (128 K) major, then row r, then block b (16 K) of the chunk: block i = (c * 16 + r) * 8 + b.
+    // 2026-10-06: Tile order: chunk c (128 K) major, then row r, then block b (16 K) of the chunk: block i = (c * 16 + r) * 8 + b.
     for (unsigned int i = threadIdx.x; i < 16 * row_s; i += blockDim.x) {
         const unsigned int c = i / 128, r = (i / 8) % 16, b = i % 8, src = r * row_s + c * 8 + b;
         unsigned int w[2] = {sw[2 * src], sw[2 * src + 1]};

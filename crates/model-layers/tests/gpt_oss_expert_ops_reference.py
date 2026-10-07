@@ -30,7 +30,7 @@ def generate(root):
     write(root, "bias-expected.bin", [], values + bias)
     write(root, "bias-known-bad.bin", [], values)
 
-    # Every possible BF16 gate encoding plus tail rows. Up includes clamp,
+    # 2026-10-06: Every possible BF16 gate encoding plus tail rows. Up includes clamp,
     # offset and rounding boundaries. NaNs/infinities are deliberate controls.
     bits = torch.arange(65536, dtype=torch.int32).to(torch.uint16)
     gate = torch.cat([bits.view(torch.bfloat16), torch.linspace(-8, 8, 259).bfloat16()]).to(device)

@@ -94,7 +94,7 @@ fn one_token_composes_stages_and_uses_its_actual_position() {
             .forward_token(hidden, state.as_mut(), &mut cache, 0, &mut blocks, &gpu, 0)
             .is_err()
     );
-    // An appended alias preserves the old prefix yet would overwrite it at 16.
+    // 2026-10-06: An appended alias preserves the old prefix yet would overwrite it at 16.
     blocks.push(blocks[0]);
     assert!(
         layer

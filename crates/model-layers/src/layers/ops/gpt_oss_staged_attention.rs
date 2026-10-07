@@ -4,7 +4,7 @@ use super::paged_sink::{PagedSinkGeometry, paged_decode_attn_bf16_sink};
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
-/// Finite Q/K/V operands only; nonfinite masked-operand propagation is unqualified.
+/// 2026-10-06: Finite Q/K/V operands only; nonfinite masked-operand propagation is unqualified.
 /// Existing paged-sink geometry and buffers, with a device-enforced 4096-token cap.
 /// The caller must provide the `gpt_oss_staged_attention_bf16` kernel handle.
 /// Above-cap lengths return NaN; this is an eager correctness policy, not a fast path.

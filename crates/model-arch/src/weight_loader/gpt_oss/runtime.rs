@@ -130,7 +130,7 @@ impl GptOssLayer {
             blocks.starts_with(&state.prefix_blocks),
             "GPT cache prefix mapping changed"
         );
-        // Distinct logical blocks must never alias and overwrite earlier tokens.
+        // 2026-10-06: Distinct logical blocks must never alias and overwrite earlier tokens.
         let unique_blocks: std::collections::HashSet<_> = blocks.iter().collect();
         ensure!(
             unique_blocks.len() == blocks.len(),

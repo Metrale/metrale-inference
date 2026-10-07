@@ -59,7 +59,7 @@ static bool run(unsigned n,unsigned k,const std::vector<uint8_t>& w,const std::v
         for(unsigned bad=1;bad<=3;++bad)detections[bad-1]+=reference(w,s,x,r,n,k,bad)!=want[r];
     }
     if(special){
-        // BMM 1+1/256 rounds to 1 BEFORE bias. A fused bias path gives 1+1/128.
+        // 2026-10-06: BMM 1+1/256 rounds to 1 BEFORE bias. A fused bias path gives 1+1/128.
         if(got[0]!=0x3f80 || bf16(widen(got[0])+1.f/256)!=0x3f80 || bf16(1.f+1.f/128)!=0x3f81)return false;
     } else if(!detections[0]||!detections[1]||!detections[2]){fprintf(stderr,"ineffective corruption control\n");return false;}
     printf("%s rows=%u K=%u max_bf16_ulp=%u controls=%u/%u/%u observed_bits=",label,n,k,max_ulp,detections[0],detections[1],detections[2]);
