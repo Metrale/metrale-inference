@@ -120,3 +120,16 @@ These diagnostic routes differ from the original chat captures and provide no
 performance claim or proof that their complete trajectories reproduce those
 captures. Evidence is retained privately in `gpt/topology-first-divergence`;
 all original semantic scores and failed numerical gates remain unchanged.
+
+A subsequent same-input head microprobe reproduced the four retained native logits
+exactly, then compared the selected BF16 head rows against an independent exact
+rational dot-product oracle. All four correctly rounded BF16 results agreed,
+including the two competing tokens. Torch 2.13.0+cu130 `F.linear` on those identical
+native inputs also agreed. This is a separate comparator environment from the
+NVIDIA image's Torch 2.14.0a0 build, and four-row projection can select a different
+backend from the full vocabulary. Thus no native head arithmetic defect was found
+in these four dots; actual reference incoming hidden values and head execution
+remain to be captured. Learned operands remain private on the device. The original
+six-control finite-bounded oracle and raw receipt are preserved; a follow-up
+13-control suite additionally verifies overflow refusal, subnormal ties and
+nonfinite-input refusal. No production arithmetic changed.
