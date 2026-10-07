@@ -88,13 +88,22 @@ impl<'a> GptOssCheckpoint<'a> {
         let gate_up = checked_product(&[2, config.moe_intermediate_size], "GPT-OSS gate/up width")?;
         let mut names = BTreeSet::new();
         let h = config.hidden_size;
+        ensure!(
+            config.vocab_size > 0 && config.vocab_size <= policy.checkpoint_vocab_size,
+            "GPT-OSS logical vocabulary exceeds physical checkpoint rows"
+        );
         let embedding = bind_bf16(
             store,
             "model.embed_tokens.weight",
-            &[config.vocab_size, h],
+            &[policy.checkpoint_vocab_size, h],
             &mut names,
         )?;
-        let head = bind_bf16(store, "lm_head.weight", &[config.vocab_size, h], &mut names)?;
+        let head = bind_bf16(
+            store,
+            "lm_head.weight",
+            &[policy.checkpoint_vocab_size, h],
+            &mut names,
+        )?;
         let final_norm = bind_bf16(store, "model.norm.weight", &[h], &mut names)?;
         let mut layers = Vec::new();
         for (i, kind) in config.layer_types.iter().copied().enumerate() {

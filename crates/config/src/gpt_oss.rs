@@ -47,6 +47,8 @@ pub enum GptOssExpertFormat {
 /// A loader must implement these semantics before accepting this configuration.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GptOssPolicy {
+    /// 2026-10-07: Physical checkpoint rows, preserved when serving caps the logical tokenizer vocabulary.
+    pub checkpoint_vocab_size: usize,
     pub routing: GptOssRouting,
     pub attention: GptOssAttention,
     pub activation: GptOssActivation,

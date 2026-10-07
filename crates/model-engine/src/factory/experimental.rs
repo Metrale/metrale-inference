@@ -42,3 +42,36 @@ mod tests {
         assert!(loader_for_config_with_policy(&config, ExperimentalModelPolicy::GptOssC1).is_err());
     }
 }
+
+// 2026-10-07: Reject padded/unmapped IDs before embedding lookup or any sequence mutation.
+pub(crate) fn validate_gpt_tokens(config: &ModelConfig, tokens: &[u32]) -> Result<()> {
+    if let Some(policy) = config.gpt_oss {
+        ensure!(
+            config.vocab_size > 0 && config.vocab_size <= policy.checkpoint_vocab_size,
+            "GPT-OSS logical vocabulary exceeds physical storage"
+        );
+        ensure!(
+            tokens.iter().all(|&id| (id as usize) < config.vocab_size),
+            "GPT-OSS token ID is outside the logical tokenizer vocabulary"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod token_bounds_tests {
+    use super::*;
+    #[test]
+    fn logical_boundary_excludes_physical_padding_and_overflow_ids() {
+        let mut config = metrale_config::parse_config(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../circuit/tests/fixtures/checkpoints/openai--gpt-oss-20b/config.json"
+        )))
+        .unwrap();
+        config.vocab_size = 200019;
+        assert!(validate_gpt_tokens(&config, &[0, 200018]).is_ok());
+        for id in [200019, 201087, 201088, u32::MAX] {
+            assert!(validate_gpt_tokens(&config, &[id]).is_err());
+        }
+    }
+}

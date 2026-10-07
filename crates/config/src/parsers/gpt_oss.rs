@@ -179,6 +179,7 @@ pub(crate) fn parse_gpt_oss(raw: &Value) -> Result<ModelConfig> {
         as usize;
     config.yarn_attention_factor = (1.0 + 0.1 * f64::from(config.yarn_factor).ln()) as f32;
     config.gpt_oss = Some(GptOssPolicy {
+        checkpoint_vocab_size: config.vocab_size,
         routing: GptOssRouting::TopKLogitsThenSoftmax,
         attention: GptOssAttention::BiasedGqaWithDenominatorSink,
         activation: GptOssActivation::InterleavedAsymmetricSwiGlu { alpha: 1.702 },

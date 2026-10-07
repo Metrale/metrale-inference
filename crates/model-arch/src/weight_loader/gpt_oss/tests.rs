@@ -161,3 +161,22 @@ fn rejects_unknown_tensor_null_addresses_and_mutated_family_contract() {
     changed.num_attention_heads = usize::MAX;
     assert!(GptOssCheckpoint::bind(&store, &changed).is_err());
 }
+
+#[test]
+fn tokenizer_cap_preserves_physical_checkpoint_rows() {
+    let mut config = config();
+    config.vocab_size = 200019;
+    let store = WeightStore::from_map(headers());
+    let bound = GptOssCheckpoint::bind(&store, &config).unwrap();
+    assert_eq!(bound.embedding.shape(), [201088, 2880]);
+    assert_eq!(bound.head.shape(), [201088, 2880]);
+    assert_eq!(bound.config.vocab_size, 200019);
+    config.vocab_size = 201089;
+    assert!(GptOssCheckpoint::bind(&store, &config).is_err());
+    config.vocab_size = 0;
+    assert!(GptOssCheckpoint::bind(&store, &config).is_err());
+    config.vocab_size = 200019;
+    let mut malformed = headers();
+    malformed.get_mut("lm_head.weight").unwrap().shape[0] = 200019;
+    assert!(GptOssCheckpoint::bind(&WeightStore::from_map(malformed), &config).is_err());
+}

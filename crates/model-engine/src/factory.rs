@@ -103,6 +103,7 @@ pub fn loader_for_config(config: &ModelConfig) -> Result<Box<dyn ModelWeightLoad
 
 mod build;
 mod experimental;
+pub(crate) use experimental::validate_gpt_tokens;
 pub use experimental::{ExperimentalModelPolicy, loader_for_config_with_policy};
 mod lm_head_setup;
 mod m2_setup;
