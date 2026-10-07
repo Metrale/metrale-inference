@@ -52,7 +52,7 @@ fn dense_row_selection_preserves_defaults_and_refuses_missing_opt_in() {
         }
         assert_eq!(gpu.kernel_lookups_snapshot().len(), usize::from(enabled));
     }
-    // Only selection is tested here: these unmeasured geometries keep the existing
+    // 2026-10-07: Only selection is tested here: these unmeasured geometries keep the existing
     // launch contract and do not qualify its numerical behavior.
     for (n, k) in [(7, 64), (8, 63), (0, 64), (8, 0)] {
         let gpu = MockGpuBackend::new();
