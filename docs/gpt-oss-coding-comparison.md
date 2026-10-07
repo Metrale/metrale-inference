@@ -84,3 +84,39 @@ The original failed 251-token numerical comparison remains failed; this diagnost
 has not been promoted or admitted as supported. `comparison-three-arms.json`
 retains all original scores and per-case results. No performance claim derives
 from these correctness runs.
+
+## Actual-token first-divergence diagnostic
+
+A separate 32-token greedy diagnostic used the verified 147-token dependency-order
+prompt directly. Actual generated IDs first differed at index 3, after three
+shared Harmony header tokens: native chose `23665` (`Implement`), while the
+reference chose `23483` (`Need`). Native BF16 logits were 26.875 and 26.75,
+respectively, a 0.125 margin. The reference exposed equal top log-probabilities
+for those two tokens (`-0.9627416133880615`). Equality at the API's reported
+precision does not establish an exact internal-logit tie or its tie-breaking rule.
+
+Both engines then received the identical 150-token common prefix independently.
+Each repeated its own choice. The complete native 201,088-logit row was byte-identical
+between generation and replay (SHA-256
+`e29ce03a48146b00ea1cbb7cd6aadd9e36977adfea5de70ee41bcda6105526ec`).
+Reference top-two reported log-probabilities remained equal, but other reported
+values changed between decode and replay, so reference dispatch equivalence is
+not assumed. This locates an early ranking difference; it does not establish that
+this particular decision caused the later reversed-dependency implementation.
+
+Native used a freshly rebuilt standalone example from the frozen accepted source,
+explicitly loading all 13 SHA-verified accepted PTX modules; skipped target builds
+were not used as executable kernels. Its binary SHA-256 is
+`f99471d75df455172f2a2000eede577539bbd3a683a9ef09cea996fc18ead928` and module
+manifest SHA-256 is `2545623a0e89c6a8214a806e092e972f0db42c084cda4ce6e18b0f37b9382b6a`.
+On this prompt, scalar and chunk widths 16/31/64/127/128 produced identical hidden
+states and KV caches, including a following decode. The standalone generation
+prompt trace also matched that scalar trace exactly. Nine local actual-ID
+admission/comparison controls passed before requests.
+
+The reference used the same pinned official image and actual `token_ids` from
+raw completions with log-probability capture. No IDs were reconstructed from text.
+These diagnostic routes differ from the original chat captures and provide no
+performance claim or proof that their complete trajectories reproduce those
+captures. Evidence is retained privately in `gpt/topology-first-divergence`;
+all original semantic scores and failed numerical gates remain unchanged.
