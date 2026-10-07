@@ -13,6 +13,8 @@ use crate::scheduler::io::{DecodeRows, Readback, StepOutcome};
 
 mod content_emit;
 mod host_sample;
+#[cfg(test)]
+mod json_eos_policy_tests;
 mod per_token;
 
 thread_local! {
