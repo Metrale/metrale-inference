@@ -173,6 +173,9 @@ fn blocking_final_is_separated_from_analysis_and_requires_terminal() {
         "4 <|return|>"
     );
     assert!(super::api::text_choice(&tokenizer, &prompt, &output[..output.len() - 1]).is_err());
+    let parsed = super::api::text_response(&tokenizer, &prompt, &output).unwrap();
+    assert_eq!(parsed.reasoning_tokens, ids("private").len() as u32);
+    assert!(parsed.reasoning_tokens < output.len() as u32);
     let mut trailing = output.clone();
     trailing.extend(ids("unexpected"));
     assert!(super::api::text_choice(&tokenizer, &prompt, &trailing).is_err());
@@ -227,6 +230,7 @@ fn incremental_final_text_arrives_before_terminal_and_analysis_never_arrives() {
         chunks.push(stream.push(id).unwrap());
     }
     assert_eq!(chunks.concat(), "café 日本 😀 <|return|>");
+    assert_eq!(stream.reasoning_tokens(), ids("private 😀").len() as u32);
     assert!(
         chunks.iter().any(String::is_empty),
         "split UTF8 bytes must remain buffered"

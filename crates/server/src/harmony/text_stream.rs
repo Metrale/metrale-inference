@@ -59,6 +59,10 @@ impl TextStream {
             Ok(String::new())
         }
     }
+    pub fn reasoning_tokens(&self) -> u32 {
+        self.stream.reasoning_tokens()
+    }
+
     pub fn finish(&self) -> Result<(), &'static str> {
         if self.failed || !self.completed {
             return Err("incomplete Harmony final turn");

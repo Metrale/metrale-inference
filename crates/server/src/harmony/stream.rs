@@ -137,6 +137,7 @@ pub struct Stream<'a> {
     pending: Vec<u8>,
     failed: bool,
     terminated: bool,
+    reasoning_tokens: u32,
 }
 
 impl<'a> Stream<'a> {
@@ -153,6 +154,7 @@ impl<'a> Stream<'a> {
             pending: vec![],
             failed: false,
             terminated: false,
+            reasoning_tokens: 0,
         })
     }
 
@@ -171,6 +173,7 @@ impl<'a> Stream<'a> {
             pending: Vec::new(),
             failed: false,
             terminated: false,
+            reasoning_tokens: 0,
         }
     }
 
@@ -179,7 +182,20 @@ impl<'a> Stream<'a> {
             self.failed = true;
             return Err("Harmony byte stream failed or already terminated");
         }
-        let result = self.advance(id);
+        // 2026-10-07: Count generated ordinary token IDs inside analysis body only.
+        // Excludes channel headers/delimiters; this is not a billing-provider convention.
+        let analysis = self.decoder.phase == super::Phase::Body
+            && self.decoder.channel.as_deref() == Some("analysis")
+            && self.tokenizer.map.classify(id) == Ok(TokenClass::Ordinary);
+        let result = self.advance(id).and_then(|message| {
+            if analysis {
+                self.reasoning_tokens = self
+                    .reasoning_tokens
+                    .checked_add(1)
+                    .ok_or("analysis token count overflow")?;
+            }
+            Ok(message)
+        });
         self.failed = result.is_err();
         result
     }
@@ -217,6 +233,10 @@ impl<'a> Stream<'a> {
                 Ok(None)
             }
         }
+    }
+
+    pub fn reasoning_tokens(&self) -> u32 {
+        self.reasoning_tokens
     }
 
     pub fn finish(&self) -> Result<(), &'static str> {

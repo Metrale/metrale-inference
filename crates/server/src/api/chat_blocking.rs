@@ -218,25 +218,30 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
 
         let num_completion = response.output_tokens.len();
         total_completion_tokens += num_completion;
-        total_reasoning_tokens += response.reasoning_tokens;
+
         total_accepted_prediction_tokens += response.accepted_prediction_tokens;
-        // 2026-09-26: Every choice sends the same prompt, so usage reports the largest
-        // per-choice prefix-cache hit, not the sum.
+        // 2026-09-26: Shared-prompt usage reports the largest per-choice cache hit.
         total_cached_prompt_tokens = total_cached_prompt_tokens.max(response.cached_prompt_tokens);
 
         if let Some(harmony) = state.tokenizer.harmony() {
-            match crate::harmony::api::text_choice(harmony, &prompt_tokens, &response.output_tokens)
-            {
-                Ok(content) => all_choices.push(ir::Choice {
-                    index: choice_idx,
-                    content: Some(content),
-                    reasoning: None,
-                    tool_calls: vec![],
-                    refusal: None,
-                    finish_reason: ir::FinishReason::Stop,
-                    matched_stop: None,
-                    logprobs: None,
-                }),
+            match crate::harmony::api::text_response(
+                harmony,
+                &prompt_tokens,
+                &response.output_tokens,
+            ) {
+                Ok(parsed) => {
+                    total_reasoning_tokens += parsed.reasoning_tokens;
+                    all_choices.push(ir::Choice {
+                        index: choice_idx,
+                        content: Some(parsed.content),
+                        reasoning: None,
+                        tool_calls: vec![],
+                        refusal: None,
+                        finish_reason: ir::FinishReason::Stop,
+                        matched_stop: None,
+                        logprobs: None,
+                    });
+                }
                 Err(error) => {
                     return super::chat::ChatOutcome::Http(openai_error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -247,6 +252,7 @@ pub(super) async fn run_blocking_path(args: BlockingPathArgs) -> super::chat::Ch
             continue;
         }
 
+        total_reasoning_tokens += response.reasoning_tokens;
         let (reasoning_content_i, output_text_i) =
             decode_response_text(&state, &response, enable_thinking);
         let (output_text_i, matched_stop) =

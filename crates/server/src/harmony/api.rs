@@ -2,11 +2,25 @@
 //! 2026-10-07: Fail-closed blocking text adapter; analysis is never returned as content.
 use super::{Ending, stream::ByteTokenizer};
 
+pub struct TextResponse {
+    pub content: String,
+    /// 2026-10-07: Generated analysis-body token IDs, excluding protocol headers/delimiters.
+    pub reasoning_tokens: u32,
+}
+
 pub fn text_choice(
     tokenizer: &ByteTokenizer,
     prompt: &[u32],
     output: &[u32],
 ) -> Result<String, &'static str> {
+    text_response(tokenizer, prompt, output).map(|r| r.content)
+}
+
+pub fn text_response(
+    tokenizer: &ByteTokenizer,
+    prompt: &[u32],
+    output: &[u32],
+) -> Result<TextResponse, &'static str> {
     let mut stream = tokenizer.assistant_stream(prompt)?;
     let mut final_text = None;
     for id in output {
@@ -21,5 +35,8 @@ pub fn text_choice(
         }
     }
     stream.finish()?;
-    final_text.ok_or("missing final Harmony answer")
+    Ok(TextResponse {
+        content: final_text.ok_or("missing final Harmony answer")?,
+        reasoning_tokens: stream.reasoning_tokens(),
+    })
 }
