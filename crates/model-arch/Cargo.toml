@@ -16,6 +16,7 @@ gpu-examples = []
 
 [dependencies]
 metrale-cache = { path = "../cache", default-features = false }
+metrale-circuit = { path = "../circuit" }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }

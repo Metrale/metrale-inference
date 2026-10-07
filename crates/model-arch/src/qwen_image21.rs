@@ -2,6 +2,7 @@
 //! 2026-10-07: Diagnostic native visual-block prelude; not a serving model.
 //! LayerNorm uses the existing two-pass NLLB kernel, whose exact-reference gate
 //! has three recorded near-zero BF16 mismatches. This path does not qualify it.
+pub mod attention;
 pub mod rope;
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::{
@@ -33,6 +34,7 @@ enum QkvStage {
     Raw,
     Normalized,
     Rotated,
+    Attended,
 }
 
 /// Fixed-shape diagnostic composition of non-affine LayerNorm, exact native
@@ -272,6 +274,50 @@ impl<'a> DiagnosticImagePrelude<'a> {
         }
         self.stage = QkvStage::Rotated;
         Ok(self.qkv)
+    }
+
+    /// 2026-10-07: Slow diagnostic block-causal attention and output projection.
+    /// Prior LayerNorm/cis discrepancies remain; this does not qualify a block.
+    pub fn attend_project(
+        &mut self,
+        attention: &mut attention::DiagnosticBlockAttention<'_>,
+        weight: &WeightTensor,
+        stream: u64,
+    ) -> Result<DevicePtr> {
+        ensure!(
+            self.stage == QkvStage::Rotated,
+            "attention requires fresh rotated QK"
+        );
+        ensure!(
+            attention.geometry() == (self.samples, self.tokens),
+            "attention geometry differs"
+        );
+        ensure!(
+            attention.uses_backend(self.gpu),
+            "attention backend differs"
+        );
+        ensure!(
+            weight.dtype == WeightDtype::BF16
+                && weight.shape == [4096, 4096]
+                && !weight.ptr.is_null()
+                && weight.ptr.0.is_multiple_of(16),
+            "invalid attention output weight"
+        );
+        self.stage = QkvStage::Empty;
+        let attended = attention.forward(self.qkv, stream)?;
+        ops::dense_gemm_bf16_pipelined(
+            self.gpu,
+            self.gemm,
+            attended,
+            &DenseWeight { weight: weight.ptr },
+            self.modulated,
+            self.rows,
+            4096,
+            4096,
+            stream,
+        )?;
+        self.stage = QkvStage::Attended;
+        Ok(self.modulated)
     }
 }
 impl Drop for DiagnosticImagePrelude<'_> {

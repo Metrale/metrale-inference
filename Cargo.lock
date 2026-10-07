@@ -1701,6 +1701,7 @@ dependencies = [
  "half",
  "memmap2",
  "metrale-cache",
+ "metrale-circuit",
  "metrale-comm",
  "metrale-config",
  "metrale-core",

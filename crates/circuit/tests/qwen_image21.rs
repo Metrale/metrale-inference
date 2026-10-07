@@ -133,3 +133,32 @@ fn architecture_graph_is_closed_and_residual_ops_cannot_be_silently_lowered() {
     assert_eq!(data["dimensions"]["hidden"], 4096);
     assert_eq!(data["dimensions"]["head_dim"], 128);
 }
+
+#[test]
+fn packed_prefixes_equal_visibility_with_padding_and_sample_isolation() {
+    for validity in 0u32..128 {
+        let mut tokens = Vec::new();
+        for sample in 0..2 {
+            for (position, image) in [None, Some(7), Some(7), None, Some(2), Some(2), None]
+                .into_iter()
+                .enumerate()
+            {
+                tokens.push(token(
+                    sample,
+                    image,
+                    ((validity.rotate_left(sample) >> position) & 1) != 0,
+                ));
+            }
+        }
+        let layout = Layout::new(tokens).unwrap();
+        let packed = layout.packed_prefixes().unwrap();
+        for (query, &(start, count)) in packed.spans.iter().enumerate() {
+            let actual = &packed.gather[start as usize..(start + count) as usize];
+            let expected: Vec<u32> = (0..14)
+                .filter(|key| layout.can_attend(query, *key).unwrap())
+                .map(|k| k as u32)
+                .collect();
+            assert_eq!(actual, expected, "mask={validity} query={query}");
+        }
+    }
+}

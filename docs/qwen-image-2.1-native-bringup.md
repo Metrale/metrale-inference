@@ -345,3 +345,38 @@ tiny, 20 large), so the overall exact rotary gate remains **failed**. The saved
 real Q/K and shorter mixed-image cases are exact. Every input, reference/native
 cis table, source snapshot and output pair is retained for this replay. This
 separates the remaining frequency-generation issue from complex multiplication.
+
+### Diagnostic image-block attention composition
+
+The prelude now continues through native block-causal attention and the real
+block-0 output projection. Shared circuit visibility lowers to stable valid-key
+gather indices and one visible prefix per query, in linear host storage/time.
+The unchanged `batched_embed` kernel gathers BF16 K/V rows; unchanged
+`nllb_attn_kv_bf16` attends each query to its packed sample-local prefix. Image
+blocks include future keys within the same block; text stays causal. Padding
+removes keys, not queries; fully masked query rows remain exactly zero.
+
+This implementation deliberately launches once per query and is a **slow
+diagnostic**, not a production image attention path. It allocates bounded linear
+scratch, refuses malformed metadata, wrong geometry/backend and stage order,
+and reuses the existing output GEMM without modifying any shared CUDA source.
+
+The exact SDPA gate **failed**: saved real-projection inputs differ at
+2,450/24,576 BF16 outputs; constructed random/high-logit/uniform cases differ at
+11,131/172,032. The same-input output GEMM is exact for all 196,608 outputs;
+composed output differences therefore inherit the attention discrepancy. All
+raw inputs, source snapshots and output pairs are retained. No threshold was
+widened and no full-block or generation qualification is inferred.
+
+Visibility controls remain useful independently of arithmetic precision:
+changing padded values or another sample's values changes zero protected outputs;
+fully masked rows have zero nonzero values. Incorrect causal-only, dense and
+query-padding masks differ at 19,888, 138,907 and 36,861 values respectively.
+The output-weight transpose control differs at 184,170 values. The shared CPU
+planner also matches the independent visibility oracle across 128 validity
+patterns and two samples. Six prelude tests and four circuit tests pass.
+
+The earlier LayerNorm and CPU cis mismatches remain open. Remaining block work
+includes gated residuals, the second norm/modulation and FFN composition, then
+full-transformer/encoder/VAE execution. LAB model registration remains unchanged;
+this increment adds no CUDA entry points and reuses existing kernel families.
