@@ -1,0 +1,364 @@
+{
+  "scope": "authored grader and isolation controls; no model-generated code evaluated",
+  "model_requests": 0,
+  "summary": {
+    "image_id": "sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3",
+    "image_repo_digests": [
+      "python@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3"
+    ],
+    "source_hashes": {
+      "corpus.py": "a5f23b838f869250be0a8aa8851ded20a4fa9e201416cda71e560d215413f0c0",
+      "container_driver.py": "624e76d9f283e538db88439010d64b0cdc5eeacd65c867732ec02b38846067ac",
+      "run.py": "5290646dc2cb0323f9987a023b4d8347eca7d70fdedf0e891891d5f8b302e7f6"
+    },
+    "model_requests": 0,
+    "executions": 12,
+    "passed": 4,
+    "scope": "authored controls only"
+  },
+  "semantic_cases": 31,
+  "controls": [
+    {
+      "task": "idempotent_ingest_edit",
+      "control": "conflicts_silently_ignored",
+      "expected_pass": false,
+      "grade": {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          true,
+          true,
+          false,
+          false,
+          true
+        ]
+      },
+      "candidate_sha256": "79e83fe576ffc959fd74b737fb3d5fa5a3efb30a1d21e0e3b175ff1b41b1f872"
+    },
+    {
+      "task": "idempotent_ingest_edit",
+      "control": "positive",
+      "expected_pass": true,
+      "grade": {
+        "passed": true,
+        "kind": "semantic_pass",
+        "cases": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "d3e1aea191868ebfceaa7c9b72d01582d3ebb1c053a28afdfc1c6cae7f93a8e4"
+    },
+    {
+      "task": "idempotent_ingest_edit",
+      "control": "sorts_by_sequence",
+      "expected_pass": false,
+      "grade": {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          false,
+          false,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "7319cd24a8c1d0d7e3f88b572adfb0fa061dfc4126db1dd6c3d4874edc06fbc9"
+    },
+    {
+      "task": "merge_intervals",
+      "control": "positive",
+      "expected_pass": true,
+      "grade": {
+        "passed": true,
+        "kind": "semantic_pass",
+        "cases": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "51db1c399b2737f2e0e4221ab8ef81765ef08a4aaf63097a46e03e77d82290fa"
+    },
+    {
+      "task": "merge_intervals",
+      "control": "sorts_input_in_place",
+      "expected_pass": false,
+      "grade": {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          false,
+          false,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "2cb06623d34c6492ac40b3a6f4bd69bc1c0e773dc9b967a7af15a190122a3be3"
+    },
+    {
+      "task": "merge_intervals",
+      "control": "touching_not_merged",
+      "expected_pass": false,
+      "grade": {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "9a495217a6ea8facef5c4eb7bc3b96ea7de243a248c22cdcbc471f6b7ffd8e72"
+    },
+    {
+      "task": "retry_delay_edit",
+      "control": "positive",
+      "expected_pass": true,
+      "grade": {
+        "passed": true,
+        "kind": "semantic_pass",
+        "cases": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "dd02ec69dd4096a1fa4635d09a06319ff817eefe93c468c6f5a883878ca2c555"
+    },
+    {
+      "task": "retry_delay_edit",
+      "control": "unicode_digits_accepted",
+      "expected_pass": false,
+      "grade": {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "fc7a3e91f36f1dba8730534808902c8ad134785bece2ffe095cbd7f6f2f11400"
+    },
+    {
+      "task": "retry_delay_edit",
+      "control": "zero_replaced_with_backoff",
+      "expected_pass": false,
+      "grade": {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          false,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "20ecf2f603a9a91ba01931d53c09643b286758202e1a4a4d59f8da9d0bb399dd"
+    },
+    {
+      "task": "stable_dependency_order",
+      "control": "cycle_silently_truncated",
+      "expected_pass": false,
+      "grade": {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          false,
+          false
+        ]
+      },
+      "candidate_sha256": "df3523ec872b9acb9d09f90a1496cf04c579ca25c8fa67ecd3baaf61b221cc87"
+    },
+    {
+      "task": "stable_dependency_order",
+      "control": "positive",
+      "expected_pass": true,
+      "grade": {
+        "passed": true,
+        "kind": "semantic_pass",
+        "cases": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "e160df9c4e2ac047b011e8d9684774b8429e3f1fb810bdeacbfa84b21a6251c4"
+    },
+    {
+      "task": "stable_dependency_order",
+      "control": "wrong_ready_order",
+      "expected_pass": false,
+      "grade": {
+        "passed": false,
+        "kind": "semantic_failure",
+        "cases": [
+          true,
+          false,
+          false,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      "candidate_sha256": "1b4595834d4747b7f7205cccc39da1221b2792efb03587c061cff7e208cf270b"
+    }
+  ],
+  "isolation": [
+    {
+      "control": "cpu_bound",
+      "exit_code": 137,
+      "failure": null,
+      "elapsed_seconds": 2.289524333085865,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "control": "exit_without_tests",
+      "exit_code": 0,
+      "failure": null,
+      "elapsed_seconds": 0.3312110840342939,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "control": "forged_success",
+      "exit_code": 0,
+      "failure": null,
+      "elapsed_seconds": 0.31782458280213177,
+      "stdout_bytes": 71,
+      "stderr_bytes": 0
+    },
+    {
+      "control": "isolation_facts",
+      "exit_code": 0,
+      "failure": null,
+      "elapsed_seconds": 0.346167708048597,
+      "stdout_bytes": 341,
+      "stderr_bytes": 0
+    },
+    {
+      "control": "stderr_bound",
+      "exit_code": 0,
+      "failure": "output_limit",
+      "elapsed_seconds": 0.33818583306856453,
+      "stdout_bytes": 0,
+      "stderr_bytes": 65536
+    },
+    {
+      "control": "stdout_bound",
+      "exit_code": 0,
+      "failure": "output_limit",
+      "elapsed_seconds": 0.3338995829690248,
+      "stdout_bytes": 65536,
+      "stderr_bytes": 0
+    },
+    {
+      "control": "wall_bound",
+      "exit_code": 137,
+      "failure": "wall_timeout",
+      "elapsed_seconds": 12.092982167145237,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    }
+  ],
+  "initial_probe_failure": {
+    "criterion": "only loopback interface exists",
+    "actual": false,
+    "reason": "Docker Desktop exposes inactive tunnel interfaces; replaced with inspected network-none mode plus route/connectivity controls; not a model result"
+  },
+  "additional_source_hashes": {
+    "prepare_requests.py": "3bc068e9fbcb693139b04d423711f2ace75615196c06289de04e07862ef78a23",
+    "test_isolation.py": "f75a0283b0d0416015c99dc0fb24320ac9645e3c0ff7b173a25a983fa3e01710"
+  },
+  "verified_container_configuration": {
+    "NetworkMode": "none",
+    "ReadonlyRootfs": true,
+    "Memory": 134217728,
+    "MemorySwap": 134217728,
+    "NanoCpus": 1000000000,
+    "PidsLimit": 32,
+    "CapDrop": [
+      "ALL"
+    ],
+    "SecurityOpt": [
+      "no-new-privileges:true"
+    ],
+    "LogConfig": {
+      "Type": "none",
+      "Config": {}
+    },
+    "Tmpfs": {
+      "/tmp": "rw,noexec,nosuid,nodev,size=16m,mode=1777"
+    },
+    "Ulimits": [
+      {
+        "Name": "cpu",
+        "Hard": 2,
+        "Soft": 2
+      },
+      {
+        "Name": "fsize",
+        "Hard": 1048576,
+        "Soft": 1048576
+      },
+      {
+        "Name": "nofile",
+        "Hard": 64,
+        "Soft": 64
+      }
+    ]
+  }
+}
