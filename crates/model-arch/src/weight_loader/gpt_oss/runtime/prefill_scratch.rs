@@ -5,6 +5,7 @@ use super::*;
 /// At most128 explicitly requested tokens of one sequence; never a multi-request batch.
 pub struct PrefillScratch {
     allocation: DevicePtr,
+    pub(super) tc: Option<super::tc_scratch::TcScratch>,
     stream: Option<u64>,
     pub(super) expert_gemm: metrale_gpu_runtime::gpu::KernelHandle,
     pub(super) expert_reuse_wide: metrale_gpu_runtime::gpu::KernelHandle,
@@ -89,6 +90,7 @@ impl PrefillScratch {
             .collect();
         Ok(Self {
             allocation,
+            tc: None,
             stream: None,
             expert_gemm,
             expert_bias,
@@ -117,11 +119,33 @@ impl PrefillScratch {
             max_blocks,
         })
     }
+    /// 2026-10-07: Explicit diagnostic reduction policy, only for full128-token chunks.
+    /// This never changes serving admission or the default constructor.
+    pub fn new_packed_tc_diagnostic(gpu: &dyn GpuBackend, max_blocks: usize) -> Result<Self> {
+        let mut scratch = Self::new(gpu, 128, max_blocks)?;
+        match super::tc_scratch::TcScratch::new(gpu) {
+            Ok(tc) => {
+                scratch.tc = Some(tc);
+                Ok(scratch)
+            }
+            Err(error) => {
+                scratch.release(gpu, gpu.default_stream())?;
+                Err(error)
+            }
+        }
+    }
+    /// 2026-10-07: Extra allocation is explicit, derived from the allocator's fixed layout.
+    pub fn packed_tc_extra_bytes() -> usize {
+        super::tc_scratch::TcScratch::required_bytes()
+    }
     /// 2026-10-07: Synchronize before freeing; caller must use the work stream.
     pub fn release(&mut self, gpu: &dyn GpuBackend, stream: u64) -> Result<()> {
         self.check_stream(stream)?;
         if !self.allocation.is_null() {
             gpu.synchronize(stream)?;
+            if let Some(tc) = &mut self.tc {
+                tc.release(gpu)?;
+            }
             gpu.free(self.allocation)?;
             self.allocation = DevicePtr::NULL;
         }
@@ -142,6 +166,50 @@ impl PrefillScratch {
         self.check_stream(stream)?;
         self.stream = Some(stream);
         Ok(())
+    }
+    /// 2026-10-07: Read the latest successful chunk before scratch is reused by another layer.
+    /// The caller supplies that layer state and the original forward stream.
+    pub fn diagnostic_router_snapshot(
+        &self,
+        state: &dyn LayerState,
+        start: usize,
+        rows: usize,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<Vec<DiagnosticTensor>> {
+        self.check_stream(stream)?;
+        let state = state
+            .as_any()
+            .downcast_ref::<State>()
+            .context("GPT state type")?;
+        ensure!(
+            !self.allocation.is_null()
+                && self.stream == Some(stream)
+                && rows > 0
+                && rows <= self.rows
+                && !state.failed
+                && !state.allocation.is_null()
+                && start.checked_add(rows) == Some(state.next_position),
+            "GPT chunk snapshot is stale, failed or unreadable"
+        );
+        [
+            ("post_attention_norm", self.norm, 2880, "BF16", 2),
+            ("router_logits", self.logits, 32, "BF16", 2),
+            ("router_scores", self.scores, 32, "BF16", 2),
+            ("router_ids", self.ids, 4, "U32", 4),
+        ]
+        .into_iter()
+        .map(|(name, ptr, cols, dtype, width)| {
+            let mut bytes = vec![0; rows * cols * width];
+            gpu.copy_d2h_on_stream(ptr, &mut bytes, stream)?;
+            Ok(DiagnosticTensor {
+                name,
+                dtype,
+                shape: vec![rows, cols],
+                bytes,
+            })
+        })
+        .collect()
     }
     fn check_stream(&self, stream: u64) -> Result<()> {
         ensure!(

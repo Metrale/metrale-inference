@@ -17,6 +17,8 @@ mod prefill;
 mod prefill_experts;
 mod prefill_scratch;
 mod serving_prefill;
+mod tc_plan;
+mod tc_scratch;
 pub use prefill_scratch::PrefillScratch;
 mod kernels;
 mod state;

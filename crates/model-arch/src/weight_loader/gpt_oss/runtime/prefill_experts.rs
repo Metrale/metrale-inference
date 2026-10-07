@@ -2,16 +2,20 @@
 //! 2026-10-07: Candidate token-grid MoE, retaining all scalar arithmetic stages.
 use super::*;
 impl GptOssLayer {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn chunk_experts(
         &self,
         hidden: DevicePtr,
         tokens: u32,
+        tc_rows: Option<u32>,
         s: &PrefillScratch,
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<()> {
         let gate = self.weights.gate_up;
-        Self::chunk_expert_projection(gpu, gate, s.norm, s.gate_up, tokens, false, s, stream)?;
+        Self::chunk_expert_projection(
+            gpu, gate, s.norm, s.gate_up, tokens, tc_rows, false, s, stream,
+        )?;
         ops::gpt_oss_token_expert_bias(
             gpu,
             s.expert_bias,
@@ -37,6 +41,7 @@ impl GptOssLayer {
             s.activation,
             s.selected,
             tokens,
+            tc_rows,
             true,
             s,
             stream,
@@ -82,10 +87,19 @@ impl GptOssLayer {
         input: DevicePtr,
         output: DevicePtr,
         tokens: u32,
+        tc_rows: Option<u32>,
         per_slot_input: bool,
         s: &PrefillScratch,
         stream: u64,
     ) -> Result<()> {
+        if let Some(max_rows) = tc_rows {
+            ensure!(tokens == 128, "TC diagnostic requires full128 rows");
+            return s
+                .tc
+                .as_ref()
+                .context("TC diagnostic scratch missing")?
+                .projection(gpu, weight, input, output, max_rows, per_slot_input, stream);
+        }
         let g = ops::GptOssTokenExperts {
             tokens,
             rows: weight.rows,

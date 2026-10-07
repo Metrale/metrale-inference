@@ -1,3 +1,16 @@
 # 2026-10-07: True MXFP4 leaf; preserves the independently tested FP32 attention policy.
+[modules]
+# Diagnostic module identity is distinct from the legacy common MoE module.
+moe_w4a16_grouped_gemm = "moe_w4a16_grouped_gemm"
+
+[sources]
+# The diagnostic constructor explicitly selects the pinned-GPT E8M0 policy;
+# existing source entry points retain their original policy. No serving default changes.
+use = [
+  "deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu",
+  "deepseek-v4-flash/nvfp4/moe_v41.cu",
+]
+
 [shadow]
 paged_decode_attn = "Parameterizes the shared BF16 paged sink attention implementation for GPT-OSS head dimension 64."
+moe_w4a16_grouped_gemm = "Imports the shared grouped BF16 MMA family with an explicit pinned-GPT MXFP4 scale policy for opt-in diagnostics; the original native expert path and serving policy remain unchanged."

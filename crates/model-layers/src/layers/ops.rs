@@ -349,3 +349,6 @@ pub use wide_prefill::*;
 
 mod gpt_oss_reuse_experts;
 pub use gpt_oss_reuse_experts::*;
+
+// 2026-10-07: Explicit packed TC diagnostic wrappers.
+pub mod gpt_oss_packed_tc;

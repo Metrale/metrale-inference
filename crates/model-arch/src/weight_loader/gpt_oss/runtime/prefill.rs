@@ -275,7 +275,18 @@ impl GptOssLayer {
         if Self::uses_expert_reuse(rows as u32) {
             gpu.copy_h2d_async(&plan.bytes(), s.expert_plan, stream)?;
         }
-        self.chunk_experts(hidden, rows as u32, s, gpu, stream)?;
+        let tc_rows = if rows == 128 {
+            if let Some(tc) = &s.tc {
+                let tc_plan = super::tc_plan::TcPlan::new(&ids)?;
+                tc.upload_plan(gpu, &tc_plan, stream)?;
+                Some(tc_plan.max_rows)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.chunk_experts(hidden, rows as u32, tc_rows, s, gpu, stream)?;
         Ok(())
     }
 }

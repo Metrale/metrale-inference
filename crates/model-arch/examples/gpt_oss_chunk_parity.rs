@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! 2026-10-07: Isolated scalar/chunk hidden, cache and following-decode exact gate.
-//! `MODEL MODULE_MANIFEST TOKEN_IDS OUTPUT_DIR [CAPACITY16|64|128]`. No serving or speed claim.
+//! `MODEL MODULE_MANIFEST TOKEN_IDS OUTPUT_DIR [CAPACITY16|64|128] [packed-tc]`. No serving or speed claim.
+#[cfg(feature = "cuda")]
+#[path = "gpt_oss_chunk_parity/head.rs"]
+mod head;
+#[cfg(feature = "cuda")]
+#[path = "gpt_oss_chunk_parity/routers.rs"]
+mod routers;
 #[cfg(not(feature = "cuda"))]
 fn main() -> anyhow::Result<()> {
     anyhow::bail!("requires CUDA")
@@ -19,8 +25,8 @@ fn main() -> anyhow::Result<()> {
     use std::path::PathBuf;
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     ensure!(
-        (4..=5).contains(&args.len()),
-        "MODEL MANIFEST TOKENS OUTPUT [CAPACITY]"
+        (4..=6).contains(&args.len()),
+        "MODEL MANIFEST TOKENS OUTPUT [CAPACITY] [packed-tc]"
     );
     let capacity = args
         .get(4)
@@ -31,11 +37,20 @@ fn main() -> anyhow::Result<()> {
         [16, 64, 128].contains(&capacity),
         "diagnostic capacity must be16,64,128"
     );
-    let widths: &[usize] = match capacity {
-        16 => &[0, 1, 2, 8, 16, 15],
-        64 => &[0, 16, 31, 63, 64],
-        128 => &[0, 16, 31, 64, 127, 128],
-        _ => unreachable!(),
+    let tc = args.get(5).is_some();
+    ensure!(
+        !tc || (args[5] == "packed-tc" && capacity == 128),
+        "TC diagnostic requires explicit packed-tc and capacity128"
+    );
+    let widths: &[usize] = if tc {
+        &[0, 64, 128]
+    } else {
+        match capacity {
+            16 => &[0, 1, 2, 8, 16, 15],
+            64 => &[0, 16, 31, 63, 64],
+            128 => &[0, 16, 31, 64, 127, 128],
+            _ => unreachable!(),
+        }
     };
     let model = PathBuf::from(&args[0]);
     let manifest_path = PathBuf::from(&args[1]);
@@ -104,7 +119,11 @@ fn main() -> anyhow::Result<()> {
         &gpu,
     )?;
     let hidden = gpu.alloc(capacity * 5760)?;
-    let mut scratch = PrefillScratch::new(&gpu, capacity, pages)?;
+    let mut scratch = if tc {
+        PrefillScratch::new_packed_tc_diagnostic(&gpu, pages)?
+    } else {
+        PrefillScratch::new(&gpu, capacity, pages)?
+    };
     let poison: Vec<u8> = (0..pool_bytes / 2)
         .flat_map(|_| 0x7fc0u16.to_le_bytes())
         .collect();
@@ -205,6 +224,20 @@ fn main() -> anyhow::Result<()> {
                         stream,
                     )?;
                 }
+                if tc {
+                    let snapshots = if width == 0 || start == prefix {
+                        layer.diagnostic_snapshot(state.as_ref(), start, &gpu, stream)?
+                    } else {
+                        scratch.diagnostic_router_snapshot(
+                            state.as_ref(),
+                            start,
+                            rows,
+                            &gpu,
+                            stream,
+                        )?
+                    };
+                    routers::save(&output, width, start, rows, li, snapshots)?;
+                }
                 let mut bytes = vec![0u8; rows * 5760];
                 gpu.copy_d2h_on_stream(hidden, &mut bytes, stream)?;
                 for t in 0..rows {
@@ -235,6 +268,18 @@ fn main() -> anyhow::Result<()> {
             .chunks_exact(2)
             .filter(|v| u16::from_le_bytes([v[0], v[1]]) & 0x7f80 == 0x7f80)
             .count();
+        if tc {
+            let logits = head::logits(
+                &gpu,
+                &trace,
+                bound.final_norm.ptr(),
+                bound.head.ptr(),
+                config.vocab_size,
+                config.rms_norm_eps as f32,
+                stream,
+            )?;
+            std::fs::write(output.join(format!("width{width}.logits.bf16")), logits)?;
+        }
         std::fs::write(output.join(format!("width{width}.hidden.bf16")), &trace)?;
         std::fs::write(output.join(format!("width{width}.cache.bf16")), &kv)?;
         cases.push(serde_json::json!({"width":width,"hidden_byte_mismatches":hidden_mismatches,"cache_byte_mismatches":cache_mismatches,"nonfinite":nonfinite,"following_decode_position":prefix}));
@@ -342,7 +387,7 @@ fn main() -> anyhow::Result<()> {
     let passed = cases.iter().all(|r| {
         r["hidden_byte_mismatches"] == 0 && r["cache_byte_mismatches"] == 0 && r["nonfinite"] == 0
     });
-    let report = serde_json::json!({"scope":"diagnostic single-sequence chunks; no production admission or speed qualification","capacity":capacity,"scratch_bytes":PrefillScratch::required_bytes(capacity,pages)?,"tokens":tokens,"module_manifest":manifest,"future_cache_fill":"BF16 NaN","admission_controls":"empty/oversize/nonsequential/overflow/stream mismatch/released scratch; allocation failure poisons state","cases":cases,"passed":passed});
+    let report = serde_json::json!({"scope":"diagnostic single-sequence chunks; no production admission or speed qualification","expert_policy":if tc {"packed-TC full128 chunks; tails legacy; distinct reduction diagnostic"}else{"legacy"},"tc_extra_bytes":if tc{PrefillScratch::packed_tc_extra_bytes()}else{0},"capacity":capacity,"scratch_bytes":PrefillScratch::required_bytes(capacity,pages)?,"tokens":tokens,"module_manifest":manifest,"future_cache_fill":"BF16 NaN","admission_controls":"empty/oversize/nonsequential/overflow/stream mismatch/released scratch; allocation failure poisons state","cases":cases,"passed":passed});
     scratch.release(&gpu, stream)?;
     let mut released_state = layers[0].alloc_state(&gpu)?;
     ensure!(
