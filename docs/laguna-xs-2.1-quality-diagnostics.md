@@ -153,3 +153,27 @@ never-ending plan reader stops at32769 bytes, verify a known SHA256 vector, and
 reject directories/devices/FIFOs. Earlier refusal controls each use fresh capture
 state so the sticky error cannot hide a missing individual check. All12 local
 controls pass; this remains host/mock evidence, with no live capture claim.
+
+## Completed unchanged-server U — 2026-10-07
+
+The six-hour run completed at 06:12:42 UTC with 650 cycles and 4,551 arithmetic
+responses. No transport/failure event was recorded, but the quality gate failed:
+1,665 responses violated integer-only formatting. Explanatory responses remain
+unscored for whole-response correctness.
+
+After confirming the soak process exited, the original server stayed running.
+Its executable matched the original SHA-256 `84224f39b1f51f8bdfc45b68923fee43cd3c999054db1adb15175be334184a0f`.
+The 66-request U repeatability run produced 19 exact and 47 explanatory/unscored
+responses, with four variable input groups at client concurrency 4. Actual
+scheduler membership is still unobserved. No capture or restart occurred.
+
+All six schema-constrained arithmetic responses contained valid JSON and the
+correct integer, but each reported `finish_reason="length"` after 6–9 visible
+tokens against a 128-token budget. Strict API acceptance remains 0/6. The server
+logged a budget-decrement-at-zero warning for each response, despite starting
+with 127 remaining tokens. This suggests invisible/suppressed-token processing
+needs investigation; a wire-label correction alone is not justified.
+
+The source-bound summary and raw-receipt hashes are in
+[`laguna-post-soak-U.json`](model-evidence/laguna-post-soak-U.json). The exact
+checkpoint remains [poolside/Laguna-XS-2.1-NVFP4 at d32afde8b09af1539b49ff96ff5551c674485f8e](https://huggingface.co/poolside/Laguna-XS-2.1-NVFP4/tree/d32afde8b09af1539b49ff96ff5551c674485f8e).

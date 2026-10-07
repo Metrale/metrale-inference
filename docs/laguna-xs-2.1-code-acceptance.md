@@ -99,3 +99,19 @@ exact-format and explanatory-response results separately.
 A future true agentic phase should add a bounded edit/test feedback loop inside
 the same isolation boundary and validate tool calls. These one-shot code-edit
 requests do not establish that capability.
+
+## First native model execution — 2026-10-07
+
+After the soak finished, the unchanged original server answered all 12 requests:
+four tasks across three repeats. Docker-isolated semantic grading passed 9/12.
+Merge intervals, dependency ordering and idempotent ingestion passed every case
+on every repeat. Retry-delay edits failed on all repeats for three explicit
+requirements: 5,000 leading zeros, ASCII-only digits, and rejecting Boolean
+attempts. The failures remain recorded rather than weakening the corpus.
+
+All 12 responses used a single code fence. That format violation is separate
+from semantics; the unambiguous code body was graded only inside the pinned
+container. No generated code ran in the host interpreter. This establishes a
+bounded one-shot coding result, not broad coding or agentic qualification.
+See [`laguna-post-soak-U.json`](model-evidence/laguna-post-soak-U.json) for the
+exact checkpoint, executable identity and raw evidence hashes.
