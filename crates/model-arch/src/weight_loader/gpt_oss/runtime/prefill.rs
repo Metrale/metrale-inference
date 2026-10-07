@@ -267,19 +267,13 @@ impl GptOssLayer {
         )?;
         let mut ids = vec![0u8; rows * 16];
         gpu.copy_d2h_on_stream(s.ids, &mut ids, stream)?;
-        for row in ids.chunks_exact(16) {
-            let values: Vec<_> = row
-                .chunks_exact(4)
-                .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
-                .collect();
-            ensure!(
-                values.iter().all(|&v| v < 32)
-                    && values
-                        .iter()
-                        .enumerate()
-                        .all(|(i, v)| !values[..i].contains(v)),
-                "GPT chunk invalid/duplicate experts"
-            );
+        let ids: Vec<_> = ids
+            .chunks_exact(4)
+            .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+            .collect();
+        let plan = super::expert_plan::ExpertTokenPlan::new(&ids)?;
+        if Self::uses_expert_reuse(rows as u32) {
+            gpu.copy_h2d_async(&plan.bytes(), s.expert_plan, stream)?;
         }
         self.chunk_experts(hidden, rows as u32, s, gpu, stream)?;
         Ok(())

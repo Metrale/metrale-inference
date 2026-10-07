@@ -102,3 +102,51 @@ extern "C" __global__ void gpt_oss_mxfp4_selected_tokens_bf16(
         input + size_t(slot) * input_slot_stride + size_t(token) * cols,
         output + output_base, rows, cols);
 }
+
+// 2026-10-07: Host-validated complete unique token/slot plan; up to four
+// independent accumulators share each decoded weight, preserving dot order.
+extern "C" __global__ void gpt_oss_mxfp4_reuse_tokens_bf16(
+    const unsigned char* blocks,const unsigned char* scales,
+    const __nv_bfloat16* input,const unsigned* ids,const unsigned* plan,
+    __nv_bfloat16* output,unsigned rows,unsigned cols,unsigned tokens,unsigned input_stride) {
+    unsigned expert=blockIdx.y,group=blockIdx.z*4;
+    if(expert>=32)return;
+    unsigned count=plan[expert*(tokens+1)];
+    unsigned row=blockIdx.x*4+threadIdx.x/32,lane=threadIdx.x&31;
+    if(row>=rows)return;
+    bool valid=count<=tokens;
+    if(valid)for(unsigned j=0;j<count;++j){
+        unsigned entry=plan[expert*(tokens+1)+1+j];
+        valid &= entry<tokens*4;
+        if(entry<tokens*4)valid &= ids[entry]==expert;
+        for(unsigned k=0;k<j;++k)valid &= entry!=plan[expert*(tokens+1)+1+k];
+    }
+    if(!valid){
+        if(!lane&&!group)for(unsigned t=0;t<tokens;++t)for(unsigned slot=0;slot<4;++slot)
+            if(ids[t*4+slot]==expert)output[(size_t(slot)*tokens+t)*rows+row]=__float2bfloat16_rn(nanf(""));
+        return;
+    }
+    if(group>=count)return;
+    unsigned active=min(4U,count-group),entry[4];float accum[4]={0,0,0,0};
+    #pragma unroll
+    for(unsigned j=0;j<4;++j)if(j<active)entry[j]=plan[expert*(tokens+1)+1+group+j];
+    const unsigned char* w=blocks+size_t(expert)*rows*(cols/2);
+    const unsigned char* s=scales+size_t(expert)*rows*(cols/32);
+    for(unsigned col=lane;col<cols;col+=32){
+        unsigned char byte=w[size_t(row)*(cols/2)+col/2];
+        unsigned char code=(col&1)?byte>>4:byte&15;
+        float weight=gpt_oss_unpack(code,s[size_t(row)*(cols/32)+col/32]);
+        #pragma unroll
+        for(unsigned j=0;j<4;++j)if(j<active){
+            unsigned token=entry[j]/4,slot=entry[j]%4;
+            float value=__bfloat162float(input[size_t(slot)*input_stride+size_t(token)*cols+col]);
+            accum[j]=fmaf(weight,value,accum[j]);
+        }
+    }
+    #pragma unroll
+    for(unsigned j=0;j<4;++j)if(j<active){
+        for(unsigned shift=16;shift;shift>>=1)accum[j]+=__shfl_down_sync(0xffffffffU,accum[j],shift);
+        if(!lane){unsigned token=entry[j]/4,slot=entry[j]%4;
+            output[(size_t(slot)*tokens+token)*rows+row]=__float2bfloat16_rn(accum[j]);}
+    }
+}

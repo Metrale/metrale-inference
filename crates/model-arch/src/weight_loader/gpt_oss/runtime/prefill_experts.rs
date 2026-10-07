@@ -11,22 +11,7 @@ impl GptOssLayer {
         stream: u64,
     ) -> Result<()> {
         let gate = self.weights.gate_up;
-        ops::gpt_oss_mxfp4_token_experts(
-            gpu,
-            s.expert_gemm,
-            gate.blocks,
-            gate.scales,
-            s.norm,
-            s.ids,
-            s.gate_up,
-            &ops::GptOssTokenExperts {
-                tokens,
-                rows: gate.rows,
-                cols: gate.cols,
-                per_slot_input: false,
-            },
-            stream,
-        )?;
+        Self::chunk_expert_projection(gpu, gate, s.norm, s.gate_up, tokens, false, s, stream)?;
         ops::gpt_oss_token_expert_bias(
             gpu,
             s.expert_bias,
@@ -46,20 +31,14 @@ impl GptOssLayer {
             stream,
         )?;
         let down = self.weights.down;
-        ops::gpt_oss_mxfp4_token_experts(
+        Self::chunk_expert_projection(
             gpu,
-            s.expert_gemm,
-            down.blocks,
-            down.scales,
+            down,
             s.activation,
-            s.ids,
             s.selected,
-            &ops::GptOssTokenExperts {
-                tokens,
-                rows: down.rows,
-                cols: down.cols,
-                per_slot_input: true,
-            },
+            tokens,
+            true,
+            s,
             stream,
         )?;
         ops::gpt_oss_token_expert_bias(
@@ -91,5 +70,53 @@ impl GptOssLayer {
             tokens * 2880,
             stream,
         )
+    }
+    // 2026-10-07: Only the measured full-chunk shape uses weight reuse; tails retain token grids.
+    pub(super) fn uses_expert_reuse(tokens: u32) -> bool {
+        tokens == 16
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn chunk_expert_projection(
+        gpu: &dyn GpuBackend,
+        weight: weights::Packed,
+        input: DevicePtr,
+        output: DevicePtr,
+        tokens: u32,
+        per_slot_input: bool,
+        s: &PrefillScratch,
+        stream: u64,
+    ) -> Result<()> {
+        let g = ops::GptOssTokenExperts {
+            tokens,
+            rows: weight.rows,
+            cols: weight.cols,
+            per_slot_input,
+        };
+        if Self::uses_expert_reuse(tokens) {
+            ops::gpt_oss_mxfp4_reuse_experts(
+                gpu,
+                s.expert_reuse,
+                weight.blocks,
+                weight.scales,
+                input,
+                s.ids,
+                s.expert_plan,
+                output,
+                &g,
+                stream,
+            )
+        } else {
+            ops::gpt_oss_mxfp4_token_experts(
+                gpu,
+                s.expert_gemm,
+                weight.blocks,
+                weight.scales,
+                input,
+                s.ids,
+                output,
+                &g,
+                stream,
+            )
+        }
     }
 }

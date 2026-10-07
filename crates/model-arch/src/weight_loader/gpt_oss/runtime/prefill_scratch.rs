@@ -7,6 +7,8 @@ pub struct PrefillScratch {
     allocation: DevicePtr,
     stream: Option<u64>,
     pub(super) expert_gemm: metrale_gpu_runtime::gpu::KernelHandle,
+    pub(super) expert_reuse: metrale_gpu_runtime::gpu::KernelHandle,
+    pub(super) expert_plan: DevicePtr,
     pub(super) expert_bias: metrale_gpu_runtime::gpu::KernelHandle,
     pub(super) gate_up: DevicePtr,
     pub(super) activation: DevicePtr,
@@ -56,10 +58,12 @@ impl PrefillScratch {
             4 * 5760,
             5760,
         ];
-        Ok(widths
+        let mut sizes: Vec<usize> = widths
             .iter()
             .map(|w| (rows * w).next_multiple_of(16))
-            .collect())
+            .collect();
+        sizes.push((32 * (rows + 1) * 4).next_multiple_of(16));
+        Ok(sizes)
     }
     /// 2026-10-07: The same allocation geometry is charged before KV pool sizing.
     pub fn required_bytes(rows: usize, max_blocks: usize) -> Result<usize> {
@@ -69,6 +73,7 @@ impl PrefillScratch {
         let sizes = Self::sizes(rows, max_blocks)?;
         let expert_gemm = gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_selected_tokens_bf16")?;
         let expert_bias = gpu.kernel("gpt_oss_expert_ops", "gpt_oss_selected_bias_tokens_bf16")?;
+        let expert_reuse = gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_reuse_tokens_bf16")?;
         let allocation = gpu.alloc(sizes.iter().sum())?;
         let mut offset = 0;
         let p: Vec<_> = sizes
@@ -84,6 +89,8 @@ impl PrefillScratch {
             stream: None,
             expert_gemm,
             expert_bias,
+            expert_reuse,
+            expert_plan: p[18],
             gate_up: p[14],
             activation: p[15],
             selected: p[16],

@@ -12,7 +12,7 @@ pub struct GptOssTokenExperts {
     pub per_slot_input: bool,
 }
 impl GptOssTokenExperts {
-    fn counts(&self) -> Result<(u32, u32, u64)> {
+    pub(super) fn counts(&self) -> Result<(u32, u32, u64)> {
         ensure!(
             (1..=16).contains(&self.tokens)
                 && self.rows > 0
@@ -114,7 +114,7 @@ pub fn gpt_oss_token_expert_bias(
         .arg_u32(tokens)
         .launch(stream)
 }
-fn range(ptr: DevicePtr, bytes: u64, align: u64) -> Result<(u64, u64)> {
+pub(super) fn range(ptr: DevicePtr, bytes: u64, align: u64) -> Result<(u64, u64)> {
     ensure!(
         !ptr.is_null() && ptr.0.is_multiple_of(align),
         "GPT token expert null/misaligned buffer"
@@ -126,7 +126,7 @@ fn range(ptr: DevicePtr, bytes: u64, align: u64) -> Result<(u64, u64)> {
             .context("GPT token expert address overflow")?,
     ))
 }
-fn separate(a: (u64, u64), b: (u64, u64)) -> Result<()> {
+pub(super) fn separate(a: (u64, u64), b: (u64, u64)) -> Result<()> {
     ensure!(
         a.1 <= b.0 || b.1 <= a.0,
         "GPT token expert output aliases input"

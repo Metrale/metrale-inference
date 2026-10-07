@@ -346,3 +346,6 @@ pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;
 pub use w8a16_tc_rows::*;
 pub use wide_prefill::*;
+
+mod gpt_oss_reuse_experts;
+pub use gpt_oss_reuse_experts::*;

@@ -272,3 +272,64 @@ its helper-only source overlay, matching full traces, passing API receipts and
 both failed timing gates are retained. No resource or instruction-cost cause is
 claimed without a separate profile. Primitive equivalence alone does not
 establish a useful performance change.
+
+## Full-chunk expert-weight reuse (2026-10-07)
+
+The next bounded candidate groups token/slot assignments by expert for full
+sixteen-token chunks. One weight decode feeds up to four independent accumulators;
+each preserves its original column FMA and warp-reduction order. Bias, activation
+and ascending-expert-ID weighted reduction retain their BF16 boundaries. Smaller
+chunks use the existing token-grid path: isolated kernel screening showed reuse
+can lose on small groups, so it is not a blanket replacement.
+
+The host constructs a checked `[32,tokens+1]` plan with complete, unique coverage
+of every token/slot and matching expert IDs. Repeated experts across tokens are
+valid; duplicates within a token are refused. The public launch wrapper requires
+this validated plan; device bounds guards alone do not establish complete
+coverage. Persistent scratch adds 2,176 bytes per layer at sixteen tokens and is
+charged through the allocation geometry before KV sizing. At 8,192 pages the
+reservation is 2,837,120 bytes per layer, 68,090,880 across all 24 layers.
+
+The constructed gate covers 84 exact token-grid/reuse projection comparisons,
+63 invalid-ID refusals, and an adversarial weighted-reduction case. Reversed valid
+plans remain exact; omitted/duplicate plans and wrong token/slot strides are
+rejected or detected. All six full-model widths (scalar, 1, 2, 8, 16, 15) preserve
+every hidden-state and cache byte over the 251-token prompt and following decode.
+The release serving gate passes lifecycle 7/7, text quality 12/12, current blocking
+tools 9/9 and streamed tools 5/5. These checks do not close the existing reference
+numerical differences or establish certification.
+
+Two isolated release sessions ran incumbent→candidate and candidate→incumbent,
+with a warmup then three interleaved repetitions per case. Both passed the
+predeclared gates: exact final/counts/termination, no case total or TTFT regression
+above 2%, and geometric total speedup above 1.02×. Session reductions were
+**26.23% and 26.35%**. Combined six-request medians:
+
+| Workload (prompt/output tokens) | Token-grid total | Reuse total | Reuse first generated | Reuse first visible | Reuse decode tokens/s |
+|---|---:|---:|---:|---:|---:|
+| Arithmetic (81/20) | 1.451 s | 1.067 s | 0.593 s | 1.040 s | 40.51 |
+| Counting (87/63) | 2.572 s | 2.190 s | 0.659 s | 1.057 s | 40.66 |
+| Retrieval (304/24) | 4.165 s | 2.665 s | 2.090 s | 2.588 s | 40.42 |
+
+This is **26.27% lower geometric-mean total latency** (1.3564×) over token grids;
+decode is unchanged. The default remains scalar and chunk admission remains
+explicit and C1-only. This does not demonstrate competitiveness with the optimized
+reference, larger-context performance, multi-request batching, energy efficiency
+or benchmark certification.
+
+The frozen incumbent binary is
+`36fa12529b5b0e2916faa38ce78de452a509bc64c7074febba6c6905c23b3b0a`;
+the candidate is
+`43fb8d9548c2a95a2f1c8834389ce026ae5a6880616bb3b062e970f8345b77c6`.
+Candidate source is base `c7769b6` plus the source-receipt overlay; later test
+packaging, documentation, inventory and independent dense-capacity changes were
+not in that binary. The actual linked MXFP4 PTX is
+`28b0e9defde5a90dc67e6fcfcabb49b55b6a1e904ab766845c5a63e499bac4a6`,
+from CUDA source
+`971a91f81d0175a7dcc6aff55a39d1d0fe2482edd710457a808d398662f067ba`.
+The checkpoint remains
+[6cee5e81ee83917806bbde320786a8fb61efebee](https://huggingface.co/openai/gpt-oss-20b/tree/6cee5e81ee83917806bbde320786a8fb61efebee).
+Raw operands, outputs, source receipts, logs and request responses remain in the
+private `gpt/expert-reuse-candidate` evidence bundle. Linux CUDA Clippy, host plan
+and wrapper controls, generated inventory and SM90/SM100a compilation pass;
+other hardware has compilation evidence only, not performance qualification.

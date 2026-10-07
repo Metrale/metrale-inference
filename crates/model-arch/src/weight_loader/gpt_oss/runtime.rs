@@ -11,6 +11,7 @@ use metrale_model_layers::circuit_exec::CircuitBindings;
 use metrale_model_layers::{layer::*, layers::ops, weight_map::DenseWeight};
 mod diagnostics;
 pub use diagnostics::DiagnosticTensor;
+mod expert_plan;
 mod forward;
 mod prefill;
 mod prefill_experts;
