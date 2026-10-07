@@ -249,9 +249,9 @@ impl serde_json::ser::Formatter for PythonJsonFormatter {
     }
 }
 
-/// 2026-09-26: Load `jinja-templates/{model_type}.jinja`, looking under `repo_root` first and
+/// 2026-10-07: Load `jinja-templates/{model_type}.jinja`, looking under `repo_root` first and
 /// then relative to the working directory. A file that exists but cannot be read is logged
-/// and skipped.
+/// and skipped. Laguna then uses the same reviewed template embedded in the executable.
 pub(super) fn load_override_template(model_type: &str, repo_root: Option<&Path>) -> Option<String> {
     let candidates = [
         repo_root.map(|r| {
@@ -280,6 +280,16 @@ pub(super) fn load_override_template(model_type: &str, repo_root: Option<&Path>)
                 }
             }
         }
+    }
+    // 2026-10-07: Carry the reviewed Laguna override in standalone binaries too.
+    // Explicit files still take precedence; --disable-template-overrides bypasses this
+    // function entirely. One source file supplies both packaged and checkout launches.
+    if model_type == "laguna" {
+        tracing::info!("Using bundled Laguna Jinja template");
+        return Some(convert_python_jinja_to_minijinja(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../jinja-templates/laguna.jinja"
+        ))));
     }
     None
 }
