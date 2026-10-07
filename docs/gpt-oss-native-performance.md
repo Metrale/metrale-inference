@@ -134,6 +134,58 @@ python scripts/gpt_oss_c1_latency.py --base http://127.0.0.1:18842 \
 ```
 
 Keep the host idle through both arms; preserve failures and do not replace these
-small diagnostics with a certification claim. Batched prefill, safe deferred
-router-error reporting/device-resident selection, broader quality, concurrency,
-and energy qualification remain outstanding.
+small diagnostics with a certification claim. Further prefill expert batching, safe
+deferred router-error reporting/device-resident selection, broader quality,
+concurrency and energy qualification remain outstanding.
+
+
+## Explicit chunk prefill: two-session serving result (2026-10-07)
+
+Commit `c5dd000` adds `--experimental-gpt-oss-chunk-prefill` alongside
+`--experimental-gpt-oss`. The default remains scalar. This opt-in uses at most
+16 tokens per chunk, retains C1/BF16/single-device admission, refuses prefix
+adoption/graphs/disk swapping, and drains scratch on its actual work stream.
+The allocator's byte calculator reserves persistent layer scratch before KV
+sizing (30,437,376 bytes across 24 layers with 16-token pages).
+
+Two isolated sessions used the **same release binary**, scalar→chunk followed
+by chunk→scalar, with one warmup and three interleaved repetitions per workload
+in each arm. No other host builds, downloads or GPU jobs overlapped timed work.
+Both sessions passed the predeclared gate: exact expected finals and token
+counts, clean terminal/framing, no per-case total or first-generated latency
+regression above 2%, and geometric total speedup above 1.02×.
+
+| Workload (prompt/output tokens) | Scalar total | Chunk total | Scalar first generated | Chunk first generated | Chunk first visible |
+|---|---:|---:|---:|---:|---:|
+| Arithmetic (81/20) |2.058s|1.539s|1.588s|1.064s|1.512s|
+| Count 1–16 (87/63) |3.230s|2.671s|1.705s|1.138s|1.536s|
+| Retrieval (304/24) |6.512s|4.500s|5.940s|3.922s|4.423s|
+
+Values are medians of six measured requests per arm/workload. Geometric total
+latency reduction is **24.68%** combined; individual sessions show 24.79% and 24.53%.
+Decode remains roughly 40 tokens/s (combined case medians 40.22–40.57); this is a
+prefill improvement, not a decode speedup or competitive-engine certification.
+
+Serving checks also passed 7/7 SSE lifecycle cases with 16 grader controls,
+12/12 bounded text cases, and 5/5 current streamed-tool cases. The historical
+blocking-tool probe passes its eight current blocking/refusal cases; its old
+streamed-tool refusal expectation fails because that route is now intentionally
+supported. That original result remains retained alongside the separate current
+SSE gate. Quality tests used max context 2048; timings used 512. Neither changes
+the model's unresolved reference-numerical qualification.
+
+The frozen binary SHA-256 is
+`a6d3747502364d8bc54c51a989b1859ab3be31ea9720d7c292f48b6d1db9da5d`.
+Its archived source manifest records base `5c5bb60` plus the admission/reserve
+changes; committed heading/inventory edits are documentation-only follow-ups.
+The actual FP32 batch-projection PTX hash is
+`55c58057d071915772f86805d0100306953f12d9a3017dd75a491e0b0ca32684`.
+The first startup safely refused a stale copied Cargo PTX artifact. That failed
+binary/log remains preserved; rebuilding the candidate kernel artifacts cleanly
+and checking the staged-source hash plus actual symbol resolved it.
+
+All sessions use [openai/gpt-oss-20b at 6cee5e81ee83917806bbde320786a8fb61efebee](https://huggingface.co/openai/gpt-oss-20b/tree/6cee5e81ee83917806bbde320786a8fb61efebee),
+native packed MXFP4, BF16 KV/head, greedy low reasoning, localhost and a 0.85
+memory-utilization ceiling on one GB10. Raw SSE, source hashes, startup logs,
+predeclared plans and failures are retained privately. No learned weights or
+weight-derived fixture tensors are published here.
