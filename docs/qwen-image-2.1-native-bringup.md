@@ -170,6 +170,29 @@ Remaining lowering must preserve these distinctions:
   These need new circuit vocabulary/lowering before a complete native plan exists.
 
 Reference semantics are from the manifest-pinned Diffusers transformer, pipeline
-and VAE source files, with their upstream file hashes. Next implement exact
-component config mapping and validated weight bindings, then compare native
-intermediates at fixed inputs before optimizing or registering support.
+and VAE source files, with their upstream file hashes.
+
+## Visual transformer config and bindings (2026-10-07)
+
+`crates/model-weights/src/qwen_image21` now validates the exact pinned visual
+transformer config and binds all 297 tensors: nine global weights and nine per
+block across 32 blocks. Typed bindings retain borrowed storage, including separate
+FFN gate/up projections; they do not copy or repack weights. A component-local
+`WeightStore` adapter is available. Missing or unknown config fields, unsupported
+math settings, missing/extra tensor names, wrong shapes and non-BF16 weights fail
+before any binding is returned. All normative behavior remains unregistered.
+
+The fixture under `crates/model-weights/tests/fixtures/qwen-image21` was captured
+from the downloaded checkpoint's two safetensors headers using CPU reads only.
+Its provenance records each source shard's size, header SHA-256, declared upstream
+file SHA-256 and fixture hashes. All 297 names and shard assignments matched the
+pinned upstream index. The norm weights are BF16 storage; this does not permit
+lower-precision accumulation where the reference performs normalization in FP32.
+Tests use actual header metadata with missing, extra, transposed-shape and dtype
+mutations, and verify returned storage pointer identity. They do not allocate or
+claim execution of checkpoint tensors on a GPU.
+
+Next connect these validated bindings to native visual-transformer operators and
+compare intermediate values at fixed inputs. Encoder/VAE bindings, scheduler,
+state lifecycle, numerical parity, generation and serving registration remain
+open; this component binder alone does not establish native image support.
