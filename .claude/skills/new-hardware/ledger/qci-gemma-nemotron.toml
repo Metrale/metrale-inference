@@ -52,7 +52,7 @@ lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = "docs/qci/gemma-nemotron-working-log.md"
-notes = "supplement to Strix. Closed files: gemma-4-26B-A4B-it-UD-Q4_K_M.gguf 16947541728 bytes, mmproj-F16.gguf 1193058784 bytes. Reference-row llama-completion ctx 512 ngl 99 fit off: nvidia-smi memory.used peak 18080 MiB, baseline 1272 MiB. Device-free receipt still prints VRAM_UNMEASURED. Native row unmeasured. PARITY_UNMEASURED, COHERENCE_UNMEASURED, LICENSE_GOVERNING_TEXT_UNDECIDED, NATIVE_GEMMA4_CIRCUIT_REFUSED. rtx-3090 is not a kernels/DEVICES.toml id. No kernels/ampere on this tree."
+notes = "supplement to Strix. Closed files: gemma-4-26B-A4B-it-UD-Q4_K_M.gguf 16947541728 bytes, mmproj-F16.gguf 1193058784 bytes. Reference-row llama-completion ctx 512 ngl 99 fit off: nvidia-smi memory.used peak 18080 MiB, baseline 1272 MiB. Two later runs exited 0 with non-empty completions; memory.used peaks 17580 and 17529 MiB returned to 1403 and 1359 MiB. Device-free receipt still prints VRAM_UNMEASURED. Native row unmeasured. PARITY_UNMEASURED, COHERENCE_UNMEASURED, LICENSE_GOVERNING_TEXT_UNDECIDED, NATIVE_GEMMA4_CIRCUIT_REFUSED. rtx-3090 is not a kernels/DEVICES.toml id. No kernels/ampere on this tree."
 
 [[combo]]
 device = "strix-halo"
@@ -152,7 +152,7 @@ lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = "docs/qci/gemma-nemotron-working-log.md"
-notes = "P1. Does not block the four-model P0 exit. Distinct from Nemotron-3-Nano. MTP off. NVFP4 kernels are not assumed on this GPU. Closed file NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf 18898091584 bytes. Embedded chat template git blob matches d85b0c772f8fe585063847c5f6bf5ec48eb210be. Reference-row llama-completion ctx 512 ngl 99 fit off: nvidia-smi memory.used peak 19258 MiB, baseline 1272 MiB. Device-free receipt still prints VRAM_UNMEASURED. Native row unmeasured. PARITY_UNMEASURED, COHERENCE_UNMEASURED, NATIVE_GGUF_Q4_0_UNSERVED."
+notes = "P1. Does not block the four-model P0 exit. Distinct from Nemotron-3-Nano. MTP off. NVFP4 kernels are not assumed on this GPU. Closed file NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf 18898091584 bytes. Embedded chat template git blob matches d85b0c772f8fe585063847c5f6bf5ec48eb210be. Reference-row llama-completion ctx 512 ngl 99 fit off: nvidia-smi memory.used peak 19258 MiB, baseline 1272 MiB. Two later runs exited 0 with non-empty completions; memory.used peaks 19043 and 19338 MiB returned to 1377 and 1371 MiB. Device-free receipt still prints VRAM_UNMEASURED. Native row unmeasured. PARITY_UNMEASURED, COHERENCE_UNMEASURED, NATIVE_GGUF_Q4_0_UNSERVED."
 
 [[combo]]
 device = "strix-halo"

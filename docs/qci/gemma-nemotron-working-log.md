@@ -333,6 +333,65 @@ reference-row serve record only. The native row stays `VRAM_UNMEASURED`.
 `PARITY_UNMEASURED` and `COHERENCE_UNMEASURED` stay. Any timing line the
 runner printed was not copied.
 
+### Closed-file headers and reference completions
+
+Header keys read from the three closed files, and nothing else:
+
+Gemma `gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`: `general.architecture=gemma4`,
+`general.file_type=15`, `general.license=apache-2.0`,
+`general.license.link=https://ai.google.dev/gemma/docs/gemma_4_license`,
+`tokenizer.ggml.model=gemma4`, `tokenizer.ggml.bos_token_id=2`,
+`tokenizer.ggml.eos_token_id=106`, `tokenizer.chat_template` present
+(18924 bytes). `general.license.name` is absent. The apache-2.0 tag and
+the Gemma 4 license link are different grants, so
+`LICENSE_GOVERNING_TEXT_UNDECIDED` stays.
+
+`mmproj-F16.gguf`: `general.architecture=clip`, `general.type=mmproj`,
+`general.file_type=1`, `general.license=apache-2.0`, and the same Gemma 4
+license link. `general.license.name` is absent. Tokenizer model, bos, eos,
+token list, and chat template are absent.
+
+Nemotron `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf`:
+`general.architecture=nemotron_h_moe`, `general.file_type=2`,
+`general.license=other`, `general.license.name=openmdw-1.1`,
+`general.license.link=https://openmdw.ai/license/1-1/`,
+`tokenizer.ggml.model=gpt2`, `tokenizer.ggml.bos_token_id=1`,
+`tokenizer.ggml.eos_token_id=11`, `tokenizer.chat_template` present
+(9867 bytes). That license name and link are the same grant as the card.
+The card's license tag remains `other`.
+
+`llama-completion` 9637 (`aedb2a5e9`) then ran twice on each closed
+language pin, with `-c 512`, `-ngl 99`, `-fit off`, `-n 24`, and
+`-no-cnv`. Each process exited 0, loaded that pin, wrote a non-empty
+completion, and was not left at an interactive prompt. `nvidia-smi`
+`memory.used` on the RTX 3090 returned near that run's own baseline, and
+`http://127.0.0.1:8888/health` refused after each exit.
+
+- Gemma run 1: before 1412 MiB, peak 17580 MiB, after 1403 MiB.
+- Gemma run 2: before 1400 MiB, peak 17529 MiB, after 1359 MiB.
+- Nemotron run 1: before 1375 MiB, peak 19043 MiB, after 1377 MiB.
+- Nemotron run 2: before 1373 MiB, peak 19338 MiB, after 1371 MiB.
+
+The earlier reference peaks, Gemma 18080 MiB and Nemotron 19258 MiB from a
+baseline near 1272 MiB, stay the record of that shorter sample. This
+four-run sample does not replace them. Both samples are reference-row
+evidence. The device-free receipt still prints `VRAM_UNMEASURED`. The
+native row stays unmeasured. `PARITY_UNMEASURED` and
+`COHERENCE_UNMEASURED` stay. No timing line was copied. `support_label`
+stays `withheld`. Investor-mvp #44 and #58 stay open. Live QCI acceptance
+is not claimed. Strix stays `TARGET_NOT_MEASURED`.
+
+Investor-mvp #41, #42, and #46 were read again and are still open, so the
+receipts stay `BLOCKER UNFROZEN`. No schema was added.
+
+`met circuit venn` was run with target
+`unsloth/gemma-4-26B-A4B-it-GGUF` and with target
+`ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF`. Both exited 1.
+Each target is no recipe, checkpoint, or arch in `INSTANCES.toml`. Neither
+wrote a report. The NVFP4 Lightning instance was not used as a target.
+`NATIVE_GEMMA4_CIRCUIT_REFUSED`, `NO_VISION_LOADER`,
+`NO_AMPERE_KERNEL_CLASS`, and `NATIVE_GGUF_Q4_0_UNSERVED` stay.
+
 ## What the next agent should not do
 
 - Do not mark investor-mvp #44 or #58 done from this log.

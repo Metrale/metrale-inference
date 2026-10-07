@@ -297,9 +297,50 @@ mod tests {
         assert!(text.contains("row.native.coherence: BLOCKER COHERENCE_UNMEASURED"));
         assert!(text.contains("row.reference.parameters:"));
         assert!(text.contains("row.native.limitations:"));
+        assert!(text.contains("support_label: withheld"));
         assert!(!text.to_ascii_lowercase().contains("supported"));
         assert!(text.contains("tok_s: withheld until bit parity"));
+        assert!(text.contains("j_per_tok: withheld until bit parity"));
         assert!(text.contains("parity: BLOCKER PARITY_UNMEASURED"));
+        assert!(text.contains("COHERENCE_UNMEASURED"));
+    }
+
+    #[test]
+    fn caller_bytes_and_commit_do_not_clear_unmeasured_blockers() {
+        let filled = DumpInput {
+            case_id: "gemma-4-26b-a4b",
+            hardware: "rtx-3090",
+            weights_present: true,
+            weights_bytes: Some(16947541728),
+            vision_present: true,
+            vision_bytes: Some(1193058784),
+            runtime_commit: Some("caller-supplied-prose-sample"),
+        };
+        let text = render(&filled);
+        assert!(text.contains("weights_file_bytes: 16947541728"));
+        assert!(text.contains("vision_file_bytes: 1193058784"));
+        assert!(text.contains("support_label: withheld"));
+        assert!(text.contains("PARITY_UNMEASURED"));
+        assert!(text.contains("VRAM_UNMEASURED"));
+        assert!(text.contains("COHERENCE_UNMEASURED"));
+        assert!(text.contains("tok_s: withheld until bit parity"));
+        assert!(text.contains("j_per_tok: withheld until bit parity"));
+        assert!(text.contains("pin.runtime_commit: caller-supplied-prose-sample"));
+        let nemotron = DumpInput {
+            case_id: "nemotron-3.5-lightning-30b-a3b",
+            hardware: "rtx-3090",
+            weights_present: true,
+            weights_bytes: Some(18898091584),
+            vision_present: true,
+            vision_bytes: Some(1),
+            runtime_commit: Some("18080 MiB"),
+        };
+        let other = render(&nemotron);
+        assert!(other.contains("weights_file_bytes: 18898091584"));
+        assert!(other.contains("PARITY_UNMEASURED"));
+        assert!(other.contains("VRAM_UNMEASURED"));
+        assert!(other.contains("COHERENCE_UNMEASURED"));
+        assert!(other.contains("pin.runtime_commit: 18080 MiB"));
     }
 
     #[test]
