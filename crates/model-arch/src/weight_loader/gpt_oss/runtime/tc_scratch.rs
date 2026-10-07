@@ -32,7 +32,7 @@ impl TcScratch {
     }
     pub fn new(gpu: &dyn GpuBackend) -> Result<Self> {
         let project = gpu.kernel(
-            "moe_w4a16_grouped_gemm",
+            "gpt_oss_mxfp4_mma",
             "moe_w4a16_grouped_gemm_ptrtable_e8m0_gpt",
         )?;
         let reorder = gpu.kernel("moe_v41", "moe_v41_gather_rows")?;

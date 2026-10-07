@@ -532,3 +532,14 @@ envelope and rate-limit refund handler. Tested debug binary SHA-256:
 Exact tested source hashes, event timing, usage and failure receipts are retained
 privately. This is a bounded protocol/cancellation qualification, not broader
 model-quality, throughput, billing or multi-request concurrency qualification.
+
+### Diagnostic module registration
+
+The packed tensor-core diagnostic now uses the distinct `gpt_oss_mxfp4_mma`
+module, a thin include of the shared implementation. Its earlier same-stem
+source import shadowed the common expert module and failed the kernel-preservation
+CI guard. The new registration keeps the original common module available;
+no missing-symbol exemptions or guard changes were added. The focused test
+first reproduced the wrong resolved source, then passed with the shadow and
+literal-lookup suites (eight tests total). This linkage repair does not change
+the arithmetic or erase the diagnostic's recorded full-model parity failures.
