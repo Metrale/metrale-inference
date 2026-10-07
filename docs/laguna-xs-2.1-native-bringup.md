@@ -93,11 +93,20 @@ The source guard fixes correctness through an existing scalar fallback; no speed
 improvement is claimed. A matching parameterized strided vanilla kernel remains
 a possible optimization after profiling and parity tests.
 
-Current version-three soak snapshot: 302 arithmetic responses, 218 exact-format
-answers and 84 explanatory responses classified `unscored_format`. Of 129
-concurrency cycles, 80 met every exact-format check and 49 did not. Arithmetic,
-forced tool round-trip and streaming initial checks passed. The process remains
-running; this snapshot is neither a completed soak nor clean quality qualification.
+Version-three soak snapshot through cycle 302: 2,121 responses in completed
+request groups, with 1,353 exact-format answers and 768 explanatory responses
+classified `unscored_format`. Initial arithmetic, forced tool round-trip and
+streaming checks passed. The process remains running; this snapshot is neither
+a completed soak nor clean quality qualification.
+
+A read-only replay found eight (input, concurrency) groups with multiple distinct
+response texts, all at concurrency two or four. No single-request variation was
+observed in this snapshot. Batch composition/order differs across groups, so this
+does not establish a race or numerical cause. Snapshot SHA-256:
+`c89ed7074e97930f48a27242913a0562c3e02406b22a93ea3e310e65228b5612`.
+A controlled follow-up will repeat identical, mixed and permuted request groups
+after the soak, preserving full responses and explicit server identity. Client
+concurrency alone does not prove scheduler batch membership.
 
 A separate constructed GB10 kernel experiment confirmed the policy distinction:
 for two rows, two 128-wide heads, weights -1/0/1 and all-one inputs, the unchanged
