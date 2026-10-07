@@ -22,6 +22,8 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--nvcc', default='/usr/local/cuda-13.0/bin/nvcc')
     args = parser.parse_args()
+    if not (args.root / 'crates/model-arch/examples/gpt_oss_full_forward/counters.rs').is_file():
+        raise RuntimeError('Archived experiment: use source and full-forward example at revision 9484665ee9a7b2445358163ec0e1e33f8c16d166')
     source = args.root / 'crates/model-layers/tests/cuda/gpt_oss_mxfp4_midpoint.cu'
     incumbent = args.root / 'kernels/gb10/common/gpt_oss_mxfp4_gemv.cu'
     baseline = json.loads(args.baseline.read_text())
