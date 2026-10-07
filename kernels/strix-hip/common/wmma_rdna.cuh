@@ -22,10 +22,10 @@ typedef float wmma_v8f __attribute__((ext_vector_type(8)));
 #if defined(__gfx1200__) || defined(__gfx1201__)
 #define WMMA_FRAG_K 8
 typedef __bf16 wmma_bf16x __attribute__((ext_vector_type(8)));
-__device__ __forceinline__ int wmma_k0(int lane) {
+__device__ __forceinline__ unsigned int wmma_k0(unsigned int lane) {
     return 8 * (lane >> 4);
 }
-__device__ __forceinline__ int wmma_acc_row(int lane, int e) {
+__device__ __forceinline__ unsigned int wmma_acc_row(unsigned int lane, unsigned int e) {
     return e + 8 * (lane >> 4);
 }
 __device__ __forceinline__ wmma_v8f wmma_bf16(wmma_bf16x a, wmma_bf16x b, wmma_v8f c) {
@@ -34,10 +34,10 @@ __device__ __forceinline__ wmma_v8f wmma_bf16(wmma_bf16x a, wmma_bf16x b, wmma_v
 #else
 #define WMMA_FRAG_K 16
 typedef __bf16 wmma_bf16x __attribute__((ext_vector_type(16)));
-__device__ __forceinline__ int wmma_k0(int) {
+__device__ __forceinline__ unsigned int wmma_k0(unsigned int) {
     return 0;
 }
-__device__ __forceinline__ int wmma_acc_row(int lane, int e) {
+__device__ __forceinline__ unsigned int wmma_acc_row(unsigned int lane, unsigned int e) {
     return 2 * e + (lane >> 4);
 }
 __device__ __forceinline__ wmma_v8f wmma_bf16(wmma_bf16x a, wmma_bf16x b, wmma_v8f c) {

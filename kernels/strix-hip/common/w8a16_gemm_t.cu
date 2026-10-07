@@ -17,7 +17,8 @@
 
 #include <cuda_bf16.h>
 
-typedef __bf16 v16bf __attribute__((ext_vector_type(16)));
+#include "wmma_rdna.cuh"
+typedef wmma_bf16x v16bf;  // 2026-10-07: WMMA_FRAG_K wide (16 on gfx11, 8 on gfx12), see wmma_rdna.cuh
 typedef float  v8f   __attribute__((ext_vector_type(8)));
 
 #define M_TILE 64
@@ -104,13 +105,13 @@ __device__ __forceinline__ void w8a16_wmma_compute_t(
 ) {
     v16bf a;
     #pragma unroll
-    for (int i = 0; i < 16; i++) a[i] = (__bf16)(float)smem_A[warp_m_offset + (lane & 15)][i];
+    for (int i = 0; i < WMMA_FRAG_K; i++) a[i] = (__bf16)(float)smem_A[warp_m_offset + (lane & 15)][wmma_k0(lane) + i];
     #pragma unroll
     for (int nb = 0; nb < 4; nb++) {
         v16bf b;
         #pragma unroll
-        for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B[k][nb * 16 + (lane & 15)];
-        acc[nb] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc[nb]);
+        for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B[wmma_k0(lane) + k][nb * 16 + (lane & 15)];
+        acc[nb] = wmma_bf16(a, b, acc[nb]);
     }
 }
 
@@ -187,7 +188,7 @@ extern "C" __global__ void w8a16_gemm_t(
     for (int nb = 0; nb < 4; nb++) {
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row = cta_m + warp_m_offset + 2 * e + (lane_id >> 4);
+            unsigned int row = cta_m + warp_m_offset + wmma_acc_row(lane_id, e);
             unsigned int col = cta_n + nb * 16 + (lane_id & 15);
             if (row < M && col < N) C[row * N + col] = __float2bfloat16(acc[nb][e]);
         }

@@ -25,9 +25,10 @@
 // registers during the current tile's WMMA, then stored to the other buffer.
 // LDS: smem_A 2*128*18*2 + smem_B 2*16*66*2 + lut_s 256*4 = 14464 bytes.
 //
-// WMMA fragments, lane l: a[i] = smem_A[warp_m_offset + (l & 15)][i],
-// b[k] = smem_B[k][nb*16 + (l & 15)]; accumulator element e goes to row
-// warp_m_offset + 2e + (l >> 4), column nb*16 + (l & 15).
+// WMMA fragments, lane l: a[i] = smem_A[warp_m_offset + (l & 15)][k0 + i],
+// b[k] = smem_B[k0 + k][nb*16 + (l & 15)], i, k < WMMA_FRAG_K, k0 = wmma_k0(l);
+// accumulator element e goes to row warp_m_offset + wmma_acc_row(l, e), column
+// nb*16 + (l & 15) (2026-10-07: wmma_rdna.cuh; gfx11 unchanged).
 //
 // Owner: strix-hip kernels.
 // Invariants: none beyond the types.
@@ -49,7 +50,8 @@
 
 #include <cuda_bf16.h>
 
-typedef __bf16 v16bf __attribute__((ext_vector_type(16)));
+#include "wmma_rdna.cuh"
+typedef wmma_bf16x v16bf;  // 2026-10-07: WMMA_FRAG_K wide (16 on gfx11, 8 on gfx12), see wmma_rdna.cuh
 typedef float  v8f   __attribute__((ext_vector_type(8)));
 
 
@@ -235,14 +237,14 @@ __device__ __forceinline__ void mma_kstep(
 ) {
     v16bf a;
     #pragma unroll
-    for (int i = 0; i < 16; i++) a[i] = (__bf16)(float)smem_A[warp_m_offset + (lane & 15)][i];
+    for (int i = 0; i < WMMA_FRAG_K; i++) a[i] = (__bf16)(float)smem_A[warp_m_offset + (lane & 15)][wmma_k0(lane) + i];
     #pragma unroll
     for (int j = 0; j < PM4_SUBTILES_PER_WARP; j++) {
         unsigned int nb = n_sub_base + j;
         v16bf b;
         #pragma unroll
-        for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B[k][nb * 16 + (lane & 15)];
-        inner[j] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, inner[j]);
+        for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B[wmma_k0(lane) + k][nb * 16 + (lane & 15)];
+        inner[j] = wmma_bf16(a, b, inner[j]);
     }
 }
 
@@ -378,7 +380,7 @@ extern "C" __global__ void __launch_bounds__(PM4_THREADS, 2) moe_fp8_grouped_gem
             unsigned int nb = n_sub_base + j;
             #pragma unroll
             for (int e = 0; e < 8; e++) {
-                unsigned int row_local = cta_m_local + warp_m_offset + 2 * e + (lane_id >> 4);
+                unsigned int row_local = cta_m_local + warp_m_offset + wmma_acc_row(lane_id, e);
                 unsigned int col = cta_n + nb * 16 + (lane_id & 15);
                 if (row_local < M_expert && col < N) {
                     unsigned int out_row = (unsigned int)m_start + row_local;
