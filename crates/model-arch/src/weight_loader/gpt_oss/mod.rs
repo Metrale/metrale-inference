@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! 2026-10-07: GPT-OSS checkpoint binding, before executable model construction.
-//! No ModelWeightLoader or factory registration: these validated views do not
-//! establish that sink attention, biased MXFP4 MoE, or Harmony generation runs.
+//! 2026-10-07: GPT-OSS checkpoint binding and explicit eager execution.
+//! The experimental loader is not registered with the model factory. Binding and
+//! launch-contract tests do not establish numerical full-forward or generation parity.
 
 use anyhow::{Context, Result, ensure};
 use metrale_config::{GptOssPolicy, LayerType, ModelConfig};
@@ -9,6 +9,8 @@ use metrale_model_layers::weight_map::PackedMxfp4Experts;
 use metrale_model_weights::weights::WeightStore;
 use std::collections::BTreeSet;
 
+pub mod loader;
+pub mod runtime;
 mod tensors;
 pub use tensors::GptOssBf16Tensor;
 use tensors::{bind_bf16, checked_product};
