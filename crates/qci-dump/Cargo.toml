@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-qci-dump"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Device-free QCI receipts for the Gemma 4 and Nemotron 3.5 Lightning beachhead."
+
+# 2026-10-06: Host-only. No dependency here reaches CUDA, a weight file, or a GPU.
+# `qci-dump` is the dump entry. `metrale-server` calls `gate` on the chat path.
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde_json.workspace = true
+
+[lints]
+workspace = true

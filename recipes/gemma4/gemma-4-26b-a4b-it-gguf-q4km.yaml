@@ -1,0 +1,55 @@
+# 2026-10-06: Consumer reference pin for investor-mvp #44. Not a metrale serve.
+# runtime is not metrale, so the recipes job parses this file and does not launch it.
+# The Q4_K_M artifact and the F16 vision component were HEAD-checked on 2026-10-06
+# at revision c099eb48e663fd284577b04978a94ffccb261841:
+#   gemma-4-26B-A4B-it-UD-Q4_K_M.gguf  16947541728 bytes
+#   mmproj-F16.gguf                    1193058784 bytes
+# HF labels the card apache-2.0 and also links the Gemma 4 license. That conflict
+# is a named blocker, not a grant.
+
+recipe_version: "2"
+model: unsloth/gemma-4-26B-A4B-it-GGUF
+runtime: gguf-reference
+container: reference/gguf-consumer:pinned
+min_nodes: 1
+
+metadata:
+  description: Gemma 4 26B-A4B GGUF Q4_K_M reference pin for QCI. Not a measured serve.
+  maintainer: metrale
+  category: qci-reference
+  quantization: UD-Q4_K_M
+
+defaults:
+  max_model_len: "8192"
+  gpu_memory_utilization: "0.85"
+
+qci:
+  case: gemma-4-26b-a4b
+  issue_url: https://github.com/Metrale/investor-mvp/issues/44
+  priority: P0
+  blocks_four_model_p0_exit: this-issue-is-a-p0-member
+  p0_exit_member: "yes"
+  original_repository: google/gemma-4-26B-A4B-it
+  repository: unsloth/gemma-4-26B-A4B-it-GGUF
+  revision: c099eb48e663fd284577b04978a94ffccb261841
+  artifact: gemma-4-26B-A4B-it-UD-Q4_K_M.gguf
+  artifact_bytes: "16947541728"
+  vision_artifact: mmproj-F16.gguf
+  vision_artifact_bytes: "1193058784"
+  quantization: UD-Q4_K_M
+  license_tag: apache-2.0
+  license_link: https://ai.google.dev/gemma/docs/gemma_4_license
+  license_status: BLOCKER LICENSE_GOVERNING_TEXT_UNDECIDED
+  concurrency: "1"
+  context: modest
+  max_images: "4"
+  max_image_bytes: "2000000"
+  max_text_chars: "8192"
+  supplemental_hardware: rtx-3090
+  target_hardware: strix-halo
+  reference_runtime: ggml-gguf
+  native_limitations: circuit refuses model_type gemma4; Gemma4WeightLoader has no vision path; no Ampere kernel class in this tree
+  mtp: n/a
+  pipeline: image-text-to-text
+  required_contracts: 41,42
+  extra_blockers: NATIVE_GEMMA4_CIRCUIT_REFUSED,NO_AMPERE_KERNEL_CLASS,NO_VISION_LOADER

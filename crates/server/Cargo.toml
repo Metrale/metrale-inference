@@ -22,6 +22,7 @@ nvtx = ["metrale-telemetry/nvtx"]
 
 [dependencies]
 metrale-bench = { path = "../bench" }
+metrale-qci-dump = { path = "../qci-dump" }
 metrale-cache = { path = "../cache", default-features = false }
 metrale-comm = { path = "../comm", default-features = false }
 metrale-config = { path = "../config", default-features = false }
