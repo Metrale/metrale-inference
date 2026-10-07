@@ -89,6 +89,22 @@ fn one_token_composes_stages_and_uses_its_actual_position() {
             .forward_token(hidden, state.as_mut(), &mut cache, 0, &mut blocks, &gpu, 0)
             .is_err()
     );
+    // An appended alias preserves the old prefix yet would overwrite it at 16.
+    blocks.push(blocks[0]);
+    assert!(
+        layer
+            .forward_token(hidden, state.as_mut(), &mut cache, 1, &mut blocks, &gpu, 0)
+            .is_err()
+    );
+    assert_eq!(
+        state
+            .as_any()
+            .downcast_ref::<State>()
+            .unwrap()
+            .next_position,
+        1
+    );
+    blocks.pop();
     for position in 1..=17 {
         layer
             .forward_token(
