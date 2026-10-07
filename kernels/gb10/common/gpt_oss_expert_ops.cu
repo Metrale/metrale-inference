@@ -64,3 +64,21 @@ extern "C" __global__ void gpt_oss_expert_reduce_bf16(
     }
     output[i]=__float2bfloat16_rn(sum);
 }
+
+// 2026-10-07: Separate BF16 post-matmul bias, selected slots [4,rows]. This is
+// deliberately not fused into the GEMV: the intermediate BF16 rounding remains.
+extern "C" __global__ void gpt_oss_selected_bias_bf16(
+    __nv_bfloat16* values, const __nv_bfloat16* bias, const unsigned* ids,
+    unsigned rows) {
+    const unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= size_t(4) * rows) return;
+    const unsigned slot = i / rows, expert = ids[slot];
+    bool valid = expert < 32;
+    for (unsigned a = 0; a < 4; ++a) {
+        valid &= ids[a] < 32;
+        for (unsigned b = 0; b < a; ++b) valid &= ids[a] != ids[b];
+    }
+    if (!valid) { values[i] = __float2bfloat16_rn(nanf("")); return; }
+    values[i] = __float2bfloat16_rn(__bfloat162float(values[i]) +
+        __bfloat162float(bias[size_t(expert) * rows + i % rows]));
+}

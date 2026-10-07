@@ -609,7 +609,7 @@ names = ["projection_bias_bf16"]
 [[rule]]
 component = "moe"
 kind = "row-major MXFP4 expert GEMV (correctness residual)"
-names = ["gpt_oss_mxfp4_gemv_bf16"]
+names = ["gpt_oss_mxfp4_gemv_bf16", "gpt_oss_mxfp4_selected_bf16"]
 
 # 2026-10-07: Explicit staged-rounding correctness residuals, no speed claim.
 [[rule]]
@@ -620,7 +620,7 @@ names = ["gpt_oss_yarn_frequencies", "gpt_oss_rope_bf16"]
 [[rule]]
 component = "moe"
 kind = "staged BF16 expert activation / reduction"
-names = ["gpt_oss_swiglu_bf16", "gpt_oss_expert_reduce_bf16"]
+names = ["gpt_oss_swiglu_bf16", "gpt_oss_expert_reduce_bf16", "gpt_oss_selected_bias_bf16"]
 
 # 2026-10-07: Bounded diagnostic policy; existing online attention is unchanged.
 [[rule]]

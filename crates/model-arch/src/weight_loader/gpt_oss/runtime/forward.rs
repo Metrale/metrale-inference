@@ -35,23 +35,47 @@ impl GptOssLayer {
             stream,
         )
     }
+    #[allow(clippy::too_many_arguments)]
     fn packed(
         &self,
         gpu: &dyn GpuBackend,
         w: Packed,
         input: DevicePtr,
         out: DevicePtr,
+        ids: DevicePtr,
+        input_stride: u32,
         stream: u64,
     ) -> Result<()> {
         KernelLaunch::new(gpu, self.kernels.mxfp4)
-            .grid([w.rows.div_ceil(4), 1, 1])
+            .grid([w.rows.div_ceil(4), 4, 1])
             .block([128, 1, 1])
             .arg_ptr(w.blocks)
             .arg_ptr(w.scales)
             .arg_ptr(input)
+            .arg_ptr(ids)
             .arg_ptr(out)
             .arg_u32(w.rows)
             .arg_u32(w.cols)
+            .arg_u32(input_stride)
+            .launch(stream)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn selected_bias(
+        &self,
+        gpu: &dyn GpuBackend,
+        values: DevicePtr,
+        bias: DevicePtr,
+        ids: DevicePtr,
+        rows: u32,
+        stream: u64,
+    ) -> Result<()> {
+        KernelLaunch::new(gpu, self.kernels.bias)
+            .grid([(4 * rows).div_ceil(256), 1, 1])
+            .block([256, 1, 1])
+            .arg_ptr(values)
+            .arg_ptr(bias)
+            .arg_ptr(ids)
+            .arg_u32(rows)
             .launch(stream)
     }
     #[allow(clippy::too_many_arguments)]
@@ -203,37 +227,43 @@ impl GptOssLayer {
             ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id)),
             "GPT router produced duplicate experts"
         );
-        for (slot, &expert) in ids.iter().enumerate() {
-            self.packed(gpu, self.weights.gate_up[expert], s.norm, s.gate_up, stream)?;
-            ops::gpt_oss_expert_bias_bf16(
-                gpu,
-                self.kernels.bias,
-                s.gate_up,
-                self.weights.gate_up_bias.offset(expert * 5760 * 2),
-                1,
-                5760,
-                stream,
-            )?;
-            ops::gpt_oss_swiglu_bf16(
-                gpu,
-                self.kernels.activation,
-                s.gate_up,
-                s.activation,
-                2880,
-                stream,
-            )?;
-            let out = s.selected.offset(slot * 2880 * 2);
-            self.packed(gpu, self.weights.down[expert], s.activation, out, stream)?;
-            ops::gpt_oss_expert_bias_bf16(
-                gpu,
-                self.kernels.bias,
-                out,
-                self.weights.down_bias.offset(expert * 2880 * 2),
-                1,
-                2880,
-                stream,
-            )?;
-        }
+        // 2026-10-07: IDs stay validated on the host. Group only independent slots;
+        // each dot, BF16 boundary, activation, and final reduction is unchanged.
+        self.packed(
+            gpu,
+            self.weights.gate_up,
+            s.norm,
+            s.gate_up,
+            s.ids,
+            0,
+            stream,
+        )?;
+        self.selected_bias(
+            gpu,
+            s.gate_up,
+            self.weights.gate_up_bias,
+            s.ids,
+            5760,
+            stream,
+        )?;
+        ops::gpt_oss_swiglu_bf16(
+            gpu,
+            self.kernels.activation,
+            s.gate_up,
+            s.activation,
+            4 * 2880,
+            stream,
+        )?;
+        self.packed(
+            gpu,
+            self.weights.down,
+            s.activation,
+            s.selected,
+            s.ids,
+            2880,
+            stream,
+        )?;
+        self.selected_bias(gpu, s.selected, self.weights.down_bias, s.ids, 2880, stream)?;
         ops::gpt_oss_expert_reduce_bf16(
             gpu,
             self.kernels.reduce,
