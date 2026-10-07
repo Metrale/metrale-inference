@@ -47,6 +47,7 @@ text=torch.randn(2,3,4096,device='cuda',dtype=torch.bfloat16);norm=torch.empty_l
 rnorm=(text.float()*torch.rsqrt(text.float().square().mean(-1,keepdim=True)+1e-6)*(weights['txt_in.text_norm'].float()+1)).bfloat16();record('text_norm',norm,rnorm)
 h=linear('text_in',norm,'txt_in.in_layer');act=torch.empty_like(h);call('gelu_apply',h,act,h.numel());record('text_gelu',act,torch.nn.functional.gelu(h,approximate='tanh'));txt=linear('text_out',act,'txt_in.out_layer')
 image=torch.randn(2,8,64,device='cuda',dtype=torch.bfloat16);img=linear('image_in',image,'img_in')
+for name,tensor in [('image-input',image),('text-input',text)]: (out/(name+'.bf16')).write_bytes(tensor.cpu().view(torch.uint16).numpy().tobytes())
 # Final projection tests a distinct known input boundary; no block stack substitution.
 hidden=torch.randn(2,10,4096,device='cuda',dtype=torch.bfloat16);normalized=torch.empty_like(hidden);one=torch.ones(4096,device='cuda',dtype=torch.bfloat16);zero=torch.zeros_like(one);call('layer_norm',hidden,one,zero,normalized,20);record('output_norm',normalized,torch.nn.functional.layer_norm(hidden,(4096,),eps=1e-6))
 selection=torch.tensor([2]*6+[0]*4+[2]*6+[1]*4,device='cuda',dtype=torch.uint32);scaled=torch.empty_like(hidden);call('scale',normalized,scale,selection,scaled,20);record('output_scale',scaled,normalized*(1+scale[selection.long()].reshape_as(hidden)));output=linear('image_out',scaled,'proj_out')

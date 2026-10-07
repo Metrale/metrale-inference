@@ -1,0 +1,15 @@
+{
+  "scope": "full pinned visual transformer reference only; external encoder embeddings and no VAE/scheduler",
+  "exact_gate_pass": false,
+  "elements": 512,
+  "bit_mismatches": 469,
+  "nonfinite_pairs": 0,
+  "relative_l2_finite": 0.027258791390489166,
+  "max_abs_error_finite": 0.130859375,
+  "torch": "2.13.0+cu130",
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "input_sha256": {
+    "image-input.bf16": "c2092b08058919db1f53b419cfb7c309bef3dc50ade4f2e793020751d4a62c28",
+    "text-input.bf16": "c3217360f8d123831503c61e7c42fb5ee79f15beacc757714faaf0225f2bd115"
+  }
+}

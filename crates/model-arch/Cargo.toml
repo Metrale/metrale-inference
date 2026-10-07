@@ -436,3 +436,7 @@ workspace = true
 [[example]]
 name = "qwen_image21_block_native"
 required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "qwen_image21_visual_native"
+required-features = ["cuda", "gpu-examples"]

@@ -480,3 +480,29 @@ wrong GELU approximation controls detect 24,576 and 1,385 differences. All outpu
 are finite. This ctypes replay executes existing native kernels with actual
 checkpoint weights; a complete Rust transformer composition and independent
 higher-precision characterization of the final projection are still pending.
+
+The actual Rust `qwen_image21_visual_native` harness now connects conditioning,
+input projections and slot gather, all 32 blocks, final adaptive normalization,
+output projection and target gather. Its two-sample, ten-joint-token fixture
+completed with finite target latents. Initial joint hidden states, shared
+modulation and final scale are byte-identical to the separate native-kernel IO
+replay. This is still a diagnostic with externally supplied encoder embeddings;
+full pinned-reference comparison is pending, and no exact gate is promoted.
+
+Encoder reuse audit: the pinned dense Qwen3-VL encoder has 36 text layers,
+4096 hidden dimensions, 32 query/8 KV heads and 128-dimensional heads. The
+existing `Qwen3VLWeightLoader` unconditionally loads MoE/NVFP4 experts and cannot
+be used unchanged for these dense BF16 weights. The pinned pipeline deliberately
+bypasses the encoder's final RMSNorm and consumes the last decoder layer's
+**pre-normalization** hidden state, then removes masked padding and the template
+prefix. A generic normalized LM output would change the trained input contract.
+
+The independent full visual reference replay has now completed. Target latents
+are finite in both paths, but differ in 469/512 BF16 values: relative L2
+`0.027258791390489166`, maximum absolute error `0.130859375`. The original exact
+gate stays failed. An integer-exact same-input dot oracle independently checked
+all four discrepant final-projection values from the earlier IO fixture: rounded
+exact BF16 agrees with the reference in all four and native in none. These are
+native accumulation-order errors, not evidence of a reference defect. The
+strict shared checkpoint-reader control and both Linux native examples pass
+scoped Clippy; the new visual example also passes its corruption test.

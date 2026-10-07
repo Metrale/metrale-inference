@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! 2026-10-07: Actual native Rust visual-block/stack diagnostic, not image serving.
-//! MODEL MODULES_JSON FIXTURE_DIR NEW_OUT [LAYERS=1]. Uses fixed saved 2x3 inputs.
+//! MODEL MODULES_JSON FIXTURE_DIR NEW_OUT [LAYERS=32]. External encoder fixture.
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::{cuda_backend::MetraleCudaBackend, gpu::GpuBackend};
-use metrale_model_arch::qwen_image21::{block::DiagnosticImageBlock, rope::ImageRopeLayout};
+use metrale_model_arch::qwen_image21::{
+    block::DiagnosticImageBlock,
+    conditioning::{ConditioningWeights, DiagnosticConditioning},
+    io::{DiagnosticVisualIo, ProjectionWeights},
+    layout::JointLayout,
+};
 use metrale_model_weights::{
     qwen_image21::{Block, Config},
     weights::{WeightDtype, WeightTensor},
@@ -20,7 +25,7 @@ fn main() -> Result<()> {
     let manifest = PathBuf::from(args.next().context("modules JSON")?);
     let fixture = PathBuf::from(args.next().context("fixture directory")?);
     let out = PathBuf::from(args.next().context("new output directory")?);
-    let layers: usize = args.next().unwrap_or_else(|| "1".into()).parse()?;
+    let layers: usize = args.next().unwrap_or_else(|| "32".into()).parse()?;
     ensure!((1..=32).contains(&layers), "layers must be 1..32");
     std::fs::create_dir(&out)?;
     let source = std::fs::read(&manifest)?;
@@ -31,6 +36,8 @@ fn main() -> Result<()> {
         "dense_gemm_bf16",
         "embed_from_argmax",
         "rms_norm_vanilla",
+        "rms_norm",
+        "gelu",
     ];
     ensure!(
         modules.modules.len() == required.len(),
@@ -57,7 +64,7 @@ fn main() -> Result<()> {
     let total = gpu.total_memory()?;
     let used = total.saturating_sub(gpu.device_free_memory()?);
     ensure!(
-        used.saturating_add(1 << 30) <= total / 100 * 85,
+        used.saturating_add(2 << 30) <= total / 100 * 85,
         "GPU memory would exceed 85 percent"
     );
     let component = model.join("transformer");
@@ -66,17 +73,89 @@ fn main() -> Result<()> {
         component.join("diffusion_pytorch_model.safetensors.index.json"),
     )?)?;
     let index: BTreeMap<String, String> = serde_json::from_value(index["weight_map"].clone())?;
-    let mut hidden = std::fs::read(fixture.join("input.bf16"))?;
-    let modulation = std::fs::read(fixture.join("modulation.bf16"))?;
+    let layout = JointLayout::new(
+        2,
+        3,
+        &[false, true, false, true],
+        &[[1, 2, 2], [1, 2, 2]],
+        &[true, true, false, false, true, true],
+    )?;
+    let mut global_buffers = Vec::new();
+    let mut global_tensors = Vec::new();
+    let mut global_hashes = BTreeMap::new();
+    for (name, shape) in [
+        (
+            "time_text_embed.timestep_embedder.linear_1",
+            vec![4096, 256],
+        ),
+        (
+            "time_text_embed.timestep_embedder.linear_2",
+            vec![4096, 4096],
+        ),
+        ("modulation.1", vec![16384, 4096]),
+        ("norm_out.linear", vec![4096, 4096]),
+        ("img_in", vec![4096, 64]),
+        ("txt_in.text_norm", vec![4096]),
+        ("txt_in.in_layer", vec![4096, 4096]),
+        ("txt_in.out_layer", vec![4096, 4096]),
+        ("proj_out", vec![64, 4096]),
+    ] {
+        let name = format!("{name}.weight");
+        let (bytes, shape) = read_tensor(&component, &index, &name, &shape)?;
+        global_hashes.insert(name, sha(&bytes));
+        let buffer = Owned::upload(&gpu, &bytes)?;
+        global_tensors.push(WeightTensor {
+            ptr: buffer.ptr,
+            shape,
+            dtype: WeightDtype::BF16,
+        });
+        global_buffers.push(buffer);
+    }
+    let mut conditioning = DiagnosticConditioning::new(
+        &gpu,
+        2,
+        ConditioningWeights {
+            time_in: &global_tensors[0],
+            time_out: &global_tensors[1],
+            modulation: &global_tensors[2],
+            final_scale: &global_tensors[3],
+        },
+    )?;
+    let mut io = DiagnosticVisualIo::new(
+        &gpu,
+        &layout,
+        ProjectionWeights {
+            image_in: &global_tensors[4],
+            text_norm: &global_tensors[5],
+            text_in: &global_tensors[6],
+            text_out: &global_tensors[7],
+            image_out: &global_tensors[8],
+        },
+    )?;
+    let image = std::fs::read(fixture.join("image-input.bf16"))?;
+    let text = std::fs::read(fixture.join("text-input.bf16"))?;
     ensure!(
-        hidden.len() == 2 * 3 * 4096 * 2 && modulation.len() == 3 * 16384 * 2,
-        "fixture shape differs"
+        image.len() == 2 * 8 * 64 * 2 && text.len() == 2 * 3 * 4096 * 2,
+        "IO fixture shape differs"
     );
-    let input_hash = sha(&hidden);
-    let modulation_hash = sha(&modulation);
+    let fixture_hashes = serde_json::json!({"image":sha(&image),"text":sha(&text)});
+    let image = Owned::upload(&gpu, &image)?;
+    let text = Owned::upload(&gpu, &text)?;
+    let conditioning_output = conditioning.forward(&[0.731, 0.019], stream)?;
+    let initial = io.input_project(image.ptr, text.ptr, stream)?;
+    gpu.synchronize(stream)?;
+    let mut hidden = vec![0u8; 2 * 10 * 4096 * 2];
+    gpu.copy_d2h(initial, &mut hidden)?;
+    std::fs::write(out.join("joint-input.bf16"), &hidden)?;
     let input = Owned::upload(&gpu, &hidden)?;
-    let mod_input = Owned::upload(&gpu, &modulation)?;
-    let rope = ImageRopeLayout::new(&[false, true, false], &[[1, 1, 1]])?;
+    let input_hash = sha(&hidden);
+    let mut modulation = vec![0u8; 3 * 16384 * 2];
+    gpu.copy_d2h(conditioning_output.modulation, &mut modulation)?;
+    std::fs::write(out.join("modulation.bf16"), &modulation)?;
+    let modulation_hash = sha(&modulation);
+    let mut final_scale = vec![0u8; 3 * 4096 * 2];
+    gpu.copy_d2h(conditioning_output.final_scale, &mut final_scale)?;
+    std::fs::write(out.join("final-scale.bf16"), &final_scale)?;
     let suffixes = [
         "attn.to_q",
         "attn.to_k",
@@ -127,12 +206,17 @@ fn main() -> Result<()> {
             &weights,
             &gpu,
             2,
-            &[-1, 0, -1],
-            &[true; 6],
-            Some(&[false, true, true]),
+            layout.image_ids(),
+            layout.key_valid(),
+            Some(layout.target_mask()),
         )?;
         let started = std::time::Instant::now();
-        let output = block.forward(input.ptr, mod_input.ptr, &rope, stream)?;
+        let output = block.forward(
+            input.ptr,
+            conditioning_output.modulation,
+            layout.rope(),
+            stream,
+        )?;
         gpu.synchronize(stream)?;
         let elapsed = started.elapsed().as_secs_f64();
         gpu.copy_d2h(output, &mut hidden)?;
@@ -146,7 +230,18 @@ fn main() -> Result<()> {
         results.push(serde_json::json!({"layer":layer,"weight_sha256":hashes,"output_sha256":sha(&hidden),"synchronized_forward_seconds":elapsed}));
         gpu.copy_h2d(&hidden, input.ptr)?;
     }
-    let receipt = serde_json::json!({"checkpoint_revision":"d26bb61231c349cf6b7896fa83353113880e1ba3","module_manifest_sha256":sha(&source),"input_sha256":input_hash,"modulation_sha256":modulation_hash,"results":results,"scope":"native Rust diagnostic visual blocks only; no encoder/VAE/denoising or qualification","qualified":false});
+    let target = io.output_project(input.ptr, conditioning_output.final_scale, stream)?;
+    gpu.synchronize(stream)?;
+    let mut target_bytes = vec![0u8; 2 * 4 * 64 * 2];
+    gpu.copy_d2h(target, &mut target_bytes)?;
+    ensure!(
+        target_bytes
+            .chunks_exact(2)
+            .all(|b| u16::from_le_bytes([b[0], b[1]]) & 0x7f80 != 0x7f80),
+        "nonfinite target output"
+    );
+    std::fs::write(out.join("target-latents.bf16"), &target_bytes)?;
+    let receipt = serde_json::json!({"checkpoint_revision":"d26bb61231c349cf6b7896fa83353113880e1ba3","module_manifest_sha256":sha(&source),"input_sha256":input_hash,"modulation_sha256":modulation_hash,"results":results,"global_weight_sha256":global_hashes,"fixture_sha256":fixture_hashes,"target_sha256":sha(&target_bytes),"scope":"native Rust visual transformer with external encoder inputs; no encoder/VAE/denoising or qualification","qualified":false});
     std::fs::write(
         out.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt)?,

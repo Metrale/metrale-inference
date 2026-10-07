@@ -1,0 +1,43 @@
+{
+  "scope": "integer-exact same-input dot on native/reference-disagreeing outputs only; original exact-reference gate unchanged",
+  "weight_sha256": "36cc3c201fbe549b207588243e4ed9995582fa506db8313b3c6b30f0e26d7e9d",
+  "input_sha256": "f11c7ebe3d276830a510ffb1310461fea0630b0473f3adfb072a113199cd7e85",
+  "disagreements": [
+    {
+      "row": 5,
+      "column": 37,
+      "native_bits": 15041,
+      "reference_bits": 15037,
+      "exact_dot_rounded_bits": 15037,
+      "native_exact": false,
+      "reference_exact": true
+    },
+    {
+      "row": 7,
+      "column": 10,
+      "native_bits": 16445,
+      "reference_bits": 16446,
+      "exact_dot_rounded_bits": 16446,
+      "native_exact": false,
+      "reference_exact": true
+    },
+    {
+      "row": 11,
+      "column": 19,
+      "native_bits": 16328,
+      "reference_bits": 16329,
+      "exact_dot_rounded_bits": 16329,
+      "native_exact": false,
+      "reference_exact": true
+    },
+    {
+      "row": 13,
+      "column": 26,
+      "native_bits": 49058,
+      "reference_bits": 49059,
+      "exact_dot_rounded_bits": 49059,
+      "native_exact": false,
+      "reference_exact": true
+    }
+  ]
+}
