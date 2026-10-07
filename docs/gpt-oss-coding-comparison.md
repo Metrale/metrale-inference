@@ -177,3 +177,23 @@ controls, not a claim of universally transparent instrumentation. Two earlier
 unsuccessful wrapper-hook attempts remain recorded. Private evidence is under
 `gpt/topology-first-divergence/reference-layer-hook4`; original scores, numerical
 gates and production arithmetic remain unchanged.
+
+A second successful graph-buffer capture added the first layer's combined QKV,
+actual FP32 rotary-cache row and attention input/output. The same complete final
+vector/logit and generated-ID controls passed again. The first-layer V projection
+already differed in one of 512 BF16 values, before positional encoding. An exact
+rational dot-plus-bias oracle on the identical initial normalized input rounded
+this row to native's 15376 bit pattern; the reference produced adjacent 15375.
+This one-row result is not evidence of a general reference defect.
+
+Separately, using the reference's own captured QKV and FP32 rotary table, an
+independent arithmetic oracle reproduced all 4,608 reference Q/K outputs with
+FP32-product policies and a final BF16 cast. Native's staged BF16 policy differed
+in 1,935 outputs on those identical operands. The corpus did not distinguish the
+tested FMA contraction orders. Actual native/reference Q/K inputs and frequency
+tables can also differ, so this establishes a local precision-policy distinction,
+not the complete cause of the attention or coding discrepancy. The original
+checkpoint contract and failed qualification gates remain separate; no production
+policy changed. Filtered receipts are in `reference-layer-hook6`,
+`rope-policy/reference-result.json` and `v-projection-oracle` beneath the same
+private evidence root. A failed scalar-metadata serialization attempt is retained.
