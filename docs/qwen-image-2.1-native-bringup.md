@@ -236,3 +236,19 @@ benign for existing dispatch: it adds two uniquely named, unregistered entry
 points and modifies no existing kernel or target lookup. It uses ordinary BF16
 conversion and CUDA elementwise arithmetic with no GB10-specific instruction.
 Numerical evidence covers GB10 only; B200/Hopper execution remains unmeasured.
+
+### LayerNorm reuse refusal
+
+The unchanged `nllb_layernorm_oop_bf16` kernel was evaluated with explicit unit
+scale/zero bias, width 4096 and epsilon `1e-6`. Random, constant, large-offset and
+small-variance cases matched exactly. The tiny-input case differed at one value
+and the large-magnitude case at two: three of 1,597,440 outputs differed by one
+BF16 ULP, with maximum absolute error `4.76837158203125e-7`. The exact-bit gate
+failed and the candidate was **not adopted**. The saved rejection receipt and
+`scripts/qwen_image21/norm_reuse_parity.py` preserve this result. Wrong RMSNorm and
+wrong-epsilon controls detected 1,508,329 and 532,685 differences respectively.
+
+The pinned Torch build's LayerNorm uses a vectorized Welford reduction; the
+existing native NLLB kernel uses a two-pass sum/variance reduction. Any new
+precision policy must retain the old kernel's behavior and be separately tested.
+This is a lowering gap, not permission to widen the criterion after seeing data.
