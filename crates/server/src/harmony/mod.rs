@@ -8,6 +8,10 @@
 //! carry Finish/Handoff before the scheduler discards an EOS token.
 
 pub mod adapter;
+pub mod stream;
+
+#[cfg(test)]
+mod stream_tests;
 
 use std::collections::BTreeSet;
 
