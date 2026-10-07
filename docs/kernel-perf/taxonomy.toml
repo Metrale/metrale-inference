@@ -587,3 +587,9 @@ names = ["argmax_*", "softmax_topp", "feed_resolve"]
 component = "elementwise"
 kind = "activation / gate / residual"
 names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "vector_add", "bf16_residual_add", "f32_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]
+
+# 2026-10-07: Isolated Qwen-image component parity; no model linkage or speed claim.
+[[rule]]
+component = "elementwise"
+kind = "image scale / tanh residual (staged BF16 residual)"
+names = ["image_modulation_scale_bf16", "image_modulation_residual_bf16"]
