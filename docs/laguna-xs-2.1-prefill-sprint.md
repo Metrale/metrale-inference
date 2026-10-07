@@ -111,3 +111,61 @@ the three retry-delay failures remain. A separate four-topic C4/128-output diagn
 only 0.24%/0.66%; one topic retains text variation in the reverse comparison. There is no
 claim of broad quality equivalence or a material diverse-decode win. This narrow optimization
 helps short-prompt latency; it does not close the long-prefill or reference-engine gap above.
+
+## Further bounded screens retained as rejected evidence
+
+The next private screens preserved the current N32 arithmetic but did not justify a serving
+change. Constructed and captured-slice controls remained exact; speed qualification is separate.
+
+| Screen | Observed boundary | Decision |
+|---|---|---|
+| M32/N64 for every expert above 16 rows | Long gate/down only 0.679–0.751× incumbent speed | Reject |
+| M32 only for 17–32 rows, full M64 above 32 | 0.844–1.018× across measured shapes | Reject |
+| M64/N32 large-expert tile | Long shapes 0.828–0.852× | Reject |
+| Compact expert/tile worklist | Long 1.002–1.026× before CPU/map-upload cost; short 0.958–1.038× | No runtime integration |
+| Transposed shared B storage | 0.976–1.055×; insufficient consistent benefit | Reject |
+| Transposed shared B plus N-major cooperative loading | 0.312–0.589× | Reject |
+
+A separate one-output C1 profile of the N32 executable records 117 small and 117 large
+expert launches. The short prompt spends 128.83 ms in small tiles and 40.63 ms in large tiles;
+the long prompt spends 116.55 ms and 358.69 ms respectively (summed injected kernel durations).
+Those requests include first-output projection/sampling and HTTP completion; these sums are
+not isolated uninstrumented prefill latency. A standalone Nsight Compute attempt refused
+hardware counters with `ERR_NVGPUCTRPERM`. No driver permissions were changed, and no
+occupancy/bandwidth-counter conclusion is claimed.
+
+Concurrent prompt scheduling remains an open qualification item. Explicit adaptive activation
+plus canonical tiers permits the existing codispatch route; declared activation still refuses it.
+That is a distinct policy experiment, not a default change or evidence that the declared route
+is qualified for batching. Equal-length and unequal-length cohorts, actual logged membership,
+per-request latency, cohort completion and semantic controls must remain separate evidence.
+
+The matched adaptive/canonical concurrent-code check uses the same frozen `5aca2f…`
+executable in both arms, changing only codispatch/variable-length prefill flags. Four distinct
+coding prompts start together, repeated three times. Logs prove four-request kernel-batched
+prefill over 633 prompt tokens (117/205/194/117), rather than inferring batching from client
+concurrency. Both arms pass 9/12 isolated semantic grades with identical per-test outcomes;
+the same three retry-delay failures remain. Only 3/12 generated-source hashes match between
+arms. This is bounded semantic evidence, not text/bit equivalence or a general coding pass.
+The grader executes generated code only in the pinned, network-disabled, read-only Docker
+sandbox with resource limits and no host mounts. Raw responses and grades are retained.
+
+A subsequent unprofiled, counterbalanced control/codispatch/codispatch/control campaign
+admits all 96 cohorts / 224 requests with exact 64/1,111 input IDs and one output. Both arms
+use the frozen N32 executable, explicit adaptive activation and canonical tiers; only the two
+prefill dispatch flags differ. Each workload/concurrency is warmed before three measured
+cohorts. These results do not replace the declared-policy native/Marlin comparison above.
+
+| Prompt | Clients | Median per-request total change | Median cohort completion change |
+|---|---:|---:|---:|
+| 64 tokens | 1 | +3.73% / +4.16% | +3.73% / +4.16% |
+| 64 tokens | 2 | −25.41% / −25.14% | −43.83% / −43.92% |
+| 64 tokens | 4 | −50.20% / −50.38% | −68.87% / −68.87% |
+| 1,111 tokens | 1 | +1.87% / +1.11% | +1.87% / +1.11% |
+| 1,111 tokens | 2 | +17.68% / +17.39% | −11.74% / −11.84% |
+| 1,111 tokens | 4 | +27.84% / +27.82% | −20.01% / −20.20% |
+
+Lower is better; both orders are shown. Median first-text changes follow the same direction.
+The group finishing sooner does not mean each request benefits. No blanket default promotion
+is justified: single requests regress, long concurrent requests trade worse individual latency
+for earlier group completion, and semantic/output equivalence remains only bounded evidence.
