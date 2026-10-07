@@ -78,8 +78,9 @@ Tokenizer bos `<s>`, eos `<|im_end|>`.
 `tokenizer.json` sha256
 `623c34567aebb18582765289fbe23d901c62704d6518d71866e0e58db892b5b7`.
 Chat template blob `d85b0c772f8fe585063847c5f6bf5ec48eb210be`.
-`TEMPLATE_BYTE_IDENTITY_UNMEASURED` against the template embedded in the GGUF
-metadata. MTP is off. The repo also contains
+The closed Q4_0 file's `tokenizer.chat_template` is 9867 bytes. `git hash-object`
+of those bytes, with no added newline, is that same blob. Template byte
+identity is measured. MTP is off. The repo also contains
 `mtp-NVIDIA-Nemotron-3.5-Lightning-30B-A3B-Q4_0.gguf`. This pin does not load it.
 Do not assume NVFP4 kernels on the RTX 3090.
 Distinct from `NVIDIA-Nemotron-3-Nano` and from the H100 and H200 Nano numbers.
@@ -95,7 +96,8 @@ Distinct from `NVIDIA-Nemotron-3-Nano` and from the H100 and H200 Nano numbers.
 - `TOPOLOGY_NOT_IN_ISSUE` — any other hardware id. Still a receipt, still not a claim.
 - `LICENSE_GOVERNING_TEXT_UNDECIDED` — Gemma only, until a product decision names the grant.
 - `NATIVE_GEMMA4_CIRCUIT_REFUSED`, `NO_VISION_LOADER`, `NO_AMPERE_KERNEL_CLASS`.
-- `NOT_THE_NANO_BENCHMARK`, `NATIVE_GGUF_Q4_0_UNSERVED`, `TEMPLATE_BYTE_IDENTITY_UNMEASURED`.
+- `NOT_THE_NANO_BENCHMARK`, `NATIVE_GGUF_Q4_0_UNSERVED`.
+  `TEMPLATE_BYTE_IDENTITY_UNMEASURED` was cleared by the git-blob comparison above.
 - `contract.41`, `contract.42`, `contract.46` — `BLOCKER UNFROZEN` when the issue requires them.
 
 `support_label` stays `withheld`. `live_qci_acceptance` stays `not-claimed`.
@@ -307,6 +309,29 @@ on that read, so the workspace pass is not claimed for `de6a666`.
 Do not comment `/stamp`. Jobs still queued with an empty runner name on
 `metrale-macos-burst` or `self-hosted,macOS,ARM64,metal-gpu` were not
 waited out. The name for that state is `RUNNER_LABEL_OFFLINE`.
+
+### Reference runtime memory on this 3090
+
+`llama-completion` from the already-installed llama.cpp build 9637
+(`aedb2a5e9`) was the recorded run for each closed language pin. No
+installer was launched. Flags were `-c 512`, `-ngl 99`, `-fit off`,
+`-n 1`, `-no-cnv`, `--no-warmup`. Context 512 is the modest context for this sample. Gemma's
+training context is 262144 and Nemotron's is 1048576. This sample does not
+use those.
+
+`nvidia-smi` `memory.used` on the RTX 3090 (24576 MiB):
+
+- Gemma, before 1272 MiB, peak while the process was alive 18080 MiB, after
+  exit 1272 MiB.
+- Nemotron, before 1272 MiB, peak while the process was alive 19258 MiB,
+  after exit 1271 MiB.
+
+Both processes exited on their own. Port 8888 was down after they exited.
+The device-free `qci-dump` receipt still prints `VRAM_UNMEASURED`, because
+that program does not observe the GPU. The numbers above are the
+reference-row serve record only. The native row stays `VRAM_UNMEASURED`.
+`PARITY_UNMEASURED` and `COHERENCE_UNMEASURED` stay. Any timing line the
+runner printed was not copied.
 
 ## What the next agent should not do
 

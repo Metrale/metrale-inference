@@ -52,7 +52,7 @@ qci:
   tokenizer_eos: "<|im_end|>"
   tokenizer_json_sha256: 623c34567aebb18582765289fbe23d901c62704d6518d71866e0e58db892b5b7
   chat_template_blob: d85b0c772f8fe585063847c5f6bf5ec48eb210be
-  template_status: BLOCKER TEMPLATE_BYTE_IDENTITY_UNMEASURED
+  template_status: measured; git blob of embedded tokenizer.chat_template equals d85b0c772f8fe585063847c5f6bf5ec48eb210be
   pipeline: text-generation
   required_contracts: 41,46
-  extra_blockers: NOT_THE_NANO_BENCHMARK,NATIVE_GGUF_Q4_0_UNSERVED,TEMPLATE_BYTE_IDENTITY_UNMEASURED
+  extra_blockers: NOT_THE_NANO_BENCHMARK,NATIVE_GGUF_Q4_0_UNSERVED
