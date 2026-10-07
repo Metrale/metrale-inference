@@ -177,21 +177,7 @@ impl PrefillScratch {
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<Vec<DiagnosticTensor>> {
-        self.check_stream(stream)?;
-        let state = state
-            .as_any()
-            .downcast_ref::<State>()
-            .context("GPT state type")?;
-        ensure!(
-            !self.allocation.is_null()
-                && self.stream == Some(stream)
-                && rows > 0
-                && rows <= self.rows
-                && !state.failed
-                && !state.allocation.is_null()
-                && start.checked_add(rows) == Some(state.next_position),
-            "GPT chunk snapshot is stale, failed or unreadable"
-        );
+        self.check_snapshot(state, start, rows, stream)?;
         [
             ("post_attention_norm", self.norm, 2880, "BF16", 2),
             ("router_logits", self.logits, 32, "BF16", 2),
@@ -210,6 +196,75 @@ impl PrefillScratch {
             })
         })
         .collect()
+    }
+    /// 2026-10-07: Copy one token's four selected expert rows after the latest successful chunk.
+    /// Caller must pair the scratch with its latest layer state before reuse; no model math changes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn diagnostic_expert_snapshot(
+        &self,
+        state: &dyn LayerState,
+        start: usize,
+        rows: usize,
+        position: usize,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<Vec<DiagnosticTensor>> {
+        self.check_snapshot(state, start, rows, stream)?;
+        let token = position
+            .checked_sub(start)
+            .context("Expert snapshot precedes chunk")?;
+        ensure!(token < rows, "Expert snapshot follows chunk");
+        [
+            ("expert_norm", self.norm, 2880usize, "BF16", 2usize, 1usize),
+            ("expert_ids", self.ids, 4, "U32", 4, 1),
+            ("expert_gate_after_bias", self.gate_up, 5760, "BF16", 2, 4),
+            ("expert_activation", self.activation, 2880, "BF16", 2, 4),
+            ("expert_down_after_bias", self.selected, 2880, "BF16", 2, 4),
+        ]
+        .into_iter()
+        .map(|(name, ptr, cols, dtype, width, slots)| {
+            let stride = cols * width;
+            let mut bytes = vec![0; slots * stride];
+            for slot in 0..slots {
+                let source = ptr.offset((slot * rows + token) * stride);
+                gpu.copy_d2h_on_stream(
+                    source,
+                    &mut bytes[slot * stride..(slot + 1) * stride],
+                    stream,
+                )?;
+            }
+            Ok(DiagnosticTensor {
+                name,
+                dtype,
+                shape: vec![slots, cols],
+                bytes,
+            })
+        })
+        .collect()
+    }
+    fn check_snapshot(
+        &self,
+        state: &dyn LayerState,
+        start: usize,
+        rows: usize,
+        stream: u64,
+    ) -> Result<()> {
+        self.check_stream(stream)?;
+        let state = state
+            .as_any()
+            .downcast_ref::<State>()
+            .context("GPT state type")?;
+        ensure!(
+            !self.allocation.is_null()
+                && self.stream == Some(stream)
+                && rows > 0
+                && rows <= self.rows
+                && !state.failed
+                && !state.allocation.is_null()
+                && start.checked_add(rows) == Some(state.next_position),
+            "GPT chunk snapshot is stale, failed or unreadable"
+        );
+        Ok(())
     }
     fn check_stream(&self, stream: u64) -> Result<()> {
         ensure!(

@@ -237,6 +237,21 @@ fn main() -> anyhow::Result<()> {
                         )?
                     };
                     routers::save(&output, width, start, rows, li, snapshots)?;
+                    if width != 0 && start != prefix {
+                        for position in [1, 12, 29, 35, 47, 48, 52, 70] {
+                            if (start..start + rows).contains(&position) {
+                                let expert = scratch.diagnostic_expert_snapshot(
+                                    state.as_ref(),
+                                    start,
+                                    rows,
+                                    position,
+                                    &gpu,
+                                    stream,
+                                )?;
+                                routers::save_experts(&output, width, position, li, expert)?;
+                            }
+                        }
+                    }
                 }
                 let mut bytes = vec![0u8; rows * 5760];
                 gpu.copy_d2h_on_stream(hidden, &mut bytes, stream)?;

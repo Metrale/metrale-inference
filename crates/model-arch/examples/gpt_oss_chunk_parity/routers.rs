@@ -40,3 +40,24 @@ pub fn save(
     }
     Ok(())
 }
+
+/// 2026-10-07: Bounded selected-expert operands and observed BF16 boundaries, not learned weights.
+pub fn save_experts(
+    output: &Path,
+    width: usize,
+    position: usize,
+    layer: usize,
+    snapshots: Vec<DiagnosticTensor>,
+) -> Result<()> {
+    let dir = output.join(format!("width{width}.experts"));
+    std::fs::create_dir_all(&dir)?;
+    for tensor in snapshots {
+        let path = dir.join(format!("p{position}-l{layer}-{}.bin", tensor.name));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        file.write_all(&tensor.bytes)?;
+    }
+    Ok(())
+}
