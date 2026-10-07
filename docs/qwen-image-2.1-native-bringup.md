@@ -25,8 +25,9 @@ appropriate permission. Do not treat the engine source license as the weight lic
       download, retaining local active components. A transformer-only backup is incomplete.
 - [x] Pin and execute the official reference pipeline to establish expected image
       behavior and resource needs. Label reference results explicitly.
-- [ ] Describe the native model circuit and compare reusable primitives before
-      adding kernels. Record unsupported lowering and component boundaries.
+- [x] Describe native component boundaries and the transformer block as
+      [residual architecture data](../kernels/circuits/residuals/qwen_image21.json).
+      Candidate primitive reuse is recorded; executable circuit lowering remains open.
 - [ ] Implement native loading and generation with intermediate numerical parity;
       keep reference-backend and native-engine qualification separate.
 - [ ] Implement image generation/editing API validation, bounded job queues,
@@ -130,3 +131,45 @@ poster `44e568efbdfc0368351ee7d3e73513097cc6d0e20a6e4ce3d82447b8e2994b04`.
 RGBA file mode alone does not prove useful alpha transparency. Editing, alpha,
 repeatability, size limits, component parity, native API and native performance
 remain unqualified. The geometry miss is retained as a quality counterexample.
+
+## Native architecture boundary (2026-10-07)
+
+The residual graph is deliberately outside `INSTANCES.toml`: it is not a golden
+instance or an executable model registration. Its transformer block explicitly
+names every unlowered operation. Tests verify topological closure and require the
+closed circuit parser to refuse those residual names. Existing `qk_norm`,
+`silu_mul` and `residual_add` operations are semantic reuse candidates; projection
+bindings, dtype behavior and image-row performance still need parity evidence.
+No measured kernel coverage or completed Venn comparison is claimed. The present
+decoder IR cannot faithfully represent this pipeline, so encoding it as ordinary
+paged causal attention would hide the architecture residual.
+
+The native pure visibility contract in
+`crates/circuit/src/image_attention.rs` implements the pinned reference predicate:
+same sample, valid key, and either a causal position or the same image block.
+It validates sample/image contiguity and answers a pair in constant time after
+layout construction without allocating a quadratic mask. A hand-written mask
+control catches a causal-only substitution, future-text leakage, cross-sample
+leakage and confusing padded queries with padded keys. This is a CPU semantic
+primitive, not a GPU kernel or a serving path.
+
+Remaining lowering must preserve these distinctions:
+
+- **Conditioning:** joint Qwen3-VL text/vision embeddings, image-slot placement,
+  zero-centered text RMSNorm, GELU-tanh projection and a sinusoidal timestep
+  embedding. Ordinary text LM logits are not the conditioning output.
+- **Denoiser:** 32 single-stream blocks with non-affine LayerNorm, shared scale
+  and tanh-gate modulation, Q/K RMSNorm, centered three-axis RoPE and image-block
+  causal attention. Prefix tokens use timestep zero; target tokens use the actual
+  timestep. The final adaptive LayerNorm applies scale without a shift.
+- **State:** prefix KV becomes immutable across denoising steps; each request owns
+  its cache and invalidates it when conditioning changes. This differs from token
+  decode's growing paged cache and needs explicit lifecycle declarations.
+- **Image reconstruction:** four-channel VAE with residual spatial/temporal
+  convolution and upsampling, exact latent means/stds and Euler flow scheduling.
+  These need new circuit vocabulary/lowering before a complete native plan exists.
+
+Reference semantics are from the manifest-pinned Diffusers transformer, pipeline
+and VAE source files, with their upstream file hashes. Next implement exact
+component config mapping and validated weight bindings, then compare native
+intermediates at fixed inputs before optimizing or registering support.
