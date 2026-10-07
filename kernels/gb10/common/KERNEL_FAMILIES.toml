@@ -844,6 +844,7 @@ description = "BF16 GEMV (1 row), batched GEMV (M <= 16 per block row) and GEMM 
 compute = "cuda_core"
 kernels = [
   "gemv::dense_gemv_bf16", "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm4",
   "gemm::dense_gemm_bf16", "gemm::dense_gemm_bf16_router",
 ]
 rows = [1, 65536]

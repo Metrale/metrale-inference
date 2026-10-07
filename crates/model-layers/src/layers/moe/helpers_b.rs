@@ -167,6 +167,19 @@ impl MoeLayer {
 }
 
 impl super::MoeLayer {
+    /// 2026-10-07: Opt in to the measured untransposed NVFP4 row-tile pair.
+    /// Explicit alternative layouts or wider-K/M kernels are not silently overridden.
+    pub fn enable_small_row_prefill(&mut self, gpu: &dyn GpuBackend) -> Result<()> {
+        anyhow::ensure!(
+            self.experts_scale_kind == crate::weight_map::WeightQuantFormat::Nvfp4
+                && self.gate_ptrs_t.is_none()
+                && self.moe_grouped_gemm_k32.0 == 0
+                && self.moe_grouped_gemm_m256.0 == 0,
+            "small-row prefill requires original NVFP4 layout and K16/M64 fallback"
+        );
+        self.small_row_prefill = Some(ops::Nvfp4SmallRowKernels::resolve(gpu)?);
+        Ok(())
+    }
     /// 2026-09-25: The routed grouped-GEMM kernel: the wider-K twin when it
     /// resolved (METRALE_MOE_GROUPED_K32=1 and the target ships it), else the
     /// base kernel. Both launch through `moe_w4a16_grouped_gemm_ptrtable`.
@@ -204,6 +217,27 @@ impl super::MoeLayer {
         max_m_tiles: u32,
         stream: u64,
     ) -> anyhow::Result<()> {
+        if let Some(kernels) = self.small_row_prefill {
+            anyhow::ensure!(
+                self.experts_scale_kind == crate::weight_map::WeightQuantFormat::Nvfp4,
+                "small-row prefill cannot reinterpret non-NVFP4 scales"
+            );
+            return kernels.launch(
+                gpu,
+                a,
+                packed_ptrs,
+                scale_ptrs,
+                scale2_vals,
+                c,
+                expert_offsets,
+                sorted_token_ids,
+                num_experts,
+                n_out,
+                k,
+                max_m_tiles,
+                stream,
+            );
+        }
         if self.moe_grouped_gemm_m256.0 != 0 {
             return crate::layers::ops::moe_w4a16_grouped_gemm_ptrtable_m256(
                 gpu,

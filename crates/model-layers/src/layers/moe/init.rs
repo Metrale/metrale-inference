@@ -145,6 +145,7 @@ impl MoeLayer {
             moe_sort_by_expert: gpu.kernel("moe", "moe_sort_by_expert")?,
             moe_sorted_gate_up: gpu.kernel("moe_sorted", "moe_sorted_gate_up")?,
             moe_sorted_silu_down: gpu.kernel("moe_sorted", "moe_sorted_silu_down")?,
+            small_row_prefill: None,
             moe_grouped_gemm: gpu.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable")?,
             moe_grouped_gemm_k32: if std::env::var("METRALE_MOE_GROUPED_K32").as_deref() == Ok("1")
             {

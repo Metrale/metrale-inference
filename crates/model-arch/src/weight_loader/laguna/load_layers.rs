@@ -203,6 +203,20 @@ fn load_moe_ffn(
         correction_bias: Some(correction_bias),
     };
     let mut layer = MoeLayer::new(weights, config.num_experts, None, gpu, config)?;
+    // 2026-10-07: Opt-in only at the measured XS shape; alternative layouts remain explicit.
+    if std::env::var("METRALE_LAGUNA_SMALL_ROW_PREFILL").as_deref() == Ok("1") {
+        anyhow::ensure!(
+            config.hidden_size == 2048
+                && config.moe_intermediate_size == 512
+                && config.num_experts == 256
+                && config.num_experts_per_tok == 8
+                && !unified_moe_layout
+                && !cutlass_grouped_moe_enabled(),
+            "Laguna small-row prefill requires the measured XS shape and original NVFP4 layout"
+        );
+        layer.enable_small_row_prefill(gpu)?;
+    }
+
     // 2026-09-25: Only a BF16 shared expert is installed here; an NVFP4 one
     // stays on the quantized path.
     if let Some((shared_gate, shared_up, shared_down)) = bf16_shared {

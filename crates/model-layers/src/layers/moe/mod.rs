@@ -87,6 +87,8 @@ pub struct MoeLayer {
     moe_sorted_gate_up: KernelHandle,
     moe_sorted_silu_down: KernelHandle,
     moe_grouped_gemm: KernelHandle,
+    // 2026-10-07: Explicitly enabled disjoint row tiles; legacy callers retain None.
+    small_row_prefill: Option<ops::Nvfp4SmallRowKernels>,
     /// 2026-09-25: Wider-K twin of `moe_grouped_gemm`. Loaded only when
     /// `METRALE_MOE_GROUPED_K32=1` and the target ships it; `grouped_gemm_kernel`
     /// prefers it whenever it is non-zero.
