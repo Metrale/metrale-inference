@@ -19,7 +19,7 @@ impl GptOssLayer {
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<()> {
-        ensure!((1..=16).contains(&rows), "GPT chunk rows outside1..=16");
+        ensure!((1..=128).contains(&rows), "GPT chunk rows outside1..=128");
         let end = start
             .checked_add(rows)
             .context("GPT chunk position overflow")?;

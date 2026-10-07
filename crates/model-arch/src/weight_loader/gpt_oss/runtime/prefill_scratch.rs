@@ -2,7 +2,7 @@
 //! 2026-10-07: Bounded chunk scratch for explicit experimental C1 admission.
 use super::*;
 /// 2026-10-07: Allocate once and explicitly release after all chunk work completes.
-/// At most16 tokens of one sequence; never a multi-request batch.
+/// At most128 explicitly requested tokens of one sequence; never a multi-request batch.
 pub struct PrefillScratch {
     allocation: DevicePtr,
     stream: Option<u64>,
@@ -35,7 +35,7 @@ impl PrefillScratch {
     /// 2026-10-07: max_blocks is the single-sequence logical page capacity.
     fn sizes(rows: usize, max_blocks: usize) -> Result<Vec<usize>> {
         ensure!(
-            (1..=16).contains(&rows) && (1..=131072).contains(&max_blocks),
+            (1..=128).contains(&rows) && (1..=131072).contains(&max_blocks),
             "GPT chunk scratch geometry"
         );
         let widths = [

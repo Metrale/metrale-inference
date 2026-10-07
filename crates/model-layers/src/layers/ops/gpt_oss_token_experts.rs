@@ -14,7 +14,7 @@ pub struct GptOssTokenExperts {
 impl GptOssTokenExperts {
     pub(super) fn counts(&self) -> Result<(u32, u32, u64)> {
         ensure!(
-            (1..=16).contains(&self.tokens)
+            (1..=128).contains(&self.tokens)
                 && self.rows > 0
                 && self.cols > 0
                 && self.cols.is_multiple_of(32),
@@ -94,7 +94,7 @@ pub fn gpt_oss_token_expert_bias(
     stream: u64,
 ) -> Result<()> {
     ensure!(
-        kernel.0 != 0 && (1..=16).contains(&tokens) && rows > 0,
+        kernel.0 != 0 && (1..=128).contains(&tokens) && rows > 0,
         "GPT token expert bias geometry/kernel"
     );
     let count = rows
@@ -138,7 +138,7 @@ mod tests {
     use super::*;
     #[test]
     fn geometry_rejects_tail_groups_and_arithmetic_overflow() {
-        for tokens in [1, 2, 15, 16] {
+        for tokens in [1, 2, 15, 16, 17, 31, 64, 127, 128] {
             assert!(
                 GptOssTokenExperts {
                     tokens,
@@ -152,7 +152,7 @@ mod tests {
         }
         for (tokens, rows, cols) in [
             (0, 35, 96),
-            (17, 35, 96),
+            (129, 35, 96),
             (1, 0, 96),
             (1, 35, 95),
             (16, u32::MAX, 32),

@@ -7,8 +7,8 @@ pub(super) struct ExpertTokenPlan {
 impl ExpertTokenPlan {
     pub(super) fn new(ids: &[u32]) -> Result<Self> {
         ensure!(
-            (4..=64).contains(&ids.len()) && ids.len().is_multiple_of(4),
-            "GPT expert plan requires1..16 top4 token rows"
+            (4..=512).contains(&ids.len()) && ids.len().is_multiple_of(4),
+            "GPT expert plan requires1..128 top4 token rows"
         );
         let tokens = ids.len() / 4;
         let stride = tokens + 1;
@@ -62,7 +62,7 @@ mod tests {
     use super::*;
     #[test]
     fn shared_experts_cover_every_permuted_token_slot_once() {
-        for tokens in [1, 2, 3, 4, 5, 15, 16] {
+        for tokens in [1, 2, 3, 4, 5, 15, 16, 31, 64, 127, 128] {
             let ids: Vec<_> = (0..tokens)
                 .flat_map(|t| [31, (t * 3) % 31, (t * 3 + 7) % 31, (t * 3 + 19) % 31])
                 .collect();
@@ -97,7 +97,7 @@ mod tests {
         for bad in [
             vec![],
             vec![0; 3],
-            vec![0; 68],
+            (0..129).flat_map(|_| [0, 1, 2, 3]).collect(),
             vec![0, 1, 2, 32],
             vec![0, 1, 2, u32::MAX],
             vec![0, 0, 1, 2],

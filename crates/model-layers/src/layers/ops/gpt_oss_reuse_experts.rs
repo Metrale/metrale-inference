@@ -20,6 +20,11 @@ pub fn gpt_oss_mxfp4_reuse_experts(
     stream: u64,
 ) -> Result<()> {
     ensure!(kernel.0 != 0, "GPT expert reuse missing kernel");
+    // 2026-10-07: Larger diagnostic token grids do not admit unqualified reuse shapes.
+    ensure!(
+        (1..=16).contains(&g.tokens),
+        "GPT expert reuse tokens outside1..=16"
+    );
     let (out_count, input_count, packed) = g.counts()?;
     let out = range(output, u64::from(out_count) * 2, 2)?;
     for source in [
