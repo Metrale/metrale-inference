@@ -9,6 +9,17 @@
 
 #[path = "ops/activations.rs"]
 mod activations;
+#[path = "ops/gpt_oss_rope.rs"]
+mod gpt_oss_rope;
+pub use gpt_oss_rope::{GptOssYarn, gpt_oss_rope_bf16, gpt_oss_yarn_frequencies};
+#[path = "ops/gpt_oss_expert_ops.rs"]
+mod gpt_oss_expert_ops;
+pub use gpt_oss_expert_ops::{
+    gpt_oss_expert_bias_bf16, gpt_oss_expert_reduce_bf16, gpt_oss_swiglu_bf16,
+};
+#[path = "ops/gpt_oss_router.rs"]
+mod gpt_oss_router;
+pub use gpt_oss_router::gpt_oss_router_bf16;
 #[path = "ops/gpt_oss_mxfp4_gemv.rs"]
 mod gpt_oss_mxfp4_gemv;
 pub use gpt_oss_mxfp4_gemv::gpt_oss_mxfp4_gemv_bf16;

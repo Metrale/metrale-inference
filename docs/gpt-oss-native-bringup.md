@@ -268,3 +268,31 @@ model. No throughput or energy improvement is claimed. Attention reference
 precision, YaRN, selected-logit routing, expert bias/activation/reduction and the
 full loader/layer/factory/serving integration remain open. Routing weights in the
 circuit retain the reference BF16 output precision and remain explicitly unlowered.
+
+## Staged arithmetic and routing (October 6 continuation)
+
+Continuous half-split YaRN now matches the pinned Transformers v4.55 CUDA
+reference exactly for all 32 frequencies and 36,864 BF16 Q/K values at positions
+0, 1, 127, 128, 4095, 4096, 8192 and 131071. Truncating correction bounds changes
+6,777 outputs; adjacent-pair rotation changes 25,263. Both errors are detected.
+
+Expert post-bmm bias reuses `nllb_bias_bf16`; the new asymmetric interleaved
+SwiGLU and selected-expert reduction preserve BF16 operation boundaries. Exact
+CUDA reference comparison passed 777 bias outputs, 65,795 activation outputs
+(including all BF16 gate encodings), and 777 reduction outputs. Known-bad
+fused rounding, symmetric clamping and unrounded weighted products fail.
+Sparse reduction assumes finite unselected expert outputs; it does not mimic
+dense NaN-times-zero contamination.
+
+The shared top-k kernel now has a distinct selected-logit BF16 policy returning
+dense 32-expert scores and four IDs. Existing callers retain their FP32 policy
+and ABI. On 515 constructed CUDA rows, legacy outputs are bit-identical and the
+new selected sets and BF16 scores exactly match Torch CUDA. The declared score
+gate was one BF16 ULP; observed maximum was zero. A wrong full-expert softmax
+without selected renormalization differs at 489 positions. Finite logits are
+required. Ties use lower expert ID; no universal reference tie-order claim is
+made. Two host admission/ABI tests pass.
+
+These remain primitive observations. A complete one-token layer composition and
+explicit native full-forward harness are being assembled before factory
+registration; full-model correctness, serving behavior and speed are unqualified.

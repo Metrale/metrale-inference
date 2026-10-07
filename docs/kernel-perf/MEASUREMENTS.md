@@ -288,7 +288,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-moe-topk-cu-moe-topk-softmax-rows"></a>
 
-### `moe_topk_softmax_rows` — [kernels/gb10/common/moe_topk.cu](../../kernels/gb10/common/moe_topk.cu#L197)
+### `moe_topk_softmax_rows` — [kernels/gb10/common/moe_topk.cu](../../kernels/gb10/common/moe_topk.cu#L220)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
