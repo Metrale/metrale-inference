@@ -227,25 +227,24 @@ impl GptOssLayer {
             ids.iter().enumerate().all(|(i, id)| !ids[..i].contains(id)),
             "GPT router produced duplicate experts"
         );
+        self.expert_forward(hidden, s.norm, s.ids, s.scores, s, gpu, stream)
+    }
+    // 2026-10-07: Shared grouped expert math for scalar decode and explicit chunk diagnostics.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn expert_forward(
+        &self,
+        hidden: DevicePtr,
+        norm: DevicePtr,
+        ids: DevicePtr,
+        scores: DevicePtr,
+        s: &mut State,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
         // 2026-10-07: IDs stay validated on the host. Group only independent slots;
         // each dot, BF16 boundary, activation, and final reduction is unchanged.
-        self.packed(
-            gpu,
-            self.weights.gate_up,
-            s.norm,
-            s.gate_up,
-            s.ids,
-            0,
-            stream,
-        )?;
-        self.selected_bias(
-            gpu,
-            s.gate_up,
-            self.weights.gate_up_bias,
-            s.ids,
-            5760,
-            stream,
-        )?;
+        self.packed(gpu, self.weights.gate_up, norm, s.gate_up, ids, 0, stream)?;
+        self.selected_bias(gpu, s.gate_up, self.weights.gate_up_bias, ids, 5760, stream)?;
         ops::gpt_oss_swiglu_bf16(
             gpu,
             self.kernels.activation,
@@ -259,17 +258,17 @@ impl GptOssLayer {
             self.weights.down,
             s.activation,
             s.selected,
-            s.ids,
+            ids,
             2880,
             stream,
         )?;
-        self.selected_bias(gpu, s.selected, self.weights.down_bias, s.ids, 2880, stream)?;
+        self.selected_bias(gpu, s.selected, self.weights.down_bias, ids, 2880, stream)?;
         ops::gpt_oss_expert_reduce_bf16(
             gpu,
             self.kernels.reduce,
             s.selected,
-            s.scores,
-            s.ids,
+            scores,
+            ids,
             s.moe,
             1,
             2880,

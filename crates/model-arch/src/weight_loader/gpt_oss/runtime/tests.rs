@@ -218,3 +218,57 @@ fn constructor_and_runtime_fail_closed() {
     layer.release_state(state.as_mut(), &gpu).unwrap();
     gpu.free(hidden).unwrap();
 }
+
+// 2026-10-07: Missing chunk kernel poisons the state before a retry can launch.
+#[test]
+fn chunk_kernel_failure_and_scratch_lifetime_fail_closed() {
+    let (config, store) = fixture();
+    let gpu = MockGpuBackend::new();
+    let bound = GptOssCheckpoint::bind(&store, &config).unwrap();
+    let layer = GptOssLayer::new(&bound.layers[0], &config, 0, &gpu).unwrap();
+    let mut state = layer.alloc_state(&gpu).unwrap();
+    let mut scratch = PrefillScratch::new(&gpu, 16, 2).unwrap();
+    let hidden = gpu.alloc(16 * 5760).unwrap();
+    let mut kv = cache(&gpu, KvCacheDtype::Bf16);
+    let mut blocks = vec![];
+    gpu.deny_kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm_fp32out");
+    assert!(
+        layer
+            .forward_chunk(
+                hidden,
+                state.as_mut(),
+                &mut kv,
+                0,
+                2,
+                &mut blocks,
+                &mut scratch,
+                &gpu,
+                7
+            )
+            .is_err()
+    );
+    assert!(state.as_any().downcast_ref::<State>().unwrap().failed);
+    let lookups = gpu.kernel_lookups_snapshot().len();
+    assert!(
+        layer
+            .forward_chunk(
+                hidden,
+                state.as_mut(),
+                &mut kv,
+                0,
+                2,
+                &mut blocks,
+                &mut scratch,
+                &gpu,
+                7
+            )
+            .is_err()
+    );
+    assert_eq!(lookups, gpu.kernel_lookups_snapshot().len());
+    assert!(scratch.admit(1, 1, 8).is_err());
+    assert!(scratch.release(&gpu, 8).is_err());
+    scratch.release(&gpu, 7).unwrap();
+    assert!(scratch.admit(1, 1, 7).is_err());
+    layer.release_state(state.as_mut(), &gpu).unwrap();
+    gpu.free(hidden).unwrap();
+}
