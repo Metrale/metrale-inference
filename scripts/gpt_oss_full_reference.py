@@ -37,6 +37,7 @@ def main():
     parser.add_argument('--input-ids', default='1,2,3,4')
     parser.add_argument('--input-ids-file', type=Path)
     parser.add_argument('--inspect-only', action='store_true')
+    parser.add_argument('--diagnostic-positions', default='')
     parser.add_argument('--attention-policy', choices=['pinned-bf16','diagnostic-fp32'], default='pinned-bf16')
     args = parser.parse_args()
     if transformers.__version__ != '4.55.0':
@@ -103,12 +104,34 @@ def main():
     hooks = []
     for layer in model.model.layers:
         hooks.append(layer.register_forward_hook(lambda module, inputs, output: layer_rows.append(output.detach().cpu().contiguous())))
+    selected_positions = {int(x) for x in args.diagnostic_positions.split(',') if x}
+    diagnostics = []
+    current_position = [-1]
+    def record(stage, layer_index):
+        def hook(module, inputs, output):
+            if current_position[0] not in selected_positions:
+                return
+            entry = dict(position=current_position[0],layer=layer_index,stage=stage)
+            if stage == 'router':
+                scores, indices = output
+                entry.update(indices=indices.cpu().tolist(), scores=scores.float().cpu().tolist())
+            else:
+                value = output[0] if isinstance(output, tuple) else output
+                entry['bf16_bits'] = value.detach().contiguous().view(torch.int16).cpu().reshape(-1).tolist()
+            diagnostics.append(entry)
+        return hook
+    if selected_positions:
+        for index, layer in enumerate(model.model.layers):
+            hooks.append(layer.mlp.router.register_forward_hook(record('router',index)))
+            hooks.append(layer.self_attn.register_forward_hook(record('attention_output',index)))
+            hooks.append(layer.post_attention_layernorm.register_forward_hook(record('post_attention_norm',index)))
     cache = None
     next_ids = []
     elapsed = []
     try:
         with (args.output/'reference.layers.bf16').open('xb') as layers_file, (args.output/'reference.logits.bf16').open('xb') as logits_file, torch.inference_mode():
-            for token in ids:
+            for position, token in enumerate(ids):
+                current_position[0] = position
                 layer_rows.clear()
                 torch.cuda.synchronize()
                 begin = time.perf_counter()
@@ -129,6 +152,9 @@ def main():
     finally:
         for hook in hooks:
             hook.remove()
+    (args.output/'diagnostics.json').write_text(json.dumps(diagnostics)+'\n')
+    provenance['diagnostic_positions'] = sorted(selected_positions)
+    provenance['diagnostics_sha256'] = sha(args.output/'diagnostics.json')
     provenance.update(layer_shape=[len(ids),24,2880],logits_shape=[len(ids),201088],next_ids=next_ids,
                       step_seconds=elapsed,peak_allocated_bytes=torch.cuda.max_memory_allocated(),
                       output_hashes={name:sha(args.output/name) for name in ['reference.layers.bf16','reference.logits.bf16']})
