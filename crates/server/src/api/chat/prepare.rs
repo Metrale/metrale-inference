@@ -102,7 +102,8 @@ pub(crate) fn prepare_chat_prompt(
     let reasoning_effort = effective_reasoning_effort(
         req.reasoning_effort,
         state.default_reasoning_effort,
-        enable_thinking,
+        // 2026-10-07: Harmony template effort survives disabling generic marker budgets.
+        enable_thinking || state.tokenizer.harmony().is_some(),
     );
     let us_thinking = _t_phase.elapsed().as_micros() - us_msg_entry;
 
