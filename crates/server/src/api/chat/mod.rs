@@ -200,14 +200,23 @@ pub(crate) async fn chat_completions_inner(
 ) -> ChatOutcome {
     // 2026-10-07: Refuse before template/grammar work and scheduler dispatch.
     if state.tokenizer.harmony().is_some()
-        && (req.stream
-            || !req.tools.is_empty()
+        && (!req.tools.is_empty()
             || req.response_format.is_some()
             || !req.stop.is_empty()
-            || req.tool_choice.is_some())
+            || req.tool_choice.is_some()
+            || req.top_logprobs.is_some()
+            || req.return_token_ids
+            || req.min_tokens != 0
+            || req.repetition_detection.is_some()
+            || matches!(
+                req.thinking,
+                crate::ir::ThinkingDirective::Off
+                    | crate::ir::ThinkingDirective::On { budget: Some(_) }
+            )
+            || matches!(req.reasoning_effort, Some(crate::ir::ReasoningEffort::Max)))
     {
         return ChatOutcome::Http(openai_error_response(StatusCode::BAD_REQUEST,
-            "Experimental GPT-OSS supports blocking text only; streaming, tools, structured output and stop overrides are unavailable".into()));
+            "Experimental GPT-OSS supports text only; tools, structured output, stop overrides, logprobs, raw token IDs minimum-token overrides, thinking budgets, thinking-off and loop overrides are unavailable".into()));
     }
     req.lookup_tenant = tenant;
     crate::metrics::REQUESTS_TOTAL.inc();
