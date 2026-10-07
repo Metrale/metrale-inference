@@ -177,3 +177,12 @@ needs investigation; a wire-label correction alone is not justified.
 The source-bound summary and raw-receipt hashes are in
 [`laguna-post-soak-U.json`](model-evidence/laguna-post-soak-U.json). The exact
 checkpoint remains [poolside/Laguna-XS-2.1-NVFP4 at d32afde8b09af1539b49ff96ff5551c674485f8e](https://huggingface.co/poolside/Laguna-XS-2.1-NVFP4/tree/d32afde8b09af1539b49ff96ff5551c674485f8e).
+
+A CPU replay through the actual pinned tokenizer and production `GrammarEngine`/
+`GrammarState` passes four completed-JSON stop-mask cases and rejects two incomplete
+prefixes. EOS IDs 2 and 24 are legal after complete JSON. This rules out those
+simple fresh-matcher cases; it does not reproduce the live scheduler's suppressed
+tokens or persisted mask state. The ignored `pinned_laguna_json_completion_stop_masks`
+test reads `LAGUNA_TOKENIZER_JSON` explicitly and downloads nothing. Its scoped
+server test passes. Binary Clippy passes; broad Metal `--tests` Clippy remains
+blocked by the existing CUDA-only integration helper.
