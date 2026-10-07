@@ -293,6 +293,23 @@ without selected renormalization differs at 489 positions. Finite logits are
 required. Ties use lower expert ID; no universal reference tie-order claim is
 made. Two host admission/ABI tests pass.
 
-These remain primitive observations. A complete one-token layer composition and
-explicit native full-forward harness are being assembled before factory
-registration; full-model correctness, serving behavior and speed are unqualified.
+The primitives are now composed in an explicit eager C1 layer/loader and standalone
+full-forward example; the factory remains unregistered. On GB10, the native packed
+checkpoint completed all 24 layers for diagnostic token IDs `[1,2,3,4]`, producing
+finite logits and saved per-layer BF16 traces. Checkpoint load took 31.805 seconds;
+the four passes took 36–44 milliseconds each including trace copies. These are
+short debug-harness observations, not serving throughput or speed qualification.
+The pinned Transformers 4.55.0 eager reference agrees on all four next-token IDs
+(`[326,1981,4,5]`), but the traces are not bit-identical. Per-position maximum
+absolute logit differences are 0.0625, 0.3046875, 0.203125 and 0.21875; RMS
+differences are 0.01797, 0.05319, 0.03588 and 0.06437. Differences start in
+layer 0. This comparison is diagnostic, with no full-model acceptance inferred.
+The reference explicitly dequantizes MXFP4 to BF16; native weights stay packed.
+Attention precision and longer-context behavior remain under investigation.
+
+Follow-up review fixes now choose
+the first tied maximum and reject missing, rewound or changed KV prefixes; a
+failed execution poisons its state. Duplicate physical cache blocks are refused.
+Linux tests cover these admissions and
+argmax behavior. Original sequential teacher-forced traces are retained. Quality,
+Harmony serving, concurrency and certification remain open.
