@@ -64,6 +64,8 @@ def main():
     for folder in ['gpt-expert-exact-dot-row231-v3','gpt-layer0-exact-p215-e29-gate','gpt-layer0-exact-p248-e6-gate','gpt-layer0-exact-p248-e5-down','gpt-layer0-exact-p248-e6-down']:
         path=a.private_root/folder;original=json.loads((path/'exact-dot.json').read_text())
         case(folder,np.fromfile(path/'blocks.bin',dtype=np.uint8),np.fromfile(path/'scales.bin',dtype=np.uint8),np.fromfile(path/'input.bf16',dtype='<u2'),False,recorded=original['native_bf16_bits'],recorded_expected=original['correctly_rounded_bf16_bits'])
+    counts=torch.empty(3,dtype=torch.int64,device='cuda');read=library.read_midpoint_counts;read.argtypes=[ctypes.c_void_p];read.restype=ctypes.c_int;assert read(ctypes.c_void_p(counts.data_ptr()))==0;torch.cuda.synchronize()
+    report['retry_counters']=counts.cpu().tolist();assert report['retry_counters']==[0,0,sum(r['retry'] for r in report['cases'])]
     report['bounded_gate_passed']=all(r['exact_match'] and r['non_midpoint_identity'] for r in report['cases'] if not r['diagnostic_only'])
     report['known_bad_double_round_detected']=sum(r['repaired_bf16']!=r['double_round_bad_bf16'] for r in report['cases'] if not r['diagnostic_only'])
     report['wide_exponent_limit_observed']=any(r['diagnostic_only'] and not r['exact_match'] for r in report['cases'])

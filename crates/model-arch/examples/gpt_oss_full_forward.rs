@@ -2,6 +2,9 @@
 //! 2026-10-07: Standalone eager native GPT-OSS teacher-forced full forward.
 //! Usage: MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON [GENERATION_JSON_OR_DASH] [DIAGNOSTICS_JSON]
 //! Emits BF16 logits/hidden traces, not a serving or performance certification.
+#[cfg(feature = "cuda")]
+#[path = "gpt_oss_full_forward/counters.rs"]
+mod counters;
 #[cfg(not(feature = "cuda"))]
 fn main() -> anyhow::Result<()> {
     anyhow::bail!("gpt_oss_full_forward requires cuda feature")
@@ -121,6 +124,12 @@ fn run() -> anyhow::Result<()> {
                 symbol.as_str().context("invalid symbol")?,
             )?;
         }
+    }
+    if let Some(counts) = counters::read(&gpu, &manifest)? {
+        ensure!(
+            counts == [0, 0, 0],
+            "midpoint module counters were not initially zero"
+        );
     }
     let total = gpu.total_memory()?;
     let minimum_free = total.div_ceil(100) * 15;
@@ -325,7 +334,8 @@ fn run() -> anyhow::Result<()> {
     }
     logits_file.sync_all()?;
     hidden_file.sync_all()?;
-    let receipt = serde_json::json!({"kind":if generation.is_some() {"native_eager_greedy_generation"} else {"native_eager_teacher_forced_forward"},"diagnostics":diagnostic_records,"prompt_tokens":prompt_tokens,"generation":generation,"expected_model_revision":"6cee5e81ee83917806bbde320786a8fb61efebee","tokens":tokens,"layers":24,"load_seconds":load_seconds,"per_token_seconds_including_trace_copies":times,"next_token_ids":next_ids,"logits":{"path":logits_path,"dtype":"BF16","shape":[tokens.len(),config.vocab_size]},"hidden":{"path":hidden_path,"dtype":"BF16","shape":[tokens.len(),24,2880]},"module_manifest":manifest,"gpu_memory_fraction_limit":0.85,"limitations":["host expert ID readback","scalar prefill","trace I/O included in times","not serving or speed certification"]});
+    let midpoint_counts = counters::report(&gpu, &manifest, times.len())?;
+    let receipt = serde_json::json!({"kind":if generation.is_some() {"native_eager_greedy_generation"} else {"native_eager_teacher_forced_forward"},"diagnostics":diagnostic_records,"prompt_tokens":prompt_tokens,"generation":generation,"expected_model_revision":"6cee5e81ee83917806bbde320786a8fb61efebee","tokens":tokens,"layers":24,"load_seconds":load_seconds,"per_token_seconds_including_trace_copies":times,"next_token_ids":next_ids,"logits":{"path":logits_path,"dtype":"BF16","shape":[tokens.len(),config.vocab_size]},"hidden":{"path":hidden_path,"dtype":"BF16","shape":[tokens.len(),24,2880]},"module_manifest":manifest,"midpoint_retry_counts":midpoint_counts,"gpu_memory_fraction_limit":0.85,"limitations":["host expert ID readback","scalar prefill","trace I/O included in times","not serving or speed certification"]});
     let mut receipt_file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
