@@ -22,7 +22,9 @@ shared one process; native restarted between its sessions. Length order
 alternated within each session. Loading and compilation were excluded, no
 profiler ran, and no competing host/GPU job ran during measurement. All 120 raw
 responses, including 20 warmups, passed exact prompt-ID/count admission, one
-completion token, zero cached tokens, length termination and exactly one DONE.
+completion token, length termination and exactly one DONE. Native usage explicitly
+reports zero cached tokens; reference usage omits that field, so its cache
+boundary is the recorded `--no-enable-prefix-caching` setting.
 Generated token identities may differ between engines; fixed counts do not imply
 identical internal routing or numerical policies.
 
