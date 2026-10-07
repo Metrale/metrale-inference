@@ -54,7 +54,8 @@ pub(super) fn resolve_model_kernels(
     let w4a16_gemv_logits_kernel = gpu.kernel("w4a16_gemv", "w4a16_gemv_logits")?;
     // 2026-09-25: The same resolver as the SSM and attention tile-GEMM
     // sites, which prefers the 3-deep pipeline variant when it is loaded.
-    let w4a16_gemm_t_kernel = if metrale_model_layers::layers::tgemm_probe_ok(&config.model_type) {
+    // 2026-10-07: The explicit GPT policy plus BF16 head admission makes this NVFP4-only path unreachable.
+    let w4a16_gemm_t_kernel = if needs_nvfp4_head_probe(config) {
         metrale_model_layers::layers::tgemm_kernel(gpu)
     } else {
         KernelHandle(0)
@@ -291,4 +292,35 @@ pub(super) fn start_innerq(
                     }
                 }
             })
+}
+
+// 2026-10-07: Other families retain their existing auto/prepacked-NVFP4 probe behavior.
+fn needs_nvfp4_head_probe(config: &ModelConfig) -> bool {
+    !(config.gpt_oss.is_some() && config.skip_lm_head_quantization() && !config.lm_head_fp8)
+        && metrale_model_layers::layers::tgemm_probe_ok(&config.model_type)
+}
+
+#[cfg(test)]
+mod gpt_probe_tests {
+    use super::*;
+    #[test]
+    fn explicit_native_bf16_policy_skips_only_unreachable_probe() {
+        let mut config = metrale_config::parse_config(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../circuit/tests/fixtures/checkpoints/openai--gpt-oss-20b/config.json"
+        )))
+        .unwrap();
+        assert!(!needs_nvfp4_head_probe(&config));
+        config.gpt_oss = None;
+        assert_eq!(
+            needs_nvfp4_head_probe(&config),
+            metrale_model_layers::layers::tgemm_probe_ok(&config.model_type)
+        );
+        config.model_type = "qwen3".into();
+        config.lm_head_bf16_override = Some(true);
+        assert_eq!(
+            needs_nvfp4_head_probe(&config),
+            metrale_model_layers::layers::tgemm_probe_ok(&config.model_type)
+        );
+    }
 }

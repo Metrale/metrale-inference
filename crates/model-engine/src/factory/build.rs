@@ -59,8 +59,7 @@ pub fn build_model(
     ssm_cache_slots: usize,
     layer_dtypes: Vec<KvCacheDtype>,
     ssm_checkpoint_interval: usize,
-    // 2026-09-25: Per-sequence HBM cache cap for `--high-speed-swap`; `None`
-    // for no cap.
+    // 2026-09-25: Optional per-sequence HBM cap for high-speed swap.
     hss_cache_blocks_per_seq: Option<u32>,
     // 2026-09-25: DFlash drafter; `None` for no DFlash.
     dflash_args: Option<DflashBuildArgs<'_>>,
@@ -69,8 +68,7 @@ pub fn build_model(
     // 2026-09-25: NLLB / M2M-100 `(src_lang_id, tgt_lang_id)`, resolved by
     // the server. Required for those model types.
     nllb_lang: Option<(u32, u32)>,
-    // 2026-09-25: NLLB / M2M-100 PEFT LoRA adapter directory; `None` for the
-    // base model.
+    // 2026-09-25: Optional NLLB PEFT LoRA adapter directory.
     nllb_lora_dir: Option<std::path::PathBuf>,
     experimental: ExperimentalModelPolicy,
 ) -> Result<slots::BuiltModel> {
@@ -121,6 +119,8 @@ pub fn build_model(
     if config.model_type == "gpt_oss" {
         anyhow::ensure!(
             matches!(slots.request, slots::SlotRequest::Count(1))
+                && config.skip_lm_head_quantization()
+                && !config.lm_head_fp8
                 && kv_dtype == KvCacheDtype::Bf16
                 && layer_dtypes.iter().all(|d| *d == KvCacheDtype::Bf16)
                 && !prefix_cache.is_active()
