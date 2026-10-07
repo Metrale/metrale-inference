@@ -346,6 +346,9 @@ fn apply_full(
     f: &KeyFull,
     params: &mut BTreeMap<String, String>,
 ) -> Result<(), ConfigMapError> {
+    if f.required && v.is_none() {
+        return Err(missing(map, path));
+    }
     if f.ignore.is_some() {
         return Ok(());
     }

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-07: Exact reference policy of pinned GPT-OSS-20B; no guessed defaults.
+schema = 1
+arch = "gpt_oss"
+model_types = ["gpt_oss"]
+[layers]
+count = "num_hidden_layers"
+[[layers.sources]]
+key = "layer_types"
+values = { sliding_attention = "sliding_attention", full_attention = "full_attention" }
+[dims]
+hidden = { key = "hidden_size", allowed = [2880] }
+vocab = { key = "vocab_size", allowed = [201088] }
+q_heads = { key = "num_attention_heads", allowed = [64] }
+kv_heads = { key = "num_key_value_heads", allowed = [8] }
+head_dim = { key = "head_dim", allowed = [64] }
+experts = { key = "num_local_experts", allowed = [32] }
+top_k = { key = "num_experts_per_tok", allowed = [4] }
+moe_inter = { key = "intermediate_size", allowed = [2880] }
+
+[keys]
+architectures = { ignore = "HF class identity; model_type selects architecture" }
+attention_bias = { required = true, require = true, why = "only the pinned reference policy is described" }
+attention_dropout = { required = true, require = 0.0, why = "only the pinned reference policy is described" }
+eos_token_id = { ignore = "serving token metadata" }
+experts_per_token = { required = true, require = 4, why = "only the pinned reference policy is described" }
+hidden_act = { required = true, require = "silu", why = "only the pinned reference policy is described" }
+initial_context_length = { required = true, require = 4096, why = "only the pinned reference policy is described" }
+initializer_range = { ignore = "training initialization" }
+max_position_embeddings = { required = true, require = 131072, why = "only the pinned reference policy is described" }
+model_type = { required = true, require = "gpt_oss", why = "only the pinned reference policy is described" }
+output_router_logits = { ignore = "auxiliary reporting only" }
+pad_token_id = { ignore = "serving token metadata" }
+quantization_config = { required = true, object = { modules_to_not_convert = { required = true, require = [["model.layers.*.self_attn", "model.layers.*.mlp.router", "model.embed_tokens", "lm_head"]], why = "only the pinned reference policy is described" }, quant_method = { required = true, require = "mxfp4", why = "only the pinned reference policy is described" } } }
+rms_norm_eps = { required = true, require = 1e-05, why = "only the pinned reference policy is described" }
+rope_scaling = { required = true, object = { beta_fast = { required = true, require = 32.0, why = "only the pinned reference policy is described" }, beta_slow = { required = true, require = 1.0, why = "only the pinned reference policy is described" }, factor = { required = true, require = 32.0, why = "only the pinned reference policy is described" }, original_max_position_embeddings = { required = true, require = 4096, why = "only the pinned reference policy is described" }, rope_type = { required = true, require = "yarn", why = "only the pinned reference policy is described" }, truncate = { required = true, require = false, why = "only the pinned reference policy is described" } } }
+rope_theta = { required = true, require = 150000, why = "only the pinned reference policy is described" }
+router_aux_loss_coef = { ignore = "training loss only" }
+sliding_window = { required = true, require = 128, why = "only the pinned reference policy is described" }
+swiglu_limit = { required = true, require = 7.0, why = "only the pinned reference policy is described" }
+tie_word_embeddings = { required = true, require = false, why = "only the pinned reference policy is described" }
+transformers_version = { ignore = "metadata" }
+use_cache = { ignore = "HF generate option" }

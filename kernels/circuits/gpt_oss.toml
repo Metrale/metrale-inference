@@ -1,0 +1,296 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-07: GPT-OSS reference architecture, Transformers v4.55.0.
+# Data-only foundation: `unlowered` nodes cannot match existing fusion rules.
+schema = 1
+arch = "gpt_oss"
+description = "Biased GQA with learned sinks and alternating sliding attention; MXFP4 routed clipped interleaved SwiGLU"
+layer_module = "model.layers.{i}"
+include = []
+dims = ["hidden", "vocab", "q_heads", "kv_heads", "head_dim", "experts", "top_k", "moe_inter"]
+prologue = ["embed"]
+epilogue = ["head"]
+draft = []
+[layout]
+kind = "list"
+[layout.blocks]
+sliding_attention = ["sliding", "moe"]
+full_attention = ["full", "moe"]
+
+[block.embed]
+stream_out = "h"
+
+[[block.embed.node]]
+id = "embed"
+op = "embed"
+out = [{ edge = "h", format = "bf16", shape = "n x hidden" }]
+binding = ["model.embed_tokens"]
+
+[block.sliding]
+stream_in = "x"
+stream_out = "y"
+
+[[block.sliding.state]]
+id = "k"
+kind = "paged_kv"
+lifetime = "model"
+format = "bf16"
+shape = "kv_heads x head_dim"
+
+[[block.sliding.state]]
+id = "v"
+kind = "paged_kv"
+lifetime = "model"
+format = "bf16"
+shape = "kv_heads x head_dim"
+
+[[block.sliding.node]]
+id = "norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+params = { eps = "0.00001", scale_order = "fp32_before_cast", unlowered = "fp32_norm_scale" }
+
+[[block.sliding.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_proj"]
+params = { bias = "true", unlowered = "projection_bias" }
+
+[[block.sliding.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+params = { bias = "true", unlowered = "projection_bias" }
+
+[[block.sliding.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.v_proj"]
+params = { bias = "true", unlowered = "projection_bias" }
+
+[[block.sliding.node]]
+id = "rope"
+op = "rope"
+in = ["q", "k"]
+out = [{ edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" }, { edge = "kr", format = "bf16", shape = "n x kv_heads*head_dim" }]
+params = { type = "yarn", theta = "150000", factor = "32", original_max_position_embeddings = "4096", beta_fast = "32", beta_slow = "1", truncate = "false", layout = "half_split", unlowered = "continuous_yarn" }
+
+[[block.sliding.node]]
+id = "kv_write"
+op = "kv_write"
+in = ["kr", "v"]
+out = []
+state = { k = "write", v = "write" }
+
+[[block.sliding.node]]
+id = "attend"
+op = "paged_attention"
+in = ["qr", "kr", "v"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.sinks"]
+params = { causal = "true", window = "128", sink = "learned_logit_zero_value", unlowered = "hd64_sink_attention" }
+state = { k = "read", v = "read" }
+
+[[block.sliding.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+params = { bias = "true", unlowered = "projection_bias" }
+
+[[block.sliding.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.full]
+stream_in = "x"
+stream_out = "y"
+
+[[block.full.state]]
+id = "k"
+kind = "paged_kv"
+lifetime = "model"
+format = "bf16"
+shape = "kv_heads x head_dim"
+
+[[block.full.state]]
+id = "v"
+kind = "paged_kv"
+lifetime = "model"
+format = "bf16"
+shape = "kv_heads x head_dim"
+
+[[block.full.node]]
+id = "norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+params = { eps = "0.00001", scale_order = "fp32_before_cast", unlowered = "fp32_norm_scale" }
+
+[[block.full.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.q_proj"]
+params = { bias = "true", unlowered = "projection_bias" }
+
+[[block.full.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+params = { bias = "true", unlowered = "projection_bias" }
+
+[[block.full.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x kv_heads*head_dim" }]
+binding = ["{L}.self_attn.v_proj"]
+params = { bias = "true", unlowered = "projection_bias" }
+
+[[block.full.node]]
+id = "rope"
+op = "rope"
+in = ["q", "k"]
+out = [{ edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" }, { edge = "kr", format = "bf16", shape = "n x kv_heads*head_dim" }]
+params = { type = "yarn", theta = "150000", factor = "32", original_max_position_embeddings = "4096", beta_fast = "32", beta_slow = "1", truncate = "false", layout = "half_split", unlowered = "continuous_yarn" }
+
+[[block.full.node]]
+id = "kv_write"
+op = "kv_write"
+in = ["kr", "v"]
+out = []
+state = { k = "write", v = "write" }
+
+[[block.full.node]]
+id = "attend"
+op = "paged_attention"
+in = ["qr", "kr", "v"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.self_attn.sinks"]
+params = { causal = "true", window = "none", sink = "learned_logit_zero_value", unlowered = "hd64_sink_attention" }
+state = { k = "read", v = "read" }
+
+[[block.full.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["a"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+params = { bias = "true", unlowered = "projection_bias" }
+
+[[block.full.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "o"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe.node]]
+id = "norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+params = { eps = "0.00001", scale_order = "fp32_before_cast", unlowered = "fp32_norm_scale" }
+
+[[block.moe.node]]
+id = "router"
+op = "router"
+in = ["xn"]
+out = [{ edge = "router_logits", format = "bf16", shape = "n x experts" }]
+binding = ["{L}.mlp.router"]
+params = { bias = "true", unlowered = "router_bias" }
+
+[[block.moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["router_logits"]
+out = [{ edge = "topk_w", format = "f32", shape = "n x top_k" }, { edge = "topk_id", format = "i32", shape = "n x top_k" }]
+params = { top_k = "4", scoring = "topk_then_softmax", unlowered = "selected_logits_softmax" }
+
+[[block.moe.node]]
+id = "gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.mlp.experts.gate_up_proj"]
+params = { layout = "interleaved_even_gate_odd_up", blocks_suffix = "_blocks", scales_suffix = "_scales", bias_suffix = "_bias", unlowered = "mxfp4_interleaved_biased_experts" }
+
+[[block.moe.node]]
+id = "act"
+op = "silu_mul"
+in = ["egu"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+params = { layout = "interleaved_even_gate_odd_up", alpha = "1.702", gate_clamp_max = "7", up_clamp_min = "-7", up_clamp_max = "7", up_offset = "1", unlowered = "clipped_scaled_swiglu" }
+
+[[block.moe.node]]
+id = "down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.mlp.experts.down_proj"]
+params = { blocks_suffix = "_blocks", scales_suffix = "_scales", bias_suffix = "_bias", bias_order = "before_routing_weight", unlowered = "mxfp4_biased_experts" }
+
+[[block.moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared_experts = "none", unlowered = "routed_only_sum" }
+
+[[block.moe.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]
+
+[block.head]
+stream_in = "x"
+outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
+
+[[block.head.node]]
+id = "norm"
+op = "final_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["model.norm"]
+params = { eps = "0.00001", scale_order = "fp32_before_cast", unlowered = "fp32_norm_scale" }
+
+[[block.head.node]]
+id = "lm_head"
+op = "lm_head"
+in = ["xn"]
+out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
+binding = ["lm_head"]
+
+[[block.head.node]]
+id = "argmax"
+op = "argmax"
+in = ["logits"]
+out = [{ edge = "token", format = "i32", shape = "n x 1" }]
