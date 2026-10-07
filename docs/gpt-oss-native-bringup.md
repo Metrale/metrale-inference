@@ -2,7 +2,7 @@
 
 Status: native eager C1 prototype executes the packed checkpoint and bounded
 Harmony generation. Default factory admission remains disabled; explicit experimental
-C1 admission is implemented, with Linux server/API validation pending. Full-model numerical
+C1 admission passes bounded Linux blocking and streaming API checks. Full-model numerical
 differences remain unresolved; no broad correctness, performance or tool-use
 qualification is claimed. Verified backups are complete. Owner: investor-mvp #43.
 
@@ -61,7 +61,7 @@ golden instance or complete native lowering is claimed.
 | Bias and activation | Projection bias, expert bias, asymmetric interleaved activation and weighted reduction | Broader checkpoint mixtures and full-model acceptance |
 | YaRN | Continuous half-split kernel with large-position CUDA comparisons | Full-model long-context qualification |
 | Routing/norm | Selected-logit BF16 scores and plain norm; same-operand probes | Accumulated numerical differences and expert decision sensitivity |
-| Harmony | Token-aware parser tests and one bounded native final response | Factory/API wiring, tools, streaming, cancellation and broader quality |
+| Harmony | Native blocking and incremental SSE checks, including bounded disconnect recovery | Tools, broader API parity and quality |
 
 Initial comparison candidates are `dense_gqa` for attention structure and golden
 `qwen3_6_moe` instances for shared MoE operations. `dense_gqa` itself has executor
@@ -98,9 +98,8 @@ including Unicode chunk splits and undeclared recipients. The checkpoint tool
 header `commentary json` preserves a separate JSON content type; duplicates,
 unknown types and JSON metadata without a tool recipient are refused.
 
-Blocking text API composition is now implemented, with actual HTTP validation
-pending. Streaming foundations retain terminal-token evidence and incremental
-UTF-8 delivery, but admission remains closed until live validation. JSON/tool
+Blocking text and incremental UTF-8 streaming pass bounded live API validation.
+Streaming retains sampled terminal-token evidence and hides analysis. JSON/tool
 schema handling and broader API parity remain open. No native tool-use result
 is claimed by these framing tests.
 
@@ -132,7 +131,7 @@ preserved when genuinely encoded, not treated as an incomplete-token heuristic.
 This strict adapter is necessary because tokenizers 0.23 DecodeStream uses lossy
 decoding and exposes no final flush/pending-byte check. ID classification always
 precedes byte decoding; decoded delimiter spellings never become control events.
-The adapter now feeds blocking API composition and a gated streaming candidate;
+The adapter now feeds blocking and experimental streaming API composition;
 framing tests alone do not establish working HTTP inference.
 
 `fixtures/gpt-oss-byte-vocab.json` is a compact decoder fixture: the original
@@ -415,9 +414,8 @@ single-device execution, memory utilization in `(0, 0.85]`, and no prefix reuse,
 swap, speculative decoding, LoRA or batched prefill. Circuit lowering remains
 unsupported. Layer capabilities independently refuse graphs and multi-sequence
 execution. Factory/CLI controls and a Metal-feature server check pass. The full
-Linux target/server build succeeds. Actual HTTP/cache-lifecycle tests remain
-pending while startup integration gaps are resolved. This admission is not
-certification.
+Linux target/server build succeeds. Bounded HTTP/SSE and disconnect-recovery
+checks pass as described below. This admission is not certification.
 
 
 ## Server integration boundaries
@@ -437,9 +435,10 @@ ordinary token IDs in analysis bodies as reasoning tokens, excluding framing
 headers/delimiters. Total completion tokens remain all sampled output IDs;
 subtracting reasoning therefore still includes protocol overhead, not just
 visible-text tokens. This is an engine accounting convention, not provider
-billing parity. Scheduler reasoning/budget logic still uses generic markers;
-API accounting does not establish Harmony-aware scheduler budget enforcement.
-Live SSE and accounting validation remain open.
+billing parity. Harmony now disables the unrelated generic scheduler thinking
+budget; explicit unsupported budget/loop requests are refused. Checkpoint
+reasoning-effort hints remain independent. This newer policy fix is not part of
+the frozen SSE binary below.
 
 ## First native HTTP lifecycle result
 
@@ -459,3 +458,30 @@ reasoning-accounting and streaming changes. Its binary SHA-256 is
 Client times were 2.125–2.482 seconds for the short successful requests and
 9.499 seconds for the 420-token request; this debug-build smoke is not a
 performance or energy certification. Broader quality and optimization remain open.
+
+
+## Native streaming lifecycle result
+
+A separate frozen streaming build passed seven live cases and sixteen grader
+controls. Literal Unicode text arrived in four content chunks over 79 ms, with
+stop 106 ms after first visible content. Unsupported thinking budgets, disabling
+thinking, custom loops and raw-token options returned explicit HTTP400 errors.
+Disconnecting after the first visible content ended generation at 24 of the
+256-token limit; the retained lifecycle log records client departure and the next
+request successfully returned ORBIT. This is bounded cancellation evidence, not
+a sustained concurrency qualification.
+
+The binary SHA-256 is
+`ee3f61515173f4a576c0c59ca02a8b74db163506229d5842bede56178bebae0c`.
+Its captured source overlays and admission patch are preserved separately.
+Reported analysis-body usage was 5/19 completion IDs for the Unicode case and
+7/19 for ORBIT. Client first-visible latency is separate from server TTFT, which
+measures the first generated token and can include hidden analysis.
+
+A frozen release build at `43598c8` subsequently passed nine diagnostic response
+checks (three repetitions each). Median decode was 37.3–37.8 tokens/second.
+Prefill was roughly 47 tokens/second; median first-generated TTFT for 81-, 87-
+and 304-token prompts was 1.740, 1.868 and 6.499 seconds. Corresponding client
+first-visible medians were 2.223, 2.295 and 7.036 seconds. These bounded results
+exclude certification and energy qualification; profiling and optimization
+remain in progress.
