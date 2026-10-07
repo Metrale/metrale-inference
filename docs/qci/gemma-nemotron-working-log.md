@@ -258,9 +258,12 @@ name `VRAM_UNMEASURED`, `PARITY_UNMEASURED`, and `COHERENCE_UNMEASURED`.
 
 #### First session, this host
 
-1. Checkout is `feat/qci-gemma-nemotron-dump` at `4b2bda9`.
-   `cargo test -p metrale-qci-dump --offline` exited 0: 9 passed, 0 failed.
-   The shipped binary is `target\debug\qci-dump.exe`.
+1. The dump sources are `4b2bda9`. Local
+   `cargo test -p metrale-qci-dump --offline` on that code exited 0:
+   9 passed, 0 failed. The shipped binary is `target\debug\qci-dump.exe`.
+   The closed-length receipts in this section are commit `de6a666`.
+   That commit changes this log and the ledger. It does not change the
+   dump sources.
 2. Missing-path receipts for both cases match and do not print the path.
    `support_label` is `withheld`.
 3. Vision file and both language files: the receipts above. A present
@@ -295,13 +298,15 @@ name `VRAM_UNMEASURED`, `PARITY_UNMEASURED`, and `COHERENCE_UNMEASURED`.
 
 `NATIVE_GEMMA4_CIRCUIT_REFUSED` is unchanged.
 
-On head `4b2bda9` the only concluded failure in `gh pr checks` was
-`PR benchmark gate`. That unstamped hold stays. Do not comment `/stamp`.
-`Build mdBook + rustdoc`, `cargo test --workspace`, and `recipes` passed.
-Jobs still queued with an empty runner name were not waited out.
-Those jobs are labeled `metrale-macos-burst` or
-`self-hosted,macOS,ARM64,metal-gpu`. The name for that state is
-`RUNNER_LABEL_OFFLINE`.
+On head `4b2bda9`, `Build mdBook + rustdoc`, `cargo test --workspace`,
+and `recipes` passed. The concluded failure was `PR benchmark gate`
+because the pull request is unstamped. The closed-length note is commit
+`de6a666`. A check read of that head showed the same unstamped
+`PR benchmark gate` failure. `cargo test --workspace` was still pending
+on that read, so the workspace pass is not claimed for `de6a666`.
+Do not comment `/stamp`. Jobs still queued with an empty runner name on
+`metrale-macos-burst` or `self-hosted,macOS,ARM64,metal-gpu` were not
+waited out. The name for that state is `RUNNER_LABEL_OFFLINE`.
 
 ## What the next agent should not do
 
