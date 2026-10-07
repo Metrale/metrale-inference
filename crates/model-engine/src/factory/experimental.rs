@@ -9,18 +9,50 @@ pub enum ExperimentalModelPolicy {
     #[default]
     Disabled,
     GptOssC1,
+    GptOssC1Chunked,
+}
+
+impl ExperimentalModelPolicy {
+    // 2026-10-07: Lazy C1 scratch is charged before KV sizing, from allocator geometry.
+    pub(super) fn layer_runtime_reserve(
+        self,
+        config: &ModelConfig,
+        block_size: usize,
+    ) -> Result<usize> {
+        if self != Self::GptOssC1Chunked {
+            return Ok(0);
+        }
+        ensure!(
+            block_size > 0,
+            "GPT chunk reserve requires nonzero block size"
+        );
+        metrale_model_arch::weight_loader::gpt_oss::runtime::PrefillScratch::required_bytes(
+            16,
+            config.max_position_embeddings.div_ceil(block_size),
+        )?
+        .checked_mul(config.num_hidden_layers)
+        .ok_or_else(|| anyhow::anyhow!("GPT chunk scratch reserve overflow"))
+    }
 }
 
 pub fn loader_for_config_with_policy(
     config: &ModelConfig,
     policy: ExperimentalModelPolicy,
 ) -> Result<Box<dyn ModelWeightLoader>> {
-    if config.model_type == "gpt_oss" && policy == ExperimentalModelPolicy::GptOssC1 {
+    if policy == ExperimentalModelPolicy::GptOssC1Chunked {
+        ensure!(
+            config.model_type == "gpt_oss",
+            "chunk prefill requires GPT-OSS"
+        );
+    }
+    if config.model_type == "gpt_oss" && policy != ExperimentalModelPolicy::Disabled {
         ensure!(
             config.tp_world_size <= 1 && config.ep_world_size <= 1,
             "experimental GPT-OSS requires single-device execution"
         );
-        return Ok(Box::new(GptOssWeightLoader));
+        return Ok(Box::new(GptOssWeightLoader {
+            chunk_prefill: policy == ExperimentalModelPolicy::GptOssC1Chunked,
+        }));
     }
     super::loader_for_config(config)
 }
@@ -28,6 +60,19 @@ pub fn loader_for_config_with_policy(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chunk_policy_refuses_other_models_and_parallelism() {
+        let mut config = ModelConfig::qwen3_next_80b_nvfp4();
+        let policy = ExperimentalModelPolicy::GptOssC1Chunked;
+        assert!(loader_for_config_with_policy(&config, policy).is_err());
+        config.model_type = "gpt_oss".into();
+        assert!(loader_for_config_with_policy(&config, policy).is_ok());
+        config.tp_world_size = 2;
+        assert!(loader_for_config_with_policy(&config, policy).is_err());
+        config.tp_world_size = 1;
+        config.ep_world_size = 2;
+        assert!(loader_for_config_with_policy(&config, policy).is_err());
+    }
     #[test]
     fn explicit_policy_preserves_default_refusal_and_rejects_parallelism() {
         let mut config = ModelConfig::qwen3_next_80b_nvfp4();

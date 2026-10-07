@@ -189,7 +189,9 @@ fn one_token_composes_stages_and_uses_its_actual_position() {
 fn constructor_and_runtime_fail_closed() {
     let (config, store) = fixture();
     let gpu = MockGpuBackend::new();
-    let loader = GptOssWeightLoader;
+    let loader = GptOssWeightLoader {
+        chunk_prefill: false,
+    };
     assert!(
         loader
             .load_layers(&store, &config, &gpu, &[KvCacheDtype::Fp8; 24])
@@ -271,4 +273,20 @@ fn chunk_kernel_failure_and_scratch_lifetime_fail_closed() {
     assert!(scratch.admit(1, 1, 7).is_err());
     layer.release_state(state.as_mut(), &gpu).unwrap();
     gpu.free(hidden).unwrap();
+}
+
+#[test]
+fn chunk_scratch_budget_matches_allocation_and_bound_release() {
+    let gpu = MockGpuBackend::new();
+    let before = gpu.live_bytes().unwrap();
+    let expected = PrefillScratch::required_bytes(16, 8192).unwrap();
+    assert_eq!(expected, 1_268_224);
+    let mut scratch = PrefillScratch::new(&gpu, 16, 8192).unwrap();
+    assert_eq!(gpu.live_bytes().unwrap() - before, expected);
+    scratch.admit(16, 8192, 7).unwrap();
+    assert!(scratch.release(&gpu, 8).is_err());
+    assert_eq!(gpu.live_bytes().unwrap() - before, expected);
+    scratch.release_bound(&gpu).unwrap();
+    assert_eq!(gpu.live_bytes().unwrap(), before);
+    assert!(scratch.admit(1, 1, 7).is_err());
 }

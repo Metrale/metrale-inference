@@ -372,6 +372,7 @@ pub fn build_model(
             kv_config: &kv_config,
             prefix_cache: prefix_cache.as_ref(),
             dflash_reserve,
+            layer_runtime_reserve: experimental.layer_runtime_reserve(&config, kv_block_size)?,
             use_speculative,
             mtp_weights: &mtp_weights,
             effective_mtp_quant,
@@ -386,7 +387,6 @@ pub fn build_model(
     let total_mem = gpu.total_memory()?;
     let total_budget = (total_mem as f64 * gpu_memory_utilization) as usize;
     let kv_cache = PagedKvCache::new(kv_config, num_kv_blocks, gpu.as_ref())?;
-
     // 2026-09-25: Step 6: assemble the model. The DFlash drafter shares the
     // target's embedding and LM head, so their pointers are copied first.
     let target_embed_for_dflash = embed.weight;

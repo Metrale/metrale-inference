@@ -25,7 +25,7 @@ pub struct PrefillScratch {
 }
 impl PrefillScratch {
     /// 2026-10-07: max_blocks is the single-sequence logical page capacity.
-    pub fn new(gpu: &dyn GpuBackend, rows: usize, max_blocks: usize) -> Result<Self> {
+    fn sizes(rows: usize, max_blocks: usize) -> Result<Vec<usize>> {
         ensure!(
             (1..=16).contains(&rows) && (1..=131072).contains(&max_blocks),
             "GPT chunk scratch geometry"
@@ -46,10 +46,17 @@ impl PrefillScratch {
             4,
             max_blocks * 4,
         ];
-        let sizes: Vec<_> = widths
+        Ok(widths
             .iter()
             .map(|w| (rows * w).next_multiple_of(16))
-            .collect();
+            .collect())
+    }
+    /// 2026-10-07: The same allocation geometry is charged before KV pool sizing.
+    pub fn required_bytes(rows: usize, max_blocks: usize) -> Result<usize> {
+        Ok(Self::sizes(rows, max_blocks)?.iter().sum())
+    }
+    pub fn new(gpu: &dyn GpuBackend, rows: usize, max_blocks: usize) -> Result<Self> {
+        let sizes = Self::sizes(rows, max_blocks)?;
         let allocation = gpu.alloc(sizes.iter().sum())?;
         let mut offset = 0;
         let p: Vec<_> = sizes
@@ -90,6 +97,10 @@ impl PrefillScratch {
             self.allocation = DevicePtr::NULL;
         }
         Ok(())
+    }
+    // 2026-10-07: Teardown must drain the actual work stream, including failed calls.
+    pub(super) fn release_bound(&mut self, gpu: &dyn GpuBackend) -> Result<()> {
+        self.release(gpu, self.stream.unwrap_or_else(|| gpu.default_stream()))
     }
     pub(super) fn admit(&mut self, rows: usize, blocks: usize, stream: u64) -> Result<()> {
         ensure!(

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! 2026-10-07: Correctness-first single-token native GPT-OSS composition.
+//! 2026-10-07: Native GPT-OSS decode with explicit experimental chunk prefill.
 //! No factory registration. Host expert-ID readback vetoes CUDA graphs; this is
 //! not a throughput-qualified route. Weight pointers stay owned by the model store.
 use super::GptOssLayerWeights;
@@ -14,6 +14,7 @@ pub use diagnostics::DiagnosticTensor;
 mod forward;
 mod prefill;
 mod prefill_scratch;
+mod serving_prefill;
 pub use prefill_scratch::PrefillScratch;
 mod kernels;
 mod state;
@@ -31,6 +32,7 @@ pub struct GptOssLayer {
     window: u32,
     max_positions: usize,
     eps: f32,
+    chunk_prefill: bool,
 }
 impl GptOssLayer {
     /// 2026-10-07: Snapshot validated pointers; keep the source store alive.
@@ -78,6 +80,7 @@ impl GptOssLayer {
             },
             max_positions: config.max_position_embeddings,
             eps: config.rms_norm_eps as f32,
+            chunk_prefill: false,
         })
     }
 }
@@ -194,11 +197,44 @@ impl TransformerLayer for GptOssLayer {
             .as_any_mut()
             .downcast_mut::<State>()
             .context("GPT layer state type")?;
+        if let Some(scratch) = &mut s.chunk_scratch {
+            scratch.release_bound(gpu)?;
+        }
         if !s.allocation.is_null() {
             gpu.free(s.allocation)?;
             s.allocation = DevicePtr::NULL;
         }
         Ok(())
+    }
+    fn prefill(
+        &self,
+        hidden: DevicePtr,
+        residual: DevicePtr,
+        num_tokens: usize,
+        state: &mut dyn LayerState,
+        cache: &mut PagedKvCache,
+        start: usize,
+        blocks: &mut Vec<u32>,
+        disk_ids: &mut Vec<u32>,
+        disk_offloaded: &mut Vec<u32>,
+        kv_write_start: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        self.serving_prefill(
+            hidden,
+            residual,
+            num_tokens,
+            state,
+            cache,
+            start,
+            blocks,
+            disk_ids,
+            disk_offloaded,
+            kv_write_start,
+            ctx,
+            stream,
+        )
     }
     fn decode(
         &self,

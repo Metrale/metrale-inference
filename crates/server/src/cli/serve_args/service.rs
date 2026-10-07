@@ -29,6 +29,10 @@ pub struct ServeServiceArgs {
     #[arg(long, default_value_t = false)]
     pub experimental_gpt_oss: bool,
 
+    /// 2026-10-07: Opt into experimental 16-token GPT-OSS prefill chunks; requires experimental GPT-OSS C1 serving.
+    #[arg(long, requires = "experimental_gpt_oss", default_value_t = false)]
+    pub experimental_gpt_oss_chunk_prefill: bool,
+
     /// Server-side deadline for a single request, in seconds. A request
     /// that exceeds it is cut and the response is reported with
     /// `finish_reason="timeout"` (never "length") plus a WARN log naming

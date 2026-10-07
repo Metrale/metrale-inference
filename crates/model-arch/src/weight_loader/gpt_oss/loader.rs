@@ -13,7 +13,9 @@ use metrale_model_layers::{
 use metrale_model_weights::weights::WeightStore;
 
 /// 2026-10-07: Native eager single-device route; support remains unregistered.
-pub struct GptOssWeightLoader;
+pub struct GptOssWeightLoader {
+    pub chunk_prefill: bool,
+}
 impl ModelWeightLoader for GptOssWeightLoader {
     fn supports_tp(&self) -> bool {
         false
@@ -35,8 +37,9 @@ impl ModelWeightLoader for GptOssWeightLoader {
             .iter()
             .enumerate()
             .map(|(index, weights)| {
-                Ok(Box::new(GptOssLayer::new(weights, config, index, gpu)?)
-                    as Box<dyn TransformerLayer>)
+                let mut layer = GptOssLayer::new(weights, config, index, gpu)?;
+                layer.set_chunk_prefill(self.chunk_prefill, gpu)?;
+                Ok(Box::new(layer) as Box<dyn TransformerLayer>)
             })
             .collect()
     }

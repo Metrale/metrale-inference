@@ -80,3 +80,28 @@ fn hermetic_resolves_prefix_caching_before_runtime_admission() {
     args.hermetic = true;
     assert!(validate(&args, &config).is_ok());
 }
+
+#[test]
+fn chunk_prefill_requires_explicit_parent_opt_in_and_preserves_refusals() {
+    let (mut args, mut config) = fixture();
+    assert!(!args.experimental_gpt_oss_chunk_prefill);
+    args.experimental_gpt_oss_chunk_prefill = true;
+    assert!(validate(&args, &config).is_ok());
+    args.experimental_gpt_oss = false;
+    assert!(validate(&args, &config).is_err());
+    args.experimental_gpt_oss = true;
+    args.max_batch_size = SlotRequest::Count(2);
+    assert!(validate(&args, &config).is_err());
+    args.max_batch_size = SlotRequest::Count(1);
+    config.model_type = "qwen3".into();
+    assert!(validate(&args, &config).is_err());
+    assert!(
+        crate::cli::Cli::try_parse_from([
+            "met",
+            "serve",
+            "checkpoint",
+            "--experimental-gpt-oss-chunk-prefill"
+        ])
+        .is_err()
+    );
+}

@@ -466,7 +466,9 @@ mod ep_worker_loop_tests {
 pub(crate) fn experimental_policy(
     args: &cli::ServeArgs,
 ) -> metrale_model_engine::factory::ExperimentalModelPolicy {
-    if args.experimental_gpt_oss {
+    if args.experimental_gpt_oss && args.experimental_gpt_oss_chunk_prefill {
+        metrale_model_engine::factory::ExperimentalModelPolicy::GptOssC1Chunked
+    } else if args.experimental_gpt_oss {
         metrale_model_engine::factory::ExperimentalModelPolicy::GptOssC1
     } else {
         metrale_model_engine::factory::ExperimentalModelPolicy::Disabled

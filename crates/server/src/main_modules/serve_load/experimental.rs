@@ -8,7 +8,7 @@ use metrale_model_engine::factory::SlotRequest;
 pub(super) fn validate(args: &ServeArgs, config: &ModelConfig) -> Result<()> {
     if config.model_type != "gpt_oss" {
         ensure!(
-            !args.experimental_gpt_oss,
+            !args.experimental_gpt_oss && !args.experimental_gpt_oss_chunk_prefill,
             "--experimental-gpt-oss requires a GPT-OSS checkpoint"
         );
         return Ok(());
