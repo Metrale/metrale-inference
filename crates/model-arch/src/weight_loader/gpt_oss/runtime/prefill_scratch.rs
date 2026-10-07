@@ -7,6 +7,7 @@ pub struct PrefillScratch {
     allocation: DevicePtr,
     stream: Option<u64>,
     pub(super) expert_gemm: metrale_gpu_runtime::gpu::KernelHandle,
+    pub(super) expert_reuse_wide: metrale_gpu_runtime::gpu::KernelHandle,
     pub(super) expert_reuse: metrale_gpu_runtime::gpu::KernelHandle,
     pub(super) expert_plan: DevicePtr,
     pub(super) expert_bias: metrale_gpu_runtime::gpu::KernelHandle,
@@ -74,6 +75,8 @@ impl PrefillScratch {
         let expert_gemm = gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_selected_tokens_bf16")?;
         let expert_bias = gpu.kernel("gpt_oss_expert_ops", "gpt_oss_selected_bias_tokens_bf16")?;
         let expert_reuse = gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_reuse_tokens_bf16")?;
+        let expert_reuse_wide =
+            gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_reuse_wide_bf16")?;
         let allocation = gpu.alloc(sizes.iter().sum())?;
         let mut offset = 0;
         let p: Vec<_> = sizes
@@ -90,6 +93,7 @@ impl PrefillScratch {
             expert_gemm,
             expert_bias,
             expert_reuse,
+            expert_reuse_wide,
             expert_plan: p[18],
             gate_up: p[14],
             activation: p[15],

@@ -3,14 +3,23 @@
 use super::*;
 impl GptOssLayer {
     /// 2026-10-07: Resolve the extra kernel before admitting a chunk-enabled loader.
-    pub(crate) fn set_chunk_prefill(&mut self, enabled: bool, gpu: &dyn GpuBackend) -> Result<()> {
-        if enabled {
+    pub(crate) fn set_chunk_prefill(
+        &mut self,
+        tokens: Option<usize>,
+        gpu: &dyn GpuBackend,
+    ) -> Result<()> {
+        if let Some(capacity) = tokens {
+            ensure!(
+                [16, 64, 128].contains(&capacity),
+                "GPT chunk capacity must be 16, 64, or 128"
+            );
             gpu.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm_fp32out")?;
             gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_selected_tokens_bf16")?;
             gpu.kernel("gpt_oss_expert_ops", "gpt_oss_selected_bias_tokens_bf16")?;
             gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_reuse_tokens_bf16")?;
+            gpu.kernel("gpt_oss_mxfp4_gemv", "gpt_oss_mxfp4_reuse_wide_bf16")?;
         }
-        self.chunk_prefill = enabled;
+        self.chunk_prefill_tokens = tokens;
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
@@ -50,7 +59,7 @@ impl GptOssLayer {
                 && hidden.0.checked_add(bytes as u64).is_some(),
             "GPT prefill extent/context bound"
         );
-        if !self.chunk_prefill {
+        let Some(capacity) = self.chunk_prefill_tokens else {
             for t in 0..count {
                 self.decode(
                     hidden.offset(t * 5760),
@@ -66,7 +75,7 @@ impl GptOssLayer {
                 )?;
             }
             return Ok(());
-        }
+        };
         if count == 0 {
             return Ok(());
         }
@@ -81,8 +90,11 @@ impl GptOssLayer {
         ensure!(cache.block_size() > 0, "GPT prefill zero block size");
         if s.chunk_scratch.is_none() {
             // 2026-10-07: Persistent per-sequence storage, sized from actual page geometry.
-            match PrefillScratch::new(ctx.gpu, 16, self.max_positions.div_ceil(cache.block_size()))
-            {
+            match PrefillScratch::new(
+                ctx.gpu,
+                capacity,
+                self.max_positions.div_ceil(cache.block_size()),
+            ) {
                 Ok(scratch) => s.chunk_scratch = Some(scratch),
                 Err(error) => {
                     s.failed = true;
@@ -95,13 +107,13 @@ impl GptOssLayer {
             .take()
             .context("GPT prefill scratch missing")?;
         let result = (|| {
-            for offset in (0..count).step_by(16) {
+            for offset in (0..count).step_by(capacity) {
                 self.forward_chunk(
                     hidden.offset(offset * 5760),
                     state,
                     cache,
                     start + offset,
-                    (count - offset).min(16),
+                    (count - offset).min(capacity),
                     blocks,
                     &mut scratch,
                     ctx.gpu,

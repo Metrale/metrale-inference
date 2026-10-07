@@ -71,9 +71,9 @@ impl GptOssLayer {
             stream,
         )
     }
-    // 2026-10-07: Only the measured full-chunk shape uses weight reuse; tails retain token grids.
+    // 2026-10-07: Wider explicit chunks use cooperative validation; short tails retain token grids.
     pub(super) fn uses_expert_reuse(tokens: u32) -> bool {
-        tokens == 16
+        tokens >= 16
     }
     #[allow(clippy::too_many_arguments)]
     fn chunk_expert_projection(
@@ -92,7 +92,20 @@ impl GptOssLayer {
             cols: weight.cols,
             per_slot_input,
         };
-        if Self::uses_expert_reuse(tokens) {
+        if tokens > 16 {
+            ops::gpt_oss_mxfp4_reuse_wide_experts(
+                gpu,
+                s.expert_reuse_wide,
+                weight.blocks,
+                weight.scales,
+                input,
+                s.ids,
+                s.expert_plan,
+                output,
+                &g,
+                stream,
+            )
+        } else if Self::uses_expert_reuse(tokens) {
             ops::gpt_oss_mxfp4_reuse_experts(
                 gpu,
                 s.expert_reuse,

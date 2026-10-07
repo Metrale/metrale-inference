@@ -34,7 +34,7 @@ pub struct GptOssLayer {
     window: u32,
     max_positions: usize,
     eps: f32,
-    chunk_prefill: bool,
+    chunk_prefill_tokens: Option<usize>,
 }
 impl GptOssLayer {
     /// 2026-10-07: Snapshot validated pointers; keep the source store alive.
@@ -82,7 +82,7 @@ impl GptOssLayer {
             },
             max_positions: config.max_position_embeddings,
             eps: config.rms_norm_eps as f32,
-            chunk_prefill: false,
+            chunk_prefill_tokens: None,
         })
     }
 }

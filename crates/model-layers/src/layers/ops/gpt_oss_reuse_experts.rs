@@ -19,11 +19,47 @@ pub fn gpt_oss_mxfp4_reuse_experts(
     g: &GptOssTokenExperts,
     stream: u64,
 ) -> Result<()> {
+    launch(
+        gpu, kernel, blocks, scales, input, ids, plan, output, g, stream, 16,
+    )
+}
+/// 2026-10-07: Cooperative validation for explicit wider chunks, with the same complete-plan precondition.
+#[allow(clippy::too_many_arguments)]
+pub fn gpt_oss_mxfp4_reuse_wide_experts(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    blocks: DevicePtr,
+    scales: DevicePtr,
+    input: DevicePtr,
+    ids: DevicePtr,
+    plan: DevicePtr,
+    output: DevicePtr,
+    g: &GptOssTokenExperts,
+    stream: u64,
+) -> Result<()> {
+    launch(
+        gpu, kernel, blocks, scales, input, ids, plan, output, g, stream, 128,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn launch(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    blocks: DevicePtr,
+    scales: DevicePtr,
+    input: DevicePtr,
+    ids: DevicePtr,
+    plan: DevicePtr,
+    output: DevicePtr,
+    g: &GptOssTokenExperts,
+    stream: u64,
+    limit: u32,
+) -> Result<()> {
     ensure!(kernel.0 != 0, "GPT expert reuse missing kernel");
     // 2026-10-07: Larger diagnostic token grids do not admit unqualified reuse shapes.
     ensure!(
-        (1..=16).contains(&g.tokens),
-        "GPT expert reuse tokens outside1..=16"
+        (1..=limit).contains(&g.tokens),
+        "GPT expert reuse token capacity exceeded"
     );
     let (out_count, input_count, packed) = g.counts()?;
     let out = range(output, u64::from(out_count) * 2, 2)?;

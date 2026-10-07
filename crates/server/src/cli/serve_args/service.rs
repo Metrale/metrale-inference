@@ -29,9 +29,13 @@ pub struct ServeServiceArgs {
     #[arg(long, default_value_t = false)]
     pub experimental_gpt_oss: bool,
 
-    /// 2026-10-07: Opt into experimental 16-token GPT-OSS prefill chunks; requires experimental GPT-OSS C1 serving.
+    /// 2026-10-07: Opt into experimental GPT-OSS prefill chunks (default 16 tokens); requires experimental GPT-OSS C1 serving.
     #[arg(long, requires = "experimental_gpt_oss", default_value_t = false)]
     pub experimental_gpt_oss_chunk_prefill: bool,
+
+    /// 2026-10-07: Explicit chunk capacity (16, 64 or 128); larger chunks remain experimental.
+    #[arg(long, requires = "experimental_gpt_oss_chunk_prefill")]
+    pub experimental_gpt_oss_chunk_tokens: Option<usize>,
 
     /// Server-side deadline for a single request, in seconds. A request
     /// that exceeds it is cut and the response is reported with

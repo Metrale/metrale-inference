@@ -105,7 +105,8 @@ extern "C" __global__ void gpt_oss_mxfp4_selected_tokens_bf16(
 
 // 2026-10-07: Host-validated complete unique token/slot plan; up to four
 // independent accumulators share each decoded weight, preserving dot order.
-extern "C" __global__ void gpt_oss_mxfp4_reuse_tokens_bf16(
+template <bool Cooperative>
+__device__ __forceinline__ void gpt_oss_mxfp4_reuse_body(
     const unsigned char* blocks,const unsigned char* scales,
     const __nv_bfloat16* input,const unsigned* ids,const unsigned* plan,
     __nv_bfloat16* output,unsigned rows,unsigned cols,unsigned tokens,unsigned input_stride) {
@@ -113,13 +114,30 @@ extern "C" __global__ void gpt_oss_mxfp4_reuse_tokens_bf16(
     if(expert>=32)return;
     unsigned count=plan[expert*(tokens+1)];
     unsigned row=blockIdx.x*4+threadIdx.x/32,lane=threadIdx.x&31;
-    if(row>=rows)return;
     bool valid=count<=tokens;
-    if(valid)for(unsigned j=0;j<count;++j){
-        unsigned entry=plan[expert*(tokens+1)+1+j];
-        valid &= entry<tokens*4;
-        if(entry<tokens*4)valid &= ids[entry]==expert;
-        for(unsigned k=0;k<j;++k)valid &= entry!=plan[expert*(tokens+1)+1+k];
+    if (Cooperative) {
+        // 2026-10-07: All threads validate before any partial-row return.
+        __shared__ unsigned invalid;
+        if (!threadIdx.x) invalid = valid ? 0 : 1;
+        __syncthreads();
+        if (valid) for (unsigned j=threadIdx.x;j<count;j+=blockDim.x) {
+            unsigned entry=plan[expert*(tokens+1)+1+j];
+            bool ok=entry<tokens*4;
+            if (ok) ok=ids[entry]==expert;
+            for(unsigned k=0;k<j;++k) ok &= entry!=plan[expert*(tokens+1)+1+k];
+            if (!ok) atomicExch(&invalid,1U);
+        }
+        __syncthreads();
+        valid=invalid==0;
+        if(row>=rows)return;
+    } else {
+        if(row>=rows)return;
+        if(valid)for(unsigned j=0;j<count;++j){
+            unsigned entry=plan[expert*(tokens+1)+1+j];
+            valid &= entry<tokens*4;
+            if(entry<tokens*4)valid &= ids[entry]==expert;
+            for(unsigned k=0;k<j;++k)valid &= entry!=plan[expert*(tokens+1)+1+k];
+        }
     }
     if(!valid){
         if(!lane&&!group)for(unsigned t=0;t<tokens;++t)for(unsigned slot=0;slot<4;++slot)
@@ -149,4 +167,19 @@ extern "C" __global__ void gpt_oss_mxfp4_reuse_tokens_bf16(
         if(!lane){unsigned token=entry[j]/4,slot=entry[j]%4;
             output[(size_t(slot)*tokens+token)*rows+row]=__float2bfloat16_rn(accum[j]);}
     }
+}
+
+// 2026-10-07: Existing small-shape policy remains separate from cooperative wide validation.
+extern "C" __global__ void gpt_oss_mxfp4_reuse_tokens_bf16(
+    const unsigned char* blocks,const unsigned char* scales,
+    const __nv_bfloat16* input,const unsigned* ids,const unsigned* plan,
+    __nv_bfloat16* output,unsigned rows,unsigned cols,unsigned tokens,unsigned input_stride) {
+    gpt_oss_mxfp4_reuse_body<false>(blocks,scales,input,ids,plan,output,rows,cols,tokens,input_stride);
+}
+// 2026-10-07: Host validates complete unique coverage; capacity<=128, four accumulators unchanged.
+extern "C" __global__ void gpt_oss_mxfp4_reuse_wide_bf16(
+    const unsigned char* blocks,const unsigned char* scales,
+    const __nv_bfloat16* input,const unsigned* ids,const unsigned* plan,
+    __nv_bfloat16* output,unsigned rows,unsigned cols,unsigned tokens,unsigned input_stride) {
+    gpt_oss_mxfp4_reuse_body<true>(blocks,scales,input,ids,plan,output,rows,cols,tokens,input_stride);
 }

@@ -81,3 +81,42 @@ fn reuse_does_not_inherit_larger_token_grid_admission() {
     }
     assert!(gpu.launches_snapshot().is_empty());
 }
+
+#[test]
+fn explicit_wide_reuse_preserves_group_stride_and_refuses_overflow() {
+    use metrale_model_layers::layers::ops::gpt_oss_mxfp4_reuse_wide_experts;
+    for tokens in [17, 31, 63, 64, 65, 127, 128, 129] {
+        let gpu = MockGpuBackend::new();
+        let g = GptOssTokenExperts {
+            tokens,
+            rows: 35,
+            cols: 96,
+            per_slot_input: true,
+        };
+        let result = gpt_oss_mxfp4_reuse_wide_experts(
+            &gpu,
+            KernelHandle(1),
+            DevicePtr(0x1000000),
+            DevicePtr(0x2000000),
+            DevicePtr(0x3000000),
+            DevicePtr(0x4000000),
+            DevicePtr(0x6000000),
+            DevicePtr(0x5000000),
+            &g,
+            7,
+        );
+        if tokens > 128 {
+            assert!(result.is_err());
+            assert!(gpu.launches_snapshot().is_empty());
+        } else {
+            result.unwrap();
+            let calls = gpu.launches_snapshot();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].grid, [9, 32, tokens.div_ceil(4)]);
+            assert_eq!(
+                calls[0].args.last().unwrap(),
+                &MockArg::Bytes((tokens * 96).to_le_bytes().to_vec())
+            );
+        }
+    }
+}

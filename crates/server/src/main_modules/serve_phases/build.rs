@@ -467,7 +467,9 @@ pub(crate) fn experimental_policy(
     args: &cli::ServeArgs,
 ) -> metrale_model_engine::factory::ExperimentalModelPolicy {
     if args.experimental_gpt_oss && args.experimental_gpt_oss_chunk_prefill {
-        metrale_model_engine::factory::ExperimentalModelPolicy::GptOssC1Chunked
+        metrale_model_engine::factory::ExperimentalModelPolicy::GptOssC1Chunked {
+            tokens: args.experimental_gpt_oss_chunk_tokens.unwrap_or(16),
+        }
     } else if args.experimental_gpt_oss {
         metrale_model_engine::factory::ExperimentalModelPolicy::GptOssC1
     } else {

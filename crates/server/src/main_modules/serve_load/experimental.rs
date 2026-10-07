@@ -6,9 +6,17 @@ use metrale_config::ModelConfig;
 use metrale_model_engine::factory::SlotRequest;
 
 pub(super) fn validate(args: &ServeArgs, config: &ModelConfig) -> Result<()> {
+    if let Some(tokens) = args.experimental_gpt_oss_chunk_tokens {
+        ensure!(
+            args.experimental_gpt_oss_chunk_prefill && [16, 64, 128].contains(&tokens),
+            "--experimental-gpt-oss-chunk-tokens requires chunk prefill and capacity 16, 64 or 128"
+        );
+    }
     if config.model_type != "gpt_oss" {
         ensure!(
-            !args.experimental_gpt_oss && !args.experimental_gpt_oss_chunk_prefill,
+            !args.experimental_gpt_oss
+                && !args.experimental_gpt_oss_chunk_prefill
+                && args.experimental_gpt_oss_chunk_tokens.is_none(),
             "--experimental-gpt-oss requires a GPT-OSS checkpoint"
         );
         return Ok(());

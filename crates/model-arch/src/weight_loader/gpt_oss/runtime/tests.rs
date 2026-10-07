@@ -190,7 +190,7 @@ fn constructor_and_runtime_fail_closed() {
     let (config, store) = fixture();
     let gpu = MockGpuBackend::new();
     let loader = GptOssWeightLoader {
-        chunk_prefill: false,
+        chunk_prefill_tokens: None,
     };
     assert!(
         loader

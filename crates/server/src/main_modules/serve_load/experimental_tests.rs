@@ -105,3 +105,49 @@ fn chunk_prefill_requires_explicit_parent_opt_in_and_preserves_refusals() {
         .is_err()
     );
 }
+
+#[test]
+fn explicit_chunk_capacity_requires_parent_and_retains_c1() {
+    let (mut args, mut config) = fixture();
+    assert_eq!(args.experimental_gpt_oss_chunk_tokens, None);
+    args.experimental_gpt_oss_chunk_tokens = Some(64);
+    assert!(validate(&args, &config).is_err());
+    args.experimental_gpt_oss_chunk_prefill = true;
+    args.experimental_gpt_oss_chunk_tokens = None;
+    assert_eq!(
+        crate::main_modules::serve_phases::experimental_policy(&args)
+            .chunk_tokens()
+            .unwrap(),
+        Some(16)
+    );
+    for tokens in [16, 64, 128] {
+        args.experimental_gpt_oss_chunk_tokens = Some(tokens);
+        assert!(validate(&args, &config).is_ok());
+        assert_eq!(
+            crate::main_modules::serve_phases::experimental_policy(&args)
+                .chunk_tokens()
+                .unwrap(),
+            Some(tokens)
+        );
+        args.max_batch_size = SlotRequest::Count(2);
+        assert!(validate(&args, &config).is_err());
+        args.max_batch_size = SlotRequest::Count(1);
+    }
+    for tokens in [0, 1, 17, 63, 65, 129, usize::MAX] {
+        args.experimental_gpt_oss_chunk_tokens = Some(tokens);
+        assert!(validate(&args, &config).is_err());
+    }
+    args.experimental_gpt_oss_chunk_tokens = Some(128);
+    config.model_type = "qwen3".into();
+    assert!(validate(&args, &config).is_err());
+    assert!(
+        crate::cli::Cli::try_parse_from([
+            "met",
+            "serve",
+            "checkpoint",
+            "--experimental-gpt-oss-chunk-tokens",
+            "64"
+        ])
+        .is_err()
+    );
+}
