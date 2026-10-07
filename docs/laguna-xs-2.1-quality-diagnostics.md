@@ -213,3 +213,30 @@ throughput qualification. The original async six-hour run, arithmetic-format
 failures and initial coding failures remain unchanged evidence. Formatting and
 scoped tests pass; fresh scoped Clippy attempts are blocked by existing Metal
 GPU-runtime lints or Linux-specific storage symbols on macOS, with logs retained.
+
+The same fixed binary also passes all six schema cases and all four additional
+JSON/tool/SSE controls on the original default **async** scheduler route, with
+both diagnostic no-mix/Q12 levers absent. Thus the correction is not limited to
+the capture route. A later preserved-old-binary A2 observation completes the
+same six JSON content IDs at 399–429ms but waits another 2.409–2.413s before
+`length`; fixed observations finish after 18.5–19.5ms. The eliminated drain is
+separate from kernel decode throughput. Streamed content counts and reported
+usage remain distinct: six content IDs; fixed usage also accounts for completion.
+
+## Live bounded capture A/B/A2 — 2026-10-07
+
+The frozen diagnostic binary/source is identical in A, B and A2; only B enables
+the explicit capture plan. Each phase runs 66 requests. Exact integer-format
+counts are 17, 19 and 21 respectively, with 5, 4 and 3 variable input groups.
+All other responses remain explanatory/unscored. These runs show persistent
+variation; changing batch arrival/timing and the capture intervention prevent a
+causal claim about a particular kernel or sampling policy.
+
+B saved its bounded maximum of 64 records containing 129 actual live rows at
+widths 1, 2, 3 and 4. Every raw BF16 array matches its receipt hash and size, all
+values are finite, and every selected device candidate is its row's **unique**
+maximum. No tie occurs in these captured early positions 1 and 2. This rules out
+a tie-policy difference in those observed rows only. First prefill tokens and
+later decode positions are not captured; equal prompt/position does not prove
+identical generated prefixes. Allocation generations identify model allocations,
+not HTTP-request continuity. The capture remains a slow, default-off diagnostic.
