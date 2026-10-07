@@ -1,0 +1,90 @@
+{
+  "reference_revision": "c6df88a511a98740646ee55577b590c9852650ce",
+  "reference_source_sha256": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
+  "kernel_sha256": "c866371ebed46df2b93099d833db5e993ec62e1d80fa862409d93119c0dd3361",
+  "compile_command": [
+    "nvcc",
+    "-shared",
+    "-Xcompiler",
+    "-fPIC",
+    "-O3",
+    "--fmad=false",
+    "-arch=sm_121",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/parity-1/wrapper.cu",
+    "-o",
+    "/home/pidtom/metrale-integration-20261006/qwen-modulation-stage/parity-1/modulation.so"
+  ],
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "device": "NVIDIA GB10",
+  "criterion": "exact BF16 bits",
+  "results": [
+    {
+      "samples": 2,
+      "tokens": 3,
+      "width": 4096,
+      "causal": true,
+      "half": 0,
+      "scale_mismatches": 0,
+      "residual_mismatches": 0,
+      "elements": 24576
+    },
+    {
+      "samples": 2,
+      "tokens": 3,
+      "width": 4096,
+      "causal": true,
+      "half": 1,
+      "scale_mismatches": 0,
+      "residual_mismatches": 0,
+      "elements": 24576
+    },
+    {
+      "samples": 1,
+      "tokens": 1,
+      "width": 257,
+      "causal": false,
+      "half": 0,
+      "scale_mismatches": 0,
+      "residual_mismatches": 0,
+      "elements": 257
+    },
+    {
+      "samples": 1,
+      "tokens": 1,
+      "width": 257,
+      "causal": false,
+      "half": 1,
+      "scale_mismatches": 0,
+      "residual_mismatches": 0,
+      "elements": 257
+    },
+    {
+      "samples": 1,
+      "tokens": 1,
+      "width": 65280,
+      "causal": false,
+      "half": 0,
+      "scale_mismatches": 0,
+      "residual_mismatches": 0,
+      "elements": 65280
+    },
+    {
+      "samples": 1,
+      "tokens": 1,
+      "width": 65280,
+      "causal": false,
+      "half": 1,
+      "scale_mismatches": 0,
+      "residual_mismatches": 0,
+      "elements": 65280
+    }
+  ],
+  "known_bad_controls": {
+    "missing_scale_rounding": 31748,
+    "missing_product_rounding": 25401,
+    "wrong_prefix_row": 32690,
+    "sigmoid_gate": 161395
+  },
+  "scope": "modulation and gated residual only; no norm/projection or model qualification"
+}

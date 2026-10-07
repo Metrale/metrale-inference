@@ -6,7 +6,7 @@
   "metadata_api": "https://huggingface.co/api/models/Qwen/Qwen-Image-2.1/revision/d26bb61231c349cf6b7896fa83353113880e1ba3?blobs=true",
   "pipeline_class": "QwenImage21Pipeline",
   "declared_diffusers_version": "0.37.0.dev0",
-  "status": "metadata_only_no_weights_downloaded",
+  "status": "checkpoint_and_backup_verified_reference_images_generated_native_unqualified",
   "download_bytes": 33131615131,
   "weight_bytes": 33115613408,
   "excluded_repository_paths": [
@@ -84,7 +84,7 @@
     "transformers": {
       "repository": "huggingface/transformers",
       "revision": "14e738b5d0cc69aa27a95dde272aea41fde44f2f",
-      "runtime_compatibility_verified": false,
+      "runtime_compatibility_verified": true,
       "files": [
         {
           "path": "src/transformers/models/qwen3_vl/modeling_qwen3_vl.py",

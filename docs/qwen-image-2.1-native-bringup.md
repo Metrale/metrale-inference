@@ -196,3 +196,43 @@ Next connect these validated bindings to native visual-transformer operators and
 compare intermediate values at fixed inputs. Encoder/VAE bindings, scheduler,
 state lifecycle, numerical parity, generation and serving registration remain
 open; this component binder alone does not establish native image support.
+
+## Native modulation primitive (2026-10-07)
+
+`kernels/gb10/common/image_modulation.cu` implements scale-only modulation and
+`tanh`-gated residual updates. The typed layout in `model-layers` builds the
+sample-major row map: target tokens select their sample's timestep row, while
+prefix tokens select the trailing timestep-zero row. Components use explicit
+strides/offsets so the same operators cover both block halves and the final
+scale-only norm epilogue. Normalization and projection are separate operations.
+
+The implementation preserves the pinned eager BF16 boundaries: round `1+scale`
+before multiplying normalized input; round `tanh(gate)` and its product with the
+branch before adding the residual. Ordinary residual-add and sigmoid/SiLU kernels
+do not realize this selection/precision policy. This is a named residual family
+point, not a promoted circuit lowering rule, registered model or optimized kernel.
+No existing kernel point was changed. LAB/LKB coverage remains unqualified; only
+the isolated component now has numerical evidence.
+
+The bounded `scripts/qwen_image21/modulation_parity.py` loads the exact manifest-
+pinned Diffusers source (SHA-256 checked) and calls its `_modulate` method, followed
+by its eager gated residual expression. On GB10, all 360,452 output elements across
+six cases matched exact BF16 bits: width 4096 with two samples and mixed prefix/
+target tokens, odd tail width 257, and all 65,280 finite BF16 gate encodings at
+width 65,280. Both block halves were tested. These are synthetic component inputs,
+not checkpoint execution or an image-quality result. The separate normalization
+used to prepare inputs is reference code, not a native normalization claim.
+
+Known-bad controls detected 31,748 differing values when scale rounding was
+omitted, 25,401 when product rounding was omitted, 32,690 for wrong prefix row
+selection, and 161,395 for substituting sigmoid gating. Rust tests cover the
+row-selection contract, invalid dimensions/masks/components, null pointers and
+exact launch geometry/arguments. No throughput claim is made. Native LayerNorm,
+conditioning, attention, projections, complete denoising and image generation
+remain open, as do the existing license and full-model qualification gates.
+
+CHKI reports the new common source reaches GB10, B200 and Hopper. The change is
+benign for existing dispatch: it adds two uniquely named, unregistered entry
+points and modifies no existing kernel or target lookup. It uses ordinary BF16
+conversion and CUDA elementwise arithmetic with no GB10-specific instruction.
+Numerical evidence covers GB10 only; B200/Hopper execution remains unmeasured.

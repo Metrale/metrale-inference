@@ -315,3 +315,9 @@ pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;
 pub use w8a16_tc_rows::*;
 pub use wide_prefill::*;
+
+#[path = "ops/image_modulation.rs"]
+mod image_modulation;
+pub use image_modulation::{
+    ImageModulationLayout, image_modulation_residual_bf16, image_modulation_scale_bf16,
+};
