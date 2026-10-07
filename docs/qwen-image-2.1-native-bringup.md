@@ -468,3 +468,15 @@ BF16 gate encodings against the pinned reference in this probe. This does not
 change existing model dispatch. The text encoder output remains an explicit
 external input boundary; encoder execution, VAE decoding, denoising scheduler,
 full native image generation and production performance remain unfinished.
+
+The first actual-weight IO replay (seed 2140) now covers all nine pinned
+non-block transformer tensors. Time input/output MLP, shared modulation/final
+scale, zero-centered text normalization, tanh-GELU/text projections, image input,
+final normalization and adaptive scale are bit-exact on their identical native
+inputs in this bounded fixture. The 4096-to-64 final image projection differs at
+4/1,280 BF16 values, relative L2 `0.00008353360576288116`, maximum absolute error
+`0.015625`; the exact IO gate remains failed. Missing zero-center weighting and
+wrong GELU approximation controls detect 24,576 and 1,385 differences. All outputs
+are finite. This ctypes replay executes existing native kernels with actual
+checkpoint weights; a complete Rust transformer composition and independent
+higher-precision characterization of the final projection are still pending.
