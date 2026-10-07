@@ -49,7 +49,6 @@ pub(crate) fn build_jinja_env_with(
     let mut env = minijinja::Environment::new();
     env.set_lstrip_blocks(true);
     env.set_trim_blocks(true);
-    env.add_function("strftime_now", super::strftime::now);
 
     env.add_function(
         "raise_exception",

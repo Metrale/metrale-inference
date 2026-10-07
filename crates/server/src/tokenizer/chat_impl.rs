@@ -92,7 +92,11 @@ impl ChatTokenizer {
         if harmony.is_some() && !checkpoint_template {
             anyhow::bail!("GPT-OSS requires its checkpoint-native Harmony chat template");
         }
-        let jinja_env = super::jinja_helpers::build_jinja_env(&chat_template)?;
+        let mut jinja_env = super::jinja_helpers::build_jinja_env(&chat_template)?;
+        // 2026-10-07: Only Harmony requires the clock helper; preserve other templates' globals.
+        if harmony.is_some() {
+            jinja_env.add_function("strftime_now", super::strftime::now);
+        }
 
         // 2026-09-26: A variant template that fails to compile is dropped without a log line.
         let openai_jinja_env = if harmony.is_some() {

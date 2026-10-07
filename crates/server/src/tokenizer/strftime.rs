@@ -73,6 +73,15 @@ fn local_format(_: &std::ffi::CStr) -> Result<String, Error> {
 mod tests {
     use super::*;
     #[test]
+    fn generic_template_environment_does_not_gain_harmony_clock_global() {
+        let env =
+            super::super::jinja_helpers::build_jinja_env("{{ strftime_now is defined }}").unwrap();
+        assert_eq!(
+            env.get_template("chat").unwrap().render(()).unwrap(),
+            "false"
+        );
+    }
+    #[test]
     fn rejects_unbounded_and_nul_formats() {
         assert!(now("x".repeat(257)).is_err());
         assert!(now("%Y\0%m".into()).is_err());
