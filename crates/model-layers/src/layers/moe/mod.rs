@@ -398,6 +398,7 @@ mod helpers_a;
 mod helpers_b;
 mod helpers_c;
 mod init;
+mod init_validation;
 #[cfg(test)]
 mod mod_tests;
 mod ptr_table_build;

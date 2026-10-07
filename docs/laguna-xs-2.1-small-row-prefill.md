@@ -82,3 +82,10 @@ targets. The separately measured combined dense/prefill configuration is
 recorded in [the dense-row report](laguna-xs-2.1-dense-small-rows.md). The full
 concurrency ladder, broad coding/agentic quality and overall competitive prefill
 remain open.
+
+A subsequent constructor cleanup extracts routing validation to keep the source
+under the 500-line cap. It also rejects zero selected experts before allocation,
+matching the existing documented `1..=num_experts` contract; a failing-then-passing
+CPU control covers the former acceptance of `(top_k=0, experts=1)`. Positive
+valid-shape checks and their ordering are unchanged. Performance receipts above
+remain tied to their frozen executables, not this later source revision.
