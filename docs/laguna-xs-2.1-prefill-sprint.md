@@ -169,3 +169,63 @@ Lower is better; both orders are shown. Median first-text changes follow the sam
 The group finishing sooner does not mean each request benefits. No blanket default promotion
 is justified: single requests regress, long concurrent requests trade worse individual latency
 for earlier group completion, and semantic/output equivalence remains only bounded evidence.
+
+The final private M64/N128, 256-thread screen also preserves all 31 numerical controls but
+runs long shapes at only 0.878–0.911× incumbent speed (short 0.960–0.996×). It is rejected;
+no serving binary includes it.
+
+## What must close before declared-policy batching
+
+The refusal in `crates/server/src/main_modules/serve_load/act_quant_support.rs`
+(`prefill_lever_refusal`) is intentional: fixed activation policy must not silently make a
+prompt's output depend on its wave-mates. Passing a few semantic tasks does not discharge it.
+The next qualification work has concrete source boundaries:
+
+1. **Match attention operands and route.**
+   `qwen3_attention/trait_impl/prefill_inner.rs` sends a single first chunk through contiguous
+   Q/K/V attention, while admitted batched first chunks use paged attention. With this launch's
+   FP8 KV cache, that is a real operand/rounding distinction. Capture the same prompt's Q/K/V,
+   attention output and residual at the first differing layer under identical prefix conditions;
+   prove the required invariant or implement a compatible shared attention route before relaxing
+   the guard. Do not attribute all differences to activation tiers.
+2. **Verify row-policy invariance, rather than assuming canonical tiers provide it.**
+   `layers/row_tiers.rs` controls row-format policy, but joined waves still change matrix geometry,
+   expert token counts and kernel dispatch. Compare same-operand dense/router/expert boundaries
+   across wave size and ordering, with independent numerical controls. Retain actual generated
+   output differences and the fixed-format contract; do not retrofit a tolerance to hide them.
+3. **Prove admission and attribution.**
+   `scheduler/phase_start_prefills.rs` requires an idle, non-EP, image-free chunked route and
+   sufficiently co-arriving requests. `phase_continue_prefills/run_batched_prefill.rs` groups
+   chunk start and last-chunk status, then enforces row budgets. The engine's
+   `prefill_b/batch_kernel/eligible.rs` and `batch_kernel.rs` additionally enforce scratch/KV
+   capacity and can fall back. Record stable sequence identity, actual membership, chunk spans,
+   admission/fallback reason and first-output boundary; a client barrier or first CUDA graph
+   is insufficient attribution.
+4. **Exercise lifecycle and semantic controls.**
+   Cover unequal prompts, arrival offsets, row/tile boundaries, prefix hits and misses,
+   cancellation, draining, resumed chunks, schema/tool termination, and independent coding
+   edge cases. Check no cross-request KV contamination, missing rows or duplicate ownership.
+5. **Gate the latency policy separately.**
+   Retain C1 and mixed short/long workloads, per-request first-text/total distributions and
+   group completion in both orders. Batching's long-request median regression above must not
+   disappear into aggregate throughput. A future queue policy needs an explicit latency
+   objective and observed admission behavior, not an unconditional enablement.
+
+The final bounded arrival/lifecycle diagnostic uses the same adaptive/canonical pair and
+retains timestamp windows plus actual server dispatch lines:
+
+| Arrivals | Observed candidate membership |
+|---|---|
+| Simultaneous 1,111 + 64 + 64 + 64 input tokens | One four-request/1,303-token prefill |
+| Long first, others delayed 25/60/120 ms | No kernel-batched prefill; serial behavior |
+| Short first, others delayed 25/60/120 ms | No kernel-batched prefill; serial behavior |
+| Four short prompts delayed 0/5/20/40 ms | First two batched over 128 tokens; remaining requests serial |
+
+All sixteen eight-output responses in each arm pass prompt/count/SSE checks; this particular
+fixture's text matches across arms. It does not erase earlier unequal-prefix fixture output
+changes. Each arm also passes 32/48/64/80-token draining, one intentional client disconnect
+with three surviving requests, and a subsequent single request. These are single instrumented
+lifecycle observations, not counterbalanced performance samples. The synchronized mixed
+cohort illustrates head-of-line tradeoffs: its long request's first text arrived about923 ms
+instead of809 ms, while its three short requests arrived about922 ms instead of1,090–1,591 ms.
+That is not evidence that late-arriving short work will receive the same benefit.
