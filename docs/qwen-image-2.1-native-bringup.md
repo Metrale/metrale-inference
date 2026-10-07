@@ -380,3 +380,62 @@ The earlier LayerNorm and CPU cis mismatches remain open. Remaining block work
 includes gated residuals, the second norm/modulation and FFN composition, then
 full-transformer/encoder/VAE execution. LAB model registration remains unchanged;
 this increment adds no CUDA entry points and reuses existing kernel families.
+
+### Complete native diagnostic block and visual stack
+
+`DiagnosticImageBlock` composes the actual block operations: the existing prelude
+and output projection, first tanh-gated residual, second non-affine norm/scale,
+real gate/up/down FFN projections, staged BF16 SiLU product, and second gated
+residual. The new SiLU entry rounds the eager activation before multiplication;
+existing fused MoE policies are unchanged. Construction validates all borrowed
+weights, and the full block rejects rotary/image visibility disagreement before
+launch. Fixed scratch is owned/reclaimed; output may feed the next block.
+
+Actual block-0 weights were replayed with seeds 2130 and 2131. All same-input
+stages were exact except attention (1,972 and 1,771 differences respectively).
+Complete-block comparison to the pinned Diffusers block remains **failed**:
+9,475/24,576 differences and relative L2 `0.0030184336937963963` for seed 2130;
+9,916/24,576 and `0.0031924771509037842` for independent seed 2131. This is retained
+error characterization, not an exact pass or a new acceptance threshold.
+
+Staged SiLU matches 73,728 actual projected values and all 65,280 finite BF16 gate
+encodings in each run. The independent run includes 24 matching infinite output
+pairs from finite-input overflow, explicitly counted separately from finite error
+metrics (zero nonfinite bit differences). Omitting the activation rounding causes
+19,341 differences in the independent actual-projection case. An early summary
+metric produced NaN for matching infinities; the retained initial evidence is
+unchanged, and the fresh run separates nonfinite classifications without changing
+outputs or the exact gate.
+
+The standalone `qwen_image21_block_native` Rust example now runs the actual
+`DiagnosticImageBlock` on CUDA, with strict safetensors dtype/shape/offset checks,
+PTX SHA verification and an 85% device-memory guard. Its 24,576 block-0 output
+values are bit-identical to the separate native ctypes composition (SHA-256
+`ca81695885c36db3e2dd788791f3078fc5a05d04856023f542a9292eba8b9a5c`). A 32-block
+native visual stack also completed with finite outputs at every layer and
+per-layer tensor/output hashes. This is a fixed two-sample × three-token fixture:
+~2.95ms block-0 and 94.12ms summed block forwards exclude weight loading/hashing
+and are **not** image-generation or production-speed claims.
+
+Independent CPU FP64 same-input attention characterization gives 66/196,608
+native differences from rounded FP64 versus 13,520 for pinned SDPA. Native counts
+by real/random/high-logit/uniform case are 1/4/1/60; SDPA counts are
+2,450/10,844/226/0. Uniform values expose reduction/tie-rounding differences; the
+native result is not uniformly more accurate. The original exact SDPA gate stays
+failed. Any future accuracy admission must use a separately predeclared numerical
+contract and held-out controls, not widen the retained gate after observing it.
+
+The visual stack still excludes input/time/text projections, final adaptive norm,
+encoder, VAE and denoising/scheduling. Neither this diagnostic nor the external
+reference images establish native image support. Kernel/LAB registration remains
+unchanged; the added staged-SiLU entry is an unregistered residual. Existing
+LayerNorm, CPU cis and attention precision gaps remain documented.
+
+The pinned 32-block reference replay completed with verified matching input and
+weight hashes. All outputs are finite, but the exact stack gate remains failed:
+final layer 31 differs at 18,062/24,576 values, relative L2
+`0.01287850703204185` (maximum cumulative relative L2 over the stack
+`0.012908305023796477`). Replaying that final reference block on the identical
+native layer-30 input yields only 247 differences and relative L2
+`0.00020246686431468674`, separating local error from accumulated drift. Full
+per-layer and same-input receipts are retained; no admission threshold changed.

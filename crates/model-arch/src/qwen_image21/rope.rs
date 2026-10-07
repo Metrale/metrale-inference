@@ -6,11 +6,13 @@ use anyhow::{Result, ensure};
 /// Image grids use the reference's asymmetric centred range for odd dimensions.
 pub struct ImageRopeLayout {
     positions: Vec<[i32; 3]>,
+    image_spans: Vec<(usize, usize)>,
 }
 impl ImageRopeLayout {
     pub fn new(mask: &[bool], shapes: &[[usize; 3]]) -> Result<Self> {
         ensure!(!mask.is_empty(), "empty image rotary sequence");
         let mut positions = Vec::with_capacity(mask.len());
+        let mut image_spans = Vec::with_capacity(shapes.len());
         let (mut cursor, mut position) = (0usize, 0i32);
         for &[frames, height, width] in shapes {
             ensure!(
@@ -38,6 +40,7 @@ impl ImageRopeLayout {
                 end <= mask.len() && mask[start..end].iter().all(|v| *v),
                 "image rotary block contains text or exceeds sequence"
             );
+            image_spans.push((start, end));
             let height = i32::try_from(height)?;
             let width = i32::try_from(width)?;
             for h in -(height - height / 2)..height / 2 {
@@ -67,7 +70,31 @@ impl ImageRopeLayout {
                 .all(|p| (-1024..8192).contains(p)),
             "rotary position outside pinned frequency table"
         );
-        Ok(Self { positions })
+        Ok(Self {
+            positions,
+            image_spans,
+        })
+    }
+    pub(super) fn matches_image_ids(&self, ids: &[i32]) -> bool {
+        if ids.len() != self.positions.len() {
+            return false;
+        }
+        let mut cursor = 0;
+        for &(start, end) in &self.image_spans {
+            if ids[cursor..start].iter().any(|id| *id != -1)
+                || ids[start] < 0
+                || ids[start..end].iter().any(|id| *id != ids[start])
+            {
+                return false;
+            }
+            if start > 0 && ids[start - 1] == ids[start]
+                || end < ids.len() && ids[end] == ids[start]
+            {
+                return false;
+            }
+            cursor = end;
+        }
+        ids[cursor..].iter().all(|id| *id == -1)
     }
     pub fn positions(&self) -> &[[i32; 3]] {
         &self.positions

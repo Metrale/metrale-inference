@@ -59,3 +59,16 @@ extern "C" __global__ void image_rope_complex_bf16(
     output[2*i] = __float2bfloat16_rn(__fmaf_rn(x,c,-__fmul_rn(y,s)));
     output[2*i+1] = __float2bfloat16_rn(__fmaf_rn(y,c,__fmul_rn(x,s)));
 }
+
+// 2026-10-07: Eager BF16 SiLU storage boundary before the separate up multiply.
+// Existing fused MoE SiLU kernels keep that intermediate in FP32; do not alias
+// this entry to them or change their rounding. In-place output is supported.
+extern "C" __global__ void image_silu_staged_mul_bf16(
+    const __nv_bfloat16* gate, const __nv_bfloat16* up,
+    __nv_bfloat16* output, uint32_t elements) {
+    const uint64_t i = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= elements) return;
+    const float g = __bfloat162float(gate[i]);
+    const float activated = __bfloat162float(__float2bfloat16_rn(g / (1.0f + expf(-g))));
+    output[i] = __float2bfloat16_rn(activated * __bfloat162float(up[i]));
+}

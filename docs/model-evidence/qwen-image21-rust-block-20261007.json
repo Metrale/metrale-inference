@@ -1,0 +1,26 @@
+{
+  "checkpoint_revision": "d26bb61231c349cf6b7896fa83353113880e1ba3",
+  "module_manifest_sha256": "ba31995aaea9bf67141daa672eb4fe136e2ffa12d084ca31a7b3398c7ddb57a4",
+  "input_sha256": "ef88e2d1836e8f33f396e07eec33a1448011b5587f5fc595d948120e1051c158",
+  "modulation_sha256": "ac635117cc88bfa1d7c81fef21e3c6d7dd01a365ea05bffbe61fa72170a687f4",
+  "results": [
+    {
+      "layer": 0,
+      "weight_sha256": {
+        "transformer_blocks.0.attn.norm_k.weight": "572f201a7f1f0eb25c33d65be6a3afc6e237af9753c94cb0c924c54622d33277",
+        "transformer_blocks.0.attn.norm_q.weight": "3faf374413f8b2585700421c2f9bb39c1e846227f105e3ff10e1a8220ffde022",
+        "transformer_blocks.0.attn.to_k.weight": "778f605c4bda4725b00be4bc29ad0efdab564197fa14c73d6bf406e68168f276",
+        "transformer_blocks.0.attn.to_out.0.weight": "9f1fae2da843d19d222cb5e542fa78097d3605411d9a08f258565dbd5b8d009a",
+        "transformer_blocks.0.attn.to_q.weight": "85e6a209b9f8ae553f4cf569fe12a6a3eb319a285691aa61951583879379ab89",
+        "transformer_blocks.0.attn.to_v.weight": "4a3bd26615db1eb1fbf9de97c8a87516e3a8e967a038add9e2935a5cbaf56fa8",
+        "transformer_blocks.0.img_mlp.gate_layer.weight": "a64f445d9dc5d3c6ff4888d18605eb32cc4d4abf1bba4a2d191eef002f3194a2",
+        "transformer_blocks.0.img_mlp.out.weight": "09ecd39bf22ad4e8ed88b45deb01f65d78d643a17ee18b0fa3d4f848e46a999c",
+        "transformer_blocks.0.img_mlp.proj.weight": "41f2381489bad58208272e46d88409c0a212746ab603ea7883feaedfee76e715"
+      },
+      "output_sha256": "ca81695885c36db3e2dd788791f3078fc5a05d04856023f542a9292eba8b9a5c",
+      "synchronized_forward_seconds": 0.00294909
+    }
+  ],
+  "scope": "native Rust diagnostic visual blocks only; no encoder/VAE/denoising or qualification",
+  "qualified": false
+}

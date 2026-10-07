@@ -35,6 +35,7 @@ memmap2 = { version = "0.9", optional = true }
 safetensors = { version = "0.8", optional = true }
 
 [dev-dependencies]
+sha2 = { workspace = true }
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
 metrale-kernels = { path = "../kernels", default-features = false }
@@ -431,3 +432,7 @@ required-features = ["cuda", "gpu-examples"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "qwen_image21_block_native"
+required-features = ["cuda", "gpu-examples"]

@@ -3,6 +3,7 @@
 //! LayerNorm uses the existing two-pass NLLB kernel, whose exact-reference gate
 //! has three recorded near-zero BF16 mismatches. This path does not qualify it.
 pub mod attention;
+pub mod block;
 pub mod rope;
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::{

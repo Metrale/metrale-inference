@@ -604,3 +604,8 @@ names = ["image_head_weight_bf16"]
 component = "rope"
 kind = "three-axis image complex rotation (diagnostic residual)"
 names = ["image_rope_complex_bf16"]
+
+[[rules]]
+name = "image_silu_staged_mul_bf16"
+component = "activation"
+kind = "image BF16 staged SiLU product residual"
