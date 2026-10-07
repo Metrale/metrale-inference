@@ -150,10 +150,38 @@ produced. It was not started as a serve. Port 8888 was already refusing
 connections before the build and still refused afterward. Nothing was
 started there.
 
-The binary as linked overflows the default 1MB Windows main stack
-(`thread 'main' has overflowed its stack`, exit `0xC00000FD`).
-`editbin /STACK:16777216` on that exe made `met circuit venn --help` print
-usage and exit 0. No source change.
+The binary as first linked overflowed the default 1MB Windows main stack
+(`thread 'main' has overflowed its stack`, exit `0xC00000FD`). A one-off
+`editbin` is not how the tree builds. `crates/server/build.rs` now passes
+`/STACK:16777216` only when linking the `met` binary on Windows. A fresh
+link with that script, and no edit after it, ran `met circuit venn --help`
+twice. Both exited 0 and both printed usage. Port 8888 was down before the
+link and was still down after. Nothing was started there.
+
+### In-tree Lightning circuit, not the Q4_0 pin
+
+```
+met circuit venn --check --target nemotron-3.5/nemotron-3.5-lightning-30b-a3b-nvfp4 --against qwen3.6/qwen3.6-35b-a3b-fp8-bf16head,qwen3.8/qwen3.8-27b-nvfp4-unsloth --mode decode,multi_seq,verify,draft --rows 1,16,128 --verify-rows 2 --out kernels/circuits/venn/nemotron-3.5-lightning-vs-qwen3.6-35b-a3b.md
+```
+
+The first `--check` exited 1: the file was stale at the end. Regenerating
+with the same flags and no `--check` exited 0 and wrote that path. A second
+`--check` exited 0 and printed `current`. `git diff` of the report is empty
+once line endings are ignored, so the report was not committed. This result
+is the NVFP4 instance `nemotron-3.5/nemotron-3.5-lightning-30b-a3b-nvfp4`.
+It is not the Q4_0 pin `ggml-org/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF`.
+No tok/s, J/tok, LKB, or LAB number from it was copied onto the GGUF rows.
+
+### Gemma recipe
+
+```
+met circuit show --recipe gemma4/gemma-4-26b-a4b-nvfp4
+```
+
+Exit 1. The tool said there is no circuit instance for that recipe.
+`kernels/circuits/INSTANCES.toml` was not given a row for
+`unsloth/gemma-4-26B-A4B-it-GGUF`. Blocker: `NATIVE_GEMMA4_CIRCUIT_REFUSED`.
+No diagram was written.
 
 ### Venn after the link
 
