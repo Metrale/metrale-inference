@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! 2026-10-07: Standalone eager native GPT-OSS teacher-forced full forward.
-//! Usage: MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON
+//! Usage: MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON [GENERATION_JSON]
 //! Emits BF16 logits/hidden traces, not a serving or performance certification.
 #[cfg(not(feature = "cuda"))]
 fn main() -> anyhow::Result<()> {
@@ -27,14 +27,14 @@ fn run() -> anyhow::Result<()> {
     use std::{path::PathBuf, time::Instant};
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     ensure!(
-        args.len() == 4,
-        "expected MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON"
+        args.len() == 4 || args.len() == 5,
+        "expected MODEL_DIR MODULES_JSON TOKEN_IDS_JSON OUTPUT_JSON [GENERATION_JSON]"
     );
     let model = PathBuf::from(&args[0]);
     let manifest_path = PathBuf::from(&args[1]);
     let output = PathBuf::from(&args[3]);
     ensure!(!output.exists(), "refusing to overwrite result receipt");
-    let tokens: Vec<u32> = serde_json::from_slice(&std::fs::read(&args[2])?)?;
+    let mut tokens: Vec<u32> = serde_json::from_slice(&std::fs::read(&args[2])?)?;
     ensure!(
         !tokens.is_empty() && tokens.len() <= 512,
         "harness requires 1..512 explicit token IDs"
@@ -45,6 +45,31 @@ fn run() -> anyhow::Result<()> {
         tokens.iter().all(|&t| (t as usize) < config.vocab_size),
         "token ID outside vocabulary"
     );
+    let mut generation = args
+        .get(4)
+        .map(|path| -> anyhow::Result<Generation> {
+            let policy: GenerationPolicy = serde_json::from_slice(&std::fs::read(path)?)?;
+            ensure!(
+                (1..=256).contains(&policy.max_new_tokens),
+                "generation requires 1..256 tokens"
+            );
+            ensure!(
+                !policy.stop_ids.is_empty()
+                    && policy
+                        .stop_ids
+                        .iter()
+                        .all(|&id| (id as usize) < config.vocab_size),
+                "explicit in-vocabulary stop IDs required"
+            );
+            Ok(Generation {
+                policy,
+                ids: vec![],
+                reason: None,
+            })
+        })
+        .transpose()?;
+    let prompt_tokens = tokens.clone();
+    let capacity = tokens.len() + generation.as_ref().map_or(0, |g| g.policy.max_new_tokens);
     let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
     let modules = manifest["modules"]
         .as_array()
@@ -77,7 +102,7 @@ fn run() -> anyhow::Result<()> {
     }
     let total = gpu.total_memory()?;
     let minimum_free = total.div_ceil(100) * 15;
-    let cache_bytes = tokens.len().div_ceil(16) * 16 * 8 * 64 * 2 * 2 * 24;
+    let cache_bytes = capacity.div_ceil(16) * 16 * 8 * 64 * 2 * 2 * 24;
     let reserve = minimum_free + cache_bytes + 64 * 1024 * 1024;
     ensure!(
         gpu.free_memory()? > reserve,
@@ -107,7 +132,7 @@ fn run() -> anyhow::Result<()> {
             layer_dims: vec![],
             cache_blocks_per_seq: None,
         },
-        tokens.len().div_ceil(16),
+        capacity.div_ceil(16),
         &gpu,
     )?;
     let hidden = gpu.alloc(2880 * 2)?;
@@ -133,7 +158,9 @@ fn run() -> anyhow::Result<()> {
     let mut blocks = vec![];
     let mut times = vec![];
     let mut next_ids = vec![];
-    for (position, &token) in tokens.iter().enumerate() {
+    let mut position = 0;
+    while position < tokens.len() {
+        let token = tokens[position];
         let start = Instant::now();
         gpu.copy_d2d_async(
             checkpoint.embedding.ptr().offset(token as usize * 2880 * 2),
@@ -198,10 +225,19 @@ fn run() -> anyhow::Result<()> {
             "native position={position} input={token} next={next} seconds={:.4}",
             times.last().unwrap()
         );
+        if position + 1 >= prompt_tokens.len()
+            && let Some(generation) = generation.as_mut()
+        {
+            if generation.record(next as u32) {
+                break;
+            }
+            tokens.push(next as u32);
+        }
+        position += 1;
     }
     logits_file.sync_all()?;
     hidden_file.sync_all()?;
-    let receipt = serde_json::json!({"kind":"native_eager_teacher_forced_forward","expected_model_revision":"6cee5e81ee83917806bbde320786a8fb61efebee","tokens":tokens,"layers":24,"load_seconds":load_seconds,"per_token_seconds_including_trace_copies":times,"next_token_ids":next_ids,"logits":{"path":logits_path,"dtype":"BF16","shape":[tokens.len(),config.vocab_size]},"hidden":{"path":hidden_path,"dtype":"BF16","shape":[tokens.len(),24,2880]},"module_manifest":manifest,"gpu_memory_fraction_limit":0.85,"limitations":["host expert ID readback","scalar prefill","trace I/O included in times","not serving or speed certification"]});
+    let receipt = serde_json::json!({"kind":if generation.is_some() {"native_eager_greedy_generation"} else {"native_eager_teacher_forced_forward"},"prompt_tokens":prompt_tokens,"generation":generation,"expected_model_revision":"6cee5e81ee83917806bbde320786a8fb61efebee","tokens":tokens,"layers":24,"load_seconds":load_seconds,"per_token_seconds_including_trace_copies":times,"next_token_ids":next_ids,"logits":{"path":logits_path,"dtype":"BF16","shape":[tokens.len(),config.vocab_size]},"hidden":{"path":hidden_path,"dtype":"BF16","shape":[tokens.len(),24,2880]},"module_manifest":manifest,"gpu_memory_fraction_limit":0.85,"limitations":["host expert ID readback","scalar prefill","trace I/O included in times","not serving or speed certification"]});
     let mut receipt_file = std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -215,6 +251,36 @@ fn run() -> anyhow::Result<()> {
     gpu.free(normed)?;
     gpu.free(logits)?;
     Ok(())
+}
+
+// A generated stop token is recorded but never fed back into the cache.
+#[cfg(any(test, feature = "cuda"))]
+#[derive(serde::Deserialize, serde::Serialize)]
+struct GenerationPolicy {
+    max_new_tokens: usize,
+    stop_ids: Vec<u32>,
+}
+#[cfg(any(test, feature = "cuda"))]
+#[derive(serde::Serialize)]
+struct Generation {
+    policy: GenerationPolicy,
+    ids: Vec<u32>,
+    reason: Option<&'static str>,
+}
+#[cfg(any(test, feature = "cuda"))]
+impl Generation {
+    fn record(&mut self, id: u32) -> bool {
+        assert!(self.reason.is_none(), "generation already stopped");
+        self.ids.push(id);
+        self.reason = if self.policy.stop_ids.contains(&id) {
+            Some("stop_token")
+        } else if self.ids.len() == self.policy.max_new_tokens {
+            Some("length")
+        } else {
+            None
+        };
+        self.reason.is_some()
+    }
 }
 
 // 2026-10-07: Match reference argmax's first/lower vocabulary index on ties.
@@ -233,6 +299,27 @@ fn greedy_argmax(values: &[f32]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generation_records_stop_and_limit_without_extra_feedback() {
+        let mut g = super::Generation {
+            policy: super::GenerationPolicy {
+                max_new_tokens: 2,
+                stop_ids: vec![9],
+            },
+            ids: vec![],
+            reason: None,
+        };
+        assert!(!g.record(4));
+        assert!(g.record(5));
+        assert_eq!(g.reason, Some("length"));
+        assert_eq!(g.ids, [4, 5]);
+        g.ids.clear();
+        g.reason = None;
+        assert!(g.record(9));
+        assert_eq!(g.reason, Some("stop_token"));
+        assert_eq!(g.ids, [9]);
+    }
+
     #[test]
     fn argmax_uses_first_index_on_equal_logits() {
         assert_eq!(super::greedy_argmax(&[1.0, 1.0]), Some(0));
