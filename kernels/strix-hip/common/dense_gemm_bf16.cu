@@ -196,7 +196,8 @@ extern "C" __global__ void dense_gemm_f32in_f32out(
 #define DP_A_EPT ((DP_M_TILE * DP_K_STEP) / DP_THREADS)
 #define DP_B_EPT ((DP_K_STEP * DP_N_TILE) / DP_THREADS)
 
-typedef __bf16 dp_v16bf __attribute__((ext_vector_type(16)));
+#include "wmma_rdna.cuh"
+typedef wmma_bf16x dp_v16bf;  // 2026-10-07: WMMA_FRAG_K wide (16 on gfx11, 8 on gfx12), see wmma_rdna.cuh
 typedef float  dp_v8f   __attribute__((ext_vector_type(8)));
 
 __device__ __forceinline__ void dp_load_A_regs(
@@ -253,13 +254,13 @@ __device__ __forceinline__ void dp_wmma_compute(
 ) {
     dp_v16bf a;
     #pragma unroll
-    for (int i = 0; i < 16; i++) a[i] = (__bf16)(float)smem_A[warp_m_offset + (lane & 15)][i];
+    for (int i = 0; i < WMMA_FRAG_K; i++) a[i] = (__bf16)(float)smem_A[warp_m_offset + (lane & 15)][wmma_k0(lane) + i];
     #pragma unroll
     for (int nb = 0; nb < DP_NSUB; nb++) {
         dp_v16bf b;
         #pragma unroll
-        for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B[k][nb * 16 + (lane & 15)];
-        acc[nb] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc[nb]);
+        for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B[wmma_k0(lane) + k][nb * 16 + (lane & 15)];
+        acc[nb] = wmma_bf16(a, b, acc[nb]);
     }
 }
 
@@ -309,7 +310,7 @@ void dense_gemm_bf16_pipelined(
     for (int nb = 0; nb < DP_NSUB; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int r = cta_m + warp_m_offset + 2 * e + (lane_id >> 4);
+            unsigned int r = cta_m + warp_m_offset + WMMA_ACC_ROW_TERMS(e, (lane_id >> 4));
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[(unsigned long long)r * N + c] = __float2bfloat16(acc[nb][e]);
         }

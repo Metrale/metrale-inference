@@ -39,7 +39,8 @@ __device__ __forceinline__ void metrale_cp16_pred(void* smem_dst, const void* gm
 __device__ __forceinline__ void metrale_cp_commit() {}
 __device__ __forceinline__ void metrale_cp_wait()   {}
 
-typedef __bf16 v16bf_512 __attribute__((ext_vector_type(16)));
+#include "wmma_rdna.cuh"
+typedef wmma_bf16x v16bf_512;  // 2026-10-07: WMMA_FRAG_K wide (16 on gfx11, 8 on gfx12), see wmma_rdna.cuh
 typedef float  v8f_512   __attribute__((ext_vector_type(8)));
 
 __device__ __forceinline__ float sw_exp_512(float x) {
@@ -161,16 +162,16 @@ extern "C" __global__ void KERNEL_NAME(
                 unsigned int k_off = ks * K16_512;
                 v16bf_512 a;
                 #pragma unroll
-                for (int i = 0; i < 16; i++)
-                    a[i] = (__bf16)(float)smem_Q[(qk_m + lane_lo) * HDIM_512 + k_off + i];
+                for (int i = 0; i < WMMA_FRAG_K; i++)
+                    a[i] = (__bf16)(float)smem_Q[(qk_m + lane_lo) * HDIM_512 + k_off + wmma_k0(lane_id) + i];
                 #pragma unroll
                 for (int nt = 0; nt < QK_N_TILES_512; nt++) {
                     unsigned int key_row = nt * 16 + lane_lo;
                     v16bf_512 bb;
                     #pragma unroll
-                    for (int k = 0; k < 16; k++)
-                        bb[k] = (__bf16)(float)smem_K[key_row * HDIM_512 + k_off + k];
-                    acc_s[nt] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, bb, acc_s[nt]);
+                    for (int k = 0; k < WMMA_FRAG_K; k++)
+                        bb[k] = (__bf16)(float)smem_K[key_row * HDIM_512 + k_off + wmma_k0(lane_id) + k];
+                    acc_s[nt] = wmma_bf16(a, bb, acc_s[nt]);
                 }
             }
 
@@ -179,7 +180,7 @@ extern "C" __global__ void KERNEL_NAME(
                 unsigned int col = nt * 16 + lane_lo;
                 #pragma unroll
                 for (int e = 0; e < 8; e++) {
-                    unsigned int row = qk_m + 2 * e + lane_hi;
+                    unsigned int row = qk_m + WMMA_ACC_ROW_TERMS(e, lane_hi);
                     smem_S[row * BC_512 + col] = acc_s[nt][e];
                 }
             }
@@ -226,7 +227,7 @@ extern "C" __global__ void KERNEL_NAME(
             float resc_e[8];
             #pragma unroll
             for (int e = 0; e < 8; e++)
-                resc_e[e] = smem_resc[pv_warp_m + 2 * e + lane_hi];
+                resc_e[e] = smem_resc[pv_warp_m + WMMA_ACC_ROW_TERMS(e, lane_hi)];
             #pragma unroll
             for (int nt = 0; nt < N_TILES_PER_WARP_512; nt++)
                 #pragma unroll
@@ -242,16 +243,16 @@ extern "C" __global__ void KERNEL_NAME(
                 unsigned int k_off = ks * K16_512;
                 v16bf_512 a;
                 #pragma unroll
-                for (int i = 0; i < 16; i++)
-                    a[i] = (__bf16)(float)smem_P[(pv_warp_m + lane_lo) * p_stride + k_off + i];
+                for (int i = 0; i < WMMA_FRAG_K; i++)
+                    a[i] = (__bf16)(float)smem_P[(pv_warp_m + lane_lo) * p_stride + k_off + wmma_k0(lane_id) + i];
                 #pragma unroll
                 for (int nt = 0; nt < N_TILES_PER_WARP_512; nt++) {
                     unsigned int d_col = (pv_n_start + nt) * 16 + lane_lo;
                     v16bf_512 bb;
                     #pragma unroll
-                    for (int k = 0; k < 16; k++)
-                        bb[k] = (__bf16)(float)smem_V[(k_off + k) * HDIM_512 + d_col];
-                    acc_o[nt] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, bb, acc_o[nt]);
+                    for (int k = 0; k < WMMA_FRAG_K; k++)
+                        bb[k] = (__bf16)(float)smem_V[(k_off + wmma_k0(lane_id) + k) * HDIM_512 + d_col];
+                    acc_o[nt] = wmma_bf16(a, bb, acc_o[nt]);
                 }
             }
         }
@@ -266,7 +267,7 @@ extern "C" __global__ void KERNEL_NAME(
             unsigned int col = (pv_n_start + nt) * 16 + lane_lo;
             #pragma unroll
             for (int e = 0; e < 8; e++) {
-                unsigned int row = pv_warp_m + 2 * e + lane_hi;
+                unsigned int row = pv_warp_m + WMMA_ACC_ROW_TERMS(e, lane_hi);
                 unsigned int gr = q_start + row;
                 if (gr < q_len && row < q_tile_len && col < head_dim) {
                     float l = smem_ml[row * 2 + 1];
