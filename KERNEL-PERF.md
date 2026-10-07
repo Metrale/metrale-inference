@@ -292,8 +292,8 @@ notes = ""
 
 ## Inventory at a glance
 
-- **1398 kernel entry points** in **353 source files** across 7 hardware trees (b200, b300, gb10, hopper, metal, strix, strix-hip), compiled into 58 (hardware, model, quant) targets.
-- **1138** have at least one engine call site; **260** are compiled but launched only from tests, examples or not at all (see [Compiled but not launched](#compiled-but-not-launched)).
+- **1399 kernel entry points** in **353 source files** across 7 hardware trees (b200, b300, gb10, hopper, metal, strix, strix-hip), compiled into 58 (hardware, model, quant) targets.
+- **1138** have at least one engine call site; **261** are compiled but launched only from tests, examples or not at all (see [Compiled but not launched](#compiled-but-not-launched)).
 - **15 architecture families**, **29 components**.
 - **61** entry points have a measured % of floor; every other row reads “not measured”.
 
@@ -328,7 +328,7 @@ notes = ""
 | KDA (Kimi delta attention, linear attention) | families listing it | 11 | 24 | 10 | 3 | 5 |
 | Mamba2 (selective state-space scan) | families listing it | 6 | 63 | 7 | 1 | 8 |
 | Causal conv1d (short convolution of GDN/KDA/Mamba2) | families listing it | 10 | 10 | 1 | 3 | 2 |
-| MoE (routing, dispatch, expert GEMM/GEMV, combine) | families listing it | 195 | 293 | 205 | 45 | 22 |
+| MoE (routing, dispatch, expert GEMM/GEMV, combine) | families listing it | 195 | 293 | 205 | 46 | 22 |
 | Dense FFN (gate/up/down projections of non-MoE layers) | families listing it | 0 | 88 | 27 | 0 | 12 |
 | Projection GEMM/GEMV — BF16/F32 | every family | 27 | 27 | 7 | 1 | 4 |
 | Projection GEMM/GEMV — FP8 (W8A16, W8A8, block-scaled) | every family | 87 | 87 | 21 | 1 | 6 |
@@ -772,8 +772,8 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | moe_fused_batch3::`moe_expert_{gate_up_shared_batch3, silu_down_shared_batch3}` (2) | [gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch3.cu:33][f228] | expert GEMM/GEMV | gb10 | Gemma4 (2 ckpts) | [1 note][t228] | not measured |
 | moe_fused_batch3::`moe_weighted_sum_blend_batch3` | [gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch3.cu:323][f228] | dispatch / combine | gb10 | Gemma4 (2 ckpts) | [1 note][t228] | not measured |
 | moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (6) | [gb10/gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu:34][f229] | expert GEMM/GEMV | b200 gb10 hop | Gemma4, Mistral4, Qwen-GDN-MoE, Qwen3-VL (10 ckpts) | [1 note][t229] | not measured |
-| moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_fused_gate_up_t_k64_m128, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (7) | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:192][f243] | expert GEMM/GEMV | gb10 | Laguna, MiniMax-M2, Step-3.7 (4 ckpts) | [1 note][t243] | not measured |
-| moe_w4a16::`moe_w4a16_grouped_gemm_ptrtable_{large64, small16}` (2) | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:209][f243] | expert GEMM/GEMV (row-partition residual pair) | gb10 | Laguna, MiniMax-M2, Step-3.7 (4 ckpts) | — | not measured |
+| moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_fused_gate_up_t_k64_m128, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (7) | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:193][f243] | expert GEMM/GEMV | gb10 | Laguna, MiniMax-M2, Step-3.7 (4 ckpts) | [1 note][t243] | not measured |
+| moe_w4a16::`moe_w4a16_grouped_gemm_ptrtable_{large64, small16_n32}` (2) | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:227][f243] | expert GEMM/GEMV (row-partition residual pair) | gb10 | Laguna, MiniMax-M2, Step-3.7 (4 ckpts) | — | not measured |
 | moe_w4a16::`moe_w4a16_grouped_gemm_{ptrtable, ptrtable_relu2, ptrtable_t}` (3) | [gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/moe_w4a16_grouped_gemm.cu:590][f253] | expert GEMM/GEMV | gb10 | Nemotron-H (3 ckpts) | [2 notes][t253] | not measured |
 | moe_w4a4::`moe_w4a4_grouped_gemm_relu2` | [gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/moe_w4a4_grouped.cu:49][f254] | expert GEMM/GEMV | gb10 | Nemotron-H (3 ckpts) | [1 note][t254] | not measured |
 | moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (6) | [gb10/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu:135][f266] | expert GEMM/GEMV | gb10 hop strix | none — its callers' targets compile another copy | [1 note][t266] | not measured |
@@ -1446,8 +1446,8 @@ Entry points whose every engine call site belongs to one component.
 | moe_fused_batch3::`moe_expert_{gate_up_shared_batch3, silu_down_shared_batch3}` (2) | [gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch3.cu:33][f228] | expert GEMM/GEMV | gb10 | Gemma4 (2 ckpts) | [1 note][t228] | not measured |
 | moe_fused_batch3::`moe_weighted_sum_blend_batch3` | [gb10/gemma-4-26b-a4b/nvfp4/moe_shared_expert_fused_batch3.cu:323][f228] | dispatch / combine | gb10 | Gemma4 (2 ckpts) | [1 note][t228] | not measured |
 | moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (6) | [gb10/gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu:34][f229] | expert GEMM/GEMV | b200 gb10 hop | Gemma4, Mistral4, Qwen-GDN-MoE, Qwen3-VL (10 ckpts) | [1 note][t229] | not measured |
-| moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_fused_gate_up_t_k64_m128, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (7) | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:192][f243] | expert GEMM/GEMV | gb10 | Laguna, MiniMax-M2, Step-3.7 (4 ckpts) | [1 note][t243] | not measured |
-| moe_w4a16::`moe_w4a16_grouped_gemm_ptrtable_{large64, small16}` (2) | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:209][f243] | expert GEMM/GEMV (row-partition residual pair) | gb10 | Laguna, MiniMax-M2, Step-3.7 (4 ckpts) | — | not measured |
+| moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_fused_gate_up_t_k64_m128, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (7) | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:193][f243] | expert GEMM/GEMV | gb10 | Laguna, MiniMax-M2, Step-3.7 (4 ckpts) | [1 note][t243] | not measured |
+| moe_w4a16::`moe_w4a16_grouped_gemm_ptrtable_{large64, small16_n32}` (2) | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:227][f243] | expert GEMM/GEMV (row-partition residual pair) | gb10 | Laguna, MiniMax-M2, Step-3.7 (4 ckpts) | — | not measured |
 | moe_w4a16::`moe_w4a16_grouped_gemm_{ptrtable, ptrtable_relu2, ptrtable_t}` (3) | [gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/moe_w4a16_grouped_gemm.cu:590][f253] | expert GEMM/GEMV | gb10 | Nemotron-H (3 ckpts) | [2 notes][t253] | not measured |
 | moe_w4a4::`moe_w4a4_grouped_gemm_relu2` | [gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/moe_w4a4_grouped.cu:49][f254] | expert GEMM/GEMV | gb10 | Nemotron-H (3 ckpts) | [1 note][t254] | not measured |
 | moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (6) | [gb10/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu:135][f266] | expert GEMM/GEMV | gb10 hop strix | none — its callers' targets compile another copy | [1 note][t266] | not measured |
@@ -1744,6 +1744,7 @@ No engine call site names these entry points: they are reached only from tests o
 | norm::`f32_residual_add` | [gb10/gemma-4-31b/nvfp4/rms_norm.cu:487][f236] | Activations and elementwise · activation / gate / residual | gb10 | — | [1 note][t236] | not measured |
 | norm::`residual_add_rms_norm_f32`, `residual_add_rms_norm_f32_abs`, `rms_norm_f32`, `rms_norm_f32_in_abs`, `rms_norm_residual_f32`, `rms_norm_residual_f32_abs` | [gb10/gemma-4-31b/nvfp4/rms_norm.cu:294][f236] | Normalization · normalization | gb10 | — | [1 note][t236] | not measured |
 | fp4_mma_microtest::`fp4_microtest_{mma, pack}` (2) | [gb10/holo-3.1-0.8b/nvfp4/fp4_mma_microtest.cu:87][f240] | Diagnostics and microtests · microtest / smoke | gb10 | — | [1 note][t240] | not measured |
+| moe_w4a16::`moe_w4a16_grouped_gemm_ptrtable_small16` | [gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu:210][f243] | MoE · expert GEMM/GEMV (row-partition residual pair) | gb10 | — | — | not measured |
 | norm::`f32_residual_add` | [gb10/minimax-m2-229b/nvfp4/rms_norm.cu:494][f244] | Activations and elementwise · activation / gate / residual | b200 gb10 hop | — | [1 note][t244] | not measured |
 | norm::`residual_add_rms_norm_f32`, `residual_add_rms_norm_f32_abs`, `rms_norm_f32`, `rms_norm_f32_in_abs`, `rms_norm_residual_f32`, `rms_norm_residual_f32_abs` | [gb10/minimax-m2-229b/nvfp4/rms_norm.cu:684][f244] | Normalization · normalization | b200 gb10 hop | — | [1 note][t244] | not measured |
 | paged_decode_attn_fp8_mla::`paged_decode_attn_reduce_fp8` | [gb10/mistral-small-4/nvfp4/paged_decode_attn_fp8_mla.cu:507][f250] | MLA · MLA decode/prefill | gb10 | — | [1 note][t250] | not measured |

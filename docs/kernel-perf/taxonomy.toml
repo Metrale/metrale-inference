@@ -493,7 +493,7 @@ files = ["kernels/metal/*"]
 [[rule]]
 component = "moe"
 kind = "expert GEMM/GEMV (row-partition residual pair)"
-names = ["moe_w4a16_grouped_gemm_ptrtable_small16", "moe_w4a16_grouped_gemm_ptrtable_large64"]
+names = ["moe_w4a16_grouped_gemm_ptrtable_small16", "moe_w4a16_grouped_gemm_ptrtable_small16_n32", "moe_w4a16_grouped_gemm_ptrtable_large64"]
 
 [[rule]]
 component = "moe"

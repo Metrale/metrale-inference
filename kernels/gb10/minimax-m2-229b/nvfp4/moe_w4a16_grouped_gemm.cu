@@ -41,7 +41,7 @@ __device__ __forceinline__ float moe_e2m1_bit_value(unsigned nibble) {
     return __uint_as_float(bits | ((nibble & 8u) << 28));
 }
 
-template<int MRows = 64, int RowPolicy = 0, bool BitDecode = false>
+template<int MRows = 64, int RowPolicy = 0, bool BitDecode = false, int NCols = 64, int Threads = 128>
 __device__ __forceinline__ void moe_w4a16_grouped_gemm_bf16_body(
     const __nv_bfloat16* __restrict__ A,
     const unsigned long long* __restrict__ B_packed_ptrs,
@@ -54,6 +54,7 @@ __device__ __forceinline__ void moe_w4a16_grouped_gemm_bf16_body(
     unsigned int N,
     unsigned int K
 ) {
+    static_assert((NCols == 64 && Threads == 128) || (MRows == 16 && NCols == 32 && Threads == 64), "tile policy");
     static_assert(MRows == 16 || MRows == 64, "supported BF16 row tiles");
     static_assert(RowPolicy >= 0 && RowPolicy <= 2, "row admission policy");
     static_assert(RowPolicy != 1 || MRows == 16, "small partition requires M16");
@@ -72,7 +73,7 @@ __device__ __forceinline__ void moe_w4a16_grouped_gemm_bf16_body(
     if (cta_m_local >= M_expert) return;
 
     const unsigned int cta_m = m_start + cta_m_local;
-    const unsigned int cta_n = blockIdx.x * N_TILE_SM;
+    const unsigned int cta_n = blockIdx.x * NCols;
 
     const unsigned char* B_expert = (const unsigned char*)B_packed_ptrs[expert_id];
     const unsigned char* S_expert = (const unsigned char*)B_scale_ptrs[expert_id];
@@ -87,7 +88,7 @@ __device__ __forceinline__ void moe_w4a16_grouped_gemm_bf16_body(
     const unsigned int tid = lane_id & 3;
 
     __shared__ __nv_bfloat16 smem_A[MRows][K_STEP + PAD];
-    __shared__ __nv_bfloat16 smem_B[K_STEP][N_TILE_SM + PAD];
+    __shared__ __nv_bfloat16 smem_B[K_STEP][NCols + PAD];
 
     constexpr int fragments = MRows == 16 ? 2 : 8;
     const unsigned int warp_n_offset = MRows == 16 ? warp_id * 16 : 0;
@@ -99,14 +100,14 @@ __device__ __forceinline__ void moe_w4a16_grouped_gemm_bf16_body(
     }
 
     const unsigned int a_stride = K_STEP + PAD;
-    const unsigned int b_stride = N_TILE_SM + PAD;
+    const unsigned int b_stride = NCols + PAD;
     const unsigned int M_eff = (unsigned int)M_expert;
     const unsigned int half_K = K / 2;
     const unsigned int num_groups = K / GROUP_SIZE;
 
     for (unsigned int k_base = 0; k_base < K; k_base += K_STEP) {
         {
-            const unsigned int ept = (MRows * K_STEP) / 128;
+            const unsigned int ept = (MRows * K_STEP) / Threads;
             #pragma unroll
             for (unsigned int i = 0; i < ept; i++) {
                 unsigned int idx = threadIdx.x * ept + i;
@@ -126,13 +127,13 @@ __device__ __forceinline__ void moe_w4a16_grouped_gemm_bf16_body(
         }
 
         {
-            const unsigned int ept = (K_STEP * N_TILE_SM) / 128;
+            const unsigned int ept = (K_STEP * NCols) / Threads;
             unsigned int scale_group = k_base / GROUP_SIZE;
             #pragma unroll
             for (unsigned int i = 0; i < ept; i++) {
                 unsigned int idx = threadIdx.x * ept + i;
-                unsigned int k = idx / N_TILE_SM;
-                unsigned int n = idx % N_TILE_SM;
+                unsigned int k = idx / NCols;
+                unsigned int n = idx % NCols;
                 unsigned int gk = k_base + k;
                 unsigned int gn = cta_n + n;
                 if (gk < K && gn < N) {
@@ -219,6 +220,23 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_small16(
     unsigned int K
 ) {
     moe_w4a16_grouped_gemm_bf16_body<16, 1, true>(
+        A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C, expert_offsets,
+        sorted_token_ids, num_experts, N, K);
+}
+
+extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_small16_n32(
+    const __nv_bfloat16* __restrict__ A,
+    const unsigned long long* __restrict__ B_packed_ptrs,
+    const unsigned long long* __restrict__ B_scale_ptrs,
+    const float* __restrict__ scale2_vals,
+    __nv_bfloat16* __restrict__ C,
+    const int* __restrict__ expert_offsets,
+    const int* __restrict__ sorted_token_ids,
+    unsigned int num_experts,
+    unsigned int N,
+    unsigned int K
+) {
+    moe_w4a16_grouped_gemm_bf16_body<16, 1, true, 32, 64>(
         A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C, expert_offsets,
         sorted_token_ids, num_experts, N, K);
 }
@@ -1735,3 +1753,6 @@ extern "C" __device__ unsigned int moe_w4a16_fused_gate_up_t_a_e4m3 = 1;
 // 2026-10-07: The disjoint small/large pair retains the same N64 tile.
 extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_small16_n_tile = N_TILE_SM;
 extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_large64_n_tile = N_TILE_SM;
+
+// 2026-10-07: Measured narrow-column point; legacy entries retain their policy.
+extern "C" __device__ unsigned int moe_w4a16_grouped_gemm_ptrtable_small16_n32_n_tile = 32;

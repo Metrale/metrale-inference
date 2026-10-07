@@ -1,0 +1,113 @@
+# Laguna prefill investigation — 2026-10-07
+
+Checkpoint: [poolside/Laguna-XS-2.1-NVFP4, d32afde8b09af1539b49ff96ff5551c674485f8e](https://huggingface.co/poolside/Laguna-XS-2.1-NVFP4/tree/d32afde8b09af1539b49ff96ff5551c674485f8e).
+This investigation follows the [long-decode comparison](laguna-xs-2.1-performance-diagnostic.md). A competitive C1 long-decode result does not establish competitive prefill.
+
+## Matched one-output baseline
+
+Frozen native binary `3aeaa2f04ff185b4fd624ba6aa9ee6df8949d1a183b10b4d55d63bc98c7091d8`
+(runtime source `5f4d7b9`) versus the pinned NVIDIA vLLM image
+`sha256:fa68ef92f906e1b3770621625c5af539d15297fea15dacfc1466b853a567c5b6`,
+with explicit Marlin linear and expert backends. Both use the same original checkpoint,
+BF16 activations, FP8 KV, batch limit 4, memory fraction 0.85, prefix caching disabled,
+and exactly the same 64- or 1,111-token input IDs. Each request generates exactly one token.
+Native enables the previously qualified small-row, dense-row and minimum-token sampling options;
+its declared activation policy and canonical row tiers remain unchanged.
+
+All 96 cohorts / 224 requests passed framing, identity and exact-count admission, including
+warmups. Three measured cohorts per workload/concurrency were run in each fresh process,
+in native/reference/reference/native order, without overlapping compilation or profiling.
+
+| Input tokens | Client concurrency | Native/reference median total latency, first / reverse order |
+|---:|---:|---:|
+| 64 | 1 | 3.810× / 3.838× |
+| 64 | 2 | 4.233× / 5.305× |
+| 64 | 4 | 4.641× / 4.708× |
+| 1,111 | 1 | 3.979× / 3.989× |
+| 1,111 | 2 | 3.240× / 3.251× |
+| 1,111 | 4 | 3.022× / 3.041× |
+
+C1 native first text is approximately 263 ms / 743 ms for short / long prompts,
+versus 69 ms / 186 ms in the reference. Native C4 first-text arrivals form a staircase:
+approximately 262/524/783/1,045 ms and 745/1,488/2,229/2,971 ms.
+These are client observations, not proof of GPU batch membership. Whole-cohort prompt throughput
+includes queueing, one generation step and HTTP completion; it is not isolated GPU prefill throughput.
+Raw evidence is preserved in `laguna-prefill-sprint-baseline`, including process/checkpoint receipts,
+raw streams, `comparison.json` and `prefill-report.json`. No energy measurement or broad quality
+qualification follows from this one-output workload.
+
+## Batching diagnosis: separate activation-policy experiment
+
+The existing declared-policy guard refuses prefill codispatch. That refusal was preserved.
+A separate diagnostic explicitly selected adaptive activation policy **and canonical row tiers**,
+comparing the same frozen binary with and without codispatch/variable-length batching.
+Actual engine logs confirmed four live streams and dispatched row totals 256, 4,444 and 1,367;
+the mixed-length case used 64/65/127/1,111 input tokens and distinct KV slots.
+
+The short cohort's first text changed from a serial staircase to approximately 320 ms for all
+four requests. Long requests arrived at approximately 2,350 ms together instead of
+744/1,513/2,253/2,995 ms: cohort completion improved, but median individual first-text latency
+worsened. These instrumented, single-cohort observations are not accepted performance measurements.
+Equal-length eight-token outputs matched across the diagnostic arms; two mixed-length outputs
+changed. The latter remains a row/batch-dependent behavior limitation.
+
+Six structured-output cases, four tool/JSON controls, six concurrent structured cases,
+unequal-length draining, cancellation survivors and a subsequent C1 request passed.
+The twelve sequential coding outputs were byte-identical to the earlier declared-policy outputs
+whose isolated semantic grade was 9/12; this is not concurrent coding qualification.
+The adaptive route is not a replacement for the declared-policy baseline or evidence of
+row-invariant precision. Its admission delay, paged prefill attention and batch-dependent outputs
+need separate qualification before any default change.
+
+## Remaining phase measurement boundary
+
+A first CUDA graph launch is not a per-request prefill/decode boundary. Prior current-native
+captures still contain other requests' prompt processing after the first graph launch.
+Future attribution must join request/sequence membership to actual prefill calls and completion,
+including queue time; neither a kernel name nor client C4 establishes a four-row GPU prefill.
+The next declared-policy optimization is evaluated against the frozen native baseline above,
+with full-request gates and unchanged per-output arithmetic.
+
+## Qualified narrow-column point for the opt-in small-row pair
+
+The existing BF16 MMA family now exposes an M16/N32, 64-thread point alongside its
+unchanged M16/N64 and M64/N64 entry points. The already opt-in Laguna small-row path
+uses N32 for experts with at most 16 rows; the complete M64 fallback remains 128 threads.
+The launch reads each entry's published N tile, verifies the expected 32/64 metadata,
+and retains all shape, pointer and BF16-activation refusals. No activation-policy default changes.
+
+Frozen candidate binary `5aca2f9adb50e4084507219cde94109f07a151f785af215ad10426fa87b957b0`
+was measured against `3aeaa2…` with identical declared-policy flags. The tested source overlay
+and embedded PTX hashes are retained in `laguna-n32-private/stage-receipt.json`; the checked-in
+version only cleans formatting, error wording and a comment from that runtime overlay.
+The exact legacy PTX gate passes on SM90a/100a/121f: all nine old entry bodies preserve
+instructions, registers, constants and shared allocations. Only the additional default
+parameters in compiler symbol names and per-function label ordinals are normalized.
+GB10 is the only runtime-measured architecture.
+
+The CUDA gate passes 31 constructed and captured-checkpoint slice cases, including zero,
+1/15/16/17/63/64/65/934-row boundaries, N tails, gathers, sentinel padding, an independent
+integer oracle, and deliberately incomplete fallback/wrong-gather controls. Five CPU wrapper
+tests verify distinct metadata, 64/128-thread launches, full fallback coverage and refusals.
+A separate injected one-output profile records 117 calls of the actual N32 entry on the
+short prompt; that trace is dispatch evidence, not an accepted latency measurement.
+
+All 144 fixed-work cohorts pass admission in incumbent/candidate/candidate/incumbent order.
+There are three measured cohorts after a warmup per workload/concurrency in each arm.
+Lower is better in this table; ranges cover both orders, without dropping outliers.
+
+| Workload | Client concurrency | Median total latency change |
+|---|---:|---:|
+| 64 input, 1 output | 1 | −4.20% / −4.09% |
+| 64 input, 1 output | 2 | −3.77% / −4.11% |
+| 64 input, 1 output | 4 | −4.43% / −4.62% |
+| 1,111 input, 1 output | 1–4 | −0.75% to −0.95% |
+| 64 input, 64 outputs | 1–4 | −0.66% to −1.53% |
+
+Measured fixed-work text-hash sets match in both orders. Six schema cases, four tool/JSON
+controls, six concurrent schema cases, unequal-length draining and cancellation controls pass.
+All twelve coding sources exactly match the earlier independently graded 9/12 baseline;
+the three retry-delay failures remain. A separate four-topic C4/128-output diagnostic improves
+only 0.24%/0.66%; one topic retains text variation in the reverse comparison. There is no
+claim of broad quality equivalence or a material diverse-decode win. This narrow optimization
+helps short-prompt latency; it does not close the long-prefill or reference-engine gap above.

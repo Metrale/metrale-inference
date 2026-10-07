@@ -18,13 +18,13 @@ impl Nvfp4SmallRowKernels {
     /// 2026-10-07: Missing kernels, wrong tiles or FP8 activation casts refuse the pair.
     pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
         let pair = Self {
-            small: gpu.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable_small16")?,
+            small: gpu.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable_small16_n32")?,
             large: gpu.kernel("moe_w4a16", "moe_w4a16_grouped_gemm_ptrtable_large64")?,
         };
-        for kernel in [pair.small, pair.large] {
+        for (kernel, expected) in [(pair.small, 32), (pair.large, 64)] {
             ensure!(
-                gpu.kernel_n_tile(kernel)? == 64,
-                "small-row pair requires N64"
+                gpu.kernel_n_tile(kernel)? == expected,
+                "small-row pair tile mismatch"
             );
             ensure!(
                 !gpu.kernel_casts_a_to_e4m3(kernel),
@@ -80,10 +80,10 @@ impl Nvfp4SmallRowKernels {
             sorted.0.is_multiple_of(4),
             "invalid sorted-row pointer alignment"
         );
-        for (kernel, rows) in [(self.small, 1), (self.large, max_m_tiles)] {
+        for (kernel, rows, threads) in [(self.small, 1, 64), (self.large, max_m_tiles, 128)] {
             KernelLaunch::new(gpu, kernel)
                 .grid([super::n_tile_blocks(gpu, kernel, n)?, rows, experts])
-                .block([128, 1, 1])
+                .block([threads, 1, 1])
                 .arg_ptr(a)
                 .arg_ptr(packed)
                 .arg_ptr(scales)
