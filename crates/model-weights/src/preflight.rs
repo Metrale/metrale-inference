@@ -306,6 +306,24 @@ fn check_expert_count(store: &WeightStore, config: &ModelConfig) -> Result<()> {
         max_expert = Some(max_expert.map_or(idx, |m| m.max(idx)));
     }
     let Some(max_idx) = max_expert else {
+        // 2026-10-07: GPT packs every expert into each projection tensor; the
+        // strict native MXFP4 format binder validates their shapes/counts later.
+        if config.gpt_oss.is_some() {
+            let groups = store
+                .names()
+                .filter(|name| {
+                    name.ends_with(".mlp.experts.gate_up_proj_blocks")
+                        || name.ends_with(".mlp.experts.down_proj_blocks")
+                })
+                .count();
+            if groups > 0 {
+                tracing::info!(
+                    groups,
+                    "Pre-flight: bundled GPT expert groups detected; exact layout validation follows in the MXFP4 binder"
+                );
+                return Ok(());
+            }
+        }
         // Config says we're MoE but no expert tensors exist at all —
         // EP=2 may have sharded them all onto another rank, which is
         // legitimate. Warn rather than fail.
