@@ -359,3 +359,25 @@ does not establish full-model agreement; expert decisions and accumulated
 rounding remain under investigation. All original, ablation and candidate
 traces are retained. Diagnostic snapshot reruns reproduced their baseline
 logits/layer traces byte-for-byte, with KV export layout controls passing.
+
+## Routing and independent arithmetic checks
+
+On identical captured logits, Torch and native selected the same experts in all
+144 sampled routing rows. Six same-input router projection replays were also
+bit-exact. Observed routing changes arise from different upstream hidden states
+crossing narrow score gaps; these checks do not establish a selector defect.
+
+Full-row selected-expert replay reproduced all eight captured native outputs.
+The four experts at staged position 215/layer 6 matched the BF16 reference. At
+position 49/layer 9, expert 18 differed in one gate projection value, propagating
+into 131 expert-output values. B4 and B32 reference geometries agreed, and the
+isolated bias, activation and down-projection checks matched.
+
+An independent rational dot-product oracle resolves that differing gate row:
+the exact sum is `-3350529/16777216`. Native returns the correctly rounded BF16
+value `-0.2001953125` (bits 48717); the CUDA reference returns `-0.19921875`
+(bits 48716). The emulated native FP32 accumulation equals the exact sum for
+this row. Reference internal accumulation is not exposed. The exact-reference
+gate remains recorded as failed, but changing this correct native result to
+match the reference is not justified. This one-row finding neither qualifies
+the full model nor resolves its remaining output differences.
