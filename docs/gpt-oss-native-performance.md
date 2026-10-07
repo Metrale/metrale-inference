@@ -333,3 +333,35 @@ Raw operands, outputs, source receipts, logs and request responses remain in the
 private `gpt/expert-reuse-candidate` evidence bundle. Linux CUDA Clippy, host plan
 and wrapper controls, generated inventory and SM90/SM100a compilation pass;
 other hardware has compilation evidence only, not performance qualification.
+
+## Rejected larger serving chunks (2026-10-07)
+
+Diagnostic capacity 64/128 in `18039cf` preserves all scalar hidden/cache bytes,
+including partial-page and 128-token window boundaries. A separate serving-option
+prototype propagated selected capacity through admission, loader, scratch and
+pre-KV memory reservation. Both capacities passed lifecycle 7/7, text 12/12,
+blocking tools 9/9 and streamed tools 5/5. Default capacity remained 16 and expert
+weight reuse remained bounded to full 16-token chunks; larger chunks used token
+grids. No precision or routing policy changed.
+
+The larger serving option was **rejected**, not promoted. One frozen release
+binary ran capacities 16→64→128, then 128→64→16 on an otherwise idle host, with
+warmups and three repetitions per workload. Outputs/counts were identical, but
+capacity 64 regressed geometric total latency **34.74% / 34.50%** and capacity
+128 regressed **34.74% / 34.22%**. In the first session, arithmetic total was
+1.065 s at 16 versus 1.438/1.439 s at 64/128; counting was 2.185 versus
+2.559/2.559 s; retrieval was 2.663 versus 4.120/4.119 s. Each setting failed the
+predeclared maximum 2% per-case regression and minimum 1.02× speedup gates.
+This does not prove that every larger-chunk implementation is slower; it rejects
+this measured token-grid implementation against the accepted 16-token reuse path.
+
+The trial binary was
+`0d040d13c633e5aa0b6c00e1adf12f7c76c122995317215f156a8c1b7158fa3e`,
+from base `18039cf` plus a recorded nine-file serving overlay. Additional
+CPU-only default/block-size test assertions were checked separately and were not
+in the release binary. Exact checkpoint:
+[6cee5e81ee83917806bbde320786a8fb61efebee](https://huggingface.co/openai/gpt-oss-20b/tree/6cee5e81ee83917806bbde320786a8fb61efebee).
+The full patch, source receipt, commands, raw API responses and both session
+comparisons are retained privately in `gpt/large-serving-candidate`. The serving
+patch was removed; existing explicit chunk serving still uses capacity 16.
+Committed diagnostic capacity 64/128 remains available for further experiments.
