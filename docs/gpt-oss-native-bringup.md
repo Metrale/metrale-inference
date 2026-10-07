@@ -236,8 +236,35 @@ wrong outputs when sink mass is added once per warp and 80,182 when omitted.
 Raw C1 operands, layout and output/control bits can be emitted for offline replay.
 Two host tests cover the wrapper's argument layout and geometry refusals.
 
-This proves the stated FP32 online-softmax kernel contract, not equivalence to
+These tested cases support the stated FP32 online-softmax contract, not equivalence to
 Transformers' staged BF16 eager attention. Native loader/layer/factory linkage,
 full-reference intermediate parity and performance remain open. The shared file
 also reaches Hopper, B200, B300 and Strix variants; their compile/performance gates
 and existing-model certification remain required before merge.
+
+## Packed expert GEMV primitive
+
+The row-major MXFP4 correctness residual consumes the validated packed expert view
+and emits BF16 before separate bias, activation and routing operations. It
+preserves low-nibble/even-column order, group32 exponent addressing and the pinned
+unpack behavior. No conversion to the existing transposed NVFP4 format occurs.
+The Rust wrapper checks pointer geometry/aliasing and has two passing host tests.
+
+On GB10, all 4,096 nibble/scale pairs passed the independent unpack oracle.
+Constructed 35-row K96/K2880 cases and a BF16-before-bias control passed.
+Actual layer0/expert0 gate/up and down slices (35 rows each, K2880) matched
+independent double-sum/BF16 results and Torch CUDA BF16 bmm exactly. The declared
+actual-slice gate allowed at most one BF16 ULP; no gate was widened. Wrong nibble
+order, group16 addressing and transposed layout controls were detected.
+
+Torch CPU BF16 bmm differed by up to eight/four ULP on these gate/down slices;
+that discrepancy is retained. CPU FP32 then BF16 matched. Reference backend and
+precision must therefore stay explicit. The actual checkpoint scale census
+covered 48 tensors / 597,196,800 bytes, all between 115 and 136, with no 0/255.
+Constructed boundary tests still cover those bytes' pinned unpack behavior.
+
+This is an unoptimized GEMV primitive, not the complete routed MoE or native
+model. No throughput or energy improvement is claimed. Attention reference
+precision, YaRN, selected-logit routing, expert bias/activation/reduction and the
+full loader/layer/factory/serving integration remain open. Routing weights in the
+circuit retain the reference BF16 output precision and remain explicitly unlowered.

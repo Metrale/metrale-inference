@@ -9,6 +9,9 @@
 
 #[path = "ops/activations.rs"]
 mod activations;
+#[path = "ops/gpt_oss_mxfp4_gemv.rs"]
+mod gpt_oss_mxfp4_gemv;
+pub use gpt_oss_mxfp4_gemv::gpt_oss_mxfp4_gemv_bf16;
 #[path = "ops/paged_sink.rs"]
 mod paged_sink;
 pub use paged_sink::{PagedSinkGeometry, paged_decode_attn_bf16_sink};

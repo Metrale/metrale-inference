@@ -307,7 +307,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-paged-decode-attn-cu-paged-decode-attn"></a>
 
-### `paged_decode_attn` — [kernels/gb10/common/paged_decode_attn.cu](../../kernels/gb10/common/paged_decode_attn.cu#L54)
+### `paged_decode_attn` — [kernels/gb10/common/paged_decode_attn.cu](../../kernels/gb10/common/paged_decode_attn.cu#L343)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
