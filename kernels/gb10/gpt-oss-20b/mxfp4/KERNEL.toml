@@ -1,6 +1,6 @@
 # 2026-10-07: True MXFP4 leaf; preserves the independently tested FP32 attention policy.
 [sources]
-# The diagnostic constructor explicitly selects the pinned-GPT E8M0 policy;
+# 2026-10-07: The diagnostic constructor explicitly selects the pinned-GPT E8M0 policy;
 # existing source entry points retain their original policy. No serving default changes.
 use = [
   "deepseek-v4-flash/nvfp4/moe_v41.cu",
