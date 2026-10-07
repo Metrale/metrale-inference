@@ -7,6 +7,9 @@
 //! Owner: model-layers (ops).
 //! Invariants: none beyond the types.
 
+#[path = "ops/dense_batchm_fp32.rs"]
+mod dense_batchm_fp32;
+pub use dense_batchm_fp32::dense_gemv_batchm_fp32;
 #[path = "ops/activations.rs"]
 mod activations;
 #[path = "ops/gpt_oss_rope.rs"]
