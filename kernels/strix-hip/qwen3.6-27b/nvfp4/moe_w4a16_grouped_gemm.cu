@@ -19,7 +19,8 @@
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
 
-typedef __bf16 v16bf __attribute__((ext_vector_type(16)));
+#include "../../common/wmma_rdna.cuh"
+typedef wmma_bf16x v16bf;  // 2026-10-07: WMMA_FRAG_K wide (16 on gfx11, 8 on gfx12), see wmma_rdna.cuh
 typedef float  v8f   __attribute__((ext_vector_type(8)));
 
 // 2026-09-25: E4M3 (1 sign, 4 exponent, 3 mantissa bits, bias 7) decoded with integer operations; the NaN code decodes to 0.
@@ -149,13 +150,13 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable(
 
         v16bf a;
         #pragma unroll
-        for (int i = 0; i < 16; i++) a[i] = (__bf16)(float)smem_A[warp_m_offset + (lane_id & 15)][i];
+        for (int i = 0; i < WMMA_FRAG_K; i++) a[i] = (__bf16)(float)smem_A[warp_m_offset + (lane_id & 15)][wmma_k0(lane_id) + i];
         #pragma unroll
         for (int nb = 0; nb < 4; nb++) {
             v16bf b;
             #pragma unroll
-            for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B[k][nb * 16 + (lane_id & 15)];
-            acc[nb] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc[nb]);
+            for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B[wmma_k0(lane_id) + k][nb * 16 + (lane_id & 15)];
+            acc[nb] = wmma_bf16(a, b, acc[nb]);
         }
         __syncthreads();
     }
@@ -164,7 +165,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable(
     for (int nb = 0; nb < 4; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + 2 * e + (lane_id >> 4);
+            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -283,15 +284,15 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_t(
         for (int h = 0; h < 2; h++) { \
             v16bf a; \
             _Pragma("unroll") \
-            for (int i = 0; i < 16; i++) \
-                a[i] = (__bf16)(float)smem_A[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + i]; \
+            for (int i = 0; i < WMMA_FRAG_K; i++) \
+                a[i] = (__bf16)(float)smem_A[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + wmma_k0(lane_id) + i]; \
             _Pragma("unroll") \
             for (int nb = 0; nb < 8; nb++) { \
                 unsigned int nc = nb * 16 + (lane_id & 15); \
                 v16bf b; \
                 _Pragma("unroll") \
-                for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B_bf16[nc][h * 16 + k]; \
-                acc[nb] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc[nb]); \
+                for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B_bf16[nc][h * 16 + wmma_k0(lane_id) + k]; \
+                acc[nb] = wmma_bf16(a, b, acc[nb]); \
             } \
         } \
     } while(0)
@@ -321,7 +322,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + 2 * e + (lane_id >> 4);
+            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -458,15 +459,15 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_t_k64(
         for (int h = 0; h < 4; h++) { \
             v16bf a; \
             _Pragma("unroll") \
-            for (int i = 0; i < 16; i++) \
-                a[i] = (__bf16)(float)smem_A_k64[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + i]; \
+            for (int i = 0; i < WMMA_FRAG_K; i++) \
+                a[i] = (__bf16)(float)smem_A_k64[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + wmma_k0(lane_id) + i]; \
             _Pragma("unroll") \
             for (int nb = 0; nb < 8; nb++) { \
                 unsigned int nc = nb * 16 + (lane_id & 15); \
                 v16bf b; \
                 _Pragma("unroll") \
-                for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B_bf16_k64[nc][h * 16 + k]; \
-                acc[nb] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc[nb]); \
+                for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B_bf16_k64[nc][h * 16 + wmma_k0(lane_id) + k]; \
+                acc[nb] = wmma_bf16(a, b, acc[nb]); \
             } \
         } \
     } while(0)
@@ -496,7 +497,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_t_k64(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + 2 * e + (lane_id >> 4);
+            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -652,15 +653,15 @@ extern "C" __global__ void moe_w4a16_fused_gate_up_t_k64(
         for (int h = 0; h < 4; h++) { \
             v16bf a; \
             _Pragma("unroll") \
-            for (int i = 0; i < 16; i++) \
-                a[i] = (__bf16)(float)smem_A_fgu64[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + i]; \
+            for (int i = 0; i < WMMA_FRAG_K; i++) \
+                a[i] = (__bf16)(float)smem_A_fgu64[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + wmma_k0(lane_id) + i]; \
             _Pragma("unroll") \
             for (int nb = 0; nb < 8; nb++) { \
                 unsigned int nc = nb * 16 + (lane_id & 15); \
                 v16bf b; \
                 _Pragma("unroll") \
-                for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B_bf16_fgu64[nc][h * 16 + k]; \
-                acc[nb] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc[nb]); \
+                for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B_bf16_fgu64[nc][h * 16 + wmma_k0(lane_id) + k]; \
+                acc[nb] = wmma_bf16(a, b, acc[nb]); \
             } \
         } \
     } while(0)
@@ -690,7 +691,7 @@ extern "C" __global__ void moe_w4a16_fused_gate_up_t_k64(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + 2 * e + (lane_id >> 4);
+            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -828,15 +829,15 @@ extern "C" __global__ void moe_w4a16_fused_gate_up_t(
         for (int h = 0; h < 2; h++) { \
             v16bf a; \
             _Pragma("unroll") \
-            for (int i = 0; i < 16; i++) \
-                a[i] = (__bf16)(float)smem_A[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + i]; \
+            for (int i = 0; i < WMMA_FRAG_K; i++) \
+                a[i] = (__bf16)(float)smem_A[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + wmma_k0(lane_id) + i]; \
             _Pragma("unroll") \
             for (int nb = 0; nb < 8; nb++) { \
                 unsigned int nc = nb * 16 + (lane_id & 15); \
                 v16bf b; \
                 _Pragma("unroll") \
-                for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B_bf16[nc][h * 16 + k]; \
-                acc[nb] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc[nb]); \
+                for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B_bf16[nc][h * 16 + wmma_k0(lane_id) + k]; \
+                acc[nb] = wmma_bf16(a, b, acc[nb]); \
             } \
         } \
     } while(0)
@@ -866,7 +867,7 @@ extern "C" __global__ void moe_w4a16_fused_gate_up_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + 2 * e + (lane_id >> 4);
+            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
@@ -984,15 +985,15 @@ extern "C" __global__ void moe_fp8_grouped_gemm_ptrtable_t(
         for (int h = 0; h < 2; h++) { \
             v16bf a; \
             _Pragma("unroll") \
-            for (int i = 0; i < 16; i++) \
-                a[i] = (__bf16)(float)metrale_e4m3_to_f32(smem_Af2[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + i]); \
+            for (int i = 0; i < WMMA_FRAG_K; i++) \
+                a[i] = (__bf16)(float)metrale_e4m3_to_f32(smem_Af2[(a_buf)][warp_m_offset + (lane_id & 15)][h * 16 + wmma_k0(lane_id) + i]); \
             _Pragma("unroll") \
             for (int nb = 0; nb < 8; nb++) { \
                 unsigned int nc = nb * 16 + (lane_id & 15); \
                 v16bf b; \
                 _Pragma("unroll") \
-                for (int k = 0; k < 16; k++) b[k] = (__bf16)(float)smem_B2_bf16[nc][h * 16 + k]; \
-                acc[nb] = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(a, b, acc[nb]); \
+                for (int k = 0; k < WMMA_FRAG_K; k++) b[k] = (__bf16)(float)smem_B2_bf16[nc][h * 16 + wmma_k0(lane_id) + k]; \
+                acc[nb] = wmma_bf16(a, b, acc[nb]); \
             } \
         } \
     } while(0)
@@ -1022,7 +1023,7 @@ extern "C" __global__ void moe_fp8_grouped_gemm_ptrtable_t(
     for (int nb = 0; nb < 8; nb++)
         #pragma unroll
         for (int e = 0; e < 8; e++) {
-            unsigned int row_local = warp_m_offset + 2 * e + (lane_id >> 4);
+            unsigned int row_local = warp_m_offset + wmma_acc_row(lane_id, e);
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if ((int)(row_local + cta_m_local) < M_expert && c < N)
                 C[(cta_m + row_local) * N + c] = __float2bfloat16(acc[nb][e]);
