@@ -1,7 +1,8 @@
 # GPT-OSS-20B native bring-up
 
 Status: native eager C1 prototype executes the packed checkpoint and bounded
-Harmony generation. Factory/API serving is not registered. Full-model numerical
+Harmony generation. Default factory admission remains disabled; explicit experimental
+C1 admission is implemented, with Linux server/API validation pending. Full-model numerical
 differences remain unresolved; no broad correctness, performance or tool-use
 qualification is claimed. Verified backups are complete. Owner: investor-mvp #43.
 
@@ -173,8 +174,9 @@ expert reduction, FP32 normalization and nontruncated YaRN. Missing, changed and
 unknown math keys fail closed; conflicting expert-count aliases are refused.
 The precision plan identifies MXFP4 experts and preserves the excluded BF16 head.
 All 193 config tests passed, including the new policy and mutation controls.
-The model factory still refuses GPT-OSS until native weight assembly and matching
-forward kernels exist. Parsing a config is not loading or serving the model.
+The default model factory still refuses GPT-OSS. A separate explicit experimental
+policy now admits the native loader; see the serving-admission section below.
+Parsing a config alone is not loading or serving the model.
 
 ## Complete checkpoint binding
 
@@ -189,7 +191,7 @@ The fixture matches the captured pinned safetensors headers. Four host tests
 exercise valid binding, each missing tensor, every shape/dtype mutation and
 boundary controls, using inert addresses. These tests do not read learned values
 or execute a GPU. Native loader/layer construction and the standalone forward
-path are now implemented and exercised below; factory serving remains unsupported.
+path are now implemented and exercised below; experimental API validation remains open.
 
 ## Projection bias GPU primitive
 
@@ -235,8 +237,8 @@ Raw C1 operands, layout and output/control bits can be emitted for offline repla
 Two host tests cover the wrapper's argument layout and geometry refusals.
 
 These tested cases support the stated FP32 online-softmax contract, not equivalence to
-Transformers' staged BF16 eager attention. Native loader/layer/factory linkage,
-full-reference intermediate parity and performance remain open. The shared file
+Transformers' staged BF16 eager attention. Later sections record native composition;
+full-reference intermediate parity, API validation and performance remain open. The shared file
 also reaches Hopper, B200, B300 and Strix variants; their compile/performance gates
 and existing-model certification remain required before merge.
 
@@ -292,7 +294,7 @@ required. Ties use lower expert ID; no universal reference tie-order claim is
 made. Two host admission/ABI tests pass.
 
 The primitives are now composed in an explicit eager C1 layer/loader and standalone
-full-forward example; the factory remains unregistered. On GB10, the native packed
+full-forward example. Default factory admission remains disabled. On GB10, the native packed
 checkpoint completed all 24 layers for diagnostic token IDs `[1,2,3,4]`, producing
 finite logits and saved per-layer BF16 traces. Checkpoint load took 31.805 seconds;
 the four passes took 36–44 milliseconds each including trace copies. These are
@@ -396,3 +398,21 @@ identical complete generated token sequences; extraction differs only in its
 analysis wording. This small comparison does not resolve longer-context
 numerical differences or establish broad quality. Load and trace I/O remain in
 the native harness timings, which are not serving performance measurements.
+
+
+## Explicit experimental serving admission
+
+An optional `MODEL.model.supported_quants` list restricts the new GPT target to
+MXFP4. Explicit incompatible selections fail; wildcard model builds skip only
+declared-incompatible combinations. Existing model manifests without an allowlist
+retain their previous resolution. Rust/Python resolver agreement and structure
+checks pass, and the HD64 leaf compiles to PTX on Spark1.
+
+`--experimental-gpt-oss` explicitly selects the experimental loader policy;
+default factory calls still refuse it. Admission requires C1, BF16 KV/head,
+single-device execution, memory utilization in `(0, 0.85]`, and no prefix reuse,
+swap, speculative decoding, LoRA or batched prefill. Circuit lowering remains
+unsupported. Layer capabilities independently refuse graphs and multi-sequence
+execution. Factory/CLI controls and a Metal-feature server check pass. The full
+Linux target/server build and actual HTTP/cache-lifecycle tests remain pending;
+Harmony API composition is still in progress. This admission is not certification.
