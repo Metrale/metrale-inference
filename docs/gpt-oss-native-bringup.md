@@ -177,3 +177,18 @@ The precision plan identifies MXFP4 experts and preserves the excluded BF16 head
 All 193 config tests passed, including the new policy and mutation controls.
 The model factory still refuses GPT-OSS until native weight assembly and matching
 forward kernels exist. Parsing a config is not loading or serving the model.
+
+## Complete checkpoint binding
+
+`GptOssCheckpoint::bind` now validates and borrows all 459 tensors: embedding and
+untied head, final norm, and every layer's norms, biased attention projections,
+sinks, biased router, packed experts and expert biases. It retains the typed
+config policy and exact BF16/U8 storage. Missing or extra tensors, wrong shapes
+and dtypes, null pointers and overflowing extents are errors. No implicit casts
+or quantization substitutions occur.
+
+The fixture matches the captured pinned safetensors headers. Four host tests
+exercise valid binding, each missing tensor, every shape/dtype mutation and
+boundary controls, using inert addresses. These tests do not read learned values
+or execute a GPU. ModelWeightLoader construction, matching kernels and the actual
+forward path are still absent; the factory remains intentionally unsupported.
