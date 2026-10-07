@@ -28,8 +28,12 @@ effort, 1,024 generated tokens including analysis, and unchanged user messages.
 Both used C1, context capacity 2,048, BF16 activations/KV and the original MXFP4
 checkpoint with memory utilization capped at 0.85. Prompt token counts matched
 146/224/147/213 across the four tasks, but actual rendered token IDs were not
-verified at capture. This is a same-message API comparison; model-versus-runtime
-attribution remains unresolved. No request was truncated or omitted from the
+instrumented at capture. A subsequent offline replay used the installed pinned
+vLLM `OnlineRenderer._make_request_with_harmony` and the native Harmony tokenizer
+oracle on the captured requests and date (2026-10-07): all four complete token
+arrays matched exactly. This narrows template uncertainty without proving the
+live GPU input buffers or identifying the cause of different generated answers;
+model-versus-runtime attribution remains unresolved. No request was truncated or omitted from the
 score. Raw responses preserve finish reasons, usage and reasoning metadata.
 
 Native binary SHA-256:
@@ -54,3 +58,8 @@ Docker results. Native/reference collection hashes respectively:
 `2d6f89c6d41095d1b8334981c150f2193abdf48bc953e4d7e55caa5e009b61f9` and
 `8d957f0ad6babb0cfc45a5f15953960607606f46a71dcdb3529272dfc299f40e`.
 Original numerical qualification limits remain unchanged.
+
+Offline replay evidence is `offline-id-comparison.json` in the same private
+package, with raw IDs, renderer source hashes and the native oracle binary hash.
+The CPU-only reference container used no GPU, model weights or network. Original
+semantic and formatting scores are unchanged.
