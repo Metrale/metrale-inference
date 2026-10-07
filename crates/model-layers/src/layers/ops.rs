@@ -9,6 +9,9 @@
 
 #[path = "ops/activations.rs"]
 mod activations;
+#[path = "ops/paged_sink.rs"]
+mod paged_sink;
+pub use paged_sink::{PagedSinkGeometry, paged_decode_attn_bf16_sink};
 #[path = "ops/projection_bias.rs"]
 mod projection_bias;
 pub use projection_bias::projection_bias_bf16;

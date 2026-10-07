@@ -215,3 +215,29 @@ This is a named LKB residual, `projection_bias_before_cast`, with primitive GPU
 parity. The common source is inherited by GB10, Hopper and B200; the addition
 changes no existing kernel entry point or caller. There is no GPT kernel target,
 forward-path linkage, full `F.linear` parity or measured performance yet.
+
+## Denominator-only sink attention primitive
+
+The existing BF16 paged decode attention body is parameterized by sink policy.
+The original entry point and ABI retain the no-sink policy; a separate entry
+accepts BF16 per-query-head sink logits. It adds sink mass once after the global
+warp merge, rescales stably for large logits, and contributes no value vector.
+Negative infinity is exactly a no-op. Nonempty sequences with NaN or positive
+infinite sinks produce NaNs; empty sequences produce zero. Sliding-window and
+GQA/cache indexing stay shared. The new Rust launcher currently requires HD64.
+
+A standalone CUDA harness compared the old source with the parameterized legacy
+entry on GB10: bit identity passed at HD64/128/192/256/512, C1/C16/C128, lengths
+0/1/7/128/129 and full/window128 attention. HD64 alone compared 5,939,200 values.
+Sink output passed an independent dense oracle with absolute tolerance 0.04;
+constructed cases include per-head sinks, KV-head-dependent values, nonfinite
+sinks, large positive logits and empty/window-boundary cases. HD64 detects 43,980
+wrong outputs when sink mass is added once per warp and 80,182 when omitted.
+Raw C1 operands, layout and output/control bits can be emitted for offline replay.
+Two host tests cover the wrapper's argument layout and geometry refusals.
+
+This proves the stated FP32 online-softmax kernel contract, not equivalence to
+Transformers' staged BF16 eager attention. Native loader/layer/factory linkage,
+full-reference intermediate parity and performance remain open. The shared file
+also reaches Hopper, B200, B300 and Strix variants; their compile/performance gates
+and existing-model certification remain required before merge.
