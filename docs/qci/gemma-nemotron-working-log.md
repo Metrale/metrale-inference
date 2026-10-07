@@ -216,6 +216,81 @@ comment `/stamp`.
 `kernels/gb10/common/moe_nvfp4_grouped_tc.cu` (`Tile order: chunk c...`).
 That file is already on `origin/main` and is not in this branch's diff.
 
+### This host on 2026-10-07
+
+`nvidia-smi` reported `NVIDIA GeForce RTX 3090, 24576 MiB, driver_version 616.92`.
+`http://127.0.0.1:8888/health` refused the connection. Nothing was started
+on that port.
+
+The weight search above missed the three pins, and no download had been
+started then. A fetch was started after that onto `O:\Metrale\qci-pins`, at
+the revisions already in this log. The files are not in git.
+
+`mmproj-F16.gguf` closed at 1193058784 bytes, the pinned vision length.
+The header is GGUF version 3, `general.architecture=clip`,
+`general.type=mmproj`, `general.name=Gemma-4-26B-A4B-It`,
+`general.file_type=1`. In llama.cpp `aedb2a5e9` that integer is
+`LLAMA_FTYPE_MOSTLY_F16`.
+
+Shipped `qci-dump --case gemma-4-26b-a4b --hardware rtx-3090 --vision-weights`
+on that file printed `vision_weights: present`,
+`vision_file_bytes: 1193058784`, `weights: absent`,
+`support_label: withheld`, and no tok/s or J/tok number. It still names
+`VRAM_UNMEASURED`, `PARITY_UNMEASURED`, and `COHERENCE_UNMEASURED`.
+
+The two language files were still open for writing when this note was
+added. Their headers are already GGUF version 3. Gemma:
+`general.architecture=gemma4`, `general.name=Gemma-4-26B-A4B-It`,
+`general.quantized_by=Unsloth`, `general.file_type=15`
+(`LLAMA_FTYPE_MOSTLY_Q4_K_M` in that same llama.cpp header). Nemotron:
+`general.architecture=nemotron_h_moe`,
+`general.name=NVIDIA-Nemotron-3.5-Lightning-30B-A3B`,
+`general.license.name=openmdw-1.1`, `general.file_type=2`
+(`LLAMA_FTYPE_MOSTLY_Q4_0`). They have not been passed to
+`qci-dump --weights`. A length read while curl still holds the file is not
+the closed length, so `WEIGHTS_ABSENT` stays until that closed file is
+passed. The pinned closed lengths remain 16947541728 and 18898091584.
+
+#### First session, this host
+
+1. Checkout is `feat/qci-gemma-nemotron-dump` at `4b2bda9`.
+   `cargo test -p metrale-qci-dump --offline` exited 0: 9 passed, 0 failed.
+   The shipped binary is `target\debug\qci-dump.exe`.
+2. Missing-path receipts for both cases match and do not print the path.
+   `support_label` is `withheld`.
+3. Vision file: the receipt above. Language weights: the fetch is still
+   open, so `WEIGHTS_ABSENT` stays until the closed file is passed.
+4. An already-installed `llama-cli` is version 9637 (`aedb2a5e9`), built
+   with Clang 20.1.8 for Windows x86_64. No installer was launched.
+   `--list-devices` printed
+   `Vulkan0: NVIDIA GeForce RTX 3090 (24540 MiB, 23755 MiB free)`.
+   The model was not loaded, because the language file is still open.
+   That attempt belongs on the reference row (`ggml-gguf`), not the native
+   row. Recipe `runtime` stays `gguf-reference`. No `INSTANCES.toml` row
+   was added for either GGUF pin.
+5. Strix stays `TARGET_NOT_MEASURED`. This host is not a Strix Halo.
+6. Bit parity stays `PARITY_UNMEASURED`. tok/s and J/tok stay withheld.
+   No number was copied from another device or from the NVFP4 Lightning
+   instance.
+7. Shipped `qci-dump --request` admitted an inline PNG for the Gemma case.
+   `generation` is `not-run`, coherence is `BLOCKER COHERENCE_UNMEASURED`,
+   and the body does not say the model is supported. A body with
+   `video_url` printed `video_outside_runtime` and did not echo the
+   payload. The unit test `video_decoding_stays_outside_the_runtime`
+   asserts HTTP 400.
+8. Nemotron stays P1. It does not block the four-model P0 exit. It was
+   not reprioritized.
+
+`NATIVE_GEMMA4_CIRCUIT_REFUSED` is unchanged.
+
+On head `4b2bda9` the only concluded failure in `gh pr checks` was
+`PR benchmark gate`. That unstamped hold stays. Do not comment `/stamp`.
+`Build mdBook + rustdoc`, `cargo test --workspace`, and `recipes` passed.
+Jobs still queued with an empty runner name were not waited out.
+Those jobs are labeled `metrale-macos-burst` or
+`self-hosted,macOS,ARM64,metal-gpu`. The name for that state is
+`RUNNER_LABEL_OFFLINE`.
+
 ## What the next agent should not do
 
 - Do not mark investor-mvp #44 or #58 done from this log.

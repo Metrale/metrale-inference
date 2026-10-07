@@ -52,7 +52,7 @@ lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = "docs/qci/gemma-nemotron-working-log.md"
-notes = "supplement to Strix. WEIGHTS_ABSENT, PARITY_UNMEASURED, VRAM_UNMEASURED, LICENSE_GOVERNING_TEXT_UNDECIDED, NATIVE_GEMMA4_CIRCUIT_REFUSED. rtx-3090 is not a kernels/DEVICES.toml id. No kernels/ampere on this tree."
+notes = "supplement to Strix. Vision mmproj-F16.gguf measured at 1193058784 bytes. Language GGUF was still open, so WEIGHTS_ABSENT stays. PARITY_UNMEASURED, VRAM_UNMEASURED, LICENSE_GOVERNING_TEXT_UNDECIDED, NATIVE_GEMMA4_CIRCUIT_REFUSED. rtx-3090 is not a kernels/DEVICES.toml id. No kernels/ampere on this tree."
 
 [[combo]]
 device = "strix-halo"
