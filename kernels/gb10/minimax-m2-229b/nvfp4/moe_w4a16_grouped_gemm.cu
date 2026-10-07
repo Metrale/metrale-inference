@@ -34,7 +34,14 @@ __device__ __constant__ float E2M1_LUT_MOE[16] = {
 // 2026-10-07: One BF16 MMA body; M16 assigns four warps to columns, M64 to rows.
 // RowPolicy 0 keeps the legacy unfiltered entry; 1 accepts 1..16, 2 accepts >16.
 // The disjoint pair covers every routed row without changing the K16 accumulation order.
-template<int MRows = 64, int RowPolicy = 0>
+// 2026-10-07: Exact E2M1 FP32 bits, retaining negative zero before ordered scale products.
+__device__ __forceinline__ float moe_e2m1_bit_value(unsigned nibble) {
+    unsigned mag = nibble & 7u;
+    unsigned bits = mag == 0 ? 0u : (mag == 1 ? 0x3f000000u : 0x3f800000u + ((mag - 2u) << 22));
+    return __uint_as_float(bits | ((nibble & 8u) << 28));
+}
+
+template<int MRows = 64, int RowPolicy = 0, bool BitDecode = false>
 __device__ __forceinline__ void moe_w4a16_grouped_gemm_bf16_body(
     const __nv_bfloat16* __restrict__ A,
     const unsigned long long* __restrict__ B_packed_ptrs,
@@ -134,7 +141,8 @@ __device__ __forceinline__ void moe_w4a16_grouped_gemm_bf16_body(
                     unsigned int nibble = (gk & 1) ? (packed_byte >> 4) : (packed_byte & 0xF);
                     unsigned char sb = S_expert[(unsigned long long)gn * num_groups + scale_group];
                     __nv_fp8_e4m3 fp8; *(unsigned char*)&fp8 = sb;
-                    smem_B[k][n] = __float2bfloat16(E2M1_LUT_MOE[nibble] * (float)fp8 * scale2);
+                    const float value = BitDecode ? moe_e2m1_bit_value(nibble) : E2M1_LUT_MOE[nibble];
+                    smem_B[k][n] = __float2bfloat16(value * (float)fp8 * scale2);
                 } else {
                     smem_B[k][n] = __float2bfloat16(0.0f);
                 }
@@ -210,7 +218,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_small16(
     unsigned int N,
     unsigned int K
 ) {
-    moe_w4a16_grouped_gemm_bf16_body<16, 1>(
+    moe_w4a16_grouped_gemm_bf16_body<16, 1, true>(
         A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C, expert_offsets,
         sorted_token_ids, num_experts, N, K);
 }
@@ -227,7 +235,7 @@ extern "C" __global__ void moe_w4a16_grouped_gemm_ptrtable_large64(
     unsigned int N,
     unsigned int K
 ) {
-    moe_w4a16_grouped_gemm_bf16_body<64, 2>(
+    moe_w4a16_grouped_gemm_bf16_body<64, 2, true>(
         A, B_packed_ptrs, B_scale_ptrs, scale2_vals, C, expert_offsets,
         sorted_token_ids, num_experts, N, K);
 }

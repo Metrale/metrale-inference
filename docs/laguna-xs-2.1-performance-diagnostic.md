@@ -219,3 +219,49 @@ reviewed Laguna template added in `e9eefb6`; no working-directory template file
 was present. Its profiler injection and private kernel overlay exclude it from
 the frozen `5784c0fe…` speed comparisons above. The private overlay was restored
 to its known parent files after capture, and the owned server stopped.
+
+## Exact E2M1 lookup substitution
+
+For the same pinned checkpoint linked above, the existing opt-in M16/M64 prefill
+pair now constructs the E2M1 FP32 value bits directly. The legacy unfiltered
+entry retains its original lookup policy. Both FP32 scale multiplications remain
+ordered before the final BF16 cast; negative zero is preserved. This changes
+neither the activation precision nor the K16 MMA accumulation order.
+
+The frozen candidate executable is
+`a9f01a9389ee456dc83f8aafcfc99316b0069fadb9649f102cda0a7fe23ef7f8`,
+against combined incumbent `5784c0fe…`. Source/PTX receipts verify the complete
+intended PTX bytes embedded in that binary. The source snapshot also contains the
+template packaging fix, while both timing arms use the same qualified working
+directory and reviewed template. No batch-four private overlay remains.
+
+Four quiet unprofiled A/B/B2/A2 sessions admitted all 144 fixed-count cohorts.
+Short-prefill total latency improved **7.20–8.06%**, and long-prefill
+**3.73–4.23%**, across C1/C2/C4 in both orders. With 64 output tokens, C1 total
+improved 1.17/1.34% and C2 1.87/3.03%. C4 was mixed: 0.38% slower in one order
+and 4.28% faster in the other. There is no consistent C4 decode improvement.
+All observed concatenated SSE text-hash sets match; this is not token-ID equality.
+
+The constructed native decoder evidence covers 45,056 combinations of all
+sixteen nibbles, all 256 FP8 scale bytes, and eleven second-scale values, including
+signed zero and nonfinite cases. Raw bits match at every product/cast stage;
+sign-removal and finite product-reassociation controls fail as intended. The
+standalone `scripts/laguna/e2m1_decode_check.cu` preserves this regression gate
+against the actual shared helper, without checkpoint data. Existing constructed
+small-row tests independently exercise exact dyadic dots, tails, routing, the
+934-row fallback and intentionally incorrect grids.
+
+On an idle GB10 host, run the standalone gate from the repository root:
+
+```sh
+nvcc --ptx -O3 --fmad=false -arch=compute_121 scripts/laguna/e2m1_decode_check.cu -o /tmp/e2m1_decode_check.ptx
+c++ -DE2M1_HOST -x c++ -I/usr/local/cuda/include scripts/laguna/e2m1_decode_check.cu -lcuda -o /tmp/e2m1_decode_check
+/tmp/e2m1_decode_check /tmp/e2m1_decode_check.ptx
+```
+
+Six schemas, four JSON/tool controls and six concurrent schemas pass. Unequal
+32/48/64/80-token draining, cancellation with three surviving requests and a
+subsequent C1 request pass. All twelve generated coding outputs have the same
+hashes as the incumbent; isolated semantic grading remains **9/12**, with the
+same three retry-delay failures. The prefill improvement does not establish
+general coding quality, energy efficiency, or competitive concurrent decoding.
