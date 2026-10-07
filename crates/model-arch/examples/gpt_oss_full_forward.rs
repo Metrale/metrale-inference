@@ -75,7 +75,11 @@ fn run() -> anyhow::Result<()> {
         .transpose()?;
     if let Some(policy) = &diagnostics {
         ensure!(
-            policy.layers.iter().all(|&l| l < 24),
+            policy
+                .layers
+                .iter()
+                .chain(&policy.cache_layers)
+                .all(|&l| l < 24),
             "diagnostic layer outside model"
         );
         ensure!(
@@ -214,6 +218,41 @@ fn run() -> anyhow::Result<()> {
                         bytes: incoming,
                     },
                 );
+                if diagnostics
+                    .as_ref()
+                    .is_some_and(|p| p.cache_layers.contains(&layer_index))
+                {
+                    for (name, pool) in [
+                        ("cache_keys", cache.k_pool_ptr(layer_index)),
+                        ("cache_values", cache.v_pool_ptr(layer_index)),
+                    ] {
+                        let mut bytes = vec![0; (position + 1) * 8 * 64 * 2];
+                        for (logical, &physical) in blocks.iter().enumerate() {
+                            let start = logical * cache.block_size();
+                            if start > position {
+                                break;
+                            }
+                            let count = cache.block_size().min(position + 1 - start);
+                            gpu.copy_d2h_on_stream(
+                                pool.offset(
+                                    physical as usize
+                                        * cache.block_stride_bytes_for_layer(layer_index),
+                                ),
+                                &mut bytes[start * 1024..(start + count) * 1024],
+                                stream,
+                            )?;
+                        }
+                        snapshots.push(
+                            metrale_model_arch::weight_loader::gpt_oss::runtime::DiagnosticTensor {
+                                name,
+                                dtype: "BF16",
+                                shape: vec![position + 1, 8, 64],
+                                bytes,
+                            },
+                        );
+                    }
+                    diagnostic_records.push(serde_json::json!({"position":position,"layer":layer_index,"name":"cache_layout","block_size":cache.block_size(),"physical_blocks":blocks,"block_stride_bytes":cache.block_stride_bytes_for_layer(layer_index),"export_order":"logical token, KV head, dimension","attention_scale":0.125,"sliding_window":if config.layer_types[layer_index] == metrale_config::LayerType::SlidingAttention {128} else {0}}));
+                }
                 for snapshot in snapshots {
                     let path = output
                         .with_extension("diagnostics")
@@ -306,6 +345,8 @@ fn run() -> anyhow::Result<()> {
 struct DiagnosticsPolicy {
     positions: Vec<usize>,
     layers: Vec<usize>,
+    #[serde(default)]
+    cache_layers: Vec<usize>,
 }
 
 // A generated stop token is recorded but never fed back into the cache.
