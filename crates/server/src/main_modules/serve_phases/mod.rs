@@ -21,8 +21,8 @@ mod topology;
 mod weights;
 
 pub(super) use build::{
-    build_high_speed_swap_config, build_model, build_prefix_cache, maybe_run_ep_worker,
-    resolve_swap_space_gb, validate_head_high_speed_swap,
+    build_high_speed_swap_config, build_model, build_prefix_cache, experimental_policy,
+    maybe_run_ep_worker, resolve_swap_space_gb, validate_head_high_speed_swap,
 };
 pub(super) use config::{
     apply_model_default_num_drafts, cap_vocab_size_to_tokenizer, load_model_config,

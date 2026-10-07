@@ -128,6 +128,7 @@ pub(crate) fn build_model(
         lora_args,
         nllb_lang,
         nllb_lora_dir,
+        experimental_policy(args),
     )
     .context("Failed to build model")
 }
@@ -458,5 +459,16 @@ mod ep_worker_loop_tests {
             "the EpCommandFailed arm must come BEFORE the catch-all break, or every command \
              failure is fatal again"
         );
+    }
+}
+
+// 2026-10-07: The opt-in is explicit on every startup/build path, never process-global.
+pub(crate) fn experimental_policy(
+    args: &cli::ServeArgs,
+) -> metrale_model_engine::factory::ExperimentalModelPolicy {
+    if args.experimental_gpt_oss {
+        metrale_model_engine::factory::ExperimentalModelPolicy::GptOssC1
+    } else {
+        metrale_model_engine::factory::ExperimentalModelPolicy::Disabled
     }
 }

@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: `build_model`: loads the weights with the loader for the
-//! config's `model_type`, sizes and allocates the buffer arena and the KV
-//! cache, and assembles a `TransformerModel` with its optional MTP, DFlash and
-//! LoRA parts. NLLB / M2M-100 configs get an `NllbGpuModel` instead.
+//! config's `model_type`, allocates the arena/KV cache and assembles the model.
 //!
 //! Owner: metrale-model-engine.
 //! Invariants:
@@ -18,9 +16,9 @@ use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_weights::weights::WeightStore;
 use metrale_telemetry::prefix_cache::PrefixCache;
 
-use super::loader_for_config;
 use super::m2_setup::maybe_run_minimax_m2_moe_transpose;
 use super::{DflashBuildArgs, LoraBuildArgs};
+use super::{ExperimentalModelPolicy, loader_for_config_with_policy};
 use crate::model::TransformerModel;
 use metrale_model_layers::layers::MtpQuantization;
 
@@ -74,6 +72,7 @@ pub fn build_model(
     // 2026-09-25: NLLB / M2M-100 PEFT LoRA adapter directory; `None` for the
     // base model.
     nllb_lora_dir: Option<std::path::PathBuf>,
+    experimental: ExperimentalModelPolicy,
 ) -> Result<slots::BuiltModel> {
     // 2026-09-25: NLLB / M2M-100 is an encoder-decoder model, served by
     // `NllbGpuModel` from the same `store`. This returns before
@@ -118,11 +117,26 @@ pub fn build_model(
     let _ = (nllb_lang, nllb_lora_dir);
 
     // 2026-09-25: Step 1: select the weight loader.
-    let loader = loader_for_config(&config)?;
+    let loader = loader_for_config_with_policy(&config, experimental)?;
+    if config.model_type == "gpt_oss" {
+        anyhow::ensure!(
+            matches!(slots.request, slots::SlotRequest::Count(1))
+                && kv_dtype == KvCacheDtype::Bf16
+                && layer_dtypes.iter().all(|d| *d == KvCacheDtype::Bf16)
+                && !prefix_cache.is_active()
+                && comm.is_none()
+                && !use_speculative
+                && !self_speculative
+                && hss_cache_blocks_per_seq.is_none()
+                && dflash_args.is_none()
+                && lora_args.is_none()
+                && (0.0..=0.85).contains(&gpu_memory_utilization)
+                && gpu_memory_utilization != 0.0,
+            "experimental GPT-OSS requires C1, BF16 KV, no prefix reuse/parallelism/speculation/swap/LoRA and memory <=0.85"
+        );
+    }
 
-    // 2026-09-25: Free memory before the LoRA load and the buffer arena. The
-    // baseline-free-bytes path of the KV budget subtracts the budget-time
-    // sample from it to get what `build_model` itself allocated.
+    // 2026-09-25: Free memory before LoRA/arena allocation anchors the KV budget.
     let build_entry_free = gpu.free_memory().ok();
 
     // 2026-09-25: LoRA adapters load before `BufferArena::new` and before the

@@ -25,6 +25,10 @@ fn parse_activation_quantization(
 // `ServeSchedulingArgs`.
 #[derive(Args, Debug, Clone, PartialEq)]
 pub struct ServeServiceArgs {
+    /// Opt into uncertified native GPT-OSS C1 serving with explicit BF16 KV and single-device restrictions.
+    #[arg(long, default_value_t = false)]
+    pub experimental_gpt_oss: bool,
+
     /// Server-side deadline for a single request, in seconds. A request
     /// that exceeds it is cut and the response is reported with
     /// `finish_reason="timeout"` (never "length") plus a WARN log naming

@@ -64,6 +64,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     );
 
     let (mut config, config_json) = model_setup::configure_model(&args, &model_dir)?;
+    super::experimental::validate(&args, &config)?;
 
     let (vision_max_pixels, remote_image_policy, video_ffmpeg) =
         model_setup::resolve_media_policies(&args, &model_dir, &mut config)?;
@@ -212,7 +213,12 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let (nllb_lora_dir, nllb_adapter_name) = adapters::resolve_nllb_adapter(&args, is_nllb)?;
     // 2026-10-02: The MoE expert-table decision, from the memory plan, before the loader reads
     // it (`serve_phases::expert_tables`).
-    if metrale_model_engine::factory::loader_for_config(&config)?.reads_expert_table_plan() {
+    if metrale_model_engine::factory::loader_for_config_with_policy(
+        &config,
+        serve_phases::experimental_policy(&args),
+    )?
+    .reads_expert_table_plan()
+    {
         let live = serve_phases::expert_tables::LiveDevice {
             arch: ptx_set.target.arch,
             sms: gpu.sm_count()?,
