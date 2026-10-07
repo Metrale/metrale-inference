@@ -17,6 +17,8 @@
 
 use anyhow::Result;
 
+#[path = "precision_plan/mxfp4.rs"]
+mod mxfp4;
 #[path = "precision_plan/parse.rs"]
 mod parse;
 #[path = "precision_plan/target.rs"]
@@ -145,6 +147,8 @@ pub enum PlanSource {
     ModelOpt,
     /// 2026-09-28: The HF `fp8` method (`weight_block_size`, `activation_scheme`).
     Fp8,
+    /// 2026-10-07: GPT-OSS packed E2M1 with E8M0 group-32 scales.
+    Mxfp4,
 }
 
 /// 2026-09-28: One scheme and the modules it targets.

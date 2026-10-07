@@ -9,6 +9,8 @@
 mod deepseek_v4;
 mod gemma4;
 mod glm5_next;
+mod gpt_oss;
+pub(crate) use gpt_oss::parse_gpt_oss;
 mod kimi_k3;
 mod laguna;
 mod longcat;
