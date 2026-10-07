@@ -439,3 +439,32 @@ final layer 31 differs at 18,062/24,576 values, relative L2
 native layer-30 input yields only 247 differences and relative L2
 `0.00020246686431468674`, separating local error from accumulated drift. Full
 per-layer and same-input receipts are retained; no admission threshold changed.
+
+### Native conditioning and visual IO construction (2026-10-07)
+
+The diagnostic Rust path now includes time MLP/shared modulation, image input
+projection, zero-centered text RMSNorm/GELU projection, expanded image-slot
+placement and final adaptive normalization/output projection. `JointLayout`
+keeps condition-image blocks separate, preserves per-sample text padding and
+selects only the trailing target image for output. Six CPU tests cover staging,
+scratch ownership, interleaved/adjacent image placement and malformed geometry;
+these tests do not qualify numerical projection behavior. Actual-weight IO
+comparison and integration with the 32-block harness remain pending.
+
+The new temporal kernel was compared over every nonnegative BF16 timestep in
+[0,1]. With identical pinned reference frequencies, all 4,161,792 BF16 outputs
+match. The native Linux host `exp` table differs in 15/128 FP32 entries, causing
+30 BF16 output differences (maximum absolute error 0.00390625); the end-to-end
+exact temporal gate therefore remains failed. Missing time factor and swapped
+sine/cosine halves are detected. The reference temporal module returns FP32,
+then its parent casts to BF16 before the time MLP; the probe preserves that cast.
+An initial diagnostic compared views of different dtypes and failed before
+writing its receipt; the corrected fresh run is retained in
+`model-evidence/qwen-image21-timestep-gb10.json`.
+
+The staged SiLU entry accepts a null up operand for unary time conditioning.
+Both unary SiLU and its existing non-null product path match all 65,280 finite
+BF16 gate encodings against the pinned reference in this probe. This does not
+change existing model dispatch. The text encoder output remains an explicit
+external input boundary; encoder execution, VAE decoding, denoising scheduler,
+full native image generation and production performance remain unfinished.

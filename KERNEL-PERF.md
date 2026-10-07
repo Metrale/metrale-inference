@@ -292,8 +292,8 @@ notes = ""
 
 ## Inventory at a glance
 
-- **1399 kernel entry points** in **354 source files** across 7 hardware trees (b200, b300, gb10, hopper, metal, strix, strix-hip), compiled into 58 (hardware, model, quant) targets.
-- **1139** have at least one engine call site; **260** are compiled but launched only from tests, examples or not at all (see [Compiled but not launched](#compiled-but-not-launched)).
+- **1400 kernel entry points** in **354 source files** across 7 hardware trees (b200, b300, gb10, hopper, metal, strix, strix-hip), compiled into 58 (hardware, model, quant) targets.
+- **1141** have at least one engine call site; **259** are compiled but launched only from tests, examples or not at all (see [Compiled but not launched](#compiled-but-not-launched)).
 - **15 architecture families**, **29 components**.
 - **61** entry points have a measured % of floor; every other row reads “not measured”.
 
@@ -301,20 +301,20 @@ notes = ""
 
 | Label | Family | Checkpoints (model directory → checkpoint) | Components | Entry points used |
 |---|---|---|---|---|
-| Qwen-GDN | Qwen3.x GDN hybrid, dense FFN | `qwen3.5-27b` → Kbenkhaled/Qwen3.5-27B-NVFP4<br>`qwen3.6-27b` → Qwen/Qwen3.6-27B<br>`qwen3.8-27b` → Qwen/Qwen3.8-27B<br>`holo-3.1-0.8b` → Hcompany/Holo-3.1-0.8B<br>`holo-3.1-4b` → Hcompany/Holo-3.1-4B<br>`ornith-1.0-9b` → deepreinforce-ai/Ornith-1.0-9B<br>`qwen3-5-4b-vlm-mlx-int8` → mlx-community/Qwen3.5-4B-MLX-8bit | GDN, Causal conv1d, Dense FFN, Vision encoder | 603 |
-| Qwen-GDN-MoE | Qwen3.x GDN hybrid, MoE (incl. Qwen3-Next) | `qwen3.5-35b-a3b` → Sehyo/Qwen3.5-35B-A3B-NVFP4<br>`qwen3.5-122b-a10b` → Sehyo/Qwen3.5-122B-A10B-NVFP4<br>`qwen3.5-397b-a17b` → nvidia/Qwen3.5-397B-A17B-NVFP4<br>`qwen3.6-35b-a3b` → Qwen/Qwen3.6-35B-A3B-FP8<br>`holo-3.1-35b-a3b` → Hcompany/Holo-3.1-35B-A3B-NVFP4<br>`qwen3-next-80b-a3b` → nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 | GDN, Causal conv1d, MoE, Dense FFN, Vision encoder | 652 |
-| Qwen3.8-FN | Qwen3.8-Flash-Next (GDN + QSA sparse attention + mHC + PLE + MoE) | `qwen3.8-flash-next` → Qwen/Qwen3.8-Flash-Next | GDN, Causal conv1d, Sparse / compressed attention, Hyper-connections, N-gram and memory embeddings, MoE, Dense FFN, Vision encoder | 554 |
-| Qwen3-VL | Qwen3-VL MoE (full attention) | `qwen3-vl-30b-a3b` → ig1/Qwen3-VL-30B-A3B-Instruct-NVFP4 | MoE, Vision encoder | 381 |
-| Gemma4 | Gemma 4 (sliding/full attention, dense and MoE) | `gemma-4-26b-a4b` → bg-digitalservices/Gemma-4-26B-A4B-it-NVFP4A16<br>`gemma-4-31b` → nvidia/Gemma-4-31B-IT-NVFP4 | MoE, Dense FFN, Vision encoder | 409 |
-| Nemotron-H | Nemotron-H (Mamba2 hybrid + MoE) | `nemotron-3-nano-30b-a3b` → nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4<br>`nemotron-super-120b-a12b` → nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4<br>`nemotron-labs-3-puzzle-75b-a9b` → nvidia/NVIDIA-Nemotron-Labs-3-Puzzle-75B-A9B-NVFP4 | Mamba2, Causal conv1d, MoE, Dense FFN | 441 |
-| DeepSeek-V4 | DeepSeek-V4 (MLA + CSA/HCA + mHC + MoE + Engram) | `deepseek-v4-flash` → RedHatAI/DeepSeek-V4-Flash-NVFP4-FP8<br>`deepseek-v4.1-flash` → deepseek-ai/DeepSeek-V4.1-Flash | MLA, Sparse / compressed attention, Hyper-connections, N-gram and memory embeddings, MoE, Dense FFN | 479 |
-| Mistral4 | Mistral Small 4 (MLA + MoE) | `mistral-small-4` → mistralai/Mistral-Small-4-119B-2603-NVFP4 | MLA, MoE, Dense FFN | 388 |
-| GLM-5.3 | GLM-5.3-Flash (KDA + DSA sparse MLA + mHC + MoE) | `glm-5.3-flash` → LibertAIDAI/GLM-5.3-Flash-NVFP4 | KDA, Causal conv1d, MLA, Sparse / compressed attention, Hyper-connections, MoE, Dense FFN, Vision encoder | 435 |
-| Kimi-K3 | Kimi K3 (KDA + gated MLA + LatentMoE) | `kimi-k3` → inference-optimization/Kimi-K3-0.40B | KDA, Causal conv1d, MLA, MoE, Dense FFN | 394 |
-| Laguna | Laguna (full/sliding attention + MoE) | `laguna-s-2.1` → poolside/Laguna-S-2.1-NVFP4<br>`laguna-xs-2.1` → poolside/Laguna-XS-2.1-NVFP4 | MoE, Dense FFN | 382 |
-| MiniMax-M2 | MiniMax-M2 (full attention + sigmoid MoE) | `minimax-m2-229b` → MiniMaxAI/MiniMax-M2.7 | MoE, Dense FFN | 381 |
-| Step-3.7 | Step-3.7-Flash (full/sliding attention + sigmoid MoE) | `step3p7-flash` → stepfun-ai/Step-3.7-Flash-NVFP4 | MoE, Dense FFN, Vision encoder | 380 |
-| LongCat | LongCat-Flash-Lite (MLA + MoE + n-gram embeddings) | `longcat-flash-lite` → meituan-longcat/LongCat-Flash-Lite | MLA, MoE, N-gram and memory embeddings, Dense FFN | 401 |
+| Qwen-GDN | Qwen3.x GDN hybrid, dense FFN | `qwen3.5-27b` → Kbenkhaled/Qwen3.5-27B-NVFP4<br>`qwen3.6-27b` → Qwen/Qwen3.6-27B<br>`qwen3.8-27b` → Qwen/Qwen3.8-27B<br>`holo-3.1-0.8b` → Hcompany/Holo-3.1-0.8B<br>`holo-3.1-4b` → Hcompany/Holo-3.1-4B<br>`ornith-1.0-9b` → deepreinforce-ai/Ornith-1.0-9B<br>`qwen3-5-4b-vlm-mlx-int8` → mlx-community/Qwen3.5-4B-MLX-8bit | GDN, Causal conv1d, Dense FFN, Vision encoder | 604 |
+| Qwen-GDN-MoE | Qwen3.x GDN hybrid, MoE (incl. Qwen3-Next) | `qwen3.5-35b-a3b` → Sehyo/Qwen3.5-35B-A3B-NVFP4<br>`qwen3.5-122b-a10b` → Sehyo/Qwen3.5-122B-A10B-NVFP4<br>`qwen3.5-397b-a17b` → nvidia/Qwen3.5-397B-A17B-NVFP4<br>`qwen3.6-35b-a3b` → Qwen/Qwen3.6-35B-A3B-FP8<br>`holo-3.1-35b-a3b` → Hcompany/Holo-3.1-35B-A3B-NVFP4<br>`qwen3-next-80b-a3b` → nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 | GDN, Causal conv1d, MoE, Dense FFN, Vision encoder | 653 |
+| Qwen3.8-FN | Qwen3.8-Flash-Next (GDN + QSA sparse attention + mHC + PLE + MoE) | `qwen3.8-flash-next` → Qwen/Qwen3.8-Flash-Next | GDN, Causal conv1d, Sparse / compressed attention, Hyper-connections, N-gram and memory embeddings, MoE, Dense FFN, Vision encoder | 555 |
+| Qwen3-VL | Qwen3-VL MoE (full attention) | `qwen3-vl-30b-a3b` → ig1/Qwen3-VL-30B-A3B-Instruct-NVFP4 | MoE, Vision encoder | 382 |
+| Gemma4 | Gemma 4 (sliding/full attention, dense and MoE) | `gemma-4-26b-a4b` → bg-digitalservices/Gemma-4-26B-A4B-it-NVFP4A16<br>`gemma-4-31b` → nvidia/Gemma-4-31B-IT-NVFP4 | MoE, Dense FFN, Vision encoder | 411 |
+| Nemotron-H | Nemotron-H (Mamba2 hybrid + MoE) | `nemotron-3-nano-30b-a3b` → nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4<br>`nemotron-super-120b-a12b` → nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4<br>`nemotron-labs-3-puzzle-75b-a9b` → nvidia/NVIDIA-Nemotron-Labs-3-Puzzle-75B-A9B-NVFP4 | Mamba2, Causal conv1d, MoE, Dense FFN | 442 |
+| DeepSeek-V4 | DeepSeek-V4 (MLA + CSA/HCA + mHC + MoE + Engram) | `deepseek-v4-flash` → RedHatAI/DeepSeek-V4-Flash-NVFP4-FP8<br>`deepseek-v4.1-flash` → deepseek-ai/DeepSeek-V4.1-Flash | MLA, Sparse / compressed attention, Hyper-connections, N-gram and memory embeddings, MoE, Dense FFN | 480 |
+| Mistral4 | Mistral Small 4 (MLA + MoE) | `mistral-small-4` → mistralai/Mistral-Small-4-119B-2603-NVFP4 | MLA, MoE, Dense FFN | 389 |
+| GLM-5.3 | GLM-5.3-Flash (KDA + DSA sparse MLA + mHC + MoE) | `glm-5.3-flash` → LibertAIDAI/GLM-5.3-Flash-NVFP4 | KDA, Causal conv1d, MLA, Sparse / compressed attention, Hyper-connections, MoE, Dense FFN, Vision encoder | 436 |
+| Kimi-K3 | Kimi K3 (KDA + gated MLA + LatentMoE) | `kimi-k3` → inference-optimization/Kimi-K3-0.40B | KDA, Causal conv1d, MLA, MoE, Dense FFN | 395 |
+| Laguna | Laguna (full/sliding attention + MoE) | `laguna-s-2.1` → poolside/Laguna-S-2.1-NVFP4<br>`laguna-xs-2.1` → poolside/Laguna-XS-2.1-NVFP4 | MoE, Dense FFN | 383 |
+| MiniMax-M2 | MiniMax-M2 (full attention + sigmoid MoE) | `minimax-m2-229b` → MiniMaxAI/MiniMax-M2.7 | MoE, Dense FFN | 382 |
+| Step-3.7 | Step-3.7-Flash (full/sliding attention + sigmoid MoE) | `step3p7-flash` → stepfun-ai/Step-3.7-Flash-NVFP4 | MoE, Dense FFN, Vision encoder | 381 |
+| LongCat | LongCat-Flash-Lite (MLA + MoE + n-gram embeddings) | `longcat-flash-lite` → meituan-longcat/LongCat-Flash-Lite | MLA, MoE, N-gram and memory embeddings, Dense FFN | 402 |
 | NLLB | NLLB-200 (encoder-decoder translation) | `nllb-200-3.3b` → facebook/nllb-200-3.3B | Encoder-decoder translation | 28 |
 
 ## Components
@@ -336,8 +336,8 @@ notes = ""
 | Projection GEMM/GEMV — W4A4 (FP4 activations) | every family | 22 | 22 | 11 | 0 | 2 |
 | Projection GEMM/GEMV — integer / K-quant (Q2_0, Q2_K..Q6_K, INT8, MLX INT8) | every family | 23 | 23 | 6 | 31 | 0 |
 | Normalization (RMSNorm, LayerNorm, L2, gated norms) | every family | 66 | 66 | 2 | 40 | 4 |
-| Activations and elementwise (SiLU/GELU/ReLU², residual, gates, scale) | every family | 19 | 19 | 3 | 16 | 3 |
-| Positional encoding (RoPE, YaRN, MRoPE) | every family | 13 | 13 | 1 | 0 | 1 |
+| Activations and elementwise (SiLU/GELU/ReLU², residual, gates, scale) | every family | 20 | 20 | 4 | 15 | 3 |
+| Positional encoding (RoPE, YaRN, MRoPE) | every family | 14 | 14 | 2 | 0 | 1 |
 | KV cache (write, quantize, TurboQuant rotation, slot metadata) | every family | 36 | 36 | 1 | 2 | 0 |
 | Quantization and format conversion | every family | 52 | 52 | 8 | 7 | 4 |
 | Embedding and LM head (lookup, overlays, softcap, scale) | every family | 11 | 18 | 7 | 6 | 0 |
@@ -353,7 +353,7 @@ notes = ""
 
 ## Shared by all LLM architectures
 
-Entry points used by **every one of the 14 decoder families** (every family with `shared_engine = true`; NLLB, the self-contained encoder-decoder, is excluded from the quorum and named when it also uses the kernel). 243 entry points qualify; 2 of them are used by all 15 families.
+Entry points used by **every one of the 14 decoder families** (every family with `shared_engine = true`; NLLB, the self-contained encoder-decoder, is excluded from the quorum and named when it also uses the kernel). 244 entry points qualify; 2 of them are used by all 15 families.
 
 | Kernel (module::function) | File | Component · kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
@@ -390,7 +390,8 @@ Entry points used by **every one of the 14 decoder families** (every family with
 | image_modulation::`image_head_weight_bf16` | [gb10/common/image_modulation.cu:37][f58] | Normalization · image BF16 post-normalization weight multiply | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | image_modulation::`image_modulation_{residual_bf16, scale_bf16}` (2) | [gb10/common/image_modulation.cu:9][f58] | Activations and elementwise · image scale / tanh residual (staged BF16 residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | image_modulation::`image_rope_complex_bf16` | [gb10/common/image_modulation.cu:50][f58] | Positional encoding · three-axis image complex rotation (diagnostic residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
-| image_modulation::`image_silu_staged_mul_bf16` | [gb10/common/image_modulation.cu:66][f58] | Activations and elementwise · activation / gate / residual | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| image_modulation::`image_silu_staged_mul_bf16` | [gb10/common/image_modulation.cu:67][f58] | Activations and elementwise · image BF16 staged SiLU product residual | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| image_modulation::`image_timestep_bf16` | [gb10/common/image_modulation.cu:79][f58] | Positional encoding · image temporal sinusoidal embedding (diagnostic residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | lora_bgmv::`lora_bgmv_{expand_fold, shrink}` (2) | [gb10/common/lora_bgmv.cu:50][f63] | LoRA adapters · BGMV shrink/expand | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t63] | not measured |
 | metadata_fill::`fill_slots_from_block_table` | [gb10/common/metadata_fill.cu:5][f66] | KV cache · cache write | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t66] | not measured |
 | moe_lora_gather_bgmv::`moe_lora_gather_bgmv_{expand_fold, shrink}` (2) | [gb10/common/moe_lora_gather_bgmv.cu:57][f80] | LoRA adapters · BGMV shrink/expand | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [1 note][t80] | not measured |
@@ -950,18 +951,18 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 
 ### Activations and elementwise (SiLU/GELU/ReLU², residual, gates, scale)
 
-19 entry points: 19 primary here (full rows), 0 of other components launched from this component's code (listed after the table; their full rows are under their primary component).
+20 entry points: 20 primary here (full rows), 0 of other components launched from this component's code (listed after the table; their full rows are under their primary component).
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | bf16_add::`bf16_add_inplace` | [gb10/common/bf16_add.cu:8][f12] | activation / gate / residual | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t12] | not measured |
 | image_modulation::`image_modulation_{residual_bf16, scale_bf16}` (2) | [gb10/common/image_modulation.cu:9][f58] | image scale / tanh residual (staged BF16 residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
-| image_modulation::`image_silu_staged_mul_bf16` | [gb10/common/image_modulation.cu:66][f58] | activation / gate / residual | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| image_modulation::`image_silu_staged_mul_bf16` | [gb10/common/image_modulation.cu:67][f58] | image BF16 staged SiLU product residual | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | relu2::`relu_squared_inplace` | [gb10/common/relu_squared.cu:26][f158] | activation / gate / residual | b200 b300 gb10 hop strix hip | Nemotron-H (3 ckpts) | — | not measured |
 | residual_add::`bf16_concat` | [gb10/common/residual_add.cu:142][f162] | activation / gate / residual | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | — | [4%][m162.bf16_concat] (prefill 4k (cold, 4549 tok)) |
 | residual_add::`bf16_residual_add` | [gb10/common/residual_add.cu:10][f162] | activation / gate / residual | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | — | [97–100%][m162.bf16_residual_add] (prefill 4k (cold, 4103 tok)) |
 | residual_add::`bf16_scaled_add`, `sigmoid_gate_mul`, `sigmoid_gate_mul_batched`, `sigmoid_gate_mul_head_broadcast`, `softplus_gate_mul_head_broadcast` | [gb10/common/residual_add.cu:60][f162] | activation / gate / residual | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t162] | not measured |
-| gelu::`gelu_mul` | [gb10/gemma-4-26b-a4b/nvfp4/gelu.cu:43][f225] | activation / gate / residual | gb10 | Gemma4 (2 ckpts) | [1 note][t225] | not measured |
+| gelu::`gelu_{mul, tanh}` (2) | [gb10/gemma-4-26b-a4b/nvfp4/gelu.cu:21][f225] | activation / gate / residual | gb10 | Gemma4 (2 ckpts) | [1 note][t225] | not measured |
 | nvfp4_mmq::`metrale_nvfp4_silu_mul_quant` | [gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu:242][f268] | activation / gate / residual | gb10 hop | Qwen-GDN (7 ckpts) | [4 notes][t268] | [57–87%][m268.metrale_nvfp4_silu_mul_quant] (decode C=16 (R=32, MTP k=1)) |
 | nvfp4_mmq::`metrale_nvfp4_silu_mul_scaled` | [gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu:221][f268] | activation / gate / residual | gb10 hop | Qwen-GDN (7 ckpts) | [3 notes][t268] | not measured |
 | silu_mul_strided::`silu_mul_strided` | [hopper/common/silu_mul_strided.cu:44][f295] | activation / gate / residual | hop | DeepSeek-V4, Nemotron-H, Qwen-GDN, Qwen-GDN-MoE (18 ckpts) | [2 notes][t295] | not measured |
@@ -971,11 +972,12 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 
 ### Positional encoding (RoPE, YaRN, MRoPE)
 
-13 entry points: 13 primary here (full rows), 0 of other components launched from this component's code (listed after the table; their full rows are under their primary component).
+14 entry points: 14 primary here (full rows), 0 of other components launched from this component's code (listed after the table; their full rows are under their primary component).
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | image_modulation::`image_rope_complex_bf16` | [gb10/common/image_modulation.cu:50][f58] | three-axis image complex rotation (diagnostic residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| image_modulation::`image_timestep_bf16` | [gb10/common/image_modulation.cu:79][f58] | image temporal sinusoidal embedding (diagnostic residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | rope::`rope_{forward, forward_proportional, forward_strided, forward_yarn, forward_yarn_interleaved, forward_yarn_interleaved_inv, forward_yarn_scaled}` (7) | [gb10/common/rope.cu:29][f167] | rotary | b200 b300 gb10 hop strix hip | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Nemotron-H, Qwen-GDN, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (29 ckpts) | [3 notes][t167] | not measured |
 | rope_mrope_interleaved::`rope_forward_mrope_interleaved` | [gb10/common/rope_mrope_interleaved.cu:34][f168] | rotary | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t168] | [6%][m168.rope_forward_mrope_interleaved] (prefill 32k (cold, 32772 tok)) |
 | rope_mrope_interleaved::`rope_forward_mrope_interleaved_k_only` | [gb10/common/rope_mrope_interleaved.cu:108][f168] | rotary | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t168] | not measured |
@@ -1563,20 +1565,22 @@ Entry points whose every engine call site belongs to one component.
 
 ### Unique to Activations and elementwise (SiLU/GELU/ReLU², residual, gates, scale)
 
-3 entry points.
+4 entry points.
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | image_modulation::`image_modulation_{residual_bf16, scale_bf16}` (2) | [gb10/common/image_modulation.cu:9][f58] | image scale / tanh residual (staged BF16 residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
-| image_modulation::`image_silu_staged_mul_bf16` | [gb10/common/image_modulation.cu:66][f58] | activation / gate / residual | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| image_modulation::`image_silu_staged_mul_bf16` | [gb10/common/image_modulation.cu:67][f58] | image BF16 staged SiLU product residual | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| gelu::`gelu_tanh` | [gb10/gemma-4-26b-a4b/nvfp4/gelu.cu:21][f225] | activation / gate / residual | gb10 | Gemma4 (2 ckpts) | [1 note][t225] | not measured |
 
 ### Unique to Positional encoding (RoPE, YaRN, MRoPE)
 
-1 entry points.
+2 entry points.
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | image_modulation::`image_rope_complex_bf16` | [gb10/common/image_modulation.cu:50][f58] | three-axis image complex rotation (diagnostic residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| image_modulation::`image_timestep_bf16` | [gb10/common/image_modulation.cu:79][f58] | image temporal sinusoidal embedding (diagnostic residual) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 
 ### Unique to KV cache (write, quantize, TurboQuant rotation, slot metadata)
 
@@ -1755,7 +1759,6 @@ No engine call site names these entry points: they are reached only from tests o
 | paged_decode_fp8_mla::`paged_decode_attn_reduce_fp8` | [gb10/deepseek-v4-flash/nvfp4/paged_decode_attn_fp8_mla.cu:507][f217] | MLA · MLA decode/prefill | b200 gb10 hop | — | [1 note][t217] | not measured |
 | paged_decode_mla::`paged_decode_attn_{reduce, splitk}` (2) | [gb10/deepseek-v4-flash/nvfp4/paged_decode_attn_mla.cu:316][f218] | MLA · MLA decode/prefill | b200 gb10 hop | — | [1 note][t218] | not measured |
 | embed_scale::`f32_scale_inplace` | [gb10/gemma-4-26b-a4b/nvfp4/embed_scale.cu:25][f223] | Embedding and LM head · embedding / LM head | gb10 | — | — | not measured |
-| gelu::`gelu_tanh` | [gb10/gemma-4-26b-a4b/nvfp4/gelu.cu:21][f225] | Activations and elementwise · activation / gate / residual | gb10 | — | [1 note][t225] | not measured |
 | paged_decode_attn_512::`paged_decode_attn_{reduce, splitk}` (2) | [gb10/gemma-4-26b-a4b/nvfp4/paged_decode_attn_512.cu:305][f231] | Attention · paged decode | gb10 | — | [1 note][t231] | not measured |
 | paged_decode_attn_fp8_512::`paged_decode_attn_reduce_fp8` | [gb10/gemma-4-26b-a4b/nvfp4/paged_decode_attn_fp8_512.cu:487][f232] | Attention · paged decode | gb10 | — | [1 note][t232] | not measured |
 | norm::`f32_residual_add` | [gb10/gemma-4-26b-a4b/nvfp4/rms_norm.cu:471][f233] | Activations and elementwise · activation / gate / residual | gb10 | — | [1 note][t233] | not measured |

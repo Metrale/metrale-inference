@@ -584,6 +584,11 @@ kind = "argmax / top-p"
 names = ["argmax_*", "softmax_topp", "feed_resolve"]
 
 [[rule]]
+names = ["image_silu_staged_mul_bf16"]
+component = "elementwise"
+kind = "image BF16 staged SiLU product residual"
+
+[[rule]]
 component = "elementwise"
 kind = "activation / gate / residual"
 names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "vector_add", "bf16_residual_add", "f32_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]
@@ -605,7 +610,8 @@ component = "rope"
 kind = "three-axis image complex rotation (diagnostic residual)"
 names = ["image_rope_complex_bf16"]
 
-[[rules]]
-name = "image_silu_staged_mul_bf16"
-component = "activation"
-kind = "image BF16 staged SiLU product residual"
+
+[[rule]]
+names = ["image_timestep_bf16"]
+component = "rope"
+kind = "image temporal sinusoidal embedding (diagnostic residual)"

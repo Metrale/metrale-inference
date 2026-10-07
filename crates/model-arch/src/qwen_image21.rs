@@ -4,6 +4,9 @@
 //! has three recorded near-zero BF16 mismatches. This path does not qualify it.
 pub mod attention;
 pub mod block;
+pub mod conditioning;
+pub mod io;
+pub mod layout;
 pub mod rope;
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::{

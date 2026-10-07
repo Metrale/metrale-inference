@@ -63,6 +63,7 @@ extern "C" __global__ void image_rope_complex_bf16(
 // 2026-10-07: Eager BF16 SiLU storage boundary before the separate up multiply.
 // Existing fused MoE SiLU kernels keep that intermediate in FP32; do not alias
 // this entry to them or change their rounding. In-place output is supported.
+// 2026-10-07: Null up explicitly selects unary SiLU for time conditioning.
 extern "C" __global__ void image_silu_staged_mul_bf16(
     const __nv_bfloat16* gate, const __nv_bfloat16* up,
     __nv_bfloat16* output, uint32_t elements) {
@@ -70,5 +71,18 @@ extern "C" __global__ void image_silu_staged_mul_bf16(
     if (i >= elements) return;
     const float g = __bfloat162float(gate[i]);
     const float activated = __bfloat162float(__float2bfloat16_rn(g / (1.0f + expf(-g))));
-    output[i] = __float2bfloat16_rn(activated * __bfloat162float(up[i]));
+    output[i] = __float2bfloat16_rn(up ? activated * __bfloat162float(up[i]) : activated);
+}
+
+// 2026-10-07: Pinned 256-channel time embedding, cosine half before sine half.
+// Input timestep has already rounded to BF16; freqs are explicit FP32[128].
+extern "C" __global__ void image_timestep_bf16(
+    const __nv_bfloat16* timestep, const float* freqs, __nv_bfloat16* output,
+    uint32_t rows) {
+    const uint64_t i = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= uint64_t(rows) * 256) return;
+    const uint32_t channel = i % 256;
+    const float scaled = __fmul_rn(__bfloat162float(timestep[i / 256]), 1000.0f);
+    const float angle = __fmul_rn(scaled, freqs[channel % 128]);
+    output[i] = __float2bfloat16_rn(channel < 128 ? cosf(angle) : sinf(angle));
 }
