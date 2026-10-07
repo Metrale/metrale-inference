@@ -133,3 +133,23 @@ remain to be captured. Learned operands remain private on the device. The origin
 six-control finite-bounded oracle and raw receipt are preserved; a follow-up
 13-control suite additionally verifies overflow refusal, subnormal ties and
 nonfinite-input refusal. No production arithmetic changed.
+
+An isolated hook in the pinned optimized reference subsequently captured its actual
+final-normalized input and complete head output for that same 150-token prefix.
+The unchanged original head implementation remained behind an explicit armed
+wrapper. An unarmed 32-token control reproduced all prior actual IDs, and the
+armed one-token control repeated the prior decision. These bounded controls do
+not prove universally transparent instrumentation or support timing claims.
+
+The observed reference input, weights and logits were BF16, using
+`UnquantizedEmbeddingMethod` on Torch `2.14.0a0+b2c75dd062.nv26.09`.
+Its incoming normalized vector differed from native in **2,725/2,880 BF16 values**
+(maximum absolute difference 1.25). Both competing reference logits were actually
+26.625. All four selected reference head rows matched independent exact rational
+dot-product rounding on that captured reference input, just as the native rows
+matched on their own input. This localizes these four output differences upstream
+of the final head; it does not identify the responsible transformer operation or
+explain the entire coding failure. Original scores and qualification gates remain.
+The source-bound hook, actual shape/dtype checks, control responses and filtered
+comparison are in `gpt/topology-first-divergence/reference-head-hook`; learned
+vectors and head rows remain private on the device.
