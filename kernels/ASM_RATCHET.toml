@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-07: The "no bare asm" ratchet (#148): the per-file count of inline `asm` statements that
+# do not yet go through the ISA router. Checked by crates/kernels/tests/no_bare_asm.rs.
+#
+# Owner: metrale-kernels.
+# Invariants:
+# - A count may only go down. A change that routes asm through the ISA router lowers its file's
+#   entry in the same commit (the test refuses a stale entry, so the slack cannot be refilled).
+# - A file not listed here may contain no bare asm. An entry whose file has none is removed.
+# - `exempt` lists the directories that ARE the router (their asm is the per-target
+#   implementation). Empty until the router's location is decided (#148, open question 1).
+# - When [files] is empty the ratchet is done and the rule is absolute.
+
+exempt = []
+
+[files]
+"kernels/b300/common/moe_w4a16_grouped_gemm.cu" = 3
+"kernels/gb10/common/attn_prefill.cu" = 24
+"kernels/gb10/common/attn_prefill_fa128.cu" = 7
+"kernels/gb10/common/attn_prefill_fp8kv.cu" = 5
+"kernels/gb10/common/attn_prefill_h128.cu" = 24
+"kernels/gb10/common/attn_prefill_v47.cu" = 29
+"kernels/gb10/common/dense_gemm_bf16.cu" = 4
+"kernels/gb10/common/dense_gemm_tc.cu" = 1
+"kernels/gb10/common/dense_gemv_bf16_tc.cu" = 2
+"kernels/gb10/common/e4m3_mma_pipe.cuh" = 6
+"kernels/gb10/common/fp8_gemm_t_blockscaled.cu" = 5
+"kernels/gb10/common/gated_delta_rule_fla.cu" = 9
+"kernels/gb10/common/gdn_chunk_fwd_o_mma8.cu" = 6
+"kernels/gb10/common/mamba2_ssd_chunk.cu" = 7
+"kernels/gb10/common/moe_bf16_grouped_gemm.cu" = 1
+"kernels/gb10/common/moe_fp8_grouped_gemm.cu" = 4
+"kernels/gb10/common/moe_fp8_grouped_tc_w8a8.cu" = 1
+"kernels/gb10/common/moe_grouped_tc.cuh" = 1
+"kernels/gb10/common/moe_w4a16_grouped_gemm.cu" = 4
+"kernels/gb10/common/moe_w8a8_grouped_gemm.cu" = 5
+"kernels/gb10/common/prefill_paged_compute.cuh" = 14
+"kernels/gb10/common/prefill_paged_compute_512.cuh" = 14
+"kernels/gb10/common/prefill_paged_compute_asym.cuh" = 27
+"kernels/gb10/common/reshape_and_cache_turbo.cu" = 1
+"kernels/gb10/common/tc_rows.cuh" = 1
+"kernels/gb10/common/w4a16_fp8_ldmab.cu" = 9
+"kernels/gb10/common/w4a16_gemm.cu" = 1
+"kernels/gb10/common/w4a16_gemv_tc.cu" = 2
+"kernels/gb10/common/w4a4_gemv_mx.cu" = 1
+"kernels/gb10/common/w4a4_gemv_mx_ps.cuh" = 4
+"kernels/gb10/common/w8a16_gemm.cu" = 1
+"kernels/gb10/common/w8a16_gemm_pipe128.cu" = 5
+"kernels/gb10/common/w8a16_gemm_pipelined.cu" = 4
+"kernels/gb10/common/w8a16_gemm_pipelined_m16.cuh" = 1
+"kernels/gb10/common/w8a16_gemm_pipelined_m32.cu" = 5
+"kernels/gb10/common/w8a16_gemm_t.cu" = 5
+"kernels/gb10/common/w8a16_gemm_t_m128.cu" = 4
+"kernels/gb10/common/wxay_engine.cuh" = 1
+"kernels/gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu" = 23
+"kernels/gb10/deepseek-v4-flash/nvfp4/w4a16_gemm.cu" = 34
+"kernels/gb10/gemma-4-26b-a4b/nvfp4/moe_w4a16_grouped_gemm.cu" = 31
+"kernels/gb10/holo-3.1-0.8b/nvfp4/fp4_mma_microtest.cu" = 1
+"kernels/gb10/minimax-m2-229b/nvfp4/moe_w4a16_grouped_gemm.cu" = 37
+"kernels/gb10/minimax-m2-229b/nvfp4/w4a16_gemm_v2.cu" = 12
+"kernels/gb10/minimax-m2-229b/nvfp4/w4a16_gemm_v3.cu" = 15
+"kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/moe_w4a16_grouped_gemm.cu" = 7
+"kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/moe_w4a4_grouped.cu" = 5
+"kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/w4a16_gemm.cu" = 35
+"kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/w4a4_gemm.cu" = 11
+"kernels/gb10/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu" = 11
+"kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu" = 8
+"kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/common.cuh" = 2
+"kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/mma.cuh" = 39
+"kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu" = 92
+"kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm_v2.cu" = 12
+"kernels/gb10/qwen3.6-27b/nvfp4/w4a4_gemm.cu" = 5
+"kernels/gb10/qwen3.6-35b-a3b/nvfp4/moe_w4a16_grouped_gemm.cu" = 37
+"kernels/gb10/qwen3.6-35b-a3b/nvfp4/w4a16_gemm.cu" = 29
+"kernels/gb10/qwen3.8-flash-next/nvfp4/qsa_indexer.cu" = 1
+"kernels/hopper/common/dense_gemm_m16_bf16.cu" = 4
+"kernels/hopper/common/gated_delta_rule_chunk_tc.cu" = 4
+"kernels/hopper/common/gdn_prefill_hopper.cuh" = 1
+"kernels/hopper/common/moe_w8a8_m16.cu" = 4
+"kernels/hopper/common/w8a16_gemm_m16.cu" = 5
+"kernels/hopper/common/w8a16_gemv_hopper.cuh" = 1
