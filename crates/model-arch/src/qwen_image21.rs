@@ -112,7 +112,7 @@ impl<'a> DiagnosticImagePrelude<'a> {
         gpu.copy_h2d(&selected, result.selection)?;
         Ok(result)
     }
-    /// Caller provides BF16 hidden[rows,4096] and modulation[samples(+1),16384]
+    /// Caller provides BF16 `hidden[rows,4096]` and `modulation[samples(+1),16384]`
     /// with sizes from construction. The selection map is owned and cannot drift.
     /// Enqueues work on stream. Norm discrepancy remains explicit and unqualified.
     pub fn project(
