@@ -48,7 +48,7 @@ def main():
         module['ptx'] = target.name
         shutil.copyfile(old, target)
     for name, filename, entry in [
-        ('moe_w4a16_grouped_gemm', 'moe_w4a16_grouped_gemm.cu', 'moe_w4a16_grouped_gemm_ptrtable_e8m0_gpt'),
+        ('gpt_oss_mxfp4_mma', 'moe_w4a16_grouped_gemm.cu', 'moe_w4a16_grouped_gemm_ptrtable_e8m0_gpt'),
         ('moe_v41', 'moe_v41.cu', 'moe_v41_gather_rows'),
     ]:
         if any(m['name'] == name for m in baseline['modules']):
