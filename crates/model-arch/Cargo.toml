@@ -444,5 +444,9 @@ name = "qwen_image21_visual_native"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "qwen_image21_encoder_native"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "qwen_image21_prompt_capture"
 required-features = ["qwen-image-text"]

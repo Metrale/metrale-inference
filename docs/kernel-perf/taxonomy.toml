@@ -608,10 +608,15 @@ names = ["image_head_weight_bf16"]
 [[rule]]
 component = "rope"
 kind = "three-axis image complex rotation (diagnostic residual)"
-names = ["image_rope_complex_bf16"]
+names = ["image_rope_complex_bf16", "image_text_rope_bf16"]
 
 
 [[rule]]
 names = ["image_timestep_bf16"]
 component = "rope"
 kind = "image temporal sinusoidal embedding (diagnostic residual)"
+
+[[rule]]
+component = "vision"
+kind = "image VAE diagnostic FP32 convolution / channel norm"
+names = ["image_vae_conv2d_f32", "image_vae_norm_f32"]

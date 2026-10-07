@@ -86,3 +86,26 @@ extern "C" __global__ void image_timestep_bf16(
     const float angle = __fmul_rn(scaled, freqs[channel % 128]);
     output[i] = __float2bfloat16_rn(channel < 128 ? cosf(angle) : sinf(angle));
 }
+
+// 2026-10-07: Pinned Qwen3-VL text RoPE uses split halves and BF16 products
+// before the BF16 sum. Coefficients are BF16 [tokens,64], already generated.
+// This additive entry leaves the existing FP32-coefficient RoPE kernels intact.
+extern "C" __global__ void image_text_rope_bf16(
+    __nv_bfloat16* values, const __nv_bfloat16* cosines,
+    const __nv_bfloat16* sines, uint32_t tokens, uint32_t heads) {
+    const uint64_t i = uint64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= uint64_t(tokens) * heads * 64) return;
+    const uint32_t pair = i % 64;
+    const uint64_t row = i / 64;
+    const uint64_t coefficient = (row / heads) * 64 + pair;
+    const float x = __bfloat162float(values[row * 128 + pair]);
+    const float y = __bfloat162float(values[row * 128 + pair + 64]);
+    const float c = __bfloat162float(cosines[coefficient]);
+    const float s = __bfloat162float(sines[coefficient]);
+    const float xc = __bfloat162float(__float2bfloat16_rn(x*c));
+    const float ys = __bfloat162float(__float2bfloat16_rn(-y*s));
+    const float yc = __bfloat162float(__float2bfloat16_rn(y*c));
+    const float xs = __bfloat162float(__float2bfloat16_rn(x*s));
+    values[row*128+pair] = __float2bfloat16_rn(xc+ys);
+    values[row*128+pair+64] = __float2bfloat16_rn(yc+xs);
+}

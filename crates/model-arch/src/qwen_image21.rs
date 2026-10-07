@@ -330,5 +330,11 @@ impl Drop for DiagnosticImagePrelude<'_> {
     }
 }
 
+pub mod encoder;
+
+pub mod scheduler;
+
+pub mod vae;
+
 #[cfg(feature = "qwen-image-text")]
 pub mod prompt;

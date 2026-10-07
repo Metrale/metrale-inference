@@ -506,3 +506,46 @@ exact BF16 agrees with the reference in all four and native in none. These are
 native accumulation-order errors, not evidence of a reference defect. The
 strict shared checkpoint-reader control and both Linux native examples pass
 scoped Clippy; the new visual example also passes its corruption test.
+
+
+### Dense encoder and original-FP32 decoder boundary (2026-10-07)
+
+The actual Rust text-only encoder now executes all 36 dense BF16 decoder layers
+from the pinned checkpoint, retaining the pre-final-normalization output needed
+by the pipeline. It reuses existing GEMM, staged normalization, causal GQA
+prefill, residual and staged SiLU operations. The named text-RoPE residual
+preserves BF16 product rounding and split-half layout; text-only positions make
+all three MRoPE axes equal. The standalone harness refuses vision token IDs and
+does not claim image-conditioned encoder support. Template tokenization/prefix
+removal remains a separate boundary.
+
+On the 33-token fixture, native embedding, coefficients and block0 output are
+byte-identical to the independent native-kernel replay. All 36 outputs are
+finite. The pinned full encoder reference differs in 120,054/135,168 BF16
+values, relative L2 `0.011740515401730699`, maximum absolute error `64`.
+The exact gate remains failed. Same-input block0 evidence localizes differences
+to K/V projections (52/50), attention (112), and down projection (78,186);
+the latter needs independent accumulation characterization before assigning
+cause. The missing RoPE product-rounding control detects 16,227 differences.
+Receipts are `model-evidence/qwen-image21-{encoder-block,rust-encoder,encoder-reference}-gb10.json`.
+
+The native VAE prelude retains the checkpoint's original FP32 weights and uses
+an FP32 reference with TF32 disabled. This is explicitly different from the
+earlier globally BF16 reference-image pipeline. The single-frame convolution
+is a named diagnostic residual: the pinned so-called causal Conv3d actually
+executes a spatial Conv2d. Post-quant projection (2,240 values), SiLU (40,320),
+integer padding/axes (45), and the tiny-input L2-clamp case (60) are exact.
+The input convolution differs in 38,193/40,320 FP32 values (relative L2
+`9.62005230908682e-7`); normalization differs in 4,770 values (relative L2
+`4.2256119328542606e-8`). Those exact gates remain failed. Flipped-kernel and
+RMS-with-epsilon substitutions are detected. The initial probe wrapper collided
+with CUDA's `norm` symbol before execution; the renamed wrapper's fresh receipt
+is `model-evidence/qwen-image21-vae-prelude-gb10.json`. These slow diagnostic
+operations do not establish full VAE decoding or a production performance claim.
+
+The separately verified host denoising scheduler is described in
+[qwen-image-2.1-scheduler.md](qwen-image-2.1-scheduler.md). Its pinned CPU/CUDA
+schedule bits and staged BF16 update hashes pass their scoped controls. Full
+native prompt-to-image generation, the remaining VAE decoder, image-conditioned
+encoder support, exact numerical admission and production performance remain
+unfinished; no model factory registration has been added.
