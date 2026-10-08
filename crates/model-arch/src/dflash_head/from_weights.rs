@@ -229,7 +229,10 @@ impl BlockDiffusionDraftHead {
         // `rope_scaling`: absent gives plain RoPE (`1 / theta^(2j / dim)`),
         // `rope_type = "yarn"` the YaRN-blended table, and any other value plain RoPE
         // with a warning. RoPE rotates the whole head (`rotary_dim = head_dim`).
-        let rope_theta = weights.config.rope_theta;
+        let rope_theta = weights
+            .config
+            .effective_rope_theta()
+            .map_err(|e| anyhow::anyhow!(e))?;
         let rotary_dim = head_dim;
         let inv_freq_table = rope_table::rope_inv_freq_table(&weights, rope_theta, rotary_dim);
 

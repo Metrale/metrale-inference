@@ -30,9 +30,11 @@ pub struct DflashConfig {
     pub block_size: usize,
     #[serde(default)]
     pub dflash_config: Option<DflashSubConfig>,
-    /// 2026-09-25: Drafter RoPE θ; 10,000,000 when absent.
-    #[serde(default = "default_rope_theta")]
-    pub rope_theta: f32,
+    /// 2026-09-25: Drafter RoPE θ as a top-level key. 2026-10-08: optional, because
+    /// transformers 5 configs state θ only inside `rope_parameters`; read it through
+    /// [`DflashConfig::effective_rope_theta`].
+    #[serde(default)]
+    pub rope_theta: Option<f32>,
     /// 2026-09-25: The `rope_scaling` block, also read under the key
     /// `rope_parameters`. `None` means plain RoPE. With `rope_type == "yarn"`
     /// the head builds a YaRN inv_freq table; any other block falls back to
@@ -73,6 +75,9 @@ pub struct DflashRopeScaling {
     /// back to plain RoPE with a warning when the head is built.
     #[serde(default)]
     pub rope_type: Option<String>,
+    /// 2026-10-08: θ as transformers 5 writes it, inside `rope_parameters`.
+    #[serde(default)]
+    pub rope_theta: Option<f32>,
     #[serde(default)]
     pub factor: Option<f32>,
     #[serde(default)]
@@ -123,6 +128,21 @@ pub struct DflashSubConfig {
 }
 
 impl DflashConfig {
+    /// 2026-10-08: Resolved RoPE θ: the top-level `rope_theta`, else `rope_parameters.rope_theta`,
+    /// else 10,000,000 (the value every drafter loaded before this field was read). A drafter
+    /// that states θ in both places with different values is refused.
+    pub fn effective_rope_theta(&self) -> Result<f32, String> {
+        let nested = self.rope_scaling.as_ref().and_then(|r| r.rope_theta);
+        match (self.rope_theta, nested) {
+            (Some(top), Some(inner)) if top != inner => Err(format!(
+                "drafter config states rope_theta {top} at top level and {inner} in rope_parameters"
+            )),
+            (Some(top), _) => Ok(top),
+            (None, Some(inner)) => Ok(inner),
+            (None, None) => Ok(default_rope_theta()),
+        }
+    }
+
     /// 2026-09-25: Resolved block size γ: `dflash_config.block_size` when set,
     /// else the top-level field. The sub-config comes first because serde
     /// fills the top-level default of 16 for a checkpoint that never states
