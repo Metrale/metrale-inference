@@ -194,6 +194,9 @@ pub(crate) fn init_nccl_comm(
         args.master_port,
         cuda_stream,
         recv_capacity,
+        args.all_reduce_oneshot_max_kb
+            .checked_mul(1024)
+            .context("--all-reduce-oneshot-max-kb overflows")?,
     )
     .context("Failed to initialize NCCL")?;
     tracing::info!("NCCL initialized: rank {}", backend.rank());

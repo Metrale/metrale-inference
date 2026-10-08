@@ -73,7 +73,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/bf16_add.cu](../../kernels/gb10/common/bf16_add.cu)
 
-- *whole file*: Scalar BF16 loads and one element per thread (no 32-bit packing as in the norm kernels); the add rounds once via __hadd. Used by the 2-rank all-reduce and the GLM-5-Next MTP residual add. — source: kernels/gb10/common/bf16_add.cu:3
+- *whole file*: Scalar BF16 loads and one element per thread (no 32-bit packing as in the norm kernels); the add rounds once via __hadd. Used by the 2-rank all-reduce and the GLM-5-Next MTP residual add. bf16_add_rank_sum (world >= 3 one-shot all-reduce) sums all ranks in rank order in FP32, rounded once: same bytes on every rank. — source: kernels/gb10/common/bf16_add.cu:3
 
 <a id="to-kernels-gb10-common-causal-conv1d-cu"></a>
 

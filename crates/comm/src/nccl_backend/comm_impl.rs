@@ -24,6 +24,9 @@ impl CommBackend for NcclBackend {
         if self.world_size == 2 && self.add_kernel.load(Ordering::Relaxed) != 0 {
             return self.all_reduce_2rank(ptr, bytes, self.legacy_stream);
         }
+        if self.oneshot_applies(bytes) {
+            return self.all_reduce_oneshot(ptr, bytes, self.legacy_stream);
+        }
         // 2026-09-26: In place on `ptr`; `recv_buffer` is not used, so its
         // capacity does not bound this path.
         let count = bytes / ALL_REDUCE_DTYPE_BYTES;
@@ -58,6 +61,14 @@ impl CommBackend for NcclBackend {
 
             self.all_reduce_2rank(ptr, bytes, self.comm_stream)?;
 
+            nccl::record_event(self.comm_done_event, self.comm_stream)?;
+            nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
+            return Ok(());
+        }
+        if self.oneshot_applies(bytes) {
+            nccl::record_event(self.compute_done_event, compute_stream)?;
+            nccl::stream_wait_event(self.comm_stream, self.compute_done_event)?;
+            self.all_reduce_oneshot(ptr, bytes, self.comm_stream)?;
             nccl::record_event(self.comm_done_event, self.comm_stream)?;
             nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
             return Ok(());
@@ -128,6 +139,10 @@ impl CommBackend for NcclBackend {
             "NCCL backend: bf16_add_inplace kernel set \
              (2-rank send/recv enabled)"
         );
+    }
+
+    fn set_rank_sum_kernel(&self, handle: u64) {
+        self.set_oneshot_sum_kernel(handle);
     }
 
     fn all_gather(&self, send_ptr: u64, recv_ptr: u64, bytes: usize) -> Result<()> {

@@ -294,4 +294,13 @@ pub struct ServeServiceArgs {
     /// not exceed `--max-lora-rank` (64 when unset).
     #[arg(long, value_name = "NAME=PATH_OR_HF_ID", value_parser = parse_lora_adapter_spec)]
     pub lora_stageable_disk: Vec<(String, String)>,
+
+    /// One-shot all-reduce bound, in KiB, at `--world-size` 3 or more: a BF16
+    /// all-reduce of at most this size is exchanged with every peer in one
+    /// grouped send/recv and summed in rank order (FP32, rounded once, the
+    /// same bytes on every rank); larger payloads use NCCL's all-reduce. `0`
+    /// (the default) sends every all-reduce to NCCL. Refused at world size 2,
+    /// which has its own exchange.
+    #[arg(long, default_value_t = 0)]
+    pub all_reduce_oneshot_max_kb: usize,
 }
