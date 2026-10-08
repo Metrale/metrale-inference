@@ -17,6 +17,8 @@
 
 use anyhow::Result;
 
+#[path = "precision_plan/packed_int.rs"]
+pub mod packed_int;
 #[path = "precision_plan/parse.rs"]
 mod parse;
 #[path = "precision_plan/target.rs"]
