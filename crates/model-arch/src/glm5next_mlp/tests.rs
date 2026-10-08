@@ -208,3 +208,15 @@ fn the_router_ladder_comes_from_the_config() {
             .router_bf16_ladder
     );
 }
+
+/// 2026-10-08: EP without TP is refused (the replicated dense and shared outputs would be summed
+/// once per rank); EP beside TP of the same size is accepted.
+#[test]
+fn ep_without_tp_is_refused() {
+    let mut c = glm_config();
+    c.ep_world_size = 3;
+    let err = format!("{:#}", Glm5NextMlpConfig::from_config(&c).unwrap_err());
+    assert!(err.contains("without tensor parallelism"), "{err}");
+    c.tp_world_size = 3;
+    assert!(Glm5NextMlpConfig::from_config(&c).is_ok());
+}

@@ -5,3 +5,75 @@
 # root_cause_class vocabulary of the kit's ledger/levers.toml (the Hardware Beachhead Campaign:
 # H100 PR). Kept as its own file so the two PRs do not conflict; its entries are appended to
 # levers.toml once the kit merges.
+
+[[lever]]
+id = "gb10x3-glm53-ep-only-layout-garbage"
+date = "2026-10-08"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE, declared)"
+recipe_or_tier = "world 3, --ep-size 3 --tp-size 1"
+symptom = "first three-box serve: greedy output word salad (' the the known asthe of France is the now...'); TP=3/EP=3 on the same binary answers 'Paris. In French, Paris is pronounced...'"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "numerics-path-mismatch"
+lever_type = "process-fix"
+lkb_effect = "none"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "parity-broken"
+verdict_reason = "EP without TP replicates the dense layers and the shared expert, and the MLP all-reduce then sums them once per rank; the layout is now refused at config time"
+failure_mode = "Glm5NextMlpConfig::needs_all_reduce is true for any ep > 1, but at tp = 1 the dense and shared outputs are full (not partial) on every rank"
+caught_by = "the fixed greedy probe set, first request after boot"
+time_lost_hours = 0.1
+would_catch_earlier = "a CPU test that the MLP site's per-rank contributions sum to the single-rank output for every legal (tp, ep); the existing tests only covered tp = ep = 2"
+effort_hours = 0.2
+transferability = "any MoE with replicated dense or shared-expert paths under expert-only parallelism"
+links = { pr = "", commit = "", evidence = "same-box greedy probes, EP=3/TP=1 vs TP=3/EP=3, one binary" }
+notes = "EP-only was also the bandwidth-worst layout (dense BF16 read on every rank), so nothing is lost by refusing it"
+
+[[lever]]
+id = "gb10x3-glm53-launch-env-leak-and-stub-libraries"
+date = "2026-10-08"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4"
+recipe_or_tier = "three-node bare-binary launch"
+symptom = "head rank: CUDA_ERROR_NO_DEVICE at module load, then a segfault in ncclGetUniqueId, then every collective involving that box hung or failed (bootstrap 'Message truncated', CUDA error 700) while the other two boxes' pair worked"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "measurement-methodology-error"
+lever_type = "process-fix"
+lkb_effect = "none"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "environment, not engine: unversioned stub libraries shadowed the driver and NCCL on one box, and the launching shell exported its own NCCL_* settings into the rank; fixed by a bundled library directory and a clean environment (env -i) per rank"
+failure_mode = "(1) unversioned libcuda.so / libnccl.so / libcudart.so / libcublasLt.so stub files on one box; the binary links the unversioned names; (2) NCCL_IB_GID_INDEX, NCCL_IB_HCA, NCCL_NSOCKS_PERTHREAD, NCCL_SOCKET_NTHREADS, NCCL_IB_QPS_PER_CONNECTION inherited from the launching shell on one rank only; (3) NCCL 2.29 lacks subnet-aware routing, which a switchless triangle needs"
+caught_by = "a ctypes 3-rank NCCL test (broadcast + all-reduce) run pairwise, which isolated the box and then the environment"
+time_lost_hours = 0.9
+would_catch_earlier = "a pre-launch check that diffs `ldd` resolution and the NCCL_* environment of the rank process across boxes, plus the 3-rank NCCL test before loading 190 GB of weights"
+effort_hours = 1.0
+transferability = "any multi-node launch from an agent shell; any box carrying build stubs in the system library path"
+links = { pr = "", commit = "", evidence = "pairwise NCCL tests on the reference boxes" }
+notes = "the switchless triangle also needs the same NCCL build on every rank: mixing 2.29 and 2.30 fails the bootstrap with a size mismatch"
+
+[[lever]]
+id = "gb10x3-glm53-oneshot-allreduce-unarmed"
+date = "2026-10-08"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4"
+recipe_or_tier = "TP=3/EP=3, --all-reduce-oneshot-max-kb 512"
+symptom = "first prefill refused: 'bf16_add_rank_sum kernel not set'"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "silent-gate-bypass"
+lever_type = "process-fix"
+lkb_effect = "none"
+parity_tier_kept = "n/a"
+per_rung = []
+verdict = "failed"
+verdict_reason = "the kernel handover ran only at world size 2; the fail-fast in the one-shot path turned what would have been a silent NCCL fallback into an immediate error"
+failure_mode = "TransformerModel registered the reduce buffers and kernels only when world_size == 2"
+caught_by = "the one-shot path's own refusal without its kernel"
+time_lost_hours = 0.05
+would_catch_earlier = "a test that every comm capability a flag arms has its setup reached at every world size the flag accepts"
+effort_hours = 0.1
+transferability = "any lever whose setup is gated on a different predicate than its dispatch"
+links = { pr = "", commit = "", evidence = "" }
+notes = "timing of the one-shot path is still unmeasured"

@@ -406,6 +406,19 @@ impl Glm5NextMlpConfig {
         if self.moe_intermediate == 0 {
             bail!("GLM MLP: moe_intermediate_size is 0 — a routed layer would compute nothing");
         }
+        // 2026-10-08: Expert parallelism without tensor parallelism replicates the dense layers
+        // and the shared expert on every rank, and the site's all-reduce then sums those
+        // replicated outputs `ep_world_size` times: measured on the three-box GLM serve at EP=3,
+        // TP=1, whose greedy output was word salad. EP runs only beside TP.
+        if self.ep_world_size > 1 && self.tp_world_size == 1 {
+            bail!(
+                "GLM MLP: expert parallelism (ep {}) without tensor parallelism would sum the \
+                 replicated dense and shared-expert outputs {} times in the MLP all-reduce; \
+                 run --tp-size equal to --ep-size",
+                self.ep_world_size,
+                self.ep_world_size
+            );
+        }
         if self.ep_rank >= self.ep_world_size {
             bail!(
                 "GLM MLP: ep_rank {} is outside ep_world_size {}",
