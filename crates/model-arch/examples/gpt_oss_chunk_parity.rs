@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     let tc = args.get(5).is_some();
     ensure!(
         !tc || (args[5] == "packed-tc" && capacity == 128),
-        "TC diagnostic requires explicit packed-tc and capacity128"
+        "TC diagnostic requires explicit packed-tc and capacity 128"
     );
     let widths: &[usize] = if tc {
         &[0, 64, 128]

@@ -1,4 +1,4 @@
-# 2026-10-07: Experimental native packaging; numerical qualification and serving admission remain open.
+# 2026-10-07: Experimental native packaging; served only under --experimental-gpt-oss, numerical qualification remains open.
 [model]
 name = "gpt-oss-20b"
 hf_id = "openai/gpt-oss-20b"

@@ -10,8 +10,9 @@
 # inline PTX). Their lookups are in MODEL.toml [expected_absent].
 #
 # Compiled with hipcc --offload-arch=gfx1151 and launched on a Radeon 8060S.
-# TODO(gfx1151): the YaRN frequency table differs from the reference by 1 ulp
-# at 6 of 32 entries (HIP powf); decide host-computed table vs accepted ulp.
+# The YaRN frequency table is built on the host (gpt_oss_yarn_frequency_table),
+# so gfx1151 uploads the same bits as GB10; gpt_oss_rope.cu is brought in for
+# gpt_oss_rope_bf16, and its gpt_oss_yarn_frequencies entry is not looked up.
 [sources]
 use = [
   "../gb10/common/dense_gemv_bf16_batchm.cu",

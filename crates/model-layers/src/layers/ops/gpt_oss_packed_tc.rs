@@ -16,7 +16,7 @@ fn geometry(tokens: u32, rows: u32, cols: u32, max_expert_rows: u32) -> Result<(
     );
     Ok(())
 }
-/// 2026-10-07: Caller supplies a validated complete expert plan and32 live pointer-table entries.
+/// 2026-10-07: Caller supplies a validated complete expert plan and 32 live pointer-table entries.
 /// Kernel writes expert-packed BF16 rows before separate bias; this is a distinct reduction policy.
 #[allow(clippy::too_many_arguments)]
 pub fn gpt_oss_packed_tc(

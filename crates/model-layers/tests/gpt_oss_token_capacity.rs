@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! 2026-10-07: Explicit larger token-grid launch bounds; expert reuse remains at16.
+//! 2026-10-07: Explicit larger token-grid launch bounds; expert reuse remains at 16.
 use metrale_gpu_runtime::gpu::{
     DevicePtr, KernelHandle,
     mock::{MockArg, MockGpuBackend},

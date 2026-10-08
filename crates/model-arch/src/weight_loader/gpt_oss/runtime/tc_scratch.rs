@@ -39,7 +39,7 @@ impl TcScratch {
         let bytes = Self::required_bytes();
         ensure!(
             gpu.device_free_memory()? >= bytes + gpu.total_memory()?.div_ceil(100) * 15,
-            "TC diagnostic scratch would exceed85% device memory"
+            "TC diagnostic scratch would exceed 85% device memory"
         );
         let allocation = gpu.alloc(bytes)?;
         let mut at = 0;
