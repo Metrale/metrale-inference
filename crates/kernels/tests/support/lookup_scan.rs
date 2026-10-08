@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-07: The workspace scan for literal kernel lookups (`.kernel(`, `try_kernel(`,
-//! `try_target_kernel(`, `gated(`), moved here unchanged from `kernel_lookups.rs`.
+//! `try_target_kernel(`, `gated(`), moved here from `kernel_lookups.rs`, plus
+//! `Lookup::required` (a `.kernel(...)?` call).
 //!
 //! Owner: metrale-kernels tests.
 //! Invariants: none beyond the types.

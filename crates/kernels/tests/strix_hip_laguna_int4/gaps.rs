@@ -33,7 +33,7 @@ pub enum GapClass {
     OtherModelFeature,
     /// 2026-10-07: Families Laguna's BF16 attention, router, shared expert, KV write or
     /// sampling may use that no strix-hip target builds. All are probes with a resolved
-    /// fallback today; each needs a HIP build or a measured decision to keep the fallback.
+    /// fallback; none has a HIP build.
     HipMissing,
 }
 

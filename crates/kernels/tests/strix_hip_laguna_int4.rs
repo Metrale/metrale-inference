@@ -18,6 +18,7 @@
 //! Usage: `METRALE_SKIP_BUILD=1 cargo test -p metrale-kernels --test strix_hip_laguna_int4`;
 //! `-- --nocapture laguna_lookup_inventory` prints the classified lookup table.
 
+// 2026-10-07: Only `entry_points` is used here.
 #[allow(dead_code)]
 #[path = "../build_shadow.rs"]
 mod build_shadow;
@@ -331,7 +332,8 @@ fn every_laguna_lookup_resolves_or_is_classified() {
     assert!(both.is_empty(), "declared twice: {both:?}");
 }
 
-/// 2026-10-07: Prints the classified table (`-- --nocapture`); the doc's lookup table is this.
+/// 2026-10-07: Prints the classified table (`-- --nocapture`) and requires every lookup to
+/// have a class; the doc's lookup table is this.
 #[test]
 fn laguna_lookup_inventory() {
     let entries = compiled_entries(&laguna());
@@ -353,6 +355,7 @@ fn laguna_lookup_inventory() {
         *counts.entry(class).or_default() += 1;
     }
     println!("{counts:?}");
+    assert!(!counts.contains_key("UNCLASSIFIED"), "{counts:?}");
 }
 
 #[test]
