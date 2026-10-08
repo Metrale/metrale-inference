@@ -9,8 +9,9 @@
 # gb10/deepseek-v4-flash/nvfp4/moe_v41.cu (diagnostic packed tensor-core MoE,
 # inline PTX). Their lookups are in MODEL.toml [expected_absent].
 #
-# TODO(gfx1151): compile with hipcc --offload-arch=gfx1151 and check launch
-# and numerics on a real device; none of that is verified yet.
+# Compiled with hipcc --offload-arch=gfx1151 and launched on a Radeon 8060S.
+# TODO(gfx1151): the YaRN frequency table differs from the reference by 1 ulp
+# at 6 of 32 entries (HIP powf); decide host-computed table vs accepted ulp.
 [sources]
 use = [
   "../gb10/common/dense_gemv_bf16_batchm.cu",

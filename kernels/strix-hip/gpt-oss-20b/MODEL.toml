@@ -1,5 +1,6 @@
-# 2026-10-07: gfx1151 (HIP) packaging of the GPT-OSS-20B MXFP4 target. Host-side
-# resolution only: no hipcc compile, launch or numerics has been run on gfx1151.
+# 2026-10-07: gfx1151 (HIP) packaging of the GPT-OSS-20B MXFP4 target. Built with
+# hipcc for gfx1151 and booted on a Radeon 8060S: kernel gate, primitive numerics and
+# Harmony generation checked. Not a qualification; see docs/gpt-oss-native-bringup.md.
 # The model fields mirror kernels/gb10/gpt-oss-20b/MODEL.toml.
 [model]
 name = "gpt-oss-20b"
