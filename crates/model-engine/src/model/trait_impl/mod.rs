@@ -71,6 +71,7 @@ mod sequence_compact;
 mod speculative;
 mod speculative_mtp;
 pub(in crate::model) mod ssm_fault_in;
+mod ssm_replay;
 mod verify_a;
 mod verify_a_ssm;
 mod verify_b;

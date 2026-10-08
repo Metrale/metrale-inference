@@ -36,6 +36,7 @@ impl TransformerModel {
                         conv_state_checkpoint: None,
                         h_state_intermediates: Vec::new(),
                         conv_state_intermediates: Vec::new(),
+                        replay_ring: None,
                         h_is_f16: metrale_model_layers::layers::qwen3_ssm::ssm_h_fp16_enabled(),
                         // 2026-09-25: Never prefilled; set so the dummy row
                         // matches a real row's geometry.

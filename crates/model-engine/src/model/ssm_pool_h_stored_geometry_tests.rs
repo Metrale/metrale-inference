@@ -153,10 +153,11 @@ fn replay_pool_has_checkpoints_and_ring_but_no_intermediates() {
     assert_eq!(p.h_checkpoint_pools.len(), p.num_ssm_layers);
     assert_eq!(p.replay_input_rings.len(), p.num_ssm_layers);
     assert_eq!(p.verify_draft_capacity(0), usize::MAX);
-    let err = p.require_verify_rollback_supported().unwrap_err();
+    let err = p.require_verify_rollback_supported(false).unwrap_err();
     assert!(err.to_string().contains("EXPERIMENTAL"), "{err}");
+    assert!(p.require_verify_rollback_supported(true).is_ok());
     let snap = pool(false);
-    assert!(snap.require_verify_rollback_supported().is_ok());
+    assert!(snap.require_verify_rollback_supported(false).is_ok());
     assert!(snap.replay_input_rings.is_empty());
     assert!(!snap.h_intermediate_pools.is_empty());
 }

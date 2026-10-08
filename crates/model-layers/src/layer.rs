@@ -56,6 +56,15 @@ impl LayerState for EmptyLayerState {
     }
 }
 
+/// 2026-10-08: One sequence's verify-input record region for one recurrent layer under the
+/// replay rollback mode (`--ssm-rollback-mode replay`): `bytes` bytes at `base`, a pool
+/// address fixed per slot. The layer lays its rows out in it (`supports_ssm_replay`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SsmReplayRing {
+    pub base: DevicePtr,
+    pub bytes: usize,
+}
+
 /// 2026-09-25: Per-sequence state of a recurrent (SSM/GDN) layer: the recurrent h state
 /// and the conv1d window, plus the copies speculative decode rolls back to.
 pub struct SsmLayerState {
@@ -75,6 +84,9 @@ pub struct SsmLayerState {
     /// 2026-09-25: Per-token conv states of a verify, indexed like
     /// `h_state_intermediates`.
     pub conv_state_intermediates: Vec<DevicePtr>,
+    /// 2026-10-08: The verify-input record a replay-mode verify writes and its commit replays
+    /// from; `None` outside the replay rollback mode.
+    pub replay_ring: Option<SsmReplayRing>,
     /// 2026-09-25: Storage format of `h_state`: `false` = FP32, `true` = FP16.
     ///
     /// A sequence on an f16-sized pool (`h_prefill_stage` is `Some`) starts `true`: the

@@ -125,6 +125,7 @@ fn mk_state(gpu: &MockGpuBackend, layer: &Qwen3SsmLayer, n_inter: usize) -> SsmL
         conv_state_intermediates: (0..n_inter)
             .map(|i| conv_slab.offset(i * conv_bytes))
             .collect(),
+        replay_ring: None,
         h_is_f16: false,
         h_prefill_stage: None,
         ple: None,

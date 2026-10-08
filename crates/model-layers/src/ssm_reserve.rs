@@ -31,7 +31,7 @@ pub use pool_plan::{
 mod rollback;
 pub use rollback::{
     SsmRollbackMode, set_ssm_rollback_mode, ssm_replay_ring_bytes, ssm_replay_row_bytes,
-    ssm_rollback_mode,
+    ssm_replay_row_bytes_for, ssm_rollback_mode,
 };
 
 /// 2026-09-25: Number of SSM-pool slots the verify pools (per-token intermediates and

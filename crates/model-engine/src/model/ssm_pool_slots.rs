@@ -249,19 +249,23 @@ impl SsmStatePool {
         self.h_inter_counts[slot]
     }
 
-    /// 2026-09-25: Error under the replay rollback mode on a model with SSM layers:
-    /// that mode allocates no per-token H intermediates and has no replay device
-    /// path. Every `decode_verify*` entry in `trait_impl/mod.rs` calls it.
-    pub(crate) fn require_verify_rollback_supported(&self) -> Result<()> {
+    /// 2026-09-25: Error under the replay rollback mode on a model with SSM layers
+    /// unless `replay_wired`: that mode allocates no per-token H intermediates, so a
+    /// verify can roll back only when every pool-backed recurrent layer records and
+    /// replays (`LayerCapabilities::supports_ssm_replay`, which the model ORs into
+    /// `replay_wired`). Every `decode_verify*` entry in `trait_impl/impl_verify.rs`
+    /// calls it.
+    pub(crate) fn require_verify_rollback_supported(&self, replay_wired: bool) -> Result<()> {
         if self.rollback_mode == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
             && self.num_ssm_layers > 0
+            && !replay_wired
         {
             bail!(
-                "--ssm-rollback-mode replay is an EXPERIMENTAL scaffold: the verify-window \
-                 input capture and checkpoint-replay reconstruction are not wired yet, so \
-                 speculative verify cannot run. The serve boots (reserve sizing shows the \
-                 replay capacity win) but --speculative traffic must use \
-                 --ssm-rollback-mode snapshot."
+                "--ssm-rollback-mode replay is EXPERIMENTAL and wired only for recurrent \
+                 layers that record and replay their verify inputs (GLM-5.3's KDA); this \
+                 model has a pool-backed recurrent layer without it, so speculative verify \
+                 cannot run. The serve boots (reserve sizing shows the replay capacity win) \
+                 but --speculative traffic must use --ssm-rollback-mode snapshot."
             );
         }
         Ok(())
@@ -277,6 +281,21 @@ impl SsmStatePool {
         let slot = self.mtp_slot(slot);
         self.conv_intermediate_pools[ssm_layer_idx]
             .offset((slot * ni + token_idx) * self.conv_bytes)
+    }
+
+    /// 2026-10-08: Slot `slot`'s replay record region in SSM layer `ssm_layer_idx`; `None`
+    /// in snapshot mode. A slot past `mtp_slots` shares the dummy's region, as its
+    /// checkpoint does.
+    pub(super) fn replay_ring(
+        &self,
+        ssm_layer_idx: usize,
+        slot: usize,
+    ) -> Option<metrale_model_layers::layer::SsmReplayRing> {
+        let base = *self.replay_input_rings.get(ssm_layer_idx)?;
+        Some(metrale_model_layers::layer::SsmReplayRing {
+            base: base.offset(self.mtp_slot(slot) * self.replay_slot_bytes),
+            bytes: self.replay_slot_bytes,
+        })
     }
 
     pub(super) fn h_checkpoint(&self, ssm_layer_idx: usize, slot: usize) -> DevicePtr {

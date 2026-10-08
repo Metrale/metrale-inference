@@ -94,4 +94,14 @@ pub trait LayerCapabilities {
     fn supports_replay_tail_split(&self) -> bool {
         false
     }
+
+    /// 2026-10-08: True when this layer, a recurrent layer on the SSM pool, can roll a
+    /// speculative verify back under `--ssm-rollback-mode replay`: its K-row verify copies
+    /// the state to the slot's checkpoint and records each row's recurrent inputs in the
+    /// slot's `SsmLayerState::replay_ring`, and `LayerWriteOnAccept::ssm_replay_commit`
+    /// restores and replays. The model admits a replay-mode verify only when every
+    /// pool-backed recurrent layer answers true.
+    fn supports_ssm_replay(&self) -> bool {
+        false
+    }
 }

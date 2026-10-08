@@ -67,6 +67,7 @@ impl TransformerModel {
                         conv_state_checkpoint: None,
                         h_state_intermediates: Vec::new(),
                         conv_state_intermediates: Vec::new(),
+                        replay_ring: None,
                         // 2026-09-25: Tagged with the active h dtype: under FP16 h-state the
                         // batched decode refuses any row whose state is not tagged FP16.
                         h_is_f16: metrale_model_layers::layers::qwen3_ssm::ssm_h_fp16_enabled(),

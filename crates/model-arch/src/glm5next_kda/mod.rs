@@ -36,8 +36,10 @@ mod config;
 mod decode;
 mod kernels;
 mod prefill;
+mod replay;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
 pub use kernels::Glm5NextKdaKernels;
+pub use replay::KdaVerifyRecord;
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
