@@ -94,7 +94,11 @@ pub(super) fn finish_first_token(
         req_require_tool_call && grammar_state.is_none() && tool_call_start_token.is_some();
     // 2026-09-25: Computed before `grammar_state` moves into the
     // `ActiveSeq`.
-    let tool_request = grammar_state.is_some() || use_legacy_tool_call;
+    let tool_request = tool_request_at_birth(
+        grammar_state.is_some(),
+        req_tools_present,
+        use_legacy_tool_call,
+    );
 
     let now = sched.io.clock.now();
     let cached_prompt_tok = seq.reused_prefix_tokens as u32;

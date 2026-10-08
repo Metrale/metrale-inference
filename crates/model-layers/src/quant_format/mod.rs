@@ -16,6 +16,7 @@ use crate::weight_map::Nvfp4Variant;
 mod compressed_tensors;
 mod fp8_blockscaled;
 mod modelopt;
+pub mod packed_int;
 
 pub use compressed_tensors::CompressedTensorsFormat;
 pub use fp8_blockscaled::Fp8BlockScaledFormat;

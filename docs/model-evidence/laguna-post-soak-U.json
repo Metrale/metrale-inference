@@ -1,0 +1,294 @@
+{
+  "date": "2026-10-07",
+  "model": "poolside/Laguna-XS-2.1-NVFP4",
+  "revision": "d32afde8b09af1539b49ff96ff5551c674485f8e",
+  "binary_sha256": "84224f39b1f51f8bdfc45b68923fee43cd3c999054db1adb15175be334184a0f",
+  "source_identity": "3e954ac14786e614cb87c713dba1cc8735edab80 + original qk-fix.patch SHA256 aeb7f67147f3931e679fb795ab586ac39058729840ef1b46671edc9c5f156e98; deployment assertion independently tied to original executable digest",
+  "soak": {
+    "complete": {
+      "time": 1791353562.1970901,
+      "test": "complete",
+      "passed": false,
+      "cycles": 650,
+      "format_failures": 1665
+    },
+    "events": {
+      "arithmetic-response": 4551,
+      "arithmetic": 1,
+      "tool-round-trip": 1,
+      "streaming": 1,
+      "soak": 1950,
+      "complete": 1
+    },
+    "failures": [],
+    "sha256": "802461f2ebf6b32d7218cf7424c18446e03fc35d29aa93140665fdf8c989512f"
+  },
+  "repeatability": {
+    "requests": 66,
+    "exact": 19,
+    "unscored_format": 47,
+    "variable_groups": 4,
+    "proven_scheduler_membership": false
+  },
+  "structured": {
+    "requests": 6,
+    "strict_passes": 0,
+    "valid_json_correct_integers": 6,
+    "finish_reason_length": 6,
+    "observed_budget_warning": true,
+    "cause_established": false
+  },
+  "coding": {
+    "requests": 12,
+    "semantic_passes": 9,
+    "results": [
+      {
+        "task": "merge_intervals",
+        "repeat": 0,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "d6cfbef66c0a83380ecf38252a4800e67bdd097d99e92c6377053196ee7fb711",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      {
+        "task": "retry_delay_edit",
+        "repeat": 0,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "9980518f7d3c2fb89ffa442bcbed221e9a7572dfa83c1e69a9774ecd2a848078",
+        "grade": {
+          "passed": false,
+          "kind": "semantic_failure",
+          "cases": [
+            true,
+            true,
+            true,
+            false,
+            true,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false
+          ]
+        }
+      },
+      {
+        "task": "stable_dependency_order",
+        "repeat": 0,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "366caf43d906fb1b7e2e81ad4c2c65dc72b0f6a6338ffaca25655bc5b837e444",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      {
+        "task": "idempotent_ingest_edit",
+        "repeat": 0,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "ba151ff59600472c64da0103f3283a93ac5aa7a25ef4a52ce6dc3dcf9c4b0017",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      {
+        "task": "merge_intervals",
+        "repeat": 1,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "d6cfbef66c0a83380ecf38252a4800e67bdd097d99e92c6377053196ee7fb711",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      {
+        "task": "retry_delay_edit",
+        "repeat": 1,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "9980518f7d3c2fb89ffa442bcbed221e9a7572dfa83c1e69a9774ecd2a848078",
+        "grade": {
+          "passed": false,
+          "kind": "semantic_failure",
+          "cases": [
+            true,
+            true,
+            true,
+            false,
+            true,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false
+          ]
+        }
+      },
+      {
+        "task": "stable_dependency_order",
+        "repeat": 1,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "366caf43d906fb1b7e2e81ad4c2c65dc72b0f6a6338ffaca25655bc5b837e444",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      {
+        "task": "idempotent_ingest_edit",
+        "repeat": 1,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "ba151ff59600472c64da0103f3283a93ac5aa7a25ef4a52ce6dc3dcf9c4b0017",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      {
+        "task": "merge_intervals",
+        "repeat": 2,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "d6cfbef66c0a83380ecf38252a4800e67bdd097d99e92c6377053196ee7fb711",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      {
+        "task": "retry_delay_edit",
+        "repeat": 2,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "9980518f7d3c2fb89ffa442bcbed221e9a7572dfa83c1e69a9774ecd2a848078",
+        "grade": {
+          "passed": false,
+          "kind": "semantic_failure",
+          "cases": [
+            true,
+            true,
+            true,
+            false,
+            true,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false
+          ]
+        }
+      },
+      {
+        "task": "stable_dependency_order",
+        "repeat": 2,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "366caf43d906fb1b7e2e81ad4c2c65dc72b0f6a6338ffaca25655bc5b837e444",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      {
+        "task": "idempotent_ingest_edit",
+        "repeat": 2,
+        "format": "single_fence_format_violation",
+        "candidate_sha256": "ba151ff59600472c64da0103f3283a93ac5aa7a25ef4a52ce6dc3dcf9c4b0017",
+        "grade": {
+          "passed": true,
+          "kind": "semantic_pass",
+          "cases": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    ],
+    "scope": "Four bounded tasks \u00d7three repeats; no broad coding or agentic qualification"
+  },
+  "raw_evidence_hashes": {
+    "server-evidence.json": "d777a35e214dba3936a85eb965097f771a60df8e8c7eaa0ed5ec0cd9c26b412f",
+    "repeatability/responses.jsonl": "2287be101c38eed1bda3cbd35d13790335b1ef35c97a2c7367ad6af2777a7c03",
+    "repeatability/summary.json": "4c67792b4416f1e8e0f961903afa9f61dcd02fb9058bf5e75d9838835556427c",
+    "structured/responses.jsonl": "3a2bb3343cae5d015ad663cc2790b78bd77e8a124e03167f94f12ce8a861deec",
+    "coding/collection.json": "656d455fd61dbd1b4010325d2f0ed20cfa0b68a9b12b6bcea8cfe94e3a685568",
+    "coding/semantic-summary.json": "b7a67da96958292dc1f911c5c3957a829de005def67dcecc3a18f4b1da39b066"
+  },
+  "scope": "Unchanged original server after soak; bounded API/coding tests, no broad model qualification or competitive speed claim."
+}

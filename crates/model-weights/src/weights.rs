@@ -39,6 +39,10 @@ pub enum WeightDtype {
     FP8E8M0,
     UInt8,
     Int64,
+    /// 2026-10-07: Raw 32-bit integer words, kept as stored: compressed-tensors
+    /// `pack-quantized` INT4/INT8 codes (`weight_packed`), decoded only by the packed-int
+    /// kernels (`metrale_model_layers::quant_format::packed_int`).
+    Int32,
     /// Keep-packed PrismML ternary Q2_0 (ggml id 42): raw on-disk blocks stay
     /// 2-bit in VRAM (fp16 scale + 2-bit codes per group of `group` elements),
     /// dequantized in-kernel by the native `q2_0_gemv` decode path. Only
@@ -72,6 +76,7 @@ impl WeightDtype {
             Self::FP8E8M0 => 1,
             Self::UInt8 => 1,
             Self::Int64 => 8,
+            Self::Int32 => 4,
             Self::PackedQ2_0 { .. } => 0,
             Self::Q2K => 0,
             Self::Q3K => 0,
@@ -90,6 +95,7 @@ impl WeightDtype {
             safetensors::Dtype::F8_E4M3 => Ok(Self::FP8E4M3),
             safetensors::Dtype::F8_E8M0 => Ok(Self::FP8E8M0),
             safetensors::Dtype::I64 => Ok(Self::Int64),
+            safetensors::Dtype::I32 => Ok(Self::Int32),
             other => bail!("Unsupported safetensors dtype: {other:?}"),
         }
     }
@@ -110,6 +116,7 @@ impl WeightDtype {
             "F8_E4M3" => Self::FP8E4M3,
             "F8_E8M0" => Self::FP8E8M0,
             "I64" => Self::Int64,
+            "I32" => Self::Int32,
             other => bail!("Unsupported safetensors dtype '{other}'"),
         })
     }

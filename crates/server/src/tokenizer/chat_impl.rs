@@ -55,9 +55,10 @@ impl ChatTokenizer {
             .with_truncation(None)
             .map_err(|e| anyhow::anyhow!("Failed to disable tokenizer truncation: {e}"))?;
 
-        // 2026-09-26: Template source, first match wins: an official Kimi K3 checkpoint gets
+        // 2026-10-07: Template source, first match wins: an official Kimi K3 checkpoint gets
         // no chat template; then `jinja-templates/{model_type}.jinja` when the file exists and
-        // `--disable-template-overrides` is off; then the model's own template
+        // `--disable-template-overrides` is off (or the bundled Laguna copy when absent);
+        // then the model's own template
         // (`load_config_template`); then the ChatML default.
         let override_tmpl = if disable_template_overrides {
             None

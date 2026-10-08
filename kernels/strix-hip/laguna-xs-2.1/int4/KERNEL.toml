@@ -1,0 +1,52 @@
+# 2026-10-07: Laguna-XS-2.1 packed-int leaf for gfx1151 (native HIP). Routed experts are
+# compressed-tensors pack-quantized INT4 (layers 1-30) and INT8 (layers 31-39), symmetric,
+# group 128; attention, the head gate, the dense layer 0, the router, the shared expert
+# and lm_head stay BF16 and use strix-hip/common's BF16 and attention sources.
+#
+# Brought in here: packed_int_gemv.cu, the dense and grouped-expert W4A16 / W8A16 GEMVs
+# (layout in packed_int_dequant.cuh), and gb10/common/dense_gemv_bf16_batchm.cu, which the
+# attention head gate launches every decode step (otherwise a dense_gemm_tc fallback).
+# Replaced here by modules with no entry points, so a
+# lookup fails closed at the boot gate instead of reaching code that cannot serve these
+# weights: the strix-hip/common no-op MoE stubs (moe_w4a16 grouped GEMM, the
+# moe_fp8_grouped_gemm_v2 stub) and gb10's gated_delta_rule. The NVFP4 w4a16 module is the
+# Qwen strix-hip fork, because model init requires one of its entry points.
+#
+# HDIM 128 sizes the shared paged attention and prefill sources for Laguna's head_dim, as
+# kernels/gb10/laguna-s-2.1/nvfp4/KERNEL.toml does on GB10.
+[build]
+extra_nvcc_flags = ["--fmad=false", "-DHDIM=128"]
+
+[sources]
+use = [
+  "../gb10/common/dense_gemv_bf16_batchm.cu",
+  "qwen3.6-27b/nvfp4/w4a16_gemm.cu",
+]
+
+[shadow]
+moe_w4a16_grouped_gemm = "replaces the strix-hip/common no-op compile stubs with a module that defines no entry points, so a grouped NVFP4 MoE lookup fails closed instead of reaching a no-op; Laguna INT4 experts use packed_int_gemv."
+moe_fp8_grouped_gemm = "replaces strix-hip/common/moe_fp8_grouped_gemm.cu, whose moe_fp8_grouped_gemm_v2 is a no-op, with a module that defines no entry points; Laguna INT4 has no FP8 expert weights."
+w4a16_gemm = "uses strix-hip/qwen3.6-27b/nvfp4/w4a16_gemm.cu, the hipcc-compiled fork the Qwen strix-hip targets build, over strix-hip/common/w4a16_gemm.cu, which no strix-hip target compiles. Model init requires w4a16::w4a16_gemm (model-engine impl_a1/kernels.rs); Laguna INT4 has no NVFP4 weights, so none of its entry points is launched."
+gated_delta_rule = "replaces gb10/common/gated_delta_rule.cu, which no strix-hip target has compiled with hipcc, with a module that defines no entry points; Laguna has no linear-attention layers."
+
+# 2026-10-07: The empty shadows above drop these entry points on purpose. Exempting them
+# silences only the build warning; a lookup of any of them still fails the boot gate
+# unless MODEL.toml [expected_absent] declares it.
+[shadow_exempt]
+moe_w4a16 = [
+  "moe_w4a16_grouped_gemm",
+  "moe_w4a16_grouped_gemm_ptrtable",
+  "moe_w4a16_grouped_gemm_ptrtable_t",
+]
+moe_fp8_grouped_gemm = ["moe_fp8_grouped_gemm", "moe_fp8_grouped_gemm_v2"]
+gated_delta_rule = [
+  "gated_delta_rule_chunk2",
+  "gated_delta_rule_chunk3",
+  "gated_delta_rule_decode",
+  "gated_delta_rule_decode_f32",
+  "gated_delta_rule_decode_f32_conv_norm",
+  "gated_delta_rule_decode_f32_norm",
+  "gated_delta_rule_decode_f32_strided",
+  "gated_delta_rule_decode_f32_strided_norm",
+  "gated_delta_rule_prefill",
+]

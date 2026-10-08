@@ -203,7 +203,11 @@ pub fn start_chunked_prefill(
         let last = hyp.last().copied().unwrap_or(0);
         let use_legacy_tool_call =
             req_require_tool_call && grammar_state.is_none() && tool_call_start_token.is_some();
-        let tool_request = grammar_state.is_some() || use_legacy_tool_call;
+        let tool_request = tool_request_at_birth(
+            grammar_state.is_some(),
+            req_tools_present,
+            use_legacy_tool_call,
+        );
         let now = sched.io.clock.now();
         let cached_prompt_tok = seq.reused_prefix_tokens as u32;
         let mut a = ActiveSeq {

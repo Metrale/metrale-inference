@@ -134,6 +134,7 @@ mod moe_grouped_fp4;
 pub mod moe_lora_grouped;
 #[path = "ops/moe_prefill.rs"]
 mod moe_prefill;
+mod moe_small_rows;
 #[path = "ops/norm.rs"]
 mod norm;
 // 2026-09-25: Tensor-core routing of the MTP drafter's BF16 GEMV.
@@ -275,6 +276,7 @@ pub(crate) use moe_grouped_b::*;
 pub use moe_grouped_fp4::*;
 pub use moe_lora_grouped::*;
 pub use moe_prefill::*;
+pub use moe_small_rows::Nvfp4SmallRowKernels;
 pub use norm::*;
 pub use nvfp4_mmq::*;
 pub use ple::*;

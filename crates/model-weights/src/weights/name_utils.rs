@@ -140,6 +140,7 @@ mod from_str_tests {
             ("F8_E4M3", FP8E4M3),
             ("F8_E8M0", FP8E8M0),
             ("I64", Int64),
+            ("I32", Int32),
         ] {
             assert_eq!(
                 WeightDtype::from_safetensors_str(s).unwrap(),
@@ -151,6 +152,10 @@ mod from_str_tests {
         // peer manifest) can never contain it, so the wire mapping rejects it.
         assert!(WeightDtype::from_safetensors_str("F16").is_err());
         assert!(WeightDtype::from_safetensors_str("bogus").is_err());
+        // 2026-10-07: Only I32 joined the integer containers (packed-int words); other
+        // integer widths stay refused.
+        assert!(WeightDtype::from_safetensors_str("I16").is_err());
+        assert!(WeightDtype::from_safetensors_str("U32").is_err());
     }
 
     #[test]

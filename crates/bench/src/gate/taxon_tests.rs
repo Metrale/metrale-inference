@@ -123,6 +123,7 @@ fn every_real_target_resolves_a_nonempty_source_set() {
             "metal/qwen3-5-4b-vlm-mlx-int8/mlx_int8",
             "strix/qwen3.6-27b/nvfp4",
             "strix/qwen3.6-35b-a3b/nvfp4",
+            "strix-hip/laguna-xs-2.1/int4",
             "strix-hip/qwen3.6-27b/nvfp4",
             "strix-hip/qwen3.6-35b-a3b/nvfp4",
         ]

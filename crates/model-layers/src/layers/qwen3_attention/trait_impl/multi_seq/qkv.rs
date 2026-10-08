@@ -23,6 +23,7 @@ use crate::layers::ops;
 use crate::layers::qwen3_attention::Qwen3AttentionLayer;
 
 mod batch;
+mod norm_policy;
 mod post;
 mod rows;
 
@@ -235,22 +236,25 @@ impl Qwen3AttentionLayer {
             qkv_buf,
             ..
         } = *c;
-        // 2026-09-25: One launch per norm for all n rows: a row's heads are `hd`
+        // 2026-10-07: One launch per norm for all n rows: a row's heads are `hd`
         // apart and rows are `per_seq_qkv` apart, the (rows_per_group,
         // num_groups, row_stride) shape `rms_norm_strided` takes. Its kernel
-        // header (`rms_norm.cu`) states it is bit-identical to `rms_norm`, one
-        // block per row. Off when `METRALE_NO_QK_NORM_STRIDED=1`, read once.
+        // header (`rms_norm.cu`) states it is bit-identical to additive `rms_norm`,
+        // not vanilla `rms_norm_vanilla`. Plain-weight models must use their scalar
+        // kernel below. Off when `METRALE_NO_QK_NORM_STRIDED=1`, read once.
         fn qk_norm_strided_enabled() -> bool {
             static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
             *ON.get_or_init(|| {
                 std::env::var("METRALE_NO_QK_NORM_STRIDED").ok().as_deref() != Some("1")
             })
         }
-        if n > 1
-            && self.rms_norm_strided_k.0 != 0
-            && qk_norm_strided_enabled()
-            && per_seq_qkv.is_multiple_of(bf16)
-        {
+        if norm_policy::additive_strided_norm_eligible(
+            self.norm_vanilla,
+            n,
+            self.rms_norm_strided_k.0 != 0,
+            qk_norm_strided_enabled(),
+            per_seq_qkv.is_multiple_of(bf16),
+        ) {
             let stride_e = (per_seq_qkv / bf16) as u32;
             if !self.attn.q_norm.weight.is_null() {
                 ops::rms_norm_strided(

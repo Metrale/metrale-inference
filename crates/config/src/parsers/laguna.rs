@@ -7,11 +7,15 @@
 //! - A parse that succeeds has a YaRN full-attention rope and a default sliding-attention rope
 //!   with `partial_rotary_factor` 1.0, and every per-layer Q-head count is a multiple of
 //!   `num_key_value_heads`; `num_attention_heads` is the largest of them.
+//! - 2026-10-07: An integer (compressed-tensors `pack-quantized`) checkpoint parses only when
+//!   [`admit_packed_int`] admits its block and only routed experts are integer-quantized.
 
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 
 use super::super::{ModelConfig, finalize_config};
+use crate::LayerPrecision;
+use crate::precision_plan::packed_int::{admit_packed_int, routed_expert_scheme};
 
 fn required<'a>(raw: &'a Value, key: &str) -> Result<&'a Value> {
     raw.get(key)
@@ -115,7 +119,57 @@ pub(crate) fn parse_laguna(raw: &Value) -> Result<ModelConfig> {
     config.mtp_transformer_layers = 0;
 
     finalize_config(&mut config, raw)?;
+    admit_packed_int_layout(&config, raw)?;
     Ok(config)
+}
+
+/// 2026-10-07: A compressed-tensors integer checkpoint (Laguna-XS-2.1-INT4) is admitted only
+/// in the layout the packed-int expert kernels serve: every MoE layer's routed experts share
+/// one admitted INT4/INT8 g128 scheme, and every other linear module (attention, the head
+/// gate, the dense layer, the router, the shared expert, lm_head) is unquantized. Float and
+/// unquantized checkpoints pass through unchanged.
+fn admit_packed_int_layout(config: &ModelConfig, raw: &Value) -> Result<()> {
+    let Some(qc) = raw.get("quantization_config") else {
+        return Ok(());
+    };
+    if admit_packed_int(qc)?.is_empty() {
+        return Ok(());
+    }
+    let plan = &config
+        .quantization_config
+        .as_ref()
+        .context("laguna integer checkpoint without a parsed quantization_config")?
+        .precision;
+    let unquantized = |module: String| -> Result<()> {
+        let p = plan.resolve(&module);
+        ensure!(
+            p == LayerPrecision::UNQUANTIZED,
+            "laguna {module} declares {}; only routed experts may be integer-quantized",
+            p.label()
+        );
+        Ok(())
+    };
+    unquantized("lm_head".into())?;
+    for i in 0..config.num_hidden_layers {
+        let lp = format!("model.layers.{i}");
+        for proj in ["q_proj", "k_proj", "v_proj", "o_proj", "g_proj"] {
+            unquantized(format!("{lp}.self_attn.{proj}"))?;
+        }
+        let mlp = format!("{lp}.mlp");
+        if config.mlp_only_layers.contains(&i) {
+            for proj in ["gate_proj", "up_proj", "down_proj"] {
+                unquantized(format!("{mlp}.{proj}"))?;
+            }
+            continue;
+        }
+        unquantized(format!("{mlp}.gate"))?;
+        for proj in ["gate_proj", "up_proj", "down_proj"] {
+            unquantized(format!("{mlp}.shared_expert.{proj}"))?;
+        }
+        routed_expert_scheme(plan, &mlp, config.num_experts)?
+            .with_context(|| format!("laguna {mlp} routed experts are not integer-quantized"))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -213,6 +267,92 @@ mod tests {
         assert_eq!(config.yarn_original_max_position_embeddings, 8192);
         assert_eq!(config.yarn_attention_factor, 1.3465736);
         assert_eq!(config.eos_token_id, 2);
+    }
+
+    const INT4: &str = include_str!("../precision_plan/fixtures/poolside_laguna_xs_2_1_int4.json");
+
+    fn int4_with(edit: impl FnOnce(&mut serde_json::Value)) -> anyhow::Result<crate::ModelConfig> {
+        let mut raw: serde_json::Value = serde_json::from_str(INT4).expect("INT4 fixture");
+        edit(&mut raw);
+        crate::parse_config(&raw.to_string())
+    }
+
+    /// 2026-10-07: poolside/Laguna-XS-2.1-INT4 @ 4b7e28ab parses with its integer plan; the
+    /// shape matches the XS target pin (model_type laguna, hidden_size 2048).
+    #[test]
+    fn parses_laguna_xs_int4_checkpoint() {
+        let config = int4_with(|_| {}).expect("parse INT4 laguna");
+        assert_eq!(config.model_type, "laguna");
+        assert_eq!(config.hidden_size, 2048);
+        assert_eq!(config.num_experts_per_tok, 8);
+        let qc = config.quantization_config.expect("quantization_config");
+        assert_eq!(qc.quant_method, "compressed-tensors");
+        assert_eq!(qc.quant_algo, "INT4");
+        assert_eq!(qc.format, "pack-quantized");
+    }
+
+    #[test]
+    fn rejects_int4_checkpoint_with_quantized_attention() {
+        let error = int4_with(|raw| {
+            raw["quantization_config"]["ignore"]
+                .as_array_mut()
+                .expect("ignore list")
+                .retain(|e| e.as_str() != Some(r"re:.*\.self_attn\.q_proj$"));
+            raw["quantization_config"]["config_groups"]["group_0"]["targets"]
+                .as_array_mut()
+                .expect("targets")
+                .push(serde_json::json!(r"re:.*self_attn\.q_proj$"));
+        })
+        .expect_err("integer attention must be refused");
+        assert!(
+            format!("{error:#}").contains("model.layers.0.self_attn.q_proj declares W4A16"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn rejects_int4_checkpoint_with_unquantized_moe_layer() {
+        let error = int4_with(|raw| {
+            raw["quantization_config"]["config_groups"]
+                .as_object_mut()
+                .expect("groups")
+                .remove("group_1");
+        })
+        .expect_err("BF16 routed experts have no packed-int kernel");
+        assert!(
+            format!("{error:#}").contains("model.layers.31.mlp routed experts"),
+            "{error:#}"
+        );
+    }
+
+    /// 2026-10-07: An exact-name target outranks group_0's pattern, so one expert of layer 5
+    /// would be INT8 among INT4 siblings; one grouped kernel cannot serve that layer.
+    #[test]
+    fn rejects_int4_checkpoint_with_mixed_expert_schemes_in_a_layer() {
+        let error = int4_with(|raw| {
+            let groups = &mut raw["quantization_config"]["config_groups"];
+            let mut one = groups["group_1"].clone();
+            one["targets"] = serde_json::json!(["model.layers.5.mlp.experts.7.down_proj"]);
+            groups["group_2"] = one;
+        })
+        .expect_err("mixed schemes in one layer must be refused");
+        assert!(
+            format!("{error:#}").contains("model.layers.5.mlp.experts.7.down_proj declares"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn rejects_int4_checkpoint_with_asymmetric_experts() {
+        let error = int4_with(|raw| {
+            raw["quantization_config"]["config_groups"]["group_1"]["weights"]["symmetric"] =
+                serde_json::json!(false);
+        })
+        .expect_err("asymmetric experts must be refused");
+        assert!(
+            format!("{error:#}").contains("group_1.weights.symmetric"),
+            "{error:#}"
+        );
     }
 
     #[test]

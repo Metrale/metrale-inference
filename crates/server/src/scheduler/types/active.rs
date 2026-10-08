@@ -162,8 +162,8 @@ pub(in crate::scheduler) struct ActiveSeq {
     /// 2026-09-25: While true, EOS is suppressed; a `<tool_call>` outside thinking clears
     /// it.
     pub require_tool_call: bool,
-    /// 2026-09-25: Sticky "this is a tool request" flag, set at birth when a grammar is
-    /// attached or `use_legacy_tool_call` holds. Unlike
+    /// 2026-10-07: Sticky tool-request flag: a grammar with declared tools, or
+    /// the legacy required-tool fallback. A JSON-only grammar does not arm it. Unlike
     /// `grammar_state.is_some()` it survives `emit_token` dropping the grammar
     /// mid-response, so the inter-tool prose budget keeps working. False for
     /// plain chat, which is never prose-capped.

@@ -154,6 +154,9 @@ impl SchedulerCore {
             metrale_speculative::adaptive_rung::AdaptiveRung::from_env(),
             dflash_rung,
         );
+        // 2026-10-07: Adaptive sampling observes full logits and must keep the host path.
+        sched.masked_greedy_sampling_allowed = !adaptive_sampling;
+        sched.masked_greedy_think_end = think_end_token;
         sched
             .io
             .dev

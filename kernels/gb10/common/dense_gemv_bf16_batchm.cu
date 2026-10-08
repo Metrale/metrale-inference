@@ -21,41 +21,6 @@
 // The four output groups of a block walk the same kv sequence, so each 64-vector slab of
 // every A row is staged once per block in shared memory and read by all four groups.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include <cuda_bf16.h>
 
 #define BLOCK_SIZE 256
@@ -67,23 +32,11 @@
 // operand order, so every M up to the cap gives each row the same bits.
 // Shared memory: As is MAX_M * 64 * 16 B = 16 KB, plus 512 B for the fold.
 
+// 2026-10-07: Capacity is a compile-time family parameter; each row keeps the
+// original reduction order. The legacy entry remains capacity 16.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-#define MAX_M 16
-
-extern "C" __global__ void dense_gemv_bf16_batchm(
+template<unsigned MAX_M>
+__device__ __forceinline__ void dense_gemv_bf16_batchm_impl(
     const __nv_bfloat16* __restrict__ A,
     const __nv_bfloat16* __restrict__ B,
     __nv_bfloat16* __restrict__ C,
@@ -172,9 +125,6 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
 
     // 2026-09-25: Scalar tail for the last K % 8 elements.
 
-
-
-
     if (active) {
         const unsigned int tail_start = K_VEC * VEC_SIZE;
         const __nv_bfloat16* B_row = B + (unsigned long long)n * K;
@@ -214,4 +164,21 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
             C[(unsigned long long)t * out_stride + n] = __float2bfloat16(r);
         }
     }
+}
+
+// 2026-10-07: Preserve the legacy entry and expose the explicit smaller family member.
+extern "C" __global__ void dense_gemv_bf16_batchm(
+    const __nv_bfloat16* __restrict__ A, const __nv_bfloat16* __restrict__ B,
+    __nv_bfloat16* __restrict__ C,
+    unsigned M, unsigned N, unsigned K, unsigned out_stride
+) {
+    dense_gemv_bf16_batchm_impl<16>(A, B, C, M, N, K, out_stride);
+}
+
+extern "C" __global__ void dense_gemv_bf16_batchm4(
+    const __nv_bfloat16* __restrict__ A, const __nv_bfloat16* __restrict__ B,
+    __nv_bfloat16* __restrict__ C,
+    unsigned M, unsigned N, unsigned K, unsigned out_stride
+) {
+    dense_gemv_bf16_batchm_impl<4>(A, B, C, M, N, K, out_stride);
 }

@@ -81,7 +81,8 @@ pub(super) fn resolve_targets(workspace_root: &std::path::Path) -> Vec<Target> {
 
     // 2026-09-25: `*` expands to every model `layout::walk` finds for this
     // hardware (directories carrying a MODEL.toml).
-    let models: Vec<String> = if model_spec == "*" {
+    let all_models = model_spec == "*";
+    let models: Vec<String> = if all_models {
         layout::walk(workspace_root)
             .unwrap_or_else(|e| panic!("{e}"))
             .into_iter()
@@ -115,6 +116,17 @@ pub(super) fn resolve_targets(workspace_root: &std::path::Path) -> Vec<Target> {
         };
 
         for quant in &quants {
+            // 2026-10-07: Wildcard builds omit explicitly incompatible precisions; a pinned request still errors in discover.
+            if all_models
+                && (!layout::supports_quant(&model_dir, quant).unwrap_or_else(|e| panic!("{e}"))
+                    || !layout::supports_quant(
+                        &layout::kernel_source_dir(&model_dir).unwrap_or_else(|e| panic!("{e}")),
+                        quant,
+                    )
+                    .unwrap_or_else(|e| panic!("{e}")))
+            {
+                continue;
+            }
             let target_id = layout::Target {
                 hardware: hw.clone(),
                 model: model.clone(),

@@ -489,6 +489,12 @@ names = ["qwen35_qkv_split", "bf16_mul", "sigmoid_bf16_to_f32", "silu_apply"]
 files = ["kernels/metal/*"]
 
 # --- MoE ---------------------------------------------------------------------------------------------
+# 2026-10-07: All three disjoint entries are required; no standalone circuit lowering is claimed.
+[[rule]]
+component = "moe"
+kind = "expert GEMM/GEMV (row-partition residual pair)"
+names = ["moe_w4a16_grouped_gemm_ptrtable_small16", "moe_w4a16_grouped_gemm_ptrtable_small16_n32", "moe_w4a16_grouped_gemm_ptrtable_large64"]
+
 [[rule]]
 component = "moe"
 kind = "routing / top-k"
@@ -534,7 +540,7 @@ names = ["w4a4_*", "metrale_nvfp4_mmq*", "metrale_nvfp4_gemm_pipe*"]
 [[rule]]
 component = "gemm-intq"
 kind = "integer / K-quant GEMM/GEMV"
-names = ["int8_*", "q2_0_*", "metrale_q*_mmq*", "kquant_mmvq_*", "mlx_int8_*", "requant_*"]
+names = ["int8_*", "packed_int4_gemv_*", "packed_int8_gemv_*", "q2_0_*", "metrale_q*_mmq*", "kquant_mmvq_*", "mlx_int8_*", "requant_*"]
 
 [[rule]]
 component = "gemm-fp8"
