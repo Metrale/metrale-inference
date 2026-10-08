@@ -150,6 +150,8 @@ impl TransformerModel {
     /// - 0xFFFFFFF2/3/4: verify K=2/3/4 → K tokens, then the accept count
     /// - 0xFFFFFFF5 (`EP_CMD_MTP_PROPOSE`): last_token, position, num_drafts,
     ///   hidden_idx
+    /// - 0xFFFFFFF6 (`EP_CMD_VERIFY_KGAMMA`): DFlash K=γ verify → K, `tokens[K]`,
+    ///   then the committed row count
     /// - 0xFFFFFFF8 (`EP_CMD_DECODE_CKPT`): decode-time Marconi checkpoint →
     ///   `EP_CKPT_WORDS` words in one bulk broadcast
     /// - 0xFFFFFFFF: shutdown (seq_id is ignored)
@@ -368,6 +370,11 @@ impl TransformerModel {
                         self.start_rollback_and_checkpoint_async(seq, 1)?;
                     }
                 }
+            }
+            metrale_model_layers::speculative::EP_CMD_VERIFY_KGAMMA => {
+                // 2026-10-08: DFlash K=γ verify: K, the K tokens, the verify, then the committed
+                // row count (`verify_kgamma_ep.rs`).
+                self.ep_worker_verify_kgamma(seq, stream)?;
             }
             token => {
                 self.decode(token, seq, stream)?;
