@@ -1,13 +1,14 @@
-# Laguna XS 2.1 INT4 on strix-hip (gfx1151): host-side phase
+# Laguna XS 2.1 INT4 on strix-hip (gfx1151)
 
 Target: `poolside/Laguna-XS-2.1-INT4` @ `4b7e28abdc0a8b121def816b89d631750bc53c92` on the
 native HIP target `strix-hip` (gfx1151). Not the SCALE-based `strix` target.
 
-Status, October 7, 2026: host-side only. The config admission, the weight layout and its
-CPU reference, the kernel target and the HIP kernel sources exist and are tested on the
-host. Nothing has been compiled by hipcc, launched, or compared on a GPU, and no Rust
-dispatch runs the packed-int experts yet. The NVFP4 GB10 target of the same model is
-unchanged (see "Unchanged targets").
+Status, October 8, 2026: serves on a Radeon 8060S (gfx1151, native Ubuntu 24.04, ROCm
+7.2.1). The target compiles with hipcc, the packed-int kernels match their host emulation
+bit for bit on the device, the packed-int MoE layer runs every MoE layer, the boot kernel
+gate passes, and next-token predictions agree with the checkpoint's own modeling code (see
+"GPU gates on gfx1151"). Not certified; one first C1 measurement only. The NVFP4 GB10
+target of the same model is unchanged (see "Unchanged targets").
 
 ## Checkpoint facts
 
@@ -83,9 +84,10 @@ of these paths.
 
 - `MODEL.toml`: `[[model_types]] laguna / 2048`, `supported_quants = ["int4"]` (the
   allowlist ported from the GPT-OSS packaging work: `nvfp4`, `bf16`, `fp8`, `mxfp4` refuse
-  the common-only fallback), sampling and behavior mirrored from the GB10 target. No
-  `[expected_absent]` yet (see "Lookups").
-- `KERNEL.toml`: `-DHDIM=128` as the GB10 Laguna target, `packed_int_gemv.cu`, the Qwen
+  the common-only fallback), sampling and behavior mirrored from the GB10 target, and 78
+  `[expected_absent]` declarations from the first gfx1151 boot (see "Lookups").
+- `KERNEL.toml`: `-DHDIM=128` as the GB10 Laguna target, `packed_int_gemv.cu`,
+  gb10/common `dense_gemv_bf16_batchm.cu` (the attention head gate's decode GEMV), the Qwen
   strix-hip `w4a16_gemm.cu` fork (model init requires `w4a16::w4a16_gemm`; it is never
   launched for INT4 weights), and fail-closed shadows with no entry points for the
   strix-hip/common no-op MoE stubs (`moe_w4a16_grouped_gemm*`, `moe_fp8_grouped_gemm_v2`),
@@ -93,7 +95,9 @@ of these paths.
 - `packed_int_gemv.cu` + `packed_int_dequant.cuh`: `packed_int{4,8}_gemv_g128` (dense
   decode, `y[M, N]`) and `moe_packed_int{4,8}_gemv_ptrtable_g128` (grouped experts: slot
   `s` uses `expert_ids[s]`, activation row `s / x_row_div`, per-expert word and scale
-  pointer tables; an out-of-range id or null pointer writes 0). Block 256 = 8 wave32
+  pointer tables; an out-of-range id or null pointer writes 0), and `moe_packed_int_combine`
+  (slot-order weighted sum plus the shared expert, the bits of `moe_unpermute_blend` with an
+  identity permutation and no shared-expert gate). Block 256 = 8 wave32
   waves, one output column per wave, codes dequantized in registers, fp32 products and sums
   with no FMA, xor-shuffle tree 16/8/4/2/1 reduction, BF16 round-to-nearest-even store. The
   word-at-a-time inner product is the unit a later `V_DOT4_I32_IU8` path replaces (TODO in
@@ -116,13 +120,34 @@ Host evidence for the kernels (no GPU):
   known answers, wrong-order and wrong-sign controls that must fail, checkpoint tensor
   shapes, and a symmetric min-max round trip.
 
+## Dispatch and loader
+
+- `metrale_model_weights`: `WeightDtype::Int32` keeps `weight_packed` words as stored
+  (every loader refused I32 before).
+- `metrale_model_layers::layers::packed_int_moe::PackedIntMoeLayer`
+  (`FfnComponent::PackedIntMoe`): per pass of n rows, the BF16 router GEMM
+  (`dense_gemm_bf16`), `moe_topk_sigmoid_batched` (selection on sigmoid plus the correction
+  bias, unbiased weights normalized and scaled by 2.5), the BF16 shared expert, the grouped
+  gate and up GEMVs over per-expert pointer tables in slot order, SiLU times up, the grouped
+  down GEMV and `moe_packed_int_combine` into `moe_output`. Every row count (decode, k2/k3,
+  prefill, batched) runs this one path. It never builds the NVFP4 `MoeLayer`.
+- Laguna loader (`weight_loader/laguna/packed_int.rs`): a MoE layer whose expert 0
+  `gate_proj.weight_packed` is I32 takes this path with the scheme the admitted precision
+  plan declares (INT4 g128 in layers 1 to 30, INT8 g128 in 31 to 39); every tensor's dtype
+  and shape is checked before upload. NVFP4 checkpoints store U8 there and keep their path.
+- Mock-backend tests pin the launch order, grids and arguments, the pointer tables, the
+  INT8 kernel choice and the refusals (denied kernels, missing or null experts, rows beyond
+  the arena with no launch, malformed tensors, undeclared I32 words, the NVFP4 control).
+
 ## Lookups on Laguna's load path
 
 `crates/kernels/tests/strix_hip_laguna_int4.rs` scans every literal kernel lookup in the
 Laguna loader, the attention, dense-FFN and MoE constructors, the model-level kernels and
 head, and the packed-int lookup, and classifies each against this target
-(`-- --nocapture laguna_lookup_inventory` prints the table): 279 lookups, 149 resolve
-(103 of them required), 130 do not.
+(`-- --nocapture laguna_lookup_inventory` prints the table). Written before the GPU work
+(279 lookups, 149 resolving); the current counts are 284 lookups: 151 resolve, 65 are
+`[expected_absent]`, and 68 stay classified gaps (Fp8WeightOnly 15, Nvfp4Only 15,
+OtherModelFeature 14, HipMissing 18, HopperOnly 4, GgufOnly 2). The first table:
 
 | Class | Lookups | Required | What |
 | --- | --- | --- | --- |
@@ -141,30 +166,90 @@ the existing NVFP4 MoE layer cannot be constructed on this target, by design: th
 expert path must be a separate dispatch that never constructs it. Every HipMissing lookup
 is a probe with a resolved fallback today. The test pins this classification
 (`tests/strix_hip_laguna_int4/gaps.rs`): a lookup that starts resolving or disappears
-fails it, and no required lookup may be HipMissing. The boot gate's
-`[expected_absent]` is written from the first `met serve --check-kernels` on gfx1151, not
-from this static table.
+fails it, and no required lookup may be HipMissing.
+
+The first `met serve --check-kernels` on gfx1151 with the real weights made 180 lookups and
+left 79 unresolved. `dense_gemv_bf16_batchm` is on the serving path (the head gate launches
+it every decode step), so it is now built. The other 78 are `[expected_absent]`, each with
+the reason its dispatch cannot run for this checkpoint: the layer-0 dense FFN and every
+attention projection are BF16 with no NVFP4, FP8 or Q2 weights, KV is FP8 or BF16 (never
+turbo), the head is BF16, and there are no SSM layers or LoRA overlays. The 65 the static
+scan sees left `GPU_GATE_GAPS`; 13 whose entry names pass through closures or
+layers/mod.rs helpers are pinned by site (`COMPUTED_NAME_LOOKUPS`). Boots with FP8 and BF16
+KV then pass (180 lookups, 0 unresolved, 78 declared); a build with one declaration
+removed fails the gate naming it.
 
 ## Unchanged targets
 
 `scripts/lib/kernel_layout.py dump` before (`91cc4ae`) and after: all 58 existing
 targets resolve identically (sources, layers, shadows, configs, module names); the only
-difference is the added `strix-hip/laguna-xs-2.1/int4`. No `kernels/gb10` or
-`kernels/strix-hip/common` file changed. The Laguna routing test is now per hardware:
+difference is the added `strix-hip/laguna-xs-2.1/int4`. No `kernels/gb10` file changed.
+One `kernels/strix-hip/common` file did, as a bug fix: `dense_gemm_tc.cu` loaded only rows
+0..7 of its 16-row A tile (one 128-thread pass over 256 elements), so every M > 8 read
+uninitialized shared memory; every strix-hip target that compiles it gets the fix. The
+Laguna routing test is now per hardware:
 gb10 routes XS and S as before; strix-hip routes XS to this target and claims no S.
 
-## Remaining GPU gates (in order)
+## GPU gates on gfx1151
 
-1. hipcc compile of the whole target (`METRALE_TARGET_HW=strix-hip
-   METRALE_TARGET_MODEL=laguna-xs-2.1 METRALE_TARGET_QUANT=int4`), including the first
-   strix-hip compile of the shared attention and prefill sources at HDIM 128.
-2. `packed_int_gemv` launch parity: device bytes against the host emulation (expected
-   bit-identical) and the CPU reference, INT4 and INT8, dense and grouped, padding slots.
-3. The INT4 expert dispatch and loader branch (upload `weight_packed` / `weight_scale` as
-   stored, pointer tables per layer, router and shared expert on the BF16 path), then
-   `met serve --check-kernels` and the `[expected_absent]` list from its output.
-4. Layer and logits parity against a pinned reference on fixed prompts, with the
-   tolerance declared for W4A16/W8A16.
-5. Serve: sequential and concurrent arithmetic oracles, tools, streaming, soak; then
-   throughput, latency, memory and energy with exact build identity; then the
-   `V_DOT4_I32_IU8` and multi-column optimizations against measured roofline.
+Host: Radeon 8060S (gfx1151), Ubuntu 24.04.4, kernel 7.0.0, ROCm 7.2.1, rustc 1.93.1.
+Build: `METRALE_TARGET_HW=strix-hip METRALE_TARGET_MODEL=laguna-xs-2.1
+METRALE_TARGET_QUANT=int4 CUDARC_CUDA_VERSION=13000 METRALE_NO_RDMA=1 cargo build --release
+-p metrale-server --no-default-features --features cuda --bin met`. Weights checked against
+the Hub LFS sha256 of every safetensors shard at the pinned revision.
+
+1. hipcc compile: all 92 kernels of the target compiled the first time, with no source
+   change (93 with the head gate GEMV).
+2. `packed_int_gemv` on the device (the built code object, loaded with `hipModuleLoad`), 140
+   checks: dense INT4/INT8 at M 1 and 3, random `[512, 2048]` and `[2048, 512]`; the real
+   expert tensors of layers 1 and 30 (INT4) and 31 and 35 (INT8); grouped launches with
+   pointer tables, `x_row_div` 8 and 1, and padding slots (id -1, id E, null pointer); the
+   combine. Device output equals the host emulation bit for bit everywhere, is within one
+   BF16 ulp of an f64 reference (worst 0.496 of tolerance), and padding writes 0. Controls
+   detected: MSB-first decode, complemented weight words, the wrong expert, an unrounded
+   routed sum. Reproduced bit for bit after the move from WSL to native Ubuntu.
+3. Dispatch and loader: above.
+4. Boot kernel gate: above.
+5. Parity. Reference: the checkpoint's own `modeling_laguna.py` (transformers 5.19, torch
+   2.14 CPU, BF16, eager attention, BF16 KV) over the same checkpoint, experts dequantized as
+   compressed-tensors does (`q * scale` rounded to BF16) and every other tensor as stored.
+   The server's `/v1/completions` prompt logprobs (top 5, echo) and 32-token greedy
+   continuations are compared on the same token ids.
+
+   | Prompt set | KV | Next-token agreement | Greedy, tokens before first divergence |
+   | --- | --- | --- | --- |
+   | 7 short (20 to 57 tokens) | BF16 | 242/273 (88.6%) | 138/196 |
+   | 7 short | FP8 | 245/273 (89.7%) | 130/196 |
+   | 2 long (704, 1,523 tokens) | BF16 | 2,187/2,227 (98.2%) | 64/64 |
+   | 2 long | FP8 | 2,188/2,227 (98.3%) | 64/64 |
+
+   The five plain-text short prompts agree at 158 of 165 positions; the two chat prompts
+   carry most short-prompt disagreements, mostly inside the system prompt where both
+   implementations are near-uniform (reference top-2 margins of 0 to 0.375 nats at all but
+   one position). Every greedy divergence is at a reference margin of 1.125 or less. On the
+   long prompts the median absolute logprob difference of the reference's top-1 token is
+   0.0002 (p90 0.019); a few positions inside the repeated "courier" split of the recall
+   text disagree with large margins in both directions, where the two implementations each
+   predict tokens a correct reading would not. Layer parity (last row of the residual
+   stream entering each layer, BF16 KV): exact at layer 0, 0.4 to 1.5% relative L2 after
+   layer 0 (attention block 0.5 to 1.2%, dense FFN 1.0 to 6.5%, two prompts), growing to at
+   most 27% in the middle and late layers (cosine 0.964 or higher).
+6. Serve smoke (chat API, FP8 KV, the model's template): factual answer, arithmetic
+   (48 x 52 = 2496), an `is_prime` function that passes executed asserts, a `get_weather`
+   tool call with `{"city":"Paris"}` and a correct answer from the tool result, and a
+   streamed answer: 6 of 6.
+7. First measurement on gfx1151, C1, not a certification: 704 prompt tokens and 256 output
+   tokens (FP8 KV, max batch 1, one warmup): first token 2,758 ms (255 tok/s prefill),
+   decode 24.2 tok/s.
+
+Found on the way: `dense_gemm_tc` (above) turned every prompt of 10 or more tokens into
+NaN through the BF16 dense FFN of layer 0.
+
+## Open
+
+- Concurrency, soak, and the arithmetic, streaming and tool suites at C2 and above.
+- Speed: grouped GEMVs one column per wave, no `V_DOT4_I32_IU8`, decode and prefill
+  through the same row path; throughput, memory and energy with build identity.
+- `/v1/completions` with a text prompt counted 703 tokens for a text the checkpoint
+  tokenizer encodes as 704 with its BOS; not investigated.
+- `--lm-head-dtype fp8` and LoRA overlays are not qualified on this target.
