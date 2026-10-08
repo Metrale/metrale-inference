@@ -1,8 +1,7 @@
 # 2026-10-07: gfx1151 (native HIP) packaging of Laguna-XS-2.1 INT4
 # (poolside/Laguna-XS-2.1-INT4 @ 4b7e28abdc0a8b121def816b89d631750bc53c92: routed experts
 # of layers 1-30 INT4 and 31-39 INT8, symmetric group 128; everything else BF16; FP8 KV).
-# Host-side resolution only: no hipcc compile, launch or numerics has been run on gfx1151,
-# and no Rust dispatch issues the packed-int expert lookups yet
+# Compiled with hipcc for gfx1151 and served by the packed-int MoE layer
 # (docs/laguna-xs-2.1-strix-int4.md). The model, sampling and behavior fields mirror
 # kernels/gb10/laguna-xs-2.1/MODEL.toml (the NVFP4 target of the same model).
 [model]
@@ -118,3 +117,255 @@ hidden_size = 2048
 
 [kernel]
 moe_gate_shmem_bytes = 6144
+
+# 2026-10-07: Optional lookups that resolve to handle 0 on this target (first
+# `met serve --check-kernels` on gfx1151 with the real INT4 weights: 180 lookups, 79
+# unresolved; dense_gemv_bf16_batchm, which the attention head gate launches every decode
+# step, was then built instead of declared). Each declared dispatch site is unreachable for
+# Laguna-XS-2.1-INT4:
+# Note A: the one dense FFN (layer 0) installs BF16 weights (set_bf16_weights) over null
+#   NVFP4 weights and has no packed-Q2 or FP8 weights. Every DenseFfnLayer entry takes Q2,
+#   FP8 or BF16 weights before NVFP4 (dense_ffn_decode.rs, dense_ffn_prefill.rs), and the
+#   batched and fixed-format arms require NVFP4 weights (can_forward_km, fixed_route), so
+#   only the BF16 arms run.
+# Note B: the attention q/k/v/g/o projections are BF16 (laguna/load_layers.rs: dense_auto,
+#   set_o_dense_bf16, set_head_gate_weight) with no NVFP4 or FP8 weights or overlays, so the
+#   NVFP4 tile, W4A4 and FP8 W8A16 / W8A8 projection arms never run.
+# Note C: turbo and rotated KV caches are selected only by a turbo --kv-cache-dtype; this
+#   target serves FP8 KV with the checkpoint scales (default_kv_dtype) or BF16 KV.
+
+[expected_absent.dense_gemv_fp8w_batch2]
+dense_gemv_fp8w_batch2 = """
+Two-row FP8 lm_head GEMV (model-engine impl_a1/kernels.rs), launched only for an FP8 head.
+The Laguna checkpoint ships a BF16 lm_head; an FP8 head needs an explicit --lm-head-dtype
+fp8, which is not qualified on this target."""
+
+[expected_absent.dequant_gguf_bf16]
+dequant_q2_0_gn_to_bf16 = """
+GGUF Q2_0 dequant (dense FFN and attention). Laguna INT4 loads safetensors; no GGUF Q2_0
+tensor exists."""
+
+[expected_absent.dequant_nvfp4_bf16]
+dequant_nvfp4_to_bf16 = """
+NVFP4 to BF16 dequant for the dense-FFN Q4_K arm. The dense FFN is BF16 (note A)."""
+
+[expected_absent.fp8_gemm_t_blockscaled]
+fp8_gemm_t_blockscaled = """
+Block-scaled FP8 GEMM probed to size the W8A8 attention prefill (qwen3_attention
+types_weights.rs, prefill/paged_qkv.rs). The attention projections are BF16 (note B)."""
+
+[expected_absent.fp8_gemv_rt]
+fp8_gemv_rowscale_batch16_rt2 = """
+Multi-row FP8 lm_head tile (model-engine lm_head_fp8_rows.rs), FP8 head only. The Laguna
+checkpoint ships a BF16 lm_head; --lm-head-dtype fp8 is not qualified on this target."""
+fp8_gemv_rowscale_batch8_rt2 = """
+Multi-row FP8 lm_head tile (model-engine lm_head_fp8_rows.rs), FP8 head only. The Laguna
+checkpoint ships a BF16 lm_head; --lm-head-dtype fp8 is not qualified on this target."""
+
+[expected_absent.fp8_scale_transpose]
+fp8_act_scale_to_kmajor = """
+K-major FP8 activation scales for the cuBLASLt W8A8 arms (dense FFN, attention). The dense
+FFN is BF16 (note A). The attention projections are BF16 (note B)."""
+
+[expected_absent.nvfp4_mmq]
+metrale_nvfp4_mmq128_nc = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_mmq128_wc = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_mmq16_nc = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_mmq16_wc = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_mmq32_nc = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_mmq32_wc = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_mmq64_nc = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_mmq64_wc = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_quantize_bf16 = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_repack = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_scale_bf16 = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_silu_mul_quant = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+metrale_nvfp4_silu_mul_scaled = "NVFP4 MMQ dense-FFN prefill. The dense FFN is BF16 (note A)."
+
+[expected_absent.prefill_paged_bf16k_turbo2v]
+attn_prefill_paged_bf16k_turbo2v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_bf16k_turbo3v]
+attn_prefill_paged_bf16k_turbo3v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_bf16k_turbo4v]
+attn_prefill_paged_bf16k_turbo4v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_fp8k_turbo2v]
+attn_prefill_paged_fp8k_turbo2v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_fp8k_turbo3v]
+attn_prefill_paged_fp8k_turbo3v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_fp8k_turbo4v]
+attn_prefill_paged_fp8k_turbo4v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_turbo2]
+attn_prefill_paged_turbo2 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_turbo3]
+attn_prefill_paged_turbo3_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_turbo3k_turbo8v]
+attn_prefill_paged_turbo3k_turbo8v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_turbo4]
+attn_prefill_paged_turbo4 = "Turbo / rotated KV cache only (note C)."
+attn_prefill_paged_turbo4_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_turbo4k_turbo3v]
+attn_prefill_paged_turbo4k_turbo3v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_turbo4k_turbo8v]
+attn_prefill_paged_turbo4k_turbo8v_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.prefill_paged_turbo8]
+attn_prefill_paged_turbo8_64 = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.q2_0_gemv_vec]
+q2_0_gemv_vec = """
+GGUF Q2_0 GEMV (dense FFN). Laguna INT4 loads safetensors; no GGUF Q2_0 tensor exists."""
+q2_0_gemv_vec_batchm = """
+GGUF Q2_0 GEMV (dense FFN). Laguna INT4 loads safetensors; no GGUF Q2_0 tensor exists."""
+
+[expected_absent.q4k_mmq]
+metrale_q4k_mmq128_nc = """
+Q4_K MMQ prefill of NVFP4 dense-FFN weights (METRALE_FFN_MMQ). The dense FFN is BF16 (note
+A)."""
+metrale_q4k_mmq128_wc = """
+Q4_K MMQ prefill of NVFP4 dense-FFN weights (METRALE_FFN_MMQ). The dense FFN is BF16 (note
+A)."""
+metrale_q8_1_quantize_ds4_bf16 = """
+Q4_K MMQ prefill of NVFP4 dense-FFN weights (METRALE_FFN_MMQ). The dense FFN is BF16 (note
+A)."""
+
+[expected_absent.q4k_quantize]
+q4k_quantize = "Q4_K requantization of NVFP4 dense-FFN weights. The dense FFN is BF16 (note A)."
+
+[expected_absent.ssm_h_dtype]
+ssm_h_state_f16_to_f32 = """
+SSM h-state dtype conversion (model-engine impl_a1/kernels.rs). Laguna has no SSM layers, so
+there is no h-state to convert."""
+ssm_h_state_f32_to_f16 = """
+SSM h-state dtype conversion (model-engine impl_a1/kernels.rs). Laguna has no SSM layers, so
+there is no h-state to convert."""
+
+[expected_absent.token_overlay]
+embed_overlay_routed_bf16 = """
+Token-overlay kernel (model-layers ops/token_overlay.rs). Dispatch needs an installed LoRA
+overlay set (lora/overlay.rs); none is installed for Laguna INT4 here and LoRA is not
+qualified on this target."""
+embed_rowdiff_bf16 = """
+Token-overlay kernel (model-layers ops/token_overlay.rs). Dispatch needs an installed LoRA
+overlay set (lora/overlay.rs); none is installed for Laguna INT4 here and LoRA is not
+qualified on this target."""
+lmhead_overlay_routed_bf16 = """
+Token-overlay kernel (model-layers ops/token_overlay.rs). Dispatch needs an installed LoRA
+overlay set (lora/overlay.rs); none is installed for Laguna INT4 here and LoRA is not
+qualified on this target."""
+lmhead_overlay_routed_f32 = """
+Token-overlay kernel (model-layers ops/token_overlay.rs). Dispatch needs an installed LoRA
+overlay set (lora/overlay.rs); none is installed for Laguna INT4 here and LoRA is not
+qualified on this target."""
+
+[expected_absent.tq_plus_innerq_apply]
+tq_plus_innerq_apply_k = "Turbo / rotated KV cache only (note C)."
+tq_plus_innerq_apply_q = "Turbo / rotated KV cache only (note C)."
+
+[expected_absent.w4a16]
+int8_gemm_faith2 = """
+NVFP4 dense-FFN prefill variant (int8 and tile GEMMs over NVFP4 weights). The dense FFN is
+BF16 (note A)."""
+int8_gemm_i32acc = """
+NVFP4 dense-FFN prefill variant (int8 and tile GEMMs over NVFP4 weights). The dense FFN is
+BF16 (note A)."""
+requant_a_bf16_int8 = """
+NVFP4 dense-FFN prefill variant (int8 and tile GEMMs over NVFP4 weights). The dense FFN is
+BF16 (note A)."""
+requant_w_nvfp4_int8 = """
+NVFP4 dense-FFN prefill variant (int8 and tile GEMMs over NVFP4 weights). The dense FFN is
+BF16 (note A)."""
+w4a16_gemm_t_k64_n64_p3 = """
+NVFP4 deep-K tile GEMM for attention prefill projections. The attention projections are BF16
+(note B)."""
+w4a16_gemm_t_k64_p3 = """
+NVFP4 dense-FFN prefill variant (int8 and tile GEMMs over NVFP4 weights). The dense FFN is
+BF16 (note A)."""
+w4a16_gemm_t_m128_bf16 = """
+NVFP4 dense-FFN prefill variant (int8 and tile GEMMs over NVFP4 weights). The dense FFN is
+BF16 (note A)."""
+w4a16_gemm_t_m128_bf16_v2 = """
+NVFP4 dense-FFN prefill variant (int8 and tile GEMMs over NVFP4 weights). The dense FFN is
+BF16 (note A)."""
+w4a16_gemm_t_p3 = """
+NVFP4 dense-FFN prefill variant (int8 and tile GEMMs over NVFP4 weights). The dense FFN is
+BF16 (note A)."""
+
+[expected_absent.w4a4]
+w4a4_gemm = """
+W4A4 NVFP4 dense-FFN prefill GEMM (METRALE_FP4_PREFILL). The dense FFN is BF16 (note A)."""
+w4a4_gemm_mfast = """
+W4A4 NVFP4 attention prefill GEMM. The attention projections are BF16 (note B)."""
+
+[expected_absent.w4a4_gemv_mx]
+w4a4_gemv_mx16 = """
+W4A4 (NVFP4-activation) projection kernel resolved by w4a4_proj::prepare. Its launches
+(dense FFN, attention, SSM) take NVFP4 weights only; Laguna's attention and dense FFN are
+BF16 and its experts packed INT4/INT8."""
+w4a4_gemv_mx16_nt2 = """
+W4A4 (NVFP4-activation) projection kernel resolved by w4a4_proj::prepare. Its launches
+(dense FFN, attention, SSM) take NVFP4 weights only; Laguna's attention and dense FFN are
+BF16 and its experts packed INT4/INT8."""
+w4a4_gemv_mx16_ps = """
+W4A4 (NVFP4-activation) projection kernel resolved by w4a4_proj::prepare. Its launches
+(dense FFN, attention, SSM) take NVFP4 weights only; Laguna's attention and dense FFN are
+BF16 and its experts packed INT4/INT8."""
+w4a4_gemv_mx32 = """
+W4A4 (NVFP4-activation) projection kernel resolved by w4a4_proj::prepare. Its launches
+(dense FFN, attention, SSM) take NVFP4 weights only; Laguna's attention and dense FFN are
+BF16 and its experts packed INT4/INT8."""
+w4a4_gemv_mx32_nt4 = """
+W4A4 (NVFP4-activation) projection kernel resolved by w4a4_proj::prepare. Its launches
+(dense FFN, attention, SSM) take NVFP4 weights only; Laguna's attention and dense FFN are
+BF16 and its experts packed INT4/INT8."""
+w4a4_gemv_mx32_ps = """
+W4A4 (NVFP4-activation) projection kernel resolved by w4a4_proj::prepare. Its launches
+(dense FFN, attention, SSM) take NVFP4 weights only; Laguna's attention and dense FFN are
+BF16 and its experts packed INT4/INT8."""
+w4a4_gemv_mx8 = """
+W4A4 (NVFP4-activation) projection kernel resolved by w4a4_proj::prepare. Its launches
+(dense FFN, attention, SSM) take NVFP4 weights only; Laguna's attention and dense FFN are
+BF16 and its experts packed INT4/INT8."""
+w4a4_quant_rows = """
+W4A4 (NVFP4-activation) projection kernel resolved by w4a4_proj::prepare. Its launches
+(dense FFN, attention, SSM) take NVFP4 weights only; Laguna's attention and dense FFN are
+BF16 and its experts packed INT4/INT8."""
+
+[expected_absent.w8a16_gemm_pipelined]
+w8a16_gemm_pipelined = "FP8 weight dense-FFN prefill GEMM. The dense FFN is BF16 (note A)."
+
+[expected_absent.w8a16_gemm_t]
+w8a16_gemm_t_pipelined = """
+FP8 weight attention prefill projection (prefill/paged_oproj.rs, cache_skip_qkv.rs). The
+attention projections are BF16 (note B)."""
+
+[expected_absent.w8a16_gemm_t_m128]
+w8a16_gemm_t_m128 = "FP8 weight dense-FFN prefill GEMM. The dense FFN is BF16 (note A)."
+
+[expected_absent.w8a16_gemv_batch4]
+w8a16_gemv_batch16 = "FP8 weight dense-FFN decode tier. The dense FFN is BF16 (note A)."
+w8a16_gemv_batch16_strided = """
+FP8 weight multi-sequence Q/K/V decode (qwen3_attention multi_seq/qkv_fp8_batch.rs). The
+attention projections are BF16 (note B)."""
+w8a16_gemv_batch4 = "FP8 weight dense-FFN decode tier. The dense FFN is BF16 (note A)."
+w8a16_gemv_batch4_strided = """
+FP8 weight multi-sequence Q/K/V decode (qwen3_attention multi_seq/qkv_fp8_batch.rs). The
+attention projections are BF16 (note B)."""
+
+[expected_absent.w8a16_gemv_fused]
+w8a16_gemv_dual = "FP8 weight dense-FFN decode GEMV. The dense FFN is BF16 (note A)."
+w8a16_gemv_silu_input = "FP8 weight dense-FFN decode GEMV. The dense FFN is BF16 (note A)."
+
+[expected_absent.wht_bf16]
+wht_bf16_inplace = "Turbo / rotated KV cache only (note C)."
+wht_bf16_inplace_inv = "Turbo / rotated KV cache only (note C)."

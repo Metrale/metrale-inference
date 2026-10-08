@@ -6,9 +6,11 @@
 //!
 //! Owner: metrale-kernels tests.
 //! Invariants:
-//! - Nothing here is a boot-gate declaration. MODEL.toml `[expected_absent]` stays empty
-//!   until the packed-int expert dispatch exists and `met serve --check-kernels` runs on
-//!   gfx1151; that run decides which of these become declarations and which need a build.
+//! - Nothing here is a boot-gate declaration. The lookups the first gfx1151
+//!   `met serve --check-kernels` made and could not resolve are MODEL.toml `[expected_absent]`
+//!   declarations (or were built, dense_gemv_bf16_batchm); what remains here is on Laguna's
+//!   static load path but was not looked up by that boot (the NVFP4 MoeLayer constructor, for
+//!   one, is never built for packed-int experts).
 //! - The list can only change with the code: an entry that starts resolving, or whose
 //!   lookup disappears, fails `every_laguna_lookup_resolves_or_is_classified`.
 
@@ -23,8 +25,6 @@ pub enum GapClass {
     Fp8WeightOnly,
     /// 2026-10-07: GGUF Q2_0 / Q4_K kernels.
     GgufOnly,
-    /// 2026-10-07: Rotated or turbo KV-cache dtypes; the checkpoint declares FP8 KV.
-    TurboKvOnly,
     /// 2026-10-07: sm_90 split-K decode attention.
     HopperOnly,
     /// 2026-10-07: A feature Laguna's config never selects: hash, softmax-bias or
@@ -53,11 +53,6 @@ pub struct Gap {
 pub const GPU_GATE_GAPS: &[Gap] = &[
     Gap {
         class: Nvfp4Only,
-        module: "dequant_nvfp4_bf16",
-        entries: &["dequant_nvfp4_to_bf16"],
-    },
-    Gap {
-        class: Nvfp4Only,
         module: "moe_w4a16",
         entries: &[
             "moe_w4a16_down_t_k64_fp4",
@@ -76,55 +71,6 @@ pub const GPU_GATE_GAPS: &[Gap] = &[
             "moe_w4a16_grouped_gemm_ptrtable_t_k64",
             "moe_w4a16_grouped_gemm_ptrtable_t_k64_e8m0",
         ],
-    },
-    Gap {
-        class: Nvfp4Only,
-        module: "nvfp4_mmq",
-        entries: &[
-            "metrale_nvfp4_mmq128_nc",
-            "metrale_nvfp4_mmq128_wc",
-            "metrale_nvfp4_mmq16_nc",
-            "metrale_nvfp4_mmq16_wc",
-            "metrale_nvfp4_mmq32_nc",
-            "metrale_nvfp4_mmq32_wc",
-            "metrale_nvfp4_mmq64_nc",
-            "metrale_nvfp4_mmq64_wc",
-            "metrale_nvfp4_quantize_bf16",
-            "metrale_nvfp4_repack",
-            "metrale_nvfp4_scale_bf16",
-            "metrale_nvfp4_silu_mul_quant",
-            "metrale_nvfp4_silu_mul_scaled",
-        ],
-    },
-    Gap {
-        class: Nvfp4Only,
-        module: "w4a16",
-        entries: &[
-            "int8_gemm_faith2",
-            "int8_gemm_i32acc",
-            "requant_a_bf16_int8",
-            "requant_w_nvfp4_int8",
-        ],
-    },
-    Gap {
-        class: Nvfp4Only,
-        module: "w4a4",
-        entries: &["w4a4_gemm", "w4a4_gemm_mfast"],
-    },
-    Gap {
-        class: Fp8WeightOnly,
-        module: "dense_gemv_fp8w_batch2",
-        entries: &["dense_gemv_fp8w_batch2"],
-    },
-    Gap {
-        class: Fp8WeightOnly,
-        module: "fp8_gemm_t_blockscaled",
-        entries: &["fp8_gemm_t_blockscaled"],
-    },
-    Gap {
-        class: Fp8WeightOnly,
-        module: "fp8_scale_transpose",
-        entries: &["fp8_act_scale_to_kmajor"],
     },
     Gap {
         class: Fp8WeightOnly,
@@ -162,38 +108,8 @@ pub const GPU_GATE_GAPS: &[Gap] = &[
     },
     Gap {
         class: Fp8WeightOnly,
-        module: "w8a16_gemm_pipelined",
-        entries: &["w8a16_gemm_pipelined"],
-    },
-    Gap {
-        class: Fp8WeightOnly,
         module: "w8a16_gemm_pipelined_m32",
         entries: &["w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m64"],
-    },
-    Gap {
-        class: Fp8WeightOnly,
-        module: "w8a16_gemm_t",
-        entries: &["w8a16_gemm_t_pipelined"],
-    },
-    Gap {
-        class: Fp8WeightOnly,
-        module: "w8a16_gemm_t_m128",
-        entries: &["w8a16_gemm_t_m128"],
-    },
-    Gap {
-        class: Fp8WeightOnly,
-        module: "w8a16_gemv_batch4",
-        entries: &[
-            "w8a16_gemv_batch16",
-            "w8a16_gemv_batch16_strided",
-            "w8a16_gemv_batch4",
-            "w8a16_gemv_batch4_strided",
-        ],
-    },
-    Gap {
-        class: Fp8WeightOnly,
-        module: "w8a16_gemv_fused",
-        entries: &["w8a16_gemv_dual", "w8a16_gemv_silu_input"],
     },
     Gap {
         class: Fp8WeightOnly,
@@ -207,107 +123,8 @@ pub const GPU_GATE_GAPS: &[Gap] = &[
     },
     Gap {
         class: GgufOnly,
-        module: "dequant_gguf_bf16",
-        entries: &["dequant_q2_0_gn_to_bf16"],
-    },
-    Gap {
-        class: GgufOnly,
-        module: "q2_0_gemv_vec",
-        entries: &["q2_0_gemv_vec", "q2_0_gemv_vec_batchm"],
-    },
-    Gap {
-        class: GgufOnly,
         module: "q2_0_mmq",
         entries: &["metrale_q2_0_mmq128_nc", "metrale_q2_0_mmq128_wc"],
-    },
-    Gap {
-        class: GgufOnly,
-        module: "q4k_mmq",
-        entries: &[
-            "metrale_q4k_mmq128_nc",
-            "metrale_q4k_mmq128_wc",
-            "metrale_q8_1_quantize_ds4_bf16",
-        ],
-    },
-    Gap {
-        class: GgufOnly,
-        module: "q4k_quantize",
-        entries: &["q4k_quantize"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_bf16k_turbo2v",
-        entries: &["attn_prefill_paged_bf16k_turbo2v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_bf16k_turbo3v",
-        entries: &["attn_prefill_paged_bf16k_turbo3v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_bf16k_turbo4v",
-        entries: &["attn_prefill_paged_bf16k_turbo4v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_fp8k_turbo2v",
-        entries: &["attn_prefill_paged_fp8k_turbo2v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_fp8k_turbo3v",
-        entries: &["attn_prefill_paged_fp8k_turbo3v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_fp8k_turbo4v",
-        entries: &["attn_prefill_paged_fp8k_turbo4v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_turbo2",
-        entries: &["attn_prefill_paged_turbo2"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_turbo3",
-        entries: &["attn_prefill_paged_turbo3_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_turbo3k_turbo8v",
-        entries: &["attn_prefill_paged_turbo3k_turbo8v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_turbo4",
-        entries: &["attn_prefill_paged_turbo4", "attn_prefill_paged_turbo4_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_turbo4k_turbo3v",
-        entries: &["attn_prefill_paged_turbo4k_turbo3v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_turbo4k_turbo8v",
-        entries: &["attn_prefill_paged_turbo4k_turbo8v_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "prefill_paged_turbo8",
-        entries: &["attn_prefill_paged_turbo8_64"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "tq_plus_innerq_apply",
-        entries: &["tq_plus_innerq_apply_k", "tq_plus_innerq_apply_q"],
-    },
-    Gap {
-        class: TurboKvOnly,
-        module: "wht_bf16",
-        entries: &["wht_bf16_inplace", "wht_bf16_inplace_inv"],
     },
     Gap {
         class: HopperOnly,
@@ -378,11 +195,6 @@ pub const GPU_GATE_GAPS: &[Gap] = &[
         entries: &["moe_topk_sqrtsoftplus", "moe_topk_sqrtsoftplus_batched"],
     },
     Gap {
-        class: OtherModelFeature,
-        module: "ssm_h_dtype",
-        entries: &["ssm_h_state_f16_to_f32", "ssm_h_state_f32_to_f16"],
-    },
-    Gap {
         class: HipMissing,
         module: "argmax_feed",
         entries: &[
@@ -395,11 +207,6 @@ pub const GPU_GATE_GAPS: &[Gap] = &[
         class: HipMissing,
         module: "dense_gemm_m16_bf16",
         entries: &["dense_gemm_m16_bf16", "dense_gemm_m16_bf16_n64"],
-    },
-    Gap {
-        class: HipMissing,
-        module: "dense_gemv_bf16_batchm",
-        entries: &["dense_gemv_bf16_batchm"],
     },
     Gap {
         class: HipMissing,
@@ -461,10 +268,5 @@ pub const GPU_GATE_GAPS: &[Gap] = &[
         class: HipMissing,
         module: "silu_mul_strided",
         entries: &["silu_mul_strided"],
-    },
-    Gap {
-        class: HipMissing,
-        module: "w4a16",
-        entries: &["w4a16_gemm_t_m128_bf16", "w4a16_gemm_t_m128_bf16_v2"],
     },
 ];

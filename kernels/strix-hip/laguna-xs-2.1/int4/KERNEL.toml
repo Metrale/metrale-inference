@@ -4,7 +4,9 @@
 # and lm_head stay BF16 and use strix-hip/common's BF16 and attention sources.
 #
 # Brought in here: packed_int_gemv.cu, the dense and grouped-expert W4A16 / W8A16 GEMVs
-# (layout in packed_int_dequant.cuh). Replaced here by modules with no entry points, so a
+# (layout in packed_int_dequant.cuh), and gb10/common/dense_gemv_bf16_batchm.cu, which the
+# attention head gate launches every decode step (otherwise a dense_gemm_tc fallback).
+# Replaced here by modules with no entry points, so a
 # lookup fails closed at the boot gate instead of reaching code that cannot serve these
 # weights: the strix-hip/common no-op MoE stubs (moe_w4a16 grouped GEMM, the
 # moe_fp8_grouped_gemm_v2 stub) and gb10's gated_delta_rule. The NVFP4 w4a16 module is the
@@ -12,15 +14,14 @@
 #
 # HDIM 128 sizes the shared paged attention and prefill sources for Laguna's head_dim, as
 # kernels/gb10/laguna-s-2.1/nvfp4/KERNEL.toml does on GB10.
-#
-# TODO(gfx1151): compile with hipcc --offload-arch=gfx1151 (none of this target, and no
-# strix-hip source at HDIM 128, has been compiled by hipcc yet), then check launch and
-# numerics on a device.
 [build]
 extra_nvcc_flags = ["--fmad=false", "-DHDIM=128"]
 
 [sources]
-use = ["qwen3.6-27b/nvfp4/w4a16_gemm.cu"]
+use = [
+  "../gb10/common/dense_gemv_bf16_batchm.cu",
+  "qwen3.6-27b/nvfp4/w4a16_gemm.cu",
+]
 
 [shadow]
 moe_w4a16_grouped_gemm = "replaces the strix-hip/common no-op compile stubs with a module that defines no entry points, so a grouped NVFP4 MoE lookup fails closed instead of reaching a no-op; Laguna INT4 experts use packed_int_gemv."

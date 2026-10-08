@@ -49,7 +49,7 @@ const PACKED_INT: [&str; 5] = [
 /// 2026-10-07: The Rust files whose lookups run when a Laguna checkpoint loads: the Laguna
 /// loader, the attention, dense-FFN and MoE layer constructors it calls, the model-level
 /// kernels and head, and the packed-int MoE layer and GEMV lookups of the INT4 expert path.
-const LAGUNA_PATHS: [&str; 10] = [
+const LAGUNA_PATHS: [&str; 13] = [
     "crates/model-arch/src/weight_loader/laguna",
     "crates/model-layers/src/layers/qwen3_attention/",
     "crates/model-layers/src/layers/dense_ffn_init.rs",
@@ -59,7 +59,83 @@ const LAGUNA_PATHS: [&str; 10] = [
     "crates/model-engine/src/model/impl_a1",
     "crates/model-engine/src/model/trait_impl/meta_argmax_masked.rs",
     "crates/model-engine/src/factory/lm_head_setup.rs",
+    "crates/model-engine/src/model/lm_head_fp8_rows.rs",
+    "crates/model-layers/src/layers/ops/token_overlay.rs",
+    "crates/model-layers/src/layers/ops/w4a4_proj.rs",
     "crates/model-engine/src/model/impl_a1.rs",
+];
+
+/// 2026-10-07: Lookups the gfx1151 boot made that the literal scan does not attribute to
+/// Laguna's path: the entry is passed through a closure (`try_kernel(gpu, "<module>", f)`),
+/// or the call is a shared helper in layers/mod.rs (tgemm_kernel, k64_kernel,
+/// k64_n64_kernel). Each is a MODEL.toml `[expected_absent]` declaration; the test pins that
+/// its site still spells both names.
+const COMPUTED_NAME_LOOKUPS: [(&str, &str, &str); 13] = [
+    (
+        "fp8_gemv_rt",
+        "fp8_gemv_rowscale_batch8_rt2",
+        "crates/model-engine/src/model/lm_head_fp8_rows.rs",
+    ),
+    (
+        "fp8_gemv_rt",
+        "fp8_gemv_rowscale_batch16_rt2",
+        "crates/model-engine/src/model/lm_head_fp8_rows.rs",
+    ),
+    (
+        "w4a16",
+        "w4a16_gemm_t_p3",
+        "crates/model-layers/src/layers/mod.rs",
+    ),
+    (
+        "w4a16",
+        "w4a16_gemm_t_k64_p3",
+        "crates/model-layers/src/layers/mod.rs",
+    ),
+    (
+        "w4a16",
+        "w4a16_gemm_t_k64_n64_p3",
+        "crates/model-layers/src/layers/mod.rs",
+    ),
+    (
+        "w4a4_gemv_mx",
+        "w4a4_quant_rows",
+        "crates/model-layers/src/layers/ops/w4a4_proj.rs",
+    ),
+    (
+        "w4a4_gemv_mx",
+        "w4a4_gemv_mx8",
+        "crates/model-layers/src/layers/ops/w4a4_proj.rs",
+    ),
+    (
+        "w4a4_gemv_mx",
+        "w4a4_gemv_mx16",
+        "crates/model-layers/src/layers/ops/w4a4_proj.rs",
+    ),
+    (
+        "w4a4_gemv_mx",
+        "w4a4_gemv_mx32",
+        "crates/model-layers/src/layers/ops/w4a4_proj.rs",
+    ),
+    (
+        "w4a4_gemv_mx",
+        "w4a4_gemv_mx16_nt2",
+        "crates/model-layers/src/layers/ops/w4a4_proj.rs",
+    ),
+    (
+        "w4a4_gemv_mx",
+        "w4a4_gemv_mx32_nt4",
+        "crates/model-layers/src/layers/ops/w4a4_proj.rs",
+    ),
+    (
+        "w4a4_gemv_mx",
+        "w4a4_gemv_mx16_ps",
+        "crates/model-layers/src/layers/ops/w4a4_proj.rs",
+    ),
+    (
+        "w4a4_gemv_mx",
+        "w4a4_gemv_mx32_ps",
+        "crates/model-layers/src/layers/ops/w4a4_proj.rs",
+    ),
 ];
 
 fn root() -> PathBuf {
@@ -226,8 +302,26 @@ fn every_laguna_lookup_resolves_or_is_classified() {
         "unresolved, unclassified:\n  {}",
         missing.join("\n  ")
     );
+    let computed: BTreeSet<(String, String)> = COMPUTED_NAME_LOOKUPS
+        .iter()
+        .map(|(m, k, site)| {
+            let text = std::fs::read_to_string(root().join(site)).unwrap();
+            assert!(
+                text.contains(&format!("\"{m}\"")) && text.contains(&format!("\"{k}\"")),
+                "{site} no longer spells {m}::{k}"
+            );
+            assert!(
+                absent.contains(&(m.to_string(), k.to_string())),
+                "{m}::{k} undeclared"
+            );
+            (m.to_string(), k.to_string())
+        })
+        .collect();
     for declared in absent.iter().chain(gaps.keys()) {
-        assert!(lookups.contains_key(declared), "stale entry {declared:?}");
+        assert!(
+            lookups.contains_key(declared) || computed.contains(declared),
+            "stale entry {declared:?}"
+        );
         assert!(
             !resolves(declared),
             "classified absent but resolves: {declared:?}"
@@ -332,12 +426,12 @@ fn no_other_target_resolves_a_laguna_strix_hip_file() {
     assert!(others > 50, "only {others} other targets");
 }
 
-/// 2026-10-07: hipcc has compiled a strix-hip source only if some strix-hip target resolves
-/// it. Apart from its packed-int GEMV, the Laguna leaf compiles only what a Qwen strix-hip
-/// target already compiles (at another HDIM: the attention sources build at HDIM 128 here,
-/// a GPU-gate compile item).
+/// 2026-10-07: Apart from the sources it brings in itself (its packed-int GEMV and the
+/// multi-row BF16 GEMV the attention head gate launches), the Laguna leaf compiles only what
+/// a Qwen strix-hip target already compiles. All of them were compiled by hipcc for gfx1151
+/// and run in the Laguna parity gate (docs/laguna-xs-2.1-strix-int4.md).
 #[test]
-fn laguna_compiles_nothing_new_to_hipcc_but_its_packed_int_gemv() {
+fn laguna_compiles_nothing_new_to_hipcc_but_its_own_sources() {
     let root = root();
     let mut proven: BTreeSet<PathBuf> = BTreeSet::new();
     for model in ["qwen3.6-27b", "qwen3.6-35b-a3b"] {
@@ -348,6 +442,13 @@ fn laguna_compiles_nothing_new_to_hipcc_but_its_packed_int_gemv() {
         let source = &entry.source;
         if stem == "packed_int_gemv" {
             assert_eq!(*source, leaf.join("packed_int_gemv.cu"));
+            continue;
+        }
+        if stem == "dense_gemv_bf16_batchm" {
+            assert_eq!(
+                *source,
+                root.join("kernels/gb10/common/dense_gemv_bf16_batchm.cu")
+            );
             continue;
         }
         if source.starts_with(&leaf) {
