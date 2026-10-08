@@ -116,8 +116,11 @@ and `lm_head`; the reference deployment runs them below that (FP8 and NVFP4). Ou
 the declared formats; a below-declared dense tier is an opt-in flag, disclosed on every record,
 with the accuracy bar. At declared precision the C1 bandwidth floor is ~24 ms per verify step
 per rank; the reference deployment's measured verify steps are 30-49 ms, so a declared-precision
-win at C1 is possible but not certain. The owner decides whether a matched below-declared tier
-may be used for the C1-C16 bar (escalated in the PR).
+win at C1 is possible but not certain. **Owner decision (2026-10-08): declared first, matched as a
+fallback.** The campaign aims to win at the declared BF16 dense formats. A rung that cannot be won
+at declared precision may use a matched below-declared tier (FP8 / NVFP4 W4A16 dense, as the
+reference deployment runs), shipped as an opt-in flag, default off, disclosed in the parity record
+and on every number it produces, behind the accuracy bar; it then counts toward the C1-C16 bar.
 
 ## 5. Checklist
 
@@ -135,3 +138,5 @@ may be used for the C1-C16 bar (escalated in the PR).
 | Date | Step | Result | Evidence |
 |---|---|---|---|
 | 2026-10-08 | audit | gap list above | this file |
+| 2026-10-08 | vLLM baseline | ladder C1-C16 47.5 / 65.7 / 87.7 / 118.8 / 133.8 / 158.5 tok/s; BFCL n=995 85.53 (normalized 85.54); agentic-webserver 10/10, 7.96 s/turn; long context 8/8 | PR comments |
+| 2026-10-08 | precision | owner: declared first, matched tier as an opt-in fallback | section 4 |
