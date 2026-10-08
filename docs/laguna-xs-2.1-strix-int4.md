@@ -83,7 +83,7 @@ of these paths.
 ## Kernel target `kernels/strix-hip/laguna-xs-2.1/int4`
 
 - `MODEL.toml`: `[[model_types]] laguna / 2048`, `supported_quants = ["int4"]` (the
-  allowlist ported from the GPT-OSS packaging work: `nvfp4`, `bf16`, `fp8`, `mxfp4` refuse
+  per-model precision allowlist: `nvfp4`, `bf16`, `fp8`, `mxfp4` refuse
   the common-only fallback), sampling and behavior mirrored from the GB10 target, and 78
   `[expected_absent]` declarations from the first gfx1151 boot (see "Lookups").
 - `KERNEL.toml`: `-DHDIM=128` as the GB10 Laguna target, `packed_int_gemv.cu`,
@@ -114,8 +114,8 @@ Host evidence for the kernels (no GPU):
   slot mapping and padding are exact.
 - A device-only compile of `packed_int_gemv.cu` for `gfx1151` with Homebrew LLVM and a
   minimal stand-in for `hip_runtime.h` (no ROCm) succeeds: wave32, 20 to 28 VGPRs, no
-  float FMA emitted. This proves syntax and codegen against the LLVM AMDGPU backend only;
-  the real hipcc compile with the repo's compat headers is still a GPU-gate item.
+  float FMA emitted. This proved syntax and codegen against the LLVM AMDGPU backend only;
+  the hipcc compile with the repo's compat headers is GPU gate 1 below.
 - `metrale_model_layers::quant_format::packed_int` is the Rust CPU reference: literal-word
   known answers, wrong-order and wrong-sign controls that must fail, checkpoint tensor
   shapes, and a symmetric min-max round trip.
@@ -160,7 +160,7 @@ OtherModelFeature 14, HipMissing 18, HopperOnly 4, GgufOnly 2). The first table:
 | HopperOnly | 4 | 0 | sm_90 split-K decode |
 | HipMissing | 21 | 0 | device token feed, M16 BF16 GEMM, multi-row BF16 GEMV, router GEMMs, BF16 shared-expert fusion, fused K-norm/RoPE/cache writes (BF16, FP8 KV), GQA decode, strided SiLU, unpermute blend, BF16 prefill twins |
 
-The six required unresolved lookups are the NVFP4 `MoeLayer` constructor's
+The eight required unresolved lookups are the NVFP4 `MoeLayer` constructor's
 `moe_w4a16` (and its FP8 twin) entries and two feature-gated ones (GELU, embed scale). So
 the existing NVFP4 MoE layer cannot be constructed on this target, by design: the INT4
 expert path must be a separate dispatch that never constructs it. Every HipMissing lookup
@@ -173,9 +173,10 @@ left 79 unresolved. `dense_gemv_bf16_batchm` is on the serving path (the head ga
 it every decode step), so it is now built. The other 78 are `[expected_absent]`, each with
 the reason its dispatch cannot run for this checkpoint: the layer-0 dense FFN and every
 attention projection are BF16 with no NVFP4, FP8 or Q2 weights, KV is FP8 or BF16 (never
-turbo), the head is BF16, and there are no SSM layers or LoRA overlays. The 65 the static
-scan sees left `GPU_GATE_GAPS`; 13 whose entry names pass through closures or
-layers/mod.rs helpers are pinned by site (`COMPUTED_NAME_LOOKUPS`). Boots with FP8 and BF16
+turbo), the head is BF16, and there are no SSM layers or LoRA overlays. Of the 78, the 65
+that the static scan sees moved out of `GPU_GATE_GAPS`; the other 13, whose entry names
+pass through closures or layers/mod.rs helpers, are pinned by site
+(`COMPUTED_NAME_LOOKUPS`). Boots with FP8 and BF16
 KV then pass (180 lookups, 0 unresolved, 78 declared); a build with one declaration
 removed fails the gate naming it.
 
@@ -183,11 +184,10 @@ removed fails the gate naming it.
 
 `scripts/lib/kernel_layout.py dump` before (`91cc4ae`) and after: all 58 existing
 targets resolve identically (sources, layers, shadows, configs, module names); the only
-difference is the added `strix-hip/laguna-xs-2.1/int4`. No `kernels/gb10` file changed.
-One `kernels/strix-hip/common` file did, as a bug fix: `dense_gemm_tc.cu` loaded only rows
+difference is the added `strix-hip/laguna-xs-2.1/int4`. The INT4 work changed no
+`kernels/gb10` file. One `kernels/strix-hip/common` file changed, as a bug fix: `dense_gemm_tc.cu` loaded only rows
 0..7 of its 16-row A tile (one 128-thread pass over 256 elements), so every M > 8 read
-uninitialized shared memory; every strix-hip target that compiles it gets the fix. The
-Laguna routing test is now per hardware:
+uninitialized shared memory; every strix-hip target that compiles it gets the fix. The Laguna routing test is now per hardware:
 gb10 routes XS and S as before; strix-hip routes XS to this target and claims no S.
 
 ## GPU gates on gfx1151
@@ -196,7 +196,10 @@ Host: Radeon 8060S (gfx1151), Ubuntu 24.04.4, kernel 7.0.0, ROCm 7.2.1, rustc 1.
 Build: `METRALE_TARGET_HW=strix-hip METRALE_TARGET_MODEL=laguna-xs-2.1
 METRALE_TARGET_QUANT=int4 CUDARC_CUDA_VERSION=13000 METRALE_NO_RDMA=1 cargo build --release
 -p metrale-server --no-default-features --features cuda --bin met`. Weights checked against
-the Hub LFS sha256 of every safetensors shard at the pinned revision.
+the Hub LFS sha256 of every safetensors shard at the pinned revision. Serve flags for gates 5
+to 7: `--max-batch-size 1 --kv-cache-dtype fp8|bf16 --lm-head-dtype bf16 --swap-space-gb 0
+--gpu-memory-utilization 0.85 --max-seq-len 4096 --activation-quantization adaptive
+--forward legacy`.
 
 1. hipcc compile: all 92 kernels of the target compiled the first time, with no source
    change (93 with the head gate GEMV).
@@ -207,7 +210,8 @@ the Hub LFS sha256 of every safetensors shard at the pinned revision.
    combine. Device output equals the host emulation bit for bit everywhere, is within one
    BF16 ulp of an f64 reference (worst 0.496 of tolerance), and padding writes 0. Controls
    detected: MSB-first decode, complemented weight words, the wrong expert, an unrounded
-   routed sum. Reproduced bit for bit after the move from WSL to native Ubuntu.
+   routed sum. First run under WSL2 on the same machine, then reproduced bit for bit
+   on native Ubuntu.
 3. Dispatch and loader: above.
 4. Boot kernel gate: above.
 5. Parity. Reference: the checkpoint's own `modeling_laguna.py` (transformers 5.19, torch
@@ -251,5 +255,6 @@ NaN through the BF16 dense FFN of layer 0.
 - Speed: grouped GEMVs one column per wave, no `V_DOT4_I32_IU8`, decode and prefill
   through the same row path; throughput, memory and energy with build identity.
 - `/v1/completions` with a text prompt counted 703 tokens for a text the checkpoint
-  tokenizer encodes as 704 with its BOS; not investigated.
+  tokenizer encodes as 704 with its BOS, and that run's output degenerated into a
+  repeated line; gate 7 used the 704 token ids. Not investigated.
 - `--lm-head-dtype fp8` and LoRA overlays are not qualified on this target.

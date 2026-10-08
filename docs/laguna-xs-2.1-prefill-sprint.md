@@ -1,4 +1,4 @@
-# Laguna prefill investigation — 2026-10-07
+# Laguna prefill investigation (2026-10-07)
 
 Checkpoint: [poolside/Laguna-XS-2.1-NVFP4, d32afde8b09af1539b49ff96ff5551c674485f8e](https://huggingface.co/poolside/Laguna-XS-2.1-NVFP4/tree/d32afde8b09af1539b49ff96ff5551c674485f8e).
 This investigation follows the [long-decode comparison](laguna-xs-2.1-performance-diagnostic.md). A competitive C1 long-decode result does not establish competitive prefill.
@@ -6,9 +6,9 @@ This investigation follows the [long-decode comparison](laguna-xs-2.1-performanc
 ## Matched one-output baseline
 
 Frozen native binary `3aeaa2f04ff185b4fd624ba6aa9ee6df8949d1a183b10b4d55d63bc98c7091d8`
-(runtime source `5f4d7b9`) versus the pinned NVIDIA vLLM image
+(runtime source `5f4d7b9`) versus the pinned reference serving engine image
 `sha256:fa68ef92f906e1b3770621625c5af539d15297fea15dacfc1466b853a567c5b6`,
-with explicit Marlin linear and expert backends. Both use the same original checkpoint,
+with explicit W4A16 linear and expert backends. Both use the same original checkpoint,
 BF16 activations, FP8 KV, batch limit 4, memory fraction 0.85, prefix caching disabled,
 and exactly the same 64- or 1,111-token input IDs. Each request generates exactly one token.
 Native enables the previously qualified small-row, dense-row and minimum-token sampling options;
@@ -78,7 +78,7 @@ and retains all shape, pointer and BF16-activation refusals. No activation-polic
 
 Frozen candidate binary `5aca2f9adb50e4084507219cde94109f07a151f785af215ad10426fa87b957b0`
 was measured against `3aeaa2…` with identical declared-policy flags. The tested source overlay
-and embedded PTX hashes are retained in `laguna-n32-private/stage-receipt.json`; the checked-in
+and embedded PTX hashes are retained in the stage receipt; the checked-in
 version only cleans formatting, error wording and a comment from that runtime overlay.
 The exact legacy PTX gate passes on SM90a/100a/121f: all nine old entry bodies preserve
 instructions, registers, constants and shared allocations. Only the additional default
@@ -114,7 +114,7 @@ helps short-prompt latency; it does not close the long-prefill or reference-engi
 
 ## Further bounded screens retained as rejected evidence
 
-The next private screens preserved the current N32 arithmetic but did not justify a serving
+The next screens (not in this tree) preserved the current N32 arithmetic but did not justify a serving
 change. Constructed and captured-slice controls remained exact; speed qualification is separate.
 
 | Screen | Observed boundary | Decision |
@@ -154,7 +154,7 @@ A subsequent unprofiled, counterbalanced control/codispatch/codispatch/control c
 admits all 96 cohorts / 224 requests with exact 64/1,111 input IDs and one output. Both arms
 use the frozen N32 executable, explicit adaptive activation and canonical tiers; only the two
 prefill dispatch flags differ. Each workload/concurrency is warmed before three measured
-cohorts. These results do not replace the declared-policy native/Marlin comparison above.
+cohorts. These results do not replace the declared-policy native/reference comparison above.
 
 | Prompt | Clients | Median per-request total change | Median cohort completion change |
 |---|---:|---:|---:|
@@ -170,7 +170,7 @@ The group finishing sooner does not mean each request benefits. No blanket defau
 is justified: single requests regress, long concurrent requests trade worse individual latency
 for earlier group completion, and semantic/output equivalence remains only bounded evidence.
 
-The final private M64/N128, 256-thread screen also preserves all 31 numerical controls but
+The final M64/N128, 256-thread screen also preserves all 31 numerical controls but
 runs long shapes at only 0.878–0.911× incumbent speed (short 0.960–0.996×). It is rejected;
 no serving binary includes it.
 
@@ -226,6 +226,6 @@ fixture's text matches across arms. It does not erase earlier unequal-prefix fix
 changes. Each arm also passes 32/48/64/80-token draining, one intentional client disconnect
 with three surviving requests, and a subsequent single request. These are single instrumented
 lifecycle observations, not counterbalanced performance samples. The synchronized mixed
-cohort illustrates head-of-line tradeoffs: its long request's first text arrived about923 ms
-instead of809 ms, while its three short requests arrived about922 ms instead of1,090–1,591 ms.
+cohort illustrates head-of-line tradeoffs: its long request's first text arrived about 923 ms
+instead of 809 ms, while its three short requests arrived about 922 ms instead of 1,090–1,591 ms.
 That is not evidence that late-arriving short work will receive the same benefit.

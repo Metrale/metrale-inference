@@ -8,7 +8,7 @@ Admission excludes grammar, tools, log probabilities, active thinking, adaptive 
 
 The model uses bounded existing scratch and its default forward stream; it does not allocate GPU storage per token or mutate logits. The synchronous readback completes before that scratch is reused. The asynchronous router delegates this variant to its synchronous inner router. Existing device-feed behavior is unchanged.
 
-Validation so far:
+Validation:
 
 - The model-side packing test checks duplicate/out-of-range IDs and the eight-ID capacity boundary.
 - The new CUDA primitive passed 84 constructed rows across vocabulary widths 1 through 100352 plus three mixed-mask rows with padded stride. Cases include masked maxima, high-index ties, signed-zero ties, very negative finite values, masked and unmasked NaNs, infinities, and all-masked refusal.
@@ -21,7 +21,7 @@ The checkpoint used for subsequent serving qualification must remain [poolside/L
 
 ## Frozen serving correctness
 
-Candidate executable SHA-256 `3aeaa2f04ff185b4fd624ba6aa9ee6df8949d1a183b10b4d55d63bc98c7091d8` embeds the exact new argmax PTX (`18e81d9a985dec515ff5c75b2b9155c1e56d933978d7dcb4616d9fecdd0e7778`). Its qualified dense and expert projection PTX remain unchanged from the preceding LUT candidate; the rejected private paired-expert experiment is absent.
+Candidate executable SHA-256 `3aeaa2f04ff185b4fd624ba6aa9ee6df8949d1a183b10b4d55d63bc98c7091d8` embeds the exact new argmax PTX (`18e81d9a985dec515ff5c75b2b9155c1e56d933978d7dcb4616d9fecdd0e7778`). Its qualified dense and expert projection PTX remain unchanged from the preceding LUT candidate; the rejected paired-expert experiment is absent.
 
 With the option enabled, six structured cases, four EOS/tool controls, six concurrent structured cases, unequal-length draining, cancellation survivors and a subsequent single request passed. All twelve collected coding candidates retain the preceding candidate's exact source hashes. Isolated semantic grading remains **9/12**, with the same three retry-delay failures; this is not a clean coding qualification. Structured/tool requests intentionally keep their host route.
 
@@ -40,20 +40,20 @@ Four quiet sessions ran incumbent A, candidate B, candidate B2, incumbent A2 wit
 
 Short and long prefill controls are essentially flat. Every fixed-workload text-hash set matches across arms. Diverse outputs vary within the incumbent as well as the candidate, and some cross-arm hash sets differ; all are retained and the diverse workload is a count/latency diagnostic, not a semantic-quality pass. Its actual tokenizer fixture is identical across all four sessions.
 
-These measurements include prefill and final stream drain. Client TPOT is not isolated kernel throughput, and client concurrency does not prove batch membership. The preceding native-versus-Marlin comparison uses older binaries and must not be relabeled as a comparison of this new candidate. A broad competitiveness claim, clean coding qualification and energy measurements remain outstanding.
+These measurements include prefill and final stream drain. Client TPOT is not isolated kernel throughput, and client concurrency does not prove batch membership. The preceding native-versus-reference comparison uses older binaries and must not be relabeled as a comparison of this new candidate. A broad competitiveness claim, clean coding qualification and energy measurements remain outstanding.
 
-## Latest matched Marlin comparison
+## Latest matched reference comparison
 
-A subsequent complete native A / Marlin B / Marlin B2 / native A2 campaign uses this same `3aeaa2f…` executable (runtime source `5f4d7b9`), the original checkpoint above, BF16 activations, FP8 KV, memory fraction 0.85, batch limit four and disabled prefix caching. Reference image: `nvcr.io/nvidia/vllm@sha256:fa68ef92f906e1b3770621625c5af539d15297fea15dacfc1466b853a567c5b6`, with explicit Marlin linear and MoE backends. Each current startup verifies the selected backends and installed-source hashes.
+A subsequent complete native A / reference B / reference B2 / native A2 campaign uses this same `3aeaa2f…` executable (runtime source `5f4d7b9`), the original checkpoint above, BF16 activations, FP8 KV, memory fraction 0.85, batch limit four and disabled prefix caching. Reference: the pinned reference serving engine image `sha256:fa68ef92f906e1b3770621625c5af539d15297fea15dacfc1466b853a567c5b6`, with explicit W4A16 linear and MoE backends. Each current startup verifies the selected backends and installed-source hashes.
 
 All **96 cohorts / 224 requests** pass admission, including warmups. Each request uses the same exact 64 input IDs and either 256 or 512 generated tokens. The two orders give:
 
-| Concurrent requests on one Spark | Native total client latency versus Marlin |
+| Concurrent requests on one Spark | Native total client latency versus the reference |
 |---|---:|
 | 1 | **9.12–9.73% lower** |
 | 2 | **3.34–9.37% higher** |
 | 4 | **29.04–37.37% higher** |
 
-Native first text is slower in every measured case: approximately 265–271 ms / 394–399 ms / 670–682 ms for C1/C2/C4, versus Marlin's 71–74 ms / 77–97 ms / 147–151 ms. C4 client TPOT remains 26.0–28.2% higher. Client TPOT includes stream drain and scheduling; it is not isolated GPU decoding speed. Actual batch membership and energy are unmeasured, and these fixed-count requests do not establish general coding quality.
+Native first text is slower in every measured case: approximately 265–271 ms / 394–399 ms / 670–682 ms for C1/C2/C4, versus the reference's 71–74 ms / 77–97 ms / 147–151 ms. C4 client TPOT remains 26.0–28.2% higher. Client TPOT includes stream drain and scheduling; it is not isolated GPU decoding speed. Actual batch membership and energy are unmeasured, and these fixed-count requests do not establish general coding quality.
 
-This complete comparison supersedes the older combined-binary ladder for the current candidate. The single-request generation win is real within this protocol, but the concurrent-service and first-text gaps remain. All owned servers/containers stopped and the GPU was empty after the campaign, before the agreed cutoff.
+This complete comparison supersedes the older combined-binary ladder for the current candidate. The single-request generation win is real within this protocol, but the concurrent-service and first-text gaps remain.

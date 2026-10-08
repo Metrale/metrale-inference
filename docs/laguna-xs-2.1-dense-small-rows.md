@@ -1,8 +1,8 @@
 # Laguna dense BF16 small-row experiment
 
-The default-off `METRALE_DENSE_GEMV_SMALL_ROWS=1` switch selects the capacity4
+The default-off `METRALE_DENSE_GEMV_SMALL_ROWS=1` switch selects the capacity-4
 member of the existing dense BF16 batch family for eligible groups of one to
-four rows. Larger row groups retain the original capacity16 entry. Split
+four rows. Larger row groups retain the original capacity-16 entry. Split
 launches select by rows per block, after existing admission checks. Kernel
 handles are cached per backend, not globally across contexts. Missing opted-in
 kernels return an error. No model default or supported-hardware claim changes.
@@ -10,7 +10,7 @@ kernels return an error. No model default or supported-hardware claim changes.
 Related checkpoint and measured serving workload:
 [poolside/Laguna-XS-2.1-NVFP4 at d32afde](https://huggingface.co/poolside/Laguna-XS-2.1-NVFP4/tree/d32afde8b09af1539b49ff96ff5551c674485f8e).
 
-The private prototype used source base `020057a974f1da08a8bef4fd8a1974edf524b0dd`
+The prototype (an overlay, not this tree) used source base `020057a974f1da08a8bef4fd8a1974edf524b0dd`
 plus a recorded three-file overlay. It reduced total request latency on the
 fixed-count decode workload by 6.66% / 6.69% at C2 and 4.67% / 6.91% at C4 in
 opposite-order comparisons. C1 improved 1.18% / 1.57%; prefill remained within

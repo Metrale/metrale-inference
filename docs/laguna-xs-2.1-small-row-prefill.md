@@ -21,7 +21,7 @@ row-partition residual; no automatic circuit lowering is claimed. Packed E2M1,
 E4M3 scales, FP32 expert scale and the K16 accumulation order are preserved.
 The FP8-activation transposed sibling is not used.
 
-## Evidence from the private prototype
+## Evidence from the prototype
 
 The prototype passed 31 constructed/learned-slice comparisons against the frozen
 incumbent, including expert counts 0, 1, 15, 16, 17, 63, 64, 65 and 934,
@@ -39,7 +39,7 @@ C4 decode was effectively flat in the reverse order, so no C4 decode win is
 claimed. Six schema, four JSON/tool and six concurrent-client schema cases
 passed. Initial coding remained 9/12, with the same retry-delay failures.
 
-These results apply to the frozen private prototype. They do not automatically
+These results apply to the frozen prototype, which is not this tree. They do not automatically
 qualify the parameterized checked-in implementation or a combination with any
 other optimization.
 
@@ -47,7 +47,7 @@ other optimization.
 
 `METRALE_LAGUNA_SMALL_ROW_PREFILL=1` enables the pair only for the measured
 2048-hidden, 512-intermediate, 256-expert, top-8 layout. It defaults off.
-Unified/transposed layout, the alternate CUTLASS path, missing kernels, an
+Unified/transposed layout, the alternate grouped-MoE path (`cutlass_grouped_moe_enabled`), missing kernels, an
 unexpected N tile or FP8-activation metadata refuse initialization. An average
 expert-load cap is refused; the large-row grid must cover the complete maximum.
 Resolved handles are stored per layer, with no per-launch host copy or lookup.

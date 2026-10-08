@@ -13,9 +13,9 @@ default asynchronous scheduler, no diagnostic capture. The native launch trace
 confirms untransposed BF16-MMA NVFP4 expert prefill and shared BF16-activation
 expert decode. An inventory entry alone was not used as proof of execution.
 
-Reference image:
-`nvcr.io/nvidia/vllm@sha256:fa68ef92f906e1b3770621625c5af539d15297fea15dacfc1466b853a567c5b6`,
-actual vLLM `0.29.0+5013de39.nv26.9.69442229`. The reference used the same local,
+Reference: a pinned reference serving engine container, image digest
+`sha256:fa68ef92f906e1b3770621625c5af539d15297fea15dacfc1466b853a567c5b6`.
+The reference used the same local,
 read-only checkpoint, BF16 model dtype, FP8 KV cache, batch limit four, maximum
 sequence length 8,192, memory fraction .85, and disabled prefix caching. Native
 used those same bounds. Both actual chat renderers produced identical 64-token
@@ -30,18 +30,17 @@ retained. No builds, downloads or profiler collections overlapped these timings.
 | Runtime | C1 short / long first-text, ms | C1 / C2 / C4 client TPOT, ms | C4 aggregate tokens/s |
 |---|---:|---:|---:|
 | Native | 315.283 / 813.104 | 19.602 / 28.711 / 39.119 | 78.685 |
-| vLLM explicit Marlin | 68.187 / 189.197 | 22.707 / 23.478 / 23.311 | 158.622 |
-| vLLM default FlashInfer CUTLASS | 71.233 / 176.817 | 22.844 / 23.792 / 23.926 | 154.490 |
+| Reference, explicit W4A16 backends | 68.187 / 189.197 | 22.707 / 23.478 / 23.311 | 158.622 |
+| Reference, default W4A4 backends | 71.233 / 176.817 | 22.844 / 23.792 / 23.926 | 154.490 |
 
 Client TPOT is `(HTTP completion - first nonempty text)/(output count - 1)`;
 it includes final drain. First text need not equal the first generated token.
 Aggregate throughput divides all verified output tokens by the complete cohort
 window. Client concurrency is not evidence of actual GPU batch membership.
 
-Explicit `--moe-backend marlin --linear-backend marlin` selected Marlin MoE and
-Marlin NVFP4 linears, verified in installed source and startup logs. This is the
-nominal W4A16 comparison. The default reference selected FlashInfer CUTLASS W4A4
-for quantized MoE and linears: a separate activation precision, not a matched
+Explicit backend flags selected W4A16 MoE and NVFP4 linear kernels, verified in
+installed source and startup logs. This is the nominal W4A16 comparison. The
+default reference configuration selected W4A4 kernels for quantized MoE and linears: a separate activation precision, not a matched
 precision speed claim. Neither comparison establishes full numerical equivalence.
 
 ## Observed bottleneck
@@ -59,9 +58,8 @@ capture recorded 90,068 calls; `dense_gemv_bf16_batchm` consumed 1,071.089 of
 are diagnostic attribution, not substitutes for unprofiled request latency.
 
 Native narrow C1 decode TPOT is competitive here. Prefill and C4 throughput are
-not. The next experiments address small expert row tiles and small-batch dense
-GEMV separately, preserving original arithmetic and testing full requests before
-any promotion. Private prototype results are not production improvements.
+not. The later sections cover small expert row tiles and small-batch dense GEMV
+separately, each preserving the original arithmetic and measured on full requests.
 
 ## Quality boundary
 
@@ -75,14 +73,14 @@ its forced-tool response ended with `finish_reason=stop`. See
 [code acceptance](laguna-xs-2.1-code-acceptance.md) for the separate controls and
 known failures. No throughput result converts these failures into passes.
 
-## Separate Marlin GPU attribution
+## Separate reference GPU attribution
 
-A subsequent pinned-Marlin trace uses the same 64 input IDs and 64 output-token
+A subsequent trace of the W4A16 reference configuration uses the same 64 input IDs and 64 output-token
 requests at client C1/C4, original NVFP4 checkpoint and FP8 KV. Actual startup
-selects `MarlinNvFp4LinearKernel` and `MARLIN` MoE; model metadata, shard sizes,
-installed source/version receipts and the existing verified backup manifest
+selects the W4A16 NVFP4 linear and MoE kernels; model metadata, shard sizes,
+installed source/version receipts and the previously verified checkpoint manifest
 were checked. This capture did not independently rehash all weight bytes.
-The official NVIDIA 26.09 ARM64 image remains pinned to
+The ARM64 reference image remains pinned to
 `sha256:fa68ef92f906e1b3770621625c5af539d15297fea15dacfc1466b853a567c5b6`.
 
 | Captured kernel window | C1 | C4 |
@@ -97,9 +95,9 @@ The official NVIDIA 26.09 ARM64 image remains pinned to
 An independent interval sweep verifies GPU/API unions and overlap. Kernel sums
 exceed union because work overlaps; these quantities must not be added together.
 The actual kernel `globalPid=281483314987008` joins the SQLite process table to
-container-namespace PID497, `VLLM::EngineCor`, context1/device0, rather than
-frontend PID253. These are not host PIDs. Graph-node
-kernel events are retained. Raw SSE confirms exact prompt IDs, usage64/64,
+the reference's engine-core process (container-namespace PID 497, context 1,
+device 0), rather than the frontend (PID 253). These are not host PIDs. Graph-node
+kernel events are retained. Raw SSE confirms exact prompt IDs, usage 64/64,
 length termination, and overlapping client request intervals at C4. Client
 concurrency is not proof of actual GPU batch membership.
 
@@ -129,17 +127,17 @@ The current combined candidate, binary SHA-256
 ran with both default-off small-row options explicitly enabled. Its source/build
 receipt SHA-256 is
 `13f6b248e09009e1af94d746c17c0c9a6f25844d4ffd497eb8f2d40bf9c8005f`.
-The same pinned Marlin image and checkpoint above were used. Current checkpoint
-config/index hashes matched the previously verified backup manifest; shard sizes
+The same pinned reference image and checkpoint above were used. Current checkpoint
+config/index hashes matched the previously verified checkpoint manifest; shard sizes
 were checked without claiming a new full-weight checksum pass.
 
-Native-A / Marlin-B / Marlin-B2 / native-A2 used fresh owned servers, identical
+Native A / reference B / reference B2 / native A2 used fresh servers, identical
 64 input IDs, temperature zero, and exactly 256 or 512 output tokens. Every
 case and C1/C2/C4 rung was warmed before three measured repetitions. All
 96 cohorts / 224 requests, including warmups, passed count and terminal admission.
 No profiling, builds, downloads or remote probes overlapped timed requests.
 
-| 512-output case | Native client TPOT, ms | Marlin client TPOT, ms | Native cohort tokens/s | Marlin cohort tokens/s |
+| 512-output case | Native client TPOT, ms | Reference client TPOT, ms | Native cohort tokens/s | Reference cohort tokens/s |
 |---|---:|---:|---:|---:|
 | C1 | 20.550–20.651 | 23.274–23.330 | 47.23–47.47 | 42.69–42.79 |
 | C2 | 24.621–25.049 | 22.221–23.914 | 77.45–78.69 | 82.93–89.57 |
@@ -155,7 +153,7 @@ competitive serving, numerical equivalence, energy efficiency or broad quality
 qualification. Coding remains 9/12.
 
 The first orchestration attempt failed before requests because launching from
-the SSH home directory selected the checkpoint template, whose `generation`
+outside the repository selected the checkpoint template, whose `generation`
 statement is unsupported by this native template parser. The successful sequence
 retained the previously qualified repository working directory and bundled
 `jinja-templates/laguna.jinja`, SHA-256
@@ -193,8 +191,8 @@ new quality qualification follows from attribution.
 
 ## Rejected follow-up screens
 
-The following private experiments were retained as diagnostics and did not change
-the production math or default dispatch:
+The following experiments are not in this tree; they are recorded as diagnostics
+and did not change the production math or default dispatch:
 
 - Loading 32 K values into shared memory before two ordered K16 BF16 MMA steps
   matched 31 constructed/learned comparisons, including the independent integer
@@ -216,9 +214,8 @@ The last bounded run used binary
 `a2017dff0afbdaffcdf22f6b08a99464f32ceb37ad5e65f70b129ec5a4414cd8`
 from a new empty working directory. It also verified startup with the embedded
 reviewed Laguna template added in `e9eefb6`; no working-directory template file
-was present. Its profiler injection and private kernel overlay exclude it from
-the frozen `5784c0fe…` speed comparisons above. The private overlay was restored
-to its known parent files after capture, and the owned server stopped.
+was present. Its profiler injection and experimental kernel overlay exclude it from
+the frozen `5784c0fe…` speed comparisons above.
 
 ## Exact E2M1 lookup substitution
 
@@ -233,7 +230,7 @@ The frozen candidate executable is
 against combined incumbent `5784c0fe…`. Source/PTX receipts verify the complete
 intended PTX bytes embedded in that binary. The source snapshot also contains the
 template packaging fix, while both timing arms use the same qualified working
-directory and reviewed template. No batch-four private overlay remains.
+directory and reviewed template.
 
 Four quiet unprofiled A/B/B2/A2 sessions admitted all 144 fixed-count cohorts.
 Short-prefill total latency improved **7.20–8.06%**, and long-prefill
@@ -274,13 +271,13 @@ The declared quantization configuration explicitly excludes attention Q/K/V/O,
 the head, first-layer FFN and router from NVFP4. Representative shapes are
 Q `[6144,2048]` / `[8192,2048]`, O `[2048,6144]` / `[2048,8192]`, and head
 `[100352,2048]`. The native dense path is not expanding packed versions of those
-weights. The reference trace's dominant dense entry is explicitly CUTLASS BF16
-WMMA, accounting for 1004.925 ms across 7750 calls in the recorded C4 region.
+weights. The reference trace's dominant dense entry is a BF16
+WMMA GEMM, accounting for 1004.925 ms across 7750 calls in the recorded C4 region.
 Dense bandwidth remains relevant, but a checkpoint precision mismatch does not
 explain this comparison. Trace regions include prompt processing; names alone
 must not be used to classify individual launches as steady decode.
 
-A separate private graph-compatible candidate reused gate/up weights when the
+A separate graph-compatible candidate (not in this tree) reused gate/up weights when the
 two routed rows selected the same expert in the same slot. Twenty-eight
 constructed comparisons, duplicate/partial/null/non-null-shared controls and an
 independent staged-FP32 oracle passed. A separate trace observed 4914 calls to
@@ -292,8 +289,8 @@ tokens improved 2.53/2.59%; C4 was flat (-0.37/+0.07%). Four distinct rendered
 prompts at C4/128 outputs were also flat (-0.327/+0.054%). Actual token fixtures
 matched across all arms. Fixed-workload text hashes matched; diverse text varied
 on both arms, without establishing a cause. Coding outputs remained identical
-and isolated grading stayed 9/12. The candidate remains private: a narrow C2 win
-does not resolve the C4 objective.
+and isolated grading stayed 9/12. The candidate was not merged: a narrow C2 win
+does not resolve the C4 gap.
 
 An occurrence-rank extension preserved one-to-one duplicate handling and passed
 the same constructed controls, but only improved the half-overlap case about
@@ -301,10 +298,8 @@ the same constructed controls, but only improved the half-overlap case about
 shape. It was not promoted or subjected to a blind full-model campaign. Neither
 prototype changes the checked-in default dispatch.
 
-
 ## Exact minimum-token greedy readback
 
-The subsequent default-off sampling path preserves host EOS/post-thinking masks and finite highest-index ties while copying only chosen IDs. Constructed controls, live serving checks and a separate kernel-dispatch witness pass. Four unprofiled opposite-order sessions improve C2/C4 fixed64-output total latency by 2.52–3.62% beyond the qualified LUT binary; C1 and prefill are flat. Four distinct C4/128-output prompts improve 3.16–3.55%, with pre-existing output variation explicitly retained and no semantic pass inferred. See [the masked-greedy contract and complete boundaries](laguna-xs-2.1-masked-greedy.md). The older Marlin comparison is not a comparison of this candidate.
+The subsequent default-off sampling path preserves host EOS/post-thinking masks and finite highest-index ties while copying only chosen IDs. Constructed controls, live serving checks and a separate kernel-dispatch witness pass. Four unprofiled opposite-order sessions improve C2/C4 fixed 64-output total latency by 2.52–3.62% beyond the qualified LUT binary; C1 and prefill are flat. Four distinct C4/128-output prompts improve 3.16–3.55%, with pre-existing output variation explicitly retained and no semantic pass inferred. See [the masked-greedy contract and complete boundaries](laguna-xs-2.1-masked-greedy.md). The older reference comparison is not a comparison of this candidate.
 
-
-The final complete masked-greedy/LUT versus pinned Marlin ladder (96 cohorts / 224 admitted requests, exact 64 input IDs, 256/512 outputs, both orders) supersedes older-current comparisons: native C1 total is 9.12–9.73% lower, C2 is 3.34–9.37% higher, and C4 is 29.04–37.37% higher. First text remains slower in all cases; C4 client TPOT is 26.0–28.2% higher. These are whole-client boundaries, not isolated kernel throughput or broad quality/energy qualification. The linked masked-greedy document records current binary/image/source identities and limits. All owned jobs were cleaned up before 13:00 UTC.
+The final complete masked-greedy/LUT versus pinned W4A16 reference ladder (96 cohorts / 224 admitted requests, exact 64 input IDs, 256/512 outputs, both orders) supersedes older-current comparisons: native C1 total is 9.12–9.73% lower, C2 is 3.34–9.37% higher, and C4 is 29.04–37.37% higher. First text remains slower in all cases; C4 client TPOT is 26.0–28.2% higher. These are whole-client boundaries, not isolated kernel throughput or broad quality/energy qualification. The linked masked-greedy document records current binary/image/source identities and limits.

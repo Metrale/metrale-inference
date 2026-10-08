@@ -12,8 +12,8 @@ contains 2,695 responses in completed groups: 1,748 exact integer answers and
 947 explanations. A separate offline audit found supported literal addition
 claims/final-answer markers in all 947 explanations, with no contradiction among
 recognized claims. That limited parser is not complete semantic grading: the
-947 responses remain `unscored_format`, not numeric passes. The full ongoing
-soak and its later snapshots are tracked separately.
+947 responses remain `unscored_format`, not numeric passes. The completed soak
+is recorded below ("Completed unchanged-server U").
 
 Observed text variation at client concurrency two/four does not identify a
 race, actual scheduler batch membership, or the responsible arithmetic kernel.
@@ -40,30 +40,29 @@ first/tree/last IDs 1/2/1025. Eight unique-maximum controls agree. Both tests an
 scoped Clippy pass locally. This is not a new GPU capture and **does not establish
 that ties caused any observed Laguna response**.
 
-## Prepared post-soak diagnosis
+## Post-soak diagnosis design
 
-Keep the live soak unchanged. After completion, freeze its actual server identity
-and run bounded identical/mixed/permuted request groups without logprobs. Retain
+The live soak was left unchanged. The diagnosis freezes its actual server identity
+and runs bounded identical/mixed/permuted request groups without logprobs. It retains
 slot-specific variants, finish reasons, exact formatting, wrong integers and
 unscored prose separately. A JSON-schema test is an independent constrained
 output test; passing it does not repair unconstrained instruction-following.
 
-A separate, default-disabled diagnostic should capture unchanged-path selected
+A separate, default-disabled diagnostic captures unchanged-path selected
 IDs and same-step logits with actual scheduler membership, padded batch size,
-row order, sequence position and prefix-cache status. Select only explicit test
-requests and bounded token positions; do not indiscriminately save prompts or
-loaded tensors. Preserve an uninstrumented before/after control because copies
-can perturb scheduling. Compare identical teacher-forced prefixes at the first
+row order, sequence position and prefix-cache status. It selects only explicit test
+requests and bounded token positions and never saves prompts or loaded tensors
+indiscriminately. An uninstrumented before/after control is kept because copies
+can perturb scheduling. Identical teacher-forced prefixes are compared at the first
 divergence, separating equal-logit tie choices from changed logits. Existing
 host-only dump hooks cannot be assumed to observe the fast device route.
 
-Only after that capture should a compatibility-reviewed fix be proposed. If
-logprobs transparency is the problem, preserve the eligible device path's token
-choice while extracting probabilities independently. Do not silently normalize
-all host/device/verify policies or declare output variability solved from these
-constructed tests.
+This document proposes no sampling-policy fix. If logprobs transparency were the
+problem, the fix would keep the eligible device path's token choice and extract
+probabilities independently, not normalize all host/device/verify policies.
+These constructed tests do not show that output variability is solved.
 
-### Bounded post-soak capture candidate
+### Bounded post-soak capture
 
 The optional server feature `laguna-diagnostic-capture` adds a hook immediately
 **after the synchronous router's existing native argmax** and before its next
@@ -124,37 +123,35 @@ owner-only on Unix. This implementation does not change any tie policy.
 The local test harness uses synthetic row bytes and callback counters to verify
 same-step preservation, unchanged selected IDs, live membership order, unknown
 batch/position/cap exclusion, duplicate-slot and precision/mode refusals, and
-new-directory enforcement. **No live GPU capture or Spark2 restart has been
-performed for this candidate.** It must remain unused until the soak completes
-and the controlled diagnostic deployment is reviewed.
+new-directory enforcement. These host checks preceded any live capture; the live
+capture is recorded under "Live bounded capture A/B/A2" below.
 
 Validation uses `METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo test -p
 metrale-server --no-default-features --features metal,laguna-diagnostic-capture
---test laguna_capture_diagnostic` on the local Mac; twelve controls pass. Scoped
+--test laguna_capture_diagnostic` on macOS; twelve controls pass. Scoped
 Clippy covers that test and the feature-enabled `met` binary. The initial
 backend-free invocation failed because the existing server binary imports GPU
 initialization symbols without a backend; enabling its normal Metal backend
 resolved that build configuration. These are host/mock checks, not CUDA evidence.
 
-
 ### Capture failure and input-bound review
 
-The plan reader now consumes at most32KiB plus one refusal byte, independent of
+The plan reader now consumes at most 32 KiB plus one refusal byte, independent of
 an earlier file-size observation. On Unix it opens nonblocking and validates the
 opened descriptor is a regular file, refusing devices and FIFOs without waiting
-for a writer. Executable hashing streams through a fixed64KiB buffer. These
+for a writer. Executable hashing streams through a fixed 64 KiB buffer. These
 changes close the plan-growth race and avoid buffering the complete executable.
 
 Any capture validation, GPU-read or file-write failure is sticky: later calls
 refuse before further readbacks or writes until the diagnostic process restarts.
 Existing bytes are never overwritten. Additional controls inject GPU-read and
 file-collision failures, prove later readback callbacks do not run, check a
-never-ending plan reader stops at32769 bytes, verify a known SHA256 vector, and
+never-ending plan reader stops at 32,769 bytes, verify a known SHA256 vector, and
 reject directories/devices/FIFOs. Earlier refusal controls each use fresh capture
-state so the sticky error cannot hide a missing individual check. All12 local
+state so the sticky error cannot hide a missing individual check. All 12 local
 controls pass; this remains host/mock evidence, with no live capture claim.
 
-## Completed unchanged-server U — 2026-10-07
+## Completed unchanged-server U (2026-10-07)
 
 The six-hour run completed at 06:12:42 UTC with 650 cycles and 4,551 arithmetic
 responses. No transport/failure event was recorded, but the quality gate failed:
@@ -187,11 +184,11 @@ test reads `LAGUNA_TOKENIZER_JSON` explicitly and downloads nothing. Its scoped
 server test passes. Binary Clippy passes; broad Metal `--tests` Clippy remains
 blocked by the existing CUDA-only integration helper.
 
-## Short JSON EOS correction — 2026-10-07
+## Short JSON EOS correction (2026-10-07)
 
 A source-bound sync/no-mix diagnostic baseline reproduced all six failures.
 Its actual streamed content IDs `[6003,9295,1034,290,89,162]` produced
-`{"answer": 4}`; server logs then showed EOS24 suppressed solely by the
+`{"answer": 4}`; server logs then showed EOS 24 suppressed solely by the
 post-think tool guard, while the grammar permitted stopping. All five sequence
 construction paths had treated any attached grammar as a tool request, including
 JSON response-format grammars. The correction requires declared tools for the
@@ -204,26 +201,26 @@ live checks pass: JSON streaming with those same six content IDs and `stop`, a
 forced tool call, its tool-result response, and JSON with declared tools but
 `tool_choice:none`. Three tests invoke the actual decoder and preserve the
 incomplete-grammar, minimum-token, real-tool, legacy and sticky-tool guards;
-the old classification is a failing control. Independent review found no blocker.
+the old classification is a failing control.
 
 Three fixed-stream diagnostic observations separate content completion from
-HTTP completion: complete JSON at 399–415ms, final finish event at 418–435ms,
-and 18.5–19.5ms between them. These client-boundary observations are not kernel
+HTTP completion: complete JSON at 399–415 ms, final finish event at 418–435 ms,
+and 18.5–19.5 ms between them. These client-boundary observations are not kernel
 throughput qualification. The original async six-hour run, arithmetic-format
 failures and initial coding failures remain unchanged evidence. Formatting and
 scoped tests pass; fresh scoped Clippy attempts are blocked by existing Metal
-GPU-runtime lints or Linux-specific storage symbols on macOS, with logs retained.
+GPU-runtime lints or Linux-specific storage symbols on macOS.
 
 The same fixed binary also passes all six schema cases and all four additional
 JSON/tool/SSE controls on the original default **async** scheduler route, with
 both diagnostic no-mix/Q12 levers absent. Thus the correction is not limited to
 the capture route. A later preserved-old-binary A2 observation completes the
-same six JSON content IDs at 399–429ms but waits another 2.409–2.413s before
-`length`; fixed observations finish after 18.5–19.5ms. The eliminated drain is
+same six JSON content IDs at 399–429 ms but waits another 2.409–2.413 s before
+`length`; fixed observations finish after 18.5–19.5 ms. The eliminated drain is
 separate from kernel decode throughput. Streamed content counts and reported
 usage remain distinct: six content IDs; fixed usage also accounts for completion.
 
-## Live bounded capture A/B/A2 — 2026-10-07
+## Live bounded capture A/B/A2 (2026-10-07)
 
 The frozen diagnostic binary/source is identical in A, B and A2; only B enables
 the explicit capture plan. Each phase runs 66 requests. Exact integer-format

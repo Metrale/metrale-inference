@@ -1,9 +1,9 @@
 # Laguna XS 2.1 native qualification
 
 This is the cumulative bring-up record for `poolside/Laguna-XS-2.1-NVFP4`.
-Add fixes, regression tests and qualification evidence to the same model branch
-and draft PR until acceptance. Current status: native single-request smoke passed;
-GPU batching is blocked by a reproduced correctness failure. No certification pass.
+The batched-decode correctness failure below is fixed ("Q/K dispatch correction");
+later evidence is in the linked quality, coding and performance documents. No
+certification pass.
 
 ## Frozen baseline, October 6, 2026
 
@@ -16,8 +16,7 @@ GPU batching is blocked by a reproduced correctness failure. No certification pa
   --bin met --no-default-features --features cuda,otlp -j4`.
 - Kernel check: 296 lookups, zero unresolved, 35 expected absent;
   kernel set `a903f598945f`.
-- Checkpoint: 17 files, 21,596,075,520 bytes, separately SHA-256 verified
-  against a TrueNAS backup. Active weights retained. Backup is not runtime evidence.
+- Checkpoint: 17 files, 21,596,075,520 bytes, separately SHA-256 verified.
 
 ## Reproduced failure and useful control
 
@@ -50,22 +49,18 @@ completion passed. The first six-hour campaign stopped at its first C2 failure
 1/2/4, but stopped during cycle 10 at concurrency 4: the model returned
 `33 + 7 = 40\n\n40` when the exact-format oracle required `40`. The arithmetic
 was correct; this is an instruction/output-format failure, distinct from the
-repeated-digit batching failure. Neither soak completed. Preserve both failures
-and test arithmetic correctness and instruction compliance separately in the next run.
+repeated-digit batching failure. Neither soak completed; later runs score
+arithmetic correctness and instruction compliance separately.
 
-## Remaining acceptance
+## Acceptance status
 
-- [x] Locate the Q/K normalization dispatch defect with alternating failure/pass controls.
-- [ ] Complete intermediate-output parity against a pinned reference.
-- [ ] Review existing shared NVFP4 fixes before introducing another kernel change.
-- [x] Add focused dispatch regressions and reproduce the baseline/fixed GPU response difference.
-      Broader live intermediate parity remains open.
-- [ ] Repeat sequential and concurrent generation, tools, streaming and cancellation.
-- [ ] Complete unrestricted soak, numerical parity and required benchmark certification.
-- [ ] Record throughput, latency, memory and energy with exact hardware/build identity.
+- Done: the Q/K normalization dispatch defect, located with alternating
+  failure/pass controls, with focused dispatch regressions and the baseline/fixed
+  GPU response difference reproduced.
+- Open: intermediate-output parity against a pinned reference, unrestricted soak,
+  required benchmark certification, and energy with exact hardware/build identity.
 
-All correctness fixes and their evidence stay on this model PR. A workaround or
-a reference-engine result must not be described as native batched qualification.
+A workaround or a reference-engine result is not native batched qualification.
 
 ## Q/K dispatch correction, October 6
 
@@ -77,36 +72,34 @@ not helped. This isolates a normalization-policy mismatch.
 
 Commit `d9d9879` prevents plain-weight models from selecting the additive strided
 kernel. Existing additive-model admission is unchanged; Laguna uses the existing
-per-sequence vanilla norm. Two focused dispatch tests passed on Spark2. The rebuilt
+per-sequence vanilla norm. Two focused dispatch tests passed on the GB10 host. The rebuilt
 CUDA server, with no diagnostic environment override and GPU batch limit 4, passed
 all 12 original reproducer responses, including six concurrent ones. Source was
-baseline `3e954ac` plus this guard and BF16 diagnostic correction `b59ab41`; the
-exact patch and binary digest were retained with operational evidence.
+baseline `3e954ac` plus this guard and BF16 diagnostic correction `b59ab41`.
 
 A new six-hour batch-four campaign exercises arithmetic, tools, SSE and HTTP
 concurrency 1/2/4. It retains full arithmetic responses, reports format failures
 separately, and stops on wrong integer-only answers or abnormal termination.
 Explanatory responses remain numerically unscored and fail the format check;
-they cannot turn the whole campaign into a pass. Completion, full numerical parity and speed qualification remain open.
+they cannot turn the whole campaign into a pass. Its completed result is in
+[quality diagnostics](laguna-xs-2.1-quality-diagnostics.md).
 
 The source guard fixes correctness through an existing scalar fallback; no speed
-improvement is claimed. A matching parameterized strided vanilla kernel remains
-a possible optimization after profiling and parity tests.
+improvement is claimed. A strided vanilla-norm kernel would be a separate
+optimization.
 
 Version-three soak snapshot through cycle 302: 2,121 responses in completed
 request groups, with 1,353 exact-format answers and 768 explanatory responses
 classified `unscored_format`. Initial arithmetic, forced tool round-trip and
-streaming checks passed. The process remains running; this snapshot is neither
-a completed soak nor clean quality qualification.
+streaming checks passed. This intermediate snapshot is neither a completed soak
+nor clean quality qualification.
 
 A read-only replay found eight (input, concurrency) groups with multiple distinct
 response texts, all at concurrency two or four. No single-request variation was
 observed in this snapshot. Batch composition/order differs across groups, so this
 does not establish a race or numerical cause. Snapshot SHA-256:
 `c89ed7074e97930f48a27242913a0562c3e02406b22a93ea3e310e65228b5612`.
-A controlled follow-up will repeat identical, mixed and permuted request groups
-after the soak, preserving full responses and explicit server identity. Client
-concurrency alone does not prove scheduler batch membership.
+Client concurrency alone does not prove scheduler batch membership.
 
 A separate constructed GB10 kernel experiment confirmed the policy distinction:
 for two rows, two 128-wide heads, weights -1/0/1 and all-one inputs, the unchanged
