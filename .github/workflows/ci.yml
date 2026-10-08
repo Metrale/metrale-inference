@@ -578,6 +578,7 @@ jobs:
           run "No block_on under tui/ or recipe/"  bash .github/scripts/check-no-block-on.sh
           run "CLI booleans are presence flags" bash .github/scripts/check-cli-booleans.sh
           run "Merge-ancestry guard self-test" bash scripts/check_merge_ancestry_test.sh
+          run "strix-hip setup pins match the doc" python3 scripts/strix-hip/pins_test.py
           run "the certification self-test is still wired" python3 .github/scripts/assert-selftest-wired.py
           run "comment-ttl configuration"     python3 .github/scripts/comment-ttl-config.py check
 
