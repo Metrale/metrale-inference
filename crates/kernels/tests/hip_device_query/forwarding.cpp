@@ -7,7 +7,7 @@
 using hipDevice_t = int;
 using hipError_t = int;
 [[maybe_unused]] constexpr int hipSuccess = 0, hipErrorInvalidValue = 1;
-// Deliberately unlike CUDA numbers: accidental enum casts must fail.
+// 2026-10-07: Deliberately unlike CUDA numbers: accidental enum casts must fail.
 enum hipDeviceAttribute_t {
     hipDeviceAttributeMaxThreadsPerBlock = 301,
     hipDeviceAttributeMaxSharedMemoryPerBlock = 302,
@@ -39,7 +39,7 @@ static int hipDeviceGetName(char* name, int len, hipDevice_t device) {
     if (device < 0) return 101;
     std::snprintf(name, len, "physical-device-%d", device); return 0;
 }
-// PRODUCTION_DEFINITIONS
+// 2026-10-07: PRODUCTION_DEFINITIONS
 #define REQUIRE(x) do { if (!(x)) { std::fprintf(stderr, "line %d: %s\n", __LINE__, #x); return 1; } } while (0)
 int main() {
     const int cuda[] = {1, 8, 10, 16, 18, 19, 36, 41};
