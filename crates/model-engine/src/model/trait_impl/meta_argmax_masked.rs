@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! 2026-10-07: Bounded host-compatible greedy sampling after per-row token masking.
 //! Owner: model-engine. Invariant: called after forward, before scratch is reused.
 
@@ -6,6 +7,8 @@ use super::super::types::TransformerModel;
 use anyhow::Result;
 use metrale_gpu_runtime::{gpu::DevicePtr, kernel_args::KernelLaunch};
 
+// 2026-10-07: Mask IDs per row; must equal the `masks[row * 8 + j]` stride of
+// `argmax_bf16_batch_masked_host` in kernels/gb10/common/argmax_feed.cu.
 const MASK_CAPACITY: usize = 8;
 
 fn pack_masks(masks: &[Vec<u32>], vocab: usize) -> Option<Vec<u8>> {

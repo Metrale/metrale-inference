@@ -19,8 +19,8 @@
 //   c++ -std=c++17 -O2 -ffp-contract=off scripts/laguna/packed_int_gemv_host_check.cpp \
 //       -o /tmp/packed_int_check && /tmp/packed_int_check
 //
-// TODO(gfx1151): the GPU gate launches packed_int_gemv.cu with the same inputs and compares
-// device output bytes with this emulation (expected bit-identical) and the reference.
+// On gfx1151 the device output of packed_int_gemv.cu equals this emulation bit for bit
+// (docs/laguna-xs-2.1-strix-int4.md, GPU gate 2).
 
 #include "../../kernels/strix-hip/laguna-xs-2.1/int4/packed_int_dequant.cuh"
 

@@ -33,14 +33,13 @@ fn pinned_laguna_json_completion_stop_masks() {
             .with_stop_tokens(&[2, 24]);
         for &id in &ids {
             state.fill_bitmask();
-            assert!(state.is_token_allowed(id), "{text:?}: token{id} refused");
+            assert!(state.is_token_allowed(id), "{text:?}: token {id} refused");
             assert!(
                 state.accept_token(id),
-                "{text:?}: token{id} did not advance"
+                "{text:?}: token {id} did not advance"
             );
         }
         let legal = state.stop_legal(&[2, 24]);
-        println!("text={text:?} ids={ids:?} stop_legal={legal}");
         assert_eq!(legal, complete, "{text:?}");
         assert_eq!(grammar_blocks_stop(Some(&mut state), &[2, 24]), !complete);
     }

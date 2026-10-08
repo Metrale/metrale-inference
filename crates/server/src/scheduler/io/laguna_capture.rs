@@ -94,7 +94,7 @@ impl Plan {
                     .generated_positions
                     .iter()
                     .all(|n| (1..=128).contains(n)),
-            "positions 1..128, at most16"
+            "positions 1..128, at most 16"
         );
         Ok(())
     }
@@ -235,7 +235,7 @@ impl Capture {
     }
 }
 
-/// 2026-10-07: Read at most32KiB plus one refusal byte, even if a file grows after metadata.
+/// 2026-10-07: Read at most 32 KiB plus one refusal byte, even if a file grows after metadata.
 pub fn read_plan(reader: impl Read) -> Result<Plan> {
     let mut bytes = Vec::with_capacity(32769);
     reader.take(32769).read_to_end(&mut bytes)?;
@@ -286,7 +286,7 @@ pub fn validate_mode(
 ) -> Result<()> {
     ensure!(
         sync && ranks == 1 && (1..=4).contains(&batch) && !spec && !codispatch && no_mix,
-        "Laguna capture requires explicit sync, single rank, batch1..4, no speculation/codispatch, METRALE_BISECT_NO_MIX=1 plus METRALE_BISECT_Q12_DISABLE=1"
+        "Laguna capture requires explicit sync, single rank, batch 1..4, no speculation/codispatch, METRALE_BISECT_NO_MIX=1 plus METRALE_BISECT_Q12_DISABLE=1"
     );
     Ok(())
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 #![cfg(feature = "laguna-diagnostic-capture")]
+// 2026-10-07: The test drives only part of the capture module.
 #[allow(dead_code)]
 #[path = "../src/scheduler/io/laguna_capture.rs"]
 mod capture;

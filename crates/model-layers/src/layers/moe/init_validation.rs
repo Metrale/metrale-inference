@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! 2026-10-07: Routing capacity checks run before allocation or kernel lookup.
 pub(super) fn validate_routing(top_k: usize, num_experts: usize) -> anyhow::Result<()> {
     anyhow::ensure!(

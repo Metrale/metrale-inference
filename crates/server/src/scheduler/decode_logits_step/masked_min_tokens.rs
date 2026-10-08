@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! 2026-10-07: Opt-in host-equivalent masks for a greedy minimum-token batch.
 //! Owner: scheduler. Invariant: every other logit transformation stays on the host.
 

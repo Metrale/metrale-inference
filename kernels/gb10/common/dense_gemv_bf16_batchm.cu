@@ -33,7 +33,7 @@
 // Shared memory: As is MAX_M * 64 * 16 B = 16 KB, plus 512 B for the fold.
 
 // 2026-10-07: Capacity is a compile-time family parameter; each row keeps the
-// original reduction order. The legacy entry remains capacity16.
+// original reduction order. The legacy entry remains capacity 16.
 
 template<unsigned MAX_M>
 __device__ __forceinline__ void dense_gemv_bf16_batchm_impl(

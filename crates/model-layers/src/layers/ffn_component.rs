@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-07: `FfnComponent`, a layer's FFN (MoE, dense or none), and its per-pass dispatch.
-//! Moved unchanged out of `layers/mod.rs`, which had reached the 500-line cap.
+//! Moved out of `layers/mod.rs`, which had reached the 500-line cap, and extended with the
+//! `PackedIntMoe` variant.
 //!
 //! Owner: model-layers.
 //! Invariants: none beyond the types.

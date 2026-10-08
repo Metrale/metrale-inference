@@ -236,7 +236,7 @@ impl Qwen3AttentionLayer {
             qkv_buf,
             ..
         } = *c;
-        // 2026-09-25: One launch per norm for all n rows: a row's heads are `hd`
+        // 2026-10-07: One launch per norm for all n rows: a row's heads are `hd`
         // apart and rows are `per_seq_qkv` apart, the (rows_per_group,
         // num_groups, row_stride) shape `rms_norm_strided` takes. Its kernel
         // header (`rms_norm.cu`) states it is bit-identical to additive `rms_norm`,

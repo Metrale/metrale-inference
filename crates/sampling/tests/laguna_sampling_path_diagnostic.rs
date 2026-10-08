@@ -18,7 +18,7 @@ fn host(row: &[f32]) -> u32 {
 #[test]
 fn logit_readback_route_is_not_transparent_at_exact_bf16_ties() {
     // 2026-10-07: Exactly BF16-representable inputs. The plain kernel reference simulates
-    // the checked-in1024-thread scan/tree, while production host sampling runs.
+    // the checked-in 1024-thread scan/tree, while production host sampling picks the last maximum.
     let row = [2.0, 2.0, -1.0];
     assert_eq!(plain_kernel_argmax(&row), 0);
     assert_eq!(host(&row), 1);

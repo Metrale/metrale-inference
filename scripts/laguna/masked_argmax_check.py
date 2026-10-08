@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
+
 # 2026-10-07: Run against masked_argmax_check.cu compiled as probe.so.
 import torch, ctypes, json, random, hashlib
 from pathlib import Path
