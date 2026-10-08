@@ -106,6 +106,8 @@ impl Decoder {
 
     /// 2026-10-06: Seed an unfinished header already present in the prompt, without delimiters.
     /// For a channel-bearing prefix, supply subsequent Channel/Text events explicitly.
+    /// Test-only: serving seeds the header from prompt IDs (`ByteTokenizer::assistant_stream`).
+    #[cfg(test)]
     pub fn seed_assistant_header(&mut self, prefix: &str) -> Result<(), &'static str> {
         self.push(Token::Start)?;
         self.push(Token::Text(prefix))?;

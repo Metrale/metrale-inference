@@ -3,6 +3,14 @@
 use super::stream::{ByteTokenizer, Stream};
 use super::{Decoder, Ending};
 
+fn text_choice(
+    tokenizer: &ByteTokenizer,
+    prompt: &[u32],
+    output: &[u32],
+) -> Result<String, &'static str> {
+    super::api::text_response(tokenizer, prompt, output).map(|r| r.content)
+}
+
 const FIXTURE: &str = include_str!("fixtures/gpt-oss-byte-vocab.json");
 
 fn ids(text: &str) -> Vec<u32> {
@@ -169,16 +177,16 @@ fn blocking_final_is_separated_from_analysis_and_requires_terminal() {
     ]
     .concat();
     assert_eq!(
-        super::api::text_choice(&tokenizer, &prompt, &output).unwrap(),
+        text_choice(&tokenizer, &prompt, &output).unwrap(),
         "4 <|return|>"
     );
-    assert!(super::api::text_choice(&tokenizer, &prompt, &output[..output.len() - 1]).is_err());
+    assert!(text_choice(&tokenizer, &prompt, &output[..output.len() - 1]).is_err());
     let parsed = super::api::text_response(&tokenizer, &prompt, &output).unwrap();
     assert_eq!(parsed.reasoning_tokens, ids("private").len() as u32);
     assert!(parsed.reasoning_tokens < output.len() as u32);
     let mut trailing = output.clone();
     trailing.extend(ids("unexpected"));
-    assert!(super::api::text_choice(&tokenizer, &prompt, &trailing).is_err());
+    assert!(text_choice(&tokenizer, &prompt, &trailing).is_err());
 }
 
 #[test]
@@ -192,15 +200,15 @@ fn blocking_refuses_tool_handoff_and_invalid_prompt_prefix() {
         vec![200012],
     ]
     .concat();
-    assert!(super::api::text_choice(&tokenizer, &prompt, &tool).is_err());
+    assert!(text_choice(&tokenizer, &prompt, &tool).is_err());
     let output = [vec![200008], ids("ok"), vec![200002]].concat();
     let user_prefix = [vec![200006], ids("user")].concat();
-    assert!(super::api::text_choice(&tokenizer, &user_prefix, &output).is_err());
+    assert!(text_choice(&tokenizer, &user_prefix, &output).is_err());
     let body_prefix = [prompt.clone(), vec![200008]].concat();
-    assert!(super::api::text_choice(&tokenizer, &body_prefix, &output).is_err());
+    assert!(text_choice(&tokenizer, &body_prefix, &output).is_err());
     let final_prefix = [prompt, vec![200005], ids("final")].concat();
     assert_eq!(
-        super::api::text_choice(&tokenizer, &final_prefix, &output).unwrap(),
+        text_choice(&tokenizer, &final_prefix, &output).unwrap(),
         "ok"
     );
 }

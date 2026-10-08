@@ -8,14 +8,6 @@ pub struct TextResponse {
     pub reasoning_tokens: u32,
 }
 
-pub fn text_choice(
-    tokenizer: &ByteTokenizer,
-    prompt: &[u32],
-    output: &[u32],
-) -> Result<String, &'static str> {
-    text_response(tokenizer, prompt, output).map(|r| r.content)
-}
-
 pub fn text_response(
     tokenizer: &ByteTokenizer,
     prompt: &[u32],
