@@ -30,6 +30,7 @@ mod handle_token;
 mod state;
 mod strip;
 mod token_ids;
+mod tool_dispatch;
 mod tool_handlers;
 
 use axum::http::StatusCode;
@@ -194,6 +195,10 @@ pub(crate) async fn run_chat_stream(
     let prompt_vocab: Arc<std::collections::HashSet<String>> =
         Arc::new(std::collections::HashSet::new());
 
+    let call_policy = state
+        .tool_call_parser
+        .as_ref()
+        .map_or(tool_parser::CallPolicy::Repairing, |p| p.call_policy());
     let ctx = StreamCtx {
         state: state.clone(),
         model: model_name.clone(),
@@ -209,6 +214,7 @@ pub(crate) async fn run_chat_stream(
             .tool_call_parser
             .as_ref()
             .is_some_and(|p| p.wants_typed_arguments()),
+        call_policy,
         max_tool_calls_per_response,
         req_return_token_ids,
         req_ctx,
@@ -237,6 +243,10 @@ pub(crate) async fn run_chat_stream(
                 .as_ref()
                 .is_some_and(|p| p.promotes_bare_call_names()),
         );
+        detector.set_fail_closed(matches!(
+            call_policy,
+            tool_parser::CallPolicy::FailClosed { .. }
+        ));
     }
 
     // 2026-09-26: `terminated`: a stream the scheduler drops without Done/Error still

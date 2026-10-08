@@ -18,7 +18,7 @@ mistral     = "mistral"
 gemma4      = "gemma4"
 minimax_m2  = "minimax_xml"
 laguna      = "poolside_v1"
-glm5_next   = "poolside_v1"
+glm5_next   = "glm47"
 deepseek_v4 = "deepseek_v4"
 deepseek_v41 = "deepseek_v4"
 

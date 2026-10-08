@@ -128,6 +128,7 @@ pub(crate) const TOOL_CALL_PARSERS: &[&str] = &[
     "minimax_xml",
     "bare_json",
     "poolside_v1",
+    "glm47",
 ];
 
 /// 2026-09-27: `--expert-quantization`: a clap value enum over the model layer's tiers

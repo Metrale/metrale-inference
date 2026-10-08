@@ -15,10 +15,7 @@ use super::super::sanitizer::sanitize_content_chunk;
 use super::super::stream_guards::flush_content_sanitizer;
 use super::ctx::StreamCtx;
 use super::state::StreamState;
-use super::tool_handlers::{
-    handle_complete_tool_call, handle_tool_call_args_fragment, handle_tool_call_delta,
-    handle_tool_call_end, handle_tool_call_start,
-};
+use super::tool_dispatch::dispatch_tool_output;
 
 type DeltaVec = Vec<StreamDelta>;
 
@@ -49,40 +46,19 @@ pub(super) fn handle_done(
             if let Some(det) = state.detector.as_mut() {
                 let outputs = det.process(&tail);
                 for output in outputs {
-                    match output {
-                        tool_parser::DetectorOutput::Content(text) => {
-                            let sanitized = sanitize_content_chunk(
-                                &text,
-                                &mut state.tag_scan_buf,
-                                &mut state.suppressing_param_leak,
-                                &mut state.inside_envelope,
-                                &ctx.leak_markers,
-                            );
-                            if !sanitized.is_empty() {
-                                deltas.push(StreamDelta::Content {
-                                    text: sanitized,
-                                    token_ids: Vec::new(),
-                                });
-                            }
-                        }
-                        tool_parser::DetectorOutput::ToolCall(mut tc, tc_idx) => {
-                            handle_complete_tool_call(state, ctx, &mut tc, tc_idx, &mut deltas);
-                        }
-                        tool_parser::DetectorOutput::ToolCallStart {
-                            id: tc_id,
-                            name,
-                            idx,
-                        } => {
-                            handle_tool_call_start(state, ctx, tc_id, name, idx, &mut deltas);
-                        }
-                        tool_parser::DetectorOutput::ToolCallDelta { args, idx } => {
-                            handle_tool_call_delta(state, ctx, args, idx, &mut deltas);
-                        }
-                        tool_parser::DetectorOutput::ToolCallArgsFragment { fragment, idx } => {
-                            handle_tool_call_args_fragment(state, ctx, fragment, idx, &mut deltas);
-                        }
-                        tool_parser::DetectorOutput::ToolCallEnd { idx } => {
-                            handle_tool_call_end(state, ctx, idx);
+                    if let Some(text) = dispatch_tool_output(state, ctx, output, &mut deltas) {
+                        let sanitized = sanitize_content_chunk(
+                            &text,
+                            &mut state.tag_scan_buf,
+                            &mut state.suppressing_param_leak,
+                            &mut state.inside_envelope,
+                            &ctx.leak_markers,
+                        );
+                        if !sanitized.is_empty() {
+                            deltas.push(StreamDelta::Content {
+                                text: sanitized,
+                                token_ids: Vec::new(),
+                            });
                         }
                     }
                 }
@@ -113,40 +89,19 @@ pub(super) fn handle_done(
             det.flush()
         };
         for output in outputs {
-            match output {
-                tool_parser::DetectorOutput::Content(text) => {
-                    let sanitized = sanitize_content_chunk(
-                        &text,
-                        &mut state.tag_scan_buf,
-                        &mut state.suppressing_param_leak,
-                        &mut state.inside_envelope,
-                        &ctx.leak_markers,
-                    );
-                    if !sanitized.is_empty() {
-                        deltas.push(StreamDelta::Content {
-                            text: sanitized,
-                            token_ids: state.take_ids_if(ctx.req_return_token_ids),
-                        });
-                    }
-                }
-                tool_parser::DetectorOutput::ToolCall(mut tc, tc_idx) => {
-                    handle_complete_tool_call(state, ctx, &mut tc, tc_idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallStart {
-                    id: tc_id,
-                    name,
-                    idx,
-                } => {
-                    handle_tool_call_start(state, ctx, tc_id, name, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallDelta { args, idx } => {
-                    handle_tool_call_delta(state, ctx, args, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallArgsFragment { fragment, idx } => {
-                    handle_tool_call_args_fragment(state, ctx, fragment, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallEnd { idx } => {
-                    handle_tool_call_end(state, ctx, idx);
+            if let Some(text) = dispatch_tool_output(state, ctx, output, &mut deltas) {
+                let sanitized = sanitize_content_chunk(
+                    &text,
+                    &mut state.tag_scan_buf,
+                    &mut state.suppressing_param_leak,
+                    &mut state.inside_envelope,
+                    &ctx.leak_markers,
+                );
+                if !sanitized.is_empty() {
+                    deltas.push(StreamDelta::Content {
+                        text: sanitized,
+                        token_ids: state.take_ids_if(ctx.req_return_token_ids),
+                    });
                 }
             }
         }

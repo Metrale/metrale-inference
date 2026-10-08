@@ -337,8 +337,8 @@ pub struct ServeSchedulingArgs {
 
     /// Tool call parser format. Enables OpenAI-compatible tool calling.
     /// Supported: "hermes", "qwen3_coder", "qwen3_xml", "gemma4", "mistral",
-    /// "minimax_xml", "bare_json", "poolside_v1". See the `FromStr for
-    /// ToolCallFormat` in tool_parser.rs.
+    /// "minimax_xml", "bare_json", "poolside_v1", "glm47". See the `FromStr
+    /// for ToolCallFormat` in tool_parser.rs.
     /// Unset: MODEL.toml `[behavior].tool_call_parser`, else the mapping for the
     /// model's `model_type` in `tool_defaults.toml`, else tool calling is off.
     #[arg(long, value_name = "FORMAT")]

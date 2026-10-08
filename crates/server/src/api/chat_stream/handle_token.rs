@@ -37,10 +37,7 @@ fn watchdogs_disabled() -> bool {
 use super::strip::{
     maybe_log_decode_trace, strip_all_preserving_boundary, strip_preserving_boundary,
 };
-use super::tool_handlers::{
-    handle_complete_tool_call, handle_tool_call_args_fragment, handle_tool_call_delta,
-    handle_tool_call_end, handle_tool_call_start,
-};
+use super::tool_dispatch::{dispatch_tool_output, push_keepalive_if_due};
 
 mod detector_content;
 #[cfg(test)]
@@ -448,34 +445,14 @@ fn handle_token_inner(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -> Del
             det.process(&delta)
         };
         for output in outputs {
-            match output {
-                tool_parser::DetectorOutput::Content(text) => {
-                    if let Some(events_out) = detector_content_arm(state, ctx, &text) {
-                        deltas.extend(events_out);
-                        return deltas;
-                    }
-                }
-                tool_parser::DetectorOutput::ToolCall(mut tc, tc_idx) => {
-                    handle_complete_tool_call(state, ctx, &mut tc, tc_idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallStart {
-                    id: tc_id,
-                    name,
-                    idx,
-                } => {
-                    handle_tool_call_start(state, ctx, tc_id, name, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallDelta { args, idx } => {
-                    handle_tool_call_delta(state, ctx, args, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallArgsFragment { fragment, idx } => {
-                    handle_tool_call_args_fragment(state, ctx, fragment, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallEnd { idx } => {
-                    handle_tool_call_end(state, ctx, idx);
-                }
+            if let Some(text) = dispatch_tool_output(state, ctx, output, &mut deltas)
+                && let Some(events_out) = detector_content_arm(state, ctx, &text)
+            {
+                deltas.extend(events_out);
+                return deltas;
             }
         }
+        push_keepalive_if_due(state, ctx, &mut deltas);
     } else {
         let sanitized = sanitize_content_chunk(
             &delta,
