@@ -52,7 +52,7 @@ lab_promoted = []
 promoted = []
 zero_day_ttbp_h = 0.0
 evidence = "docs/qci/gemma-nemotron-working-log.md"
-notes = "supplement to Strix. Closed files: gemma-4-26B-A4B-it-UD-Q4_K_M.gguf 16947541728 bytes, mmproj-F16.gguf 1193058784 bytes. Reference-row llama-completion ctx 512 ngl 99 fit off: nvidia-smi memory.used peak 18080 MiB, baseline 1272 MiB. Two later runs exited 0 with non-empty completions; memory.used peaks 17580 and 17529 MiB returned to 1403 and 1359 MiB. Device-free receipt still prints VRAM_UNMEASURED. Native row unmeasured. PARITY_UNMEASURED, COHERENCE_UNMEASURED, LICENSE_GOVERNING_TEXT_UNDECIDED, NATIVE_GEMMA4_CIRCUIT_REFUSED. rtx-3090 is not a kernels/DEVICES.toml id. No kernels/ampere on this tree."
+notes = "supplement to Strix. Closed files: gemma-4-26B-A4B-it-UD-Q4_K_M.gguf 16947541728 bytes, mmproj-F16.gguf 1193058784 bytes. Reference-row llama-completion ctx 512 ngl 99 fit off: nvidia-smi memory.used peak 18080 MiB, baseline 1272 MiB. Two later runs exited 0 with non-empty completions; memory.used peaks 17580 and 17529 MiB returned to 1403 and 1359 MiB. Device-free receipt still prints VRAM_UNMEASURED. Native row unmeasured. PARITY_UNMEASURED, COHERENCE_UNMEASURED, NATIVE_GEMMA4_CIRCUIT_REFUSED. Governing license is provisional apache-2.0 as of 2026-10-08, reversible; the Gemma 4 license link remains on the file. rtx-3090 is not a kernels/DEVICES.toml id. No kernels/ampere on this tree."
 
 [[combo]]
 device = "strix-halo"

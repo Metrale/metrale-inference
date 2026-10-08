@@ -39,7 +39,7 @@ qci:
   quantization: UD-Q4_K_M
   license_tag: apache-2.0
   license_link: https://ai.google.dev/gemma/docs/gemma_4_license
-  license_status: BLOCKER LICENSE_GOVERNING_TEXT_UNDECIDED
+  license_status: provisional apache-2.0; owner decision 2026-10-08; reversible; Gemma 4 license link remains on the file
   concurrency: "1"
   context: modest
   max_images: "4"

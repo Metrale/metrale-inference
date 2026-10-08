@@ -60,7 +60,8 @@ Concurrency 1. Context modest (`max_model_len` 8192, `max_images` 4,
 `max_image_bytes` 2000000, `max_text_chars` 8192 on the recipe).
 HF license tag `apache-2.0`. Card link
 `https://ai.google.dev/gemma/docs/gemma_4_license`.
-Blocker: `LICENSE_GOVERNING_TEXT_UNDECIDED`.
+On 2026-10-08 the issue owner chose `apache-2.0` as the working grant.
+That choice is reversible. The Gemma 4 license link remains on the file.
 Pipeline tag on the card: `image-text-to-text`. That is a card fact, not a
 native serve result.
 
@@ -94,7 +95,7 @@ Distinct from `NVIDIA-Nemotron-3-Nano` and from the H100 and H200 Nano numbers.
 - `ENGINE_NOT_BUILT` — pass `--runtime-commit` only for a binary you built.
 - `TARGET_NOT_MEASURED` — `--hardware strix-halo` with no Strix log.
 - `TOPOLOGY_NOT_IN_ISSUE` — any other hardware id. Still a receipt, still not a claim.
-- `LICENSE_GOVERNING_TEXT_UNDECIDED` — Gemma only, until a product decision names the grant.
+- `LICENSE_GOVERNING_TEXT_UNDECIDED` — cleared for Gemma on 2026-10-08. The owner chose provisional `apache-2.0`. The Gemma 4 license link remains on the file, and the choice can be changed.
 - `NATIVE_GEMMA4_CIRCUIT_REFUSED`, `NO_VISION_LOADER`, `NO_AMPERE_KERNEL_CLASS`.
 - `NOT_THE_NANO_BENCHMARK`, `NATIVE_GGUF_Q4_0_UNSERVED`.
   `TEMPLATE_BYTE_IDENTITY_UNMEASURED` was cleared by the git-blob comparison above.
@@ -343,8 +344,9 @@ Gemma `gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`: `general.architecture=gemma4`,
 `tokenizer.ggml.model=gemma4`, `tokenizer.ggml.bos_token_id=2`,
 `tokenizer.ggml.eos_token_id=106`, `tokenizer.chat_template` present
 (18924 bytes). `general.license.name` is absent. The apache-2.0 tag and
-the Gemma 4 license link are different grants, so
-`LICENSE_GOVERNING_TEXT_UNDECIDED` stays.
+the Gemma 4 license link are different grants. The owner chose
+provisional `apache-2.0` on 2026-10-08, so
+`LICENSE_GOVERNING_TEXT_UNDECIDED` is cleared. The link stays on the file.
 
 `mmproj-F16.gguf`: `general.architecture=clip`, `general.type=mmproj`,
 `general.file_type=1`, `general.license=apache-2.0`, and the same Gemma 4

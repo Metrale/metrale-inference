@@ -356,6 +356,8 @@ mod tests {
         assert!(text.contains("pin.artifact_bytes: 16947541728"));
         assert!(text.contains("pin.vision_artifact: mmproj-F16.gguf"));
         assert!(text.contains("pin.vision_artifact_bytes: 1193058784"));
+        assert!(text.contains("pin.license_status: provisional apache-2.0"));
+        assert!(!text.contains("LICENSE_GOVERNING_TEXT_UNDECIDED"));
         assert!(text.contains("topology.role: supplemental"));
         assert!(
             text.contains("supplement rtx-3090") || text.contains("rtx-3090 results supplement")
