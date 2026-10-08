@@ -41,6 +41,16 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-08: True when this layer's batched multi-sequence decode needs no per-sequence
+    /// arm for a sparse-index selection: it has none, or it selects each row over that row's
+    /// own sequence (GLM-5.3's DSA mixer). The model skips its mHC + sparse-index
+    /// per-sequence rule (`hc_perseq` in `decode_a2.rs`, `hc_qsa_perseq` in `decode_b.rs`)
+    /// only when every layer returns true, so the default false keeps that rule for every
+    /// model that does not opt in.
+    fn decode_multi_seq_selects_index_per_row(&self) -> bool {
+        false
+    }
+
     /// 2026-09-25: True when this layer keeps per-sequence state that lowering the
     /// sequence's KV cursor does not rewind, such as a monotonic cache count or an n-gram
     /// history. The model ORs it across layers, and the scheduler's `rollback_to_boundary`
