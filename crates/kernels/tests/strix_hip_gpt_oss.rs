@@ -7,7 +7,9 @@
 //! Invariants checked (host-only; nothing here compiles or launches a kernel):
 //! - Every kernel lookup in the GPT-OSS runtime either resolves to an entry
 //!   point the target compiles, under the module name the build gives it, or
-//!   is declared in MODEL.toml `[expected_absent]`; no declaration is stale.
+//!   is declared in MODEL.toml `[expected_absent]`; no declaration is stale
+//!   (a GPT runtime lookup, or a model-level lookup whose module and entry
+//!   literals appear together in one workspace source file).
 //! - Paged decode attention is the HDIM 64 wrapper, as a declared shadow.
 //! - Only `mxfp4` resolves; other quants refuse the common-only fallback.
 //! - No resolved source defines the strix-hip/common no-op stub entry points.
@@ -152,6 +154,38 @@ fn runtime_lookups() -> BTreeSet<(String, String)> {
     out
 }
 
+/// 2026-10-07: Whether `module` and `kernel` both appear as string literals in one
+/// `crates/*/src` Rust file. The boot gate also audits model-level optional lookups
+/// (`try_kernel`, kernel tables, per-module closures) outside the GPT runtime; the first
+/// gfx1151 `--check-kernels` run reported 18 of them. A declaration naming no such pair
+/// anywhere is stale.
+fn declared_in_workspace(module: &str, kernel: &str) -> bool {
+    fn visit(dir: &Path, hit: &mut dyn FnMut(&str) -> bool) -> bool {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() && visit(&path, hit) {
+                return true;
+            }
+            if path.extension().is_some_and(|e| e == "rs")
+                && std::fs::read_to_string(&path).is_ok_and(|t| hit(&t))
+            {
+                return true;
+            }
+        }
+        false
+    }
+    let (m, k) = (format!("\"{module}\""), format!("\"{kernel}\""));
+    let crates = root().join("crates");
+    std::fs::read_dir(&crates).unwrap().flatten().any(|c| {
+        visit(&c.path().join("src"), &mut |t: &str| {
+            t.contains(&m) && t.contains(&k)
+        })
+    })
+}
+
 fn expected_absent() -> BTreeSet<(String, String)> {
     let path = root().join("kernels/strix-hip/gpt-oss-20b/MODEL.toml");
     let manifest: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
@@ -186,12 +220,30 @@ fn every_gpt_runtime_lookup_resolves_or_is_declared_absent() {
         .collect();
     assert!(missing.is_empty(), "unresolved, undeclared: {missing:?}");
     for declared in &absent {
-        assert!(lookups.contains(declared), "stale declaration {declared:?}");
+        assert!(
+            lookups.contains(declared) || declared_in_workspace(&declared.0, &declared.1),
+            "stale declaration {declared:?}"
+        );
         assert!(
             !resolves(declared),
             "declared absent but resolves: {declared:?}"
         );
     }
+}
+
+// 2026-10-07: Known-bad controls for the workspace stale check: a real model-level pair is
+// found; a misspelled entry, and a real entry under the wrong module, are not.
+#[test]
+fn workspace_stale_check_rejects_unknown_pairs() {
+    assert!(declared_in_workspace("token_overlay", "embed_rowdiff_bf16"));
+    assert!(!declared_in_workspace(
+        "token_overlay",
+        "embed_rowdiff_bf16_typo"
+    ));
+    assert!(!declared_in_workspace(
+        "w4a4_gemv_mx",
+        "projection_bias_bf16"
+    ));
 }
 
 #[test]
