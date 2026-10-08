@@ -8,7 +8,8 @@
 //! - Every norm launches `rms_norm_vanilla` (`x * w / rms`), never `rms_norm`, which scales by
 //!   `1 + w`.
 //! - Highway slots are per token: `decode` uses slot 0, `prefill` gives prompt token `t` slot
-//!   `t`, and `decode_batched` gives verify row `t` slot `t`.
+//!   `ctx.hc_row_offset + t`, `decode_batched` gives verify row `t` slot `t`, and
+//!   (2026-10-08) `decode_multi_seq` gives sequence row `r` slot `ctx.hc_row_offset + r`.
 //! - The last text layer collapses the highway with `hc_head_mean`, which takes no weights.
 //! - Any all-reduce of a mixer or MLP output happens before `hc_post` folds that output into
 //!   the highway.
@@ -60,7 +61,9 @@ mod levers;
 mod steps;
 mod types;
 pub use levers::prefill_rows;
-pub(crate) use levers::{PREFILL_ROWS, cublas_wide_proj, dsa_batch_qidx};
+pub(crate) use levers::{
+    PREFILL_ROWS, cublas_wide_proj, dsa_batch_qidx, multi_seq_chunk_rows, multi_seq_chunks,
+};
 pub use types::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
 
 impl TransformerLayer for Glm5NextLayer {
@@ -82,6 +85,39 @@ impl TransformerLayer for Glm5NextLayer {
             dsa.free(gpu)?;
         }
         Ok(())
+    }
+
+    /// 2026-10-08: A DSA layer's padding row gets a view of its workspace's padding indexer
+    /// buffers (`Glm5NextDsaWorkspace::pad_state`) instead of a cache sized for the whole
+    /// context, which `alloc_state` would allocate on every padded step and nothing would
+    /// free. A KDA layer's padding row uses the SSM pool's dummy slot, which the model builds
+    /// itself; this answers `alloc_state` for it.
+    fn alloc_pad_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn LayerState>> {
+        match &self.mixer {
+            Glm5NextMixer::Dsa(l) => Ok(Box::new(l.workspace.pad_state(&l.cfg))),
+            Glm5NextMixer::Kda { .. } => self.alloc_state(gpu),
+        }
+    }
+
+    /// 2026-10-08: One decode token for each of `num_seqs` sequences in one batched step
+    /// (`steps/multi_seq.rs`): row `r` of `hidden` is sequence `r`, with its own highway slot,
+    /// state, `seq_lens[r]` and metadata row. The DSA mixer reads the block tables from
+    /// `ctx.attn_metadata`, so `block_tables` is not read; `residual` is not either, since
+    /// the highway is the residual.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_multi_seq<'a, 'b: 'a>(
+        &self,
+        hidden: DevicePtr,
+        _residual: DevicePtr,
+        num_seqs: usize,
+        states: &'a mut [&'b mut (dyn LayerState + 'static)],
+        kv_cache: &mut PagedKvCache,
+        seq_lens: &[usize],
+        _block_tables: &[Vec<u32>],
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        self.forward_multi(hidden, num_seqs, states, kv_cache, seq_lens, ctx, stream)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -114,11 +150,13 @@ impl TransformerLayer for Glm5NextLayer {
     }
 
     /// 2026-09-25: Prefill with the highway indexed by token: prompt token `t` uses highway slot
-    /// `t`, so every token's streams are still there when the next layer reads them. The trait's
-    /// default runs each token through `decode`, which uses slot 0 for all of them.
+    /// `ctx.hc_row_offset + t` (2026-10-08: the offset is 0 except in the fused decode +
+    /// prefill step, where the decode rows hold the slots below it), so every token's streams
+    /// are still there when the next layer reads them. The trait's default runs each token
+    /// through `decode`, which uses slot 0 for all of them.
     ///
-    /// Errors when `num_tokens` exceeds `ctx.buffers.max_batch_tokens()`, the number of highway
-    /// slots in the buffer arena.
+    /// Errors when `ctx.hc_row_offset + num_tokens` exceeds `ctx.buffers.max_batch_tokens()`,
+    /// the number of highway slots in the buffer arena.
     #[allow(clippy::too_many_arguments)]
     fn prefill(
         &self,
@@ -136,10 +174,14 @@ impl TransformerLayer for Glm5NextLayer {
         stream: u64,
     ) -> Result<()> {
         let cap = ctx.buffers.max_batch_tokens();
-        if num_tokens > cap {
+        // 2026-10-08: In a fused decode + prefill step the chunk's highway rows start after
+        // the decode rows, at `ctx.hc_row_offset` (0 on every other caller).
+        let slot0 = ctx.hc_row_offset;
+        if slot0 + num_tokens > cap {
             bail!(
-                "GLM layer {}: prefill of {num_tokens} tokens exceeds the {cap}-token mHC \
-                 highway the buffer arena was sized for; each token needs its own slot",
+                "GLM layer {}: prefill of {num_tokens} tokens from highway slot {slot0} exceeds \
+                 the {cap}-token mHC highway the buffer arena was sized for; each token needs \
+                 its own slot",
                 self.layer_idx
             );
         }
@@ -165,7 +207,7 @@ impl TransformerLayer for Glm5NextLayer {
                     ctx,
                     stream,
                     false,
-                    t,
+                    slot0 + t,
                     // 2026-09-25: `is_prefill` is true only for this caller.
                     // This IS the prefill sub-chunk caller.
                     true,
@@ -179,7 +221,7 @@ impl TransformerLayer for Glm5NextLayer {
             self.forward_one(
                 hidden.offset(off),
                 residual.offset(off),
-                t,
+                slot0 + t,
                 state,
                 kv_cache,
                 seq_len_start + t,
@@ -254,11 +296,19 @@ impl TransformerLayer for Glm5NextLayer {
 }
 
 impl LayerCapabilities for Glm5NextLayer {
-    /// 2026-09-25: True. `decode` runs every sequence through highway slot 0, and the trait's
-    /// default `decode_multi_seq` calls `decode` once per sequence with one shared
-    /// `ForwardContext`, so every sequence would read and write the same highway slot. The DSA
-    /// mixer's single-row `decode` also reads `attn_metadata` row 0 on a decode step.
+    /// 2026-09-25: Was true while `decode_multi_seq` was the trait default, which ran every
+    /// sequence through `decode`'s highway slot 0 and the DSA mixer's metadata row 0.
+    /// 2026-10-08: False for a text layer: `decode_multi_seq` (`forward_multi`) gives each row
+    /// its own slot, state and metadata row. True for the MTP block (no hyper-connection),
+    /// which `forward_multi` refuses; the model never puts that block in its layer list.
     fn decode_multi_seq_unsupported(&self) -> bool {
+        self.mhc.is_none()
+    }
+
+    /// 2026-10-08: True: a DSA row selects over its own sequence's indexer cache
+    /// (`Glm5NextDsaLayer::decode_rows`) and a KDA layer has no index, so the model's mHC +
+    /// sparse-index per-sequence rule does not apply to this layer.
+    fn decode_multi_seq_selects_index_per_row(&self) -> bool {
         true
     }
 

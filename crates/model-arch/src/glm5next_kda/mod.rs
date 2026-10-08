@@ -34,6 +34,8 @@ pub mod tp_bind;
 
 mod config;
 mod decode;
+#[cfg(test)]
+mod decode_rows_tests;
 mod kernels;
 mod prefill;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};

@@ -66,15 +66,13 @@ fn advancing_past_the_cap_is_refused_not_clamped() {
     let c = cfg();
     let cap = max_dsa_context(&c);
     // 2026-09-25: Built by hand with null pointers: the length bookkeeping touches no memory.
-    let mut s = Glm5NextDsaState {
-        k_normed: metrale_gpu_runtime::gpu::DevicePtr(0),
-        gate: metrale_gpu_runtime::gpu::DevicePtr(0),
-        valid: metrale_gpu_runtime::gpu::DevicePtr(0),
-        len: 0,
-        capacity: cap,
-        index_head_dim: c.index_head_dim,
-        released: false,
-    };
+    let mut s = Glm5NextDsaState::borrowed(
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        cap,
+        c.index_head_dim,
+    );
     assert!(s.is_empty());
     s.advance(cap - 1).unwrap();
     assert_eq!(s.len(), cap - 1);
@@ -92,15 +90,13 @@ fn advancing_past_the_cap_is_refused_not_clamped() {
 #[test]
 fn row_offsets_are_flat_bf16_rows() {
     let c = cfg();
-    let s = Glm5NextDsaState {
-        k_normed: metrale_gpu_runtime::gpu::DevicePtr(0),
-        gate: metrale_gpu_runtime::gpu::DevicePtr(0),
-        valid: metrale_gpu_runtime::gpu::DevicePtr(0),
-        len: 0,
-        capacity: max_dsa_context(&c),
-        index_head_dim: c.index_head_dim,
-        released: false,
-    };
+    let s = Glm5NextDsaState::borrowed(
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        max_dsa_context(&c),
+        c.index_head_dim,
+    );
     assert_eq!(s.row_offset(0), 0);
     assert_eq!(s.row_offset(1), 128 * 2);
     assert_eq!(s.row_offset(1000), 1000 * 128 * 2);
@@ -126,15 +122,13 @@ fn the_reservation_is_small_enough_to_preallocate() {
 fn ensure_room_refuses_before_the_write_and_moves_nothing() {
     let c = cfg();
     let cap = max_dsa_context(&c);
-    let mut s = Glm5NextDsaState {
-        k_normed: metrale_gpu_runtime::gpu::DevicePtr(0),
-        gate: metrale_gpu_runtime::gpu::DevicePtr(0),
-        valid: metrale_gpu_runtime::gpu::DevicePtr(0),
-        len: 0,
-        capacity: cap,
-        index_head_dim: c.index_head_dim,
-        released: false,
-    };
+    let mut s = Glm5NextDsaState::borrowed(
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        metrale_gpu_runtime::gpu::DevicePtr(0),
+        cap,
+        c.index_head_dim,
+    );
     s.advance(cap).unwrap();
     assert!(
         s.ensure_room(0).is_ok(),
@@ -238,5 +232,34 @@ fn alloc_then_release_returns_the_ledger_to_baseline_in_count_and_bytes() {
 
         st.free(&gpu).expect("second free is a no-op");
         assert_eq!(gpu.live_bytes().expect("ledger"), base_bytes);
+    }
+}
+
+/// 2026-10-08: A borrowed view's `free` releases nothing. The batched decode builds padding
+/// views over a layer workspace's buffers and drops them; a `release_state` reaching one must
+/// leave those buffers to their owner. The owner's own `free` of each buffer succeeding after
+/// the view's `free` is the proof: the mock refuses a pointer that is no longer allocated.
+#[test]
+fn freeing_a_borrowed_view_leaves_the_owners_buffers_live() {
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+    let gpu = MockGpuBackend::new();
+    let c = cfg();
+    let (k, g, v) = (
+        gpu.alloc(c.index_kpool * c.index_head_dim * 2).unwrap(),
+        gpu.alloc(c.index_kpool * c.index_head_dim * 2).unwrap(),
+        gpu.alloc(c.index_kpool).unwrap(),
+    );
+    let live = gpu.live_alloc_count();
+    let mut s = Glm5NextDsaState::borrowed(k, g, v, c.index_kpool, c.index_head_dim);
+    s.advance(1).unwrap();
+    s.free(&gpu).unwrap();
+    assert_eq!(
+        gpu.live_alloc_count(),
+        live,
+        "the view freed an owner's buffer"
+    );
+    assert_eq!(s.k_normed.0, 0, "a released view must not look live");
+    for p in [k, g, v] {
+        gpu.free(p).expect("the owner still holds every buffer");
     }
 }

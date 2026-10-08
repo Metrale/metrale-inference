@@ -14,6 +14,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::Glm5NextDsaConfig;
 use super::super::select::DsaSelectScratch;
+use super::super::state::Glm5NextDsaState;
 
 /// 2026-09-25: Whether one selection pass covers all `k` rows (`select_rows_batched`) or each
 /// row selects on its own (`select_row`). All four terms must hold:
@@ -87,6 +88,16 @@ pub struct Glm5NextDsaWorkspace {
     /// for each row on the replay-safe path.
     pub(super) geom_dev: DevicePtr,
     pub(super) select: DsaSelectScratch,
+    /// 2026-10-08: `[index_kpool, index_head_dim]` BF16 `k_normed` and `gate` rows and
+    /// `[index_kpool]` u8 `valid`, the indexer cache every padding row of a batched decode
+    /// writes and selects over ([`Self::pad_state`]). One pool of rows is enough: a padding
+    /// row sits at position 0 with `seq_len` 1 (`upload_batch_metadata_fixed`), so it writes
+    /// row 0 and selects over one token, and the selection kernels read only rows below the
+    /// live length.
+    pub(super) pad_k: DevicePtr,
+    pub(super) pad_gate: DevicePtr,
+    pub(super) pad_valid: DevicePtr,
+    pad_rows: usize,
 }
 
 impl Glm5NextDsaWorkspace {
@@ -163,6 +174,35 @@ impl Glm5NextDsaWorkspace {
             stage_gate: gpu.alloc(cfg.index_head_dim * 2)?,
             geom_dev: gpu.alloc(5 * 4)?,
             select: DsaSelectScratch::alloc(gpu, cfg, &geom)?,
+            pad_k: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,
+            pad_gate: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,
+            pad_valid: {
+                // 2026-10-08: Zeroed once here; a padding row marks its own row valid.
+                let p = gpu.alloc(cfg.index_kpool)?;
+                gpu.memset_async(p, 0, cfg.index_kpool, 0)?;
+                gpu.synchronize(0)?;
+                p
+            },
+            pad_rows: cfg.index_kpool,
         })
+    }
+
+    /// 2026-10-08: The largest `k` `decode_k` and `decode_rows` accept.
+    pub fn max_rows(&self) -> usize {
+        self.max_rows
+    }
+
+    /// 2026-10-08: An empty indexer cache over the padding buffers, for a padding row of a
+    /// batched decode (`Glm5NextLayer::alloc_pad_state`). Every padding row of every step
+    /// shares these buffers; their outputs are discarded, and the workspace outlives every
+    /// graph that bakes the addresses.
+    pub fn pad_state(&self, cfg: &Glm5NextDsaConfig) -> Glm5NextDsaState {
+        Glm5NextDsaState::borrowed(
+            self.pad_k,
+            self.pad_gate,
+            self.pad_valid,
+            self.pad_rows,
+            cfg.index_head_dim,
+        )
     }
 }
