@@ -5,7 +5,7 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: none beyond the types.
 
-use metrale_config::{Glm5NextRouterMode, ModelConfig, parse_config};
+use metrale_config::{Glm5NextRouterMode, ModelConfig, TpSlice, parse_config};
 
 use super::*;
 
@@ -54,6 +54,81 @@ fn tp2_ep2_halves_widths_and_the_expert_set() {
         assert_eq!(c.local_experts, 144);
         assert!(c.needs_all_reduce());
     }
+}
+
+/// 2026-10-08: The even split's column offsets at TP 2: rank 1 starts half-way.
+#[test]
+fn tp2_rank1_starts_half_way() {
+    let mut m = glm_config();
+    m.tp_world_size = 2;
+    m.tp_rank = 1;
+    let c = Glm5NextMlpConfig::from_config(&m).unwrap();
+    assert_eq!(
+        c.dense_slice(),
+        TpSlice {
+            start: 6144,
+            len: 6144
+        }
+    );
+    assert_eq!(
+        c.shared_slice(),
+        TpSlice {
+            start: 1024,
+            len: 1024
+        }
+    );
+}
+
+/// 2026-10-08: World = TP = EP = 3: the dense width splits 4096 x 3, the shared expert 688/680/680
+/// (8-column units, the BF16 GEMV's `K % 8` rule), and the experts 96 x 3, each id owned once.
+#[test]
+fn tp3_ep3_splits_widths_in_gemm_units_and_experts_evenly() {
+    let mut base = glm_config();
+    base.tp_world_size = 3;
+    base.ep_world_size = 3;
+    let cfgs: Vec<Glm5NextMlpConfig> = (0..3)
+        .map(|r| {
+            let mut m = base.clone();
+            m.tp_rank = r;
+            m.ep_rank = r;
+            Glm5NextMlpConfig::from_config(&m).unwrap()
+        })
+        .collect();
+    let dense: Vec<_> = cfgs.iter().map(|c| c.dense_slice()).collect();
+    let shared: Vec<_> = cfgs.iter().map(|c| c.shared_slice()).collect();
+    let s = |start, len| TpSlice { start, len };
+    assert_eq!(dense, vec![s(0, 4096), s(4096, 4096), s(8192, 4096)]);
+    assert_eq!(shared, vec![s(0, 688), s(688, 680), s(1368, 680)]);
+    for c in &cfgs {
+        assert_eq!(c.local_shared_intermediate % BF16_GEMM_K_ALIGN, 0);
+        assert_eq!(c.moe_intermediate, 2048, "an expert is never TP-split");
+        assert_eq!(c.local_experts, 96);
+        assert!(c.needs_all_reduce());
+    }
+    assert_eq!(
+        cfgs.iter()
+            .map(|c| c.local_expert_range())
+            .collect::<Vec<_>>(),
+        vec![0..96, 96..192, 192..288]
+    );
+}
+
+/// 2026-10-08: A width that is not a whole number of 8-column units cannot split over TP.
+#[test]
+fn a_width_off_the_gemm_unit_is_refused_above_one_rank() {
+    let mut c = glm_config();
+    c.shared_expert_intermediate_size = 2044;
+    assert!(
+        Glm5NextMlpConfig::from_config(&c).is_ok(),
+        "one rank slices nothing"
+    );
+    c.tp_world_size = 3;
+    let err = format!("{:#}", Glm5NextMlpConfig::from_config(&c).unwrap_err());
+    assert!(
+        err.contains("shared_expert_intermediate_size 2044"),
+        "{err}"
+    );
+    assert!(err.contains("not a multiple"), "{err}");
 }
 
 /// 2026-09-25: At EP 2 the ranks own ids 0..144 and 144..288: every id is owned by exactly one

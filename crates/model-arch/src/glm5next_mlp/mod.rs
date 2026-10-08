@@ -5,8 +5,9 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - `Glm5NextMlpConfig::from_config` returns a config only when the dense and shared widths
-//!   divide over `tp_world_size`, `num_experts` divides over `ep_world_size`, and `validate`
-//!   passes.
+//!   split over `tp_world_size` in [`BF16_GEMM_K_ALIGN`] units (`metrale_config::tp_split`),
+//!   `num_experts` divides over `ep_world_size`, and `validate` passes. 2026-10-08: The width
+//!   split may be uneven (2048 over three ranks: 688/680/680); an even one is unchanged.
 //! - For such configs, the `local_expert_range`s of ranks `0..ep_world_size` partition
 //!   `0..num_experts`, and `local_slot` is `None` for every id outside this rank's range.
 //!
@@ -32,8 +33,8 @@
 //! * `num_experts` is the full routed-expert count; `local_experts` is this rank's share.
 //!   `glm5next_router_topk` must be given the full count.
 
-use anyhow::{Result, bail};
-use metrale_config::{Glm5NextRouterMode, ModelConfig};
+use anyhow::{Context, Result, bail};
+use metrale_config::{Glm5NextRouterMode, ModelConfig, TpSlice};
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
 pub mod build;
@@ -58,6 +59,12 @@ pub const W4A16_GEMV_MODULE: &str = "w4a16_gemv";
 pub const MOE_MODULE: &str = "moe";
 /// 2026-09-25: `[modules]`: `moe_w4a16_grouped_gemm = "moe_w4a16"`, the tensor-core grouped W4A16 GEMM.
 pub const MOE_GROUPED_MODULE: &str = "moe_w4a16";
+
+/// 2026-10-08: The unit the dense and shared-expert widths split over TP in. Their `down_proj`
+/// runs with the rank's width as K, and `dense_gemv_bf16`, `dense_gemv_bf16_batchm` (both
+/// `kernels/gb10/common/`) assume `K % 8 == 0` for their 16-byte row loads; the activation rows
+/// those GEMMs read are also `width` apart, so the same rule keeps them 16-byte aligned.
+pub const BF16_GEMM_K_ALIGN: usize = 8;
 
 /// 2026-09-25: The most experts `glm5next_router_topk` can select per token: its per-token
 /// selection lives in the shared arrays `sel_id[16]` and `sel_w[16]`.
@@ -249,13 +256,18 @@ pub enum Glm5NextMlpKind {
 pub struct Glm5NextMlpConfig {
     pub hidden: usize,
     /// 2026-09-25: `intermediate_size / tp_world_size`: this rank's share of the dense FFN width.
+    /// 2026-10-08: The length of this rank's `tp_split` of `intermediate_size`.
     pub local_dense_intermediate: usize,
+    /// 2026-10-08: The first dense FFN column this rank owns.
+    pub dense_start: usize,
     /// 2026-09-25: `moe_intermediate_size`, one routed expert's width. Not divided by TP: an
     /// expert is owned whole by one EP rank.
     pub moe_intermediate: usize,
     /// 2026-09-25: `shared_expert_intermediate_size / tp_world_size`: this rank's share of the
-    /// shared expert.
+    /// shared expert. 2026-10-08: The length of this rank's `tp_split` of it.
     pub local_shared_intermediate: usize,
+    /// 2026-10-08: The first shared-expert column this rank owns.
+    pub shared_start: usize,
     /// 2026-09-25: The full routed-expert count, not this rank's share.
     pub num_experts: usize,
     /// 2026-09-25: `num_experts / ep_world_size`; this rank owns ids
@@ -284,24 +296,22 @@ pub struct Glm5NextMlpConfig {
 
 impl Glm5NextMlpConfig {
     /// 2026-09-25: Divides the global widths by TP and the expert set by EP (a world size of 0
-    /// counts as 1), then runs [`Self::validate`]. Errors when a width or the expert count does
-    /// not divide evenly.
+    /// counts as 1), then runs [`Self::validate`]. 2026-10-08: The widths split by
+    /// `metrale_config::tp_split` in [`BF16_GEMM_K_ALIGN`] units, so they need not divide by
+    /// `tp_world_size`; errors when a width is not a multiple of the unit or has fewer units
+    /// than ranks, or when the expert count does not divide over EP.
     pub fn from_config(config: &ModelConfig) -> Result<Self> {
         let tp = config.tp_world_size.max(1);
         let ep = config.ep_world_size.max(1);
-        if !config.intermediate_size.is_multiple_of(tp) {
-            bail!(
-                "GLM MLP: intermediate_size {} does not divide over tp_world_size {tp}",
-                config.intermediate_size
-            );
-        }
-        if !config.shared_expert_intermediate_size.is_multiple_of(tp) {
-            bail!(
-                "GLM MLP: shared_expert_intermediate_size {} does not divide over \
-                 tp_world_size {tp}",
-                config.shared_expert_intermediate_size
-            );
-        }
+        let split = |name: &str, total: usize| {
+            metrale_config::tp_split(total, tp, config.tp_rank, BF16_GEMM_K_ALIGN)
+                .with_context(|| format!("GLM MLP: {name} {total} over tp_world_size {tp}"))
+        };
+        let dense = split("intermediate_size", config.intermediate_size)?;
+        let shared = split(
+            "shared_expert_intermediate_size",
+            config.shared_expert_intermediate_size,
+        )?;
         if !config.num_experts.is_multiple_of(ep) {
             bail!(
                 "GLM MLP: num_experts {} does not divide over ep_world_size {ep}; a ragged \
@@ -311,9 +321,11 @@ impl Glm5NextMlpConfig {
         }
         let c = Self {
             hidden: config.hidden_size,
-            local_dense_intermediate: config.intermediate_size / tp,
+            local_dense_intermediate: dense.len,
+            dense_start: dense.start,
             moe_intermediate: config.moe_intermediate_size,
-            local_shared_intermediate: config.shared_expert_intermediate_size / tp,
+            local_shared_intermediate: shared.len,
+            shared_start: shared.start,
             num_experts: config.num_experts,
             local_experts: config.num_experts / ep,
             ep_rank: config.ep_rank,
@@ -327,6 +339,22 @@ impl Glm5NextMlpConfig {
         };
         c.validate()?;
         Ok(c)
+    }
+
+    /// 2026-10-08: This rank's columns of the dense FFN width.
+    pub fn dense_slice(&self) -> TpSlice {
+        TpSlice {
+            start: self.dense_start,
+            len: self.local_dense_intermediate,
+        }
+    }
+
+    /// 2026-10-08: This rank's columns of the shared-expert width.
+    pub fn shared_slice(&self) -> TpSlice {
+        TpSlice {
+            start: self.shared_start,
+            len: self.local_shared_intermediate,
+        }
     }
 
     /// 2026-09-25: The half-open global expert-id range this rank owns.

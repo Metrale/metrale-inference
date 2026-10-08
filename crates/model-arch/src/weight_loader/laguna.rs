@@ -20,8 +20,8 @@ use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, dense};
 pub struct LagunaWeightLoader;
 
 impl ModelWeightLoader for LagunaWeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(

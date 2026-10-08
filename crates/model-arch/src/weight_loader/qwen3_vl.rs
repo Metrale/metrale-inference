@@ -28,11 +28,11 @@ use metrale_model_layers::weight_map::{
 pub struct Qwen3VLWeightLoader;
 
 impl ModelWeightLoader for Qwen3VLWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Q/K/V are sharded column-parallel and O row-parallel
         // (`load_qkvo_tp`, `shard_quantized_nvfp4`); q_norm/k_norm, the MoE and
         // the vision encoder are loaded whole on every rank.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(

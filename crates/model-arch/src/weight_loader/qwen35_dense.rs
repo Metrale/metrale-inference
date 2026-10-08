@@ -236,12 +236,12 @@ use load_cx::{Flow, LayerIn, LoadCx};
 pub struct Qwen35DenseWeightLoader;
 
 impl ModelWeightLoader for Qwen35DenseWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: The NVFP4 and BF16 attention arms shard Q/K/V/O, and the GDN dequant
         // path shards by head (`shard_gdn_*`). The native FP8 attention and FFN arms, the
         // UInt8 attention weights and the keep-packed Q2 arms require TP=1; the native FP8
         // and pre-quantized NVFP4 GDN arms do not shard.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(
