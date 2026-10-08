@@ -73,8 +73,68 @@ fn block_x_factors(body: &str) -> Vec<String> {
     out
 }
 
-/// 2026-09-29: The N tile(s) the entry's body uses: `blockIdx.x * TILE` in the entry's own
-/// body, else in the body of each `*_impl` helper it calls. Only `#define`d integers count.
+/// 2026-10-07: The tiles of each `callee<args>(` call in `body` whose definition is a
+/// `template<...>` helper multiplying `blockIdx.x` by one of its template parameters. The
+/// parameter takes the call's argument at its position, else its default; a value counts
+/// when it is an integer literal or a `#define`d integer.
+fn template_call_tiles(text: &str, body: &str, defines: &BTreeMap<String, u32>) -> Vec<u32> {
+    let value = |v: &str| {
+        v.trim()
+            .parse::<u32>()
+            .ok()
+            .or_else(|| defines.get(v.trim()).copied())
+    };
+    let mut out = Vec::new();
+    for (lt, _) in body.match_indices('<') {
+        let name_start = body[..lt]
+            .rfind(|c: char| !is_ident(c))
+            .map_or(0, |p| p + 1);
+        let callee = &body[name_start..lt];
+        let Some(gt) = body[lt..].find('>').map(|p| lt + p) else {
+            continue;
+        };
+        if callee.is_empty() || !body[gt + 1..].trim_start().starts_with('(') {
+            continue;
+        }
+        let args: Vec<&str> = body[lt + 1..gt].split(',').map(str::trim).collect();
+        let Some(def) = text.find(&format!("void {callee}(")) else {
+            continue;
+        };
+        // 2026-10-07: The `template<...>` must directly precede the definition.
+        let Some(tpl) = text[..def].rfind("template<") else {
+            continue;
+        };
+        let Some(tpl_end) = text[tpl..def].find('>').map(|p| tpl + p) else {
+            continue;
+        };
+        if text[tpl_end..def].contains([';', '}']) {
+            continue;
+        }
+        let params: Vec<(&str, Option<&str>)> = text[tpl + "template<".len()..tpl_end]
+            .split(',')
+            .map(|p| {
+                let (decl, default) = p.split_once('=').map_or((p, None), |(d, v)| (d, Some(v)));
+                (decl.split_whitespace().last().unwrap_or(""), default)
+            })
+            .collect();
+        let Some(helper) = block_at(text, def) else {
+            continue;
+        };
+        for ident in block_x_factors(helper) {
+            let Some(pos) = params.iter().position(|(name, _)| *name == ident) else {
+                continue;
+            };
+            let v = args.get(pos).copied().or(params[pos].1);
+            out.extend(v.and_then(value));
+        }
+    }
+    out
+}
+
+/// 2026-10-07: The N tile(s) the entry's body uses: `blockIdx.x * TILE` in the entry's own
+/// body, else in the body of each `*_impl` helper it calls, else through the template
+/// parameters of each templated helper it calls (`template_call_tiles`). Only `#define`d
+/// integers count, and template arguments that are integers or `#define`d integers.
 /// Bodies are brace-matched: a helper defined between two entry points belongs to neither.
 fn body_tiles(text: &str, entry: &str, defines: &BTreeMap<String, u32>) -> Vec<u32> {
     let start = entry_start(text, entry).expect("caller checked the entry exists");
@@ -96,6 +156,9 @@ fn body_tiles(text: &str, entry: &str, defines: &BTreeMap<String, u32>) -> Vec<u
         .iter()
         .filter_map(|i| defines.get(i).copied())
         .collect();
+    if tiles.is_empty() {
+        tiles = template_call_tiles(text, body, defines);
+    }
     tiles.sort_unstable();
     tiles.dedup();
     tiles
@@ -164,6 +227,33 @@ fn a_published_tile_that_differs_from_the_body_is_found() {
         "only k's own helper counts"
     );
     assert_eq!(published_tile(text, "k", &defines), Some(64));
+}
+
+/// 2026-10-07: A templated body resolves its tile from the call's template argument, else
+/// the parameter default; a published value that differs from either is found.
+#[test]
+fn a_templated_body_tiles_by_its_template_argument() {
+    let text = "#define N_TILE_SM 64\n\
+        template<int MRows = 64, int NCols = 64>\n\
+        __device__ __forceinline__ void k_body(int n) { unsigned cta_n = blockIdx.x * NCols; }\n\
+        extern \"C\" __global__ void k(int n) { k_body<64>(n); }\n\
+        extern \"C\" __global__ void k32(int n) { k_body<16, 32>(n); }\n\
+        extern \"C\" __global__ void ksm(int n) { k_body<16, N_TILE_SM>(n); }\n\
+        extern \"C\" __device__ unsigned int k_n_tile = 32;\n";
+    let defines = int_defines(text);
+    assert_eq!(body_tiles(text, "k", &defines), vec![64], "the default");
+    assert_eq!(
+        body_tiles(text, "k32", &defines),
+        vec![32],
+        "a literal argument"
+    );
+    assert_eq!(
+        body_tiles(text, "ksm", &defines),
+        vec![64],
+        "a #define argument"
+    );
+    // 2026-10-07: Known-bad control: k publishes 32 but its body tiles by 64.
+    assert_eq!(published_tile(text, "k", &defines), Some(32));
 }
 
 /// 2026-09-29: An entry declared with `__launch_bounds__` between `__global__` and its name
