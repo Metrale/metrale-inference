@@ -144,7 +144,7 @@ feed posts. Additional substitution ids beyond the badge/QR ids above:
 | id | content | notes |
 |---|---|---|
 | `field-cert-author-1..3` / `value-cert-author-1..3` | recipient logins | groups hidden per author count; 32px mono (36px centered on square) |
-| `value-cert-pr` | `#840` | tspan (gold) |
+| `value-cert-pr` | `#840` | tspan (copper, `#D9774D`) |
 | `value-cert-pr-title` | PR title | tspan flowing after the number; whole line clipped at 784px with fade. On the SQUARE variant the line is center-anchored, so keep title ≤ ~60 chars there |
 | `value-cert-repo` | `owner/repo` | clipped 270px @12.5 mono (~33 chars) |
 | `value-cert-commit` | merge sha (10) | |
@@ -198,7 +198,13 @@ or above it (square).
 
 ## 6. Caveats
 
-- Rendering uses the font stack's fallback (DejaVu on the CI boxes — Inter is
+- Colours follow the brand kit (Metrale/metrale-assets, vendored in
+  `assets/brand/metrale-assets`): copper-light `#D9774D` for emphasis and the
+  stage accents on the dark ground, the kit's copper `#C65A2E` for the mark,
+  green `#12B981` only for verified, holds and merged, gold `#E4C070` only for
+  demotions, voids and pending items (and the metal of the /seal badge), and
+  neutrals for structure. No cyan.
+- Rendering uses the font stack's fallback (DejaVu on the CI boxes — Manrope is
   declared first but not embedded). Metrics differ a little between the two;
   every dynamic field is clipped+faded, so nothing can escape its box either way.
 - The per-stage hint text in the stage banner (right-aligned at x=1120) moves

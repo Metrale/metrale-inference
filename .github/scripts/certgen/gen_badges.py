@@ -282,19 +282,22 @@ def inject(src_text, pr, author, stamp=None, seal=None, url=QR_URL):
     return s
 
 # ---------------------------------------------------------------- mark ------
-# The kit's mark (assets/brand/svg/mark.svg), geometry verbatim, gradient ids
-# prefixed `cert-m-` so they collide with nothing in a host document.
-MARK_DEFS = ('<linearGradient id="cert-m-v" x1="0" y1="0" x2="0.25" y2="1"><stop offset="0" stop-color="#CDBFF1"/><stop offset="1" stop-color="#9F8DD8"/></linearGradient><linearGradient id="cert-m-c" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#6FD9EC"/><stop offset="1" stop-color="#5A96BD"/></linearGradient><linearGradient id="cert-m-g" x1="0.8" y1="0" x2="0.2" y2="1"><stop offset="0" stop-color="#E4C070"/><stop offset="1" stop-color="#AE8A3F"/></linearGradient><linearGradient id="cert-m-w" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F7F7F9"/><stop offset="1" stop-color="#D9D9DE"/></linearGradient>')
-MARK_BODY = ('<path d="M0 0L189 189L189 265L47 123L47 362L0 362Z" fill="url(#cert-m-w)"/><path d="M378 0L189 189L189 265L331 123L331 362L378 362Z" fill="url(#cert-m-v)"/><rect x="105" y="326" width="168" height="36" fill="url(#cert-m-c)"/><path d="M464 -118L502 -118C506 -118 508 -116 508 -112C500 -92 468 -60 442 -44L438 -42L408 -42C404 -42 402 -44 402 -48C432 -60 460 -100 464 -118Z" fill="url(#cert-m-g)"/>')
+# The kit's compact mark (metrale-assets svg/mark-compact.svg, vendored in
+# assets/brand/metrale-assets), path for path: the mark is drawn here 24-32 px
+# tall, and the kit uses the compact cut at 48 px and below. One flat copper,
+# no gradients. assets/brand/derive.mjs --check fails if these paths drift.
+MARK_BODY = ('<path d="M0 0L138 75.9L89.82 102.4L53 82.15L53 132.85L0 162Z" fill="#C65A2E"/>'
+             '<path d="M209 0L122.17 47.76L156 66.36L156 132.85L209 162Z" fill="#C65A2E"/>')
 
 
 def mark_svg(x, y, s):
-    """The mark in a box `636*s` tall at (x, y); its viewBox is -8 -128 524 498.
+    """The mark in a box `636*s` tall at (x, y), the box the previous mark's viewBox
+    (-8 -128 524 498) defined: the mark fills the height its M had (362 units).
     A <g>, not a nested <svg>: the certificate tooling counts `</svg>`."""
     k = 636 * s / 498
     f = lambda v: f"{v:.5f}".rstrip("0").rstrip(".")
-    return (f'  <g transform="translate({f(x)} {f(y)}) scale({f(k)}) translate(8 128)" '
-            f'aria-hidden="true"><defs>{MARK_DEFS}</defs>{MARK_BODY}</g>\n')
+    return (f'  <g transform="translate({f(x)} {f(y)}) scale({f(k)}) translate(8 128) scale(2.23457)" '
+            f'aria-hidden="true">{MARK_BODY}</g>\n')
 
 
 LOGO = mark_svg(64, 22, 0.06918)
@@ -303,7 +306,7 @@ def standalone_header(pr, author):
     qr, _ = qr_group()
     return (f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
             f'viewBox="0 0 1200 208" width="1200" height="208" '
-            f'font-family="Urbanist, Helvetica Neue, Helvetica, Arial, sans-serif" '
+            f'font-family="Manrope, Helvetica Neue, Helvetica, Arial, sans-serif" '
             f'role="img" aria-label="Metrale Engine PR certification header band">\n'
             f'  <title>Metrale Engine — PR certification header band</title>\n'
             + DEFS
@@ -324,7 +327,7 @@ def standalone_badge(kind):
         w, h, label = 320, 232, "Metrale Engine gold codeowner seal"
     return (f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
             f'viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
-            f'font-family="Urbanist, Helvetica Neue, Helvetica, Arial, sans-serif" '
+            f'font-family="Manrope, Helvetica Neue, Helvetica, Arial, sans-serif" '
             f'role="img" aria-label="{label}">\n  <title>{label}</title>\n'
             + DEFS + f'  <rect width="{w}" height="{h}" fill="#0E1318"/>\n' + body + '</svg>\n')
 
