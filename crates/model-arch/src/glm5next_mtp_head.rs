@@ -81,8 +81,8 @@ pub struct Glm5NextMtpHead {
     vocab: usize,
     max_seq_len: usize,
     /// 2026-09-25: Vocab shard of the shared `lm_head` this rank sweeps:
-    /// `[head_v0, head_v0 + head_n)`. `head_n == vocab` on a single rank or when `vocab_size`
-    /// does not divide by `tp_world_size`.
+    /// `[head_v0, head_v0 + head_n)`. `head_n == vocab` (and `head_v0 == 0`) except at two ranks
+    /// over an even vocab (2026-10-08: `init::draft_head_shard`).
     head_rank: usize,
     head_v0: usize,
     head_n: usize,

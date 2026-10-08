@@ -5,10 +5,29 @@
 //! Owner: model-arch (GLM-5.3 MTP drafter).
 //! Invariants:
 //! - A constructed head's `max_seq_len` is at most `max_dsa_context` of its DSA block.
-//! - `head_n` is `vocab_size / tp_world_size` when `tp_world_size > 1` divides
-//!   `vocab_size`, and `vocab_size` otherwise.
+//! - `head_n` is `vocab_size / 2` at `tp_world_size == 2` with an even `vocab_size`, and
+//!   `vocab_size` otherwise (2026-10-08: [`draft_head_shard`]); `[head_v0, head_v0 + head_n)`
+//!   always lies inside the vocab.
 
 use super::*;
+
+/// 2026-10-08: Ranks the draft head's `(max, argmax)` exchange in `forward_one` packs into its
+/// 16-byte buffer: two logit lanes, then three index digits per rank.
+const HEAD_XCHG_RANKS: usize = 2;
+
+/// 2026-10-08: `(head_v0, head_n)`, the vocab rows rank `rank` of `world` sweeps. The sweep
+/// splits only where the exchange can combine the ranks' results: `HEAD_XCHG_RANKS` ranks and a
+/// vocab that halves. Elsewhere every rank sweeps the whole vocab from row 0. Before this,
+/// TP=3 kept `head_n = vocab` but offset rank `r` by `r * vocab` rows, past the end of
+/// `lm_head`; and a world of 4 over a divisible vocab overran the two-rank exchange.
+pub(super) fn draft_head_shard(vocab: usize, world: usize, rank: usize) -> (usize, usize) {
+    if world == HEAD_XCHG_RANKS && vocab.is_multiple_of(HEAD_XCHG_RANKS) {
+        let n = vocab / HEAD_XCHG_RANKS;
+        (rank * n, n)
+    } else {
+        (0, vocab)
+    }
+}
 
 impl Glm5NextMtpHead {
     pub fn new(
@@ -57,11 +76,7 @@ impl Glm5NextMtpHead {
         // the gemv takes none; it assumes rows packed at K.
         let head_world = config.tp_world_size.max(1);
         let head_rank = config.tp_rank;
-        let head_n = if head_world > 1 && config.vocab_size.is_multiple_of(head_world) {
-            config.vocab_size / head_world
-        } else {
-            config.vocab_size
-        };
+        let (head_v0, head_n) = draft_head_shard(config.vocab_size, head_world, head_rank);
         // 2026-09-25: Quantise only the rows this rank sweeps: `head_n * hidden` bytes, not
         // the whole vocab. A failure here is not fatal; the head falls back to the BF16 sweep.
         let gemv_fp8w_k =
@@ -72,9 +87,7 @@ impl Glm5NextMtpHead {
             None
         } else {
             let shard = DenseWeight {
-                weight: lm_head
-                    .weight
-                    .offset(head_rank * head_n * config.hidden_size * 2),
+                weight: lm_head.weight.offset(head_v0 * config.hidden_size * 2),
             };
             match gpu
                 .kernel("gemv_fp8w", "quantize_bf16_to_fp8")
@@ -116,10 +129,46 @@ impl Glm5NextMtpHead {
             vocab: config.vocab_size,
             max_seq_len,
             head_rank,
-            head_v0: head_rank * head_n,
+            head_v0,
             head_n,
             head_fp8,
             gemv_fp8w_k,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::draft_head_shard;
+
+    /// 2026-10-08: GLM-5.3's vocab.
+    const VOCAB: usize = 154_880;
+
+    /// 2026-10-08: Two ranks halve the vocab, as before.
+    #[test]
+    fn two_ranks_halve_the_vocab() {
+        assert_eq!(draft_head_shard(VOCAB, 2, 0), (0, VOCAB / 2));
+        assert_eq!(draft_head_shard(VOCAB, 2, 1), (VOCAB / 2, VOCAB / 2));
+    }
+
+    /// 2026-10-08: Any other world sweeps the whole vocab from row 0 on every rank, and the
+    /// range never leaves the vocab. TP=3 is the case that used to offset past the end.
+    #[test]
+    fn other_worlds_sweep_the_whole_vocab_inside_it() {
+        for (world, vocab) in [
+            (1, VOCAB),
+            (3, VOCAB),
+            (4, VOCAB),
+            (3, 154_881),
+            (2, 154_881),
+        ] {
+            for rank in 0..world {
+                let (v0, n) = draft_head_shard(vocab, world, rank);
+                assert!(v0 + n <= vocab, "world {world} rank {rank}: [{v0}, +{n})");
+                if (world, vocab % 2) != (2, 0) {
+                    assert_eq!((v0, n), (0, vocab), "world {world} rank {rank}");
+                }
+            }
+        }
     }
 }
