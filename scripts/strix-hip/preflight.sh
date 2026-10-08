@@ -2,26 +2,33 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # 2026-10-07: Read-only fingerprint of a native-HIP Strix Halo host
-# (`METRALE_TARGET_HW=strix-hip`, WSL Ubuntu 24.04). Not the SCALE `strix`
-# target. Prints one JSON object on stdout and changes nothing on the box
-# except a temporary directory for the device probe, removed on exit.
+# (`METRALE_TARGET_HW=strix-hip`, Ubuntu 24.04 either native or under WSL).
+# Not the SCALE `strix` target. Prints one JSON object on stdout and changes
+# nothing on the box except a temporary directory for the device probe,
+# removed on exit.
 #
-# Usage, as the build user in a LOGIN shell (so /etc/profile.d/rocm-wsl.sh
-# applies; `wsl -e bash script` alone skips it):
+# Host kind is detected: a WSL kernel (`microsoft` in /proc/version) is
+# "wsl", anything else with /dev/kfd is "native".
+#
+# Usage, as the build user in a LOGIN shell (under WSL that makes
+# /etc/profile.d/rocm-wsl.sh apply; `wsl -e bash script` alone skips it):
 #   bash -l scripts/strix-hip/preflight.sh > preflight.json
 #   wsl -d Ubuntu-24.04 -u <you> -e bash -l /mnt/c/Users/<you>/preflight.sh
 #
-# Exit status: 0 when the host can run strix-hip builds, 2 when
-# HSA_ENABLE_DXG_DETECTION is not 1, 3 when no gfx1151 agent/device is found
-# (2 wins when both fail). The JSON is printed in every case; `failures`
-# names each reason.
+# Exit status: 0 when the host can run strix-hip builds; 2 when the GPU
+# runtime path is not set up (WSL: HSA_ENABLE_DXG_DETECTION is not 1; native:
+# /dev/kfd missing or not read/write for this user); 3 when no gfx1151
+# agent/device is found (2 wins when both fail). The JSON is printed in every
+# case; `failures` names each reason. On a native host, kernel parameters
+# that differ from the linux-setup.sh pins are listed in `warnings` and do not
+# change the exit status.
 #
 # The device probe compiles a small HIP program with the installed hipcc, so it
 # reports what the HIP runtime sees, independent of the CUDA shim
 # (docs/porting/hip-device-reporting.md covers the shim's mapping).
 #
-# TODO: compare the collected versions against the pins in wsl-setup.sh and
-# report drift as a warning field.
+# TODO: compare the collected ROCm versions against the setup-script pins and
+# report drift in `warnings` as is done for the native kernel parameters.
 set -uo pipefail
 
 export LC_ALL=C
@@ -41,6 +48,23 @@ cat /etc/os-release > "$WORK/os-release" 2>/dev/null
 cat "$ROCM/.info/version" > "$WORK/rocm-version" 2>/dev/null
 dpkg-query -W -f='${Package} ${Version}\n' rocdxg-roct hsa-rocr hip-runtime-amd amdgpu-install > "$WORK/dpkg" 2>/dev/null
 free -b > "$WORK/free" 2>&1
+cat /proc/cmdline > "$WORK/cmdline" 2>/dev/null
+cat /proc/version > "$WORK/proc-version" 2>/dev/null
+# amdgpu memory totals (native only; WSL has no amdgpu DRM device). First AMD card.
+for d in /sys/class/drm/card*/device; do
+  [ "$(cat "$d/vendor" 2>/dev/null)" = "0x1002" ] || continue
+  [ -r "$d/mem_info_gtt_total" ] || continue
+  { echo "pci_device=$(cat "$d/device" 2>/dev/null)"
+    echo "gtt_total=$(cat "$d/mem_info_gtt_total" 2>/dev/null)"
+    echo "vram_total=$(cat "$d/mem_info_vram_total" 2>/dev/null)"
+    echo "vis_vram_total=$(cat "$d/mem_info_vis_vram_total" 2>/dev/null)"; } > "$WORK/amdgpu"
+  break
+done
+if [ -e /dev/kfd ]; then
+  kfd_rw=0
+  if [ -r /dev/kfd ] && [ -w /dev/kfd ]; then kfd_rw=1; fi
+  printf 'present=1\nrw=%s\n' "$kfd_rw" > "$WORK/kfd"
+fi
 capture hipcc 30 "$ROCM/bin/hipcc" --version
 capture rocminfo 60 "$ROCM/bin/rocminfo"
 
@@ -89,6 +113,7 @@ if [ -x "$ROCM/bin/hipcc" ]; then
 fi
 
 HSA_DXG="${HSA_ENABLE_DXG_DETECTION:-}" PROFILE_FILE_PRESENT=$([ -f /etc/profile.d/rocm-wsl.sh ] && echo 1 || echo 0) \
+  PROFILE_NATIVE_PRESENT=$([ -f /etc/profile.d/rocm-native.sh ] && echo 1 || echo 0) \
   python3 -I - "$WORK" <<'PY'
 import json, os, re, sys
 
@@ -114,6 +139,27 @@ def kv(text):
     return out
 
 failures = []
+warnings = []
+
+# Kernel parameters linux-setup.sh pins for a native host (key -> value).
+NATIVE_CMDLINE = {"amd_iommu": "off", "amdgpu.gttsize": "126976",
+                  "ttm.pages_limit": "32505856", "ttm.page_pool_size": "32505856"}
+
+is_wsl = "microsoft" in (read("proc-version") or read("uname") or "").lower()
+kfd = kv(read("kfd")) if read("kfd") is not None else None
+host = "wsl" if is_wsl else ("native" if kfd else "unknown")
+cmdline_tokens = (read("cmdline") or "").split()
+cmdline = {}
+for tok in cmdline_tokens:
+    k, _, v = tok.partition("=")
+    if k in NATIVE_CMDLINE:
+        cmdline[k] = v
+amdgpu = {}
+for k, v in kv(read("amdgpu")).items():
+    amdgpu[k] = int(v) if v.isdigit() else (v or None)
+for k in ("gtt_total", "vram_total"):
+    if isinstance(amdgpu.get(k), int):
+        amdgpu[k.replace("_total", "_total_gib")] = round(amdgpu[k] / 2**30, 2)
 
 osr = kv(read("os-release"))
 dpkg = {}
@@ -172,23 +218,43 @@ for d in range(int(probe.get("device_count", "0") or 0)):
 win = kv(read("windows")) if read("windows") is not None else None
 
 hsa = os.environ.get("HSA_DXG", "")
-if hsa != "1":
-    failures.append("HSA_ENABLE_DXG_DETECTION is not 1 (run in a login shell or source /etc/profile.d/rocm-wsl.sh)")
+runtime_ok = True
+if host == "wsl":
+    if hsa != "1":
+        runtime_ok = False
+        failures.append("HSA_ENABLE_DXG_DETECTION is not 1 (run in a login shell or source /etc/profile.d/rocm-wsl.sh)")
+elif host == "native":
+    if kfd.get("rw") != "1":
+        runtime_ok = False
+        failures.append("/dev/kfd is not read/write for this user (add it to render and video, then log in again)")
+    for k, want in NATIVE_CMDLINE.items():
+        if cmdline.get(k) != want:
+            warnings.append(f"kernel parameter {k}={cmdline.get(k)} (linux-setup.sh pins {k}={want})")
+else:
+    runtime_ok = False
+    failures.append("neither a WSL kernel nor /dev/kfd: no GPU runtime path")
 gfx_seen = (gpu or {}).get("gfx_name") == "gfx1151" or any(
     str(d.get("gcn_arch", "")).startswith("gfx1151") for d in devices)
 if not gfx_seen:
     failures.append("no gfx1151 agent in rocminfo or HIP device list")
 
 doc = {
-    "schema": "metrale-strix-hip-preflight/1",
+    "schema": "metrale-strix-hip-preflight/2",
+    "host": host,
     "ok": not failures,
     "failures": failures,
+    "warnings": warnings,
     "os": {"pretty_name": osr.get("PRETTY_NAME", "").strip('"') or None,
            "version_id": osr.get("VERSION_ID", "").strip('"') or None},
     "kernel": (read("uname") or "").strip() or None,
     "wsl": "microsoft" in (read("uname") or "").lower(),
     "env": {"HSA_ENABLE_DXG_DETECTION": hsa or None,
-            "profile_d_rocm_wsl": os.environ.get("PROFILE_FILE_PRESENT") == "1"},
+            "profile_d_rocm_wsl": os.environ.get("PROFILE_FILE_PRESENT") == "1",
+            "profile_d_rocm_native": os.environ.get("PROFILE_NATIVE_PRESENT") == "1"},
+    "native": None if host != "native" else {
+        "kfd_rw": kfd.get("rw") == "1",
+        "cmdline": {k: cmdline.get(k) for k in NATIVE_CMDLINE},
+        "amdgpu": amdgpu or None},
     "rocm": {"version": (read("rocm-version") or "").strip() or None,
              "rocdxg_roct": dpkg.get("rocdxg-roct"),
              "hsa_rocr": dpkg.get("hsa-rocr"),
@@ -207,7 +273,7 @@ doc = {
 json.dump(doc, sys.stdout, indent=2)
 sys.stdout.write("\n")
 code = 0
-if hsa != "1":
+if not runtime_ok:
     code = 2
 elif not gfx_seen:
     code = 3
