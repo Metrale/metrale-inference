@@ -68,7 +68,15 @@ pub(super) fn resolve_model_kernels(
     } else {
         metrale_gpu_runtime::gpu::KernelHandle(0)
     };
-    let w4a16_gemm_kernel = gpu.kernel("w4a16", "w4a16_gemm")?;
+    // 2026-10-07: Both launch sites of this NVFP4 GEMM (impl_a3_lm_head.rs,
+    // lm_head_batched.rs) sit under `lm_head_nvfp4 = Some(..)`, which the explicit GPT
+    // BF16-head policy never builds, so it is not looked up there (the strix-hip GPT target
+    // ships no w4a16 entry points). Every other family still requires it.
+    let w4a16_gemm_kernel = if gpt_bf16_head_policy(config) {
+        KernelHandle(0)
+    } else {
+        gpu.kernel("w4a16", "w4a16_gemm")?
+    };
     let w4a16_gemv_batch2_kernel = gpu.kernel("w4a16_gemv", "w4a16_gemv_batch2")?;
     // 2026-09-25: The narrow batched-GEMV tiers (`W4A16_BATCHM_WIDTHS`) for
     // multi-row lm_head calls. A tier the target lacks has handle 0, and
@@ -294,9 +302,14 @@ pub(super) fn start_innerq(
             })
 }
 
+// 2026-10-07: The explicit GPT-OSS policy with a BF16 head: no NVFP4 head is ever built.
+fn gpt_bf16_head_policy(config: &ModelConfig) -> bool {
+    config.gpt_oss.is_some() && config.skip_lm_head_quantization() && !config.lm_head_fp8
+}
+
 // 2026-10-07: Other families retain their existing auto/prepacked-NVFP4 probe behavior.
 fn needs_nvfp4_head_probe(config: &ModelConfig) -> bool {
-    !(config.gpt_oss.is_some() && config.skip_lm_head_quantization() && !config.lm_head_fp8)
+    !gpt_bf16_head_policy(config)
         && metrale_model_layers::layers::tgemm_probe_ok(&config.model_type)
 }
 
@@ -311,7 +324,14 @@ mod gpt_probe_tests {
         )))
         .unwrap();
         assert!(!needs_nvfp4_head_probe(&config));
+        assert!(gpt_bf16_head_policy(&config));
+        // 2026-10-07: Known-bad control: an FP8 head request leaves the GPT BF16 policy, so
+        // the NVFP4 GEMM lookup stays required.
+        config.lm_head_fp8 = true;
+        assert!(!gpt_bf16_head_policy(&config));
+        config.lm_head_fp8 = false;
         config.gpt_oss = None;
+        assert!(!gpt_bf16_head_policy(&config));
         assert_eq!(
             needs_nvfp4_head_probe(&config),
             metrale_model_layers::layers::tgemm_probe_ok(&config.model_type)
