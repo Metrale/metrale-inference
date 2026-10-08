@@ -14,6 +14,9 @@ import transformers
 from safetensors import safe_open
 from transformers.models.gpt_oss.modeling_gpt_oss import eager_attention_forward
 
+# 2026-10-07: Repository root; the harness and kernel sources are hashed in place.
+ROOT = Path(__file__).resolve().parents[3]
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -34,7 +37,7 @@ def main():
     lib = ctypes.CDLL(str(a.library.resolve()))
     lib.staged_run.argtypes = [ctypes.c_void_p] * 7 + [ctypes.c_uint] * 4 + [ctypes.c_float, ctypes.c_uint, ctypes.c_ulonglong]
     lib.staged_run.restype = ctypes.c_int
-    report = {"gate": "exact BF16 bits, NaN payload excluded", "library_sha256": hashlib.sha256(a.library.read_bytes()).hexdigest(), "kernel_source_sha256": hashlib.sha256((a.library.parent / "gpt_oss_staged_attention.cu").read_bytes()).hexdigest(), "harness_source_sha256": hashlib.sha256((a.library.parent / "gpt_oss_staged_attention_test.cu").read_bytes()).hexdigest(), "cases": []}
+    report = {"gate": "exact BF16 bits, NaN payload excluded", "library_sha256": hashlib.sha256(a.library.read_bytes()).hexdigest(), "kernel_source_sha256": hashlib.sha256((ROOT / "kernels/gb10/common/gpt_oss_staged_attention.cu").read_bytes()).hexdigest(), "harness_source_sha256": hashlib.sha256((ROOT / "crates/model-layers/tests/cuda/gpt_oss_staged_attention_test.cu").read_bytes()).hexdigest(), "cases": []}
 
     report["provenance"] = {
         "transformers": transformers.__version__, "torch": torch.__version__,

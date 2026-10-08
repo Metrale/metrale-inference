@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Standalone Torch-CUDA operand harness; no model factory registration.
 #include <cuda_runtime.h>
-#include "gpt_oss_staged_attention.cu"
+#include "../../../../kernels/gb10/common/gpt_oss_staged_attention.cu"
 extern "C" int staged_run(void* q, void* k, void* v, void* output,
     void* tables, void* lengths, void* sinks, unsigned int max_blocks,
     unsigned int q_heads, unsigned int kv_heads, unsigned int block_size,
