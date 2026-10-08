@@ -20,15 +20,19 @@
 //   words and scales are at w_ptrs[e] and scale_ptrs[e] in the dense layout. A slot whose
 //   expert id is outside [0, num_experts) or whose pointers are null writes 0: padding
 //   slots never read memory.
+// - Combine: moe_packed_int_combine reduces the grouped down output in slot order
+//   (slot s = t * top_k + j) with the routing weights and adds the shared expert:
+//   out[t, c] = bf16(float(bf16(sum_j w[t, j] * e[t * top_k + j, c])) + shared[t, c]),
+//   j ascending, fp32, no FMA: the bits of moe_unpermute_blend with an identity
+//   token_to_perm and no shared-expert gate. Block (256, 1, 1), grid (tokens, 1, 1).
 // - Entry points: packed_int4_gemv_g128, packed_int8_gemv_g128,
-//   moe_packed_int4_gemv_ptrtable_g128, moe_packed_int8_gemv_ptrtable_g128 (module
-//   packed_int_gemv). No Rust dispatch launches them yet; the lookup names are pinned by
-//   crates/kernels/tests/strix_hip_laguna_int4.rs.
+//   moe_packed_int4_gemv_ptrtable_g128, moe_packed_int8_gemv_ptrtable_g128,
+//   moe_packed_int_combine (module packed_int_gemv). The Rust dispatch is
+//   metrale_model_layers::layers::packed_int_moe; the lookup names are pinned by
+//   metrale_model_layers::quant_format::packed_int::packed_int_gemv_kernels.
 //
-// TODO(gfx1151): hipcc compile, then launch against the CPU reference
-// (metrale_model_layers::quant_format::packed_int) on the device; nothing here has run on
-// a GPU. Optimization (several columns per wave, 128-bit word loads, LDS-staged
-// activations, V_DOT4_I32_IU8) comes after that parity gate.
+// TODO(gfx1151 perf): several columns per wave, 128-bit word loads, LDS-staged
+// activations and V_DOT4_I32_IU8, each against the device parity harness.
 
 #include "packed_int_dequant.cuh"
 
@@ -129,4 +133,23 @@ extern "C" __global__ void __launch_bounds__(PI_THREADS) moe_packed_int8_gemv_pt
     const unsigned long long* __restrict__ scale_ptrs, const int* __restrict__ expert_ids,
     unsigned short* __restrict__ y, int num_experts, int x_row_div, int n, int k) {
     pi_grouped<8>(x, w_ptrs, scale_ptrs, expert_ids, y, num_experts, x_row_div, n, k);
+}
+
+// 2026-10-07: Slot-order routed reduce plus shared expert (see Invariants, Combine).
+extern "C" __global__ void __launch_bounds__(PI_THREADS) moe_packed_int_combine(
+    const unsigned short* __restrict__ expert_out, const float* __restrict__ weights,
+    const unsigned short* __restrict__ shared, unsigned short* __restrict__ out, int hidden,
+    int top_k) {
+    const size_t t = blockIdx.x;
+    for (int c = threadIdx.x; c < hidden; c += PI_THREADS) {
+        float acc = 0.0f;
+        for (int j = 0; j < top_k; ++j) {
+            const size_t slot = t * top_k + j;
+            float prod = weights[slot] * pi_bf16_to_f32(expert_out[slot * hidden + c]);
+            acc = acc + prod;
+        }
+        float routed = pi_bf16_to_f32(pi_f32_to_bf16_rn(acc));
+        float sum = routed + pi_bf16_to_f32(shared[t * hidden + c]);
+        out[t * hidden + c] = pi_f32_to_bf16_rn(sum);
+    }
 }
