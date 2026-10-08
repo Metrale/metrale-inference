@@ -34,7 +34,7 @@ Reductions are geometric across the three case medians, relative to capacity16 i
 | Counting | 2.1915s | 2.0284s | 0.4894s | 0.8876s | 40.59 |
 | Retrieval | 2.6710s | 2.2395s | 1.6586s | 2.1574s | 40.33 |
 
-First-generated timing is the server boundary, first-visible timing is the first client-visible SSE text, and total is client request completion. Hidden reasoning explains why the first two boundaries differ. These are bounded native-to-native C1 improvements, not a claim of competitive speed, energy superiority, reference-logit equivalence or certification. The separate optimized-reference gap remains open. Select this route explicitly with `--experimental-gpt-oss --experimental-gpt-oss-chunk-prefill --experimental-gpt-oss-chunk-tokens 128`; omitted capacity retains16.
+First-generated timing is the server boundary, first-visible timing is the first client-visible SSE text, and total is client request completion. Hidden reasoning explains why the first two boundaries differ. These are bounded native-to-native C1 improvements, not a claim of competitive speed, energy superiority, reference-logit equivalence or certification. The separate optimized-reference gap remains open. Select this route explicitly with `--experimental-gpt-oss --experimental-gpt-oss-chunk-prefill --experimental-gpt-oss-chunk-tokens 128`. The capacity has no default: chunk prefill without `--experimental-gpt-oss-chunk-tokens` is refused.
 
 ## Inactive-group follow-up
 

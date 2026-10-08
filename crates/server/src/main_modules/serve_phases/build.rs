@@ -128,7 +128,7 @@ pub(crate) fn build_model(
         lora_args,
         nllb_lang,
         nllb_lora_dir,
-        experimental_policy(args),
+        experimental_policy(args)?,
     )
     .context("Failed to build model")
 }
@@ -463,16 +463,22 @@ mod ep_worker_loop_tests {
 }
 
 // 2026-10-07: The opt-in is explicit on every startup/build path, never process-global.
+// The chunk capacity has no default: chunk prefill without an explicit capacity is refused.
 pub(crate) fn experimental_policy(
     args: &cli::ServeArgs,
-) -> metrale_model_engine::factory::ExperimentalModelPolicy {
-    if args.experimental_gpt_oss && args.experimental_gpt_oss_chunk_prefill {
-        metrale_model_engine::factory::ExperimentalModelPolicy::GptOssC1Chunked {
-            tokens: args.experimental_gpt_oss_chunk_tokens.unwrap_or(16),
-        }
-    } else if args.experimental_gpt_oss {
-        metrale_model_engine::factory::ExperimentalModelPolicy::GptOssC1
-    } else {
-        metrale_model_engine::factory::ExperimentalModelPolicy::Disabled
-    }
+) -> Result<metrale_model_engine::factory::ExperimentalModelPolicy> {
+    use metrale_model_engine::factory::ExperimentalModelPolicy;
+    Ok(
+        if args.experimental_gpt_oss && args.experimental_gpt_oss_chunk_prefill {
+            ExperimentalModelPolicy::GptOssC1Chunked {
+                tokens: args.experimental_gpt_oss_chunk_tokens.context(
+                    "--experimental-gpt-oss-chunk-prefill requires --experimental-gpt-oss-chunk-tokens 16, 64 or 128",
+                )?,
+            }
+        } else if args.experimental_gpt_oss {
+            ExperimentalModelPolicy::GptOssC1
+        } else {
+            ExperimentalModelPolicy::Disabled
+        },
+    )
 }

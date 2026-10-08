@@ -86,6 +86,7 @@ fn chunk_prefill_requires_explicit_parent_opt_in_and_preserves_refusals() {
     let (mut args, mut config) = fixture();
     assert!(!args.experimental_gpt_oss_chunk_prefill);
     args.experimental_gpt_oss_chunk_prefill = true;
+    args.experimental_gpt_oss_chunk_tokens = Some(16);
     assert!(validate(&args, &config).is_ok());
     args.experimental_gpt_oss = false;
     assert!(validate(&args, &config).is_err());
@@ -114,17 +115,16 @@ fn explicit_chunk_capacity_requires_parent_and_retains_c1() {
     assert!(validate(&args, &config).is_err());
     args.experimental_gpt_oss_chunk_prefill = true;
     args.experimental_gpt_oss_chunk_tokens = None;
-    assert_eq!(
-        crate::main_modules::serve_phases::experimental_policy(&args)
-            .chunk_tokens()
-            .unwrap(),
-        Some(16)
-    );
+    // 2026-10-07: No implicit capacity: chunk prefill without an explicit size is refused
+    // by both the admission check and the policy builder.
+    assert!(validate(&args, &config).is_err());
+    assert!(crate::main_modules::serve_phases::experimental_policy(&args).is_err());
     for tokens in [16, 64, 128] {
         args.experimental_gpt_oss_chunk_tokens = Some(tokens);
         assert!(validate(&args, &config).is_ok());
         assert_eq!(
             crate::main_modules::serve_phases::experimental_policy(&args)
+                .unwrap()
                 .chunk_tokens()
                 .unwrap(),
             Some(tokens)

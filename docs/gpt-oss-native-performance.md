@@ -143,7 +143,8 @@ concurrency and energy qualification remain outstanding.
 
 Commit `c5dd000` adds `--experimental-gpt-oss-chunk-prefill` alongside
 `--experimental-gpt-oss`. The default remains scalar. This opt-in uses at most
-16 tokens per chunk, retains C1/BF16/single-device admission, refuses prefix
+16 tokens per chunk (the capacity is now an explicit required flag,
+`--experimental-gpt-oss-chunk-tokens 16`), retains C1/BF16/single-device admission, refuses prefix
 adoption/graphs/disk swapping, and drains scratch on its actual work stream.
 The allocator's byte calculator reserves persistent layer scratch before KV
 sizing (30,437,376 bytes across 24 layers with 16-token pages).

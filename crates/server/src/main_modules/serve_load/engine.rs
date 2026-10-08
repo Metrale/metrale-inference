@@ -215,7 +215,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // it (`serve_phases::expert_tables`).
     if metrale_model_engine::factory::loader_for_config_with_policy(
         &config,
-        serve_phases::experimental_policy(&args),
+        serve_phases::experimental_policy(&args)?,
     )?
     .reads_expert_table_plan()
     {

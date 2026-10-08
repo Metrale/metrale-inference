@@ -6,6 +6,11 @@ use metrale_config::ModelConfig;
 use metrale_model_engine::factory::SlotRequest;
 
 pub(super) fn validate(args: &ServeArgs, config: &ModelConfig) -> Result<()> {
+    ensure!(
+        !args.experimental_gpt_oss_chunk_prefill
+            || args.experimental_gpt_oss_chunk_tokens.is_some(),
+        "--experimental-gpt-oss-chunk-prefill requires --experimental-gpt-oss-chunk-tokens 16, 64 or 128"
+    );
     if let Some(tokens) = args.experimental_gpt_oss_chunk_tokens {
         ensure!(
             args.experimental_gpt_oss_chunk_prefill && [16, 64, 128].contains(&tokens),

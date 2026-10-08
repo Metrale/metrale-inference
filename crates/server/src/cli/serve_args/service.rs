@@ -29,7 +29,7 @@ pub struct ServeServiceArgs {
     #[arg(long, default_value_t = false)]
     pub experimental_gpt_oss: bool,
 
-    /// 2026-10-07: Opt into experimental GPT-OSS prefill chunks (default 16 tokens); requires experimental GPT-OSS C1 serving.
+    /// 2026-10-07: Opt into experimental GPT-OSS prefill chunks; requires experimental GPT-OSS C1 serving and an explicit --experimental-gpt-oss-chunk-tokens.
     #[arg(long, requires = "experimental_gpt_oss", default_value_t = false)]
     pub experimental_gpt_oss_chunk_prefill: bool,
 
