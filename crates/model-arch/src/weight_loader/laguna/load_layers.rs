@@ -127,6 +127,11 @@ fn load_moe_ffn(
     unified_moe_layout: bool,
 ) -> Result<FfnComponent> {
     let mlp = format!("{lp}.mlp");
+    // 2026-10-07: Packed INT4/INT8 experts (Laguna-XS-2.1-INT4) have their own layer; an
+    // NVFP4 checkpoint's U8 expert weights never take this branch.
+    if let Some(scheme) = super::packed_int::packed_int_scheme(store, config, &mlp)? {
+        return super::packed_int::load_packed_int_moe(store, config, gpu, &mlp, scheme);
+    }
     let gate = dense(store, &format!("{mlp}.gate.weight"))?;
     let correction_bias = dense(store, &format!("{mlp}.experts.e_score_correction_bias"))?;
     let experts = (0..config.num_experts)

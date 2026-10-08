@@ -37,23 +37,25 @@ const STUBS: [&str; 4] = [
     "moe_fp8_grouped_gemm_v2",
 ];
 
-/// 2026-10-07: The packed-int GEMV entry points (packed_int_gemv.cu).
-const PACKED_INT: [&str; 4] = [
+/// 2026-10-07: The packed-int GEMV and combine entry points (packed_int_gemv.cu).
+const PACKED_INT: [&str; 5] = [
     "packed_int4_gemv_g128",
     "packed_int8_gemv_g128",
     "moe_packed_int4_gemv_ptrtable_g128",
     "moe_packed_int8_gemv_ptrtable_g128",
+    "moe_packed_int_combine",
 ];
 
 /// 2026-10-07: The Rust files whose lookups run when a Laguna checkpoint loads: the Laguna
 /// loader, the attention, dense-FFN and MoE layer constructors it calls, the model-level
-/// kernels and head, and the packed-int GEMV lookup the INT4 expert path will call.
-const LAGUNA_PATHS: [&str; 9] = [
+/// kernels and head, and the packed-int MoE layer and GEMV lookups of the INT4 expert path.
+const LAGUNA_PATHS: [&str; 10] = [
     "crates/model-arch/src/weight_loader/laguna",
     "crates/model-layers/src/layers/qwen3_attention/",
     "crates/model-layers/src/layers/dense_ffn_init.rs",
     "crates/model-layers/src/layers/moe/init.rs",
     "crates/model-layers/src/quant_format/packed_int.rs",
+    "crates/model-layers/src/layers/packed_int_moe.rs",
     "crates/model-engine/src/model/impl_a1",
     "crates/model-engine/src/model/trait_impl/meta_argmax_masked.rs",
     "crates/model-engine/src/factory/lm_head_setup.rs",
