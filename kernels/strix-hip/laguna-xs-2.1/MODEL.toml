@@ -1,0 +1,120 @@
+# 2026-10-07: gfx1151 (native HIP) packaging of Laguna-XS-2.1 INT4
+# (poolside/Laguna-XS-2.1-INT4 @ 4b7e28abdc0a8b121def816b89d631750bc53c92: routed experts
+# of layers 1-30 INT4 and 31-39 INT8, symmetric group 128; everything else BF16; FP8 KV).
+# Host-side resolution only: no hipcc compile, launch or numerics has been run on gfx1151,
+# and no Rust dispatch issues the packed-int expert lookups yet
+# (docs/laguna-xs-2.1-strix-int4.md). The model, sampling and behavior fields mirror
+# kernels/gb10/laguna-xs-2.1/MODEL.toml (the NVFP4 target of the same model).
+[model]
+name = "laguna-xs-2.1"
+hf_id = "poolside/Laguna-XS-2.1-INT4"
+model_type = "laguna"
+architecture = "Hybrid Full/Sliding Attention + Dense/MoE"
+parameters = "XS (hidden 2048, 40 layers, top_k 8)"
+# 2026-10-07: Only the packed-int leaf resolves; any other quant is refused instead of
+# falling back to strix-hip/common alone (crates/closure layout_manifest.rs supports_quant).
+supported_quants = ["int4"]
+
+layers_total = 40
+layers_sliding_attention = 30
+layers_full_attention = 10
+layer_pattern = "1 full attention followed by 3 sliding attention"
+
+hidden_dim = 2048
+head_dim = 128
+q_heads = 48
+kv_heads = 8
+intermediate_size = 8192
+moe_experts = 256
+moe_topk = 8
+moe_intermediate = 512
+shared_expert_intermediate = 512
+moe_scoring_func = "sigmoid"
+moe_routing_bias = true
+
+rotary_dim = 64
+rope_theta = 500000
+partial_rotary_factor = 0.5
+vocab_size = 100352
+max_position_embeddings = 262144
+sliding_window = 512
+vision = false
+mtp_layers = 0
+
+[sampling.thinking_text]
+temperature = 0.7
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.thinking_coding]
+temperature = 0.7
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.non_thinking]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[sampling.tools]
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+presence_penalty = 0.0
+frequency_penalty = 0.0
+repetition_penalty = 1.0
+dry_multiplier = 0.0
+
+[behavior]
+# 2026-09-25: Turns off the thinking-loop watchdog, which arms a forced `</think>` when the
+# reasoning tail repeats (scheduler/decode_logits_step.rs).
+# kernels/gb10/laguna-s-2.1/MODEL.toml records the measurement behind the same setting.
+enable_think_loop_watchdog = false
+# 2026-09-25: confidence_early_stop = false stops F2ConfidenceEarlyStop from arming a forced
+# `</think>`; rollback_resteer = false makes the decode-time rollback decline
+# (scheduler/rollback.rs).
+confidence_early_stop = false
+rollback_resteer = false
+# 2026-09-25: min_p_floor 0.0 disables the floor. temperature_max is applied after request
+# and preset resolution as temperature.min(temperature_max), unless the run forces
+# temperature 0 (api/chat/sampling_setup.rs).
+min_p_floor = 0.0
+temperature_max = 1.0
+thinking_in_tools = true
+max_thinking_budget = 8192
+# 2026-09-25: false: max_thinking_budget, or the request's own budget, is the only cap on
+# thinking; true would also cap it at 90% of max_tokens (api/chat/thinking.rs).
+cap_thinking_at_max_tokens = false
+# 2026-09-25: Thinking off for a request with no thinking directive; an explicit directive
+# overrides it (api/chat/thinking.rs).
+thinking_default = false
+default_kv_dtype = "fp8"
+tool_call_parser = "poolside_v1"
+# 2026-09-25: Chat requests take their default temperature, top-k and top-p from this file's
+# [sampling] category instead of the server-wide defaults; request values win.
+use_sampling_presets_for_core = true
+# 2026-09-25: No `<environment>` working-directory hint in the system message of a
+# tool-active request (api/chat/msg_entry.rs).
+disable_cwd_hint_injection = true
+# 2026-09-25: Cap on content tokens outside tool bodies since the last tool call on a tool
+# request; past it the sequence rolls back or the response ends
+# (scheduler/decode_logits_content.rs). --max-inter-tool-prose and
+# METRALE_MAX_INTER_TOOL_PROSE outrank it and 0 disables it (resolve_max_inter_tool_prose);
+# an absent key takes DEFAULT_MAX_INTER_TOOL_PROSE (3072, crates/kernels/src/behavior_defaults.rs).
+max_inter_tool_prose = 2048
+
+[[model_types]]
+model_type = "laguna"
+hidden_size = 2048
+
+[kernel]
+moe_gate_shmem_bytes = 6144

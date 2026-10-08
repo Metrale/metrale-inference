@@ -198,3 +198,32 @@ fn symmetric_round_trip_is_within_half_a_step() {
         }
     }
 }
+
+/// 2026-10-07: The lookup pair per scheme, and a denied entry point surfaces as an error.
+#[test]
+fn gemv_kernel_lookups_name_the_strix_hip_entry_points() {
+    use super::{PACKED_INT_GEMV_MODULE, packed_int_gemv_kernels};
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+
+    let gpu = MockGpuBackend::new();
+    packed_int_gemv_kernels(&gpu, INT4).expect("int4 pair");
+    packed_int_gemv_kernels(&gpu, INT8).expect("int8 pair");
+    let names: Vec<(String, String)> = gpu.kernel_lookups_snapshot();
+    let want = [
+        "packed_int4_gemv_g128",
+        "moe_packed_int4_gemv_ptrtable_g128",
+        "packed_int8_gemv_g128",
+        "moe_packed_int8_gemv_ptrtable_g128",
+    ];
+    assert_eq!(
+        names,
+        want.map(|f| (PACKED_INT_GEMV_MODULE.to_string(), f.to_string()))
+    );
+    gpu.deny_kernel(PACKED_INT_GEMV_MODULE, "moe_packed_int8_gemv_ptrtable_g128");
+    assert!(packed_int_gemv_kernels(&gpu, INT8).is_err());
+    let int2 = PackedIntScheme {
+        bits: 2,
+        group_size: 128,
+    };
+    assert!(packed_int_gemv_kernels(&gpu, int2).is_err());
+}

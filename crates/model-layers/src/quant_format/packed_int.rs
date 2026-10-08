@@ -28,6 +28,38 @@
 
 use anyhow::{Result, ensure};
 use metrale_config::precision_plan::packed_int::PackedIntScheme;
+use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
+
+/// 2026-10-07: Module of the strix-hip packed-int GEMVs
+/// (kernels/strix-hip/laguna-xs-2.1/int4/packed_int_gemv.cu).
+pub const PACKED_INT_GEMV_MODULE: &str = "packed_int_gemv";
+
+/// 2026-10-07: The packed-int GEMV pair for one scheme: the dense decode GEMV
+/// (`y[M, N] = x[M, K] W^T`) and the grouped-expert GEMV over a per-expert pointer table.
+/// Both are required: a target without them cannot serve packed-int weights, and the
+/// lookup error says which entry point is missing. No dispatch calls this yet; it pins the
+/// names the strix-hip target compiles (crates/kernels/tests/strix_hip_laguna_int4.rs).
+pub fn packed_int_gemv_kernels(
+    gpu: &dyn GpuBackend,
+    scheme: PackedIntScheme,
+) -> Result<(KernelHandle, KernelHandle)> {
+    ensure!(
+        scheme.group_size == metrale_config::precision_plan::packed_int::PACKED_INT_GROUP_SIZE,
+        "no packed-int GEMV for group size {}",
+        scheme.group_size
+    );
+    match scheme.bits {
+        4 => Ok((
+            gpu.kernel(PACKED_INT_GEMV_MODULE, "packed_int4_gemv_g128")?,
+            gpu.kernel(PACKED_INT_GEMV_MODULE, "moe_packed_int4_gemv_ptrtable_g128")?,
+        )),
+        8 => Ok((
+            gpu.kernel(PACKED_INT_GEMV_MODULE, "packed_int8_gemv_g128")?,
+            gpu.kernel(PACKED_INT_GEMV_MODULE, "moe_packed_int8_gemv_ptrtable_g128")?,
+        )),
+        bits => anyhow::bail!("no packed-int GEMV for INT{bits}"),
+    }
+}
 
 /// 2026-10-07: The stored code of K index `k` in a row of packed words, as a signed value.
 pub fn decode_code(scheme: PackedIntScheme, row_words: &[u32], k: usize) -> i32 {
