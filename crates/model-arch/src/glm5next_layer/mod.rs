@@ -251,6 +251,44 @@ impl TransformerLayer for Glm5NextLayer {
             false,
         )
     }
+
+    /// 2026-10-08: The DFlash drafter reads each target layer's completed output averaged
+    /// over the `hc_mult` streams. After `forward_one` / `forward_k` return, the FFN site's
+    /// `hc_post` has folded the MLP output into the highway, so highway slot `r` holds this
+    /// layer's completed streams for row `r` (decode: slot 0; prefill and verify: slot `t`
+    /// for row `t`) until the next layer's `hc_pre` reads them; `hidden` instead holds the
+    /// FFN site's pre-mix `y` (the last layer alone collapses the highway into it).
+    /// `hc_head_mean` is that unweighted mean, one launch per row so each row lands at its
+    /// strided slot. The MTP block (`mhc: None`) has no highway; its `hidden` is the
+    /// completed output.
+    fn dflash_tap_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        buffers: &metrale_gpu_runtime::buffers::BufferArena,
+        src_row0: usize,
+        rows: usize,
+        dst: DevicePtr,
+        dst_row_stride_bytes: usize,
+        stream: u64,
+    ) -> Result<bool> {
+        let Some(mhc) = self.mhc.as_ref() else {
+            return Ok(false);
+        };
+        let (h, hc) = (self.hidden, mhc.hc_mult);
+        for r in 0..rows {
+            hc_head_mean(
+                gpu,
+                mhc.kernels.hc_head,
+                buffers.hc_streams().offset((src_row0 + r) * hc * h * 4),
+                dst.offset(r * dst_row_stride_bytes),
+                1,
+                h as u32,
+                hc as u32,
+                stream,
+            )?;
+        }
+        Ok(true)
+    }
 }
 
 impl LayerCapabilities for Glm5NextLayer {

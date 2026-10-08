@@ -294,16 +294,54 @@ impl TransformerModel {
         let n_capture = self.dflash_capture_layers.len();
         let acc_base = dstate.ctx_hidden_acc;
         let max_ctx = dstate.max_ctx_len;
+        // 2026-10-08: Positions at or past `max_ctx` are dropped, so the rows written are
+        // the processed rows below it.
+        let rows = proc_count.min(max_ctx.saturating_sub(chunk_start));
+        let row_stride = n_capture * h * bf16;
+        let dst = acc_base.offset(chunk_start * row_stride + slot_idx * h * bf16);
+        self.dflash_tap(layer_idx, 0, rows, dst, row_stride, stream)
+    }
+
+    /// 2026-10-08: Write `rows` DFlash capture rows of layer `layer_idx` (buffer rows
+    /// `src_row0..src_row0 + rows` of the pass just run) to `dst + r * dst_row_stride`.
+    /// The layer writes them itself when its completed output is not its `hidden` rows
+    /// (`TransformerLayer::dflash_tap_rows`); otherwise each row of `hidden_states()` is
+    /// copied, one `copy_d2d_async` per row in row order.
+    fn dflash_tap(
+        &self,
+        layer_idx: usize,
+        src_row0: usize,
+        rows: usize,
+        dst: DevicePtr,
+        dst_row_stride: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let layer = self.layers.get(layer_idx).with_context(|| {
+            format!(
+                "DFlash capture layer {layer_idx} is past the target's {} layers",
+                self.layers.len()
+            )
+        })?;
+        if layer.dflash_tap_rows(
+            self.gpu.as_ref(),
+            &self.buffers,
+            src_row0,
+            rows,
+            dst,
+            dst_row_stride,
+            stream,
+        )? {
+            return Ok(());
+        }
+        let row_bytes = self.config.hidden_size * 2;
         let src_base = self.buffers.hidden_states();
-        for t in 0..proc_count {
-            let abs_pos = chunk_start + t;
-            if abs_pos >= max_ctx {
-                break;
-            }
-            let src = src_base.offset(t * h * bf16);
-            let dst_offset = abs_pos * n_capture * h * bf16 + slot_idx * h * bf16;
-            self.gpu
-                .copy_d2d_async(src, acc_base.offset(dst_offset), h * bf16, stream)?;
+        for r in 0..rows {
+            self.gpu.copy_d2d_async(
+                src_base.offset((src_row0 + r) * row_bytes),
+                dst.offset(r * dst_row_stride),
+                row_bytes,
+                stream,
+            )?;
         }
         Ok(())
     }
@@ -372,10 +410,8 @@ impl TransformerModel {
         };
         let h = self.config.hidden_size;
         let bf16 = 2usize;
-        let src = self.buffers.hidden_states().offset(token_idx * h * bf16);
         let dst_slot = dst.offset(slot * h * bf16);
-        self.gpu.copy_d2d_async(src, dst_slot, h * bf16, stream)?;
-        Ok(())
+        self.dflash_tap(layer_idx, token_idx, 1, dst_slot, h * bf16, stream)
     }
 
     /// 2026-09-25: `Model::save_dflash_hidden_for_propose`: run
@@ -444,14 +480,14 @@ impl TransformerModel {
             dst_row0 + k
         );
         let k_capped = k.min(kmax.saturating_sub(dst_row0));
-        for t in 0..k_capped {
-            let src = self
-                .buffers
-                .hidden_states()
-                .offset((src_row0 + t) * h * bf16);
-            let dst_slot = dst.offset((dst_row0 + t) * ctx_slot_bytes + slot * h * bf16);
-            self.gpu.copy_d2d_async(src, dst_slot, h * bf16, stream)?;
-        }
-        Ok(())
+        let dst_slot = dst.offset(dst_row0 * ctx_slot_bytes + slot * h * bf16);
+        self.dflash_tap(
+            layer_idx,
+            src_row0,
+            k_capped,
+            dst_slot,
+            ctx_slot_bytes,
+            stream,
+        )
     }
 }
