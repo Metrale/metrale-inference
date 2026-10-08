@@ -4,13 +4,13 @@ Status: native eager C1 prototype executes the packed checkpoint and bounded
 Harmony generation. Default factory admission remains disabled; explicit experimental
 C1 admission passes bounded Linux blocking and streaming API checks. Full-model numerical
 differences remain unresolved; no broad correctness, performance or tool-use
-qualification is claimed. Verified backups are complete. Owner: investor-mvp #43.
+qualification is claimed.
 
 ## Reproducible inputs
 
 - Checkpoint: `openai/gpt-oss-20b`, revision
   `6cee5e81ee83917806bbde320786a8fb61efebee`.
-- Config copied from the verified model backup on Spark 1 into
+- Config copied from the pinned checkpoint into
   `crates/circuit/tests/fixtures/checkpoints/openai--gpt-oss-20b/config.json`.
 - SHA-256: `3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce`.
 - [Pinned config](https://huggingface.co/openai/gpt-oss-20b/blob/6cee5e81ee83917806bbde320786a8fb61efebee/config.json).
@@ -344,8 +344,8 @@ at layer 9. Boundary positions 127–130 do not show an abrupt error increase.
 These observations are diagnostic, not a correctness acceptance.
 
 The original pinned BF16 reference is preserved. A separately labeled FP32
-attention ablation and selected intermediate traces are being used to locate
-the differences. No tolerance has been widened and no serving-speed or quality
+attention ablation and selected intermediate traces were used to locate
+the differences (see the following sections). No tolerance has been widened and no serving-speed or quality
 qualification is inferred from the debug harness timings.
 
 
@@ -493,8 +493,7 @@ checks (three repetitions each). Median decode was 37.3–37.8 tokens/second.
 Prefill was roughly 47 tokens/second; median first-generated TTFT for 81-, 87-
 and 304-token prompts was 1.740, 1.868 and 6.499 seconds. Corresponding client
 first-visible medians were 2.223, 2.295 and 7.036 seconds. These bounded results
-exclude certification and energy qualification; profiling and optimization
-remain in progress.
+exclude certification and energy qualification.
 
 ### Blocking tool roundtrip qualification (2026-10-07)
 

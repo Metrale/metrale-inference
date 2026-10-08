@@ -275,7 +275,7 @@ establish a useful performance change.
 
 ## Full-chunk expert-weight reuse (2026-10-07)
 
-The next bounded candidate groups token/slot assignments by expert for full
+This candidate groups token/slot assignments by expert for full
 sixteen-token chunks. One weight decode feeds up to four independent accumulators;
 each preserves its original column FMA and warp-reduction order. Bias, activation
 and ascending-expert-ID weighted reduction retain their BF16 boundaries. Smaller

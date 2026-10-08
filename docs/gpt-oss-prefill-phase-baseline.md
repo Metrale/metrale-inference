@@ -49,7 +49,7 @@ Controlled evidence package `gpt/prefill-phase-sprint` retains exact commands,
 server identities, source evidence, all requests/SSE responses and an independent
 admission/median analysis in `comparison.json`. Fixture SHA-256:
 `857996de4dcd1c308163b94507b9e45cf64ca81499dedcbfa0a77465ec6a6373`.
-The growing length-dependent gap makes prompt processing the immediate
-optimization priority; it does not establish which operation causes the gap.
+The gap grows with prompt length; this measurement does not establish which
+operation causes it.
 Any candidate must retain numerical, lifecycle and task-quality gates and be
 measured against a contemporary native control in both orders.
