@@ -540,7 +540,7 @@ names = ["w4a4_*", "metrale_nvfp4_mmq*", "metrale_nvfp4_gemm_pipe*"]
 [[rule]]
 component = "gemm-intq"
 kind = "integer / K-quant GEMM/GEMV"
-names = ["int8_*", "q2_0_*", "metrale_q*_mmq*", "kquant_mmvq_*", "mlx_int8_*", "requant_*"]
+names = ["int8_*", "packed_int4_gemv_*", "packed_int8_gemv_*", "q2_0_*", "metrale_q*_mmq*", "kquant_mmvq_*", "mlx_int8_*", "requant_*"]
 
 [[rule]]
 component = "gemm-fp8"
