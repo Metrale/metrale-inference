@@ -276,6 +276,15 @@ reference exactly for all 32 frequencies and 36,864 BF16 Q/K values at positions
 0, 1, 127, 128, 4095, 4096, 8192 and 131071. Truncating correction bounds changes
 6,777 outputs; adjacent-pair rotation changes 25,263. Both errors are detected.
 
+Host YaRN table (2026-10-07): the 32 FP32 inverse frequencies are now built on
+the host by `gpt_oss_yarn_frequency_table` and copied to the device, so GB10 and
+gfx1151 use identical bits and the runtime no longer looks up a device table
+kernel. The steps keep the Transformers FP32 op order; only the power is
+computed in f64 and rounded once, which gives the correctly rounded value.
+Device `powf` is not correctly rounded: gfx1151 HIP differed at 6 of 32 entries
+and GB10 CUDA (equal to the Torch CUDA reference) at entries 6 and 10, by one
+ULP each. The table therefore moves by one ULP at those two entries on GB10.
+
 Expert post-bmm bias reuses `nllb_bias_bf16`; the new asymmetric interleaved
 SwiGLU and selected-expert reduction preserve BF16 operation boundaries. Exact
 CUDA reference comparison passed 777 bias outputs, 65,795 activation outputs

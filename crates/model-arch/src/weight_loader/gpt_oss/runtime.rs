@@ -32,6 +32,8 @@ pub struct GptOssLayer {
     weights: Weights,
     kernels: Kernels,
     yarn: ops::GptOssYarn,
+    /// 2026-10-07: Host-built YaRN table; every device uploads these bits.
+    frequency_table: [f32; 32],
     index: usize,
     window: u32,
     max_positions: usize,
@@ -72,10 +74,12 @@ impl GptOssLayer {
             config.layer_types.get(index) == Some(&bound.kind),
             "GPT layer kind differs from config"
         );
+        let yarn = ops::GptOssYarn::from_config(config)?;
         Ok(Self {
             weights: Weights::from(bound)?,
             kernels: Kernels::new(gpu)?,
-            yarn: ops::GptOssYarn::from_config(config)?,
+            frequency_table: ops::gpt_oss_yarn_frequency_table(&yarn)?,
+            yarn,
             index,
             window: if bound.kind == LayerType::SlidingAttention {
                 128
@@ -180,17 +184,13 @@ impl CircuitBindings for GptOssLayer {}
 impl TransformerLayer for GptOssLayer {
     fn alloc_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn LayerState>> {
         let state = State::new(gpu, self.max_positions)?;
-        if let Err(error) = ops::gpt_oss_yarn_frequencies(
-            gpu,
-            self.kernels.frequencies,
-            state.frequencies,
-            &self.yarn,
-            gpu.default_stream(),
-        ) {
-            let _ = gpu.free(state.allocation);
-            return Err(error);
-        }
-        if let Err(error) = gpu.synchronize(gpu.default_stream()) {
+        // 2026-10-07: Blocking upload of the host table; no device powf.
+        let bytes: Vec<u8> = self
+            .frequency_table
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        if let Err(error) = gpu.copy_h2d(&bytes, state.frequencies) {
             let _ = gpu.free(state.allocation);
             return Err(error);
         }

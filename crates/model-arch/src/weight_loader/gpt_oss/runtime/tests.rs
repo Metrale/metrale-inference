@@ -290,3 +290,32 @@ fn chunk_scratch_budget_matches_allocation_and_bound_release() {
     assert_eq!(gpu.live_bytes().unwrap(), before);
     assert!(scratch.admit(1, 1, 7).is_err());
 }
+
+// 2026-10-07: The YaRN table is host-built and uploaded: no device table kernel is looked
+// up or launched, and the state buffer holds exactly the host table bits.
+#[test]
+fn yarn_table_is_uploaded_from_host_without_a_device_kernel() {
+    let (config, store) = fixture();
+    let gpu = MockGpuBackend::new();
+    gpu.deny_kernel("gpt_oss_rope", "gpt_oss_yarn_frequencies");
+    let bound = GptOssCheckpoint::bind(&store, &config).unwrap();
+    let layer = GptOssLayer::new(&bound.layers[0], &config, 0, &gpu).unwrap();
+    assert!(
+        !gpu.kernel_lookups_snapshot()
+            .iter()
+            .any(|(_, k)| k == "gpt_oss_yarn_frequencies")
+    );
+    let launches = gpu.launches_snapshot().len();
+    let mut state = layer.alloc_state(&gpu).unwrap();
+    assert_eq!(launches, gpu.launches_snapshot().len());
+    let expected =
+        ops::gpt_oss_yarn_frequency_table(&ops::GptOssYarn::from_config(&config).unwrap()).unwrap();
+    let mut bytes = [0u8; 128];
+    let ptr = state.as_any().downcast_ref::<State>().unwrap().frequencies;
+    gpu.copy_d2h(ptr, &mut bytes).unwrap();
+    for (i, chunk) in bytes.chunks_exact(4).enumerate() {
+        let got = u32::from_le_bytes(chunk.try_into().unwrap());
+        assert_eq!(got, expected[i].to_bits(), "frequency {i}");
+    }
+    layer.release_state(state.as_mut(), &gpu).unwrap();
+}

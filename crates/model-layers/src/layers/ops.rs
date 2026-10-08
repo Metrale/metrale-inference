@@ -14,7 +14,7 @@ pub use dense_batchm_fp32::dense_gemv_batchm_fp32;
 mod activations;
 #[path = "ops/gpt_oss_rope.rs"]
 mod gpt_oss_rope;
-pub use gpt_oss_rope::{GptOssYarn, gpt_oss_rope_bf16, gpt_oss_yarn_frequencies};
+pub use gpt_oss_rope::{GptOssYarn, gpt_oss_rope_bf16, gpt_oss_yarn_frequency_table};
 #[path = "ops/gpt_oss_expert_ops.rs"]
 mod gpt_oss_expert_ops;
 pub use gpt_oss_expert_ops::{

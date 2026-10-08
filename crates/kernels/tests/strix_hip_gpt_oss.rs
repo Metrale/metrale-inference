@@ -211,6 +211,16 @@ fn every_gpt_runtime_lookup_resolves_or_is_declared_absent() {
         let pair = (known.0.to_string(), known.1.to_string());
         assert!(lookups.contains(&pair), "lookup scan missed {pair:?}");
     }
+    // 2026-10-07: The YaRN table is host-built and uploaded; no target needs the device
+    // table kernel at runtime (it stays compiled for the reference bridge).
+    let table = (
+        "gpt_oss_rope".to_string(),
+        "gpt_oss_yarn_frequencies".to_string(),
+    );
+    assert!(
+        !lookups.contains(&table),
+        "runtime still looks up {table:?}"
+    );
     let entries = compiled_entries(&gpt());
     let absent = expected_absent();
     let resolves = |(m, k): &(String, String)| entries.get(m).is_some_and(|e| e.contains(k));

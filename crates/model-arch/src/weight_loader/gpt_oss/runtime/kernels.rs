@@ -3,7 +3,6 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 pub(super) struct Kernels {
-    pub frequencies: KernelHandle,
     pub norm: KernelHandle,
     pub gemv: KernelHandle,
     pub bias: KernelHandle,
@@ -24,7 +23,6 @@ impl Kernels {
             gemv: gpu.kernel("gemv", "dense_gemv_bf16_fp32out")?,
             projection_bias: gpu.kernel("projection_bias", "projection_bias_bf16")?,
             bias: gpu.kernel("gpt_oss_expert_ops", "gpt_oss_selected_bias_bf16")?,
-            frequencies: gpu.kernel("gpt_oss_rope", "gpt_oss_yarn_frequencies")?,
             rope: gpu.kernel("gpt_oss_rope", "gpt_oss_rope_bf16")?,
             cache: gpu.kernel("reshape_and_cache", "reshape_and_cache_flash")?,
             attention: gpu.kernel("paged_decode", "paged_decode_attn_sink")?,

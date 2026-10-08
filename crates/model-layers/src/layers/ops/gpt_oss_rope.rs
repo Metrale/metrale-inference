@@ -6,7 +6,7 @@ use metrale_config::{GptOssRope, ModelConfig};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
-/// 2026-10-07: Explicit scalar inputs to the GPU frequency table builder.
+/// 2026-10-07: Explicit scalar inputs to the host frequency table builder.
 #[derive(Debug, Clone, Copy)]
 pub struct GptOssYarn {
     pub head_dim: u32,
@@ -100,28 +100,47 @@ impl GptOssYarn {
     }
 }
 
-/// 2026-10-07: Build 32 FP32 frequencies on GPU; matches CUDA tensor pow/div order.
-pub fn gpt_oss_yarn_frequencies(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    out: DevicePtr,
-    p: &GptOssYarn,
-    stream: u64,
-) -> Result<()> {
+/// 2026-10-07: Host-built table of the 32 FP32 YaRN inverse frequencies.
+///
+/// Every device uploads these exact bits; no device math library is involved.
+/// The steps follow the Transformers v4.55 `_compute_yarn_parameters` FP32
+/// tensor order, with the same FP32 `low`/`span` scalars the ramp sees there:
+///
+/// ```text
+/// pos[i]   = base ^ (2i / 64)
+/// extra[i] = 1 - clamp((i - low) / span, 0, 1)
+/// out[i]   = 1/(factor*pos[i]) * (1 - extra[i]) + (1/pos[i]) * extra[i]
+/// ```
+///
+/// The power is the only transcendental step. It is evaluated in f64 and
+/// rounded once to f32, which yields the correctly rounded FP32 power unless
+/// the exact value lies within about 2^-52 (relative) of an FP32 rounding
+/// midpoint; the GPT-OSS-20B entries were checked against a 200-bit
+/// reference and are pinned bit for bit in `tests/gpt_oss_rope.rs`. All other
+/// steps are IEEE FP32 add/sub/mul/div, correctly rounded by definition, and
+/// Rust never contracts them into FMAs. A device `powf` is only accurate to a
+/// few ulps: on gfx1151 HIP it differed from this table at 6/32 entries, and
+/// the GB10 CUDA kernel (equal to the Torch CUDA reference) at 2/32.
+///
+/// Usage: `let table = gpt_oss_yarn_frequency_table(&GptOssYarn::from_config(&cfg)?)?;`
+/// then copy `table` (little-endian, 128 bytes) to the frequency buffer.
+pub fn gpt_oss_yarn_frequency_table(p: &GptOssYarn) -> Result<[f32; 32]> {
     p.validate()?;
+    let mut out = [0.0f32; 32];
+    for (i, slot) in out.iter_mut().enumerate() {
+        // 2026-10-07: Exponent 2i/64 is exact in FP32 and f64 alike.
+        let pos = f64::from(p.base).powf(f64::from(2 * i as u32) / 64.0) as f32;
+        let extrapolation = 1.0 / pos;
+        let interpolation = 1.0 / (p.factor * pos);
+        let ramp = ((i as f32 - p.low) / p.span).clamp(0.0, 1.0);
+        let extra = 1.0 - ramp;
+        *slot = interpolation * (1.0 - extra) + extrapolation * extra;
+    }
     ensure!(
-        kernel.0 != 0 && out.0 != 0 && out.0.is_multiple_of(4) && out.0.checked_add(128).is_some(),
-        "GPT YaRN invalid frequency buffer/kernel"
+        out.iter().all(|f| f.is_finite() && *f > 0.0),
+        "GPT YaRN nonfinite or nonpositive frequency"
     );
-    KernelLaunch::new(gpu, kernel)
-        .grid([1, 1, 1])
-        .block([32, 1, 1])
-        .arg_ptr(out)
-        .arg_f32(p.base)
-        .arg_f32(p.factor)
-        .arg_f32(p.low)
-        .arg_f32(p.span)
-        .launch(stream)
+    Ok(out)
 }
 /// 2026-10-07: In-place packed BF16 Q/K, token positions U32 and frequency table F32.
 /// Callers own sufficient nonoverlapping buffers; positions must be within context.
