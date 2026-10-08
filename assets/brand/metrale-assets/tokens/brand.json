@@ -1,0 +1,61 @@
+{
+  "color": {
+    "copper": "#C65A2E",
+    "copperDeep": "#9E4422",
+    "copperLight": "#D9774D",
+    "ground": "#0E1318",
+    "paper": "#F4F3F0",
+    "white": "#FFFFFF",
+    "ink": "#E6E6E9",
+    "inkDark": "#15181F",
+    "graphite": "#3C4049",
+    "cyan": "#61ACCC",
+    "violet": "#9F8DD8",
+    "violetDeep": "#6F5FB0",
+    "violetLight": "#5B3FD1",
+    "lavender": "#CDBFF1",
+    "gray": "#6B7079",
+    "grayDark": "#8A8F99"
+  },
+  "roles": {
+    "mark": "copper",
+    "ruleOnDark": "violetDeep",
+    "productOnDark": "violetDeep",
+    "ruleOnLight": "violetLight",
+    "productOnLight": "violetLight",
+    "companyOnDark": "ink",
+    "companyOnLight": "graphite",
+    "signal": "cyan",
+    "productUiTextOnDark": "violet"
+  },
+  "type": {
+    "family": "Manrope",
+    "logo": {
+      "weight": 300,
+      "tracking": "0.33em"
+    },
+    "productOnLight": {
+      "weight": 500
+    },
+    "body": 400,
+    "headings": 500,
+    "source": "https://fonts.google.com/specimen/Manrope"
+  },
+  "geometry": {
+    "mark": [
+      209,
+      162
+    ],
+    "stem": 53,
+    "slope": 0.55,
+    "gap": 6,
+    "faviconGap": 18,
+    "clearSpace": 53
+  },
+  "minimumSize": {
+    "horizontalPx": 160,
+    "productLockupPx": 240,
+    "stackedPx": 72,
+    "markPx": 16
+  }
+}

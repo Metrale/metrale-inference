@@ -198,14 +198,17 @@ committed here, but binaries built with them incorporate it.
 
 Font files served by the book, each under its own font license.
 
-### 9a. Urbanist — OFL-1.1
+### 9a. Manrope — OFL-1.1
 
-- **Files**: `book/theme/fonts/urbanist-*.woff2`
+- **Files**: `book/theme/fonts/manrope-latin-wght-normal.woff2`, and the brand
+  kit's copy it is derived from,
+  `assets/brand/metrale-assets/fonts/manrope-latin-wght-normal.woff2`
 - **License text**: shipped in place at
-  [`book/theme/fonts/URBANIST-LICENSE.txt`](book/theme/fonts/URBANIST-LICENSE.txt);
+  [`book/theme/fonts/MANROPE-LICENSE.txt`](book/theme/fonts/MANROPE-LICENSE.txt)
+  and [`assets/brand/metrale-assets/fonts/MANROPE-LICENSE.txt`](assets/brand/metrale-assets/fonts/MANROPE-LICENSE.txt);
   canonical text at [`LICENSES/OFL-1.1.txt`](LICENSES/OFL-1.1.txt).
-- **Copyright**: `Copyright 2021 The Urbanist Project Authors
-  (https://github.com/coreyhu/Urbanist)`.
+- **Copyright**: `Copyright 2019 The Manrope Project Authors
+  (https://github.com/sharanda/manrope)`.
 
 ### 9b. IBM Plex Mono — OFL-1.1
 

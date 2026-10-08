@@ -46,9 +46,8 @@
 
     --links: var(--accent);
 
-    /* The blog's inline-code ink, derived from the cyan token rather than
-       copied as a hex. */
-    --inline-code-color: color-mix(in srgb, var(--ch-cyan) 78%, white);
+    /* Inline code reads in the ink on a neutral wash (metrale.css); no hue. */
+    --inline-code-color: var(--t1);
 
     --theme-popup-bg: var(--card);
     --theme-popup-border: var(--border-strong);
