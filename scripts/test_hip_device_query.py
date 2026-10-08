@@ -35,7 +35,7 @@ def main():
     definitions = "\n".join(body(source, name) for name in
                             ("cuDeviceGetName", "cuDeviceGetAttribute"))
     fixture = FIXTURE.read_text()
-    assert fixture.count("// PRODUCTION_DEFINITIONS") == 1
+    assert fixture.count("// 2026-10-07: PRODUCTION_DEFINITIONS") == 1
     compiler = os.environ.get("CXX", "c++")
     print(subprocess.check_output([compiler, "--version"], text=True).splitlines()[0])
     print("source_sha256=" + hashlib.sha256(source.encode()).hexdigest())
@@ -44,7 +44,7 @@ def main():
 
         def run(code, name):
             cpp, exe = tmp / (name + ".cpp"), tmp / name
-            cpp.write_text(fixture.replace("// PRODUCTION_DEFINITIONS", code))
+            cpp.write_text(fixture.replace("// 2026-10-07: PRODUCTION_DEFINITIONS", code))
             argv = [compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror",
                     "-Wno-unused-parameter", "-Wno-unused-function",
                     str(cpp), "-o", str(exe)]
