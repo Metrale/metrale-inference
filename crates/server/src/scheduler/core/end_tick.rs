@@ -31,6 +31,9 @@ impl SchedulerCore {
         let block_size = self.block_size;
         let think_end_token = self.think_end_token;
         let think_start_token = self.think_start_token;
+        if let Some(sl) = &sched.shared_lookup {
+            sl.store_finished(active);
+        }
         retire_finished_sequences(&sched.io, active, sched.limits.max_seq_len);
         sched.io.tel.mark(mtp_timing::Phase::LoopRetire, t_loop);
 

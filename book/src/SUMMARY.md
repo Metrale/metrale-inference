@@ -17,6 +17,9 @@
 - [Philosophy: AI Kernel HyperCompiling](./architecture/philosophy.md)
 - [Workspace Layout](./architecture/workspace.md)
 - [Kernel Dispatch Pipeline](./architecture/dispatch.md)
+- [The Circuit Compiler](./architecture/circuit-compiler.md)
+- [The Latent Kernel Blueprint](./architecture/lkb.md)
+- [The Latent Architecture Blueprint](./architecture/lab.md)
 - [SBIO: Business Logic vs I/O](./architecture/sbio.md)
 
 # Part III — The Crates
@@ -75,6 +78,7 @@
 # Appendix
 
 - [A Category-Theoretic Perspective](./appendix/category-theory.md)
+- [The LKB in Mathematics](./appendix/lkb-math.md)
 - [Glossary](./appendix/glossary.md)
 - [Further Reading](./appendix/reading.md)
 

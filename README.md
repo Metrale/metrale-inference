@@ -794,7 +794,7 @@ multi-node campaigns, thermal parking, sharding and the lockfile.
 <a id="architecture-at-a-glance"></a>
 ## <img src="docs/readme/icons/layers.svg" width="20" height="20" alt="Layers icon"> Architecture at a glance
 
-A Cargo workspace of 21 crates:
+A Cargo workspace of 23 crates:
 
 | Layer | Crates |
 |---|---|
@@ -802,7 +802,8 @@ A Cargo workspace of 21 crates:
 | Model | `model-engine` (the `Model` trait; prefill, decode, verify, SSM state), `model-arch` (per-family architectures and loaders), `model-layers` (attention, SSM, MoE, FFN, MTP heads, vision, LoRA), `model-weights` (weight store, fast loader, preflight) |
 | Serving | `scheduler` (step plans and the driver loop), `cache` (paged KV, radix-tree prefix cache), `speculative` (MTP gate, DFlash, n-gram), `sampling`, `grammar` (pure-Rust grammar-constrained decoding), `storage` (GDS and RDMA tiers, expert paging) |
 | GPU | `kernels` (PTX compiled from `kernels/<hw>/<model>/<quant>/`), `gpu-runtime` (backend, streams, buffers, kernel registry), `gpu-sys` (raw FFI: cuFile, NVML, NCCL, RDMA verbs), `comm` (collectives), `telemetry` (metrics, GPU spans, energy attribution) |
-| Foundation | `core` (shared types), `config` (model config tree), `closure` (kernel source hashing for records), `governance` (the PR journey ledger) |
+| Planning | `circuit` (architecture circuits, the fuser, kernel families and per-hardware plans: the circuit compiler) |
+| Foundation | `core` (shared types), `config` (model config tree), `closure` (kernel source hashing for records), `governance` (the PR journey ledger), `kernel-tree` (the kernel tree embedded in the binary) |
 
 A chat completion takes this path:
 
@@ -816,6 +817,21 @@ A chat completion takes this path:
    from the embedded PTX: KV cache write, paged attention, SSM state update,
    MoE routing and expert GEMV.
 6. Logits are sampled and the token is streamed back.
+
+Kernels and architectures are described against two shared blueprints:
+
+- The **Latent Kernel Blueprint (LKB)** is the set of kernel families
+  (`KERNEL_FAMILIES.toml`) with their parameters and points, plus the fusions proven
+  bit-identical.
+- The **Latent Architecture Blueprint (LAB)** is the set of parameterized circuit blocks a model
+  is assembled from.
+
+Each hardware class realizes the LKB ahead of time. A kernel only one class has is kept as a
+named LKB residual. A new model is a parameter point of the LAB, derived from its
+`config.json`. The circuit compiler (`met circuit`) plans every model on every class from these.
+The book chapters [The Circuit Compiler](book/src/architecture/circuit-compiler.md),
+[The Latent Kernel Blueprint](book/src/architecture/lkb.md) and
+[The Latent Architecture Blueprint](book/src/architecture/lab.md) define the terms.
 
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is a five-minute tour; the
 [book](https://docs.metrale.ai) has one chapter per crate and deep dives on

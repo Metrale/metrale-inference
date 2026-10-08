@@ -10,7 +10,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Result, bail};
-use metrale_bench::gate::{self, GateStatus};
+use metrale_bench::gate::{self, GateBaseline, GateStatus};
+use metrale_bench::hardware::energy::JOULES_PER_TOKEN_KEY;
 use metrale_bench::hardware::limits::TimingLimits;
 use metrale_bench::hardware::policy::Sensitivity;
 use metrale_bench::registry;
@@ -206,6 +207,23 @@ pub fn units(
 /// are in `kernels/gb10/HARDWARE.toml`).
 pub fn shard_secs(whole: u64, n: usize, timing: &TimingLimits) -> u64 {
     (whole / n as u64 + timing.shard_overhead_s).max(timing.shard_floor_s)
+}
+
+/// 2026-10-04: Whether the gate's default entry on `hardware` bounds a J/token
+/// metric (a key ending in [`JOULES_PER_TOKEN_KEY`]). The GPU rail reads
+/// differently box to box, so `--energy-reference-node` pins such a gate. A gate
+/// with no measured entry on `hardware` bounds nothing.
+///
+/// # Errors
+/// When `hardware` has entries but no resolvable default.
+pub fn energy_bounded(baseline: &GateBaseline, hardware: &str) -> Result<bool> {
+    if !baseline.hardware.contains_key(hardware) {
+        return Ok(false);
+    }
+    let (_, entry) = baseline.resolve(hardware, None)?;
+    Ok(entry.metrics.iter().any(|(name, bound)| {
+        name.ends_with(JOULES_PER_TOKEN_KEY) && (bound.min.is_some() || bound.max.is_some())
+    }))
 }
 
 /// 2026-09-26: The order one box runs its units in: group shards first, longest first;

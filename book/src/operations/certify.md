@@ -64,15 +64,40 @@ is nothing to balance against. A partition already begun at the anchor is
 finished at its own count whatever `--shards` says, because the verdict never
 assembles a partition across counts or commits.
 
-**Speed-class gates spread only across boxes that are one box.** Before
-anything starts, every pair of admitted nodes is checked by
-`hardware::equivalence` (same GPU and driver line, clock ceiling within 1 %,
-memory within 5 %, no thermal throttle, chassis within 15 °C — the fields
-that told two "identical" GB10s apart by 0.66 tok/s). If every pair agrees,
-Speed units go anywhere; otherwise they are **bundled** on the node with the
-most headroom and the plan prints `WARNING speed-class gates BUNDLED on …`
-with the concrete mismatch. CI re-checks the same rule from the records'
-own captures (`docs/provable-benchmark-work.md` §5c).
+**Speed-class gates run on one box.** With more than one node admitted, every
+Speed-class unit is **bundled** on one node, even when the boxes look
+equivalent at rest: equivalence at rest did not hold under load on
+2026-09-15, and the Speed class never sets the makespan. Without
+`--energy-reference-node` the bundle goes to the node with the most free
+memory, then the coolest chassis, and the plan prints `WARNING speed-class
+gates BUNDLED on …` with the reasons, including any pair that
+`hardware::equivalence` rejects at plan time (same GPU and driver line, clock
+ceiling within 1 %, memory within 5 %, no thermal throttle, chassis within
+15 °C — the fields that told two "identical" GB10s apart by 0.66 tok/s). CI
+judges Speed records from more than one signer by the same rule, from the
+records' own captures (`docs/provable-benchmark-work.md` §5c).
+
+**Name the reference box: the box the energy ceilings were cut on.** Until
+box calibration exists, pass `--energy-reference-node` on every multi-node
+campaign:
+
+```
+met bench certify --with-nodes <reference>,<other> --energy-reference-node <reference>
+```
+
+The boxes do not read as one: on identical code one GB10 read 6.6–13 % more
+J/token than another at every concurrency rung with identical tok/s, and
+before a listener fix the same box read 210 ms more on 32k TTFT. The J/token
+ceilings were cut from one box's history. With the flag, the reference
+(one of `--with-nodes`, spelled as there) hosts **every Speed-class gate and
+every energy-bounded gate**, so no speed or energy comparison is confounded
+by the box. A gate is energy-bounded when its default entry for the class in
+`BENCH.toml` bounds a metric ending in `gpu_rail_joules_per_token`; there is
+no hand-kept list, and the plan names those gates and why. Correctness gates
+still spread across the fleet. A reference that is not in `--with-nodes`, or
+is not admitted, is an error before anything runs; nothing falls back to
+another box. The plan prints `reference … (--energy-reference-node) hosts
+every Speed-class gate; energy-bounded gates PINNED: …`.
 
 **Cool-down.** Before a node takes another unit its hottest chassis zone
 and the driver's thermal-throttle flag are read. At the class's park line (**80 °C** on GB10) or above, or
@@ -174,7 +199,8 @@ kept outside the default directory is selected with
 ## `--json`
 
 One object per line on stdout, `event` ∈ `plan`, `preflight`, `fleet` (with
-`--with-nodes`: nodes, rejections, `speed_mode`, per-node queues, makespan),
+`--with-nodes`: nodes, rejections, `speed_mode`, `energy_pin`, per-node
+queues, makespan),
 `guard`, `start`, `line`, `done` (each with `node` under `--with-nodes`),
 `summary`, `final`, each with an `at` timestamp. The human report is
 suppressed.

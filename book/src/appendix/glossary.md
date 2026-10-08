@@ -6,6 +6,7 @@ Short definitions for the acronyms and names that recur in this book and the Met
 |---|---|
 | **axum** | Rust async web framework (built on tokio + tower). Metrale Engine's HTTP layer. |
 | **BF16** | Brain Floating-Point 16. 1 sign + 8 exponent + 7 mantissa. Standard precision for Metrale Engine activations and residual streams. |
+| **Circuit** | An architecture written as a string diagram: ops wired by typed edges, in blocks laid out per layer kind (`kernels/circuits/<arch>.toml`). See [The Circuit Compiler](../architecture/circuit-compiler.md). |
 | **CommBackend** | Metrale Engine's trait for collective ops (all-reduce, broadcast, send/recv). NCCL-backed in production; no-op in single-GPU. |
 | **ComputeTarget** | Metrale Engine's build-time trait for vendor-specific compilers (`nvcc`, `xcrun metal`, `hipcc`, `icpx`). |
 | **conv1d** | 1D convolution, typically causal with small kernel width (3–4). Used in Mamba-style SSMs. |
@@ -16,6 +17,7 @@ Short definitions for the acronyms and names that recur in this book and the Met
 | **E2M1** | 4-bit float format: 1 sign + 2 exponent + 1 mantissa. Values: {0, ±0.5, ±1, ±1.5, ±2, ±3, ±4, ±6}. The storage format of NVFP4 weights. |
 | **E4M3** | 8-bit float format: 1 sign + 4 exponent + 3 mantissa. The standard FP8 format. |
 | **EP=2** | Expert Parallelism across 2 nodes. Metrale Engine's multi-GPU shape — experts split across ranks, other layers replicated. |
+| **Evidence envelope** | The (class, point, row count) combinations at which a kernel family has a microbench record. "Optimized" is claimed only inside it. See [the LKB](../architecture/lkb.md#the-evidence-envelope). |
 | **Flash Attention** | Tiled online-softmax attention kernel family. Metrale Engine's prefill kernel builds on FA-2 + FA-4. |
 | **FP8** | 8-bit floating-point. In Metrale Engine context, usually E4M3. |
 | **GB10** | NVIDIA Grace-Blackwell GB10 Superchip. SM121. 119.7 GB unified memory. |
@@ -29,8 +31,14 @@ Short definitions for the acronyms and names that recur in this book and the Met
 | **HF** | HuggingFace. Metrale Engine loads HF-format checkpoints via `safetensors`. |
 | **HyperCompiling** | "AI Kernel HyperCompiling" — Metrale Engine's philosophy. Specialize per `(H, M_q)` target; abstractions stay above the kernel layer. |
 | **IORouter** | The SBIO pattern name for an I/O-side trait (`GpuBackend`, `CommBackend`, `WeightStore`). |
+| **Kernel family** | One kernel algorithm for one op class, with its parameters and instantiated points (`KERNEL_FAMILIES.toml`). A generator of the LKB. |
 | **KernelTarget** | The `(arch, model, quant)` dispatch key. `metrale-core::target::KernelTarget`. |
 | **KV cache** | Cached key and value tensors from attention. Paged in Metrale Engine. |
+| **LAB** | Latent Architecture Blueprint: architectures as parameterized block families, so a new model is a parameter point plus a named residual. See [the LAB](../architecture/lab.md). |
+| **Laxity** | The gain of a fusion: the cost of its parts minus the cost of the fused kernel. Time and energy laxity are measured separately. See [the LKB in Mathematics](./lkb-math.md#5-cost-and-energy-are-lax-functors). |
+| **LKB** | Latent Kernel Blueprint: kernel families (generators) and bit-identical rewrites (relations), shared by every hardware class and realized on each. See [the LKB](../architecture/lkb.md). |
+| **LKB residual** | The kernels of a hardware class that are not points of any LKB family: shadows, class-only sources, per-point copies. Always named, with evidence. Not to be confused with the residual stream. |
+| **Lowering rule** | A `[[rule]]` in `FUSIONS.toml`: an op pattern mapped to kernels under given modes, rows and settings. Its `numerics` tag is `reference`, `bit_identical` or `differs`. |
 | **LPDDR5X** | The memory technology GB10 uses. Unified with CPU; 273 GB/s peak bandwidth. |
 | **Mamba / Mamba-2** | Selective state-space models. Mamba-2 is the variant used by Nemotron-H. |
 | **Marconi** | Metrale Engine's SSM snapshot cache. Extension of RadixAttention to hybrid models. |
@@ -40,11 +48,15 @@ Short definitions for the acronyms and names that recur in this book and the Met
 | **MRoPE** | Multi-RoPE. Variant of RoPE that splits head dim into spatial (H, W) and temporal (T) segments. Used by vision models. |
 | **MTP** | Multi-Token Prediction. Metrale Engine's speculative-decoding mechanism using a model-native draft head. |
 | **NCCL** | NVIDIA's collective-ops library for multi-GPU / multi-node. |
+| **Numerics point** | A choice of reduction order, rounding points, FMA contraction and MMA atom for a kernel. Two kernels at the same numerics point give identical bytes. |
 | **NVFP4** | 4-bit E2M1 weights + FP8 E4M3 per-block scales (block=16). Metrale Engine's flagship quant format on GB10. |
 | **O_DIRECT** | Linux open flag that bypasses the page cache. Used by Metrale Engine's fast safetensors loader. |
 | **PCND** | "Prefer Config / No Defaults" — a user-instruction principle: no implicit defaults in production paths. |
+| **Point** | One instantiation of a kernel family: a value for each compile-time, policy and numerics parameter. |
 | **PTX** | Parallel Thread Execution. NVIDIA's virtual ISA; Metrale Engine's compiled kernels ship as PTX. |
 | **RadixAttention** | Prefix-caching mechanism built on a radix tree over token sequences. |
+| **Realization** | How a hardware class turns LKB points into kernels it can launch, along its `HARDWARE.toml` inheritance chain. In the math, a functor `F_H`. |
+| **Relation** | A lowering rule proven byte-identical to the chain it replaces (`numerics = "bit_identical"`). It may become the default on bytes plus a same-box speed and energy A/B. |
 | **RMSNorm** | Root-mean-square normalization. The norm used in every modern transformer Metrale Engine supports. |
 | **RoCE** | RDMA over Converged Ethernet. Metrale Engine's multi-node transport. |
 | **RoPE** | Rotary Position Embedding. Position encoding used by every transformer in the support matrix. |
@@ -57,9 +69,11 @@ Short definitions for the acronyms and names that recur in this book and the Met
 | **SSM** | State-Space Model. Mamba / delta-net style layer. |
 | **SSOT** | Single Source of Truth. User-instruction principle. |
 | **TBT** | Time Between Tokens. The decode-step latency SLAI optimises. |
+| **TTBP / TTPV** | Time to bit parity; time to a performance (speed and energy) win over the baseline, per hardware and model combination. |
 | **TTFT** | Time To First Token. The prefill-stage latency. |
 | **Tensor core** | Dedicated MMA hardware on NVIDIA GPUs; Metrale Engine targets the BF16 and E4M3 tensor cores on SM121. |
 | **TurboQuant** | Metrale Engine's WHT + Lloyd-Max 4/3/8-bit KV-cache quant format. Lower MSE than NVFP4 at the same bit rate. |
+| **Uncovered op** | An op no kernel family lowers on a class; reported as *novel* by `met circuit venn` and `plan`. A gap in the LKB, the opposite of the LKB residual. |
 | **vLLM** | Popular open-source LLM inference framework. Metrale Engine's primary throughput baseline. |
 | **WHT** | Walsh-Hadamard Transform. Used in TurboQuant to flatten outliers before quantization. |
 | **XGrammar** | Token-bitmap automaton for constrained decoding. Metrale Engine's tool-call + structured-output enforcement substrate. |

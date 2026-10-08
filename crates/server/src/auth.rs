@@ -75,12 +75,33 @@ impl AuthConfig {
     /// comparison is `ct_eq`, so the time does not depend on how many
     /// leading bytes match.
     pub fn validate(&self, presented: &[u8]) -> bool {
-        let mut any_match = 0u8;
-        for valid in &self.tokens {
-            any_match |= ct_eq(presented, valid);
-        }
-        any_match == 1
+        self.tenant_of(presented).is_some()
     }
+
+    /// 2026-10-04: The tenant `presented` authenticates as: 1 + the index of
+    /// the loaded token it equals (tokens are sorted, so the index is stable
+    /// for one tokens file); `None` when it equals none. Same constant-time
+    /// comparison as [`Self::validate`].
+    pub fn tenant_of(&self, presented: &[u8]) -> Option<LookupTenant> {
+        let mut found = 0u64;
+        for (i, valid) in self.tokens.iter().enumerate() {
+            found |= u64::from(ct_eq(presented, valid)) * (i as u64 + 1);
+        }
+        (found != 0).then_some(LookupTenant(found))
+    }
+}
+
+/// 2026-10-04: Who a request belongs to, for state shared across requests
+/// that must not cross tenants (the cross-request prompt-lookup cache). The
+/// auth middleware attaches it to every request: `0` when the serve has no
+/// `--require-auth` (one trust domain), else the token's tenant
+/// ([`AuthConfig::tenant_of`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LookupTenant(pub u64);
+
+impl LookupTenant {
+    /// 2026-10-04: The tenant of a serve without `--require-auth`.
+    pub const OPEN: Self = Self(0);
 }
 
 /// 2026-09-26: `1` if the slices are byte-equal, `0` otherwise. A length
@@ -150,6 +171,12 @@ mod tests {
         assert!(cfg.validate(b"beta-token"));
         assert!(!cfg.validate(b"# project A"));
         assert!(!cfg.validate(b"gamma-token"));
+        // 2026-10-04: Each token is its own tenant, never the open serve's.
+        let (a, b) = (cfg.tenant_of(b"alpha-token"), cfg.tenant_of(b"beta-token"));
+        assert!(a.is_some() && b.is_some() && a != b);
+        assert!(a != Some(LookupTenant::OPEN) && b != Some(LookupTenant::OPEN));
+        assert_eq!(cfg.tenant_of(b"gamma-token"), None);
+        assert_eq!(cfg.tenant_of(b"alpha-toke"), None);
     }
 
     #[test]

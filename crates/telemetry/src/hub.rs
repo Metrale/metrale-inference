@@ -70,6 +70,7 @@ pub struct Telemetry {
     pub kernel: KernelInstruments,
     pub sched: SchedInstruments,
     pub spec: SpecMatrix,
+    pub spec_confidence: crate::spec_confidence::ConfidenceOutcomes,
     pub requests: RequestInstruments,
 }
 
@@ -111,6 +112,7 @@ impl Telemetry {
             kernel: KernelInstruments::new(),
             sched: SchedInstruments::new(),
             spec: SpecMatrix::new(),
+            spec_confidence: crate::spec_confidence::ConfidenceOutcomes::new(),
             requests: RequestInstruments::new(),
         }
     }
@@ -213,6 +215,16 @@ impl Telemetry {
             return;
         }
         self.spec.record(drafts, accepted);
+    }
+
+    /// 2026-10-04: A verify step reached a draft whose drafter top-1 log-probability was
+    /// `lp`, and accepted it or not.
+    #[inline]
+    pub fn spec_draft_confidence(&self, lp: f32, accepted: bool) {
+        if !self.on() {
+            return;
+        }
+        self.spec_confidence.record(lp, accepted);
     }
 
     /// 2026-09-26: A request finished. Its energy is attributed from the ring

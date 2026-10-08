@@ -25,6 +25,7 @@ impl MoeLayer {
         if self.nvfp4_grouped_decode_ok(3, ctx) {
             return self.forward_nvfp4_grouped_decode(input, 3, ctx, stream);
         }
+        self.refuse_lean_layout("MoeLayer::forward_k3")?;
         // 2026-09-25: The batch3 kernels do not handle zero-computation experts
         // (router width above num_experts), so refuse instead of mis-routing.
         anyhow::ensure!(

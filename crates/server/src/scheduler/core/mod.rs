@@ -100,6 +100,7 @@ impl SchedulerCore {
             use_self_speculative,
             use_ngram_speculative,
             prompt_lookup,
+            shared_lookup,
             swap_space_gb,
             high_speed_swap_cfg,
             block_size,
@@ -173,6 +174,18 @@ impl SchedulerCore {
                 pl.max_drafts,
                 pl.max_seqs
             );
+            // 2026-10-04: The cross-request cache rides prompt lookup.
+            if let Some(setup) = shared_lookup {
+                let sl = crate::scheduler::shared_lookup_step::SharedLookup::new(setup)
+                    .expect("shared prompt-lookup cache settings are validated at serve start");
+                tracing::info!(
+                    "prompt-lookup shared cache: ARMED (budget={} MiB, scopes={}, key_len={})",
+                    setup.config.budget_bytes >> 20,
+                    setup.config.max_scopes,
+                    setup.config.key_len
+                );
+                sched.shared_lookup = Some(sl);
+            }
         }
         let num_drafts = if use_mtp || use_self_speculative || use_ngram_speculative {
             num_drafts.max(1)

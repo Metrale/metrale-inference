@@ -18,7 +18,8 @@ use super::flag_values::{
     SSM_H_DTYPES, TELEMETRY_LEVELS, TOOL_CALL_PARSERS, TRISTATES,
 };
 
-mod violation;
+mod prompt_lookup;
+pub(super) mod violation;
 use violation::{Violation, check_enum, format_violations};
 
 /// 2026-09-26: Validate a `met serve` command line.
@@ -78,24 +79,6 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
                  nvfp4 in the ladder (e.g. 1-32=nvfp4;33-=adaptive)",
             ));
         }
-    }
-    if args
-        .ssm_h_dtype
-        .as_deref()
-        .is_some_and(|d| d.starts_with("f16"))
-        && args
-            .activation_quantization
-            .ladder(metrale_config::ProjFamily::Gdn)
-            .rungs()
-            .iter()
-            .any(|r| r.format != metrale_config::ActQuantFormat::Adaptive)
-    {
-        v.push(Violation::new(
-            "--ssm-h-dtype f16 with a fixed --activation-quantization for gdn",
-            "a fixed GDN format runs the MTP verify on the exact chain (the kernels decode \
-             runs), whose kernels read an FP32 h-state only",
-            "drop --ssm-h-dtype, or give gdn the adaptive ladder (e.g. `declared,gdn:adaptive`)",
-        ));
     }
     if args.no_canonical_tiers && !args.activation_quantization.is_adaptive() {
         v.push(Violation::new(
@@ -208,18 +191,6 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             "use auto (default: preflight sizes the ring from free memory) or 0..=8.",
         ));
     }
-    // 2026-09-26: An FP16 h-state turns the exact verify chain off
-    // (`GdnFlags::verify_exact_active`), so the pair would drop an explicit
-    // `--exact-verify` without saying so.
-    if args.exact_verify && h_f16 {
-        v.push(Violation::new(
-            "--exact-verify together with --ssm-h-dtype f16",
-            "the exact MTP-verify chain (issue #435) runs FP32-reader kernels and must \
-             never read the FP16 h-state pool, so with f16 the exact request would be \
-             silently dropped and spec-on output would NOT equal spec-off",
-            "drop --ssm-h-dtype f16 (f32 is the default), or drop --exact-verify",
-        ));
-    }
     check_enum(
         &mut v,
         "--mtp-quantization",
@@ -297,17 +268,7 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
         ));
     }
 
-    // 2026-10-02: Prompt lookup takes MTP's round when it matches and leaves
-    // it to MTP otherwise; with no MTP there is no round to take.
-    if args.prompt_lookup.prompt_lookup_decoding && !args.speculative {
-        v.push(Violation::new(
-            "--prompt-lookup-decoding is set without --speculative.",
-            "prompt-lookup copies are verified in the MTP speculative step, in place of \
-             the drafter's chain; without MTP that step never runs, so the flag would do \
-             nothing.",
-            "add --speculative, or drop --prompt-lookup-decoding.",
-        ));
-    }
+    prompt_lookup::check(args, &mut v);
 
     // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
     // DFlash drafts a whole block in one pass and has no chain to stop.
@@ -341,6 +302,8 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             "pass a value from 0 to 1 (1.0 keeps every draft), or drop the flag.",
         ));
     }
+
+    crate::cli::validate_spec_cost::check(args, &mut v); // 2026-10-04: measured's checks
 
     // 2026-09-26: Only an explicit --num-drafts is checked: an omitted one
     // resolves against MODEL.toml later, and a model default without a

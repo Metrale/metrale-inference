@@ -69,6 +69,7 @@ impl SchedLevers {
             dcut_enabled: true,
             dcut_width_cap: 8,
             dcut_ratio: 0.75,
+            spec_cost: None,
             mtp_accept_fold_at_16: false,
             mtp_accept_debug: false,
             // 2026-09-25: `mtp_max_seqs()` with the variable unset.

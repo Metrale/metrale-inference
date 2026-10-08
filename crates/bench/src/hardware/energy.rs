@@ -46,6 +46,10 @@ pub const SAMPLE_PERIOD_MS: u64 = 250;
 /// [`super::energy_sampler::EnergySampler::idle_baseline`] integrates.
 pub const IDLE_BASELINE_SECS: u64 = 2;
 
+/// 2026-10-04: The J/token record key, after the `c{C}_` rung prefix when there is
+/// one. A BENCH.toml bound on a key ending in it is an energy bound.
+pub const JOULES_PER_TOKEN_KEY: &str = "gpu_rail_joules_per_token";
+
 /// 2026-09-26: Logged once per run when sampling starts (`EnergyMeter::start`).
 pub const RAIL_NOTE: &str = "energy: GPU RAIL ONLY (nvidia-smi power.draw.average, 250 ms cadence). \
      On GB10 the module rail — Grace cores + LPDDR5X — reads N/A and is NOT in this number; on a \
@@ -222,7 +226,7 @@ impl EnergyWindow {
         // 2026-09-26: Absent when the window cannot support the ratio, so a J/token
         // ceiling fails as missing from the record rather than passing.
         if let Some(r) = joules_per_token(self.energy_j, tokens) {
-            put(m, "gpu_rail_joules_per_token", r);
+            put(m, JOULES_PER_TOKEN_KEY, r);
         }
         put(m, "gpu_rail_mean_power_w", self.mean_power_w);
         put(m, "gpu_rail_max_power_w", self.max_power_w);

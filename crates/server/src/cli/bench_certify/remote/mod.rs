@@ -9,6 +9,8 @@
 //! - The guard runs on the calling thread; a `Stop` sets the shared cancel flag.
 //! - With more than one node, Speed-class units run on one node
 //!   ([`schedule::speed_mode`]).
+//! - With `--energy-reference-node`, energy-bounded units run on that node
+//!   only ([`schedule::energy_pin`]).
 //!
 //! Invariants: none beyond the types.
 
@@ -40,13 +42,15 @@ use super::{Emit, GUARD_EVERY};
 use metrale_bench::hardware::equivalence::EquivalencePolicy;
 use metrale_bench::hardware::limits::ThermalEnvelope;
 use node::Node;
-use schedule::SpeedMode;
+use schedule::{EnergyPin, SpeedMode};
 
 /// 2026-09-26: The admitted fleet and the mode it runs in.
 pub struct Fleet {
     pub nodes: Vec<Node>,
     pub rejected: Vec<node::Rejection>,
     pub mode: SpeedMode,
+    /// 2026-10-04: Set by the caller from `--energy-reference-node`; `None` without it.
+    pub energy: Option<EnergyPin>,
     /// 2026-09-26: The class's declared thermal envelope; `None` only under
     /// `--dangerous-ignore-thermals`.
     pub envelope: Option<ThermalEnvelope>,
@@ -101,6 +105,7 @@ pub fn assemble(
         nodes,
         rejected,
         mode,
+        energy: None,
         envelope,
     })
 }
@@ -193,6 +198,7 @@ pub fn drive(
         placed: vec![None; n],
     }));
     let mode = fleet.mode.clone();
+    let energy = fleet.energy.as_ref();
     let workers: Vec<_> = std::thread::scope(|scope| {
         let handles: Vec<_> = runners
             .iter_mut()
@@ -201,7 +207,8 @@ pub fn drive(
                 let board = board.clone();
                 let mode = mode.clone();
                 let node = fleet.nodes[k].clone();
-                scope.spawn(move || worker(k, &node, runner.as_mut(), &board, &mode, shared))
+                scope
+                    .spawn(move || worker(k, &node, runner.as_mut(), &board, &mode, energy, shared))
             })
             .collect();
         // 2026-09-26: The guard and the lockfile heartbeat, on this thread, every
@@ -278,6 +285,7 @@ fn worker(
     runner: &mut dyn GateRunner,
     board: &Mutex<Board>,
     mode: &SpeedMode,
+    energy: Option<&EnergyPin>,
     shared: &Shared,
 ) {
     let mut strikes = 0;
@@ -320,7 +328,7 @@ fn worker(
                 .iter()
                 .map(|p| *p == Phase::Pending)
                 .collect();
-            match schedule::next_for(k, &b.campaign.units, &pending, &b.placed, mode) {
+            match schedule::next_for(k, &b.campaign.units, &pending, &b.placed, mode, energy) {
                 Some(i) => {
                     b.campaign.start(i);
                     b.placed[i] = Some(k);

@@ -54,7 +54,7 @@ pub(crate) async fn require_auth_middleware(
     // router's lifetime would keep `request_tx` open and block a swap's
     // scheduler join.
     axum::extract::State(host): axum::extract::State<Arc<super::model_host::ModelHost>>,
-    req: axum::extract::Request,
+    mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
@@ -66,6 +66,7 @@ pub(crate) async fn require_auth_middleware(
         return next.run(req).await;
     }
     let Some(auth_cfg) = host.auth() else {
+        req.extensions_mut().insert(crate::auth::LookupTenant::OPEN);
         return next.run(req).await;
     };
     let presented_token = req
@@ -74,18 +75,22 @@ pub(crate) async fn require_auth_middleware(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(str::trim);
-    let (status, code, message) = match presented_token {
-        None => (
+    let tenant = presented_token.and_then(|t| auth_cfg.tenant_of(t.as_bytes()));
+    let (status, code, message) = match (presented_token, tenant) {
+        (None, _) => (
             axum::http::StatusCode::UNAUTHORIZED,
             "missing_api_key",
             "Missing Authorization: Bearer header",
         ),
-        Some(t) if !auth_cfg.validate(t.as_bytes()) => (
+        (Some(_), None) => (
             axum::http::StatusCode::UNAUTHORIZED,
             "invalid_api_key",
             "Invalid bearer token",
         ),
-        Some(_) => return next.run(req).await,
+        (Some(_), Some(tenant)) => {
+            req.extensions_mut().insert(tenant);
+            return next.run(req).await;
+        }
     };
     let body = serde_json::json!({
         "error": {

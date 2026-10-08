@@ -236,6 +236,7 @@ impl Qwen3AttentionLayer {
         // N would read past it. 2026-09-28: the edge (`W4a16BatchmTiers::edge`) is 8 by
         // default and up to 64 for a W4A4 weight; `n > 8` held only for the first.
         let use_fused = fused_qkv_enabled()
+            && !self.fixed_nvfp4_qkv_serves(n)
             && self.qkv_nvfp4_t.is_some()
             && n as u32 > self.w4a16_batchm.edge(q_nvfp4).max(8);
         if use_fused {

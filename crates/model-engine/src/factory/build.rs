@@ -111,6 +111,7 @@ pub fn build_model(
         return Ok(slots::BuiltModel {
             max_batch_size: nllb_slots,
             model: Box::new(model),
+            drafter_weights_sha256: None,
         });
     }
     #[cfg(not(feature = "cuda"))]
@@ -263,6 +264,9 @@ pub fn build_model(
         use_speculative,
         !mtp_weights.is_empty(),
     )?;
+    // 2026-10-04: The drafter's stored-weight key, before anything below might free an `mtp.*`,
+    // embedding or lm_head tensor (`--spec-cost-model measured`'s drafter key).
+    let drafter_weights_sha256 = store.drafter_weights_sha256(gpu.as_ref())?;
 
     // 2026-10-01: Step 3a: the transposed twin of the NVFP4 LM head, built here rather than in
     // `TransformerModel::new` so the KV sizing finds it on the allocation ledger.
@@ -477,5 +481,6 @@ pub fn build_model(
     Ok(slots::BuiltModel {
         model: Box::new(model),
         max_batch_size,
+        drafter_weights_sha256,
     })
 }

@@ -44,6 +44,9 @@ pub(super) struct ReqSpec {
     /// 2026-09-25: `None` means queued before the loop starts; `Some(t)` means it arrives while the
     /// loop is parked at tick `t`.
     pub arrive_at_tick: Option<usize>,
+    /// 2026-10-04: The request's tenant (`auth::LookupTenant`); the open
+    /// serve's by default.
+    pub lookup_tenant: Option<crate::auth::LookupTenant>,
 }
 
 impl ReqSpec {
@@ -64,6 +67,7 @@ impl ReqSpec {
             cancel_at: None,
             expired_deadline: false,
             arrive_at_tick: None,
+            lookup_tenant: Some(crate::auth::LookupTenant::OPEN),
         }
     }
 }
@@ -79,6 +83,8 @@ pub(super) struct RunOptions {
     pub self_speculative: bool,
     pub ngram_speculative: bool,
     pub prompt_lookup: Option<metrale_speculative::prompt_lookup::PromptLookupConfig>,
+    /// 2026-10-04: The cross-request prompt-lookup cache; `None` when off.
+    pub shared_lookup: Option<crate::scheduler::shared_lookup_step::SharedLookupSetup>,
     pub swap_space_gb: usize,
     pub slai_policy: bool,
     pub mtp_gate_force: bool,
@@ -116,6 +122,7 @@ impl Default for RunOptions {
             self_speculative: false,
             ngram_speculative: false,
             prompt_lookup: None,
+            shared_lookup: None,
             swap_space_gb: 0,
             slai_policy: false,
             mtp_gate_force: true,
@@ -190,6 +197,7 @@ fn build_request(r: &ReqSpec, shared: &Shared) -> (InferenceRequest, Sink) {
             InferenceRequest::$variant {
                 prompt_tokens: Arc::new(prompt),
                 session_hash: r.id,
+                lookup_tenant: r.lookup_tenant,
                 adapter_slot: -1,
                 src_lang_id: 0,
                 tgt_lang_id: 0,
@@ -383,6 +391,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                 use_self_speculative: opts.self_speculative,
                 use_ngram_speculative: opts.ngram_speculative,
                 prompt_lookup: opts.prompt_lookup,
+                shared_lookup: opts.shared_lookup,
                 swap_space_gb: opts.swap_space_gb,
                 high_speed_swap_cfg: None,
                 block_size,

@@ -37,7 +37,7 @@ fn the_turn_termination_levers_ship_on_in_the_live_resolver() {
         std::env::remove_var("METRALE_TOOL_RESPONSE_STOP");
         std::env::remove_var("METRALE_TOOL_EOS_ESCAPE");
     }
-    let live = SchedLevers::from_env(None, None);
+    let live = SchedLevers::from_env(None, None, None);
     assert!(live.tool_response_stop, "METRALE_TOOL_RESPONSE_STOP");
     assert!(live.tool_eos_escape, "METRALE_TOOL_EOS_ESCAPE");
     assert!(SchedLevers::defaults().tool_response_stop);
@@ -112,7 +112,7 @@ fn spec_think_per_lane_in_the_resolver_the_server_actually_uses() {
     };
 
     set(None, None);
-    let live = SchedLevers::from_env(None, None);
+    let live = SchedLevers::from_env(None, None, None);
     assert_eq!(
         live.mtp_spec_think_env, None,
         "with no env set the resolver must defer to the model default"
@@ -141,14 +141,14 @@ fn spec_think_per_lane_in_the_resolver_the_server_actually_uses() {
     );
 
     set(Some("0"), None);
-    let l = SchedLevers::from_env(None, None);
+    let l = SchedLevers::from_env(None, None, None);
     assert!(
         !l.mtp_spec_think(glm),
         "METRALE_MTP_SPEC_THINK=0 turns GLM off"
     );
 
     set(None, Some("0"));
-    let l = SchedLevers::from_env(None, None);
+    let l = SchedLevers::from_env(None, None, None);
     assert!(
         !l.mtp_spec_think(glm),
         "METRALE_DFLASH_SPEC_THINK=0 must keep working as an off switch for MTP"
@@ -156,7 +156,7 @@ fn spec_think_per_lane_in_the_resolver_the_server_actually_uses() {
     assert!(!l.dflash_spec_think);
 
     set(None, Some("1"));
-    let l = SchedLevers::from_env(None, None);
+    let l = SchedLevers::from_env(None, None, None);
     assert!(
         l.mtp_spec_think(glm) && l.mtp_spec_think(other),
         "METRALE_DFLASH_SPEC_THINK=1 keeps its pre-split MTP opt-in on every model"
@@ -167,7 +167,7 @@ fn spec_think_per_lane_in_the_resolver_the_server_actually_uses() {
     );
 
     set(Some("1"), None);
-    let l = SchedLevers::from_env(None, None);
+    let l = SchedLevers::from_env(None, None, None);
     assert!(
         l.mtp_spec_think(other),
         "METRALE_MTP_SPEC_THINK=1 is the per-lane opt-in for qualification runs"
@@ -179,7 +179,7 @@ fn spec_think_per_lane_in_the_resolver_the_server_actually_uses() {
 
     set(Some("1"), Some("0"));
     assert!(
-        !SchedLevers::from_env(None, None).mtp_spec_think(glm),
+        !SchedLevers::from_env(None, None, None).mtp_spec_think(glm),
         "an explicit =0 on either variable beats an opt-in"
     );
 
@@ -285,7 +285,7 @@ fn an_absent_mtp_gate_flag_leaves_the_legacy_variable_reachable() {
     assert!(resolve_mtp_gate_force(Some(true)));
     assert!(!resolve_mtp_gate_force(Some(false)));
     assert!(
-        SchedLevers::from_env(Some(true), None).mtp_gate_force,
+        SchedLevers::from_env(Some(true), None, None).mtp_gate_force,
         "and the carried levers read the same resolution — one rule, not two"
     );
 }
@@ -398,7 +398,7 @@ fn the_verify_step_levers_hold_their_polarities() {
     // concurrent environment access from another test is not excluded.
     unsafe { std::env::remove_var("METRALE_DFLASH_EAGLE_FIX") };
     assert!(
-        SchedLevers::from_env(None, None).dflash_eagle_fix,
+        SchedLevers::from_env(None, None, None).dflash_eagle_fix,
         "METRALE_DFLASH_EAGLE_FIX must stay DEFAULT-ON in the resolver the \
          server actually uses — `defaults()` is a hand-written literal and \
          cannot catch a change here"

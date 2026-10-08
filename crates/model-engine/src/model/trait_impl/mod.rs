@@ -35,6 +35,8 @@ mod decode_b;
 mod decode_b2;
 pub(in crate::model) mod decode_checkpoint;
 mod decode_graph_key;
+mod slot_graph_key;
+pub(crate) use slot_graph_key::SlotGraphKey;
 mod decode_multi_seq_gate;
 mod drafter_prefill;
 mod ep_misc;

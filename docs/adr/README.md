@@ -56,3 +56,6 @@ What's better, what's worse, what new problems did we create?
 - [0015 — The governance harvest, and a one-time content-pinned amnesty](0015-governance-harvest-and-the-one-time-amnesty.md)
 - [0016 — Exempt only proven test-only Rust modules from benchmark invalidation](0016-test-only-rust-module-coverage.md)
 - [0017 — License: MIT OR Apache-2.0](0017-license-mit-or-apache.md)
+- [0018 — A proven bit-identical relation may become the default on bytes, speed and energy](0018-relations-become-defaults-on-bytes-speed-and-energy.md)
+- [0019 — A recipe is a parameter point, a serving policy, and resources](0019-recipes-are-a-parameter-point-a-serving-policy-and-resources.md)
+- [0020 — Kernels and architectures are built against shared blueprints](0020-kernels-and-architectures-against-shared-blueprints.md)

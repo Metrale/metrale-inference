@@ -44,6 +44,7 @@ pub mod sampler;
 pub mod sched;
 pub mod seqcell;
 pub mod snapshot;
+pub mod spec_confidence;
 
 #[cfg(test)]
 mod nvml_script;
