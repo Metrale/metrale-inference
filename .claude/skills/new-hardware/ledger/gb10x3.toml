@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-08: The bring-up ledger of the GLM Campaign (GLM-5.3 Flash on 3×GB10 with DFlash2): a
+# multi-node topology of the existing gb10 class, "gb10x3". Same schema as the kit's
+# ledger/h100.toml (the Hardware Beachhead Campaign: H100 PR); read that file's header for every
+# key. Update at every milestone.
+
+[[combo]]
+device = "gb10 x3 (one GPU per box, RoCE triangle)"
+class = "gb10"
+model = "glm-5.3-flash-nvfp4 (hybrid KDA + DSA sparse MLA + mHC, 288-expert MoE) + DFlash2 drafter"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4 + incoai/GLM-5.3-Flash-DFlash2"
+revision = "local copy; model.safetensors.index.json sha256 26765b2601fd246ef361cfb9f5e10f9fb291a59e05ad0a109062f3a4747c7fd1"
+started = "2026-10-08T17:15:00Z"
+ttbp_mock_at = ""
+ttbp_real_at = ""
+ttpv_speed_at = ""
+ttpv_energy_at = ""
+ttpv_at = ""
+certified_at = ""
+ttbp_mock_h = 0.0
+ttbp_real_h = 0.0
+ttpv_speed_h = 0.0
+ttpv_energy_h = 0.0
+ttpv_h = 0.0
+loop_budget = "10 calendar days or 60 three-box device-hours of loop measurement, whichever comes first"
+escalations = []
+iterations = 0
+levers_kept = []
+levers_discarded = []
+loc_added = 0
+loc_removed = 0
+loc_removed_by_parameterization = 0
+lkb_coverage_pct_start = ""
+lkb_coverage_pct = ""
+lkb_measured_pct_start = ""
+lkb_measured_pct = ""
+residual_count_start = 0
+residual_loc_start = 0
+residual_count = 0
+residual_loc = 0
+residual_copy_points_start = 0
+residual_copy_points = 0
+residual_single_class_start = 0
+residual_single_class = 0
+lab_arch_coverage_start = ""
+lab_arch_coverage = ""
+lab_param_points_start = 0
+lab_param_points = 0
+lab_residual_start = ["glm5_next (no circuit; IR lacks MLA, sparse indexer, KDA gate and mHC ops)"]
+lab_residual = ["glm5_next (no circuit; IR lacks MLA, sparse indexer, KDA gate and mHC ops)"]
+lab_promoted = []
+promoted = []
+zero_day_ttbp_h = 0.0
+evidence = "the campaign PR, GLM Campaign: GLM-5.3 Flash on 3×GB10 with DFlash2"
+notes = "LKB fields stay empty until a glm5_next circuit exists (gap 12): met circuit lkb cannot plan a model with no circuit"

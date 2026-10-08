@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-08: The lever journal of the GLM Campaign (GLM-5.3 Flash on 3×GB10 with DFlash2). One
+# [[lever]] per optimization attempt, kept OR discarded OR failed, with the schema and the
+# root_cause_class vocabulary of the kit's ledger/levers.toml (the Hardware Beachhead Campaign:
+# H100 PR). Kept as its own file so the two PRs do not conflict; its entries are appended to
+# levers.toml once the kit merges.
