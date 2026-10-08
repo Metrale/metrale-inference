@@ -20,6 +20,7 @@ const SHIPPED_CONFIG: &str = r#"{
     "block_size": 16,
     "rope_theta": 10000000.0,
     "rope_scaling": null,
+    "rms_norm_eps": 1e-6,
     "dflash_config": {
         "mask_token_id": 248070,
         "target_layer_ids": [1, 10, 19, 28, 37]
@@ -42,6 +43,7 @@ fn shipped_qwen3_6_fields_reach_the_runtime_config() {
     assert_eq!(config.rope_theta, Some(10_000_000.0));
     assert_eq!(config.effective_rope_theta(), Ok(10_000_000.0));
     assert!(config.rope_scaling.is_none());
+    assert_eq!(config.effective_rms_norm_eps(), Ok(1e-6));
     let sub = config.dflash_config.expect("dflash_config present");
     assert_eq!(sub.mask_token_id, 248070);
     assert_eq!(sub.target_layer_ids, vec![1, 10, 19, 28, 37]);
@@ -69,6 +71,10 @@ fn omitted_optional_fields_use_runtime_defaults() {
     assert!(config.draft_vocab_size.is_none());
     assert!(config.dflash_config.is_none());
     assert!(config.rope_scaling.is_none());
+    assert!(
+        config.effective_rms_norm_eps().is_err(),
+        "a drafter that does not state its norm epsilon is refused, not given 1e-6"
+    );
 }
 
 #[test]
@@ -122,7 +128,7 @@ fn effective_block_size_falls_back_to_the_top_level() {
 const NESTED_THETA_CONFIG: &str = r#"{
     "hidden_size": 64, "num_hidden_layers": 1, "intermediate_size": 128,
     "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 32, "vocab_size": 256,
-    "rope_parameters": {"rope_theta": 10000.0, "rope_type": "default"}
+    "rope_parameters": {"rope_theta": 10000.0, "rope_type": "default"}, "rms_norm_eps": 1e-05
 }"#;
 
 #[test]
@@ -130,6 +136,8 @@ fn rope_theta_inside_rope_parameters_is_used() {
     let config = parse_dflash_config(NESTED_THETA_CONFIG).unwrap();
     assert_eq!(config.rope_theta, None);
     assert_eq!(config.effective_rope_theta(), Ok(10_000.0));
+    // 2026-10-08: The GLM-5.3 Flash DFlash2 drafter's 1e-5, not the 1e-6 every head used.
+    assert_eq!(config.effective_rms_norm_eps(), Ok(1e-5));
 }
 
 #[test]

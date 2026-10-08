@@ -41,6 +41,11 @@ pub struct DflashConfig {
     /// plain RoPE with a warning.
     #[serde(default, alias = "rope_parameters")]
     pub rope_scaling: Option<DflashRopeScaling>,
+    /// 2026-10-08: The drafter's RMSNorm epsilon. Every drafter shipped so far states it (the
+    /// Qwen drafters 1e-6, the GLM-5.3 Flash DFlash2 drafter 1e-5); read it through
+    /// [`DflashConfig::effective_rms_norm_eps`], which refuses a config without it.
+    #[serde(default)]
+    pub rms_norm_eps: Option<f32>,
     /// 2026-09-25: DSpark Markov head rank, a top-level key; 0 when absent,
     /// which loads no Markov head.
     #[serde(default)]
@@ -141,6 +146,14 @@ impl DflashConfig {
             (None, Some(inner)) => Ok(inner),
             (None, None) => Ok(default_rope_theta()),
         }
+    }
+
+    /// 2026-10-08: The RMSNorm epsilon the drafter was trained with. The head used 1e-6 for
+    /// every drafter before this was read; a config that does not state it is refused rather
+    /// than given a guess.
+    pub fn effective_rms_norm_eps(&self) -> Result<f32, String> {
+        self.rms_norm_eps
+            .ok_or_else(|| "drafter config.json has no rms_norm_eps".to_string())
     }
 
     /// 2026-09-25: Resolved block size γ: `dflash_config.block_size` when set,

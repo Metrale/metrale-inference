@@ -335,7 +335,10 @@ impl BlockDiffusionDraftHead {
             yarn_inv_freq,
             rope_theta,
             rotary_dim,
-            rms_norm_eps: 1e-6,
+            rms_norm_eps: weights
+                .config
+                .effective_rms_norm_eps()
+                .map_err(|e| anyhow::anyhow!(e))?,
             ctx_window,
             propose_graphs: parking_lot::Mutex::new(super::ProposeGraphs::default()),
             suppress_graphs: std::sync::atomic::AtomicBool::new(false),

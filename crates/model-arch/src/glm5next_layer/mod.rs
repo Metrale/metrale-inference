@@ -214,7 +214,7 @@ impl TransformerLayer for Glm5NextLayer {
         // 2026-09-25: For a KDA layer, row `t < K - 1` writes intermediate `t`, and
         // `rollback_ssm_states_dispatch` restores intermediate `num_accepted - 1`.
         // 2026-10-08: Under `--ssm-rollback-mode replay` the pool has no intermediates; the
-        // slot's checkpoint and verify record stand in for them (`replay_verify`).
+        // slot's checkpoint and verify record stand in for them (`replay_verify_prepare`).
         let mut replay = None;
         if let (Glm5NextMixer::Kda { layer, .. }, true) = (&self.mixer, num_tokens > 1) {
             let st = self.kda_state(state)?;

@@ -9,7 +9,7 @@
 //! but runs no kernel. So these tests prove the plumbing the bit-exactness argument rests on:
 //! the commit restores the checkpoint, and each replayed row launches what the verify row
 //! launched, on pointers whose bytes are the bytes that verify row read. The kernels' own
-//! arithmetic is covered by the GPU test `glm_dflash_replay_matches_sequential_decode`.
+//! arithmetic is covered on a GPU by the `kda_replay_microtest` example.
 
 use metrale_gpu_runtime::gpu::mock::{MockArg, MockGpuBackend, MockLaunch};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
