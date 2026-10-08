@@ -71,6 +71,8 @@ pub struct Glm5NextDsaState {
     index_head_dim: usize,
     /// 2026-09-25: Set by [`Self::free`], which then does nothing on a second call.
     released: bool,
+    /// 2026-10-08: False for a [`Self::borrowed`] view, whose buffers `free` leaves alone.
+    owned: bool,
 }
 
 impl Glm5NextDsaState {
@@ -88,7 +90,30 @@ impl Glm5NextDsaState {
             capacity,
             index_head_dim: d,
             released: false,
+            owned: true,
         })
+    }
+
+    /// 2026-10-08: An empty state over `capacity` rows of buffers the caller owns and keeps
+    /// alive: the padding rows of a batched decode (`Glm5NextDsaWorkspace::pad_state`).
+    /// [`Self::free`] releases nothing for it.
+    pub fn borrowed(
+        k_normed: DevicePtr,
+        gate: DevicePtr,
+        valid: DevicePtr,
+        capacity: usize,
+        index_head_dim: usize,
+    ) -> Self {
+        Self {
+            k_normed,
+            gate,
+            valid,
+            len: 0,
+            capacity,
+            index_head_dim,
+            released: false,
+            owned: false,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -192,14 +217,17 @@ impl Glm5NextDsaState {
     /// Takes `&mut self` because callers hold the state behind a `dyn` state object. A second
     /// call does nothing (`released` is set first), since `release_state` on the layer and the
     /// MTP proposer's `free_state` can both reach one state. After the three frees succeed the
-    /// pointers are nulled and `len` is 0.
+    /// pointers are nulled and `len` is 0. 2026-10-08: A [`Self::borrowed`] view frees
+    /// nothing and is only nulled.
     pub fn free(&mut self, gpu: &dyn GpuBackend) -> Result<()> {
         if self.released {
             return Ok(());
         }
         self.released = true;
-        for p in [self.k_normed, self.gate, self.valid] {
-            gpu.free(p)?;
+        if self.owned {
+            for p in [self.k_normed, self.gate, self.valid] {
+                gpu.free(p)?;
+            }
         }
         self.k_normed = DevicePtr(0);
         self.gate = DevicePtr(0);

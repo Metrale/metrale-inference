@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: GLM-5.3-Flash layer launch levers: the prefill sub-chunk width, cuBLASLt for
-//! wide projections, and the batched DSA indexer query.
+//! wide projections, the batched DSA indexer query, and (2026-10-08) the row group of the
+//! batched multi-sequence decode.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
@@ -81,4 +82,24 @@ pub fn prefill_rows() -> usize {
         }
         r
     })
+}
+
+/// 2026-10-08: Widest row group `Glm5NextLayer::forward_multi` runs through a layer:
+/// `DENSE_GEMV_BATCHM_MAX_M`, the widest M `ops::dense_mm_bf16` sends to the batched GEMV, whose
+/// rows carry the M = 1 GEMV's bits. A wider group would move every projection to cuBLASLt,
+/// whose rows depend on their batch-mates. The loader sizes every workspace for at least this
+/// many rows (`verify_k` in `glm5_next_load/loader.rs`).
+pub(crate) fn multi_seq_chunk_rows() -> usize {
+    metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
+}
+
+/// 2026-10-08: `rows` split into consecutive `(start, width)` groups of `cap` rows, the last one
+/// shorter when `cap` does not divide `rows`. A `cap` of 0 is treated as 1. No group is empty,
+/// and `rows == 0` gives none.
+pub(crate) fn multi_seq_chunks(rows: usize, cap: usize) -> Vec<(usize, usize)> {
+    let cap = cap.max(1);
+    (0..rows)
+        .step_by(cap)
+        .map(|start| (start, cap.min(rows - start)))
+        .collect()
 }

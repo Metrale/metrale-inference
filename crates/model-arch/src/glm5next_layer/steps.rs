@@ -10,6 +10,7 @@ use super::*;
 
 mod drafter;
 mod forward;
+mod multi_seq;
 
 impl Glm5NextLayer {
     /// 2026-09-25: `rms_norm_vanilla` over `rows` contiguous `[hidden]` rows in one launch. The
