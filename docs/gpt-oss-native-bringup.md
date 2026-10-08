@@ -213,8 +213,9 @@ Two host launcher tests also passed; they establish ABI/refusal behavior only.
 
 This is a named LKB residual, `projection_bias_before_cast`, with primitive GPU
 parity. The common source is inherited by GB10, Hopper and B200; the addition
-changes no existing kernel entry point or caller. There is no GPT kernel target,
-forward-path linkage, full `F.linear` parity or measured performance yet.
+changes no existing kernel entry point or caller. At this step there was no GPT
+kernel target, forward-path linkage, full `F.linear` parity or measured
+performance; later sections record the target and forward composition.
 
 ## Denominator-only sink attention primitive
 
@@ -552,3 +553,39 @@ no missing-symbol exemptions or guard changes were added. The focused test
 first reproduced the wrong resolved source, then passed with the shadow and
 literal-lookup suites (eight tests total). This linkage repair does not change
 the arithmetic or erase the diagnostic's recorded full-model parity failures.
+
+## Strix Halo native HIP bring-up (2026-10-07)
+
+`kernels/strix-hip/gpt-oss-20b/mxfp4` packages the same GPT sources for gfx1151
+(hipcc `--offload-arch=gfx1151`, ROCm 7.2.1 under WSL2; Radeon 8060S). This is the
+native HIP target, not the SCALE `strix` target. Every GPT-specific source is
+brought in by the leaf, so the Qwen strix-hip targets resolve as before. The
+diagnostic packed tensor-core module and its row reorder use inline PTX and are
+not built; their lookups are declared in `MODEL.toml [expected_absent]`, together
+with 18 optional model-level lookups that the experimental admission cannot reach.
+Empty fail-closed shadows replace the strix-hip common no-op grouped-MoE stubs.
+
+Shared changes made for this target: a HIP alias for `__float2bfloat16_rn`
+(checked against an integer round-to-nearest-even reference over all 2^32 inputs:
+0 mismatches), a HIP source mirror that keeps the stage layout so relative
+includes resolve, and HIP device queries that report the physical device instead
+of fixed values (see `docs/porting/hip-device-reporting.md`). Without the last one
+the memory budget used host RAM (116 GiB) instead of the GPU pool (64 GiB).
+
+Results with real weights, first bring-up and not a qualification:
+
+| Gate | Result |
+| --- | --- |
+| `met serve --check-kernels` | serial prefill: 55 lookups, 0 unresolved, 18 declared absent; chunk-128: 0 unresolved (61 lookups, checked before the host YaRN table) |
+| Primitive numerics vs the repo oracles | bias, residual, cache scatter, dense GEMV and batchm, MXFP4 GEMV (all variants), expert bias/SwiGLU/reduce and router top-k exact; RMSNorm max relative error 0.0075 (tolerance 0.01); HD64 sink attention within 0.04 |
+| YaRN | with the host table, all 36,864 Q/K values at the eight replay positions match the GB10 kernel and Torch given the same table |
+| Next-token agreement, 251-token fixture vs pinned Transformers BF16 | 242/251; 7 of the 9 differing positions are exact ties in the reference |
+| Chunked vs serial prefill, capacity 16/64/128 | hidden state and KV bit-identical |
+| Server smoke | Harmony text checks pass; `lookup_part` tool round trip passes on Chat Completions and Messages |
+| First C1 measurement | 553-token prompt, 259 generated: prefill 25.9 tok/s, decode 21.4 tok/s (serial prefill) |
+
+Open: chunk-128 prefill timing on this target, `kernels/strix-hip/HARDWARE.toml`
+has no `sm_count` (the build assumes 48; the device reports 20), and the
+remaining non-tie divergences at positions 47 and 52. A tool declared without a
+`description` makes the Harmony template fail with HTTP 400; the cause is in the
+template path, not the target.
