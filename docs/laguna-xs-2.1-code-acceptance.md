@@ -65,9 +65,9 @@ session log. No candidate/model result is inferred from it.
 ## Reproduce authored controls locally
 
 ```sh
-python3 scripts/laguna_code_acceptance/run.py --controls --output /absolute/NEW-controls
-python3 scripts/laguna_code_acceptance/test_isolation.py --output /absolute/NEW-isolation
-python3 scripts/laguna_code_acceptance/prepare_requests.py /absolute/NEW-requests.json
+python3 scripts/laguna/code_acceptance/run.py --controls --output /absolute/NEW-controls
+python3 scripts/laguna/code_acceptance/test_isolation.py --output /absolute/NEW-isolation
+python3 scripts/laguna/code_acceptance/prepare_requests.py /absolute/NEW-requests.json
 ```
 
 The request preparer writes four fixtures and makes zero HTTP calls. It sends
