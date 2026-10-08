@@ -44,7 +44,7 @@ impl Qwen3SsmLayer {
     ) -> Result<()> {
         match &mut self.ffn {
             FfnComponent::Dense(d) => d.set_lora_weights(ffn),
-            FfnComponent::Moe(_) => anyhow::bail!(
+            FfnComponent::Moe(_) | FfnComponent::PackedIntMoe(_) => anyhow::bail!(
                 "LoRA: dense-FFN delta on a linear-attention layer whose FFN is MoE — \
                  routed-expert deltas belong on set_moe_lora_weights"
             ),

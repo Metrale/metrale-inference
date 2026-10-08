@@ -17,6 +17,7 @@ pub mod mtp_meta;
 pub mod mtp_multi;
 pub mod ngram_embed;
 pub mod ops;
+pub mod packed_int_moe;
 pub mod ple;
 pub mod qsa;
 pub mod qwen3_attention;
@@ -53,6 +54,7 @@ pub use dense_ffn::{DenseFfnLayer, DenseFfnWeights, FfnActivation};
 pub use glm_vit::{GlmVit, GlmVitBlock, GlmVitMerger};
 
 pub use moe::MoeLayer;
+pub use packed_int_moe::PackedIntMoeLayer;
 // 2026-09-28: The MoE experts' decode activation cell (`moe/fp8_grouped_tc_w8a8.rs`).
 pub use moe::{moe_expert_fp8_act, set_moe_expert_fp8_act};
 pub use mtp_head::{

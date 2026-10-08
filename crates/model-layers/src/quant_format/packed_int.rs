@@ -37,8 +37,8 @@ pub const PACKED_INT_GEMV_MODULE: &str = "packed_int_gemv";
 /// 2026-10-07: The packed-int GEMV pair for one scheme: the dense decode GEMV
 /// (`y[M, N] = x[M, K] W^T`) and the grouped-expert GEMV over a per-expert pointer table.
 /// Both are required: a target without them cannot serve packed-int weights, and the
-/// lookup error says which entry point is missing. No dispatch calls this yet; it pins the
-/// names the strix-hip target compiles (crates/kernels/tests/strix_hip_laguna_int4.rs).
+/// lookup error says which entry point is missing. `layers::packed_int_moe` launches the
+/// grouped one; the names are the strix-hip target's (crates/kernels/tests/strix_hip_laguna_int4.rs).
 pub fn packed_int_gemv_kernels(
     gpu: &dyn GpuBackend,
     scheme: PackedIntScheme,

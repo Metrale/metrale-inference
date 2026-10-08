@@ -9,7 +9,7 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
-use super::{DenseFfnLayer, MoeLayer, moe, ops};
+use super::{DenseFfnLayer, MoeLayer, PackedIntMoeLayer, moe, ops};
 use crate::layer::ForwardContext;
 
 /// 2026-09-25: A layer's FFN: MoE, dense, or none.
@@ -17,6 +17,9 @@ use crate::layer::ForwardContext;
 pub enum FfnComponent {
     Moe(MoeLayer),
     Dense(DenseFfnLayer),
+    /// 2026-10-07: MoE with packed INT4/INT8 routed experts (`packed_int_moe.rs`). Every row
+    /// count runs `PackedIntMoeLayer::forward_rows`; the NVFP4/FP8 MoE arms never see it.
+    PackedIntMoe(PackedIntMoeLayer),
     /// 2026-09-25: No FFN: `forward` returns its input and the other passes launch nothing.
     None,
 }
@@ -35,7 +38,9 @@ impl FfnComponent {
     ) {
         match self {
             Self::Dense(d) => d.circuit_bind(levers, weights, unmodelled),
-            Self::Moe(_) => unmodelled.push("a MoE FFN (not bound yet)".to_string()),
+            Self::Moe(_) | Self::PackedIntMoe(_) => {
+                unmodelled.push("a MoE FFN (not bound yet)".to_string())
+            }
             Self::None => unmodelled.push("no FFN".to_string()),
         }
     }
@@ -51,7 +56,7 @@ impl FfnComponent {
     ) -> Result<()> {
         match self {
             Self::Dense(d) => d.circuit_prepare(gpu, config, levers, stream),
-            Self::Moe(_) | Self::None => Ok(()),
+            Self::Moe(_) | Self::PackedIntMoe(_) | Self::None => Ok(()),
         }
     }
 
@@ -90,6 +95,7 @@ impl FfnComponent {
         match self {
             Self::Moe(m) => m.forward(input, ctx, stream),
             Self::Dense(d) => d.forward(input, ctx, stream),
+            Self::PackedIntMoe(p) => p.forward_rows(input, 1, ctx, stream),
             Self::None => Ok(input),
         }
     }
@@ -98,6 +104,7 @@ impl FfnComponent {
         match self {
             Self::Moe(m) => m.forward_k2(input, ctx, stream),
             Self::Dense(d) => d.forward_k2(input, ctx, stream),
+            Self::PackedIntMoe(p) => p.forward_rows(input, 2, ctx, stream).map(|_| ()),
             Self::None => Ok(()),
         }
     }
@@ -106,6 +113,7 @@ impl FfnComponent {
         match self {
             Self::Moe(m) => m.forward_k3(input, ctx, stream),
             Self::Dense(d) => d.forward_k3(input, ctx, stream),
+            Self::PackedIntMoe(p) => p.forward_rows(input, 3, ctx, stream).map(|_| ()),
             Self::None => Ok(()),
         }
     }
@@ -178,6 +186,7 @@ impl FfnComponent {
         match self {
             Self::Moe(m) => m.forward_prefill(input, num_tokens, ctx, stream),
             Self::Dense(d) => d.forward_prefill(input, num_tokens, ctx, stream),
+            Self::PackedIntMoe(p) => p.forward_rows(input, num_tokens, ctx, stream).map(|_| ()),
             Self::None => {
                 let _ = (input, num_tokens);
                 Ok(())
@@ -195,6 +204,7 @@ impl FfnComponent {
         match self {
             Self::Moe(m) => m.forward_batched(input, num_tokens, ctx, stream),
             Self::Dense(d) => d.forward_batched(input, num_tokens, ctx, stream),
+            Self::PackedIntMoe(p) => p.forward_rows(input, num_tokens, ctx, stream).map(|_| ()),
             Self::None => {
                 let _ = (input, num_tokens);
                 Ok(())
@@ -212,6 +222,7 @@ impl FfnComponent {
         match self {
             Self::Moe(m) => m.forward_token_major_decode(input, num_tokens, ctx, stream),
             Self::Dense(d) => d.forward_batched(input, num_tokens, ctx, stream),
+            Self::PackedIntMoe(p) => p.forward_rows(input, num_tokens, ctx, stream).map(|_| ()),
             Self::None => {
                 let _ = (input, num_tokens);
                 Ok(())
@@ -229,6 +240,7 @@ impl FfnComponent {
         match self {
             Self::Moe(m) => m.forward_atomic_c4_decode(input, num_tokens, ctx, stream),
             Self::Dense(d) => d.forward_batched(input, num_tokens, ctx, stream),
+            Self::PackedIntMoe(p) => p.forward_rows(input, num_tokens, ctx, stream).map(|_| ()),
             Self::None => {
                 let _ = (input, num_tokens);
                 Ok(())
