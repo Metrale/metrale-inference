@@ -239,6 +239,22 @@ TTFT gates. The file is compiled into the bench binary with `include_str!`.
 
 ---
 
+## 11. mdBook page template — MPL-2.0
+
+The book's page template is mdBook's own, modified: the sidebar toggle is a
+button, the menu bar is a banner landmark, the stock theme-color is removed
+and the fonts stylesheet is not linked (the changes are listed at the top of
+the file). The modified file stays under MPL-2.0.
+
+- **File**: `book/theme/index.hbs`, from mdBook v0.4.40's
+  `src/theme/index.hbs`.
+- **License**: MPL-2.0; the notice is at the top of the file, the text at
+  [`LICENSES/MPL-2.0.txt`](LICENSES/MPL-2.0.txt).
+- **Copyright**: the mdBook contributors.
+- **Upstream**: https://github.com/rust-lang/mdBook
+
+---
+
 ## Keeping this file current
 
 Re-run these after any change that adds a vendored directory, a build-time
