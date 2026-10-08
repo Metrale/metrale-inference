@@ -27,10 +27,10 @@ use metrale_model_layers::weight_map::{
 pub struct Qwen3WeightLoader;
 
 impl ModelWeightLoader for Qwen3WeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Full-attention layers shard on both arms. Linear-attention layers are
         // loaded unsharded (`load_ssm`).
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(

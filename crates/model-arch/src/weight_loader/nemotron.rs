@@ -28,10 +28,10 @@ use metrale_model_layers::weight_map::{
 pub struct NemotronHWeightLoader;
 
 impl ModelWeightLoader for NemotronHWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Full-attention layers are TP-sharded in both the
         // NVFP4-from-disk and the dense arm; SSM and MoE layers are not.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(

@@ -160,9 +160,11 @@ pub trait ModelWeightLoader {
     /// loader declares it.
     ///
     /// With `--tp-size > 1`, startup (`serve_phases/topology.rs`) refuses a
-    /// loader that returns `false`. `weight_loader/minimax.rs` is a loader
-    /// that returns `true`.
-    fn supports_tp(&self) -> bool;
+    /// loader that returns `Unsupported`. `weight_loader/minimax.rs` is a loader
+    /// that returns `Even`. 2026-10-08: `Uneven` lets head counts that do not
+    /// divide over TP split by `metrale_config::tp_split`; the GLM-5.3 loader
+    /// is the one that declares it.
+    fn tp_support(&self) -> metrale_config::TpSupport;
 
     /// 2026-09-25: Load all transformer layers from the weight store.
     ///

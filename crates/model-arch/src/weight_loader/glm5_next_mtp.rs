@@ -60,11 +60,7 @@ pub fn load_glm5next_mtp_module(
 
     let dsa_cfg = Glm5NextDsaConfig::from_config(config)?;
     let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
-    let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::new(
-        config.tp_rank,
-        config.tp_world_size.max(1),
-        &dsa_cfg,
-    )?;
+    let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
     let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
     let dsa_kernels = Glm5NextDsaKernels::resolve(gpu)?;
     let mlp_kernels = Glm5NextMlpKernels::resolve(gpu)?;
@@ -89,7 +85,6 @@ pub fn load_glm5next_mtp_module(
     let mlp = Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
         gpu,
         &mlp_cfg,
-        config.tp_rank,
         config.shared_expert_intermediate_size,
         &load,
         &expert,

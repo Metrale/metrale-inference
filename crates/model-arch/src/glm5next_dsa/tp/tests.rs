@@ -33,7 +33,7 @@ const DSA_LAYER_BYTES: usize = 249_828_864;
 
 #[test]
 fn full_shapes_match_the_reference_checkpoint() {
-    let p = DsaTpPlan::new(0, 1, &cfg(64)).unwrap();
+    let p = DsaTpPlan::new(0, 1, 64, &cfg(64)).unwrap();
     let expect: &[(&str, usize)] = &[
         ("q_a_proj", 12_582_912),
         ("q_a_layernorm", 3_072),
@@ -63,7 +63,7 @@ fn full_shapes_match_the_reference_checkpoint() {
 
 #[test]
 fn tp1_is_inert() {
-    let p = DsaTpPlan::new(0, 1, &cfg(64)).unwrap();
+    let p = DsaTpPlan::new(0, 1, 64, &cfg(64)).unwrap();
     assert!(!p.needs_output_all_reduce());
     for t in &p.tensors {
         assert_eq!(t.local_rows, t.full_rows, "{} rows", t.name);
@@ -78,8 +78,8 @@ fn tp1_is_inert() {
 #[test]
 fn tp2_partitions_sharded_tensors_and_replicates_the_rest() {
     let (r0, r1) = (
-        DsaTpPlan::new(0, 2, &cfg(32)).unwrap(),
-        DsaTpPlan::new(1, 2, &cfg(32)).unwrap(),
+        DsaTpPlan::new(0, 2, 64, &cfg(32)).unwrap(),
+        DsaTpPlan::new(1, 2, 64, &cfg(32)).unwrap(),
     );
     assert_eq!(r0.full_heads, 64);
     assert_eq!(r0.local_heads, 32);
@@ -111,7 +111,7 @@ fn tp2_partitions_sharded_tensors_and_replicates_the_rest() {
 /// 2026-09-25: Every indexer tensor replicates (see the module doc for why).
 #[test]
 fn the_entire_indexer_replicates() {
-    let p = DsaTpPlan::new(1, 2, &cfg(32)).unwrap();
+    let p = DsaTpPlan::new(1, 2, 64, &cfg(32)).unwrap();
     let idx: Vec<_> = p
         .tensors
         .iter()
@@ -133,7 +133,7 @@ fn the_entire_indexer_replicates() {
 /// `q_a` projection and the two latent norms.
 #[test]
 fn latent_kv_projection_replicates() {
-    let p = DsaTpPlan::new(1, 2, &cfg(32)).unwrap();
+    let p = DsaTpPlan::new(1, 2, 64, &cfg(32)).unwrap();
     let kva = p.get("kv_a_proj_with_mqa").unwrap();
     assert_eq!(kva.kind, DsaShard::Replicated);
     // 2026-09-25: NoPE: the latent is exactly `kv_lora_rank` (512) wide.
@@ -147,7 +147,7 @@ fn latent_kv_projection_replicates() {
 #[test]
 fn q_b_and_kv_b_shard_at_their_own_per_head_widths() {
     let c = cfg(32);
-    let p = DsaTpPlan::new(1, 2, &c).unwrap();
+    let p = DsaTpPlan::new(1, 2, 64, &c).unwrap();
     let qb = p.get("q_b_proj").unwrap();
     let kvb = p.get("kv_b_proj").unwrap();
 
@@ -165,7 +165,7 @@ fn q_b_and_kv_b_shard_at_their_own_per_head_widths() {
 
 #[test]
 fn o_proj_is_row_parallel() {
-    let p = DsaTpPlan::new(1, 2, &cfg(32)).unwrap();
+    let p = DsaTpPlan::new(1, 2, 64, &cfg(32)).unwrap();
     let o = p.get("o_proj").unwrap();
     assert_eq!(o.kind, DsaShard::HeadCols);
     assert_eq!(o.full_rows, 4096, "hidden is never sharded");
@@ -230,7 +230,7 @@ fn config_rejects_a_kpool_beyond_the_kernel_bound() {
 
 #[test]
 fn tp_rank_must_be_in_range() {
-    assert!(DsaTpPlan::new(2, 2, &cfg(32)).is_err());
+    assert!(DsaTpPlan::new(2, 2, 64, &cfg(32)).is_err());
 }
 
 /// 2026-09-25: `kv_lora_rank` must equal `KERNEL_KV_LORA_DIM`, the `GLM_KV_LORA_DIM` (512) that
@@ -243,4 +243,60 @@ fn a_latent_the_kernel_cannot_read_is_refused() {
     let e = c.validate().unwrap_err();
     assert!(e.to_string().contains("KV_LORA_DIM"), "unexpected: {e}");
     assert!(e.to_string().contains("wrong width"), "unexpected: {e}");
+}
+
+/// 2026-10-08: TP=3 over 64 heads (22/21/21): every head-sharded tensor partitions in rank
+/// order at its own per-head width, and the indexer and latent tensors replicate.
+#[test]
+fn tp3_partitions_whole_heads_at_each_tensors_width() {
+    let ranks: Vec<DsaTpPlan> = [22usize, 21, 21]
+        .iter()
+        .enumerate()
+        .map(|(r, &local)| DsaTpPlan::new(r, 3, 64, &cfg(local)).unwrap())
+        .collect();
+    assert_eq!(
+        ranks
+            .iter()
+            .map(|p| (p.head_start, p.local_heads))
+            .collect::<Vec<_>>(),
+        vec![(0, 22), (22, 21), (43, 21)]
+    );
+    for (i, t0) in ranks[0].tensors.iter().enumerate() {
+        let mut next = 0usize;
+        for p in &ranks {
+            let t = &p.tensors[i];
+            match t.kind {
+                DsaShard::Replicated => assert_eq!(t.local_bytes(), t.full_bytes(), "{}", t.name),
+                DsaShard::HeadRows => {
+                    let per_head = t.full_rows / 64;
+                    assert_eq!(t.src_row_offset, next, "{} rank {}", t.name, p.tp_rank);
+                    assert_eq!(t.local_rows, p.local_heads * per_head, "{}", t.name);
+                    next += t.local_rows;
+                }
+                DsaShard::HeadCols => {
+                    let per_head = t.full_row_elems / 64;
+                    assert_eq!(t.src_col_offset, next, "{} rank {}", t.name, p.tp_rank);
+                    assert_eq!(t.local_row_elems, p.local_heads * per_head, "{}", t.name);
+                    next += t.local_row_elems;
+                }
+            }
+        }
+        match t0.kind {
+            DsaShard::Replicated => {}
+            DsaShard::HeadRows => assert_eq!(next, t0.full_rows, "{} covered", t0.name),
+            DsaShard::HeadCols => assert_eq!(next, t0.full_row_elems, "{} covered", t0.name),
+        }
+    }
+    // 2026-10-08: Rank 1's `q_b_proj` and `kv_b_proj` start at head 22 at their own strides.
+    assert_eq!(ranks[1].get("q_b_proj").unwrap().src_row_offset, 22 * 256);
+    assert_eq!(ranks[1].get("kv_b_proj").unwrap().src_row_offset, 22 * 512);
+    assert_eq!(ranks[2].get("o_proj").unwrap().src_col_offset, 43 * 256);
+}
+
+/// 2026-10-08: The layer config must hold this rank's share; the even reconstruction
+/// `local * tp_size` (21 * 3 = 63) is exactly the mistake this refuses.
+#[test]
+fn a_layer_config_with_another_ranks_share_is_refused() {
+    assert!(DsaTpPlan::new(0, 3, 64, &cfg(21)).is_err());
+    assert!(DsaTpPlan::new(1, 3, 64, &cfg(22)).is_err());
 }
