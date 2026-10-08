@@ -63,7 +63,16 @@ pub fn step_verify_dflash(
 
     // 2026-09-25: on a DFlash serve with `dflash_masked_verify` off, judge on
     // the raw argmax, with no masks or penalties.
-    let verified = if dflash_verify_raw_argmax && !sched.levers.dflash_masked_verify {
+    // 2026-09-29: A144: raw argmax never sees `logit_bias`; when decode
+    // would apply a non-empty bias to this row, take the masked pipeline
+    // instead.
+    let verified = if dflash_verify_raw_argmax
+        && !sched.levers.dflash_masked_verify
+        // 2026-09-29: A146: a thinking row never takes the raw verdict.
+        && !crate::scheduler::sample_step::speculative_raw_argmax_forbidden(
+            a,
+            sched.levers.think_ended_gpu_argmax,
+        ) {
         verified_argmax
     } else {
         crate::scheduler::verify_pipeline_helper::verify_pick_all_with_pipeline(

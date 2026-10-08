@@ -14,6 +14,8 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod defaults;
+
 /// 2026-09-25: Decode / verify / speculation levers for one run.
 pub struct SchedLevers {
     // 2026-09-25: Grammar and sampling.
@@ -70,7 +72,16 @@ pub struct SchedLevers {
     pub dflash_adaptive: bool,
     pub dflash_serial_append: bool,
     pub dflash_unified_ctx: bool,
+    /// 2026-09-29: A146: DFlash lane only: speculate inside `<think>`.
+    /// Opt-in (`METRALE_DFLASH_SPEC_THINK=1`) until DFlash-in-think has its
+    /// own GPU and TEB qualification.
     pub dflash_spec_think: bool,
+    /// 2026-09-29: A146: MTP lane (every non-DFlash speculative serve): the
+    /// operator's explicit spec-in-think choice, or `None` to take the
+    /// model's default (`mtp_gate::mtp_spec_think_default`, resolved at serve
+    /// load). Env parsing only; see [`resolve_mtp_spec_think_env`] and
+    /// [`SchedLevers::mtp_spec_think`].
+    pub mtp_spec_think_env: Option<bool>,
     /// 2026-09-25: Pin the MTP throughput gate to the verify arm for DFlash
     /// at `active.len() <= 2` (`METRALE_DFLASH_GATE_PIN_C2=0` turns it
     /// off). Measured 2026-08-19 (qwen3.8-27B+DFlash2, C=2):
@@ -204,6 +215,23 @@ pub struct SchedLevers {
     loop_watchdog: AtomicBool,
 }
 
+/// 2026-09-29: A146: the MTP lane's explicit spec-in-think choice from
+/// `METRALE_MTP_SPEC_THINK` / `METRALE_DFLASH_SPEC_THINK`, or `None` to take
+/// the model's default. An explicit `0` on EITHER wins (off switches beat
+/// opt-ins, so the older variable still disables); otherwise `1` on either
+/// opts in: `METRALE_MTP_SPEC_THINK=1` is the per-lane name for
+/// qualification runs, `METRALE_DFLASH_SPEC_THINK=1` keeps its pre-split
+/// meaning for the MTP lane. Any other value is no opinion.
+pub fn resolve_mtp_spec_think_env(mtp: Option<&str>, dflash: Option<&str>) -> Option<bool> {
+    if mtp == Some("0") || dflash == Some("0") {
+        Some(false)
+    } else if mtp == Some("1") || dflash == Some("1") {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 /// 2026-09-25: `METRALE_FOO=1` enables.
 fn opt_in(var: &str) -> bool {
     metrale_config::levers::var(var).as_deref() == Some("1")
@@ -301,7 +329,28 @@ impl SchedLevers {
             // on both lanes (`if inside_thinking && !spec_think { return
             // false; }`), so turning it on lets plain MTP speculate inside
             // `<think>` too.
+            //
+            // 2026-09-29: A146: the guard is now split per lane, and the MTP
+            // default is per model. Batch-K verify used to commit tokens
+            // spec-off decode would not; the spec-in-think parity chain
+            // (verify window and `emit_token` commit thinking state exactly
+            // like spec-off decode, plus A143/A144/A144b) closed that on the
+            // MTP lane for GLM-5.3 (Atlas, 2026-09-26: K=3 spec-in-think
+            // byte-identical 6/6 vs spec-off, TEB 156/176 identical to
+            // spec-off per scenario). So:
+            //  * `dflash_spec_think` stays opt-in (`=1`) and governs the
+            //    DFlash lane (every DFlash verify mode) inside `<think>` on
+            //    every model, until DFlash-in-think has its own GPU and TEB
+            //    qualification;
+            //  * the MTP lane defaults on only for models that passed those
+            //    gates (`mtp_gate::mtp_spec_think_default`, today GLM-5.3);
+            //    every other model keeps the opt-in. The env only overrides
+            //    that default; see `resolve_mtp_spec_think_env`.
             dflash_spec_think: opt_in("METRALE_DFLASH_SPEC_THINK"),
+            mtp_spec_think_env: resolve_mtp_spec_think_env(
+                metrale_config::levers::var("METRALE_MTP_SPEC_THINK").as_deref(),
+                metrale_config::levers::var("METRALE_DFLASH_SPEC_THINK").as_deref(),
+            ),
             dflash_gate_pin_c2: on_unless_zero("METRALE_DFLASH_GATE_PIN_C2"),
             dflash_batch_verify: on_unless_zero("METRALE_DFLASH_BATCH_VERIFY"),
             dflash_adaptive_min: num("METRALE_DFLASH_ADAPTIVE_MIN", 2.0),
@@ -363,72 +412,12 @@ impl SchedLevers {
         }
     }
 
-    /// 2026-09-25: Lever values for tests, without reading the environment.
-    /// They match `from_env` with no `METRALE_*` set except
-    /// `dflash_masked_verify` and `dflash_seam_serial`, which are off here
-    /// and on in `from_env`.
-    pub fn defaults() -> Self {
-        Self {
-            fast_greedy_grammar: true,
-            fast_masked: true,
-            fast_greedy_chat: true,
-            force_temp_zero: false,
-            tool_response_stop: true,
-            tool_eos_escape: true,
-            mtp_minp: true,
-            mtp_verify_sample: true,
-            dflash_eagle_fix: true,
-            dflash_step_timing: false,
-            vision_timing: false,
-            dflash_masked_verify: false,
-            dflash_seam_serial: false,
-            dflash_adaptive: false,
-            dflash_serial_append: false,
-            dflash_unified_ctx: true,
-            dflash_spec_think: false,
-            dflash_gate_pin_c2: true,
-            dflash_batch_verify: true,
-            dflash_adaptive_min: 2.0,
-            dflash_adaptive_reprobe: 256,
-            dflash_resume_guard: 0,
-            shadow_topk: 0,
-            disable_watchdogs: false,
-            eos_suppressed_by_thinking: false,
-            forced_token_fastpath: true,
-            decode_timing: false,
-            mtp_timing: false,
-            mtp_gate_force: false,
-            adadec_diagnostic: false,
-            holo_always_mixed: false,
-            prefill_codispatch: false,
-            prefill_varlen: false,
-            codispatch_window_ms: 100,
-            codispatch_settle_ms: 10,
-            vision_codispatch: false,
-            beam_codispatch: true,
-            bisect_q12_disable: false,
-            bisect_no_mix: false,
-            mixed_slice_tokens: 0,
-            grammar_budget_close: true,
-            think_ended_gpu_argmax: true,
-            parallel_sample: true,
-            mtp_batch_bootstrap: true,
-            mtp_boot_argmax: true,
-            mtp_batch_verify: true,
-            mtp_batch_propose: true,
-            dcut_enabled: true,
-            dcut_width_cap: 8,
-            dcut_ratio: 0.75,
-            spec_cost: None,
-            mtp_accept_fold_at_16: false,
-            mtp_accept_debug: false,
-            // 2026-09-25: `mtp_max_seqs()` with the variable unset.
-            mtp_max_seqs: 32,
-            spec_entry_pin_tokens: 8,
-            ssm_tail_ckpt: false,
-            ssm_tail_midchunk: true,
-            loop_watchdog: AtomicBool::new(false),
-        }
+    /// 2026-09-29: A146: MTP-lane spec-in-think for THIS serve: the explicit
+    /// env choice when one was given, else `model_default`
+    /// (`mtp_gate::mtp_spec_think_default`, resolved from the model
+    /// architecture at serve load).
+    pub fn mtp_spec_think(&self, model_default: bool) -> bool {
+        self.mtp_spec_think_env.unwrap_or(model_default)
     }
 
     /// 2026-09-25: Is the loop watchdog armed?
@@ -449,6 +438,7 @@ impl SchedLevers {
             disable_watchdogs: self.disable_watchdogs,
             forced_token_fastpath: self.forced_token_fastpath,
             mtp_minp: self.mtp_minp,
+            think_ended_gpu_argmax: self.think_ended_gpu_argmax,
         }
     }
 
