@@ -1796,6 +1796,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-qci-dump"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "clap",
+ "serde_json",
+]
+
+[[package]]
 name = "metrale-sampling"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -1842,6 +1850,7 @@ dependencies = [
  "metrale-model-engine",
  "metrale-model-layers",
  "metrale-model-weights",
+ "metrale-qci-dump",
  "metrale-sampling",
  "metrale-scheduler",
  "metrale-speculative",

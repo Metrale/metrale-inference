@@ -103,6 +103,16 @@ pub async fn chat_completions(
         return openai_error_response(StatusCode::BAD_REQUEST, msg);
     }
 
+    // 2026-10-06: The two QCI campaign ids admit text and images here, and refuse
+    // video, a malformed image, and context pressure, before any model load.
+    // Every other model falls through unchanged.
+    if let metrale_qci_dump::Gate::Respond { status, body } =
+        metrale_qci_dump::gate(&req.model, body.as_ref())
+    {
+        let code = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        return (code, Json(body)).into_response();
+    }
+
     // 2026-09-26: With `--auto-swap`, a request naming another model that the
     // recipe catalogue knows loads that model first. An empty, unknown or
     // already-live name is served by the current model.
