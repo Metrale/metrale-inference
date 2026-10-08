@@ -239,6 +239,10 @@ name = "kda_layer_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "kda_replay_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "kda_recurrent_microtest"
 required-features = ["cuda", "gpu-examples"]
 
