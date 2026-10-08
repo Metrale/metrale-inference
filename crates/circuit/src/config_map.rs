@@ -13,7 +13,8 @@
 //!   silently dropped.
 //! - An absent key takes the default its rule states (the Hugging Face class default, cited
 //!   in the TOML); a requirement applies to a present (or defaulted) value, and an absent key
-//!   without a default is simply absent. A dim with no default is required.
+//!   without a default is simply absent unless `required = true`. A dim with no default
+//!   is required. `required` rejects absent/null input even if a default is declared.
 //! - JSON `null` is absent.
 
 use std::collections::BTreeMap;
@@ -231,6 +232,9 @@ pub(crate) enum KeyRule {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct KeyFull {
+    /// 2026-10-07: This key must be explicitly present and non-null.
+    #[serde(default)]
+    pub required: bool,
     /// 2026-09-30: Not math, with the reason.
     pub ignore: Option<String>,
     /// 2026-09-30: Refused whenever present (not null), with the reason: math the circuit

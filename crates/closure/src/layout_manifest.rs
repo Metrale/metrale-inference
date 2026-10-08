@@ -403,3 +403,32 @@ pub fn kernel_manifest(dir: &Path) -> Result<Option<KernelManifest>, LayoutError
     }
     Ok(Some(KernelManifest { path, uses, shadow }))
 }
+
+/// 2026-10-07: Optional model precision allowlist; absent preserves legacy common-only resolution.
+pub fn supports_quant(model_dir: &Path, quant: &str) -> Result<bool, LayoutError> {
+    let path = model_dir.join("MODEL.toml");
+    if !path.is_file() {
+        return Ok(true);
+    }
+    let value = read_toml(&path)?;
+    let Some(declared) = value.get("model").and_then(|m| m.get("supported_quants")) else {
+        return Ok(true);
+    };
+    let fail = || LayoutError::Manifest {
+        path: path.clone(),
+        message: "model.supported_quants must be a nonempty array of nonempty quant names".into(),
+    };
+    let entries = declared
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .ok_or_else(fail)?;
+    let mut matches = false;
+    for entry in entries {
+        let name = entry
+            .as_str()
+            .filter(|n| !n.trim().is_empty())
+            .ok_or_else(fail)?;
+        matches |= name == quant;
+    }
+    Ok(matches)
+}

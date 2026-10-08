@@ -12,6 +12,7 @@ pub mod dflash_loader;
 mod gemma4;
 /// 2026-09-25: GLM-5.3 checkpoint tensor classification (`classify`).
 pub mod glm5_next;
+pub mod gpt_oss;
 mod laguna;
 mod longcat;
 mod minimax;

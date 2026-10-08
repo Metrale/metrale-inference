@@ -30,8 +30,8 @@ pub struct ModelCapabilities {
     pub has_attention_layers: bool,
     /// 2026-09-26: `num_experts > 0`.
     pub has_moe_layers: bool,
-    /// 2026-09-26: Equal to `has_ssm_layers`: it follows the architecture, not the tokenizer
-    /// vocabulary.
+    /// 2026-10-07: Recurrent families or a validated GPT-OSS reasoning family.
+    /// Architectural metadata, not a native serving qualification.
     pub supports_thinking: bool,
     /// 2026-09-26: `ModelConfig::vision` is set.
     pub supports_vision: bool,
@@ -74,7 +74,7 @@ impl ModelCapabilities {
             has_ssm_layers: has_ssm || has_mamba2,
             has_attention_layers: has_attention,
             has_moe_layers: has_moe,
-            supports_thinking: has_ssm || has_mamba2,
+            supports_thinking: has_ssm || has_mamba2 || config.gpt_oss.is_some(),
             supports_vision: has_vision,
             has_mtp,
             ssm_architecture: ssm_arch,

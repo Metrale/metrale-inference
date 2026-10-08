@@ -7,8 +7,39 @@
 //! Owner: model-layers (ops).
 //! Invariants: none beyond the types.
 
+#[path = "ops/dense_batchm_fp32.rs"]
+mod dense_batchm_fp32;
+pub use dense_batchm_fp32::dense_gemv_batchm_fp32;
 #[path = "ops/activations.rs"]
 mod activations;
+#[path = "ops/gpt_oss_rope.rs"]
+mod gpt_oss_rope;
+pub use gpt_oss_rope::{GptOssYarn, gpt_oss_rope_bf16, gpt_oss_yarn_frequency_table};
+#[path = "ops/gpt_oss_expert_ops.rs"]
+mod gpt_oss_expert_ops;
+pub use gpt_oss_expert_ops::{
+    gpt_oss_expert_bias_bf16, gpt_oss_expert_reduce_bf16, gpt_oss_swiglu_bf16,
+};
+#[path = "ops/gpt_oss_staged_attention.rs"]
+mod gpt_oss_staged_attention;
+pub use gpt_oss_staged_attention::gpt_oss_staged_attention_bf16;
+#[path = "ops/gpt_oss_router.rs"]
+mod gpt_oss_router;
+pub use gpt_oss_router::gpt_oss_router_bf16;
+#[path = "ops/gpt_oss_token_experts.rs"]
+mod gpt_oss_token_experts;
+pub use gpt_oss_token_experts::{
+    GptOssTokenExperts, gpt_oss_mxfp4_token_experts, gpt_oss_token_expert_bias,
+};
+#[path = "ops/gpt_oss_mxfp4_gemv.rs"]
+mod gpt_oss_mxfp4_gemv;
+pub use gpt_oss_mxfp4_gemv::gpt_oss_mxfp4_gemv_bf16;
+#[path = "ops/paged_sink.rs"]
+mod paged_sink;
+pub use paged_sink::{PagedSinkGeometry, paged_decode_attn_bf16_sink};
+#[path = "ops/projection_bias.rs"]
+mod projection_bias;
+pub use projection_bias::projection_bias_bf16;
 #[path = "ops/derived_weights.rs"]
 mod derived_weights;
 #[path = "ops/dispatch_config.rs"]
@@ -315,3 +346,9 @@ pub use w8a16_gemm_pipelined_m32::*;
 pub use w8a16_gemv_ncol::*;
 pub use w8a16_tc_rows::*;
 pub use wide_prefill::*;
+
+mod gpt_oss_reuse_experts;
+pub use gpt_oss_reuse_experts::*;
+
+// 2026-10-07: Explicit packed TC diagnostic wrappers.
+pub mod gpt_oss_packed_tc;

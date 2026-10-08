@@ -37,8 +37,8 @@ impl QuantFormat for CompressedTensorsFormat {
         "compressed-tensors"
     }
 
-    fn base_variant(&self) -> Nvfp4Variant {
-        Nvfp4Variant::CompressedTensors
+    fn base_variant(&self) -> Option<Nvfp4Variant> {
+        Some(Nvfp4Variant::CompressedTensors)
     }
 
     fn is_ignored(&self, module_path: &str) -> bool {

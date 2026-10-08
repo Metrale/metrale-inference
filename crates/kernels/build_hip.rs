@@ -23,21 +23,42 @@ use super::content_hash;
 /// sibling `#include "foo.cuh"` resolves next to the mirrored `.cu`; a file is
 /// rewritten only when its widened text differs from the mirror. The source
 /// tree is never modified.
+///
+/// 2026-10-07: A source under `stage_root` keeps its stage-relative path, and
+/// the staged `common/` is mirrored beside it, so a leaf's
+/// `#include "../../common/x.cu"` reaches the mirrored common/ exactly as it
+/// reaches the staged one (build_stage.rs). Other sources keep a hashed subdir.
 pub(super) fn hip_mirror_source(
     src: &std::path::Path,
     mirror_root: &std::path::Path,
+    stage_root: &std::path::Path,
     source_ext: &str,
 ) -> PathBuf {
     let src_dir = src.parent().expect("kernel source has no parent dir");
-    // 2026-09-25: One mirror subdir per source dir, keyed by a hash of its path,
-    // so same-named files in different directories do not collide.
-    let dir_key = content_hash(&src_dir.to_string_lossy());
-    let mirror_dir = mirror_root.join(dir_key);
-    std::fs::create_dir_all(&mirror_dir)
-        .unwrap_or_else(|e| panic!("create hip mirror subdir: {e}"));
+    let mirror_dir = match src_dir.strip_prefix(stage_root) {
+        Ok(rel) => {
+            let staged_common = stage_root.join("common");
+            if src_dir != staged_common && staged_common.is_dir() {
+                mirror_dir_into(
+                    &staged_common,
+                    &mirror_root.join("stage").join("common"),
+                    source_ext,
+                );
+            }
+            mirror_root.join("stage").join(rel)
+        }
+        // 2026-09-25: One mirror subdir per source dir, keyed by a hash of its
+        // path, so same-named files in different directories do not collide.
+        Err(_) => mirror_root.join(content_hash(&src_dir.to_string_lossy())),
+    };
+    mirror_dir_into(src_dir, &mirror_dir, source_ext);
+    mirror_dir.join(src.file_name().unwrap())
+}
 
-    // 2026-09-25: Transform every source, `.cuh` and `.h` file in the source dir
-    // into the mirror, so headers stay in lockstep with their `.cu`.
+/// 2026-09-25: Transform every source, `.cuh` and `.h` file in `src_dir` into
+/// `mirror_dir`, so headers stay in lockstep with their `.cu`.
+fn mirror_dir_into(src_dir: &std::path::Path, mirror_dir: &std::path::Path, source_ext: &str) {
+    std::fs::create_dir_all(mirror_dir).unwrap_or_else(|e| panic!("create hip mirror subdir: {e}"));
     if let Ok(entries) = std::fs::read_dir(src_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
@@ -67,8 +88,6 @@ pub(super) fn hip_mirror_source(
             println!("cargo:rerun-if-changed={}", p.display());
         }
     }
-
-    mirror_dir.join(src.file_name().unwrap())
 }
 
 /// 2026-09-25: Append `ULL` to the hex warp-mask literal that is the first

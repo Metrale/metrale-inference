@@ -1,0 +1,25 @@
+# 2026-10-07: Experimental native packaging; served only under --experimental-gpt-oss, numerical qualification remains open.
+[model]
+name = "gpt-oss-20b"
+hf_id = "openai/gpt-oss-20b"
+architecture = "GPT-OSS alternating full/sliding attention with interleaved MXFP4 experts"
+supported_quants = ["mxfp4"]
+layers_total = 24
+hidden_dim = 2880
+head_dim = 64
+q_heads = 64
+kv_heads = 8
+moe_experts = 32
+moe_top_k = 4
+intermediate_size = 2880
+vocab_size = 201088
+sliding_window = 128
+
+[[model_types]]
+model_type = "gpt_oss"
+hidden_size = 2880
+
+[behavior]
+default_kv_dtype = "bf16"
+thinking_default = true
+thinking_in_tools = false

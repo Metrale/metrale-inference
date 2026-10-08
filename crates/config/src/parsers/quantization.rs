@@ -92,6 +92,20 @@ pub fn parse_quantization_config(raw: &serde_json::Value) -> Result<Option<Quant
     let precision = crate::precision_plan::DeclaredPrecisionPlan::from_quantization_config(qc_raw)
         .context("quantization_config")?;
 
+    // 2026-10-07: Preserve validated MXFP4 exclusions for loader introspection too.
+    if quant_method == "mxfp4" {
+        ignore_modules = qc["modules_to_not_convert"]
+            .as_array()
+            .context("MXFP4 exclusions")?
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .context("MXFP4 exclusion string")
+            })
+            .collect::<Result<_>>()?;
+    }
+
     Ok(Some(QuantizationConfig {
         quant_method,
         quant_algo,

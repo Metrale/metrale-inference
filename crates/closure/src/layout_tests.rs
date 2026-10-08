@@ -462,3 +462,6 @@ fn vendored_subdirectories_ride_with_their_role() {
     );
     assert!(l.common_subdirs.is_empty());
 }
+
+#[path = "layout_quant_tests.rs"]
+mod quant_allowlist;

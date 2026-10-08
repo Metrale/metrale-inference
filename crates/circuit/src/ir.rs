@@ -366,6 +366,8 @@ pub enum LayerKind {
     LinearAttention,
     /// 2026-09-28: A softmax attention layer.
     FullAttention,
+    /// 2026-10-07: Causal attention with a finite sliding window.
+    SlidingAttention,
     /// 2026-09-29: A Mamba2 layer (Nemotron-H `mamba`).
     Mamba,
     /// 2026-09-29: A layer whose only mixer is a MoE FFN (Nemotron-H `moe`).
@@ -378,6 +380,7 @@ impl LayerKind {
         match self {
             LayerKind::LinearAttention => "linear_attention",
             LayerKind::FullAttention => "full_attention",
+            LayerKind::SlidingAttention => "sliding_attention",
             LayerKind::Mamba => "mamba",
             LayerKind::Moe => "moe",
         }
@@ -388,6 +391,7 @@ impl LayerKind {
         match s {
             "linear_attention" => Some(LayerKind::LinearAttention),
             "full_attention" => Some(LayerKind::FullAttention),
+            "sliding_attention" => Some(LayerKind::SlidingAttention),
             "mamba" => Some(LayerKind::Mamba),
             "moe" => Some(LayerKind::Moe),
             _ => None,

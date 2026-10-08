@@ -86,7 +86,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-dense-gemv-bf16-batchm-cu-dense-gemv-bf16-batchm"></a>
 
-### `dense_gemv_bf16_batchm` — [kernels/gb10/common/dense_gemv_bf16_batchm.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm.cu#L86)
+### `dense_gemv_bf16_batchm` — [kernels/gb10/common/dense_gemv_bf16_batchm.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm.cu#L230)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -288,7 +288,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-moe-topk-cu-moe-topk-softmax-rows"></a>
 
-### `moe_topk_softmax_rows` — [kernels/gb10/common/moe_topk.cu](../../kernels/gb10/common/moe_topk.cu#L197)
+### `moe_topk_softmax_rows` — [kernels/gb10/common/moe_topk.cu](../../kernels/gb10/common/moe_topk.cu#L220)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -307,7 +307,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-paged-decode-attn-cu-paged-decode-attn"></a>
 
-### `paged_decode_attn` — [kernels/gb10/common/paged_decode_attn.cu](../../kernels/gb10/common/paged_decode_attn.cu#L54)
+### `paged_decode_attn` — [kernels/gb10/common/paged_decode_attn.cu](../../kernels/gb10/common/paged_decode_attn.cu#L343)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|

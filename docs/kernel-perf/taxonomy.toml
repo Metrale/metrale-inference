@@ -101,6 +101,14 @@ components = ["kda", "short-conv", "mla", "moe", "dense-ffn"]
 shared_engine = true
 
 [[family]]
+id = "gpt-oss"
+label = "GPT-OSS"
+name = "GPT-OSS (experimental eager C1, sink attention + MXFP4 MoE)"
+models = ["gpt-oss-20b"]
+components = ["moe"]
+shared_engine = false
+
+[[family]]
 id = "laguna"
 label = "Laguna"
 name = "Laguna (full/sliding attention + MoE)"
@@ -351,6 +359,10 @@ paths = ["crates/model-arch/src/weight_loader/gemma4"]
 families = ["gemma4"]
 
 [[family_site]]
+paths = ["crates/model-arch/src/weight_loader/gpt_oss", "crates/model-layers/src/layers/ops/gpt_oss_"]
+families = ["gpt-oss"]
+
+[[family_site]]
 paths = ["crates/model-arch/src/weight_loader/laguna"]
 families = ["laguna"]
 
@@ -587,3 +599,31 @@ names = ["argmax_*", "softmax_topp", "feed_resolve"]
 component = "elementwise"
 kind = "activation / gate / residual"
 names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "vector_add", "bf16_residual_add", "f32_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]
+
+# 2026-10-07: New correctness primitives; classification does not claim target linkage or timing evidence.
+[[rule]]
+component = "elementwise"
+kind = "FP32 projection bias / BF16 store"
+names = ["projection_bias_bf16"]
+
+[[rule]]
+component = "moe"
+kind = "row-major MXFP4 expert GEMV (correctness residual)"
+names = ["gpt_oss_mxfp4_gemv_bf16", "gpt_oss_mxfp4_selected_bf16", "gpt_oss_mxfp4_selected_tokens_bf16", "gpt_oss_mxfp4_reuse_tokens_bf16", "gpt_oss_mxfp4_reuse_wide_bf16"]
+
+# 2026-10-07: Explicit staged-rounding correctness residuals, no speed claim.
+[[rule]]
+component = "rope"
+kind = "continuous YaRN / staged BF16 rotation"
+names = ["gpt_oss_yarn_frequencies", "gpt_oss_rope_bf16"]
+
+[[rule]]
+component = "moe"
+kind = "staged BF16 expert activation / reduction"
+names = ["gpt_oss_swiglu_bf16", "gpt_oss_expert_reduce_bf16", "gpt_oss_selected_bias_bf16", "gpt_oss_selected_bias_tokens_bf16"]
+
+# 2026-10-07: Bounded diagnostic policy; existing online attention is unchanged.
+[[rule]]
+component = "attention"
+kind = "staged BF16 sink attention (correctness residual)"
+names = ["gpt_oss_staged_attention_bf16"]

@@ -34,6 +34,7 @@ pub(super) fn plan(qc: &Value) -> Result<DeclaredPrecisionPlan> {
     match method.as_str() {
         "compressed-tensors" => compressed_tensors(qc),
         "fp8" => fp8(qc),
+        "mxfp4" => super::mxfp4::plan(qc),
         "modelopt" => modelopt(qc),
         "" if producer_modelopt || qc.get("quant_algo").is_some() => modelopt(qc),
         _ => Ok(DeclaredPrecisionPlan::default()),

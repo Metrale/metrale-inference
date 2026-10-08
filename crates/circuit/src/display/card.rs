@@ -53,7 +53,7 @@ fn bits(f: Format) -> u32 {
         Format::Bf16 => 16,
         Format::F32 | Format::I32 => 32,
         Format::Fp8E4m3 { .. } => 8,
-        Format::Nvfp4 { .. } => 4,
+        Format::Nvfp4 { .. } | Format::Mxfp4 => 4,
     }
 }
 
@@ -64,6 +64,7 @@ fn family(f: Format) -> &'static str {
         Format::I32 => "i32",
         Format::Fp8E4m3 { .. } => "fp8",
         Format::Nvfp4 { .. } => "nvfp4",
+        Format::Mxfp4 => "mxfp4",
     }
 }
 

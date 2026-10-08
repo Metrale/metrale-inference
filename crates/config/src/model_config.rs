@@ -10,6 +10,9 @@ use super::*;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelConfig {
+    /// 2026-10-07: Explicit GPT-OSS runtime semantics, never read directly from JSON.
+    #[serde(skip)]
+    pub gpt_oss: Option<GptOssPolicy>,
     pub hidden_size: usize,
     #[serde(default)]
     pub num_hidden_layers: usize,

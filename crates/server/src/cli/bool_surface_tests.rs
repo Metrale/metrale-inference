@@ -77,7 +77,8 @@ fn no_value_flag_can_be_given_without_its_value() {
 
 /// 2026-09-26: Every serve boolean parses bare and refuses `--flag true`,
 /// `--flag false`, `--flag=true` and `--flag=false`. The MODEL positional is
-/// filled, so a stray `true` cannot be taken as the model.
+/// filled, so a stray `true` cannot be taken as the model. Explicit parent
+/// admission flags are supplied before testing a dependent flag's arity.
 #[test]
 fn a_serve_boolean_refuses_a_value() {
     let serve = Cli::command();
@@ -96,18 +97,26 @@ fn a_serve_boolean_refuses_a_value() {
         bools.len()
     );
     for flag in &bools {
-        let bare = ["met", "serve", "org/model", &format!("--{flag}")].map(String::from);
+        let mut prefix = vec!["met".to_string(), "serve".into(), "org/model".into()];
+        // 2026-10-07: Test arity without weakening the production opt-in dependency.
+        if flag == "experimental-gpt-oss-chunk-prefill" {
+            prefix.push("--experimental-gpt-oss".into());
+        }
+        let mut bare = prefix.clone();
+        bare.push(format!("--{flag}"));
         assert!(
             Cli::try_parse_from(&bare).is_ok(),
             "--{flag} bare must parse"
         );
         for value in ["true", "false"] {
-            let spaced = ["met", "serve", "org/model", &format!("--{flag}"), value];
+            let mut spaced = bare.clone();
+            spaced.push(value.into());
             assert!(
                 Cli::try_parse_from(spaced).is_err(),
                 "--{flag} {value} was accepted"
             );
-            let joined = ["met", "serve", "org/model", &format!("--{flag}={value}")];
+            let mut joined = prefix.clone();
+            joined.push(format!("--{flag}={value}"));
             assert!(
                 Cli::try_parse_from(joined).is_err(),
                 "--{flag}={value} was accepted"

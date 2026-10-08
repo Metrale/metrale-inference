@@ -13,6 +13,7 @@
 // and check neither.
 
 #include <cuda_bf16.h>
+#include <math.h>
 
 #define BLOCK_SIZE 256
 #define MAX_EXPERTS 512
@@ -29,10 +30,13 @@
 
 
 
+// 2026-10-07: SelectedOnly emits dense BF16 scores after softmax over selected logits.
+// The default specialization retains the historical FP32/top-k output ABI and arithmetic.
+template<typename Output = float, bool SelectedOnly = false>
 __device__ __forceinline__ void topk_softmax_lowidx_block(
     const __nv_bfloat16* __restrict__ gate_logits,
     unsigned int* __restrict__ expert_indices,
-    float* __restrict__ expert_weights,
+    Output* __restrict__ expert_weights,
     unsigned int num_experts,
     unsigned int top_k,
     unsigned int normalize
@@ -55,14 +59,14 @@ __device__ __forceinline__ void topk_softmax_lowidx_block(
     }
 
     for (unsigned int i = actual_n + tid; i < MAX_EXPERTS; i += BLOCK_SIZE) {
-        s_vals[i] = -1e30f;
+        s_vals[i] = SelectedOnly ? -INFINITY : -1e30f;
     }
     __syncthreads();
 
 
     for (unsigned int t = 0; t < top_k && t < actual_n; t++) {
 
-        float local_max = -1e30f;
+        float local_max = SelectedOnly ? -INFINITY : -1e30f;
         unsigned int local_idx = 0;
         for (unsigned int i = tid; i < actual_n; i += BLOCK_SIZE) {
             float v = s_vals[i];
@@ -104,9 +108,28 @@ __device__ __forceinline__ void topk_softmax_lowidx_block(
             s_top_vals[t] = best_val;
             s_top_idxs[t] = best_idx;
 
-            s_vals[best_idx] = -1e30f;
+            s_vals[best_idx] = SelectedOnly ? -INFINITY : -1e30f;
         }
         __syncthreads();
+    }
+
+    // 2026-10-07: No full-expert softmax/renormalization round trip in this policy.
+    // Each token writes dense scores; selected IDs remain in decreasing-logit order.
+    if constexpr (SelectedOnly) {
+        for (unsigned int i = tid; i < actual_n; i += BLOCK_SIZE)
+            expert_weights[i] = __float2bfloat16(0.0f);
+        __syncthreads();
+        if (tid == 0) {
+            float total = 0.0f;
+            for (unsigned int t = 0; t < top_k; ++t)
+                total += expf(s_top_vals[t] - s_top_vals[0]);
+            for (unsigned int t = 0; t < top_k; ++t) {
+                expert_indices[t] = s_top_idxs[t];
+                expert_weights[s_top_idxs[t]] = __float2bfloat16_rn(
+                    expf(s_top_vals[t] - s_top_vals[0]) / total);
+            }
+        }
+        return;
     }
 
     // 2026-09-25: The softmax denominator runs over all read experts. Chosen experts are -1e30 in s_vals by now, so
@@ -465,4 +488,18 @@ extern "C" __global__ void moe_topk_softmax_batched(
             }
         }
     }
+}
+
+// 2026-10-07: Explicit selected-logit BF16 policy, dense scores [rows,experts].
+// Callers require finite logits, 1 <= top_k <= min(experts,32), experts <=512.
+// Ties select the lower expert ID; reference topk tie order is not guaranteed.
+// Grid(rows), block256. No existing caller changes policy.
+extern "C" __global__ void moe_topk_selected_bf16_rows(
+    const __nv_bfloat16* logits, unsigned int* indices, __nv_bfloat16* scores,
+    unsigned int experts, unsigned int top_k
+) {
+    const unsigned long long row = blockIdx.x;
+    topk_softmax_lowidx_block<__nv_bfloat16, true>(
+        logits + row * experts, indices + row * top_k, scores + row * experts,
+        experts, top_k, 1);
 }

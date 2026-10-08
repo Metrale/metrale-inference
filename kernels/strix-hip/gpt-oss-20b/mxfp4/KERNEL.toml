@@ -1,0 +1,54 @@
+# 2026-10-07: GPT-OSS-20B MXFP4 leaf for gfx1151. Every GPT-specific source is
+# brought in here, not in strix-hip/common, so the Qwen strix-hip targets
+# resolve exactly as before. Module names come from common/'s [modules]
+# (paged_decode_attn -> paged_decode); the other stems are their own module
+# names, matching the lookups in model-arch gpt_oss/runtime/{kernels.rs,
+# prefill.rs,serving_prefill.rs,prefill_scratch.rs}.
+#
+# Not brought in: gb10/gpt-oss-20b/mxfp4/gpt_oss_mxfp4_mma.cu and
+# gb10/deepseek-v4-flash/nvfp4/moe_v41.cu (diagnostic packed tensor-core MoE,
+# inline PTX). Their lookups are in MODEL.toml [expected_absent].
+#
+# Compiled with hipcc --offload-arch=gfx1151 and launched on a Radeon 8060S.
+# The YaRN frequency table is built on the host (gpt_oss_yarn_frequency_table),
+# so gfx1151 uploads the same bits as GB10; gpt_oss_rope.cu is brought in for
+# gpt_oss_rope_bf16, and its gpt_oss_yarn_frequencies entry is not looked up.
+[sources]
+use = [
+  "../gb10/common/dense_gemv_bf16_batchm.cu",
+  "../gb10/common/gpt_oss_expert_ops.cu",
+  "../gb10/common/gpt_oss_mxfp4_gemv.cu",
+  "../gb10/common/gpt_oss_rope.cu",
+  "../gb10/common/projection_bias.cu",
+  "../gb10/gpt-oss-20b/mxfp4/paged_decode_attn.cu",
+]
+
+[shadow]
+paged_decode_attn = "uses gb10/gpt-oss-20b/mxfp4/paged_decode_attn.cu, the HDIM 64 build of the shared BF16 paged sink attention, over the common HDIM 256 build."
+moe_w4a16_grouped_gemm = "replaces the strix-hip/common no-op compile stubs with a module that defines no entry points, so a grouped MoE lookup fails closed instead of reaching a no-op."
+moe_fp8_grouped_gemm = "replaces strix-hip/common/moe_fp8_grouped_gemm.cu, whose moe_fp8_grouped_gemm_v2 is a no-op, with a module that defines no entry points; GPT-OSS has no FP8 expert path."
+w4a16_gemm = "replaces strix-hip/common/w4a16_gemm.cu, an NVFP4 GEMM no strix-hip target compiles, with a module that defines no entry points; GPT-OSS weights are MXFP4."
+gated_delta_rule = "replaces gb10/common/gated_delta_rule.cu, which no strix-hip target has compiled with hipcc, with a module that defines no entry points; GPT-OSS has no linear-attention layers."
+
+# 2026-10-07: The empty shadows above drop these entry points on purpose.
+# Exempting them silences only the build warning; any lookup of them still
+# fails the boot gate unless MODEL.toml [expected_absent] declares it.
+[shadow_exempt]
+moe_w4a16 = [
+  "moe_w4a16_grouped_gemm",
+  "moe_w4a16_grouped_gemm_ptrtable",
+  "moe_w4a16_grouped_gemm_ptrtable_t",
+]
+moe_fp8_grouped_gemm = ["moe_fp8_grouped_gemm", "moe_fp8_grouped_gemm_v2"]
+w4a16 = ["w4a16_gemm", "w4a16_gemm_t"]
+gated_delta_rule = [
+  "gated_delta_rule_chunk2",
+  "gated_delta_rule_chunk3",
+  "gated_delta_rule_decode",
+  "gated_delta_rule_decode_f32",
+  "gated_delta_rule_decode_f32_conv_norm",
+  "gated_delta_rule_decode_f32_norm",
+  "gated_delta_rule_decode_f32_strided",
+  "gated_delta_rule_decode_f32_strided_norm",
+  "gated_delta_rule_prefill",
+]

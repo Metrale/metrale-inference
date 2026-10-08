@@ -52,7 +52,7 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
                     (OpKind::StateSnapshot, "h", StateAccess::Snapshot),
                     (OpKind::SsmUpdate, "h", StateAccess::Update),
                 ],
-                LayerKind::FullAttention => vec![
+                LayerKind::FullAttention | LayerKind::SlidingAttention => vec![
                     (OpKind::KvWrite, "k", StateAccess::Write),
                     (OpKind::KvWrite, "v", StateAccess::Write),
                     (OpKind::PagedAttention, "k", StateAccess::Read),

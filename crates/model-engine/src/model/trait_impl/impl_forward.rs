@@ -6,6 +6,7 @@
 //! Owner: model-engine.
 //! Invariants: the ones in `trait_impl/mod.rs`.
 
+use crate::factory::validate_gpt_tokens;
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
@@ -20,6 +21,7 @@ impl ModelForward for TransformerModel {
     // consumed while this sequence still owns it. `METRALE_NO_MTP_EAGER_DRAFTER`
     // turns the eager consume off.
     fn prefill(&self, tokens: &[u32], seq: &mut SequenceState, stream: u64) -> Result<DevicePtr> {
+        validate_gpt_tokens(&self.config, tokens)?;
         self.gdn_carry_flush_pending()?;
         self.stamp_overlay_route(seq.adapter_slot);
         let logits = self.prefill_dispatch(tokens, seq, stream)?;
@@ -36,6 +38,7 @@ impl ModelForward for TransformerModel {
         is_last_chunk: bool,
         stream: u64,
     ) -> Result<DevicePtr> {
+        validate_gpt_tokens(&self.config, tokens)?;
         self.gdn_carry_flush_pending()?;
         self.stamp_overlay_route(seq.adapter_slot);
         let logits = self.prefill_chunk_dispatch(
@@ -57,6 +60,7 @@ impl ModelForward for TransformerModel {
         chunk_size: usize,
         stream: u64,
     ) -> Result<DevicePtr> {
+        validate_gpt_tokens(&self.config, tokens)?;
         self.gdn_carry_flush_pending()?;
         self.stamp_overlay_route(seq.adapter_slot);
         let logits = self.prefill_twophase_dispatch(tokens, seq, chunk_size, stream)?;
@@ -65,6 +69,7 @@ impl ModelForward for TransformerModel {
     }
 
     fn decode(&self, token: u32, seq: &mut SequenceState, _stream: u64) -> Result<DevicePtr> {
+        validate_gpt_tokens(&self.config, &[token])?;
         self.gdn_carry_flush_pending()?;
         self.stamp_overlay_route(seq.adapter_slot);
         self.stamp_decode_moe_single(seq.adapter_slot);
@@ -77,6 +82,7 @@ impl ModelForward for TransformerModel {
         seqs: &mut [&mut SequenceState],
         stream: u64,
     ) -> Result<DevicePtr> {
+        validate_gpt_tokens(&self.config, tokens)?;
         self.gdn_carry_flush_pending()?;
         self.stamp_overlay_route_batch(seqs);
         self.stamp_decode_moe_batch(seqs);
@@ -103,6 +109,8 @@ impl ModelForward for TransformerModel {
         prefill_is_last: bool,
         stream: u64,
     ) -> Result<crate::traits::MixedForwardResult> {
+        validate_gpt_tokens(&self.config, decode_tokens)?;
+        validate_gpt_tokens(&self.config, prefill_tokens)?;
         self.gdn_carry_flush_pending()?;
         // 2026-09-25: A mixed step always stamps `i32::MIN` (mixed adapters), so
         // the token-overlay hooks skip for the whole step.

@@ -79,7 +79,7 @@ impl Num {
             Format::Bf16 => Some(Num::Bf16),
             Format::F32 => Some(Num::F32),
             Format::Fp8E4m3 { .. } => Some(Num::E4m3),
-            Format::Nvfp4 { .. } => Some(Num::E2m1),
+            Format::Nvfp4 { .. } | Format::Mxfp4 => Some(Num::E2m1),
             Format::I32 => None,
         }
     }

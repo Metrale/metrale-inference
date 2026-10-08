@@ -83,10 +83,20 @@
 
 #define MAX_M 16
 
-extern "C" __global__ void dense_gemv_bf16_batchm(
+// 2026-10-07: Output specialization only; accumulation and reduction are shared.
+template<typename Output> __device__ __forceinline__ Output batchm_store(float value);
+template<> __device__ __forceinline__ __nv_bfloat16 batchm_store<__nv_bfloat16>(float value) { return __float2bfloat16(value); }
+template<> __device__ __forceinline__ float batchm_store<float>(float value) { return value; }
+
+// 2026-10-07: One shared allocation per entry, reused by either template path.
+struct BatchmScratch { uint4 activations[MAX_M][BLOCK_SIZE / N_PER_BLOCK]; float fold[MAX_M][N_PER_BLOCK * 2]; };
+
+template<typename Output, bool Fixed16 = false>
+__device__ __forceinline__ void dense_gemv_batchm_impl(
+    BatchmScratch& scratch,
     const __nv_bfloat16* __restrict__ A,
     const __nv_bfloat16* __restrict__ B,
-    __nv_bfloat16* __restrict__ C,
+    Output* __restrict__ C,
     unsigned int M,
     unsigned int N,
     unsigned int K,
@@ -109,7 +119,7 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
     // the __syncthreads() calls in the staging loop.
     const bool active = (n < N);
 
-    const unsigned int m = (M > MAX_M) ? MAX_M : M;
+    const unsigned int m = Fixed16 ? MAX_M : ((M > MAX_M) ? MAX_M : M);
 
     float acc[MAX_M];
     #pragma unroll
@@ -120,7 +130,7 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
 
     // 2026-09-25: One 64-vector slab of every A row, shared by the four output groups.
 
-    __shared__ uint4 As[MAX_M][BLOCK_SIZE / N_PER_BLOCK];
+    auto& As = scratch.activations;
 
     for (unsigned int base = 0; base < K_VEC; base += threads_per_out) {
 
@@ -200,7 +210,7 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
     }
 
     // 2026-09-25: Two warps per output: add the warp partials through shared memory, per row.
-    __shared__ float smem[MAX_M][N_PER_BLOCK * 2];
+    auto& smem = scratch.fold;
 
     if (warp_lane == 0) {
         const unsigned int smem_idx = local_out * 2 + (lane / WARP_SIZE);
@@ -211,7 +221,29 @@ extern "C" __global__ void dense_gemv_bf16_batchm(
     if (lane == 0) {
         for (unsigned int t = 0; t < m; t++) {
             const float r = smem[t][local_out * 2] + smem[t][local_out * 2 + 1];
-            C[(unsigned long long)t * out_stride + n] = __float2bfloat16(r);
+            C[(unsigned long long)t * out_stride + n] = batchm_store<Output>(r);
         }
     }
+}
+
+// 2026-10-07: Preserve the existing BF16 entry ABI and arithmetic.
+extern "C" __global__ void dense_gemv_bf16_batchm(
+    const __nv_bfloat16* A, const __nv_bfloat16* B, __nv_bfloat16* C,
+    unsigned M, unsigned N, unsigned K, unsigned out_stride) {
+    __shared__ BatchmScratch scratch;
+    dense_gemv_batchm_impl(scratch, A, B, C, M, N, K, out_stride);
+}
+// 2026-10-07: FP32 output keeps projection bias before the final BF16 rounding.
+// 2026-10-07: Host bounds M<=128, N%4==0, K%8==0, at most16 rows per
+// grid-Y tile and block.x==256. Only complete16-row tiles use fixed indexing.
+extern "C" __global__ void dense_gemv_bf16_batchm_fp32out(
+    const __nv_bfloat16* A, const __nv_bfloat16* B, float* C,
+    unsigned M, unsigned N, unsigned K, unsigned out_stride) {
+    __shared__ BatchmScratch scratch;
+    // 2026-10-07: Exact-row specialization; partial/small batches keep legacy path.
+    const unsigned rows_per_y = (M + gridDim.y - 1) / gridDim.y;
+    if (M % MAX_M == 0 && rows_per_y == MAX_M)
+        dense_gemv_batchm_impl<float, true>(scratch, A, B, C, M, N, K, out_stride);
+    else
+        dense_gemv_batchm_impl(scratch, A, B, C, M, N, K, out_stride);
 }

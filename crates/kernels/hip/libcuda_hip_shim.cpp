@@ -111,7 +111,8 @@ int cuMemHostAlloc(void**p,size_t n,unsigned int f){return hipHostMalloc(p,n,f);
 int cuMemHostGetDevicePointer_v2(CUdeviceptr* pdptr, void* p, unsigned int f)
                                             { return hipHostGetDevicePointer((void**)pdptr, p, f); }
 
-// 2026-09-25: cuDeviceGetAttribute answers fixed values by CUDA attribute number; cuDeviceGetName reports "AMD-gfx1151".
+// 2026-10-07: Physical device queries use HIP; CUDA compatibility policy is
+// explicit in cuDeviceGetAttribute below and is not a hardware fingerprint.
 int cuInit(unsigned int f){return hipInit(f);}
 int cuDriverGetVersion(int*v){return hipDriverGetVersion(v);}
 int cuDeviceGet(int*d,int o){return hipDeviceGet(d,o);}
@@ -121,8 +122,39 @@ int cuDevicePrimaryCtxRetain(void**c,int d){return hipDevicePrimaryCtxRetain((hi
 int cuDevicePrimaryCtxRelease_v2(int d){return hipDevicePrimaryCtxRelease(d);}
 int cuCtxSynchronize(void){return hipDeviceSynchronize();}
 int cuCtxGetDevice(int*d){return hipGetDevice(d);}
-int cuDeviceGetName(char*n,int len,int d){ if(len>0){const char*s="AMD-gfx1151"; int i=0; for(;i<len-1 && s[i];i++) n[i]=s[i]; n[i]=0;} return 0;}
-int cuDeviceGetAttribute(int*v,int attr,int dev){ (void)dev; switch(attr){ case 75:*v=12;break; case 76:*v=1;break; case 16:*v=40;break; case 1:*v=1024;break; case 10:*v=32;break; case 8:*v=65536;break; case 18:*v=1;break; case 19:*v=1;break; case 41:*v=1;break; case 36:*v=1500;break; default:*v=0;break;} return 0;}
+int cuDeviceGetName(char* name, int len, int device) {
+    return hipDeviceGetName(name, len, device);
+}
+
+int cuDeviceGetAttribute(int* value, int attr, int device) {
+    if (!value) return hipErrorInvalidValue;
+    // 2026-10-07: These are shim capabilities, not AMD physical properties.
+    // Keep the historical synthetic CUDA 12.1 selection contract. The cudarc
+    // context constructor probes 115; async pool allocation is not implemented
+    // by this shim, regardless of the underlying HIP device's pool support.
+    if (attr == 75 || attr == 76 || attr == 115) {
+        hipDevice_t validated;
+        hipError_t status = hipDeviceGet(&validated, device);
+        if (status != hipSuccess) return status;
+        *value = attr == 75 ? 12 : attr == 76 ? 1 : 0;
+        return hipSuccess;
+    }
+    // 2026-10-07: CUDA driver attribute numbers are not HIP enum values.
+    // Translate only the previously exposed physical properties explicitly.
+    hipDeviceAttribute_t mapped;
+    switch (attr) {
+        case 1: mapped = hipDeviceAttributeMaxThreadsPerBlock; break;
+        case 8: mapped = hipDeviceAttributeMaxSharedMemoryPerBlock; break;
+        case 10: mapped = hipDeviceAttributeWarpSize; break;
+        case 16: mapped = hipDeviceAttributeMultiprocessorCount; break;
+        case 18: mapped = hipDeviceAttributeIntegrated; break;
+        case 19: mapped = hipDeviceAttributeCanMapHostMemory; break;
+        case 36: mapped = hipDeviceAttributeMemoryClockRate; break;
+        case 41: mapped = hipDeviceAttributeUnifiedAddressing; break;
+        default: return hipErrorInvalidValue;
+    }
+    return hipDeviceGetAttribute(value, mapped, device);
+}
 
 int cuStreamDestroy_v2(void*s){return hipStreamDestroy((hipStream_t)s);}
 int cuStreamDestroy(void*s){return hipStreamDestroy((hipStream_t)s);}

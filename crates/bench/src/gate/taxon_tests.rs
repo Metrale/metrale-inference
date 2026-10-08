@@ -82,6 +82,7 @@ fn every_real_target_resolves_a_nonempty_source_set() {
             "gb10/gemma-4-26b-a4b/nvfp4",
             "gb10/gemma-4-31b/nvfp4",
             "gb10/glm-5.3-flash/nvfp4",
+            "gb10/gpt-oss-20b/mxfp4",
             "gb10/holo-3.1-0.8b/nvfp4",
             "gb10/holo-3.1-35b-a3b/nvfp4",
             "gb10/holo-3.1-4b/nvfp4",
@@ -123,6 +124,7 @@ fn every_real_target_resolves_a_nonempty_source_set() {
             "metal/qwen3-5-4b-vlm-mlx-int8/mlx_int8",
             "strix/qwen3.6-27b/nvfp4",
             "strix/qwen3.6-35b-a3b/nvfp4",
+            "strix-hip/gpt-oss-20b/mxfp4",
             "strix-hip/qwen3.6-27b/nvfp4",
             "strix-hip/qwen3.6-35b-a3b/nvfp4",
         ]

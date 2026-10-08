@@ -250,6 +250,8 @@ pub enum StreamEvent {
     /// token when `prompt_logprobs` is set (`scheduler/prefill_a_step.rs`).
     PromptLogprobs(Vec<TokenLogprobs>),
     Done {
+        /// 2026-10-07: Sampled stop ID withheld from Token events, for token-aware framing.
+        terminal_token_id: Option<u32>,
         finish_reason: String,
         prompt_tokens: usize,
         completion_tokens: usize,

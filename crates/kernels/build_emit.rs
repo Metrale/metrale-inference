@@ -159,6 +159,11 @@ pub(super) fn closure_attestation(
         let Ok(closure) = metrale_closure::hash_with_report(workspace_root, &inputs) else {
             continue;
         };
+        // 2026-10-07: A thin source can include kernels outside its layout layers.
+        // Reuse the attested transitive set so editing those files rebuilds the PTX.
+        for file in &closure.files {
+            println!("cargo:rerun-if-changed={}", file.display());
+        }
         // 2026-09-25: Surfaced, not swallowed. A quoted include naming no file is
         // hashed by name rather than content, so a new one widens what the gate
         // cannot see. A 2026-09-25 build reported two, `vendors/hip.h` and

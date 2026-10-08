@@ -32,6 +32,9 @@ pub(crate) fn prepare_chat_prompt(
     state: &Arc<AppState>,
     req: &mut ChatRequest,
 ) -> Result<PreparedChat, Response> {
+    if state.tokenizer.harmony().is_some() {
+        return super::harmony::prepare(state, req);
+    }
     // 2026-09-26: Tools are active when a parser is configured, the request
     // declares tools, and `tool_choice` is not `none`.
     let tools_active = state.tool_call_parser.is_some()
@@ -102,7 +105,8 @@ pub(crate) fn prepare_chat_prompt(
     let reasoning_effort = effective_reasoning_effort(
         req.reasoning_effort,
         state.default_reasoning_effort,
-        enable_thinking,
+        // 2026-10-07: Harmony template effort survives disabling generic marker budgets.
+        enable_thinking || state.tokenizer.harmony().is_some(),
     );
     let us_thinking = _t_phase.elapsed().as_micros() - us_msg_entry;
 

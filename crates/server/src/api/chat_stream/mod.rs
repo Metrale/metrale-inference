@@ -27,6 +27,7 @@ mod ctx;
 mod handle_done;
 mod handle_error;
 mod handle_token;
+mod harmony;
 mod state;
 mod strip;
 mod token_ids;
@@ -98,6 +99,22 @@ pub(crate) async fn run_chat_stream(
     dump_seq: Option<u64>,
     active_guard: crate::metrics::ActiveRequestGuard,
 ) -> Result<crate::ir::DeltaStream, (StatusCode, String)> {
+    let harmony_parser = state
+        .tokenizer
+        .shared_harmony()
+        .map(|tokenizer| {
+            let schemas = if tools_active {
+                tool_defs.iter().map(|t| crate::harmony::tool_schema::ToolSchema::new(&t.function.name, t.function.parameters.clone().unwrap_or_else(|| serde_json::json!({"type":"object","properties":{},"additionalProperties":false})))).collect::<Result<Vec<_>, _>>()?
+            } else {vec![]};
+            crate::harmony::text_stream::TextStream::with_tools(tokenizer, &prompt_tokens, schemas)
+        })
+        .transpose()
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.into()))?;
+    let stop_tokens = state
+        .tokenizer
+        .harmony()
+        .map_or(stop_tokens, |h| h.stop_ids());
+
     // 2026-09-26: The scheduler thread sends with `bounded_stream_send`, which gives up
     // on a full channel after `METRALE_STREAM_SEND_DEADLINE_MS` (5000 ms when unset);
     // 1024 events of buffer ride out a client that reads late.
@@ -222,6 +239,11 @@ pub(crate) async fn run_chat_stream(
         _active_guard: active_guard,
     };
 
+    if let Some(parser) = harmony_parser {
+        let events = super::stream_terminal::terminated(ReceiverStream::new(token_rx));
+        return Ok(harmony::adapt(events, parser, ctx, cancel_flag));
+    }
+
     let mut stream_state = StreamState::new(
         tools_active,
         enable_thinking,
@@ -251,6 +273,7 @@ pub(crate) async fn run_chat_stream(
             // 2026-09-26: The request sets `prompt_logprobs: None`; nothing to emit.
             StreamEvent::PromptLogprobs(_) => Vec::new(),
             StreamEvent::Done {
+                terminal_token_id: _,
                 finish_reason,
                 prompt_tokens: _,
                 completion_tokens,

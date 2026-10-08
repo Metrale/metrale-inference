@@ -22,6 +22,11 @@ use crate::rules::{PatternOp, Rule};
 /// weight format, quantized input format and layer kind. The fuser matches chains with it, and
 /// the hardware planner asks which rules could run a node at all.
 pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
+    // 2026-10-07: A named architecture residual cannot match a generic rule merely
+    // because its base op agrees. Remove this marker only with a faithful lowering.
+    if n.params.contains_key("unlowered") {
+        return false;
+    }
     let op = match n.op {
         OpKind::Linear(r) if !p.roles.is_empty() => p.roles.contains(&r),
         _ => p.op == n.op,

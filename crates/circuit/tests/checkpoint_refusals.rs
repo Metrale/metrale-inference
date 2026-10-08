@@ -53,7 +53,8 @@ fn path_b_golden_instances_restate_the_config_derived_shape() {
 /// 2026-09-30: Every other fixture is refused, for the reason named.
 #[test]
 fn path_c_every_other_checkpoint_is_refused_with_its_reason() {
-    let cases: [(&str, &str); 12] = [
+    let cases: [(&str, &str); 13] = [
+        ("openai--gpt-oss-20b", "model_type `gpt_oss`"),
         (
             "Inferact--Qwen3.8-Flash-Next-NVFP4",
             "model_type `qwen4_exp`",
@@ -207,4 +208,29 @@ fn path_c_an_unmapped_math_key_or_a_missing_quant_group_is_refused() {
     )
     .unwrap_err();
     assert!(e.to_string().contains("'-'"), "{e}");
+}
+
+/// 2026-10-06: The refusal must exercise the archived revision, not a toy stand-in or mutable main.
+#[test]
+fn gpt_oss_fixture_matches_the_recorded_revision_and_checksum() {
+    use sha2::{Digest, Sha256};
+    let config = include_bytes!("fixtures/checkpoints/openai--gpt-oss-20b/config.json");
+    let provenance: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/checkpoints/openai--gpt-oss-20b/provenance.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        provenance["revision"],
+        "6cee5e81ee83917806bbde320786a8fb61efebee"
+    );
+    assert_eq!(
+        Sha256::digest(config)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
+        provenance["config_sha256"]
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(config).unwrap();
+    assert_eq!(parsed["model_type"], "gpt_oss");
+    assert_eq!(parsed["quantization_config"]["quant_method"], "mxfp4");
 }
