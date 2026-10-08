@@ -116,7 +116,7 @@ On an idle CUDA host, build the selected-operator harness from the repository:
 nvcc -shared -Xcompiler -fPIC -arch=sm_121f -O3 --fmad=false \
   -DTQ_PLUS_SIGNS crates/model-layers/tests/cuda/gpt_oss_selected_experts_test.cu \
   -o /path/to/fresh-fixture/selected.so
-python scripts/gpt_oss_selected_parity.py /path/to/fresh-fixture
+python3 scripts/gpt_oss/selected_parity.py /path/to/fresh-fixture
 ```
 
 The fixture directory must include the compiled source tree if source hashes are
@@ -128,8 +128,8 @@ With the explicitly admitted C1 server already running and its binary/source/
 model-revision identity saved in a JSON receipt:
 
 ```bash
-python scripts/gpt_oss_c1_latency.py --self-test
-python scripts/gpt_oss_c1_latency.py --base http://127.0.0.1:18842 \
+python3 scripts/gpt_oss/c1_latency.py --self-test
+python3 scripts/gpt_oss/c1_latency.py --base http://127.0.0.1:18842 \
   --evidence /path/to/server-evidence.json --output /path/to/fresh-run
 ```
 

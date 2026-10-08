@@ -73,7 +73,7 @@ def resolve(output):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--nvcc', default='/usr/local/cuda-13.0/bin/nvcc')
     parser.add_argument('--resolve', action='store_true', help='CUDA driver resolution after compilation; requires coordinated free GPU')
