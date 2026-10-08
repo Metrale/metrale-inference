@@ -220,7 +220,17 @@ impl TransformerModel {
         if let Some(graph) = cached_for_slot
             && graph.0 != 0
         {
+            // 2026-10-08: As in the K=2/3/4 verifies (`verify_c.rs`): refuse a replay whose
+            // GLM-5.3 DSA indexer row would land past its buffer before the graph runs, and
+            // after it reconcile the host-side indexer length to `seq_len + k`, which a replay
+            // (kernels only) does not advance. Every other layer's hooks do nothing.
+            for (i, layer) in self.layers.iter().enumerate() {
+                layer.check_replay_room(&*seq.layer_states[i], seq.seq_len, k)?;
+            }
             self.gpu.launch_graph(graph, stream)?;
+            for (i, layer) in self.layers.iter().enumerate() {
+                layer.sync_replayed_step(seq.layer_states[i].as_mut(), seq.seq_len, k)?;
+            }
         }
         let need_run = cached_for_slot.is_none();
         if need_run {

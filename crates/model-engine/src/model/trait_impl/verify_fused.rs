@@ -243,7 +243,16 @@ impl TransformerModel {
         if let Some(graph) = cached_for_slot
             && graph.0 != 0
         {
+            // 2026-10-08: The replay hooks of the K=2/3/4 verifies (`verify_c.rs`): the GLM-5.3
+            // DSA indexer room check before the launch and its host length after it. Every
+            // other layer's hooks do nothing.
+            for (i, layer) in self.layers.iter().enumerate() {
+                layer.check_replay_room(&*seq.layer_states[i], seq.seq_len, m)?;
+            }
             self.gpu.launch_graph(graph, stream)?;
+            for (i, layer) in self.layers.iter().enumerate() {
+                layer.sync_replayed_step(seq.layer_states[i].as_mut(), seq.seq_len, m)?;
+            }
         }
         let need_run = cached_for_slot.is_none();
         if need_run {
