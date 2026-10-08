@@ -6,7 +6,7 @@ use metrale_model_arch::weight_loader::gpt_oss::runtime::PrefillScratch;
 fn missing_tc_modules_release_the_already_allocated_base() {
     for (module, kernel) in [
         (
-            "moe_w4a16_grouped_gemm",
+            "gpt_oss_mxfp4_mma",
             "moe_w4a16_grouped_gemm_ptrtable_e8m0_gpt",
         ),
         ("moe_v41", "moe_v41_gather_rows"),
