@@ -694,3 +694,27 @@ effort_hours = 4
 transferability = "any class bringing up a model whose fastest-known tier on a DIFFERENT class happens to be a precision-lowering one: re-derive the right default tier (usually 'declared', precision follows the checkpoint) for the new class rather than inheriting the old class's tier choice"
 links = { pr = "", commit = "", evidence = "PARITY-O.R.A.C.L.E ruling on PR #126/#127" }
 notes = "resolved by switching the campaign's canonical baseline to 'declared' (precision follows the checkpoint on every class), kept 'nvfp4' tier numbers only as an annotation, not the ladder's baseline"
+
+[[lever]]
+id = "hopper-dense27b-l4-mtp-k3-at-every-width"
+date = "2026-10-09"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense), --weight-quantization declared"
+recipe_or_tier = "flags27b-d2 (throughput recipe, util 0.95) + --mtp-k-ladder 128:3 --mtp-max-seqs 128"
+symptom = "the default MTP K-ladder (4:3,8:3,16:1,32:1) and dispatch cap 32 are GB10-tuned: K=1 at C9-32 and no speculation above C32, while the comparison engine runs 3 drafts at every width"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "inherited-constant-underfill"
+lever_type = "parameterization"
+lkb_effect = "n/a (serving constants)"
+parity_tier_kept = "n/a (never ran)"
+per_rung = []
+verdict = "failed"
+verdict_reason = "the serve does not boot: 3 drafts x 128 sequences of verify pools need a 56.32 GB reserve against 56.20 GB free after weights at util 0.95; the A arm (default ladder) measured C16 648 / C32 591 / C64 829 / C128 423 tok/s"
+failure_mode = "the verify pools scale with width x drafts (about 0.1 GB per sequence-draft on this model); the widest-K-everywhere arm does not fit 80 GB"
+caught_by = "boot failure of the B arm (the A/B kept running A legs until stopped by hand)"
+time_lost_hours = 0.4
+would_catch_earlier = "price the verify pools with `met circuit memory` at the proposed ladder before scheduling the A/B"
+effort_hours = 0.2
+transferability = "any class where speculation width is raised: check the verify-pool memory at the widest rung first"
+links = { pr = "", commit = "", evidence = "H100 box ~/runs/ab-l4-k3w128 (serve-B1.log reserve line)" }
+notes = "retry with a ladder that fits (e.g. 16:3,32:2,128:1 with --mtp-max-seqs 128) after the prefill-serialization lever lands"
