@@ -427,7 +427,7 @@ impl ModelVision for RecordingModel {
 
 impl ModelEp for RecordingModel {
     facts! {
-        fn is_ep(&self) -> bool = false;
+        fn is_ep(&self) -> bool = self.cfg.ep;
         fn ep_protocol_v2(&self) -> bool = false;
     }
     recorded! {
