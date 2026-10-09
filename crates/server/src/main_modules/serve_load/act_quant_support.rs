@@ -197,6 +197,21 @@ pub(crate) fn prefill_lever_refusal(
     })
 }
 
+/// 2026-10-09: The refusal of `--dense-quantization` below `declared` on a model whose loader
+/// does not implement it (only `glm5_next` does), so the flag is never accepted and ignored.
+pub(crate) fn dense_quant_refusal(
+    model_type: &str,
+    tier: metrale_model_layers::layers::DenseQuantization,
+) -> Option<String> {
+    (tier.below_declared() && model_type != "glm5_next").then(|| {
+        format!(
+            "--dense-quantization {}: only glm5_next implements it; model_type {model_type:?} \
+             would ignore it",
+            tier.name()
+        )
+    })
+}
+
 /// 2026-09-30: `support` for the published value, logging what runs. 2026-10-01: Also refuses the
 /// cross-sequence prefill levers beside a fixed format ([`prefill_lever_refusal`]).
 pub(crate) fn check(config: &ModelConfig, lm_head_dtype: &str) -> Result<()> {
@@ -211,6 +226,12 @@ pub(crate) fn check(config: &ModelConfig, lm_head_dtype: &str) -> Result<()> {
         ) {
             bail!("{why}");
         }
+    }
+    if let Some(why) = dense_quant_refusal(
+        &config.model_type,
+        metrale_model_layers::layers::dense_quantization(),
+    ) {
+        bail!("{why}");
     }
     let unhonoured = support(value, ModelKind::of(config, lm_head_dtype))?;
     if !unhonoured.is_empty() {

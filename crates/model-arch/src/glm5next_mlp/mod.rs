@@ -153,10 +153,8 @@ pub struct Glm5NextMlpKernels {
     pub w4a4_mx: [KernelHandle; 3],
 }
 
-/// 2026-10-08: Widest launch the routed experts run on the W4A4 slot GEMV. Each slot re-reads
-/// its expert, so past this the grouped W4A16 GEMM, which reads each expert once per launch,
-/// takes over (logged as above declared); the activation scratch is sized for this many rows.
-/// Not measured: chosen as the C16 decode width.
+/// 2026-10-08: Widest launch on the W4A4 slot GEMV (each slot re-reads its expert); wider runs
+/// the grouped W4A16 GEMM, logged as above declared. Unmeasured: the C16 decode width.
 pub const MOE_W4A4_MAX_ROWS: usize = 16;
 
 /// 2026-10-08: Rows one dense W4A4 launch covers (`w4a4_gemv_mx32`); wider launches run in
@@ -364,14 +362,18 @@ impl Glm5NextMlpConfig {
     pub fn from_config(config: &ModelConfig) -> Result<Self> {
         let tp = config.tp_world_size.max(1);
         let ep = config.ep_world_size.max(1);
-        let split = |name: &str, total: usize| {
-            metrale_config::tp_split(total, tp, config.tp_rank, BF16_GEMM_K_ALIGN)
+        // 2026-10-09: The shared width splits in the FP8 dense tier's unit when it is on.
+        let fp8_unit = crate::glm5next_fp8_dense::shared_split_unit(BF16_GEMM_K_ALIGN);
+        let unit = |shared: bool| if shared { fp8_unit } else { BF16_GEMM_K_ALIGN };
+        let split = |name: &str, total: usize, shared: bool| {
+            metrale_config::tp_split(total, tp, config.tp_rank, unit(shared))
                 .with_context(|| format!("GLM MLP: {name} {total} over tp_world_size {tp}"))
         };
-        let dense = split("intermediate_size", config.intermediate_size)?;
+        let dense = split("intermediate_size", config.intermediate_size, false)?;
         let shared = split(
             "shared_expert_intermediate_size",
             config.shared_expert_intermediate_size,
+            true,
         )?;
         if !config.num_experts.is_multiple_of(ep) {
             bail!(

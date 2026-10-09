@@ -230,6 +230,10 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 }
             };
 
+            if crate::glm5next_fp8_dense::enabled() {
+                register_fp8_dense(gpu, &mixer, &mlp, &mlp_cfg, idx)?;
+            }
+
             let t_mlp = t_layer.elapsed();
             tracing::info!(
                 "glm5_next layer {idx} built: collect {:.2}s mixer {:.2}s mlp {:.2}s \
@@ -285,6 +289,15 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 is_first: idx == 0,
                 is_last: idx == last,
             }));
+        }
+        if crate::glm5next_fp8_dense::enabled() {
+            let (count, bytes) = crate::glm5next_fp8_dense::registered();
+            tracing::warn!(
+                "glm5_next --dense-quantization fp8: {count} BF16 dense projections also held as \
+                 FP8 per-channel ({:.2} GB) and decoded W8A8, BELOW the checkpoint's declared \
+                 BF16; the router, the indexer's wq_b and weights_proj stay BF16",
+                bytes as f64 / 1e9
+            );
         }
         Ok(out)
     }
@@ -425,4 +438,41 @@ fn build_dense_site(
         nvfp4,
         precision,
     })
+}
+
+/// 2026-10-09: `--dense-quantization fp8`: register the FP8 copy of every BF16 projection of
+/// one layer's mixer and shared expert (`glm5next_fp8_dense`), with the shapes their forwards
+/// launch.
+fn register_fp8_dense(
+    gpu: &dyn GpuBackend,
+    mixer: &Glm5NextMixer,
+    mlp: &Glm5NextMlpSite,
+    mlp_cfg: &Glm5NextMlpConfig,
+    idx: usize,
+) -> Result<()> {
+    let mut projs = match mixer {
+        Glm5NextMixer::Kda { layer, .. } => layer.dense_projections(),
+        Glm5NextMixer::Dsa(layer) => layer.dense_projections(),
+    };
+    if let Glm5NextMlpSite::Moe(w) = mlp {
+        let (h, s) = (mlp_cfg.hidden, mlp_cfg.local_shared_intermediate);
+        projs.push((w.shared.gate_proj, s, h, "shared_experts.gate_proj"));
+        projs.push((w.shared.up_proj, s, h, "shared_experts.up_proj"));
+        projs.push((w.shared.down_proj, h, s, "shared_experts.down_proj"));
+    }
+    let max_k = projs.iter().map(|p| p.2).max().unwrap_or(0);
+    crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
+    let quantize = gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
+    for (w, n, k, name) in projs {
+        crate::glm5next_fp8_dense::register(
+            gpu,
+            quantize,
+            w,
+            n,
+            k,
+            &format!("layer {idx} {name}"),
+            0,
+        )?;
+    }
+    Ok(())
 }

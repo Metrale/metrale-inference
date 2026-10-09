@@ -29,6 +29,7 @@ const ENUMERATED: &[&str] = &[
     "tool-grammar",
     "expert-quantization",
     "weight-quantization",
+    "dense-quantization",
 ];
 
 /// 2026-09-26: Flags a value needs beside it to validate: `--ssm-h-dtype f16`
