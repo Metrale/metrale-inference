@@ -1874,6 +1874,7 @@ dependencies = [
 name = "metrale-speculative"
 version = "1.0.0-beta-preview"
 dependencies = [
+ "anyhow",
  "metrale-model-layers",
  "parking_lot",
  "serde",

@@ -86,6 +86,7 @@ pub(super) fn resolve_speculation(
             args.dflash_gamma.is_some(),
             metrale_model_layers::layers::qwen3_ssm::gdn_flags::gdn_woa_enabled(),
         );
+        dflash_rung.set_ladder(args.dflash_draft_ladder_resolved.clone());
     }
 
     if args.dflash {

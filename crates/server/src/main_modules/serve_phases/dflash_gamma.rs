@@ -74,6 +74,20 @@ pub(crate) fn apply_dflash_gamma(
         }
     );
     args.dflash_gamma_resolved = Some(gamma);
+    // 2026-10-09: The ladder is parsed here, before any weight loads, and refused when a rung
+    // asks for more drafts than γ - 1, the most the pools are sized for.
+    if let Some(spec) = &args.dflash_draft_ladder {
+        let ladder = metrale_speculative::dflash_ladder::DraftLadder::parse(spec)
+            .with_context(|| format!("--dflash-draft-ladder {spec:?}"))?;
+        anyhow::ensure!(
+            ladder.max_drafts() < gamma,
+            "--dflash-draft-ladder {spec:?} asks for {} drafts per step, but γ = {gamma} \
+             drafts at most {}",
+            ladder.max_drafts(),
+            gamma - 1
+        );
+        args.dflash_draft_ladder_resolved = Some(ladder);
+    }
     Ok(())
 }
 

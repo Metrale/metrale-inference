@@ -114,6 +114,7 @@ pub(super) fn install_dflash_drafter(
                 max_batch_size,
             )?;
             model.set_dflash_proposer(std::sync::Arc::new(head));
+            model.ensure_verify_hidden_stash()?;
             tracing::info!(target: "metrale_model_engine::factory::build", "DFlash drafter installed as the active proposer");
         } else {
             tracing::warn!(target: "metrale_model_engine::factory::build", "DFlash drafter store had no fc.weight — proposer not installed; \
