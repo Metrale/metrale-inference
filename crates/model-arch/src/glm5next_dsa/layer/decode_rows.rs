@@ -199,33 +199,54 @@ impl Glm5NextDsaLayer {
             && w.q_idx_rows.0 != 0
             && w.head_weights_rows.0 != 0;
         if batched_idx {
+            // 2026-10-09: Above `DENSE_GEMV_BATCHM_MAX_M` rows (a `METRALE_GLM_ROW_GROUP` wider
+            // than 16) `glm_mm`'s cuBLASLt arm writes BF16, so these FP32-out projections take
+            // the FP32-out cuBLASLt call instead.
+            let wide = n > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
+                && crate::glm5next_layer::cublas_wide_proj();
             let k = &self.kernels;
-            gemm(
-                gpu,
-                k.gemm_f32,
-                k.gemv_f32,
-                k.batchm_f32(),
-                w.q_resid,
-                self.weights.wq_b,
-                w.q_idx_rows,
-                n,
-                idx_row,
-                self.cfg.q_lora_rank,
-                stream,
-            )?;
-            gemm(
-                gpu,
-                k.gemm_f32,
-                k.gemv_f32,
-                k.batchm_f32(),
-                hidden,
-                self.weights.weights_proj,
-                w.head_weights_rows,
-                n,
-                heads,
-                self.cfg.hidden,
-                stream,
-            )?;
+            for (a, wt, out, n_out, kk) in [
+                (
+                    w.q_resid,
+                    self.weights.wq_b,
+                    w.q_idx_rows,
+                    idx_row,
+                    self.cfg.q_lora_rank,
+                ),
+                (
+                    hidden,
+                    self.weights.weights_proj,
+                    w.head_weights_rows,
+                    heads,
+                    self.cfg.hidden,
+                ),
+            ] {
+                if wide {
+                    metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
+                        a,
+                        wt,
+                        out,
+                        n as u32,
+                        n_out as u32,
+                        kk as u32,
+                        stream,
+                    )?;
+                } else {
+                    gemm(
+                        gpu,
+                        k.gemm_f32,
+                        k.gemv_f32,
+                        k.batchm_f32(),
+                        a,
+                        wt,
+                        out,
+                        n,
+                        n_out,
+                        kk,
+                        stream,
+                    )?;
+                }
+            }
         }
         for r in 0..n {
             let mr = meta_row_base + r;

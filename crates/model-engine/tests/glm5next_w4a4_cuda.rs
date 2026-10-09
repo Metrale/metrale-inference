@@ -256,7 +256,7 @@ fn routed_w4a4_tracks_w4a16_and_is_row_invariant() -> Result<()> {
     let xd = upload(&gpu, &bf16_bytes(&x))?;
     let out = gpu.alloc(16 * c.hidden * 2)?;
     let run = |w: &Glm5NextMoeWeights, rows: usize| -> Result<Vec<f32>> {
-        forward_moe(&gpu, &k, &c, w, xd, out, rows, &ws, stream)?;
+        forward_moe(&gpu, &k, &c, w, xd, out, rows, &ws, false, stream)?;
         gpu.synchronize(stream)?;
         read_bf16(&gpu, out, rows * c.hidden)
     };
@@ -272,7 +272,7 @@ fn routed_w4a4_tracks_w4a16_and_is_row_invariant() -> Result<()> {
     let wide = run(&w4a4, 16)?;
     for r in 0..16 {
         let xr = xd.offset(r * c.hidden * 2);
-        forward_moe(&gpu, &k, &c, &w4a4, xr, out, 1, &ws, stream)?;
+        forward_moe(&gpu, &k, &c, &w4a4, xr, out, 1, &ws, false, stream)?;
         gpu.synchronize(stream)?;
         let one = read_bf16(&gpu, out, c.hidden)?;
         ensure!(

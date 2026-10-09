@@ -164,6 +164,8 @@ impl Glm5NextLayer {
                 out,
                 rows,
                 &self.mlp_ws,
+                // 2026-10-09: A capture cannot read the expert histogram back to the host.
+                ctx.graph_capture,
                 stream,
             )?,
         }

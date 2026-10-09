@@ -97,7 +97,9 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         // (`METRALE_GLM_PREFILL_ROWS`).
         let verify_k = (metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize)
             .max(crate::glm5next_layer::PREFILL_ROWS)
-            .max(crate::glm5next_layer::prefill_rows());
+            .max(crate::glm5next_layer::prefill_rows())
+            // 2026-10-09: `METRALE_GLM_ROW_GROUP`, the batched decode/verify group width.
+            .max(crate::glm5next_layer::multi_seq_chunk_rows());
         let kda_ws = std::sync::Arc::new(crate::glm5next_kda::Glm5NextKdaWorkspace::new(
             gpu, &kda_cfg, verify_k,
         )?);

@@ -299,6 +299,9 @@ pub fn forward_moe(
     out: DevicePtr,
     rows: usize,
     ws: &Glm5NextMlpWorkspace,
+    // 2026-10-09: True while a CUDA graph is captured: the grouped GEMM then sizes its grid
+    // from the worst case instead of reading the expert histogram back to the host.
+    capturing: bool,
     stream: u64,
 ) -> Result<()> {
     if rows == 0 || rows > ws.max_rows {
@@ -424,7 +427,9 @@ pub fn forward_moe(
         // 2026-09-25: Leaves the routed outputs in expert-sorted order; the combine below reads
         // them through `token_to_perm`.
         let t = profile::start();
-        forward_prefill_gemm::forward_moe_grouped_prefill(gpu, k, cfg, w, x, rows, ws, stream)?;
+        forward_prefill_gemm::forward_moe_grouped_prefill(
+            gpu, k, cfg, w, x, rows, ws, !capturing, stream,
+        )?;
         profile::end(profile::MOE_EXPERTS, t, gpu, stream);
     }
 

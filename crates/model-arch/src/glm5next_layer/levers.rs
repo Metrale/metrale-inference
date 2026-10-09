@@ -89,9 +89,35 @@ pub fn prefill_rows() -> usize {
 /// rows carry the M = 1 GEMV's bits. A wider group would move every projection to cuBLASLt,
 /// whose rows depend on their batch-mates. The loader sizes every workspace for at least this
 /// many rows (`verify_k` in `glm5_next_load/loader.rs`).
+///
+/// 2026-10-09: `METRALE_GLM_ROW_GROUP=N` (opt-in, 1..=`MAX_ROW_GROUP`) widens the group, so a
+/// batched decode or verify of more than 16 rows reads each weight once per N rows instead of
+/// once per 16. Above 16 rows the BF16 projections run on cuBLASLt and a row's bits then
+/// depend on its batch-mates: the default stays 16 until transcripts and accuracy clear a
+/// wider group. Read once.
 pub(crate) fn multi_seq_chunk_rows() -> usize {
-    metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
+    static ROWS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *ROWS.get_or_init(|| {
+        let default = metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize;
+        let rows = std::env::var("METRALE_GLM_ROW_GROUP")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|r| (1..=MAX_ROW_GROUP).contains(r))
+            .unwrap_or(default);
+        if rows != default {
+            tracing::warn!(
+                "METRALE_GLM_ROW_GROUP={rows}: batched GLM decode/verify groups of {rows} rows \
+                 (default {default}); above {default} rows the projections leave the \
+                 bit-identical batched GEMV"
+            );
+        }
+        rows
+    })
 }
+
+/// 2026-10-09: The widest `METRALE_GLM_ROW_GROUP` accepted: the GLM mHC `mix` scratch floor
+/// (`MHC_MIX_MAX_TOKENS`), so every group fits `glm_hc_pre`.
+pub(crate) const MAX_ROW_GROUP: usize = crate::glm5next_mhc::MHC_MIX_MAX_TOKENS;
 
 /// 2026-10-08: `rows` split into consecutive `(start, width)` groups of `cap` rows, the last one
 /// shorter when `cap` does not divide `rows`. A `cap` of 0 is treated as 1. No group is empty,
