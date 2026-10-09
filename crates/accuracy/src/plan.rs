@@ -34,6 +34,9 @@ pub struct Plan {
     pub constants: BTreeMap<String, f64>,
     /// 2026-10-09: Where block scales fold.
     pub scale_fold: ScaleFold,
+    /// 2026-10-09: The point's compile-time and policy values (a policy such as a norm's
+    /// weight form changes the declared computation, not its formats).
+    pub point: Values,
 }
 
 /// 2026-10-09: Terms a level combines, for reduced length `k`; `None` for a malformed width.
@@ -106,12 +109,13 @@ pub fn parse_kernel(k: &str) -> Result<KernelId, String> {
     })
 }
 
-/// 2026-10-09: The plan of contract `c` over `pipeline` (from [`declared`]), with reduced lengths
-/// `lens` (`k` and any other dimension the contract's reduction names).
+/// 2026-10-09: The plan of contract `c` over `pipeline` (from [`declared`]) at `point`, with
+/// reduced lengths `lens` (`k` and any other dimension the contract's reduction names).
 pub fn plan(
     c: &Contract,
     pipeline: NodePipeline,
     lens: &BTreeMap<String, u64>,
+    point: &Values,
 ) -> Result<Plan, String> {
     let mut depth = BTreeMap::new();
     for (dim, levels) in &c.reduction {
@@ -128,6 +132,7 @@ pub fn plan(
         approx: c.approx.clone(),
         constants: c.constants.clone(),
         scale_fold: c.scale_fold,
+        point: point.clone(),
     })
 }
 
@@ -155,6 +160,15 @@ impl Plan {
             .get(name)
             .copied()
             .ok_or_else(|| format!("the contract declares no constant `{name}`"))
+    }
+
+    /// 2026-10-09: The point's value of parameter `p`; an error names a point that does not
+    /// state it.
+    pub fn value_of(&self, p: &str) -> Result<&str, String> {
+        self.point
+            .get(p)
+            .map(String::as_str)
+            .ok_or_else(|| format!("the point states no `{p}`"))
     }
 
     /// 2026-10-09: The relative error of approximate function `f`; an error names a missing

@@ -100,6 +100,7 @@ const TABLES: &[&[(&str, Adapter)]] = &[
     ADAPTERS,
     super::accuracy_adapters_w8a8::ADAPTERS,
     super::accuracy_adapters_quant::ADAPTERS,
+    super::accuracy_adapters_norm::ADAPTERS,
 ];
 
 /// 2026-10-09: An adapter launches `launcher`.

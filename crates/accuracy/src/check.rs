@@ -171,7 +171,7 @@ fn prepare(job: &Job<'_>) -> Result<(Reference, Plan, Case), Verdict> {
         .ok_or_else(|| err(format!("reference `{}`", c.reference)))?;
     let pipeline = plan::declared(job.family, job.kernel, &c.op, job.point).map_err(err)?;
     let lens = reference.lens(job.shape, &pipeline);
-    let plan = plan::plan(c, pipeline, &lens).map_err(err)?;
+    let plan = plan::plan(c, pipeline, &lens, job.point).map_err(err)?;
     let mut case = Case {
         family: job.family.id.clone(),
         kernel: job.kernel.to_string(),

@@ -17,7 +17,12 @@ use metrale_circuit::venn::Repo;
 #[test]
 fn the_plan_accounts_for_every_swept_point() {
     let s = sweep(&common::Tree, "gb10").unwrap();
-    let contracts = parse_contracts(&common::Tree.read("kernels/gb10/common/ACCURACY.toml").unwrap()).unwrap();
+    let contracts = parse_contracts(
+        &common::Tree
+            .read("kernels/gb10/common/ACCURACY.toml")
+            .unwrap(),
+    )
+    .unwrap();
     let fams = common::families();
     assert_eq!(validate(&contracts, &fams), Vec::<String>::new());
     let (full, cov) = plan(&s, &contracts, &fams, Scope::Full, None, None);
@@ -26,32 +31,64 @@ fn the_plan_accounts_for_every_swept_point() {
     let uncovered_points = s
         .points
         .iter()
-        .filter(|p| cov.uncovered.contains_key(&(p.family.clone(), p.kernels.clone(), p.shape.op.clone())))
+        .filter(|p| {
+            cov.uncovered
+                .contains_key(&(p.family.clone(), p.kernels.clone(), p.shape.op.clone()))
+        })
         .count();
-    assert_eq!(cov.covered_points + uncovered_points, cov.swept_points, "a swept point is neither planned nor reported");
+    assert_eq!(
+        cov.covered_points + uncovered_points,
+        cov.swept_points,
+        "a swept point is neither planned nor reported"
+    );
     assert!(!full.is_empty() && quick.len() < full.len());
-    let key = |j: &metrale_accuracy::jobs::Planned<'_>| format!("{} {:?} {:?} {}", j.kernel, j.point, j.shape, j.input.name());
+    let key = |j: &metrale_accuracy::jobs::Planned<'_>| {
+        format!(
+            "{} {:?} {:?} {}",
+            j.kernel,
+            j.point,
+            j.shape,
+            j.input.name()
+        )
+    };
     let fullset: BTreeSet<String> = full.iter().map(key).collect();
     for j in &quick {
-        assert!(fullset.contains(&key(j)), "quick has a check full lacks: {}", key(j));
+        assert!(
+            fullset.contains(&key(j)),
+            "quick has a check full lacks: {}",
+            key(j)
+        );
         assert!(j.contract.kernels.contains(&j.kernel));
     }
     // 2026-10-09: Quick keeps every contracted (kernel, class) and every distinct (kernel, K, N).
     let classes = |v: &[metrale_accuracy::jobs::Planned<'_>]| -> BTreeSet<(String, String)> {
-        v.iter().map(|j| (j.kernel.clone(), j.input.name().to_string())).collect()
+        v.iter()
+            .map(|j| (j.kernel.clone(), j.input.name().to_string()))
+            .collect()
     };
     assert_eq!(classes(&quick), classes(&full));
     let shapes = |v: &[metrale_accuracy::jobs::Planned<'_>]| -> BTreeSet<(String, u64, u64)> {
-        v.iter().map(|j| (j.kernel.clone(), j.shape.in_dim, j.shape.out_dim)).collect()
+        v.iter()
+            .map(|j| (j.kernel.clone(), j.shape.in_dim, j.shape.out_dim))
+            .collect()
     };
     assert_eq!(shapes(&quick), shapes(&full));
 }
 
 #[test]
 fn a_contract_naming_a_foreign_kernel_is_refused() {
-    let text = common::Tree.read("kernels/gb10/common/ACCURACY.toml").unwrap();
-    let bad = text.replacen("\"w4a16_gemv::w4a16_gemv_sw\"]", "\"w4a16_gemv::not_a_kernel\"]", 1);
+    let text = common::Tree
+        .read("kernels/gb10/common/ACCURACY.toml")
+        .unwrap();
+    let bad = text.replacen(
+        "\"w4a16_gemv::w4a16_gemv_sw\"]",
+        "\"w4a16_gemv::not_a_kernel\"]",
+        1,
+    );
     assert_ne!(bad, text);
     let problems = validate(&parse_contracts(&bad).unwrap(), &common::families());
-    assert!(problems.iter().any(|p| p.contains("not_a_kernel")), "{problems:?}");
+    assert!(
+        problems.iter().any(|p| p.contains("not_a_kernel")),
+        "{problems:?}"
+    );
 }
