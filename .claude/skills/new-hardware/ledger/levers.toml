@@ -718,3 +718,27 @@ effort_hours = 0.2
 transferability = "any class where speculation width is raised: check the verify-pool memory at the widest rung first"
 links = { pr = "", commit = "", evidence = "H100 box ~/runs/ab-l4-k3w128 (serve-B1.log reserve line)" }
 notes = "retry with a ladder that fits (e.g. 16:3,32:2,128:1 with --mtp-max-seqs 128) after the prefill-serialization lever lands"
+
+[[lever]]
+id = "hopper-dense27b-tc-rows-prefetch-distance"
+date = "2026-10-09"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense), --weight-quantization declared"
+recipe_or_tier = "w4a16_tc_rows (NVFP4 FFN, 17-128 rows)"
+symptom = "w4a16_tc_rows_64 at the 27B gate shape reaches 14-23% of HBM bandwidth; ncu: 162 registers, ~8 warps per SM, 20% DRAM, 38% of cycles with no eligible warp"
+diagnosis_tool = "ncu"
+root_cause_class = "latency-bound-kernel"
+lever_type = "parameterization"
+lkb_effect = "new parameter PF on the tc_rows family (load groups ahead); 5 new points, bit-identical to PF 1 (parity microtest)"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "w4a16_m17_bench on the H100: PF 2/3 are 0-10% SLOWER than PF 1 at 16-64 rows on every FFN shape (e.g. gate 64 rows 85.7 -> 93.1/95.8 us); the kernel is issue/latency bound inside the warp (decode + LDS + MMA chain, syncthreads per group), not starved of bytes in flight"
+failure_mode = "the ncu 'no eligible warp' symptom was read as a memory-latency problem; deeper register prefetch only raised register pressure"
+caught_by = "the microbench of the new points before any routing"
+time_lost_hours = 1
+would_catch_earlier = "check ncu stall reasons (long scoreboard vs wait/barrier/MIO) before choosing a prefetch lever"
+effort_hours = 1
+transferability = "register-ring prefetch rarely helps an MMA kernel already at 2+ IPC per active scheduler; cp.async/TMA smem staging is the lever that adds bytes in flight without registers"
+links = { pr = "", commit = "5b92d0599 (points), 30a9e4009 (routing, default 1)", evidence = "H100 ~/runs/micro-l9/w4a16_m17_bench.log, w4a16_parity_microtest.log (0 differing)" }
+notes = "default stays PF 1 on every class; the points remain as data for other classes"
