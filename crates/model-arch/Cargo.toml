@@ -399,6 +399,10 @@ name = "cublaslt_proj_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "w4a16_gemv_tc_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "w4a16_parity_microtest"
 required-features = ["cuda", "gpu-examples"]
 

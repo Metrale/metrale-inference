@@ -238,8 +238,10 @@ __device__ __forceinline__ void w4a16_gemv_tc_impl(
     }
 }
 
-#define W4TC_ENTRY(NAME, MT, NT, KU)                                                   \
-    extern "C" __global__ __launch_bounds__(TC_WARPS * 32) void NAME(                    \
+// 2026-10-09: LB is the launch-bounds list: (TC_WARPS * 32) for one block per SM as before,
+// (TC_WARPS * 32, B) to ask for B blocks per SM (fewer registers per thread).
+#define W4TC_ENTRY(NAME, MT, NT, KU, LB)                                               \
+    extern "C" __global__ __launch_bounds__ LB void NAME(                                \
         const __nv_bfloat16* __restrict__ A, const unsigned char* __restrict__ B_packed,  \
         const unsigned char* __restrict__ B_scale, const float scale2,                    \
         __nv_bfloat16* __restrict__ C, unsigned int M, unsigned int N, unsigned int K) {  \
@@ -252,5 +254,23 @@ __device__ __forceinline__ void w4a16_gemv_tc_impl(
 
 
 
-W4TC_ENTRY(w4a16_gemv_tc8, 8, 1, 8)
-W4TC_ENTRY(w4a16_gemv_tc16, 16, 2, 2)
+W4TC_ENTRY(w4a16_gemv_tc8, 8, 1, 8, (TC_WARPS * 32))
+W4TC_ENTRY(w4a16_gemv_tc16, 16, 2, 2, (TC_WARPS * 32))
+
+// 2026-10-09: Schedule points of the same two row tiers: NT (8-column tiles per CTA), KU (k-blocks
+// per load trip) and blocks per SM. A warp still takes the k-blocks warp, warp + 8, ... in
+// ascending order whatever KU is, a column's sum does not read the CTA's other columns whatever
+// NT is, and the launch bounds change only register allocation, so every point gives the bits of
+// its tier's entry above (`_tc8_` points those of w4a16_gemv_tc8, `_tc16_` those of tc16). The
+// grid is ceil(N / (8 * NT)). On the H100 SXM the one-block-per-SM tiers stream the 27B's FFN
+// weights at about a third of HBM bandwidth at 4-8 rows.
+W4TC_ENTRY(w4a16_gemv_tc8_nt1_ku4_o2, 8, 1, 4, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc8_nt1_ku8_o2, 8, 1, 8, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc8_nt2_ku4_o2, 8, 2, 4, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc8_nt2_ku2_o3, 8, 2, 2, (TC_WARPS * 32, 3))
+W4TC_ENTRY(w4a16_gemv_tc8_nt1_ku4_o3, 8, 1, 4, (TC_WARPS * 32, 3))
+W4TC_ENTRY(w4a16_gemv_tc8_nt4_ku2_o2, 8, 4, 2, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc16_nt2_ku2_o2, 16, 2, 2, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc16_nt1_ku4_o2, 16, 1, 4, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc16_nt4_ku1_o2, 16, 4, 1, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc16_nt2_ku4_o2, 16, 2, 4, (TC_WARPS * 32, 2))

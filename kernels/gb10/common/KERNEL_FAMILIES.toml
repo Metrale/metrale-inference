@@ -979,7 +979,14 @@ id = "w4a16_tc"
 description = "NVFP4 W4A16 tensor-core GEMV row tiers (tc8, tc16)"
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
-kernels = ["w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16"]
+kernels = [
+  "w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16",
+  "w4a16_gemv_tc::w4a16_gemv_tc8_nt1_ku4_o2", "w4a16_gemv_tc::w4a16_gemv_tc8_nt1_ku8_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc8_nt2_ku4_o2", "w4a16_gemv_tc::w4a16_gemv_tc8_nt2_ku2_o3",
+  "w4a16_gemv_tc::w4a16_gemv_tc8_nt1_ku4_o3", "w4a16_gemv_tc::w4a16_gemv_tc8_nt4_ku2_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc16_nt2_ku2_o2", "w4a16_gemv_tc::w4a16_gemv_tc16_nt1_ku4_o2",
+  "w4a16_gemv_tc::w4a16_gemv_tc16_nt4_ku1_o2", "w4a16_gemv_tc::w4a16_gemv_tc16_nt2_ku4_o2",
+]
 rows = [1, 16]
 # 2026-10-02: E2M1 x E4M3 folded into a BF16 operand exactly (w4a16_gemv_tc.cu:23-30, 201-204),
 # FP32 MMA sums, the global scale on the FP32 sum (:221, :230).
