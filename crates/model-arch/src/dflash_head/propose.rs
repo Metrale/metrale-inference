@@ -290,7 +290,7 @@ impl BlockDiffusionDraftHead {
                 tracing::warn!("DFlash forward_block failed, falling back to no-spec: {e:#}");
                 e
             })?;
-        let cap = self.levers.draft_cap.unwrap_or(self.block_g());
+        let cap = self.drafts_to_return(num_drafts);
 
         if self.levers.verify_trace {
             tracing::info!(

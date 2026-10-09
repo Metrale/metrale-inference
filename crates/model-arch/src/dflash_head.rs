@@ -308,13 +308,31 @@ impl BlockDiffusionDraftHead {
         self.block_gamma.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// 2026-10-09: How many of a block's drafts a propose of `num_drafts` returns:
+    /// `METRALE_DFLASH_DRAFT_CAP` when set, else the block's own count (`block_g`), and under
+    /// `METRALE_DFLASH_FULL_BLOCK=1` never more than `num_drafts`.
+    pub(super) fn drafts_to_return(&self, num_drafts: usize) -> usize {
+        let cap = self.levers.draft_cap.unwrap_or(self.block_g());
+        if self.levers.full_block {
+            cap.min(num_drafts)
+        } else {
+            cap
+        }
+    }
+
     /// 2026-09-25: Arm the block width for the next propose from the
     /// scheduler's draft count: `num_drafts + 1` rows (anchor + masks),
     /// clamped to `2..=gamma.max(2)`, so a request above the head's sizing
     /// gets the widest block.
     #[inline]
     pub(super) fn set_block_g(&self, num_drafts: usize) {
-        let g = (num_drafts + 1).clamp(2, self.gamma.max(2));
+        // 2026-10-09: `METRALE_DFLASH_FULL_BLOCK=1` keeps the full width; the caller then
+        // returns `num_drafts` drafts from it (`drafts_to_return`).
+        let g = if self.levers.full_block {
+            self.gamma.max(2)
+        } else {
+            (num_drafts + 1).clamp(2, self.gamma.max(2))
+        };
         self.block_gamma
             .store(g, std::sync::atomic::Ordering::Relaxed);
     }
