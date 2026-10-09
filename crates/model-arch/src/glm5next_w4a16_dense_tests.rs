@@ -11,6 +11,20 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::*;
 
+/// 2026-10-09: The plans the dispatch tests run under (48 SMs: GB10).
+const OFF: SegPlan = SegPlan {
+    mode: SegMode::Off,
+    sms: 0,
+};
+const FUSE: SegPlan = SegPlan {
+    mode: SegMode::Fuse,
+    sms: 48,
+};
+const SPLIT: SegPlan = SegPlan {
+    mode: SegMode::Split,
+    sms: 48,
+};
+
 /// 2026-10-09: The KDA q/k/v, f_a, b, g_a, o and the shared expert go W4A16; KDA f_b/g_b and
 /// every DSA projection stay FP8; a name without a decision is refused.
 #[test]
@@ -180,7 +194,7 @@ fn registered_weights_run_in_whole_row_chunks_and_everything_else_declines_or_er
 
     let (a, c) = (DevicePtr(0x1000_0000), DevicePtr(0x2000_0000));
     let start = gpu.launches_snapshot().len();
-    assert!(proj_registered(&gpu, key, a, c, 150, n, k, 7).unwrap());
+    assert!(proj_registered(&gpu, OFF, key, a, c, 150, n, k, 7).unwrap());
     let l = gpu.launches_snapshot();
     let ours = &l[start..];
     assert_eq!(ours.len(), 3);
@@ -204,10 +218,10 @@ fn registered_weights_run_in_whole_row_chunks_and_everything_else_declines_or_er
     }
 
     let n_launches = gpu.launches_snapshot().len();
-    assert!(!proj_registered(&gpu, bf16, a, c, 1, n, k, 0).unwrap());
-    assert!(!proj_registered(&gpu, DevicePtr(0x3000_0000), a, c, 1, n, k, 0).unwrap());
+    assert!(!proj_registered(&gpu, OFF, bf16, a, c, 1, n, k, 0).unwrap());
+    assert!(!proj_registered(&gpu, OFF, DevicePtr(0x3000_0000), a, c, 1, n, k, 0).unwrap());
     assert_eq!(gpu.launches_snapshot().len(), n_launches);
-    let e = proj_registered(&gpu, key, a, c, 1, n, 256, 0)
+    let e = proj_registered(&gpu, OFF, key, a, c, 1, n, 256, 0)
         .unwrap_err()
         .to_string();
     assert!(e.contains("launched as [96, 256]"), "{e}");
@@ -242,4 +256,130 @@ fn the_dsa_absorbed_lever_moves_three_projections_and_needs_the_tier() {
             .contains("w4a16")
     );
     assert!(parse_dsa_absorbed(Some("on"), true).is_err());
+}
+
+/// 2026-10-09: `METRALE_GLM_W4A16_SEG` takes 0, fuse or split, and fuse/split only with the tier.
+#[test]
+fn the_seg_lever_parses_three_values_and_needs_the_tier() {
+    use crate::glm5next_w4a16_seg::parse_seg;
+    assert_eq!(parse_seg(None, false), Ok(SegMode::Off));
+    assert_eq!(parse_seg(Some("0"), false), Ok(SegMode::Off));
+    assert_eq!(parse_seg(Some("fuse"), true), Ok(SegMode::Fuse));
+    assert_eq!(parse_seg(Some("split"), true), Ok(SegMode::Split));
+    assert!(
+        parse_seg(Some("split"), false)
+            .unwrap_err()
+            .contains("w4a16")
+    );
+    for v in ["1", "on", "Split", ""] {
+        assert!(parse_seg(Some(v), true).is_err(), "{v:?}");
+    }
+}
+
+/// 2026-10-09: Register `[n, k]` weights on `gpu`, returning their keys.
+fn register_all(gpu: &MockGpuBackend, shapes: &[(usize, usize)]) -> Vec<DevicePtr> {
+    let kernels = Nvfp4QuantKernels::load(gpu).unwrap();
+    shapes
+        .iter()
+        .map(|&(n, k)| {
+            let bf16 = gpu.alloc(n * k * 2).unwrap();
+            register(gpu, &kernels, bf16, n, k, "test", 0).unwrap()
+        })
+        .collect()
+}
+
+/// 2026-10-09: Under `fuse` and `split` a registered projection of 2+ rows runs on the
+/// segmented tiles, one segment, 64-row chunks, grid (tiles, split) with the split of its shape
+/// (a 768-wide K-4096 weight: 1 under fuse, 4 under split); one row keeps the GEMV's 7 args.
+#[test]
+fn seg_modes_move_two_rows_and_up_to_the_segmented_tiles() {
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
+    let gpu = MockGpuBackend::new();
+    let (n, k) = (768usize, 4096usize);
+    let key = register_all(&gpu, &[(n, k)])[0];
+    let (a, c) = (DevicePtr(0x1000_0000), DevicePtr(0x2000_0000));
+    for (plan, s) in [(FUSE, 1u32), (SPLIT, 4)] {
+        let start = gpu.launches_snapshot().len();
+        assert!(proj_registered(&gpu, plan, key, a, c, 70, n, k, 5).unwrap());
+        let l = gpu.launches_snapshot();
+        let ours = &l[start..];
+        assert_eq!(ours.len(), 2, "64 + 6 rows");
+        for (i, (l, rows)) in ours.iter().zip([64u32, 6]).enumerate() {
+            assert_eq!(l.grid, [12, s, 1]);
+            assert_eq!(l.args.len(), 19);
+            assert_eq!(ptr_arg(&l.args[0]), a.offset(i * 64 * k * 2));
+            assert_eq!(ptr_arg(&l.args[1]), key);
+            assert_eq!(ptr_arg(&l.args[4]), c.offset(i * 64 * n * 2));
+            assert_eq!(u32_arg(&l.args[5]), n as u32);
+            assert_eq!(u32_arg(&l.args[10]), 0, "segment 1 empty");
+            assert_eq!(u32_arg(&l.args[16]), rows);
+        }
+        let start = gpu.launches_snapshot().len();
+        assert!(proj_registered(&gpu, plan, key, a, c, 1, n, k, 5).unwrap());
+        assert_eq!(
+            gpu.launches_snapshot()[start..][0].args.len(),
+            7,
+            "the GEMV"
+        );
+    }
+}
+
+/// 2026-10-09: A group declines without a launch under `off`, at one row, or with a member not
+/// registered; otherwise it is one launch per 64 rows over every member (KDA f_a, g_a, b: 2 + 2
+/// + 1 tiles, split 4 under `split`), and a member at another shape is an error.
+#[test]
+fn a_group_is_one_launch_or_declines_whole() {
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
+    let gpu = MockGpuBackend::new();
+    let k = 4096usize;
+    let keys = register_all(&gpu, &[(128, k), (128, k), (22, k)]);
+    let outs = [
+        DevicePtr(0x2000_0000),
+        DevicePtr(0x3000_0000),
+        DevicePtr(0x4000_0000),
+    ];
+    let ns = [128usize, 128, 22];
+    let members: Vec<_> = (0..3).map(|i| (keys[i], outs[i], ns[i])).collect();
+    let a = DevicePtr(0x1000_0000);
+    let n0 = gpu.launches_snapshot().len();
+    assert!(!proj_group_registered(&gpu, OFF, &members, a, 16, k, 0).unwrap());
+    assert!(!proj_group_registered(&gpu, SPLIT, &members, a, 1, k, 0).unwrap());
+    let mut stray = members.clone();
+    stray[1].0 = DevicePtr(0x7000_0000);
+    assert!(!proj_group_registered(&gpu, SPLIT, &stray, a, 16, k, 0).unwrap());
+    assert_eq!(
+        gpu.launches_snapshot().len(),
+        n0,
+        "a decline launches nothing"
+    );
+
+    for (plan, s) in [(FUSE, 1u32), (SPLIT, 4)] {
+        let start = gpu.launches_snapshot().len();
+        assert!(proj_group_registered(&gpu, plan, &members, a, 100, k, 2).unwrap());
+        let l = gpu.launches_snapshot();
+        let ours = &l[start..];
+        assert_eq!(ours.len(), 2, "64 + 36 rows");
+        for (j, l) in ours.iter().enumerate() {
+            assert_eq!(l.grid, [5, s, 1]);
+            assert_eq!(ptr_arg(&l.args[0]), a.offset(j * 64 * k * 2));
+            for i in 0..3 {
+                assert_eq!(ptr_arg(&l.args[1 + 5 * i]), keys[i]);
+                assert_eq!(
+                    ptr_arg(&l.args[4 + 5 * i]),
+                    outs[i].offset(j * 64 * ns[i] * 2)
+                );
+                assert_eq!(u32_arg(&l.args[5 + 5 * i]), ns[i] as u32);
+            }
+        }
+    }
+    let mut wrong = members.clone();
+    wrong[2].2 = 20;
+    let e = proj_group_registered(&gpu, SPLIT, &wrong, a, 16, k, 0)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("launched as [20, 4096]"), "{e}");
+    assert!(
+        !proj_group(&gpu, &members, a, 16, k, 0).unwrap(),
+        "the published tier (declared in tests) declines"
+    );
 }

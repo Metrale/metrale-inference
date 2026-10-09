@@ -26,6 +26,9 @@
 //! - From 2 rows up a row's output does not depend on the row count: `w4a16_tc_rows` is
 //!   row-invariant across its entry points and launches here are chunked by whole rows
 //!   ([`W4A16_LAUNCH_ROWS`]). 2026-10-09: one row takes `w4a16_gemv` instead, whose bits differ.
+//! - 2026-10-09: `METRALE_GLM_W4A16_SEG` (`glm5next_w4a16_seg`) moves the launches of 2 rows
+//!   and up to the segmented row tiles; [`proj_group`] runs projections that share their input
+//!   in one launch there and declines otherwise. Unset, every launch is as before.
 //! - Every registered K is a multiple of [`W4A16_K_UNIT`]; the TP splits are chosen so that it
 //!   holds ([`kda_channel_unit`], `glm5next_fp8_dense::shared_split_unit`), and a width that
 //!   breaks it is refused at load.
@@ -36,10 +39,12 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{Context, Result, bail, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops::{
-    W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_MODULE, w4a16_tc_rows, w4a16_tc_rows_entry,
+    W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_MODULE, W4a16Seg, w4a16_tc_rows, w4a16_tc_rows_entry,
     w4a16_tc_rows_shape_ok,
 };
 use metrale_model_layers::weight_map::{DenseWeight, QuantizedWeight, quantize_to_nvfp4};
+
+use crate::glm5next_w4a16_seg::{self as seg, SegMode, SegPlan};
 
 /// 2026-10-09: The row-tile kernel's K unit (`w4a16_tc_rows_shape_ok`: K a multiple of 256).
 pub const W4A16_K_UNIT: usize = 256;
@@ -139,9 +144,11 @@ pub struct Nvfp4QuantKernels {
 }
 
 impl Nvfp4QuantKernels {
-    /// 2026-10-09: Resolve them, and the row-tile entry points [`proj`] launches, failing when
-    /// any is not in this target's kernels: the operator asked for the tier.
+    /// 2026-10-09: Resolve them, and the row-tile entry points [`proj`] launches (the
+    /// segmented ones too under `METRALE_GLM_W4A16_SEG`), failing when any is not in this
+    /// target's kernels: the operator asked for the tier.
     pub fn load(gpu: &dyn GpuBackend) -> Result<Self> {
+        seg::prepare(gpu)?;
         for rows in [16, 32, 64] {
             let entry = w4a16_tc_rows_entry(rows);
             gpu.op_cache()
@@ -269,27 +276,14 @@ pub fn proj(
     if !enabled() {
         return Ok(false);
     }
-    proj_registered(gpu, b, a, c, m, n, k, stream)
+    proj_registered(gpu, seg::plan()?, b, a, c, m, n, k, stream)
 }
 
-/// 2026-10-09: [`proj`] whatever the published tier.
-#[allow(clippy::too_many_arguments)]
-fn proj_registered(
-    gpu: &dyn GpuBackend,
-    b: DevicePtr,
-    a: DevicePtr,
-    c: DevicePtr,
-    m: usize,
-    n: usize,
-    k: usize,
-    stream: u64,
-) -> Result<bool> {
-    let e = {
-        let g = state().lock().unwrap_or_else(|e| e.into_inner());
-        match g.get(&b.0) {
-            Some(&e) => e,
-            None => return Ok(false),
-        }
+/// 2026-10-09: The registered entry under `b`, checked against the launch shape `[n, k]`.
+fn lookup(b: DevicePtr, n: usize, k: usize) -> Result<Option<Entry>> {
+    let g = state().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(&e) = g.get(&b.0) else {
+        return Ok(None);
     };
     ensure!(
         (e.n, e.k) == (n, k),
@@ -298,6 +292,25 @@ fn proj_registered(
         e.n,
         e.k
     );
+    Ok(Some(e))
+}
+
+/// 2026-10-09: [`proj`] whatever the published tier, under `plan`.
+#[allow(clippy::too_many_arguments)]
+fn proj_registered(
+    gpu: &dyn GpuBackend,
+    plan: SegPlan,
+    b: DevicePtr,
+    a: DevicePtr,
+    c: DevicePtr,
+    m: usize,
+    n: usize,
+    k: usize,
+    stream: u64,
+) -> Result<bool> {
+    let Some(e) = lookup(b, n, k)? else {
+        return Ok(false);
+    };
     let (n32, k32) = (n as u32, k as u32);
     if m == 1 {
         // 2026-10-09: One row takes the NVFP4 GEMV, which streams the weight across every SM;
@@ -309,6 +322,15 @@ fn proj_registered(
             .kernel(gpu, "w4a16_gemv", "w4a16_gemv")
             .context("--dense-quantization w4a16: w4a16_gemv::w4a16_gemv")?;
         metrale_model_layers::layers::ops::w4a16_gemv(gpu, kernel, a, &e.w, c, n32, k32, stream)?;
+        return Ok(true);
+    }
+    if plan.mode != SegMode::Off {
+        let segs = [W4a16Seg {
+            weight: e.w,
+            output: c,
+            n: n32,
+        }];
+        seg::launch(gpu, a, &segs, m, k32, plan.split(&[n32], k32), stream)?;
         return Ok(true);
     }
     let mut done = 0;
@@ -328,6 +350,55 @@ fn proj_registered(
         )?;
         done += rows;
     }
+    Ok(true)
+}
+
+/// 2026-10-09: `members[i] = (weight, output, n_i)`: `output_i [m, n_i] = a [m, k] @ W_i^T` for
+/// projections that share the input `a`, in one launch per 64 rows (`glm5next_w4a16_seg`).
+/// `Ok(false)`, launching nothing, unless the tier is on, `METRALE_GLM_W4A16_SEG` is not `off`,
+/// `m` is 2 or more (one row keeps the GEMV) and every member is registered: the caller then
+/// runs them one by one. A registered member at another shape is an error.
+pub fn proj_group(
+    gpu: &dyn GpuBackend,
+    members: &[(DevicePtr, DevicePtr, usize)],
+    a: DevicePtr,
+    m: usize,
+    k: usize,
+    stream: u64,
+) -> Result<bool> {
+    if !enabled() {
+        return Ok(false);
+    }
+    proj_group_registered(gpu, seg::plan()?, members, a, m, k, stream)
+}
+
+/// 2026-10-09: [`proj_group`] whatever the published tier, under `plan`.
+fn proj_group_registered(
+    gpu: &dyn GpuBackend,
+    plan: SegPlan,
+    members: &[(DevicePtr, DevicePtr, usize)],
+    a: DevicePtr,
+    m: usize,
+    k: usize,
+    stream: u64,
+) -> Result<bool> {
+    if plan.mode == SegMode::Off || m < 2 {
+        return Ok(false);
+    }
+    let mut segs = Vec::with_capacity(members.len());
+    for &(b, c, n) in members {
+        let Some(e) = lookup(b, n, k)? else {
+            return Ok(false);
+        };
+        segs.push(W4a16Seg {
+            weight: e.w,
+            output: c,
+            n: n as u32,
+        });
+    }
+    let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
+    let k32 = k as u32;
+    seg::launch(gpu, a, &segs, m, k32, plan.split(&ns, k32), stream)?;
     Ok(true)
 }
 

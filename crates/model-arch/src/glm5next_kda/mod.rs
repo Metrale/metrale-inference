@@ -149,6 +149,9 @@ pub struct Glm5NextKdaWorkspace {
     /// 2026-09-25: `[T, hidden]` BF16: the block output.
     pub final_out: DevicePtr,
     lowrank: DevicePtr,
+    /// 2026-10-09: `[T, head_dim]` BF16: `g_a(h)` when f_a, g_a and b_proj run as one group
+    /// (`glm5next_w4a16_dense::proj_group`), so it does not overwrite `f_a(h)` in `lowrank`.
+    lowrank_g: DevicePtr,
     beta_bf16: DevicePtr,
     chunk_gc: DevicePtr,
     chunk_u: DevicePtr,
@@ -182,6 +185,7 @@ impl Glm5NextKdaWorkspace {
             o_norm_out: gpu.alloc(t * qkv * 2)?,
             final_out: gpu.alloc(t * cfg.hidden * 2)?,
             lowrank: gpu.alloc(t * hd * 2)?,
+            lowrank_g: gpu.alloc(t * hd * 2)?,
             beta_bf16: gpu.alloc(t * h * 2)?,
             chunk_gc: gpu.alloc(n * 4)?,
             chunk_u: gpu.alloc(n * 4)?,
@@ -296,6 +300,15 @@ impl Glm5NextKdaLayer {
         let _stable = crate::glm5next_fp8_dense::stable_input(hidden);
 
         // 2026-09-25: Three separate `[T, qkv]` projections, then one pack (see the module doc).
+        // 2026-10-09: One launch under `METRALE_GLM_W4A16_SEG` (`proj_group`), else one each.
+        let w = &self.weights;
+        let qkv_group: Vec<_> = [&w.q_proj, &w.k_proj, &w.v_proj]
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| (p.weight, ws.qkv_parts.offset(i * t * qkv * 2), qkv))
+            .collect();
+        let grouped =
+            crate::glm5next_w4a16_dense::proj_group(gpu, &qkv_group, hidden, t, hid, stream)?;
         for (i, w) in [
             &self.weights.q_proj,
             &self.weights.k_proj,
@@ -303,6 +316,7 @@ impl Glm5NextKdaLayer {
         ]
         .into_iter()
         .enumerate()
+        .filter(|_| !grouped)
         {
             self.gemm(
                 gpu,
@@ -329,16 +343,26 @@ impl Glm5NextKdaLayer {
         // 2026-09-25: Low-rank forget gate, hidden -> head_dim -> heads * head_dim, then
         // `lower_bound * sigmoid(exp(A_log[h]) * (g[c] + dt_bias[c]))` in `kda_gate_bf16`.
         // `A_log` is per head and `dt_bias` per channel.
-        self.gemm(
-            gpu,
-            hidden,
-            &self.weights.f_a,
-            ws.lowrank,
-            t,
-            hd,
-            hid,
-            stream,
-        )?;
+        // 2026-10-09: f_a, b_proj and g_a read `hidden` too: one launch under
+        // `METRALE_GLM_W4A16_SEG`, with g_a(h) in its own buffer; else one each, as below.
+        let low_group = [
+            (w.f_a.weight, ws.lowrank, hd),
+            (w.b_proj.weight, ws.beta_bf16, c.heads),
+            (w.g_a.weight, ws.lowrank_g, hd),
+        ];
+        let low = crate::glm5next_w4a16_dense::proj_group(gpu, &low_group, hidden, t, hid, stream)?;
+        if !low {
+            self.gemm(
+                gpu,
+                hidden,
+                &self.weights.f_a,
+                ws.lowrank,
+                t,
+                hd,
+                hid,
+                stream,
+            )?;
+        }
         self.gemm(
             gpu,
             ws.lowrank,
@@ -363,16 +387,18 @@ impl Glm5NextKdaLayer {
             .launch(stream)?;
 
         // 2026-09-25: beta = sigmoid(b_proj(hidden)); the KDA kernels read it after the sigmoid.
-        self.gemm(
-            gpu,
-            hidden,
-            &self.weights.b_proj,
-            ws.beta_bf16,
-            t,
-            c.heads,
-            hid,
-            stream,
-        )?;
+        if !low {
+            self.gemm(
+                gpu,
+                hidden,
+                &self.weights.b_proj,
+                ws.beta_bf16,
+                t,
+                c.heads,
+                hid,
+                stream,
+            )?;
+        }
         let n = t * c.heads;
         KernelLaunch::new(gpu, self.kernels.sigmoid)
             .grid([div_ceil(n as u32, 256), 1, 1])
@@ -383,19 +409,22 @@ impl Glm5NextKdaLayer {
             .launch(stream)?;
 
         // 2026-09-25: Low-rank output gate; a KDA block has no `Z` tensor (`KDA_TENSORS`).
+        let g_low = if low { ws.lowrank_g } else { ws.lowrank };
+        if !low {
+            self.gemm(
+                gpu,
+                hidden,
+                &self.weights.g_a,
+                ws.lowrank,
+                t,
+                hd,
+                hid,
+                stream,
+            )?;
+        }
         self.gemm(
             gpu,
-            hidden,
-            &self.weights.g_a,
-            ws.lowrank,
-            t,
-            hd,
-            hid,
-            stream,
-        )?;
-        self.gemm(
-            gpu,
-            ws.lowrank,
+            g_low,
             &self.weights.g_b,
             ws.out_gate,
             t,
