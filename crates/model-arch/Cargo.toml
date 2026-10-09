@@ -460,5 +460,13 @@ required-features = ["cuda", "gpu-examples"]
 name = "glm5next_dsa_proj_tier_bench"
 required-features = ["cuda", "gpu-examples"]
 
+[[example]]
+name = "glm5next_dsa_hb_layer_parity"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_hb_replay"
+required-features = ["cuda", "gpu-examples"]
+
 [lints]
 workspace = true

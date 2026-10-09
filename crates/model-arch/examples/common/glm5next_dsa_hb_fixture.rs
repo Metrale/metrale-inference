@@ -67,18 +67,22 @@ pub fn bf16s(b: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-/// 2026-10-09: The FP8 latent pool every block table points into: finite E4M3 values of
-/// magnitude <= 4 (exponent field <= 8).
+/// 2026-10-09: The FP8 latent pool every block table points into: finite E4M3 values with an
+/// exponent field <= `exp_max` (8: magnitude < 4; 15: the whole finite range, up to 448).
 pub struct Pool {
     pub host: Vec<u8>,
     pub dev: DevicePtr,
 }
 
-pub fn make_pool(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<Pool> {
+pub fn make_pool(g: &dyn GpuBackend, rng: &mut Lcg, exp_max: u64) -> Result<Pool> {
     let host: Vec<u8> = (0..POOL_BLOCKS * BLOCK * KVL)
         .map(|_| {
             let r = rng.u();
-            ((r & 0x80) as u8) | ((((r >> 8) % 9) as u8) << 3) | ((r >> 16) & 7) as u8
+            let b = ((r & 0x80) as u8)
+                | ((((r >> 8) % (exp_max + 1)) as u8) << 3)
+                | ((r >> 16) & 7) as u8;
+            // 2026-10-09: 0x7f / 0xff are E4M3 NaN; use the largest finite code instead.
+            if b & 0x7f == 0x7f { b - 1 } else { b }
         })
         .collect();
     Ok(Pool {
@@ -125,17 +129,18 @@ impl Case {
 }
 
 /// 2026-10-09: As `dsa_expand_selection` lays a row out: `valid` slots of pools of 4
-/// consecutive tokens (every 9th pool a -1 hole), the 3-token tail, then -1. Q is scaled so
-/// scores spread over several units.
+/// consecutive tokens (every 9th pool a -1 hole), the 3-token tail, then -1. Q is uniform in
+/// [-q_scale, q_scale].
 pub fn make_case(
     g: &dyn GpuBackend,
     rng: &mut Lcg,
     heads: usize,
     rows: usize,
     valid: usize,
+    q_scale: f32,
 ) -> Result<Case> {
     let q: Vec<f32> = (0..rows * heads * KVL)
-        .map(|_| bf16::from_f32(rng.f() * 4.0).to_f32())
+        .map(|_| bf16::from_f32(rng.f() * q_scale).to_f32())
         .collect();
     let sl: Vec<i32> = (0..rows).map(|r| (SEQ - 7 * r) as i32).collect();
     let (mut bt, mut bt_d, mut sel, mut sel_d) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());

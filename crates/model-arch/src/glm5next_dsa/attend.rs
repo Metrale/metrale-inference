@@ -286,10 +286,28 @@ pub fn decode_attention(
     }
 
     if let Some(hb) = kernel.head_batched {
-        return decode_head_batched(gpu, hb, cfg, geom, paging, inputs, stream);
+        decode_head_batched(gpu, hb, cfg, geom, paging, inputs, stream)?;
+        if let Some(dir) = check::check_dir()?
+            && !gpu.stream_is_capturing(stream)
+        {
+            check::against_per_head(gpu, kernel.per_head, cfg, geom, paging, inputs, stream, dir)?;
+        }
+        return Ok(());
     }
+    launch_per_head(gpu, kernel.per_head, cfg, geom, paging, inputs, stream)
+}
 
-    KernelLaunch::new(gpu, kernel.per_head)
+/// 2026-10-09: The per-head kernel's launch (one CTA per head and row).
+fn launch_per_head(
+    gpu: &dyn GpuBackend,
+    per_head: KernelHandle,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    paging: &DsaDecodePaging,
+    inputs: &DsaDecodeInputs,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, per_head)
         .grid([paging.num_q_heads as u32, paging.num_seqs as u32, 1])
         .block([DECODE_BLOCK, 1, 1])
         .arg_ptr(inputs.q)
@@ -395,5 +413,6 @@ fn decode_head_batched(
     Ok(())
 }
 
+mod check;
 #[cfg(test)]
 mod tests;

@@ -215,7 +215,11 @@ fn main() -> Result<()> {
         .map(|s| s.parse().context("HB_SPLITS"))
         .collect::<Result<_>>()?;
     let mut rng = Lcg(0x0D5A_4B42);
-    let pool = make_pool(g, &mut rng)?;
+    // 2026-10-09: `HB_FP8_EXP_MAX` (default 8, max 15) widens the latent's E4M3 exponent range.
+    let exp_max: u64 = std::env::var("HB_FP8_EXP_MAX").map_or(Ok(8), |v| v.parse())?;
+    let pool = make_pool(g, &mut rng, exp_max.min(15))?;
+    // 2026-10-09: `HB_Q_SCALE` (default 4) bounds |Q|.
+    let q_scale: f32 = std::env::var("HB_Q_SCALE").map_or(Ok(4.0), |v| v.parse())?;
     let mut failed = false;
     println!(
         "us/launch median (p10-p90); err = worst distance from f64 in head-scale bf16 ulps; \
@@ -230,7 +234,7 @@ fn main() -> Result<()> {
         (32, 4, 1500),
         (64, 2, 2051),
     ] {
-        let c = make_case(g, &mut rng, heads, rows, valid)?;
+        let c = make_case(g, &mut rng, heads, rows, valid, q_scale)?;
         let n_out = rows * heads * KVL * 2;
         let out_old = g.alloc(n_out)?;
         let t_old = time(g, |i| {
@@ -299,7 +303,7 @@ fn main() -> Result<()> {
 /// at or past `seq_len` (zeros), row 3 duplicates and out-of-range entries mixed in (vs the
 /// reference, which attends a duplicate twice). Returns whether any failed.
 fn edge_cases(g: &dyn GpuBackend, k: &Kernels, pool: &Pool, rng: &mut Lcg) -> Result<bool> {
-    let mut c = make_case(g, rng, 22, 4, 300)?;
+    let mut c = make_case(g, rng, 22, 4, 300, 4.0)?;
     let row = |r: usize| r * WIDTH..(r + 1) * WIDTH;
     c.sel[0][row(0)].fill(-1);
     c.sl[1] = 0;
