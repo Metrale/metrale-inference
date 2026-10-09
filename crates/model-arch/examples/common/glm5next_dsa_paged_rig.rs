@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-09: The rig of `glm5next_dsa_paged_parity`: synthetic DSA layer, KV caches,
-//! metadata rows and the forward context.
+//! 2026-10-09: The rig of `glm5next_dsa_paged_parity` (and `glm5next_dsa_rows_microtest`):
+//! synthetic DSA layer, KV caches, metadata rows and the forward context.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants: none beyond the types.
+// 2026-10-09: Shared by two examples (`glm5next_dsa_paged_parity`,
+// `glm5next_dsa_rows_microtest`), each using a part of it.
+#![allow(dead_code)]
 
 use anyhow::{Result, bail};
 use half::bf16;
@@ -185,6 +188,15 @@ pub(crate) fn kv(gpu: &dyn GpuBackend, blocks: usize) -> Result<PagedKvCache> {
 
 /// 2026-10-09: One metadata row per `(position, block table)`, as the serve lays them out.
 pub(crate) fn meta(gpu: &dyn GpuBackend, seqs: &[(usize, &[u32])]) -> Result<AttnMetadataDev> {
+    meta_mb(gpu, seqs, MB)
+}
+
+/// 2026-10-09: [`meta`] with `mb` block-table entries per row (each table holds `mb`).
+pub(crate) fn meta_mb(
+    gpu: &dyn GpuBackend,
+    seqs: &[(usize, &[u32])],
+    mb: usize,
+) -> Result<AttnMetadataDev> {
     let positions: Vec<i32> = seqs.iter().map(|(l, _)| *l as i32).collect();
     let slots: Vec<u8> = seqs
         .iter()
@@ -203,7 +215,7 @@ pub(crate) fn meta(gpu: &dyn GpuBackend, seqs: &[(usize, &[u32])]) -> Result<Att
         slot: up(gpu, &slots)?,
         seq_len: up_i32(gpu, &lens)?,
         block_table: up_i32(gpu, &bts)?,
-        max_blocks_per_seq: MB as u32,
+        max_blocks_per_seq: mb as u32,
         num_seqs: seqs.len() as u32,
         seq_slot: DevicePtr::NULL,
         moe_row_adapter: DevicePtr::NULL,
