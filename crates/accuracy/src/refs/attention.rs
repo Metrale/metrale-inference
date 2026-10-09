@@ -213,7 +213,7 @@ pub fn fill(
     let (q_heads, kv_heads) = (runtime(shape, "q_heads")?, runtime(shape, "kv_heads")?);
     let width = shape.in_dim as usize;
     if shape.rows == 0
-        || width % q_heads != 0
+        || !width.is_multiple_of(q_heads)
         || q_heads % kv_heads != 0
         || shape.out_dim != shape.in_dim
     {

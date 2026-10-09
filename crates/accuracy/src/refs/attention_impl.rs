@@ -117,7 +117,7 @@ fn page_swap(case: &mut Case, rng: &mut SplitMix64) -> Result<Vec<usize>, String
     let r = (0..g.rows)
         .filter(|&r| {
             let l = lens[r] as usize;
-            l > g.page && l % g.page != 0
+            l > g.page && !l.is_multiple_of(g.page)
         })
         .min_by_key(|&r| lens[r] as usize)
         .ok_or("no sequence spans two pages with a partial last page")?;
@@ -143,7 +143,7 @@ struct State {
 }
 
 /// 2026-10-09: `log2(e)` as the f32 constant `__expf` multiplies by.
-const LOG2E_F32: f64 = 1.442_695_021_629_333_496_093_75;
+const LOG2E_F32: f64 = std::f32::consts::LOG2_E as f64;
 
 struct Arith {
     f: Formats,

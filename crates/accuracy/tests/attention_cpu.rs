@@ -218,6 +218,6 @@ fn the_contract_fits_the_family_and_covers_every_swept_point() {
     assert!(jobs.iter().all(|j| {
         let q: u64 = j.shape.runtime["q_heads"].parse().unwrap();
         let kv: u64 = j.shape.runtime["kv_heads"].parse().unwrap();
-        j.shape.in_dim % q == 0 && q % kv == 0
+        j.shape.in_dim % q == 0 && q.is_multiple_of(kv)
     }));
 }
