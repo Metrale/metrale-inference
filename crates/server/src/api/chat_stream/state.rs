@@ -15,6 +15,10 @@ pub(super) struct StreamState {
     /// 2026-09-26: Token ids of the current phase; cleared at the think-end token and when
     /// `<think>` re-opens.
     pub(super) all_toks: Vec<u32>,
+    /// 2026-10-09: Every token the stream received, kept only under
+    /// `METRALE_LOG_TOOL_RAW=1` for the raw log at `Done`
+    /// (`chat_blocking_choice::log_raw_generation`).
+    pub(super) raw_toks: Option<Vec<u32>>,
     /// 2026-09-26: Bytes of `content_decoded` already emitted as reasoning or content.
     pub(super) emitted: usize,
     /// 2026-09-26: Stable decoded text of `all_toks` for the current phase, grown by
@@ -154,6 +158,7 @@ impl StreamState {
     ) -> Self {
         Self {
             all_toks: Vec::new(),
+            raw_toks: crate::api::chat_blocking_choice::log_tool_raw_on().then(Vec::new),
             emitted: 0,
             content_decoded: String::new(),
             detok_prefix_offset: 0,

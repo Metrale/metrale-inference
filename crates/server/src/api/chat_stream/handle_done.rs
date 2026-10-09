@@ -32,6 +32,13 @@ pub(super) fn handle_done(
     accepted_prediction_tokens: usize,
 ) -> DeltaVec {
     let mut deltas: DeltaVec = Vec::new();
+    if let Some(raw) = state.raw_toks.take() {
+        crate::api::chat_blocking_choice::log_raw_generation(
+            &ctx.state,
+            &raw,
+            &format!("stream {}, finish {finish_reason}", ctx.id),
+        );
+    }
 
     // 2026-09-26: With no stop match and no other stop flag, the stop-string hold-back
     // tail is real output: send it through the detector or the sanitizer, as live
