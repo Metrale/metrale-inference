@@ -151,8 +151,9 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             weights += dim("vocab")? * dim("hidden")? * 2.0;
         }
         if let Some(w) = n.weight {
-            let k = n.inputs.first().map_or(0, |&e| c.edges[e].dim_value);
-            let out: u64 = n.outputs.iter().map(|&e| c.edges[e].dim_value).sum();
+            let (out, k) = c
+                .weight_shape(n)
+                .ok_or_else(|| format!("node `{}`: its weight has no shape", n.id))?;
             let one = w
                 .weight_bytes(out, k)
                 .ok_or_else(|| format!("node `{}`: weight {} has no size", n.id, w.name()))?
@@ -169,6 +170,12 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             }
             OpKind::GdnRecurrence => {
                 state += dim("lin_v_heads")? * dim("lin_k_dim")? * dim("lin_v_dim")? * h;
+            }
+            // 2026-10-08: The latent cache and the indexer's pooled keys, per token, at their
+            // declared formats.
+            OpKind::MlaAttention | OpKind::IndexSelect => {
+                kv_per_token += crate::venn::roofline::read_unit_bytes(c, n, settings)
+                    .map_err(|e| e.to_string())?;
             }
             OpKind::SsmUpdate => {
                 state += dim("mamba_heads")? * dim("mamba_head_dim")? * dim("ssm_state")? * 4.0;
@@ -190,8 +197,9 @@ pub fn weight_floor_bytes(c: &Circuit) -> Result<f64, String> {
     for b in c.blocks.iter().filter(|b| b.section == Section::Main) {
         for n in &c.nodes[b.first..b.end] {
             let Some(w) = n.weight else { continue };
-            let k = n.inputs.first().map_or(0, |&e| c.edges[e].dim_value);
-            let out: u64 = n.outputs.iter().map(|&e| c.edges[e].dim_value).sum();
+            let (out, k) = c
+                .weight_shape(n)
+                .ok_or_else(|| format!("node `{}`: its weight has no shape", n.id))?;
             let copies = match n.op {
                 OpKind::ExpertGateUp | OpKind::ExpertDown => {
                     *c.dims.get("top_k").ok_or_else(|| {
