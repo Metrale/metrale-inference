@@ -1527,6 +1527,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5449c8c750f1a07ea702bbd212bd999fceece9b3d1508b17023b3e174583124b"
 
 [[package]]
+name = "metrale-accuracy"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-circuit",
+ "serde",
+ "sha2",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
 name = "metrale-bench"
 version = "1.0.0-beta-preview"
 dependencies = [

@@ -77,7 +77,9 @@ pub fn checkpoint_id_of(dir: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn load_instance(repo: &dyn Repo, inst: &Instance) -> Result<Loaded, VennError> {
+/// 2026-10-09: Load `inst`'s circuit, precision and rules from `repo` (the Venn's loader, shared
+/// with the accuracy sweep).
+pub fn load_instance(repo: &dyn Repo, inst: &Instance) -> Result<Loaded, VennError> {
     let io = |e: String| VennError::Load(format!("{}: {e}", inst.recipe));
     let circuit = repo
         .read(&format!("kernels/circuits/{}.toml", inst.arch))

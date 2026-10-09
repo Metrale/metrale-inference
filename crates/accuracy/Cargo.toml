@@ -1,0 +1,23 @@
+[package]
+name = "metrale-accuracy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Accuracy contracts: per kernel family, a reference, a tolerance derived from the declared formats and accumulation order, seeded inputs and seeded mutations that must fail."
+
+# 2026-10-09: Pure logic, like metrale-circuit: no GPU, no file I/O, no environment, no clock.
+# Inputs arrive as text or bytes, kernel outputs arrive through the `runner::KernelRunner`
+# trait. The CLI (`met accuracy`) supplies the file system and the device.
+
+[dependencies]
+# 2026-10-09: The family manifest (pipelines, params, points) and the circuit instances whose
+# points the sweep enumerates; the contracts read them, never restate them.
+metrale-circuit = { path = "../circuit" }
+serde = { workspace = true }
+sha2.workspace = true
+thiserror.workspace = true
+# 2026-10-09: Same pin as metrale-circuit and metrale-closure.
+toml = "1.1"
+
+[lints]
+workspace = true
