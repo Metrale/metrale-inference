@@ -68,3 +68,37 @@ fn without_dflash_nothing_is_resolved() {
     apply_dflash_gamma(&mut a, None).unwrap();
     assert_eq!(a.dflash_gamma_resolved, None);
 }
+
+/// 2026-10-09: A ladder within γ - 1 is installed; one whose widest rung passes γ - 1 is
+/// refused at startup, before any weight loads.
+#[test]
+fn a_draft_ladder_is_held_to_the_serves_gamma() {
+    let dir = tempfile::tempdir().unwrap();
+    drafter(dir.path());
+    let d = dir.path().to_str().unwrap();
+    let ladder = "1:7,2:5,3:4,4:3,5:2,6:7";
+    let mut ok = args(&[
+        "--dflash",
+        "--draft-model",
+        d,
+        "--dflash-gamma",
+        "8",
+        "--dflash-draft-ladder",
+        ladder,
+    ]);
+    apply_dflash_gamma(&mut ok, None).unwrap();
+    assert_eq!(
+        ok.dflash_draft_ladder_resolved,
+        Some(metrale_speculative::dflash_ladder::DraftLadder::parse(ladder).unwrap())
+    );
+    let mut wide = args(&[
+        "--dflash",
+        "--draft-model",
+        d,
+        "--dflash-gamma",
+        "7",
+        "--dflash-draft-ladder",
+        ladder,
+    ]);
+    assert!(apply_dflash_gamma(&mut wide, None).is_err());
+}

@@ -170,6 +170,9 @@ struct Ctl {
 /// and the scheduler context holds it (`SchedCtx::dflash_rung`).
 pub struct DflashRung {
     ctl: Ctl,
+    /// 2026-10-09: An explicit per-concurrency ladder (`set_ladder`); when set it decides
+    /// `drafts_for` whether or not the resolver is armed.
+    ladder: std::sync::RwLock<Option<crate::dflash_ladder::DraftLadder>>,
 }
 
 impl Default for DflashRung {
@@ -198,7 +201,16 @@ impl DflashRung {
                 last_n: AtomicUsize::new(0),
                 flips: AtomicU64::new(0),
             },
+            ladder: std::sync::RwLock::new(None),
         }
+    }
+
+    /// 2026-10-09: Install (or clear) the explicit per-concurrency draft ladder.
+    pub fn set_ladder(&self, ladder: Option<crate::dflash_ladder::DraftLadder>) {
+        if let Some(l) = &ladder {
+            tracing::info!("DFlash draft ladder: {l:?}");
+        }
+        *self.ladder.write().unwrap_or_else(|e| e.into_inner()) = ladder;
     }
 
     fn rungs(&self) -> Rungs {
@@ -286,6 +298,15 @@ impl DflashRung {
     /// `num_drafts` is the serve's configured count (cap - 1) and is returned
     /// unchanged when the resolver is unarmed.
     pub fn drafts_for(&self, n_active: usize, num_drafts: usize) -> usize {
+        // 2026-10-09: An explicit ladder wins, capped at `num_drafts` like the resolver.
+        if let Some(l) = self
+            .ladder
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            return l.drafts(n_active).min(num_drafts).max(1);
+        }
         if !self.armed() {
             return num_drafts;
         }
