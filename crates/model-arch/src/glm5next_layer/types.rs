@@ -26,7 +26,7 @@ pub enum Glm5NextMixer {
 /// 2026-09-25: The layer's MLP: dense for the layers the config lists in `mlp_only_layers`,
 /// routed MoE for the rest.
 pub enum Glm5NextMlpSite {
-    Dense(Glm5NextDenseMlpWeights),
+    Dense(Box<Glm5NextDenseSite>),
     Moe(Box<Glm5NextMoeWeights>),
 }
 

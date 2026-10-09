@@ -45,6 +45,7 @@ mod expert_quant;
 #[cfg(test)]
 mod export_layout_tests;
 mod loader;
+mod mlp_precision;
 mod nvfp4_dequant;
 mod nvfp4_quant;
 #[cfg(test)]
@@ -195,6 +196,16 @@ impl LayerSource {
             tensors,
             plan_cast,
         })
+    }
+
+    /// 2026-10-08: A tensor's stored dtype, shape and bytes, copied (the packed NVFP4 dense MLP
+    /// the W4A4 path slices).
+    pub(super) fn raw(&self, name: &str) -> Result<(WeightDtype, Vec<usize>, Vec<u8>)> {
+        let (dtype, shape, bytes) = self
+            .tensors
+            .get(name)
+            .with_context(|| format!("missing tensor {name}"))?;
+        Ok((*dtype, shape.clone(), bytes.clone()))
     }
 
     pub(super) fn f32(&self, name: &str) -> Result<Vec<f32>> {
@@ -401,6 +412,24 @@ pub(super) fn bind_expert_at(
     id: usize,
 ) -> Result<Glm5NextExpertWeights> {
     bind_expert(gpu, store, layer, id)
+}
+
+/// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.
+pub(super) fn mtp_expert_precision(
+    config: &ModelConfig,
+    kernels: &Glm5NextMlpKernels,
+    layer: usize,
+    cfg: &Glm5NextMlpConfig,
+    has_scales: bool,
+) -> Result<crate::glm5next_mlp::precision::GroupPrecision> {
+    mlp_precision::group_precision(
+        config,
+        kernels,
+        layer,
+        crate::glm5next_mlp::precision::MlpGroup::RoutedExperts,
+        cfg.local_expert_range().start,
+        has_scales,
+    )
 }
 
 /// 2026-09-25: `upload_f32_as_bf16`, for the MTP loader.

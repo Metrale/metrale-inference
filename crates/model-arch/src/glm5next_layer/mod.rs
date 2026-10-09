@@ -38,8 +38,8 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use crate::glm5next_dsa::layer::Glm5NextDsaLayer;
 use crate::glm5next_dsa::state::Glm5NextDsaState;
 use crate::glm5next_kda::{Glm5NextKdaConfig, Glm5NextKdaLayer, Glm5NextKdaWorkspace, KdaSeqState};
-use crate::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_dense, forward_moe};
-use crate::glm5next_mlp::weights::{Glm5NextDenseMlpWeights, Glm5NextMoeWeights};
+use crate::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_dense_site, forward_moe};
+use crate::glm5next_mlp::weights::{Glm5NextDenseSite, Glm5NextMoeWeights};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState, TransformerLayer};
 use metrale_model_layers::layer::{

@@ -24,6 +24,9 @@ pub(crate) struct ModelKind {
     /// attention/GDN projections and MLPs decode W8A8 at every row count, and its A4 MLPs keep
     /// NVFP4 weights.
     pub declared_tier: bool,
+    /// 2026-10-08: GLM-5.3 (`glm5_next`), whose routed experts and dense MLP read the `moe` and
+    /// `ffn` ladders (`glm5next_mlp::precision`).
+    pub glm5_next: bool,
 }
 
 impl ModelKind {
@@ -38,6 +41,7 @@ impl ModelKind {
             fp8_head: lm_head_dtype == "fp8",
             declared_tier: metrale_model_layers::layers::weight_quantization().tier()
                 == WeightQuantization::Declared,
+            glm5_next: config.model_type == "glm5_next",
         }
     }
 
@@ -47,6 +51,16 @@ impl ModelKind {
         use Support::*;
         let dense = self.qwen_hybrid && !self.fp8_moe;
         match family {
+            // 2026-10-08: GLM-5.3's routed experts and dense MLP run their declared W4A4 (or a
+            // named nvfp4) on row-invariant kernels: the dense MLP at every width, the experts
+            // up to the slot GEMV's row cap, past which the grouped W4A16 GEMM runs and the
+            // model's load log names those widths as above declared. Their 16-bit paths are not
+            // row-invariant, so a fixed bf16 runs adaptive.
+            ProjFamily::Ffn | ProjFamily::Moe if self.glm5_next => match format {
+                Fp8 => Refused("GLM-5.3 has no FP8-activation MLP kernels"),
+                Declared | Nvfp4 => Honoured,
+                Bf16 | Adaptive => Unhonoured,
+            },
             ProjFamily::LmHead => match format {
                 Fp8 if !self.fp8_head => {
                     Refused("the LM head runs 16-bit activations (fp8 needs --lm-head-dtype fp8)")

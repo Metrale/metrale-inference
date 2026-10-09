@@ -266,7 +266,7 @@ fn text_layer_activation_scales_are_deferred_and_nothing_else_new() {
 /// 2026-10-08: A resident U8 expert: per projection, packed codes, E4M3 block scales and a
 /// scalar `weight_scale_2`, with the given `input_scale` bytes deferred to a staged shard (or no
 /// `input_scale` at all for `None`).
-fn packed_expert_store(gpu: &MockGpuBackend, scales: Option<[&[u8]; 3]>) -> WeightStore {
+fn packed_expert_store(tag: &str, gpu: &MockGpuBackend, scales: Option<[&[u8]; 3]>) -> WeightStore {
     let mut map = std::collections::HashMap::new();
     let mut put = |name: String, bytes: &[u8], shape: Vec<usize>, dtype: WeightDtype| {
         let ptr = gpu.alloc(bytes.len()).unwrap();
@@ -298,7 +298,7 @@ fn packed_expert_store(gpu: &MockGpuBackend, scales: Option<[&[u8]; 3]>) -> Weig
     let mut store = WeightStore::from_map(map);
     if let Some(scales) = scales {
         for (p, bytes) in projs.iter().zip(scales) {
-            let path = stage_shard(&format!("input-scale-{p}-{}", bytes.len()), 9, bytes);
+            let path = stage_shard(&format!("input-scale-{tag}-{p}-{}", bytes.len()), 9, bytes);
             store.defer(
                 qualified(4, &format!("mlp.experts.0.{p}.input_scale")),
                 DeferredTensor {
@@ -328,7 +328,7 @@ fn a_packed_expert_binds_its_deferred_activation_scales() {
         0.5f32.to_le_bytes(),
         0.0372f32.to_le_bytes(),
     );
-    let store = packed_expert_store(&gpu, Some([&g, &u, &d]));
+    let store = packed_expert_store("bind", &gpu, Some([&g, &u, &d]));
     let e = bind_expert(&gpu, &store, 4, 0).unwrap();
     assert_eq!(e.gate_proj.input_scale, Some(0.25));
     assert_eq!(e.up_proj.input_scale, Some(0.5));
@@ -339,7 +339,7 @@ fn a_packed_expert_binds_its_deferred_activation_scales() {
     );
 
     let gpu = MockGpuBackend::new();
-    let none = bind_expert(&gpu, &packed_expert_store(&gpu, None), 4, 0).unwrap();
+    let none = bind_expert(&gpu, &packed_expert_store("none", &gpu, None), 4, 0).unwrap();
     assert_eq!(none.gate_proj.input_scale, None);
 }
 
@@ -357,7 +357,7 @@ fn a_malformed_activation_scale_is_refused() {
         (two, "one scalar"),
     ] {
         let gpu = MockGpuBackend::new();
-        let store = packed_expert_store(&gpu, Some([&ok, &ok, &bad]));
+        let store = packed_expert_store(&format!("bad{}", bad.len()), &gpu, Some([&ok, &ok, &bad]));
         let err = bind_expert(&gpu, &store, 4, 0).unwrap_err().to_string();
         assert!(err.contains(want), "{err}");
     }

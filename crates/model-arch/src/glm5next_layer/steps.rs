@@ -140,7 +140,7 @@ impl Glm5NextLayer {
             .then(profile::start)
             .flatten();
         match &self.mlp {
-            Glm5NextMlpSite::Dense(w) => forward_dense(
+            Glm5NextMlpSite::Dense(w) => forward_dense_site(
                 ctx.gpu,
                 &self.mlp_kernels,
                 &self.mlp_cfg,
