@@ -124,6 +124,10 @@ pub struct BlockDiffusionDraftHead {
     /// 2026-09-25: Widest cross-sequence batch the scratch bands can hold.
     pub(super) max_batch: usize,
     pub mask_token_id: u32,
+    /// 2026-10-09: The sliding window the drafter's attention applies (the paged path's
+    /// indirect attention, `attn_window_arg`); `None` attends every ctx row. The factory
+    /// sets it only when the serve's `--dflash-window-size` equals the window the drafter
+    /// was trained at (`install_dflash_drafter`).
     pub window_size: Option<usize>,
     /// 2026-09-25: The target layers whose hidden states the drafter is
     /// conditioned on, from the drafter config's `dflash_config.target_layer_ids`.

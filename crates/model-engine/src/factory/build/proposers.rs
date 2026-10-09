@@ -108,7 +108,9 @@ pub(super) fn install_dflash_drafter(
                 target_lm_head_native_fp8_for_dflash,
                 target_hidden_for_dflash,
                 args.gamma,
-                args.window_size,
+                // 2026-10-09: The trained window when the flag states it, else none
+                // (`DflashConfig::attention_window`); every other value was ignored before.
+                args.drafter_config.attention_window(args.window_size),
                 model.gpu_backend(),
                 max_seq_len,
                 max_batch_size,

@@ -221,6 +221,7 @@ impl BlockDiffusionDraftHead {
                     slot_mapping_gamma_opt,
                     stream,
                     block_dump_armed,
+                    self.window_size,
                 )
             };
 

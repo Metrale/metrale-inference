@@ -22,6 +22,8 @@ pub(super) fn paged_layer_args(
     slot_mapping_gamma_opt: Option<DevicePtr>,
     stream: u64,
     block_dump_armed: bool,
+    // 2026-10-09: The drafter's attention window (`BlockDiffusionDraftHead::window_size`).
+    window_size: Option<usize>,
 ) -> Option<PagedLayerArgs> {
     let BlockDims {
         n_seq,
@@ -34,6 +36,7 @@ pub(super) fn paged_layer_args(
         option_b_ctx_count,
         option_b_on,
         batch,
+        position,
         ..
     } = *d;
     if !option_b_on {
@@ -55,6 +58,24 @@ pub(super) fn paged_layer_args(
         block_dump: block_dump_armed,
         n_seq: n_seq as u32,
         seq_block_tables: batch.map(|x| x.block_tables.clone()).unwrap_or_default(),
+        attn_windows: match batch {
+            Some(x) => (0..n_seq)
+                .map(|b| {
+                    crate::dflash_head::forward_block_layer_paged::attn_window_arg(
+                        window_size,
+                        x.positions[b],
+                        x.ctx_counts[b],
+                    )
+                })
+                .collect(),
+            None => vec![
+                crate::dflash_head::forward_block_layer_paged::attn_window_arg(
+                    window_size,
+                    position,
+                    option_b_ctx_count,
+                ),
+            ],
+        },
     })
 }
 

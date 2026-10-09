@@ -172,6 +172,15 @@ impl DflashConfig {
         }
     }
 
+    /// 2026-10-09: The window the drafter's attention applies on a serve whose
+    /// `--dflash-window-size` is `serve_window` (`None`: 0, no window): the trained window when
+    /// the flag states it, else `None` (every ctx row attended, as before this was read). A
+    /// flag that differs from the trained window draws [`Self::window_mismatch`]'s warning.
+    pub fn attention_window(&self, serve_window: Option<usize>) -> Option<usize> {
+        let trained = self.trained_window()?;
+        (serve_window == Some(trained)).then_some(trained)
+    }
+
     /// 2026-10-09: A warning when the serve's drafter window `serve_window` (0: none) differs
     /// from the window the drafter was trained at; `None` when they agree or the drafter
     /// states none. The serve keeps the flag either way: the GLM-5.3 Flash DFlash2 drafter is
@@ -182,8 +191,8 @@ impl DflashConfig {
         (trained != serve_window).then(|| {
             format!(
                 "DFlash drafter trained with a {trained}-token sliding window, served with \
-                 --dflash-window-size {serve_window}; pass --dflash-window-size {trained} to \
-                 serve it as trained"
+                 --dflash-window-size {serve_window}, so its attention applies no window; pass \
+                 --dflash-window-size {trained} to serve it as trained"
             )
         })
     }

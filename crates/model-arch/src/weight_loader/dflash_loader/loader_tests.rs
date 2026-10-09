@@ -187,4 +187,12 @@ fn a_serve_window_other_than_the_trained_one_is_reported() {
     assert_eq!(off.trained_window(), None);
     assert_eq!(off.window_mismatch(4096), None);
     assert_eq!(with("").window_mismatch(4096), None);
+    assert_eq!(glm.attention_window(Some(2048)), Some(2048));
+    assert_eq!(
+        glm.attention_window(Some(4096)),
+        None,
+        "a differing flag keeps no window"
+    );
+    assert_eq!(glm.attention_window(None), None);
+    assert_eq!(off.attention_window(Some(2048)), None);
 }
