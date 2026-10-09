@@ -271,6 +271,22 @@ impl TransformerModel {
                 h,
                 stream,
             )?;
+        } else if self.config.model_type == "glm5_next"
+            && num_tokens > ops::DENSE_GEMV_BATCHM_DECODE_MAX_M
+        {
+            // 2026-10-09: GLM-5.3's BF16 head over a wide verify (up to 128 rows) on the
+            // tile GEMM took 118 ms per step (nsys, C16 DFlash2, 154,880-row vocab); cuBLASLt's
+            // tensor-core GEMM reads the head once. Rows above the batched-GEMV width already
+            // depend on their batch-mates on this path, so no row-invariance is lost.
+            ops::cublas_bf16_proj_dense(
+                hidden,
+                self.lm_head_weight.weight,
+                logits,
+                num_tokens,
+                v,
+                h,
+                stream,
+            )?;
         } else {
             ops::dense_gemm(
                 self.gpu.as_ref(),
