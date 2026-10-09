@@ -2261,27 +2261,29 @@ cite = "crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.
 holds = "for i in 0..n {"
 note = "BF16 q/k/v projections batch 2-8 rows (dense_gemv_bf16_batchm); above 8 they run one GEMV per row"
 
-# 2026-10-08: The GLM-5 layer refuses the multi-sequence decode: every sequence would share
-# highway slot 0, so the engine runs each sequence through `decode` alone.
+# 2026-10-09: The GLM-5 text layers batch a multi-sequence decode (`forward_multi`, groups of
+# up to 16 rows): the projections, the latent write and the attend take every row of a group in
+# one launch, and the KDA recurrence one launch for up to 16 rows. Each row's KDA conv and each
+# row's DSA indexer write and selection still launch once per row.
 [[legacy_path]]
 arch = "glm5_next"
 layer_kind = "linear_attention"
 per_sequence = ["multi_seq"]
-sites = []
+sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_layer/mod.rs:261"
-holds = "fn decode_multi_seq_unsupported(&self) -> bool {"
-note = "GLM-5 layer (KDA): multi-sequence decode vetoed, each sequence decodes alone"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:232"
+holds = "|row| self.conv_row(gpu, row, &states[row], ws, stream),"
+note = "KDA batched decode: conv one row per launch, recurrence one launch per group"
 
 [[legacy_path]]
 arch = "glm5_next"
 layer_kind = "deepseek_sparse_attention"
 per_sequence = ["multi_seq"]
-sites = []
+sites = ["dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_layer/mod.rs:261"
-holds = "fn decode_multi_seq_unsupported(&self) -> bool {"
-note = "GLM-5 layer (DSA): multi-sequence decode vetoed, each sequence decodes alone"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:171"
+holds = "for r in 0..n {"
+note = "DSA batched decode: indexer key, pool store and selection one row per launch"
 
 # 2026-10-08: A K-row verify batches the KDA projections but walks the conv and the recurrence
 # one row at a time; the DSA latent write, indexer write and selection also run per row (the
@@ -2292,7 +2294,7 @@ layer_kind = "linear_attention"
 per_sequence = ["verify"]
 sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2", "kda.recur"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:150"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:307"
 holds = "for row in 0..k {"
 note = "KDA verify: conv and recurrence one row per launch (stateful_row)"
 
@@ -2302,6 +2304,6 @@ layer_kind = "deepseek_sparse_attention"
 per_sequence = ["verify"]
 sites = ["dsa.kv_norm", "dsa.kv_write", "dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.idx_w", "dsa.idx_q", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:148"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:118"
 holds = "for row in 0..k {"
 note = "DSA verify: latent write, indexer projections, store and selection one row per launch"

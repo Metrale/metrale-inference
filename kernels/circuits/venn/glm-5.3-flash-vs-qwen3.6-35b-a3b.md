@@ -80,15 +80,15 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 
 | # | Layer kind | Mode | Rows | Est. added time | vs. multi-row step | Source | Note |
 |---|---|---|---|---|---|---|---|
-| 1 | linear_attention | multi_seq | 128 | 7074466.1 µs | +763.9% | legacy: crates/model-arch/src/glm5next_layer/mod.rs:261 | GLM-5 layer (KDA): multi-sequence decode vetoed, each sequence decodes alone |
-| 2 | deepseek_sparse_attention | multi_seq | 128 | 2171216.8 µs | +234.5% | legacy: crates/model-arch/src/glm5next_layer/mod.rs:261 | GLM-5 layer (DSA): multi-sequence decode vetoed, each sequence decodes alone |
-| 3 | linear_attention | multi_seq | 16 | 722156.9 µs | +213.9% | legacy: crates/model-arch/src/glm5next_layer/mod.rs:261 | GLM-5 layer (KDA): multi-sequence decode vetoed, each sequence decodes alone |
-| 4 | deepseek_sparse_attention | multi_seq | 16 | 216200.7 µs | +64.0% | legacy: crates/model-arch/src/glm5next_layer/mod.rs:261 | GLM-5 layer (DSA): multi-sequence decode vetoed, each sequence decodes alone |
-| 5 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:150 | KDA verify: conv and recurrence one row per launch (stateful_row) |
-| 6 | deepseek_sparse_attention | verify | 4 | 2015.0 µs | +1.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:148 | DSA verify: latent write, indexer projections, store and selection one row per launch |
-| 7 | deepseek_sparse_attention | verify | 4 | 34.7 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
-| 8 | deepseek_sparse_attention | multi_seq | 16 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
-| 9 | deepseek_sparse_attention | multi_seq | 128 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
+| 1 | deepseek_sparse_attention | multi_seq | 128 | 11765.9 µs | +1.3% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:171 | DSA batched decode: indexer key, pool store and selection one row per launch |
+| 2 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:307 | KDA verify: conv and recurrence one row per launch (stateful_row) |
+| 3 | deepseek_sparse_attention | verify | 4 | 2015.0 µs | +1.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:118 | DSA verify: latent write, indexer projections, store and selection one row per launch |
+| 4 | deepseek_sparse_attention | multi_seq | 16 | 1389.7 µs | +0.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:171 | DSA batched decode: indexer key, pool store and selection one row per launch |
+| 5 | deepseek_sparse_attention | verify | 4 | 34.7 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
+| 6 | deepseek_sparse_attention | multi_seq | 16 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
+| 7 | linear_attention | multi_seq | 16 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:232 | KDA batched decode: conv one row per launch, recurrence one launch per group |
+| 8 | deepseek_sparse_attention | multi_seq | 128 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
+| 9 | linear_attention | multi_seq | 128 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:232 | KDA batched decode: conv one row per launch, recurrence one launch per group |
 
 ## decode, 1 row (estimated step 84522.5 µs)
 
