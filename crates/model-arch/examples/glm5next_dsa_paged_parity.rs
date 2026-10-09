@@ -12,7 +12,8 @@
 //!      the layer output, the indexer row, the KV latent, at every step;
 //!   2. a prefill sub-chunk (`decode_k`, k > 1, the batched selector): the layer output;
 //!   3. the batched multi-sequence decode (`decode_rows`) over C paged sequences against the
-//!      same C flat ones: each row's output;
+//!      same C flat ones, then the batched verify (`decode_spans`, three rows per sequence
+//!      after a rewind): each row's output;
 //!   4. a prefix hit: sequence B's block table starts with A's first blocks and its fresh
 //!      paged state adopts them; B's outputs on A's suffix tokens equal A's.
 //!
@@ -31,7 +32,7 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::GpuBackend;
-use metrale_model_arch::glm5next_dsa::layer::Glm5NextDsaLayer;
+use metrale_model_arch::glm5next_dsa::layer::{DsaRowSpan, Glm5NextDsaLayer};
 use metrale_model_arch::glm5next_dsa::paged::IndexerCache;
 use metrale_model_arch::glm5next_dsa::state::Glm5NextDsaState;
 use metrale_model_layers::layer::LayerState;
@@ -251,6 +252,39 @@ fn rows_gate(
         HIDDEN * 2,
     )?;
     println!("  decode_rows capture={capture}: {c} paged rows byte-identical to flat");
+
+    // 2026-10-09: The batched verify (`decode_spans`): three rows per sequence at
+    // `lens[r]..lens[r] + 3`. Every state is one row ahead after the step above, so each is
+    // rewound first, as after a rejected draft, and the verify rows overwrite that row.
+    let k = 3;
+    let spans: Vec<DsaRowSpan> = lens
+        .iter()
+        .map(|&first_pos| DsaRowSpan { first_pos, rows: k })
+        .collect();
+    let x = rng.bf16_bytes(k * c * HIDDEN, 1.0);
+    let mut outs = Vec::new();
+    for (states, cache, tables) in [(&mut fst, &mut fkv, &fbt), (&mut pst, &mut pkv, &pbt)] {
+        let h = up(gpu, &x)?;
+        let mut rows: Vec<(usize, &[u32])> = Vec::new();
+        for r in 0..c {
+            for t in 0..k {
+                rows.push((lens[r] + t, tables[r].as_slice()));
+            }
+        }
+        let m = meta(gpu, &rows)?;
+        let ctx = fwd.ctx(gpu, capture, true, Some(m));
+        let mut refs: Vec<&mut (dyn LayerState + 'static)> =
+            states.iter_mut().map(|b| b.as_mut()).collect();
+        l.decode_spans(h, &mut refs, &spans, cache, &m, 0, &ctx, stream(gpu))?;
+        outs.push(read(gpu, h, k * c * HIDDEN * 2)?);
+    }
+    same_rows(
+        &format!("decode_spans capture={capture}"),
+        &outs[0],
+        &outs[1],
+        HIDDEN * 2,
+    )?;
+    println!("  decode_spans capture={capture}: {c} x {k} paged verify rows byte-identical");
     Ok(())
 }
 
