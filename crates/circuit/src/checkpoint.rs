@@ -57,8 +57,7 @@ pub enum ServePrecision {
 /// 2026-09-30: A checkpoint resolved to its circuit.
 #[derive(Debug, Clone)]
 pub struct ResolvedCheckpoint {
-    /// 2026-09-30: The circuit arch (`qwen3_5`, `qwen3_6_moe`, `nemotron_h`, `dense_gqa`,
-    /// 2026-10-08: `glm5_next`).
+    /// 2026-09-30: The circuit arch (`qwen3_5`, `qwen3_6_moe`, `nemotron_h`, `dense_gqa`).
     pub arch: String,
     /// 2026-09-30: The config's top-level `model_type`.
     pub model_type: String,
@@ -122,7 +121,7 @@ macro_rules! circuits_file {
     };
 }
 
-const ARCHES: [Arch; 5] = [
+const ARCHES: [Arch; 4] = [
     Arch {
         circuit: circuits_file!("qwen3_5.toml"),
         config_map: circuits_file!("qwen3_5.config.toml"),
@@ -139,19 +138,10 @@ const ARCHES: [Arch; 5] = [
         circuit: circuits_file!("dense_gqa.toml"),
         config_map: circuits_file!("dense_gqa.config.toml"),
     },
-    Arch {
-        circuit: circuits_file!("glm5_next.toml"),
-        config_map: circuits_file!("glm5_next.config.toml"),
-    },
 ];
 
 /// 2026-09-30: The block libraries the embedded circuits include.
-const BLOCKS: [(&str, &str); 4] = [
-    ("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml")),
-    ("glm5_next_kda", circuits_file!("blocks/glm5_next_kda.toml")),
-    ("glm5_next_dsa", circuits_file!("blocks/glm5_next_dsa.toml")),
-    ("glm5_next_ffn", circuits_file!("blocks/glm5_next_ffn.toml")),
-];
+const BLOCKS: [(&str, &str); 1] = [("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml"))];
 
 /// 2026-09-30: The embedded config maps, parsed.
 pub fn config_maps() -> Result<Vec<ConfigMap>, ConfigMapError> {

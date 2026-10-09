@@ -16,7 +16,7 @@ use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
-pub const CIRCUITS: [(&str, &str); 4] = [
+pub const CIRCUITS: [(&str, &str); 3] = [
     (
         "qwen3_5",
         include_str!("../../../../kernels/circuits/qwen3_5.toml"),
@@ -29,15 +29,10 @@ pub const CIRCUITS: [(&str, &str); 4] = [
         "nemotron_h",
         include_str!("../../../../kernels/circuits/nemotron_h.toml"),
     ),
-    // 2026-10-08: GLM-5 (not an executor target; `met circuit` plans and the Venn read it).
-    (
-        "glm5_next",
-        include_str!("../../../../kernels/circuits/glm5_next.toml"),
-    ),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 4] = [
+pub const PRECISION: [(&str, &str); 3] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
@@ -52,10 +47,6 @@ pub const PRECISION: [(&str, &str); 4] = [
             "../../../../kernels/circuits/precision/nemotron-3.5-lightning-30b-a3b-nvfp4.toml"
         ),
     ),
-    (
-        "glm-5.3-flash-nvfp4",
-        include_str!("../../../../kernels/circuits/precision/glm-5.3-flash-nvfp4.toml"),
-    ),
 ];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
@@ -65,25 +56,10 @@ pub const CHECKPOINTS: [(&str, &str); 1] = [(
 )];
 
 /// 2026-09-28: Every block library a circuit can include.
-pub const BLOCKS: [(&str, &str); 4] = [
-    (
-        "qwen3_hybrid",
-        include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
-    ),
-    // 2026-10-08: The GLM-5 block libraries (kernels/circuits/glm5_next.toml includes them).
-    (
-        "glm5_next_kda",
-        include_str!("../../../../kernels/circuits/blocks/glm5_next_kda.toml"),
-    ),
-    (
-        "glm5_next_dsa",
-        include_str!("../../../../kernels/circuits/blocks/glm5_next_dsa.toml"),
-    ),
-    (
-        "glm5_next_ffn",
-        include_str!("../../../../kernels/circuits/blocks/glm5_next_ffn.toml"),
-    ),
-];
+pub const BLOCKS: [(&str, &str); 1] = [(
+    "qwen3_hybrid",
+    include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
+)];
 
 /// 2026-09-28: FUSIONS.toml per hardware.
 pub const FUSIONS: [(&str, &str); 1] = [(

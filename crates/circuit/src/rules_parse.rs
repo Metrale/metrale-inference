@@ -96,8 +96,6 @@ struct PatternFile {
     holds: Option<String>,
     #[serde(default)]
     steps: BTreeMap<String, String>,
-    #[serde(default)]
-    params: BTreeMap<String, String>,
 }
 
 /// 2026-09-28: Parse FUSIONS.toml text into rules, in file order. 2026-09-30: A file that
@@ -365,6 +363,5 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         sibling: p.sibling,
         holds: fmt(&p.holds)?,
         steps,
-        params: p.params.clone(),
     })
 }

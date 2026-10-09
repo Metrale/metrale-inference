@@ -144,9 +144,6 @@ fn draw_segment(doc: &mut Document, pen: &Pen<'_>, s: &Segment, layers: &[usize]
                 LayerKind::FullAttention => (g.layer[1], Style::LayerAttn, "Full-attention layer"),
                 LayerKind::Mamba => (g.layer[0], Style::LayerGdn, "Mamba2 layer"),
                 LayerKind::Moe => (g.layer[3], Style::LayerMoe, "MoE layer"),
-                LayerKind::SparseAttention => {
-                    (g.layer[1], Style::LayerAttn, "Sparse-attention layer")
-                }
             };
             title.push(format!("{glyph} "), style);
             title.push(name, Style::Heading);

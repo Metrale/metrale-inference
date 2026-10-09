@@ -134,7 +134,7 @@ fn shape_errors_are_refused() {
 #[test]
 fn unknown_ops_roles_and_formats_are_refused() {
     for (from, to) in [
-        ("op = \"rms_norm\"", "op = \"group_norm\""),
+        ("op = \"rms_norm\"", "op = \"layer_norm\""),
         (
             "op = \"rms_norm\", local",
             "op = \"linear\", role = \"up\", local",

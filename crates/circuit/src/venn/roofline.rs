@@ -9,9 +9,6 @@
 //! - Bytes are every edge the node reads or writes at `rows` rows, plus its weights, plus the
 //!   state it reads and writes: the paged KV cache over `context_tokens` per sequence, the
 //!   GatedDeltaNet and Mamba2 recurrent states (FP32, read and written once per sequence).
-//!   2026-10-08: Latent attention reads `kv_b_proj` and the latent rows it attends (the selected
-//!   ones under an indexer), the indexer's selection every pool key; both at the declared state
-//!   format.
 //! - Routed experts read `E * (1 - (1 - k/E)^T)` distinct experts' weights for `T` tokens
 //!   (uniform routing).
 //! - The peak is the MMA class of the node's input activation: FP8 or NVFP4 activations run the
@@ -25,7 +22,6 @@ use super::families::Roofline;
 use crate::format::Format;
 use crate::ir::{Circuit, Node, OpKind};
 use crate::rules::Mode;
-use crate::state::{StateAccess, StateDtype, StateFormat};
 
 /// 2026-09-29: One node's estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,14 +58,6 @@ pub enum CostError {
     /// 2026-09-29: A KV-cache dtype the estimate has no element size for.
     #[error("kv_cache_dtype `{0}` has no element size (bf16 | fp8)")]
     KvDtype(String),
-    /// 2026-10-08: A state or parameter an op's estimate reads that the node does not give.
-    #[error("node `{node}`: {detail}")]
-    Node {
-        /// 2026-10-08: Node id.
-        node: String,
-        /// 2026-10-08: What is missing.
-        detail: String,
-    },
 }
 
 /// 2026-09-29: Estimate `node` at `rows` rows of `mode`.
@@ -100,12 +88,11 @@ pub fn node_cost(
             bytes += edge_bytes(c, n, e, rows)?;
         }
     }
-    let (out, k) = c.weight_shape(n).ok_or_else(|| CostError::Edge {
-        node: n.id.clone(),
-        edge: "<weight>".into(),
-        rows,
-    })?;
-    let (out, k) = (out as f64, k as f64);
+    let k = n
+        .inputs
+        .first()
+        .map_or(0.0, |&e| c.edges[e].dim_value as f64);
+    let out: f64 = n.outputs.iter().map(|&e| c.edges[e].dim_value as f64).sum();
     let mut flops = 0.0;
     match n.op {
         OpKind::Linear(_) | OpKind::LmHead | OpKind::Router => {
@@ -128,37 +115,6 @@ pub fn node_cost(
             let (kvh, hd, qh) = (dim("kv_heads")?, dim("head_dim")?, dim("q_heads")?);
             bytes += seqs * ctx * kvh * hd * 2.0 * kv;
             flops = 4.0 * t * ctx * qh * hd;
-        }
-        OpKind::MlaAttention => {
-            // 2026-10-08: `kv_b_proj` (both halves, the query absorption and the value
-            // projection), then every attended latent row once per sequence.
-            bytes += weight_bytes(n, out, k)?;
-            let ctx = r.context_tokens as f64;
-            let attended = match n.params.get("selection").map(String::as_str) {
-                Some("index_topk") => ctx.min(dim("index_topk")? + dim("index_kpool")?),
-                Some("all") => ctx,
-                other => {
-                    return Err(CostError::Node {
-                        node: n.id.clone(),
-                        detail: format!("selection {other:?} is neither index_topk nor all"),
-                    });
-                }
-            };
-            bytes += seqs * attended * read_unit_bytes(c, n, settings)?;
-            let (qh, lat) = (dim("q_heads")?, dim("kv_lora")?);
-            flops = 2.0 * t * qh * lat * (dim("mla_qk")? + dim("mla_v")?)
-                + 4.0 * t * attended * qh * lat;
-        }
-        OpKind::IndexSelect => {
-            // 2026-10-08: Every pool key of the context once per sequence (the cache holds one
-            // pooled key per `index_kpool` tokens, declared per token), scored by every head.
-            let ctx = r.context_tokens as f64;
-            bytes += seqs * ctx * read_unit_bytes(c, n, settings)?;
-            flops = 2.0
-                * t
-                * (ctx / dim("index_kpool")?)
-                * dim("index_heads")?
-                * dim("index_head_dim")?;
         }
         OpKind::GdnRecurrence | OpKind::SsmUpdate => {
             let elems = if n.op == OpKind::GdnRecurrence {
@@ -184,35 +140,6 @@ pub fn node_cost(
         flops,
         time_us,
     })
-}
-
-/// 2026-10-08: Bytes of one unit (one token) of the first state `n` reads: its elements times
-/// its element size, a keyed format read from `settings`.
-pub(crate) fn read_unit_bytes(
-    c: &Circuit,
-    n: &Node,
-    settings: &BTreeMap<String, String>,
-) -> Result<f64, CostError> {
-    let fail = |detail: String| CostError::Node {
-        node: n.id.clone(),
-        detail,
-    };
-    let (idx, _) = n
-        .state
-        .iter()
-        .find(|(_, a)| *a == StateAccess::Read)
-        .ok_or_else(|| fail("the estimate needs the state it reads".into()))?;
-    let decl = &c.states[*idx];
-    let dtype = match &decl.format {
-        StateFormat::Fixed(d) => *d,
-        StateFormat::Keyed(key) => {
-            let v = settings
-                .get(key)
-                .ok_or_else(|| fail(format!("the policy states no `{key}`")))?;
-            StateDtype::parse(v).ok_or_else(|| CostError::KvDtype(v.clone()))?
-        }
-    };
-    Ok((decl.elements * dtype.size()) as f64)
 }
 
 /// 2026-10-01: `n` multiplies an NVFP4 activation by a linear weight: the node the NVFP4 peak

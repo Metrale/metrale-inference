@@ -20,8 +20,7 @@ use crate::rules::{PatternOp, Rule};
 
 /// 2026-10-01: Node `n` of `c` fits pattern element `p`: op (any listed linear role), local id,
 /// weight format, quantized input format and layer kind. The fuser matches chains with it, and
-/// the hardware planner asks which rules could run a node at all. 2026-10-08: And every param
-/// the element states, with the node's value.
+/// the hardware planner asks which rules could run a node at all.
 pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
     let op = match n.op {
         OpKind::Linear(r) if !p.roles.is_empty() => p.roles.contains(&r),
@@ -32,7 +31,6 @@ pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
         && reads_quantized_as(c, p, n)
         && p.layer_kind
             .is_none_or(|k| n.layer.is_some_and(|i| c.layer_kinds[i] == k))
-        && p.params.iter().all(|(k, v)| n.params.get(k) == Some(v))
 }
 
 /// 2026-09-30: A node that reads a quantized activation (an `act_quant` output) matches only

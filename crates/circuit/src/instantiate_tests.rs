@@ -7,7 +7,6 @@
 
 use super::*;
 use crate::circuit_toml::CircuitError as E;
-use crate::ir::LayerKind;
 use crate::ir::OpParseError;
 use crate::test_toy::{CIRCUIT, PRECISION, circuit, shape};
 
@@ -322,73 +321,4 @@ fn an_included_library_supplies_blocks_and_every_include_fault_is_refused() {
         err(instantiate(&main, &[("lib", &stray)], &shape(2), &table)).0,
         "lib"
     );
-}
-
-/// 2026-10-08: `[layout.prefix]` maps the first `count` layers through its own blocks (a dense
-/// FFN before the MoE layers): exactly layers `0..count`, whatever the count, and a kind it does
-/// not map inside the prefix, an undeclared count dim and a missing one are refused.
-#[test]
-fn a_layout_prefix_maps_the_first_layers_through_its_blocks() {
-    let table = crate::precision::PrecisionTable::parse(PRECISION).unwrap();
-    let ffn_at = CIRCUIT.find("[block.ffn]").unwrap();
-    let head_at = CIRCUIT.find("[block.head]").unwrap();
-    let dense = CIRCUIT[ffn_at..head_at].replace("block.ffn", "block.dense");
-    let text = CIRCUIT
-        .replacen(
-            "dims = [\"hidden\", \"inter\", \"vocab\"]",
-            "dims = [\"hidden\", \"inter\", \"vocab\", \"first_dense\"]",
-            1,
-        )
-        .replacen(
-            "[block.embed]",
-            &format!(
-                "[layout.prefix]\ncount = \"first_dense\"\nblocks = {{ linear_attention = \
-                 [\"dense\"] }}\n\n{dense}[block.embed]"
-            ),
-            1,
-        );
-    let with = |layers: usize, first: u64| {
-        let mut s = shape(layers);
-        s.dims.insert("first_dense".into(), first);
-        s
-    };
-    let templates = |c: &Circuit| {
-        c.blocks
-            .iter()
-            .filter(|b| b.layer.is_some())
-            .map(|b| b.template.clone())
-            .collect::<Vec<_>>()
-    };
-    let c = instantiate(&text, &[], &with(4, 2), &table).unwrap();
-    assert_eq!(templates(&c), ["dense", "dense", "ffn", "ffn"]);
-    assert_eq!(
-        c.nodes[c.node("l1.dense.down").unwrap()].binding,
-        ["layers.1.down"]
-    );
-    let none = instantiate(&text, &[], &with(3, 0), &table).unwrap();
-    assert_eq!(templates(&none), ["ffn", "ffn", "ffn"]);
-    // 2026-10-08: A prefix over every layer leaves the layout's own block unused, which is
-    // refused as any unused block is.
-    assert_eq!(
-        instantiate(&text, &[], &with(2, 5), &table),
-        Err(E::Layout("block template `ffn` is never used".into()))
-    );
-
-    let mut s = with(3, 2);
-    s.layer_kinds[1] = LayerKind::FullAttention;
-    assert_eq!(
-        instantiate(&text, &[], &s, &table),
-        Err(E::Layout(
-            "layer 1 is full_attention, which the `first_dense` prefix maps to no blocks".into()
-        ))
-    );
-    let undeclared = text.replacen(", \"first_dense\"]", "]", 1);
-    assert!(matches!(
-        instantiate(&undeclared, &[], &with(3, 2), &table),
-        Err(E::ShapeMismatch(m)) if m.contains("not in the circuit's `dims` list")
-    ));
-    assert!(matches!(
-        instantiate(&text, &[], &shape(3), &table),
-        Err(E::ShapeMismatch(m)) if m.contains("first_dense")
-    ));
 }

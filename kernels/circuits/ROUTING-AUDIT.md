@@ -207,33 +207,6 @@ class and exact citation.
 | `ffn_mmq64_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372 |
 | `ffn_mmq_pipe_a4_gate_up` | reference | ml/dense_ffn_prefill_nvfp4.rs:51-68 (the M tile by rows) |
 | `ffn_mmq_pipe_a4_act_down` | reference | ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183 |
-| `glm_hc_expand` | reference | crates/model-arch/src/glm5next_mhc.rs:68-87; crates/model-arch/src/glm5next_layer/steps/forward.rs:73 |
-| `glm_hc_pre` | reference | crates/model-arch/src/glm5next_mhc.rs:153-214 (hc_mix_bf16 for the BF16 hc_fn the loader uploads, then hc_finish); crates/model-arch/src/glm5next_layer/steps/forward.rs:85,142 |
-| `glm_hc_post` | reference | crates/model-arch/src/glm5next_mhc.rs:218-245; crates/model-arch/src/glm5next_layer/steps/forward.rs:126,164 |
-| `glm_hc_contract` | reference | crates/model-arch/src/glm5next_mhc.rs:90-109; crates/model-arch/src/glm5next_layer/steps/forward.rs:179 |
-| `glm_rms_norm_plain_kda` | reference | crates/model-arch/src/glm5next_layer/steps.rs:16-36; crates/model-arch/src/glm5next_layer/steps/forward.rs:103,160 |
-| `glm_rms_norm_plain_dsa` | reference | crates/model-arch/src/glm5next_layer/steps.rs:16-36; crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:99-109 (q_a_layernorm) |
-| `glm_bf16_gemv_kda` | reference | crates/model-arch/src/glm5next_kda/mod.rs:192-232,248-266,281-300,315-324,335-354,376-385; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down) |
-| `glm_bf16_gemv_dsa` | reference | crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:86-98,124-136; crates/model-arch/src/glm5next_dsa/layer.rs:185-197,210-222; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down) |
-| `glm_shared_gate_up_kda` | reference | crates/model-arch/src/glm5next_mlp/forward/dense.rs:46-71 |
-| `glm_shared_gate_up_dsa` | reference | crates/model-arch/src/glm5next_mlp/forward/dense.rs:46-71 |
-| `glm_kda_pack` | reference | crates/model-arch/src/glm5next_kda/mod.rs:267-276 |
-| `glm_kda_conv_l2` | reference | crates/model-arch/src/glm5next_kda/decode.rs:36-49 |
-| `glm_kda_gates` | reference | crates/model-arch/src/glm5next_kda/mod.rs:301-312,326-332 |
-| `glm_kda_recurrence` | reference | crates/model-arch/src/glm5next_kda/decode.rs:53-76 (the shared-memory kernel when the target ships it; :78-93 the 2R+2W fallback) |
-| `glm_kda_o_norm` | reference | crates/model-arch/src/glm5next_kda/mod.rs:366-375 |
-| `glm_mla_latent_write` | reference | crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:177-187 |
-| `glm_index_k_norm` | reference | crates/model-arch/src/glm5next_dsa/layer.rs:198-208 |
-| `glm_index_store` | reference | crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly) |
-| `glm_index_select` | reference | crates/model-arch/src/glm5next_dsa/select/launch.rs:17-150; crates/model-arch/src/glm5next_dsa/layer.rs:253-329 |
-| `glm_index_f32_gemv` | reference | crates/model-arch/src/glm5next_dsa/layer.rs:229-243,266-277 |
-| `glm_mla_absorbed` | reference | crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:110-123,328,337-349; crates/model-arch/src/glm5next_dsa/attend.rs:163-190 |
-| `glm_router_f32` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:345-358 |
-| `glm_router_topk_kda` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:360-372 |
-| `glm_router_topk_dsa` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:360-372 |
-| `glm_swiglu_clamp` | reference | crates/model-arch/src/glm5next_mlp/forward/launch.rs:130-150; crates/model-arch/src/glm5next_mlp/forward/dense.rs:72-82 |
-| `glm_moe_combine_kda` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:428-450 |
-| `glm_moe_combine_dsa` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:428-450 |
 
 ## Bit-identical fusions
 
@@ -334,16 +307,4 @@ These are facts about the code, found while encoding it. They are not changes.
   - W4A4 at 9-64 rows (mx16/mx32/mx64 and the `_ps`/`_nt` twins).
 - **Only four `differs` levers are modelled:** `gdn_fused_norm`, `decode_fused_silu`, `gdn_fused_verify` (K=2) and `w4a4_downcast` (4-8 rows, mx8).
 - **Sampling is outside the main circuit.** The verify's per-row argmax is part of today's verify forward but not of the circuit.
-- **GLM-5 (`glm5_next`) is covered at one decode row only** (2026-10-08; the `glm_*` rules, not
-  golden). Without a rule: the routed experts and the dense MLP of layers 0-2 (the checkpoint
-  declares NVFP4 W4A4; the engine runs the experts W4A16 and the dense MLP as a load-time BF16
-  dequantisation, so a W4A4 rule would plan a precision the engine does not run); the head's
-  `final_norm` (GLM's norms scale by the weight as stored, and the `final_norm` rule's kernel by
-  1 + weight; the same holds for Nemotron-H); the MTP draft head; the multi-sequence decode (the
-  layer vetoes it and decodes each sequence alone) and the K-row verify (conv, recurrence, latent
-  write and selection per row), both `[[legacy_path]]` entries of KERNEL_FAMILIES.toml. Two
-  engine departures the rules state: the FP32 hyper-connection highway (`writes = "f32"`), and the
-  latent attention on load-time products of `q_b_proj` / `o_proj` with `kv_b_proj`'s halves
-  (`glm_mla_absorbed`): 185M weights per layer against the 109M of `q_b_proj`, `kv_b_proj` and
-  `o_proj` read as stored (1.7x).
 - **Strided RoPE equals MRoPE only for text.** The strided kernel matches the interleaved MRoPE only while the three positions are equal. An image sequence's multi-row step should be checked.

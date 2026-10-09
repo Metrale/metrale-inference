@@ -2,8 +2,7 @@
 
 //! 2026-09-28: Dimension expressions: a sum of products of named dims and integer literals,
 //! e.g. `q_heads*head_dim*2` or `lin_qk*2+lin_v`. 2026-10-02: A factor may be a dim divided by a
-//! literal, rounded up (`moe_inter/128`: the scale count of a 128-wide group). 2026-10-08: Or by
-//! another dim, rounded up (`index_head_dim/index_kpool`: a pooled key's share of one token).
+//! literal, rounded up (`moe_inter/128`: the scale count of a 128-wide group).
 //!
 //! Owner: metrale-circuit.
 //! Invariants:
@@ -25,15 +24,12 @@ enum Factor {
     Lit(u64),
     /// 2026-10-02: `name/lit`, rounded up.
     CeilDiv(String, u64),
-    /// 2026-10-08: `name/name`, rounded up.
-    CeilDivDim(String, String),
 }
 
 /// 2026-09-28: Why a dimension expression did not parse or evaluate.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DimError {
-    /// 2026-09-28: Empty term, stray character or a literal of zero. 2026-10-08: Also a division
-    /// by a dim whose value is zero.
+    /// 2026-09-28: Empty term, stray character or a literal of zero.
     #[error("bad dimension expression `{0}`")]
     Syntax(String),
     /// 2026-09-28: A name the arch shape does not define.
@@ -78,10 +74,9 @@ impl DimExpr {
 
     /// 2026-09-28: Every name the expression reads.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.terms.iter().flatten().flat_map(|f| match f {
-            Factor::Name(n) | Factor::CeilDiv(n, _) => vec![n.as_str()],
-            Factor::CeilDivDim(n, d) => vec![n.as_str(), d.as_str()],
-            Factor::Lit(_) => Vec::new(),
+        self.terms.iter().flatten().filter_map(|f| match f {
+            Factor::Name(n) | Factor::CeilDiv(n, _) => Some(n.as_str()),
+            Factor::Lit(_) => None,
         })
     }
 
@@ -102,10 +97,6 @@ impl DimExpr {
                     Factor::Lit(v) => *v,
                     Factor::Name(n) => dim(n)?,
                     Factor::CeilDiv(n, d) => dim(n)?.div_ceil(*d),
-                    Factor::CeilDivDim(n, d) => match dim(d)? {
-                        0 => return Err(DimError::Syntax(self.text.clone())),
-                        by => dim(n)?.div_ceil(by),
-                    },
                 };
                 prod = prod.checked_mul(v).ok_or_else(overflow)?;
             }
@@ -116,14 +107,11 @@ impl DimExpr {
 }
 
 fn parse_factor(f: &str) -> Option<Factor> {
-    if let Some((name, by)) = f.split_once('/') {
-        let Factor::Name(n) = parse_factor(name)? else {
-            return None;
-        };
-        return match parse_factor(by)? {
-            Factor::Lit(d) => Some(Factor::CeilDiv(n, d)),
-            Factor::Name(d) => Some(Factor::CeilDivDim(n, d)),
-            Factor::CeilDiv(..) | Factor::CeilDivDim(..) => None,
+    if let Some((name, lit)) = f.split_once('/') {
+        let d = lit.parse::<u64>().ok().filter(|&v| v > 0)?;
+        return match parse_factor(name)? {
+            Factor::Name(n) => Some(Factor::CeilDiv(n, d)),
+            Factor::Lit(_) | Factor::CeilDiv(..) => None,
         };
     }
     let first = f.chars().next()?;

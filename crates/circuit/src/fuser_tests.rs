@@ -364,32 +364,3 @@ fn the_rules_digest_covers_the_whole_file() {
     assert_ne!(a, crate::digest::rules_digest("schema = 1\n# a comment\n"));
     assert_eq!(a.len(), 64);
 }
-
-/// 2026-10-08: A pattern element's params must equal the node's: a rule for one policy point
-/// takes only nodes that state it, never a node without params or with another value.
-#[test]
-fn a_pattern_param_matches_only_nodes_that_state_it() {
-    let table = crate::precision::PrecisionTable::parse(crate::test_toy::PRECISION).unwrap();
-    let text = crate::test_toy::CIRCUIT.replacen(
-        "op = \"silu_mul\"",
-        "op = \"silu_mul\"\nparams = { clamp = \"swiglu\" }",
-        1,
-    );
-    let stated = crate::instantiate(&text, &[], &crate::test_toy::shape(1), &table).unwrap();
-    let plain = circuit(1);
-    let r = rules(
-        &(fused(
-            "clamped",
-            r#"{ op = "silu_mul", params = { clamp = "swiglu" } }"#,
-            100,
-        ) + &fused(
-            "other",
-            r#"{ op = "silu_mul", params = { clamp = "none" } }"#,
-            200,
-        )),
-    );
-    let p = plan(&stated, &r, &policy(), 1);
-    assert_eq!(rule_of_node(&stated, &p, "l0.ffn.act"), "clamped");
-    let p = plan(&plain, &r, &policy(), 1);
-    assert_eq!(rule_of_node(&plain, &p, "l0.ffn.act"), "act");
-}

@@ -130,17 +130,14 @@ fn lightning_experts_are_a_format_and_activation_policy_of_the_tc_grouped_kernel
 #[test]
 fn lightning_routing_is_a_scoring_policy_variant() {
     let r = report();
-    let top_k = row(&r, Mode::Decode, 1, "moe.top_k");
-    // 2026-10-08: The GLM-5 router kernel already runs sigmoid + correction-bias top-k over FP32
-    // logits, Lightning's routing exactly, so it is the primary finding; reusing it or folding it
-    // into moe_topk's sigmoid_bias point is the step-4 decision.
-    let p = top_k.primary.as_ref().expect("classified");
+    let f = row(&r, Mode::Decode, 1, "moe.top_k")
+        .primary
+        .as_ref()
+        .expect("classified");
     assert_eq!(
-        (p.family.as_str(), p.class),
-        ("glm_router_topk", Class::SharedUnmeasured)
+        (f.family.as_str(), f.class),
+        ("moe_topk", Class::PolicyVariant)
     );
-    let f = finding(top_k, "moe_topk");
-    assert_eq!(f.class, Class::PolicyVariant);
     assert_eq!(
         diff(f, "scoring"),
         ("sigmoid_bias".into(), "softmax".into(), ParamKind::Policy)

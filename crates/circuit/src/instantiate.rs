@@ -14,10 +14,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::circuit_toml::{
-    BlockFile, CircuitError, CircuitFile, NodeFile, layout_rule, parse_file, when_holds,
+    BlockFile, CircuitError, CircuitFile, LayoutRule, NodeFile, layout_rule, parse_file, when_holds,
 };
 use crate::format::Format;
-use crate::ir::{ArchShape, BlockInstance, Circuit, Node, OpKind, Section};
+use crate::ir::{ArchShape, BlockInstance, Circuit, LayerKind, Node, OpKind, Section};
 use crate::precision::{EdgePrecision, LinearFormats};
 
 /// 2026-09-28: Parse `text`, merge the block libraries it includes (`includes`: name to
@@ -54,6 +54,124 @@ pub fn instantiate(
         b.block(&template, layer, section, module)?;
     }
     b.finish()
+}
+
+fn check_dims(file: &CircuitFile, shape: &ArchShape) -> Result<(), CircuitError> {
+    for d in &file.dims {
+        if !shape.dims.contains_key(d) {
+            return Err(CircuitError::ShapeMismatch(format!(
+                "circuit `{}` needs dim `{d}`, which the arch shape does not give",
+                file.arch
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// 2026-09-30: One block to instantiate: template, layer, section, and a module that replaces
+/// the draft module for its `{L}`.
+type Planned = (String, Option<usize>, Section, Option<String>);
+
+fn block_sequence(
+    file: &CircuitFile,
+    rule: &LayoutRule,
+    kinds: &[LayerKind],
+    dims: &BTreeMap<String, u64>,
+) -> Result<Vec<Planned>, CircuitError> {
+    if kinds.is_empty() {
+        return Err(CircuitError::Layout("the arch shape has no layers".into()));
+    }
+    let mut used = BTreeSet::new();
+    let mut out = Vec::new();
+    let known = |name: &str, used: &mut BTreeSet<String>| {
+        if !file.block.contains_key(name) {
+            return Err(CircuitError::Layout(format!("no block template `{name}`")));
+        }
+        used.insert(name.to_string());
+        Ok(())
+    };
+    for name in &file.prologue {
+        known(name, &mut used)?;
+        out.push((name.clone(), None, Section::Main, None));
+    }
+    // 2026-09-30: The layout blocks per kind, with the overrides of every switch that holds.
+    let mut layout = file.layout.blocks.clone();
+    for (w, over) in &file.layout.when {
+        for names in over.values() {
+            for n in names {
+                known(n, &mut used)?;
+            }
+        }
+        if when_holds(w, &file.dims, dims)? {
+            layout.extend(over.clone());
+        }
+    }
+    for (i, kind) in kinds.iter().enumerate() {
+        if let LayoutRule::Interval { period } = rule {
+            let want = if (i + 1) % period == 0 {
+                LayerKind::FullAttention
+            } else {
+                LayerKind::LinearAttention
+            };
+            if *kind != want {
+                return Err(CircuitError::Layout(format!(
+                    "layer {i} is {} but the interval-{period} layout puts {} there",
+                    kind.name(),
+                    want.name()
+                )));
+            }
+        }
+        let blocks = layout.get(kind.name()).ok_or_else(|| {
+            CircuitError::Layout(format!(
+                "layer {i} is {}, which the layout maps to no blocks",
+                kind.name()
+            ))
+        })?;
+        for name in blocks {
+            known(name, &mut used)?;
+            out.push((name.clone(), Some(i), Section::Main, None));
+        }
+    }
+    for name in &file.epilogue {
+        known(name, &mut used)?;
+        out.push((name.clone(), None, Section::Main, None));
+    }
+    let on = match &file.draft_when {
+        Some(w) => when_holds(w, &file.dims, dims)?,
+        None => true,
+    };
+    let mut draft = &file.draft;
+    for (w, list) in &file.draft_variant {
+        for entry in list {
+            known(entry.split('@').next().unwrap_or_default(), &mut used)?;
+        }
+        if when_holds(w, &file.dims, dims)? {
+            draft = list;
+        }
+    }
+    for entry in &file.draft {
+        known(entry.split('@').next().unwrap_or_default(), &mut used)?;
+    }
+    if on {
+        for entry in draft {
+            let (name, module) = match entry.split_once('@') {
+                Some((n, m)) => (n.to_string(), Some(m.to_string())),
+                None => (entry.clone(), None),
+            };
+            out.push((name, None, Section::Draft, module));
+        }
+    }
+    if !file.draft.is_empty() && file.draft_module.is_none() {
+        return Err(CircuitError::Layout(
+            "`draft` blocks need a `draft_module` for their bindings".into(),
+        ));
+    }
+    if let Some(unused) = file.local_blocks.iter().find(|k| !used.contains(*k)) {
+        return Err(CircuitError::Layout(format!(
+            "block template `{unused}` is never used"
+        )));
+    }
+    Ok(out)
 }
 
 struct Builder<'a> {
@@ -371,9 +489,7 @@ fn dup(block: &str, name: &str) -> CircuitError {
 
 #[path = "instantiate/edges.rs"]
 mod edges;
-mod layout;
 mod states;
-use layout::{block_sequence, check_dims};
 use states::check_state_access;
 pub(crate) use states::state_decl;
 

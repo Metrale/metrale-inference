@@ -143,10 +143,6 @@ pub struct PatternOp {
     /// the reference requirement (an activation quantized inside the group, a sum rounded to
     /// BF16), stated so the plan shows them and the kernel must declare them.
     pub steps: BTreeMap<crate::pipeline::StepKind, crate::pipeline::Value>,
-    /// 2026-10-08: Node params the node must state with these values (`decay = "channel"`): a
-    /// rule for one policy point of an op (a KDA recurrence, a gated delta rule with per-channel
-    /// decay) is never taken by a node of another point that states it. Empty: any params.
-    pub params: BTreeMap<String, String>,
 }
 
 /// 2026-09-28: How many times a group's kernels launch per step.
@@ -239,16 +235,6 @@ pub struct Rule {
     /// 2026-09-30: A `per_run` rule's selectors (`[[rule.run]]`), in file order; empty for any
     /// other repeat.
     pub runs: Vec<crate::runs::RunSelect>,
-}
-
-impl Rule {
-    /// 2026-10-08: Node `n` of `c` fits the rule's first pattern element (op, role, local id,
-    /// formats, layer kind, params): a group of this rule could start there.
-    pub fn heads_a_node(&self, c: &crate::ir::Circuit, n: crate::ir::NodeIdx) -> bool {
-        self.pattern
-            .first()
-            .is_some_and(|p| crate::fuser::pattern_fits(c, p, &c.nodes[n]))
-    }
 }
 
 /// 2026-09-28: Why FUSIONS.toml did not load.

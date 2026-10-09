@@ -66,23 +66,16 @@ pub fn families() -> venn::Families {
 }
 
 pub fn report() -> VennReport {
-    report_of(&args())
-}
-
-/// 2026-10-08: The report `a` asks for (target and compared models by recipe), built from the
-/// checked-out tree.
-pub fn report_of(a: &VennArgs) -> VennReport {
+    let a = args();
     let all = common::instances();
     let find = |r: &str| {
         all.iter()
             .find(|i| i.recipe == r)
             .cloned()
-            .unwrap_or_else(|| panic!("no instance {r}"))
+            .expect("instance")
     };
-    let t = find(&a.target);
-    let others: Vec<_> = a.against.iter().map(|r| find(r)).collect();
-    let lt = common::load(&t);
-    let lo: Vec<_> = others.iter().map(common::load).collect();
+    let (t, m, d) = (find(LIGHTNING), find(MOE), find(DENSE));
+    let (lt, lm, ld) = (common::load(&t), common::load(&m), common::load(&d));
     let fams = families();
     let meas = venn::parse_measurements(&common::read("docs/kernel-perf/measurements.toml"))
         .expect("measurements");
@@ -91,11 +84,16 @@ pub fn report_of(a: &VennArgs) -> VennReport {
             instance: &t,
             loaded: &lt,
         },
-        against: others
-            .iter()
-            .zip(&lo)
-            .map(|(instance, loaded)| Side { instance, loaded })
-            .collect(),
+        against: vec![
+            Side {
+                instance: &m,
+                loaded: &lm,
+            },
+            Side {
+                instance: &d,
+                loaded: &ld,
+            },
+        ],
         families: &fams,
         measurements: &meas,
         runs: a.runs().expect("runs"),

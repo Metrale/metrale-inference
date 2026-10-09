@@ -40,7 +40,7 @@ fn an_unknown_name_is_reported_not_zeroed() {
 #[test]
 fn syntax_errors_are_refused() {
     for s in [
-        "", "a+", "*a", "0", "a*0", "Hidden", "a-b", "a**b", "2x", "a/0", "4/2", "a/2/2",
+        "", "a+", "*a", "0", "a*0", "Hidden", "a-b", "a**b", "2x", "a/0", "4/2", "a/b", "a/2/2",
     ] {
         assert!(
             matches!(DimExpr::parse(s), Err(DimError::Syntax(_))),
@@ -70,27 +70,4 @@ fn a_ceil_division_rounds_up_and_names_its_dim() {
     assert_eq!(e.eval(&dims()), Ok(3 * 3 * 4));
     assert_eq!(e.names().collect::<Vec<_>>(), ["n", "head_dim"]);
     assert_eq!(DimExpr::parse("q_heads/24").unwrap().eval(&dims()), Ok(1));
-}
-
-/// 2026-10-08: `name/name` divides by the other dim, rounding up, and names both; a divisor dim
-/// of zero, an unknown divisor and a nested division are refused.
-#[test]
-fn a_division_by_a_dim_rounds_up_and_names_both() {
-    let e = DimExpr::parse("head_dim/top_k").unwrap();
-    assert_eq!(e.eval(&dims()), Ok(32));
-    assert_eq!(e.names().collect::<Vec<_>>(), ["head_dim", "top_k"]);
-    assert_eq!(DimExpr::parse("q_heads/n*2").unwrap().eval(&dims()), Ok(16));
-    assert_eq!(DimExpr::parse("head_dim/n").unwrap().eval(&dims()), Ok(86));
-    let mut zero = dims();
-    zero.insert("z".into(), 0);
-    assert_eq!(
-        DimExpr::parse("head_dim/z").unwrap().eval(&zero),
-        Err(DimError::Syntax("head_dim/z".into()))
-    );
-    assert!(matches!(
-        DimExpr::parse("head_dim/kpool").unwrap().eval(&dims()),
-        Err(DimError::Unknown { name, .. }) if name == "kpool"
-    ));
-    assert!(DimExpr::parse("4/head_dim").is_err());
-    assert!(DimExpr::parse("head_dim/top_k/2").is_err());
 }
