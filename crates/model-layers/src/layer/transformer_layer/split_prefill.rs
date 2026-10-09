@@ -13,8 +13,35 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 
 use crate::layer::{BatchedAttnMetadata, ForwardContext, GdnPrefillBuffers, LayerState};
 
+/// 2026-10-09: One sequence's rows in a multi-sequence prefill pass (`prefill_spans`): its
+/// layer state, block table, the position of its first row and its row count. The rows of
+/// the pass are sequence-major in span order.
+pub struct PrefillSpan<'a> {
+    pub state: &'a mut (dyn LayerState + 'static),
+    pub block_table: &'a mut Vec<u32>,
+    pub seq_len_start: usize,
+    pub rows: usize,
+}
+
 /// 2026-09-26: A supertrait of `TransformerLayer`; see the module header.
 pub trait LayerSplitPrefill {
+    /// 2026-10-09: Prefill several sequences' chunks in one pass: `spans[s].rows` rows of
+    /// sequence `s` at `hidden` row `Σ spans[..s].rows`, each starting at position
+    /// `spans[s].seq_len_start`. A layer that answers `prefill_spans_supported` must leave
+    /// every sequence's state, KV and rows as its own `prefill` of the same rows would. The
+    /// default returns an error.
+    fn prefill_spans(
+        &self,
+        hidden: DevicePtr,
+        spans: &mut [PrefillSpan<'_>],
+        kv_cache: &mut PagedKvCache,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let _ = (hidden, spans, kv_cache, ctx, stream);
+        anyhow::bail!("prefill_spans: not implemented for this layer type")
+    }
+
     /// 2026-09-25: Phase 1 projections (norm, QKVZ, gates) over all stacked tokens of a
     /// batched prefill at once. The caller then runs `prefill_phase1_conv1d_one` per
     /// request and `prefill_phase1_l2_batched`. The default returns an error.

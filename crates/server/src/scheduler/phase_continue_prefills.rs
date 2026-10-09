@@ -162,10 +162,12 @@ pub(super) fn continue_in_progress_prefills(
     // 2026-09-25: Batched paths, for two or more prefilling streams: with no
     // active decode, `run_batched_prefill_step` (`prefill_batch_chunk`);
     // with active decode, `run_batched_mixed_step` (`mixed_forward_batch`).
-    // Neither runs under EP, while a stream collects prompt logprobs, or
-    // with `METRALE_BISECT_Q12_DISABLE=1`, which leaves the single-stream
-    // path below. The mixed one also needs `always_mixed` off and no
-    // speculative step this tick (`spec_mixing`).
+    // Neither runs while a stream collects prompt logprobs, or with
+    // `METRALE_BISECT_Q12_DISABLE=1`, which leaves the single-stream path
+    // below. Under EP the mixed one never runs, and the prefill-only one only
+    // as `batched_prefill_allowed` permits (2026-10-09). The mixed one also
+    // needs `always_mixed` off and no speculative step this tick
+    // (`spec_mixing`).
     let q12_dispatch_disabled = sched.levers.bisect_q12_disable;
     // 2026-09-25: Prompt-logprob collection runs only on the single-stream
     // path, so a collecting stream keeps both batched paths off.
@@ -176,7 +178,7 @@ pub(super) fn continue_in_progress_prefills(
         && !any_collecting
         && prefilling.len() >= 2
         && active.is_empty()
-        && !model.is_ep();
+        && super::phase_start_prefills::batched_prefill_allowed(model, &sched.levers);
     // 2026-09-25: With `always_mixed`, several prefills plus active decode
     // take the single-stream path below instead: the head of `prefilling`
     // is fused with the active decode through `mixed_forward`, sized by the

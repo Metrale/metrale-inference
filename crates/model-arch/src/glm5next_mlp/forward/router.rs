@@ -15,7 +15,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use super::super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
-use super::gemm;
+use super::launch::gemm;
 
 /// 2026-10-09: The router logits of `rows` rows of `x` (`[rows, hidden]` BF16) into `logits`
 /// (`[rows, num_experts]` FP32). `batched` (`METRALE_GLM_ROUTER_ROWS=1`) sends 2..=16 rows to

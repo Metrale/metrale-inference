@@ -79,6 +79,37 @@ const _: () = assert!(
     "reserved: DFlash ctx-commit (A113)"
 );
 const _: () = assert!(EP_CMD_DECODE_CKPT != 0xFFFF_FFFF, "collides with shutdown");
+// 2026-10-09: FA, the multi-sequence prefill, against every code above.
+const _: () = {
+    use crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS as P;
+    use metrale_model_layers::speculative as sp;
+    assert!(
+        P > 0xFFFF_FFEF,
+        "EP_CMD_PREFILL_SPANS would be a decode token id"
+    );
+    let others = [
+        0xFFFF_FFE0,
+        0xFFFF_FFF0,
+        0xFFFF_FFF1,
+        0xFFFF_FFF2,
+        0xFFFF_FFF3,
+        0xFFFF_FFF4,
+        sp::EP_CMD_MTP_PROPOSE,
+        sp::EP_CMD_VERIFY_KGAMMA,
+        0xFFFF_FFF7,
+        EP_CMD_DECODE_CKPT,
+        sp::EP_CMD_VERIFY_BATCH,
+        0xFFFF_FFFF,
+    ];
+    let mut i = 0;
+    while i < others.len() {
+        assert!(
+            P != others[i],
+            "EP_CMD_PREFILL_SPANS collides with another worker opcode"
+        );
+        i += 1;
+    }
+};
 
 /// 2026-09-25: Payload width of [`EP_CMD_DECODE_CKPT`], in u32 words.
 pub(in crate::model) const EP_CKPT_WORDS: usize = 6;

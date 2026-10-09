@@ -12,6 +12,8 @@ mod drafter;
 mod forward;
 mod multi_seq;
 pub use multi_seq::{GroupSpan, group_spans};
+mod prefill_spans;
+pub use prefill_spans::{SpanPiece, prefill_span_groups};
 mod replay;
 mod verify_multi;
 
@@ -129,40 +131,71 @@ impl Glm5NextLayer {
         Ok(())
     }
 
+    /// 2026-10-09: [`Self::reduce_partial`] once per piece of `row_pieces`, so each piece's
+    /// collective has the size its own pass gives it (NCCL may order an element's sum by the
+    /// message size); `[rows]` is one collective, as before.
+    fn reduce_pieces(
+        &self,
+        p: DevicePtr,
+        row_pieces: &[usize],
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let mut r0 = 0usize;
+        for &n in row_pieces {
+            self.reduce_partial(p.offset(r0 * self.hidden * 2), n, ctx, stream)?;
+            r0 += n;
+        }
+        Ok(())
+    }
+
     /// 2026-09-25: The MLP over `rows` rows of `normed` into `out`, then one all-reduce of all
-    /// rows when `Glm5NextMlpConfig::needs_all_reduce`.
+    /// rows when `Glm5NextMlpConfig::needs_all_reduce`. 2026-10-09: `row_pieces` splits the rows
+    /// into consecutive pieces (`[rows]`: one) whose launches must not depend on each other: a
+    /// dense site runs once per piece, a routed site launches its router and shared expert once
+    /// per piece (`forward_moe_pieces`) and shares the rest, and the all-reduce runs per piece
+    /// (`reduce_pieces`).
     fn mlp_forward(
         &self,
         normed: DevicePtr,
         out: DevicePtr,
         rows: usize,
+        row_pieces: &[usize],
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        crate::glm5next_mlp::forward::check_pieces(rows, row_pieces)?;
         let t_dense = matches!(self.mlp, Glm5NextMlpSite::Dense(_))
             .then(profile::start)
             .flatten();
         match &self.mlp {
-            Glm5NextMlpSite::Dense(w) => forward_dense_site(
+            Glm5NextMlpSite::Dense(w) => {
+                let mut r0 = 0usize;
+                for &n in row_pieces {
+                    forward_dense_site(
+                        ctx.gpu,
+                        &self.mlp_kernels,
+                        &self.mlp_cfg,
+                        w,
+                        self.mlp_cfg.local_dense_intermediate,
+                        normed.offset(r0 * self.hidden * 2),
+                        out.offset(r0 * self.hidden * 2),
+                        n,
+                        &self.mlp_ws,
+                        stream,
+                    )?;
+                    r0 += n;
+                }
+            }
+            Glm5NextMlpSite::Moe(w) => forward_moe_pieces(
                 ctx.gpu,
                 &self.mlp_kernels,
                 &self.mlp_cfg,
                 w,
-                self.mlp_cfg.local_dense_intermediate,
                 normed,
                 out,
                 rows,
-                &self.mlp_ws,
-                stream,
-            )?,
-            Glm5NextMlpSite::Moe(w) => forward_moe(
-                ctx.gpu,
-                &self.mlp_kernels,
-                &self.mlp_cfg,
-                w,
-                normed,
-                out,
-                rows,
+                row_pieces,
                 &self.mlp_ws,
                 // 2026-10-09: A capture cannot read the expert histogram back to the host.
                 ctx.graph_capture,
@@ -175,7 +208,7 @@ impl Glm5NextLayer {
         if self.mlp_cfg.needs_all_reduce() {
             self.reduce_probe(profile::REDUCE_MLP_BAR, "mlp", ctx, stream);
             let t = profile::start_hot();
-            self.reduce_partial(out, rows, ctx, stream)?;
+            self.reduce_pieces(out, row_pieces, ctx, stream)?;
             profile::end_nosync(profile::REDUCE_MLP_ENQ, t);
             // 2026-09-25: This span times only the `synchronize` in `profile::end`.
             let t = profile::start_hot();
@@ -250,7 +283,7 @@ impl Glm5NextLayer {
         self.add_inplace(gpu, hidden, attn_out, h, stream)?;
 
         self.norm(gpu, hidden, self.post_attn_norm, normed, 1, stream)?;
-        self.mlp_forward(normed, ffn_out, 1, ctx, stream)?;
+        self.mlp_forward(normed, ffn_out, 1, &[1], ctx, stream)?;
         self.add_inplace(gpu, hidden, ffn_out, h, stream)
     }
 

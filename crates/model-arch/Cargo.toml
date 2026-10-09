@@ -211,6 +211,10 @@ name = "glm5next_moe_wide_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_prefill_spans_mlp_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_moe_grouped_prefill_microtest"
 required-features = ["cuda", "gpu-examples"]
 

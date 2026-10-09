@@ -21,12 +21,14 @@ use super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 mod dense;
 mod launch;
 mod moe_experts;
+mod pieces;
 mod router;
 mod w4a4;
 mod workspace;
 
 pub use dense::{forward_dense, forward_dense_site};
-use launch::{gemm, swiglu};
+use launch::swiglu;
+pub(crate) use pieces::check_pieces;
 pub use w4a4::forward_dense_w4a4;
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 
@@ -305,6 +307,28 @@ pub fn forward_moe(
     capturing: bool,
     stream: u64,
 ) -> Result<()> {
+    forward_moe_pieces(gpu, k, cfg, w, x, out, rows, &[rows], ws, capturing, stream)
+}
+
+/// 2026-10-09: [`forward_moe`] with `row_pieces` splitting the `rows` rows into consecutive
+/// pieces: the router and the shared expert, whose arithmetic depends on the row count, run
+/// once per piece as a `forward_moe` of that piece's row count runs them (`pieces.rs`); the
+/// top-k, the routed experts and the combine run once over all rows. The multi-sequence
+/// prefill passes one piece per sequence; `forward_moe` passes `[rows]`.
+#[allow(clippy::too_many_arguments)]
+pub fn forward_moe_pieces(
+    gpu: &dyn GpuBackend,
+    k: &Glm5NextMlpKernels,
+    cfg: &Glm5NextMlpConfig,
+    w: &Glm5NextMoeWeights,
+    x: DevicePtr,
+    out: DevicePtr,
+    rows: usize,
+    row_pieces: &[usize],
+    ws: &Glm5NextMlpWorkspace,
+    capturing: bool,
+    stream: u64,
+) -> Result<()> {
     if rows == 0 || rows > ws.max_rows {
         bail!(
             "GLM MoE: {rows} rows do not fit a workspace built for {}",
@@ -319,6 +343,7 @@ pub fn forward_moe(
             cfg.num_experts
         );
     }
+    pieces::check_pieces(rows, row_pieces)?;
 
     use crate::glm5next_layer::profile;
 
@@ -358,17 +383,7 @@ pub fn forward_moe(
     }
 
     let t = profile::start();
-    router::router_logits(
-        gpu,
-        k,
-        cfg,
-        w.router,
-        x,
-        ws.logits,
-        rows,
-        crate::glm5next_layer::router_rows(),
-        stream,
-    )?;
+    pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
     // 2026-09-25: One top-k launch for all rows: `glm5next_router_topk` handles row `blockIdx.x`.
     KernelLaunch::new(gpu, k.router)
         .grid([rows as u32, 1, 1])
@@ -421,18 +436,7 @@ pub fn forward_moe(
     }
 
     let t = profile::start();
-    forward_dense(
-        gpu,
-        k,
-        cfg,
-        &w.shared,
-        cfg.local_shared_intermediate,
-        x,
-        ws.shared_out,
-        rows,
-        ws,
-        stream,
-    )?;
+    pieces::shared_expert(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
 
     // 2026-09-25: The shared expert joins the routed sum in the combine, before the caller's
     // all-reduce, so one collective reduces both partial sums.
