@@ -509,3 +509,147 @@ effort_hours = 0.2
 transferability = "multi-node hybrid MoE serving on gb10"
 links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
 notes = "matched tier: below the checkpoint's declared precision, disclosed; accuracy not yet gated"
+
+[[lever]]
+id = "gb10x3-glm53-lmhead-vocab-shard"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "vocab-parallel BF16 head (batched decode route + unaligned vocab split)"
+symptom = "5.8 ms full-vocab head on every rank at C1"
+diagnosis_tool = "nsys"
+root_cause_class = "redundant-work"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 9.9, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 6.5, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 3.9, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "tokenizer caps vocab to 154,856 (not 64-aligned) so the split returned None; fixed + sharded the batched head; head 5.8 -> 1.8 ms"
+failure_mode = "silent fallback to whole-vocab head"
+caught_by = "nsys"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dsa-decode-ilp"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "DSA MLA decode: 4 tokens in flight per warp + per-lane merge"
+symptom = "234 us per DSA decode launch, 22 CTAs, latency-bound"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "kernel"
+lkb_effect = "same kernel, restructured loop"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "234 -> 200 us per launch; greedy identical 8/8 at C1 and C4; end-to-end within noise"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-hc-finish-warp-sinkhorn"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "hc_finish Sinkhorn in one warp with warp barriers"
+symptom = "hc_finish 15.7 us x 90 per step"
+diagnosis_tool = "nsys"
+root_cause_class = "sync-overhead"
+lever_type = "kernel"
+lkb_effect = "same kernel, barrier scope"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0.9, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "greedy identical 8/8 at C1/C4; C1 23.3 -> 23.5"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.5
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-expert-tp-layout"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--moe-expert-layout tp (768/640/640 slices of every expert)"
+symptom = "post-MoE all-reduce waits 94.5 us vs 15 us (EP rank imbalance)"
+diagnosis_tool = "nsys"
+root_cause_class = "load-imbalance"
+lever_type = "code"
+lkb_effect = "existing MoE kernels at a narrower width"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 5.2, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 0.3, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = -6.5, j_tok_pct = 0.0, n = 1 }]
+verdict = "held"
+verdict_reason = "helps C1, hurts C16; 7-min boot (buffered reads); rank 0 holds 20% more expert width (128-col units)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dense-w4a16-tier"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--dense-quantization w4a16 (KDA + shared expert NVFP4 W4A16, disclosed, below declared) + 1-row GEMV"
+symptom = "FP8 dense GEMVs ~13.8 ms/step at ~225 GB/s"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-bound"
+lever_type = "code"
+lkb_effect = "existing NVFP4 kernels (w4a16_tc_rows, w4a16_gemv)"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 9.4, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = -0.6, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 1.1, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "vs fp8: C1 23.4 -> 25.6, C8 72.5 -> 72.1, C16 88.3 -> 89.3; row tile alone gave only C1 24.5 (44 CTAs), the GEMV at M=1 fixed it"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-lmhead-fp8"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--lm-head-dtype fp8"
+symptom = "head 1.8 ms/step"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-bound"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = -2.1, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 0.5, j_tok_pct = 0.0, n = 1 }]
+verdict = "discarded"
+verdict_reason = "the FP8 head is not vocab-sharded, so it reads 634 MB vs the sharded BF16 head's 423 MB"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.1
+transferability = "any TP serve with a vocab that is not a multiple of the split unit; GLM mHC/DSA kernels"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes (OSL 512, n = 1) and C1 nsys --cuda-graph-trace=node on rank 0" }
+notes = ""
