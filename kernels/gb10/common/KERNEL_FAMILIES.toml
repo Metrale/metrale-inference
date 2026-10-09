@@ -2162,6 +2162,38 @@ values = { kv_lora = "512", kv_dtype = "fp8" }
 how = "instantiation"
 files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu"]
 
+# 2026-10-09: glm_mla_decode's contract on tensor cores, head-batched: one CTA per (split, row,
+# group of 24 heads) stages each selected latent token once for all its heads (absorbed NoPE
+# MLA: every head reads the same tokens), scores them with an m16n8k16 bf16 MMA (FP8 is exact
+# in bf16),
+# and accumulates P V with P split into bf16 hi + lo; a merge kernel combines the splits. Opt-in
+# through METRALE_GLM_DSA_DECODE_HB (glm5next_dsa/attend.rs); it differs from glm_mla_decode in
+# summation order only.
+[[family]]
+id = "glm_mla_decode_hb"
+description = "GLM-5 sparse NoPE MLA decode, head-batched on tensor cores, split + merge (latent 512)"
+compute = "tensor_core"
+mma = "mma.sync.m16n8k16.bf16"
+kernels = [
+  "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_decode_hb_fp8",
+  "glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_merge",
+]
+rows = [1, 4096]
+pipeline.mla_attention = { in = ["bf16", "i32"], act = "bf16", weight = "bf16->bf16", cache = "fp8", scores = "f32", softmax = "f32", accumulate = "f32", out = ["bf16"] }
+op = [{ op = "mla_attention" }]
+[[family.param]]
+name = "kv_lora"
+kind = "compile"
+from = "dim:kv_lora"
+[[family.param]]
+name = "kv_dtype"
+kind = "policy"
+from = "setting:kv_cache_dtype"
+[[family.point]]
+values = { kv_lora = "512", kv_dtype = "fp8" }
+how = "instantiation"
+files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu"]
+
 # 2026-10-08: RMSNorm (plain weight) of the kv_a row, FP8-quantised into its paged slot, one token
 # per launch (glm5next_mla_latent_write.cu:1-14).
 [[family]]

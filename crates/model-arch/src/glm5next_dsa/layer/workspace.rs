@@ -13,6 +13,7 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::super::Glm5NextDsaConfig;
+use super::super::attend::{DsaSplitWorkspace, hb_splits_lever};
 use super::super::select::DsaSelectScratch;
 use super::super::state::Glm5NextDsaState;
 
@@ -101,6 +102,9 @@ pub struct Glm5NextDsaWorkspace {
     pub(super) pad_gate: DevicePtr,
     pub(super) pad_valid: DevicePtr,
     pad_rows: usize,
+    /// 2026-10-09: The head-batched decode's partials (`attend::DsaSplitWorkspace::alloc_for`),
+    /// `None` unless `METRALE_GLM_DSA_DECODE_HB` asks for two splits or more.
+    pub(super) split_ws: Option<DsaSplitWorkspace>,
 }
 
 impl Glm5NextDsaWorkspace {
@@ -187,6 +191,7 @@ impl Glm5NextDsaWorkspace {
                 p
             },
             pad_rows: cfg.index_kpool,
+            split_ws: DsaSplitWorkspace::alloc_for(gpu, cfg, hb_splits_lever()?, rows)?,
         })
     }
 
