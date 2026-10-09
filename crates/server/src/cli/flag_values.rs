@@ -18,7 +18,7 @@
 //! Owner: server CLI (`met serve`).
 //! Invariants: none beyond the types.
 
-use metrale_config::WeightQuantization;
+use metrale_config::{MoeExpertLayout, WeightQuantization};
 use metrale_model_layers::layers::{DenseQuantization, ExpertQuantization};
 
 /// 2026-09-26: What `--kv-high-precision-layers auto` resolves to. The flag's
@@ -211,6 +211,32 @@ impl clap::ValueEnum for DenseQuantizationArg {
     }
 }
 
+/// 2026-10-09: `--moe-expert-layout`: a clap value enum over the config crate's layouts
+/// (`metrale_config::MoeExpertLayout`), which own the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MoeExpertLayoutArg(pub MoeExpertLayout);
+
+impl clap::ValueEnum for MoeExpertLayoutArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [MoeExpertLayoutArg; 2] = [
+            MoeExpertLayoutArg(MoeExpertLayout::ALL[0]),
+            MoeExpertLayoutArg(MoeExpertLayout::ALL[1]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self.0 {
+            MoeExpertLayout::Ep => "each routed expert owned whole by one --ep-size rank",
+            MoeExpertLayout::Tp => {
+                "every routed expert's intermediate width split over the --tp-size ranks, all \
+                 slots local on every rank; needs --ep-size 1 (glm5_next only; unmeasured)"
+            }
+        };
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
 /// 2026-09-28: `--weight-quantization`: a clap value enum over the config crate's tiers
 /// (`metrale_config::WeightQuantization`), which own the names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,6 +300,12 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
             DenseQuantization::ALL
                 .iter()
                 .map(|q| q.name().to_string())
+                .collect(),
+        ),
+        "moe-expert-layout" => Some(
+            MoeExpertLayout::ALL
+                .iter()
+                .map(|l| l.name().to_string())
                 .collect(),
         ),
         "expert-quantization" => Some(

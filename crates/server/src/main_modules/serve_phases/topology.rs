@@ -75,10 +75,22 @@ pub(crate) fn resolve_topology(
     config.serve_max_seq_len = args.max_seq_len;
     config.ep_rank = ep_rank;
     config.ep_world_size = ep_size;
+    // 2026-10-09: `--moe-expert-layout`; `tp` is refused off its topology and for a loader
+    // that does not slice experts over TP.
+    config.moe_expert_layout = args.moe_expert_layout.0;
+    config.moe_expert_layout.check_topology(tp_size, ep_size)?;
     if tp_size > 1 {
         let loader = metrale_model_engine::factory::loader_for_config(config)?;
         let support = loader.tp_support();
+        let slices_experts = loader.slices_experts_over_tp();
         drop(loader);
+        if config.moe_expert_layout == metrale_config::MoeExpertLayout::Tp && !slices_experts {
+            anyhow::bail!(
+                "--moe-expert-layout tp is not supported by the {} weight loader: it does not \
+                 slice routed experts over TP. Use --moe-expert-layout ep.",
+                config.model_type,
+            );
+        }
         if support == metrale_config::TpSupport::Unsupported {
             anyhow::bail!(
                 "TP (--tp-size > 1) is not supported by the {} weight loader. \
@@ -114,6 +126,12 @@ pub(crate) fn resolve_topology(
             start,
             end,
         );
+        if config.moe_expert_layout == metrale_config::MoeExpertLayout::Tp {
+            tracing::info!(
+                "MoE expert layout tp: every routed expert's intermediate width is sliced over \
+                 the {tp_size} TP ranks; all experts are local on every rank"
+            );
+        }
     }
     Ok(Topology {
         world_size,

@@ -74,6 +74,7 @@ mod ws_sizing {
             router_bf16_ladder: false,
             tp_world_size: 2,
             ep_world_size: 2,
+            expert_shard: crate::glm5next_mlp::ExpertShard::Whole,
         }
     }
 

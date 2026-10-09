@@ -9,7 +9,8 @@
 //!   (`[hidden, inter]`) by column, over the same `TpSlice` of `inter`, so the dense output is
 //!   a partial sum.
 //! - EP: an expert is owned whole by one rank. In each pointer table, an id another rank owns
-//!   keeps a null `packed` pointer.
+//!   keeps a null `packed` pointer. 2026-10-09: Under the `tp` expert layout every id is local
+//!   (each a `moe_intermediate`-wide slice), so no entry is null.
 //! - The router weight and bias are loaded unsliced on every rank.
 
 use anyhow::{Result, bail};
@@ -27,6 +28,8 @@ use super::weights::{
 pub type LoadFn<'a> = &'a dyn Fn(&str) -> Result<Vec<f32>>;
 /// 2026-09-25: One routed expert's weights, by GLOBAL id. Experts are not sliced, so the
 /// loader's closure (`bind_expert`) can return NVFP4 pointers straight from the weight store.
+/// 2026-10-09: Under the `tp` expert layout the closure returns this rank's slice, uploaded by
+/// the loader (`glm5_next_load::expert_tp`), `moe_intermediate` wide.
 pub type ExpertFn<'a> = &'a dyn Fn(usize) -> Result<Glm5NextExpertWeights>;
 
 /// 2026-09-25: Rows `[start, end)` of a `[rows, row_elems]` row-major tensor, for a
