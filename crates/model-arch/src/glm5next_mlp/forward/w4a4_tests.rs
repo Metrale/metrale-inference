@@ -27,8 +27,8 @@ const MX8: u64 = 0x58;
 const MX16: u64 = 0x5A;
 const MX32: u64 = 0x5C;
 const SWIGLU: u64 = 0x5E;
-const UNION8: u64 = 0x60;
-const UNION16: u64 = 0x62;
+const SWEEP8: u64 = 0x60;
+const SWEEP16: u64 = 0x62;
 const ROW_UNION: u64 = 0x64;
 
 /// 2026-10-08: GLM-5.3-Flash at TP=3, EP=3, rank 0.
@@ -60,7 +60,7 @@ fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
     k.w4a4_moe_slots = KernelHandle(SLOTS);
     k.w4a4_mx = [KernelHandle(MX8), KernelHandle(MX16), KernelHandle(MX32)];
     k.swiglu = KernelHandle(SWIGLU);
-    k.w4a4_moe_union = [KernelHandle(UNION8), KernelHandle(UNION16)];
+    k.w4a4_moe_sweep = [KernelHandle(SWEEP8), KernelHandle(SWEEP16)];
     k.moe_row_union = KernelHandle(ROW_UNION);
     k
 }
@@ -244,17 +244,18 @@ fn one_routed_row_runs_the_slot_gemv() {
 }
 
 /// 2026-10-09: 3 and 12 rows build the experts' union once (one block of rows x top_k threads)
-/// and run every projection on the union GEMV (the 8-token entry up to 8 rows, the 16-token one
-/// above), one block row per union entry, reading the union tables; the quantizations are those
-/// of the slot path (rows, then rows x top_k slot products).
+/// and run the persistent union sweep (the 8-token entry up to 8 rows, the 16-token one above)
+/// on one CTA per SM: gate and up in one launch (two tables, two outputs), down in another (its
+/// table in both slots), each reading the union tables; the quantizations are those of the slot
+/// path (rows, then rows x top_k slot products).
 #[test]
 fn several_routed_rows_sweep_each_union_expert_once() {
-    for (rows, union) in [(3usize, UNION8), (12, UNION16)] {
+    for (rows, sweep) in [(3usize, SWEEP8), (12, SWEEP16)] {
         let (_gpu, l, ws) = run_experts(rows);
         let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
         assert_eq!(
             funcs,
-            vec![QUANT, ROW_UNION, union, union, SWIGLU, QUANT, union],
+            vec![QUANT, ROW_UNION, sweep, SWIGLU, QUANT, sweep],
             "{rows} rows"
         );
         let slots = (rows * 8) as u32;
@@ -263,20 +264,53 @@ fn several_routed_rows_sweep_each_union_expert_once() {
             (l[1].block[0], u32_arg(&l[1], 3), u32_arg(&l[1], 4)),
             (slots, rows as u32, 8)
         );
-        assert_eq!(l[5].grid[0], slots);
-        for (i, t, dst, n, kk, div) in [
-            (2, 0x1000, ws.a_gate, 2048, 4096, 8),
-            (3, 0x2000, ws.a_up, 2048, 4096, 8),
-            (6, 0x3000, ws.expert_out, 4096, 2048, 1),
+        assert_eq!(l[4].grid[0], slots);
+        // 2026-10-09: (launch, [table, output] per slot, nproj, N, K, act_div).
+        for (i, projs, nproj, n, kk, div) in [
+            (
+                2,
+                [(0x1000, ws.a_gate), (0x2000, ws.a_up)],
+                2,
+                2048,
+                4096,
+                8,
+            ),
+            (
+                5,
+                [(0x3000, ws.expert_out), (0x3000, ws.expert_out)],
+                1,
+                4096,
+                2048,
+                1,
+            ),
         ] {
+            assert_eq!(ptr_arg(&l[i], 0), ws.w4a4_aq, "launch {i}");
             assert_eq!(ptr_arg(&l[i], 3), ws.u_eid, "launch {i}");
             assert_eq!(ptr_arg(&l[i], 4), ws.u_slot, "launch {i}");
-            assert_eq!(ptr_arg(&l[i], 5), DevicePtr(t), "launch {i}");
-            assert_eq!(ptr_arg(&l[i], 7), DevicePtr(t + 2), "launch {i}");
-            assert_eq!(ptr_arg(&l[i], 8), dst, "launch {i}");
-            let args: Vec<u32> = (9..15).map(|a| u32_arg(&l[i], a)).collect();
-            assert_eq!(args, vec![n, kk, rows as u32, 8, div, 288], "launch {i}");
-            assert_eq!(l[i].grid, [n / 16, slots, 1], "launch {i}");
+            for (j, (t, dst)) in projs.into_iter().enumerate() {
+                let a = 5 + 4 * j;
+                assert_eq!(ptr_arg(&l[i], a), DevicePtr(t), "launch {i} table {j}");
+                assert_eq!(
+                    ptr_arg(&l[i], a + 1),
+                    DevicePtr(t + 1),
+                    "launch {i} table {j}"
+                );
+                assert_eq!(
+                    ptr_arg(&l[i], a + 2),
+                    DevicePtr(t + 2),
+                    "launch {i} table {j}"
+                );
+                assert_eq!(ptr_arg(&l[i], a + 3), dst, "launch {i} output {j}");
+            }
+            let args: Vec<u32> = (13..20).map(|a| u32_arg(&l[i], a)).collect();
+            assert_eq!(
+                args,
+                vec![nproj, n, kk, rows as u32, 8, div, 288],
+                "launch {i}"
+            );
+            // 2026-10-09: The mock reports GB10's 48 SMs.
+            assert_eq!(l[i].grid, [48, 1, 1], "launch {i}");
+            assert_eq!(l[i].block, [256, 1, 1], "launch {i}");
         }
     }
 }

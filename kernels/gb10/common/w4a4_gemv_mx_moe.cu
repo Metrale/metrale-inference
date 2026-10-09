@@ -16,7 +16,9 @@
 //   C row s, N wide. A slot whose expert is negative, out of range or remote writes nothing; the
 //   caller zeroes C first where that matters.
 // - w4a4_gemv_mx{8,16}_moe_union (2026-10-09): the same per (row, slot), with each expert of the
-//   rows' union swept once for all the rows that chose it (below).
+//   rows' union swept once for all the rows that chose it (below). Since 2026-10-09 the forward
+//   runs its persistent form w4a4_gemv_mx{8,16}_moe_union_sweep (gate and up in one launch); the
+//   grid form stays as the reference the model-arch example glm5next_moe_wide_bench compares to.
 //
 // Owner: gb10 kernels.
 // Invariants:
@@ -106,7 +108,7 @@ __device__ __forceinline__ void w4a4_moe_union(
     if (s_m == 0u) return;
     w4a4_gemv_mx_tok_impl<MB, 4>(Aq, As, Ag, (const unsigned char*)bq,
                                  (const unsigned char*)scale_ptrs[id], scale2_vals[id], C,
-                                 W4a4RowsTable{s_m, s_a, s_c}, N, K);
+                                 W4a4RowsTable{s_m, s_a, s_c}, N, K, blockIdx.x);
 }
 
 #define W4A4_UNION_ENTRY(NAME, MB)                                                         \
@@ -125,5 +127,155 @@ __device__ __forceinline__ void w4a4_moe_union(
 // 2026-10-09: Up to 8 and up to 16 rows (one or two 8-token MMA tiles).
 W4A4_UNION_ENTRY(w4a4_gemv_mx8_moe_union, 1)
 W4A4_UNION_ENTRY(w4a4_gemv_mx16_moe_union, 2)
+
+// 2026-10-09: The persistent form of w4a4_moe_union, for up to two projections that read the
+// same activations (gate and up). The grid is fixed (a few CTAs per SM, any count works), so a
+// CUDA graph replays it whatever the routing. Each CTA lists the union entries whose expert this
+// rank holds (u_eid in range, a non-null pointer in either projection's table) in union order, then
+// takes a contiguous share of the work items (projection p, live entry e, weight tile x), x
+// fastest, and runs each as w4a4_moe_union's block with blockIdx.x = x. The grid form spends a
+// CTA on every (tile, entry) pair, ~3 in 4 of them empty at 16 rows on one of three ranks, and
+// one launch per projection.
+// Every output element is computed by the same w4a4_gemv_mx_tok_impl call, so each token's
+// output is bit-identical to the grid form's (and so to the slot kernel's).
+// Launch: grid (CTAs, 1, 1), block 256; rows * top_k <= 256, rows <= 8 * MB and
+// num_experts <= 65536, else no CTA writes. A projection whose table holds a null pointer for a live entry's expert skips it, as
+// the grid form's CTA would. nproj 1 reads only the first table.
+// 2026-10-09: One CTA per SM (161 registers at mx16; two per SM caps it at 128 and spills) and
+// the L2 prefetch one item ahead. Measured at 16 rows against 2 per SM and 0 or 2 items ahead:
+// the model-arch example glm5next_moe_wide_bench. The host's grid is
+// glm5next_mlp::W4A4_SWEEP_CTAS_PER_SM per SM.
+#define W4A4_SWEEP_MIN_CTAS_PER_SM 1
+
+#define W4A4_SWEEP_PF 1
+
+// 2026-10-09: L2 prefetch of weight tile x (rows 16x .. 16x + 15) of one expert: its packed rows
+// and its scale rows are two contiguous ranges. Skipped for a null or unaligned base; the size
+// is rounded down to the 16 bytes the bulk prefetch moves in.
+__device__ __forceinline__ void w4a4_sweep_prefetch(const unsigned char* bq,
+                                                    const unsigned char* bs, unsigned int x,
+                                                    unsigned int N, unsigned int K)
+{
+    const unsigned int r0 = x * 16u, nr = min(16u, N - r0);
+    const unsigned char* q = bq + (unsigned long long)r0 * (K >> 1);
+    const unsigned char* sc = bs + (unsigned long long)r0 * (K >> 4);
+    const unsigned int qn = (nr * (K >> 1)) & ~15u, sn = (nr * (K >> 4)) & ~15u;
+    if (bq != nullptr && ((unsigned long long)q & 15ull) == 0ull && qn != 0u)
+        asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;" ::"l"(q), "r"(qn) : "memory");
+    if (bs != nullptr && ((unsigned long long)sc & 15ull) == 0ull && sn != 0u)
+        asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;" ::"l"(sc), "r"(sn) : "memory");
+}
+
+template <int MB, int PF>
+__device__ __forceinline__ void w4a4_moe_union_sweep(
+    const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,
+    const float* __restrict__ Ag, const int* __restrict__ u_eid, const int* __restrict__ u_slot,
+    const unsigned long long* __restrict__ packed0, const unsigned long long* __restrict__ scale0,
+    const float* __restrict__ s2_0, __nv_bfloat16* __restrict__ C0,
+    const unsigned long long* __restrict__ packed1, const unsigned long long* __restrict__ scale1,
+    const float* __restrict__ s2_1, __nv_bfloat16* __restrict__ C1, unsigned int nproj,
+    unsigned int N, unsigned int K, unsigned int rows, unsigned int top_k, unsigned int act_div,
+    unsigned int num_experts)
+{
+    const unsigned int T = rows * top_k;
+    // 2026-10-09: Block-uniform refusals before any barrier.
+    // s_live packs (entry << 16) | expert, so an expert id must fit 16 bits.
+    if (T > W4A4_WARPS * 32u || rows > 8u * MB || nproj == 0u || nproj > 2u ||
+        num_experts > 0x10000u)
+        return;
+    __shared__ int s_live[W4A4_WARPS * 32];
+    __shared__ unsigned int s_wcnt[W4A4_WARPS];
+    __shared__ int s_sl[8 * MB];
+    __shared__ unsigned int s_a[8 * MB], s_c[8 * MB], s_m;
+    const unsigned int tid = threadIdx.x, lane = tid & 31u, warp = tid >> 5;
+
+    int id = -1;
+    if (tid < T) {
+        id = u_eid[tid];
+        if (id < 0 || (unsigned int)id >= num_experts ||
+            (packed0[id] == 0ull && (nproj == 1u || packed1[id] == 0ull)))
+            id = -1;
+    }
+    const unsigned int bal = __ballot_sync(0xFFFFFFFFu, id >= 0);
+    if (lane == 0u) s_wcnt[warp] = (unsigned int)__popc(bal);
+    __syncthreads();
+    unsigned int before = 0u, count = 0u;
+    #pragma unroll
+    for (unsigned int w = 0; w < W4A4_WARPS; w++) {
+        before += w < warp ? s_wcnt[w] : 0u;
+        count += s_wcnt[w];
+    }
+    // 2026-10-09: s_live[e] = (union entry << 16) | expert of the e-th live entry.
+    if (id >= 0) s_live[before + (unsigned int)__popc(bal & ((1u << lane) - 1u))] = (int)((tid << 16) | (unsigned int)id);
+    __syncthreads();
+
+    // 2026-10-09: Work item w = (p * count + e) * tiles + x; this CTA takes [w0, w1).
+    const unsigned int tiles = (N + 15u) >> 4;
+    const unsigned int work = nproj * count * tiles;
+    const unsigned int w0 = (unsigned int)((unsigned long long)work * blockIdx.x / gridDim.x);
+    const unsigned int w1 = (unsigned int)((unsigned long long)work * (blockIdx.x + 1u) / gridDim.x);
+    unsigned int cur = 0xFFFFFFFFu;
+    for (unsigned int w = w0; w < w1; w++) {
+        const unsigned int x = w % tiles, pe = w / tiles;
+        const unsigned int p = pe / count;
+        const unsigned int ue = (unsigned int)s_live[pe % count];
+        const unsigned int u = ue >> 16, eid = ue & 0xFFFFu;
+        // 2026-10-09: While this item computes, pull the weight tile of the item PF
+        // ahead into L2 (a hint: it changes no value).
+        if (PF != 0 && tid == 0u && w + PF < w1) {
+            const unsigned int wn = w + PF, pn = wn / tiles;
+            const unsigned int en = (unsigned int)s_live[pn % count] & 0xFFFFu;
+            const bool first = pn / count == 0u;
+            w4a4_sweep_prefetch((const unsigned char*)(first ? packed0[en] : packed1[en]),
+                                (const unsigned char*)(first ? scale0[en] : scale1[en]),
+                                wn % tiles, N, K);
+        }
+        // 2026-10-09: The previous item's reduction and token tables are done with.
+        __syncthreads();
+        if (u != cur) {
+            if (tid < rows) s_sl[tid] = u_slot[u * rows + tid];
+            __syncthreads();
+            if (tid == 0u) {
+                unsigned int m = 0;
+                for (unsigned int r = 0; r < rows; r++) {
+                    const int sl = s_sl[r];
+                    if (sl < 0) continue;
+                    const unsigned int row_slot = r * top_k + (unsigned int)sl;
+                    s_a[m] = act_div == 1u ? row_slot : r;
+                    s_c[m] = row_slot;
+                    m++;
+                }
+                for (unsigned int j = m; j < 8u * MB; j++) { s_a[j] = 0u; s_c[j] = 0u; }
+                s_m = m;
+            }
+            __syncthreads();
+            cur = u;
+        }
+        const unsigned long long bq = p == 0u ? packed0[eid] : packed1[eid];
+        if (s_m == 0u || bq == 0ull) continue;
+        const unsigned long long bs = p == 0u ? scale0[eid] : scale1[eid];
+        const float s2 = p == 0u ? s2_0[eid] : s2_1[eid];
+        w4a4_gemv_mx_tok_impl<MB, 4>(Aq, As, Ag, (const unsigned char*)bq, (const unsigned char*)bs,
+                                     s2, p == 0u ? C0 : C1, W4a4RowsTable{s_m, s_a, s_c}, N, K, x);
+    }
+}
+
+#define W4A4_SWEEP_ENTRY(NAME, MB, PF, MINB)                                                            \
+    extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32, MINB) void NAME( \
+        const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,             \
+        const float* __restrict__ Ag, const int* __restrict__ u_eid,                            \
+        const int* __restrict__ u_slot, const unsigned long long* __restrict__ packed0,         \
+        const unsigned long long* __restrict__ scale0, const float* __restrict__ s2_0,          \
+        __nv_bfloat16* __restrict__ C0, const unsigned long long* __restrict__ packed1,         \
+        const unsigned long long* __restrict__ scale1, const float* __restrict__ s2_1,          \
+        __nv_bfloat16* __restrict__ C1, unsigned int nproj, unsigned int N, unsigned int K,     \
+        unsigned int rows, unsigned int top_k, unsigned int act_div, unsigned int num_experts) { \
+        w4a4_moe_union_sweep<MB, PF>(Aq, As, Ag, u_eid, u_slot, packed0, scale0, s2_0, C0, packed1,  \
+                                 scale1, s2_1, C1, nproj, N, K, rows, top_k, act_div,            \
+                                 num_experts);                                                   \
+    }
+
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM)
 
 #endif
