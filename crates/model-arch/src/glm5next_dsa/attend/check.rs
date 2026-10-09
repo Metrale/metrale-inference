@@ -10,7 +10,9 @@
 //!
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants:
-//! - Off (no extra launch, no host copy) unless the variable names a directory.
+//! - Off (no extra launch, no host copy) unless the variable names a directory. When on, it
+//!   logs once at the first call, once at the first captured (unchecked) launch, and one INFO
+//!   line per checked launch with its worst difference.
 //! - At most [`MAX_DUMPS`] cases are written per process.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,6 +31,45 @@ const MAX_DUMPS: usize = 8;
 static DUMPS: AtomicUsize = AtomicUsize::new(0);
 static CALLS: AtomicUsize = AtomicUsize::new(0);
 static BAD_CALLS: AtomicUsize = AtomicUsize::new(0);
+static SKIPPED: AtomicUsize = AtomicUsize::new(0);
+
+/// 2026-10-09: `METRALE_GLM_DSA_DECODE_HB_SERVE_REF=1` (diagnostic): after every head-batched
+/// launch, eager or captured, the per-head kernel runs on the same inputs and overwrites the
+/// output, so the serve keeps the head-batched launches, workspace and ordering but serves the
+/// per-head result. It separates "the head-batched output is wrong" from "something else the
+/// lever changes". Read once; any value but 1 or unset is an error.
+pub(super) fn serve_reference() -> Result<bool> {
+    static V: std::sync::OnceLock<Result<bool, String>> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        match std::env::var("METRALE_GLM_DSA_DECODE_HB_SERVE_REF")
+            .ok()
+            .as_deref()
+        {
+            None => Ok(false),
+            Some("1") => {
+                tracing::warn!(
+                    "METRALE_GLM_DSA_DECODE_HB_SERVE_REF=1: every head-batched DSA decode is \
+                     overwritten by the per-head kernel's output"
+                );
+                Ok(true)
+            }
+            Some(v) => Err(format!(
+                "METRALE_GLM_DSA_DECODE_HB_SERVE_REF={v:?}: expected 1"
+            )),
+        }
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-09: A launch inside a graph capture is not checked; the first one is logged.
+pub(super) fn note_captured_skip(rows: usize) {
+    if SKIPPED.fetch_add(1, Ordering::Relaxed) == 0 {
+        tracing::warn!(
+            "DSA HB check: launches inside a CUDA-graph capture are not checked (first: {rows} rows)"
+        );
+    }
+}
 
 /// 2026-10-09: The check directory, read once; `None` when unset.
 pub(super) fn check_dir() -> Result<Option<&'static str>> {
@@ -37,6 +78,12 @@ pub(super) fn check_dir() -> Result<Option<&'static str>> {
     if let Some(d) = v {
         std::fs::create_dir_all(d)
             .with_context(|| format!("METRALE_GLM_DSA_DECODE_HB_CHECK={d}"))?;
+        static ANNOUNCED: std::sync::Once = std::sync::Once::new();
+        ANNOUNCED.call_once(|| {
+            tracing::warn!(
+                "METRALE_GLM_DSA_DECODE_HB_CHECK={d}: checking eager head-batched launches"
+            )
+        });
     }
     Ok(v.as_deref())
 }
@@ -102,6 +149,14 @@ pub(super) fn against_per_head(
         }
     }
     let bad = worst.0.is_nan() || worst.0 > DUMP_REL;
+    tracing::info!(
+        "DSA HB check: call {calls}: {rows} rows x {heads} heads, worst row {} head {} at {:.5} \
+         of its scale (seq_len {})",
+        worst.1,
+        worst.2,
+        worst.0,
+        seq_lens[worst.1]
+    );
     if bad {
         let b = BAD_CALLS.fetch_add(1, Ordering::Relaxed) + 1;
         tracing::warn!(
