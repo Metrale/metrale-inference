@@ -16,7 +16,7 @@ use anyhow::Result;
 use metrale_model_layers::speculative::{kgamma_committed_len, kgamma_width};
 
 use super::super::types::TransformerModel;
-use crate::traits::{Model, SequenceState};
+use crate::traits::{ModelSsmState, ModelVerify, SequenceState};
 
 impl TransformerModel {
     /// 2026-10-08: Worker side of `EP_CMD_VERIFY_KGAMMA` on the addressed slot's sequence.
