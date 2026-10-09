@@ -115,6 +115,9 @@ pub struct AppState {
     /// 2026-09-26: `--disable-thinking`: `resolve_thinking` turns thinking off
     /// whatever the request or MODEL.toml asks (`api/chat/thinking.rs`).
     pub disable_thinking: bool,
+    /// 2026-10-08: `--uncapped-thinking`: `resolve_thinking` and the template-opened
+    /// block arm no budget of the server's own (`api/chat/thinking.rs`).
+    pub uncapped_thinking: bool,
     /// 2026-09-26: The thinking directive from `--default-chat-template-kwargs`,
     /// used when the request gives no explicit one (`api/chat/prepare.rs`).
     pub default_thinking: crate::ir::ThinkingDirective,

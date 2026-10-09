@@ -346,6 +346,7 @@ pub(crate) fn load_model(
         // the CLI overrides below.
         behavior: model_setup::resolve_behavior(&ptx_set, &args, &default_kwargs),
         disable_thinking: args.disable_thinking,
+        uncapped_thinking: args.chat_surface.uncapped_thinking,
         default_thinking: default_kwargs.thinking,
         default_reasoning_effort: default_kwargs.reasoning_effort,
         response_store,

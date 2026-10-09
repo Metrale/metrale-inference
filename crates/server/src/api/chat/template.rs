@@ -119,7 +119,7 @@ pub(super) fn render_template(
 
     // 2026-09-26: A think-start in the last 8 prompt tokens with no think-end after it
     // means the template forced thinking on; thinking is then enabled with the model's
-    // `max_thinking_budget`.
+    // `max_thinking_budget` (2026-10-08: with no budget under `--uncapped-thinking`).
     let (enable_thinking, thinking_budget) = if let Some(think_start) = state.think_start_token_id {
         let tail = &prompt_tokens[prompt_tokens.len().saturating_sub(8)..];
         let last_start = tail.iter().rposition(|t| *t == think_start);
@@ -129,12 +129,12 @@ pub(super) fn render_template(
             (None, _) => false,
         };
         if has_unclosed_think && !enable_thinking {
+            let budget = (!state.uncapped_thinking).then_some(state.behavior.max_thinking_budget);
             tracing::info!(
                 "Template-forced thinking detected (unclosed \\<think\\> in prompt tail) — \
-                 overriding enable_thinking=true with budget={}",
-                state.behavior.max_thinking_budget,
+                 overriding enable_thinking=true with budget={budget:?}",
             );
-            (true, Some(state.behavior.max_thinking_budget))
+            (true, budget)
         } else {
             (enable_thinking, thinking_budget)
         }
