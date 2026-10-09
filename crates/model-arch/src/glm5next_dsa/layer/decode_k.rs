@@ -46,6 +46,41 @@ impl Glm5NextDsaLayer {
         // it; see `batch_select_enabled`.
         is_prefill: bool,
     ) -> Result<()> {
+        self.decode_k_with(
+            hidden,
+            k,
+            state,
+            kv_cache,
+            seq_len,
+            block_table,
+            ctx,
+            stream,
+            is_prefill,
+            crate::glm5next_layer::dsa_indexer_rows(),
+        )
+    }
+
+    /// 2026-10-09: [`Self::decode_k`] with the batched indexer (`indexer_rows`, the
+    /// `METRALE_GLM_DSA_INDEXER_ROWS` lever) explicit. On a prefill sub-chunk that takes the
+    /// batched selector over a paged cache, it writes every row's latent in one launch, computes
+    /// the indexer key, gate, key norm and head weights of all rows in groups of at most
+    /// `DENSE_GEMV_BATCHM_MAX_M` rows, places them with one `dsa_indexer_store_rows`, and runs
+    /// the selector query in such groups too: one launch per stage instead of per row, each row
+    /// with the per-row path's bits. Otherwise the rows run as before.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_k_with(
+        &self,
+        hidden: DevicePtr,
+        k: usize,
+        state: &mut dyn LayerState,
+        kv_cache: &mut PagedKvCache,
+        seq_len: usize,
+        block_table: &mut Vec<u32>,
+        ctx: &ForwardContext,
+        stream: u64,
+        is_prefill: bool,
+        indexer_rows: bool,
+    ) -> Result<()> {
         let bt_block_size = kv_cache.block_size().max(1);
         let st = state
             .as_any_mut()
@@ -115,6 +150,22 @@ impl Glm5NextDsaLayer {
                 stream,
             )?),
         };
+        // 2026-10-09: `indexer_rows` on a batched-selector prefill over a paged cache: the
+        // latent writes, the indexer rows and their head weights for all rows before the loop
+        // (`stage_prefill_rows`); the loop then only plans each row's attend.
+        let staged = indexer_rows
+            && batch_select
+            && st.cache() == super::super::paged::IndexerCache::Paged
+            && self.select_kernels.rows.store.0 != 0;
+        if staged {
+            let (slot0, pos0, bt0, bt_rows) = match (meta, &host) {
+                (Some(m), _) => (m.slot, m.positions, m.block_table, m.max_blocks_per_seq),
+                (None, Some(h)) => (h.slot, h.q_pos, h.bt, 0),
+                (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
+            };
+            self.write_latent_rows(gpu, 0, k, kv_cache, slot0, stream)?;
+            self.stage_prefill_rows(gpu, hidden, k, st, kv_cache, pos0, bt0, bt_rows, stream)?;
+        }
         for row in 0..k {
             let pos = seq_len + row;
             let bt_stride = meta.map_or(0, |m| m.max_blocks_per_seq as usize) * 4;
@@ -123,7 +174,9 @@ impl Glm5NextDsaLayer {
                 (None, Some(h)) => h.slot.offset(row * 8),
                 (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
-            self.write_latent_rows(gpu, row, 1, kv_cache, slot_dev, stream)?;
+            if !staged {
+                self.write_latent_rows(gpu, row, 1, kv_cache, slot_dev, stream)?;
+            }
 
             use crate::glm5next_layer::profile;
             profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
@@ -146,14 +199,16 @@ impl Glm5NextDsaLayer {
                     block_table: block_table.as_slice(),
                 },
             };
-            self.indexer_forward(
-                gpu,
-                hidden.offset(row * self.cfg.hidden * 2),
-                st,
-                kv_cache,
-                place,
-                stream,
-            )?;
+            if !staged {
+                self.indexer_forward(
+                    gpu,
+                    hidden.offset(row * self.cfg.hidden * 2),
+                    st,
+                    kv_cache,
+                    place,
+                    stream,
+                )?;
+            }
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
 
             // 2026-09-25: The attend reads `bt`/`sl` after the row loop. On the host path the
@@ -190,7 +245,9 @@ impl Glm5NextDsaLayer {
             if replay_safe {
                 self.write_geom(gpu, d_sl, stream)?;
             }
-            if batch_select {
+            if batch_select && staged {
+                batch_q_pos.push(pos as i32);
+            } else if batch_select {
                 // 2026-09-25: `indexer_forward` left this row's head weights in the single-row
                 // slot; copy them to row `row` for the batched pass, which reads `weights[r*H]`.
                 gpu.copy_d2d_async(
@@ -220,7 +277,7 @@ impl Glm5NextDsaLayer {
         if batch_select && !batch_q_pos.is_empty() {
             // 2026-10-09: Every row is this one sequence, so row 0's block table serves all.
             let rows = self.indexer_rows(st, kv_cache, attend_bt)?;
-            self.select_rows_batched(gpu, k, st, rows, &batch_q_pos, stream)?;
+            self.select_rows_batched(gpu, k, st, rows, &batch_q_pos, indexer_rows, stream)?;
         }
 
         if let Some(paging) = attend_paging {

@@ -243,6 +243,10 @@ name = "glm5next_dsa_rows_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_kda_prefill_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_dsa_paged_parity"
 required-features = ["cuda", "gpu-examples"]
 

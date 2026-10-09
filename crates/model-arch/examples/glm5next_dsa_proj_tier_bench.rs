@@ -21,9 +21,11 @@
 //!   METRALE_TARGET_QUANT=nvfp4 cargo run -p metrale-model-arch --release \
 //!       --example glm5next_dsa_proj_tier_bench --features cuda,gpu-examples
 
-use std::io::{Read, Seek, SeekFrom};
+#[path = "common/glm_ckpt.rs"]
+mod glm_ckpt;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
+use glm_ckpt::tensor;
 use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -40,46 +42,6 @@ const SAMPLES: usize = 41;
 const PER_SAMPLE: usize = 5;
 /// 2026-10-09: Copies of each weight per tier, rotated per call.
 const COPIES: usize = 3;
-
-/// 2026-10-09: One BF16 tensor of the checkpoint as f32, read by its header offsets.
-fn tensor(dir: &str, name: &str) -> Result<(Vec<usize>, Vec<f32>)> {
-    let index: serde_json::Value = serde_json::from_slice(&std::fs::read(format!(
-        "{dir}/model.safetensors.index.json"
-    ))?)?;
-    let file = index["weight_map"][name]
-        .as_str()
-        .with_context(|| format!("{name} not in the index"))?;
-    let mut f = std::fs::File::open(format!("{dir}/{file}"))?;
-    let mut n = [0u8; 8];
-    f.read_exact(&mut n)?;
-    let hn = u64::from_le_bytes(n);
-    let mut hdr = vec![0u8; hn as usize];
-    f.read_exact(&mut hdr)?;
-    let hdr: serde_json::Value = serde_json::from_slice(&hdr)?;
-    let t = &hdr[name];
-    if t["dtype"] != "BF16" {
-        bail!("{name}: {} not BF16", t["dtype"]);
-    }
-    let shape: Vec<usize> = t["shape"]
-        .as_array()
-        .context("shape")?
-        .iter()
-        .map(|v| v.as_u64().unwrap_or(0) as usize)
-        .collect();
-    let (a, b) = (
-        t["data_offsets"][0].as_u64().context("off")?,
-        t["data_offsets"][1].as_u64().context("off")?,
-    );
-    f.seek(SeekFrom::Start(8 + hn + a))?;
-    let mut raw = vec![0u8; (b - a) as usize];
-    f.read_exact(&mut raw)?;
-    Ok((
-        shape,
-        raw.chunks(2)
-            .map(|c| bf16::from_le_bytes([c[0], c[1]]).to_f32())
-            .collect(),
-    ))
-}
 
 fn up_bf16(g: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
     let b: Vec<u8> = v

@@ -125,6 +125,16 @@ pub(crate) fn layer(
     cfg: &Glm5NextDsaConfig,
     rng: &mut Lcg,
 ) -> Result<Glm5NextDsaLayer> {
+    layer_rows(gpu, cfg, rng, 16)
+}
+
+/// 2026-10-09: [`layer`] with a workspace of `rows` rows (a prefill sub-chunk's width).
+pub(crate) fn layer_rows(
+    gpu: &dyn GpuBackend,
+    cfg: &Glm5NextDsaConfig,
+    rng: &mut Lcg,
+    rows: usize,
+) -> Result<Glm5NextDsaLayer> {
     let (h, ql, kvl, d, lh) = (
         cfg.hidden,
         cfg.q_lora_rank,
@@ -158,7 +168,7 @@ pub(crate) fn layer(
         kernels: Glm5NextDsaLayerKernels::resolve(gpu)?,
         select_kernels: Glm5NextDsaKernels::resolve(gpu)?,
         decode_kernel: Glm5NextDsaDecodeKernel::resolve(gpu)?,
-        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, 16)?,
+        workspace: Glm5NextDsaWorkspace::new(gpu, cfg, rows)?,
         layer_idx: 1,
         attn_layer_idx: 0,
         rms_eps: 1e-6,

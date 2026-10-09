@@ -90,6 +90,10 @@ impl Glm5NextDsaLayer {
         state: &Glm5NextDsaState,
         rows: IndexerRowsDev,
         q_pos_host: &[i32],
+        // 2026-10-09: The selector query of all rows in groups of the batched FP32-out GEMV
+        // (`f32_proj_rows`, each row the M = 1 GEMV's bits) instead of one GEMV per row
+        // (`METRALE_GLM_DSA_INDEXER_ROWS`).
+        batched_query: bool,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -112,13 +116,25 @@ impl Glm5NextDsaLayer {
                 self.cfg.q_lora_rank as u32,
                 stream,
             )?;
+        } else if batched_query {
+            self.f32_proj_rows(
+                gpu,
+                w.q_resid,
+                self.weights.wq_b,
+                w.q_idx_rows,
+                k,
+                idx_row,
+                self.cfg.q_lora_rank,
+                stream,
+            )?;
         } else {
             for row in 0..k {
                 gemm(
                     gpu,
                     self.kernels.gemm_f32,
                     self.kernels.gemv_f32,
-                    // 2026-09-25: No FP32-out batched GEMV kernel exists.
+                    // 2026-09-25: M = 1 per row (2026-10-09: `batched_query` takes the batched
+                    // FP32-out GEMV above).
                     KernelHandle(0),
                     w.q_resid.offset(row * self.cfg.q_lora_rank * 2),
                     self.weights.wq_b,

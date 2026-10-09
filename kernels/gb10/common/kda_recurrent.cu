@@ -328,6 +328,7 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem_rows(
 // dynamic shared memory; D must equal KDA_REG_D and the state and row arguments are as for
 // _rows.
 #define KDA_REG_D 128
+
 extern "C" __global__ void kda_recurrent_decode_bf16_rows_reg(
     const __nv_bfloat16* __restrict__ q,
     const __nv_bfloat16* __restrict__ k,
@@ -400,4 +401,99 @@ extern "C" __global__ void kda_recurrent_decode_bf16_rows_reg(
         o += s * sh_q[kk];
     }
     out[hd + vi] = o;
+}
+
+// 2026-10-09: One token of the register-resident step on one v column: `col` holds the column
+// S[:, vi] on entry and the updated column on exit; the staged decay, k and scaled q are the
+// token's. The expressions and their order are kda_recurrent_decode_bf16_smem_body's pass one and
+// pass two, with the column read from and written to registers instead of S in memory.
+// _rows_reg keeps its own copy with the state loads and stores inside the two passes: built
+// on this helper (load, step, store) it needed 255 registers and spilled.
+__device__ __forceinline__ float kda_reg_token(
+    float (&col)[KDA_REG_D],
+    const float* __restrict__ sh_decay,
+    const float* __restrict__ sh_k,
+    const float* __restrict__ sh_q,
+    float v,
+    float b
+) {
+    float kv = 0.0f;
+    #pragma unroll
+    for (unsigned int kk = 0; kk < KDA_REG_D; ++kk) {
+        const float s = col[kk] * sh_decay[kk];
+        col[kk] = s;
+        kv += s * sh_k[kk];
+    }
+    const float delta = (v - kv) * b;
+    float o = 0.0f;
+    #pragma unroll
+    for (unsigned int kk = 0; kk < KDA_REG_D; ++kk) {
+        const float s = col[kk] + sh_k[kk] * delta;
+        col[kk] = s;
+        o += s * sh_q[kk];
+    }
+    return o;
+}
+
+// 2026-10-09: T consecutive tokens of ONE sequence in one launch, the state column kept in
+// registers between tokens: grid (H, KDA_REG_D / VB), block VB (VB divides KDA_REG_D; one
+// thread per v column), 3 * KDA_REG_D floats of dynamic shared memory. Token t reads q/k/v at
+// t * qkv_row_stride elements past the bases, gate at t * gate_row_stride, beta at
+// t * beta_row_stride, and writes out at t * out_row_stride. Per (h, vi, t) the arithmetic is
+// the per-token kernels' (kda_reg_token; the staging below is _rows_reg's), on the column the
+// previous token left, so every output and the final state equal T per-token launches. The
+// state is read once before token 0 and written once after token T - 1.
+extern "C" __global__ void kda_recurrent_decode_bf16_seq_reg(
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ state,
+    float* __restrict__ out,
+    unsigned int H,
+    float scale,
+    unsigned int T,
+    unsigned int qkv_row_stride,
+    unsigned int gate_row_stride,
+    unsigned int beta_row_stride,
+    unsigned int out_row_stride
+) {
+    constexpr unsigned int D = KDA_REG_D;
+    const unsigned int h = blockIdx.x;
+    if (h >= H) return;
+    extern __shared__ float sh_seq[];
+    float* sh_decay = sh_seq;
+    float* sh_k = sh_seq + D;
+    float* sh_q = sh_seq + 2u * D;
+    const size_t hd = (size_t)h * D;
+    const unsigned int vi = blockIdx.y * blockDim.x + threadIdx.x;
+    const bool live = vi < D;
+    float* S = state + hd * D;
+
+    float col[D];
+    if (live) {
+        #pragma unroll
+        for (unsigned int kk = 0; kk < D; ++kk) col[kk] = S[(size_t)kk * D + vi];
+    }
+    for (unsigned int t = 0; t < T; ++t) {
+        const size_t qo = (size_t)t * qkv_row_stride + hd;
+        const size_t go = (size_t)t * gate_row_stride + hd;
+        __syncthreads();
+        for (unsigned int i = threadIdx.x; i < D; i += blockDim.x) {
+            sh_decay[i] = expf(gate[go + i]);
+            sh_k[i] = __bfloat162float(k[qo + i]);
+            sh_q[i] = __bfloat162float(q[qo + i]) * scale;
+        }
+        __syncthreads();
+        if (live) {
+            const float b = beta[(size_t)t * beta_row_stride + h];
+            out[(size_t)t * out_row_stride + hd + vi] =
+                kda_reg_token(col, sh_decay, sh_k, sh_q, __bfloat162float(v[qo + vi]), b);
+        }
+    }
+    if (live) {
+        #pragma unroll
+        for (unsigned int kk = 0; kk < D; ++kk) S[(size_t)kk * D + vi] = col[kk];
+    }
 }

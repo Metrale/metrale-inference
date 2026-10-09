@@ -78,8 +78,10 @@ pub(crate) fn router_rows() -> bool {
 /// projections and the key norm of a batched decode or verify group once over all its rows
 /// (`Glm5NextDsaLayer::indexer_project_rows`) instead of once per row; each row is then placed
 /// from its staging row. On a captured decode the paged rows also store and select in one
-/// launch per stage (`select_paged_rows`) instead of seven launches per row. Each row keeps its
-/// bits. Off until measured end to end. Read once.
+/// launch per stage (`select_paged_rows`) instead of seven launches per row; a paged prefill
+/// sub-chunk writes its latents, places its indexer rows and computes its head weights and
+/// selector query once per group of up to 16 rows (`Glm5NextDsaLayer::decode_k_with`). Each
+/// row keeps its bits. Off until measured end to end. Read once.
 pub(crate) fn dsa_indexer_rows() -> bool {
     static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() == Ok("1"))

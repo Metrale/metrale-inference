@@ -2378,9 +2378,9 @@ layer_kind = "linear_attention"
 per_sequence = ["verify"]
 sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2", "kda.recur"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:315"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:353"
 holds = "for row in 0..k {"
-note = "KDA verify: conv and recurrence one row per launch (stateful_row)"
+note = "KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS"
 
 [[legacy_path]]
 arch = "glm5_next"
@@ -2388,6 +2388,6 @@ layer_kind = "deepseek_sparse_attention"
 per_sequence = ["verify"]
 sites = ["dsa.kv_norm", "dsa.kv_write", "dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.idx_w", "dsa.idx_q", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:118"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:169"
 holds = "for row in 0..k {"
 note = "DSA verify: latent write, indexer projections, store and selection one row per launch"
