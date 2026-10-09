@@ -123,16 +123,19 @@ fn burst_beside_decode_runs_as_waves_not_serial_prefills() {
         assert_eq!(inline_chunk0(&on), 0, "spec={spec}: no inline chunk 0");
         let tick = burst_tick(&on);
         let waves = batch_calls(&tick);
-        assert_eq!(waves.len(), 3, "spec={spec}: three waves: {waves:?}");
+        assert_eq!(
+            waves.len(),
+            1,
+            "spec={spec}: one wave on the burst tick: {waves:?}"
+        );
         assert!(
             waves[0].contains("s2@") && waves[0].contains("s3@"),
             "spec={spec}: s2 and s3 share the first wave: {}",
             waves[0]
         );
-        assert!(waves[1].contains("s4@") && waves[2].contains("s5@"));
-        // 2026-10-09: The decode still runs on that tick, after the waves, and
-        // no mixed step replaced it.
-        let last_wave = tick.iter().position(|l| l == waves[2]).expect("wave");
+        // 2026-10-09: The decode still runs on that tick, after the wave, and no mixed step
+        // replaced it.
+        let wave_at = tick.iter().position(|l| l == waves[0]).expect("wave");
         // 2026-10-09: `decode(` is a new sequence's MTP bootstrap; `decode_verify` the
         // speculative step of the sequence that was already decoding.
         let decode = tick.iter().rposition(|l| {
@@ -141,8 +144,8 @@ fn burst_beside_decode_runs_as_waves_not_serial_prefills() {
                 || l.starts_with("decode(")
         });
         assert!(
-            decode.is_some_and(|d| d > last_wave),
-            "spec={spec}: a decode follows the waves: {tick:#?}"
+            decode.is_some_and(|d| d > wave_at),
+            "spec={spec}: a decode follows the wave: {tick:#?}"
         );
         assert!(!tick.iter().any(|l| l.starts_with("mixed_forward")));
         if spec {
@@ -151,6 +154,18 @@ fn burst_beside_decode_runs_as_waves_not_serial_prefills() {
                 "the decoding sequence kept its speculative step on the burst tick"
             );
         }
+        // 2026-10-09: The next wave (s4) is a batched forward of a later tick, not an inline
+        // chunk 0.
+        let later = on
+            .iter()
+            .skip_while(|l| *l != waves[0])
+            .skip(1)
+            .find(|l| l.starts_with("prefill_batch_chunk(") || l.starts_with("prefill_chunk("))
+            .expect("the remaining streams prefill later");
+        assert!(
+            later.starts_with("prefill_batch_chunk(") && later.contains("s4@"),
+            "spec={spec}: the second wave: {later}"
+        );
         // 2026-10-09: The fake answers from per-request scripts, so what each
         // client receives does not depend on the path.
         assert_eq!(outputs(&on), outputs(&off), "spec={spec}");

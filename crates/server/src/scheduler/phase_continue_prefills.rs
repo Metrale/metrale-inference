@@ -180,7 +180,7 @@ pub(super) fn continue_in_progress_prefills(
         && !model.is_ep();
     // 2026-10-09: `--prefill-varlen-with-decode`: the same waves while
     // sequences decode, as forwards of their own ahead of this tick's decode
-    // lane (no mixed step, so the decode keeps its speculative step). It wins
+    // lane (no mixed step, so the decode keeps its speculative step), one wave per tick. It wins
     // over the batched mixed step below, whose default `mixed_forward_batch`
     // is a plain decode and these waves run back to back anyway.
     let can_batch_beside_decode = sched.levers.prefill_varlen
@@ -225,6 +225,13 @@ pub(super) fn continue_in_progress_prefills(
             prefill_event,
             think_end_token,
             tool_call_start_token,
+            // 2026-10-09: Beside a decode, one wave per tick, so the decode runs between waves
+            // and each wave's sequences start decoding as soon as it lands.
+            if can_batch_beside_decode {
+                1
+            } else {
+                usize::MAX
+            },
         );
         promote_completed_prefills(
             model,
