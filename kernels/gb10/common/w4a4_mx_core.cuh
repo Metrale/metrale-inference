@@ -33,6 +33,8 @@ __device__ __forceinline__ void w4a4_mma(float (&d)[4], uint32_t a0, uint32_t a1
 // a(tok) (its Aq, As and Ag row) and writes output row c(tok). W4a4RowsIdentity is the one-tile
 // GEMV's contiguous [M] rows; w4a4_gemv_mx_moe.cu maps a routed expert's tokens through
 // shared-memory tables.
+// 2026-10-09: The weight tile is rows 16 * n_tile .. 16 * n_tile + 15 (the one-tile entries pass
+// blockIdx.x; the persistent union sweep walks its tiles).
 struct W4a4RowsIdentity {
     unsigned int m;
     __device__ __forceinline__ unsigned int a(unsigned int tok) const { return tok; }
@@ -48,7 +50,7 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
     const unsigned char* __restrict__ Bs,
     const float scale2,
     __nv_bfloat16* __restrict__ C,
-    const Rows rows, unsigned int N, unsigned int K)
+    const Rows rows, unsigned int N, unsigned int K, unsigned int n_tile)
 {
     const unsigned int M = rows.m;
     const unsigned int warp = threadIdx.x >> 5;
@@ -56,7 +58,7 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
     const unsigned int g = lane >> 2;
     const unsigned int t = lane & 3u;
     const bool odd = (t & 1u) != 0u;
-    const unsigned int n0 = blockIdx.x * 16u;
+    const unsigned int n0 = n_tile * 16u;
     const unsigned int half_K = K >> 1;
     const unsigned int groups = K >> 4;
     const unsigned int num_c = K >> 7;
@@ -171,7 +173,8 @@ __device__ __forceinline__ void w4a4_gemv_mx_impl(
     __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K)
 {
-    w4a4_gemv_mx_tok_impl<MB, KU>(Aq, As, Ag, Bq, Bs, scale2, C, W4a4RowsIdentity{M}, N, K);
+    w4a4_gemv_mx_tok_impl<MB, KU>(Aq, As, Ag, Bq, Bs, scale2, C, W4a4RowsIdentity{M}, N, K,
+                                  blockIdx.x);
 }
 
 // 2026-09-25: E2M1 code of x, rounded to nearest with ties to even and saturated at 6.
