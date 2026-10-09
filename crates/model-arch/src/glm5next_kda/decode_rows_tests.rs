@@ -21,6 +21,7 @@ const CONV: u64 = 0x306;
 const RECUR: u64 = 0x30B;
 const RECUR_SMEM: u64 = 0x30C;
 const RECUR_ROWS: u64 = 0x313;
+const CONV_ROWS: u64 = 0x316;
 
 fn cfg() -> Glm5NextKdaConfig {
     Glm5NextKdaConfig {
@@ -61,6 +62,7 @@ fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         gemv_batchm: k(BATCHM),
         gemv_batchm_wide: k(0x314),
         conv_decode: k(CONV),
+        conv_decode_rows: k(CONV_ROWS),
         conv_prefill: k(0x307),
         l2: k(0x308),
         gate: k(0x309),
@@ -117,20 +119,30 @@ fn each_row_steps_only_its_own_sequence_state() {
     let from = gpu.launch_count();
     l.decode_rows(&gpu, hidden, &states, &ws, 7).unwrap();
     let launches = since(&gpu, from);
-    let cd = cfg().conv_dim();
 
-    let conv: Vec<_> = launches.iter().filter(|x| x.func == CONV).collect();
-    assert_eq!(conv.len(), 3);
-    for (r, c) in conv.iter().enumerate() {
+    let u64a = |v: u64| MockArg::Bytes(v.to_le_bytes().to_vec());
+    let u32a = |v: u32| MockArg::Bytes(v.to_le_bytes().to_vec());
+    // 2026-10-09: One conv launch for the three rows: grid y is the row; the window arguments
+    // are the rows' conv states in order, then zeros; the row arguments 0, 1, 2, then zeros.
+    assert!(
+        launches.iter().all(|x| x.func != CONV),
+        "no per-row conv launch"
+    );
+    let conv: Vec<_> = launches.iter().filter(|x| x.func == CONV_ROWS).collect();
+    assert_eq!(conv.len(), 1);
+    assert_eq!(conv[0].grid[1], 3);
+    for r in 0..KDA_ROWS_MAX {
+        let want = states.get(r).map_or(0, |s| s.conv.0);
+        assert_eq!(conv[0].args[9 + r], u64a(want), "conv state argument {r}");
+        let row = if r < 3 { r as u32 } else { 0 };
         assert_eq!(
-            c.args[0],
-            MockArg::Buffer(states[r].conv),
-            "row {r}'s conv state"
+            conv[0].args[9 + KDA_ROWS_MAX + r],
+            u32a(row),
+            "conv row {r}"
         );
-        assert_eq!(c.args[1], MockArg::Buffer(ws.qkv_proj.offset(r * cd * 2)));
     }
     // 2026-10-09: One recurrent launch for the three rows: grid z is the row, and the state
-    // arguments are the rows' states in order, then zeros.
+    // arguments are the rows' states in order, then zeros, then the rows.
     assert!(
         recurrent_launches(&launches).is_empty(),
         "no per-row recurrent launch"
@@ -138,15 +150,11 @@ fn each_row_steps_only_its_own_sequence_state() {
     let rows: Vec<_> = launches.iter().filter(|x| x.func == RECUR_ROWS).collect();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].grid[2], 3);
-    let ptrs = &rows[0].args[14..];
-    assert_eq!(ptrs.len(), KDA_ROWS_MAX);
-    for (r, a) in ptrs.iter().enumerate() {
+    for r in 0..KDA_ROWS_MAX {
         let want = states.get(r).map_or(0, |s| s.recurrent.0);
-        assert_eq!(
-            *a,
-            MockArg::Bytes(want.to_le_bytes().to_vec()),
-            "state argument {r}"
-        );
+        assert_eq!(rows[0].args[14 + r], u64a(want), "state argument {r}");
+        let row = if r < 3 { r as u32 } else { 0 };
+        assert_eq!(rows[0].args[14 + KDA_ROWS_MAX + r], u32a(row), "row {r}");
     }
     // 2026-10-09: The row strides: q/k/v by `conv_dim`, gate and out by `qkv`, beta by heads.
     let u = |v: usize| MockArg::Bytes((v as u32).to_le_bytes().to_vec());
@@ -218,6 +226,80 @@ fn row_counts_outside_the_workspace_are_refused_before_any_launch() {
     assert!(l.decode_rows(&gpu, hidden, &[], &ws, 7).is_err());
     assert!(l.decode_rows(&gpu, hidden, &[st; 17], &ws, 7).is_err());
     assert_eq!(gpu.launch_count(), from);
-    l.decode_rows(&gpu, hidden, &[st; 16], &ws, 7).unwrap();
+    // 2026-10-09: Sixteen distinct sequences: a rows launch refuses two rows on one state.
+    let distinct: Vec<KdaSeqState> = (0..16).map(|_| seq_state(&gpu)).collect();
+    l.decode_rows(&gpu, hidden, &distinct, &ws, 7).unwrap();
     assert!(gpu.launch_count() > from, "16 rows fit a 16-row workspace");
+}
+
+/// 2026-10-09: A verify of sequences with 3, 1 and 2 rows steps row 0 of all three, then row 1
+/// of the first and third, then row 2 of the first: each launch holds one row per sequence, a
+/// sequence's rows in order, and `after_row` runs for a launch's rows before the next launch.
+#[test]
+fn verify_rows_step_t_major_one_row_per_sequence_per_launch() {
+    let gpu = MockGpuBackend::new();
+    let l = layer(&gpu);
+    let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
+    let s: Vec<KdaSeqState> = (0..3).map(|_| seq_state(&gpu)).collect();
+    let hidden = gpu.alloc(6 * 256 * 2).unwrap();
+    let from = gpu.launch_count();
+    let mut after = Vec::new();
+    let seqs = [(s[0], 3usize), (s[1], 1), (s[2], 2)];
+    l.decode_seq_rows(&gpu, hidden, &seqs, &ws, 7, |row| {
+        after.push((row, gpu.launch_count()));
+        Ok(())
+    })
+    .unwrap();
+    let launches = since(&gpu, from);
+    let rows: Vec<_> = launches.iter().filter(|x| x.func == RECUR_ROWS).collect();
+    let u32a = |v: u32| MockArg::Bytes(v.to_le_bytes().to_vec());
+    let u64a = |v: u64| MockArg::Bytes(v.to_le_bytes().to_vec());
+    let want: [&[(usize, usize)]; 3] = [&[(0, 0), (3, 1), (4, 2)], &[(1, 0), (5, 2)], &[(2, 0)]];
+    assert_eq!(rows.len(), 3);
+    for (launch, w) in rows.iter().zip(want) {
+        assert_eq!(launch.grid[2] as usize, w.len());
+        for (z, &(row, seq)) in w.iter().enumerate() {
+            assert_eq!(launch.args[14 + z], u64a(s[seq].recurrent.0));
+            assert_eq!(launch.args[14 + KDA_ROWS_MAX + z], u32a(row as u32));
+        }
+    }
+    let order: Vec<usize> = after.iter().map(|&(r, _)| r).collect();
+    assert_eq!(order, vec![0, 3, 4, 1, 5, 2], "after_row in launch order");
+    // 2026-10-09: Each after_row sees its launch done and the next not yet issued.
+    let recur_at: Vec<usize> = gpu
+        .launches_snapshot()
+        .iter()
+        .enumerate()
+        .filter(|(_, x)| x.func == RECUR_ROWS)
+        .map(|(i, _)| i + 1)
+        .collect();
+    for (k, &(_, at)) in after.iter().enumerate() {
+        let launch = if k < 3 {
+            0
+        } else if k < 5 {
+            1
+        } else {
+            2
+        };
+        assert!(at >= recur_at[launch], "after_row {k} before its launch");
+        if launch < 2 {
+            assert!(
+                at < recur_at[launch + 1],
+                "after_row {k} after the next launch"
+            );
+        }
+    }
+}
+
+/// 2026-10-09: Twenty one-row sequences take two launches, 16 rows then 4.
+#[test]
+fn rows_launches_hold_at_most_sixteen_rows() {
+    let gpu = MockGpuBackend::new();
+    let st: Vec<(KdaSeqState, usize)> = (0..20).map(|_| (seq_state(&gpu), 1)).collect();
+    let launches = super::rows::t_major_launches(&st);
+    assert_eq!(
+        launches.iter().map(Vec::len).collect::<Vec<_>>(),
+        vec![16, 4]
+    );
+    assert_eq!(launches[1][0].row, 16);
 }

@@ -65,7 +65,7 @@ impl Glm5NextKdaLayer {
 
     /// 2026-10-09: The conv window update (SiLU and L2 fused) of the row buffers `io` on `state.conv`, the
     /// first half of [`Self::stateful_row`].
-    fn conv_row(
+    pub(super) fn conv_row(
         &self,
         gpu: &dyn GpuBackend,
         io: RowIo,
@@ -93,7 +93,7 @@ impl Glm5NextKdaLayer {
     /// 2026-10-09: The 1R+1W kernel's launch geometry for this config, `(vpb, shared bytes)`,
     /// or `None` when the 2R+2W kernel runs instead (no 1R+1W kernel, a `head_dim` the slice
     /// does not divide, a request over `KDA_SMEM_BUDGET`, or `METRALE_GLM_KDA_NO_SMEM=1`).
-    fn smem_geometry(&self) -> Option<(usize, usize)> {
+    pub(super) fn smem_geometry(&self) -> Option<(usize, usize)> {
         let d = self.cfg.head_dim;
         let vpb = KDA_V_PER_BLOCK.min(d);
         let smem = (3 * d + vpb * (d + 1)) * 4;
@@ -247,34 +247,10 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
-        let n = states.len();
-        // 2026-10-09: Above `KDA_ROWS_MAX` rows the recurrence runs in launches of that many.
-        let batched =
-            n >= 2 && self.kernels.recurrent_smem_rows.0 != 0 && self.smem_geometry().is_some();
-        if !batched {
-            return self.decode_rows_then(gpu, hidden, states, ws, stream, |_| Ok(()));
-        }
-        // 2026-10-09: Every row's conv first, then one recurrent launch for all rows. Row
-        // `r`'s recurrence reads only row `r`'s conv output and state, so the order across
-        // rows does not change a row's bits, and block (h, v-slice, r) of the rows kernel is
-        // the single-row kernel's block (h, v-slice) on row `r`. This needs distinct states:
-        // the verify's rows of one sequence go through `decode_rows_then`.
-        self.rows_with(
-            gpu,
-            hidden,
-            n,
-            ws,
-            stream,
-            |row| {
-                self.conv_row(
-                    gpu,
-                    RowIo::workspace(&self.cfg, ws, row),
-                    &states[row],
-                    stream,
-                )
-            },
-            || self.recurrent_rows(gpu, states, ws, stream),
-        )
+        // 2026-10-09: One row per sequence; `decode_seq_rows` steps them with the rows
+        // kernels (conv and recurrence, one launch per 16 rows) when the target has them.
+        let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
+        self.decode_seq_rows(gpu, hidden, &seqs, ws, stream, |_| Ok(()))
     }
 
     /// 2026-10-09: [`Self::decode_rows`] one row at a time, with `after_row(row)` called after
@@ -310,103 +286,10 @@ impl Glm5NextKdaLayer {
         )
     }
 
-    /// 2026-10-09: `kda_recurrent_decode_bf16_smem_rows` over `states.len()` rows (at most
-    /// `KDA_ROWS_MAX`), with the 1R+1W geometry; `kda_recurrent_decode_bf16_rows_reg` instead
-    /// under `METRALE_GLM_KDA_ROWS_REG=1` at head_dim `KDA_REG_D`. Both give each row the
-    /// single-row kernel's bits.
-    fn recurrent_rows(
-        &self,
-        gpu: &dyn GpuBackend,
-        states: &[KdaSeqState],
-        ws: &Glm5NextKdaWorkspace,
-        stream: u64,
-    ) -> Result<()> {
-        let Some((vpb, smem)) = self.smem_geometry() else {
-            bail!("KDA batched recurrence without the 1R+1W geometry");
-        };
-        if states.is_empty() {
-            bail!("KDA batched recurrence of no rows");
-        }
-        // 2026-10-09: One launch per `KDA_ROWS_MAX` rows (a wider `METRALE_GLM_ROW_GROUP`
-        // group takes several); chunk `c0` reads and writes the rows from `c0` on.
-        for c0 in (0..states.len()).step_by(KDA_ROWS_MAX) {
-            let chunk = &states[c0..states.len().min(c0 + KDA_ROWS_MAX)];
-            self.recurrent_rows_chunk(gpu, chunk, c0, ws, vpb, smem, stream)?;
-        }
-        Ok(())
-    }
-
-    /// 2026-10-09: One rows launch over `states` (at most `KDA_ROWS_MAX`), the workspace rows
-    /// from `row0` on.
-    #[allow(clippy::too_many_arguments)]
-    fn recurrent_rows_chunk(
-        &self,
-        gpu: &dyn GpuBackend,
-        states: &[KdaSeqState],
-        row0: usize,
-        ws: &Glm5NextKdaWorkspace,
-        vpb: usize,
-        smem: usize,
-        stream: u64,
-    ) -> Result<()> {
-        let c = &self.cfg;
-        let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
-        let conv_out = ws.conv_out.offset(row0 * cd * 2);
-        let (gate, beta, core) = (
-            ws.gate.offset(row0 * qkv * 4),
-            ws.beta.offset(row0 * c.heads * 4),
-            ws.core.offset(row0 * qkv * 4),
-        );
-        if self.kernels.recurrent_rows_reg.0 != 0 && d == KDA_REG_D && kda_rows_reg() {
-            let mut launch = KernelLaunch::new(gpu, self.kernels.recurrent_rows_reg)
-                .grid([c.heads as u32, 1, states.len() as u32])
-                .block([KDA_REG_D as u32, 1, 1])
-                .shared_mem((3 * d * 4) as u32)
-                .arg_ptr(conv_out)
-                .arg_ptr(conv_out.offset(qkv * 2))
-                .arg_ptr(conv_out.offset(qkv * 4))
-                .arg_ptr(gate)
-                .arg_ptr(beta)
-                .arg_ptr(core)
-                .arg_u32(c.heads as u32)
-                .arg_f32(1.0 / (d as f32).sqrt())
-                .arg_u32(cd as u32)
-                .arg_u32(qkv as u32)
-                .arg_u32(c.heads as u32)
-                .arg_u32(qkv as u32);
-            for r in 0..KDA_ROWS_MAX {
-                launch = launch.arg_u64(states.get(r).map_or(0, |s| s.recurrent.0));
-            }
-            return launch.launch(stream);
-        }
-        let mut launch = KernelLaunch::new(gpu, self.kernels.recurrent_smem_rows)
-            .grid([c.heads as u32, (d / vpb) as u32, states.len() as u32])
-            .block([vpb as u32, 1, 1])
-            .shared_mem(smem as u32)
-            .arg_ptr(conv_out)
-            .arg_ptr(conv_out.offset(qkv * 2))
-            .arg_ptr(conv_out.offset(qkv * 4))
-            .arg_ptr(gate)
-            .arg_ptr(beta)
-            .arg_ptr(core)
-            .arg_u32(c.heads as u32)
-            .arg_u32(d as u32)
-            .arg_f32(1.0 / (d as f32).sqrt())
-            .arg_u32(vpb as u32)
-            .arg_u32(cd as u32)
-            .arg_u32(qkv as u32)
-            .arg_u32(c.heads as u32)
-            .arg_u32(qkv as u32);
-        for r in 0..KDA_ROWS_MAX {
-            launch = launch.arg_u64(states.get(r).map_or(0, |s| s.recurrent.0));
-        }
-        launch.launch(stream)
-    }
-
     /// 2026-10-08: `front_end` over `k` rows, `per_row(row)` for each row in order,
     /// (2026-10-09) `after_rows`, then `back_end`, each span in its profile bucket. Refuses `k == 0` or `k` above the
     /// workspace before any launch.
-    fn rows_with(
+    pub(super) fn rows_with(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,

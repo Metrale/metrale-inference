@@ -266,9 +266,11 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem(
 // 2026-10-09: kda_recurrent_decode_bf16_smem for up to KDA_ROWS_MAX rows of different
 // sequences in one launch: grid (H, D / VPB, rows), and block (h, v-slice, r) is the block
 // (h, v-slice) of the single-row kernel on row r, so each row's state and output are the
-// single-row launch's. Row r reads q/k/v at r * qkv_row_stride elements past the given
-// bases, gate at r * gate_row_stride, beta at r * beta_row_stride, writes out at
-// r * out_row_stride, and updates the state at s<r>. The per-row state pointers are kernel
+// single-row launch's. Grid z index r takes workspace row w<r> (2026-10-09: a batched verify
+// steps row t of every sequence in one launch, and those rows are not adjacent): it reads
+// q/k/v at w<r> * qkv_row_stride elements past the given bases, gate at w<r> *
+// gate_row_stride, beta at w<r> * beta_row_stride, writes out at w<r> * out_row_stride, and
+// updates the state at s<r>. The per-row state pointers are kernel
 // arguments, so a captured graph keeps the ones it was captured with; a null pointer skips
 // the row. The launcher must pass exactly KDA_ROWS_MAX state arguments.
 #define KDA_ROWS_MAX 16
@@ -290,22 +292,29 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem_rows(
     unsigned long long s0, unsigned long long s1, unsigned long long s2, unsigned long long s3,
     unsigned long long s4, unsigned long long s5, unsigned long long s6, unsigned long long s7,
     unsigned long long s8, unsigned long long s9, unsigned long long s10, unsigned long long s11,
-    unsigned long long s12, unsigned long long s13, unsigned long long s14, unsigned long long s15
+    unsigned long long s12, unsigned long long s13, unsigned long long s14, unsigned long long s15,
+    unsigned int w0, unsigned int w1, unsigned int w2, unsigned int w3,
+    unsigned int w4, unsigned int w5, unsigned int w6, unsigned int w7,
+    unsigned int w8, unsigned int w9, unsigned int w10, unsigned int w11,
+    unsigned int w12, unsigned int w13, unsigned int w14, unsigned int w15
 ) {
     const unsigned int r = blockIdx.z;
     if (r >= KDA_ROWS_MAX) return;
     const unsigned long long sp[KDA_ROWS_MAX] = {s0, s1, s2, s3, s4, s5, s6, s7,
                                                  s8, s9, s10, s11, s12, s13, s14, s15};
+    const unsigned int wrow[KDA_ROWS_MAX] = {w0, w1, w2, w3, w4, w5, w6, w7,
+                                              w8, w9, w10, w11, w12, w13, w14, w15};
     float* state = (float*)sp[r];
     if (state == nullptr) return;
+    const size_t w = wrow[r];
     kda_recurrent_decode_bf16_smem_body(
-        q + (size_t)r * qkv_row_stride,
-        k + (size_t)r * qkv_row_stride,
-        v + (size_t)r * qkv_row_stride,
-        gate + (size_t)r * gate_row_stride,
-        beta + (size_t)r * beta_row_stride,
+        q + w * qkv_row_stride,
+        k + w * qkv_row_stride,
+        v + w * qkv_row_stride,
+        gate + w * gate_row_stride,
+        beta + w * beta_row_stride,
         state,
-        out + (size_t)r * out_row_stride,
+        out + w * out_row_stride,
         H, D, scale, VPB);
 }
 
@@ -317,7 +326,8 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem_rows(
 // expressions and their order are kda_recurrent_decode_bf16_smem_body's: the same staging, the
 // same pass-one products and kv sum, the same delta, the same pass-two update and o sum. Launch:
 // grid (H, 1, rows), block KDA_REG_D (one thread per v column of the head), 3 * D floats of
-// dynamic shared memory; D must equal KDA_REG_D and the state arguments are as for _rows.
+// dynamic shared memory; D must equal KDA_REG_D and the state and row arguments are as for
+// _rows.
 #define KDA_REG_D 128
 extern "C" __global__ void kda_recurrent_decode_bf16_rows_reg(
     const __nv_bfloat16* __restrict__ q,
@@ -335,21 +345,28 @@ extern "C" __global__ void kda_recurrent_decode_bf16_rows_reg(
     unsigned long long s0, unsigned long long s1, unsigned long long s2, unsigned long long s3,
     unsigned long long s4, unsigned long long s5, unsigned long long s6, unsigned long long s7,
     unsigned long long s8, unsigned long long s9, unsigned long long s10, unsigned long long s11,
-    unsigned long long s12, unsigned long long s13, unsigned long long s14, unsigned long long s15
+    unsigned long long s12, unsigned long long s13, unsigned long long s14, unsigned long long s15,
+    unsigned int w0, unsigned int w1, unsigned int w2, unsigned int w3,
+    unsigned int w4, unsigned int w5, unsigned int w6, unsigned int w7,
+    unsigned int w8, unsigned int w9, unsigned int w10, unsigned int w11,
+    unsigned int w12, unsigned int w13, unsigned int w14, unsigned int w15
 ) {
     const unsigned int r = blockIdx.z;
     const unsigned int h = blockIdx.x;
     if (r >= KDA_ROWS_MAX || h >= H) return;
     const unsigned long long sp[KDA_ROWS_MAX] = {s0, s1, s2, s3, s4, s5, s6, s7,
                                                  s8, s9, s10, s11, s12, s13, s14, s15};
+    const unsigned int wrow[KDA_ROWS_MAX] = {w0, w1, w2, w3, w4, w5, w6, w7,
+                                              w8, w9, w10, w11, w12, w13, w14, w15};
     float* state = (float*)sp[r];
     if (state == nullptr) return;
-    q += (size_t)r * qkv_row_stride;
-    k += (size_t)r * qkv_row_stride;
-    v += (size_t)r * qkv_row_stride;
-    gate += (size_t)r * gate_row_stride;
-    beta += (size_t)r * beta_row_stride;
-    out += (size_t)r * out_row_stride;
+    const size_t w = wrow[r];
+    q += w * qkv_row_stride;
+    k += w * qkv_row_stride;
+    v += w * qkv_row_stride;
+    gate += w * gate_row_stride;
+    beta += w * beta_row_stride;
+    out += w * out_row_stride;
 
     constexpr unsigned int D = KDA_REG_D;
     extern __shared__ float sh_reg[];

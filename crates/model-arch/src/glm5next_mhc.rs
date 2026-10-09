@@ -33,6 +33,10 @@ pub struct Glm5NextMhcKernels {
     /// computes the FP32 kernel's result on the widened weights. Optional (`try_kernel`, 0 when
     /// absent); `glm_hc_pre` uses it when the site's `hc_fn_bf16` is set and the handle is not 0.
     pub hc_mix_bf16: KernelHandle,
+    /// 2026-10-09: `glm5next_hc_mix_bf16_rows`: `hc_mix_bf16` with one block per (token,
+    /// [`HC_MIX_ROWS`] mixing rows), each mix's bits unchanged; `glm_hc_pre` takes it from
+    /// [`HC_MIX_ROWS_MIN_TOKENS`] tokens. Optional (`try_kernel`, 0 when absent).
+    pub hc_mix_bf16_rows: KernelHandle,
     /// 2026-09-25: `glm5next_hc_finish`: from the mixes, `post`, `comb` (Sinkhorn) and the
     /// collapsed row `y`.
     pub hc_finish: KernelHandle,
@@ -55,6 +59,11 @@ impl Glm5NextMhcKernels {
                 gpu,
                 GLM5NEXT_MHC_MODULE,
                 "glm5next_hc_mix_bf16",
+            ),
+            hc_mix_bf16_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_MODULE,
+                "glm5next_hc_mix_bf16_rows",
             ),
             hc_finish: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_finish")?,
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
@@ -125,6 +134,15 @@ pub struct Glm5NextMhcSiteWeights {
     pub mix: DevicePtr,
 }
 
+/// 2026-10-09: `#define GLM_HC_MIX_ROWS` in `glm5next_mhc.cu`: mixing rows per block of
+/// `glm5next_hc_mix_bf16_rows`.
+pub const HC_MIX_ROWS: usize = 8;
+
+/// 2026-10-09: Fewest tokens `glm_hc_pre` sends to `glm5next_hc_mix_bf16_rows`: 32 tokens give
+/// 96 blocks at GLM-5.3's 24 mixing rows, two per GB10 SM. Below it the per-row kernel's
+/// T x 24 blocks keep the SMs busier. Not yet measured; the C16 bench times both.
+pub const HC_MIX_ROWS_MIN_TOKENS: usize = 32;
+
 /// 2026-09-25: The lower bound of `mhc_mix_max_tokens()`.
 pub const MHC_MIX_MAX_TOKENS: usize = 256;
 
@@ -182,8 +200,22 @@ pub fn glm_hc_pre(
     } else {
         kernels.hc_mix
     };
+    // 2026-10-09: From `HC_MIX_ROWS_MIN_TOKENS` tokens, one block per (token, `HC_MIX_ROWS`
+    // rows) reads each token's streams once per group instead of once per row; each mix keeps
+    // its bits. Fewer tokens keep one block per (token, row) for the parallelism.
+    let (mix_kernel, mix_grid_y) = if w.hc_fn_bf16
+        && kernels.hc_mix_bf16_rows.0 != 0
+        && num_tokens as usize >= HC_MIX_ROWS_MIN_TOKENS
+    {
+        (
+            kernels.hc_mix_bf16_rows,
+            mix_hc.div_ceil(HC_MIX_ROWS as u32),
+        )
+    } else {
+        (mix_kernel, mix_hc)
+    };
     KernelLaunch::new(gpu, mix_kernel)
-        .grid([num_tokens, mix_hc, 1])
+        .grid([num_tokens, mix_grid_y, 1])
         .block([256, 1, 1])
         .arg_ptr(streams)
         .arg_ptr(w.hc_fn)
@@ -298,5 +330,62 @@ mod mhc_shape_tests {
             "2.2 MB for the whole model at the floor"
         );
         assert_eq!(total(1024), 8_847_360, "8.8 MB at a 1024-row sub-chunk");
+    }
+
+    /// 2026-10-09: `glm_hc_pre` sends a BF16 site to the 8-row mix kernel from
+    /// `HC_MIX_ROWS_MIN_TOKENS` tokens (grid y = ceil(24 / 8)), and below it to the per-row one
+    /// (grid y = 24); an FP32 site always takes the per-row FP32 kernel.
+    #[test]
+    fn wide_token_counts_take_the_grouped_mix_kernel() {
+        use metrale_gpu_runtime::gpu::DevicePtr;
+        use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+        let gpu = MockGpuBackend::new();
+        let k = |h| KernelHandle(h);
+        let kernels = Glm5NextMhcKernels {
+            hc_expand: k(1),
+            hc_pre: k(2),
+            hc_mix: k(3),
+            hc_mix_bf16: k(4),
+            hc_mix_bf16_rows: k(5),
+            hc_finish: k(6),
+            hc_post: k(7),
+            hc_head: k(8),
+        };
+        let site = |bf16| Glm5NextMhcSiteWeights {
+            hc_fn: DevicePtr(0x100),
+            hc_fn_bf16: bf16,
+            hc_scale: DevicePtr(0x200),
+            hc_base: DevicePtr(0x300),
+            mix: DevicePtr(0x400),
+        };
+        let first_mix = |t: u32, bf16: bool| {
+            let from = gpu.launch_count();
+            let p = DevicePtr(0x500);
+            glm_hc_pre(
+                &gpu,
+                &kernels,
+                p,
+                &site(bf16),
+                p,
+                p,
+                p,
+                t,
+                4096,
+                4,
+                20,
+                1e-6,
+                1e-6,
+                0,
+            )
+            .unwrap();
+            let l = gpu.launches_snapshot()[from].clone();
+            (l.func, l.grid[1])
+        };
+        let min = HC_MIX_ROWS_MIN_TOKENS as u32;
+        assert_eq!(first_mix(min, true), (5, 3));
+        assert_eq!(first_mix(128, true), (5, 3));
+        assert_eq!(first_mix(min - 1, true), (4, 24));
+        assert_eq!(first_mix(1, true), (4, 24));
+        assert_eq!(first_mix(128, false), (3, 24));
     }
 }
