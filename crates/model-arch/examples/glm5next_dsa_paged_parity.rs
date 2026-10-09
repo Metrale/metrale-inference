@@ -19,6 +19,8 @@
 //! Gate 4 covers the DSA layer only. The KDA recurrent state on a hit is restored from an SSM
 //! snapshot (the serve-level check is in the campaign report).
 //!
+//! `METRALE_PAGED_PARITY_VERBOSE=1` prints every differing row of a failed comparison.
+//!
 //!   METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=glm-5.3-flash METRALE_TARGET_QUANT=nvfp4 \
 //!   cargo run -p metrale-model-arch --release --example glm5next_dsa_paged_parity \
 //!       --features cuda,gpu-examples
@@ -129,10 +131,13 @@ fn decode_gate(
     capture: bool,
 ) -> Result<()> {
     let (mut f, mut p) = (Arm::flat(gpu)?, Arm::paged(gpu, 3)?);
+    // 2026-10-09: A second flat arm is the control: flat against flat must match before
+    // paged against flat means anything.
+    let mut control = Arm::flat(gpu)?;
     let chunk = 12;
     let x = rng.bf16_bytes(chunk * HIDDEN, 1.0);
     let mut outs = Vec::new();
-    for arm in [&mut f, &mut p] {
+    for arm in [&mut f, &mut control, &mut p] {
         let h = up(gpu, &x)?;
         let ctx = fwd.ctx(gpu, false, false, None);
         l.decode_k(
@@ -143,15 +148,23 @@ fn decode_gate(
             0,
             &mut arm.bt,
             &ctx,
-            STREAM,
+            stream(gpu),
             true,
         )?;
         outs.push(read(gpu, h, chunk * HIDDEN * 2)?);
     }
-    same(
-        &format!("capture={capture} prefill sub-chunk output"),
+    let tag = format!("capture={capture} prefill sub-chunk output");
+    same_rows(
+        &format!("{tag} (flat control)"),
         &outs[0],
         &outs[1],
+        HIDDEN * 2,
+    )?;
+    same_rows(
+        &format!("{tag} (paged vs flat)"),
+        &outs[0],
+        &outs[2],
+        HIDDEN * 2,
     )?;
     for pos in chunk..LEN {
         let x = rng.bf16_bytes(HIDDEN, 1.0);
@@ -228,13 +241,14 @@ fn rows_gate(
         let ctx = fwd.ctx(gpu, capture, true, Some(m));
         let mut refs: Vec<&mut (dyn LayerState + 'static)> =
             states.iter_mut().map(|b| b.as_mut()).collect();
-        l.decode_rows(h, &mut refs, &lens, cache, &m, 0, &ctx, STREAM)?;
+        l.decode_rows(h, &mut refs, &lens, cache, &m, 0, &ctx, stream(gpu))?;
         outs.push(read(gpu, h, c * HIDDEN * 2)?);
     }
-    same(
+    same_rows(
         &format!("decode_rows capture={capture}"),
         &outs[0],
         &outs[1],
+        HIDDEN * 2,
     )?;
     println!("  decode_rows capture={capture}: {c} paged rows byte-identical to flat");
     Ok(())
@@ -259,7 +273,7 @@ fn step(
         .then(|| meta(gpu, &[(pos, bt.as_slice())]))
         .transpose()?;
     let ctx = fwd.ctx(gpu, capture, true, m);
-    l.decode_k(h, 1, st, cache, pos, bt, &ctx, STREAM, false)?;
+    l.decode_k(h, 1, st, cache, pos, bt, &ctx, stream(gpu), false)?;
     read(gpu, h, HIDDEN * 2)
 }
 

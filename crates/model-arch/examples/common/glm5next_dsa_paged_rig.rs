@@ -26,7 +26,6 @@ pub(crate) const BLOCK: usize = 16;
 /// 2026-10-09: Blocks per sequence: 160 tokens, 40 pools against a 4-pool budget.
 pub(crate) const MB: usize = 10;
 pub(crate) const LEN: usize = MB * BLOCK - 8;
-pub(crate) const STREAM: u64 = 0;
 
 pub(crate) struct Lcg(pub(crate) u64);
 impl Lcg {
@@ -55,18 +54,49 @@ pub(crate) fn up_i32(gpu: &dyn GpuBackend, v: &[i32]) -> Result<DevicePtr> {
         &v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<_>>(),
     )
 }
+/// 2026-10-09: Every launch goes on the backend's own stream, the one `copy_h2d` uses. That
+/// stream is non-blocking, so work on the legacy stream 0 is not ordered after its copies: the
+/// layer's per-row host copies (`slot`, `q_pos`, `bt`) would then overwrite a buffer a queued
+/// kernel has not read yet, and the two arms would race differently.
+pub(crate) fn stream(gpu: &dyn GpuBackend) -> u64 {
+    gpu.default_stream()
+}
 pub(crate) fn read(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u8>> {
-    gpu.synchronize(STREAM)?;
+    gpu.synchronize(stream(gpu))?;
     let mut b = vec![0u8; n];
     gpu.copy_d2h(p, &mut b)?;
     Ok(b)
 }
-pub(crate) fn same(what: &str, a: &[u8], b: &[u8]) -> Result<()> {
-    if a != b {
-        let first = a.iter().zip(b).position(|(x, y)| x != y).unwrap_or(0);
-        bail!("{what}: paged differs from flat at byte {first}");
+/// 2026-10-09: Fails on the first differing byte of `a` against `b`, naming its row of
+/// `row_bytes` and the offset in that row. `METRALE_PAGED_PARITY_VERBOSE=1` also prints every
+/// differing row, its first differing offset and its differing byte count.
+pub(crate) fn same_rows(what: &str, a: &[u8], b: &[u8], row_bytes: usize) -> Result<()> {
+    if a == b {
+        return Ok(());
     }
-    Ok(())
+    let first = a
+        .iter()
+        .zip(b)
+        .position(|(x, y)| x != y)
+        .unwrap_or(a.len().min(b.len()));
+    if std::env::var("METRALE_PAGED_PARITY_VERBOSE").as_deref() == Ok("1") {
+        for (r, (ra, rb)) in a.chunks(row_bytes).zip(b.chunks(row_bytes)).enumerate() {
+            let n = ra.iter().zip(rb).filter(|(x, y)| x != y).count();
+            if let Some(o) = ra.iter().zip(rb).position(|(x, y)| x != y) {
+                eprintln!("  {what}: row {r} first differs at byte {o} ({n} bytes differ)");
+            }
+        }
+    }
+    bail!(
+        "{what}: differs at byte {first} (row {}, byte {} of {row_bytes}; lengths {} / {})",
+        first / row_bytes,
+        first % row_bytes,
+        a.len(),
+        b.len()
+    );
+}
+pub(crate) fn same(what: &str, a: &[u8], b: &[u8]) -> Result<()> {
+    same_rows(what, a, b, a.len().max(1))
 }
 
 pub(crate) fn cfg() -> Glm5NextDsaConfig {

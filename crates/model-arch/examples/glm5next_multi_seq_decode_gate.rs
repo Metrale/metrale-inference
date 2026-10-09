@@ -51,7 +51,8 @@ const BLOCK: usize = 16;
 /// 2026-10-08: Block-table entries per sequence: 6 blocks of 16 hold the longest history (79
 /// tokens) plus the decoded one.
 const MB: usize = 6;
-const STREAM: u64 = 0;
+// 2026-10-09: Local `STREAM` = `gpu.default_stream()`, the non-blocking stream `copy_h2d` uses;
+// stream 0 is not ordered after the layer's host copies (`slot`, `q_pos`, `bt`).
 
 struct Lcg(u64);
 impl Lcg {
@@ -93,6 +94,8 @@ fn up_i32(gpu: &dyn GpuBackend, v: &[i32]) -> Result<DevicePtr> {
     )
 }
 fn read(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Result<Vec<u8>> {
+    #[allow(non_snake_case)]
+    let STREAM = gpu.default_stream();
     gpu.synchronize(STREAM)?;
     let mut b = vec![0u8; n];
     gpu.copy_d2h(p, &mut b)?;
@@ -115,6 +118,8 @@ fn same(what: &str, a: &[u8], b: &[u8]) -> Result<()> {
 /// 2026-10-08: KDA: C states drawn independently; each sequence decoded alone from a copy,
 /// then all C in one `decode_rows` from another copy.
 fn kda_gate(gpu: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
+    #[allow(non_snake_case)]
+    let STREAM = gpu.default_stream();
     let cfg = Glm5NextKdaConfig {
         hidden: HIDDEN,
         heads: 8,
@@ -313,6 +318,8 @@ impl Fwd {
 /// written token by token through the single-sequence decode. Then the next token of each
 /// sequence alone, and all C in one `decode_rows`, from the same history.
 fn dsa_gate(gpu: &dyn GpuBackend, fwd: &Fwd, rng: &mut Lcg, capture: bool) -> Result<()> {
+    #[allow(non_snake_case)]
+    let STREAM = gpu.default_stream();
     let cfg = Glm5NextDsaConfig {
         hidden: HIDDEN,
         index_heads: 8,

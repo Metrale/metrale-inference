@@ -193,3 +193,40 @@ fn a_v_side_too_small_is_refused_before_any_launch() {
         "refused before the first launch"
     );
 }
+
+/// 2026-10-09: A 12-row prefill sub-chunk from position 10 crosses the 16-token block boundary:
+/// rows 10..15 land in physical block 5 (slots 10..15) and rows 16..21 in physical block 2
+/// (slots 0..5), and the batched selection reads through the uploaded table. A placement that
+/// kept the chunk's first block for every row fails at row 16.
+#[test]
+fn a_prefill_chunk_crossing_a_block_boundary_follows_the_table() {
+    let rig = Rig::new();
+    let mut layer = rig.layer();
+    layer.indexer_cache = IndexerCache::Paged;
+    let mut kv = rig.kv();
+    let pool = kv.v_pool_ptr(0);
+    let stride = kv.v_block_stride_bytes_for_layer(0);
+    let d = cfg().index_head_dim;
+    let mut st: Box<dyn LayerState> = Box::new(layer.alloc_dsa_state(&rig.gpu).unwrap());
+    let mut bt = vec![5u32, 2, 7, 1];
+    let hidden = rig.buf(12 * HIDDEN * 2);
+    let mut ctx = rig.ctx(false);
+    ctx.decode_step = false;
+    let from = rig.gpu.launch_count();
+    layer
+        .decode_k(hidden, 12, st.as_mut(), &mut kv, 10, &mut bt, &ctx, 7, true)
+        .unwrap();
+    let l = rig.since(from);
+    let knorm = of(&l, KNORM);
+    assert_eq!(knorm.len(), 12);
+    for (i, w) in knorm.iter().enumerate() {
+        let pos = 10 + i;
+        let block = bt[pos / 16] as usize;
+        let want = pool.offset(block * stride + (pos % 16) * d * 2);
+        assert_eq!(w.args[0], ptr(want), "row at position {pos}");
+    }
+    let kpool = of(&l, KPOOL);
+    assert_eq!(kpool.len(), 1, "one batched selection for the chunk");
+    assert_eq!(kpool[0].args[12], ptr(layer.workspace.bt));
+    assert_eq!(dsa(st.as_ref()).len(), 22);
+}
