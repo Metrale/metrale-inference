@@ -307,10 +307,13 @@ impl BufferArena {
     /// token-major buffer: for a buffer whose size is a multiple of
     /// `max_batch_tokens`, `size / max_batch_tokens * tokens` bytes; any other
     /// buffer, and every buffer when `tokens >= max_batch_tokens`, is zeroed
-    /// whole. `splitk_workspace`, `logits` and `scratch` are zeroed whole. The
-    /// caller must read only rows `0..tokens`. Measured 2026-08-28 on
-    /// GLM-5.3-Flash (nsys, `max_batch_tokens = 4096`): `zero_all` took 8.01 ms
-    /// of an 85 ms decode step.
+    /// whole. `logits` is zeroed for its first `tokens` rows (whole when `tokens >=
+    /// logits_rows`); `splitk_workspace` and `scratch` are zeroed whole. The caller
+    /// must read only rows `0..tokens`. Measured 2026-08-28 on GLM-5.3-Flash (nsys,
+    /// `max_batch_tokens = 4096`): `zero_all` took 8.01 ms of an 85 ms decode step.
+    /// 2026-10-09: The whole-`logits` zero (256 rows of a 154856-entry vocabulary,
+    /// 79 MB) took 355 us of GPU time per GLM-5.3 decode step, ahead of the graph on
+    /// the same stream; a decode step writes and reads only logits row 0.
     pub fn zero_all_rows(
         &self,
         gpu: &dyn GpuBackend,
@@ -350,7 +353,13 @@ impl BufferArena {
             self.sizes.splitk_workspace,
             stream,
         )?;
-        gpu.memset_async(self.logits, 0, self.sizes.logits, stream)?;
+        let logits_rows = self.sizes.logits_rows.max(1);
+        let logits_head = if tokens >= logits_rows {
+            self.sizes.logits
+        } else {
+            self.sizes.logits / logits_rows * tokens
+        };
+        gpu.memset_async(self.logits, 0, logits_head, stream)?;
         gpu.memset_async(self.scratch, 0, self.sizes.scratch, stream)?;
         Ok(())
     }

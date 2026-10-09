@@ -48,6 +48,9 @@ pub struct BufferSizes {
     pub moe_router_in_f32: usize,
     pub moe_output: usize,
     pub logits: usize,
+    /// 2026-10-09: The rows `logits` holds (`logits / logits_rows` bytes each), so a
+    /// decode step can zero only the rows it reads.
+    pub logits_rows: usize,
     pub ssm_qkvz: usize,
     pub ssm_ba: usize,
     pub ssm_deinterleaved: usize,
@@ -337,6 +340,7 @@ impl BufferSizes {
             // projection writes its output here.
             moe_output: m.div_ceil(16) * 16 * h * bf16,
             logits: logits_tokens * config.vocab_size * bf16,
+            logits_rows: logits_tokens,
             // 2026-09-25: The SSM buffers are also scratch for other layers, so
             // each is the largest of its uses and at least 256 bytes. `ssm_qkvz`
             // holds the QKVZ projection (`ceil16(M)` rows for its cuBLASLt arm),
