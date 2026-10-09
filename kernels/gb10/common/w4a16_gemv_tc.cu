@@ -114,6 +114,10 @@ __device__ __forceinline__ void w4a16_gemv_tc_impl(
     __nv_bfloat16* __restrict__ C,
     unsigned int M, unsigned int N, unsigned int K)
 {
+    // 2026-10-09: MT is 8, 16 or a multiple of 16: MTILES m16 row tiles share every decoded weight
+    // fragment (rows 16 * mt + g and 16 * mt + g + 8 of tile mt). A row's sum is the same chain
+    // of MMAs whatever MT is, so a row's bits do not depend on MT.
+    constexpr int MTILES = MT <= 16 ? 1 : MT / 16;
     const unsigned int warp = threadIdx.x >> 5;
     const unsigned int lane = threadIdx.x & 31u;
     const unsigned int g = lane >> 2;
@@ -122,11 +126,6 @@ __device__ __forceinline__ void w4a16_gemv_tc_impl(
     const unsigned int half_K = K >> 1;
     const unsigned int num_groups = K >> 4;
     const unsigned int num_kb = K >> 7;
-
-    const bool lo_live = g < M;
-    const bool hi_live = (MT > 8) && (g + 8u < M);
-    const uint4* a_lo_row = (const uint4*)(A + (unsigned long long)g * K);
-    const uint4* a_hi_row = (const uint4*)(A + (unsigned long long)(g + 8u) * K);
 
     // 2026-09-25: A weight row n >= N, in a last tile that N does not fill, loads zeros and is
     // never stored.
@@ -141,11 +140,14 @@ __device__ __forceinline__ void w4a16_gemv_tc_impl(
         srow[i] = B_scale + (unsigned long long)n * num_groups + t * 2u;
     }
 
-    float acc[NT][4];
+    float acc[NT][MTILES][4];
     #pragma unroll
     for (int i = 0; i < NT; i++) {
         #pragma unroll
-        for (int c = 0; c < 4; c++) acc[i][c] = 0.0f;
+        for (int mt = 0; mt < MTILES; mt++) {
+            #pragma unroll
+            for (int c = 0; c < 4; c++) acc[i][mt][c] = 0.0f;
+        }
     }
 
     // 2026-09-25: Each trip covers KU k-blocks and issues all of their weight and scale loads,
@@ -172,69 +174,98 @@ __device__ __forceinline__ void w4a16_gemv_tc_impl(
             const unsigned int kb = kb0 + (unsigned int)u * TC_WARPS;
             if (kb >= num_kb) break;
             // 2026-09-25: This thread's 32 activations of row g (and g + 8), k = kb * 128 + t * 32 on; abase counts uint4s of 8 BF16.
-            uint4 al[4], ah[4];
             const unsigned int abase = kb * 16u + t * 4u;
-            #pragma unroll
-            for (int j = 0; j < 4; j++) {
-                al[j] = lo_live ? a_lo_row[abase + j] : make_uint4(0u, 0u, 0u, 0u);
-                if (MT > 8) ah[j] = hi_live ? a_hi_row[abase + j] : make_uint4(0u, 0u, 0u, 0u);
+            // 2026-10-09: Up to two m-tiles preload their 4 words per row (as tc8 / tc16 always
+            // did); wider tiles load word j of each row inside the j loop, which bounds registers.
+            constexpr bool PRELOAD = MTILES <= 2;
+            constexpr int AJ = PRELOAD ? 4 : 1;
+            uint4 al[MTILES][AJ], ah[MTILES][AJ];
+            auto act_load = [&](int mt, int j, int slot) {
+                const unsigned int rlo = (unsigned int)mt * 16u + g, rhi = rlo + 8u;
+                const bool lo_live = rlo < M;
+                const bool hi_live = (MT > 8) && (rhi < M);
+                const uint4* a_lo_row = (const uint4*)(A + (unsigned long long)rlo * K);
+                const uint4* a_hi_row = (const uint4*)(A + (unsigned long long)rhi * K);
+                al[mt][slot] = lo_live ? a_lo_row[abase + j] : make_uint4(0u, 0u, 0u, 0u);
+                if (MT > 8) ah[mt][slot] = hi_live ? a_hi_row[abase + j] : make_uint4(0u, 0u, 0u, 0u);
+            };
+            if constexpr (PRELOAD) {
+                #pragma unroll
+                for (int mt = 0; mt < MTILES; mt++) {
+                    #pragma unroll
+                    for (int j = 0; j < 4; j++) act_load(mt, j, PRELOAD ? j : 0);
+                }
             }
             #pragma unroll
             for (int j = 0; j < 4; j++) {
-                // 2026-09-25: Activation pairs for P0..P3 of weight word j.
-                const uint32_t l37 = __byte_perm(al[j].y, al[j].w, 0x7632);
-                const uint32_t l26 = __byte_perm(al[j].y, al[j].w, 0x5410);
-                const uint32_t l15 = __byte_perm(al[j].x, al[j].z, 0x7632);
-                const uint32_t l04 = __byte_perm(al[j].x, al[j].z, 0x5410);
-                uint32_t h37 = 0u, h26 = 0u, h15 = 0u, h04 = 0u;
-                if (MT > 8) {
-                    h37 = __byte_perm(ah[j].y, ah[j].w, 0x7632);
-                    h26 = __byte_perm(ah[j].y, ah[j].w, 0x5410);
-                    h15 = __byte_perm(ah[j].x, ah[j].z, 0x7632);
-                    h04 = __byte_perm(ah[j].x, ah[j].z, 0x5410);
-                }
+                uint32_t p[NT][4];
                 #pragma unroll
                 for (int i = 0; i < NT; i++) {
                     const uint32_t q = (j == 0) ? w[u][i].x : (j == 1) ? w[u][i].y
                                      : (j == 2) ? w[u][i].z : w[u][i].w;
                     const uint32_t s = w4tc_scale_x2((sc[u][i] >> ((j >> 1) * 8)) & 0xFFu);
-                    const uint32_t p0 = w4tc_bmul2(w4tc_fp4pair(q), s);
-                    const uint32_t p1 = w4tc_bmul2(w4tc_fp4pair(q << 4), s);
-                    const uint32_t p2 = w4tc_bmul2(w4tc_fp4pair(q << 8), s);
-                    const uint32_t p3 = w4tc_bmul2(w4tc_fp4pair(q << 12), s);
-                    w4tc_mma(acc[i], l37, h37, l26, h26, p0, p1);
-                    w4tc_mma(acc[i], l15, h15, l04, h04, p2, p3);
+                    p[i][0] = w4tc_bmul2(w4tc_fp4pair(q), s);
+                    p[i][1] = w4tc_bmul2(w4tc_fp4pair(q << 4), s);
+                    p[i][2] = w4tc_bmul2(w4tc_fp4pair(q << 8), s);
+                    p[i][3] = w4tc_bmul2(w4tc_fp4pair(q << 12), s);
+                }
+                #pragma unroll
+                for (int mt = 0; mt < MTILES; mt++) {
+                    if constexpr (!PRELOAD) act_load(mt, j, 0);
+                    const int aj = PRELOAD ? j : 0;
+                    // 2026-09-25: Activation pairs for P0..P3 of weight word j.
+                    const uint32_t l37 = __byte_perm(al[mt][aj].y, al[mt][aj].w, 0x7632);
+                    const uint32_t l26 = __byte_perm(al[mt][aj].y, al[mt][aj].w, 0x5410);
+                    const uint32_t l15 = __byte_perm(al[mt][aj].x, al[mt][aj].z, 0x7632);
+                    const uint32_t l04 = __byte_perm(al[mt][aj].x, al[mt][aj].z, 0x5410);
+                    uint32_t h37 = 0u, h26 = 0u, h15 = 0u, h04 = 0u;
+                    if (MT > 8) {
+                        h37 = __byte_perm(ah[mt][aj].y, ah[mt][aj].w, 0x7632);
+                        h26 = __byte_perm(ah[mt][aj].y, ah[mt][aj].w, 0x5410);
+                        h15 = __byte_perm(ah[mt][aj].x, ah[mt][aj].z, 0x7632);
+                        h04 = __byte_perm(ah[mt][aj].x, ah[mt][aj].z, 0x5410);
+                    }
+                    #pragma unroll
+                    for (int i = 0; i < NT; i++) {
+                        w4tc_mma(acc[i][mt], l37, h37, l26, h26, p[i][0], p[i][1]);
+                        w4tc_mma(acc[i][mt], l15, h15, l04, h04, p[i][2], p[i][3]);
+                    }
                 }
             }
         }
     }
 
-    // 2026-09-25: Split-K reduction across the CTA's warps, in warp order.
+    // 2026-09-25: Split-K reduction across the CTA's warps, in warp order. 2026-10-09: one m-tile
+    // at a time through the same shared buffer.
     __shared__ float red[TC_WARPS][NT][4][32];
-    #pragma unroll
-    for (int i = 0; i < NT; i++) {
-        #pragma unroll
-        for (int c = 0; c < 4; c++) red[warp][i][c][lane] = acc[i][c];
-    }
-    __syncthreads();
-
     const float sfin = scale2 * 0x1p26f;
-    for (unsigned int i = warp; i < (unsigned int)NT; i += TC_WARPS) {
-        if (n0 + i * 8u >= N) continue;
-        float r[4];
+    #pragma unroll
+    for (int mt = 0; mt < MTILES; mt++) {
+        if (mt > 0) __syncthreads();
         #pragma unroll
-        for (int c = 0; c < 4; c++) {
-            float v = red[0][i][c][lane];
+        for (int i = 0; i < NT; i++) {
             #pragma unroll
-            for (int ww = 1; ww < TC_WARPS; ww++) v += red[ww][i][c][lane];
-            r[c] = v * sfin;
+            for (int c = 0; c < 4; c++) red[warp][i][c][lane] = acc[i][mt][c];
         }
-        const unsigned int col = n0 + i * 8u + t * 2u;
-        // 2026-09-25: Paired 4-byte store only when it is aligned (N even) and in range.
-        const bool paired = ((N & 1u) == 0u) && (col + 1u < N);
-        if (g < M) w4tc_store2(C + (unsigned long long)g * N + col, r[0], r[1], paired, col + 1u < N, col < N);
-        if (MT > 8 && g + 8u < M)
-            w4tc_store2(C + (unsigned long long)(g + 8u) * N + col, r[2], r[3], paired, col + 1u < N, col < N);
+        __syncthreads();
+        const unsigned int rlo = (unsigned int)mt * 16u + g, rhi = rlo + 8u;
+        for (unsigned int i = warp; i < (unsigned int)NT; i += TC_WARPS) {
+            if (n0 + i * 8u >= N) continue;
+            float r[4];
+            #pragma unroll
+            for (int c = 0; c < 4; c++) {
+                float v = red[0][i][c][lane];
+                #pragma unroll
+                for (int ww = 1; ww < TC_WARPS; ww++) v += red[ww][i][c][lane];
+                r[c] = v * sfin;
+            }
+            const unsigned int col = n0 + i * 8u + t * 2u;
+            // 2026-09-25: Paired 4-byte store only when it is aligned (N even) and in range.
+            const bool paired = ((N & 1u) == 0u) && (col + 1u < N);
+            if (rlo < M) w4tc_store2(C + (unsigned long long)rlo * N + col, r[0], r[1], paired, col + 1u < N, col < N);
+            if (MT > 8 && rhi < M)
+                w4tc_store2(C + (unsigned long long)rhi * N + col, r[2], r[3], paired, col + 1u < N, col < N);
+        }
     }
 }
 
@@ -281,3 +312,13 @@ W4TC_ENTRY(w4a16_gemv_tc16_nt2_ku4_o2, 16, 2, 4, (TC_WARPS * 32, 2))
 W4TC_ENTRY(w4a16_gemv_tc16_nt4_ku1_o3, 16, 4, 1, (TC_WARPS * 32, 3))
 W4TC_ENTRY(w4a16_gemv_tc16_nt8_ku1_o2, 16, 8, 1, (TC_WARPS * 32, 2))
 W4TC_ENTRY(w4a16_gemv_tc16_nt4_ku2_o2, 16, 4, 2, (TC_WARPS * 32, 2))
+
+// 2026-10-09: The wide row tiers: 2 and 4 m16 tiles share each decoded weight fragment, for
+// 17..=32 and 33..=64 rows. A row runs the same MMA chain as in tc16, so tc32 / tc64 give tc16's
+// bits for every row they share with it.
+W4TC_ENTRY(w4a16_gemv_tc32, 32, 2, 2, (TC_WARPS * 32))
+W4TC_ENTRY(w4a16_gemv_tc32_nt4_ku1_o2, 32, 4, 1, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc32_nt2_ku1_o2, 32, 2, 1, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc64, 64, 2, 1, (TC_WARPS * 32))
+W4TC_ENTRY(w4a16_gemv_tc64_nt2_ku1_o2, 64, 2, 1, (TC_WARPS * 32, 2))
+W4TC_ENTRY(w4a16_gemv_tc64_nt4_ku1_o1, 64, 4, 1, (TC_WARPS * 32))

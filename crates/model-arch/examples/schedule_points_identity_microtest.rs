@@ -182,7 +182,7 @@ fn main() -> Result<()> {
             g,
             &(0..n * k / 16).map(|_| r.e4m3_scale()).collect::<Vec<_>>(),
         )?;
-        let a = up(g, &bf16_bytes(&mut r, 16 * k))?;
+        let a = up(g, &bf16_bytes(&mut r, 64 * k))?;
         let out_ref = g.alloc(M_MAX * n * 2)?;
         let out_pt = g.alloc(M_MAX * n * 2)?;
 
@@ -247,6 +247,57 @@ fn main() -> Result<()> {
                     println!("{label} {name:<34} vs {base:<28} m={m:<3} identical={same}");
                     if !same {
                         failures.push(format!("{label} {name} m={m}"));
+                    }
+                }
+            }
+        }
+        // 2026-10-09: The wide tiers against tc16 run on 16-row slices of the same rows (offset A
+        // and C): a row's bits must not depend on how many m-tiles share its weight fragments.
+        if let Ok(h16) = g.kernel("w4a16_gemv_tc", "w4a16_gemv_tc16") {
+            let wide = metrale_kernels::w4a16_gemv_tc_entries::W4A16_GEMV_TC_WIDE_POINTS;
+            for (tier, points) in wide.iter().enumerate() {
+                let rows: &[usize] = if tier == 0 {
+                    &[17, 24, 32]
+                } else {
+                    &[33, 48, 64]
+                };
+                for p in *points {
+                    let name = format!("w4a16_gemv_{p}");
+                    let Ok(hp) = g.kernel("w4a16_gemv_tc", &name) else {
+                        continue;
+                    };
+                    for &m in rows {
+                        let mut r0 = 0;
+                        while r0 < m {
+                            let rows16 = (m - r0).min(16);
+                            w4tc_launch(
+                                g,
+                                h16,
+                                nt("tc16"),
+                                a.offset(r0 * k * 2),
+                                packed,
+                                scales,
+                                out_ref.offset(r0 * n * 2),
+                                rows16,
+                                n,
+                                k,
+                            )?;
+                            r0 += rows16;
+                        }
+                        w4tc_launch(g, hp, nt(p), a, packed, scales, out_pt, m, n, k)?;
+                        let (x, y) = (down(g, out_ref, m * n * 2)?, down(g, out_pt, m * n * 2)?);
+                        if !non_trivial(&x) || !non_trivial(&y) {
+                            bail!("{label} {name} m={m}: trivial output, the gate cannot judge");
+                        }
+                        compared += 1;
+                        let same = x == y;
+                        println!(
+                            "{label} {name:<34} vs tc16 slices{:<14} m={m:<3} identical={same}",
+                            ""
+                        );
+                        if !same {
+                            failures.push(format!("{label} {name} m={m}"));
+                        }
                     }
                 }
             }

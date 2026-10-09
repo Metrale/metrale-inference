@@ -36,7 +36,11 @@ const SHAPES: &[(&str, u32, u32)] = &[
 
 /// 2026-10-09: `(rows served, NT)` of a point of `metrale_kernels::w4a16_gemv_tc_entries`.
 fn geometry(point: &str) -> (u32, u32) {
-    let mt = if point.starts_with("tc16") { 16 } else { 8 };
+    let mt = ["tc64", "tc32", "tc16"]
+        .iter()
+        .zip([64, 32, 16])
+        .find(|(p, _)| point.starts_with(**p))
+        .map_or(8, |(_, m)| m);
     (
         mt,
         metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_nt(point),
@@ -49,16 +53,16 @@ fn main() -> Result<()> {
         .parse()?;
     let g0 = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let g: &dyn GpuBackend = &g0;
-    let rows_all: &[u32] = &[1, 2, 4, 8, 12, 16];
+    let rows_all: &[u32] = &[1, 2, 4, 8, 12, 16, 24, 32, 48, 64];
     for &(label, n, k) in SHAPES {
         let (nu, ku) = (n as usize, k as usize);
         let packed = g.alloc(nu * ku / 2)?;
         g.memset(packed, 0x23, nu * ku / 2)?;
         let scales = g.alloc(nu * ku / 16)?;
         g.memset(scales, 0x38, nu * ku / 16)?;
-        let a = g.alloc(16 * ku * 2)?;
-        g.memset(a, 0x3C, 16 * ku * 2)?;
-        let out = g.alloc(16 * nu * 2)?;
+        let a = g.alloc(64 * ku * 2)?;
+        g.memset(a, 0x3C, 64 * ku * 2)?;
+        let out = g.alloc(64 * nu * 2)?;
         let bytes = (nu * ku / 2 + nu * ku / 16) as f64;
         let floor_us = bytes / (peak * 1e9) * 1e6;
         eprintln!(
@@ -66,14 +70,18 @@ fn main() -> Result<()> {
             bytes / 1e6
         );
         let points = metrale_kernels::w4a16_gemv_tc_entries::W4A16_GEMV_TC_POINTS;
-        for point in points.iter().flat_map(|t| t.iter()) {
+        let wide = metrale_kernels::w4a16_gemv_tc_entries::W4A16_GEMV_TC_WIDE_POINTS;
+        for point in points.iter().chain(wide.iter()).flat_map(|t| t.iter()) {
             let entry = format!("w4a16_gemv_{point}");
             let Ok(h) = g.kernel("w4a16_gemv_tc", &entry) else {
                 eprintln!("    {entry:<30} not in this module set");
                 continue;
             };
             let (mt, nt) = geometry(point);
-            for &m in rows_all.iter().filter(|&&m| m <= mt && (mt == 8 || m > 8)) {
+            for &m in rows_all
+                .iter()
+                .filter(|&&m| m <= mt && (m > mt / 2 || (mt == 8 && m >= 4)))
+            {
                 let launch = || {
                     KernelLaunch::new(g, h)
                         .grid([n.div_ceil(8 * nt), 1, 1])

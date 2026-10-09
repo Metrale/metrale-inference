@@ -41,6 +41,14 @@ pub const W4A16_GEMV_TC_POINTS: [&[&str]; 2] = [
     ],
 ];
 
+/// 2026-10-09: The wide row tiers (`tc32`: 17..=32 rows, `tc64`: 33..=64), m16 tiles sharing each
+/// decoded weight fragment; a row's bits equal tc16's. Benched and identity-checked; not yet a
+/// `[defaults]` tier.
+pub const W4A16_GEMV_TC_WIDE_POINTS: [&[&str]; 2] = [
+    &["tc32", "tc32_nt4_ku1_o2", "tc32_nt2_ku1_o2"],
+    &["tc64", "tc64_nt2_ku1_o2", "tc64_nt4_ku1_o1"],
+];
+
 /// 2026-10-09: The baseline point of every tier.
 pub const W4A16_GEMV_TC_BASELINE: [&str; 2] = ["tc8", "tc16"];
 
@@ -68,12 +76,12 @@ pub fn w4a16_gemv_tc_entries<'a>(
 }
 
 /// 2026-10-09: The 8-column tiles per CTA (`NT`) of a point: its `_nt{NT}` field, else the bare
-/// tier's (tc8: 1, tc16: 2). The launch grid is `ceil(N / (8 * NT))`.
+/// tier's (tc8: 1; tc16, tc32, tc64: 2). The launch grid is `ceil(N / (8 * NT))`.
 // 2026-10-09: The build script includes this file for the parse only.
 #[allow(dead_code)]
 pub fn w4a16_gemv_tc_nt(point: &str) -> u32 {
     point
         .split('_')
         .find_map(|t| t.strip_prefix("nt").and_then(|v| v.parse().ok()))
-        .unwrap_or(if point.starts_with("tc16") { 2 } else { 1 })
+        .unwrap_or(if point.starts_with("tc8") { 1 } else { 2 })
 }

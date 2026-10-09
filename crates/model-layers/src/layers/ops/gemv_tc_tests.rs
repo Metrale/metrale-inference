@@ -130,6 +130,21 @@ fn every_schedule_point_is_compiled_with_the_nt_its_grid_assumes() {
             );
         }
     }
+    let wide = metrale_kernels::w4a16_gemv_tc_entries::W4A16_GEMV_TC_WIDE_POINTS;
+    for (tier, mt) in [(0usize, 32u32), (1, 64)] {
+        for p in wide[tier] {
+            let (_, emt, ent) = entries
+                .iter()
+                .find(|(name, _, _)| name == p)
+                .unwrap_or_else(|| panic!("wide point {p} has no W4TC_ENTRY"));
+            assert_eq!(*emt, mt, "{p}: MT");
+            assert_eq!(
+                *ent,
+                metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_nt(p),
+                "{p}: NT"
+            );
+        }
+    }
     assert_eq!(
         8 * metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_nt("tc8"),
         TC8_COLS_PER_CTA
