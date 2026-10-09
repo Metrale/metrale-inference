@@ -276,7 +276,14 @@ pub fn reference(case: &Case, plan: &Plan, idx: &[usize]) -> Result<Vec<Bounded>
                     .map(|j| {
                         let wop = match (fold, group) {
                             (ScaleFold::Element, Some(g)) => {
-                                Bounded::exact(wq(j) * w.block_scale(c, j, g)).round(f.operand)
+                                // 2026-10-09: A decoded weight the operand format holds (E2M1 x
+                                // E4M3 in BF16) is exact under any rounding the kernel applies.
+                                let p = wq(j) * w.block_scale(c, j, g);
+                                if f.operand.holds(p) {
+                                    Bounded::exact(p)
+                                } else {
+                                    Bounded::exact(p).round(f.operand)
+                                }
                             }
                             (ScaleFold::None, Some(_)) => {
                                 return Err(

@@ -67,7 +67,7 @@ pub(crate) fn shards(case: &Case, n: usize) -> Vec<Shard> {
 }
 
 /// 2026-10-09: The linear case's sizes: rows, k, n.
-fn linear_dims(case: &Case) -> Result<(usize, usize, usize)> {
+pub(crate) fn linear_dims(case: &Case) -> Result<(usize, usize, usize)> {
     let x = case.tensor("x").map_err(not_runnable)?;
     let w = case.tensor("w").map_err(not_runnable)?;
     need!(
@@ -101,6 +101,7 @@ const TABLES: &[&[(&str, Adapter)]] = &[
     super::accuracy_adapters_w8a8::ADAPTERS,
     super::accuracy_adapters_quant::ADAPTERS,
     super::accuracy_adapters_norm::ADAPTERS,
+    super::accuracy_adapters_tc::ADAPTERS,
 ];
 
 /// 2026-10-09: An adapter launches `launcher`.
@@ -130,7 +131,7 @@ pub(crate) fn launch(dev: &mut Dev<'_>, case: &Case) -> std::result::Result<Vec<
 }
 
 /// 2026-10-09: Upload an NVFP4 weight as the engine holds one.
-fn nvfp4_weight(dev: &mut Dev<'_>, case: &Case) -> Result<QuantizedWeight> {
+pub(crate) fn nvfp4_weight(dev: &mut Dev<'_>, case: &Case) -> Result<QuantizedWeight> {
     let mut w = QuantizedWeight::null();
     w.weight = dev.upload(case.tensor("w").map_err(not_runnable)?)?;
     w.weight_scale = dev.upload(case.tensor("w_block").map_err(not_runnable)?)?;
