@@ -172,10 +172,13 @@ impl TransformerModel {
             == Some("1");
         // 2026-09-25: The `lora_eager` lever runs LoRA verifies without graphs.
         let lora_eager = self.lora.is_some() && self.levers.lora_eager;
-        // 2026-10-09: With a comm backend only under `METRALE_EP_GRAPHS` (`levers.ep_graphs`),
-        // the opt-in the decode graphs use (`decode_a.rs`): every rank runs this verify, so
-        // every rank captures and replays the same collectives.
-        let use_graphs = (self.comm.is_none() || self.levers.ep_graphs)
+        // 2026-10-09: With a comm backend under the decode graphs' rule (`decode_a.rs`):
+        // `METRALE_EP_GRAPHS`, or every layer capturable with a communicator
+        // (`layers_capture_with_comm`, GLM-5.3; `METRALE_COMM_DECODE_GRAPHS=0` turns it off).
+        // Every rank runs this verify, so every rank captures and replays the same collectives.
+        let use_graphs = (self.comm.is_none()
+            || self.levers.ep_graphs
+            || self.layers_capture_with_comm())
             && !self
                 .suppress_graphs
                 .load(std::sync::atomic::Ordering::Relaxed)

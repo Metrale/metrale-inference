@@ -241,11 +241,11 @@ impl TransformerModel {
         // WY entries. Each ghost slot must be free and, with WY tables, its
         // intermediate pool must cover the ghost's depth (the closure in
         // `pick_verify_graph`).
-        // 2026-10-09: With a comm backend only under `METRALE_EP_GRAPHS` (`levers.ep_graphs`):
+        // 2026-10-09: With a comm backend under the decode graphs' rule (`verify_d.rs`):
         // every rank runs this verify, so every rank captures and replays the same collectives.
         let graphs_on = super::verify_e2::verify_graphs_enabled()
             && !k4_diag
-            && (self.comm.is_none() || self.levers.ep_graphs);
+            && (self.comm.is_none() || self.levers.ep_graphs || self.layers_capture_with_comm());
         let graph_key = if graphs_on {
             self.verify_batched_graph_key(
                 &*seqs,
