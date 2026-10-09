@@ -20,6 +20,9 @@ pub struct Glm5NextKdaKernels {
     /// weight, so a K-row `decode_k` reads each projection weight once. `0` on a target without
     /// it; [`ops::dense_mm_bf16`] then sends those rows to the tile GEMM.
     pub gemv_batchm: KernelHandle,
+    /// 2026-10-09: `dense_gemv_bf16_batchm_wide` (9..=16 rows, accumulators in registers);
+    /// `0` when absent (`glm5next_layer::wide_gemv`).
+    pub gemv_batchm_wide: KernelHandle,
     pub conv_decode: KernelHandle,
     pub conv_prefill: KernelHandle,
     pub l2: KernelHandle,
@@ -52,6 +55,11 @@ impl Glm5NextKdaKernels {
                 gpu,
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm",
+            ),
+            gemv_batchm_wide: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "dense_gemv_bf16_batchm",
+                "dense_gemv_bf16_batchm_wide",
             ),
             conv_decode: gpu.kernel("causal_conv1d", "causal_conv1d_update_l2norm")?,
             conv_prefill: gpu.kernel("causal_conv1d", "causal_conv1d_update_prefill")?,

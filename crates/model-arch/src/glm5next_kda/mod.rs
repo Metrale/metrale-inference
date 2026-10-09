@@ -206,24 +206,15 @@ impl Glm5NextKdaLayer {
     ) -> Result<()> {
         // 2026-09-25: Only M above `DENSE_GEMV_BATCHM_MAX_M` goes to cuBLASLt. Below it
         // `dense_mm_bf16` runs the M = 1 GEMV or the batched GEMV, whose rows carry the same
-        // bits, so the cuBLASLt switch never changes those widths.
-        if m > ops::DENSE_GEMV_BATCHM_MAX_M as usize && crate::glm5next_layer::cublas_wide_proj() {
-            return ops::cublas_bf16_proj_dense(
-                input,
-                weight.weight,
-                out,
-                m as u32,
-                n as u32,
-                k as u32,
-                stream,
-            );
-        }
-        ops::dense_mm_bf16(
+        // bits, so the cuBLASLt switch never changes those widths. 2026-10-09: the dispatch is
+        // `glm_mm`'s, with the register-resident batched GEMV at 9..=16 rows.
+        crate::glm5next_layer::wide_gemv::glm_mm(
             gpu,
-            &ops::DenseMmKernels {
-                gemm: self.kernels.gemm,
-                gemv: self.kernels.gemv,
-                batchm: self.kernels.gemv_batchm,
+            self.kernels.gemm,
+            self.kernels.gemv,
+            crate::glm5next_layer::wide_gemv::Batchm {
+                narrow: self.kernels.gemv_batchm,
+                wide: self.kernels.gemv_batchm_wide,
             },
             input,
             weight.weight,

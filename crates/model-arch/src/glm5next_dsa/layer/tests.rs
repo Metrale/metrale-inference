@@ -329,6 +329,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
         include_str!("../../glm5next_layer/steps/replay.rs"),
         include_str!("../../glm5next_layer/steps/verify_multi.rs"),
         include_str!("../../glm5next_layer/types.rs"),
+        include_str!("../../glm5next_layer/wide_gemv.rs"),
     );
     assert_eq!(
         glm5next_layer_files(),
@@ -345,6 +346,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
             "steps/verify_multi.rs",
             "tests.rs",
             "types.rs",
+            "wide_gemv.rs",
         ],
         "a new glm5next_layer file must join the scanned `concat!` above"
     );

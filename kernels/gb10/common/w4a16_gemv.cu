@@ -2195,7 +2195,8 @@ extern "C" __global__ void w4a16_gemv_dual_batch3(
 // unused), and u_slot[u * rows + r] the slot row r gave it (-1 when row r did not select
 // it). Entries follow the first appearance of each id in row-major order. It needs one
 // block of at least rows * top_k threads; glm5next_mlp/forward/moe_experts.rs launches exactly
-// that, and forward.rs takes this path only while rows * top_k <= MOE_ROW_UNION_MAX_IDS (64).
+// that, and forward.rs takes this path only while rows * top_k <= MOE_ROW_UNION_MAX_IDS (128 since
+// 2026-10-09; 64 before).
 
 
 extern "C" __global__ void glm5next_moe_row_union(
@@ -2413,3 +2414,13 @@ METRALE_MOE_BATCHM_ENTRY(5)
 METRALE_MOE_BATCHM_ENTRY(6)
 METRALE_MOE_BATCHM_ENTRY(7)
 METRALE_MOE_BATCHM_ENTRY(8)
+// 2026-10-09: Tiers 9..16, so a 16-row decode group reads each union expert once. The body
+// is the template above; each (row, slot) keeps w4a16_gemv_sw_moe's arithmetic.
+METRALE_MOE_BATCHM_ENTRY(9)
+METRALE_MOE_BATCHM_ENTRY(10)
+METRALE_MOE_BATCHM_ENTRY(11)
+METRALE_MOE_BATCHM_ENTRY(12)
+METRALE_MOE_BATCHM_ENTRY(13)
+METRALE_MOE_BATCHM_ENTRY(14)
+METRALE_MOE_BATCHM_ENTRY(15)
+METRALE_MOE_BATCHM_ENTRY(16)
