@@ -267,6 +267,9 @@ impl Glm5NextKdaLayer {
     ) -> Result<()> {
         let c = &self.cfg;
         let (hid, qkv, hd) = (c.hidden, c.qkv_dim(), c.head_dim);
+        // 2026-10-09: `hidden` is read, never written, by every projection below, so under
+        // `--dense-quantization fp8` its FP8 quantization is reused across them.
+        let _stable = crate::glm5next_fp8_dense::stable_input(hidden);
 
         // 2026-09-25: Three separate `[T, qkv]` projections, then one pack (see the module doc).
         for (i, w) in [
