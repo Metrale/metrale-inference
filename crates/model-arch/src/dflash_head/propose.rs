@@ -46,48 +46,6 @@ impl BlockDiffusionDraftHead {
             .downcast_mut::<DflashProposerState>()
             .ok_or_else(|| anyhow::anyhow!("Invalid DFlash proposer state"))?;
 
-        // 2026-09-25: `METRALE_DFLASH_CTX_PARITY_DUMP=1`, one-shot per
-        // `ctx.stats`: the whole ctx accumulator (`ctx_len` rows of
-        // `ctx_slot_bytes`) to `/tmp/metrale_ctx_parity.bin`, and its shape to
-        // `/tmp/metrale_ctx_parity.json`.
-        {
-            if self.levers.ctx_parity_dump
-                && dstate.ctx_len > 0
-                && ctx.stats.dumped.keyed("dflash_ctx_parity")
-            {
-                let n_bytes = dstate.ctx_len * dstate.ctx_slot_bytes;
-                let mut buf = vec![0u8; n_bytes];
-                ctx.gpu.synchronize(_stream)?;
-                ctx.gpu.copy_d2h(dstate.ctx_hidden_acc, &mut buf)?;
-                match std::fs::write("/tmp/metrale_ctx_parity.bin", &buf) {
-                    Ok(()) => {
-                        let elems_per_slot = dstate.ctx_slot_bytes / 2;
-                        let meta = format!(
-                            "{{\"ctx_len\":{},\"ctx_slot_bytes\":{},\"elems_per_slot\":{},\"position\":{},\"last_token\":{},\"n_bytes\":{}}}",
-                            dstate.ctx_len,
-                            dstate.ctx_slot_bytes,
-                            elems_per_slot,
-                            position,
-                            last_token,
-                            n_bytes,
-                        );
-                        let _ = std::fs::write("/tmp/metrale_ctx_parity.json", meta);
-                        tracing::info!(
-                            "DFLASH CTX_PARITY: wrote {} bytes — ctx_len={} slots × {} BF16 elems/slot (position={}, last_token={}) to /tmp/metrale_ctx_parity.bin",
-                            n_bytes,
-                            dstate.ctx_len,
-                            dstate.ctx_slot_bytes / 2,
-                            position,
-                            last_token,
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("DFLASH CTX_PARITY: write failed: {e}");
-                    }
-                }
-            }
-        }
-
         let _ = (ctx, position, last_token);
 
         // 2026-09-25: Append the latest captured target hiddens as one ctx row,
@@ -114,6 +72,52 @@ impl BlockDiffusionDraftHead {
             debug_assert_eq!(dstate.ctx_positions.len(), dstate.ctx_len);
             dstate.ctx_positions.push(position.saturating_sub(1) as i32);
             dstate.ctx_len += 1;
+        }
+
+        // 2026-09-25: `METRALE_DFLASH_CTX_PARITY_DUMP=1`, one-shot per `ctx.stats`: the ctx
+        // accumulator to `/tmp/metrale_ctx_parity.bin` and its shape to
+        // `/tmp/metrale_ctx_parity.json`. 2026-10-09: Taken after the decode-append, so it holds
+        // exactly the `ctx_len` rows this propose's forward attends, with their RoPE positions
+        // (`ctx_positions`), at the first propose at or past `METRALE_DFLASH_BLOCK_DUMP_AT_POS`:
+        // the propose whose drafts and block logits `METRALE_DFLASH_BLOCK_DUMP=1` writes, so an
+        // offline drafter forward can be checked against them.
+        if self.levers.ctx_parity_dump
+            && dstate.ctx_len > 0
+            && position >= self.levers.block_dump_at_pos
+            && ctx.stats.dumped.keyed("dflash_ctx_parity")
+        {
+            let n_bytes = dstate.ctx_len * dstate.ctx_slot_bytes;
+            let mut buf = vec![0u8; n_bytes];
+            ctx.gpu.synchronize(_stream)?;
+            ctx.gpu.copy_d2h(dstate.ctx_hidden_acc, &mut buf)?;
+            match std::fs::write("/tmp/metrale_ctx_parity.bin", &buf) {
+                Ok(()) => {
+                    let meta = format!(
+                        "{{\"ctx_len\":{},\"ctx_slot_bytes\":{},\"elems_per_slot\":{},\"position\":{},\"last_token\":{},\"n_bytes\":{},\"ctx_positions\":{:?}}}",
+                        dstate.ctx_len,
+                        dstate.ctx_slot_bytes,
+                        dstate.ctx_slot_bytes / 2,
+                        position,
+                        last_token,
+                        n_bytes,
+                        dstate.ctx_positions,
+                    );
+                    if let Err(e) = std::fs::write("/tmp/metrale_ctx_parity.json", meta) {
+                        tracing::warn!("DFLASH CTX_PARITY: meta write failed: {e}");
+                    }
+                    tracing::info!(
+                        "DFLASH CTX_PARITY: wrote {} bytes — ctx_len={} slots × {} BF16 elems/slot (position={}, last_token={}) to /tmp/metrale_ctx_parity.bin",
+                        n_bytes,
+                        dstate.ctx_len,
+                        dstate.ctx_slot_bytes / 2,
+                        position,
+                        last_token,
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!("DFLASH CTX_PARITY: write failed: {e}");
+                }
+            }
         }
 
         // 2026-09-25: The paged drafter cache (`METRALE_DFLASH_OPTION_B`, on

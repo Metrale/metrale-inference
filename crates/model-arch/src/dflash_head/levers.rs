@@ -96,7 +96,8 @@ pub struct DFlashLevers {
     /// the ctx K/V precompute intermediates.
     pub precompute_dump: bool,
     /// 2026-09-25: `METRALE_DFLASH_CTX_PARITY_DUMP=1`: one-shot `/tmp` dump of the
-    /// accumulated ctx hidden rows.
+    /// accumulated ctx hidden rows. 2026-10-09: With their positions, after the decode-append,
+    /// at the first propose at or past `block_dump_at_pos` (the block dump's propose).
     pub ctx_parity_dump: bool,
     /// 2026-09-25: `METRALE_DFLASH_DEBUG_NO_DECODE_APPEND=1`: skip the ctx append
     /// at the start of `propose_drafts`.
