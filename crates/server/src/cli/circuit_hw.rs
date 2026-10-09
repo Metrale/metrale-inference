@@ -45,7 +45,7 @@ pub(crate) const MATRIX_CONFIGS: &str = "crates/circuit/tests/fixtures/checkpoin
 
 /// 2026-09-30: The models of the roadmap matrix. `recipe` where a golden recipe pins the formats
 /// (its gb10 cell is the golden plan); `declared` plans the checkpoint's own formats.
-pub(crate) const MATRIX_MODELS: [MatrixModel; 10] = [
+pub(crate) const MATRIX_MODELS: [MatrixModel; 11] = [
     MatrixModel {
         slug: "qwen3.8-27b-nvfp4",
         checkpoint: "unsloth/Qwen3.8-27B-NVFP4",
@@ -96,6 +96,13 @@ pub(crate) const MATRIX_MODELS: [MatrixModel; 10] = [
     MatrixModel {
         slug: "llama-3.1-8b-instruct",
         checkpoint: "NousResearch/Meta-Llama-3.1-8B-Instruct",
+        precision: CircuitPrecision::Declared,
+    },
+    // 2026-10-08: GLM-5.3-Flash (`glm5_next`) at its declared formats: NVFP4 W4A4 routed experts
+    // and dense MLP, BF16 attention, indexer, shared expert and head, FP8 latent cache.
+    MatrixModel {
+        slug: "glm-5.3-flash-nvfp4",
+        checkpoint: "nvidia/GLM-5.3-Flash-NVFP4",
         precision: CircuitPrecision::Declared,
     },
 ];
