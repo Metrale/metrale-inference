@@ -71,12 +71,28 @@ fn kda_rows_reg() -> bool {
     *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROWS_REG").as_deref() == Ok("1"))
 }
 
-/// 2026-10-09: `METRALE_GLM_KDA_SEQ_ROWS=1` steps the batched decode and verify through the
-/// rows kernels (`rows.rs`). Off by default: on GB10 at C16 the rows kernels measured ~24 us
-/// a row against ~8.6 us for the single-row launches they replace. Read once.
-fn kda_seq_rows() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_SEQ_ROWS").as_deref() == Ok("1"))
+/// 2026-10-09: `METRALE_GLM_KDA_SEQ_ROWS`: `1` steps the batched decode and verify through the
+/// rows kernels (`rows.rs`), `decode` only the batched decode; unset (the default) steps row by
+/// row. On GB10 at C16 the verify arm measured ~24 us a row against ~8.6 us for the
+/// single-row launches: row by row, a verify steps one sequence's 1.4 MB state through its
+/// rows back to back, while L2 still holds it; row `t` of sixteen sequences (~23 MB) does not
+/// stay resident. A decode has one row per sequence and no such reuse. Read once.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum KdaSeqRows {
+    Off,
+    DecodeOnly,
+    All,
+}
+
+pub(crate) fn kda_seq_rows() -> KdaSeqRows {
+    static F: std::sync::OnceLock<KdaSeqRows> = std::sync::OnceLock::new();
+    *F.get_or_init(
+        || match std::env::var("METRALE_GLM_KDA_SEQ_ROWS").as_deref() {
+            Ok("1") => KdaSeqRows::All,
+            Ok("decode") => KdaSeqRows::DecodeOnly,
+            _ => KdaSeqRows::Off,
+        },
+    )
 }
 
 /// 2026-09-25: `METRALE_GLM_KDA_NO_SMEM=1` selects the 2R+2W recurrent kernel. Read once per

@@ -89,9 +89,9 @@ impl Glm5NextKdaLayer {
     /// the rows of sequence `s` contiguous in `hidden` in order, sequences one after another.
     /// The projections run once over all rows; then row `t` of every sequence steps in one
     /// conv and one recurrent launch per 16 rows, and `after_row(row)` runs for each of those
-    /// rows before row `t + 1`. Without the rows kernels, or unless `METRALE_GLM_KDA_SEQ_ROWS=1`
-    /// (2026-10-09: off by default), it steps row by row (`decode_rows_then`), with the same
-    /// bits.
+    /// rows before row `t + 1`. Without the rows kernels, or unless `METRALE_GLM_KDA_SEQ_ROWS`
+    /// asks for them (`kda_seq_rows`; 2026-10-09: off by default), it steps row by row
+    /// (`decode_rows_then`), with the same bits.
     pub fn decode_seq_rows(
         &self,
         gpu: &dyn GpuBackend,
@@ -101,7 +101,14 @@ impl Glm5NextKdaLayer {
         stream: u64,
         after_row: impl FnMut(usize) -> Result<()>,
     ) -> Result<()> {
-        self.decode_seq_rows_with(gpu, hidden, seqs, ws, stream, after_row, kda_seq_rows())
+        // 2026-10-09: A group with one row per sequence is a batched decode.
+        let decode = seqs.iter().all(|&(_, k)| k <= 1);
+        let use_rows = match kda_seq_rows() {
+            KdaSeqRows::All => true,
+            KdaSeqRows::DecodeOnly => decode,
+            KdaSeqRows::Off => false,
+        };
+        self.decode_seq_rows_with(gpu, hidden, seqs, ws, stream, after_row, use_rows)
     }
 
     /// 2026-10-09: [`Self::decode_seq_rows`] with the rows-kernel choice explicit.
