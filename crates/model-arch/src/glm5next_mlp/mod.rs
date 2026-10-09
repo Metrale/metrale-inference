@@ -40,6 +40,7 @@ use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 pub mod build;
 pub mod forward;
 pub mod forward_prefill_gemm;
+pub mod precision;
 pub mod weights;
 
 pub use weights::{Glm5NextDenseMlpWeights, Glm5NextExpertWeights, Glm5NextMoeWeights};
