@@ -243,6 +243,34 @@ impl TransformerModel {
         (batchm, tc.enabled && (tc.narrow.0 != 0 || tc.wide.0 != 0))
     }
 
+    /// 2026-10-09: This rank's `(begin, len)` vocab rows when the BF16 head at `padded_n`
+    /// rows would take the batched GEMV (`project_bf16_lm_head`'s last arm) and the head is
+    /// vocab-parallel; `None` sends the call to the whole-vocab dispatch unchanged.
+    fn bf16_head_batched_vocab_shard(&self, padded_n: usize, h: usize) -> Option<(usize, usize)> {
+        let m = padded_n as u32;
+        // 2026-10-09: Under a fixed head format `project_bf16_lm_head` takes the batched GEMV
+        // at every row count up to its widest launch; otherwise only inside the decode band and
+        // when the tensor-core arm does not claim the row count.
+        let fixed =
+            metrale_model_layers::layers::fixed_act(metrale_config::ProjFamily::LmHead, padded_n)
+                .is_some();
+        let band = if fixed {
+            ops::DENSE_GEMV_BATCHM_MAX_M
+        } else {
+            lm_head_batchm_max()
+        };
+        if self.dense_gemv_batchm_kernel.0 == 0
+            || !(1..=band).contains(&m)
+            || !h.is_multiple_of(8)
+            || (!fixed
+                && (!lmhead_batch_gemv_enabled()
+                    || lm_head_m16_tc_route(self.lm_head_m16_tc(), m, h as u32).is_some()))
+        {
+            return None;
+        }
+        self.lmhead_vocab_shard(self.config.vocab_size as u32)
+    }
+
     /// 2026-09-25: Project `normed` [padded_n, H] into `logits` [padded_n, V].
     ///
     /// `v` is read from `self.config.vocab_size` rather than passed: it is the
@@ -343,6 +371,33 @@ impl TransformerModel {
                         stream,
                     )?;
                 }
+            }
+        } else if let Some((begin, len)) = self.bf16_head_batched_vocab_shard(padded_n, h) {
+            // 2026-10-09: Vocab-parallel BF16 head on the batched-GEMV route, as `lm_head` does
+            // for one row: this rank projects its row range into a zeroed buffer and the
+            // all-reduce sums the ranks' pieces. Each logit is the same kernel's dot product
+            // whatever the range, and adding the other ranks' zeros is exact, so the bits
+            // match the whole-vocab launch. GLM-5.3 at C1 (154,880 rows over 3 ranks): the
+            // whole-vocab launch was 5.8 ms of a 46.7 ms step (nsys).
+            self.gpu
+                .memset_async(logits, 0, padded_n * v * 2, stream)?;
+            ops::dense_gemv_batchm(
+                self.gpu.as_ref(),
+                self.dense_gemv_batchm_kernel,
+                normed,
+                &DenseWeight {
+                    weight: self.lm_head_weight.weight.offset(begin * h * 2),
+                },
+                logits.offset(begin * 2),
+                padded_n as u32,
+                len as u32,
+                h as u32,
+                // 2026-10-09: Rows of `logits` stay a full vocab apart.
+                v as u32,
+                stream,
+            )?;
+            if let Some(comm) = self.comm_ref() {
+                comm.all_reduce_async(logits.0, padded_n * v * 2, stream)?;
             }
         } else {
             project_bf16_lm_head(

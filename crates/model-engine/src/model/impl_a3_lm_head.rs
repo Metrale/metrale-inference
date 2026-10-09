@@ -323,7 +323,7 @@ impl TransformerModel {
     /// size (154,880 rows over 3 ranks) still shards; an evenly dividing vocab gets the same
     /// ranges as before. The pieces meet in a zeroed buffer summed by an all-reduce, so
     /// uneven lengths need nothing else, and adding the other ranks' zeros is exact.
-    fn lmhead_vocab_shard(&self, v: u32) -> Option<(usize, usize)> {
+    pub(super) fn lmhead_vocab_shard(&self, v: u32) -> Option<(usize, usize)> {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *OFF.get_or_init(|| std::env::var("METRALE_NO_LMHEAD_VOCAB_TP").as_deref() == Ok("1")) {
             return None;
@@ -457,9 +457,12 @@ fn lmhead_vocab_split(v: usize, world: usize, rank: usize) -> Option<(usize, usi
         // 2026-10-08: The previous rule, byte for byte.
         return Some((rank * (v / world), v / world));
     }
-    metrale_config::tp_split(v, world, rank, LMHEAD_VOCAB_SPLIT_ALIGN)
-        .ok()
-        .map(|s| (s.start, s.len))
+    // 2026-10-09: A vocab that is not a whole number of units (the tokenizer caps GLM-5.3's
+    // 154,880-row head to 154,856) splits as if padded to the next unit; the last range stops
+    // at `v`. Without this the cap silently sent every rank back to the whole head.
+    let padded = v.div_ceil(LMHEAD_VOCAB_SPLIT_ALIGN) * LMHEAD_VOCAB_SPLIT_ALIGN;
+    let s = metrale_config::tp_split(padded, world, rank, LMHEAD_VOCAB_SPLIT_ALIGN).ok()?;
+    (s.start < v).then(|| (s.start, s.len.min(v - s.start)))
 }
 
 #[cfg(test)]
@@ -489,5 +492,19 @@ mod vocab_split_tests {
             parts,
             vec![(0, 51_648), (51_648, 51_648), (103_296, 51_584)]
         );
+    }
+
+    #[test]
+    fn a_tokenizer_capped_vocab_still_shards_and_covers_every_row() {
+        let parts: Vec<_> = (0..3)
+            .map(|r| lmhead_vocab_split(154_856, 3, r).unwrap())
+            .collect();
+        assert_eq!(
+            parts,
+            vec![(0, 51_648), (51_648, 51_648), (103_296, 51_560)]
+        );
+        assert_eq!(lmhead_vocab_split(100, 2, 1), Some((50, 50)));
+        let tail: Vec<_> = (0..2).map(|r| lmhead_vocab_split(129, 2, r).unwrap()).collect();
+        assert_eq!(tail, vec![(0, 128), (128, 1)]);
     }
 }
