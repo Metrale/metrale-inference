@@ -33,11 +33,11 @@ pub trait ModelEp {
         false
     }
 
-    /// 2026-10-09: Whether `prefill_batch_chunk` can run on this multi-rank serve: the scheduler
-    /// batches prefills under the multi-rank protocol only when this holds (and its lever is
-    /// on). Default `false`.
-    fn ep_prefill_batch_supported(&self) -> bool {
-        false
+    /// 2026-10-09: `Some(rows)` when `prefill_batch_chunk` can run on this multi-rank serve,
+    /// `rows` being the prompt rows one batched prefill step should carry; the scheduler batches
+    /// prefills under the multi-rank protocol only then (and with its lever on). Default `None`.
+    fn ep_prefill_batch_rows(&self) -> Option<usize> {
+        None
     }
 
     /// 2026-09-25: Send a command word to every worker rank. Default: `Ok(())`.

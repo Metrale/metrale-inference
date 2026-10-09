@@ -14,22 +14,22 @@
 //! - Groups hold whole pieces in pass order, at most `prefill_rows()` rows, so a sequence's
 //!   pieces step its state in order and every group fits the mHC `mix` scratch and the MLP
 //!   workspace the single-sequence prefill fits.
+//! - Pieces share a group only where the layer's MLP computes a row the same whatever its
+//!   batch-mates (`mlp_shares_rows`): a routed site only on the grouped GEMM, both for the
+//!   piece's own row count and for the group's. Any other piece runs as a group of its own.
 //! - Row `r` of the pass uses highway slot `ctx.hc_row_offset + r`.
 //!
 //! # Which launches a row shares with other sequences
 //!
 //! The group-wide ones: `hc_pre`/`hc_post`/`hc_head_mean` and the norms (one block per token,
-//! nothing shared across tokens), the mixer and MLP all-reduces, and in a routed MLP the
-//! top-k, the sort, the expert GEMMs, the shared expert and the combine, each of which computes
-//! a row from its own inputs. The launches whose arithmetic depends on the row count stay per
-//! piece: the router GEMM (`forward_moe_pieces`) and a dense MLP site. So on one GPU a row's
-//! bits equal the single-sequence prefill's, measured byte for byte on the routed site by
-//! `examples/glm5next_prefill_spans_mlp_gate.rs`, with one exception: the routed experts pick
-//! their kernel by the group's row count (W4A4 up to 16 rows, the row-union GEMV below
-//! `METRALE_GLM_MOE_PREFILL_GEMM_MIN_ROWS`, the grouped GEMM from there), so a prompt whose own
-//! row count picks another kernel than its group's (16 tokens or fewer, or below that floor) is
-//! not byte-identical. Across three ranks the all-reduce is a sum of `rows * hidden` elements
-//! whose per-element order NCCL may pick by message size.
+//! nothing shared across tokens; `glm5next_c16_kernel_bench` checks the rows `hc_mix` against
+//! the per-row one byte for byte), and in a routed MLP the top-k, the sort, the grouped expert
+//! GEMM and the combine, each of which computes a row from its own inputs. The launches whose
+//! arithmetic depends on the row count stay per piece: the router GEMM and the shared expert
+//! (`forward_moe_pieces`), a dense MLP site, and the mixer and MLP all-reduces (so each
+//! collective has the size the piece's own pass gives it). So a row's bits equal the
+//! single-sequence prefill's; the routed site is measured byte for byte by
+//! `examples/glm5next_prefill_spans_mlp_gate.rs`.
 
 use super::forward::kda_chunk_prefill;
 use super::*;
@@ -47,8 +47,14 @@ pub struct SpanPiece {
 
 /// 2026-10-09: The row groups of a pass whose sequence `s` has `rows[s]` rows: every sequence
 /// cut at multiples of `cap` from its first row, the pieces packed in order into groups of at
-/// most `cap` rows. A `cap` of 0 is treated as 1; a sequence with no rows has no piece.
-pub fn prefill_span_groups(rows: &[usize], cap: usize) -> Vec<Vec<SpanPiece>> {
+/// most `cap` rows. A piece shares a group only when `share` holds for its own row count and
+/// for the group's total with it; any other piece gets a group of its own, so its launches are
+/// those of its own prefill. A `cap` of 0 is treated as 1; a sequence with no rows has no piece.
+pub fn prefill_span_groups(
+    rows: &[usize],
+    cap: usize,
+    share: impl Fn(usize) -> bool,
+) -> Vec<Vec<SpanPiece>> {
     let cap = cap.max(1);
     let mut groups = Vec::new();
     let mut cur: Vec<SpanPiece> = Vec::new();
@@ -58,19 +64,28 @@ pub fn prefill_span_groups(rows: &[usize], cap: usize) -> Vec<Vec<SpanPiece>> {
         let mut t0 = 0usize;
         while t0 < n {
             let len = cap.min(n - t0);
-            if cur_rows + len > cap {
-                groups.push(std::mem::take(&mut cur));
-                cur_rows = 0;
-            }
-            cur.push(SpanPiece {
+            let piece = SpanPiece {
                 seq,
                 t0,
                 row,
                 rows: len,
-            });
-            cur_rows += len;
+            };
             row += len;
             t0 += len;
+            if !share(len) {
+                if !cur.is_empty() {
+                    groups.push(std::mem::take(&mut cur));
+                    cur_rows = 0;
+                }
+                groups.push(vec![piece]);
+                continue;
+            }
+            if !cur.is_empty() && (cur_rows + len > cap || !share(cur_rows + len)) {
+                groups.push(std::mem::take(&mut cur));
+                cur_rows = 0;
+            }
+            cur.push(piece);
+            cur_rows += len;
         }
     }
     if !cur.is_empty() {
@@ -117,7 +132,8 @@ impl Glm5NextLayer {
             );
         }
         let row_bytes = self.hidden * 2;
-        for group in prefill_span_groups(&rows, prefill_rows().min(cap)) {
+        let share = |r: usize| self.mlp_shares_rows(r);
+        for group in prefill_span_groups(&rows, prefill_rows().min(cap), share) {
             let base = group[0].row;
             let m: usize = group.iter().map(|p| p.rows).sum();
             let slot_base = ctx.hc_row_offset + base;
@@ -145,6 +161,26 @@ impl Glm5NextLayer {
             })?;
         }
         Ok(())
+    }
+
+    /// 2026-10-09: Whether pieces whose rows add up to `rows` may share this layer's MLP
+    /// launches with a row's bits unchanged: always for a dense site (it runs per piece); for a
+    /// routed site only on the grouped GEMM, whose rows do not depend on each other
+    /// (`examples/glm5next_prefill_spans_mlp_gate.rs`). The W4A4, row-union and per-row paths
+    /// are left to one piece per group.
+    fn mlp_shares_rows(&self, rows: usize) -> bool {
+        match &self.mlp {
+            Glm5NextMlpSite::Dense(_) => true,
+            Glm5NextMlpSite::Moe(w) => {
+                crate::glm5next_mlp::forward::expert_route(
+                    &self.mlp_kernels,
+                    &self.mlp_cfg,
+                    w,
+                    &self.mlp_ws,
+                    rows,
+                ) == crate::glm5next_mlp::forward::ExpertRoute::Grouped
+            }
+        }
     }
 
     /// 2026-10-09: One piece's mixer, with the output left over its `k` input rows at `x`:
@@ -223,7 +259,7 @@ mod tests {
     #[test]
     fn short_prompts_pack_whole_into_groups() {
         assert_eq!(
-            prefill_span_groups(&[198, 198, 197], 512),
+            prefill_span_groups(&[198, 198, 197], 512, |_| true),
             vec![
                 vec![piece(0, 0, 0, 198), piece(1, 0, 198, 198)],
                 vec![piece(2, 0, 396, 197)],
@@ -237,7 +273,7 @@ mod tests {
     #[test]
     fn a_long_sequence_keeps_its_own_sub_chunks() {
         assert_eq!(
-            prefill_span_groups(&[10, 3, 1], 4),
+            prefill_span_groups(&[10, 3, 1], 4, |_| true),
             vec![
                 vec![piece(0, 0, 0, 4)],
                 vec![piece(0, 4, 4, 4)],
@@ -260,7 +296,7 @@ mod tests {
             (vec![5], 1),
             (vec![3, 0, 4], 0),
         ] {
-            let groups = prefill_span_groups(&rows, cap);
+            let groups = prefill_span_groups(&rows, cap, |_| true);
             let cap = cap.max(1);
             let mut next_row = 0usize;
             let mut next_t = vec![0usize; rows.len()];
@@ -289,5 +325,31 @@ mod tests {
             assert_eq!(next_row, rows.iter().sum::<usize>());
             assert_eq!(next_t, rows);
         }
+    }
+
+    /// 2026-10-09: The serve's routed site shares only from 17 rows (the grouped GEMM): a
+    /// shorter piece runs alone, and a piece may not join a group whose total the predicate
+    /// refuses.
+    #[test]
+    fn a_piece_the_predicate_refuses_runs_alone() {
+        let grouped = |r: usize| r >= 17;
+        assert_eq!(
+            prefill_span_groups(&[77, 9, 77, 77, 16, 20], 512, grouped),
+            vec![
+                vec![piece(0, 0, 0, 77)],
+                vec![piece(1, 0, 77, 9)],
+                vec![piece(2, 0, 86, 77), piece(3, 0, 163, 77)],
+                vec![piece(4, 0, 240, 16)],
+                vec![piece(5, 0, 256, 20)],
+            ]
+        );
+        let below_300 = |r: usize| r < 300;
+        assert_eq!(
+            prefill_span_groups(&[200, 150, 50], 512, below_300),
+            vec![
+                vec![piece(0, 0, 0, 200)],
+                vec![piece(1, 0, 200, 150), piece(2, 0, 350, 50)],
+            ]
+        );
     }
 }

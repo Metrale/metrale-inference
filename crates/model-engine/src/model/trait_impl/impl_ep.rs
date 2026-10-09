@@ -21,8 +21,8 @@ impl ModelEp for TransformerModel {
         self.is_ep_dispatch()
     }
 
-    fn ep_prefill_batch_supported(&self) -> bool {
-        self.prefill_spans_supported_dispatch()
+    fn ep_prefill_batch_rows(&self) -> Option<usize> {
+        self.prefill_spans_rows_dispatch()
     }
 
     fn ep_broadcast_cmd(&self, cmd: u32) -> Result<()> {

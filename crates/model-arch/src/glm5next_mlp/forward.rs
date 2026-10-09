@@ -22,6 +22,7 @@ mod dense;
 mod launch;
 mod moe_experts;
 mod pieces;
+mod route;
 mod router;
 mod w4a4;
 mod workspace;
@@ -29,6 +30,7 @@ mod workspace;
 pub use dense::{forward_dense, forward_dense_site};
 use launch::swiglu;
 pub(crate) use pieces::check_pieces;
+pub use route::{ExpertRoute, expert_route};
 pub use w4a4::forward_dense_w4a4;
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 
@@ -349,34 +351,16 @@ pub fn forward_moe_pieces(
 
     let groups = moe_row_groups(rows, row_batch_max());
     // 2026-10-08: The precision plan picks W4A4 or the W4A16 paths below for this row count.
-    let w4a4 = match w.precision.kernel(rows) {
-        super::precision::MlpKernel::W4a4Static => Some(w.act_scales.ok_or_else(|| {
+    // 2026-10-09: The path comes from `route::expert_route`, which the prefill grouping reads too.
+    let path = route::expert_route(k, cfg, w, ws, rows);
+    let w4a4 = match path {
+        route::ExpertRoute::W4a4 => Some(w.act_scales.ok_or_else(|| {
             anyhow::anyhow!("GLM MoE: the plan runs W4A4 at {rows} rows but no scales were bound")
         })?),
         _ => None,
     };
-    let grouped_prefill = w4a4.is_none()
-        && rows > MOE_ROW_BATCH_MAX_ROWS
-        && rows >= forward_prefill_gemm::prefill_gemm_min_rows()
-        && forward_prefill_gemm::prefill_gemm_enabled()
-        && !host_dispatch_forced()
-        && !profile::trace_on()
-        && k.moe_sort_by_expert.0 != 0
-        && k.moe_grouped_gemm.0 != 0
-        && k.combine_indexed.0 != 0
-        && rows * cfg.top_k <= ws.max_total_expanded();
-    let batched = w4a4.is_none()
-        && !grouped_prefill
-        && rows >= 2
-        && !host_dispatch_forced()
-        && !row_batch_disabled()
-        && !profile::trace_on()
-        && k.moe_row_union.0 != 0
-        && groups.iter().all(|&(_, w)| {
-            w >= 2
-                && w * cfg.top_k <= MOE_ROW_UNION_MAX_IDS
-                && k.w4a16_gemv_sw_moe_batchm[w - 2].0 != 0
-        });
+    let grouped_prefill = path == route::ExpertRoute::Grouped;
+    let batched = path == route::ExpertRoute::RowBatched;
     if w4a4.is_none() {
         announce_row_batch(batched, rows);
         announce_grouped_prefill(grouped_prefill, rows);

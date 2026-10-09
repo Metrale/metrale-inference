@@ -28,22 +28,32 @@ use super::spans_wire::{
 use crate::traits::{ModelForward, PrefillSlice, SequenceState};
 
 impl TransformerModel {
-    /// 2026-10-09: Whether this serve can run the multi-rank batched prefill at all: a
-    /// multi-rank world on the v2 protocol (the slots travel in the payload), every layer
-    /// implementing `prefill_spans`, and none of the per-chunk extras the pass leaves out: a
-    /// live prefix cache (a restore changes a chunk's rows), DFlash or MTP prompt capture,
-    /// LoRA, token overlays, or the high-speed-swap window.
-    pub(in crate::model) fn prefill_spans_supported_dispatch(&self) -> bool {
-        self.multi_rank_protocol_active()
+    /// 2026-10-09: The rows one batched prefill step should carry, or `None` when this serve
+    /// cannot run the multi-rank batched prefill at all. It runs on a multi-rank world on the v2
+    /// protocol (the slots travel in the payload), with every layer implementing
+    /// `prefill_spans`, and none of the per-chunk extras the pass leaves out: a live prefix
+    /// cache (a restore changes a chunk's rows), DFlash or MTP prompt capture, LoRA, token
+    /// overlays, or the high-speed-swap window. The rows are the narrowest layer's row group
+    /// (`prefill_spans_rows`), at most the arena.
+    pub(in crate::model) fn prefill_spans_rows_dispatch(&self) -> Option<usize> {
+        let ok = self.multi_rank_protocol_active()
             && self.ep_protocol_v2
-            && !self.layers.is_empty()
-            && self.layers.iter().all(|l| l.prefill_spans_supported())
             && !self.prefix_cache.is_active()
             && self.dflash_capture_layers.is_empty()
             && self.mtp_prefill_hidden.is_null()
             && self.lora.is_none()
             && self.overlays.is_none()
-            && self.kv_cache.lock().config().cache_blocks_per_seq.is_none()
+            && self.kv_cache.lock().config().cache_blocks_per_seq.is_none();
+        if !ok {
+            return None;
+        }
+        let rows = self
+            .layers
+            .iter()
+            .map(|l| l.prefill_spans_rows())
+            .collect::<Option<Vec<usize>>>()?;
+        let narrowest = rows.into_iter().min()?;
+        Some(narrowest.min(self.buffers.max_batch_tokens()).max(1))
     }
 
     /// 2026-10-09: Rank 0's batched prefill on a multi-rank serve: check the batch, then for
@@ -55,8 +65,8 @@ impl TransformerModel {
         row_base: usize,
     ) -> Result<Vec<DevicePtr>> {
         ensure!(
-            self.prefill_spans_supported_dispatch(),
-            "multi-rank batched prefill: this serve cannot run it (prefill_spans_supported)"
+            self.prefill_spans_rows_dispatch().is_some(),
+            "multi-rank batched prefill: this serve cannot run it (prefill_spans_rows)"
         );
         let n = streams.len();
         let logits_rows = self.buffers.sizes().logits / (self.config.vocab_size * 2);

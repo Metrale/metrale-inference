@@ -5,7 +5,7 @@
 //! share one `forward_moe` call over all their rows. For several sets of prompt lengths it runs
 //! `forward_moe` on each sequence's rows alone (what the one-request-at-a-time prefill runs) and
 //! on all of them packed sequence-major, and compares every sequence's output rows byte for
-//! byte; then it times two 198-row calls against one 396-row call.
+//! byte; then it times each burst of `TIMED` apart (one call per prompt) and together.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -46,10 +46,13 @@ use metrale_model_arch::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 use metrale_model_layers::layers::{DenseQuantization, set_dense_quantization_from_cli};
 
 /// 2026-10-09: The rows one pass may group (`METRALE_GLM_PREFILL_ROWS` in the serve recipe).
-const MAX_ROWS: usize = 512;
+const MAX_ROWS: usize = 2048;
 /// 2026-10-09: Prompt-length sets, each at most `MAX_ROWS` rows in all: the ladder's two
-/// 198-token prompts, three uneven prompts, and a short one before a long one.
-const CASES: [&[usize]; 3] = [&[198, 198], &[198, 197, 116], &[64, 300]];
+/// 198-token prompts, three uneven prompts, a short one before a long one, and a C16 burst of
+/// 77-token prompts in one group.
+const CASES: [&[usize]; 4] = [&[198, 198], &[198, 197, 116], &[64, 300], &[77; 16]];
+/// 2026-10-09: The bursts timed apart and together.
+const TIMED: [&[usize]; 3] = [&[198, 198], &[77; 16], &[198; 8]];
 const TIMING_REPS: usize = 9;
 
 struct Rng(u64);
@@ -269,7 +272,7 @@ fn main() -> Result<()> {
 
     let x = up_bf16(
         &gpu,
-        &(0..396 * c.hidden)
+        &(0..MAX_ROWS * c.hidden)
             .map(|_| rng.unit() * 3.0)
             .collect::<Vec<_>>(),
     )?;
@@ -288,36 +291,35 @@ fn main() -> Result<()> {
         v.sort_by(|a, b| a.total_cmp(b));
         Ok(v)
     };
-    let apart = time(&mut || {
-        moe(x, out_one, 198)?;
-        moe(x.offset(198 * row_bytes), out_one, 198)
-    })?;
-    let together = time(&mut || {
-        forward_moe_pieces(
-            &gpu,
-            &k,
-            &c,
-            &site,
-            x,
-            out_all,
-            396,
-            &[198, 198],
-            &ws,
-            false,
-            stream,
-        )
-    })?;
     let med = |v: &[f64]| v[v.len() / 2];
-    println!(
-        "two prompts of 198 rows, one rank's routed site: apart {:.2} ms (min {:.2}, max {:.2}), \
-         together {:.2} ms (min {:.2}, max {:.2}), median of {TIMING_REPS}",
-        med(&apart),
-        apart[0],
-        apart[TIMING_REPS - 1],
-        med(&together),
-        together[0],
-        together[TIMING_REPS - 1]
-    );
+    for rows in TIMED {
+        let total: usize = rows.iter().sum();
+        let apart = time(&mut || {
+            let mut at = 0usize;
+            for &n in rows {
+                moe(x.offset(at * row_bytes), out_one, n)?;
+                at += n;
+            }
+            Ok(())
+        })?;
+        let together = time(&mut || {
+            forward_moe_pieces(
+                &gpu, &k, &c, &site, x, out_all, total, rows, &ws, false, stream,
+            )
+        })?;
+        println!(
+            "{} prompts of {:?} rows, one rank's routed site: apart {:.2} ms (min {:.2}, max {:.2}), \
+             together {:.2} ms (min {:.2}, max {:.2}), median of {TIMING_REPS}",
+            rows.len(),
+            rows[0],
+            med(&apart),
+            apart[0],
+            apart[TIMING_REPS - 1],
+            med(&together),
+            together[0],
+            together[TIMING_REPS - 1]
+        );
+    }
     if failures > 0 {
         bail!("{failures} sequence(s) differ between their own call and the packed call");
     }

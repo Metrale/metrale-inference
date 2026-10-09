@@ -27,7 +27,7 @@ pub struct PrefillSpan<'a> {
 pub trait LayerSplitPrefill {
     /// 2026-10-09: Prefill several sequences' chunks in one pass: `spans[s].rows` rows of
     /// sequence `s` at `hidden` row `Σ spans[..s].rows`, each starting at position
-    /// `spans[s].seq_len_start`. A layer that answers `prefill_spans_supported` must leave
+    /// `spans[s].seq_len_start`. A layer that answers `prefill_spans_rows` must leave
     /// every sequence's state, KV and rows as its own `prefill` of the same rows would. The
     /// default returns an error.
     fn prefill_spans(
