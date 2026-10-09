@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-09: The wide-row arm of the declared-W8A8 projection. From
-//! `METRALE_W8A8_LT_MIN_ROWS` rows up (unset or 0: never), a per-row-scaled weight's
+//! 2026-10-09: The wide-row arm of the declared-W8A8 projection. From the class's
+//! `[defaults] w8a8_lt_min_rows` rows up (`METRALE_W8A8_LT_MIN_ROWS` overrides; 0: never), and only
+//! while every projection family routes `adaptive` (`--activation-quantization`), a per-row-scaled weight's
 //! [`super::w8a8_gemv`] runs as one cuBLASLt FP8 GEMM per stacked segment
 //! (`cublaslt::fp8_gemm_act_weight_t_rowwise_ldc`): the same E4M3 activation and per-token scale
 //! the quantizer left in the scratch, the same E4M3 weight and per-row scale, FP32 accumulation,
 //! BF16 out. The declared numerics are kept; the summation order is cuBLASLt's, and its
 //! algorithm may change with the row count, so a row's bits can depend on how many rows share
-//! the launch (the `adaptive` activation routing already routes by row count).
+//! the launch: a fixed activation format promises row invariance, so the arm stays off under one
+//! (the `adaptive` routing already routes by row count).
 //!
 //! Why: the skinny GEMV keeps 1-16 token tiles in registers and re-reads the weight once per
 //! 128-row launch with little reuse per byte; on the H100 SXM its 128-row launch of the 27B's GDN
@@ -24,16 +26,16 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::{W8a8Scale, W8a8Scratch, W8a8Weight};
 
-/// 2026-10-09: `METRALE_W8A8_LT_MIN_ROWS`, read once per process (a graph capture and its
-/// replays must agree). Unset, empty, unparsable or 0 turns the arm off.
+/// 2026-10-09: The row count the arm starts at, 0 for never: the resolved class default
+/// (`target_defaults::resolved`, read once per process, so a graph capture and its replays agree),
+/// and 0 whenever a projection family runs a fixed activation format.
 pub fn w8a8_lt_min_rows() -> usize {
-    static MIN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *MIN.get_or_init(|| parse_min_rows(std::env::var("METRALE_W8A8_LT_MIN_ROWS").ok().as_deref()))
-}
-
-/// 2026-10-09: The pure parse behind [`w8a8_lt_min_rows`].
-fn parse_min_rows(raw: Option<&str>) -> usize {
-    raw.and_then(|v| v.trim().parse().ok()).unwrap_or(0)
+    if crate::layers::activation_quantization::any_fixed() {
+        return 0;
+    }
+    super::super::target_defaults::resolved()
+        .w8a8_lt_min_rows
+        .value as usize
 }
 
 /// 2026-10-09: Whether the arm takes a launch of `rows` rows of a `scale` weight, under the
@@ -77,14 +79,6 @@ pub(super) fn try_w8a8_gemm_lt(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_threshold_parses_and_zero_or_garbage_is_off() {
-        assert_eq!(parse_min_rows(None), 0);
-        assert_eq!(parse_min_rows(Some("")), 0);
-        assert_eq!(parse_min_rows(Some("abc")), 0);
-        assert_eq!(parse_min_rows(Some(" 64 ")), 64);
-    }
 
     #[test]
     fn only_per_row_weights_at_or_above_the_threshold_take_the_arm() {

@@ -37,6 +37,10 @@ mod behavior_defaults;
 
 // 2026-10-05: The W8A8 GEMV schedule points, shared with the build script's `[defaults]` parse.
 pub mod w8a8_gemv_entries;
+
+// 2026-10-09: The W4A16 tensor-core GEMV schedule points, shared with the build script's
+// `[defaults]` parse.
+pub mod w4a16_gemv_tc_entries;
 pub use behavior_defaults::{
     DEFAULT_EFFORT_CAPPED_AT_CEILING, DEFAULT_MAX_INTER_TOOL_PROSE, DEFAULT_MAX_THINKING_BUDGET,
 };

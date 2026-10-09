@@ -232,6 +232,10 @@ ffn_w4a16_tc_rows_max_m = 0
 ffn_w4a16_bf16_tile = false
 # 2026-10-05: The baseline W8A8 GEMV schedule points (crates/kernels/src/w8a8_gemv_entries.rs).
 w8a8_gemv_entries = ["mb1_ku8", "mb2", "mb4", "mb8", "mb16"]
+# 2026-10-09: The baseline W4A16 tensor-core GEMV points (crates/kernels/src/w4a16_gemv_tc_entries.rs).
+w4a16_gemv_tc_entries = ["tc8", "tc16"]
+# 2026-10-09: Off: the skinny W8A8 GEMV at every row count (unmeasured against cuBLASLt here).
+w8a8_lt_min_rows = 0
 
 
 # 2026-10-02: The tensor-core policy (crates/circuit/src/hardware/tc_policy.rs): the ops a GB10 plan

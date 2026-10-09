@@ -110,4 +110,13 @@ pub struct TargetDefaults {
     /// `ops::W8a8Kernels::load`. The points of a band give the same bits. The baseline is
     /// [`crate::w8a8_gemv_entries::W8A8_GEMV_BASELINE`]; hopper declares the measured points.
     pub w8a8_gemv_entries: [&'static str; 5],
+    /// 2026-10-09: The W4A16 tensor-core GEMV entry per row tier (tc8, tc16), each a point of
+    /// [`crate::w4a16_gemv_tc_entries::W4A16_GEMV_TC_POINTS`], read by metrale-model-layers
+    /// `ops::gemv_tc`. The points of a tier give the same bits. The baseline is
+    /// [`crate::w4a16_gemv_tc_entries::W4A16_GEMV_TC_BASELINE`]; hopper declares measured points.
+    pub w4a16_gemv_tc_entries: [&'static str; 2],
+    /// 2026-10-09: From this many rows up, a per-row-scaled declared-W8A8 decode projection runs as
+    /// cuBLASLt FP8 GEMMs under the `adaptive` activation routing (metrale-model-layers
+    /// `ops/w8a8_decode/lt.rs`). `0` means never, the baseline; hopper declares 64.
+    pub w8a8_lt_min_rows: u32,
 }

@@ -177,6 +177,25 @@ pub struct TargetLevers {
     pub ffn_w4a16_bf16_tile: Resolved<bool>,
     /// 2026-10-05: The W8A8 GEMV entry per token-tile band (`ops::W8a8Kernels::load`).
     pub w8a8_gemv_entries: Resolved<[&'static str; 5]>,
+    /// 2026-10-09: The W4A16 tensor-core GEMV entry per row tier (`ops::gemv_tc`).
+    pub w4a16_gemv_tc_entries: Resolved<[&'static str; 2]>,
+    /// 2026-10-09: The cuBLASLt arm of the declared-W8A8 projection (`ops/w8a8_decode/lt.rs`).
+    pub w8a8_lt_min_rows: Resolved<u32>,
+}
+
+/// 2026-10-09: The W4A16 tensor-core GEMV entries: the environment's two comma-separated points
+/// when each is a compiled point of its tier (`metrale_kernels::w4a16_gemv_tc_entries`), else the
+/// declaration.
+pub fn resolve_w4a16_gemv_tc_entries(
+    declared: [&'static str; 2],
+    raw: Option<&str>,
+) -> Resolved<[&'static str; 2]> {
+    match raw
+        .and_then(|v| metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_entries(v.split(',')))
+    {
+        Some(e) => Resolved::env(e),
+        None => Resolved::target(declared),
+    }
 }
 
 /// 2026-10-05: The W8A8 GEMV entries: the environment's five comma-separated points when each
@@ -227,6 +246,15 @@ pub fn resolve(
         w8a8_gemv_entries: resolve_w8a8_gemv_entries(
             defaults.w8a8_gemv_entries,
             var("METRALE_W8A8_GEMV_ENTRIES").as_deref(),
+        ),
+        w4a16_gemv_tc_entries: resolve_w4a16_gemv_tc_entries(
+            defaults.w4a16_gemv_tc_entries,
+            var("METRALE_W4A16_GEMV_TC_ENTRIES").as_deref(),
+        ),
+        // 2026-10-09: A parsed `0` turns the cuBLASLt arm off on any target.
+        w8a8_lt_min_rows: resolve_max_m(
+            defaults.w8a8_lt_min_rows,
+            var("METRALE_W8A8_LT_MIN_ROWS").as_deref(),
         ),
         // 2026-09-25: `kernels/hopper` declares it on, the other tables off. A
         // pinned `--ssm-batched-recurrent` outranks this row (`serve_flags.rs`).
@@ -376,7 +404,9 @@ pub fn format_levers(l: &TargetLevers) -> String {
          w8a8_prefill_max_m={w8a8_wide}/{w8a8_narrow}{w8a8_src} \
          ffn_w4a16_tc_rows_max_m={tc_rows}{tc_rows_src} \
          ffn_w4a16_bf16_tile={bf16_tile} \
-         w8a8_gemv_entries={w8a8_entries}{w8a8_entries_src}",
+         w8a8_gemv_entries={w8a8_entries}{w8a8_entries_src} \
+         w4a16_gemv_tc_entries={w4tc_entries}{w4tc_entries_src} \
+         w8a8_lt_min_rows={w8a8_lt}{w8a8_lt_src}",
         hw = if l.hw.is_empty() { "unknown" } else { l.hw },
         // 2026-09-25: Not a lever: the target's `[hardware] sm_count`, which
         // `arch_preflight::check_sm_count` compares with the device at boot.
@@ -405,6 +435,10 @@ pub fn format_levers(l: &TargetLevers) -> String {
         bf16_tile = onoff(l.ffn_w4a16_bf16_tile),
         w8a8_entries = l.w8a8_gemv_entries.value.join("/"),
         w8a8_entries_src = l.w8a8_gemv_entries.source.tag(),
+        w4tc_entries = l.w4a16_gemv_tc_entries.value.join("/"),
+        w4tc_entries_src = l.w4a16_gemv_tc_entries.source.tag(),
+        w8a8_lt = l.w8a8_lt_min_rows.value,
+        w8a8_lt_src = l.w8a8_lt_min_rows.source.tag(),
     )
 }
 

@@ -14,9 +14,9 @@
 //!
 //!   cargo run -p metrale-model-arch --release --example w4a16_gemv_tc_bench --features cuda,gpu-examples
 //!
-//! Env: METRALE_PEAK_GBPS (required: the bench runs on more than one class). Every entry of the
-//! module whose name parses as `w4a16_gemv_tc{8,16}[_nt{NT}_ku{KU}_o{B}]` and resolves is timed
-//! at the rows its tier serves.
+//! Env: METRALE_PEAK_GBPS (required: the bench runs on more than one class). Every point of
+//! `metrale_kernels::w4a16_gemv_tc_entries::W4A16_GEMV_TC_POINTS` that resolves is timed at the
+//! rows its tier serves.
 
 use anyhow::{Context, Result};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
@@ -34,34 +34,13 @@ const SHAPES: &[(&str, u32, u32)] = &[
     ("ffn down    ", 5120, 17408),
 ];
 
-/// 2026-10-09: The entries this bench knows, with their tier's widest row count and NT.
-const ENTRIES: &[&str] = &[
-    "w4a16_gemv_tc8",
-    "w4a16_gemv_tc8_nt1_ku4_o2",
-    "w4a16_gemv_tc8_nt1_ku8_o2",
-    "w4a16_gemv_tc8_nt2_ku4_o2",
-    "w4a16_gemv_tc8_nt2_ku2_o3",
-    "w4a16_gemv_tc8_nt1_ku4_o3",
-    "w4a16_gemv_tc8_nt4_ku2_o2",
-    "w4a16_gemv_tc16",
-    "w4a16_gemv_tc16_nt2_ku2_o2",
-    "w4a16_gemv_tc16_nt1_ku4_o2",
-    "w4a16_gemv_tc16_nt4_ku1_o2",
-    "w4a16_gemv_tc16_nt2_ku4_o2",
-];
-
-/// 2026-10-09: `(rows served, NT)` from an entry name; the bare tiers are tc8 NT 1, tc16 NT 2.
-fn geometry(entry: &str) -> Result<(u32, u32)> {
-    let rest = entry
-        .strip_prefix("w4a16_gemv_tc")
-        .context("not a w4a16_gemv_tc entry")?;
-    let (tier, point) = rest.split_once('_').unwrap_or((rest, ""));
-    let mt: u32 = tier.parse().context("tier")?;
-    let nt = point
-        .split('_')
-        .find_map(|t| t.strip_prefix("nt").and_then(|v| v.parse().ok()))
-        .unwrap_or(if mt == 8 { 1 } else { 2 });
-    Ok((mt, nt))
+/// 2026-10-09: `(rows served, NT)` of a point of `metrale_kernels::w4a16_gemv_tc_entries`.
+fn geometry(point: &str) -> (u32, u32) {
+    let mt = if point.starts_with("tc16") { 16 } else { 8 };
+    (
+        mt,
+        metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_nt(point),
+    )
 }
 
 fn main() -> Result<()> {
@@ -86,12 +65,14 @@ fn main() -> Result<()> {
             "── {label} N={n} K={k}  weights {:.1} MB, floor {floor_us:.1} us ──",
             bytes / 1e6
         );
-        for entry in ENTRIES {
-            let Ok(h) = g.kernel("w4a16_gemv_tc", entry) else {
+        let points = metrale_kernels::w4a16_gemv_tc_entries::W4A16_GEMV_TC_POINTS;
+        for point in points.iter().flat_map(|t| t.iter()) {
+            let entry = format!("w4a16_gemv_{point}");
+            let Ok(h) = g.kernel("w4a16_gemv_tc", &entry) else {
                 eprintln!("    {entry:<30} not in this module set");
                 continue;
             };
-            let (mt, nt) = geometry(entry)?;
+            let (mt, nt) = geometry(point);
             for &m in rows_all.iter().filter(|&&m| m <= mt && (mt == 8 || m > 8)) {
                 let launch = || {
                     KernelLaunch::new(g, h)

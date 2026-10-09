@@ -95,3 +95,47 @@ fn grid_covers_every_column() {
         }
     }
 }
+
+/// 2026-10-09: Every schedule point a class can declare is an entry of the kernel file with the
+/// tier's MT, and the NT the launcher sizes its grid with (`w4a16_gemv_tc_nt`) is the NT the entry
+/// was instantiated with: a mismatch would leave columns unwritten or write past N.
+#[test]
+fn every_schedule_point_is_compiled_with_the_nt_its_grid_assumes() {
+    const CU: &str = include_str!("../../../../../kernels/gb10/common/w4a16_gemv_tc.cu");
+    let entries: Vec<(String, u32, u32)> = CU
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("W4TC_ENTRY(w4a16_gemv_"))
+        .map(|rest| {
+            let f: Vec<&str> = rest.split(',').map(str::trim).collect();
+            (
+                f[0].to_string(),
+                f[1].parse().unwrap(),
+                f[2].parse().unwrap(),
+            )
+        })
+        .collect();
+    assert!(entries.len() >= 2, "the kernel file's entries: {entries:?}");
+    let points = metrale_kernels::w4a16_gemv_tc_entries::W4A16_GEMV_TC_POINTS;
+    for (tier, mt) in [(0usize, 8u32), (1, 16)] {
+        for p in points[tier] {
+            let (_, emt, ent) = entries
+                .iter()
+                .find(|(name, _, _)| name == p)
+                .unwrap_or_else(|| panic!("point {p} has no W4TC_ENTRY"));
+            assert_eq!(*emt, mt, "{p}: MT");
+            assert_eq!(
+                *ent,
+                metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_nt(p),
+                "{p}: NT"
+            );
+        }
+    }
+    assert_eq!(
+        8 * metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_nt("tc8"),
+        TC8_COLS_PER_CTA
+    );
+    assert_eq!(
+        8 * metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_nt("tc16"),
+        TC16_COLS_PER_CTA
+    );
+}
