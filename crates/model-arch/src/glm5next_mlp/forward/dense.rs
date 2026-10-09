@@ -46,32 +46,36 @@ pub fn forward_dense(
     }
     // 2026-10-09: gate and up read `x` unchanged: one FP8 quantization under the FP8 tier.
     let stable = crate::glm5next_fp8_dense::stable_input(x);
-    gemm(
-        gpu,
-        k.gemm,
-        k.gemv,
-        k.batchm(),
-        x,
-        w.gate_proj,
-        ws.a_gate,
-        m,
-        inter,
-        cfg.hidden,
-        stream,
-    )?;
-    gemm(
-        gpu,
-        k.gemm,
-        k.gemv,
-        k.batchm(),
-        x,
-        w.up_proj,
-        ws.a_up,
-        m,
-        inter,
-        cfg.hidden,
-        stream,
-    )?;
+    // 2026-10-09: One launch under `METRALE_GLM_W4A16_SEG` (`proj_group`), else one each.
+    let group = [(w.gate_proj, ws.a_gate, inter), (w.up_proj, ws.a_up, inter)];
+    if !crate::glm5next_w4a16_dense::proj_group(gpu, &group, x, m, cfg.hidden, stream)? {
+        gemm(
+            gpu,
+            k.gemm,
+            k.gemv,
+            k.batchm(),
+            x,
+            w.gate_proj,
+            ws.a_gate,
+            m,
+            inter,
+            cfg.hidden,
+            stream,
+        )?;
+        gemm(
+            gpu,
+            k.gemm,
+            k.gemv,
+            k.batchm(),
+            x,
+            w.up_proj,
+            ws.a_up,
+            m,
+            inter,
+            cfg.hidden,
+            stream,
+        )?;
+    }
     drop(stable);
     swiglu(
         gpu,

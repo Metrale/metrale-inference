@@ -1756,6 +1756,11 @@ microbench = "same bench, W8A8 twin, 2026-09-28: 270 us at M=2, 823 us at M=8, 2
 # activations staged in shared memory), one template over the weight-format policy
 # (kernels/gb10/common/tc_rows.cuh): FP8 block-128 W8A16 (w8a16_tc_rows.cu, the canonical-tier
 # W8A16 projections) and NVFP4 g16 W4A16 (w4a16_tc_rows.cu, the declared NVFP4 lm_head).
+# 2026-10-09: w4a16_tc_rows_seg.cu instantiates the NVFP4 point's row tiles again over up to three
+# weight segments sharing the input and a K-split S in {1, 2, 4} (tr_block_split, the S blocks
+# of a column tile merging FP32 partial sums in one thread-block cluster). S = 1 writes
+# w4a16_tc_rows' bytes; S > 1 changes the FP32 summation order (accuracy-gated, opt-in through
+# METRALE_GLM_W4A16_SEG). Neither axis changes the pipeline below, so neither is a point here.
 [[family]]
 id = "tc_rows"
 description = "Tensor-core row-tile dense projection (FP8 block-128 W8A16, NVFP4 g16 W4A16)"
@@ -1769,6 +1774,15 @@ kernels = [
   "w4a16_tc_rows::w4a16_tc_rows_16",
   "w4a16_tc_rows::w4a16_tc_rows_32",
   "w4a16_tc_rows::w4a16_tc_rows_64",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k1",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k2",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k4",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_32_k1",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_32_k2",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_32_k4",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k1",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k2",
+  "w4a16_tc_rows_seg::w4a16_tc_rows_seg_64_k4",
 ]
 rows = [1, 64]
 # 2026-10-02: The FP8 point's pipeline (the NVFP4 point overrides it below): an E4M3 byte becomes
@@ -1789,7 +1803,7 @@ files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w8a16_tc_rows.c
 [[family.point]]
 values = { weight = "nvfp4/g16" }
 how = "instantiation"
-files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu"]
+files = ["kernels/gb10/common/tc_rows.cuh", "kernels/gb10/common/w4a16_tc_rows.cu", "kernels/gb10/common/w4a16_tc_rows_seg.cu"]
 # 2026-10-02: BF16(E2M1 x E4M3) exactly per weight, the FP32 sum times s2 once per output
 # (Nvfp4G16 `out`), BF16 logits; only the declared NVFP4 head uses it.
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }

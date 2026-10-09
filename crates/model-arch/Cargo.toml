@@ -83,6 +83,10 @@ name = "w8a16_tc_rows_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "w4a16_tc_rows_seg_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "fp8_moe_grouped_routing_microtest"
 required-features = ["cuda", "gpu-examples"]
 
