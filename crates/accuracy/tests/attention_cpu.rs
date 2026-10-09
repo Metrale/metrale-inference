@@ -63,6 +63,7 @@ fn check(c: Contract, behaviour: Behaviour, s: &Shape, input: InputClass) -> Out
         behaviour,
         wrong,
         shape: s.clone(),
+        point: Default::default(),
     };
     let job = Job {
         contract: &c,

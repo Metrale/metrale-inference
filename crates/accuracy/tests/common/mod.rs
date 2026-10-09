@@ -92,6 +92,8 @@ pub struct Emu {
     pub behaviour: Behaviour,
     pub wrong: (String, Wrong),
     pub shape: metrale_accuracy::points::Shape,
+    /// 2026-10-09: The family point whose pipeline the emulation follows (empty: the family's).
+    pub point: metrale_circuit::venn::families::Values,
 }
 
 impl KernelRunner for Emu {
@@ -116,17 +118,12 @@ impl Emu {
             (self.wrong.1)(&mut case)?;
         }
         let kernel = self.contract.kernels[0].clone();
-        let pipeline = plan::declared(
-            &self.family,
-            &kernel,
-            &self.contract.op,
-            &Default::default(),
-        )?;
+        let pipeline = plan::declared(&self.family, &kernel, &self.contract.op, &self.point)?;
         let p = plan::plan(
             &self.contract,
             pipeline.clone(),
             &reference.lens(&self.shape, &pipeline),
-            &Default::default(),
+            &self.point,
         )?;
         let (rows, cols) = (case.out.0[0], case.out.0[1]);
         let acc = match &self.behaviour {

@@ -109,6 +109,7 @@ fn runner(p: &Point, c: &Contract, behaviour: Behaviour) -> Tc {
             // 2026-10-09: No entry point is a data-mutation stand-in here.
             wrong: ("none::none".into(), |_| Ok(())),
             shape: p.shape.clone(),
+            point: p.point.clone(),
         },
         symbol: p.symbol.map(|(s, f)| (s.to_string(), f)),
     }

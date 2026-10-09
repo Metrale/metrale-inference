@@ -37,6 +37,8 @@ pub mod gdn_impl;
 pub mod linear;
 pub mod linear_impl;
 pub mod linear_mutate;
+pub mod moe_grouped;
+pub mod moe_grouped_impl;
 pub mod norm;
 pub mod norm_impl;
 pub mod quant;
@@ -101,6 +103,7 @@ pub const REFS: &[&dyn RefImpl] = &[
     &attention_impl::PagedAttention,
     &gdn_impl::GdnRecurrence,
     &conv_impl::Conv1dL2norm,
+    &moe_grouped_impl::MoeGrouped,
 ];
 
 /// 2026-10-09: Random output columns a sample adds to the structural ones.

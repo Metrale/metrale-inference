@@ -69,6 +69,7 @@ fn check(c: &Contract, behaviour: Behaviour, s: &Shape, input: InputClass) -> Ou
         behaviour,
         wrong: ("no::such_symbol".into(), |_| Ok(())),
         shape: s.clone(),
+        point: Default::default(),
     };
     let job = Job {
         contract: c,

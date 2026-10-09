@@ -70,6 +70,7 @@ fn check(c: &Contract, behaviour: Behaviour, s: &Shape, input: InputClass) -> Ou
         behaviour,
         wrong: ("no::such_symbol".into(), |_| Ok(())),
         shape: s.clone(),
+        point: Default::default(),
     };
     let job = Job {
         contract: c,
@@ -139,7 +140,13 @@ fn filled(c: &Contract, s: &Shape, input: InputClass) -> (Reference, plan::Plan,
         .unwrap();
     let r = Reference::parse(&c.reference).unwrap();
     let declared = plan::declared(&family, &c.kernels[0], &c.op, &Default::default()).unwrap();
-    let p = plan::plan(c, declared.clone(), &r.lens(s, &declared), &Default::default()).unwrap();
+    let p = plan::plan(
+        c,
+        declared.clone(),
+        &r.lens(s, &declared),
+        &Default::default(),
+    )
+    .unwrap();
     let mut case = Case {
         family: family.id.clone(),
         kernel: c.kernels[0].clone(),

@@ -99,6 +99,7 @@ fn check(c: &Contract, s: &Shape, input: InputClass, behaviour: Behaviour, seed:
         behaviour,
         wrong,
         shape: s.clone(),
+        point: Default::default(),
     };
     let job = Job {
         contract: c,
@@ -284,6 +285,7 @@ fn a_per_head_norm_needs_whole_heads_and_a_weight_form() {
         behaviour: Behaviour::Conforming,
         wrong: (symbol_of(&c), flip_weight_form),
         shape: s.clone(),
+        point: Default::default(),
     };
     match run(&job, &mut e).verdict {
         Verdict::Error(m) => assert!(m.contains("weight_form"), "{m}"),
