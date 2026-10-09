@@ -455,6 +455,7 @@ impl TransformerModel {
             // uploads the tables.
             verify_wy_cache: Mutex::new(None),
             verify_kgamma_graph: Mutex::new(std::collections::HashMap::new()),
+            replay_commit_graphs: Mutex::new(std::collections::HashMap::new()),
             fused_graph: Mutex::new(std::collections::HashMap::new()),
             prefix_cache,
             secondary_stream,
