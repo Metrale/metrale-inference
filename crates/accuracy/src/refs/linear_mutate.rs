@@ -58,16 +58,20 @@ pub fn mutate(case: &mut Case, m: &Mutation, rng: &mut SplitMix64) -> Result<Vec
     let n = case.tensor("w")?.dims[0];
     match m {
         Mutation::CorruptBlockScale => {
+            // 2026-10-09: The weight's block scales, or its per-channel scales when it has none.
+            let (name, block_rows) = match case.scalars.get("w_block_rows") {
+                Some(br) if case.tensors.contains_key("w_block") => ("w_block", *br as usize),
+                _ => ("w_row", 1),
+            };
             let t = case
                 .tensors
-                .get_mut("w_block")
-                .ok_or("the weight has no block scales")?;
-            let (rows, groups) = (t.dims[0], t.dims[1]);
+                .get_mut(name)
+                .ok_or("the weight has no scales")?;
+            let (rows, groups) = (t.dims[0], t.dims.get(1).copied().unwrap_or(1));
             let (rb, g) = (
                 rng.below(rows as u64) as usize,
                 rng.below(groups as u64) as usize,
             );
-            let block_rows = case.scalars.get("w_block_rows").map_or(1, |v| *v as usize);
             flip_scale(
                 t.enc,
                 std::sync::Arc::make_mut(&mut t.bytes).as_mut_slice(),

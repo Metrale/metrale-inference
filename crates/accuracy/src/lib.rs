@@ -22,6 +22,7 @@ pub mod elem;
 pub mod emulate;
 pub mod inputs;
 pub mod jobs;
+pub mod model_check;
 pub mod mutation;
 pub mod plan;
 pub mod points;

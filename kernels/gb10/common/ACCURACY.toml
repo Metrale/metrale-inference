@@ -106,3 +106,56 @@ class = "bit_identical"
 against = "gemv::dense_gemv_bf16"
 inputs = ["gaussian", "outliers", "all_equal"]
 mutations = ["symbol:gemv::dense_gemv_bf16_fp32out"]
+
+# 2026-10-09: w8a8_gemv.cu on wxay_engine.cuh mma_gemv: per 128-value chunk four
+# mma.sync.m16n8k32.e4m3 into the running FP32 accumulator (the atom's internal order over its
+# 32 products is not documented: declared as a 32-term chain, the worst case); chunk c belongs
+# to warp c mod 8, ascending c, so each warp chains K/256 MMAs; the 8 warp partials are summed
+# in warp order (wxay_engine.cuh:108-127). rowscale folds (w_scale[n] * a_scale[m]) after the
+# sum (w8a8_gemv.cu:4).
+[[contract]]
+family = "wxay"
+kernels = [
+  "w8a8_gemv::w8a8_gemv_rowscale_mb1_ku8", "w8a8_gemv::w8a8_gemv_rowscale_mb2",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb4", "w8a8_gemv::w8a8_gemv_rowscale_mb8",
+  "w8a8_gemv::w8a8_gemv_rowscale_mb16",
+]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "32", order = "sequential" },
+  { level = "warp", width = "k/256", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "zero_rows"]
+mutations = ["corrupt_block_scale", "accumulate:bf16"]
+
+# 2026-10-09: blk128: each chunk's four MMAs start from zero and fold into the accumulator by
+# acc = fmaf(w_scale * a_scale, chunk, acc) (w8a8_gemv.cu:118-128); a warp chains K/1024 chunks.
+[[contract]]
+family = "wxay"
+kernels = [
+  "w8a8_gemv::w8a8_gemv_blk128_mb1_ku8", "w8a8_gemv::w8a8_gemv_blk128_mb2",
+  "w8a8_gemv::w8a8_gemv_blk128_mb4", "w8a8_gemv::w8a8_gemv_blk128_mb8",
+  "w8a8_gemv::w8a8_gemv_blk128_mb16",
+]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.group = [
+  { level = "mma", width = "32", order = "sequential" },
+  { level = "chunk", width = "4", order = "sequential" },
+]
+reduction.k = [
+  { level = "warp", width = "k/1024", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "group"
+inputs = ["gaussian", "outliers", "near_overflow", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
