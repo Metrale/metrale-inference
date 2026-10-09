@@ -114,6 +114,18 @@ fn points(sel: &AccuracySelectArgs) -> Result<i32> {
     for (f, k) in &cov.unused {
         println!("UNSWEPT  {f:<24} {k} — contracted, no described model runs it");
     }
+    let mut problems = problems;
+    for c in &contracts.contracts {
+        let sibling = match &c.class {
+            metrale_accuracy::contract::Class::BitIdentical { against } => Some(against),
+            metrale_accuracy::contract::Class::Derived => None,
+        };
+        for k in c.kernels.iter().chain(sibling) {
+            if !super::accuracy_adapters::has_adapter(k) {
+                problems.push(format!("`{}`: no launch adapter for `{k}`", c.family));
+            }
+        }
+    }
     for p in &problems {
         println!("CONTRACT {p}");
     }
