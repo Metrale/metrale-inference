@@ -11,6 +11,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::ACT_BLOCK;
+use crate::glm5next_layer::wide_gemv::{Batchm, glm_mm};
 use crate::glm5next_mlp::weights::{Glm5NextExpertPtrTable, Nvfp4Proj};
 
 const W4_TILE: u32 = 64;
@@ -23,7 +24,7 @@ pub(super) fn gemm(
     gpu: &dyn GpuBackend,
     k: KernelHandle,
     gemv: KernelHandle,
-    batchm: KernelHandle,
+    batchm: impl Into<Batchm>,
     a: DevicePtr,
     b: DevicePtr,
     c: DevicePtr,
@@ -32,28 +33,8 @@ pub(super) fn gemm(
     kk: usize,
     stream: u64,
 ) -> Result<()> {
-    if m > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
-        && crate::glm5next_layer::cublas_wide_proj()
-    {
-        return metrale_model_layers::layers::ops::cublas_bf16_proj_dense(
-            a, b, c, m as u32, n as u32, kk as u32, stream,
-        );
-    }
-    metrale_model_layers::layers::ops::dense_mm_bf16(
-        gpu,
-        &metrale_model_layers::layers::ops::DenseMmKernels {
-            gemm: k,
-            gemv,
-            batchm,
-        },
-        a,
-        b,
-        c,
-        m,
-        n,
-        kk,
-        stream,
-    )
+    // 2026-10-09: The dispatch lives in `glm_mm`, shared with the DSA and KDA blocks.
+    glm_mm(gpu, k, gemv, batchm.into(), a, b, c, m, n, kk, stream)
 }
 
 /// 2026-09-25: `C[1, N] = A[1, K] @ dequant(B)[N, K]^T` for one NVFP4 projection, on the

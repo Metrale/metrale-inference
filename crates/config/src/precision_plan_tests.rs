@@ -14,6 +14,7 @@ fn fixture(name: &str) -> serde_json::Value {
         "fp8" => include_str!("precision_plan/fixtures/qwen3_6_35b_a3b_fp8.json"),
         "ct_all" => include_str!("precision_plan/fixtures/kbenkhaled_qwen3_5_27b_nvfp4.json"),
         "next80" => include_str!("precision_plan/fixtures/nvidia_qwen3_next_80b_nvfp4.json"),
+        "glm53" => include_str!("precision_plan/fixtures/glm_5_3_flash_nvfp4.json"),
         other => panic!("no fixture {other}"),
     };
     serde_json::from_str(text).expect("fixture parses")
@@ -364,4 +365,37 @@ fn hf_module_entries_match_by_segment_and_refuse_bad_patterns() {
         "weight_block_size": [128, 128], "modules_to_not_convert": ["lm_head", "model.(visual"],
     });
     assert!(DeclaredPrecisionPlan::from_quantization_config(&bad).is_err());
+}
+
+/// 2026-10-08: GLM-5.3-Flash NVFP4 (ModelOpt, `config_groups` targeting `Linear`, no
+/// `quantized_layers`; fixture is the whole `quantization_config` of config.json): the routed
+/// experts and the dense MLP of layers 0-2 declare W4A4 with STATIC NVFP4 activation scales
+/// (`dynamic: false`, the per-tensor `input_scale` of the checkpoint), while attention, the
+/// router (`mlp.gate`), the shared expert, the MTP layer 45 and the head are unquantized.
+#[test]
+fn glm53_declares_static_w4a4_experts_and_dense_mlp_bf16_elsewhere() {
+    let p = plan("glm53");
+    assert_eq!(p.source, PlanSource::ModelOpt);
+    for m in [
+        format!("{L}.0.mlp.gate_proj"),
+        format!("{L}.2.mlp.down_proj"),
+        format!("{L}.3.mlp.experts.0.gate_proj"),
+        format!("{L}.44.mlp.experts.287.down_proj"),
+    ] {
+        let got = p.resolve(&m);
+        assert_eq!(got.label(), "W4A4", "{m}");
+        let a = got.activation.expect("activation");
+        assert!(a.is_fp4(), "{m}");
+        assert_eq!(a.timing, ScaleTiming::Static, "{m}: input_scale is a stored scale");
+        assert_eq!(a.granularity, Granularity::TensorGroup(16), "{m}");
+    }
+    for m in [
+        format!("{L}.0.self_attn.q_a_proj"),
+        format!("{L}.3.mlp.gate"),
+        format!("{L}.3.mlp.shared_experts.gate_proj"),
+        format!("{L}.45.mlp.experts.0.gate_proj"),
+        "lm_head".to_string(),
+    ] {
+        assert_eq!(p.resolve(&m), LayerPrecision::UNQUANTIZED, "{m}");
+    }
 }

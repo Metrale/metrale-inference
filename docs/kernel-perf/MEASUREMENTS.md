@@ -86,7 +86,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-dense-gemv-bf16-batchm-cu-dense-gemv-bf16-batchm"></a>
 
-### `dense_gemv_bf16_batchm` — [kernels/gb10/common/dense_gemv_bf16_batchm.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm.cu#L86)
+### `dense_gemv_bf16_batchm` — [kernels/gb10/common/dense_gemv_bf16_batchm.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm.cu#L229)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|

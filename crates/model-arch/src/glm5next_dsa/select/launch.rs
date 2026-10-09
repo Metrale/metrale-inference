@@ -77,9 +77,9 @@ pub fn select_tokens(
     KernelLaunch::new(gpu, kernels.kpool_compress)
         .grid([ceiling.map_or(geom.n_pools_full, |m| m + 1) as u32, 1, 1])
         .block([d.min(1024) as u32, 1, 1])
-        .arg_ptr(inputs.k_normed)
-        .arg_ptr(inputs.gate)
-        .arg_ptr(inputs.valid)
+        .arg_ptr(inputs.rows.k)
+        .arg_ptr(inputs.rows.gate)
+        .arg_ptr(inputs.rows.valid)
         .arg_ptr(inputs.ape)
         .arg_ptr(scratch.pool_keys)
         .arg_ptr(scratch.pool_indices)
@@ -89,6 +89,10 @@ pub fn select_tokens(
         .arg_u32(kp as u32)
         .arg_i32(inputs.first_key)
         .arg_ptr(gd)
+        // 2026-10-09: The paged address path; NULL / 0 / 0 for a flat cache.
+        .arg_ptr(inputs.rows.bt)
+        .arg_u32(inputs.rows.block_size)
+        .arg_u32(inputs.rows.blk_elems)
         .launch(stream)?;
 
     if has_pools {
@@ -107,7 +111,7 @@ pub fn select_tokens(
             .arg_ptr(inputs.weights)
             .arg_ptr(scratch.pool_indices)
             .arg_ptr(scratch.pool_valid)
-            .arg_ptr(inputs.valid)
+            .arg_ptr(inputs.rows.valid)
             .arg_ptr(inputs.q_pos)
             .arg_ptr(scratch.scores)
             .arg_ptr(scratch.valid_cand)
@@ -143,7 +147,7 @@ pub fn select_tokens(
         .arg_ptr(scratch.selected)
         .arg_ptr(scratch.pool_indices)
         .arg_ptr(scratch.valid_cand)
-        .arg_ptr(inputs.valid)
+        .arg_ptr(inputs.rows.valid)
         .arg_ptr(inputs.q_pos)
         .arg_ptr(inputs.q_mask)
         .arg_ptr(scratch.tokens)

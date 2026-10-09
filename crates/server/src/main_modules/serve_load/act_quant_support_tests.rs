@@ -13,12 +13,14 @@ const MOE: ModelKind = ModelKind {
     fp8_moe: true,
     fp8_head: false,
     declared_tier: true,
+    glm5_next: false,
 };
 const DENSE: ModelKind = ModelKind {
     qwen_hybrid: true,
     fp8_moe: false,
     fp8_head: false,
     declared_tier: true,
+    glm5_next: false,
 };
 const DENSE_NVFP4: ModelKind = ModelKind {
     declared_tier: false,
@@ -140,4 +142,58 @@ fn nvfp4_attention_and_gdn_are_honoured_on_the_dense_nvfp4_tier_only() {
         assert!(e.contains(fam), "{s}: {e}");
     }
     assert_eq!(support(&v("declared"), other).unwrap().len(), 4);
+}
+
+/// 2026-10-08: GLM-5.3: the default honours its MLP families (declared W4A4) and reports the
+/// families it has no row-invariant path for; fp8 on its MLP is refused, bf16 runs adaptive.
+#[test]
+fn glm_honours_its_declared_mlp_and_refuses_fp8() {
+    let glm = ModelKind {
+        qwen_hybrid: false,
+        fp8_moe: false,
+        fp8_head: false,
+        declared_tier: true,
+        glm5_next: true,
+    };
+    assert_eq!(
+        support(&v("declared"), glm).unwrap(),
+        vec![ProjFamily::Gdn, ProjFamily::Attn]
+    );
+    assert!(
+        support(&v("adaptive,moe:nvfp4,ffn:nvfp4"), glm)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        support(&v("adaptive,moe:bf16"), glm).unwrap(),
+        vec![ProjFamily::Moe]
+    );
+    for flag in ["adaptive,moe:fp8", "adaptive,ffn:fp8"] {
+        let e = support(&v(flag), glm).unwrap_err().to_string();
+        assert!(e.contains("FP8-activation MLP"), "{flag}: {e}");
+    }
+    // 2026-10-08: The same flags on a model that is not GLM keep their old answers.
+    let other = ModelKind {
+        glm5_next: false,
+        ..glm
+    };
+    assert_eq!(
+        support(&v("adaptive,moe:fp8"), other).unwrap(),
+        vec![ProjFamily::Moe]
+    );
+}
+
+/// 2026-10-09: `--dense-quantization fp8` is accepted on glm5_next only; `declared` everywhere.
+#[test]
+fn dense_fp8_is_refused_off_glm() {
+    use metrale_model_layers::layers::DenseQuantization;
+    assert!(dense_quant_refusal("glm5_next", DenseQuantization::Fp8).is_none());
+    let why = dense_quant_refusal("qwen3_5_moe", DenseQuantization::Fp8).expect("refused");
+    assert!(why.contains("only glm5_next"), "{why}");
+    for m in ["glm5_next", "qwen3_5_moe", "llama"] {
+        assert!(
+            dense_quant_refusal(m, DenseQuantization::Declared).is_none(),
+            "{m}"
+        );
+    }
 }

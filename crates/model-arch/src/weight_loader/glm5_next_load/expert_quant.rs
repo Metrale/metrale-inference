@@ -80,6 +80,9 @@ fn quantize_and_upload(
         packed,
         scale,
         scale_2: blob.scale_2,
+        // 2026-10-08: Quantized here from 16-bit weights: the checkpoint declares no FP4
+        // activations for it, so it has no activation scale.
+        input_scale: None,
     })
 }
 

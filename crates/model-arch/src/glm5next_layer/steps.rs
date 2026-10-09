@@ -143,7 +143,7 @@ impl Glm5NextLayer {
             .then(profile::start)
             .flatten();
         match &self.mlp {
-            Glm5NextMlpSite::Dense(w) => forward_dense(
+            Glm5NextMlpSite::Dense(w) => forward_dense_site(
                 ctx.gpu,
                 &self.mlp_kernels,
                 &self.mlp_cfg,
@@ -164,6 +164,8 @@ impl Glm5NextLayer {
                 out,
                 rows,
                 &self.mlp_ws,
+                // 2026-10-09: A capture cannot read the expert histogram back to the host.
+                ctx.graph_capture,
                 stream,
             )?,
         }

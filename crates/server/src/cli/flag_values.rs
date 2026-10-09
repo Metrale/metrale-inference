@@ -19,7 +19,7 @@
 //! Invariants: none beyond the types.
 
 use metrale_config::WeightQuantization;
-use metrale_model_layers::layers::ExpertQuantization;
+use metrale_model_layers::layers::{DenseQuantization, ExpertQuantization};
 
 /// 2026-09-26: What `--kv-high-precision-layers auto` resolves to. The flag's
 /// help text states the same number as "recommended".
@@ -184,6 +184,33 @@ impl clap::ValueEnum for ExpertQuantizationArg {
     }
 }
 
+/// 2026-10-09: `--dense-quantization`: a clap value enum over the model layer's tiers
+/// (`metrale_model_layers::layers::DenseQuantization`), which own the names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DenseQuantizationArg(pub DenseQuantization);
+
+impl clap::ValueEnum for DenseQuantizationArg {
+    fn value_variants<'a>() -> &'a [Self] {
+        const VARIANTS: [DenseQuantizationArg; 2] = [
+            DenseQuantizationArg(DenseQuantization::ALL[0]),
+            DenseQuantizationArg(DenseQuantization::ALL[1]),
+        ];
+        &VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self.0 {
+            DenseQuantization::Declared => "16-bit dense projections at the checkpoint's width",
+            DenseQuantization::Fp8 => {
+                "16-bit dense projections quantized at load to FP8 per-channel and decoded \
+                 W8A8 with per-token FP8 activations: below the checkpoint's declared \
+                 precision (glm5_next only; unmeasured)"
+            }
+        };
+        Some(clap::builder::PossibleValue::new(self.0.name()).help(help))
+    }
+}
+
 /// 2026-09-28: `--weight-quantization`: a clap value enum over the config crate's tiers
 /// (`metrale_config::WeightQuantization`), which own the names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,6 +266,12 @@ pub(crate) fn options_for_flag(flag: &str) -> Option<Vec<String>> {
         }
         "weight-quantization" => Some(
             WeightQuantization::ALL
+                .iter()
+                .map(|q| q.name().to_string())
+                .collect(),
+        ),
+        "dense-quantization" => Some(
+            DenseQuantization::ALL
                 .iter()
                 .map(|q| q.name().to_string())
                 .collect(),

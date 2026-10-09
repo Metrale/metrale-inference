@@ -34,8 +34,9 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, LayerState};
 
 use super::super::attend::DsaDecodePaging;
+use super::super::paged::IndexerCache;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, gemm};
+use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
 
 /// 2026-10-08: Row `r`'s `Glm5NextDsaState`; errors on any other state type.
 fn dsa_row<'a>(
@@ -160,7 +161,20 @@ impl Glm5NextDsaLayer {
             let st = dsa_row(states, s)?;
             self.check_lockstep(st, span.first_pos)?;
             st.ensure_room(span.rows)?;
+            // 2026-10-09: A paged row is always placed on the device, at its metadata
+            // position through its metadata block-table row: this call has no host tables.
+            if st.cache() == IndexerCache::Paged {
+                if self.select_kernels.indexer_store.0 == 0 {
+                    bail!(
+                        "DSA layer {}: a paged batched decode needs dsa_indexer_store, which \
+                         this target lacks",
+                        self.layer_idx
+                    );
+                }
+                self.paged_layout(kv_cache)?;
+            }
         }
+        let bt_stride = meta.max_blocks_per_seq as usize * 4;
         let row_seq: Vec<usize> = spans
             .iter()
             .enumerate()
@@ -199,44 +213,75 @@ impl Glm5NextDsaLayer {
             && w.q_idx_rows.0 != 0
             && w.head_weights_rows.0 != 0;
         if batched_idx {
+            // 2026-10-09: Above `DENSE_GEMV_BATCHM_MAX_M` rows (a `METRALE_GLM_ROW_GROUP` wider
+            // than 16) `glm_mm`'s cuBLASLt arm writes BF16, so these FP32-out projections take
+            // the FP32-out cuBLASLt call instead.
+            let wide = n > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
+                && crate::glm5next_layer::cublas_wide_proj();
             let k = &self.kernels;
-            gemm(
-                gpu,
-                k.gemm_f32,
-                k.gemv_f32,
-                k.gemv_batchm_f32,
-                w.q_resid,
-                self.weights.wq_b,
-                w.q_idx_rows,
-                n,
-                idx_row,
-                self.cfg.q_lora_rank,
-                stream,
-            )?;
-            gemm(
-                gpu,
-                k.gemm_f32,
-                k.gemv_f32,
-                k.gemv_batchm_f32,
-                hidden,
-                self.weights.weights_proj,
-                w.head_weights_rows,
-                n,
-                heads,
-                self.cfg.hidden,
-                stream,
-            )?;
+            for (a, wt, out, n_out, kk) in [
+                (
+                    w.q_resid,
+                    self.weights.wq_b,
+                    w.q_idx_rows,
+                    idx_row,
+                    self.cfg.q_lora_rank,
+                ),
+                (
+                    hidden,
+                    self.weights.weights_proj,
+                    w.head_weights_rows,
+                    heads,
+                    self.cfg.hidden,
+                ),
+            ] {
+                if wide {
+                    metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
+                        a,
+                        wt,
+                        out,
+                        n as u32,
+                        n_out as u32,
+                        kk as u32,
+                        stream,
+                    )?;
+                } else {
+                    gemm(
+                        gpu,
+                        k.gemm_f32,
+                        k.gemv_f32,
+                        k.batchm_f32(),
+                        a,
+                        wt,
+                        out,
+                        n,
+                        n_out,
+                        kk,
+                        stream,
+                    )?;
+                }
+            }
         }
         for r in 0..n {
             let mr = meta_row_base + r;
             let t = profile::start();
             let st = dsa_row(states, row_seq[r])?;
-            let pos_dev = replay_safe.then(|| meta.positions.offset(mr * 4));
+            let bt_row = meta.block_table.offset(mr * bt_stride);
+            let place = if replay_safe || st.cache() == IndexerCache::Paged {
+                IndexerPlace::Device {
+                    pos: meta.positions.offset(mr * 4),
+                    bt: bt_row,
+                }
+            } else {
+                // 2026-10-09: A flat row's host address is `pos * D`; it needs no table.
+                IndexerPlace::Host { block_table: &[] }
+            };
             self.indexer_forward_with(
                 gpu,
                 hidden.offset(r * self.cfg.hidden * 2),
                 st,
-                pos_dev,
+                kv_cache,
+                place,
                 !batched_idx,
                 stream,
             )?;
@@ -250,10 +295,12 @@ impl Glm5NextDsaLayer {
                     w.head_weights_rows.offset(r * heads * 4),
                 )
             });
+            let rows = self.indexer_rows(st, kv_cache, bt_row)?;
             self.select_row(
                 gpu,
                 r,
                 st,
+                rows,
                 meta.positions.offset(mr * 4),
                 replay_safe,
                 pre,
@@ -261,7 +308,6 @@ impl Glm5NextDsaLayer {
             )?;
         }
 
-        let bt_stride = meta.max_blocks_per_seq as usize * 4;
         let paging = DsaDecodePaging {
             num_seqs: n,
             num_q_heads: self.cfg.local_heads,

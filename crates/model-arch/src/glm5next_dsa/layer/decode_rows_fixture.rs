@@ -26,6 +26,8 @@ use crate::glm5next_dsa::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 /// through the mock to `MOCK_K`.
 pub(super) const BATCHM: u64 = 0x105;
 pub(super) const BATCHM_F32: u64 = 0x108;
+pub(super) const BATCHM_WIDE: u64 = 0x109;
+pub(super) const BATCHM_WIDE_F32: u64 = 0x10A;
 pub(super) const GEMV_F32: u64 = 0x104;
 pub(super) const SCORES: u64 = 0x203;
 pub(super) const LATENT: u64 = 0x107;
@@ -145,6 +147,8 @@ impl Rig {
                 gemv_f32: k(GEMV_F32),
                 gemv_batchm: k(BATCHM),
                 gemv_batchm_f32: k(BATCHM_F32),
+                gemv_batchm_wide: k(BATCHM_WIDE),
+                gemv_batchm_wide_f32: k(BATCHM_WIDE_F32),
                 rms_norm: k(0x106),
                 latent_write: k(LATENT),
             },
@@ -167,6 +171,7 @@ impl Rig {
             rms_eps: 1e-6,
             kv_scale: 1.0,
             persist_bt: true,
+            indexer_cache: crate::glm5next_dsa::paged::IndexerCache::Flat,
         }
     }
 

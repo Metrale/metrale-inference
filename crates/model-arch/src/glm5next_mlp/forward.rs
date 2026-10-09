@@ -21,10 +21,12 @@ use super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 mod dense;
 mod launch;
 mod moe_experts;
+mod w4a4;
 mod workspace;
 
-pub use dense::forward_dense;
+pub use dense::{forward_dense, forward_dense_site};
 use launch::{gemm, swiglu};
+pub use w4a4::forward_dense_w4a4;
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 
 const ACT_BLOCK: u32 = 256;
@@ -77,6 +79,15 @@ pub struct Glm5NextMlpWorkspace {
     /// 2026-09-25: `[rows, top_k]` I32: a slot's row in the expert-sorted output, read by
     /// `glm5next_moe_combine_indexed`.
     token_to_perm: DevicePtr,
+    /// 2026-10-08: W4A4 activation scratch (`w4a4_scratch_dims`): `[w4a4_rows, k / 2]` E2M1
+    /// codes, `[w4a4_rows, k / 16]` E4M3 scales and `[w4a4_rows]` F32 global scales, in the
+    /// layout `w4a4_quant_rows_static` writes.
+    w4a4_aq: DevicePtr,
+    w4a4_as: DevicePtr,
+    w4a4_ag: DevicePtr,
+    /// 2026-10-08: Rows, and the widest K, the W4A4 scratch holds.
+    w4a4_rows: usize,
+    w4a4_k: usize,
     max_inter: usize,
     /// 2026-09-25: Widest row group this scratch serves, at least 1.
     max_rows: usize,
@@ -165,10 +176,12 @@ pub fn row_batch_max() -> usize {
 }
 
 /// 2026-09-25: Widest compiled `w4a16_gemv_sw_moe_batchm_mR` tier: the
-/// `METRALE_MOE_BATCHM_ENTRY(2..=8)` instances in `kernels/gb10/common/w4a16_gemv.cu`, held at
+/// `METRALE_MOE_BATCHM_ENTRY(2..=16)` instances in `kernels/gb10/common/w4a16_gemv.cu`, held at
 /// index `R - 2` of `Glm5NextMlpKernels::w4a16_gemv_sw_moe_batchm`. `forward_moe` splits a wider
-/// row group into sub-groups no wider than this.
-pub const MOE_ROW_BATCH_MAX_ROWS: usize = 8;
+/// row group into sub-groups no wider than this. 2026-10-09: 16 (was 8), so a 16-row decode
+/// group reads each union expert once instead of once per 8-row half;
+/// `METRALE_GLM_MOE_ROW_BATCH_MAX=8` restores the halves.
+pub const MOE_ROW_BATCH_MAX_ROWS: usize = 16;
 
 /// 2026-09-25: Split `rows` into consecutive `(start, width)` sub-groups of at most `cap`, as
 /// even as the count allows. There is no width-1 tier; at `cap = MOE_ROW_BATCH_MAX_ROWS` no
@@ -192,7 +205,8 @@ fn moe_row_groups(rows: usize, cap: usize) -> Vec<(usize, usize)> {
 
 /// 2026-09-25: Most ids `glm5next_moe_row_union` resolves: it runs as one block of
 /// `rows * top_k` threads, and `forward_moe` does not take the row-batched path above this.
-pub const MOE_ROW_UNION_MAX_IDS: usize = 64;
+/// 2026-10-09: 128 (was 64): `MOE_ROW_BATCH_MAX_ROWS` rows at GLM-5.3's top-8.
+pub const MOE_ROW_UNION_MAX_IDS: usize = 128;
 
 /// 2026-09-25: Log once per row count (counts from 15 up share one bit) whether the routed
 /// experts took the row-batched path.
@@ -285,6 +299,9 @@ pub fn forward_moe(
     out: DevicePtr,
     rows: usize,
     ws: &Glm5NextMlpWorkspace,
+    // 2026-10-09: True while a CUDA graph is captured: the grouped GEMM then sizes its grid
+    // from the worst case instead of reading the expert histogram back to the host.
+    capturing: bool,
     stream: u64,
 ) -> Result<()> {
     if rows == 0 || rows > ws.max_rows {
@@ -305,7 +322,15 @@ pub fn forward_moe(
     use crate::glm5next_layer::profile;
 
     let groups = moe_row_groups(rows, row_batch_max());
-    let grouped_prefill = rows > MOE_ROW_BATCH_MAX_ROWS
+    // 2026-10-08: The precision plan picks W4A4 or the W4A16 paths below for this row count.
+    let w4a4 = match w.precision.kernel(rows) {
+        super::precision::MlpKernel::W4a4Static => Some(w.act_scales.ok_or_else(|| {
+            anyhow::anyhow!("GLM MoE: the plan runs W4A4 at {rows} rows but no scales were bound")
+        })?),
+        _ => None,
+    };
+    let grouped_prefill = w4a4.is_none()
+        && rows > MOE_ROW_BATCH_MAX_ROWS
         && rows >= forward_prefill_gemm::prefill_gemm_min_rows()
         && forward_prefill_gemm::prefill_gemm_enabled()
         && !host_dispatch_forced()
@@ -314,7 +339,8 @@ pub fn forward_moe(
         && k.moe_grouped_gemm.0 != 0
         && k.combine_indexed.0 != 0
         && rows * cfg.top_k <= ws.max_total_expanded();
-    let batched = !grouped_prefill
+    let batched = w4a4.is_none()
+        && !grouped_prefill
         && rows >= 2
         && !host_dispatch_forced()
         && !row_batch_disabled()
@@ -325,8 +351,10 @@ pub fn forward_moe(
                 && w * cfg.top_k <= MOE_ROW_UNION_MAX_IDS
                 && k.w4a16_gemv_sw_moe_batchm[w - 2].0 != 0
         });
-    announce_row_batch(batched, rows);
-    announce_grouped_prefill(grouped_prefill, rows);
+    if w4a4.is_none() {
+        announce_row_batch(batched, rows);
+        announce_grouped_prefill(grouped_prefill, rows);
+    }
 
     let t = profile::start();
     if rows > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
@@ -389,13 +417,19 @@ pub fn forward_moe(
         ws,
         stream,
     };
-    moe_experts::per_row_experts(&site, batched, grouped_prefill)?;
+    if let Some(scales) = w4a4 {
+        w4a4::w4a4_experts(&site, scales)?;
+    } else {
+        moe_experts::per_row_experts(&site, batched, grouped_prefill)?;
+    }
 
     if grouped_prefill {
         // 2026-09-25: Leaves the routed outputs in expert-sorted order; the combine below reads
         // them through `token_to_perm`.
         let t = profile::start();
-        forward_prefill_gemm::forward_moe_grouped_prefill(gpu, k, cfg, w, x, rows, ws, stream)?;
+        forward_prefill_gemm::forward_moe_grouped_prefill(
+            gpu, k, cfg, w, x, rows, ws, !capturing, stream,
+        )?;
         profile::end(profile::MOE_EXPERTS, t, gpu, stream);
     }
 
