@@ -65,6 +65,8 @@
 #define VEC_BF16 16
 #define VEC_U32  8
 #define NUM_WARPS 8
+// 2026-10-09: Selection entries a warp keeps in flight per pass of the main loop.
+#define DSA_DECODE_GROUP 4
 
 // 2026-09-25: The latent width, fixed at compile time: 32 lanes * VEC_BF16 (16) covers
 // exactly 512. The host refuses a kv_lora_rank that differs (Glm5NextDsaConfig::validate,
@@ -159,68 +161,71 @@ extern "C" __global__ void glm5next_dsa_mla_decode_fp8(
     #pragma unroll
     for (int i = 0; i < VEC_BF16; i++) o_reg[i] = 0.0f;
 
-    for (; j < j_end; j++) {
-        const int t = my_sel[j];
-        // 2026-09-25: Skipped rather than clamped: a clamped index would attend a real but
-        // wrong token.
-        if (t == DSA_INVALID || t < 0 || (unsigned int)t >= seq_len) continue;
-
-        const unsigned int logical_block = (unsigned int)t / block_size;
-        const unsigned int p             = (unsigned int)t % block_size;
-        const unsigned int physical_block = (unsigned int)my_block_table[logical_block];
-
-        const unsigned char* k_tok =
-            K_cache + (unsigned long long)physical_block * cache_stride_bytes + p * token_stride;
-        const unsigned char* v_tok =
-            V_cache + (unsigned long long)physical_block * cache_stride_bytes + p * token_stride;
-
-        float k_tmp[VEC_BF16];
-        load_kv_fp8(k_tok, lane_offset, k_scale, k_tmp);
-
-        float dot = 0.0f;
+    // 2026-10-09: Four selection entries per pass. Their cache loads and dot-product
+    // butterflies are issued together so the warp overlaps four memory round trips instead of
+    // waiting on one token at a time; the online-softmax updates then run in selection order.
+    // Every value is the same expression in the same order as the one-token loop, so the
+    // output bits are unchanged (C1 nsys: 234 us per launch, latency-bound at 22 CTAs).
+    const bool same_kv = (K_cache == V_cache) && (k_scale == v_scale);
+    for (; j < j_end; j += DSA_DECODE_GROUP) {
+        float k_tmp[DSA_DECODE_GROUP][VEC_BF16];
+        float dot[DSA_DECODE_GROUP];
+        bool ok[DSA_DECODE_GROUP];
+        const unsigned char* v_tok[DSA_DECODE_GROUP];
         #pragma unroll
-        for (int i = 0; i < VEC_BF16; i++)
-            if (lane_offset + i < kv_lora_dim) dot += q_reg[i] * k_tmp[i];
-        #pragma unroll
-        for (int off = WARP_SIZE / 2; off > 0; off >>= 1)
-            dot += __shfl_xor_sync(0xffffffff, dot, off);
-
-        const float score   = dot * inv_sqrt_d;
-        const float m_new   = fmaxf(m, score);
-        const float exp_old = __expf(m - m_new);
-        const float exp_new = __expf(score - m_new);
-        l = l * exp_old + exp_new;
-
-        // 2026-09-25: Absorbed MLA: the layer passes one pool as both K and V and one scale
-        // as both scales (glm5next_dsa/layer.rs `attend_rows`), so V is the K values just
-        // decoded, bit for bit. The copy saves the second load; `__restrict__` on both
-        // pointers stops the compiler from merging the loads itself. Distinct K/V buffers or
-        // scales take the second load. Both operands are kernel arguments, so the branch is
-        // uniform.
-
-
-
-
-
-
-
-
-
-
-
-        const bool same_kv = (K_cache == V_cache) && (k_scale == v_scale);
-        float v_tmp[VEC_BF16];
-        if (same_kv) {
-            #pragma unroll
-            for (int i = 0; i < VEC_BF16; i++) v_tmp[i] = k_tmp[i];
-        } else {
-            load_kv_fp8(v_tok, lane_offset, v_scale, v_tmp);
+        for (int g = 0; g < DSA_DECODE_GROUP; g++) {
+            const unsigned int jj = j + (unsigned int)g;
+            const int t = jj < j_end ? my_sel[jj] : DSA_INVALID;
+            // 2026-09-25: Skipped rather than clamped: a clamped index would attend a real but
+            // wrong token.
+            ok[g] = !(t == DSA_INVALID || t < 0 || (unsigned int)t >= seq_len);
+            dot[g] = 0.0f;
+            v_tok[g] = nullptr;
+            if (ok[g]) {
+                const unsigned int logical_block  = (unsigned int)t / block_size;
+                const unsigned int p              = (unsigned int)t % block_size;
+                const unsigned int physical_block = (unsigned int)my_block_table[logical_block];
+                const unsigned long long off =
+                    (unsigned long long)physical_block * cache_stride_bytes + p * token_stride;
+                v_tok[g] = V_cache + off;
+                load_kv_fp8(K_cache + off, lane_offset, k_scale, k_tmp[g]);
+                #pragma unroll
+                for (int i = 0; i < VEC_BF16; i++)
+                    if (lane_offset + i < kv_lora_dim) dot[g] += q_reg[i] * k_tmp[g][i];
+            }
         }
-
         #pragma unroll
-        for (int i = 0; i < VEC_BF16; i++)
-            o_reg[i] = o_reg[i] * exp_old + exp_new * v_tmp[i];
-        m = m_new;
+        for (int off = WARP_SIZE / 2; off > 0; off >>= 1) {
+            #pragma unroll
+            for (int g = 0; g < DSA_DECODE_GROUP; g++)
+                dot[g] += __shfl_xor_sync(0xffffffff, dot[g], off);
+        }
+        #pragma unroll
+        for (int g = 0; g < DSA_DECODE_GROUP; g++) {
+            if (!ok[g]) continue;
+            const float score   = dot[g] * inv_sqrt_d;
+            const float m_new   = fmaxf(m, score);
+            const float exp_old = __expf(m - m_new);
+            const float exp_new = __expf(score - m_new);
+            l = l * exp_old + exp_new;
+
+            // 2026-09-25: Absorbed MLA: the layer passes one pool as both K and V and one scale
+            // as both scales (glm5next_dsa/layer.rs `attend_rows`), so V is the K values just
+            // decoded, bit for bit. Distinct K/V buffers or scales take the second load. Both
+            // operands are kernel arguments, so the branch is uniform.
+            float v_tmp[VEC_BF16];
+            if (same_kv) {
+                #pragma unroll
+                for (int i = 0; i < VEC_BF16; i++) v_tmp[i] = k_tmp[g][i];
+            } else {
+                load_kv_fp8(v_tok[g], lane_offset, v_scale, v_tmp);
+            }
+
+            #pragma unroll
+            for (int i = 0; i < VEC_BF16; i++)
+                o_reg[i] = o_reg[i] * exp_old + exp_new * v_tmp[i];
+            m = m_new;
+        }
     }
 
     // 2026-09-25: Cross-warp merge of (m, l, o); no attention-sink term.
@@ -249,11 +254,20 @@ extern "C" __global__ void glm5next_dsa_mla_decode_fp8(
                 const float m_new  = fmaxf(my_m, mw);
                 const float sc_me  = __expf(my_m - m_new);
                 const float sc_w   = __expf(mw - m_new);
-                smem_l[warp_id] = my_l * sc_me + lw * sc_w;
-                smem_m[warp_id] = m_new;
+                // 2026-10-09: Every lane has read (m, l) before lane 0 overwrites them, and each
+                // lane merges only its own VEC_BF16 latent columns: the same per-column
+                // expression as before, where all 32 lanes redundantly walked all 512 columns.
+                __syncwarp();
+                if (lane_id == 0) {
+                    smem_l[warp_id] = my_l * sc_me + lw * sc_w;
+                    smem_m[warp_id] = m_new;
+                }
                 #pragma unroll
-                for (int i = 0; i < GLM_KV_LORA_DIM; i++)
-                    smem_o[warp_id][i] = smem_o[warp_id][i] * sc_me + smem_o[other][i] * sc_w;
+                for (int i = 0; i < VEC_BF16; i++) {
+                    const unsigned int c = lane_offset + i;
+                    if (c < GLM_KV_LORA_DIM)
+                        smem_o[warp_id][c] = smem_o[warp_id][c] * sc_me + smem_o[other][c] * sc_w;
+                }
             }
         }
         __syncthreads();
