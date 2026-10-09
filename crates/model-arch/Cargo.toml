@@ -215,6 +215,10 @@ name = "glm5next_multi_seq_decode_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_c16_kernel_bench"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_verify_spans_gate"
 required-features = ["cuda", "gpu-examples"]
 
