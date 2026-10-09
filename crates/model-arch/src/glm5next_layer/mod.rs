@@ -39,13 +39,12 @@ use crate::glm5next_dsa::layer::Glm5NextDsaLayer;
 use crate::glm5next_dsa::paged::IndexerCache;
 use crate::glm5next_dsa::state::Glm5NextDsaState;
 use crate::glm5next_kda::{Glm5NextKdaConfig, Glm5NextKdaLayer, Glm5NextKdaWorkspace, KdaSeqState};
-use crate::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_dense_site, forward_moe};
+use crate::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_dense_site, forward_moe_pieces};
 use crate::glm5next_mlp::weights::{Glm5NextDenseSite, Glm5NextMoeWeights};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState, TransformerLayer};
 use metrale_model_layers::layer::{
-    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerSplitPrefill, LayerWeightSetup,
-    LayerWriteOnAccept,
+    LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerWeightSetup, LayerWriteOnAccept,
 };
 // 2026-09-25: GLM's own mHC launchers, not DeepSeek-V4's `ops::hc_pre`/`ops::hc_post`.
 use crate::glm5next_mhc::{
@@ -66,7 +65,7 @@ pub use levers::prefill_rows;
 pub(crate) use levers::{
     PREFILL_ROWS, cublas_wide_proj, dsa_batch_qidx, multi_seq_chunk_rows, multi_seq_chunks,
 };
-pub use steps::{GroupSpan, group_spans};
+pub use steps::{GroupSpan, SpanPiece, group_spans, prefill_span_groups};
 pub use types::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
 
 impl TransformerLayer for Glm5NextLayer {
@@ -416,6 +415,11 @@ impl LayerCapabilities for Glm5NextLayer {
         true
     }
 
+    /// 2026-10-09: True for a text layer (`steps/prefill_spans.rs`); false for the MTP block.
+    fn prefill_spans_supported(&self) -> bool {
+        self.mhc.is_some()
+    }
+
     /// 2026-09-25: True. A DSA layer's per-sequence state comes from `gpu.alloc` in
     /// `alloc_state`, so the addresses a captured graph holds belong to one sequence.
     fn graph_stale_on_new_sequence(&self) -> bool {
@@ -569,7 +573,6 @@ impl LayerAuxState for Glm5NextLayer {
     }
 }
 
-impl LayerSplitPrefill for Glm5NextLayer {}
 impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {}
 
 #[cfg(test)]

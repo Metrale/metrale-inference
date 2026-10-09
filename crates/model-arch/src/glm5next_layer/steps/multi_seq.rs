@@ -218,7 +218,7 @@ impl Glm5NextLayer {
                     }
                     let seqs: Vec<(KdaSeqState, usize)> =
                         spans.iter().map(|sp| (kda[sp.seq], sp.rows)).collect();
-                    self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, |normed| {
+                    self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, &[m], |normed| {
                         layer.decode_seq_rows(ctx.gpu, normed, &seqs, ws, stream, |row| {
                             self.kda_after_row(layer, &spans, keep, &row_states, row, ctx, stream)
                         })?;
@@ -256,7 +256,7 @@ impl Glm5NextLayer {
                         })
                         .collect();
                     let group = &mut states[s_lo..=s_hi];
-                    self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, |normed| {
+                    self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, &[m], |normed| {
                         // 2026-10-08: Writes its output projection over its input buffer, as
                         // `decode_k` does.
                         layer.decode_spans(

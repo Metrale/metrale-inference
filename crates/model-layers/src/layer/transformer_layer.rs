@@ -25,7 +25,7 @@ mod write_on_accept;
 pub use aux_state::LayerAuxState;
 pub use capabilities::LayerCapabilities;
 pub use graph_hooks::LayerGraphHooks;
-pub use split_prefill::LayerSplitPrefill;
+pub use split_prefill::{LayerSplitPrefill, PrefillSpan};
 pub use weight_setup::LayerWeightSetup;
 pub use write_on_accept::{GdnCarryBinding, LayerWriteOnAccept};
 
