@@ -454,6 +454,10 @@ mod nvfp4_plan;
 #[path = "dense_ffn_tc_rows.rs"]
 mod tc_rows;
 
+/// 2026-10-09: The wide-row cuBLASLt arm of the NVFP4 projections.
+#[path = "dense_ffn_lt.rs"]
+mod lt;
+
 /// 2026-09-25: Whether `forward_k2`, `forward_k3` or `forward_km` must hand the layer to
 /// `forward_prefill`: true when a BF16 or FP8 overlay is installed.
 fn native_small_batch_uses_prefill(has_bf16: bool, has_fp8: bool) -> bool {

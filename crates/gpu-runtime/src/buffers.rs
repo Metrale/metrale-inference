@@ -73,6 +73,7 @@ pub struct BufferArena {
     ffn_act_scale: DevicePtr,
     ffn_act_scale_kmajor: DevicePtr,
     ffn_gate_up_fused: DevicePtr,
+    ffn_bf16_weight: DevicePtr,
     fp8_act: DevicePtr,
     /// 2026-09-25: The grouped FP8 MoE activation, scale and tile-worklist slab that every
     /// MoE layer reuses in turn; see [`BufferArena::moe_fp8_scratch`].
@@ -200,6 +201,11 @@ impl BufferArena {
         } else {
             DevicePtr::NULL
         };
+        let ffn_bf16_weight = if sizes.ffn_bf16_weight > 0 {
+            gpu.alloc(sizes.ffn_bf16_weight)?
+        } else {
+            DevicePtr::NULL
+        };
         let fp8_act = gpu.alloc(sizes.fp8_act)?;
         let moe_fp8_scratch = if sizes.moe_fp8_scratch > 0 {
             gpu.alloc(sizes.moe_fp8_scratch)?
@@ -289,6 +295,7 @@ impl BufferArena {
             ffn_act_scale,
             ffn_act_scale_kmajor,
             ffn_gate_up_fused,
+            ffn_bf16_weight,
             fp8_act,
             moe_fp8_scratch,
             fp8_act_scale,

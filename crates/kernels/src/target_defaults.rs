@@ -119,4 +119,9 @@ pub struct TargetDefaults {
     /// cuBLASLt FP8 GEMMs under the `adaptive` activation routing (metrale-model-layers
     /// `ops/w8a8_decode/lt.rs`). `0` means never, the baseline; hopper declares 64.
     pub w8a8_lt_min_rows: u32,
+    /// 2026-10-09: From this many rows up, an NVFP4 dense-FFN projection runs as an exact
+    /// transient BF16 copy of its weight and a cuBLASLt BF16 GEMM, under the `adaptive`
+    /// activation routing (metrale-model-layers `layers/dense_ffn_lt.rs`); it also sizes the
+    /// arena's `ffn_bf16_weight`. `0` means never, the baseline.
+    pub ffn_w4a16_lt_min_rows: u32,
 }

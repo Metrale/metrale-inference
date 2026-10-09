@@ -44,6 +44,7 @@ impl BufferSizes {
             + self.ffn_act_q8
             + self.ffn_act_a
             + self.ffn_gate_up_fused
+            + self.ffn_bf16_weight
             + self.ffn_act_scale
             + self.ffn_act_scale_kmajor
             + self.fp8_act

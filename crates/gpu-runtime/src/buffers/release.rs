@@ -61,6 +61,7 @@ impl metrale_core::scope::ModelResource<dyn GpuBackend> for BufferArena {
             ffn_act_scale,
             ffn_act_scale_kmajor,
             ffn_gate_up_fused,
+            ffn_bf16_weight,
             fp8_act,
             moe_fp8_scratch,
             fp8_act_scale,
@@ -112,6 +113,7 @@ impl metrale_core::scope::ModelResource<dyn GpuBackend> for BufferArena {
             *ffn_act_scale,
             *ffn_act_scale_kmajor,
             *ffn_gate_up_fused,
+            *ffn_bf16_weight,
             *fp8_act,
             *moe_fp8_scratch,
             *fp8_act_scale,
@@ -167,6 +169,7 @@ impl metrale_core::scope::ModelResource<dyn GpuBackend> for BufferArena {
         *ffn_act_scale = DevicePtr::NULL;
         *ffn_act_scale_kmajor = DevicePtr::NULL;
         *ffn_gate_up_fused = DevicePtr::NULL;
+        *ffn_bf16_weight = DevicePtr::NULL;
         *fp8_act = DevicePtr::NULL;
         *moe_fp8_scratch = DevicePtr::NULL;
         *fp8_act_scale = DevicePtr::NULL;

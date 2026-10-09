@@ -101,6 +101,10 @@ fn main() -> Result<()> {
     }
 
     let dq = g.kernel("dequant_nvfp4_bf16", "dequant_nvfp4_to_bf16").ok();
+    // 2026-10-09: The per-group exact form the dense FFN's cuBLASLt arm launches.
+    let dq16 = g
+        .kernel("dequant_nvfp4_bf16", "dequant_nvfp4_to_bf16_g16")
+        .ok();
     for &(label, n, k) in NVFP4_SHAPES {
         let (nu, ku) = (n as usize, k as usize);
         let packed = filled(g, nu * ku / 2, 0x23)?;
@@ -130,6 +134,24 @@ fn main() -> Result<()> {
                 );
             }
             None => eprintln!("  dequant_nvfp4_to_bf16 not in this target's module set"),
+        }
+        if let Some(h) = dq16 {
+            let groups = (nu * ku / 16) as u64;
+            let us = time(g, || {
+                KernelLaunch::new(g, h)
+                    .grid([groups.div_ceil(256).min(132 * 32) as u32, 1, 1])
+                    .block([256, 1, 1])
+                    .arg_ptr(packed)
+                    .arg_ptr(scales)
+                    .arg_ptr(w)
+                    .arg_u64(groups)
+                    .launch(0)
+            })?;
+            let moved = (nu * ku / 2 + nu * ku / 16 + nu * ku * 2) as f64;
+            eprintln!(
+                "  dequant_nvfp4_to_bf16_g16 {us:>8.1} us  {:>7.1} GB/s moved",
+                moved / (us * 1e-6) / 1e9
+            );
         }
         for &m in ROWS {
             let us = time(g, || {

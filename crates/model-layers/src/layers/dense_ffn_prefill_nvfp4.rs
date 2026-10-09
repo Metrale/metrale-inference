@@ -158,6 +158,9 @@ impl DenseFfnLayer {
                             stream,
                         )?;
                     }
+                    // 2026-10-09: The cuBLASLt arm (`dense_ffn_lt.rs`) from the target's
+                    // `ffn_w4a16_lt_min_rows`; it reads the row-major weight, not `$wt`.
+                    _ if self.try_ffn_lt(ctx, $w, $in, $out, m, $n, $k, stream)? => {}
                     // 2026-10-05: The row-tile arm (`dense_ffn_tc_rows.rs`) up to the target's
                     // `ffn_w4a16_tc_rows_max_m`; it reads the row-major weight, not `$wt`.
                     _ if self.tc_rows_serves(ctx, m, $n, $k) => {

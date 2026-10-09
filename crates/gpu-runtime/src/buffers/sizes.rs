@@ -114,6 +114,11 @@ pub struct BufferSizes {
     /// every dense model, whatever the lever says: the levers are resolved above
     /// this crate. 0 for a MoE model.
     pub ffn_gate_up_fused: usize,
+    /// 2026-10-09: `[intermediate, hidden]` BF16: the transient BF16 copy of one NVFP4 dense-FFN
+    /// projection that the cuBLASLt arm (`layers/dense_ffn_lt.rs` in metrale-model-layers) reads.
+    /// Sized when the compiled target declares `ffn_w4a16_lt_min_rows > 0`; 0 otherwise and for
+    /// a MoE model (the arm then declines).
+    pub ffn_bf16_weight: usize,
     /// 2026-09-25: FP8 activation scratch for the prefill projections, 1 byte per
     /// element, `[ceil16(M), K]` for the widest K among hidden,
     /// `q_heads * head_dim`, Mamba-2 d_inner and the GDN value dim.
@@ -276,6 +281,14 @@ impl BufferSizes {
         let ffn_gate_up_fused = if config.num_experts == 0 {
             let rows = GATEUP_FUSED_MAX_M.div_ceil(16) * 16;
             rows * 2 * config.intermediate_size * bf16
+        } else {
+            0
+        };
+
+        let ffn_bf16_weight = if config.num_experts == 0
+            && metrale_kernels::TARGET_DEFAULTS.ffn_w4a16_lt_min_rows > 0
+        {
+            config.intermediate_size * h * bf16
         } else {
             0
         };
@@ -445,6 +458,7 @@ impl BufferSizes {
             ffn_act_scale,
             ffn_act_scale_kmajor,
             ffn_gate_up_fused,
+            ffn_bf16_weight,
             fp8_act,
             moe_fp8_scratch: super::moe_fp8_scratch::Layout::new(config, m).bytes,
             fp8_act_scale,

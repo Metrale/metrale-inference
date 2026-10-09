@@ -208,7 +208,24 @@ pub fn bf16_gemm_act_weight_t(
     k: u32,
     stream: u64,
 ) -> Result<()> {
-    gemm_act_weight_t_out(act, weight, out, m, n, k, CUDA_R_16BF, stream)
+    gemm_act_weight_t_out(act, weight, out, m, n, k, CUDA_R_16BF, 1.0, stream)
+}
+
+/// 2026-10-09: [`bf16_gemm_act_weight_t`] times `alpha`: `out = alpha * act @ weightᵀ`, the
+/// scale applied to the FP32 sum before the BF16 store (a weight's global scale, so its BF16
+/// copy can stay exact).
+#[allow(clippy::too_many_arguments)]
+pub fn bf16_gemm_act_weight_t_alpha(
+    act: u64,
+    weight: u64,
+    out: u64,
+    m: u32,
+    n: u32,
+    k: u32,
+    alpha: f32,
+    stream: u64,
+) -> Result<()> {
+    gemm_act_weight_t_out(act, weight, out, m, n, k, CUDA_R_16BF, alpha, stream)
 }
 
 /// 2026-09-25: [`bf16_gemm_act_weight_t`] with an FP32 `out`. Only the D
@@ -222,11 +239,11 @@ pub fn bf16_gemm_act_weight_t_f32_out(
     k: u32,
     stream: u64,
 ) -> Result<()> {
-    gemm_act_weight_t_out(act, weight, out, m, n, k, CUDA_R_32F, stream)
+    gemm_act_weight_t_out(act, weight, out, m, n, k, CUDA_R_32F, 1.0, stream)
 }
 
-/// 2026-09-25: Shared body of the two wrappers above; `out_dtype` is the D
-/// layout's type.
+/// 2026-09-25: Shared body of the wrappers above; `out_dtype` is the D
+/// layout's type. 2026-10-09: `alpha` scales the product (1.0 for the plain forms).
 #[allow(clippy::too_many_arguments)]
 fn gemm_act_weight_t_out(
     act: u64,
@@ -236,6 +253,7 @@ fn gemm_act_weight_t_out(
     n: u32,
     k: u32,
     out_dtype: i32,
+    alpha: f32,
     stream: u64,
 ) -> Result<()> {
     let ctx = ctx()?;
@@ -318,7 +336,6 @@ fn gemm_act_weight_t_out(
         if returned < 1 {
             bail!("cuBLASLt: no algorithm for {m}x{n}x{k}");
         }
-        let alpha: f32 = 1.0;
         let beta: f32 = 0.0;
         let status = cublasLtMatmul(
             ctx.handle,

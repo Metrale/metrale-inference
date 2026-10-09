@@ -267,7 +267,10 @@ impl DenseFfnLayer {
                     k: u32,
                     same_input: bool|
          -> Result<()> {
-            if tc_rows {
+            // 2026-10-09: The cuBLASLt arm (`dense_ffn_lt.rs`) from the target's threshold.
+            if self.try_ffn_lt(ctx, weight, input, output, m, n, k, stream)? {
+                Ok(())
+            } else if tc_rows {
                 self.w4a16_tc_rows_chunked(ctx, weight, input, output, m, n, k, stream)
             } else if same_input {
                 ops::w4a4_proj::nvfp4_proj_small_m_same_input(

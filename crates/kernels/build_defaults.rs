@@ -40,6 +40,7 @@ pub(crate) struct Defaults {
     pub w8a8_gemv_entries: [&'static str; 5],
     pub w4a16_gemv_tc_entries: [&'static str; 2],
     pub w8a8_lt_min_rows: u32,
+    pub ffn_w4a16_lt_min_rows: u32,
 }
 
 // 2026-10-05: The W8A8 GEMV schedule points (`src/w8a8_gemv_entries.rs`), one table for this
@@ -93,6 +94,8 @@ pub(crate) fn baseline(hw: &str) -> Defaults {
         w4a16_gemv_tc_entries: W4A16_GEMV_TC_BASELINE,
         // 2026-10-09: Off: the skinny W8A8 GEMV at every row count.
         w8a8_lt_min_rows: 0,
+        // 2026-10-09: Off: NVFP4 dense-FFN projections keep the in-tree kernels at every width.
+        ffn_w4a16_lt_min_rows: 0,
     }
 }
 
@@ -218,6 +221,7 @@ pub(crate) fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
                     })
             }
             "w8a8_lt_min_rows" => out.w8a8_lt_min_rows = unsigned(key, value),
+            "ffn_w4a16_lt_min_rows" => out.ffn_w4a16_lt_min_rows = unsigned(key, value),
             "ssm_batched_recurrent" => out.ssm_batched_recurrent = boolean(key, value),
             "gdn_prefill_tc" => out.gdn_prefill_tc = boolean(key, value),
             "ssm_ba_gates_hopper" => out.ssm_ba_gates_hopper = boolean(key, value),
@@ -271,6 +275,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
          \x20   w8a8_gemv_entries: {w8a8_entries:?},\n\
          \x20   w4a16_gemv_tc_entries: {w4a16_tc_entries:?},\n\
          \x20   w8a8_lt_min_rows: {w8a8_lt},\n\
+         \x20   ffn_w4a16_lt_min_rows: {ffn_lt},\n\
          }};\n",
         hw = d.hw,
         batchm = d.lm_head_batchm_max,
@@ -292,6 +297,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
         w8a8_entries = d.w8a8_gemv_entries,
         w4a16_tc_entries = d.w4a16_gemv_tc_entries,
         w8a8_lt = d.w8a8_lt_min_rows,
+        ffn_lt = d.ffn_w4a16_lt_min_rows,
     )
 }
 
