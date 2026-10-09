@@ -8,9 +8,10 @@
 //! - Every check (row counts, metadata rows, each row's lockstep and room) runs before the
 //!   first launch.
 //! - Row `r` reads and writes only sequence `r`'s state and metadata row
-//!   `meta_row_base + r`; the projections, the latent write and the attend are the only
-//!   launches that span rows, and each computes every row on its own. (2026-10-09: under
-//!   `decode_spans`, "sequence `r`" is the sequence whose span holds row `r`.)
+//!   `meta_row_base + r`; the projections (the selector query and head weights among them),
+//!   the latent write and the attend are the only launches that span rows, and each computes
+//!   every row on its own. (2026-10-09: under `decode_spans`, "sequence `r`" is the sequence
+//!   whose span holds row `r`.)
 //!
 //! # Why a row's output equals the single-sequence decode's
 //!
@@ -18,10 +19,11 @@
 //! decode step: `indexer_forward` (M = 1 GEMVs), the device geometry when capturing, and
 //! `select_row` over the row's own indexer cache. The spanning launches give each row the
 //! single-row bits: the latent write runs one block per row, reading the row's metadata slot;
-//! `project_in`/`project_out` run the
-//! M = 1 GEMV at one row and `dense_gemv_bf16_batchm` at 2..=`DENSE_GEMV_BATCHM_MAX_M`
-//! (`kernels/gb10/common/dense_gemv_bf16_batchm.cu`: each row's result is bit-identical to
-//! `dense_gemv_bf16`); the RMSNorm runs one block per row; `glm5next_dsa_mla_decode_fp8` runs
+//! `project_in`/`project_out` run the M = 1 GEMV at one row and `dense_gemv_bf16_batchm` at
+//! 2..=`DENSE_GEMV_BATCHM_MAX_M` (`kernels/gb10/common/dense_gemv_bf16_batchm.cu`: each row's
+//! result is bit-identical to `dense_gemv_bf16`); from two rows on (2026-10-09) the selector
+//! query and head weights run `dense_gemv_bf16_batchm_fp32out`, whose rows are the M = 1
+//! `dense_gemv_bf16_fp32out`'s; the RMSNorm runs one block per row; `glm5next_dsa_mla_decode_fp8` runs
 //! one block per (head, row) reading that row's block table, `seq_len` and selection row.
 //! Above `DENSE_GEMV_BATCHM_MAX_M` rows the projections move to cuBLASLt and the identity is
 //! lost, so the layer above hands this at most that many rows (`multi_seq_chunk_rows`).
@@ -33,7 +35,7 @@ use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, LayerState};
 
 use super::super::attend::DsaDecodePaging;
 use super::super::state::Glm5NextDsaState;
-use super::Glm5NextDsaLayer;
+use super::{Glm5NextDsaLayer, gemm};
 
 /// 2026-10-08: Row `r`'s `Glm5NextDsaState`; errors on any other state type.
 fn dsa_row<'a>(
@@ -180,28 +182,81 @@ impl Glm5NextDsaLayer {
             stream,
         )?;
         profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
+        // 2026-10-09: The selector query (`wq_b` over `q_resid`) and head weights
+        // (`weights_proj` over the layer input) of every row in one launch each, so `wq_b`
+        // (12.6 MB on GLM-5.3) is read once per group instead of once per row. Each row of
+        // `dense_gemv_bf16_batchm_fp32out` is the M = 1 `gemv_f32`'s result for that row, so
+        // this runs only where the single-row path would take `gemv_f32`, and only for two
+        // rows or more: one row keeps the single-sequence launches.
+        let w = &self.workspace;
+        let (heads, idx_row) = (
+            self.cfg.index_heads,
+            self.cfg.index_heads * self.cfg.index_head_dim,
+        );
+        let batched_idx = n > 1
+            && self.kernels.gemv_batchm_f32.0 != 0
+            && self.kernels.gemv_f32.0 != 0
+            && w.q_idx_rows.0 != 0
+            && w.head_weights_rows.0 != 0;
+        if batched_idx {
+            let k = &self.kernels;
+            gemm(
+                gpu,
+                k.gemm_f32,
+                k.gemv_f32,
+                k.gemv_batchm_f32,
+                w.q_resid,
+                self.weights.wq_b,
+                w.q_idx_rows,
+                n,
+                idx_row,
+                self.cfg.q_lora_rank,
+                stream,
+            )?;
+            gemm(
+                gpu,
+                k.gemm_f32,
+                k.gemv_f32,
+                k.gemv_batchm_f32,
+                hidden,
+                self.weights.weights_proj,
+                w.head_weights_rows,
+                n,
+                heads,
+                self.cfg.hidden,
+                stream,
+            )?;
+        }
         for r in 0..n {
             let mr = meta_row_base + r;
             let t = profile::start();
             let st = dsa_row(states, row_seq[r])?;
             let pos_dev = replay_safe.then(|| meta.positions.offset(mr * 4));
-            self.indexer_forward(
+            self.indexer_forward_with(
                 gpu,
                 hidden.offset(r * self.cfg.hidden * 2),
                 st,
                 pos_dev,
+                !batched_idx,
                 stream,
             )?;
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
             if replay_safe {
                 self.write_geom(gpu, meta.seq_len.offset(mr * 4), stream)?;
             }
+            let pre = batched_idx.then(|| {
+                (
+                    w.q_idx_rows.offset(r * idx_row * 4),
+                    w.head_weights_rows.offset(r * heads * 4),
+                )
+            });
             self.select_row(
                 gpu,
                 r,
                 st,
                 meta.positions.offset(mr * 4),
                 replay_safe,
+                pre,
                 stream,
             )?;
         }

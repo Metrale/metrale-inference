@@ -37,11 +37,9 @@ fn watchdogs_disabled() -> bool {
 use super::strip::{
     maybe_log_decode_trace, strip_all_preserving_boundary, strip_preserving_boundary,
 };
-use super::tool_handlers::{
-    handle_complete_tool_call, handle_tool_call_args_fragment, handle_tool_call_delta,
-    handle_tool_call_end, handle_tool_call_start,
-};
+use super::tool_dispatch::{dispatch_tool_output, push_keepalive_if_due};
 
+mod close_reasoning;
 mod detector_content;
 #[cfg(test)]
 mod role_literal_strip_tests;
@@ -49,6 +47,7 @@ mod stop_holdback;
 #[cfg(test)]
 mod stop_string_holdback_tests;
 
+use close_reasoning::close_reasoning;
 use detector_content::{detector_content_arm, process_detector_content};
 use stop_holdback::apply_stop_string_holdback;
 
@@ -120,6 +119,9 @@ pub(super) fn handle_token(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -
 
 fn handle_token_inner(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -> DeltaVec {
     let mut deltas: DeltaVec = Vec::new();
+    if let Some(raw) = state.raw_toks.as_mut() {
+        raw.push(tok);
+    }
     state.all_toks.push(tok);
     // 2026-09-26: One id per streamed token, drained onto the next client-visible chunk
     // when the request asked for `return_token_ids`.
@@ -127,51 +129,26 @@ fn handle_token_inner(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -> Del
         state.pending_token_ids.push(tok);
     }
 
+    // 2026-10-08: Under a reasoning format that a tool call closes
+    // (`ReasoningParser::tool_call_closes_reasoning`), `<tool_call>` ends the
+    // reasoning and is the first token of the answer, so it is decoded again below.
+    if !state.thinking_done
+        && ctx.tool_call_closes_reasoning
+        && ctx.state.tool_call_start_token_id == Some(tok)
+    {
+        let held_id = ctx
+            .req_return_token_ids
+            .then(|| state.pending_token_ids.pop())
+            .flatten();
+        close_reasoning(state, ctx, &mut deltas);
+        state.all_toks.push(tok);
+        state.pending_token_ids.extend(held_id);
+    }
     if !state.thinking_done {
         if let Some(end_id) = ctx.state.think_end_token_id
             && tok == end_id
         {
-            state.thinking_done = true;
-            // 2026-09-26: Emit only the reasoning bytes past `state.emitted` (for example a
-            // held-back incomplete UTF-8 tail); the rest was already streamed.
-            if ctx.enable_thinking && state.all_toks.len() > 1 {
-                let full = ctx
-                    .state
-                    .tokenizer
-                    .decode(&state.all_toks[..state.all_toks.len() - 1])
-                    .unwrap_or_default();
-                let stable = full.trim_end_matches('\u{FFFD}');
-                if stable.len() > state.emitted {
-                    let residual = &stable[state.emitted..];
-                    // 2026-09-26: A whitespace-only residual is real text; skip only an
-                    // empty one.
-                    if !residual.is_empty() {
-                        deltas.push(StreamDelta::Reasoning {
-                            text: residual.to_string(),
-                            token_ids: state.take_ids_if(ctx.req_return_token_ids),
-                        });
-                    }
-                }
-            }
-            // 2026-09-26: Flush the tail the reasoning sanitizer held back, unless it is
-            // suppressing a leak.
-            if !state.reasoning_suppressing_leak && !state.reasoning_tag_scan_buf.is_empty() {
-                let tail = std::mem::take(&mut state.reasoning_tag_scan_buf);
-                if !tail.is_empty() {
-                    deltas.push(StreamDelta::Reasoning {
-                        text: tail,
-                        token_ids: Vec::new(),
-                    });
-                }
-            }
-            if let Some(ref mut det) = state.detector {
-                det.reset();
-            }
-            state.emitted = 0;
-            state.all_toks.clear();
-            state.content_decoded.clear();
-            state.detok_prefix_offset = 0;
-            state.detok_read_offset = 0;
+            close_reasoning(state, ctx, &mut deltas);
             return deltas;
         }
         if ctx.enable_thinking {
@@ -234,8 +211,11 @@ fn handle_token_inner(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -> Del
                 // 256-byte rolling tail of cleaned reasoning finds an opener split across
                 // deltas. Each opener counts once; at `ChatLevers::in_think_leak_openers`
                 // hits (default 1, 0 = never) the stream is cut and the sequence cancelled.
-                let tools_active_request =
-                    !ctx.tool_defs_for_backfill.is_empty() || state.detector.is_some();
+                // 2026-10-08: Not under a format whose tool call closes the reasoning: there
+                // an opener cannot leak into it.
+                let tools_active_request = (!ctx.tool_defs_for_backfill.is_empty()
+                    || state.detector.is_some())
+                    && !ctx.tool_call_closes_reasoning;
                 if tools_active_request {
                     state.reasoning_xml_scan_buf.push_str(&cleaned);
                     if state.reasoning_xml_scan_buf.len() > 256 {
@@ -357,9 +337,21 @@ fn handle_token_inner(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -> Del
     };
     let _ = &state.content_decoder;
 
-    if state.thinking_done {
+    // 2026-10-08: Inside a call of a format whose tool call closes the reasoning, every
+    // marker is call text (`reasoning_parser/glm47.rs`), and outside one only `</think>`
+    // is dropped.
+    let markers_are_call_text = ctx.tool_call_closes_reasoning
+        && state
+            .detector
+            .as_ref()
+            .is_some_and(|d| d.inside_tool_call());
+    if state.thinking_done && !markers_are_call_text {
         // 2026-09-26: The same think-marker scrub as the blocking path.
-        delta = crate::api::strip::scrub_think_markers(&delta);
+        delta = if ctx.tool_call_closes_reasoning {
+            delta.replace("</think>", "")
+        } else {
+            crate::api::strip::scrub_think_markers(&delta)
+        };
         // 2026-09-26: A re-opened `<think>` ends this delta there and returns the stream
         // to the thinking phase.
         if let Some(pos) = delta.find("<think>") {
@@ -448,34 +440,14 @@ fn handle_token_inner(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -> Del
             det.process(&delta)
         };
         for output in outputs {
-            match output {
-                tool_parser::DetectorOutput::Content(text) => {
-                    if let Some(events_out) = detector_content_arm(state, ctx, &text) {
-                        deltas.extend(events_out);
-                        return deltas;
-                    }
-                }
-                tool_parser::DetectorOutput::ToolCall(mut tc, tc_idx) => {
-                    handle_complete_tool_call(state, ctx, &mut tc, tc_idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallStart {
-                    id: tc_id,
-                    name,
-                    idx,
-                } => {
-                    handle_tool_call_start(state, ctx, tc_id, name, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallDelta { args, idx } => {
-                    handle_tool_call_delta(state, ctx, args, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallArgsFragment { fragment, idx } => {
-                    handle_tool_call_args_fragment(state, ctx, fragment, idx, &mut deltas);
-                }
-                tool_parser::DetectorOutput::ToolCallEnd { idx } => {
-                    handle_tool_call_end(state, ctx, idx);
-                }
+            if let Some(text) = dispatch_tool_output(state, ctx, output, &mut deltas)
+                && let Some(events_out) = detector_content_arm(state, ctx, &text)
+            {
+                deltas.extend(events_out);
+                return deltas;
             }
         }
+        push_keepalive_if_due(state, ctx, &mut deltas);
     } else {
         let sanitized = sanitize_content_chunk(
             &delta,

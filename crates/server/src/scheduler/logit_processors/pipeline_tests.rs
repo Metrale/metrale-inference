@@ -114,6 +114,7 @@ fn logits_context_field_set_is_stable() {
         think_start_token: Some(2),
         tool_call_start_token: Some(3),
         tool_call_end_token: Some(4),
+        thinking_closed_by: Some(3),
         verify_pos: 0,
     };
     // 2026-09-25: `Clone`, not `Copy`: the masks are `Arc`s.
@@ -122,6 +123,7 @@ fn logits_context_field_set_is_stable() {
     assert_eq!(ctx2.think_start_token, Some(2));
     assert_eq!(ctx2.tool_call_start_token, Some(3));
     assert_eq!(ctx2.tool_call_end_token, Some(4));
+    assert_eq!(ctx2.thinking_closed_by, Some(3));
     assert_eq!(ctx.tool_call_end_token, Some(4));
 }
 

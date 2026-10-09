@@ -77,3 +77,27 @@ effort_hours = 0.1
 transferability = "any lever whose setup is gated on a different predicate than its dispatch"
 links = { pr = "", commit = "", evidence = "" }
 notes = "timing of the one-shot path is still unmeasured"
+
+[[lever]]
+id = "gb10-dense-gemv-bf16-load-pipelining"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (BF16 dense projections, declared)"
+recipe_or_tier = "declared"
+symptom = "nsys, TP=3 C1 decode: dense_gemv_bf16 27 ms of a 55 ms GPU step (499 calls/step)"
+diagnosis_tool = "microbench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "parameterization"
+lkb_effect = "none (not kept)"
+parity_tier_kept = "1"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "four 16-byte loads in flight per thread (same accumulation order, bit-identical) moved the kernel by -3..+6 % across the GLM shapes: the existing kernel already reads 210-233 GB/s, about 80 % of the box's ~273 GB/s"
+failure_mode = "the hypothesis (one outstanding load per thread limits bandwidth) was wrong at these shapes"
+caught_by = "standalone microbench, old vs new kernel, bit comparison + timing over L2-defeating weight copies"
+time_lost_hours = 0.2
+would_catch_earlier = "computing achieved GB/s from the nsys per-call times before writing a variant"
+effort_hours = 0.2
+transferability = "any BF16 decode GEMV on gb10"
+links = { pr = "", commit = "", evidence = "same-box standalone microbench" }
+notes = "the BF16 dense floor at declared precision is therefore ~23 ms per TP=3 step; C1 needs speculation or the matched tier to pass the reference"

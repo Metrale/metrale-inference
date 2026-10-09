@@ -34,7 +34,8 @@ fn cfg() -> Glm5NextDsaConfig {
 fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
     let src = include_str!("../layer.rs");
     assert!(
-        src.contains(r#"gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")"#),
+        include_str!("kernels.rs")
+            .contains(r#"gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")"#),
         "GLM uses x*rms*w; `rms_norm` applies x*rms*(1+w) and would shift every norm"
     );
     for (file, text) in [
@@ -42,6 +43,7 @@ fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
         ("layer/decode_k.rs", include_str!("decode_k.rs")),
         ("layer/rows.rs", include_str!("rows.rs")),
         ("layer/workspace.rs", include_str!("workspace.rs")),
+        ("layer/kernels.rs", include_str!("kernels.rs")),
         ("layer/proj_gemm.rs", include_str!("proj_gemm.rs")),
     ] {
         assert!(

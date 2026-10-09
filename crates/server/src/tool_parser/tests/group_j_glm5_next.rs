@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-26: Tool calling for GLM-5.3-Flash (`model_type = "glm5_next"`).
-//! `tool_defaults.toml` maps it to the `poolside_v1` parser; these tests pin
-//! that mapping and the
+//! `tool_defaults.toml` maps it to the `glm47` parser (2026-10-08; it was
+//! `poolside_v1`, whose wire format `glm47` shares); these tests pin that
+//! mapping and the
 //! `<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>`
-//! format through that parser.
+//! format through the shared Poolside v1 parse.
 //!
 //! Without the mapping, and with no parser set on the command line or in
 //! MODEL.toml, `resolve_tool_call_parser` returns `None`, `tools_active` is
@@ -43,9 +44,10 @@ fn args_of(call: &ToolCall) -> serde_json::Value {
     serde_json::from_str(&call.function.arguments).expect("arguments are valid JSON")
 }
 
-/// 2026-09-26: `tool_defaults.toml` maps `glm5_next` to `poolside_v1`.
+/// 2026-09-26: `tool_defaults.toml` maps `glm5_next` to `glm47` (2026-10-08),
+/// the fail-closed policy over the Poolside v1 wire format.
 #[test]
-fn glm5_next_is_registered_to_the_poolside_v1_wire_format() {
+fn glm5_next_is_registered_to_the_glm47_parser() {
     let defaults: toml::Value =
         toml::from_str(include_str!("../../../tool_defaults.toml")).expect("tool_defaults parses");
     let fmt_str = defaults
@@ -54,11 +56,11 @@ fn glm5_next_is_registered_to_the_poolside_v1_wire_format() {
         .and_then(|s| s.as_str())
         .expect("tool_defaults [model_type] must register glm5_next");
     assert_eq!(
-        fmt_str, "poolside_v1",
-        "GLM-5.3 emits the poolside_v1 envelope; see chat_template.jinja"
+        fmt_str, "glm47",
+        "GLM-5.3 emits the GLM-4.7 envelope; see chat_template.jinja"
     );
     let fmt: ToolCallFormat = fmt_str.parse().expect("glm5_next tool format parses");
-    assert_eq!(fmt.into_parser().name(), "poolside_v1");
+    assert_eq!(fmt.into_parser().name(), "glm47");
 }
 
 /// 2026-09-26: `GLM_TWO_ARG` gives one call with both arguments, and no

@@ -7,11 +7,13 @@
 //! | [`ReasoningFormat::Qwen`], [`ReasoningFormat::DeepSeekR1`], [`ReasoningFormat::MiniMax`] | `<think>` / `</think>` |
 //! | [`ReasoningFormat::Mistral`] | `[THINK]` / `[/THINK]` |
 //! | [`ReasoningFormat::Gemma4`] | `<|channel>` / `<channel|>` |
+//! | [`ReasoningFormat::Glm47`] | `<think>` / `</think>` or `<tool_call>` |
 //!
 //! The three `<think>` formats share one implementation and differ only in
 //! name; they assume the prompt already opened the block. Mistral uses the
 //! same implementation but expects the model to emit its own `[THINK]`.
-//! Gemma 4 has its own parser. At serve time the format comes from the
+//! Gemma 4 has its own parser, and so has GLM-4.7 (`glm47.rs`), whose block
+//! a tool call also closes. At serve time the format comes from the
 //! `[reasoning]` table of `tool_defaults.toml`, keyed by `model_type`, and a
 //! thinking-capable model without an entry gets `qwen`
 //! (`main_modules/serve_phases/tokenizer_runtime.rs`).
@@ -19,6 +21,9 @@
 //! Owner: server.
 //! Invariants: none beyond the types.
 
+mod glm47;
+#[cfg(test)]
+mod glm47_tests;
 mod parsers;
 #[cfg(test)]
 mod tests;
@@ -47,6 +52,17 @@ pub trait ReasoningParser: Send + Sync {
         }
     }
 
+    /// 2026-10-08: Whether the format's tool-call opener (`<tool_call>`) also
+    /// closes the reasoning block, the opener and what follows being the
+    /// answer. Such a parser keeps marker text inside a tool call, where a
+    /// call that swallowed a `</think>` must reach the tool parser intact, so
+    /// callers split with its `extract_thinking` on text and do not run the
+    /// shared marker scrub (`api/chat_blocking.rs`, `api/chat_stream`).
+    /// Default false.
+    fn tool_call_closes_reasoning(&self) -> bool {
+        false
+    }
+
     /// 2026-09-26: Split completed text into `(reasoning, content)`.
     ///
     /// `enable_thinking` is the request's resolved thinking state. When it is
@@ -69,6 +85,9 @@ pub enum ReasoningFormat {
     Mistral,
     /// 2026-09-26: `<|channel>thought ... <channel|> ...`, Gemma 4's channel format.
     Gemma4,
+    /// 2026-10-08: `<think>...</think>`, which `<tool_call>` also closes, parsed
+    /// as `glm47`; also named `glm45`.
+    Glm47,
 }
 
 impl FromStr for ReasoningFormat {
@@ -82,9 +101,10 @@ impl FromStr for ReasoningFormat {
             "minimax" | "minimax_m2" => Ok(Self::MiniMax),
             "mistral" => Ok(Self::Mistral),
             "gemma4" | "gemma" => Ok(Self::Gemma4),
+            "glm47" | "glm45" => Ok(Self::Glm47),
             other => Err(format!(
                 "Unknown reasoning parser '{other}'. Supported: qwen, \
-                 deepseek_r1, minimax, mistral, gemma4"
+                 deepseek_r1, minimax, mistral, gemma4, glm47"
             )),
         }
     }

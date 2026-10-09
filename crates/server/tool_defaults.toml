@@ -18,7 +18,7 @@ mistral     = "mistral"
 gemma4      = "gemma4"
 minimax_m2  = "minimax_xml"
 laguna      = "poolside_v1"
-glm5_next   = "poolside_v1"
+glm5_next   = "glm47"
 deepseek_v4 = "deepseek_v4"
 deepseek_v41 = "deepseek_v4"
 
@@ -33,6 +33,8 @@ deepseek_v41 = "deepseek_v4"
 #     the prompt (`prompt_opens_think`); one implementation under three names
 #   mistral: [THINK]...[/THINK]
 #   gemma4: the <|channel>thought ... <channel|> channel format
+#   glm47: <think>...</think> opened by the prompt on every request, also
+#     closed by <tool_call> (reasoning_parser/glm47.rs)
 
 [reasoning]
 qwen3_5_moe = "qwen"
@@ -47,3 +49,4 @@ qwen3_vl_moe = "qwen"
 mistral     = "mistral"
 minimax_m2  = "minimax"
 laguna      = "qwen"
+glm5_next   = "glm47"

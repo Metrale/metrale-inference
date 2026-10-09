@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::AppState;
 use crate::ir::ChatRequest;
 
-use super::{msg_entry, template, thinking};
+use super::{media_limits, msg_entry, template, thinking};
 
 /// 2026-09-26: Outputs of [`prepare_chat_prompt`].
 pub(crate) struct PreparedChat {
@@ -66,6 +66,16 @@ pub(crate) fn prepare_chat_prompt(
     );
 
     let _t_phase = std::time::Instant::now();
+
+    // 2026-10-08: Refused before `build_msg_entries` fetches or decodes any media.
+    if let Err(over) = media_limits::check_media_limits(&req.messages, state.media_limits) {
+        return Err(crate::api::compact::openai_error_response_with_param(
+            axum::http::StatusCode::BAD_REQUEST,
+            over.message,
+            Some(over.param),
+            None,
+        ));
+    }
 
     let msg_entry::BuildOut {
         messages,
@@ -121,8 +131,11 @@ pub(crate) fn prepare_chat_prompt(
         // 2026-09-26: The request's `preserve_thinking` wins, then
         // `behavior.preserve_thinking` (MODEL.toml, overridden by
         // `--default-chat-template-kwargs`). `None` leaves the template
-        // variable undefined.
-        req.preserve_thinking.or(state.behavior.preserve_thinking),
+        // variable undefined. 2026-10-08: `thinking` is the request's alone.
+        crate::tokenizer::ThinkingVars {
+            preserve_thinking: req.preserve_thinking.or(state.behavior.preserve_thinking),
+            thinking: req.template_thinking,
+        },
         tools_active,
     )?;
     if state.chat.phase_timing {

@@ -66,6 +66,12 @@ fn stream_through_pipeline(chunks: &[&str]) -> (Vec<(String, String)>, String) {
                     );
                 }
                 DetectorOutput::ToolCallEnd { .. } => {}
+                DetectorOutput::CheckedToolCall { call, idx, .. } => {
+                    tc_acc.insert(
+                        *idx,
+                        (call.function.name.clone(), call.function.arguments.clone()),
+                    );
+                }
             }
         }
     };

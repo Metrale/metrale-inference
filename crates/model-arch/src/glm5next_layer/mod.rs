@@ -384,6 +384,15 @@ impl LayerCapabilities for Glm5NextLayer {
         self.mhc.is_none()
     }
 
+    /// 2026-10-09: True. Every per-step input of the decode is read from device buffers the
+    /// model uploads before a replay (the DSA position, slot, `seq_len` and block table from
+    /// the metadata, the KDA state from the slot-keyed pool), and `reduce_partial` issues the
+    /// collectives on the capturing stream; the batched decode already replays the same
+    /// launches with a communicator.
+    fn decode_graph_with_comm(&self) -> bool {
+        true
+    }
+
     /// 2026-10-08: True: a DSA row selects over its own sequence's indexer cache
     /// (`Glm5NextDsaLayer::decode_rows`) and a KDA layer has no index, so the model's mHC +
     /// sparse-index per-sequence rule does not apply to this layer.

@@ -65,6 +65,7 @@ impl SchedulerCore {
                 think_start_token,
                 tool_call_start_token,
                 tool_call_end_token,
+                thinking_closed_by: sched.limits.thinking_closed_by,
                 verify_pos: 0,
                 boundary_mask: sched.masks.boundary.clone(),
                 mid_word_mask: sched.masks.mid_word.clone(),

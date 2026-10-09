@@ -216,6 +216,10 @@ pub struct ChatTemplateKwargs {
     /// 2026-09-26: Keep earlier turns' `<think>` blocks when re-rendering
     /// them; see `ir::ChatRequest::preserve_thinking`.
     pub preserve_thinking: Option<bool>,
+    /// 2026-10-08: The template's `thinking` variable, passed through
+    /// untouched (`ir::ChatRequest::template_thinking`); it is not a thinking
+    /// directive.
+    pub thinking: Option<bool>,
     /// 2026-09-26: The lowest-priority effort channel, after
     /// `reasoning.effort` and the top-level `reasoning_effort`. Within this
     /// object, `thinking_budget` and `enable_thinking: false` win over it.

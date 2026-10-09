@@ -110,6 +110,14 @@ pub fn emit_token(
         a.think_skip_count = 0;
     }
 
+    // 2026-10-09: under a format whose tool call closes the thinking block, the
+    // opener leaves thinking here and is handled below as a content token.
+    crate::scheduler::think_close::close_thinking_at_tool_call(
+        a,
+        tok,
+        sched.limits.thinking_closed_by,
+    );
+
     // 2026-09-25: a `<tool_call>` outside thinking satisfies
     // `require_tool_call`.
     if a.require_tool_call && a.tool_call_start_token == Some(tok) && !a.inside_thinking {
@@ -336,6 +344,17 @@ pub fn emit_token(
         return;
     }
     if a.eos_tokens.contains(&tok) && suppress_eos {
+        // 2026-10-09: the same debug line as `decode_logits_step`'s held-back EOS.
+        tracing::debug!(
+            target: "metrale::eos",
+            tok,
+            inside_thinking = a.inside_thinking,
+            by_thinking = thinking_suppresses_eos,
+            by_grammar = grammar_suppresses_eos,
+            by_legacy_tool = legacy_suppresses_eos,
+            by_min_tokens = min_tokens_suppresses,
+            "EOS suppressed in emit_token; model forced to continue"
+        );
         return;
     }
     // 2026-09-25: thinking tokens of a request without thinking enabled are
