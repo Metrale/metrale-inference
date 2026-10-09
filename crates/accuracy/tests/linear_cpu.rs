@@ -90,6 +90,7 @@ fn emu(
         behaviour,
         wrong,
         shape,
+        point: Default::default(),
     };
     (c, e)
 }

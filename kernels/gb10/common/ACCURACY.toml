@@ -106,3 +106,122 @@ class = "bit_identical"
 against = "gemv::dense_gemv_bf16"
 inputs = ["gaussian", "outliers", "all_equal"]
 mutations = ["symbol:gemv::dense_gemv_bf16_fp32out"]
+
+# 2026-10-09: The tensor-core grouped NVFP4 experts (W4A16, the declared path of
+# nvidia/Qwen3.6-35B-A3B-NVFP4). Per output column and row (moe_grouped_tc.cuh gtc_warp): every
+# 128-K chunk runs eight m16n8k16 BF16 MMAs (:155-166, tc_weight_formats.cuh Nvfp4G16 frag
+# :124-136, weight = BF16(E2M1 * E4M3), exact) straight into one FP32 accumulator (FOLDS =
+# false), so a column's sum is a chain of K/16 MMAs, each adding 16 products. The order inside
+# one mma.sync is not documented: the MMA level is stated as a sequential chain of its 16
+# products, which bounds any bracketing under round-to-nearest; the calibration confirms it.
+# s2 multiplies the FP32 sum once (Nvfp4G16::out :139), then gate and up round to BF16
+# (moe_grouped_tc.cuh:191-192). The f32 steps around the MMA are IEEE (no fast-math, no flush);
+# subnormal handling inside the MMA is not documented, IEEE is stated (tensor cores have kept
+# subnormal inputs and outputs on every architecture measured) and the calibration's denormal
+# class confirms it. The SiLU product (:193) uses __expf, ex2.approx after
+# an f32 multiply by log2(e): ex2.approx is within 2 ulp (CUDA C Programming Guide, __expf:
+# 2 + floor(|1.16 x|) ulp, the |x| part being the argument rounding the reference derives), so
+# 2^-22 relative; it is stored as BF16 hi + lo (:194-197), within 2^-16 of the f32 product.
+[[contract]]
+family = "moe_grouped_tc"
+kernels = ["moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc"]
+op = "expert_gate_up"
+reference = "moe_grouped"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "chain", width = "k/16", order = "sequential" },
+]
+ftz = false
+approx = { ex2 = "2^-22", silu_store = "2^-16" }
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale", "accumulate:bf16"]
+
+# 2026-10-09: The down projection reads the hi + lo pair of each K value and runs one MMA on each,
+# hi first, into the same accumulator (moe_grouped_tc.cuh:163-164): the reference's reduced
+# length is 2K (each half times the same weight), a chain of 2K/16 MMAs; s2 once, then BF16
+# (:199).
+[[contract]]
+family = "moe_grouped_tc"
+kernels = ["moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc"]
+op = "expert_down"
+reference = "moe_grouped"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "chain", width = "k/16", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale", "accumulate:bf16"]
+
+# 2026-10-09: The lean point reads the same tables after the production repack
+# (nvfp4_tc_lean_repack) and promises the row-major kernels' bytes (moe_nvfp4_grouped_tc.cu:
+# 156-157, tc_weight_formats.cuh:153-154).
+[[contract]]
+family = "moe_grouped_tc"
+kernels = ["moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc_lean"]
+op = "expert_gate_up"
+reference = "moe_grouped"
+class = "bit_identical"
+against = "moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale"]
+
+[[contract]]
+family = "moe_grouped_tc"
+kernels = ["moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc_lean"]
+op = "expert_down"
+reference = "moe_grouped"
+class = "bit_identical"
+against = "moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale"]
+
+# 2026-10-09: The CUDA-core grouped FP8 experts (moe_shared_expert_fused_fp8_grouped.cu). gate+up:
+# a lane takes 16-K chunks k16 = lane + 32j (:251), each four times a four-product sum added to its
+# accumulator (:292, products and sums rounded separately: the gb10 KERNEL.toml compiles with
+# --fmad=false), K/128 additions per lane, then a 32-lane shuffle tree (:306-307); gate and up
+# round to BF16 and the FP32 SiLU product is stored as is (:311-317). down: 8-K chunks
+# k8 = lane + 32j (:413), twice a four-product sum each (:446), K/128 additions per lane, the
+# shuffle tree (:461-462), BF16 out (:463). IEEE f32 throughout (no fast-math, no flush).
+# gate+up lists no `accumulate:` mutation: its pipeline declares the scaled weight a BF16 operand
+# (the manifest's convention for a BF16 activation; the kernel itself scales in f32, :276), which
+# admits 2^-8 per product, and a BF16 accumulator stays inside that. down declares f32 operands
+# and catches it.
+[[contract]]
+family = "moe_grouped_fp8_scalar"
+kernels = ["moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped"]
+op = "expert_gate_up"
+reference = "moe_grouped"
+class = "derived"
+reduction.k = [
+  { level = "products", width = "4", order = "sequential" },
+  { level = "lane", width = "k/128", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+]
+ftz = false
+approx = { ex2 = "2^-22", silu_store = "0" }
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale"]
+
+[[contract]]
+family = "moe_grouped_fp8_scalar"
+kernels = ["moe_shared_expert_fused_fp8_grouped::moe_expert_down_act_fp8_grouped"]
+op = "expert_down"
+reference = "moe_grouped"
+class = "derived"
+reduction.k = [
+  { level = "products", width = "4", order = "sequential" },
+  { level = "lane", width = "k/128", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["zero_expert", "corrupt_block_scale", "accumulate:bf16"]

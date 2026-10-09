@@ -43,14 +43,14 @@ pub struct Dims {
 
 /// 2026-10-09: The formats of a linear plan: (activation as stored, weight as stored, weight
 /// operand precision, product precisions, accumulator, scale precision, output).
-struct Formats {
-    act: Layout,
-    weight: Layout,
-    operand: Elem,
-    mma: (Elem, Elem),
-    acc: Elem,
-    scale: Option<Elem>,
-    out: Elem,
+pub(crate) struct Formats {
+    pub(crate) act: Layout,
+    pub(crate) weight: Layout,
+    pub(crate) operand: Elem,
+    pub(crate) mma: (Elem, Elem),
+    pub(crate) acc: Elem,
+    pub(crate) scale: Option<Elem>,
+    pub(crate) out: Elem,
 }
 
 fn num(n: Num, ftz: bool) -> Elem {
@@ -58,7 +58,8 @@ fn num(n: Num, ftz: bool) -> Elem {
     if ftz && n == Num::F32 { F32_FTZ } else { e }
 }
 
-fn formats(plan: &Plan) -> Result<Formats, String> {
+/// 2026-10-09: The formats of `plan`'s projection (the grouped-expert reference reads them too).
+pub(crate) fn formats(plan: &Plan) -> Result<Formats, String> {
     let p = &plan.pipeline;
     let input = *p.inputs.first().ok_or("the pipeline names no input")?;
     let act_step = match plan.step(StepKind::Act) {
@@ -111,7 +112,9 @@ fn formats(plan: &Plan) -> Result<Formats, String> {
     })
 }
 
-fn put(case: &mut Case, prefix: &str, s: Stored) {
+/// 2026-10-09: Store operand `s` under `prefix` (`<prefix>`, `<prefix>_block`, `<prefix>_row`,
+/// scalars `<prefix>_block_rows`, `<prefix>_global`): the names [`reference`] reads.
+pub fn put(case: &mut Case, prefix: &str, s: Stored) {
     case.tensors.insert(prefix.to_string(), s.values);
     if let Some(b) = s.block {
         case.tensors.insert(format!("{prefix}_block"), b);
@@ -124,6 +127,47 @@ fn put(case: &mut Case, prefix: &str, s: Stored) {
     case.scalars.insert(format!("{prefix}_global"), s.global);
 }
 
+fn round_into(l: Layout, v: Vec<f64>) -> Vec<f64> {
+    match l {
+        Layout::Bf16 => v
+            .iter()
+            .map(|x| elem::BF16.round_saturating(*x).unwrap_or(0.0))
+            .collect(),
+        _ => v,
+    }
+}
+
+/// 2026-10-09: Activations `[rows, k]` of `class` stored in `layout` (one NVFP4 global per row).
+pub fn activation(
+    rx: &mut SplitMix64,
+    layout: Layout,
+    class: InputClass,
+    rows: usize,
+    k: usize,
+) -> Result<Stored, String> {
+    let x = tensor(rx, class, rows, k, 1.0, elem::F32);
+    quantize(layout, &round_into(layout, x), rows, k, true)
+}
+
+/// 2026-10-09: A weight `[n, k]` stored in `layout`, drawn as a checkpoint holds one (gaussian,
+/// then quantized into the stored layout) as a period of distinct rows tiled to `n` (a lm_head's
+/// 248k rows are not drawn one by one).
+pub fn weight(rw: &mut SplitMix64, layout: Layout, n: usize, k: usize) -> Result<Stored, String> {
+    let period = match layout {
+        Layout::Fp8Block(r, _) => (2 * r).min(n.next_multiple_of(r)),
+        _ => ROW_PERIOD.min(n),
+    };
+    let w = tensor(
+        rw,
+        InputClass::Gaussian,
+        period,
+        k,
+        1.0 / (k as f64).sqrt(),
+        elem::F32,
+    );
+    quantize(layout, &round_into(layout, w), period, k, false)?.tile(n)
+}
+
 /// 2026-10-09: Fill `case` with the operands of a linear launch of `dims`, drawn for `class`.
 pub fn fill(
     case: &mut Case,
@@ -134,39 +178,8 @@ pub fn fill(
     rw: &mut SplitMix64,
 ) -> Result<(), String> {
     let f = formats(plan)?;
-    let real_fmt = elem::F32;
-    let x = tensor(rx, class, dims.rows, dims.k, 1.0, real_fmt);
-    let round_into = |l: Layout, v: Vec<f64>| -> Vec<f64> {
-        match l {
-            Layout::Bf16 => v
-                .iter()
-                .map(|x| elem::BF16.round_saturating(*x).unwrap_or(0.0))
-                .collect(),
-            _ => v,
-        }
-    };
-    // 2026-10-09: The class shapes the activations; weights are drawn as a checkpoint holds
-    // them (gaussian, then quantized into the stored layout), as a period of distinct rows
-    // tiled to N (a lm_head's 248k rows are not drawn one by one).
-    let period = match f.weight {
-        Layout::Fp8Block(r, _) => (2 * r).min(dims.n.next_multiple_of(r)),
-        _ => ROW_PERIOD.min(dims.n),
-    };
-    let w = tensor(
-        rw,
-        InputClass::Gaussian,
-        period,
-        dims.k,
-        1.0 / (dims.k as f64).sqrt(),
-        real_fmt,
-    );
-    put(
-        case,
-        "x",
-        quantize(f.act, &round_into(f.act, x), dims.rows, dims.k, true)?,
-    );
-    let stored = quantize(f.weight, &round_into(f.weight, w), period, dims.k, false)?;
-    put(case, "w", stored.tile(dims.n)?);
+    put(case, "x", activation(rx, f.act, class, dims.rows, dims.k)?);
+    put(case, "w", weight(rw, f.weight, dims.n, dims.k)?);
     case.out = (
         vec![dims.rows, dims.n],
         if f.out == elem::BF16 {
@@ -208,6 +221,13 @@ impl Operand<'_> {
     fn row_scale(&self, r: usize) -> f64 {
         self.row.map_or(1.0, |t| t.get(r))
     }
+}
+
+/// 2026-10-09: An exactly known operand converted into `fmt`: exact when `fmt` holds the value
+/// (an E2M1 value times its E4M3 scale in BF16 always is), one rounding otherwise.
+fn exact_in(v: f64, fmt: Elem) -> Bounded {
+    let b = Bounded::exact(v);
+    if fmt.holds(v) { b } else { b.round(fmt) }
 }
 
 /// 2026-10-09: The bounded reference at flat output indices `idx` (`r * n + c`), before the
@@ -275,7 +295,7 @@ pub fn reference(case: &Case, plan: &Plan, idx: &[usize]) -> Result<Vec<Bounded>
                     .map(|j| {
                         let wop = match (fold, group) {
                             (ScaleFold::Element, Some(g)) => {
-                                Bounded::exact(wq(j) * w.block_scale(c, j, g)).round(f.operand)
+                                exact_in(wq(j) * w.block_scale(c, j, g), f.operand)
                             }
                             (ScaleFold::None, Some(_)) => {
                                 return Err(

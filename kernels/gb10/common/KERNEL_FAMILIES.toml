@@ -1466,6 +1466,17 @@ op = [
   { op = "linear", roles = ["shared_gate_up", "shared_down"], weight = ["fp8/block128x128"] },
   { op = "silu_mul" },
 ]
+# 2026-10-09: The routing's sizes at the expert nodes: the model's expert count (it sizes the
+# per-expert pointer tables and the active-expert cap) and slots per token. Runtime: one kernel
+# serves every value. The accuracy reference draws its routing from them.
+[[family.param]]
+name = "experts"
+kind = "runtime"
+from = { expert_gate_up = "dim:experts", expert_down = "dim:experts" }
+[[family.param]]
+name = "top_k"
+kind = "runtime"
+from = { expert_gate_up = "dim:top_k", expert_down = "dim:top_k" }
 [[family.point]]
 values = {}
 how = "instantiation"
@@ -1572,6 +1583,17 @@ from = { expert_gate_up = "param:weight_layout", expert_down = "param:weight_lay
 # NVFP4 tables repacked in place at load (model-layers moe/nvfp4_lean.rs), which the loader picks
 # when the layer qualifies, not a circuit.
 absent = "row_major"
+# 2026-10-09: The routing's sizes at the expert nodes: the model's expert count (it sizes the
+# per-expert pointer tables and the active-expert cap) and slots per token. Runtime: one kernel
+# serves every value. The accuracy reference draws its routing from them.
+[[family.param]]
+name = "experts"
+kind = "runtime"
+from = { expert_gate_up = "dim:experts", expert_down = "dim:experts" }
+[[family.param]]
+name = "top_k"
+kind = "runtime"
+from = { expert_gate_up = "dim:top_k", expert_down = "dim:top_k" }
 [[family.point]]
 values = { weight = "fp8/block128x128", activation = "bf16", epilogue = "silu_mul", down_input = "f32", weight_layout = "row_major" }
 how = "instantiation"

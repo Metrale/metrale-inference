@@ -28,6 +28,8 @@ use crate::points::Shape;
 pub mod linear;
 pub mod linear_impl;
 pub mod linear_mutate;
+pub mod moe_grouped;
+pub mod moe_grouped_impl;
 pub mod quant;
 
 /// 2026-10-09: What a reference provides. Every method but [`RefImpl::sample`] is required.
@@ -80,7 +82,7 @@ pub trait RefImpl: Sync {
 }
 
 /// 2026-10-09: The references, by contract spelling.
-pub const REFS: &[&dyn RefImpl] = &[&linear_impl::Linear];
+pub const REFS: &[&dyn RefImpl] = &[&linear_impl::Linear, &moe_grouped_impl::MoeGrouped];
 
 /// 2026-10-09: Random output columns a sample adds to the structural ones.
 const EXTRA_COLUMNS: usize = 48;
