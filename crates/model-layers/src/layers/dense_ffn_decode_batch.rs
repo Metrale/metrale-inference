@@ -14,7 +14,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use super::{DenseFfnLayer, DenseFfnWeightsQ2, FfnActivation, native_small_batch_uses_prefill};
 use crate::layer::ForwardContext;
 use crate::layers::ops;
-use crate::weight_map::PackedQ2Weight;
+use crate::weight_map::{PackedQ2Weight, QuantizedWeight};
 
 impl DenseFfnLayer {
     /// 2026-09-25: Packed-Q2 FFN for `m` rows, used by `forward_k2` and `forward_k3`:
@@ -66,7 +66,7 @@ impl DenseFfnLayer {
     /// `forward_prefill`, and to `forward_km` when `small_batch_w4a4` and `can_forward_km(2)`; otherwise NVFP4 runs `w4a16_gemv_dual_batch2`, `act_mul` and `w4a16_gemv_batch2`, plus the
     /// LoRA deltas.
     pub fn forward_k2(&self, input: DevicePtr, ctx: &ForwardContext, stream: u64) -> Result<()> {
-        if self.forward_w8a8(input, 2, ctx, stream)? {
+        if self.forward_w8a8(input, 2, ctx, stream, false)? {
             return Ok(());
         }
         if let Some(ref q2w) = self.q2_weights {
@@ -128,7 +128,7 @@ impl DenseFfnLayer {
 
     /// 2026-09-25: FFN for 3 rows; the same routing as `forward_k2`, with the batch3 kernels.
     pub fn forward_k3(&self, input: DevicePtr, ctx: &ForwardContext, stream: u64) -> Result<()> {
-        if self.forward_w8a8(input, 3, ctx, stream)? {
+        if self.forward_w8a8(input, 3, ctx, stream, false)? {
             return Ok(());
         }
         if let Some(ref q2w) = self.q2_weights {
@@ -242,7 +242,7 @@ impl DenseFfnLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
-        if self.forward_w8a8(input, m as usize, ctx, stream)? {
+        if self.forward_w8a8(input, m as usize, ctx, stream, false)? {
             return Ok(());
         }
         if native_small_batch_uses_prefill(self.bf16_weights.is_some(), self.fp8_weights.is_some())
@@ -252,33 +252,42 @@ impl DenseFfnLayer {
         let h = ctx.config.hidden_size as u32;
         let inter = ctx.config.intermediate_size as u32;
         let kh = self.batchm_kernel(m);
+        // 2026-10-05: Above the narrow-GEMV edge, within the target's row-tile band
+        // (`dense_ffn_tc_rows.rs`), the three projections run `w4a16_tc_rows` instead of the
+        // batched GEMV tier (on the H100 SXM test box `w4a16_gemv_batch16` takes 258 us at 16 rows
+        // for the 27B's gate/up, `w4a16_tc_rows_16` 52 us).
+        let tc_rows = m > ops::gemv_tc::narrow_gemv_max_rows()
+            && self.tc_rows_serves(ctx, m, inter, h)
+            && self.tc_rows_serves(ctx, m, h, inter);
+        // 2026-10-05: `same_input`: up reuses gate's W4A4 activation quantisation.
+        let proj = |weight: &QuantizedWeight,
+                    input: DevicePtr,
+                    output: DevicePtr,
+                    n: u32,
+                    k: u32,
+                    same_input: bool|
+         -> Result<()> {
+            // 2026-10-09: The cuBLASLt arm (`dense_ffn_lt.rs`) from the target's threshold.
+            if self.try_ffn_lt(ctx, weight, input, output, m, n, k, stream)? {
+                Ok(())
+            } else if tc_rows {
+                self.w4a16_tc_rows_chunked(ctx, weight, input, output, m, n, k, stream)
+            } else if same_input {
+                ops::w4a4_proj::nvfp4_proj_small_m_same_input(
+                    ctx.gpu, kh, input, weight, output, m, n, k, stream,
+                )
+            } else {
+                ops::w4a4_proj::nvfp4_proj_small_m(
+                    ctx.gpu, kh, input, weight, output, m, n, k, stream,
+                )
+            }
+        };
 
         let gate_out = ctx.buffers.expert_gate_out();
         let up_out = ctx.buffers.expert_up_out();
 
-        ops::w4a4_proj::nvfp4_proj_small_m(
-            ctx.gpu,
-            kh,
-            input,
-            &self.weights.gate_proj,
-            gate_out,
-            m,
-            inter,
-            h,
-            stream,
-        )?;
-        // 2026-09-25: Same `input` as gate: the W4A4 path reuses gate's quantisation.
-        ops::w4a4_proj::nvfp4_proj_small_m_same_input(
-            ctx.gpu,
-            kh,
-            input,
-            &self.weights.up_proj,
-            up_out,
-            m,
-            inter,
-            h,
-            stream,
-        )?;
+        proj(&self.weights.gate_proj, input, gate_out, inter, h, false)?;
+        proj(&self.weights.up_proj, input, up_out, inter, h, true)?;
         self.apply_lora_gate_up(ctx, input, gate_out, up_out, m, stream)?;
         ops::silu_mul(
             ctx.gpu,
@@ -290,17 +299,7 @@ impl DenseFfnLayer {
             stream,
         )?;
         let output = ctx.buffers.moe_output();
-        ops::w4a4_proj::nvfp4_proj_small_m(
-            ctx.gpu,
-            kh,
-            gate_out,
-            &self.weights.down_proj,
-            output,
-            m,
-            h,
-            inter,
-            stream,
-        )?;
+        proj(&self.weights.down_proj, gate_out, output, h, inter, false)?;
         self.apply_lora_down(ctx, gate_out, output, m, stream)?;
 
         Ok(())

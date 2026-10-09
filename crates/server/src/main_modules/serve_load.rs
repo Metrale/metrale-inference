@@ -63,6 +63,7 @@ pub(crate) fn load_model(
         forward,
         auto_max_batch_size,
         device_budget,
+        mock,
         drafter_weights_sha256,
     }) = engine::load_engine(args)?
     else {
@@ -186,11 +187,14 @@ pub(crate) fn load_model(
     // on|off` toggles this run's flag. Its starting value is
     // `--content-loop-watchdog`, else `METRALE_CONTENT_LOOP_WATCHDOG`, else
     // MODEL.toml `[behavior].enable_loop_watchdog`.
-    let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
-        args.mtp_gate_force(),
-        args.mtp_shape.mtp_dcut_ratio,
-        spec_cost,
-    ));
+    let sched_levers = std::sync::Arc::new(
+        crate::scheduler::levers::SchedLevers::from_env(
+            args.mtp_gate_force(),
+            args.mtp_shape.mtp_dcut_ratio,
+            spec_cost,
+        )
+        .with_prefill_varlen_with_decode(args.prefill_batch.prefill_varlen_with_decode)?,
+    );
     sched_levers.set_loop_watchdog(crate::scheduler::resolve_content_loop_watchdog(
         ptx_set.behavior.enable_loop_watchdog,
         std::env::var("METRALE_CONTENT_LOOP_WATCHDOG")
@@ -336,6 +340,7 @@ pub(crate) fn load_model(
             forward: forward.forward.to_string(),
             plan_digest: forward.plan_digest,
             auto_max_batch_size,
+            mock,
             moe_expert_tables: metrale_model_layers::layers::moe_expert_tables()
                 .map(|t| t.name().to_string()),
             kernel_tree: crate::main_modules::serve_phases::expert_tables::planned_tree()

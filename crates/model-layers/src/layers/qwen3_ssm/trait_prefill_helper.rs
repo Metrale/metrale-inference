@@ -57,6 +57,10 @@ impl Qwen3SsmLayer {
         value_dim: usize,
         stream: u64,
     ) -> Result<()> {
+        // 2026-10-05: The declared W8A8 first, as for QKV|Z (`w8a8_decode.rs`).
+        if self.w8a8_prefill_proj(ctx, true, normed_out_buf, k as usize, out_proj_buf, stream)? {
+            return Ok(());
+        }
         let force_w8a8 = matches!(std::env::var("METRALE_FP8_W8A8").ok().as_deref(), Some("1"));
         // 2026-09-25: Per-row FP8 weights (`out_proj_fp8w_rowwise`), dequantised
         // once per layer to BF16 in the arena slab (`rowwise_bf16.rs`) and run

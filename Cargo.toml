@@ -5,6 +5,7 @@ members = [
     "crates/config",
     "crates/closure",
     "crates/circuit",
+    "crates/ml-utils",
     "crates/governance",
     "crates/kernels",
     "crates/kernel-tree",

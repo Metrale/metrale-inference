@@ -7,15 +7,9 @@
 //! the decode kernel named on it (the kernel keeps the turbo codebooks as
 //! `__half`).
 
-/// 2026-09-25: Elements per scale group in every grouped layout; the
-/// `NVFP4_GROUP_SIZE` of `kernels/gb10/common/paged_decode_attn_nvfp4.cu`.
-pub const NVFP4_GROUP_SIZE: usize = 16;
-
-/// 2026-09-25: E2M1 4-bit codebook (NVFP4), as in
-/// `kernels/gb10/common/paged_decode_attn_nvfp4.cu`.
-pub const NVFP4_E2M1_LUT: [f32; 16] = [
-    0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
-];
+/// 2026-10-03: The NVFP4 scale group size and E2M1 codebook live in `metrale-core::numeric`
+/// (one host codec); re-exported here for the KV dequantizers.
+pub use metrale_core::numeric::{NVFP4_E2M1_LUT, NVFP4_GROUP_SIZE};
 
 /// 2026-09-25: Turbo4 16-level Lloyd-Max codebook, as in
 /// `kernels/gb10/common/paged_decode_attn_turbo4.cu`.
@@ -122,6 +116,24 @@ mod lut_tests {
     fn exp2_matches_powi_across_the_domain() {
         for e in -9..=8i32 {
             assert_eq!(exp2(e).to_bits(), 2.0f32.powi(e).to_bits(), "2^{e}");
+        }
+    }
+
+    /// 2026-10-03: The host NVFP4 codec (`metrale-core::numeric`) decodes scale bytes through
+    /// `FP8_E4M3_LUT`, which this table also serves to the KV dequantizers. The two must agree on
+    /// every finite byte; they differ only on the NaN codes (`0x7F`, `0xFF`), which core decodes
+    /// to signed zero and no block scale may hold.
+    #[test]
+    fn every_finite_byte_decodes_as_the_core_table_does() {
+        for byte in 0..256usize {
+            if byte & 0x7F == 0x7F {
+                continue;
+            }
+            assert_eq!(
+                E4M3_LUT[byte].to_bits(),
+                metrale_core::numeric::FP8_E4M3_LUT[byte].to_bits(),
+                "byte 0x{byte:02X}"
+            );
         }
     }
 }

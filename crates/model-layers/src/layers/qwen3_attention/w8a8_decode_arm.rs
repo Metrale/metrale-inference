@@ -73,9 +73,19 @@ impl Qwen3AttentionLayer {
 
     /// 2026-09-28: Install W8A8 gate/up/down on this layer's dense FFN
     /// (`DenseFfnLayer::set_w8a8_decode_weights`); refuses a MoE or absent FFN.
-    pub fn set_w8a8_ffn_weights(&mut self, w: W8a8Ffn, hidden: u32, inter: u32) -> Result<()> {
+    pub fn set_w8a8_ffn_weights(
+        &mut self,
+        w: W8a8Ffn,
+        prefill: crate::layers::W8a8Ctx,
+        hidden: u32,
+        inter: u32,
+    ) -> Result<()> {
         match self.ffn {
-            FfnComponent::Dense(ref mut d) => d.set_w8a8_decode_weights(w, hidden, inter),
+            FfnComponent::Dense(ref mut d) => {
+                d.set_w8a8_decode_weights(w, hidden, inter)?;
+                d.set_w8a8_prefill_ctx(prefill);
+                Ok(())
+            }
             _ => anyhow::bail!("W8A8 FFN weights need a dense FFN"),
         }
     }
@@ -83,7 +93,11 @@ impl Qwen3AttentionLayer {
     /// 2026-09-28: Whether [`Self::w8a8_qkv`] runs at `rows` rows (a pure function of the
     /// layer and `rows`, so the single-token Q and K/V steps agree on it).
     pub(super) fn w8a8_qkv_serves(&self, rows: usize) -> bool {
-        self.lora.is_none() && self.w8a8.is_some_and(|w| w.ctx.available(&w.input, rows))
+        self.lora.is_none()
+            && rows > 0
+            && self
+                .w8a8
+                .is_some_and(|w| w.ctx.available(&w.input, rows.min(ops::W8A8_MAX_ROWS)))
     }
 
     /// 2026-09-28: The single-token Q|K|V into the contiguous `[Q | K | V]` at `qkv`.
@@ -120,7 +134,7 @@ impl Qwen3AttentionLayer {
         if !self.w8a8_qkv_serves(rows) {
             return Ok(false);
         }
-        w.ctx.proj(
+        w.ctx.proj_rows(
             ctx.gpu,
             &w.input,
             normed,
@@ -189,7 +203,7 @@ impl Qwen3AttentionLayer {
             return Ok(true);
         }
         match self.w8a8 {
-            Some(ref w) => w.ctx.proj(
+            Some(ref w) => w.ctx.proj_rows(
                 ctx.gpu,
                 &w.output,
                 attn_out,
@@ -201,6 +215,58 @@ impl Qwen3AttentionLayer {
             ),
             None => Ok(false),
         }
+    }
+
+    /// 2026-10-05: Install the prefill's W8A8 context: the same kernels as the decode arms with
+    /// an activation scratch of its own. Without it the prefill arms below launch nothing.
+    pub fn set_w8a8_prefill_ctx(&mut self, ctx: crate::layers::W8a8Ctx) {
+        self.w8a8_prefill = Some(ctx);
+    }
+
+    /// 2026-10-05: The W8A8 O for a prefill of `rows` rows of `attn_out[rows, q_dim]` into
+    /// `out[rows, hidden]`, on the prefill's own scratch, or `Ok(false)` launching nothing.
+    pub(super) fn w8a8_prefill_o(
+        &self,
+        ctx: &ForwardContext,
+        attn_out: DevicePtr,
+        rows: usize,
+        out: DevicePtr,
+        stream: u64,
+    ) -> Result<bool> {
+        let (Some(w), Some(pc)) = (self.w8a8, self.w8a8_prefill) else {
+            return Ok(false);
+        };
+        pc.proj_rows(
+            ctx.gpu,
+            &w.output,
+            attn_out,
+            w.output.k(),
+            rows,
+            out,
+            w.output.n(),
+            stream,
+        )
+    }
+
+    /// 2026-10-05: Segment `seg` (0 Q, 1 K, 2 V) of the W8A8 Q|K|V for a prefill of `rows` rows of
+    /// `normed[rows, hidden]` into `out[rows, n_seg]`, on the prefill's own scratch: the prefill
+    /// projections at the declared FP8, instead of an NVFP4 copy of the FP8 weight. The caller
+    /// applies any adapter delta and the gated deinterleave afterwards, as for its other arms.
+    /// `Ok(false)` launches nothing.
+    pub(super) fn w8a8_prefill_qkv_segment(
+        &self,
+        ctx: &ForwardContext,
+        seg: usize,
+        normed: DevicePtr,
+        rows: usize,
+        out: DevicePtr,
+        stream: u64,
+    ) -> Result<bool> {
+        let (Some(w), Some(pc)) = (self.w8a8, self.w8a8_prefill) else {
+            return Ok(false);
+        };
+        let s = w.input.segment(seg)?;
+        pc.proj_rows(ctx.gpu, &s, normed, s.k(), rows, out, s.n(), stream)
     }
 }
 

@@ -375,8 +375,8 @@ impl Qwen3AttentionLayer {
         }
 
         self.ffn
-            .forward_prefill(normed2, num_tokens, ctx, stream)
-            .map_err(|e| anyhow::anyhow!("ffn.forward_prefill (HC) failed: {e}"))?;
+            .forward_prompt(normed2, num_tokens, ctx, stream)
+            .map_err(|e| anyhow::anyhow!("ffn.forward_prompt (HC) failed: {e}"))?;
 
         let dense_out = ctx.buffers.moe_output();
 

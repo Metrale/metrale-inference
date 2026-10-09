@@ -110,6 +110,7 @@ fn resolve_args(a: &CircuitVennArgs) -> Result<(VennArgs, Option<CheckpointTexts
         rows: a.rows.clone(),
         verify_rows: a.verify_rows.clone(),
         out: a.out.clone(),
+        hardware: a.device.hardware.clone(),
     };
     Ok((args, texts))
 }
@@ -124,7 +125,15 @@ pub(crate) fn run(a: CircuitVennArgs) -> Result<()> {
     let checkpoint = texts
         .as_ref()
         .map(|t| (t.config.as_str(), t.hf_quant.as_deref()));
-    let text = report_text(&FsRepo { root: root.clone() }, &args, checkpoint)?;
+    let text = match &args.hardware {
+        // 2026-10-05: Every side planned on the device's class, from the working tree.
+        Some(_) => {
+            let tree = super::circuit_hw::FsTree::new(root.clone());
+            let reg = super::circuit_hw::registry(&tree)?;
+            metrale_circuit::hardware::venn_text(&tree, &reg, &args, checkpoint)?
+        }
+        None => report_text(&FsRepo { root: root.clone() }, &args, checkpoint)?,
+    };
     let path = root.join(&a.out);
     if a.check {
         let on_disk = std::fs::read_to_string(&path)

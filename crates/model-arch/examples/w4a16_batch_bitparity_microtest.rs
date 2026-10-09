@@ -20,6 +20,9 @@
 //!   METRALE_TARGET_QUANT=nvfp4 cargo run -p metrale-model-arch --release \
 //!     --features cuda,gpu-examples --example w4a16_batch_bitparity_microtest
 
+#[path = "common/xclass_digest.rs"]
+mod xclass_digest;
+
 use anyhow::Result;
 use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
@@ -237,6 +240,10 @@ fn main() -> Result<()> {
                     g.synchronize(0)?;
                     let cb = down(g, c_batch, m * n * 2)?;
                     let cr = down(g, c_ref, m * n * 2)?;
+                    xclass_digest::print(
+                        &format!("w4a16 seed={seed} n={n} k={k} {tier} M={m}"),
+                        &cb,
+                    );
                     let identical = cb == cr;
                     let (n_diff, worst) = worst_delta(&cb, &cr);
                     clean &= identical;
@@ -257,6 +264,7 @@ fn main() -> Result<()> {
                 g.synchronize(0)?;
                 let cb = down(g, c_batch, m * n * 2)?;
                 let cr = down(g, c_ref, m * n * 2)?;
+                xclass_digest::print(&format!("w4a16 seed={seed} n={n} k={k} {tier} M={m}"), &cb);
                 let identical = cb == cr;
                 let (n_diff, worst) = worst_delta(&cb, &cr);
                 clean &= identical;

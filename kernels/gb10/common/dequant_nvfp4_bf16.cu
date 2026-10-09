@@ -71,3 +71,36 @@ extern "C" __global__ void dequant_nvfp4_to_bf16(
         row_out[col] = __float2bfloat16(DQ_E2M1_LUT[nib] * s);
     }
 }
+
+// 2026-10-09: The per-group form for a transient BF16 copy of a weight that a vendor BF16 GEMM
+// then reads (metrale-model-layers layers/dense_ffn_lt.rs): out[n, k] = E2M1(nibble) *
+// E4M3(scale[n, k / 16]), with NO global scale (the GEMM applies it as alpha). A 2-bit E2M1
+// significand times a 4-bit E4M3 significand fits BF16's 8 bits, and every product of these
+// formats is a BF16 normal or zero, so each element is exact.
+//
+// One thread per 16-element group: 8 packed bytes, one scale byte, two 16-byte stores. The row-
+// major [N, K/2] and [N, K/16] layouts make group g's bytes packed[8g .. 8g + 8) and its scale
+// scales[g]. Launch: grid (min(ceil(groups / 256), 65535 * ...), 1, 1) by the caller, block 256;
+// the loop strides by the grid.
+extern "C" __global__ void __launch_bounds__(256) dequant_nvfp4_to_bf16_g16(
+    const unsigned char* __restrict__ packed,
+    const unsigned char* __restrict__ scales,
+    __nv_bfloat16* __restrict__ out,
+    unsigned long long groups
+) {
+    for (unsigned long long g = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x; g < groups;
+         g += (unsigned long long)gridDim.x * blockDim.x) {
+        const uint2 q = ((const uint2*)packed)[g];
+        const float s = dq_fp8_e4m3_decode(scales[g]);
+        __align__(16) __nv_bfloat16 v[16];
+        #pragma unroll
+        for (int i = 0; i < 8; i++) {
+            const unsigned int byte = ((i < 4 ? q.x : q.y) >> ((i & 3) * 8)) & 0xFFu;
+            v[2 * i] = __float2bfloat16_rn(DQ_E2M1_LUT[byte & 0xFu] * s);
+            v[2 * i + 1] = __float2bfloat16_rn(DQ_E2M1_LUT[byte >> 4] * s);
+        }
+        uint4* o = (uint4*)(out + g * 16ull);
+        o[0] = ((const uint4*)v)[0];
+        o[1] = ((const uint4*)v)[1];
+    }
+}

@@ -41,8 +41,9 @@ pub mod venn;
 mod test_toy;
 
 pub use checkpoint::{
-    CheckpointError, QuantMetadata, ResolvedCheckpoint, ServePrecision,
-    instantiate_from_checkpoint, map_checkpoint, recurrent_states, resolve_checkpoint,
+    CheckpointError, LayerSchedule, QuantMetadata, ResolvedCheckpoint, ServePrecision,
+    instantiate_from_checkpoint, layer_schedule, map_checkpoint, recurrent_states,
+    resolve_checkpoint,
 };
 pub use circuit_toml::{CircuitError, includes_of};
 pub use format::{Format, Scale};

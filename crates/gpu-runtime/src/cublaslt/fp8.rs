@@ -26,6 +26,39 @@ pub fn fp8_gemm_act_weight_t_rowwise(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    fp8_gemm_act_weight_t_rowwise_ldc(
+        act_fp8,
+        act_scale,
+        weight_fp8,
+        weight_scale,
+        out,
+        m,
+        n,
+        k,
+        n,
+        stream,
+    )
+}
+
+/// 2026-10-09: [`fp8_gemm_act_weight_t_rowwise`] with an output row pitch: row `r` of the result
+/// is written at `out + r * ldc` BF16 elements (`ldc >= n`), so a stacked projection's segment
+/// lands in its own columns of a shared output.
+#[allow(clippy::too_many_arguments)]
+pub fn fp8_gemm_act_weight_t_rowwise_ldc(
+    act_fp8: u64,
+    act_scale: u64,
+    weight_fp8: u64,
+    weight_scale: u64,
+    out: u64,
+    m: u32,
+    n: u32,
+    k: u32,
+    ldc: u32,
+    stream: u64,
+) -> Result<()> {
+    if ldc < n {
+        bail!("cuBLASLt fp8 rowwise: ldc {ldc} < N {n}");
+    }
     let ctx = ctx()?;
     unsafe {
         let mut desc: cublasLtMatmulDesc_t = std::ptr::null_mut();
@@ -78,7 +111,7 @@ pub fn fp8_gemm_act_weight_t_rowwise(
             "LayoutB",
         )?;
         chk(
-            cublasLtMatrixLayoutCreate(&mut ld_, CUDA_R_16BF, n as u64, m as u64, n as i64),
+            cublasLtMatrixLayoutCreate(&mut ld_, CUDA_R_16BF, n as u64, m as u64, ldc as i64),
             "LayoutD",
         )?;
         let mut pref: cublasLtMatmulPreference_t = std::ptr::null_mut();

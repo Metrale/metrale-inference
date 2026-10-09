@@ -59,6 +59,10 @@ pub struct Qwen3SsmLayer {
     /// checkpoint that declares them FP8 W8A8; run ahead of every other decode
     /// arm at 1..=64 rows (`w8a8_decode.rs`).
     pub(crate) w8a8: Option<crate::layers::W8a8Mixer>,
+    /// 2026-10-05: The W8A8 kernels with the prefill's own activation scratch
+    /// (`set_w8a8_prefill_ctx`): the prefill QKV|Z and out_proj run them at the declared FP8
+    /// on the prefill stream, apart from the decode arms' scratch (`w8a8.ctx`).
+    pub(crate) w8a8_prefill: Option<crate::layers::W8a8Ctx>,
     /// 2026-09-25: Addresses of this layer's two slices of the arena slab
     /// `ssm_rowwise_w_bf16`, 0 until the first row-wise prefill carves them
     /// (`rowwise_bf16.rs`).

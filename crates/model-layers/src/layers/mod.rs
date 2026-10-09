@@ -366,6 +366,21 @@ impl FfnComponent {
         }
     }
 
+    /// 2026-10-05: [`Self::forward_prefill`] for a prompt's prefill pass: a dense FFN's W8A8
+    /// arm runs on the prefill's own context (`DenseFfnLayer::forward_prompt`).
+    pub fn forward_prompt(
+        &self,
+        input: DevicePtr,
+        num_tokens: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        match self {
+            Self::Dense(d) => d.forward_prompt(input, num_tokens, ctx, stream),
+            _ => self.forward_prefill(input, num_tokens, ctx, stream),
+        }
+    }
+
     pub fn forward_prefill(
         &self,
         input: DevicePtr,

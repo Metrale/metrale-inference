@@ -15,7 +15,8 @@
 //! cap (`.github/workflows/file-size-cap.yml`):
 //!
 //!  - `run_batched_prefill` — two or more streams prefilling, no active
-//!                            decode.
+//!                            decode (or beside it, under
+//!                            `--prefill-varlen-with-decode`).
 //!  - `run_batched_mixed`   — two or more streams prefilling, with active
 //!                            decode.
 //!  - `run_standard`        — one chunk of the head of `prefilling`, fused
@@ -177,6 +178,19 @@ pub(super) fn continue_in_progress_prefills(
         && prefilling.len() >= 2
         && active.is_empty()
         && !model.is_ep();
+    // 2026-10-09: `--prefill-varlen-with-decode`: the same waves while
+    // sequences decode, as forwards of their own ahead of this tick's decode
+    // lane (no mixed step, so the decode keeps its speculative step), one wave per tick. It wins
+    // over the batched mixed step below, whose default `mixed_forward_batch`
+    // is a plain decode and these waves run back to back anyway.
+    let can_batch_beside_decode = sched.levers.prefill_varlen
+        && sched.levers.prefill_varlen_with_decode
+        && !always_mixed
+        && !q12_dispatch_disabled
+        && !any_collecting
+        && prefilling.len() >= 2
+        && !active.is_empty()
+        && !model.is_ep();
     // 2026-09-25: With `always_mixed`, several prefills plus active decode
     // take the single-stream path below instead: the head of `prefilling`
     // is fused with the active decode through `mixed_forward`, sized by the
@@ -189,7 +203,17 @@ pub(super) fn continue_in_progress_prefills(
         && !single_active_with_spec
         && !model.is_ep();
 
-    if can_batch_prefill_only {
+    if can_batch_prefill_only || can_batch_beside_decode {
+        if can_batch_beside_decode {
+            // 2026-10-09: Order the waves after the decode work already
+            // queued on the default stream; they share its arena buffers.
+            if let Err(e) = model
+                .record_event(prefill_event, model.default_stream())
+                .and_then(|_| model.stream_wait_event(prefill_stream, prefill_event))
+            {
+                tracing::error!("varlen-with-decode fence failed: {e:#}");
+            }
+        }
         run_batched_prefill_step(
             model,
             sched,
@@ -201,6 +225,13 @@ pub(super) fn continue_in_progress_prefills(
             prefill_event,
             think_end_token,
             tool_call_start_token,
+            // 2026-10-09: Beside a decode, one wave per tick, so the decode runs between waves
+            // and each wave's sequences start decoding as soon as it lands.
+            if can_batch_beside_decode {
+                1
+            } else {
+                usize::MAX
+            },
         );
         promote_completed_prefills(
             model,

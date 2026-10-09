@@ -268,3 +268,20 @@ metrale_nvfp4_scale_bf16 = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILAB
 metrale_nvfp4_silu_mul_scaled = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
 metrale_nvfp4_silu_mul_quant = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
 metrale_nvfp4_gemm_pipe = "Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights."
+
+# 2026-10-05: Hopper only, harvested by `met serve --check-kernels` on the H100 SXM test box
+# under `--weight-quantization declared` (the tier that runs the declared W4A4 MLP). Every
+# kernel of kernels/gb10/common/w4a4_gemv_mx.cu sits inside `#ifndef
+# METRALE_NO_WARP_BLOCKSCALE_MMA`, which kernels/hopper/HARDWARE.toml defines. With any of them
+# absent, `w4a4_proj::prepare` (crates/model-layers/src/layers/ops/w4a4_proj.rs) leaves the
+# W4A4 decode unarmed and the NVFP4 projections run W4A16: BF16 activations, above the
+# declared A4.
+[expected_absent.w4a4_gemv_mx]
+w4a4_quant_rows = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx8 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx16 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx32 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx16_nt2 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx32_nt4 = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx16_ps = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."
+w4a4_gemv_mx32_ps = "Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16."

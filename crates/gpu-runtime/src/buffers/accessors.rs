@@ -156,6 +156,13 @@ impl BufferArena {
     pub fn ffn_gate_up_fused(&self) -> DevicePtr {
         self.ffn_gate_up_fused
     }
+    /// 2026-10-09: The transient BF16 weight of the NVFP4 dense-FFN cuBLASLt arm, and its bytes.
+    pub fn ffn_bf16_weight(&self) -> DevicePtr {
+        self.ffn_bf16_weight
+    }
+    pub fn ffn_bf16_weight_bytes(&self) -> usize {
+        self.sizes.ffn_bf16_weight
+    }
     /// 2026-09-25: Allocated byte size of `ffn_gate_up_fused`; the fused arm
     /// selects itself only when its `[ceil16(m), 2 * intermediate]` output fits.
     pub fn ffn_gate_up_fused_bytes(&self) -> usize {

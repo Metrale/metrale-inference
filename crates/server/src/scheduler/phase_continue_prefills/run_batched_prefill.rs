@@ -27,6 +27,10 @@ pub(super) fn run_batched_prefill_step(
     prefill_event: u64,
     think_end_token: Option<u32>,
     tool_call_start_token: Option<u32>,
+    // 2026-10-09: The most waves this call runs; the streams of later waves keep their offsets
+    // and wait for the next tick (beside a decode, one wave per tick lets the decode run between
+    // them).
+    max_waves: usize,
 ) {
     // 2026-09-25: InnerQ calibration poll (`poll_innerq`).
     super::poll_innerq(model);
@@ -127,7 +131,7 @@ pub(super) fn run_batched_prefill_step(
     }
 
     let t0_batch = sched.io.clock.now();
-    for wave in waves {
+    for wave in waves.into_iter().take(max_waves) {
         // 2026-09-25: Slices for this wave's members only: each borrows
         // `p.prompt_tokens` and `p.seq` of a distinct `PrefillInProgress`.
         let mut in_wave = vec![false; n];

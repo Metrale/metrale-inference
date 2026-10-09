@@ -207,7 +207,14 @@ impl Qwen3AttentionLayer {
         // `fp8_blockscaled_prefill` holds, quantizing `normed` for this
         // projection; the transposed FP8 GEMMs; `w8a16_gemm`; the `fp8` weight;
         // NVFP4, transposed then plain; BF16.
-        if ctx.dispatch.cutlass_nvfp4_attn_qkv(label)
+        // 2026-10-05: The declared-W8A8 weights first (`w8a8_decode_arm.rs`).
+        let seg = match proj {
+            Proj::Q => 0,
+            Proj::K => 1,
+            Proj::V => 2,
+        };
+        if self.w8a8_prefill_qkv_segment(ctx, seg, normed, n as usize, out, stream)? {
+        } else if ctx.dispatch.cutlass_nvfp4_attn_qkv(label)
             && let Some(nvfp4_t) = nvfp4_t
         {
             ops::log_cutlass_nvfp4_route(ctx.gpu, label, n, out_dim, h);

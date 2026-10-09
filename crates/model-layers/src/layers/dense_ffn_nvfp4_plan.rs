@@ -69,8 +69,9 @@ impl DenseFfnLayer {
         (gate_up, down)
     }
 
-    /// 2026-09-26: Resolves the NVFP4 prefill arms from `ctx.levers` and the resolved handles.
-    pub(super) fn nvfp4_prefill_plan(&self, ctx: &ForwardContext) -> Nvfp4PrefillPlan {
+    /// 2026-09-26: Resolves the NVFP4 prefill arms of an `m`-row prefill from `ctx.levers`, the
+    /// target's declarations and the resolved handles.
+    pub(super) fn nvfp4_prefill_plan(&self, ctx: &ForwardContext, m: u32) -> Nvfp4PrefillPlan {
         let bf16_tc_env = ctx.levers.bf16_tc_prefill;
         let fp8_m64_prefill = self.w4a16_gemm_t_k.0 != 0 && ctx.levers.fp8_m64_prefill;
         let int8_prefill = self.int8_faith2_k.0 != 0 && ctx.levers.int8_prefill;
@@ -155,7 +156,8 @@ impl DenseFfnLayer {
             self.w4a16_gemm_t_m128_bf16_k
         };
         // 2026-09-25: The BF16 arm needs the lever and the handle of the kernel actually chosen.
-        let bf16_tc_prefill = bf16_kernel.0 != 0 && bf16_tc_env;
+        // 2026-10-05: Or the target's wide BF16 tile at this width (`dense_ffn_tc_rows.rs`).
+        let bf16_tc_prefill = bf16_kernel.0 != 0 && (bf16_tc_env || self.bf16_tile_serves(m));
         Nvfp4PrefillPlan {
             fp8_m64_prefill,
             int8_prefill,

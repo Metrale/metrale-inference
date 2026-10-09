@@ -26,6 +26,9 @@ pub struct VennArgs {
     pub verify_rows: Vec<u64>,
     /// 2026-09-29: `--out`, repo-relative.
     pub out: String,
+    /// 2026-10-05: `--hardware`: the device (kernels/DEVICES.toml) to plan every side on;
+    /// `None` plans each side offline with its own hardware's rules.
+    pub hardware: Option<String>,
 }
 
 impl VennArgs {
@@ -60,8 +63,12 @@ impl VennArgs {
     pub fn command(&self) -> String {
         let join = |v: &[u64]| v.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
         let modes: Vec<&str> = self.modes.iter().map(|m| m.name()).collect();
+        let hardware = self
+            .hardware
+            .as_ref()
+            .map_or_else(String::new, |h| format!(" --hardware {h}"));
         format!(
-            "met circuit venn --target {} --against {} --mode {} --rows {} --verify-rows {} --out {}",
+            "met circuit venn --target {} --against {} --mode {} --rows {} --verify-rows {}{hardware} --out {}",
             self.target,
             self.against.join(","),
             modes.join(","),

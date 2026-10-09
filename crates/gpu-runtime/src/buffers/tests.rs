@@ -133,6 +133,11 @@ fn test_buffer_arena_alloc() {
             arena.ffn_gate_up_fused(),
             sizes.ffn_gate_up_fused,
         ),
+        (
+            "ffn_bf16_weight",
+            arena.ffn_bf16_weight(),
+            sizes.ffn_bf16_weight,
+        ),
         ("fp8_act", arena.fp8_act(), sizes.fp8_act),
         (
             "moe_fp8_scratch",

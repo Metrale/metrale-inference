@@ -171,6 +171,47 @@ pub struct TargetLevers {
     pub ffn_gateup_fused: Resolved<bool>,
     pub w8a8_prefill_max_m_widening: Resolved<u32>,
     pub w8a8_prefill_max_m_narrowing: Resolved<u32>,
+    /// 2026-10-05: The dense FFN's `w4a16_tc_rows` row band (`layers/dense_ffn_tc_rows.rs`).
+    pub ffn_w4a16_tc_rows_max_m: Resolved<u32>,
+    /// 2026-10-05: The dense FFN's wide BF16-activation tile (`layers/dense_ffn_tc_rows.rs`).
+    pub ffn_w4a16_bf16_tile: Resolved<bool>,
+    /// 2026-10-05: The W8A8 GEMV entry per token-tile band (`ops::W8a8Kernels::load`).
+    pub w8a8_gemv_entries: Resolved<[&'static str; 5]>,
+    /// 2026-10-09: The W4A16 tensor-core GEMV entry per row tier (`ops::gemv_tc`).
+    pub w4a16_gemv_tc_entries: Resolved<[&'static str; 2]>,
+    /// 2026-10-09: The cuBLASLt arm of the declared-W8A8 projection (`ops/w8a8_decode/lt.rs`).
+    pub w8a8_lt_min_rows: Resolved<u32>,
+    /// 2026-10-09: The NVFP4 dense FFN's cuBLASLt arm (`layers/dense_ffn_lt.rs`).
+    pub ffn_w4a16_lt_min_rows: Resolved<u32>,
+    /// 2026-10-09: The row tiles' load-ahead (`ops::w4a16_tc_rows`).
+    pub w4a16_tc_rows_pf: Resolved<u32>,
+}
+
+/// 2026-10-09: The W4A16 tensor-core GEMV entries: the environment's two comma-separated points
+/// when each is a compiled point of its tier (`metrale_kernels::w4a16_gemv_tc_entries`), else the
+/// declaration.
+pub fn resolve_w4a16_gemv_tc_entries(
+    declared: [&'static str; 2],
+    raw: Option<&str>,
+) -> Resolved<[&'static str; 2]> {
+    match raw
+        .and_then(|v| metrale_kernels::w4a16_gemv_tc_entries::w4a16_gemv_tc_entries(v.split(',')))
+    {
+        Some(e) => Resolved::env(e),
+        None => Resolved::target(declared),
+    }
+}
+
+/// 2026-10-05: The W8A8 GEMV entries: the environment's five comma-separated points when each
+/// is a compiled point of its band (`metrale_kernels::w8a8_gemv_entries`), else the declaration.
+pub fn resolve_w8a8_gemv_entries(
+    declared: [&'static str; 5],
+    raw: Option<&str>,
+) -> Resolved<[&'static str; 5]> {
+    match raw.and_then(|v| metrale_kernels::w8a8_gemv_entries::w8a8_gemv_entries(v.split(','))) {
+        Some(e) => Resolved::env(e),
+        None => Resolved::target(declared),
+    }
 }
 
 /// 2026-09-25: The whole table, as a pure function of a declaration and a
@@ -196,6 +237,43 @@ pub fn resolve(
             defaults.w8a8_prefill_max_m_narrowing,
             var("METRALE_W8A8_PREFILL_MAX_M_NARROWING").as_deref(),
         ),
+        // 2026-10-05: A parsed `0` turns the row-tile arm off on any target.
+        ffn_w4a16_tc_rows_max_m: resolve_max_m(
+            defaults.ffn_w4a16_tc_rows_max_m,
+            var("METRALE_FFN_W4A16_TC_ROWS_MAX_M").as_deref(),
+        ),
+        ffn_w4a16_bf16_tile: resolve_toggle(
+            defaults.ffn_w4a16_bf16_tile,
+            var("METRALE_FFN_W4A16_BF16_TILE").as_deref(),
+            false,
+        ),
+        w8a8_gemv_entries: resolve_w8a8_gemv_entries(
+            defaults.w8a8_gemv_entries,
+            var("METRALE_W8A8_GEMV_ENTRIES").as_deref(),
+        ),
+        w4a16_gemv_tc_entries: resolve_w4a16_gemv_tc_entries(
+            defaults.w4a16_gemv_tc_entries,
+            var("METRALE_W4A16_GEMV_TC_ENTRIES").as_deref(),
+        ),
+        // 2026-10-09: A parsed `0` turns the cuBLASLt arm off on any target.
+        w8a8_lt_min_rows: resolve_max_m(
+            defaults.w8a8_lt_min_rows,
+            var("METRALE_W8A8_LT_MIN_ROWS").as_deref(),
+        ),
+        // 2026-10-09: A parsed `0` turns the arm off; a class without the arena's scratch
+        // declines it whatever the variable says.
+        ffn_w4a16_lt_min_rows: resolve_max_m(
+            defaults.ffn_w4a16_lt_min_rows,
+            var("METRALE_FFN_W4A16_LT_MIN_ROWS").as_deref(),
+        ),
+        // 2026-10-09: 1, 2 or 3; anything else keeps the declaration.
+        w4a16_tc_rows_pf: match var("METRALE_W4A16_TC_ROWS_PF")
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|v| (1..=3).contains(v))
+        {
+            Some(v) => Resolved::env(v),
+            None => Resolved::target(defaults.w4a16_tc_rows_pf),
+        },
         // 2026-09-25: `kernels/hopper` declares it on, the other tables off. A
         // pinned `--ssm-batched-recurrent` outranks this row (`serve_flags.rs`).
         ssm_batched_recurrent: resolve_toggle(
@@ -341,7 +419,14 @@ pub fn format_levers(l: &TargetLevers) -> String {
          attn_m16_tc={attn_m16_tc} lm_head_m16_tc={lm_head_m16_tc} \
          attn_ncol_gemv={attn_ncol_gemv} ffn_gateup_fused={gateup} \
          fp8_act_quant_hopper={act_quant} \
-         w8a8_prefill_max_m={w8a8_wide}/{w8a8_narrow}{w8a8_src}",
+         w8a8_prefill_max_m={w8a8_wide}/{w8a8_narrow}{w8a8_src} \
+         ffn_w4a16_tc_rows_max_m={tc_rows}{tc_rows_src} \
+         ffn_w4a16_bf16_tile={bf16_tile} \
+         w8a8_gemv_entries={w8a8_entries}{w8a8_entries_src} \
+         w4a16_gemv_tc_entries={w4tc_entries}{w4tc_entries_src} \
+         w8a8_lt_min_rows={w8a8_lt}{w8a8_lt_src} \
+         ffn_w4a16_lt_min_rows={ffn_lt}{ffn_lt_src} \
+         w4a16_tc_rows_pf={tc_pf}{tc_pf_src}",
         hw = if l.hw.is_empty() { "unknown" } else { l.hw },
         // 2026-09-25: Not a lever: the target's `[hardware] sm_count`, which
         // `arch_preflight::check_sm_count` compares with the device at boot.
@@ -365,6 +450,19 @@ pub fn format_levers(l: &TargetLevers) -> String {
         w8a8_wide = cap(l.w8a8_prefill_max_m_widening.value),
         w8a8_narrow = cap(l.w8a8_prefill_max_m_narrowing.value),
         w8a8_src = l.w8a8_prefill_max_m_widening.source.tag(),
+        tc_rows = l.ffn_w4a16_tc_rows_max_m.value,
+        tc_rows_src = l.ffn_w4a16_tc_rows_max_m.source.tag(),
+        bf16_tile = onoff(l.ffn_w4a16_bf16_tile),
+        w8a8_entries = l.w8a8_gemv_entries.value.join("/"),
+        w8a8_entries_src = l.w8a8_gemv_entries.source.tag(),
+        w4tc_entries = l.w4a16_gemv_tc_entries.value.join("/"),
+        w4tc_entries_src = l.w4a16_gemv_tc_entries.source.tag(),
+        w8a8_lt = l.w8a8_lt_min_rows.value,
+        w8a8_lt_src = l.w8a8_lt_min_rows.source.tag(),
+        ffn_lt = l.ffn_w4a16_lt_min_rows.value,
+        ffn_lt_src = l.ffn_w4a16_lt_min_rows.source.tag(),
+        tc_pf = l.w4a16_tc_rows_pf.value,
+        tc_pf_src = l.w4a16_tc_rows_pf.source.tag(),
     )
 }
 

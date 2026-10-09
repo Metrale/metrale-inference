@@ -113,6 +113,9 @@ pub(super) fn install_w8a8_decode(
         );
         return Ok(done);
     }
+    // 2026-10-05: The prefill's W8A8 projections (attention, GDN and FFN) run on the prefill
+    // stream, so they share a scratch of their own, never the decode stream's.
+    let prefill_ctx = W8a8Ctx::new(gpu, max_k(config))?;
     let (h, inter) = (config.hidden_size as u32, config.intermediate_size as u32);
     for (i, (lt, layer)) in layer_types.iter().zip(layers.iter_mut()).enumerate() {
         let lp = config.layer_prefix(i);
@@ -148,11 +151,12 @@ pub(super) fn install_w8a8_decode(
                         h,
                         output.k(),
                     )?;
+                    l.set_w8a8_prefill_ctx(prefill_ctx);
                     done.attention += 4;
                     served.upgrade_w8a8(Group::Attention, i)?;
                 }
                 if let Some(f) = ffn {
-                    l.set_w8a8_ffn_weights(f, h, inter)?;
+                    l.set_w8a8_ffn_weights(f, prefill_ctx, h, inter)?;
                     done.ffn += 3;
                     served.upgrade_w8a8(Group::Ffn, i)?;
                 }
@@ -171,11 +175,12 @@ pub(super) fn install_w8a8_decode(
                         h,
                         output.k(),
                     )?;
+                    l.set_w8a8_prefill_ctx(prefill_ctx);
                     done.gdn += 3;
                     served.upgrade_w8a8(Group::Gdn, i)?;
                 }
                 if let Some(f) = ffn {
-                    l.set_w8a8_ffn_weights(f, h, inter)?;
+                    l.set_w8a8_ffn_weights(f, prefill_ctx, h, inter)?;
                     done.ffn += 3;
                     served.upgrade_w8a8(Group::Ffn, i)?;
                 }
