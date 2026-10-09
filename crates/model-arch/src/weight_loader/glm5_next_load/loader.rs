@@ -30,14 +30,20 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     /// 2026-09-25: Keep the MTP layer's BF16 routed-expert weights off the
     /// device (`is_full_width_mtp_expert`); `bind_expert` quantises them from
     /// disk. The layer is `num_hidden_layers`. A checkpoint whose MTP experts
-    /// are U8 defers nothing.
+    /// are U8 defers nothing. 2026-10-08: Also every text layer's F32
+    /// `*.input_scale` (`is_activation_scale`): one scalar per projection, read
+    /// on the host by `act_scale::input_scale` rather than given an allocation
+    /// granule each.
     fn defer_predicate(
         &self,
         config: &ModelConfig,
     ) -> Option<metrale_model_weights::weights::DeferHook> {
         let num_layers = config.num_hidden_layers;
         Some(std::sync::Arc::new(
-            move |name: &str, dtype: WeightDtype| is_full_width_mtp_expert(name, dtype, num_layers),
+            move |name: &str, dtype: WeightDtype| {
+                is_full_width_mtp_expert(name, dtype, num_layers)
+                    || is_activation_scale(name, dtype)
+            },
         ))
     }
 

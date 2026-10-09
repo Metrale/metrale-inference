@@ -20,6 +20,11 @@ pub struct Nvfp4Proj {
     pub scale: DevicePtr,
     /// 2026-09-25: The single global F32 scale.
     pub scale_2: f32,
+    /// 2026-10-08: The checkpoint's static activation scale (`input_scale`, ModelOpt's
+    /// `amax / (6 * 448)`), when it declares FP4 activations for this projection. The W4A4
+    /// path quantizes the input under it and scales the output by `input_scale * scale_2`; the
+    /// W4A16 path does not read it.
+    pub input_scale: Option<f32>,
 }
 
 /// 2026-09-25: A BF16 SwiGLU MLP: the dense layers `0..first_k_dense_replace`, and the shared

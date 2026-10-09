@@ -38,6 +38,7 @@ use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer, Mlp};
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::DenseWeight;
 
+mod act_scale;
 #[cfg(test)]
 mod defer_hook_tests;
 mod expert_quant;
@@ -52,6 +53,8 @@ mod plan_dtype;
 #[cfg(test)]
 mod tp_shapes_tests;
 
+use act_scale::input_scale;
+use act_scale::is_activation_scale;
 use expert_quant::{quantize_deferred_expert_proj, quantize_expert_proj};
 
 pub struct Glm5NextWeightLoader;
@@ -316,7 +319,8 @@ fn bind_mhc_site(
 /// 1. deferred by [`Glm5NextWeightLoader::defer_predicate`]: read from disk,
 ///    quantised, uploaded;
 /// 2. resident U8: bound zero-copy with its `weight_scale` and scalar
-///    `weight_scale_2`;
+///    `weight_scale_2`, and its static activation scale when the checkpoint has one
+///    (2026-10-08, [`act_scale::input_scale`]);
 /// 3. resident BF16: read back and quantised; `prune_after_load` frees the
 ///    source.
 ///
@@ -347,6 +351,7 @@ pub(super) fn bind_expert(
                     packed: w.ptr,
                     scale: scale.ptr,
                     scale_2: s2,
+                    input_scale: input_scale(gpu, store, layer, &base)?,
                 })
             }
             WeightDtype::BF16 => quantize_expert_proj(gpu, store, w, &base),
