@@ -68,7 +68,11 @@ pub fn mutate(case: &mut Case, m: &Mutation, rng: &mut SplitMix64) -> Result<Vec
                 rng.below(groups as u64) as usize,
             );
             let block_rows = case.scalars.get("w_block_rows").map_or(1, |v| *v as usize);
-            flip_scale(t.enc, &mut t.bytes, rb * groups + g)?;
+            flip_scale(
+                t.enc,
+                std::sync::Arc::make_mut(&mut t.bytes).as_mut_slice(),
+                rb * groups + g,
+            )?;
             Ok((rb * block_rows..((rb + 1) * block_rows).min(n)).collect())
         }
         Mutation::SwapScaleGranularity => {
@@ -81,11 +85,12 @@ pub fn mutate(case: &mut Case, m: &Mutation, rng: &mut SplitMix64) -> Result<Vec
                 return Err("one scale group along K: no coarser granularity to swap to".into());
             }
             let w = t.enc.bytes_for(1);
+            let bytes = std::sync::Arc::make_mut(&mut t.bytes);
             for r in 0..rows {
                 for g in (1..groups).step_by(2) {
                     let (dst, src) = ((r * groups + g) * w, (r * groups + g - 1) * w);
-                    let tmp: Vec<u8> = t.bytes[src..src + w].to_vec();
-                    t.bytes[dst..dst + w].copy_from_slice(&tmp);
+                    let tmp: Vec<u8> = bytes[src..src + w].to_vec();
+                    bytes[dst..dst + w].copy_from_slice(&tmp);
                 }
             }
             Ok(Vec::new())

@@ -26,6 +26,10 @@ use crate::inputs::{InputClass, SplitMix64, tensor};
 use crate::plan::Plan;
 use crate::refs::quant::{Layout, Stored, quantize};
 
+/// 2026-10-09: Distinct weight rows drawn before tiling: prime, so no shard or tile edge (a
+/// multiple of 64) maps a row onto its neighbour's values.
+pub const ROW_PERIOD: usize = 127;
+
 /// 2026-10-09: The sizes of one projection launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dims {
@@ -132,16 +136,6 @@ pub fn fill(
     let f = formats(plan)?;
     let real_fmt = elem::F32;
     let x = tensor(rx, class, dims.rows, dims.k, 1.0, real_fmt);
-    // 2026-10-09: The class shapes the activations; weights are drawn as a checkpoint holds
-    // them (gaussian, then quantized into the stored layout).
-    let w = tensor(
-        rw,
-        InputClass::Gaussian,
-        dims.n,
-        dims.k,
-        1.0 / (dims.k as f64).sqrt(),
-        real_fmt,
-    );
     let round_into = |l: Layout, v: Vec<f64>| -> Vec<f64> {
         match l {
             Layout::Bf16 => v
@@ -151,16 +145,28 @@ pub fn fill(
             _ => v,
         }
     };
+    // 2026-10-09: The class shapes the activations; weights are drawn as a checkpoint holds
+    // them (gaussian, then quantized into the stored layout), as a period of distinct rows
+    // tiled to N (a lm_head's 248k rows are not drawn one by one).
+    let period = match f.weight {
+        Layout::Fp8Block(r, _) => (2 * r).min(dims.n.next_multiple_of(r)),
+        _ => ROW_PERIOD.min(dims.n),
+    };
+    let w = tensor(
+        rw,
+        InputClass::Gaussian,
+        period,
+        dims.k,
+        1.0 / (dims.k as f64).sqrt(),
+        real_fmt,
+    );
     put(
         case,
         "x",
         quantize(f.act, &round_into(f.act, x), dims.rows, dims.k, true)?,
     );
-    put(
-        case,
-        "w",
-        quantize(f.weight, &round_into(f.weight, w), dims.n, dims.k, false)?,
-    );
+    let stored = quantize(f.weight, &round_into(f.weight, w), period, dims.k, false)?;
+    put(case, "w", stored.tile(dims.n)?);
     case.out = (
         vec![dims.rows, dims.n],
         if f.out == elem::BF16 {

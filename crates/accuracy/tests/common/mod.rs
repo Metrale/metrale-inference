@@ -51,7 +51,7 @@ use metrale_accuracy::contract::{Contract, parse_contracts};
 use metrale_accuracy::elem::Elem;
 use metrale_accuracy::plan;
 use metrale_accuracy::refs::Reference;
-use metrale_accuracy::runner::{KernelRunner, SENTINEL};
+use metrale_accuracy::runner::{KernelRunner, RunError, SENTINEL};
 use metrale_circuit::venn::families::{Families, Family};
 
 /// 2026-10-09: The gb10 family manifest.
@@ -79,27 +79,38 @@ pub enum Behaviour {
     Accumulator(Elem),
 }
 
-/// 2026-10-09: A CPU runner: the conforming emulation of the case's contract, honouring shards
-/// and leaving unwritten columns at the sentinel. `wrong` names an entry point that runs the
-/// emulation with the odd scale groups reading the even groups' scales (a wrong-symbol stand-in).
+/// 2026-10-09: A CPU runner: the conforming emulation of the case's contract at `shape`,
+/// honouring shards and leaving unwritten columns at the sentinel. `wrong.0` names an entry point
+/// that runs the emulation after applying `wrong.1` to the operands (a wrong-symbol stand-in).
 pub struct Emu {
     pub contract: Contract,
     pub family: Family,
     pub behaviour: Behaviour,
-    pub wrong: String,
+    pub wrong: (String, metrale_accuracy::mutation::Mutation),
+    pub shape: metrale_accuracy::points::Shape,
 }
 
 impl KernelRunner for Emu {
-    fn run(&mut self, case: &Case) -> Result<Vec<u8>, String> {
+    fn run(&mut self, case: &Case) -> Result<Vec<u8>, RunError> {
+        self.emulate(case).map_err(RunError::Unavailable)
+    }
+
+    fn closure(&self) -> String {
+        "cpu-emulation".into()
+    }
+
+    fn device(&self) -> String {
+        "cpu".into()
+    }
+}
+
+impl Emu {
+    fn emulate(&self, case: &Case) -> Result<Vec<u8>, String> {
         let reference = Reference::parse(&self.contract.reference).unwrap();
         let mut case = case.clone();
-        if case.kernel == self.wrong {
+        if case.kernel == self.wrong.0 {
             let mut r = metrale_accuracy::inputs::SplitMix64::new(0);
-            reference.mutate(
-                &mut case,
-                &metrale_accuracy::mutation::Mutation::SwapScaleGranularity,
-                &mut r,
-            )?;
+            reference.mutate(&mut case, &self.wrong.1, &mut r)?;
         }
         let kernel = self.contract.kernels[0].clone();
         let pipeline = plan::declared(
@@ -108,20 +119,10 @@ impl KernelRunner for Emu {
             &self.contract.op,
             &Default::default(),
         )?;
-        let shape = metrale_accuracy::points::Shape {
-            op: self.contract.op.clone(),
-            weight: None,
-            activation: None,
-            output: None,
-            in_dim: case.tensor("x")?.dims[1] as u64,
-            out_dim: case.out.0[1] as u64,
-            rows: case.out.0[0] as u64,
-            runtime: Default::default(),
-        };
         let p = plan::plan(
             &self.contract,
             pipeline.clone(),
-            &reference.lens(&shape, &pipeline),
+            &reference.lens(&self.shape, &pipeline),
         )?;
         let (rows, cols) = (case.out.0[0], case.out.0[1]);
         let acc = match &self.behaviour {
@@ -162,13 +163,5 @@ impl KernelRunner for Emu {
             out[i * width..(i + 1) * width].copy_from_slice(&t.bytes);
         }
         Ok(out)
-    }
-
-    fn closure(&self) -> String {
-        "cpu-emulation".into()
-    }
-
-    fn device(&self) -> String {
-        "cpu".into()
     }
 }

@@ -16,10 +16,23 @@ use crate::case::{Case, Enc, Tensor};
 /// 3.4e38, f32 0x7f7f7f7f likewise: far outside every bound).
 pub const SENTINEL: u8 = 0x7f;
 
+/// 2026-10-09: Why a launch produced no output.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RunError {
+    /// 2026-10-09: The runner cannot launch it at all: the symbol is not in the target, no
+    /// adapter knows the launcher, the operands do not fit the launcher. A setup problem.
+    #[error("unavailable: {0}")]
+    Unavailable(String),
+    /// 2026-10-09: The launch ran and failed loudly: a CUDA error, a write outside the output
+    /// buffer. In a mutation arm this is a detection; in the good arm a failure.
+    #[error("fault: {0}")]
+    Fault(String),
+}
+
 /// 2026-10-09: Launches entry points.
 pub trait KernelRunner {
     /// 2026-10-09: Run `case.kernel` on `case`; the output bytes.
-    fn run(&mut self, case: &Case) -> Result<Vec<u8>, String>;
+    fn run(&mut self, case: &Case) -> Result<Vec<u8>, RunError>;
     /// 2026-10-09: What runs: the target closure hash of the binary, or `cpu-emulation`.
     fn closure(&self) -> String;
     /// 2026-10-09: The device, for records.
@@ -42,7 +55,7 @@ pub fn decode(case: &Case, bytes: &[u8], idx: &[usize]) -> Result<Vec<f64>, Stri
     let t = Tensor {
         enc,
         dims: dims.clone(),
-        bytes: bytes.to_vec(),
+        bytes: std::sync::Arc::new(bytes.to_vec()),
     };
     idx.iter()
         .map(|&i| {

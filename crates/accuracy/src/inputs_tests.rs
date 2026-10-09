@@ -74,11 +74,20 @@ fn classes_produce_their_definitions_in_format() {
 }
 
 #[test]
-fn structural_indices_cover_every_edge() {
+fn structural_indices_cover_the_edges_at_both_ends() {
     let mut r = SplitMix64::new(9);
     let v = structural_indices(154_856, &[64, 51_619], 32, &mut r);
-    for must in [0, 63, 64, 51_618, 51_619, 103_237, 103_238, 154_855] {
+    for must in [
+        0, 63, 64, 511, 512, 154_751, 154_752, 51_618, 51_619, 103_237, 103_238, 154_855,
+    ] {
         assert!(v.binary_search(&must).is_ok(), "missing {must}");
     }
     assert!(v.windows(2).all(|w| w[0] < w[1]));
+    assert!(
+        v.len() < 120,
+        "{} indices: the sample must stay small at a large N",
+        v.len()
+    );
+    let small = structural_indices(100, &[64], 0, &mut r);
+    assert_eq!(small, vec![0, 63, 64, 99]);
 }

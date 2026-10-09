@@ -58,6 +58,8 @@ pub struct AccuracyPoint {
     pub users: BTreeSet<String>,
     /// 2026-10-09: Checkpoints that run it (a point two checkpoints share is a shared kernel).
     pub checkpoints: BTreeSet<String>,
+    /// 2026-10-09: Kernel targets (`<hw>/<model>/<quant>`) of the instances that run it.
+    pub targets: BTreeSet<String>,
     /// 2026-10-09: Node sites (`block.local`) that run it.
     pub sites: BTreeSet<String>,
 }
@@ -188,10 +190,12 @@ fn add_run(
             shape,
             users: BTreeSet::new(),
             checkpoints: BTreeSet::new(),
+            targets: BTreeSet::new(),
             sites: BTreeSet::new(),
         });
         p.users.insert(inst.recipe.clone());
         p.checkpoints.insert(inst.checkpoint.clone());
+        p.targets.insert(inst.target.clone());
         p.sites.insert(format!("{}.{}", n.block, n.local));
     }
     Ok(())

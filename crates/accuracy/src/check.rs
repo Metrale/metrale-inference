@@ -29,7 +29,7 @@ use crate::plan::{self, Plan};
 use crate::points::Shape;
 use crate::refs::Reference;
 use crate::refs::linear_mutate::shards;
-use crate::runner::{KernelRunner, decode};
+use crate::runner::{KernelRunner, RunError, decode};
 
 /// 2026-10-09: One arm's measurement.
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +172,7 @@ fn prepare(job: &Job<'_>) -> Result<(Reference, Plan, Case), Verdict> {
     let mut case = Case {
         family: job.family.id.clone(),
         kernel: job.kernel.to_string(),
+        launcher: job.kernel.to_string(),
         op: c.op.clone(),
         tensors: Default::default(),
         scalars: Default::default(),
@@ -210,7 +211,7 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
         .1
         .elem()
         .ok_or_else(|| err("an output with no rounding model".into()))?;
-    let got = runner.run(&case).map_err(err)?;
+    let got = runner.run(&case).map_err(|e| err(e.to_string()))?;
     o.output_sha256 = hex(&Sha256::digest(&got));
     match &job.contract.class {
         Class::Derived => {
@@ -260,7 +261,8 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
         Class::BitIdentical { against } => {
             let mut sib = case.clone();
             sib.kernel = against.clone();
-            let base = runner.run(&sib).map_err(err)?;
+            sib.launcher = against.clone();
+            let base = runner.run(&sib).map_err(|e| err(e.to_string()))?;
             let b = compare::bytes(&got, &base).map_err(vacuous)?;
             o.good = Some(Arm {
                 name: "good".into(),
@@ -326,17 +328,38 @@ fn derived_mutation(
         }
         Mutation::Symbol(s) => {
             mutated.kernel = s.clone();
-            runner.run(&mutated).map_err(err)?
+            match runner.run(&mutated) {
+                Ok(b) => b,
+                Err(e) => return faulted(m, e),
+            }
         }
         _ => {
             at.extend(reference.mutate(&mut mutated, m, &mut rng).map_err(err)?);
             at.sort_unstable();
             at.dedup();
-            runner.run(&mutated).map_err(err)?
+            match runner.run(&mutated) {
+                Ok(b) => b,
+                Err(e) => return faulted(m, e),
+            }
         }
     };
     let want = reference.reference(case, plan, &at).map_err(err)?;
     arm(m, false, &decode(case, &got, &at).map_err(err)?, &want, out)
+}
+
+/// 2026-10-09: A mutation arm whose launch failed: a fault is a loud detection (infinite
+/// ratio, the fault named); an unavailable launch is a setup error of the contract.
+fn faulted(m: &Mutation, e: RunError) -> Result<Arm, Verdict> {
+    match e {
+        RunError::Fault(why) => Ok(Arm {
+            name: format!("{} (fault: {why})", m.name()),
+            emulated: false,
+            ratio: f64::INFINITY,
+            max_err: f64::INFINITY,
+            compared: 0,
+        }),
+        RunError::Unavailable(why) => Err(Verdict::Error(format!("{}: {why}", m.name()))),
+    }
 }
 
 fn arm(
@@ -385,7 +408,10 @@ fn identical_mutation(
             reference.mutate(&mut mutated, m, &mut rng).map_err(err)?;
         }
     }
-    let got = runner.run(&mutated).map_err(err)?;
+    let got = match runner.run(&mutated) {
+        Ok(b) => b,
+        Err(e) => return faulted(m, e),
+    };
     let b = compare::bytes(&got, base).map_err(vacuous)?;
     Ok(Arm {
         name: m.name(),

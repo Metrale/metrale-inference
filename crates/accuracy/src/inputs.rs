@@ -188,9 +188,14 @@ pub fn tensor(
     out
 }
 
-/// 2026-10-09: Indices in `[0, n)` a sampled comparison must cover: both ends, both sides of
-/// every multiple of each `stride` (tile, group, split and alignment edges), and `extra` seeded
-/// random ones. Sorted, distinct.
+/// 2026-10-09: Edges of each stride kept at each end of the range: a tile or alignment bug at
+/// every edge shows at the first ones; the far end catches tail handling.
+pub const EDGES_PER_END: usize = 8;
+
+/// 2026-10-09: Indices in `[0, n)` a sampled comparison must cover: both ends, both sides of the
+/// first and last [`EDGES_PER_END`] multiples of each `stride` (tile, group and alignment
+/// edges), every index in `always` (shard edges) and `extra` seeded random ones. Sorted,
+/// distinct.
 pub fn structural_indices(
     n: usize,
     strides: &[usize],
@@ -198,12 +203,13 @@ pub fn structural_indices(
     rng: &mut SplitMix64,
 ) -> Vec<usize> {
     let mut v = vec![0, n.saturating_sub(1)];
-    for &s in strides.iter().filter(|&&s| s > 0) {
-        let mut m = s;
-        while m < n {
+    for &s in strides.iter().filter(|&&s| s > 0 && s < n) {
+        let last = (n - 1) / s;
+        let ends = (1..=EDGES_PER_END.min(last))
+            .chain(last.saturating_sub(EDGES_PER_END - 1).max(1)..=last);
+        for m in ends.map(|j| j * s) {
             v.push(m - 1);
             v.push(m);
-            m += s;
         }
     }
     for _ in 0..extra {

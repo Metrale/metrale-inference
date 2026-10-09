@@ -8,6 +8,9 @@
 
 use clap::Parser;
 
+pub(crate) mod accuracy;
+mod accuracy_adapters;
+mod accuracy_gpu;
 pub mod bench_aggregate;
 mod bench_args;
 pub mod bench_card;
@@ -107,6 +110,64 @@ pub enum Command {
     /// The circuits, precision tables and fusion rules are the ones this binary was built
     /// with (`kernels/circuits/`, `kernels/<hw>/common/FUSIONS.toml`).
     Circuit(CircuitArgs),
+    /// Kernel accuracy contracts (kernels/<hw>/common/ACCURACY.toml): list the kernel points the
+    /// described models run, or check each against its contract (a tolerance derived from the
+    /// family's declared formats and accumulation, or byte identity with a sibling) with seeded
+    /// inputs and seeded mutations that must fail.
+    Accuracy(AccuracyArgs),
+}
+
+/// `met accuracy`: kernel accuracy contracts.
+#[derive(clap::Args, Debug)]
+pub struct AccuracyArgs {
+    #[command(subcommand)]
+    pub action: AccuracyAction,
+}
+
+/// The `met accuracy` actions.
+#[derive(clap::Subcommand, Debug)]
+pub enum AccuracyAction {
+    /// List every (family, point, shape) the models in kernels/circuits/INSTANCES.toml run on a
+    /// hardware class, with the contract that covers it or the reason none does. CPU only.
+    Points(AccuracySelectArgs),
+    /// Run the contracts on this binary's GPU kernels and write the record; exits non-zero
+    /// unless every check passes (good arm inside its contract, every mutation caught).
+    Check(AccuracyRunArgs),
+    /// As `check`, and also print the `[[contract.calibration]]` rows the passing checks
+    /// measured, for review into ACCURACY.toml.
+    Calibrate(AccuracyRunArgs),
+}
+
+/// `met accuracy points` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct AccuracySelectArgs {
+    /// Hardware class (`kernels/<class>/`).
+    #[arg(long)]
+    pub hardware: String,
+    /// Only this family (a KERNEL_FAMILIES.toml id).
+    #[arg(long)]
+    pub family: Option<String>,
+    /// Only points a recipe or checkpoint containing this text runs.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Repository root; default: the first ancestor of the working directory holding
+    /// kernels/circuits/INSTANCES.toml.
+    #[arg(long)]
+    pub root: Option<std::path::PathBuf>,
+}
+
+/// `met accuracy check|calibrate` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct AccuracyRunArgs {
+    #[command(flatten)]
+    pub select: AccuracySelectArgs,
+    /// `quick` (every distinct shape on the gaussian class with its mutations, the adversarial
+    /// classes at the largest shape) or `full` (every point on every class).
+    #[arg(long)]
+    pub scope: String,
+    /// Directory the record is written to (`<out>/<hardware>/<closure>.toml`).
+    #[arg(long)]
+    pub out: std::path::PathBuf,
 }
 
 /// `met circuit`: inspect an architecture circuit.

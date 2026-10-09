@@ -246,4 +246,42 @@ impl Stored {
     pub fn row_scale(&self, r: usize) -> f64 {
         self.row.as_ref().map_or(1.0, |t| t.get(r))
     }
+
+    /// 2026-10-09: The operand repeated by rows up to `rows` rows (`[p, k]` -> `[rows, k]`): row
+    /// `r` holds row `r % p`. Large weights are drawn this way (a period coprime with the
+    /// 64-alignment of shard edges keeps neighbouring rows distinct), and every reference reads
+    /// the tiled bytes, so the tiling is part of the operand, not an approximation.
+    pub fn tile(&self, rows: usize) -> Result<Stored, String> {
+        let p = self.values.dims[0];
+        if self.block.is_some() && p % self.block_rows != 0 {
+            return Err(format!(
+                "a period of {p} rows splits {}-row scale blocks",
+                self.block_rows
+            ));
+        }
+        let rep = |t: &Tensor, have: usize, want: usize| -> Tensor {
+            let row = t.bytes.len() / have;
+            let mut bytes = Vec::with_capacity(row * want);
+            for r in 0..want {
+                bytes.extend_from_slice(&t.bytes[(r % have) * row..(r % have + 1) * row]);
+            }
+            let mut dims = t.dims.clone();
+            dims[0] = want;
+            Tensor {
+                enc: t.enc,
+                dims,
+                bytes: std::sync::Arc::new(bytes),
+            }
+        };
+        Ok(Stored {
+            values: rep(&self.values, p, rows),
+            block: self
+                .block
+                .as_ref()
+                .map(|b| rep(b, b.dims[0], rows.div_ceil(self.block_rows))),
+            block_rows: self.block_rows,
+            row: self.row.as_ref().map(|t| rep(t, p, rows)),
+            global: self.global,
+        })
+    }
 }

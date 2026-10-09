@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-09: GB10 kernel accuracy contracts, one per family entry point set (`met accuracy`;
+# schema and rules: crates/accuracy/src/contract.rs; design: book and the crate docs).
+#
+# Owner: gb10 kernels.
+# Invariants:
+# - A contract never restates a format: the reference reads the family's `pipeline.<op>` in
+#   KERNEL_FAMILIES.toml. It states only what that pipeline does not: the reduction tree of
+#   each reduced dimension (`reduction.<dim>`, innermost level first; `sequential` adds its
+#   width to the depth, `tree` ceil(log2 width)), flush-to-zero, approximate-function errors,
+#   and where block scales fold (`element`: decoded with the value; `group`: on each group's
+#   partial sum; `none`).
+# - `derived`: every compared output must be a correct rounding of a value inside the bound
+#   derived from those declarations. `bit_identical`: the output equals `against`'s byte for
+#   byte on the same operands (one-row siblings run once per row).
+# - Every contract lists mutations that must fail; a mutation that passes fails the run.
+# - Each reduction is read from the kernel source; the comment above it cites the lines.
+
+schema = 1
+hardware = "gb10"
+seed = 20261009
+
+# 2026-10-09: w4a16_gemv.cu w4a16_gemv_partial + w4a16_gemv_sw: per 16-value chunk a fmaf chain
+# (`part`, 16 terms), folded by `acc_c = fmaf(scale, part, acc_c)` with scale = e4m3 * scale2;
+# chunks kk = 2*lane + c + 128j give each of two accumulators ceil(K/2048) chunks; acc0 + acc1;
+# a 32-lane shuffle tree on each of the two partials; acc_a + acc_b.
+[[contract]]
+family = "w4a16_gemv"
+kernels = ["w4a16_gemv::w4a16_gemv_sw"]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.group = [{ level = "thread", width = "16", order = "sequential" }]
+reduction.k = [
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "accumulators", width = "2", order = "tree" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "partials", width = "2", order = "tree" },
+]
+ftz = false
+approx = {}
+scale_fold = "group"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16", "symbol:w4a16_gemv::w4a16_gemv"]
+
+# 2026-10-09: The two- and three-row GEMVs promise each row's bytes equal the one-row
+# w4a16_gemv's (w4a16_gemv.cu: one pass over the weight, the same K order per row).
+[[contract]]
+family = "w4a16_gemv"
+kernels = ["w4a16_gemv::w4a16_gemv_batch2", "w4a16_gemv::w4a16_gemv_batch3"]
+op = "linear"
+reference = "linear"
+class = "bit_identical"
+against = "w4a16_gemv::w4a16_gemv"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity"]
+
+# 2026-10-09: dense_gemv_bf16.cu: 64 threads per output, each a sequential chain over its
+# K/64 values (8 per uint4, kv = lane + 64j), a 32-lane shuffle tree, then the two warps' sums.
+# dense_gemv_bf16_batchm follows the same order per row (ops/gemm_quant_gemv.rs).
+[[contract]]
+family = "dense_bf16"
+kernels = ["gemv::dense_gemv_bf16"]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "thread", width = "k/64", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "2", order = "tree" },
+]
+ftz = false
+approx = {}
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:gemv::dense_gemv_bf16_fp32out"]
+
+# 2026-10-09: The vocabulary-parallel head: the lm_head rows split over three ranks at
+# 64-aligned edges (GLM's capped vocabulary is not a multiple of 64), each shard written at
+# its own output columns. The split mutation places every later shard one column off.
+[[contract]]
+family = "dense_bf16"
+kernels = ["dense_gemv_bf16_batchm::dense_gemv_bf16_batchm"]
+op = "lm_head"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "thread", width = "k/64", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "2", order = "tree" },
+]
+ftz = false
+approx = {}
+scale_fold = "none"
+split = { world = 3, align = 64 }
+inputs = ["gaussian", "zero_rows"]
+mutations = ["split_off_by_one", "accumulate:bf16"]
+
+[[contract]]
+family = "dense_bf16"
+kernels = ["dense_gemv_bf16_batchm::dense_gemv_bf16_batchm"]
+op = "router"
+reference = "linear"
+class = "bit_identical"
+against = "gemv::dense_gemv_bf16"
+inputs = ["gaussian", "outliers", "all_equal"]
+mutations = ["symbol:gemv::dense_gemv_bf16_fp32out"]

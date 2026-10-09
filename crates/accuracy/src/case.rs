@@ -66,7 +66,8 @@ pub struct Tensor {
     /// 2026-10-09: Dimensions, outermost first.
     pub dims: Vec<usize>,
     /// 2026-10-09: Bytes.
-    pub bytes: Vec<u8>,
+    /// (shared: a mutation copies only the tensor it edits, `Arc::make_mut`).
+    pub bytes: std::sync::Arc<Vec<u8>>,
 }
 
 impl Tensor {
@@ -130,7 +131,11 @@ impl Tensor {
                 }
             }
         }
-        Ok(Tensor { enc, dims, bytes })
+        Ok(Tensor {
+            enc,
+            dims,
+            bytes: std::sync::Arc::new(bytes),
+        })
     }
 
     /// 2026-10-09: Element count.
@@ -182,8 +187,11 @@ impl Tensor {
 pub struct Case {
     /// 2026-10-09: Family.
     pub family: String,
-    /// 2026-10-09: The entry point (`module::function`).
+    /// 2026-10-09: The entry point launched (`module::function`).
     pub kernel: String,
+    /// 2026-10-09: The entry point whose launcher runs it (the contract's kernel; differs from
+    /// `kernel` only in a wrong-symbol mutation, which keeps the launcher and swaps the symbol).
+    pub launcher: String,
     /// 2026-10-09: Op key of the family pipeline.
     pub op: String,
     /// 2026-10-09: Input tensors by name (the reference's canonical names).

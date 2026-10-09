@@ -24,6 +24,6 @@ fn encodings_round_trip_and_refuse_unrepresentable_values() {
     let b = Tensor::encode(Enc::Bf16, vec![2, 2], &[1.0, -2.0, 0.15625, big]).unwrap();
     assert_eq!(b.values(), vec![1.0, -2.0, 0.15625, big]);
     let u = Tensor::encode(Enc::Ue8m0, vec![2], &[0.25, 8.0]).unwrap();
-    assert_eq!(u.bytes, vec![125, 130]);
+    assert_eq!(*u.bytes, vec![125u8, 130]);
     assert!(Tensor::encode(Enc::Ue8m0, vec![1], &[3.0]).is_err());
 }

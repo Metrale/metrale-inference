@@ -11,6 +11,7 @@ use common::{Behaviour, Emu, contract, families};
 use metrale_accuracy::check::{Job, Verdict, run};
 use metrale_accuracy::elem::BF16;
 use metrale_accuracy::inputs::InputClass;
+use metrale_accuracy::mutation::Mutation;
 use metrale_accuracy::points::Shape;
 
 const W4A16_SW: &str = r#"
@@ -71,6 +72,7 @@ fn emu(
     body: &str,
     family: &str,
     behaviour: Behaviour,
+    shape: Shape,
 ) -> (metrale_accuracy::contract::Contract, Emu) {
     let c = contract(body);
     let f = families()
@@ -78,19 +80,24 @@ fn emu(
         .into_iter()
         .find(|f| f.id == family)
         .unwrap();
+    let wrong = (
+        "w4a16_gemv::w4a16_gemv_qg".to_string(),
+        Mutation::SwapScaleGranularity,
+    );
     let e = Emu {
         contract: c.clone(),
         family: f,
         behaviour,
-        wrong: "w4a16_gemv::w4a16_gemv_qg".into(),
+        wrong,
+        shape,
     };
     (c, e)
 }
 
 #[test]
 fn nvfp4_w4a16_gemv_passes_every_class_and_catches_every_mutation() {
-    let (c, mut e) = emu(W4A16_SW, "w4a16_gemv", Behaviour::Conforming);
     let s = shape("linear", 2, 5120, 1024);
+    let (c, mut e) = emu(W4A16_SW, "w4a16_gemv", Behaviour::Conforming, s.clone());
     for input in c.inputs.clone() {
         let job = Job {
             contract: &c,
@@ -122,10 +129,10 @@ fn nvfp4_w4a16_gemv_passes_every_class_and_catches_every_mutation() {
 
 #[test]
 fn a_split_lm_head_catches_an_off_by_one_shard() {
-    let (c, mut e) = emu(DENSE_SPLIT, "dense_bf16", Behaviour::Conforming);
     // 2026-10-09: GLM's capped vocabulary, not a multiple of 64: the shard edges fall at 51648
     // and 103296; scaled down 16x to keep the CPU test fast while keeping the misalignment.
     let s = shape("lm_head", 1, 256, 154_856 / 16);
+    let (c, mut e) = emu(DENSE_SPLIT, "dense_bf16", Behaviour::Conforming, s.clone());
     let job = Job {
         contract: &c,
         family: &e.family.clone(),
@@ -147,8 +154,13 @@ fn a_split_lm_head_catches_an_off_by_one_shard() {
 
 #[test]
 fn a_kernel_that_breaks_its_declaration_fails_the_bound() {
-    let (c, mut e) = emu(W4A16_SW, "w4a16_gemv", Behaviour::Accumulator(BF16));
     let s = shape("linear", 1, 5120, 512);
+    let (c, mut e) = emu(
+        W4A16_SW,
+        "w4a16_gemv",
+        Behaviour::Accumulator(BF16),
+        s.clone(),
+    );
     let job = Job {
         contract: &c,
         family: &e.family.clone(),
@@ -166,8 +178,8 @@ fn a_contract_too_loose_to_catch_a_mutation_fails_the_run() {
     // 2026-10-09: Declaring a million-term sequential chain makes the bound vacuous in practice;
     // the corrupted scale then stays inside it and the run must fail, not pass.
     let loose = W4A16_SW.replace("width = \"k/2048\"", "width = \"1000000\"");
-    let (c, mut e) = emu(&loose, "w4a16_gemv", Behaviour::Conforming);
     let s = shape("linear", 1, 5120, 512);
+    let (c, mut e) = emu(&loose, "w4a16_gemv", Behaviour::Conforming, s.clone());
     let job = Job {
         contract: &c,
         family: &e.family.clone(),
