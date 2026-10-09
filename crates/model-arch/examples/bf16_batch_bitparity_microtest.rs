@@ -25,6 +25,9 @@
 //!   METRALE_TARGET_QUANT=nvfp4 cargo run -p metrale-model-arch --release \
 //!     --features cuda,gpu-examples --example bf16_batch_bitparity_microtest
 
+#[path = "common/xclass_digest.rs"]
+mod xclass_digest;
+
 use anyhow::Result;
 use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
@@ -248,12 +251,20 @@ fn main() -> Result<()> {
                 reference(g, gemv_k, a_d, w_d, c_ref, m, n, k)?;
                 g.synchronize(0)?;
                 let cr = down(g, c_ref, m * n * 2)?;
+                xclass_digest::print(
+                    &format!("bf16 seed={seed} n={n} k={k} gemv-rows M={m}"),
+                    &cr,
+                );
 
                 if m <= BATCHM_MAX_M {
                     g.memset(c_batch, 0, MAX_M * n * 2)?;
                     batchm(g, batchm_k, a_d, w_d, c_batch, m as u32, n as u32, k as u32)?;
                     g.synchronize(0)?;
                     let cb = down(g, c_batch, m * n * 2)?;
+                    xclass_digest::print(
+                        &format!("bf16 seed={seed} n={n} k={k} batchm M={m}"),
+                        &cb,
+                    );
                     let identical = cb == cr;
                     let (n_diff, worst, rel) = worst_delta(&cb, &cr);
                     batchm_clean &= identical;
@@ -273,6 +284,10 @@ fn main() -> Result<()> {
                 gemm(g, gemm_k, a_d, w_d, c_batch, m as u32, n as u32, k as u32)?;
                 g.synchronize(0)?;
                 let cb = down(g, c_batch, m * n * 2)?;
+                xclass_digest::print(
+                    &format!("bf16 seed={seed} n={n} k={k} pipelined M={m}"),
+                    &cb,
+                );
                 let identical = cb == cr;
                 let (n_diff, worst, rel) = worst_delta(&cb, &cr);
                 gemm_clean &= identical;
