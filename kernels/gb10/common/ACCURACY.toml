@@ -171,3 +171,58 @@ class = "bit_identical"
 against = "gated_delta_rule::gated_delta_rule_decode_f32"
 inputs = ["gaussian", "outliers", "near_overflow"]
 mutations = ["state_stale"]
+
+# 2026-10-09: causal_conv1d.cu causal_conv1d_update_l2norm_f32_strided (:496-557), compiled with
+# --fmad=false: per channel the window shifts and takes the input (:521-523), `acc += state[k] *
+# w[k]` runs the d_conv taps in order from 0 (:526-527, no bias on the GDN path), the sigmoid is
+# rcp.rn(1 + ex2.approx(acc * -log2 e)) (:528, the PTX of __expf and 1/x), and the q/k heads'
+# L2 norm sums squares in a 32-lane shfl_down tree (:536-537) and the head's four warps in
+# sequence (:544-545) before rsqrtf (:546). ex2.approx.f32 and rsqrt.approx.f32 are at most
+# 2 ulp (PTX ISA, CUDA math API), i.e. 2^-22 relative. The output compared is each row's conv
+# output followed by its updated window.
+[[contract]]
+family = "causal_conv1d_l2norm"
+kernels = ["causal_conv1d::causal_conv1d_update_l2norm_f32_strided"]
+op = "conv1d_update"
+reference = "conv1d_l2norm"
+class = "derived"
+reduction.conv = [{ level = "thread", width = "k/1", order = "sequential" }]
+reduction.head = [
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "k/32", order = "sequential" },
+]
+ftz = false
+approx = { ex2 = "2^-22", rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["state_stale", "accumulate:bf16"]
+
+# 2026-10-09: causal_conv1d_update_l2norm_f32 (:413-472) is the strided kernel's text with
+# rows `dim` apart (:437-438, :442, :443, :451-452, :459-461, :465).
+[[contract]]
+family = "causal_conv1d_l2norm"
+kernels = ["causal_conv1d::causal_conv1d_update_l2norm_f32"]
+op = "conv1d_update"
+reference = "conv1d_l2norm"
+class = "derived"
+reduction.conv = [{ level = "thread", width = "k/1", order = "sequential" }]
+reduction.head = [
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "k/32", order = "sequential" },
+]
+ftz = false
+approx = { ex2 = "2^-22", rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["state_stale", "accumulate:bf16"]
+
+# 2026-10-09: The batched conv promises the per-sequence kernel's output and window byte for byte.
+[[contract]]
+family = "causal_conv1d_l2norm"
+kernels = ["causal_conv1d::causal_conv1d_update_l2norm_f32_strided"]
+op = "conv1d_update"
+reference = "conv1d_l2norm"
+class = "bit_identical"
+against = "causal_conv1d::causal_conv1d_update_l2norm_f32"
+inputs = ["gaussian", "outliers", "near_overflow"]
+mutations = ["state_stale"]

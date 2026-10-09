@@ -11,11 +11,16 @@
 //!   `[rows, decay|beta]` buffer, the layout the batched decode emitter hands it
 //!   (model-layers circuit_exec/emitters/gdn_batched.rs), so its row strides are exercised.
 //! - The state is updated in place inside a guarded buffer: a write outside it is a fault.
+//! - The conv step (`conv1d_l2norm` reference) runs through `ops::conv1d_update_l2norm_strided`
+//!   and `ops::conv1d_update_l2norm`; the strided launch reads input rows padded past `dim`
+//!   (the engine reads QKVZ rows, wider than the output's), so a kernel that read the input at
+//!   the output stride would read the padding.
 
 use anyhow::Result;
 use metrale_accuracy::case::{Case, Enc, Tensor};
 use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use metrale_model_layers::layers::ops;
+use metrale_model_layers::weight_map::quantized::DenseWeight;
 
 use super::accuracy_adapters::{Adapter, at, not_runnable};
 use super::accuracy_gpu::Dev;
@@ -27,6 +32,11 @@ pub(crate) const ADAPTERS: &[(&str, Adapter)] = &[
         gdn_strided,
     ),
     ("gated_delta_rule::gated_delta_rule_decode_f32", gdn_rows),
+    (
+        "causal_conv1d::causal_conv1d_update_l2norm_f32_strided",
+        conv_strided,
+    ),
+    ("causal_conv1d::causal_conv1d_update_l2norm_f32", conv_rows),
 ];
 
 /// 2026-10-09: The head geometry a gdn case records.
@@ -184,4 +194,145 @@ fn gdn_rows(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<
         dev.stream,
     )?;
     joined(dev, &g, o, st)
+}
+
+/// 2026-10-09: bf16 columns padding each strided conv input row; filled with the largest bf16,
+/// so a read of the padding as a channel leaves every bound.
+const CONV_PAD: usize = 256;
+
+/// 2026-10-09: The geometry and launch scalars a conv case records.
+struct Conv {
+    rows: usize,
+    dim: usize,
+    d_conv: usize,
+    qk_channels: usize,
+    head_dim: usize,
+    eps: f32,
+}
+
+impl Conv {
+    fn of(case: &Case) -> Result<Conv> {
+        let s = |n: &str| case.scalar(n).map_err(not_runnable);
+        let c = Conv {
+            rows: case.out.0[0],
+            dim: s("dim")? as usize,
+            d_conv: s("d_conv")? as usize,
+            qk_channels: s("qk_channels")? as usize,
+            head_dim: s("head_dim")? as usize,
+            eps: s("eps")? as f32,
+        };
+        if case.out.0[1] != c.dim * (1 + c.d_conv) || case.out.1 != Enc::F32 {
+            return Err(not_runnable(format!(
+                "a conv output {:?} for {} channels of {} taps",
+                case.out, c.dim, c.d_conv
+            )));
+        }
+        let bf16 = |n: &str| -> Result<()> {
+            match case.tensor(n).map_err(not_runnable)?.enc {
+                Enc::Bf16 => Ok(()),
+                e => Err(not_runnable(format!(
+                    "`{n}` is {e:?}; the kernel reads bf16"
+                ))),
+            }
+        };
+        bf16("x")?;
+        bf16("w")?;
+        Ok(c)
+    }
+}
+
+/// 2026-10-09: The window, copied into a guarded output buffer the kernel updates in place.
+fn window(dev: &mut Dev<'_>, case: &Case, c: &Conv) -> Result<DevicePtr> {
+    let t = f32_tensor(case, "window")?;
+    let bytes = c.rows * c.dim * c.d_conv * 4;
+    if t.bytes.len() != bytes {
+        return Err(not_runnable(format!(
+            "a window of {} bytes for {bytes}",
+            t.bytes.len()
+        )));
+    }
+    let p = dev.output(bytes)?;
+    dev.gpu.copy_h2d(&t.bytes, p)?;
+    Ok(p)
+}
+
+/// 2026-10-09: Read the output and the window back and join them per row.
+fn conv_joined(dev: &mut Dev<'_>, c: &Conv, y: DevicePtr, w: DevicePtr) -> Result<Vec<u8>> {
+    let (yb, wb) = (c.dim * 4, c.dim * c.d_conv * 4);
+    let y = dev.read(y, c.rows * yb)?;
+    let w = dev.read(w, c.rows * wb)?;
+    let mut out = Vec::with_capacity(c.rows * (yb + wb));
+    for r in 0..c.rows {
+        out.extend_from_slice(&y[r * yb..(r + 1) * yb]);
+        out.extend_from_slice(&w[r * wb..(r + 1) * wb]);
+    }
+    Ok(out)
+}
+
+fn conv_strided(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<u8>> {
+    let c = Conv::of(case)?;
+    let x = case.tensor("x").map_err(not_runnable)?;
+    let stride = c.dim + CONV_PAD;
+    let pad = 0x7f7fu16.to_le_bytes();
+    let mut rows = Vec::with_capacity(c.rows * stride * 2);
+    for r in 0..c.rows {
+        rows.extend_from_slice(&x.bytes[r * c.dim * 2..(r + 1) * c.dim * 2]);
+        for _ in 0..CONV_PAD {
+            rows.extend_from_slice(&pad);
+        }
+    }
+    let input = dev.upload(&Tensor {
+        enc: Enc::Bf16,
+        dims: vec![c.rows, stride],
+        bytes: std::sync::Arc::new(rows),
+    })?;
+    let w = DenseWeight {
+        weight: dev.upload(case.tensor("w").map_err(not_runnable)?)?,
+    };
+    let st = window(dev, case, &c)?;
+    let y = dev.output(c.rows * c.dim * 4)?;
+    ops::conv1d_update_l2norm_strided(
+        dev.gpu,
+        kernel,
+        st,
+        input,
+        &w,
+        y,
+        c.dim as u32,
+        c.d_conv as u32,
+        c.rows as u32,
+        c.qk_channels as u32,
+        c.head_dim as u32,
+        c.eps,
+        stride as u32,
+        c.dim as u32,
+        dev.stream,
+    )?;
+    conv_joined(dev, &c, y, st)
+}
+
+fn conv_rows(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<u8>> {
+    let c = Conv::of(case)?;
+    let input = dev.upload(case.tensor("x").map_err(not_runnable)?)?;
+    let w = DenseWeight {
+        weight: dev.upload(case.tensor("w").map_err(not_runnable)?)?,
+    };
+    let st = window(dev, case, &c)?;
+    let y = dev.output(c.rows * c.dim * 4)?;
+    ops::conv1d_update_l2norm(
+        dev.gpu,
+        kernel,
+        st,
+        input,
+        &w,
+        y,
+        c.dim as u32,
+        c.d_conv as u32,
+        c.rows as u32,
+        c.qk_channels as u32,
+        c.head_dim as u32,
+        c.eps,
+        dev.stream,
+    )?;
+    conv_joined(dev, &c, y, st)
 }

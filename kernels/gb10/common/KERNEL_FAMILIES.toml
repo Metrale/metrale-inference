@@ -385,6 +385,30 @@ op = [
   { op = "state_snapshot", after = ["conv1d_update"], beside = ["l2_norm"] },
   { op = "l2_norm" },
 ]
+# 2026-10-09: The launch arguments of the conv step (causal_conv1d.cu:496-509): the q/k heads
+# the L2 norm covers (qk_channels = 2 * k_heads * k_dim, head_dim = k_dim), the taps and the
+# norm's epsilon. The Qwen3.5/3.6 circuits state no conv dim: their config maps require
+# linear_conv_kernel_dim = 4 (kernels/circuits/qwen3_5.config.toml:81) and their conv state is
+# 4 wide. No circuit states the epsilon: every GDN emitter passes 1e-6
+# (model-layers circuit_exec/emitters/gdn.rs:129, gdn_batched.rs:113, gdn_verify_batch.rs:333).
+[[family.param]]
+name = "k_heads"
+kind = "runtime"
+from = { conv1d_update = "dim:lin_k_heads" }
+[[family.param]]
+name = "k_dim"
+kind = "runtime"
+from = { conv1d_update = "dim:lin_k_dim" }
+[[family.param]]
+name = "d_conv"
+kind = "runtime"
+from = { conv1d_update = "dim:conv_kernel" }
+absent = "4"
+[[family.param]]
+name = "l2_eps"
+kind = "runtime"
+from = { conv1d_update = "param:l2_eps" }
+absent = "1e-6"
 [[family.point]]
 values = {}
 how = "instantiation"

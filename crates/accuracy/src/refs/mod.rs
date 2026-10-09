@@ -25,6 +25,9 @@ use crate::mutation::Mutation;
 use crate::plan::Plan;
 use crate::points::Shape;
 
+pub mod conv;
+pub mod conv_head;
+pub mod conv_impl;
 pub mod gdn;
 pub mod gdn_head;
 pub mod gdn_impl;
@@ -83,7 +86,11 @@ pub trait RefImpl: Sync {
 }
 
 /// 2026-10-09: The references, by contract spelling.
-pub const REFS: &[&dyn RefImpl] = &[&linear_impl::Linear, &gdn_impl::GdnRecurrence];
+pub const REFS: &[&dyn RefImpl] = &[
+    &linear_impl::Linear,
+    &gdn_impl::GdnRecurrence,
+    &conv_impl::Conv1dL2norm,
+];
 
 /// 2026-10-09: Random output columns a sample adds to the structural ones.
 const EXTRA_COLUMNS: usize = 48;
