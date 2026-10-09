@@ -435,9 +435,9 @@ impl BlockDiffusionDraftHead {
             && head.kernels.fp8_gemm_n128_row_scaled_m16.0 != 0;
         if fp8_requested && !fp8_kernels_present {
             tracing::warn!(
-                "METRALE_DFLASH_DRAFTER_FP8=1 but fp8_gemm_t_row_scaled(_m16) kernels are \
-                 not in this target's w4a16 PTX module — staying on the BF16 drafter path. \
-                 Port the Phase G kernels from kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu."
+                "FP8 drafter requested (METRALE_DFLASH_DRAFTER_FP8 is not 0) but the \
+                 fp8_gemm_t_row_scaled(_m16) kernels are in neither this target's w4a16 nor its \
+                 dflash_fp8_gemm PTX module — staying on the BF16 drafter path."
             );
         }
         if fp8_requested && fp8_kernels_present {

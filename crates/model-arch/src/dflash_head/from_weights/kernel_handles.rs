@@ -11,7 +11,26 @@ use metrale_gpu_runtime::gpu::GpuBackend;
 use crate::dflash_head::DflashKernels;
 
 /// 2026-09-26: Every handle in `DflashKernels`, resolved in field order.
+/// 2026-10-09: The module a target ships the drafter's row-scaled FP8 GEMMs in when its `w4a16`
+/// module does not (kernels/gb10/glm-5.3-flash/nvfp4/dflash_fp8_gemm.cu).
+const DFLASH_FP8_MODULE: &str = "dflash_fp8_gemm";
+
+/// 2026-10-09: A row-scaled FP8 GEMM entry point: the `w4a16` module's, else, only on a target
+/// that ships it, [`DFLASH_FP8_MODULE`]'s. A target with neither looks up exactly what it did
+/// before, so its kernel audit is unchanged. `KernelHandle(0)` when absent.
+fn fp8_row_scaled_kernel(
+    gpu: &dyn GpuBackend,
+    name: &str,
+) -> metrale_gpu_runtime::gpu::KernelHandle {
+    let h = metrale_model_layers::layers::try_kernel(gpu, "w4a16", name);
+    if h.0 == 0 && gpu.has_module(DFLASH_FP8_MODULE) {
+        return metrale_model_layers::layers::try_kernel(gpu, DFLASH_FP8_MODULE, name);
+    }
+    h
+}
+
 pub(super) fn load_kernels(gpu: &dyn GpuBackend) -> Result<DflashKernels> {
+    let fp8_kernel = |name: &str| fp8_row_scaled_kernel(gpu, name);
     Ok(DflashKernels {
         // 2026-09-25: The drafter's norms use `rms_norm_vanilla`
         // (`x * w / RMS(x)`), not `rms_norm`, which computes `x * (1 + w) / RMS(x)`.
@@ -53,7 +72,8 @@ pub(super) fn load_kernels(gpu: &dyn GpuBackend) -> Result<DflashKernels> {
             })?,
         // 2026-09-25: Used only here, at load, for the FP8 weight copies below.
         quantize_bf16_to_fp8: gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?,
-        // 2026-09-25: The row-scaled FP8 GEMM from the `w4a16` module, first found of
+        // 2026-09-25: The row-scaled FP8 GEMM from the `w4a16` module (2026-10-09: or
+        // `dflash_fp8_gemm`, `fp8_row_scaled_kernel`), first found of
         // `fp8_gemm_t_row_scaled_k64`, `fp8_gemm_t_row_scaled_p4`,
         // `fp8_gemm_t_row_scaled`. `METRALE_DFLASH_FP8_GEMM_P4=1` skips `_k64`, and
         // `METRALE_DFLASH_FP8_GEMM_P2=1` takes only the last. `KernelHandle(0)` when
@@ -64,11 +84,7 @@ pub(super) fn load_kernels(gpu: &dyn GpuBackend) -> Result<DflashKernels> {
             let pin_p4 = std::env::var("METRALE_DFLASH_FP8_GEMM_P4").ok().as_deref() == Some("1");
             let mut h = metrale_gpu_runtime::gpu::KernelHandle(0);
             if !pin_p2 && !pin_p4 {
-                h = metrale_model_layers::layers::try_kernel(
-                    gpu,
-                    "w4a16",
-                    "fp8_gemm_t_row_scaled_k64",
-                );
+                h = fp8_kernel("fp8_gemm_t_row_scaled_k64");
                 if h.0 != 0 {
                     tracing::info!(
                         target: "metrale_model_arch::dflash_head::from_weights",
@@ -77,11 +93,7 @@ pub(super) fn load_kernels(gpu: &dyn GpuBackend) -> Result<DflashKernels> {
                 }
             }
             if h.0 == 0 && !pin_p2 {
-                h = metrale_model_layers::layers::try_kernel(
-                    gpu,
-                    "w4a16",
-                    "fp8_gemm_t_row_scaled_p4",
-                );
+                h = fp8_kernel("fp8_gemm_t_row_scaled_p4");
                 if h.0 != 0 {
                     tracing::info!(
                         target: "metrale_model_arch::dflash_head::from_weights",
@@ -90,16 +102,12 @@ pub(super) fn load_kernels(gpu: &dyn GpuBackend) -> Result<DflashKernels> {
                 }
             }
             if h.0 == 0 {
-                h = metrale_model_layers::layers::try_kernel(gpu, "w4a16", "fp8_gemm_t_row_scaled");
+                h = fp8_kernel("fp8_gemm_t_row_scaled");
             }
             h
         },
         dense_gemv_fp8w: gpu.kernel("gemv_fp8w", "dense_gemv_fp8w")?,
-        fp8_gemm_n128_row_scaled_m16: metrale_model_layers::layers::try_kernel(
-            gpu,
-            "w4a16",
-            "fp8_gemm_t_row_scaled_m16",
-        ),
+        fp8_gemm_n128_row_scaled_m16: fp8_kernel("fp8_gemm_t_row_scaled_m16"),
         fp8_gemv_rt2: metrale_model_layers::layers::try_kernel(
             gpu,
             "fp8_gemv_rt",
