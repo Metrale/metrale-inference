@@ -120,6 +120,36 @@ impl Glm5NextDsaLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        self.decode_spans_with(
+            hidden,
+            states,
+            spans,
+            kv_cache,
+            meta,
+            meta_row_base,
+            ctx,
+            stream,
+            crate::glm5next_layer::dsa_indexer_rows(),
+        )
+    }
+
+    /// 2026-10-09: [`Self::decode_spans`] with the batched indexer (`indexer_rows`, the
+    /// `METRALE_GLM_DSA_INDEXER_ROWS` lever) explicit: the indexer projections staged for all
+    /// rows, and on a captured decode the paged rows' store and selection in one launch per
+    /// stage (`select_paged_rows`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_spans_with(
+        &self,
+        hidden: DevicePtr,
+        states: &mut [&mut (dyn LayerState + 'static)],
+        spans: &[DsaRowSpan],
+        kv_cache: &mut PagedKvCache,
+        meta: &AttnMetadataDev,
+        meta_row_base: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+        indexer_rows: bool,
+    ) -> Result<()> {
         use crate::glm5next_layer::profile;
         let n: usize = spans.iter().map(|s| s.rows).sum();
         if n == 0
@@ -262,7 +292,53 @@ impl Glm5NextDsaLayer {
                 }
             }
         }
-        for r in 0..n {
+        // 2026-10-09: `indexer_rows` (`METRALE_GLM_DSA_INDEXER_ROWS=1`): the indexer key and
+        // gate projections and the key norm of every row in one pass (`indexer_project_rows`),
+        // each row then placed from its staging row. Only where every row is placed on the
+        // device (a capture, or paged caches), and with the head weights already batched above.
+        let staged = indexer_rows
+            && n > 1
+            && batched_idx
+            && (replay_safe
+                || (0..spans.len())
+                    .map(|s| dsa_row(states, s).map(|st| st.cache() == IndexerCache::Paged))
+                    .collect::<Result<Vec<bool>>>()?
+                    .into_iter()
+                    .all(|p| p));
+        if staged {
+            let t = profile::start();
+            self.indexer_project_rows(gpu, hidden, n, stream)?;
+            profile::end(profile::DSA_INDEXER, t, gpu, stream);
+        }
+        // 2026-10-09: Staged on the replay-safe path, the leading rows that are each one
+        // sequence's decode row on a paged cache store and select in one launch per stage
+        // (`select_paged_rows`); the rest (a padding row's flat cache) run row by row below.
+        let paged_rows = if staged && replay_safe && spans.iter().all(|s| s.rows == 1) {
+            let mut m = 0;
+            while m < n && dsa_row(states, m)?.cache() == IndexerCache::Paged {
+                m += 1;
+            }
+            if m >= 2 && self.paged_rows_ready(m) {
+                m
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        if paged_rows > 0 {
+            let t = profile::start();
+            let bt0 = meta.block_table.offset(meta_row_base * bt_stride);
+            let rows0 = self.indexer_rows(dsa_row(states, 0)?, kv_cache, bt0)?;
+            self.select_paged_rows(gpu, paged_rows, rows0, meta, meta_row_base, stream)?;
+            for s in 0..paged_rows {
+                let st = dsa_row(states, s)?;
+                st.ensure_room(1)?;
+                st.advance(1)?;
+            }
+            profile::end(profile::DSA_SELECT, t, gpu, stream);
+        }
+        for r in paged_rows..n {
             let mr = meta_row_base + r;
             let t = profile::start();
             let st = dsa_row(states, row_seq[r])?;
@@ -276,15 +352,30 @@ impl Glm5NextDsaLayer {
                 // 2026-10-09: A flat row's host address is `pos * D`; it needs no table.
                 IndexerPlace::Host { block_table: &[] }
             };
-            self.indexer_forward_with(
-                gpu,
-                hidden.offset(r * self.cfg.hidden * 2),
-                st,
-                kv_cache,
-                place,
-                !batched_idx,
-                stream,
-            )?;
+            if staged {
+                st.ensure_room(1)?;
+                let pos = st.len();
+                self.store_indexer_row(
+                    gpu,
+                    st,
+                    kv_cache,
+                    place,
+                    pos,
+                    self.cfg.index_head_dim,
+                    r,
+                    stream,
+                )?;
+            } else {
+                self.indexer_forward_with(
+                    gpu,
+                    hidden.offset(r * self.cfg.hidden * 2),
+                    st,
+                    kv_cache,
+                    place,
+                    !batched_idx,
+                    stream,
+                )?;
+            }
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
             if replay_safe {
                 self.write_geom(gpu, meta.seq_len.offset(mr * 4), stream)?;

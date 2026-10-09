@@ -55,6 +55,7 @@ mod kernels;
 mod proj_gemm;
 mod row_ops;
 mod rows;
+mod select_rows;
 mod workspace;
 
 pub use decode_rows::DsaRowSpan;
@@ -247,7 +248,7 @@ impl Glm5NextDsaLayer {
             )?;
         }
 
-        self.store_indexer_row(gpu, state, kv_cache, place, pos, d, stream)
+        self.store_indexer_row(gpu, state, kv_cache, place, pos, d, 0, stream)
     }
 
     /// 2026-09-25: The selector query projection and the selection for one query row, written

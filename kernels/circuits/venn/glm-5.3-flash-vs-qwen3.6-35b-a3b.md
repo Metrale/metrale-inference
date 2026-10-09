@@ -80,26 +80,26 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 
 | # | Layer kind | Mode | Rows | Est. added time | vs. multi-row step | Source | Note |
 |---|---|---|---|---|---|---|---|
-| 1 | deepseek_sparse_attention | multi_seq | 128 | 11765.9 µs | +1.3% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:171 | DSA batched decode: indexer key, pool store and selection one row per launch |
-| 2 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:307 | KDA verify: conv and recurrence one row per launch (stateful_row) |
+| 1 | deepseek_sparse_attention | multi_seq | 128 | 11765.9 µs | +1.3% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341 | DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage) |
+| 2 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:315 | KDA verify: conv and recurrence one row per launch (stateful_row) |
 | 3 | deepseek_sparse_attention | verify | 4 | 2015.0 µs | +1.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:118 | DSA verify: latent write, indexer projections, store and selection one row per launch |
-| 4 | deepseek_sparse_attention | multi_seq | 16 | 1389.7 µs | +0.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:171 | DSA batched decode: indexer key, pool store and selection one row per launch |
+| 4 | deepseek_sparse_attention | multi_seq | 16 | 1389.7 µs | +0.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341 | DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage) |
 | 5 | deepseek_sparse_attention | verify | 4 | 34.7 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
 | 6 | deepseek_sparse_attention | multi_seq | 16 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
-| 7 | linear_attention | multi_seq | 16 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:232 | KDA batched decode: conv one row per launch, recurrence one launch per group |
+| 7 | linear_attention | multi_seq | 16 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/rows.rs:134 | KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows) |
 | 8 | deepseek_sparse_attention | multi_seq | 128 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
-| 9 | linear_attention | multi_seq | 128 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:232 | KDA batched decode: conv one row per launch, recurrence one launch per group |
+| 9 | linear_attention | multi_seq | 128 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/rows.rs:134 | KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows) |
 
 ## decode, 1 row (estimated step 84522.5 µs)
 
 | # | Phase | Target op | Comparison kernel | Class | Parameter(s) differing | Runtime / compile-time / policy | Est. step share | Evidence at target point | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | decode | `moe.experts_gate_up` ×42 (`expert_gate_up`, W nvfp4/g16, A nvfp4/g16) | moe_nvfp4_gemv_1row: instantiation in `moe_expert_gemv.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 15.1% (12746.0 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (epilogue); also moe_grouped_tc: Policy variant (activation, epilogue) |
+| 1 | decode | `moe.experts_gate_up` ×42 (`expert_gate_up`, W nvfp4/g16, A nvfp4/g16) | w4a4_mx_static: instantiation in `w4a4_gemv_mx_moe.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 15.1% (12746.0 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (epilogue); also moe_grouped_tc: Policy variant (activation, epilogue) |
 | 2 | decode | `kda.k` ×34 (`linear:k`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 10.8% (9166.8 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 3 | decode | `kda.o` ×34 (`linear:o`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 10.8% (9166.8 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 4 | decode | `kda.q` ×34 (`linear:q`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 10.8% (9166.8 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 5 | decode | `kda.v` ×34 (`linear:v`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 10.8% (9166.8 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
-| 6 | decode | `moe.experts_down` ×42 (`expert_down`, W nvfp4/g16, A nvfp4/g16) | moe_relu2_down_1row: instantiation in `moe_expert_relu2_down_shared.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 7.5% (6379.9 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
+| 6 | decode | `moe.experts_down` ×42 (`expert_down`, W nvfp4/g16, A nvfp4/g16) | w4a4_mx_static: instantiation in `w4a4_gemv_mx_moe.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 7.5% (6379.9 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
 | 7 | decode | `dsa.o` ×11 (`linear:o`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 7.0% (5931.1 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 8 | decode | `moe.shared_gate_up` ×42 (`linear:shared_gate_up`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 6.7% (5662.5 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 9 | decode | `head.lm_head` ×1 (`lm_head`, W bf16, A bf16) | dense_bf16: `gemv::dense_gemv_bf16` (qwen3.8-27b-nvfp4-unsloth-declared `head.lm_head`) | Shared | none | - | 6.0% (5096.8 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
@@ -131,7 +131,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 35 | decode | `kda.conv_ckpt` ×34 (`state_snapshot`, in f32) | causal_conv1d_l2norm: `causal_conv1d::causal_conv1d_update_l2norm_f32` (qwen3.6-35b-a3b-nvfp4-declared `l0.gdn.conv_ckpt`) | Shared, unmeasured | none | - | 0.0% (13.4 µs) | none | reuse, then microbench at this point |
 | 36 | decode | `kda.qkv` ×34 (`concat`, in bf16) | concat: instantiation in `residual_add.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (13.4 µs) | none | reuse, then microbench at this point |
 | 37 | decode | `moe.post` ×42 (`hc_post`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (12.4 µs) | none | reuse, then microbench at this point |
-| 38 | decode | `dsa.select` ×11 (`index_select`, in bf16) | dsa_indexer: instantiation in `dsa_indexer.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (12.0 µs) | none | reuse, then microbench at this point |
+| 38 | decode | `dsa.select` ×11 (`index_select`, in bf16) | dsa_indexer: instantiation in `dsa_indexer.cu` +2; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (12.0 µs) | none | reuse, then microbench at this point |
 | 39 | decode | `dsa.idx_w` ×11 (`linear:index_weights`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 0.0% (11.9 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 40 | decode | `kda.post` ×34 (`hc_post`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (10.1 µs) | none | reuse, then microbench at this point |
 | 41 | decode | `mlp.mix` ×3 (`linear:hc_mix`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 0.0% (9.9 µs) | `qwen3.6-35b-a3b::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1) · drafter q M=1 N=8192 K=2048` (97.9% of floor); `qwen3.8-27b::dense_gemv_bf16 @ decode C=1 (R=4, MTP k=3) · drafter gate/up M=1 N=17408 K=5120` (95.8% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
@@ -165,14 +165,14 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 69 | decode | `dsa.kv_write` ×11 (`kv_write`, in bf16) | glm_mla_latent_write: instantiation in `glm5next_mla_latent_write.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (0.0 µs) | none | reuse, then microbench at this point; also kv_write: Policy variant (kv_dtype, layout) |
 | 70 | decode | `embed.embed` ×1 (`embed`) | embed_copy: `(embed_copy emitter)` (qwen3.6-35b-a3b-nvfp4-declared `embed.embed`) | Shared, unmeasured | none | - | 0.0% (0.0 µs) | none | reuse, then microbench at this point |
 | 71 | decode | `dsa.idx_k_norm` ×11 (`layer_norm`, in bf16) | layer_norm: instantiation in `nllb_encoder.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (0.0 µs) | none | reuse, then microbench at this point |
-| 72 | decode | `dsa.pool` ×11 (`kpool_compress`, in bf16) | dsa_indexer: instantiation in `dsa_indexer.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (0.0 µs) | none | reuse, then microbench at this point |
+| 72 | decode | `dsa.pool` ×11 (`kpool_compress`, in bf16) | dsa_indexer: instantiation in `dsa_indexer.cu` +2; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (0.0 µs) | none | reuse, then microbench at this point |
 
 ## multi_seq, 16 rows (estimated step 337569.8 µs)
 
 | # | Phase | Target op | Comparison kernel | Class | Parameter(s) differing | Runtime / compile-time / policy | Est. step share | Evidence at target point | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | multi_seq | `moe.experts_gate_up` ×42 (`expert_gate_up`, W nvfp4/g16, A nvfp4/g16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 49.3% (166524.4 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (epilogue); also moe_grouped_tc: Policy variant (activation, epilogue) |
-| 2 | multi_seq | `moe.experts_down` ×42 (`expert_down`, W nvfp4/g16, A nvfp4/g16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 24.7% (83372.6 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
+| 1 | multi_seq | `moe.experts_gate_up` ×42 (`expert_gate_up`, W nvfp4/g16, A nvfp4/g16) | w4a4_mx_static: instantiation in `w4a4_gemv_mx_moe.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 49.3% (166524.4 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (epilogue); also moe_grouped_tc: Policy variant (activation, epilogue) |
+| 2 | multi_seq | `moe.experts_down` ×42 (`expert_down`, W nvfp4/g16, A nvfp4/g16) | w4a4_mx_static: instantiation in `w4a4_gemv_mx_moe.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 24.7% (83372.6 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
 | 3 | multi_seq | `kda.recur` ×34 (`gdn_recurrence`, in f32) | gdn_recurrence_strided: `gated_delta_rule::gated_delta_rule_decode_f32_strided` (qwen3.6-35b-a3b-nvfp4-declared `l0.gdn.recur`) | Policy variant | decay channel vs head | policy | 5.5% (18685.4 µs) | none | policy template on decay (or split + bit_identical fusion rule); also gdn_carry_verify: Policy variant (decay) |
 | 4 | multi_seq | `kda.k` ×34 (`linear:k`, W bf16, A bf16) | dense_bf16_tc: instantiation in `dense_gemv_bf16_tc.cu`; no compared model runs this op on it here | Shared | none | - | 2.7% (9217.2 µs) | `qwen3.8-27b::dense_gemv_bf16_tc16 @ decode C=16 (R=32, MTP k=1) · drafter gate/up M=16 N=17408 K=5120` (95.2% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 5 | multi_seq | `kda.o` ×34 (`linear:o`, W bf16, A bf16) | dense_bf16_tc: instantiation in `dense_gemv_bf16_tc.cu`; no compared model runs this op on it here | Shared | none | - | 2.7% (9217.2 µs) | `qwen3.8-27b::dense_gemv_bf16_tc16 @ decode C=16 (R=32, MTP k=1) · drafter gate/up M=16 N=17408 K=5120` (95.2% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
@@ -325,8 +325,8 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 
 | # | Phase | Target op | Comparison kernel | Class | Parameter(s) differing | Runtime / compile-time / policy | Est. step share | Evidence at target point | Decision |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | verify | `moe.experts_gate_up` ×42 (`expert_gate_up`, W nvfp4/g16, A nvfp4/g16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 35.0% (48900.5 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (epilogue); also moe_grouped_tc: Policy variant (activation, epilogue) |
-| 2 | verify | `moe.experts_down` ×42 (`expert_down`, W nvfp4/g16, A nvfp4/g16) | moe_w4a16_grouped_gemm: instantiation in `moe_w4a16_grouped_gemm.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 17.5% (24477.8 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
+| 1 | verify | `moe.experts_gate_up` ×42 (`expert_gate_up`, W nvfp4/g16, A nvfp4/g16) | w4a4_mx_static: instantiation in `w4a4_gemv_mx_moe.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 35.0% (48900.5 µs) | none | reuse, then microbench at this point; also moe_nvfp4_grouped: Policy variant (epilogue); also moe_grouped_tc: Policy variant (activation, epilogue) |
+| 2 | verify | `moe.experts_down` ×42 (`expert_down`, W nvfp4/g16, A nvfp4/g16) | w4a4_mx_static: instantiation in `w4a4_gemv_mx_moe.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 17.5% (24477.8 µs) | none | reuse, then microbench at this point; also moe_grouped_tc: Policy variant (down_input); also moe_nvfp4_grouped: Policy variant (down_input) |
 | 3 | verify | `kda.k` ×34 (`linear:k`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 6.6% (9176.9 µs) | `qwen3.8-27b::dense_gemv_bf16_batchm @ decode C=1 (R=4, MTP k=3)` (91.7% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 4 | verify | `kda.o` ×34 (`linear:o`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 6.6% (9176.9 µs) | `qwen3.8-27b::dense_gemv_bf16_batchm @ decode C=1 (R=4, MTP k=3)` (91.7% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 5 | verify | `kda.q` ×34 (`linear:q`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +2; no compared model runs this op on it here | Shared | none | - | 6.6% (9176.9 µs) | `qwen3.8-27b::dense_gemv_bf16_batchm @ decode C=1 (R=4, MTP k=3)` (91.7% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
@@ -436,27 +436,26 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 
 | # | Family | Point | Sites | Max est. share |
 |---|---|---|---|---|
-| 1 | moe_w4a16_grouped_gemm | - | `moe.experts_down`, `moe.experts_gate_up` | 49.3% (multi_seq n=16) |
-| 2 | moe_nvfp4_gemv_1row | - | `moe.experts_gate_up` | 15.1% (decode n=1) |
-| 3 | moe_relu2_down_1row | - | `moe.experts_down` | 7.5% (decode n=1) |
-| 4 | glm_mla_decode | kv_dtype=fp8 kv_lora=512 | `dsa.attend` | 1.8% (decode n=1) |
-| 5 | kda_recurrent | decay=channel | `kda.recur` | 1.4% (decode n=1) |
-| 6 | dense_bf16 | - | `dsa.idx_gate`, `dsa.idx_k`, `dsa.idx_q`, `dsa.idx_w`, `dsa.kv_a`, `dsa.mix`, `dsa.o`, `dsa.q_a`, `dsa.q_b`, `head.lm_head`, `kda.b`, `kda.f_a`, `kda.f_b`, `kda.g_a`, `kda.g_b`, `kda.k`, `kda.mix`, `kda.o`, `kda.q`, `kda.v`, `mlp.mix`, `moe.gate`, `moe.mix`, `moe.shared_down`, `moe.shared_gate_up` | 1.0% (multi_seq n=128) |
-| 7 | w4a4_mx | - | `mlp.a_quant`, `mlp.down`, `mlp.gate_up`, `mlp.xn_quant`, `moe.eact_quant`, `moe.xn_quant` | 0.8% (decode n=1) |
-| 8 | causal_conv1d_l2norm | - | `kda.conv_ckpt`, `kda.l2`, `kda.short_conv` | 0.4% (multi_seq n=128) |
-| 9 | glm_swiglu_clamp | - | `mlp.clamp`, `moe.experts_clamp`, `moe.shared_clamp` | 0.3% (multi_seq n=128) |
-| 10 | nvfp4_mmq | - | `mlp.a_quant`, `mlp.act`, `mlp.down`, `mlp.gate_up`, `mlp.xn_quant`, `moe.eact_quant`, `moe.experts_act`, `moe.shared_act`, `moe.xn_quant` | 0.2% (multi_seq n=128) |
-| 11 | glm_moe_combine | shared_gate=none | `moe.blend` | 0.2% (multi_seq n=128) |
-| 12 | concat | - | `kda.qkv` | 0.2% (multi_seq n=128) |
-| 13 | glm_mhc | - | `dsa.post`, `dsa.pre`, `embed.expand`, `head.contract`, `kda.post`, `kda.pre`, `mlp.post`, `mlp.pre`, `moe.post`, `moe.pre` | 0.2% (multi_seq n=128) |
-| 14 | kda_o_norm | gate_act=sigmoid | `kda.out_norm` | 0.1% (multi_seq n=128) |
-| 15 | kda_gates | decay=channel gate=sigmoid_bounded | `kda.gates` | 0.1% (multi_seq n=128) |
-| 16 | silu_mul | - | `mlp.act`, `moe.experts_act`, `moe.shared_act` | 0.0% (verify n=4) |
-| 17 | argmax_host | - | `head.argmax` | 0.0% (multi_seq n=128) |
-| 18 | moe_weighted_sum_scale | shared_gate=none | `moe.blend` | 0.0% (decode n=1) |
-| 19 | dsa_indexer | - | `dsa.pool`, `dsa.select` | 0.0% (decode n=1) |
-| 20 | glm_router_topk | scoring=sigmoid_bias | `moe.top_k` | 0.0% (multi_seq n=128) |
-| 21 | embed_copy | - | `embed.embed` | 0.0% (multi_seq n=128) |
-| 22 | layer_norm | - | `dsa.idx_k_norm` | 0.0% (multi_seq n=128) |
-| 23 | glm_mla_latent_write | weight_form=plain | `dsa.kv_norm` | 0.0% (decode n=1) |
-| 24 | glm_mla_latent_write | kv_dtype=fp8 layout=latent | `dsa.kv_write` | 0.0% (decode n=1) |
+| 1 | w4a4_mx_static | - | `moe.experts_down`, `moe.experts_gate_up` | 49.3% (multi_seq n=16) |
+| 2 | moe_w4a16_grouped_gemm | - | `moe.experts_down`, `moe.experts_gate_up` | 48.3% (multi_seq n=128) |
+| 3 | glm_mla_decode | kv_dtype=fp8 kv_lora=512 | `dsa.attend` | 1.8% (decode n=1) |
+| 4 | kda_recurrent | decay=channel | `kda.recur` | 1.4% (decode n=1) |
+| 5 | dense_bf16 | - | `dsa.idx_gate`, `dsa.idx_k`, `dsa.idx_q`, `dsa.idx_w`, `dsa.kv_a`, `dsa.mix`, `dsa.o`, `dsa.q_a`, `dsa.q_b`, `head.lm_head`, `kda.b`, `kda.f_a`, `kda.f_b`, `kda.g_a`, `kda.g_b`, `kda.k`, `kda.mix`, `kda.o`, `kda.q`, `kda.v`, `mlp.mix`, `moe.gate`, `moe.mix`, `moe.shared_down`, `moe.shared_gate_up` | 1.0% (multi_seq n=128) |
+| 6 | w4a4_mx | - | `mlp.a_quant`, `mlp.down`, `mlp.gate_up`, `mlp.xn_quant`, `moe.eact_quant`, `moe.xn_quant` | 0.8% (decode n=1) |
+| 7 | causal_conv1d_l2norm | - | `kda.conv_ckpt`, `kda.l2`, `kda.short_conv` | 0.4% (multi_seq n=128) |
+| 8 | glm_swiglu_clamp | - | `mlp.clamp`, `moe.experts_clamp`, `moe.shared_clamp` | 0.3% (multi_seq n=128) |
+| 9 | nvfp4_mmq | - | `mlp.a_quant`, `mlp.act`, `mlp.down`, `mlp.gate_up`, `mlp.xn_quant`, `moe.eact_quant`, `moe.experts_act`, `moe.shared_act`, `moe.xn_quant` | 0.2% (multi_seq n=128) |
+| 10 | glm_moe_combine | shared_gate=none | `moe.blend` | 0.2% (multi_seq n=128) |
+| 11 | concat | - | `kda.qkv` | 0.2% (multi_seq n=128) |
+| 12 | glm_mhc | - | `dsa.post`, `dsa.pre`, `embed.expand`, `head.contract`, `kda.post`, `kda.pre`, `mlp.post`, `mlp.pre`, `moe.post`, `moe.pre` | 0.2% (multi_seq n=128) |
+| 13 | kda_o_norm | gate_act=sigmoid | `kda.out_norm` | 0.1% (multi_seq n=128) |
+| 14 | kda_gates | decay=channel gate=sigmoid_bounded | `kda.gates` | 0.1% (multi_seq n=128) |
+| 15 | silu_mul | - | `mlp.act`, `moe.experts_act`, `moe.shared_act` | 0.0% (verify n=4) |
+| 16 | argmax_host | - | `head.argmax` | 0.0% (multi_seq n=128) |
+| 17 | moe_weighted_sum_scale | shared_gate=none | `moe.blend` | 0.0% (decode n=1) |
+| 18 | dsa_indexer | - | `dsa.pool`, `dsa.select` | 0.0% (decode n=1) |
+| 19 | glm_router_topk | scoring=sigmoid_bias | `moe.top_k` | 0.0% (multi_seq n=128) |
+| 20 | embed_copy | - | `embed.embed` | 0.0% (multi_seq n=128) |
+| 21 | layer_norm | - | `dsa.idx_k_norm` | 0.0% (multi_seq n=128) |
+| 22 | glm_mla_latent_write | weight_form=plain | `dsa.kv_norm` | 0.0% (decode n=1) |
+| 23 | glm_mla_latent_write | kv_dtype=fp8 layout=latent | `dsa.kv_write` | 0.0% (decode n=1) |

@@ -2125,9 +2125,14 @@ kernels = [
   "dsa_indexer::dsa_indexer_store", "dsa_indexer::dsa_write_geom",
   "dsa_indexer::dsa_kpool_compress", "dsa_indexer::dsa_index_scores",
   "dsa_indexer::dsa_topk_pools", "dsa_indexer::dsa_expand_selection",
+  "dsa_indexer_rows::dsa_indexer_store_rows", "dsa_indexer_rows::dsa_write_geom_rows",
+  "dsa_indexer_rows::dsa_pool_scores_rows", "dsa_indexer_rows::dsa_topk_pools_rows",
+  "dsa_indexer_rows::dsa_expand_selection_rows",
 ]
 kernel_compute."dsa_indexer::dsa_indexer_store" = { compute = "memory" }
 kernel_compute."dsa_indexer::dsa_write_geom" = { compute = "memory" }
+kernel_compute."dsa_indexer_rows::dsa_indexer_store_rows" = { compute = "memory" }
+kernel_compute."dsa_indexer_rows::dsa_write_geom_rows" = { compute = "memory" }
 rows = [1, 1]
 pipeline.kpool_compress = { in = ["bf16", "bf16"], state = "bf16", compute = "f32", out = [] }
 pipeline.index_select = { in = ["f32", "f32"], scores = "f32", score = "f32", out = ["i32"] }
@@ -2135,7 +2140,9 @@ op = [{ op = "kpool_compress" }, { op = "index_select" }]
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/dsa_indexer.cu"]
+# 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
+# sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_rows.cu"]
 
 # 2026-10-08: NoPE latent decode attention over the selected tokens of an FP8 latent cache, one
 # CTA per (head, row). Its query is already in latent space and its output stays there: the
@@ -2334,9 +2341,9 @@ layer_kind = "linear_attention"
 per_sequence = ["multi_seq"]
 sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:232"
-holds = "|row| self.conv_row(gpu, row, &states[row], ws, stream),"
-note = "KDA batched decode: conv one row per launch, recurrence one launch per group"
+cite = "crates/model-arch/src/glm5next_kda/rows.rs:134"
+holds = "return self.decode_rows_then(gpu, hidden, &states, ws, stream, after_row);"
+note = "KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows)"
 
 [[legacy_path]]
 arch = "glm5_next"
@@ -2344,9 +2351,9 @@ layer_kind = "deepseek_sparse_attention"
 per_sequence = ["multi_seq"]
 sites = ["dsa.idx_k", "dsa.idx_k_norm", "dsa.idx_gate", "dsa.pool", "dsa.select"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:171"
-holds = "for r in 0..n {"
-note = "DSA batched decode: indexer key, pool store and selection one row per launch"
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341"
+holds = "for r in paged_rows..n {"
+note = "DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage)"
 
 # 2026-10-08: A K-row verify batches the KDA projections but walks the conv and the recurrence
 # one row at a time; the DSA latent write, indexer write and selection also run per row (the
@@ -2357,7 +2364,7 @@ layer_kind = "linear_attention"
 per_sequence = ["verify"]
 sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2", "kda.recur"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:307"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:315"
 holds = "for row in 0..k {"
 note = "KDA verify: conv and recurrence one row per launch (stateful_row)"
 

@@ -103,7 +103,7 @@ fn the_per_row_dsa_indexer_is_the_top_flag() {
     let top = &r.flags[0];
     assert_eq!(
         top.source,
-        "legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:171"
+        "legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341"
     );
     assert!(top.run.mode == Mode::MultiSeq && top.run.rows == 128);
 }

@@ -32,6 +32,9 @@ impl Glm5NextDsaLayer {
         place: IndexerPlace<'_>,
         pos: usize,
         d: usize,
+        // 2026-10-09: The staging row a device placement copies from: 0, or row `r` of the
+        // batched indexer projections (`indexer_project_rows`).
+        stage_row: usize,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -52,8 +55,8 @@ impl Glm5NextDsaLayer {
                 KernelLaunch::new(gpu, self.select_kernels.indexer_store)
                     .grid([1, 1, 1])
                     .block([d.min(1024) as u32, 1, 1])
-                    .arg_ptr(w.stage_k)
-                    .arg_ptr(w.stage_gate)
+                    .arg_ptr(w.stage_k.offset(stage_row * d * 2))
+                    .arg_ptr(w.stage_gate.offset(stage_row * d * 2))
                     .arg_ptr(pd)
                     .arg_ptr(rows.k)
                     .arg_ptr(rows.gate)

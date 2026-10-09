@@ -3,7 +3,10 @@
 //! 2026-10-08: Byte-identity gate for the GLM-5.3 batched multi-sequence decode mixers: KDA
 //! `decode_rows` and DSA `decode_rows` over C sequences against each sequence decoded alone
 //! (`Glm5NextKdaLayer::decode`, `Glm5NextDsaLayer::decode_k` at k = 1 on a decode step), at
-//! C = 2, 4 and 16, on synthetic weights through the real kernels.
+//! C = 1 (2026-10-09), 2, 4 and 16, on synthetic weights through the real kernels. The levers
+//! that batch rows (`METRALE_GLM_KDA_SEQ_ROWS`, `METRALE_GLM_KDA_ROWS_REG`,
+//! `METRALE_GLM_DSA_INDEXER_ROWS`) are read from the environment, so running the gate with them
+//! set checks the batched arms against the same single-sequence references.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -37,7 +40,7 @@ use metrale_model_arch::glm5next_dsa::state::Glm5NextDsaState;
 use metrale_model_arch::glm5next_kda::KdaSeqState;
 use metrale_model_layers::layer::LayerState;
 
-const CS: [usize; 3] = [2, 4, 16];
+const CS: [usize; 4] = [1, 2, 4, 16];
 
 /// 2026-10-08: KDA: C states drawn independently; each sequence decoded alone from a copy,
 /// then all C in one `decode_rows` from another copy.

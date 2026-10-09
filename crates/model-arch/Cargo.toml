@@ -227,6 +227,14 @@ name = "glm5next_c16_kernel_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_rowbatch_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "glm5next_dsa_rows_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_dsa_paged_parity"
 required-features = ["cuda", "gpu-examples"]
 
