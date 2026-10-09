@@ -10,7 +10,8 @@
 //!    against one 16-row sweep (`_m16`), union build included, for the gate projection. The
 //!    two outputs must be byte-identical.
 //! 3. KDA recurrence: sixteen `kda_recurrent_decode_bf16_smem` launches against one
-//!    `kda_recurrent_decode_bf16_smem_rows`. Outputs and states must be byte-identical.
+//!    `kda_recurrent_decode_bf16_smem_rows` and one `kda_recurrent_decode_bf16_rows_reg`.
+//!    Outputs and states must be byte-identical.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -303,6 +304,7 @@ fn kda(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
     let cd = 3 * qkv;
     let single = g.kernel("kda_recurrent", "kda_recurrent_decode_bf16_smem")?;
     let rows_k = g.kernel("kda_recurrent", "kda_recurrent_decode_bf16_smem_rows")?;
+    let reg_k = g.kernel("kda_recurrent", "kda_recurrent_decode_bf16_rows_reg")?;
     let smem = ((3 * D + VPB * (D + 1)) * 4) as u32;
     let conv = up_bf16(g, rng, ROWS * cd, 0.1)?;
     let gate = up_f32(
@@ -323,8 +325,10 @@ fn kda(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
         .collect();
     let mk =
         |v: &Vec<Vec<f32>>| -> Result<Vec<DevicePtr>> { v.iter().map(|s| up_f32(g, s)).collect() };
-    let (sa, sbat) = (mk(&init)?, mk(&init)?);
-    let (oa, ob) = (zeros(g, ROWS * qkv * 4)?, zeros(g, ROWS * qkv * 4)?);
+    let (sa, sbat, sreg) = (mk(&init)?, mk(&init)?, mk(&init)?);
+    let oa = zeros(g, ROWS * qkv * 4)?;
+    let ob = zeros(g, ROWS * qkv * 4)?;
+    let oreg = zeros(g, ROWS * qkv * 4)?;
     let scale = 1.0 / (D as f32).sqrt();
     let per_row = |states: &[DevicePtr], out: DevicePtr| -> Result<()> {
         for (r, s) in states.iter().enumerate() {
@@ -372,29 +376,59 @@ fn kda(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
         }
         l.launch(0)
     };
+    let reg = |states: &[DevicePtr], out: DevicePtr| -> Result<()> {
+        let mut l = KernelLaunch::new(g, reg_k)
+            .grid([H as u32, 1, ROWS as u32])
+            .block([D as u32, 1, 1])
+            .shared_mem((3 * D * 4) as u32)
+            .arg_ptr(conv)
+            .arg_ptr(conv.offset(qkv * 2))
+            .arg_ptr(conv.offset(qkv * 4))
+            .arg_ptr(gate)
+            .arg_ptr(beta)
+            .arg_ptr(out)
+            .arg_u32(H as u32)
+            .arg_f32(scale)
+            .arg_u32(cd as u32)
+            .arg_u32(qkv as u32)
+            .arg_u32(H as u32)
+            .arg_u32(qkv as u32);
+        for r in 0..16 {
+            l = l.arg_u64(states.get(r).map_or(0, |s| s.0));
+        }
+        l.launch(0)
+    };
     // 2026-10-09: One step each from the same initial states, compared; then timing (the
     // states keep advancing, which does not change the work).
     per_row(&sa, oa)?;
     batched(&sbat, ob)?;
-    same(
-        "KDA out",
-        &read(g, oa, ROWS * qkv * 4)?,
-        &read(g, ob, ROWS * qkv * 4)?,
-    )?;
+    reg(&sreg, oreg)?;
+    let want = read(g, oa, ROWS * qkv * 4)?;
+    same("KDA out (rows)", &want, &read(g, ob, ROWS * qkv * 4)?)?;
+    same("KDA out (rows_reg)", &want, &read(g, oreg, ROWS * qkv * 4)?)?;
     for r in 0..ROWS {
+        let st = read(g, sa[r], sb)?;
         same(
-            &format!("KDA state {r}"),
-            &read(g, sa[r], sb)?,
+            &format!("KDA state {r} (rows)"),
+            &st,
             &read(g, sbat[r], sb)?,
+        )?;
+        same(
+            &format!("KDA state {r} (rows_reg)"),
+            &st,
+            &read(g, sreg[r], sb)?,
         )?;
     }
     let tp = time(g, || per_row(&sa, oa))?;
     let tb = time(g, || batched(&sbat, ob))?;
+    let tr = time(g, || reg(&sreg, oreg))?;
     let mb = (2 * ROWS * sb) as f64 / 1e6;
     println!(
         "KDA recurrence, 16 rows x {H} heads ({mb:.1} MB state read+write): 16 single-row \
-         launches {tp:.1} us, one rows launch {tb:.1} us ({:.0} GB/s)",
-        mb * 1e3 / tb
+         launches {tp:.1} us, one smem rows launch {tb:.1} us ({:.0} GB/s), one register \
+         rows launch {tr:.1} us ({:.0} GB/s)",
+        mb * 1e3 / tb,
+        mb * 1e3 / tr
     );
     Ok(())
 }

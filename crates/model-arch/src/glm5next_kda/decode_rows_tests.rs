@@ -69,6 +69,7 @@ fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         recurrent: k(RECUR),
         recurrent_smem: k(RECUR_SMEM),
         recurrent_smem_rows: k(RECUR_ROWS),
+        recurrent_rows_reg: k(0x315),
         o_norm: k(0x30E),
         split_widen: k(0x30F),
         sigmoid: k(0x310),

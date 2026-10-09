@@ -37,6 +37,10 @@ pub struct Glm5NextKdaKernels {
     /// [`KDA_ROWS_MAX`] rows of different sequences in one launch, each row's state a kernel
     /// argument. Resolved with `try_kernel`; `0` keeps one launch per row.
     pub recurrent_smem_rows: KernelHandle,
+    /// 2026-10-09: `kda_recurrent_decode_bf16_rows_reg`: the rows step with the decayed column
+    /// in registers (head_dim [`KDA_REG_D`] only). Taken instead of `recurrent_smem_rows` under
+    /// `METRALE_GLM_KDA_ROWS_REG=1` until measured; `0` when absent.
+    pub recurrent_rows_reg: KernelHandle,
     pub o_norm: KernelHandle,
     pub split_widen: KernelHandle,
     pub sigmoid: KernelHandle,
@@ -78,6 +82,11 @@ impl Glm5NextKdaKernels {
                 "kda_recurrent",
                 "kda_recurrent_decode_bf16_smem_rows",
             ),
+            recurrent_rows_reg: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_recurrent",
+                "kda_recurrent_decode_bf16_rows_reg",
+            ),
             o_norm: gpu.kernel("kda_layer_ops", "kda_o_norm_gated_bf16")?,
             split_widen: gpu.kernel("kda_layer_ops", "kda_split_widen")?,
             sigmoid: gpu.kernel("kda_layer_ops", "kda_sigmoid_bf16_f32")?,
@@ -91,3 +100,7 @@ impl Glm5NextKdaKernels {
 /// arguments `kda_recurrent_decode_bf16_smem_rows` takes. Wider groups keep one launch per
 /// row.
 pub const KDA_ROWS_MAX: usize = 16;
+
+/// 2026-10-09: `#define KDA_REG_D` in `kda_recurrent.cu`: the head_dim
+/// `kda_recurrent_decode_bf16_rows_reg` is compiled for.
+pub const KDA_REG_D: usize = 128;

@@ -40,7 +40,7 @@ mod kernels;
 mod prefill;
 mod replay;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
-pub use kernels::{Glm5NextKdaKernels, KDA_ROWS_MAX};
+pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX};
 pub use replay::KdaVerifyRecord;
 
 use anyhow::{Result, bail};
@@ -62,6 +62,13 @@ const KDA_V_PER_BLOCK: usize = 32;
 /// 2026-09-25: Largest shared memory `stateful_row` requests for the 1R+1W kernel; a larger need
 /// launches the 2R+2W kernel instead.
 const KDA_SMEM_BUDGET: usize = 48 * 1024;
+
+/// 2026-10-09: `METRALE_GLM_KDA_ROWS_REG=1` runs the batched decode's KDA recurrence on the
+/// register-resident rows kernel; off until a measurement shows it faster. Read once.
+fn kda_rows_reg() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROWS_REG").as_deref() == Ok("1"))
+}
 
 /// 2026-09-25: `METRALE_GLM_KDA_NO_SMEM=1` selects the 2R+2W recurrent kernel. Read once per
 /// process; it is checked on every decode row.
