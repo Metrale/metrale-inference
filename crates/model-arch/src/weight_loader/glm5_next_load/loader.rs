@@ -177,6 +177,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                         },
                         rms_eps: config.rms_norm_eps as f32,
                         kv_scale: 1.0,
+                        indexer_cache: crate::glm5next_dsa::paged::text_stack_indexer_cache(),
                     }))
                 }
             };

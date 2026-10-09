@@ -183,11 +183,11 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/dsa_indexer.cu](../../kernels/gb10/common/dsa_indexer.cu)
 
-- *whole file*: Replay-safe geometry: under CUDA-graph capture the selector kernels read S, pool counts, select_k and the top-k tile from a device geom vector, and the grid is fixed at the context ceiling with blocks past the live pool count returning at once (idle blocks traded for graph replay). — source: kernels/gb10/common/dsa_indexer.cu:53
+- *whole file*: Replay-safe geometry: under CUDA-graph capture the selector kernels read S, pool counts, select_k and the top-k tile from a device geom vector, and the grid is fixed at the context ceiling with blocks past the live pool count returning at once (idle blocks traded for graph replay). — source: kernels/gb10/common/dsa_indexer.cu:57
 - *dsa_expand_selection*: Clamps select_k per row so each row's tail slot matches a single-row pass: glm5next_dsa_mla_decode_fp8 merges NUM_WARPS = 8 slices of the row, and measured 2026-09-06 without the clamp, 14 of 18 configurations where a tail token crossed a slice boundary differed by up to 2 BF16 ulp. — source: kernels/gb10/common/dsa_indexer.cu:413
-- *dsa_kpool_compress*: Pool size KP must be &lt;= 8 (per-channel lg[8] slot array); config validation refuses a larger index_kpool. A trailing partial pool is never valid. — source: kernels/gb10/common/dsa_indexer.cu:44
+- *dsa_kpool_compress*: Pool size KP must be &lt;= 8 (per-channel lg[8] slot array); config validation refuses a larger index_kpool. A trailing partial pool is never valid. — source: kernels/gb10/common/dsa_indexer.cu:51
 - *dsa_mla_masked_attn*: Test-oracle dense path, not on the serve path: the score row is S floats of dynamic shared memory, so at 49,152 B S is capped at 12,288 keys. Scores are parallel over keys and the value sum over dims to avoid a barrier per key. — source: kernels/gb10/common/dsa_indexer.cu:509
-- *dsa_topk_pools*: Tiled bitonic select with a running best list in 16 \* NP2 bytes of shared memory whatever the context (NP2 &lt;= 2048 fits 49,152 B); the score-desc / index-asc total order makes the result independent of tiling. select_k must be &lt;= NP2. — source: kernels/gb10/common/dsa_indexer.cu:267; kernels/b300/common/dsa_indexer.cu:248
+- *dsa_topk_pools*: Tiled bitonic select with a running best list in 16 \* NP2 bytes of shared memory whatever the context (NP2 &lt;= 2048 fits 49,152 B); the score-desc / index-asc total order makes the result independent of tiling. select_k must be &lt;= NP2. — source: kernels/gb10/common/dsa_indexer.cu:267; kernels/b300/common/dsa_indexer.cu:270
 
 <a id="to-kernels-gb10-common-e2m1-branchless-cu"></a>
 

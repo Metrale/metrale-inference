@@ -280,6 +280,7 @@ pub mod weight_quantization;
 pub use activation_quantization::{ActQuantFormat, ActivationQuantization, ProjFamily};
 pub use dispatch::parse_config;
 pub use gguf::{GgufConfigInputs, GgufMeta, config_from_gguf};
+pub use kv_completeness::glm_dsa_indexer_paged;
 pub use model_config::ModelConfig;
 pub use parsers::{
     PEFT_SUPPORTED_TARGET_MODULES, PeftAdapterConfig, allow_partial_targets,

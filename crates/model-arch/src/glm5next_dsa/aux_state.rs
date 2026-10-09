@@ -37,6 +37,7 @@
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::GpuBackend;
 
+use super::paged::IndexerCache;
 use super::state::Glm5NextDsaState;
 
 /// 2026-09-25: `[len u64][index_head_dim u64]`, little-endian.
@@ -54,6 +55,7 @@ impl Glm5NextDsaState {
     /// prefix-cache snapshot. Rows past `len` were never written or are
     /// unreachable (`rewind_to` leaves them in place).
     pub fn snapshot_blob(&self, gpu: &dyn GpuBackend, stream: u64) -> Result<Vec<u8>> {
+        self.ensure_flat_for_blob()?;
         let len = self.len();
         let d = self.index_head_dim();
         let key_bytes = len * d * 2;
@@ -78,6 +80,7 @@ impl Glm5NextDsaState {
     /// model-engine's `apply_aux_states` propagates it with `?`, so the
     /// prefix-cache hit fails.
     pub fn restore_blob(&mut self, blob: &[u8], gpu: &dyn GpuBackend, stream: u64) -> Result<()> {
+        self.ensure_flat_for_blob()?;
         ensure!(
             blob.len() >= HEADER_BYTES,
             "DSA aux blob truncated: {} bytes, need at least {HEADER_BYTES} for the header",
@@ -116,6 +119,17 @@ impl Glm5NextDsaState {
         // check never sees a partial restore.
         self.rewind_to(0)?;
         self.advance(len)?;
+        Ok(())
+    }
+
+    /// 2026-10-09: A paged cache's rows are in its KV blocks, which the prefix cache shares
+    /// directly; a blob of them would be a second copy, and its NULL pointers cannot be read.
+    fn ensure_flat_for_blob(&self) -> Result<()> {
+        ensure!(
+            self.cache() == IndexerCache::Flat,
+            "DSA aux blob on a paged indexer cache: its rows travel with the KV blocks, so \
+             a layer with a paged cache must not report aux state"
+        );
         Ok(())
     }
 

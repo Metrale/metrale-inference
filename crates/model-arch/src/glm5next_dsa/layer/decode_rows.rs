@@ -34,8 +34,9 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, LayerState};
 
 use super::super::attend::DsaDecodePaging;
+use super::super::paged::IndexerCache;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, gemm};
+use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
 
 /// 2026-10-08: Row `r`'s `Glm5NextDsaState`; errors on any other state type.
 fn dsa_row<'a>(
@@ -160,7 +161,20 @@ impl Glm5NextDsaLayer {
             let st = dsa_row(states, s)?;
             self.check_lockstep(st, span.first_pos)?;
             st.ensure_room(span.rows)?;
+            // 2026-10-09: A paged row is always placed on the device, at its metadata
+            // position through its metadata block-table row: this call has no host tables.
+            if st.cache() == IndexerCache::Paged {
+                if self.select_kernels.indexer_store.0 == 0 {
+                    bail!(
+                        "DSA layer {}: a paged batched decode needs dsa_indexer_store, which \
+                         this target lacks",
+                        self.layer_idx
+                    );
+                }
+                self.paged_layout(kv_cache)?;
+            }
         }
+        let bt_stride = meta.max_blocks_per_seq as usize * 4;
         let row_seq: Vec<usize> = spans
             .iter()
             .enumerate()
@@ -252,12 +266,22 @@ impl Glm5NextDsaLayer {
             let mr = meta_row_base + r;
             let t = profile::start();
             let st = dsa_row(states, row_seq[r])?;
-            let pos_dev = replay_safe.then(|| meta.positions.offset(mr * 4));
+            let bt_row = meta.block_table.offset(mr * bt_stride);
+            let place = if replay_safe || st.cache() == IndexerCache::Paged {
+                IndexerPlace::Device {
+                    pos: meta.positions.offset(mr * 4),
+                    bt: bt_row,
+                }
+            } else {
+                // 2026-10-09: A flat row's host address is `pos * D`; it needs no table.
+                IndexerPlace::Host { block_table: &[] }
+            };
             self.indexer_forward_with(
                 gpu,
                 hidden.offset(r * self.cfg.hidden * 2),
                 st,
-                pos_dev,
+                kv_cache,
+                place,
                 !batched_idx,
                 stream,
             )?;
@@ -271,10 +295,12 @@ impl Glm5NextDsaLayer {
                     w.head_weights_rows.offset(r * heads * 4),
                 )
             });
+            let rows = self.indexer_rows(st, kv_cache, bt_row)?;
             self.select_row(
                 gpu,
                 r,
                 st,
+                rows,
                 meta.positions.offset(mr * 4),
                 replay_safe,
                 pre,
@@ -282,7 +308,6 @@ impl Glm5NextDsaLayer {
             )?;
         }
 
-        let bt_stride = meta.max_blocks_per_seq as usize * 4;
         let paging = DsaDecodePaging {
             num_seqs: n,
             num_q_heads: self.cfg.local_heads,
