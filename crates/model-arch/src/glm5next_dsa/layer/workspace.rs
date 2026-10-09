@@ -201,6 +201,12 @@ impl Glm5NextDsaWorkspace {
         })
     }
 
+    /// 2026-10-09: `[max_rows, local_heads * kv_lora_rank]` BF16: the latent attention output of
+    /// the last attend, before `o_absorb` (read by the decode-kernel parity example).
+    pub fn attn_out(&self) -> DevicePtr {
+        self.attn_out
+    }
+
     /// 2026-10-08: The largest `k` `decode_k` and `decode_rows` accept.
     pub fn max_rows(&self) -> usize {
         self.max_rows
