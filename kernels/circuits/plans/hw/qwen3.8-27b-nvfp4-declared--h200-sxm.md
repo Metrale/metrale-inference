@@ -335,9 +335,9 @@ Kernels a rule under this policy names that the device's class does not provide:
 | nvfp4_mmq::metrale_nvfp4_quantize_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
 | nvfp4_mmq::metrale_nvfp4_scale_bf16 | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
 | nvfp4_mmq::metrale_nvfp4_silu_mul_quant | expected absent: Hopper sm_90a lacks the vendor BLACKWELL_MMA_AVAILABLE warp FP4 path (SM 12.x only); absent handles retain W4A16 prefill and transposed weights. |
-| w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_gemv_mx16_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_gemv_mx32_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
-| w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) |
+| w4a4_gemv_mx::w4a4_gemv_mx16_nt2 | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_gemv_mx16_ps | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_gemv_mx32_nt4 | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_gemv_mx32_ps | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_gemv_mx8 | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
+| w4a4_gemv_mx::w4a4_quant_rows | expected absent: Hopper sm_90a: block-scaled FP4 MMA is unsupported; the hardware guard excludes the W4A4 decode, and NVFP4 projections run W4A16. |
