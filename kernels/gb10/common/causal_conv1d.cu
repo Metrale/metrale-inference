@@ -427,6 +427,8 @@ extern "C" __global__ void causal_conv1d_update_l2norm(
                                      b < batch, dim, d_conv, qk_channels, head_dim, l2_eps);
 }
 
+#include "rows_pick.cuh"
+
 // 2026-10-09: causal_conv1d_update_l2norm for up to 16 rows of different sequences in one
 // launch: grid y is the row r, which reads and writes input/output row w<r> and updates the
 // window at state pointer s<r> (each a kernel argument, so a captured graph keeps them). Block
@@ -453,13 +455,12 @@ extern "C" __global__ void causal_conv1d_update_l2norm_rows(
 ) {
     const unsigned int r = blockIdx.y;
     if (r >= 16) return;
-    const unsigned long long sp[16] = {s0, s1, s2, s3, s4, s5, s6, s7,
-                                       s8, s9, s10, s11, s12, s13, s14, s15};
-    const unsigned int wr[16] = {w0, w1, w2, w3, w4, w5, w6, w7,
-                                 w8, w9, w10, w11, w12, w13, w14, w15};
-    float* state = (float*)sp[r];
+    float* state = (float*)rows_pick16(r, s0, s1, s2, s3, s4, s5, s6, s7,
+                                       s8, s9, s10, s11, s12, s13, s14, s15);
     if (state == nullptr) return;
-    causal_conv1d_update_l2norm_body(state, new_input, weight, bias, output, 0u, wr[r], true,
+    const unsigned int w = rows_pick16(r, w0, w1, w2, w3, w4, w5, w6, w7,
+                                       w8, w9, w10, w11, w12, w13, w14, w15);
+    causal_conv1d_update_l2norm_body(state, new_input, weight, bias, output, 0u, w, true,
                                      dim, d_conv, qk_channels, head_dim, l2_eps);
 }
 

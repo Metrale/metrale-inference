@@ -274,6 +274,7 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem(
 // arguments, so a captured graph keeps the ones it was captured with; a null pointer skips
 // the row. The launcher must pass exactly KDA_ROWS_MAX state arguments.
 #define KDA_ROWS_MAX 16
+#include "rows_pick.cuh"
 extern "C" __global__ void kda_recurrent_decode_bf16_smem_rows(
     const __nv_bfloat16* __restrict__ q,
     const __nv_bfloat16* __restrict__ k,
@@ -300,13 +301,11 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem_rows(
 ) {
     const unsigned int r = blockIdx.z;
     if (r >= KDA_ROWS_MAX) return;
-    const unsigned long long sp[KDA_ROWS_MAX] = {s0, s1, s2, s3, s4, s5, s6, s7,
-                                                 s8, s9, s10, s11, s12, s13, s14, s15};
-    const unsigned int wrow[KDA_ROWS_MAX] = {w0, w1, w2, w3, w4, w5, w6, w7,
-                                              w8, w9, w10, w11, w12, w13, w14, w15};
-    float* state = (float*)sp[r];
+    float* state = (float*)rows_pick16(r, s0, s1, s2, s3, s4, s5, s6, s7,
+                                       s8, s9, s10, s11, s12, s13, s14, s15);
     if (state == nullptr) return;
-    const size_t w = wrow[r];
+    const size_t w = rows_pick16(r, w0, w1, w2, w3, w4, w5, w6, w7,
+                                 w8, w9, w10, w11, w12, w13, w14, w15);
     kda_recurrent_decode_bf16_smem_body(
         q + w * qkv_row_stride,
         k + w * qkv_row_stride,
@@ -354,13 +353,11 @@ extern "C" __global__ void kda_recurrent_decode_bf16_rows_reg(
     const unsigned int r = blockIdx.z;
     const unsigned int h = blockIdx.x;
     if (r >= KDA_ROWS_MAX || h >= H) return;
-    const unsigned long long sp[KDA_ROWS_MAX] = {s0, s1, s2, s3, s4, s5, s6, s7,
-                                                 s8, s9, s10, s11, s12, s13, s14, s15};
-    const unsigned int wrow[KDA_ROWS_MAX] = {w0, w1, w2, w3, w4, w5, w6, w7,
-                                              w8, w9, w10, w11, w12, w13, w14, w15};
-    float* state = (float*)sp[r];
+    float* state = (float*)rows_pick16(r, s0, s1, s2, s3, s4, s5, s6, s7,
+                                       s8, s9, s10, s11, s12, s13, s14, s15);
     if (state == nullptr) return;
-    const size_t w = wrow[r];
+    const size_t w = rows_pick16(r, w0, w1, w2, w3, w4, w5, w6, w7,
+                                 w8, w9, w10, w11, w12, w13, w14, w15);
     q += w * qkv_row_stride;
     k += w * qkv_row_stride;
     v += w * qkv_row_stride;
