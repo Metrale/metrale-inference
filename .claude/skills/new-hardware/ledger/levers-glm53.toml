@@ -389,3 +389,123 @@ effort_hours = 1.0
 transferability = "multi-node hybrid MoE serving on gb10"
 links = { pr = "", commit = "", evidence = "quick same-box serve probes (n = 1, not the official ladder) and nsys on rank 0" }
 notes = "j_tok not measured for these quick probes; per_rung tok_s_pct from n = 1 probes"
+
+[[lever]]
+id = "gb10x3-glm53-prefill-rows-512"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_PREFILL_ROWS=512"
+symptom = "TTFT p50 4.5 s at C1, 23.9 s at C8 on the official ladder"
+diagnosis_tool = "bench"
+root_cause_class = "serialization"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "bit-identical-not-claimed"
+per_rung = [{ rung = "C1", tok_s_pct = 3.4, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 9.8, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "TTFT C1 4.5 s -> 0.74 s, C8 23.9 s -> 0.43 s"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = "wide sub-chunk changes projection numerics (documented on the lever)"
+
+[[lever]]
+id = "gb10x3-glm53-dflash-off-chat-prose"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "no DFlash (K=0) vs DFlash2 g8 vLLM draft ladder"
+symptom = "DFlash2 slower than plain decode on chat prose"
+diagnosis_tool = "bench"
+root_cause_class = "speculation-acceptance"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 27, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 33, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 31, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "K=0 beats DFlash at every rung probed: C1 17.0 vs 13.4, C8 56.0 vs 42.2 (nvfp4 tier); C1 21.2 vs 16.3, C8 68.7 vs 46.6, C16 85.7 vs 53.4 (declared + fp8 dense, FULL_BLOCK)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = "acceptance p1 0.44, mean accepted 0.63/step; vLLM reaches 47 tok/s C1 with the same drafter so a drafter-input defect is still suspected"
+
+[[lever]]
+id = "gb10x3-glm53-dflash-full-block"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "METRALE_DFLASH_FULL_BLOCK=1"
+symptom = "short ladder drafts accept less than the full block"
+diagnosis_tool = "bench"
+root_cause_class = "speculation-acceptance"
+lever_type = "config"
+lkb_effect = "no kernel change"
+parity_tier_kept = "bit-identical"
+per_rung = []
+verdict = "discarded"
+verdict_reason = "not isolated (no same-build run without it); with it DFlash still loses to K=0 by 23% at C1, so it is moot for the recipe"
+failure_mode = "undeclared lever refused startup"
+caught_by = "lever registry"
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-declared-w4a4-union"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--weight-quantization declared (W4A4 slot + union kernels)"
+symptom = "declared W4A4 C1 37 -> 28 before the union kernels"
+diagnosis_tool = "bench"
+root_cause_class = "kernel-efficiency"
+lever_type = "kernel"
+lkb_effect = "union kernels in the existing family"
+parity_tier_kept = "declared"
+per_rung = [{ rung = "C1", tok_s_pct = 0.6, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 5.7, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 12.7, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "K=0: C1 17.1 vs 17.0, C8 59.2 vs 56.0, C16 79.0 vs 70.1 vs the nvfp4 (W4A16) tier"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dense-fp8-matched"
+date = "2026-10-09"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3/EP=3 over three boxes"
+recipe_or_tier = "--dense-quantization fp8 (matched tier, opt-in, disclosed)"
+symptom = "BF16 dense dominates the C1 step"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "config"
+lkb_effect = "FP8 quantize reuse, no new kernel"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 24, j_tok_pct = 0.0, n = 1 }, { rung = "C8", tok_s_pct = 16, j_tok_pct = 0.0, n = 1 }, { rung = "C16", tok_s_pct = 8.5, j_tok_pct = 0.0, n = 1 }]
+verdict = "kept"
+verdict_reason = "declared experts + fp8 dense, K=0: C1 21.2, C8 68.7, C16 85.7 vs declared-only 17.1/59.2/79.0"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.2
+transferability = "multi-node hybrid MoE serving on gb10"
+links = { pr = "", commit = "", evidence = "chat-prose quick probes, OSL 512, same boxes (n = 1); not the official ladder" }
+notes = "matched tier: below the checkpoint's declared precision, disclosed; accuracy not yet gated"
