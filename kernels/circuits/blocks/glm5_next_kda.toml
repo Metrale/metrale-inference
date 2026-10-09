@@ -1,0 +1,208 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-08: The GLM-5 (`glm5_next`) KDA layer: Kimi delta attention under the attention-site
+# hyper-connection. Split out of kernels/circuits/glm5_next.toml to keep each file short; only
+# that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - Follows the reference modelling code (transformers 5.16 `modeling_glm5_next`, the semantics
+#   the engine's goldens were generated from): the hyper-connection pre-mix, then the input
+#   RMSNorm, then the mixer, then the post-mix; the residual is the hyper-connection streams, so
+#   there is no residual add.
+# - KDA is the gated delta rule with a per-channel decay: it reads the GatedDeltaNet ops with
+#   their policy stated in params (`decay = "channel"`, `gate = "sigmoid_bounded"`,
+#   `gate_act = "sigmoid"`), so the Venn sees the GatedDeltaNet kernels as policy variants of
+#   it. The decay is `linear_lower_bound * sigmoid(exp(A_log[h]) * (f_b(f_a(x)) + dt_bias))`,
+#   beta is `sigmoid(b_proj(x))`, q and k are L2-normalised after the conv.
+# - q, k and v are separate projections concatenated for one causal conv over q|k|v (SiLU, no
+#   bias, FP32 conv weights); the output gate is low rank (`g_a`, `g_b`) and gates a per-head
+#   RMSNorm with a sigmoid.
+# - Declared precision: every KDA tensor is BF16 (`self_attn*` is excluded from the NVFP4
+#   quantization); the hyper-connection `hc_attn_fn` is a BF16 parameter, no quantization
+#   target (`unquantized`), its mixes computed in FP32.
+
+schema = 1
+description = "GLM-5 KDA layer under the attention-site hyper-connection"
+
+[block.kda]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-08: The recurrent state, FP32 `[heads, head_dim, head_dim]`, and the FP32 conv window
+# `[3 * heads * head_dim, conv_kernel]` (crates/model-arch/src/glm5next_kda/config.rs:41-48).
+[[block.kda.state]]
+id = "h"
+kind = "recurrent"
+lifetime = "sequence"
+format = "{ssm_h_storage}"
+shape = "lin_v_heads x lin_k_dim x lin_v_dim"
+verify = "h_steps"
+
+[[block.kda.state]]
+id = "conv"
+kind = "recurrent"
+lifetime = "sequence"
+format = "f32"
+shape = "lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim x conv_kernel"
+verify = "conv_steps"
+
+[[block.kda.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.kda.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.kda.node]]
+id = "input_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.input_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.kda.node]]
+id = "q"
+op = "linear"
+role = "q"
+in = ["xn"]
+out = [{ edge = "q", format = "bf16", shape = "n x lin_k_heads*lin_k_dim" }]
+binding = ["{L}.self_attn.q_proj"]
+
+[[block.kda.node]]
+id = "k"
+op = "linear"
+role = "k"
+in = ["xn"]
+out = [{ edge = "k", format = "bf16", shape = "n x lin_k_heads*lin_k_dim" }]
+binding = ["{L}.self_attn.k_proj"]
+
+[[block.kda.node]]
+id = "v"
+op = "linear"
+role = "v"
+in = ["xn"]
+out = [{ edge = "v", format = "bf16", shape = "n x lin_v_heads*lin_v_dim" }]
+binding = ["{L}.self_attn.v_proj"]
+
+[[block.kda.node]]
+id = "qkv"
+op = "concat"
+in = ["q", "k", "v"]
+out = [{ edge = "qkv", format = "bf16", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
+
+[[block.kda.node]]
+id = "short_conv"
+op = "conv1d_update"
+state = { conv = "update" }
+in = ["qkv"]
+out = [{ edge = "conv", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
+binding = ["{L}.self_attn.q_conv1d", "{L}.self_attn.k_conv1d", "{L}.self_attn.v_conv1d"]
+
+[[block.kda.node]]
+id = "conv_ckpt"
+op = "state_snapshot"
+state = { conv = "snapshot" }
+in = ["conv"]
+out = []
+
+[[block.kda.node]]
+id = "l2"
+op = "l2_norm"
+in = ["conv"]
+out = [{ edge = "qkvn", format = "f32", shape = "n x lin_k_heads*lin_k_dim*2+lin_v_heads*lin_v_dim" }]
+
+[[block.kda.node]]
+id = "b"
+op = "linear"
+role = "kda_b"
+in = ["xn"]
+out = [{ edge = "b", format = "bf16", shape = "n x lin_v_heads" }]
+binding = ["{L}.self_attn.b_proj"]
+
+[[block.kda.node]]
+id = "f_a"
+op = "linear"
+role = "kda_f_a"
+in = ["xn"]
+out = [{ edge = "fa", format = "bf16", shape = "n x lin_k_dim" }]
+binding = ["{L}.self_attn.f_a_proj"]
+
+[[block.kda.node]]
+id = "f_b"
+op = "linear"
+role = "kda_f_b"
+in = ["fa"]
+out = [{ edge = "f", format = "bf16", shape = "n x lin_v_heads*lin_k_dim" }]
+binding = ["{L}.self_attn.f_b_proj"]
+
+[[block.kda.node]]
+id = "gates"
+op = "gdn_gates"
+in = ["b", "f"]
+out = [
+  { edge = "decay", format = "f32", shape = "n x lin_v_heads*lin_k_dim" },
+  { edge = "beta", format = "f32", shape = "n x lin_v_heads" },
+]
+binding = ["{L}.self_attn.A_log", "{L}.self_attn.dt_bias"]
+params = { gate = "sigmoid_bounded", decay = "channel" }
+
+[[block.kda.node]]
+id = "recur"
+op = "gdn_recurrence"
+state = { h = "update" }
+in = ["qkvn", "decay", "beta"]
+out = [{ edge = "core", format = "f32", shape = "n x lin_v_heads*lin_v_dim" }]
+params = { decay = "channel" }
+
+[[block.kda.node]]
+id = "g_a"
+op = "linear"
+role = "kda_g_a"
+in = ["xn"]
+out = [{ edge = "ga", format = "bf16", shape = "n x lin_v_dim" }]
+binding = ["{L}.self_attn.g_a_proj"]
+
+[[block.kda.node]]
+id = "g_b"
+op = "linear"
+role = "kda_g_b"
+in = ["ga"]
+out = [{ edge = "g", format = "bf16", shape = "n x lin_v_heads*lin_v_dim" }]
+binding = ["{L}.self_attn.g_b_proj"]
+
+[[block.kda.node]]
+id = "out_norm"
+op = "gated_rms_norm"
+in = ["core", "g"]
+out = [{ edge = "gated", format = "bf16", shape = "n x lin_v_heads*lin_v_dim" }]
+binding = ["{L}.self_attn.o_norm"]
+params = { gate_act = "sigmoid" }
+
+[[block.kda.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["gated"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.self_attn.o_proj"]
+
+[[block.kda.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
