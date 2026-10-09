@@ -161,3 +161,30 @@ fn rope_theta_stated_twice_with_the_same_value_is_accepted() {
     .unwrap();
     assert_eq!(config.effective_rope_theta(), Ok(10_000.0));
 }
+
+/// 2026-10-09: The trained window is read, an off switch hides it, and only a different
+/// serve window draws the warning.
+#[test]
+fn a_serve_window_other_than_the_trained_one_is_reported() {
+    let with = |extra: &str| {
+        parse_dflash_config(&format!(
+            r#"{{"hidden_size": 64, "num_hidden_layers": 1, "intermediate_size": 128,
+                "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 32,
+                "vocab_size": 256{extra}}}"#
+        ))
+        .unwrap()
+    };
+    let glm = with(r#", "sliding_window": 2048, "use_sliding_window": true"#);
+    assert_eq!(glm.trained_window(), Some(2048));
+    assert_eq!(glm.window_mismatch(2048), None);
+    assert!(
+        glm.window_mismatch(4096)
+            .unwrap()
+            .contains("--dflash-window-size 2048")
+    );
+    assert!(glm.window_mismatch(0).is_some());
+    let off = with(r#", "sliding_window": 2048, "use_sliding_window": false"#);
+    assert_eq!(off.trained_window(), None);
+    assert_eq!(off.window_mismatch(4096), None);
+    assert_eq!(with("").window_mismatch(4096), None);
+}
