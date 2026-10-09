@@ -59,6 +59,15 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
                     (OpKind::PagedAttention, "v", StateAccess::Read),
                 ],
                 LayerKind::Moe => vec![],
+                // 2026-10-08: GLM-5 DSA: the latent cache written and read, the pooled index
+                // keys written by the pooling and read by the selection, the pool tail updated.
+                LayerKind::SparseAttention => vec![
+                    (OpKind::KvWrite, "latent", StateAccess::Write),
+                    (OpKind::MlaAttention, "latent", StateAccess::Read),
+                    (OpKind::KpoolCompress, "index", StateAccess::Write),
+                    (OpKind::KpoolCompress, "tail", StateAccess::Update),
+                    (OpKind::IndexSelect, "index", StateAccess::Read),
+                ],
             };
             let mut want: Vec<_> = want
                 .into_iter()
@@ -67,7 +76,8 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
             want.sort();
             assert_eq!(r, want, "{} layer {layer} ({kind:?})", inst.recipe);
         }
-        // 2026-09-30: The draft head's attention keeps its own KV cache.
+        // 2026-09-30: The draft head's attention keeps its own KV cache. 2026-10-08: A sparse
+        // attention draft (GLM-5's MTP layer) also keeps its own indexer pool tail.
         let draft: Vec<_> = c
             .states
             .iter()
@@ -75,7 +85,8 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
             .collect();
         if !draft.is_empty() {
             assert!(
-                draft.iter().all(|s| s.kind == StateKind::PagedKv),
+                draft.iter().all(|s| s.kind == StateKind::PagedKv
+                    || (s.kind == StateKind::Recurrent && s.local == "tail")),
                 "{}",
                 inst.recipe
             );

@@ -16,13 +16,24 @@ use std::collections::BTreeMap;
 use super::{ARCHES, BLOCKS, config_maps};
 use crate::circuit_toml::{CircuitError, parse_file};
 use crate::instantiate::state_decl;
-use crate::ir::Section;
+use crate::ir::{LayerKind, Section};
 use crate::state::{StateDecl, StateKind};
+
+/// 2026-10-09: A layer kind whose recurrent state the engine's SSM pool holds: the linear
+/// attention (GatedDeltaNet, KDA) and Mamba2 layers. Per-sequence state of another layer kind
+/// (the GLM-5 sparse-attention indexer's pool tail) lives with that layer, not in the pool.
+fn recurrent_layer_kind(kind: &str) -> bool {
+    matches!(
+        LayerKind::parse(kind),
+        Some(LayerKind::LinearAttention | LayerKind::Mamba)
+    )
+}
 
 /// 2026-09-30: The recurrent states of one layer of the circuit that serves the engine-configured
 /// `model_type` (`ConfigMap::serves_engine_model_type`), under
-/// `dims`: the declarations of the one layer block that keeps recurrent state (GatedDeltaNet
-/// `gdn`, Mamba2 `mamba`), ids `<block>.<state>`. `Ok(Some(empty))` for a circuit with no
+/// `dims`: the declarations of the one layer block of a recurrent layer kind
+/// ([`recurrent_layer_kind`]) that keeps recurrent state (GatedDeltaNet `gdn`, Mamba2 `mamba`,
+/// KDA `kda`), ids `<block>.<state>`. `Ok(Some(empty))` for a circuit with no
 /// recurrent layer.
 pub fn recurrent_states(
     model_type: &str,
@@ -36,11 +47,15 @@ pub fn recurrent_states(
         return Ok(None);
     };
     let file = parse_file(ARCHES[i].circuit, &BLOCKS)?;
-    let mut templates: Vec<&String> = file
-        .layout
+    let layout = &file.layout;
+    let by_kind = layout
         .blocks
-        .values()
-        .flatten()
+        .iter()
+        .chain(layout.when.values().flatten())
+        .chain(layout.prefix.iter().flat_map(|p| p.blocks.iter()));
+    let mut templates: Vec<&String> = by_kind
+        .filter(|(kind, _)| recurrent_layer_kind(kind))
+        .flat_map(|(_, blocks)| blocks)
         .filter(|t| {
             file.block
                 .get(*t)

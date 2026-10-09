@@ -194,6 +194,18 @@ pub(crate) struct LayoutFile {
     /// holds (`moe_latent = { moe = ["moe_latent"] }`).
     #[serde(default)]
     pub when: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    /// 2026-10-08: The first layers take other blocks per kind (`first_k_dense_replace`: dense
+    /// FFN layers before the MoE ones).
+    pub prefix: Option<PrefixFile>,
+}
+
+/// 2026-10-08: `[layout.prefix]`: layers `0..count` (`count` a dim of the circuit) map their
+/// kind through `blocks` instead of the layout's own; a kind it does not map is an error there.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PrefixFile {
+    pub count: String,
+    pub blocks: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize)]

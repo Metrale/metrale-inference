@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-08: The formats each linear module of nvidia/GLM-5.3-Flash-NVFP4 runs at under the
+# declared tier: the checkpoint's own quantization (ModelOpt 0.47 NVFP4; config.json
+# `quantization_config` and hf_quant_config.json `quantization`), module by module.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - `config_groups.group_0` declares NVFP4 (group 16) weights AND input activations (FP4, group
+#   16, `dynamic: false`: a static global `input_scale` per projection) for every `Linear` not
+#   excluded. Excluded (`ignore` / `exclude_modules`): `lm_head`, the embeddings, every
+#   `self_attn*` (KDA, MLA and the indexer), every MoE router `mlp.gate` and shared expert
+#   `mlp.shared_experts*`, the vision tower, and the whole MTP layer `layers.45*`. So the routed
+#   experts of layers 3-44 and the dense MLP of layers 0-2 are W4A4; everything else is BF16.
+# - The hyper-connection mixes, the indexer gate and the conv weights are parameters, not
+#   `Linear`s; the circuit marks the weight-reading ones `unquantized`.
+# - KV cache: `kv_cache_scheme` FP8 E4M3, static, with no scale tensors in the checkpoint (the
+#   instance's `kv_cache_dtype = fp8`).
+
+schema = 1
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+tier = "declared"
+
+[[linear]]
+match = "model.language_model.layers.45.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.experts.*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.mlp.gate_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.mlp.up_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.mlp.down_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*"
+weight = "bf16"
+activation = "bf16"
