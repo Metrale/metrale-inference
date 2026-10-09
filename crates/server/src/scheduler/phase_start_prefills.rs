@@ -35,24 +35,25 @@ pub(super) fn start_new_requests(
     active: &mut Vec<ActiveSeq>,
     prefilling: &mut Vec<PrefillInProgress>,
 ) {
-    // 2026-09-25: `--prefill-codispatch`: on a non-EP model, with two or
-    // more new requests, no image among them, and nothing active or
-    // prefilling, defer every chunk 0 so `continue_in_progress_prefills`
-    // can run them as one batched prefill.
+    // 2026-09-25: `--prefill-codispatch`: on a model that may batch prefills
+    // (`batched_prefill_allowed`), with two or more new requests, no image
+    // among them, and nothing active or prefilling, defer every chunk 0 so
+    // `continue_in_progress_prefills` can run them as one batched prefill.
+    let batch_ok = batched_prefill_allowed(model, &sched.levers);
     let want_codispatch = sched.levers.prefill_codispatch
         && chunked
         && new_reqs.len() >= 2
         && active.is_empty()
         && prefilling.is_empty()
-        && !model.is_ep()
+        && batch_ok
         && !new_reqs.iter().any(|r| r.has_image_pixels());
-    // 2026-09-25: `--prefill-varlen-batch`: on a non-EP model with nothing
-    // active, defer chunk 0 of each request without images when there are
-    // two or more new requests or a prefill is already in flight. A lone
-    // request with nothing in flight keeps its inline chunk 0 and the
-    // `max_batch_tokens` budget.
+    // 2026-09-25: `--prefill-varlen-batch`: on a model that may batch
+    // prefills, with nothing active, defer chunk 0 of each request without
+    // images when there are two or more new requests or a prefill is
+    // already in flight. A lone request with nothing in flight keeps its
+    // inline chunk 0 and the `max_batch_tokens` budget.
     let want_varlen_defer = chunked
-        && !model.is_ep()
+        && batch_ok
         && active.is_empty()
         && (new_reqs.len() >= 2 || !prefilling.is_empty())
         && sched.levers.prefill_varlen;
@@ -291,6 +292,17 @@ pub(super) fn start_new_requests(
             }
         }
     }
+}
+
+/// 2026-10-09: Whether the scheduler may defer chunk 0 for, and run, a batched prefill
+/// (`prefill_batch_chunk`) on `model`: always on one GPU; on a multi-rank serve only with
+/// `METRALE_EP_PREFILL_BATCH=1` and a model that can announce the pass to its workers
+/// (`ep_prefill_batch_supported`). The fused prefill + decode paths stay single-GPU.
+pub(super) fn batched_prefill_allowed(
+    model: &dyn Model,
+    levers: &crate::scheduler::levers::SchedLevers,
+) -> bool {
+    !model.is_ep() || (levers.ep_prefill_batch && model.ep_prefill_batch_supported())
 }
 
 /// 2026-09-25: Group beam requests by adapter, then pack each group, in
