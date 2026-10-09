@@ -16,6 +16,31 @@ use super::super::types::PrefillInProgress;
 use super::super::{FirstTokenPolicy, sample_first_token};
 use super::prefill_waves::{WaveGeom, plan_prefill_waves};
 
+/// 2026-09-25: The chunk a prefilling stream advances by in a batched step when it does not
+/// share the co-dispatch geometry. 2026-10-09: Also what the multi-rank step's row budget
+/// counts (`phase_continue_prefills`).
+pub(super) fn stream_chunk_len(
+    model: &dyn Model,
+    p: &PrefillInProgress,
+    max_prefill_tokens: usize,
+) -> usize {
+    let remaining = p.prompt_tokens.len() - p.chunk_offset;
+    // 2026-09-25: MLA: one chunk for the whole remaining prompt, as
+    // in `run_standard_chunk_loop`.
+    let effective_max = if model.is_mla() {
+        remaining
+    } else {
+        max_prefill_tokens
+    };
+    metrale_model_engine::prefill_plan::plan_chunk_len(
+        p.chunk_offset,
+        p.prompt_tokens.len(),
+        remaining.min(effective_max),
+        model.kv_block_size(),
+        model.prefill_tail_split(&p.prompt_tokens),
+    )
+}
+
 pub(super) fn run_batched_prefill_step(
     model: &dyn Model,
     sched: &crate::scheduler::sched_ctx::SchedCtx,
@@ -74,21 +99,7 @@ pub(super) fn run_batched_prefill_step(
         let (chunk_len, is_last) = if let Some((cl, il)) = shared_geom {
             (cl, il)
         } else {
-            let remaining = p.prompt_tokens.len() - p.chunk_offset;
-            // 2026-09-25: MLA: one chunk for the whole remaining prompt, as
-            // in `run_standard_chunk_loop`.
-            let effective_max = if model.is_mla() {
-                remaining
-            } else {
-                max_prefill_tokens
-            };
-            let chunk_len = metrale_model_engine::prefill_plan::plan_chunk_len(
-                p.chunk_offset,
-                p.prompt_tokens.len(),
-                remaining.min(effective_max),
-                model.kv_block_size(),
-                model.prefill_tail_split(&p.prompt_tokens),
-            );
+            let chunk_len = stream_chunk_len(model, p, max_prefill_tokens);
             let is_last = p.chunk_offset + chunk_len >= p.prompt_tokens.len();
             (chunk_len, is_last)
         };

@@ -85,11 +85,12 @@ pub trait LayerCapabilities {
         false
     }
 
-    /// 2026-10-09: True when this layer implements `prefill_spans`, the multi-sequence prefill
-    /// pass, with the same collectives on every rank. The model runs a multi-rank batched
-    /// prefill (`EP_CMD_PREFILL_SPANS`) only when every layer says so. Default false.
-    fn prefill_spans_supported(&self) -> bool {
-        false
+    /// 2026-10-09: `Some(rows)` when this layer implements `prefill_spans`, the multi-sequence
+    /// prefill pass, with the same collectives on every rank; `rows` is the widest row group it
+    /// runs, the size of one batched prefill step. The model runs a multi-rank batched prefill
+    /// (`EP_CMD_PREFILL_SPANS`) only when every layer answers `Some`. Default `None`.
+    fn prefill_spans_rows(&self) -> Option<usize> {
+        None
     }
 
     #[allow(clippy::too_many_arguments)]

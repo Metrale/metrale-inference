@@ -416,9 +416,10 @@ impl LayerCapabilities for Glm5NextLayer {
         true
     }
 
-    /// 2026-10-09: True for a text layer (`steps/prefill_spans.rs`); false for the MTP block.
-    fn prefill_spans_supported(&self) -> bool {
-        self.mhc.is_some()
+    /// 2026-10-09: `prefill_rows()` for a text layer (`steps/prefill_spans.rs`); `None` for the
+    /// MTP block.
+    fn prefill_spans_rows(&self) -> Option<usize> {
+        self.mhc.is_some().then(prefill_rows)
     }
 
     /// 2026-09-25: True. A DSA layer's per-sequence state comes from `gpu.alloc` in

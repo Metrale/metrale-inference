@@ -428,7 +428,7 @@ impl ModelVision for RecordingModel {
 impl ModelEp for RecordingModel {
     facts! {
         fn is_ep(&self) -> bool = self.cfg.ep;
-        fn ep_prefill_batch_supported(&self) -> bool = self.cfg.ep_prefill_batch;
+        fn ep_prefill_batch_rows(&self) -> Option<usize> = self.cfg.ep_prefill_batch;
         fn ep_protocol_v2(&self) -> bool = false;
     }
     recorded! {

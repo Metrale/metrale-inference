@@ -128,7 +128,7 @@ pub struct SchedLevers {
     /// (`prefill_varlen_enabled`).
     pub prefill_varlen: bool,
     /// 2026-10-09: `METRALE_EP_PREFILL_BATCH=1` (default off): the batched-prefill paths also
-    /// run on a multi-rank serve whose model answers `ep_prefill_batch_supported`
+    /// run on a multi-rank serve whose model answers `ep_prefill_batch_rows`
     /// (`phase_start_prefills::batched_prefill_allowed`).
     pub ep_prefill_batch: bool,
     /// 2026-09-25: `METRALE_PREFILL_CODISPATCH_WINDOW_MS` (default 100).
