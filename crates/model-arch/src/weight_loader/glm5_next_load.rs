@@ -41,6 +41,7 @@ use metrale_model_layers::weight_map::DenseWeight;
 mod act_scale;
 #[cfg(test)]
 mod defer_hook_tests;
+mod dense_tiers;
 mod expert_quant;
 #[cfg(test)]
 mod export_layout_tests;

@@ -120,6 +120,14 @@ pub struct ServeServiceArgs {
     /// its attention (KDA, DSA latent, indexer) and shared-expert projections; pair it with
     /// `--lm-head-dtype fp8` for the head. The FP8 copies sit beside the 16-bit weights. Any
     /// other model refuses it. Unmeasured.
+    ///
+    /// `w4a16` is FURTHER below declared than `fp8`, so the answers change more: the KDA q/k/v,
+    /// f_a, b, g_a and o projections and the shared expert's gate/up/down are quantized at load
+    /// to NVFP4 (E2M1 weights, one E4M3 scale per 16, one F32 scale per tensor) and decoded
+    /// W4A16 with 16-bit activations; the 16-bit copies of those are freed. The rest of `fp8`'s
+    /// set (DSA latent and indexer projections, KDA f_b and g_b) runs as under `fp8`. At TP>1
+    /// it splits the KDA heads in pairs and the shared expert in 256-wide units. GLM-5.3 only.
+    /// Unmeasured.
     #[arg(long, value_enum, default_value_t = DenseQuantizationArg(DenseQuantization::Declared))]
     pub dense_quantization: DenseQuantizationArg,
 

@@ -191,9 +191,10 @@ pub struct DenseQuantizationArg(pub DenseQuantization);
 
 impl clap::ValueEnum for DenseQuantizationArg {
     fn value_variants<'a>() -> &'a [Self] {
-        const VARIANTS: [DenseQuantizationArg; 2] = [
+        const VARIANTS: [DenseQuantizationArg; 3] = [
             DenseQuantizationArg(DenseQuantization::ALL[0]),
             DenseQuantizationArg(DenseQuantization::ALL[1]),
+            DenseQuantizationArg(DenseQuantization::ALL[2]),
         ];
         &VARIANTS
     }
@@ -205,6 +206,12 @@ impl clap::ValueEnum for DenseQuantizationArg {
                 "16-bit dense projections quantized at load to FP8 per-channel and decoded \
                  W8A8 with per-token FP8 activations: below the checkpoint's declared \
                  precision (glm5_next only; unmeasured)"
+            }
+            DenseQuantization::W4a16 => {
+                "FURTHER BELOW the checkpoint's declared precision than fp8: the KDA q/k/v, \
+                 f_a, b, g_a and o projections and the shared expert quantized at load to \
+                 NVFP4 (4-bit weights) and decoded W4A16 with 16-bit activations; the rest of \
+                 fp8's set stays fp8 (glm5_next only; unmeasured)"
             }
         };
         Some(clap::builder::PossibleValue::new(self.0.name()).help(help))

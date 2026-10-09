@@ -124,9 +124,19 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
     if dense.below_declared() {
         tracing::warn!(
             "--dense-quantization {}: the 16-bit dense projections run BELOW the checkpoint's \
-             declared precision (FP8 per-channel weights, per-token FP8 activations); outputs \
-             differ from the declared model",
-            dense.name()
+             declared precision ({}); outputs differ from the declared model",
+            dense.name(),
+            {
+                use metrale_model_layers::layers::DenseQuantization as D;
+                match dense {
+                    D::W4a16 => {
+                        "NVFP4 weights with 16-bit activations for the loader's W4A16 set, FP8 \
+                         per-channel weights with per-token FP8 activations for the rest"
+                    }
+                    D::Fp8 => "FP8 per-channel weights, per-token FP8 activations",
+                    D::Declared => "the checkpoint's",
+                }
+            }
         );
     }
     // 2026-09-26: Published only when given; otherwise

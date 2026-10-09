@@ -88,8 +88,26 @@ pub enum TpSupport {
     Even,
     /// 2026-10-08: Head counts split by [`tp_split`], so ranks may own different counts. The
     /// loader's plans must read the pre-shard counts from [`ModelConfig::pre_shard_heads`]
-    /// rather than multiply a local count back up.
-    Uneven,
+    /// rather than multiply a local count back up. 2026-10-09: The linear-attention key heads
+    /// split in units of [`linear_head_unit`]`(linear_key_head_dim, linear_channel_unit)` heads,
+    /// so each rank's key channels are a multiple of `linear_channel_unit`; 1 splits head by
+    /// head.
+    Uneven { linear_channel_unit: usize },
+}
+
+/// 2026-10-09: The fewest whole heads of `head_dim` channels whose channel count is a multiple of
+/// `channel_unit`: `channel_unit / gcd(channel_unit, head_dim)` (2 for 128-wide heads in 256-wide
+/// units, 1 for a unit of 1, one that divides `head_dim`, or a `head_dim` of 0). Errors on a
+/// zero unit.
+pub fn linear_head_unit(head_dim: usize, channel_unit: usize) -> Result<usize> {
+    if channel_unit == 0 {
+        bail!("linear_head_unit: channel_unit is 0");
+    }
+    let (mut a, mut b) = (channel_unit, head_dim);
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    Ok(channel_unit / a)
 }
 
 /// 2026-10-08: The head counts [`ModelConfig::shard_heads_for_tp`] divided, as they were
@@ -113,17 +131,19 @@ fn require_divisible(name: &str, count: usize, tp_size: usize) -> Result<()> {
 /// 2026-10-08: This rank's `(outer, inner)` head counts for a grouped pair (KV heads and the Q
 /// heads that share them; linear key heads and their value heads). The outer count is split
 /// head by head and the inner count in whole groups, so every local inner head keeps its outer
-/// head. A zero count stays zero.
+/// head. A zero count stays zero. 2026-10-09: `outer_unit` outer heads (and their groups) are
+/// the split's unit; 1 is head by head.
 fn split_grouped(
     outer_name: &str,
     outer: usize,
     inner_name: &str,
     inner: usize,
+    outer_unit: usize,
     tp_size: usize,
     tp_rank: usize,
 ) -> Result<(usize, usize)> {
     if outer == 0 {
-        return Ok((0, tp_split(inner, tp_size, tp_rank, 1)?.len));
+        return Ok((0, tp_split(inner, tp_size, tp_rank, outer_unit)?.len));
     }
     if !inner.is_multiple_of(outer) {
         bail!(
@@ -133,8 +153,8 @@ fn split_grouped(
     }
     let group = inner / outer;
     Ok((
-        tp_split(outer, tp_size, tp_rank, 1)?.len,
-        tp_split(inner, tp_size, tp_rank, group)?.len,
+        tp_split(outer, tp_size, tp_rank, outer_unit)?.len,
+        tp_split(inner, tp_size, tp_rank, group * outer_unit)?.len,
     ))
 }
 
@@ -187,12 +207,15 @@ impl ModelConfig {
                     d(pre.linear_num_value_heads),
                 )
             }
-            TpSupport::Uneven => {
+            TpSupport::Uneven {
+                linear_channel_unit,
+            } => {
                 let (kv, q) = split_grouped(
                     "num_key_value_heads",
                     pre.num_key_value_heads,
                     "num_attention_heads",
                     pre.num_attention_heads,
+                    1,
                     tp_size,
                     tp_rank,
                 )?;
@@ -202,6 +225,7 @@ impl ModelConfig {
                         pre.linear_num_key_heads,
                         "linear_num_value_heads",
                         pre.linear_num_value_heads,
+                        linear_head_unit(self.linear_key_head_dim, linear_channel_unit)?,
                         tp_size,
                         tp_rank,
                     )?

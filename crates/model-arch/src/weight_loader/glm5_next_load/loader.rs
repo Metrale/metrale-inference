@@ -53,8 +53,12 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     /// 2026-09-25: DSA, KDA and the MLP all shard under TP (see `glm5_next_load.rs`);
     /// routed experts are also split by EP (`local_expert_range`). 2026-10-08: The head and
     /// width splits come from `metrale_config::tp_split`, so they need not divide evenly.
+    /// 2026-10-09: The KDA heads split in the published dense tier's channel unit
+    /// (`glm5next_w4a16_dense::kda_channel_unit`), the one `KdaTpPlan::from_config` gets.
     fn tp_support(&self) -> metrale_config::TpSupport {
-        metrale_config::TpSupport::Uneven
+        metrale_config::TpSupport::Uneven {
+            linear_channel_unit: crate::glm5next_w4a16_dense::kda_channel_unit(),
+        }
     }
 
     fn load_layers(
@@ -76,7 +80,11 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             })?;
             *t.shape.first().context("f_a_proj has no rows")?
         };
-        let kda_plan = KdaTpPlan::from_config(config, gate_rank)?;
+        let kda_plan = KdaTpPlan::from_config(
+            config,
+            gate_rank,
+            crate::glm5next_w4a16_dense::kda_channel_unit(),
+        )?;
         let dsa_cfg = Glm5NextDsaConfig::from_config(config)?;
         let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
 
@@ -144,7 +152,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 .with_context(|| format!("glm5_next: collecting layer {idx}"))?;
             let t_collect = t_layer.elapsed();
 
-            let mixer = match sl.mixer {
+            let mut mixer = match sl.mixer {
                 Mixer::Kda => {
                     let sharded = KdaShardedSource::new(&src, &kda_plan)?;
                     let (w, _report) = bind_kda_weights(gpu, &kda_cfg, idx, &sharded)?;
@@ -185,7 +193,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             let t_mixer = t_layer.elapsed();
 
             let load = |n: &str| src.f32(n);
-            let mlp = match sl.mlp {
+            let mut mlp = match sl.mlp {
                 Mlp::Dense => Glm5NextMlpSite::Dense(Box::new(build_dense_site(
                     gpu,
                     store,
@@ -223,7 +231,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             };
 
             if crate::glm5next_fp8_dense::enabled() {
-                register_fp8_dense(gpu, &mixer, &mlp, &mlp_cfg, idx)?;
+                dense_tiers::register_dense_tiers(gpu, &mut mixer, &mut mlp, &mlp_cfg, idx)?;
             }
 
             let t_mlp = t_layer.elapsed();
@@ -285,10 +293,21 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         if crate::glm5next_fp8_dense::enabled() {
             let (count, bytes) = crate::glm5next_fp8_dense::registered();
             tracing::warn!(
-                "glm5_next --dense-quantization fp8: {count} BF16 dense projections also held as \
+                "glm5_next --dense-quantization {}: {count} BF16 dense projections also held as \
                  FP8 per-channel ({:.2} GB) and decoded W8A8, BELOW the checkpoint's declared \
                  BF16; the router, the indexer's wq_b and weights_proj stay BF16",
+                metrale_model_layers::layers::dense_quantization().name(),
                 bytes as f64 / 1e9
+            );
+        }
+        if crate::glm5next_w4a16_dense::enabled() {
+            let (count, nvfp4, bf16) = crate::glm5next_w4a16_dense::registered();
+            tracing::warn!(
+                "glm5_next --dense-quantization w4a16: {count} BF16 dense projections replaced by \
+                 NVFP4 ({:.2} GB; {:.2} GB of BF16 freed) and decoded W4A16, FURTHER BELOW the \
+                 checkpoint's declared BF16",
+                nvfp4 as f64 / 1e9,
+                bf16 as f64 / 1e9
             );
         }
         Ok(out)
@@ -430,41 +449,4 @@ fn build_dense_site(
         nvfp4,
         precision,
     })
-}
-
-/// 2026-10-09: `--dense-quantization fp8`: register the FP8 copy of every BF16 projection of
-/// one layer's mixer and shared expert (`glm5next_fp8_dense`), with the shapes their forwards
-/// launch.
-fn register_fp8_dense(
-    gpu: &dyn GpuBackend,
-    mixer: &Glm5NextMixer,
-    mlp: &Glm5NextMlpSite,
-    mlp_cfg: &Glm5NextMlpConfig,
-    idx: usize,
-) -> Result<()> {
-    let mut projs = match mixer {
-        Glm5NextMixer::Kda { layer, .. } => layer.dense_projections(),
-        Glm5NextMixer::Dsa(layer) => layer.dense_projections(),
-    };
-    if let Glm5NextMlpSite::Moe(w) = mlp {
-        let (h, s) = (mlp_cfg.hidden, mlp_cfg.local_shared_intermediate);
-        projs.push((w.shared.gate_proj, s, h, "shared_experts.gate_proj"));
-        projs.push((w.shared.up_proj, s, h, "shared_experts.up_proj"));
-        projs.push((w.shared.down_proj, h, s, "shared_experts.down_proj"));
-    }
-    let max_k = projs.iter().map(|p| p.2).max().unwrap_or(0);
-    crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
-    let quantize = gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
-    for (w, n, k, name) in projs {
-        crate::glm5next_fp8_dense::register(
-            gpu,
-            quantize,
-            w,
-            n,
-            k,
-            &format!("layer {idx} {name}"),
-            0,
-        )?;
-    }
-    Ok(())
 }

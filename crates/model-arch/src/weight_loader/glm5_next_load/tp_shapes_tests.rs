@@ -11,7 +11,7 @@
 //! plans `load_layers` builds: `KdaTpPlan::from_config`, `DsaTpPlan::from_config` and
 //! `Glm5NextMlpConfig::from_config`.
 
-use metrale_config::{ModelConfig, parse_config};
+use metrale_config::{ModelConfig, TpSupport, parse_config};
 
 use super::Glm5NextWeightLoader;
 use crate::glm5next_dsa::Glm5NextDsaConfig;
@@ -65,16 +65,27 @@ struct Rank {
 
 /// 2026-10-08: World = TP = EP = `tp`, as serve's overlapping groups set it.
 fn rank(tp: usize, r: usize, gate_rank: usize) -> Rank {
+    rank_in(tp, r, gate_rank, Glm5NextWeightLoader.tp_support())
+}
+
+/// 2026-10-09: [`rank`] under `support`, whose linear channel unit both the head division and
+/// the KDA plan take, as `load_layers` passes one `kda_channel_unit` to both.
+fn rank_in(tp: usize, r: usize, gate_rank: usize, support: TpSupport) -> Rank {
+    let TpSupport::Uneven {
+        linear_channel_unit,
+    } = support
+    else {
+        panic!("the GLM loader splits unevenly");
+    };
     let mut c = parse_config(CONFIG).expect("the real checkpoint config parses");
     c.tp_world_size = tp;
     c.tp_rank = r;
     c.ep_world_size = tp;
     c.ep_rank = r;
-    c.shard_heads_for_tp(Glm5NextWeightLoader.tp_support())
-        .unwrap();
+    c.shard_heads_for_tp(support).unwrap();
     let dsa_cfg = Glm5NextDsaConfig::from_config(&c).unwrap();
     Rank {
-        kda: KdaTpPlan::from_config(&c, gate_rank).unwrap(),
+        kda: KdaTpPlan::from_config(&c, gate_rank, linear_channel_unit).unwrap(),
         dsa: DsaTpPlan::from_config(&c, &dsa_cfg).unwrap(),
         mlp: Glm5NextMlpConfig::from_config(&c).unwrap(),
         config: c,
@@ -284,4 +295,59 @@ fn the_mlp_widths_tile_over_the_ranks() {
             assert_tiles(&format!("tp{tp} mlp width {total}"), tp, tp != 3, &placed);
         }
     }
+}
+
+/// 2026-10-09: Under `--dense-quantization w4a16` (a 256-channel linear unit) the KDA heads are
+/// 22/22/20 at TP=3 in the config and the plan alike, the DSA heads stay 22/21/21, every W4A16
+/// KDA projection's local shape is one the W4A16 kernel takes (o_proj K 2816/2816/2560), and the
+/// slices still tile the checkpoint at TP 1, 2 and 3. A plan cut in another unit than the
+/// config's division is refused.
+#[test]
+fn the_w4a16_unit_splits_kda_heads_in_pairs_and_every_width_fits() {
+    use crate::glm5next_w4a16_dense::{W4A16_K_UNIT, shape_ok};
+    let d = disk();
+    let gate_rank = get(&d, 0, "self_attn.f_a_proj.weight").dims[0];
+    let w4 = TpSupport::Uneven {
+        linear_channel_unit: W4A16_K_UNIT,
+    };
+    let ranks: Vec<Rank> = (0..3).map(|r| rank_in(3, r, gate_rank, w4)).collect();
+    for (rk, (kda, dsa)) in ranks.iter().zip([(22usize, 22usize), (22, 21), (20, 21)]) {
+        assert_eq!(rk.kda.local_heads, kda);
+        assert_eq!(rk.config.linear_num_key_heads, kda);
+        assert_eq!(rk.dsa.local_heads, dsa);
+        let (hid, ch) = (rk.config.hidden_size, kda * 128);
+        for (name, n, k) in [
+            ("q/k/v_proj", ch, hid),
+            ("f_a/g_a_proj", gate_rank, hid),
+            ("b_proj", kda, hid),
+            ("o_proj", hid, ch),
+        ] {
+            assert!(shape_ok(n, k), "{name} [{n}, {k}] at {kda} heads");
+        }
+        assert_eq!(rk.kda.get("o_proj").unwrap().local_row_elems, ch);
+    }
+    assert!(
+        !shape_ok(4096, 21 * 128),
+        "the head-by-head split would not fit"
+    );
+    for tp in 1..=3 {
+        let placed: Vec<Placed> = (0..tp)
+            .map(|r| {
+                let rk = rank_in(tp, r, gate_rank, w4);
+                kda_placed(&rk.kda, "o_proj").unwrap()
+            })
+            .collect();
+        assert_tiles(&format!("w4a16 tp{tp} o_proj"), tp, tp != 3, &placed);
+    }
+
+    let mut c = parse_config(CONFIG).unwrap();
+    (c.tp_world_size, c.tp_rank) = (3, 1);
+    c.shard_heads_for_tp(TpSupport::Uneven {
+        linear_channel_unit: 1,
+    })
+    .unwrap();
+    let e = KdaTpPlan::from_config(&c, gate_rank, W4A16_K_UNIT)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("22 heads but the config holds 21"), "{e}");
 }

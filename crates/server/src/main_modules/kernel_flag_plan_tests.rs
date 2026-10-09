@@ -193,16 +193,21 @@ fn a_bad_expert_quantization_value_is_refused() {
     }
 }
 
-/// 2026-10-09: `--dense-quantization fp8` reaches the plan; nothing else changes.
+/// 2026-10-09: `--dense-quantization fp8` and `w4a16` reach the plan; nothing else changes.
 #[test]
 fn the_dense_tier_reaches_the_plan() {
-    let p = plan(&["--dense-quantization", "fp8"]);
-    assert_eq!(p.dense_quantization, DenseQuantization::Fp8);
-    assert_eq!(
-        KernelFlagPlan {
-            dense_quantization: DenseQuantization::Declared,
-            ..p
-        },
-        plan(&[])
-    );
+    for (value, tier) in [
+        ("fp8", DenseQuantization::Fp8),
+        ("w4a16", DenseQuantization::W4a16),
+    ] {
+        let p = plan(&["--dense-quantization", value]);
+        assert_eq!(p.dense_quantization, tier);
+        assert_eq!(
+            KernelFlagPlan {
+                dense_quantization: DenseQuantization::Declared,
+                ..p
+            },
+            plan(&[])
+        );
+    }
 }
