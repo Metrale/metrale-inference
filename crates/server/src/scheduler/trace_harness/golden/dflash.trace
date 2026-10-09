@@ -28,6 +28,7 @@ ep_broadcast_cmd(0xc)
 ep_broadcast_cmd(0xd)
 decode_and_verify_fused(tokens=[10, 11, 12, 13], s1@0:len=9) -> [11, 12, 13, 14]
 ep_broadcast_cmd(0x3)
+commit_ctx(s1@0:len=9, n=4, base=5, row=0)
 commit_accepted_prefix(s1@0:len=9, na=4, k=4)
 save_hidden_for_mtp(3, stream=0)
 trim_proposer_state(s1@0:len=9, na=3, stream=0)

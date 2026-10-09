@@ -315,21 +315,11 @@ impl TransformerModel {
                     )?;
                 }
                 // 2026-09-25: DFlash: capture this layer's output while `hidden_states` still
-                // holds it, inside the captured region. By default every verify row is
-                // captured (`try_dflash_capture_all`), because the scheduler's `commit_ctx`
-                // copies rows 0..=num_accepted; `METRALE_DFLASH_EAGLE_FIX=0` or
-                // `METRALE_DFLASH_UNIFIED_CTX=0` captures only the last row. The env is read
-                // once, so a captured graph cannot bake a changed value.
-                static CAPTURE_ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-                let capture_all = *CAPTURE_ALL.get_or_init(|| {
-                    std::env::var("METRALE_DFLASH_EAGLE_FIX").ok().as_deref() != Some("0")
-                        && std::env::var("METRALE_DFLASH_UNIFIED_CTX").ok().as_deref() != Some("0")
-                });
-                if capture_all {
-                    self.try_dflash_capture_all(layer_idx, k, stream)?;
-                } else {
-                    self.try_dflash_capture(layer_idx, k - 1, stream)?;
-                }
+                // holds it, inside the captured region. 2026-10-09: The rule every verify width
+                // shares (`dflash_verify_capture.rs`): every row by default, because the
+                // scheduler's `commit_ctx` copies rows 0..=num_accepted; the last row only
+                // under the older context levers.
+                self.dflash_capture_verify_rows(layer_idx, k, k - 1, stream)?;
             }
 
             let normed = self.buffers.norm_output();

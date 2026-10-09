@@ -62,8 +62,8 @@ pub fn step_verify_k4(
     // the workers run `decode_verify_graphed_k4` for the command above, so
     // the master runs it too and the collectives stay matched.
     let result_vec: Vec<u32> = if dflash_verify_raw_argmax && !model.is_ep() {
-        // 2026-09-25: one M=4 forward; it captures the DFlash hidden at
-        // row 0 (`Model::decode_and_verify_fused`).
+        // 2026-09-25: one M=4 forward; it captures the DFlash hidden of
+        // every row (`Model::decode_and_verify_fused`).
         match model.decode_and_verify_fused(&tokens_k4, &mut a.seq, 0) {
             Ok(r) => r,
             Err(e) => {
@@ -182,6 +182,14 @@ pub fn step_verify_k4(
         tracing::error!("EP broadcast verify_k4 result: {e:#}");
         super::lifecycle::fail_sequence(a, format!("EP broadcast verify_k4 result: {e:#}"));
         return;
+    }
+
+    // 2026-10-09: On a DFlash serve the drafter context gets the verified rows
+    // `0..=num_accepted` at their own positions, as after a K=γ verify. The verify forward ran
+    // 4 rows past the pre-verify length.
+    if dflash_verify_raw_argmax {
+        let pre_verify_len = a.seq.seq_len.saturating_sub(4);
+        commit_verified_ctx(model, &mut a.seq, num_accepted, pre_verify_len, sched);
     }
 
     // 2026-09-25: debug level: this fires on every verify step.

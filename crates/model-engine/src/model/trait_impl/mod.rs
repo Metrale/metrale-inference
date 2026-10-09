@@ -38,6 +38,7 @@ mod decode_graph_key;
 mod slot_graph_key;
 pub(crate) use slot_graph_key::SlotGraphKey;
 mod decode_multi_seq_gate;
+mod dflash_verify_capture;
 mod drafter_prefill;
 mod ep_misc;
 mod feed;

@@ -3,9 +3,10 @@
 //! 2026-09-25: DFlash decode and verify of one sequence in a single forward over `M = 1 + drafts` rows.
 //!
 //! Row 0 is the accepted token and rows `1..M` are the drafts, so every
-//! weight is read once for the decode and the verify. The DFlash hidden
-//! capture is taken from row 0 only, so the drafter conditions on an accepted
-//! token's per-layer hidden, never on a draft's.
+//! weight is read once for the decode and the verify. 2026-10-09: The DFlash hidden
+//! capture takes every row (`dflash_verify_capture.rs`), and the scheduler commits only the
+//! accepted ones (rows `0..=num_accepted`), so the drafter still conditions on accepted
+//! tokens' per-layer hiddens, never on a rejected draft's.
 //!
 //! The `unsafe { from_raw_parts(..) }` blocks view `Vec`s or arrays of `u32`,
 //! `i32` or `i64` (POD, no padding) as bytes for `copy_h2d_async`, whose
@@ -331,8 +332,10 @@ impl TransformerModel {
                         stream,
                     )?;
                 }
-                // 2026-09-25: DFlash capture from row 0, the accepted token.
-                self.try_dflash_capture(layer_idx, 0, stream)?;
+                // 2026-09-25: DFlash capture from row 0, the accepted token. 2026-10-09: Every
+                // row, as the K=γ verify does (`dflash_verify_capture.rs`): the verdict commits
+                // rows 0..=num_accepted, row 0 first.
+                self.dflash_capture_verify_rows(layer_idx, m, 0, stream)?;
             }
 
             let normed = self.buffers.norm_output();

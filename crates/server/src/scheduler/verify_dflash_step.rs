@@ -135,12 +135,6 @@ pub fn step_verify_dflash(
         }
     }
 
-    // 2026-09-25: the drafter context gets rows `0..=num_accepted` at RoPE
-    // base `pre_verify_len`, one of two ways. With `dflash_unified_ctx` (on
-    // unless `METRALE_DFLASH_UNIFIED_CTX=0`), `commit_ctx` commits them.
-    // Otherwise, when `dflash_eagle_fix` is on, `dflash_eagle_kgamma_append`
-    // appends them with row `num_accepted`, the hidden that produced the
-    // bonus, last. A failure of either is logged and the step continues.
     tracing::debug!(
         "CTX_VERIFY slot={} pre_verify_len={} na={} k={}",
         a.seq.slot_idx,
@@ -148,19 +142,7 @@ pub fn step_verify_dflash(
         num_accepted,
         drafts.len() + 1,
     );
-    if sched.levers.dflash_unified_ctx {
-        if let Err(e) = model.commit_ctx(&mut a.seq, num_accepted + 1, pre_verify_len, 0) {
-            tracing::error!("commit_ctx (kgamma): {e:#}");
-        }
-    } else {
-        let eagle_fix = sched.levers.dflash_eagle_fix;
-        if eagle_fix
-            && let Err(e) =
-                model.dflash_eagle_kgamma_append(&mut a.seq, num_accepted, pre_verify_len)
-        {
-            tracing::error!("dflash_eagle_kgamma_append: {e:#}");
-        }
-    }
+    commit_verified_ctx(model, &mut a.seq, num_accepted, pre_verify_len, sched);
 
     for i in 0..num_accepted {
         emit_token(a, drafts[i], None, sched);
@@ -253,6 +235,31 @@ pub fn step_verify_dflash(
             tokens.len(),
             num_accepted,
         );
+    }
+}
+
+/// 2026-10-09: Give the drafter the verified rows `0..=num_accepted` of a single-sequence
+/// verify on a DFlash serve, at RoPE base `pre_verify_len` (the anchor's position). Every verify
+/// width calls it (K=γ here; K=2, K=3 and K=4 in their steps), so the context stays one row per
+/// position whichever width ran. With `dflash_unified_ctx` (on unless
+/// `METRALE_DFLASH_UNIFIED_CTX=0`) `commit_ctx` commits them; otherwise, when
+/// `dflash_eagle_fix` is on, `dflash_eagle_kgamma_append` appends them. A failure of either is
+/// logged and the step continues: the drafter only loses context.
+pub(super) fn commit_verified_ctx(
+    model: &dyn Model,
+    seq: &mut SequenceState,
+    num_accepted: usize,
+    pre_verify_len: usize,
+    sched: &crate::scheduler::sched_ctx::SchedCtx,
+) {
+    if sched.levers.dflash_unified_ctx {
+        if let Err(e) = model.commit_ctx(seq, num_accepted + 1, pre_verify_len, 0) {
+            tracing::error!("commit_ctx (verify): {e:#}");
+        }
+    } else if sched.levers.dflash_eagle_fix
+        && let Err(e) = model.dflash_eagle_kgamma_append(seq, num_accepted, pre_verify_len)
+    {
+        tracing::error!("dflash_eagle_kgamma_append: {e:#}");
     }
 }
 
