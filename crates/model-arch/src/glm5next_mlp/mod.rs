@@ -151,6 +151,9 @@ pub struct Glm5NextMlpKernels {
     /// 2026-10-08: `w4a4_gemv_mx8_moe_slots`: the routed experts' W4A4 GEMV, one block row per
     /// (token, slot), weights from the global-id pointer tables.
     pub w4a4_moe_slots: KernelHandle,
+    /// 2026-10-09: `w4a4_gemv_mx{8,16}_moe_union`: the slot GEMV with each union expert swept
+    /// once for every row that chose it, up to 8 and 16 rows.
+    pub w4a4_moe_union: [KernelHandle; 2],
     /// 2026-10-08: The dense W4A4 GEMVs `w4a4_gemv_mx8`, `_mx16`, `_mx32` (`w4a4_gemv_mx.cu`),
     /// for up to 8, 16 and 32 rows.
     pub w4a4_mx: [KernelHandle; 3],
@@ -266,6 +269,8 @@ impl Glm5NextMlpKernels {
                 W4A4_MOE_MODULE,
                 "w4a4_gemv_mx8_moe_slots",
             ),
+            w4a4_moe_union: ["w4a4_gemv_mx8_moe_union", "w4a4_gemv_mx16_moe_union"]
+                .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MOE_MODULE, e)),
             w4a4_mx: ["w4a4_gemv_mx8", "w4a4_gemv_mx16", "w4a4_gemv_mx32"]
                 .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MX_MODULE, e)),
         })

@@ -28,7 +28,7 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{Result, bail, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops::{
-    W8A8_MAX_ROWS, W8a8Kernels, W8a8Scratch, W8a8Weight, w8a8_proj,
+    W8A8_MAX_ROWS, W8a8Kernels, W8a8Scratch, W8a8Weight, w8a8_gemv, w8a8_proj,
 };
 use metrale_model_layers::weight_map::{DenseWeight, Fp8Weight, WeightQuantFormat};
 
@@ -39,6 +39,45 @@ struct Fp8Dense {
     scratch: W8a8Scratch,
     max_k: u32,
     weights: HashMap<u64, W8a8Weight>,
+    /// 2026-10-09: What the scratch holds: `(input, rows, k, stream)` of the last quantization.
+    quantized: Option<(u64, usize, usize, u64)>,
+    /// 2026-10-09: The input a [`StableInput`] guard declares unchanged while it lives.
+    stable: Option<u64>,
+}
+
+/// 2026-10-09: While alive, the caller promises that the BF16 rows at the guarded address do
+/// not change, so consecutive projections of it reuse one FP8 quantization (KDA's q/k/v and gates
+/// read the same hidden state; the shared expert's gate and up the same input). A projection of
+/// another input re-quantizes into the scratch, after which the guarded input is quantized again
+/// on its next use. Dropping the guard forgets the scratch's content. Under `declared` it does
+/// nothing.
+pub struct StableInput {
+    active: bool,
+}
+
+/// 2026-10-09: Declare `a` unchanged until the guard drops (see [`StableInput`]).
+pub fn stable_input(a: DevicePtr) -> StableInput {
+    if !enabled() {
+        return StableInput { active: false };
+    }
+    let mut g = state().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = g.as_mut() {
+        s.stable = Some(a.0);
+    }
+    StableInput { active: true }
+}
+
+impl Drop for StableInput {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let mut g = state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(s) = g.as_mut() {
+            s.stable = None;
+            s.quantized = None;
+        }
+    }
 }
 
 fn state() -> &'static Mutex<Option<Fp8Dense>> {
@@ -88,6 +127,8 @@ pub fn prepare(gpu: &dyn GpuBackend, max_k: usize) -> Result<()> {
         scratch: W8a8Scratch::alloc(gpu, max_k)?,
         max_k,
         weights,
+        quantized: None,
+        stable: None,
     });
     Ok(())
 }
@@ -191,15 +232,12 @@ fn proj_registered(
     k: usize,
     stream: u64,
 ) -> Result<bool> {
-    let (kernels, scratch, w) = {
-        let g = state().lock().unwrap_or_else(|e| e.into_inner());
-        let Some(s) = g.as_ref() else {
-            return Ok(false);
-        };
-        let Some(w) = s.weights.get(&b.0) else {
-            return Ok(false);
-        };
-        (s.kernels, s.scratch, *w)
+    let mut g = state().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = g.as_mut() else {
+        return Ok(false);
+    };
+    let Some(&w) = s.weights.get(&b.0) else {
+        return Ok(false);
     };
     ensure!(
         (w.n() as usize, w.k() as usize) == (n, k),
@@ -208,23 +246,31 @@ fn proj_registered(
         w.n(),
         w.k()
     );
+    let key = (a.0, m, k, stream);
+    if m <= W8A8_MAX_ROWS && s.stable == Some(a.0) && s.quantized == Some(key) {
+        // 2026-10-09: The scratch already holds this stable input's quantization.
+        w8a8_gemv(gpu, &s.kernels, &w, &s.scratch, m, c, n as u32, stream)?;
+        return Ok(true);
+    }
     let mut done = 0;
     while done < m {
         let rows = (m - done).min(W8A8_MAX_ROWS);
         w8a8_proj(
             gpu,
-            &kernels,
+            &s.kernels,
             &w,
             a.offset(done * k * 2),
             k as u32,
             rows,
             c.offset(done * n * 2),
             n as u32,
-            &scratch,
+            &s.scratch,
             stream,
         )?;
         done += rows;
     }
+    // 2026-10-09: The scratch holds the last chunk only, which is all of it up to 256 rows.
+    s.quantized = (m <= W8A8_MAX_ROWS).then_some(key);
     Ok(true)
 }
 
