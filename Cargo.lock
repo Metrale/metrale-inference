@@ -1532,6 +1532,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-circuit",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror",
  "toml",

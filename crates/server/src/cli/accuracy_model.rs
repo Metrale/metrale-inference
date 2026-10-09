@@ -1,80 +1,79 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-09: `met accuracy model`: the I/O side of `metrale_accuracy::model_check`. It reads two
-//! logits files with their pins, prints the per-token summary and judges it against the limits
-//! the caller states (each measured from a good arm by the model check's owner).
+//! 2026-10-09: `met accuracy model`: the I/O side of `metrale_accuracy::model_logprobs`. It reads
+//! the pinned reference dump and the dump under test, and prints the exact or numerics verdict
+//! per leg. The dumps come from an engine-neutral producer over the OpenAI-compatible API, so
+//! one judge serves this engine and any comparison engine.
 //!
 //! Owner: server CLI.
 //! Invariants:
-//! - Logits of another corpus or reference are refused by the pins, never compared.
-//! - Every limit is an explicit flag; there is no default limit.
+//! - A reference whose bytes are not the pinned SHA-256, or dumps of different corpora, are
+//!   refused, never compared.
+//! - Numerics mode needs every limit on the command line; there is no default limit.
 
-use anyhow::{Context, Result};
-use metrale_accuracy::model_check::{Pins, compare};
-use serde::Deserialize;
+use anyhow::{Context, Result, bail};
+use metrale_accuracy::model_logprobs::{LEGS, Limits, exact, judge, leg_metrics, load};
 
 use super::AccuracyModelArgs;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Side {
-    corpus_sha256: String,
-    reference_sha256: String,
-    vocab: usize,
-}
-
-fn read(prefix: &std::path::Path) -> Result<(Pins, usize, Vec<f64>)> {
-    let meta = prefix.with_extension("toml");
-    let side: Side = toml::from_str(
-        &std::fs::read_to_string(&meta).with_context(|| meta.display().to_string())?,
-    )
-    .with_context(|| meta.display().to_string())?;
-    let data = prefix.with_extension("f32");
-    let bytes = std::fs::read(&data).with_context(|| data.display().to_string())?;
-    anyhow::ensure!(
-        bytes.len() % 4 == 0,
-        "{}: not a whole number of f32",
-        data.display()
-    );
-    let logits = bytes
-        .chunks_exact(4)
-        .map(|b| f64::from(f32::from_le_bytes([b[0], b[1], b[2], b[3]])))
-        .collect();
-    Ok((
-        Pins {
-            corpus_sha256: side.corpus_sha256,
-            reference_sha256: side.reference_sha256,
-        },
-        side.vocab,
-        logits,
-    ))
+fn limits(a: &AccuracyModelArgs) -> Result<Limits> {
+    let need = |v: Option<f64>, flag: &str| {
+        v.with_context(|| {
+            format!("numerics mode needs --{flag} (set from measured good and bad arms)")
+        })
+    };
+    Ok(Limits {
+        tf_min_top1: need(a.tf_min_top1, "tf-min-top1")?,
+        tf_max_kl: need(a.tf_max_kl, "tf-max-kl")?,
+        tf_max_dlp_p99: need(a.tf_max_dlp_p99, "tf-max-dlp-p99")?,
+        dec_max_kl: need(a.dec_max_kl, "dec-max-kl")?,
+        dec_max_dlp_p99: need(a.dec_max_dlp_p99, "dec-max-dlp-p99")?,
+        max_divergence_margin: need(a.max_divergence_margin, "max-divergence-margin")?,
+        max_unmeasured_divergences: need(
+            a.max_unmeasured_divergences,
+            "max-unmeasured-divergences",
+        )?,
+    })
 }
 
 /// 2026-10-09: Run `met accuracy model`; the exit status.
 pub(crate) fn run(a: &AccuracyModelArgs) -> Result<i32> {
-    let (rp, rv, run) = read(&a.run)?;
-    let (pp, pv, reference) = read(&a.reference)?;
-    anyhow::ensure!(rv == pv, "vocab {rv} (run) and {pv} (reference) differ");
-    let (_, s) = compare(&run, &reference, rv, &rp, &pp)?;
-    println!(
-        "tokens {} | mean KL {:.3e} max KL {:.3e} | top-1 {:.4} | max |dlogit| {:.3e}",
-        s.tokens, s.mean_kl, s.max_kl, s.top1, s.max_dlogit
-    );
-    let mut failed = Vec::new();
-    if s.mean_kl > a.max_mean_kl {
-        failed.push(format!("mean KL {:.3e} > {:.3e}", s.mean_kl, a.max_mean_kl));
+    let reference =
+        std::fs::read(&a.reference).with_context(|| a.reference.display().to_string())?;
+    let test = std::fs::read(&a.test).with_context(|| a.test.display().to_string())?;
+    let (r, t) = load(&reference, &a.reference_sha256, &test)?;
+    match a.mode.as_str() {
+        "exact" => {
+            let diffs = exact(&r, &t);
+            for (leg, i, at) in &diffs {
+                println!("  {leg}[{i}] differs (first token/logprob difference at {at:?})");
+            }
+            println!("EXACT {}", if diffs.is_empty() { "PASS" } else { "FAIL" });
+            Ok(i32::from(!diffs.is_empty()))
+        }
+        "numerics" => {
+            let l = limits(a)?;
+            let mut ok = true;
+            for leg in LEGS {
+                let m = leg_metrics(&r, &t, leg);
+                let pass = judge(leg, &m, &l);
+                ok &= pass;
+                println!(
+                    "{leg:5} {} positions {} top1 {:.5} kl_mean {:.5} dlp_p99 {:.5} dlp_max {:.5} diverged {} unmeasured {} max_margin {:?}",
+                    if pass { "PASS" } else { "FAIL" },
+                    m.positions,
+                    m.top1,
+                    m.kl_mean,
+                    m.dlp_p99,
+                    m.dlp_max,
+                    m.diverged,
+                    m.unmeasured_divergences,
+                    m.max_margin_at_divergence
+                );
+            }
+            println!("NUMERICS {}", if ok { "PASS" } else { "FAIL" });
+            Ok(i32::from(!ok))
+        }
+        other => bail!("--mode {other} (exact | numerics)"),
     }
-    if s.top1 < a.min_top1 {
-        failed.push(format!("top-1 {:.4} < {:.4}", s.top1, a.min_top1));
-    }
-    if s.max_dlogit > a.max_dlogit {
-        failed.push(format!(
-            "max |dlogit| {:.3e} > {:.3e}",
-            s.max_dlogit, a.max_dlogit
-        ));
-    }
-    for f in &failed {
-        println!("FAIL {f}");
-    }
-    Ok(i32::from(!failed.is_empty()))
 }

@@ -11,14 +11,14 @@ use clap::Parser;
 pub(crate) mod accuracy;
 mod accuracy_adapters;
 mod accuracy_adapters_attention;
-mod accuracy_adapters_norm;
-mod accuracy_adapters_quant;
-mod accuracy_adapters_w8a8;
-mod accuracy_adapters_tc;
-mod accuracy_model;
 mod accuracy_adapters_gdn;
 mod accuracy_adapters_moe;
+mod accuracy_adapters_norm;
+mod accuracy_adapters_quant;
+mod accuracy_adapters_tc;
+mod accuracy_adapters_w8a8;
 mod accuracy_gpu;
+mod accuracy_model;
 pub mod bench_aggregate;
 mod bench_args;
 pub mod bench_card;
@@ -144,32 +144,50 @@ pub enum AccuracyAction {
     /// As `check`, and also print the `[[contract.calibration]]` rows the passing checks
     /// measured, for review into ACCURACY.toml.
     Calibrate(AccuracyRunArgs),
-    /// Judge a teacher-forced model check: a run's logits against a pinned reference's on the
-    /// same corpus (per-token KL, top-1 agreement, max |dlogit|), and, with per-stage deltas,
-    /// the first stage that leaves its composed budget. Exits non-zero when a limit is exceeded.
+    /// Judge a model-level accuracy check over two engine-neutral logprob dumps (teacher-forced
+    /// prompt logprobs `tf`, greedy decode at one and four rows `dec1`/`dec4`, top-k per
+    /// position, taken over the OpenAI-compatible API): `exact` requires byte equality,
+    /// `numerics` judges top-1, top-k KL, |dlogprob| p99 and the divergence margin against the
+    /// limits given. Exits non-zero on a failure.
     Model(AccuracyModelArgs),
 }
 
-/// `met accuracy model` options. Each side is `<prefix>.f32` (little-endian f32 logits,
-/// `[positions, vocab]` row-major) and `<prefix>.toml` (`corpus_sha256`, `reference_sha256`,
-/// `vocab`).
+/// `met accuracy model` options.
 #[derive(clap::Args, Debug, Clone)]
 pub struct AccuracyModelArgs {
-    /// The run's logits prefix.
-    #[arg(long)]
-    pub run: std::path::PathBuf,
-    /// The reference's logits prefix.
-    #[arg(long)]
+    /// The pinned reference dump (JSON).
+    #[arg(long = "ref")]
     pub reference: std::path::PathBuf,
-    /// Fail when the mean per-token KL (nats) exceeds this.
+    /// SHA-256 the reference file must have.
+    #[arg(long = "ref-sha256")]
+    pub reference_sha256: String,
+    /// The dump under test (JSON, same corpus).
     #[arg(long)]
-    pub max_mean_kl: f64,
-    /// Fail when the top-1 agreement falls below this share.
+    pub test: std::path::PathBuf,
+    /// `exact` (bit-identical levers) or `numerics` (precision-changing levers).
     #[arg(long)]
-    pub min_top1: f64,
-    /// Fail when any |dlogit| exceeds this.
+    pub mode: String,
+    /// numerics: least tf top-1 agreement.
     #[arg(long)]
-    pub max_dlogit: f64,
+    pub tf_min_top1: Option<f64>,
+    /// numerics: largest tf mean KL.
+    #[arg(long)]
+    pub tf_max_kl: Option<f64>,
+    /// numerics: largest tf p99 |dlogprob|.
+    #[arg(long)]
+    pub tf_max_dlp_p99: Option<f64>,
+    /// numerics: largest decode mean KL.
+    #[arg(long)]
+    pub dec_max_kl: Option<f64>,
+    /// numerics: largest decode p99 |dlogprob|.
+    #[arg(long)]
+    pub dec_max_dlp_p99: Option<f64>,
+    /// numerics: largest reference top-1/top-2 margin at a decode divergence.
+    #[arg(long)]
+    pub max_divergence_margin: Option<f64>,
+    /// numerics: most decode divergences without a measurable margin.
+    #[arg(long)]
+    pub max_unmeasured_divergences: Option<f64>,
 }
 
 /// `met accuracy points` options.
