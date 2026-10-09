@@ -406,6 +406,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                 limits: SchedLimits {
                     im_start_hard_stop: None,
                     tool_response_hard_stop: None,
+                    thinking_closed_by: None,
                     max_seq_len: 4096,
                 },
                 watchdog: WatchdogParams::default(),

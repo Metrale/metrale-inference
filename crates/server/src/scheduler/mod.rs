@@ -75,6 +75,7 @@ mod swap_out_tests;
 mod teardown;
 #[cfg(test)]
 mod test_support;
+mod think_close;
 #[cfg(test)]
 mod think_skip_tests;
 #[cfg(test)]

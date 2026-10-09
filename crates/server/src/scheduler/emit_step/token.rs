@@ -110,6 +110,14 @@ pub fn emit_token(
         a.think_skip_count = 0;
     }
 
+    // 2026-10-09: under a format whose tool call closes the thinking block, the
+    // opener leaves thinking here and is handled below as a content token.
+    crate::scheduler::think_close::close_thinking_at_tool_call(
+        a,
+        tok,
+        sched.limits.thinking_closed_by,
+    );
+
     // 2026-09-25: a `<tool_call>` outside thinking satisfies
     // `require_tool_call`.
     if a.require_tool_call && a.tool_call_start_token == Some(tok) && !a.inside_thinking {
