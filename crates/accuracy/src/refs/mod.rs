@@ -26,6 +26,8 @@ use crate::plan::Plan;
 use crate::points::Shape;
 
 pub mod act_quant;
+pub mod attention;
+pub mod attention_impl;
 pub mod linear;
 pub mod linear_impl;
 pub mod linear_mutate;
@@ -90,6 +92,7 @@ pub const REFS: &[&dyn RefImpl] = &[
     &act_quant::ActQuant,
     &norm_impl::RmsNorm,
     &rope_impl::Rope,
+    &attention_impl::PagedAttention,
 ];
 
 /// 2026-10-09: Random output columns a sample adds to the structural ones.

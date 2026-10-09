@@ -599,6 +599,17 @@ from = "dim:head_dim"
 name = "kv_dtype"
 kind = "policy"
 from = "setting:kv_cache_dtype"
+# 2026-10-09: The head counts are runtime arguments (one compiled kernel serves every GQA ratio,
+# `kv_head = q_head / (num_q_heads / num_kv_heads)`, paged_decode_attn.cu:88-89); the accuracy
+# reference sizes its launch from them.
+[[family.param]]
+name = "q_heads"
+kind = "runtime"
+from = "dim:q_heads"
+[[family.param]]
+name = "kv_heads"
+kind = "runtime"
+from = "dim:kv_heads"
 [[family.discover]]
 kind = "file"
 glob = "kernels/gb10/common/paged_decode_attn_*_128.cu"

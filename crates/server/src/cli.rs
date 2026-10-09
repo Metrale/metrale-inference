@@ -10,6 +10,7 @@ use clap::Parser;
 
 pub(crate) mod accuracy;
 mod accuracy_adapters;
+mod accuracy_adapters_attention;
 mod accuracy_adapters_norm;
 mod accuracy_adapters_quant;
 mod accuracy_adapters_w8a8;

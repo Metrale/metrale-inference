@@ -514,3 +514,34 @@ approx = {}
 scale_fold = "group"
 inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
 mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16", "symbol:w8a16_gemv_batch4::w8a16_gemv_batch16"]
+
+# 2026-10-09: paged_decode_attn.cu paged_decode_attn (BF16 cache; the GB10 BF16 decode route
+# never splits, run_paged_decode/bf16_fp8.rs). Head-dim dot (`d`): per lane
+# `dot += q0*k0 + q1*k1` over VEC_U32 = HDIM/64 pairs (:166-172, :228-234; products of bf16
+# operands are exact in f32), then a 32-lane xor-shuffle tree (:174-175). Context (`ctx`): each
+# of the 8 warps takes a contiguous chunk of ceil(L/8) positions (:107-112) and folds them in
+# order, one rescale (`o *= exp_old`, `l *= exp_old`) before each add (:191-221, :239-254); the
+# warps merge pairwise at strides 4, 2, 1 (:276-298); one `1.0f / l` and one product per output
+# (:303-309). `__expf` is `ex2.approx.f32` of the argument times log2(e): 2 ulp from the
+# correctly rounded result over the full range (PTX ISA, `ex2`), so 2.5 ulp of the exact value,
+# 2^-21.68 relative. The kernels build with `--fmad=false` (KERNEL.toml): every operation rounds.
+[[contract]]
+family = "paged_decode_attn"
+kernels = ["paged_decode::paged_decode_attn"]
+op = "paged_attention"
+reference = "paged_attention"
+class = "derived"
+reduction.d = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "lane", width = "k/64", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+]
+reduction.ctx = [
+  { level = "warp", width = "k/8", order = "sequential" },
+  { level = "cta", width = "8", order = "tree" },
+]
+ftz = false
+approx = { exp2 = "2^-21.67" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["kv_page_swap", "accumulate:bf16"]
