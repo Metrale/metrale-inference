@@ -159,3 +159,34 @@ approx = {}
 scale_fold = "group"
 inputs = ["gaussian", "outliers", "near_overflow", "zero_rows"]
 mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: w8a8_act_quant.cu:4-22: s = fmaxf(amax / 448, 1e-12) and q = E4M3(clamp(v / s)),
+# correctly rounded divisions, amax exact. The rule is exact, so the contract is too (e = 0); the
+# codes and scales are decoded with the declared granularity.
+[[contract]]
+family = "w8a8_act_quant"
+kernels = ["w8a8_act_quant::w8a8_act_quant_row"]
+op = "act_quant"
+reference = "act_quant"
+class = "derived"
+reduction = {}
+ftz = false
+approx = {}
+constants = { scale_floor = 1e-12 }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["symbol:w8a8_act_quant::w8a8_act_quant_g128"]
+
+[[contract]]
+family = "w8a8_act_quant"
+kernels = ["w8a8_act_quant::w8a8_act_quant_g128"]
+op = "act_quant"
+reference = "act_quant"
+class = "derived"
+reduction = {}
+ftz = false
+approx = {}
+constants = { scale_floor = 1e-12 }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["symbol:w8a8_act_quant::w8a8_act_quant_row"]

@@ -96,7 +96,11 @@ pub(crate) const ADAPTERS: &[(&str, Adapter)] = &[
 ];
 
 /// 2026-10-09: Every adapter table: this file's projections and each op class's own file.
-const TABLES: &[&[(&str, Adapter)]] = &[ADAPTERS, super::accuracy_adapters_w8a8::ADAPTERS];
+const TABLES: &[&[(&str, Adapter)]] = &[
+    ADAPTERS,
+    super::accuracy_adapters_w8a8::ADAPTERS,
+    super::accuracy_adapters_quant::ADAPTERS,
+];
 
 /// 2026-10-09: An adapter launches `launcher`.
 pub(crate) fn has_adapter(launcher: &str) -> bool {

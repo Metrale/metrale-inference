@@ -30,6 +30,8 @@ pub struct Plan {
     pub ftz: bool,
     /// 2026-10-09: Approximate-function relative errors.
     pub approx: BTreeMap<String, f64>,
+    /// 2026-10-09: Kernel constants the contract states.
+    pub constants: BTreeMap<String, f64>,
     /// 2026-10-09: Where block scales fold.
     pub scale_fold: ScaleFold,
 }
@@ -124,6 +126,7 @@ pub fn plan(
         depth,
         ftz: c.ftz,
         approx: c.approx.clone(),
+        constants: c.constants.clone(),
         scale_fold: c.scale_fold,
     })
 }
@@ -144,6 +147,14 @@ impl Plan {
             .get(dim)
             .copied()
             .ok_or_else(|| format!("the contract declares no reduction for `{dim}`"))
+    }
+
+    /// 2026-10-09: Kernel constant `name`; an error names a missing declaration.
+    pub fn constant_of(&self, name: &str) -> Result<f64, String> {
+        self.constants
+            .get(name)
+            .copied()
+            .ok_or_else(|| format!("the contract declares no constant `{name}`"))
     }
 
     /// 2026-10-09: The relative error of approximate function `f`; an error names a missing

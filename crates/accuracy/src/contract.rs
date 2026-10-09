@@ -107,6 +107,9 @@ pub struct Contract {
     pub ftz: bool,
     /// 2026-10-09: Relative error of each approximate function the reference uses.
     pub approx: BTreeMap<String, f64>,
+    /// 2026-10-09: Kernel constants a reference needs (a quantizer's scale floor), by name; a
+    /// reference asks for the ones it uses and errors on a missing one.
+    pub constants: BTreeMap<String, f64>,
     /// 2026-10-09: Where block scales fold.
     pub scale_fold: ScaleFold,
     /// 2026-10-09: Output split across launches, when the contract tests one.
@@ -167,6 +170,7 @@ struct ContractFile {
     reduction: Option<BTreeMap<String, Vec<Level>>>,
     ftz: Option<bool>,
     approx: Option<BTreeMap<String, String>>,
+    constants: Option<BTreeMap<String, f64>>,
     scale_fold: Option<String>,
     split: Option<Split>,
     inputs: Vec<String>,
@@ -294,6 +298,7 @@ fn contract(c: ContractFile) -> Result<Contract, ContractError> {
         reduction: c.reduction.clone().unwrap_or_default(),
         ftz: c.ftz.unwrap_or(false),
         approx,
+        constants: c.constants.clone().unwrap_or_default(),
         scale_fold,
         split: c.split,
         inputs,
