@@ -21,6 +21,7 @@ use super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 mod dense;
 mod launch;
 mod moe_experts;
+mod router;
 mod w4a4;
 mod workspace;
 
@@ -357,35 +358,17 @@ pub fn forward_moe(
     }
 
     let t = profile::start();
-    if rows > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
-        && crate::glm5next_layer::cublas_wide_proj()
-    {
-        metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
-            x,
-            w.router,
-            ws.logits,
-            rows as u32,
-            cfg.num_experts as u32,
-            cfg.hidden as u32,
-            stream,
-        )?;
-    } else {
-        for r in 0..rows {
-            gemm(
-                gpu,
-                k.gemm_f32,
-                k.gemv_f32,
-                KernelHandle(0),
-                x.offset(r * cfg.hidden * 2),
-                w.router,
-                ws.logits.offset(r * cfg.num_experts * 4),
-                1,
-                cfg.num_experts,
-                cfg.hidden,
-                stream,
-            )?;
-        }
-    }
+    router::router_logits(
+        gpu,
+        k,
+        cfg,
+        w.router,
+        x,
+        ws.logits,
+        rows,
+        crate::glm5next_layer::router_rows(),
+        stream,
+    )?;
     // 2026-09-25: One top-k launch for all rows: `glm5next_router_topk` handles row `blockIdx.x`.
     KernelLaunch::new(gpu, k.router)
         .grid([rows as u32, 1, 1])

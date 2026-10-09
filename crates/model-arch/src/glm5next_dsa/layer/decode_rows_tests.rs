@@ -13,9 +13,11 @@ use metrale_gpu_runtime::gpu::mock::MockArg;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layer::LayerState;
 
+use crate::glm5next_dsa::layer::Glm5NextDsaLayer;
 use crate::glm5next_dsa::state::Glm5NextDsaState;
 
 use super::super::decode_rows_fixture::*;
+use super::DsaRowSpan;
 
 /// 2026-10-08: Three sequences at different lengths. One latent write covers the rows,
 /// reading the metadata slots and `kv_a` from row 0; row `r`'s indexer row lands at its own
@@ -315,5 +317,113 @@ fn nine_rows_or_more_take_the_wide_batched_gemv() {
         assert_eq!(of(&l, BATCHM_WIDE_F32).len(), f32_, "n={n}");
         assert_eq!(of(&l, BATCHM).len(), 4 - bf, "n={n}");
         assert_eq!(of(&l, BATCHM_F32).len(), 2 - f32_, "n={n}");
+    }
+}
+
+/// 2026-10-09: `decode_spans_with` one row per sequence over `boxes`, with the batched indexer
+/// projections as `indexer_rows` says.
+fn run_indexer_rows(
+    rig: &Rig,
+    layer: &Glm5NextDsaLayer,
+    boxes: &mut [Box<dyn LayerState>],
+    lens: &[usize],
+    meta: &metrale_model_layers::layer::AttnMetadataDev,
+    capture: bool,
+    indexer_rows: bool,
+) -> (DevicePtr, anyhow::Result<()>) {
+    let mut kv = rig.kv();
+    let hidden = rig.buf(boxes.len() * HIDDEN * 2);
+    let mut refs: Vec<&mut (dyn LayerState + 'static)> =
+        boxes.iter_mut().map(|b| b.as_mut()).collect();
+    let spans: Vec<DsaRowSpan> = lens
+        .iter()
+        .map(|&first_pos| DsaRowSpan { first_pos, rows: 1 })
+        .collect();
+    let r = layer.decode_spans_with(
+        hidden,
+        &mut refs,
+        &spans,
+        &mut kv,
+        meta,
+        0,
+        &rig.ctx(capture),
+        7,
+        indexer_rows,
+    );
+    (hidden, r)
+}
+
+/// 2026-10-09: With the batched indexer projections on a captured group, `wk` and the compress
+/// gate run once each over all three rows (from `hidden` into the staging rows), the key norm
+/// once with one block per row, and row `r`'s store copies staging row `r` to its own
+/// metadata position and its own cache; no per-row indexer projection or norm remains, and
+/// every cache grows by one row. A bug that stored staging row 0 for every row, or left the
+/// per-row projections in place, fails here.
+#[test]
+fn batched_indexer_rows_stage_every_row_and_store_each_from_its_own() {
+    let rig = Rig::new();
+    let layer = rig.layer();
+    let meta = rig.meta(3);
+    let lens = [5usize, 9, 2];
+    let mut boxes = rig.states(&lens);
+    let caches: Vec<DevicePtr> = boxes.iter().map(|b| dsa(b.as_ref()).k_normed).collect();
+    let from = rig.gpu.launch_count();
+    let (hidden, r) = run_indexer_rows(&rig, &layer, &mut boxes, &lens, &meta, true, true);
+    r.unwrap();
+    let l = rig.since(from);
+    let w = &layer.workspace;
+    let d = cfg().index_head_dim;
+    let three = MockArg::Bytes(3u32.to_le_bytes().to_vec());
+    let staged: Vec<_> = of(&l, BATCHM)
+        .into_iter()
+        .filter(|p| p.args[2] == ptr(w.stage_k) || p.args[2] == ptr(w.stage_gate))
+        .collect();
+    assert_eq!(staged.len(), 2, "wk and the compress gate, each once");
+    for p in &staged {
+        assert_eq!(p.args[0], ptr(hidden));
+        assert_eq!(p.args[3], three);
+    }
+    assert!(of(&l, 0x103).is_empty(), "no M = 1 BF16 GEMV");
+    let knorm = of(&l, KNORM);
+    assert_eq!(knorm.len(), 1);
+    assert_eq!(knorm[0].grid[0], 3);
+    assert_eq!(knorm[0].args[0], ptr(w.stage_k));
+    assert_eq!(knorm[0].args[3], three);
+    let store = of(&l, STORE);
+    assert_eq!(store.len(), 3);
+    for (r, s) in store.iter().enumerate() {
+        assert_eq!(s.args[0], ptr(w.stage_k.offset(r * d * 2)), "row {r}'s key");
+        assert_eq!(
+            s.args[1],
+            ptr(w.stage_gate.offset(r * d * 2)),
+            "row {r}'s gate"
+        );
+        assert_eq!(s.args[2], ptr(meta.positions.offset(r * 4)));
+        assert_eq!(s.args[3], ptr(caches[r]));
+    }
+    let after: Vec<usize> = boxes.iter().map(|b| dsa(b.as_ref()).len()).collect();
+    assert_eq!(after, vec![6, 10, 3]);
+}
+
+/// 2026-10-09: Eager over flat caches the rows are placed by host address, so the batched
+/// indexer projections stay off even when asked for: one key norm per row, on the row's own
+/// cache row, as before.
+#[test]
+fn eager_flat_rows_keep_the_per_row_indexer() {
+    let rig = Rig::new();
+    let layer = rig.layer();
+    let meta = rig.meta(3);
+    let lens = [5usize, 9, 2];
+    let mut boxes = rig.states(&lens);
+    let caches: Vec<DevicePtr> = boxes.iter().map(|b| dsa(b.as_ref()).k_normed).collect();
+    let from = rig.gpu.launch_count();
+    run_indexer_rows(&rig, &layer, &mut boxes, &lens, &meta, false, true)
+        .1
+        .unwrap();
+    let knorm = of(&rig.since(from), KNORM);
+    assert_eq!(knorm.len(), 3);
+    for (r, k) in knorm.iter().enumerate() {
+        let row = lens[r] * cfg().index_head_dim * 2;
+        assert_eq!(k.args[0], ptr(caches[r].offset(row)));
     }
 }

@@ -65,6 +65,24 @@ pub(crate) fn dsa_batch_qidx() -> bool {
     })
 }
 
+/// 2026-10-09: `METRALE_GLM_ROUTER_ROWS=1` computes the router logits of a 2..=16-row group
+/// (the batched decode and verify) in one batched FP32-out GEMV instead of one M = 1 GEMV per
+/// row; each row's logits keep their bits (`glm5next_mlp::forward::router::router_logits`).
+/// Off until measured end to end. Read once.
+pub(crate) fn router_rows() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_ROUTER_ROWS").as_deref() == Ok("1"))
+}
+
+/// 2026-10-09: `METRALE_GLM_DSA_INDEXER_ROWS=1` runs the DSA indexer's key and gate
+/// projections and the key norm of a batched decode or verify group once over all its rows
+/// (`Glm5NextDsaLayer::indexer_project_rows`) instead of once per row; each row is then placed
+/// from its staging row. Each row keeps its bits. Off until measured end to end. Read once.
+pub(crate) fn dsa_indexer_rows() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() == Ok("1"))
+}
+
 /// 2026-09-25: `PREFILL_ROWS`, overridable at launch with `METRALE_GLM_PREFILL_ROWS` (values
 /// below 1 or unparsable are ignored). `1` selects the per-token walk: `Glm5NextLayer::prefill`
 /// takes the batched sub-chunk path only when `rows > 1`. A width above

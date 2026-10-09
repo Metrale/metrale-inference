@@ -84,7 +84,9 @@ pub struct Glm5NextDsaWorkspace {
     /// 2026-09-25: `[index_head_dim]` BF16 staging rows at fixed addresses (`stage_k`,
     /// `stage_gate`). On the replay-safe path the indexer projections write here and
     /// `dsa_indexer_store` copies them to the row at a device-side position, which a
-    /// replayed graph reads live.
+    /// replayed graph reads live. 2026-10-09: `[max_rows, index_head_dim]`: the batched
+    /// indexer projections (`indexer_project_rows`) stage row `r` at row `r`; every other
+    /// path uses row 0.
     pub(super) stage_k: DevicePtr,
     pub(super) stage_gate: DevicePtr,
     /// 2026-09-25: `[5]` i32 selector geometry, written on the device by `dsa_write_geom`
@@ -107,7 +109,7 @@ impl Glm5NextDsaWorkspace {
     /// 2026-09-25: `max_rows` (at least 1) is the largest `k` this workspace serves. Sized by
     /// it: the projection outputs, `attn_out`, `sl`, the batched-selector buffers, and the
     /// selection scratch, which is planned at [`super::super::state::max_dsa_context`] tokens and
-    /// `max_rows` query rows. The staging rows and `bt` do not depend on it.
+    /// `max_rows` query rows, and (2026-10-09) the staging rows. `bt` does not depend on it.
     pub fn new(gpu: &dyn GpuBackend, cfg: &Glm5NextDsaConfig, max_rows: usize) -> Result<Self> {
         let rows = max_rows.max(1);
         let geom = super::super::select::DsaSelectGeometry::plan(
@@ -173,8 +175,8 @@ impl Glm5NextDsaWorkspace {
             },
             bt_cap,
             max_rows: rows,
-            stage_k: gpu.alloc(cfg.index_head_dim * 2)?,
-            stage_gate: gpu.alloc(cfg.index_head_dim * 2)?,
+            stage_k: gpu.alloc(rows * cfg.index_head_dim * 2)?,
+            stage_gate: gpu.alloc(rows * cfg.index_head_dim * 2)?,
             geom_dev: gpu.alloc(5 * 4)?,
             select: DsaSelectScratch::alloc(gpu, cfg, &geom)?,
             pad_k: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,

@@ -109,6 +109,11 @@ pub struct Glm5NextMlpKernels {
     /// 2026-10-09: `dense_gemv_bf16_batchm_wide` (9..=16 rows, accumulators in registers);
     /// `0` when absent (`glm5next_layer::wide_gemv`).
     pub gemv_batchm_wide: KernelHandle,
+    /// 2026-10-09: `dense_gemv_bf16_batchm_fp32out` and `dense_gemv_bf16_batchm_wide_fp32out`:
+    /// the router logits of 2..=16 rows in one sweep of the router weight, each row the M = 1
+    /// `gemv_f32`'s bits (`forward::router_logits`). `0` when absent: one GEMV per row.
+    pub gemv_batchm_f32: KernelHandle,
+    pub gemv_batchm_wide_f32: KernelHandle,
     /// 2026-09-25: NVFP4 `w4a16_gemm` tile GEMM. Resolved, but not launched by this module.
     pub w4a16: KernelHandle,
     /// 2026-09-25: NVFP4 `C[1, N] = A[1, K] @ B[N, K]^T`, the per-expert decode GEMV.
@@ -182,6 +187,14 @@ impl Glm5NextMlpKernels {
             wide: self.gemv_batchm_wide,
         }
     }
+
+    /// 2026-10-09: The FP32-out batched GEMV pair, for the router logits.
+    pub(crate) fn batchm_f32(&self) -> crate::glm5next_layer::wide_gemv::Batchm {
+        crate::glm5next_layer::wide_gemv::Batchm {
+            narrow: self.gemv_batchm_f32,
+            wide: self.gemv_batchm_wide_f32,
+        }
+    }
 }
 
 impl Glm5NextMlpKernels {
@@ -204,6 +217,16 @@ impl Glm5NextMlpKernels {
                 gpu,
                 "gemv",
                 "dense_gemv_bf16_fp32out",
+            ),
+            gemv_batchm_f32: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "dense_gemv_bf16_batchm",
+                "dense_gemv_bf16_batchm_fp32out",
+            ),
+            gemv_batchm_wide_f32: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "dense_gemv_bf16_batchm",
+                "dense_gemv_bf16_batchm_wide_fp32out",
             ),
             w4a16: gpu.kernel(W4A16_MODULE, "w4a16_gemm")?,
             w4a16_gemv: gpu.kernel(W4A16_GEMV_MODULE, "w4a16_gemv")?,
