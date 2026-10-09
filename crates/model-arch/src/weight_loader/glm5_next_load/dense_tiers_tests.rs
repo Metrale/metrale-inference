@@ -47,15 +47,15 @@ fn the_split_is_all_fp8_unless_w4a16() {
     let gpu = MockGpuBackend::new();
     let projs = layer(&gpu);
     let names = |v: &[Proj]| v.iter().map(|p| p.3).collect::<Vec<_>>();
-    let (fp8, w4) = split_by_tier(projs.clone(), false).unwrap();
+    let (fp8, w4) = split_by_tier(projs.clone(), false, false).unwrap();
     assert_eq!(names(&fp8), names(&projs));
     assert!(w4.is_empty());
-    let (fp8, w4) = split_by_tier(projs, true).unwrap();
+    let (fp8, w4) = split_by_tier(projs, true, false).unwrap();
     assert_eq!(names(&fp8), vec!["kda.f_b_proj", "kda.g_b_proj"]);
     assert_eq!(w4.len(), 10);
-    let e = split_by_tier(vec![(DevicePtr(1), 1, 1, "dsa.wq_b")], true).unwrap_err();
+    let e = split_by_tier(vec![(DevicePtr(1), 1, 1, "dsa.wq_b")], true, false).unwrap_err();
     assert!(e.to_string().contains("no tier decided"), "{e}");
-    assert!(split_by_tier(vec![(DevicePtr(1), 1, 1, "dsa.wq_b")], false).is_ok());
+    assert!(split_by_tier(vec![(DevicePtr(1), 1, 1, "dsa.wq_b")], false, false).is_ok());
 }
 
 /// 2026-10-09: Under `w4a16` the ten W4A16 fields hold their NVFP4 keys and their BF16 buffers
@@ -73,7 +73,7 @@ fn w4a16_retargets_and_frees_exactly_its_set() {
         );
         {
             let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
-            register_projections(&gpu, projs.clone(), &mut slots, on, 5).unwrap();
+            register_projections(&gpu, projs.clone(), &mut slots, on, false, 5).unwrap();
         }
         let w4_new = crate::glm5next_w4a16_dense::registered().0 - w4_before;
         let fp8_new = crate::glm5next_fp8_dense::registered().0 - fp8_before;
@@ -102,6 +102,7 @@ fn an_unsupported_width_is_refused_before_anything_is_freed() {
         vec![(w, 64, 2688, "kda.o_proj")],
         &mut [&mut field],
         true,
+        false,
         9,
     )
     .unwrap_err()
@@ -109,4 +110,43 @@ fn an_unsupported_width_is_refused_before_anything_is_freed() {
     assert!(e.contains("layer 9 kda.o_proj is [64, 2688]"), "{e}");
     assert_eq!(field, w);
     assert!(is_live(&gpu, w));
+}
+
+/// 2026-10-09: Under `METRALE_GLM_DSA_W4A16` the DSA q_a, absorbed q and absorbed o move to
+/// W4A16 (retargeted, BF16 freed) and the rest of the DSA layer stays FP8; without it, under the
+/// same tier, all six stay FP8 and keep their BF16.
+#[test]
+fn the_dsa_absorbed_set_moves_only_under_its_lever() {
+    for dsa_absorbed in [false, true] {
+        let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
+        let gpu = MockGpuBackend::new();
+        let (hid, ql, lat, kvl) = (512usize, 256usize, 512usize, 256usize);
+        let projs: Vec<Proj> = [
+            (ql, hid, "dsa.q_a_proj"),
+            (lat, ql, "dsa.q_absorb"),
+            (kvl, hid, "dsa.kv_a_proj"),
+            (hid, lat, "dsa.o_absorb"),
+            (128, hid, "dsa.indexer.wk"),
+            (128, hid, "dsa.indexer.compress_gate"),
+        ]
+        .into_iter()
+        .map(|(n, k, name)| (gpu.alloc(n * k * 2).unwrap(), n, k, name))
+        .collect();
+        let mut fields: Vec<DevicePtr> = projs.iter().map(|p| p.0).collect();
+        {
+            let mut slots: Vec<&mut DevicePtr> = fields.iter_mut().collect();
+            register_projections(&gpu, projs.clone(), &mut slots, true, dsa_absorbed, 3).unwrap();
+        }
+        for (i, p) in projs.iter().enumerate() {
+            let moved =
+                dsa_absorbed && matches!(p.3, "dsa.q_a_proj" | "dsa.q_absorb" | "dsa.o_absorb");
+            assert_eq!(
+                fields[i] != p.0,
+                moved,
+                "{} (dsa_absorbed {dsa_absorbed})",
+                p.3
+            );
+            assert_eq!(is_live(&gpu, p.0), !moved, "{}: BF16 freed iff moved", p.3);
+        }
+    }
 }

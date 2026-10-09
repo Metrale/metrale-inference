@@ -38,13 +38,13 @@ fn each_projection_has_its_tier_and_unknown_names_are_refused() {
         "dsa.indexer.compress_gate",
     ];
     for n in w4 {
-        assert_eq!(tier_of(n).unwrap(), ProjTier::W4a16, "{n}");
+        assert_eq!(tier_of(n, false).unwrap(), ProjTier::W4a16, "{n}");
     }
     for n in fp8 {
-        assert_eq!(tier_of(n).unwrap(), ProjTier::Fp8, "{n}");
+        assert_eq!(tier_of(n, false).unwrap(), ProjTier::Fp8, "{n}");
     }
     for n in ["dsa.wq_b", "dsa.weights_proj", "mlp.gate", "kda.q_proj "] {
-        let e = tier_of(n).unwrap_err().to_string();
+        let e = tier_of(n, false).unwrap_err().to_string();
         assert!(e.contains("no tier decided"), "{n}: {e}");
     }
 }
@@ -215,4 +215,31 @@ fn registered_weights_run_in_whole_row_chunks_and_everything_else_declines_or_er
         !proj(&gpu, key, a, c, 1, n, k, 0).unwrap(),
         "the published tier (declared in tests) declines"
     );
+}
+
+/// 2026-10-09: `METRALE_GLM_DSA_W4A16` moves exactly the DSA q_a / absorbed q / absorbed o, is
+/// refused without the `w4a16` tier, and takes only 0 or 1.
+#[test]
+fn the_dsa_absorbed_lever_moves_three_projections_and_needs_the_tier() {
+    for n in ["dsa.q_a_proj", "dsa.q_absorb", "dsa.o_absorb"] {
+        assert_eq!(tier_of(n, true).unwrap(), ProjTier::W4a16, "{n}");
+    }
+    for n in [
+        "dsa.kv_a_proj",
+        "dsa.indexer.wk",
+        "dsa.indexer.compress_gate",
+        "kda.f_b_proj",
+    ] {
+        assert_eq!(tier_of(n, true).unwrap(), ProjTier::Fp8, "{n}");
+    }
+    assert!(tier_of("dsa.wq_b", true).is_err());
+    assert_eq!(parse_dsa_absorbed(None, false), Ok(false));
+    assert_eq!(parse_dsa_absorbed(Some("0"), true), Ok(false));
+    assert_eq!(parse_dsa_absorbed(Some("1"), true), Ok(true));
+    assert!(
+        parse_dsa_absorbed(Some("1"), false)
+            .unwrap_err()
+            .contains("w4a16")
+    );
+    assert!(parse_dsa_absorbed(Some("on"), true).is_err());
 }
