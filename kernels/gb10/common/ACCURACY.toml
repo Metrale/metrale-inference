@@ -106,3 +106,68 @@ class = "bit_identical"
 against = "gemv::dense_gemv_bf16"
 inputs = ["gaussian", "outliers", "all_equal"]
 mutations = ["symbol:gemv::dense_gemv_bf16_fp32out"]
+
+# 2026-10-09: gated_delta_rule.cu gated_delta_rule_decode_f32_strided (:696-813), compiled with
+# --fmad=false (common/KERNEL.toml), so every product and sum below rounds in f32. Per value
+# column (one thread): hk_dot (:743-751) and q_dot (:773) add each step's four products as
+# ((p0 + p1) + p2) + p3 and then into the running sum, k_dim/4 steps; the clamp's sum of squares
+# runs k_dim terms in a thread (:780-783), a 32-lane shfl_down tree (:790-791) and the four
+# warps' partials in sequence (:797), so v_dim must be 128 (the reference refuses others).
+# rsqrtf at :803 and :811 is rsqrt.approx.f32, at most 2 ulp (CUDA math API), i.e. 2^-22
+# relative. The output compared is each row's o followed by the new (clamped) state.
+[[contract]]
+family = "gdn_recurrence_strided"
+kernels = ["gated_delta_rule::gated_delta_rule_decode_f32_strided"]
+op = "gdn_recurrence"
+reference = "gdn_recurrence"
+class = "derived"
+reduction.k = [
+  { level = "quad", width = "4", order = "sequential" },
+  { level = "thread", width = "k/4", order = "sequential" },
+]
+reduction.state_k = [{ level = "thread", width = "k/1", order = "sequential" }]
+reduction.state_v = [
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "k/32", order = "sequential" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["state_stale", "accumulate:bf16"]
+
+# 2026-10-09: gated_delta_rule_decode_f32 (:233-346) is the same text as the strided kernel
+# with contiguous rows; the reduction is the strided contract's (:283, :306, :313-316, :324,
+# :330; rsqrtf at :336 and :344).
+[[contract]]
+family = "gdn_recurrence"
+kernels = ["gated_delta_rule::gated_delta_rule_decode_f32"]
+op = "gdn_recurrence"
+reference = "gdn_recurrence"
+class = "derived"
+reduction.k = [
+  { level = "quad", width = "4", order = "sequential" },
+  { level = "thread", width = "k/4", order = "sequential" },
+]
+reduction.state_k = [{ level = "thread", width = "k/1", order = "sequential" }]
+reduction.state_v = [
+  { level = "warp", width = "32", order = "tree" },
+  { level = "warps", width = "k/32", order = "sequential" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["state_stale", "accumulate:bf16"]
+
+# 2026-10-09: The batched decode arm promises the per-sequence kernel's output and state byte
+# for byte (one text, one order per thread); near_overflow drives the state-norm clamp.
+[[contract]]
+family = "gdn_recurrence_strided"
+kernels = ["gated_delta_rule::gated_delta_rule_decode_f32_strided"]
+op = "gdn_recurrence"
+reference = "gdn_recurrence"
+class = "bit_identical"
+against = "gated_delta_rule::gated_delta_rule_decode_f32"
+inputs = ["gaussian", "outliers", "near_overflow"]
+mutations = ["state_stale"]

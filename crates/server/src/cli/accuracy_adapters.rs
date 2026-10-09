@@ -96,7 +96,7 @@ pub(crate) const ADAPTERS: &[(&str, Adapter)] = &[
 ];
 
 /// 2026-10-09: Every adapter table: this file's projections and each op class's own file.
-const TABLES: &[&[(&str, Adapter)]] = &[ADAPTERS];
+const TABLES: &[&[(&str, Adapter)]] = &[ADAPTERS, super::accuracy_adapters_gdn::ADAPTERS];
 
 /// 2026-10-09: Launch `case` and return its output bytes.
 pub(crate) fn launch(dev: &mut Dev<'_>, case: &Case) -> std::result::Result<Vec<u8>, RunError> {
