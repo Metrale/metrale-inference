@@ -11,12 +11,15 @@
 mod common;
 
 use common::{Behaviour, Emu, Tree, families};
+use metrale_accuracy::case::{Case, Enc, Tensor};
 use metrale_accuracy::check::{Job, Outcome, Verdict, run};
+use metrale_accuracy::compare;
 use metrale_accuracy::contract::{Class, Contract, parse_contracts};
-use metrale_accuracy::elem::BF16;
+use metrale_accuracy::elem::{BF16, F32};
 use metrale_accuracy::inputs::InputClass;
 use metrale_accuracy::plan;
 use metrale_accuracy::points::Shape;
+use metrale_accuracy::refs::Reference;
 use metrale_circuit::pipeline::StepKind;
 use metrale_circuit::venn::Repo;
 
@@ -34,8 +37,13 @@ fn derived() -> Vec<Contract> {
     v
 }
 
-/// 2026-10-09: A conv point of `dim` channels whose first 4096 are 32 normalized heads.
-fn shape(rows: u64, dim: u64) -> Shape {
+/// 2026-10-09: The swept conv points' widths (input row, output): Qwen3.6-35B-A3B and
+/// Qwen3.8-27B read their q|k|v channels from the q|k|v|z projection row.
+const WIDTHS: [(u64, u64); 2] = [(12288, 8192), (16384, 10240)];
+
+/// 2026-10-09: A conv point reading `dim` channels from rows of `in_dim`, the first 4096 of
+/// them 32 normalized heads.
+fn shape(rows: u64, in_dim: u64, dim: u64) -> Shape {
     let rt = [
         ("k_heads", "16"),
         ("k_dim", "128"),
@@ -47,7 +55,7 @@ fn shape(rows: u64, dim: u64) -> Shape {
         weight: None,
         activation: Some("bf16".into()),
         output: Some("f32".into()),
-        in_dim: dim,
+        in_dim,
         out_dim: dim,
         rows,
         runtime: rt
@@ -119,11 +127,11 @@ fn the_committed_conv_contracts_fit_the_families_and_the_fused_norm_matches_the_
 #[test]
 fn both_widths_pass_every_class_and_catch_every_mutation() {
     for c in derived() {
-        for dim in [8192, 10240] {
-            let s = shape(2, dim);
+        for (in_dim, dim) in WIDTHS.into_iter().chain([(8192, 8192)]) {
+            let s = shape(2, in_dim, dim);
             for &input in &c.inputs {
                 let o = check(&c, Behaviour::Conforming, &s, input);
-                let at = format!("{} {dim}, {}", c.kernels[0], input.name());
+                let at = format!("{} {in_dim}->{dim}, {}", c.kernels[0], input.name());
                 assert_eq!(o.verdict, Verdict::Pass, "{at}: {o:#?}");
                 let (good, floor) = (o.good.unwrap(), o.floor.unwrap());
                 println!(
@@ -153,7 +161,7 @@ fn a_kernel_that_accumulates_in_bf16_fails_the_bound() {
     let o = check(
         &derived()[0],
         Behaviour::Accumulator(BF16),
-        &shape(1, 8192),
+        &shape(1, 12288, 8192),
         InputClass::Gaussian,
     );
     assert_eq!(o.verdict, Verdict::FailBound, "{o:#?}");
@@ -173,7 +181,7 @@ fn a_contract_too_loose_to_catch_a_mutation_fails_the_run() {
     let o = check(
         &loose,
         Behaviour::Conforming,
-        &shape(1, 8192),
+        &shape(1, 12288, 8192),
         InputClass::Gaussian,
     );
     assert!(
@@ -187,7 +195,7 @@ fn a_contract_too_loose_to_catch_a_mutation_fails_the_run() {
 fn a_point_without_its_launch_values_is_refused() {
     let c = &derived()[0];
     for missing in ["k_heads", "k_dim", "d_conv", "l2_eps"] {
-        let mut s = shape(1, 8192);
+        let mut s = shape(1, 12288, 8192);
         s.runtime.remove(missing);
         let o = check(c, Behaviour::Conforming, &s, InputClass::Gaussian);
         assert!(
@@ -196,4 +204,58 @@ fn a_point_without_its_launch_values_is_refused() {
             o.verdict
         );
     }
+}
+
+#[test]
+fn reading_the_input_at_the_output_stride_leaves_the_bound() {
+    // 2026-10-09: The kernel reads row b's channels at `b * input_stride`; one that used the
+    // output's stride for the input would read row 1 from inside row 0's z channels. The bound
+    // must see it: row 1's outputs of that misread lie far outside it.
+    let c = &derived()[0];
+    let fams = families();
+    let family = fams.families.iter().find(|f| f.id == c.family).unwrap();
+    let (in_dim, dim) = WIDTHS[0];
+    let s = shape(2, in_dim, dim);
+    let r = Reference::parse(&c.reference).unwrap();
+    let declared = plan::declared(family, &c.kernels[0], &c.op, &Default::default()).unwrap();
+    let p = plan::plan(
+        c,
+        declared.clone(),
+        &r.lens(&s, &declared),
+        &Default::default(),
+    )
+    .unwrap();
+    let mut case = Case {
+        family: family.id.clone(),
+        kernel: c.kernels[0].clone(),
+        launcher: c.kernels[0].clone(),
+        op: c.op.clone(),
+        tensors: Default::default(),
+        scalars: Default::default(),
+        out: (Vec::new(), Enc::F32),
+        split: Vec::new(),
+    };
+    r.fill(&mut case, &p, &s, InputClass::Gaussian, 20261009, "stride")
+        .unwrap();
+    let x = case.tensor("x").unwrap().clone();
+    let flat = x.values();
+    let misread: Vec<f64> = (0..2 * in_dim as usize)
+        .map(|i| {
+            let (row, ch) = (i / in_dim as usize, i % in_dim as usize);
+            flat.get(row * dim as usize + ch).copied().unwrap_or(0.0)
+        })
+        .collect();
+    let mut wrong = case.clone();
+    wrong.tensors.insert(
+        "x".into(),
+        Tensor::encode(x.enc, x.dims.clone(), &misread).unwrap(),
+    );
+    let cols = case.out.0[1];
+    let idx: Vec<usize> = (cols..cols + dim as usize).step_by(7).collect();
+    let want = r.reference(&case, &p, &idx).unwrap();
+    let got = r.emulate(&wrong, &p, None, 0, &idx).unwrap();
+    let b = compare::bounded(&got, &want, F32).unwrap();
+    assert!(b.max_ratio > 2.0, "{b:?}");
+    let same = r.emulate(&case, &p, None, 0, &idx).unwrap();
+    assert!(compare::bounded(&same, &want, F32).unwrap().max_ratio < 0.5);
 }

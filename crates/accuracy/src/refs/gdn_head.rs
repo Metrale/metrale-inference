@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-09: One (sequence, value head) of the gated delta rule step ([`super::gdn`]), in
-//! bounded arithmetic and as a conforming emulation, and the flat output index map. Every
-//! rounding point below is a line of gated_delta_rule.cu (gated_delta_rule_decode_f32_strided,
-//! :696-813; gated_delta_rule_decode_f32, :233-346, is the same text); the kernels compile with
-//! `--fmad=false` (kernels/gb10/common/KERNEL.toml), so each product and each sum rounds.
+//! bounded arithmetic and as a conforming emulation, and the flat output index map. The rounding
+//! points are those of every source the swept targets compile for the decode symbols, all built
+//! with `--fmad=false` (each product and each sum rounds): kernels/gb10/common/
+//! gated_delta_rule.cu (:233-346, :696-813), its qwen3.6-27b/nvfp4 shadow (the qwen3.8-27b
+//! target; :661-718, :1288-1405) and its qwen3.6-35b-a3b/nvfp4 shadow (:753-837, :990-1081).
+//! They differ in the dot products' bracketing (inside the declared depth) and in the state
+//! clamp, which the contract declares.
 //!
 //! Owner: metrale-accuracy.
 //! Invariants:
-//! - A head is computed whole (the clamp reads every column's state), once per call.
+//! - A head is computed whole (a clamp reads every column's state), once per call.
 //! - The clamp decision is taken on the bound: certain either way, or both outcomes covered.
 
 use std::collections::BTreeMap;
@@ -17,21 +20,31 @@ use crate::bounded::{Bounded, sum};
 use crate::case::Case;
 use crate::elem::Elem;
 use crate::plan::Plan;
-use crate::refs::gdn::{Formats, Geom, STATE_MAX_NORM, decay_clamp, formats};
+use crate::refs::gdn::{Formats, Geom, decay_clamp, formats};
 
-/// 2026-10-09: The depths the step's reductions are declared with: the q/k dot products
-/// (`k`), and the clamp's sum of squares (`state_k` within a thread, then `state_v` across).
+/// 2026-10-09: What the contract declares for the step: the q/k dot products' depth (`k`), the
+/// state-norm clamp (`constants.state_max_norm`, `inf` for none) and, with a clamp, its sum of
+/// squares' depth (`state_k` within a thread, then `state_v` across).
 #[derive(Debug, Clone, Copy)]
 struct Depths {
     k: u64,
-    norm: u64,
+    clamp: Option<(f64, u64)>,
 }
 
 /// 2026-10-09: The declared depths; a missing reduction is an error naming it.
 fn depths(plan: &Plan) -> Result<Depths, String> {
+    let max = plan.constant_of("state_max_norm")?;
+    if max.is_nan() || max <= 0.0 {
+        return Err(format!("state_max_norm {max}: a positive norm or inf"));
+    }
+    let clamp = if max.is_infinite() {
+        None
+    } else {
+        Some((max, plan.depth_of("state_k")? + plan.depth_of("state_v")?))
+    };
     Ok(Depths {
         k: plan.depth_of("k")?,
-        norm: plan.depth_of("state_k")? + plan.depth_of("state_v")?,
+        clamp,
     })
 }
 
@@ -80,15 +93,15 @@ fn bounded_head(h: &Head, f: &Formats, d: Depths, rsqrt: f64) -> Result<Out<Boun
     let mut o = Vec::with_capacity(vd);
     let mut pre = vec![x(0.0); kd * vd];
     let mut stored = vec![x(0.0); kd * vd];
-    // 2026-10-09: :811 `rsqrtf((float)k_dim)`.
+    // 2026-10-09: `rsqrtf((float)k_dim)`.
     let inv = x(kd as f64).rsqrt(rsqrt);
     for c in 0..vd {
-        // 2026-10-09: :743-751, hk_dot: each product rounds, four per step, then into the sum.
+        // 2026-10-09: hk_dot: each product rounds, then the sums of the declared tree.
         let terms: Vec<Bounded> = (0..kd)
             .map(|j| x(h.s[j * vd + c]).mul(x(h.k[j])).round(cp))
             .collect();
         let hk = sum(&terms, cp, d.k);
-        // 2026-10-09: :753 `(v_i - g * hk_dot) * bt`.
+        // 2026-10-09: `(v_i - g * hk_dot) * bt`.
         let u = x(h.v[c])
             .sub(x(h.g).mul(hk).round(cp))
             .round(cp)
@@ -96,7 +109,7 @@ fn bounded_head(h: &Head, f: &Formats, d: Depths, rsqrt: f64) -> Result<Out<Boun
             .round(cp);
         let mut qt = Vec::with_capacity(kd);
         for j in 0..kd {
-            // 2026-10-09: :765-772 `g * h + k * v_new`, stored; :773 reads the stored value.
+            // 2026-10-09: `g * h + k * v_new`, stored; q_dot reads the stored value.
             let p = x(h.g)
                 .mul(x(h.s[j * vd + c]))
                 .round(cp)
@@ -106,23 +119,26 @@ fn bounded_head(h: &Head, f: &Formats, d: Depths, rsqrt: f64) -> Result<Out<Boun
             stored[j * vd + c] = st;
             qt.push(st.mul(x(h.q[j])).round(cp));
         }
-        // 2026-10-09: :773 q_dot, as hk_dot; :812 `q_dot * inv_sqrt_d` is the store's rounding.
+        // 2026-10-09: q_dot, as hk_dot; `q_dot * inv_sqrt_d` is the store's rounding.
         o.push(sum(&qt, cp, d.k).mul(inv));
     }
-    // 2026-10-09: :780-797, the sum of squares of the stored state over the head.
+    let Some((max, depth)) = d.clamp else {
+        return Ok(Out { o, s: pre });
+    };
+    // 2026-10-09: The clamp: the sum of squares of the stored state over the head.
     let squares: Vec<Bounded> = stored.iter().map(|s| s.mul(*s).round(cp)).collect();
-    let norm = sum(&squares, cp, d.norm);
+    let norm = sum(&squares, cp, depth);
     if norm.mag() >= f.compute.max_finite {
         return Err(format!(
             "the state norm^2 reaches {:e}: f32 overflows and the clamp zeroes the state",
             norm.mag()
         ));
     }
-    let limit = STATE_MAX_NORM * STATE_MAX_NORM;
-    // 2026-10-09: :803 `SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq)`; :805 `H *= scale` is the
-    // store's rounding.
+    let limit = max * max;
+    // 2026-10-09: `SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq)`; `H *= scale` is the store's
+    // rounding.
     let clamped = || -> Vec<Bounded> {
-        let scale = x(STATE_MAX_NORM).mul(norm.rsqrt(rsqrt)).round(cp);
+        let scale = x(max).mul(norm.rsqrt(rsqrt)).round(cp);
         stored.iter().map(|s| s.mul(scale)).collect()
     };
     let s = if norm.v - norm.e > limit {
@@ -130,7 +146,7 @@ fn bounded_head(h: &Head, f: &Formats, d: Depths, rsqrt: f64) -> Result<Out<Boun
     } else if norm.v + norm.e <= limit {
         pre
     } else {
-        // 2026-10-09: `head_norm_sq > 1e6` may go either way: cover both outcomes.
+        // 2026-10-09: `head_norm_sq > max^2` may go either way: cover both outcomes.
         pre.iter()
             .zip(clamped())
             .map(|(a, b)| Bounded {
@@ -175,10 +191,13 @@ fn emulated_head(h: &Head, f: &Formats, d: Depths, acc: Elem, variant: u32) -> O
         }
         o.push(rnd(f.out, red(&qt, d.k) * inv));
     }
+    let Some((max, depth)) = d.clamp else {
+        return Out { o, s: st };
+    };
     let squares: Vec<f64> = st.iter().map(|s| rnd(cp, s * s)).collect();
-    let norm = red(&squares, d.norm);
-    let s = if norm > STATE_MAX_NORM * STATE_MAX_NORM {
-        let scale = rnd(cp, STATE_MAX_NORM * rnd(cp, 1.0 / norm.sqrt()));
+    let norm = red(&squares, depth);
+    let s = if norm > max * max {
+        let scale = rnd(cp, max * rnd(cp, 1.0 / norm.sqrt()));
         st.iter().map(|s| rnd(f.state, s * scale)).collect()
     } else {
         st

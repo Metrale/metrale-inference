@@ -13,7 +13,7 @@ mod common;
 use common::{Behaviour, Emu, Tree, families};
 use metrale_accuracy::case::{Case, Enc};
 use metrale_accuracy::check::{Job, Outcome, Verdict, run};
-use metrale_accuracy::contract::{Class, Contract, parse_contracts};
+use metrale_accuracy::contract::{Class, Contract, Level, parse_contracts};
 use metrale_accuracy::elem::{BF16, F32};
 use metrale_accuracy::inputs::InputClass;
 use metrale_accuracy::plan;
@@ -59,13 +59,25 @@ fn shape(rows: u64, v_heads: u64) -> Shape {
 }
 
 fn check(c: &Contract, behaviour: Behaviour, s: &Shape, input: InputClass) -> Outcome {
+    check_kernel(c, c, behaviour, s, input)
+}
+
+/// 2026-10-09: Contract `c` checked against a CPU "kernel" that conforms to `kernel` (another
+/// declaration of the same reference: a kernel with or without the state clamp).
+fn check_kernel(
+    c: &Contract,
+    kernel: &Contract,
+    behaviour: Behaviour,
+    s: &Shape,
+    input: InputClass,
+) -> Outcome {
     let family = families()
         .families
         .into_iter()
         .find(|f| f.id == c.family)
         .unwrap();
     let mut e = Emu {
-        contract: c.clone(),
+        contract: kernel.clone(),
         family: family.clone(),
         behaviour,
         wrong: ("no::such_symbol".into(), |_| Ok(())),
@@ -212,25 +224,87 @@ fn the_output_keeps_half_its_bound_and_the_state_stays_inside_it() {
     }
 }
 
+/// 2026-10-09: Contract `c` declaring the clamp of the 27B strided source: `state_max_norm =
+/// 1000` and its sum of squares (k_dim terms in a thread, a 32-lane tree, four warps in
+/// sequence).
+fn clamped(c: &Contract) -> Contract {
+    let level = |level: &str, width: &str, order: &str| Level {
+        level: level.into(),
+        width: width.into(),
+        order: order.into(),
+    };
+    let mut c = c.clone();
+    c.constants.insert("state_max_norm".into(), 1000.0);
+    c.reduction
+        .insert("state_k".into(), vec![level("thread", "k/1", "sequential")]);
+    c.reduction.insert(
+        "state_v".into(),
+        vec![
+            level("warp", "32", "tree"),
+            level("warps", "k/32", "sequential"),
+        ],
+    );
+    c
+}
+
 #[test]
-fn the_state_norm_clamp_engages_on_near_overflow_inputs_and_stays_inside_the_bound() {
-    // 2026-10-09: q/k/v near 2^15 push every head's state norm far past 1000; the clamped
-    // state (rsqrt approximation and scale rounding in the bound) is what the reference
-    // compares, and a conforming kernel passes it.
+fn the_committed_contracts_hold_the_decode_step_unclamped() {
+    // 2026-10-09: q/k/v near 2^15 push every head's state norm far past 1000; unclamped, the
+    // compared state reaches 1e9 and more.
+    for c in derived() {
+        assert_eq!(c.constants.get("state_max_norm"), Some(&f64::INFINITY));
+        let s = shape(1, 32);
+        let (r, p, case) = filled(&c, &s, InputClass::NearOverflow);
+        let cols = case.out.0[1];
+        let idx: Vec<usize> = (s.out_dim as usize..cols).step_by(97).collect();
+        let want = r.reference(&case, &p, &idx).unwrap();
+        let largest = want.iter().map(|w| w.v.abs()).fold(0.0, f64::max);
+        assert!(largest > 1e6, "state value {largest}");
+    }
+}
+
+#[test]
+fn a_kernel_that_clamps_the_state_fails_the_unclamped_contract_where_norms_pass_1000() {
+    // 2026-10-09: The GPU finding on the qwen3.8-27b target, reproduced on the CPU: the strided
+    // kernel there clamps, so it fails the classes whose states pass a norm of 1000 and passes
+    // the gaussian class, whose states stay far below it.
     let c = &derived()[0];
+    let s = shape(2, 48);
+    for (input, want) in [
+        (InputClass::NearOverflow, Verdict::FailBound),
+        (InputClass::Outliers, Verdict::FailBound),
+        (InputClass::Gaussian, Verdict::Pass),
+    ] {
+        let o = check_kernel(c, &clamped(c), Behaviour::Conforming, &s, input);
+        assert_eq!(o.verdict, want, "{}: {o:#?}", input.name());
+    }
+}
+
+#[test]
+fn the_clamped_declaration_passes_a_clamping_kernel_and_fails_one_that_does_not() {
+    // 2026-10-09: The declaration the first contracts made (and the common source compiles):
+    // a clamping kernel passes it with the clamp engaged, and the unclamped kernels the swept
+    // targets compile fail it, as they failed on the GPU.
+    let c = clamped(&derived()[0]);
     let s = shape(1, 32);
-    let o = check(c, Behaviour::Conforming, &s, InputClass::NearOverflow);
+    let o = check(&c, Behaviour::Conforming, &s, InputClass::NearOverflow);
     assert_eq!(o.verdict, Verdict::Pass, "{o:#?}");
     let good = o.good.unwrap();
     assert!(good.max_err > 0.0 && good.ratio < 0.5, "{good:?}");
-    let (r, p, case) = filled(c, &s, InputClass::NearOverflow);
+    let (r, p, case) = filled(&c, &s, InputClass::NearOverflow);
     let cols = case.out.0[1];
     let idx: Vec<usize> = (s.out_dim as usize..cols).step_by(97).collect();
     let want = r.reference(&case, &p, &idx).unwrap();
-    // 2026-10-09: Unclamped, these states reach 1e9 and more; clamped, no element of a head
-    // whose norm is 1000 exceeds 1000.
     let largest = want.iter().map(|w| w.v.abs()).fold(0.0, f64::max);
     assert!(largest > 1.0 && largest <= 1000.0, "state value {largest}");
+    let o = check_kernel(
+        &c,
+        &derived()[0],
+        Behaviour::Conforming,
+        &s,
+        InputClass::NearOverflow,
+    );
+    assert_eq!(o.verdict, Verdict::FailBound, "{o:#?}");
 }
 
 #[test]

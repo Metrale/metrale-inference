@@ -58,7 +58,7 @@ fn chan(case: &Case, g: &Geom, r: usize, ch: usize) -> Result<Chan, String> {
     let (win, x, w) = (case.tensor("window")?, case.tensor("x")?, case.tensor("w")?);
     let base = (r * g.dim + ch) * g.d_conv;
     let mut window: Vec<f64> = (1..g.d_conv).map(|t| win.get(base + t)).collect();
-    window.push(x.get(r * g.dim + ch));
+    window.push(x.get(r * g.in_dim + ch));
     Ok(Chan {
         window,
         w: (0..g.d_conv).map(|t| w.get(ch * g.d_conv + t)).collect(),
