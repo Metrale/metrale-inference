@@ -23,8 +23,9 @@
 //!   under `declared` and `fp8` nothing is registered and every launch is unchanged.
 //! - A registered weight runs only at the shape it was registered with; another shape is an
 //!   error, never a BF16 run (its field no longer points at BF16).
-//! - A row's output does not depend on the row count: `w4a16_tc_rows` is row-invariant across
-//!   its entry points and launches here are chunked by whole rows ([`W4A16_LAUNCH_ROWS`]).
+//! - From 2 rows up a row's output does not depend on the row count: `w4a16_tc_rows` is
+//!   row-invariant across its entry points and launches here are chunked by whole rows
+//!   ([`W4A16_LAUNCH_ROWS`]). 2026-10-09: one row takes `w4a16_gemv` instead, whose bits differ.
 //! - Every registered K is a multiple of [`W4A16_K_UNIT`]; the TP splits are chosen so that it
 //!   holds ([`kda_channel_unit`], `glm5next_fp8_dense::shared_split_unit`), and a width that
 //!   breaks it is refused at load.
@@ -269,6 +270,18 @@ fn proj_registered(
         e.k
     );
     let (n32, k32) = (n as u32, k as u32);
+    if m == 1 {
+        // 2026-10-09: One row takes the NVFP4 GEMV, which streams the weight across every SM;
+        // the 64-column row tile left the KDA projections at 44 CTAs (C1 nsys: 34.6 us for a
+        // 2816 x 4096 weight). A one-row result is therefore not the bits that row gets inside
+        // a wider launch: this opt-in tier is not row-invariant between 1 and 2+ rows.
+        let kernel = gpu
+            .op_cache()
+            .kernel(gpu, "w4a16_gemv", "w4a16_gemv")
+            .context("--dense-quantization w4a16: w4a16_gemv::w4a16_gemv")?;
+        metrale_model_layers::layers::ops::w4a16_gemv(gpu, kernel, a, &e.w, c, n32, k32, stream)?;
+        return Ok(true);
+    }
     let mut done = 0;
     while done < m {
         let rows = (m - done).min(W4A16_LAUNCH_ROWS);

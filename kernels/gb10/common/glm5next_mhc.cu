@@ -463,7 +463,10 @@ extern "C" __global__ void glm5next_hc_finish(
     }
 
 
-    if (by == 0) {
+    // 2026-10-09: The Sinkhorn runs in warp 0 alone with warp barriers between its row and
+    // column passes: only hc <= 4 lanes work, and 2 * sinkhorn_iters block-wide barriers were
+    // most of this kernel's ~16 us. Same arithmetic in the same order.
+    if (by == 0 && tid < 32u) {
         if (lane) {
             const unsigned int i = tid;
             float po = s_mix[hc + i] * hc_scale[1] + hc_base[hc + i];
@@ -472,7 +475,7 @@ extern "C" __global__ void glm5next_hc_finish(
                 comb[i * hc + j] =
                     s_mix[2 * hc + i * hc + j] * hc_scale[2] + hc_base[2 * hc + i * hc + j];
         }
-        __syncthreads();
+        __syncwarp();
 
 
         if (lane) {
@@ -488,7 +491,7 @@ extern "C" __global__ void glm5next_hc_finish(
             for (unsigned int j = 0; j < hc; ++j)
                 comb[i * hc + j] = comb[i * hc + j] / sum + hc_eps;
         }
-        __syncthreads();
+        __syncwarp();
 
 
         if (lane) {
@@ -497,7 +500,7 @@ extern "C" __global__ void glm5next_hc_finish(
             for (unsigned int i = 0; i < hc; ++i) c += comb[i * hc + j];
             for (unsigned int i = 0; i < hc; ++i) comb[i * hc + j] /= c;
         }
-        __syncthreads();
+        __syncwarp();
 
 
         for (unsigned int it = 0; it + 1 < sinkhorn_iters; ++it) {
@@ -507,14 +510,14 @@ extern "C" __global__ void glm5next_hc_finish(
                 for (unsigned int j = 0; j < hc; ++j) r += comb[i * hc + j];
                 for (unsigned int j = 0; j < hc; ++j) comb[i * hc + j] /= r;
             }
-            __syncthreads();
+            __syncwarp();
             if (lane) {
                 const unsigned int j = tid;
                 float c = hc_eps;
                 for (unsigned int i = 0; i < hc; ++i) c += comb[i * hc + j];
                 for (unsigned int i = 0; i < hc; ++i) comb[i * hc + j] /= c;
             }
-            __syncthreads();
+            __syncwarp();
         }
         // 2026-09-25: No exact column projection after the loop, as in glm5next_hc_pre.
         for (unsigned int k = tid; k < hc * hc; k += GLM_HC_BLOCK)
