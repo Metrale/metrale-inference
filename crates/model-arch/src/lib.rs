@@ -13,6 +13,7 @@ pub mod dflash_head;
 pub mod engram_v41;
 pub mod glm5next_dsa;
 pub mod glm5next_dsa_ref;
+pub mod glm5next_fp8_dense;
 pub mod glm5next_kda;
 pub mod glm5next_kda_ref;
 pub mod glm5next_layer;

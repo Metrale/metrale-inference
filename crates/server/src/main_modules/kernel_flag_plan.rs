@@ -38,6 +38,8 @@ pub(crate) struct KernelFlagPlan {
     pub weight_quant: metrale_config::WeightQuantTier,
     /// 2026-09-27: Always published: no environment fallback exists.
     pub expert_quantization: metrale_model_layers::layers::ExpertQuantization,
+    /// 2026-10-09: `--dense-quantization`. Always published: no environment fallback exists.
+    pub dense_quantization: metrale_model_layers::layers::DenseQuantization,
     pub prefill_codispatch: Option<bool>,
     pub prefill_varlen: Option<bool>,
     pub ssm_tail_midchunk: Option<bool>,
@@ -73,6 +75,7 @@ impl KernelFlagPlan {
                 .weight_quant_tier()
                 .expect("validated by validate_serve_args"),
             expert_quantization: args.expert_quantization.0,
+            dense_quantization: args.dense_quantization.0,
             prefill_codispatch: args.prefill_codispatch.then_some(true),
             prefill_varlen: args.prefill_varlen_batch.then_some(true),
             ssm_tail_midchunk: args.no_ssm_tail_midchunk.then_some(false),

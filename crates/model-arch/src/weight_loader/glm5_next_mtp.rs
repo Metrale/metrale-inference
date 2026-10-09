@@ -82,12 +82,19 @@ pub fn load_glm5next_mtp_module(
     }));
 
     let expert = |id: usize| super::glm5_next_load::bind_expert_at(gpu, store, idx, id);
+    // 2026-10-08: The MTP layer's plan, as for a text layer; this checkpoint declares the layer
+    // 16-bit, so its experts (quantized at load) run W4A16. One row: its workspace is one row.
+    let precision = |has_scales: bool| {
+        super::glm5_next_load::mtp_expert_precision(config, &mlp_kernels, idx, &mlp_cfg, has_scales)
+    };
     let mlp = Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
         gpu,
         &mlp_cfg,
         config.shared_expert_intermediate_size,
         &load,
         &expert,
+        &precision,
+        1,
     )?));
 
     let up =

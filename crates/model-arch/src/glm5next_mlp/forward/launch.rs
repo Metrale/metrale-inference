@@ -32,6 +32,10 @@ pub(super) fn gemm(
     kk: usize,
     stream: u64,
 ) -> Result<()> {
+    // 2026-10-09: `--dense-quantization fp8` serves registered weights (the shared expert) W8A8.
+    if crate::glm5next_fp8_dense::proj(gpu, b, a, c, m, n, kk, stream)? {
+        return Ok(());
+    }
     if m > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
         && crate::glm5next_layer::cublas_wide_proj()
     {

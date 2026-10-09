@@ -6,6 +6,9 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::glm5next_mlp::Glm5NextDenseSite;
+use crate::glm5next_mlp::build_w4a4::{act_scales_of, build_dense_nvfp4};
+use crate::glm5next_mlp::precision::{MlpGroup, MlpKernel};
 
 impl ModelWeightLoader for Glm5NextWeightLoader {
     /// 2026-09-25: True only when `metrale_config::glm_vision_enabled()`
@@ -30,14 +33,20 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     /// 2026-09-25: Keep the MTP layer's BF16 routed-expert weights off the
     /// device (`is_full_width_mtp_expert`); `bind_expert` quantises them from
     /// disk. The layer is `num_hidden_layers`. A checkpoint whose MTP experts
-    /// are U8 defers nothing.
+    /// are U8 defers nothing. 2026-10-08: Also every text layer's F32
+    /// `*.input_scale` (`is_activation_scale`): one scalar per projection, read
+    /// on the host by `act_scale::input_scale` rather than given an allocation
+    /// granule each.
     fn defer_predicate(
         &self,
         config: &ModelConfig,
     ) -> Option<metrale_model_weights::weights::DeferHook> {
         let num_layers = config.num_hidden_layers;
         Some(std::sync::Arc::new(
-            move |name: &str, dtype: WeightDtype| is_full_width_mtp_expert(name, dtype, num_layers),
+            move |name: &str, dtype: WeightDtype| {
+                is_full_width_mtp_expert(name, dtype, num_layers)
+                    || is_activation_scale(name, dtype)
+            },
         ))
     }
 
@@ -174,25 +183,45 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
 
             let load = |n: &str| src.f32(n);
             let mlp = match sl.mlp {
-                Mlp::Dense => Glm5NextMlpSite::Dense(mlp_build::build_dense_mlp(
+                Mlp::Dense => Glm5NextMlpSite::Dense(Box::new(build_dense_site(
                     gpu,
+                    store,
+                    config,
                     &mlp_cfg,
-                    config.intermediate_size,
-                    mlp_cfg.dense_slice(),
-                    "mlp",
-                    &load,
-                )?),
+                    &mlp_kernels,
+                    &src,
+                    idx,
+                    verify_k,
+                )?)),
                 Mlp::RoutedMoe => {
                     let expert = |id: usize| bind_expert(gpu, store, idx, id);
-                    Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
+                    let precision = |has_scales: bool| {
+                        mlp_precision::group_precision(
+                            config,
+                            &mlp_kernels,
+                            idx,
+                            MlpGroup::RoutedExperts,
+                            mlp_cfg.local_expert_range().start,
+                            has_scales,
+                        )
+                    };
+                    let moe = mlp_build::build_moe(
                         gpu,
                         &mlp_cfg,
                         config.shared_expert_intermediate_size,
                         &load,
                         &expert,
-                    )?))
+                        &precision,
+                        verify_k,
+                    )?;
+                    mlp_precision::announce(&moe.precision, verify_k);
+                    Glm5NextMlpSite::Moe(Box::new(moe))
                 }
             };
+
+            if crate::glm5next_fp8_dense::enabled() {
+                register_fp8_dense(gpu, &mixer, &mlp, &mlp_cfg, idx)?;
+            }
 
             let t_mlp = t_layer.elapsed();
             tracing::info!(
@@ -249,6 +278,15 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 is_first: idx == 0,
                 is_last: idx == last,
             }));
+        }
+        if crate::glm5next_fp8_dense::enabled() {
+            let (count, bytes) = crate::glm5next_fp8_dense::registered();
+            tracing::warn!(
+                "glm5_next --dense-quantization fp8: {count} BF16 dense projections also held as \
+                 FP8 per-channel ({:.2} GB) and decoded W8A8, BELOW the checkpoint's declared \
+                 BF16; the router, the indexer's wq_b and weights_proj stay BF16",
+                bytes as f64 / 1e9
+            );
         }
         Ok(out)
     }
@@ -325,4 +363,105 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         }
         Ok(())
     }
+}
+
+/// 2026-10-08: One dense MLP site: its precision plan, then the weight forms the plan reaches
+/// within `max_rows`: the checkpoint's packed NVFP4, TP-sliced, for W4A4, and the BF16
+/// dequantization for the 16-bit path (both when a ladder mixes them).
+#[allow(clippy::too_many_arguments)]
+fn build_dense_site(
+    gpu: &dyn GpuBackend,
+    store: &WeightStore,
+    config: &ModelConfig,
+    mlp_cfg: &Glm5NextMlpConfig,
+    kernels: &Glm5NextMlpKernels,
+    src: &LayerSource,
+    idx: usize,
+    max_rows: usize,
+) -> Result<Glm5NextDenseSite> {
+    let act = ["gate_proj", "up_proj", "down_proj"]
+        .map(|p| input_scale(gpu, store, idx, &format!("mlp.{p}")))
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    let act = [act[0], act[1], act[2]];
+    let precision = mlp_precision::group_precision(
+        config,
+        kernels,
+        idx,
+        MlpGroup::DenseMlp,
+        0,
+        act.iter().all(Option::is_some),
+    )?;
+    mlp_precision::announce(&precision, max_rows);
+    let nvfp4 = if precision.reaches(MlpKernel::W4a4Static, max_rows) {
+        let scales = act_scales_of(act, &format!("layer {idx} dense MLP"))?;
+        let raw = |n: &str| src.raw(n);
+        let w = build_dense_nvfp4(
+            gpu,
+            mlp_cfg.hidden,
+            config.intermediate_size,
+            mlp_cfg.dense_slice(),
+            "mlp",
+            &raw,
+            scales,
+        )?;
+        Some((w, scales))
+    } else {
+        None
+    };
+    let bf16 = if precision.reaches(MlpKernel::Bf16, max_rows) {
+        let load = |n: &str| src.f32(n);
+        Some(mlp_build::build_dense_mlp(
+            gpu,
+            mlp_cfg,
+            config.intermediate_size,
+            mlp_cfg.dense_slice(),
+            "mlp",
+            &load,
+        )?)
+    } else {
+        None
+    };
+    Ok(Glm5NextDenseSite {
+        bf16,
+        nvfp4,
+        precision,
+    })
+}
+
+/// 2026-10-09: `--dense-quantization fp8`: register the FP8 copy of every BF16 projection of
+/// one layer's mixer and shared expert (`glm5next_fp8_dense`), with the shapes their forwards
+/// launch.
+fn register_fp8_dense(
+    gpu: &dyn GpuBackend,
+    mixer: &Glm5NextMixer,
+    mlp: &Glm5NextMlpSite,
+    mlp_cfg: &Glm5NextMlpConfig,
+    idx: usize,
+) -> Result<()> {
+    let mut projs = match mixer {
+        Glm5NextMixer::Kda { layer, .. } => layer.dense_projections(),
+        Glm5NextMixer::Dsa(layer) => layer.dense_projections(),
+    };
+    if let Glm5NextMlpSite::Moe(w) = mlp {
+        let (h, s) = (mlp_cfg.hidden, mlp_cfg.local_shared_intermediate);
+        projs.push((w.shared.gate_proj, s, h, "shared_experts.gate_proj"));
+        projs.push((w.shared.up_proj, s, h, "shared_experts.up_proj"));
+        projs.push((w.shared.down_proj, h, s, "shared_experts.down_proj"));
+    }
+    let max_k = projs.iter().map(|p| p.2).max().unwrap_or(0);
+    crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
+    let quantize = gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?;
+    for (w, n, k, name) in projs {
+        crate::glm5next_fp8_dense::register(
+            gpu,
+            quantize,
+            w,
+            n,
+            k,
+            &format!("layer {idx} {name}"),
+            0,
+        )?;
+    }
+    Ok(())
 }

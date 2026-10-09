@@ -204,6 +204,10 @@ impl Glm5NextKdaLayer {
         k: usize,
         stream: u64,
     ) -> Result<()> {
+        // 2026-10-09: `--dense-quantization fp8` serves registered weights W8A8.
+        if crate::glm5next_fp8_dense::proj(gpu, weight.weight, input, out, m, n, k, stream)? {
+            return Ok(());
+        }
         // 2026-09-25: Only M above `DENSE_GEMV_BATCHM_MAX_M` goes to cuBLASLt. Below it
         // `dense_mm_bf16` runs the M = 1 GEMV or the batched GEMV, whose rows carry the same
         // bits, so the cuBLASLt switch never changes those widths.
@@ -233,6 +237,25 @@ impl Glm5NextKdaLayer {
             k,
             stream,
         )
+    }
+
+    /// 2026-10-09: Every BF16 projection this layer launches through `gemm`, as
+    /// `(weight, n, k, name)` with the shapes the forward passes, for `--dense-quantization fp8`.
+    pub fn dense_projections(&self) -> Vec<(DevicePtr, usize, usize, &'static str)> {
+        let c = &self.cfg;
+        let w = &self.weights;
+        let (hid, qkv, hd) = (c.hidden, c.qkv_dim(), c.head_dim);
+        vec![
+            (w.q_proj.weight, qkv, hid, "kda.q_proj"),
+            (w.k_proj.weight, qkv, hid, "kda.k_proj"),
+            (w.v_proj.weight, qkv, hid, "kda.v_proj"),
+            (w.f_a.weight, hd, hid, "kda.f_a_proj"),
+            (w.f_b.weight, qkv, hd, "kda.f_b_proj"),
+            (w.b_proj.weight, c.heads, hid, "kda.b_proj"),
+            (w.g_a.weight, hd, hid, "kda.g_a_proj"),
+            (w.g_b.weight, qkv, hd, "kda.g_b_proj"),
+            (w.o_proj.weight, hid, qkv, "kda.o_proj"),
+        ]
     }
 
     /// 2026-09-25: Projections, forget gate, beta and output gate, shared by decode and prefill.

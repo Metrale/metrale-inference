@@ -38,11 +38,15 @@ use metrale_config::{Glm5NextRouterMode, ModelConfig, TpSlice};
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
 pub mod build;
+pub mod build_w4a4;
 pub mod forward;
 pub mod forward_prefill_gemm;
+pub mod precision;
 pub mod weights;
 
-pub use weights::{Glm5NextDenseMlpWeights, Glm5NextExpertWeights, Glm5NextMoeWeights};
+pub use weights::{
+    Glm5NextDenseMlpWeights, Glm5NextDenseSite, Glm5NextExpertWeights, Glm5NextMoeWeights,
+};
 
 /// 2026-09-25: Module of `kernels/gb10/common/glm5next_ffn.cu`. A `.cu` file not listed in
 /// `common/KERNEL.toml`'s `[modules]` resolves under its file stem; the listed ones below do
@@ -59,6 +63,12 @@ pub const W4A16_GEMV_MODULE: &str = "w4a16_gemv";
 pub const MOE_MODULE: &str = "moe";
 /// 2026-09-25: `[modules]`: `moe_w4a16_grouped_gemm = "moe_w4a16"`, the tensor-core grouped W4A16 GEMM.
 pub const MOE_GROUPED_MODULE: &str = "moe_w4a16";
+
+/// 2026-10-08: Module of `w4a4_gemv_mx_moe.cu` (its file stem): the static-scale NVFP4
+/// activation quantizer and the routed-expert W4A4 slot GEMV.
+pub const W4A4_MOE_MODULE: &str = "w4a4_gemv_mx_moe";
+/// 2026-10-08: Module of `w4a4_gemv_mx.cu` (its file stem): the W4A4 mx GEMVs.
+pub const W4A4_MX_MODULE: &str = "w4a4_gemv_mx";
 
 /// 2026-10-08: The unit the dense and shared-expert widths split over TP in. Their `down_proj`
 /// runs with the rank's width as K, and `dense_gemv_bf16`, `dense_gemv_bf16_batchm` (both
@@ -132,7 +142,24 @@ pub struct Glm5NextMlpKernels {
     /// 2026-09-25: [`Self::combine`] reading the routed rows in expert-sorted order through
     /// `token_to_perm`, with the same accumulation order and single rounding.
     pub combine_indexed: KernelHandle,
+    /// 2026-10-08: `w4a4_quant_rows_static` (`w4a4_gemv_mx_moe.cu`): NVFP4 activations under a
+    /// static per-tensor scale, the input of every W4A4 projection here.
+    pub w4a4_quant_static: KernelHandle,
+    /// 2026-10-08: `w4a4_gemv_mx8_moe_slots`: the routed experts' W4A4 GEMV, one block row per
+    /// (token, slot), weights from the global-id pointer tables.
+    pub w4a4_moe_slots: KernelHandle,
+    /// 2026-10-08: The dense W4A4 GEMVs `w4a4_gemv_mx8`, `_mx16`, `_mx32` (`w4a4_gemv_mx.cu`),
+    /// for up to 8, 16 and 32 rows.
+    pub w4a4_mx: [KernelHandle; 3],
 }
+
+/// 2026-10-08: Widest launch on the W4A4 slot GEMV (each slot re-reads its expert); wider runs
+/// the grouped W4A16 GEMM, logged as above declared. Unmeasured: the C16 decode width.
+pub const MOE_W4A4_MAX_ROWS: usize = 16;
+
+/// 2026-10-08: Rows one dense W4A4 launch covers (`w4a4_gemv_mx32`); wider launches run in
+/// chunks of it, and each row's sums do not depend on the chunk.
+pub const DENSE_W4A4_CHUNK_ROWS: usize = 32;
 
 impl Glm5NextMlpKernels {
     pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
@@ -240,7 +267,39 @@ impl Glm5NextMlpKernels {
                 FFN_MODULE,
                 "glm5next_moe_combine_indexed",
             ),
+            w4a4_quant_static: metrale_model_layers::layers::try_kernel(
+                gpu,
+                W4A4_MOE_MODULE,
+                "w4a4_quant_rows_static",
+            ),
+            w4a4_moe_slots: metrale_model_layers::layers::try_kernel(
+                gpu,
+                W4A4_MOE_MODULE,
+                "w4a4_gemv_mx8_moe_slots",
+            ),
+            w4a4_mx: ["w4a4_gemv_mx8", "w4a4_gemv_mx16", "w4a4_gemv_mx32"]
+                .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MX_MODULE, e)),
         })
+    }
+
+    /// 2026-10-08: The routed experts' W4A4 row cap on this target: [`MOE_W4A4_MAX_ROWS`] when
+    /// the static quantizer and the slot GEMV resolved, else 0.
+    pub fn w4a4_expert_rows(&self) -> usize {
+        if self.w4a4_quant_static.0 != 0 && self.w4a4_moe_slots.0 != 0 {
+            MOE_W4A4_MAX_ROWS
+        } else {
+            0
+        }
+    }
+
+    /// 2026-10-08: The dense MLP's W4A4 row cap: unbounded (chunked) when the static quantizer
+    /// and the three mx GEMVs resolved, else 0.
+    pub fn w4a4_dense_rows(&self) -> usize {
+        if self.w4a4_quant_static.0 != 0 && self.w4a4_mx.iter().all(|k| k.0 != 0) {
+            usize::MAX
+        } else {
+            0
+        }
     }
 }
 
@@ -303,14 +362,18 @@ impl Glm5NextMlpConfig {
     pub fn from_config(config: &ModelConfig) -> Result<Self> {
         let tp = config.tp_world_size.max(1);
         let ep = config.ep_world_size.max(1);
-        let split = |name: &str, total: usize| {
-            metrale_config::tp_split(total, tp, config.tp_rank, BF16_GEMM_K_ALIGN)
+        // 2026-10-09: The shared width splits in the FP8 dense tier's unit when it is on.
+        let fp8_unit = crate::glm5next_fp8_dense::shared_split_unit(BF16_GEMM_K_ALIGN);
+        let unit = |shared: bool| if shared { fp8_unit } else { BF16_GEMM_K_ALIGN };
+        let split = |name: &str, total: usize, shared: bool| {
+            metrale_config::tp_split(total, tp, config.tp_rank, unit(shared))
                 .with_context(|| format!("GLM MLP: {name} {total} over tp_world_size {tp}"))
         };
-        let dense = split("intermediate_size", config.intermediate_size)?;
+        let dense = split("intermediate_size", config.intermediate_size, false)?;
         let shared = split(
             "shared_expert_intermediate_size",
             config.shared_expert_intermediate_size,
+            true,
         )?;
         if !config.num_experts.is_multiple_of(ep) {
             bail!(

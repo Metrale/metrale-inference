@@ -113,6 +113,28 @@ pub struct Glm5NextDsaLayer {
 }
 
 impl Glm5NextDsaLayer {
+    /// 2026-10-09: Every BF16-output projection this layer launches through `proj_gemm::gemm`,
+    /// as `(weight, n, k, name)` with the shapes the forward passes, for
+    /// `--dense-quantization fp8`. The FP32-output `wq_b` and `weights_proj` are not listed.
+    pub fn dense_projections(&self) -> Vec<(DevicePtr, usize, usize, &'static str)> {
+        let c = &self.cfg;
+        let w = &self.weights;
+        let latent = c.local_heads * c.kv_lora_rank;
+        vec![
+            (w.q_a_proj, c.q_lora_rank, c.hidden, "dsa.q_a_proj"),
+            (w.q_absorb, latent, c.q_lora_rank, "dsa.q_absorb"),
+            (w.kv_a_proj, c.kv_lora_rank, c.hidden, "dsa.kv_a_proj"),
+            (w.o_absorb, c.hidden, latent, "dsa.o_absorb"),
+            (w.wk, c.index_head_dim, c.hidden, "dsa.indexer.wk"),
+            (
+                w.compress_gate,
+                c.index_head_dim,
+                c.hidden,
+                "dsa.indexer.compress_gate",
+            ),
+        ]
+    }
+
     /// 2026-09-25: Project `hidden` into indexer cache row `state.len()`, then advance by one.
     ///
     /// With `pos_dev`, `k_normed` and `gate` go to the workspace staging rows and
