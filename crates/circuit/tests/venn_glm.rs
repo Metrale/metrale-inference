@@ -3,7 +3,7 @@
 //! 2026-10-08: The GLM-5.3-Flash kernel Venn against the Qwen3.6-35B-A3B NVFP4 MoE and the
 //! Qwen3.8-27B declared W4A4 dense model: the checked-in report is what the tool produces, KDA
 //! reads as a per-channel policy of the gated delta rule, the hyper-connection and the sparse
-//! latent attention are GLM's own families, and the multi-sequence veto is the top flag.
+//! latent attention are GLM's own families, and the per-row DSA indexer is the top flag.
 //! Regenerate the report after an intended change with
 //! `cargo test -p metrale-circuit --test venn_glm -- --ignored regenerate`.
 //!
@@ -95,13 +95,15 @@ fn the_glm_only_ops_classify_against_their_own_families() {
     }
 }
 
+/// 2026-10-09: The batched decode (`forward_multi`) took the per-sequence veto away; what still
+/// loops per row at C128 is the DSA indexer write and selection, the top flag.
 #[test]
-fn the_multi_sequence_veto_is_the_top_flag() {
+fn the_per_row_dsa_indexer_is_the_top_flag() {
     let r = report_of(&glm_args());
     let top = &r.flags[0];
     assert_eq!(
         top.source,
-        "legacy: crates/model-arch/src/glm5next_layer/mod.rs:261"
+        "legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:171"
     );
     assert!(top.run.mode == Mode::MultiSeq && top.run.rows == 128);
 }

@@ -2613,7 +2613,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_mhc.rs:68-87; crates/model-arch/src/glm5next_layer/steps/forward.rs:73"
+cite = "crates/model-arch/src/glm5next_mhc.rs:68-87; crates/model-arch/src/glm5next_layer/steps/forward.rs:75"
 
 [[rule]]
 id = "glm_hc_pre"
@@ -2628,7 +2628,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 100
-cite = "crates/model-arch/src/glm5next_mhc.rs:153-214 (hc_mix_bf16 for the BF16 hc_fn the loader uploads, then hc_finish); crates/model-arch/src/glm5next_layer/steps/forward.rs:85,142"
+cite = "crates/model-arch/src/glm5next_mhc.rs:153-214 (hc_mix_bf16 for the BF16 hc_fn the loader uploads, then hc_finish); crates/model-arch/src/glm5next_layer/steps/forward.rs:87,144"
 
 [[rule]]
 id = "glm_hc_post"
@@ -2640,7 +2640,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_mhc.rs:218-245; crates/model-arch/src/glm5next_layer/steps/forward.rs:126,164"
+cite = "crates/model-arch/src/glm5next_mhc.rs:218-245; crates/model-arch/src/glm5next_layer/steps/forward.rs:128,166"
 
 [[rule]]
 id = "glm_hc_contract"
@@ -2652,7 +2652,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_mhc.rs:90-109; crates/model-arch/src/glm5next_layer/steps/forward.rs:179"
+cite = "crates/model-arch/src/glm5next_mhc.rs:90-109; crates/model-arch/src/glm5next_layer/steps/forward.rs:181"
 
 [[rule]]
 id = "glm_rms_norm_plain_kda"
@@ -2664,7 +2664,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:16-36; crates/model-arch/src/glm5next_layer/steps/forward.rs:103,160"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:17-37; crates/model-arch/src/glm5next_layer/steps/forward.rs:105,162"
 
 [[rule]]
 id = "glm_rms_norm_plain_dsa"
@@ -2676,7 +2676,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:16-36; crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:99-109 (q_a_layernorm)"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:17-37; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:43-53 (q_a_layernorm)"
 
 # 2026-10-08: Every BF16 projection of one row runs the M = 1 GEMV (`ops::dense_mm_bf16`).
 [[rule]]
@@ -2689,7 +2689,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:192-232,248-266,281-300,315-324,335-354,376-385; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down)"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:194-234,250-268,283-302,317-326,337-356,378-387; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down)"
 
 [[rule]]
 id = "glm_bf16_gemv_dsa"
@@ -2701,7 +2701,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:86-98,124-136; crates/model-arch/src/glm5next_dsa/layer.rs:185-197,210-222; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down)"
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-42,67-79; crates/model-arch/src/glm5next_dsa/layer.rs:155-167,180-192; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down)"
 
 # 2026-10-08: The shared expert's gate and up are two GEMVs, as in the dense SwiGLU MLP.
 [[rule]]
@@ -2744,7 +2744,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:267-276"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:269-278"
 
 # 2026-10-08: The decode conv writes BF16 q|k|v rows (`causal_conv1d_update_l2norm`), which the
 # recurrence reads; the circuit's conv edges are FP32 as the GatedDeltaNet decode keeps them.
@@ -2762,7 +2762,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:36-49"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:49-63"
 
 [[rule]]
 id = "glm_kda_gates"
@@ -2777,7 +2777,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:301-312,326-332"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:303-314,328-334"
 
 [[rule]]
 id = "glm_kda_recurrence"
@@ -2790,7 +2790,7 @@ modes = ["decode"]
 when = { ssm_h_dtype = "f32" }
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:53-76 (the shared-memory kernel when the target ships it; :78-93 the 2R+2W fallback)"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:95-111 (the shared-memory kernel when the target ships it; :112-127 the 2R+2W fallback)"
 
 [[rule]]
 id = "glm_kda_o_norm"
@@ -2802,7 +2802,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:366-375"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:368-377"
 
 # 2026-10-08: RMSNorm, FP8 quantisation and the paged store in one kernel; the norm hands its
 # FP32 result to the quantizer in registers.
@@ -2820,7 +2820,7 @@ modes = ["decode"]
 when = { kv_cache_dtype = "fp8" }
 numerics = "reference"
 priority = 100
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:177-187"
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:95-105"
 
 [[rule]]
 id = "glm_index_k_norm"
@@ -2832,7 +2832,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_dsa/layer.rs:198-208"
+cite = "crates/model-arch/src/glm5next_dsa/layer.rs:168-178"
 
 # 2026-10-08: The engine stores each token's raw normed key and gate score in a flat
 # per-sequence cache and pools at selection time (`dsa_kpool_compress` below); the circuit's
@@ -2864,7 +2864,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:17-150; crates/model-arch/src/glm5next_dsa/layer.rs:253-329"
+cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:17-150; crates/model-arch/src/glm5next_dsa/layer.rs:226-313"
 
 # 2026-10-08: The indexer query and head weights are FP32-out GEMVs (`*_fp32out`), so the
 # selection reads FP32 where the circuit's edges are BF16.
@@ -2878,10 +2878,10 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_dsa/layer.rs:229-243,266-277"
+cite = "crates/model-arch/src/glm5next_dsa/layer.rs:200-213,246-259"
 
 # 2026-10-08: The absorbed latent attention on load-time products: `q_absorb` is q_b_proj times
-# kv_b_proj's key half and `o_absorb` o_proj times its value half (glm5next_dsa/layer.rs:111-122),
+# kv_b_proj's key half and `o_absorb` o_proj times its value half (glm5next_dsa/layer.rs:67-78),
 # each a BF16 GEMV with a wider weight than the checkpoint's (32768 x 1536 for q, 4096 x 32768 for
 # o, against 16384 x 1536 and 4096 x 16384), then the latent decode between them.
 [[rule]]
@@ -2903,7 +2903,7 @@ modes = ["decode"]
 when = { kv_cache_dtype = "fp8" }
 numerics = "reference"
 priority = 100
-cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:110-123,328,337-349; crates/model-arch/src/glm5next_dsa/attend.rs:163-190"
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:54-66,137-149; crates/model-arch/src/glm5next_dsa/layer.rs:321-363 (attend_rows); crates/model-arch/src/glm5next_dsa/attend.rs:163-190"
 
 [[rule]]
 id = "glm_router_f32"
