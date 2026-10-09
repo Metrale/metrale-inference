@@ -46,11 +46,15 @@ The filename must match the model's `model_type` from `config.json`:
 
 ## Priority
 
-1. Override template from this directory — **opt-in by file presence**, unless
+1. `--chat-template FILE` — a template file named at serve time. It replaces
+   this directory for every apply path (the `openai/` variant included), and a
+   file that cannot be read fails the start. It cannot be combined with
+   `--disable-template-overrides`.
+2. Override template from this directory — **opt-in by file presence**, unless
    serving with `--disable-template-overrides`
-2. Template from `tokenizer_config.json` / `chat_template.jinja` (the model's
+3. Template from `tokenizer_config.json` / `chat_template.jinja` (the model's
    own — the default for models without an override file)
-3. Default ChatML fallback (lowest priority)
+4. Default ChatML fallback (lowest priority)
 
 ## Usage
 

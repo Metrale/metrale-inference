@@ -124,6 +124,9 @@ pub(super) struct StreamState {
     /// 2026-09-26: True once the think-end token has arrived, or from the start when the
     /// request did not enable thinking; a re-opened `<think>` clears it.
     pub(super) thinking_done: bool,
+    /// 2026-10-08: The held call and when something last went out for it
+    /// (`tool_dispatch::keepalive_due`).
+    pub(super) keepalive_last: Option<(usize, std::time::Instant)>,
     /// 2026-09-26: Stays empty: only the `ctx.tool_retry_enabled` branch writes it, and
     /// that flag is always `false`.
     pub(super) buffered_tool_chunks: std::collections::HashMap<usize, Vec<crate::ir::StreamDelta>>,
@@ -194,6 +197,7 @@ impl StreamState {
                 None
             },
             thinking_done: !enable_thinking,
+            keepalive_last: None,
             buffered_tool_chunks: HashMap::new(),
             pending_retry: None,
             pending_token_ids: Vec::new(),

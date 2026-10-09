@@ -36,8 +36,28 @@ pub(super) fn build_choice_message(
     let mut msg_tool_calls: Option<Vec<tool_parser::ToolCall>> = None;
     let mut msg_refusal: Option<String> = None;
     let mut finish_reason_i = response.finish_reason.clone();
+    let fail_closed = state
+        .tool_call_parser
+        .as_ref()
+        .is_some_and(|p| matches!(p.call_policy(), tool_parser::CallPolicy::FailClosed { .. }));
 
-    if tools_active {
+    if tools_active && fail_closed {
+        // 2026-10-08: Every `<tool_call>` envelope is delivered, as written or as a
+        // refusal (`tool_parser::glm47`); nothing is repaired, dropped or cut.
+        let (content, verdicts) = tool_parser::parse_glm47_answer(&output_text_i, &req.tools);
+        msg_content = content;
+        if !verdicts.is_empty() {
+            let calls: Vec<tool_parser::ToolCall> = verdicts
+                .into_iter()
+                .map(tool_parser::Verdict::into_tool_call)
+                .collect();
+            crate::metrics::TOOL_CALLS_TOTAL.inc_by(calls.len() as u64);
+            msg_tool_calls = Some(calls);
+            if finish_reason_i != ir::FINISH_REASON_TIMEOUT {
+                finish_reason_i = "tool_calls".to_string();
+            }
+        }
+    } else if tools_active {
         if std::env::var("METRALE_LOG_TOOL_RAW").as_deref() == Ok("1") {
             tracing::info!(
                 target: "metrale::tool_debug",
@@ -129,7 +149,7 @@ pub(super) fn build_choice_message(
 
     // 2026-09-26: No valid tool call (tools off, or nothing valid parsed): cut any
     // tool-call markup, and everything after it, from the content.
-    if msg_tool_calls.is_none() {
+    if msg_tool_calls.is_none() && !(tools_active && fail_closed) {
         msg_content = msg_content.map(|c| super::strip::strip_orphan_tool_markup(&c));
     }
 

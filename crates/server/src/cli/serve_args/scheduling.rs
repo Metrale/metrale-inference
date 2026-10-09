@@ -102,7 +102,8 @@ pub struct ServeSchedulingArgs {
     /// Ignore the `jinja-templates/` override directory and render every
     /// model with its own chat template (from the checkpoint; ChatML when it
     /// has none). Default off: an override file's presence is the opt-in
-    /// signal for its model type (see `jinja-templates/README.md`).
+    /// signal for its model type (see `jinja-templates/README.md`). To render
+    /// with a template file instead, see `--chat-template`.
     #[arg(long, default_value_t = false)]
     pub disable_template_overrides: bool,
 
@@ -337,8 +338,8 @@ pub struct ServeSchedulingArgs {
 
     /// Tool call parser format. Enables OpenAI-compatible tool calling.
     /// Supported: "hermes", "qwen3_coder", "qwen3_xml", "gemma4", "mistral",
-    /// "minimax_xml", "bare_json", "poolside_v1". See the `FromStr for
-    /// ToolCallFormat` in tool_parser.rs.
+    /// "minimax_xml", "bare_json", "poolside_v1", "glm47". See the `FromStr
+    /// for ToolCallFormat` in tool_parser.rs.
     /// Unset: MODEL.toml `[behavior].tool_call_parser`, else the mapping for the
     /// model's `model_type` in `tool_defaults.toml`, else tool calling is off.
     #[arg(long, value_name = "FORMAT")]

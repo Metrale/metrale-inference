@@ -211,7 +211,7 @@ pub(super) fn chat_tokenizer(
         false,
         &config.model_type,
         None,
-        false,
+        metrale_server::tokenizer::TemplateSource::OverrideDir,
     )?;
     Ok(tokenizer)
 }

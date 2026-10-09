@@ -10,6 +10,7 @@
 
 use crate::api::chat::prepare::{inject_tool_system_prompt, parser_tool_prompt};
 use crate::ir::{ContentPart, Message, Role};
+use crate::tokenizer::TemplateSource::OverrideDir;
 use crate::tokenizer::chat_render::{RenderFlags, render_chat};
 use crate::tokenizer::jinja_helpers::{ToolJsonStyle, build_jinja_env_with};
 use crate::tool_parser::{
@@ -174,8 +175,9 @@ fn native_qwen_tool_prompt_ownership_tracks_actual_template_selection() {
     tokenizers::Tokenizer::new(tokenizers::models::wordlevel::WordLevel::default())
         .save(model.join("tokenizer.json"), false)
         .unwrap();
-    let load =
-        |kind| ChatTokenizer::from_model_dir(&model, 0, true, kind, Some(&repo), false).unwrap();
+    let load = |kind| {
+        ChatTokenizer::from_model_dir(&model, 0, true, kind, Some(&repo), OverrideDir).unwrap()
+    };
     // 2026-09-26: With no tokenizer_config.json the ChatML default is used, even for a Qwen
     // model type.
     assert!(!load("qwen3_6_moe").uses_native_qwen_tool_template());

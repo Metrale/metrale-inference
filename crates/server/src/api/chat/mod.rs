@@ -12,6 +12,7 @@
 pub(crate) mod echo;
 pub(crate) mod levers;
 mod loop_detect;
+pub(crate) mod media_limits;
 mod msg_entry;
 pub(crate) mod prepare;
 pub(crate) mod remote_image;
