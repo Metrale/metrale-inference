@@ -15,7 +15,8 @@ use crate::glm5next_mlp::{DENSE_W4A4_CHUNK_ROWS, Glm5NextMlpConfig, MOE_W4A4_MAX
 
 /// 2026-10-08: The NVFP4 activation scratch of the W4A4 paths: `(rows, k)`, the most rows one
 /// quantization holds (a routed down input of `MOE_W4A4_MAX_ROWS * top_k` slots, or one dense
-/// chunk) and the widest K it quantizes.
+/// chunk) and the widest K it quantizes. 2026-10-10: The routed down input is stored at its
+/// 128-padded width (the `_k64` quantizer's rows when the expert width is not a k128 multiple).
 pub fn w4a4_scratch_dims(cfg: &Glm5NextMlpConfig, max_rows: usize) -> (usize, usize) {
     let rows = max_rows.max(1);
     let q_rows = (MOE_W4A4_MAX_ROWS.min(rows) * cfg.top_k)
@@ -23,7 +24,7 @@ pub fn w4a4_scratch_dims(cfg: &Glm5NextMlpConfig, max_rows: usize) -> (usize, us
         .max(1);
     let k = cfg
         .hidden
-        .max(cfg.moe_intermediate)
+        .max(cfg.moe_intermediate.next_multiple_of(128))
         .max(cfg.local_dense_intermediate)
         .max(1);
     (q_rows, k)

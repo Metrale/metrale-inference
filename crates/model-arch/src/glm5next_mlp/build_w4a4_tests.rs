@@ -95,6 +95,19 @@ fn k_must_be_whole_k128_chunks() {
     }
 }
 
+/// 2026-10-10: The `_k64` contract: the 64-unit expert slices of GLM-5.3 at TP=3 (704, 640) and
+/// whole k128 widths pass; a width off the 64 grid, or one whose 128-padding passes the scratch
+/// bound, is refused.
+#[test]
+fn k64_must_be_whole_k64_halves_within_the_padded_bound() {
+    for k in [704, 640, 64, 2048, 32768] {
+        check_w4a4_k64(k, "ok").unwrap();
+    }
+    for k in [0, 32, 688, 672 + 16, 32768 + 64] {
+        assert!(check_w4a4_k64(k, "bad").is_err(), "{k}");
+    }
+}
+
 fn proj(input_scale: Option<f32>) -> Nvfp4Proj {
     Nvfp4Proj {
         packed: DevicePtr::NULL,

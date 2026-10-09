@@ -10,7 +10,8 @@
 //! its bound is exchanged with every peer and summed in rank order
 //! (`sendrecv.rs`); otherwise it is `ncclAllReduce`. After each collective the backend
 //! queries `ncclCommGetAsyncError`; a broadcast waits for completion for at
-//! most `COLLECTIVE_TIMEOUT_SECS`, an idle command receive without a deadline,
+//! most `COLLECTIVE_TIMEOUT_SECS` (a rendezvous broadcast `RENDEZVOUS_TIMEOUT_SECS`),
+//! an idle command receive without a deadline,
 //! and a failure in either marks the communicator unhealthy. `attempt_reconnect`
 //! aborts the communicator and bootstraps again. `METRALE_COMM_DIAGNOSTICS=1`
 //! logs every host submission.
@@ -63,6 +64,12 @@ pub use recv_buffer::{ALL_REDUCE_DTYPE_BYTES, required_model_recv_bytes, require
 /// 2026-09-26: Deadline, in seconds, for a broadcast to complete. It bounds
 /// only the completion polling, not an NCCL or driver call that hangs.
 pub(super) const COLLECTIVE_TIMEOUT_SECS: u64 = 30;
+
+/// 2026-10-10: Deadline, in seconds, for a rendezvous broadcast
+/// (`CommBackend::broadcast_rendezvous`): long enough for the spread of weight-load times
+/// between ranks (minutes when one rank reads cold storage), short enough that a rank that never
+/// arrives still fails the start rather than hanging it.
+pub(super) const RENDEZVOUS_TIMEOUT_SECS: u64 = 1800;
 
 /// 2026-09-26: NCCL communicator plus the streams, events and receive buffer
 /// its operations use.

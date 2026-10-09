@@ -7,7 +7,10 @@
 //! whole. Covered per tier: W4A16 at 1 row (slot GEMV), 4 and 16 rows (row-batched union) and
 //! 128 rows (grouped prefill GEMM); declared W4A4 at 1 row (slot GEMV) and 4 and 16 rows
 //! (union GEMV). Two widths: 640 (five 128-column units: 256 / 256 / 128, no padding) and 336
-//! (padded to 384: the last rank holds 80 real columns and 48 zero ones).
+//! (padded to 384: the last rank holds 80 real columns and 48 zero ones). 2026-10-10: In
+//! 64-column units: 640 splits 256 / 192 / 192 and GLM-5.3's 2048 (added) 704 / 704 / 640, so a
+//! rank's W4A4 down runs the `_k64` twins (K % 128 == 64); 336 is 128 / 128 / 128 with 80 real
+//! columns on the last rank.
 //!
 //! Owner: model-engine tests.
 //! Invariants: none beyond the types.
@@ -39,10 +42,11 @@ use metrale_model_arch::glm5next_mlp::{ExpertShard, Glm5NextMlpConfig, Glm5NextM
 /// 2026-10-09: The tp sum against the whole expert at the SAME tier: the same dequantized
 /// weights and, at W4A4, the same activation blocks (the slices are 128-aligned, so every
 /// 16-value block quantizes identically); the difference is the FP32 summation order and the
-/// BF16 rounding of each rank's partial before the sum. Unmeasured bounds; tighten after the
-/// first run.
-const SAME_TIER_MIN_COSINE: f64 = 0.9995;
-const SAME_TIER_MAX_REL_L2: f64 = 0.02;
+/// BF16 rounding of each rank's partial before the sum. 2026-10-10: Measured on GB10 over the
+/// 640, 336 and 2048 widths, both tiers and every row count: cosine >= 0.999994, rel L2 0.0032
+/// to 0.0036 (one BF16 rounding of three partials); the bounds sit ~1.7x outside.
+const SAME_TIER_MIN_COSINE: f64 = 0.99997;
+const SAME_TIER_MAX_REL_L2: f64 = 0.006;
 /// 2026-10-09: The padded width's W4A4 against the whole expert at W4A16 (a 336-wide whole
 /// expert has no W4A4 down: K is not a multiple of 128): the W4A4-vs-W4A16 bound of
 /// `glm5next_w4a4_cuda.rs`.
@@ -305,7 +309,7 @@ fn tp_sliced_experts_sum_to_the_whole() -> Result<()> {
         x: upload(&gpu, &bf16_bytes(&x))?,
         out: gpu.alloc(MAX_ROWS * HIDDEN * 2)?,
     };
-    for full in [640usize, 336] {
+    for full in [640usize, 336, 2048] {
         let experts: Vec<HostExpert> = (0..EXPERTS)
             .map(|_| HostExpert {
                 gate: host_nvfp4(&mut rng, full, HIDDEN),

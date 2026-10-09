@@ -19,6 +19,12 @@
 //   rows' union swept once for all the rows that chose it (below). Since 2026-10-09 the forward
 //   runs its persistent form w4a4_gemv_mx{8,16}_moe_union_sweep (gate and up in one launch); the
 //   grid form stays as the reference the model-arch example glm5next_moe_wide_bench compares to.
+// - 2026-10-10: `_k64` twins of the quantizer, the slot GEMV and the sweeps, for a routed down
+//   projection whose K (the expert width) is a multiple of 64 but not of 128: an expert sliced
+//   over TP ranks in 64-column units (glm5next_mlp::expert_tp). The quantizer writes the rows at
+//   the padded width (w4a4_quant_rows_impl<true, true>), the GEMVs read the weights at their
+//   natural K and the activations at the padded one (w4a4_gemv_mx_tok_impl KH); each output is
+//   bit-identical to the plain entry at the padded K over zero-padded weights.
 //
 // Owner: gb10 kernels.
 // Invariants:
@@ -27,6 +33,7 @@
 // - Launch: quant grid (rows, 1, 1), block 256; slots grid (ceil(N / 16), slots, 1), block 256.
 //   K % 128 == 0 (whole k128 chunks; a tail is not read), K <= 32768. Activations as
 //   w4a4_quant_rows writes them (fragment order), row stride K / 2 bytes, K / 16 scales.
+//   2026-10-10: The `_k64` twins: K % 64 == 0, activation rows at round_up(K, 128).
 #ifndef METRALE_NO_WARP_BLOCKSCALE_MMA
 
 #include "w4a4_mx_core.cuh"
@@ -38,7 +45,16 @@ extern "C" __global__ __launch_bounds__(256) void w4a4_quant_rows_static(
     w4a4_quant_rows_impl<true>(A, Aq, As, Ag, K, gs);
 }
 
-extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32) void w4a4_gemv_mx8_moe_slots(
+extern "C" __global__ __launch_bounds__(256) void w4a4_quant_rows_static_k64(
+    const __nv_bfloat16* __restrict__ A, unsigned char* __restrict__ Aq,
+    unsigned char* __restrict__ As, float* __restrict__ Ag, unsigned int K, float gs)
+{
+    w4a4_quant_rows_impl<true, true>(A, Aq, As, Ag, K, gs);
+}
+
+// 2026-10-10: The slot GEMV body; KH: the `_k64` twin (activation rows at round_up(K, 128)).
+template <bool KH>
+__device__ __forceinline__ void w4a4_moe_slots(
     const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,
     const float* __restrict__ Ag, const int* __restrict__ ids,
     const unsigned long long* __restrict__ packed_ptrs,
@@ -53,11 +69,27 @@ extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32) void w4a4_gemv_mx8_moe_
     const unsigned long long bq = packed_ptrs[id];
     if (bq == 0ull) return;
     const unsigned int row = s / act_div;
-    w4a4_gemv_mx_impl<1, 4>(
-        Aq + (unsigned long long)row * (K >> 1), As + (unsigned long long)row * (K >> 4), Ag + row,
-        (const unsigned char*)bq, (const unsigned char*)scale_ptrs[id], scale2_vals[id],
-        C + (unsigned long long)s * N, 1u, N, K);
+    const unsigned int ka = KH ? (K + 127u) & ~127u : K;
+    w4a4_gemv_mx_tok_impl<1, 4, W4a4RowsIdentity, KH>(
+        Aq + (unsigned long long)row * (ka >> 1), As + (unsigned long long)row * (ka >> 4),
+        Ag + row, (const unsigned char*)bq, (const unsigned char*)scale_ptrs[id],
+        scale2_vals[id], C + (unsigned long long)s * N, W4a4RowsIdentity{1u}, N, K, blockIdx.x);
 }
+
+#define W4A4_SLOTS_ENTRY(NAME, KH)                                                         \
+    extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32) void NAME(                     \
+        const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,        \
+        const float* __restrict__ Ag, const int* __restrict__ ids,                         \
+        const unsigned long long* __restrict__ packed_ptrs,                                \
+        const unsigned long long* __restrict__ scale_ptrs,                                 \
+        const float* __restrict__ scale2_vals, __nv_bfloat16* __restrict__ C,              \
+        unsigned int N, unsigned int K, unsigned int act_div, unsigned int num_experts) {  \
+        w4a4_moe_slots<KH>(Aq, As, Ag, ids, packed_ptrs, scale_ptrs, scale2_vals, C, N, K,  \
+                           act_div, num_experts);                                          \
+    }
+
+W4A4_SLOTS_ENTRY(w4a4_gemv_mx8_moe_slots, false)
+W4A4_SLOTS_ENTRY(w4a4_gemv_mx8_moe_slots_k64, true)
 
 // 2026-10-09: Token rows of one routed expert from shared-memory tables (union entry u).
 struct W4a4RowsTable {
@@ -166,7 +198,7 @@ __device__ __forceinline__ void w4a4_sweep_prefetch(const unsigned char* bq,
         asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;" ::"l"(sc), "r"(sn) : "memory");
 }
 
-template <int MB, int PF>
+template <int MB, int PF, bool KH>
 __device__ __forceinline__ void w4a4_moe_union_sweep(
     const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,
     const float* __restrict__ Ag, const int* __restrict__ u_eid, const int* __restrict__ u_slot,
@@ -255,12 +287,13 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
         if (s_m == 0u || bq == 0ull) continue;
         const unsigned long long bs = p == 0u ? scale0[eid] : scale1[eid];
         const float s2 = p == 0u ? s2_0[eid] : s2_1[eid];
-        w4a4_gemv_mx_tok_impl<MB, 4>(Aq, As, Ag, (const unsigned char*)bq, (const unsigned char*)bs,
-                                     s2, p == 0u ? C0 : C1, W4a4RowsTable{s_m, s_a, s_c}, N, K, x);
+        w4a4_gemv_mx_tok_impl<MB, 4, W4a4RowsTable, KH>(
+            Aq, As, Ag, (const unsigned char*)bq, (const unsigned char*)bs, s2, p == 0u ? C0 : C1,
+            W4a4RowsTable{s_m, s_a, s_c}, N, K, x);
     }
 }
 
-#define W4A4_SWEEP_ENTRY(NAME, MB, PF, MINB)                                                            \
+#define W4A4_SWEEP_ENTRY(NAME, MB, PF, MINB, KH)                                                        \
     extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32, MINB) void NAME( \
         const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,             \
         const float* __restrict__ Ag, const int* __restrict__ u_eid,                            \
@@ -270,12 +303,15 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
         const unsigned long long* __restrict__ scale1, const float* __restrict__ s2_1,          \
         __nv_bfloat16* __restrict__ C1, unsigned int nproj, unsigned int N, unsigned int K,     \
         unsigned int rows, unsigned int top_k, unsigned int act_div, unsigned int num_experts) { \
-        w4a4_moe_union_sweep<MB, PF>(Aq, As, Ag, u_eid, u_slot, packed0, scale0, s2_0, C0, packed1,  \
+        w4a4_moe_union_sweep<MB, PF, KH>(Aq, As, Ag, u_eid, u_slot, packed0, scale0, s2_0, C0, packed1, \
                                  scale1, s2_1, C1, nproj, N, K, rows, top_k, act_div,            \
                                  num_experts);                                                   \
     }
 
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM)
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false)
+// 2026-10-10: The `_k64` twins (the routed down projection of a 64-unit expert slice).
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep_k64, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep_k64, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true)
 
 #endif

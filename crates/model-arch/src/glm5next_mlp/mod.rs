@@ -170,9 +170,23 @@ pub struct Glm5NextMlpKernels {
     pub w4a4_moe_sweep: [KernelHandle; 2],
     /// 2026-10-09: The sweep's grid: [`W4A4_SWEEP_CTAS_PER_SM`] per SM of this device.
     pub w4a4_sweep_ctas: u32,
+    /// 2026-10-10: The `_k64` twins of the routed W4A4 kernels, for a routed down projection
+    /// whose K is a multiple of 64 but not of 128 (a 64-unit expert slice, `expert_tp`).
+    pub w4a4_moe_k64: W4a4MoeK64Kernels,
     /// 2026-10-08: The dense W4A4 GEMVs `w4a4_gemv_mx8`, `_mx16`, `_mx32` (`w4a4_gemv_mx.cu`),
     /// for up to 8, 16 and 32 rows.
     pub w4a4_mx: [KernelHandle; 3],
+}
+
+/// 2026-10-10: `w4a4_quant_rows_static_k64`, `w4a4_gemv_mx8_moe_slots_k64` and
+/// `w4a4_gemv_mx{8,16}_moe_union_sweep_k64` (`w4a4_gemv_mx_moe.cu`): the quantizer writes rows at
+/// `K.next_multiple_of(128)` with zero padding groups, and the GEMVs read the weights at their
+/// natural `K % 64 == 0` width. Each is `KernelHandle(0)` when absent from the target's PTX.
+#[derive(Clone, Copy)]
+pub struct W4a4MoeK64Kernels {
+    pub quant: KernelHandle,
+    pub slots: KernelHandle,
+    pub sweep: [KernelHandle; 2],
 }
 
 /// 2026-10-08: Widest launch on the W4A4 slot GEMV (each slot re-reads its expert); wider runs
@@ -314,6 +328,23 @@ impl Glm5NextMlpKernels {
             ]
             .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MOE_MODULE, e)),
             w4a4_sweep_ctas: gpu.sm_count()? * W4A4_SWEEP_CTAS_PER_SM,
+            w4a4_moe_k64: W4a4MoeK64Kernels {
+                quant: metrale_model_layers::layers::try_kernel(
+                    gpu,
+                    W4A4_MOE_MODULE,
+                    "w4a4_quant_rows_static_k64",
+                ),
+                slots: metrale_model_layers::layers::try_kernel(
+                    gpu,
+                    W4A4_MOE_MODULE,
+                    "w4a4_gemv_mx8_moe_slots_k64",
+                ),
+                sweep: [
+                    "w4a4_gemv_mx8_moe_union_sweep_k64",
+                    "w4a4_gemv_mx16_moe_union_sweep_k64",
+                ]
+                .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MOE_MODULE, e)),
+            },
             w4a4_mx: ["w4a4_gemv_mx8", "w4a4_gemv_mx16", "w4a4_gemv_mx32"]
                 .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MX_MODULE, e)),
         })

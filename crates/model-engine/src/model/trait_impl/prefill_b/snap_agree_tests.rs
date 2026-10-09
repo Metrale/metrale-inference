@@ -10,13 +10,9 @@
 //! Owner: model-engine prefill (SSM prefix cache).
 //! Invariants: none beyond the types.
 
-use std::sync::{Arc, Condvar, Mutex};
-
-use metrale_comm::CommBackend;
-use metrale_gpu_runtime::gpu::GpuBackend;
-use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
-
-use super::snap_agree::{LocalGates, agree, gather_u32_via_broadcast, local_proposal, skip_point};
+use super::snap_agree::{LocalGates, agree, local_proposal, skip_point};
+use crate::rank_agree::gather_u32_via_broadcast;
+use crate::test_pair_comm::run_pair;
 
 const MATCHED: usize = 16352;
 const TOTAL: usize = 16356;
@@ -170,95 +166,14 @@ fn replay_length_identical_across_ranks() {
     assert_eq!(skip_point(false, T, MATCHED, TOTAL, true), 0);
 }
 
-/// 2026-09-25: Two-rank rendezvous broadcast: the root hands its device bytes to the
-/// other rank, which writes them at its own rank-local pointer.
-struct Link {
-    /// 2026-09-25: `(root, bytes)`, tagged with the root so that a root waiting for its
-    /// bytes to be taken does not mistake the next broadcast's post, already issued by
-    /// the faster peer, for its own unread one.
-    slot: Mutex<Option<(usize, Vec<u8>)>>,
-    cv: Condvar,
-}
-
-struct PairComm {
-    rank: usize,
-    gpu: Arc<MockGpuBackend>,
-    link: Arc<Link>,
-}
-
-impl CommBackend for PairComm {
-    fn all_reduce(&self, _: u64, _: usize) -> anyhow::Result<()> {
-        unreachable!("gather uses broadcast only")
-    }
-    fn all_gather(&self, _: u64, _: u64, _: usize) -> anyhow::Result<()> {
-        unreachable!()
-    }
-    fn reduce_scatter(&self, _: u64, _: u64, _: usize) -> anyhow::Result<()> {
-        unreachable!()
-    }
-    fn broadcast(&self, ptr: u64, bytes: usize, root: usize) -> anyhow::Result<()> {
-        let dev = metrale_gpu_runtime::gpu::DevicePtr(ptr);
-        let mut slot = self.link.slot.lock().unwrap();
-        if self.rank == root {
-            let mut out = vec![0u8; bytes];
-            self.gpu.copy_d2h(dev, &mut out)?;
-            *slot = Some((root, out));
-            self.link.cv.notify_all();
-            // 2026-09-25: Wait until the peer has taken the bytes: a broadcast completes
-            // on every rank together.
-            while slot.as_ref().is_some_and(|(r, _)| *r == root) {
-                slot = self.link.cv.wait(slot).unwrap();
-            }
-        } else {
-            while slot.as_ref().is_none_or(|(r, _)| *r != root) {
-                slot = self.link.cv.wait(slot).unwrap();
-            }
-            let (_, bytes) = slot.take().unwrap();
-            self.gpu.copy_h2d(&bytes, dev)?;
-            self.link.cv.notify_all();
-        }
-        Ok(())
-    }
-    fn barrier(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-    fn send_to(&self, _: u64, _: usize, _: usize, _: u64) -> anyhow::Result<()> {
-        unreachable!()
-    }
-    fn recv_from(&self, _: u64, _: usize, _: usize, _: u64) -> anyhow::Result<()> {
-        unreachable!()
-    }
-    fn rank(&self) -> usize {
-        self.rank
-    }
-    fn world_size(&self) -> usize {
-        2
-    }
-}
-
 /// 2026-09-25: Run the real gather on two threads; returns what each rank observed.
+/// 2026-10-10: Over the shared two-rank test communicator (`crate::test_pair_comm`).
 fn gather_two(vals: [u32; 2]) -> [Vec<u32>; 2] {
-    let link = Arc::new(Link {
-        slot: Mutex::new(None),
-        cv: Condvar::new(),
+    let [(r0, _), (r1, _)] = run_pair(move |rank, gpu, comm| {
+        let buf = gpu.alloc(4).unwrap();
+        gather_u32_via_broadcast(gpu, comm, buf, 2, vals[rank]).unwrap()
     });
-    let handles: Vec<_> = (0..2)
-        .map(|rank| {
-            let link = Arc::clone(&link);
-            std::thread::spawn(move || {
-                let gpu = Arc::new(MockGpuBackend::new());
-                let buf = gpu.alloc(4).unwrap();
-                let comm = PairComm {
-                    rank,
-                    gpu: Arc::clone(&gpu),
-                    link,
-                };
-                gather_u32_via_broadcast(gpu.as_ref(), &comm, buf, 2, vals[rank]).unwrap()
-            })
-        })
-        .collect();
-    let mut out = handles.into_iter().map(|h| h.join().unwrap());
-    [out.next().unwrap(), out.next().unwrap()]
+    [r0, r1]
 }
 
 // 2026-09-25: Every rank sees the same vector, in rank order, so `agree` and the
