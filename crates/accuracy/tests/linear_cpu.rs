@@ -80,10 +80,13 @@ fn emu(
         .into_iter()
         .find(|f| f.id == family)
         .unwrap();
-    let wrong = (
-        "w4a16_gemv::w4a16_gemv_qg".to_string(),
-        Mutation::SwapScaleGranularity,
-    );
+    let wrong: (String, common::Wrong) = ("w4a16_gemv::w4a16_gemv_qg".to_string(), |case| {
+        let linear = metrale_accuracy::refs::Reference::parse("linear").unwrap();
+        let mut r = metrale_accuracy::inputs::SplitMix64::new(0);
+        linear
+            .mutate(case, &Mutation::SwapScaleGranularity, &mut r)
+            .map(|_| ())
+    });
     let e = Emu {
         contract: c.clone(),
         family: f,

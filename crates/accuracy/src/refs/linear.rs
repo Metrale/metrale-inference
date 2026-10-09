@@ -53,7 +53,8 @@ struct Formats {
     out: Elem,
 }
 
-fn num(n: Num, ftz: bool) -> Elem {
+/// 2026-10-09: The rounding model of pipeline precision `n`, flushed under `ftz` when f32.
+pub(crate) fn num(n: Num, ftz: bool) -> Elem {
     let e = elem::of_num(n);
     if ftz && n == Num::F32 { F32_FTZ } else { e }
 }

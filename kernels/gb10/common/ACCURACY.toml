@@ -106,3 +106,179 @@ class = "bit_identical"
 against = "gemv::dense_gemv_bf16"
 inputs = ["gaussian", "outliers", "all_equal"]
 mutations = ["symbol:gemv::dense_gemv_bf16_fp32out"]
+
+# 2026-10-09: rms_norm.cu rms_norm (:59-96), one block of min(n, 1024) threads per row
+# (ops::rms_norm): thread t squares the BF16 pairs t, t + blockDim, ... and adds each pair's
+# two squares before its running sum (:63-67, `v0*v0 + v1*v1` then `sum_sq +=`), ceil(n/2048)
+# pairs a thread; a 32-lane xor-shuffle sum (:75, :31-36); warp 0 sums the per-warp partials
+# with the same 32-lane shuffle, zeros past the last warp (:86-93). `rsqrtf` compiles to
+# rsqrt.approx.f32 (no fast-math flag in KERNEL.toml): the PTX ISA bounds its relative error by
+# 2^-22.9 and the CUDA Programming Guide rsqrtf by 2 ulp; 2^-22 covers both. The division by n
+# is div.rn.f32. The same three contracts for the input, final and per-head norms (one op
+# each); the wrong symbol is the plain-weight copy with rms_norm's signature.
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:rms_norm_vanilla::rms_norm_vanilla"]
+
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm"]
+op = "final_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:rms_norm_vanilla::rms_norm_vanilla"]
+
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm"]
+op = "qk_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:rms_norm_vanilla::rms_norm_vanilla"]
+
+# 2026-10-09: rms_norm.cu residual_add_rms_norm: the pairs' FP32 sums `hv + sv` are squared
+# before their BF16 store (:405-413, the family's kernel_pipeline input f32) in rms_norm's
+# order and tree (:423-441), and the stored BF16 sums are scaled (:451-457). The wrong symbol
+# is its plain-weight copy, same arguments (:468).
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::residual_add_rms_norm"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:norm::residual_add_rms_norm_vanilla"]
+
+# 2026-10-09: residual_add_rms_norm_exact.cu squares the BF16-rounded sums (:52-61) with
+# rms_norm's tree (rms_norm_exact.cuh rmsx_block_sum, :135-152) and scales them (:79-86). Its
+# declared norm input is bf16, so the case is a plain row (the adapter adds a zero branch).
+[[contract]]
+family = "rms_norm"
+kernels = ["residual_add_rms_norm_exact::residual_add_rms_norm_exact"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "derived"
+reduction.k = [
+  { level = "pair", width = "2", order = "tree" },
+  { level = "thread", width = "k/2048", order = "sequential" },
+  { level = "warp", width = "32", order = "tree" },
+  { level = "block", width = "32", order = "tree" },
+]
+ftz = false
+approx = { rsqrt = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:norm::residual_add_rms_norm_vanilla"]
+
+# 2026-10-09: rms_norm_strided's per-row body is rms_norm's (rms_norm.cu:139-196 vs :52-112)
+# under the same block (ops::rms_norm_strided); only the row's base address differs, so with
+# packed rows it writes rms_norm's bytes. The plain-weight rms_norm_vanilla takes the strided
+# arguments less the trailing row stride, which it never reads.
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm_strided"]
+op = "qk_norm"
+reference = "rms_norm"
+class = "bit_identical"
+against = "norm::rms_norm"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["symbol:rms_norm_vanilla::rms_norm_vanilla"]
+
+# 2026-10-09: rms_norm_residual is rms_norm plus the residual copy (rms_norm.cu:267-331 vs
+# :52-112): its normed row is rms_norm's bytes.
+[[contract]]
+family = "rms_norm"
+kernels = ["norm::rms_norm_residual"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "bit_identical"
+against = "norm::rms_norm"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["symbol:norm::rms_norm_residual_vanilla"]
+
+# 2026-10-09: With a zero branch the exact fused norm squares and scales the stream itself, in
+# rms_norm's order and tree (rms_norm_exact.cuh): its normed row is rms_norm's bytes.
+[[contract]]
+family = "rms_norm"
+kernels = ["residual_add_rms_norm_exact::residual_add_rms_norm_exact"]
+op = "rms_norm"
+reference = "rms_norm"
+class = "bit_identical"
+against = "norm::rms_norm"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["symbol:norm::residual_add_rms_norm_vanilla"]
+
+# 2026-10-09: rope.cu rope_forward: no reduction. The frequency is f32(1 / pow(theta, 2i/d))
+# with the quotient, `pow` and reciprocal in f64 (:69-72): CUDA's double pow is within 2 ulp
+# (CUDA Programming Guide, double-precision functions), 2^-51 relative. cosf and sinf (:86-87)
+# compile to the accurate library code (no fast-math flag; the PTX has the Payne-Hanek
+# reduction, not sin.approx): 2 ulp over the full range (same guide, single precision), 2^-22
+# relative. The wrong rope base is the theta argument times ten; the rotation's two products
+# and their sum are its only accumulation.
+[[contract]]
+family = "rope"
+kernels = ["rope::rope_forward"]
+op = "rope"
+reference = "rope"
+class = "derived"
+reduction = {}
+ftz = false
+approx = { pow = "2^-51", cos = "2^-22", sin = "2^-22" }
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
+mutations = ["wrong_rope_base", "accumulate:bf16"]
+
+# 2026-10-09: rope_forward_strided runs rope_forward's per-pair body (rope.cu:165-237 vs
+# :40-114) and computes exactly what it does with the packed row strides (:142-146).
+[[contract]]
+family = "rope"
+kernels = ["rope::rope_forward_strided"]
+op = "rope"
+reference = "rope"
+class = "bit_identical"
+against = "rope::rope_forward"
+inputs = ["gaussian", "outliers", "zero_rows"]
+mutations = ["wrong_rope_base"]

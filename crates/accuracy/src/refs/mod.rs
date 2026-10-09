@@ -28,7 +28,11 @@ use crate::points::Shape;
 pub mod linear;
 pub mod linear_impl;
 pub mod linear_mutate;
+pub mod norm;
+pub mod norm_impl;
 pub mod quant;
+pub mod rope;
+pub mod rope_impl;
 
 /// 2026-10-09: What a reference provides. Every method but [`RefImpl::sample`] is required.
 pub trait RefImpl: Sync {
@@ -80,7 +84,7 @@ pub trait RefImpl: Sync {
 }
 
 /// 2026-10-09: The references, by contract spelling.
-pub const REFS: &[&dyn RefImpl] = &[&linear_impl::Linear];
+pub const REFS: &[&dyn RefImpl] = &[&linear_impl::Linear, &norm_impl::RmsNorm, &rope_impl::Rope];
 
 /// 2026-10-09: Random output columns a sample adds to the structural ones.
 const EXTRA_COLUMNS: usize = 48;

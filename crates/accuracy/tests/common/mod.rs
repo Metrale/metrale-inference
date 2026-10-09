@@ -79,6 +79,10 @@ pub enum Behaviour {
     Accumulator(Elem),
 }
 
+/// 2026-10-09: What a wrong entry point computes, as an edit of the operands the conforming
+/// emulation then runs on (another layout, another weight form).
+pub type Wrong = fn(&mut Case) -> Result<(), String>;
+
 /// 2026-10-09: A CPU runner: the conforming emulation of the case's contract at `shape`,
 /// honouring shards and leaving unwritten columns at the sentinel. `wrong.0` names an entry point
 /// that runs the emulation after applying `wrong.1` to the operands (a wrong-symbol stand-in).
@@ -86,7 +90,7 @@ pub struct Emu {
     pub contract: Contract,
     pub family: Family,
     pub behaviour: Behaviour,
-    pub wrong: (String, metrale_accuracy::mutation::Mutation),
+    pub wrong: (String, Wrong),
     pub shape: metrale_accuracy::points::Shape,
 }
 
@@ -109,8 +113,7 @@ impl Emu {
         let reference = Reference::parse(&self.contract.reference).unwrap();
         let mut case = case.clone();
         if case.kernel == self.wrong.0 {
-            let mut r = metrale_accuracy::inputs::SplitMix64::new(0);
-            reference.mutate(&mut case, &self.wrong.1, &mut r)?;
+            (self.wrong.1)(&mut case)?;
         }
         let kernel = self.contract.kernels[0].clone();
         let pipeline = plan::declared(
@@ -123,6 +126,7 @@ impl Emu {
             &self.contract,
             pipeline.clone(),
             &reference.lens(&self.shape, &pipeline),
+            &Default::default(),
         )?;
         let (rows, cols) = (case.out.0[0], case.out.0[1]);
         let acc = match &self.behaviour {
