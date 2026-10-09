@@ -40,8 +40,9 @@ mod kernels;
 mod prefill;
 mod replay;
 mod rows;
+mod seq_tokens;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
-pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX};
+pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX, KdaSeqKernels};
 pub use replay::KdaVerifyRecord;
 
 use anyhow::{Result, bail};
@@ -69,6 +70,15 @@ const KDA_SMEM_BUDGET: usize = 48 * 1024;
 fn kda_rows_reg() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROWS_REG").as_deref() == Ok("1"))
+}
+
+/// 2026-10-09: `METRALE_GLM_KDA_SEQ_TOKENS=1` steps the rows of one sequence that need no
+/// per-row snapshot (a prefill sub-chunk, a replay-mode verify) in one conv and one recurrent
+/// launch for all of them (`seq_tokens.rs`) instead of two launches per row; same bits. Off
+/// until measured end to end. Read once.
+fn kda_seq_tokens() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_SEQ_TOKENS").as_deref() == Ok("1"))
 }
 
 /// 2026-10-09: `METRALE_GLM_KDA_SEQ_ROWS`: `1` steps the batched decode and verify through the

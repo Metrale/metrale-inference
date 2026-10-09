@@ -194,6 +194,35 @@ impl Glm5NextKdaLayer {
         snapshots: &[(DevicePtr, DevicePtr)],
         stream: u64,
     ) -> Result<()> {
+        self.decode_k_with(
+            gpu,
+            hidden,
+            k,
+            state,
+            ws,
+            snapshots,
+            stream,
+            kda_seq_tokens(),
+        )
+    }
+
+    /// 2026-10-09: [`Self::decode_k`] with the per-sequence token kernels
+    /// (`METRALE_GLM_KDA_SEQ_TOKENS`) explicit: with `tokens`, rows that take no snapshot step
+    /// in one conv and one recurrent launch for all of them (`stateful_tokens`, same bits),
+    /// where the target and config allow it; otherwise row by row.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_k_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+        tokens: bool,
+    ) -> Result<()> {
+        let tokens = tokens && k > 1 && snapshots.is_empty() && self.seq_tokens_ready();
         self.rows_with(
             gpu,
             hidden,
@@ -201,13 +230,22 @@ impl Glm5NextKdaLayer {
             ws,
             stream,
             |row| {
+                if tokens {
+                    return Ok(());
+                }
                 self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, row), state, stream)?;
                 match snapshots.get(row) {
                     Some(dst) => self.snapshot_state(gpu, state, *dst, stream),
                     None => Ok(()),
                 }
             },
-            || Ok(()),
+            || {
+                if tokens {
+                    self.stateful_tokens(gpu, k, state, ws, stream)
+                } else {
+                    Ok(())
+                }
+            },
         )
     }
 

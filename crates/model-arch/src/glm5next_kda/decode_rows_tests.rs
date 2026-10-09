@@ -22,6 +22,9 @@ const RECUR: u64 = 0x30B;
 const RECUR_SMEM: u64 = 0x30C;
 const RECUR_ROWS: u64 = 0x313;
 const CONV_ROWS: u64 = 0x316;
+const CONV_TOKENS: u64 = 0x317;
+const CONV_WINDOW: u64 = 0x318;
+const RECUR_SEQ: u64 = 0x319;
 
 fn cfg() -> Glm5NextKdaConfig {
     Glm5NextKdaConfig {
@@ -72,6 +75,11 @@ fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         recurrent_smem: k(RECUR_SMEM),
         recurrent_smem_rows: k(RECUR_ROWS),
         recurrent_rows_reg: k(0x315),
+        seq: crate::glm5next_kda::KdaSeqKernels {
+            conv_tokens: k(CONV_TOKENS),
+            conv_window: k(CONV_WINDOW),
+            recurrent: k(RECUR_SEQ),
+        },
         o_norm: k(0x30E),
         split_widen: k(0x30F),
         sigmoid: k(0x310),
@@ -380,4 +388,54 @@ fn the_default_steps_row_by_row() {
             .iter()
             .all(|x| x.func != CONV_ROWS && x.func != RECUR_ROWS)
     );
+}
+
+/// 2026-10-09: With the token kernels, `k` rows of one sequence without snapshots step in one
+/// conv launch (grid y = k, reading workspace row 0 on and the sequence's conv state), one
+/// window advance (k as its token count) and one recurrence (k tokens, the sequence's state),
+/// and no per-row conv or recurrence; with snapshots, or with one row, they step row by row.
+#[test]
+fn token_kernels_step_a_sequence_in_three_launches_without_snapshots() {
+    let gpu = MockGpuBackend::new();
+    let l = layer(&gpu);
+    let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
+    let st = seq_state(&gpu);
+    let hidden = gpu.alloc(16 * cfg().hidden * 2).unwrap();
+    let from = gpu.launch_count();
+    l.decode_k_with(&gpu, hidden, 7, &st, &ws, &[], 0, true)
+        .unwrap();
+    let got = since(&gpu, from);
+    let of = |f: u64| {
+        got.iter()
+            .filter(|x| x.func == f)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let (conv, win, rec) = (of(CONV_TOKENS), of(CONV_WINDOW), of(RECUR_SEQ));
+    assert_eq!((conv.len(), win.len(), rec.len()), (1, 1, 1));
+    assert_eq!(conv[0].grid[1], 7);
+    assert_eq!(conv[0].args[0], MockArg::Buffer(st.conv));
+    assert_eq!(conv[0].args[1], MockArg::Buffer(ws.qkv_proj));
+    assert_eq!(win[0].args[0], MockArg::Buffer(st.conv));
+    assert_eq!(win[0].args[4], MockArg::Bytes(7u32.to_le_bytes().to_vec()));
+    assert_eq!(rec[0].args[5], MockArg::Buffer(st.recurrent));
+    assert_eq!(rec[0].args[9], MockArg::Bytes(7u32.to_le_bytes().to_vec()));
+    assert!(of(CONV).is_empty() && recurrent_launches(&got).is_empty());
+
+    let c = cfg();
+    let snap = (
+        gpu.alloc(c.recurrent_state_elems() * 4).unwrap(),
+        gpu.alloc(c.conv_state_elems() * 4).unwrap(),
+    );
+    for (k, snaps) in [(7usize, vec![snap]), (1, vec![])] {
+        let from = gpu.launch_count();
+        l.decode_k_with(&gpu, hidden, k, &st, &ws, &snaps, 0, true)
+            .unwrap();
+        let got = since(&gpu, from);
+        assert!(
+            got.iter()
+                .all(|x| ![CONV_TOKENS, CONV_WINDOW, RECUR_SEQ].contains(&x.func))
+        );
+        assert_eq!(recurrent_launches(&got).len(), k);
+    }
 }

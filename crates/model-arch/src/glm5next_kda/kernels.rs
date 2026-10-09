@@ -45,6 +45,9 @@ pub struct Glm5NextKdaKernels {
     /// in registers (head_dim [`KDA_REG_D`] only). Taken instead of `recurrent_smem_rows` under
     /// `METRALE_GLM_KDA_ROWS_REG=1` until measured; `0` when absent.
     pub recurrent_rows_reg: KernelHandle,
+    /// 2026-10-09: The one-launch-per-layer stateful step of several tokens of one sequence
+    /// (`seq_tokens.rs`); all `0` on a target without them.
+    pub seq: KdaSeqKernels,
     pub o_norm: KernelHandle,
     pub split_widen: KernelHandle,
     pub sigmoid: KernelHandle,
@@ -96,6 +99,7 @@ impl Glm5NextKdaKernels {
                 "kda_recurrent",
                 "kda_recurrent_decode_bf16_rows_reg",
             ),
+            seq: KdaSeqKernels::resolve(gpu),
             o_norm: gpu.kernel("kda_layer_ops", "kda_o_norm_gated_bf16")?,
             split_widen: gpu.kernel("kda_layer_ops", "kda_split_widen")?,
             sigmoid: gpu.kernel("kda_layer_ops", "kda_sigmoid_bf16_f32")?,
@@ -113,3 +117,29 @@ pub const KDA_ROWS_MAX: usize = 16;
 /// 2026-10-09: `#define KDA_REG_D` in `kda_recurrent.cu`: the head_dim
 /// `kda_recurrent_decode_bf16_rows_reg` is compiled for.
 pub const KDA_REG_D: usize = 128;
+
+/// 2026-10-09: `causal_conv1d_update_l2norm_tokens`, `causal_conv1d_window_advance` and
+/// `kda_recurrent_decode_bf16_seq_reg` (the first two in `kda_conv_tokens.cu`), resolved
+/// with `try_kernel`.
+#[derive(Clone, Copy, Debug)]
+pub struct KdaSeqKernels {
+    pub conv_tokens: KernelHandle,
+    pub conv_window: KernelHandle,
+    pub recurrent: KernelHandle,
+}
+
+impl KdaSeqKernels {
+    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+        let k = metrale_model_layers::layers::try_kernel;
+        Self {
+            conv_tokens: k(gpu, "kda_conv_tokens", "causal_conv1d_update_l2norm_tokens"),
+            conv_window: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance"),
+            recurrent: k(gpu, "kda_recurrent", "kda_recurrent_decode_bf16_seq_reg"),
+        }
+    }
+
+    /// 2026-10-09: Whether all three resolved.
+    pub fn ready(&self) -> bool {
+        self.conv_tokens.0 != 0 && self.conv_window.0 != 0 && self.recurrent.0 != 0
+    }
+}
