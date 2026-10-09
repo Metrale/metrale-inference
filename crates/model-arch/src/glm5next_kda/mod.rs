@@ -71,6 +71,14 @@ fn kda_rows_reg() -> bool {
     *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROWS_REG").as_deref() == Ok("1"))
 }
 
+/// 2026-10-09: `METRALE_GLM_KDA_SEQ_ROWS=1` steps the batched decode and verify through the
+/// rows kernels (`rows.rs`). Off by default: on GB10 at C16 the rows kernels measured ~24 us
+/// a row against ~8.6 us for the single-row launches they replace. Read once.
+fn kda_seq_rows() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_SEQ_ROWS").as_deref() == Ok("1"))
+}
+
 /// 2026-09-25: `METRALE_GLM_KDA_NO_SMEM=1` selects the 2R+2W recurrent kernel. Read once per
 /// process; it is checked on every decode row.
 fn kda_no_smem() -> bool {

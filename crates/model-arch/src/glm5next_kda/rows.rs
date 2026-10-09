@@ -32,26 +32,47 @@ pub(super) struct RowStep {
 /// 2026-10-09: The rows each launch of `decode_seq_rows` takes, in launch order: for `t` from
 /// 0, the row `t` of every sequence with more than `t` rows (`seqs[s]` = (state, rows), rows
 /// laid out sequence-major from workspace row 0), in groups of at most `KDA_ROWS_MAX`.
+///
+/// Entries that share a state (the padding rows of a batched decode all step the pool's dummy
+/// slot) never share a launch: the `p`-th entry of a state runs in phase `p`, after every row
+/// of phase `p - 1`, so a shared state steps through its entries one after another in entry
+/// order, as the row-by-row path stepped it.
 pub(super) fn t_major_launches(seqs: &[(KdaSeqState, usize)]) -> Vec<Vec<RowStep>> {
     let mut row0 = Vec::with_capacity(seqs.len());
+    let mut phase = Vec::with_capacity(seqs.len());
     let mut next = 0usize;
-    for &(_, k) in seqs {
+    for (i, &(state, k)) in seqs.iter().enumerate() {
         row0.push(next);
         next += k;
+        phase.push(
+            seqs[..i]
+                .iter()
+                .filter(|(s, _)| s.recurrent.0 == state.recurrent.0)
+                .count(),
+        );
     }
-    let max_k = seqs.iter().map(|&(_, k)| k).max().unwrap_or(0);
+    let phases = phase.iter().copied().max().map_or(0, |p| p + 1);
     let mut out = Vec::new();
-    for t in 0..max_k {
-        let rows: Vec<RowStep> = seqs
+    for p in 0..phases {
+        let max_k = seqs
             .iter()
-            .zip(&row0)
-            .filter(|((_, k), _)| *k > t)
-            .map(|((state, _), r0)| RowStep {
-                row: r0 + t,
-                state: *state,
-            })
-            .collect();
-        out.extend(rows.chunks(KDA_ROWS_MAX).map(<[RowStep]>::to_vec));
+            .zip(&phase)
+            .filter(|(_, ph)| **ph == p)
+            .map(|(&(_, k), _)| k)
+            .max()
+            .unwrap_or(0);
+        for t in 0..max_k {
+            let rows: Vec<RowStep> = seqs
+                .iter()
+                .zip(row0.iter().zip(&phase))
+                .filter(|((_, k), (_, ph))| **ph == p && *k > t)
+                .map(|((state, _), (r0, _))| RowStep {
+                    row: r0 + t,
+                    state: *state,
+                })
+                .collect();
+            out.extend(rows.chunks(KDA_ROWS_MAX).map(<[RowStep]>::to_vec));
+        }
     }
     out
 }
@@ -68,8 +89,9 @@ impl Glm5NextKdaLayer {
     /// the rows of sequence `s` contiguous in `hidden` in order, sequences one after another.
     /// The projections run once over all rows; then row `t` of every sequence steps in one
     /// conv and one recurrent launch per 16 rows, and `after_row(row)` runs for each of those
-    /// rows before row `t + 1`. Without the rows kernels it steps row by row
-    /// (`decode_rows_then`), with the same bits.
+    /// rows before row `t + 1`. Without the rows kernels, or unless `METRALE_GLM_KDA_SEQ_ROWS=1`
+    /// (2026-10-09: off by default), it steps row by row (`decode_rows_then`), with the same
+    /// bits.
     pub fn decode_seq_rows(
         &self,
         gpu: &dyn GpuBackend,
@@ -77,11 +99,27 @@ impl Glm5NextKdaLayer {
         seqs: &[(KdaSeqState, usize)],
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
+        after_row: impl FnMut(usize) -> Result<()>,
+    ) -> Result<()> {
+        self.decode_seq_rows_with(gpu, hidden, seqs, ws, stream, after_row, kda_seq_rows())
+    }
+
+    /// 2026-10-09: [`Self::decode_seq_rows`] with the rows-kernel choice explicit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_seq_rows_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        seqs: &[(KdaSeqState, usize)],
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
         mut after_row: impl FnMut(usize) -> Result<()>,
+        // 2026-10-09: Whether to use the rows kernels; `decode_seq_rows` passes the lever.
+        use_rows: bool,
     ) -> Result<()> {
         let total: usize = seqs.iter().map(|&(_, k)| k).sum();
         let multi = seqs.iter().filter(|&&(_, k)| k > 0).count() > 1;
-        if !multi || !self.rows_kernels_ready() {
+        if !multi || !self.rows_kernels_ready() || !use_rows {
             let states: Vec<KdaSeqState> = seqs
                 .iter()
                 .flat_map(|&(s, k)| std::iter::repeat_n(s, k))

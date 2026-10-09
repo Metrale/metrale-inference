@@ -117,7 +117,9 @@ fn each_row_steps_only_its_own_sequence_state() {
     let states: Vec<KdaSeqState> = (0..3).map(|_| seq_state(&gpu)).collect();
     let hidden = gpu.alloc(3 * 256 * 2).unwrap();
     let from = gpu.launch_count();
-    l.decode_rows(&gpu, hidden, &states, &ws, 7).unwrap();
+    let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
+    l.decode_seq_rows_with(&gpu, hidden, &seqs, &ws, 7, |_| Ok(()), true)
+        .unwrap();
     let launches = since(&gpu, from);
 
     let u64a = |v: u64| MockArg::Bytes(v.to_le_bytes().to_vec());
@@ -245,10 +247,18 @@ fn verify_rows_step_t_major_one_row_per_sequence_per_launch() {
     let from = gpu.launch_count();
     let mut after = Vec::new();
     let seqs = [(s[0], 3usize), (s[1], 1), (s[2], 2)];
-    l.decode_seq_rows(&gpu, hidden, &seqs, &ws, 7, |row| {
-        after.push((row, gpu.launch_count()));
-        Ok(())
-    })
+    l.decode_seq_rows_with(
+        &gpu,
+        hidden,
+        &seqs,
+        &ws,
+        7,
+        |row| {
+            after.push((row, gpu.launch_count()));
+            Ok(())
+        },
+        true,
+    )
     .unwrap();
     let launches = since(&gpu, from);
     let rows: Vec<_> = launches.iter().filter(|x| x.func == RECUR_ROWS).collect();
@@ -302,4 +312,72 @@ fn rows_launches_hold_at_most_sixteen_rows() {
         vec![16, 4]
     );
     assert_eq!(launches[1][0].row, 16);
+}
+
+/// 2026-10-09: Padding rows of a batched decode share the pool's dummy state. They run one per
+/// launch after the real rows, never two in a launch (which the rows kernels would race on and
+/// `check_launch` refuses), and a real state shared by two entries steps them in entry order.
+#[test]
+fn entries_sharing_a_state_never_share_a_launch() {
+    let gpu = MockGpuBackend::new();
+    let (a, b, dummy) = (seq_state(&gpu), seq_state(&gpu), seq_state(&gpu));
+    let seqs = [(a, 1), (dummy, 1), (b, 1), (dummy, 1), (dummy, 1)];
+    let launches = super::rows::t_major_launches(&seqs);
+    let rows: Vec<Vec<usize>> = launches
+        .iter()
+        .map(|l| l.iter().map(|r| r.row).collect())
+        .collect();
+    assert_eq!(rows, vec![vec![0, 1, 2], vec![3], vec![4]]);
+    for l in &launches {
+        let mut seen: Vec<u64> = l.iter().map(|r| r.state.recurrent.0).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), l.len(), "two rows of one state in a launch");
+    }
+    // 2026-10-09: Two two-row entries on one state: all of the first, then all of the second.
+    let launches = super::rows::t_major_launches(&[(a, 2), (b, 1), (a, 2)]);
+    let rows: Vec<Vec<usize>> = launches
+        .iter()
+        .map(|l| l.iter().map(|r| r.row).collect())
+        .collect();
+    assert_eq!(rows, vec![vec![0, 2], vec![1], vec![3], vec![4]]);
+}
+
+/// 2026-10-09: A padded batched decode (16 real rows and the dummy state on 4 padding rows)
+/// runs to completion through `decode_rows` instead of being refused.
+#[test]
+fn a_padded_decode_group_is_not_refused() {
+    let gpu = MockGpuBackend::new();
+    let l = layer(&gpu);
+    let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 20).unwrap();
+    let dummy = seq_state(&gpu);
+    let mut states: Vec<KdaSeqState> = (0..12).map(|_| seq_state(&gpu)).collect();
+    states.extend([dummy; 4]);
+    let hidden = gpu.alloc(16 * 256 * 2).unwrap();
+    let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
+    l.decode_seq_rows_with(&gpu, hidden, &seqs, &ws, 7, |_| Ok(()), true)
+        .unwrap();
+}
+
+/// 2026-10-09: Without the opt-in the batched decode steps row by row: one single-row conv
+/// and one single-row recurrent launch per row, no rows launch.
+#[test]
+fn the_default_steps_row_by_row() {
+    let gpu = MockGpuBackend::new();
+    let l = layer(&gpu);
+    let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
+    let states: Vec<KdaSeqState> = (0..3).map(|_| seq_state(&gpu)).collect();
+    let seqs: Vec<(KdaSeqState, usize)> = states.iter().map(|s| (*s, 1)).collect();
+    let hidden = gpu.alloc(3 * 256 * 2).unwrap();
+    let from = gpu.launch_count();
+    l.decode_seq_rows_with(&gpu, hidden, &seqs, &ws, 7, |_| Ok(()), false)
+        .unwrap();
+    let launches = since(&gpu, from);
+    assert_eq!(launches.iter().filter(|x| x.func == CONV).count(), 3);
+    assert_eq!(recurrent_launches(&launches).len(), 3);
+    assert!(
+        launches
+            .iter()
+            .all(|x| x.func != CONV_ROWS && x.func != RECUR_ROWS)
+    );
 }
