@@ -217,3 +217,45 @@ fn the_drift_threshold_sits_between_the_spread_and_the_nearest_mutation() {
     );
     assert!(metrale_accuracy::check::drift_threshold(&c, "p", InputClass::Outliers, 512).is_none());
 }
+
+#[test]
+fn an_inert_arm_is_not_a_pass_of_the_contract_and_a_never_observed_mutation_fails_the_run() {
+    use metrale_accuracy::check::{Arm, Outcome, unobserved};
+    let arm = |name: &str, inert: bool| Arm {
+        name: name.into(),
+        emulated: true,
+        ratio: 0.0,
+        max_err: 0.0,
+        compared: 10,
+        misrounded: 0.0,
+        inert,
+    };
+    let out = |muts: Vec<Arm>| Outcome {
+        family: "f".into(),
+        kernel: "m::k".into(),
+        key: "p".into(),
+        input: InputClass::Gaussian,
+        good: None,
+        floor: None,
+        mutations: muts,
+        output_sha256: String::new(),
+        verdict: Verdict::Pass,
+    };
+    // 2026-10-09: Inert at one point, observed (caught) at another: proven.
+    let mut caught = arm("accumulate:bf16", false);
+    caught.ratio = 100.0;
+    assert!(unobserved(&[out(vec![arm("accumulate:bf16", true)]), out(vec![caught])]).is_empty());
+    // 2026-10-09: Inert everywhere: never observed, the run fails.
+    let u = unobserved(&[
+        out(vec![arm("accumulate:bf16", true)]),
+        out(vec![arm("accumulate:bf16", true)]),
+    ]);
+    assert_eq!(
+        u,
+        vec![(
+            "f".to_string(),
+            "m::k".to_string(),
+            "accumulate:bf16".to_string()
+        )]
+    );
+}

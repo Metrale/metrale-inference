@@ -47,6 +47,11 @@ pub struct Arm {
     /// 2026-10-09: Share of compared elements not correctly rounded from the reference value
     /// (derived), or of differing bytes (bit_identical): the drift statistic.
     pub misrounded: f64,
+    /// 2026-10-09: A mutation arm whose output equals the good arm's at every compared element:
+    /// the mutation is not observable at this input (a narrower accumulator that lands on the
+    /// same roundings), so it says nothing about the contract here. Never true for `good` or
+    /// `floor`. A run fails when a contract's mutation is inert at every point it checks.
+    pub inert: bool,
 }
 
 /// 2026-10-09: The verdict of one check.
@@ -228,6 +233,7 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
                 max_err: g.max_err,
                 compared: g.compared,
                 misrounded: g.misrounded as f64 / g.compared.max(1) as f64,
+                inert: false,
             });
             let mut floor = Arm {
                 name: "floor".into(),
@@ -236,6 +242,7 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
                 max_err: 0.0,
                 compared: 0,
                 misrounded: 0.0,
+                inert: false,
             };
             for v in 0..crate::emulate::VARIANTS {
                 let fl = reference
@@ -253,7 +260,7 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
             if job.input == InputClass::Gaussian {
                 for m in &job.contract.mutations {
                     o.mutations.push(derived_mutation(
-                        job, reference, &plan, &case, &idx, m, out, runner,
+                        job, reference, &plan, &case, &idx, m, out, &got, runner,
                     )?);
                 }
             }
@@ -280,11 +287,13 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
                 max_err: 0.0,
                 compared: b.compared,
                 misrounded: b.differing as f64 / b.compared.max(1) as f64,
+                inert: false,
             });
             if job.input == InputClass::Gaussian {
                 for m in &job.contract.mutations {
-                    o.mutations
-                        .push(identical_mutation(job, reference, &case, &base, m, runner)?);
+                    o.mutations.push(identical_mutation(
+                        job, reference, &case, &base, &got, m, runner,
+                    )?);
                 }
             }
             if b.differing > 0 {
@@ -292,14 +301,15 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
             }
         }
     }
+    // 2026-10-09: An inert arm (output identical to the good arm's) cannot be judged here; a
+    // visible one inside the contract means the contract is too loose. Inert arms are
+    // accounted for across the run ([`unobserved`]).
+    let derived = !matches!(job.contract.class, Class::BitIdentical { .. });
     if let Some(m) = o
         .mutations
         .iter()
-        .find(|m| m.ratio <= 1.0 && !matches!(job.contract.class, Class::BitIdentical { .. }))
+        .find(|m| !m.inert && ((derived && m.ratio <= 1.0) || m.ratio == 0.0))
     {
-        return Err(Verdict::FailMutationPassed(m.name.clone()));
-    }
-    if let Some(m) = o.mutations.iter().find(|m| m.ratio == 0.0) {
         return Err(Verdict::FailMutationPassed(m.name.clone()));
     }
     Ok(())
@@ -313,6 +323,7 @@ fn derived_mutation(
     idx: &[usize],
     m: &Mutation,
     out: crate::elem::Elem,
+    good: &[u8],
     runner: &mut dyn KernelRunner,
 ) -> Result<Arm, Verdict> {
     let err = |e: String| Verdict::Error(format!("{}: {e}", m.name()));
@@ -336,16 +347,24 @@ fn derived_mutation(
             // the contract can see the narrower accumulator, not that one order is unlucky.
             let want = reference.reference(case, plan, &at).map_err(err)?;
             let mut worst: Option<Arm> = None;
+            let mut visible = false;
             for v in 0..crate::emulate::VARIANTS {
                 let em = reference
                     .emulate(case, plan, Some(*e), v, &at)
                     .map_err(err)?;
+                let conforming = reference.emulate(case, plan, None, v, &at).map_err(err)?;
+                visible |= em
+                    .iter()
+                    .zip(&conforming)
+                    .any(|(a, b)| a.to_bits() != b.to_bits());
                 let a = arm(m, true, &em, &want, out)?;
                 if worst.as_ref().is_none_or(|w| a.ratio > w.ratio) {
                     worst = Some(a);
                 }
             }
-            return worst.ok_or_else(|| err("no bracketing ran".into()));
+            let mut w = worst.ok_or_else(|| err("no bracketing ran".into()))?;
+            w.inert = !visible;
+            return Ok(w);
         }
         Mutation::Symbol(s) => {
             mutated.kernel = s.clone();
@@ -365,7 +384,14 @@ fn derived_mutation(
         }
     };
     let want = reference.reference(case, plan, &at).map_err(err)?;
-    arm(m, false, &decode(case, &got, &at).map_err(err)?, &want, out)
+    let mutated_vals = decode(case, &got, &at).map_err(err)?;
+    let good_vals = decode(case, good, &at).map_err(err)?;
+    let mut a = arm(m, false, &mutated_vals, &want, out)?;
+    a.inert = mutated_vals
+        .iter()
+        .zip(&good_vals)
+        .all(|(x, y)| x.to_bits() == y.to_bits());
+    Ok(a)
 }
 
 /// 2026-10-09: A mutation arm whose launch failed: a fault is a loud detection (infinite
@@ -379,6 +405,7 @@ fn faulted(m: &Mutation, e: RunError) -> Result<Arm, Verdict> {
             max_err: f64::INFINITY,
             compared: 0,
             misrounded: 1.0,
+            inert: false,
         }),
         RunError::Unavailable(why) => Err(Verdict::Error(format!("{}: {why}", m.name()))),
     }
@@ -399,6 +426,7 @@ fn arm(
         max_err: b.max_err,
         compared: b.compared,
         misrounded: b.misrounded as f64 / b.compared.max(1) as f64,
+        inert: false,
     })
 }
 
@@ -407,6 +435,7 @@ fn identical_mutation(
     reference: Reference,
     case: &Case,
     base: &[u8],
+    good: &[u8],
     m: &Mutation,
     runner: &mut dyn KernelRunner,
 ) -> Result<Arm, Verdict> {
@@ -443,6 +472,7 @@ fn identical_mutation(
         max_err: 0.0,
         compared: b.compared,
         misrounded: b.differing as f64 / b.compared.max(1) as f64,
+        inert: got.as_slice() == good,
     })
 }
 
@@ -461,4 +491,29 @@ pub fn drift_threshold(c: &Contract, key: &str, input: InputClass, compared: usi
         .max(cal.floor_misrounded)
         .max(1.0 / compared.max(1) as f64);
     Some((spread * cal.mutation_min_misrounded.min(1.0)).sqrt())
+}
+
+/// 2026-10-09: The (family, kernel, mutation) a run never observed: every arm of it was inert,
+/// so no checked point proves the contract catches it. A non-empty answer fails the run.
+pub fn unobserved(outcomes: &[Outcome]) -> Vec<(String, String, String)> {
+    use std::collections::BTreeMap;
+    let mut seen: BTreeMap<(String, String, String), bool> = BTreeMap::new();
+    for o in outcomes {
+        for m in &o.mutations {
+            let base = m
+                .name
+                .split(" (fault")
+                .next()
+                .unwrap_or(&m.name)
+                .to_string();
+            let e = seen
+                .entry((o.family.clone(), o.kernel.clone(), base))
+                .or_insert(false);
+            *e |= !m.inert;
+        }
+    }
+    seen.into_iter()
+        .filter(|(_, v)| !v)
+        .map(|(k, _)| k)
+        .collect()
 }

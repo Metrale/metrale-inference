@@ -197,10 +197,15 @@ fn check(a: &AccuracyRunArgs, calibrate: bool) -> Result<i32> {
         print_line(&o, t.elapsed());
         outcomes.push(o);
     }
+    let unseen = metrale_accuracy::check::unobserved(&outcomes);
+    for (f, k, m) in &unseen {
+        println!("fail:mutation-never-observed {f} {k} {m}: inert at every point checked");
+    }
     let failed = outcomes
         .iter()
         .filter(|o| o.verdict != Verdict::Pass)
-        .count();
+        .count()
+        + unseen.len();
     println!(
         "# {} checks, {} failed, {:.1} s; {} of {} swept points covered",
         outcomes.len(),

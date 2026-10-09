@@ -44,6 +44,7 @@ fn arm(a: &Arm) -> Value {
     t.insert("max_err".into(), Value::Float(a.max_err));
     t.insert("compared".into(), Value::Integer(a.compared as i64));
     t.insert("misrounded".into(), Value::Float(a.misrounded));
+    t.insert("inert".into(), Value::Boolean(a.inert));
     Value::Table(t)
 }
 
