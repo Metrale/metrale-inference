@@ -124,4 +124,8 @@ pub struct TargetDefaults {
     /// activation routing (metrale-model-layers `layers/dense_ffn_lt.rs`); it also sizes the
     /// arena's `ffn_bf16_weight`. `0` means never, the baseline.
     pub ffn_w4a16_lt_min_rows: u32,
+    /// 2026-10-09: How many load groups ahead the 64-column `w4a16_tc_rows` entries run
+    /// (tc_rows.cuh PF; 1, 2 or 3, the widest compiled point at or below it per row tier), read by
+    /// metrale-model-layers `ops::w4a16_tc_rows`. The points give the same bits. The baseline is 1.
+    pub w4a16_tc_rows_pf: u32,
 }

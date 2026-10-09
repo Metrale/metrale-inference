@@ -41,6 +41,7 @@ pub(crate) struct Defaults {
     pub w4a16_gemv_tc_entries: [&'static str; 2],
     pub w8a8_lt_min_rows: u32,
     pub ffn_w4a16_lt_min_rows: u32,
+    pub w4a16_tc_rows_pf: u32,
 }
 
 // 2026-10-05: The W8A8 GEMV schedule points (`src/w8a8_gemv_entries.rs`), one table for this
@@ -96,6 +97,8 @@ pub(crate) fn baseline(hw: &str) -> Defaults {
         w8a8_lt_min_rows: 0,
         // 2026-10-09: Off: NVFP4 dense-FFN projections keep the in-tree kernels at every width.
         ffn_w4a16_lt_min_rows: 0,
+        // 2026-10-09: The row tiles' loads run one group ahead (tc_rows.cuh PF).
+        w4a16_tc_rows_pf: 1,
     }
 }
 
@@ -222,6 +225,13 @@ pub(crate) fn parse_defaults(hw: &str, hw_toml: &toml::Value) -> Defaults {
             }
             "w8a8_lt_min_rows" => out.w8a8_lt_min_rows = unsigned(key, value),
             "ffn_w4a16_lt_min_rows" => out.ffn_w4a16_lt_min_rows = unsigned(key, value),
+            "w4a16_tc_rows_pf" => {
+                out.w4a16_tc_rows_pf = unsigned(key, value);
+                assert!(
+                    (1..=3).contains(&out.w4a16_tc_rows_pf),
+                    "kernels/{hw}/HARDWARE.toml: [defaults] {key} must be 1, 2 or 3"
+                );
+            }
             "ssm_batched_recurrent" => out.ssm_batched_recurrent = boolean(key, value),
             "gdn_prefill_tc" => out.gdn_prefill_tc = boolean(key, value),
             "ssm_ba_gates_hopper" => out.ssm_ba_gates_hopper = boolean(key, value),
@@ -276,6 +286,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
          \x20   w4a16_gemv_tc_entries: {w4a16_tc_entries:?},\n\
          \x20   w8a8_lt_min_rows: {w8a8_lt},\n\
          \x20   ffn_w4a16_lt_min_rows: {ffn_lt},\n\
+         \x20   w4a16_tc_rows_pf: {tc_rows_pf},\n\
          }};\n",
         hw = d.hw,
         batchm = d.lm_head_batchm_max,
@@ -298,6 +309,7 @@ pub(crate) fn literal(d: &Defaults) -> String {
         w4a16_tc_entries = d.w4a16_gemv_tc_entries,
         w8a8_lt = d.w8a8_lt_min_rows,
         ffn_lt = d.ffn_w4a16_lt_min_rows,
+        tc_rows_pf = d.w4a16_tc_rows_pf,
     )
 }
 

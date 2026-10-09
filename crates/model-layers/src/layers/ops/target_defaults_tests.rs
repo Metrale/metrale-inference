@@ -41,6 +41,7 @@ const GB10: TargetDefaults = TargetDefaults {
     w4a16_gemv_tc_entries: ["tc8", "tc16"],
     w8a8_lt_min_rows: 0,
     ffn_w4a16_lt_min_rows: 0,
+    w4a16_tc_rows_pf: 1,
 };
 
 /// 2026-09-25: A copy of `kernels/hopper/HARDWARE.toml` `[defaults]`.
@@ -72,6 +73,7 @@ const HOPPER: TargetDefaults = TargetDefaults {
     w4a16_gemv_tc_entries: ["tc8_nt2_ku2_o3", "tc16_nt4_ku1_o2"],
     w8a8_lt_min_rows: 64,
     ffn_w4a16_lt_min_rows: 129,
+    w4a16_tc_rows_pf: 1,
 };
 
 fn with(defaults: &TargetDefaults, env: &[(&str, &str)]) -> TargetLevers {

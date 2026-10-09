@@ -183,6 +183,8 @@ pub struct TargetLevers {
     pub w8a8_lt_min_rows: Resolved<u32>,
     /// 2026-10-09: The NVFP4 dense FFN's cuBLASLt arm (`layers/dense_ffn_lt.rs`).
     pub ffn_w4a16_lt_min_rows: Resolved<u32>,
+    /// 2026-10-09: The row tiles' load-ahead (`ops::w4a16_tc_rows`).
+    pub w4a16_tc_rows_pf: Resolved<u32>,
 }
 
 /// 2026-10-09: The W4A16 tensor-core GEMV entries: the environment's two comma-separated points
@@ -264,6 +266,14 @@ pub fn resolve(
             defaults.ffn_w4a16_lt_min_rows,
             var("METRALE_FFN_W4A16_LT_MIN_ROWS").as_deref(),
         ),
+        // 2026-10-09: 1, 2 or 3; anything else keeps the declaration.
+        w4a16_tc_rows_pf: match var("METRALE_W4A16_TC_ROWS_PF")
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|v| (1..=3).contains(v))
+        {
+            Some(v) => Resolved::env(v),
+            None => Resolved::target(defaults.w4a16_tc_rows_pf),
+        },
         // 2026-09-25: `kernels/hopper` declares it on, the other tables off. A
         // pinned `--ssm-batched-recurrent` outranks this row (`serve_flags.rs`).
         ssm_batched_recurrent: resolve_toggle(
@@ -415,7 +425,8 @@ pub fn format_levers(l: &TargetLevers) -> String {
          w8a8_gemv_entries={w8a8_entries}{w8a8_entries_src} \
          w4a16_gemv_tc_entries={w4tc_entries}{w4tc_entries_src} \
          w8a8_lt_min_rows={w8a8_lt}{w8a8_lt_src} \
-         ffn_w4a16_lt_min_rows={ffn_lt}{ffn_lt_src}",
+         ffn_w4a16_lt_min_rows={ffn_lt}{ffn_lt_src} \
+         w4a16_tc_rows_pf={tc_pf}{tc_pf_src}",
         hw = if l.hw.is_empty() { "unknown" } else { l.hw },
         // 2026-09-25: Not a lever: the target's `[hardware] sm_count`, which
         // `arch_preflight::check_sm_count` compares with the device at boot.
@@ -450,6 +461,8 @@ pub fn format_levers(l: &TargetLevers) -> String {
         w8a8_lt_src = l.w8a8_lt_min_rows.source.tag(),
         ffn_lt = l.ffn_w4a16_lt_min_rows.value,
         ffn_lt_src = l.ffn_w4a16_lt_min_rows.source.tag(),
+        tc_pf = l.w4a16_tc_rows_pf.value,
+        tc_pf_src = l.w4a16_tc_rows_pf.source.tag(),
     )
 }
 
