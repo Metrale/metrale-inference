@@ -74,6 +74,7 @@ impl From<ChatCompletionRequest> for ir::ChatRequest {
             .chat_template_kwargs
             .as_ref()
             .and_then(|kw| kw.preserve_thinking);
+        let template_thinking = req.chat_template_kwargs.as_ref().and_then(|kw| kw.thinking);
         let top_logprobs = resolve_top_logprobs(req.logprobs, req.top_logprobs);
         // 2026-09-26: Keys that do not parse as `u32` token ids are dropped.
         let logit_bias: Vec<(u32, f32)> = req.logit_bias.as_ref().map_or(Vec::new(), |map| {
@@ -116,6 +117,7 @@ impl From<ChatCompletionRequest> for ir::ChatRequest {
             thinking,
             reasoning_effort,
             preserve_thinking,
+            template_thinking,
             repetition_detection: req.repetition_detection,
             adapter: req.adapter,
             src_lang: req.src_lang,

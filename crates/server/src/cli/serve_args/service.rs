@@ -3,7 +3,8 @@
 //! 2026-09-26: The last `met serve` flags, from `--request-timeout` to
 //! `--lora-stageable-disk`: the request deadline, profiling, FP8 KV calibration,
 //! weight loading, the dashboard, vision and video input, the listener, auth and
-//! LoRA adapters. `ServeSchedulingArgs` flattens this struct last.
+//! LoRA adapters, then the chat-surface flags (`serve_args_chat_surface.rs`).
+//! `ServeSchedulingArgs` flattens this struct last.
 //!
 //! Owner: server CLI.
 //! Invariants: the `///` text on the struct's fields is the `--help` output and
@@ -294,4 +295,8 @@ pub struct ServeServiceArgs {
     /// not exceed `--max-lora-rank` (64 when unset).
     #[arg(long, value_name = "NAME=PATH_OR_HF_ID", value_parser = parse_lora_adapter_spec)]
     pub lora_stageable_disk: Vec<(String, String)>,
+
+    /// 2026-10-08: `--chat-template` and the other chat-surface flags, listed last.
+    #[command(flatten)]
+    pub chat_surface: crate::cli::serve_args_chat_surface::ServeChatSurfaceArgs,
 }

@@ -34,7 +34,7 @@ pub(super) fn render_template(
     enable_thinking: bool,
     thinking_budget: Option<u32>,
     reasoning_effort: Option<crate::ir::ReasoningEffort>,
-    preserve_thinking: Option<bool>,
+    thinking_vars: crate::tokenizer::ThinkingVars,
     tools_active: bool,
 ) -> Result<TemplateOut, Response> {
     let template_thinking = enable_thinking;
@@ -71,7 +71,7 @@ pub(super) fn render_template(
                 template_thinking,
                 state.behavior.disable_tool_steering,
                 reasoning_effort.map(crate::ir::ReasoningEffort::as_str),
-                preserve_thinking,
+                thinking_vars,
             )
             .map(|t| t.len())
             .unwrap_or(0);
@@ -90,7 +90,7 @@ pub(super) fn render_template(
         template_thinking,
         state.behavior.disable_tool_steering,
         reasoning_effort.map(crate::ir::ReasoningEffort::as_str),
-        preserve_thinking,
+        thinking_vars,
     ) {
         Ok(t) => t,
         Err(e) => {

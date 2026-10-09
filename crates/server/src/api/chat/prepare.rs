@@ -121,8 +121,11 @@ pub(crate) fn prepare_chat_prompt(
         // 2026-09-26: The request's `preserve_thinking` wins, then
         // `behavior.preserve_thinking` (MODEL.toml, overridden by
         // `--default-chat-template-kwargs`). `None` leaves the template
-        // variable undefined.
-        req.preserve_thinking.or(state.behavior.preserve_thinking),
+        // variable undefined. 2026-10-08: `thinking` is the request's alone.
+        crate::tokenizer::ThinkingVars {
+            preserve_thinking: req.preserve_thinking.or(state.behavior.preserve_thinking),
+            thinking: req.template_thinking,
+        },
         tools_active,
     )?;
     if state.chat.phase_timing {

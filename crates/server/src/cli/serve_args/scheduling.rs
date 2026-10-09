@@ -102,7 +102,8 @@ pub struct ServeSchedulingArgs {
     /// Ignore the `jinja-templates/` override directory and render every
     /// model with its own chat template (from the checkpoint; ChatML when it
     /// has none). Default off: an override file's presence is the opt-in
-    /// signal for its model type (see `jinja-templates/README.md`).
+    /// signal for its model type (see `jinja-templates/README.md`). To render
+    /// with a template file instead, see `--chat-template`.
     #[arg(long, default_value_t = false)]
     pub disable_template_overrides: bool,
 
