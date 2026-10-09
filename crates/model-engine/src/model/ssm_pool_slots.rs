@@ -271,6 +271,17 @@ impl SsmStatePool {
         Ok(())
     }
 
+    /// 2026-10-09: The conv intermediates a slot has: `num_intermediates` (the conv stride)
+    /// in snapshot mode, none under replay, which allocates no intermediate pools. Every loop
+    /// over a slot's conv intermediates is bounded by this, not by the stride.
+    pub(crate) fn conv_inter_count(&self) -> usize {
+        if self.conv_intermediate_pools.is_empty() {
+            0
+        } else {
+            self.num_intermediates
+        }
+    }
+
     pub(super) fn conv_intermediate(
         &self,
         ssm_layer_idx: usize,
@@ -317,7 +328,7 @@ impl SsmStatePool {
                 for t in 0..self.h_inter_count(slot) {
                     gpu.memset(self.h_intermediate(i, slot, t), 0, self.h_stored_bytes)?;
                 }
-                for t in 0..self.num_intermediates {
+                for t in 0..self.conv_inter_count() {
                     gpu.memset(self.conv_intermediate(i, slot, t), 0, self.conv_bytes)?;
                 }
                 gpu.memset(self.h_checkpoint(i, slot), 0, self.h_stored_bytes)?;
@@ -360,7 +371,7 @@ impl SsmStatePool {
                         stream,
                     )?;
                 }
-                for t in 0..self.num_intermediates {
+                for t in 0..self.conv_inter_count() {
                     gpu.copy_d2d_async(
                         self.conv_intermediate(i, from, t),
                         self.conv_intermediate(i, to, t),

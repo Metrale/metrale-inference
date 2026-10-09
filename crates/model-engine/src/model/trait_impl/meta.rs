@@ -289,7 +289,8 @@ impl TransformerModel {
                             .h_state_intermediates
                             .push(self.ssm_pool.h_intermediate(ssm_layer_idx, slot, t));
                     }
-                    for t in 0..self.ssm_pool.num_intermediates {
+                    // 2026-10-09: None under replay (`conv_inter_count`).
+                    for t in 0..self.ssm_pool.conv_inter_count() {
                         ssm_state
                             .conv_state_intermediates
                             .push(self.ssm_pool.conv_intermediate(ssm_layer_idx, slot, t));
