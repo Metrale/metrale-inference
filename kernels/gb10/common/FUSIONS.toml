@@ -2593,3 +2593,388 @@ when = { row_tiers = "by_rows" }
 numerics = "reference"
 priority = 100
 cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-183"
+
+# 2026-10-08: GLM-5 (`glm5_next`, kernels/circuits/glm5_next.toml): the engine's single-sequence
+# decode (`Glm5NextLayer::forward_one`, crates/model-arch/src/glm5next_layer/steps/forward.rs).
+# Not a golden instance yet: these rules cover the GLM-specific kernels and the BF16 projections
+# at one row; the routed experts and the dense MLP (declared W4A4, run by the engine W4A16 and as
+# load-time BF16 dequantisations), the draft head, the multi-sequence decode (vetoed; the
+# `[[legacy_path]]` of KERNEL_FAMILIES.toml) and the K-row verify have no rule. Every pattern
+# names a GLM-only op, role, local id or param, or a GLM layer kind, so no rule here matches a
+# node of another circuit. The engine keeps the hyper-connection highway FP32 (`writes`).
+
+[[rule]]
+id = "glm_hc_expand"
+pattern = [{ op = "hc_expand", writes = "f32" }]
+kernels = [{ module = "glm5next_mhc", func = "glm5next_hc_expand" }]
+repeat = "once"
+emitter = "glm_hc"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_mhc.rs:68-87; crates/model-arch/src/glm5next_layer/steps/forward.rs:73"
+
+[[rule]]
+id = "glm_hc_pre"
+pattern = [{ op = "linear", role = "hc_mix", input = "f32" }, { op = "hc_pre" }]
+kernels = [
+  { module = "glm5next_mhc", func = "glm5next_hc_mix_bf16" },
+  { module = "glm5next_mhc", func = "glm5next_hc_finish" },
+]
+repeat = "once"
+emitter = "glm_hc"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 100
+cite = "crates/model-arch/src/glm5next_mhc.rs:153-214 (hc_mix_bf16 for the BF16 hc_fn the loader uploads, then hc_finish); crates/model-arch/src/glm5next_layer/steps/forward.rs:85,142"
+
+[[rule]]
+id = "glm_hc_post"
+pattern = [{ op = "hc_post", writes = "f32" }]
+kernels = [{ module = "glm5next_mhc", func = "glm5next_hc_post" }]
+repeat = "once"
+emitter = "glm_hc"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_mhc.rs:218-245; crates/model-arch/src/glm5next_layer/steps/forward.rs:126,164"
+
+[[rule]]
+id = "glm_hc_contract"
+pattern = [{ op = "hc_contract" }]
+kernels = [{ module = "glm5next_mhc", func = "glm5next_hc_head" }]
+repeat = "once"
+emitter = "glm_hc"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_mhc.rs:90-109; crates/model-arch/src/glm5next_layer/steps/forward.rs:179"
+
+[[rule]]
+id = "glm_rms_norm_plain_kda"
+pattern = [{ op = "rms_norm", layer_kind = "linear_attention", params = { weight_form = "plain" } }]
+kernels = [{ module = "rms_norm_vanilla", func = "rms_norm_vanilla" }]
+repeat = "once"
+emitter = "rms_norm"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:16-36; crates/model-arch/src/glm5next_layer/steps/forward.rs:103,160"
+
+[[rule]]
+id = "glm_rms_norm_plain_dsa"
+pattern = [{ op = "rms_norm", layer_kind = "deepseek_sparse_attention", params = { weight_form = "plain" } }]
+kernels = [{ module = "rms_norm_vanilla", func = "rms_norm_vanilla" }]
+repeat = "once"
+emitter = "rms_norm"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:16-36; crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:99-109 (q_a_layernorm)"
+
+# 2026-10-08: Every BF16 projection of one row runs the M = 1 GEMV (`ops::dense_mm_bf16`).
+[[rule]]
+id = "glm_bf16_gemv_kda"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "kda_b", "kda_f_a", "kda_f_b", "kda_g_a", "kda_g_b", "shared_down"], weight = "bf16", layer_kind = "linear_attention" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:192-232,248-266,281-300,315-324,335-354,376-385; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down)"
+
+[[rule]]
+id = "glm_bf16_gemv_dsa"
+pattern = [{ op = "linear", roles = ["mla_q_a", "mla_kv_a", "index_k", "index_gate", "shared_down"], weight = "bf16", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:86-98,124-136; crates/model-arch/src/glm5next_dsa/layer.rs:185-197,210-222; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down)"
+
+# 2026-10-08: The shared expert's gate and up are two GEMVs, as in the dense SwiGLU MLP.
+[[rule]]
+id = "glm_shared_gate_up_kda"
+pattern = [{ op = "linear", role = "shared_gate_up", weight = "bf16", layer_kind = "linear_attention" }]
+kernels = [
+  { module = "gemv", func = "dense_gemv_bf16" },
+  { module = "gemv", func = "dense_gemv_bf16" },
+]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:46-71"
+
+[[rule]]
+id = "glm_shared_gate_up_dsa"
+pattern = [{ op = "linear", role = "shared_gate_up", weight = "bf16", layer_kind = "deepseek_sparse_attention" }]
+kernels = [
+  { module = "gemv", func = "dense_gemv_bf16" },
+  { module = "gemv", func = "dense_gemv_bf16" },
+]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:46-71"
+
+[[rule]]
+id = "glm_kda_pack"
+pattern = [{ op = "concat", layer_kind = "linear_attention" }]
+kernels = [{ module = "kda_layer_ops", func = "kda_pack_qkv_bf16" }]
+repeat = "once"
+emitter = "kda"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:267-276"
+
+# 2026-10-08: The decode conv writes BF16 q|k|v rows (`causal_conv1d_update_l2norm`), which the
+# recurrence reads; the circuit's conv edges are FP32 as the GatedDeltaNet decode keeps them.
+[[rule]]
+id = "glm_kda_conv_l2"
+pattern = [
+  { op = "conv1d_update", local = "short_conv" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm" }]
+repeat = "once"
+emitter = "kda"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:36-49"
+
+[[rule]]
+id = "glm_kda_gates"
+pattern = [{ op = "gdn_gates", params = { gate = "sigmoid_bounded", decay = "channel" } }]
+kernels = [
+  { module = "kda_gate", func = "kda_gate_bf16" },
+  { module = "kda_layer_ops", func = "kda_sigmoid_bf16_f32" },
+]
+repeat = "once"
+emitter = "kda"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:301-312,326-332"
+
+[[rule]]
+id = "glm_kda_recurrence"
+pattern = [{ op = "gdn_recurrence", input = "bf16", params = { decay = "channel" } }]
+kernels = [{ module = "kda_recurrent", func = "kda_recurrent_decode_bf16_smem" }]
+repeat = "once"
+emitter = "kda"
+rows = [1, 1]
+modes = ["decode"]
+when = { ssm_h_dtype = "f32" }
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:53-76 (the shared-memory kernel when the target ships it; :78-93 the 2R+2W fallback)"
+
+[[rule]]
+id = "glm_kda_o_norm"
+pattern = [{ op = "gated_rms_norm", params = { gate_act = "sigmoid" } }]
+kernels = [{ module = "kda_layer_ops", func = "kda_o_norm_gated_bf16" }]
+repeat = "once"
+emitter = "kda"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:366-375"
+
+# 2026-10-08: RMSNorm, FP8 quantisation and the paged store in one kernel; the norm hands its
+# FP32 result to the quantizer in registers.
+[[rule]]
+id = "glm_mla_latent_write"
+pattern = [
+  { op = "rms_norm", local = "kv_norm", holds = "f32" },
+  { op = "kv_write", params = { layout = "latent" } },
+]
+kernels = [{ module = "glm5next_mla_latent_write", func = "glm5next_mla_latent_write_fp8" }]
+repeat = "once"
+emitter = "dsa"
+rows = [1, 1]
+modes = ["decode"]
+when = { kv_cache_dtype = "fp8" }
+numerics = "reference"
+priority = 100
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:177-187"
+
+[[rule]]
+id = "glm_index_k_norm"
+pattern = [{ op = "layer_norm" }]
+kernels = [{ module = "nllb_encoder", func = "nllb_layernorm_bf16" }]
+repeat = "once"
+emitter = "dsa"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_dsa/layer.rs:198-208"
+
+# 2026-10-08: The engine stores each token's raw normed key and gate score in a flat
+# per-sequence cache and pools at selection time (`dsa_kpool_compress` below); the circuit's
+# `kpool_compress` pools at write time. Same selection, another state layout.
+[[rule]]
+id = "glm_index_store"
+pattern = [{ op = "kpool_compress" }]
+kernels = [{ module = "dsa_indexer", func = "dsa_indexer_store" }]
+repeat = "once"
+emitter = "dsa"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly)"
+
+[[rule]]
+id = "glm_index_select"
+pattern = [{ op = "index_select", input = "f32" }]
+kernels = [
+  { module = "dsa_indexer", func = "dsa_kpool_compress" },
+  { module = "dsa_indexer", func = "dsa_index_scores" },
+  { module = "dsa_indexer", func = "dsa_topk_pools" },
+  { module = "dsa_indexer", func = "dsa_expand_selection" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:17-150; crates/model-arch/src/glm5next_dsa/layer.rs:253-329"
+
+# 2026-10-08: The indexer query and head weights are FP32-out GEMVs (`*_fp32out`), so the
+# selection reads FP32 where the circuit's edges are BF16.
+[[rule]]
+id = "glm_index_f32_gemv"
+pattern = [{ op = "linear", roles = ["index_q", "index_weights"], weight = "bf16", writes = "f32" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16_fp32out" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_dsa/layer.rs:229-243,266-277"
+
+# 2026-10-08: The absorbed latent attention on load-time products: `q_absorb` is q_b_proj times
+# kv_b_proj's key half and `o_absorb` o_proj times its value half (glm5next_dsa/layer.rs:111-122),
+# each a BF16 GEMV with a wider weight than the checkpoint's (32768 x 1536 for q, 4096 x 32768 for
+# o, against 16384 x 1536 and 4096 x 16384), then the latent decode between them.
+[[rule]]
+id = "glm_mla_absorbed"
+pattern = [
+  { op = "linear", role = "mla_q_b", weight = "bf16" },
+  { op = "mla_attention" },
+  { op = "linear", role = "o", weight = "bf16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "gemv", func = "dense_gemv_bf16" },
+  { module = "glm5next_dsa_mla_decode", func = "glm5next_dsa_mla_decode_fp8" },
+  { module = "gemv", func = "dense_gemv_bf16" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [1, 1]
+modes = ["decode"]
+when = { kv_cache_dtype = "fp8" }
+numerics = "reference"
+priority = 100
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:110-123,328,337-349; crates/model-arch/src/glm5next_dsa/attend.rs:163-190"
+
+[[rule]]
+id = "glm_router_f32"
+pattern = [{ op = "router", local = "gate", weight = "bf16" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16_fp32out" }]
+repeat = "once"
+emitter = "moe_router"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:345-358"
+
+[[rule]]
+id = "glm_router_topk_kda"
+pattern = [{ op = "top_k", layer_kind = "linear_attention", params = { scoring = "sigmoid_bias" } }]
+kernels = [{ module = "glm5next_ffn", func = "glm5next_router_topk" }]
+repeat = "once"
+emitter = "moe_router"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:360-372"
+
+[[rule]]
+id = "glm_router_topk_dsa"
+pattern = [{ op = "top_k", layer_kind = "deepseek_sparse_attention", params = { scoring = "sigmoid_bias" } }]
+kernels = [{ module = "glm5next_ffn", func = "glm5next_router_topk" }]
+repeat = "once"
+emitter = "moe_router"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:360-372"
+
+# 2026-10-08: Clamp, SiLU and multiply in one pass over separate gate and up rows; the clamped
+# values stay in FP32 registers.
+[[rule]]
+id = "glm_swiglu_clamp"
+pattern = [{ op = "swiglu_clamp", holds = "f32" }, { op = "silu_mul" }]
+kernels = [{ module = "glm5next_ffn", func = "glm5next_swiglu_clamp" }]
+repeat = "once"
+emitter = "glm_swiglu"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/launch.rs:130-150; crates/model-arch/src/glm5next_mlp/forward/dense.rs:72-82"
+
+[[rule]]
+id = "glm_moe_combine_kda"
+pattern = [{ op = "blend", layer_kind = "linear_attention", params = { shared_gate = "none" } }]
+kernels = [{ module = "glm5next_ffn", func = "glm5next_moe_combine" }]
+repeat = "once"
+emitter = "moe_blend"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:428-450"
+
+[[rule]]
+id = "glm_moe_combine_dsa"
+pattern = [{ op = "blend", layer_kind = "deepseek_sparse_attention", params = { shared_gate = "none" } }]
+kernels = [{ module = "glm5next_ffn", func = "glm5next_moe_combine" }]
+repeat = "once"
+emitter = "moe_blend"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:428-450"
