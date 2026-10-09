@@ -197,6 +197,27 @@ impl TransformerModel {
             ] {
                 stale.extend(of_slot(m));
             }
+            if let Some(ssm_slot) = slot_to_release {
+                // 2026-10-09: The batched verify graphs are keyed by the SSM slot released above
+                // (`verify_batched_graph_key`); every key holding this one is dropped.
+                let mut verify = self.verify_batched_graphs.lock();
+                let keys: Vec<Vec<u32>> = verify
+                    .0
+                    .keys()
+                    .filter(|k| {
+                        metrale_model_layers::speculative::verify_key::verify_graph_key_has_slot(
+                            k,
+                            ssm_slot as u32,
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                for k in keys {
+                    if let Some((g, _)) = verify.0.remove(&k) {
+                        stale.push(g);
+                    }
+                }
+            }
             {
                 // 2026-09-25: A batched graph bakes every row's state pointers, so every key
                 // that contains this slot is dropped.

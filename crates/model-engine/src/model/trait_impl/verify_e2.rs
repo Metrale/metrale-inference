@@ -188,12 +188,6 @@ impl TransformerModel {
         wy_tables_null: bool,
         write_on_accept: bool,
     ) -> Option<Vec<u32>> {
-        // 2026-10-09: No key, so the verify runs eager, when a layer allocates per-sequence
-        // buffers outside the slot-addressed pool (GLM-5.3's DSA indexer cache): a graph keyed
-        // by slot would replay an earlier occupant's addresses.
-        if self.layers.iter().any(|l| l.graph_stale_on_new_sequence()) {
-            return None;
-        }
         let mut pairs: Vec<(u32, u32)> = Vec::with_capacity(seqs.len());
         for (i, s) in seqs.iter().enumerate() {
             pairs.push((s.ssm_slot_idx()? as u32, *ks.get(i)? as u32));

@@ -241,7 +241,11 @@ impl TransformerModel {
         // WY entries. Each ghost slot must be free and, with WY tables, its
         // intermediate pool must cover the ghost's depth (the closure in
         // `pick_verify_graph`).
-        let graphs_on = super::verify_e2::verify_graphs_enabled() && !k4_diag;
+        // 2026-10-09: With a comm backend only under `METRALE_EP_GRAPHS` (`levers.ep_graphs`):
+        // every rank runs this verify, so every rank captures and replays the same collectives.
+        let graphs_on = super::verify_e2::verify_graphs_enabled()
+            && !k4_diag
+            && (self.comm.is_none() || self.levers.ep_graphs);
         let graph_key = if graphs_on {
             self.verify_batched_graph_key(
                 &*seqs,
@@ -289,8 +293,26 @@ impl TransformerModel {
         if let Some(graph) = replay {
             // 2026-09-25: The graph reads this step's metadata and WY tables
             // from the fixed addresses refreshed above.
+            // 2026-10-09: As around the single-sequence verify replays (`verify_d.rs`): refuse
+            // a replay whose GLM-5.3 DSA indexer rows would pass their buffer, and after it
+            // bring each sequence's host-side indexer length to `seq_len + k`, which a replay
+            // does not advance. Every other layer's hooks do nothing.
             if graph.0 != 0 {
+                for (i, seq) in seqs.iter().enumerate() {
+                    for (l, layer) in self.layers.iter().enumerate() {
+                        layer.check_replay_room(&*seq.layer_states[l], seq.seq_len, ks[i])?;
+                    }
+                }
                 self.gpu.launch_graph(graph, stream)?;
+                for (i, seq) in seqs.iter_mut().enumerate() {
+                    for (l, layer) in self.layers.iter().enumerate() {
+                        layer.sync_replayed_step(
+                            seq.layer_states[l].as_mut(),
+                            seq.seq_len,
+                            ks[i],
+                        )?;
+                    }
+                }
             }
         } else {
             // 2026-09-25: No graph to replay: run the forward, under capture
