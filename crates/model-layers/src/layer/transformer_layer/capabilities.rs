@@ -67,6 +67,14 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-09: True when this layer's batched verify (`decode_verify_multi`) may run on a
+    /// multi-rank serve, every rank running it from the batch rank 0 announces
+    /// (`EP_CMD_VERIFY_BATCH`). The model admits a multi-rank batched verify only when every
+    /// layer says so; the default keeps it single-rank.
+    fn batch_verify_across_ranks(&self) -> bool {
+        false
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// 2026-09-25: True when a captured decode graph goes stale once a new sequence takes
     /// this slot. Decode graphs are keyed by `slot_idx`, which is safe only while every

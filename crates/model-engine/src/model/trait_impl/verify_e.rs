@@ -351,6 +351,9 @@ impl TransformerModel {
                     midchunk_capture: None,
                 };
 
+                // 2026-10-09: Each sequence's length before this verify, for the layers that
+                // place rows by position themselves (`decode_verify_multi`).
+                let seq_lens_pre: Vec<usize> = seqs.iter().map(|s| s.seq_len).collect();
                 let mut seq_lens_vec: Vec<usize> = Vec::with_capacity(r_total);
                 let mut block_tables_vec: Vec<Vec<u32>> = Vec::with_capacity(r_total);
                 for (i, seq) in seqs.iter().enumerate() {
@@ -388,6 +391,7 @@ impl TransformerModel {
                     r_total,
                     n,
                     ks,
+                    &seq_lens_pre,
                     &off,
                     wy_tables_base,
                     k4_diag,

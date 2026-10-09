@@ -53,6 +53,7 @@ mod row_ops;
 mod rows;
 mod workspace;
 
+pub use decode_rows::DsaRowSpan;
 use proj_gemm::gemm;
 pub use workspace::Glm5NextDsaWorkspace;
 pub(crate) use workspace::batch_select_enabled;

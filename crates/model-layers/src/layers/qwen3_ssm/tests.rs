@@ -190,6 +190,8 @@ fn run_batched_verify(
         buffers.residual(),
         ks.len(),
         ks,
+        // 2026-10-09: The GDN layer does not read the lengths.
+        &vec![0; ks.len()],
         &mut states,
         &mut kv,
         DevicePtr::NULL,

@@ -242,7 +242,9 @@ pub trait TransformerLayer:
     /// (`verify_e.rs`) runs attention layers through `decode_multi_seq` and every other
     /// layer through this. `wy_tables` is this layer's slice of the staged WY pointer
     /// tables (layout at [`VERIFY_WY_TABLE_SEQS`]), or NULL when none were staged or the
-    /// layer is not linear attention. The default returns an error.
+    /// layer is not linear attention. 2026-10-09: `seq_lens[i]` is sequence `i`'s length
+    /// before the verify, so its row `t` is the token at position `seq_lens[i] + t`. The
+    /// default returns an error.
     #[allow(clippy::too_many_arguments)]
     fn decode_verify_multi<'a, 'b: 'a>(
         &self,
@@ -250,6 +252,7 @@ pub trait TransformerLayer:
         _residual: DevicePtr,
         _n_seqs: usize,
         _ks: &[usize],
+        _seq_lens: &[usize],
         _states: &'a mut [&'b mut (dyn LayerState + 'static)],
         _kv_cache: &mut PagedKvCache,
         _wy_tables: DevicePtr,

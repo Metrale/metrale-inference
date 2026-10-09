@@ -103,11 +103,31 @@ impl Glm5NextKdaLayer {
         record: &KdaVerifyRecord,
         stream: u64,
     ) -> Result<()> {
-        if rows > record.rows || rows > ws.max_tokens {
+        self.record_verify_rows_at(gpu, ws, 0, 0, rows, record, stream)
+    }
+
+    /// 2026-10-09: [`Self::record_verify_rows`] for `rows` workspace rows from `ws_row0` into
+    /// record rows from `rec_row0`. A batched verify packs several sequences into one
+    /// workspace pass, so a sequence's rows start at its offset in the pass and continue a
+    /// record an earlier pass may have begun. Errors when either range runs past its buffer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_verify_rows_at(
+        &self,
+        gpu: &dyn GpuBackend,
+        ws: &Glm5NextKdaWorkspace,
+        ws_row0: usize,
+        rec_row0: usize,
+        rows: usize,
+        record: &KdaVerifyRecord,
+        stream: u64,
+    ) -> Result<()> {
+        if rec_row0 + rows > record.rows || ws_row0 + rows > ws.max_tokens {
             bail!(
-                "KDA layer {}: a verify record of {rows} rows does not fit (record {} rows, \
-                 workspace {} rows)",
+                "KDA layer {}: verify record rows {rec_row0}..{} from workspace rows \
+                 {ws_row0}..{} do not fit (record {} rows, workspace {} rows)",
                 self.layer_idx,
+                rec_row0 + rows,
+                ws_row0 + rows,
                 record.rows,
                 ws.max_tokens
             );
@@ -116,14 +136,25 @@ impl Glm5NextKdaLayer {
             return Ok(());
         }
         let c = &self.cfg;
+        let (cd, qkv) = (c.conv_dim(), c.qkv_dim());
         gpu.copy_d2d_async(
-            ws.qkv_proj,
-            record.input_row(0),
-            rows * c.conv_dim() * 2,
+            ws.qkv_proj.offset(ws_row0 * cd * 2),
+            record.input_row(rec_row0),
+            rows * cd * 2,
             stream,
         )?;
-        gpu.copy_d2d_async(ws.gate, record.gate_row(0), rows * c.qkv_dim() * 4, stream)?;
-        gpu.copy_d2d_async(ws.beta, record.beta_row(0), rows * c.heads * 4, stream)
+        gpu.copy_d2d_async(
+            ws.gate.offset(ws_row0 * qkv * 4),
+            record.gate_row(rec_row0),
+            rows * qkv * 4,
+            stream,
+        )?;
+        gpu.copy_d2d_async(
+            ws.beta.offset(ws_row0 * c.heads * 4),
+            record.beta_row(rec_row0),
+            rows * c.heads * 4,
+            stream,
+        )
     }
 
     /// 2026-10-08: Commit `accepted` of the `k` rows a replay-mode verify ran. `accepted == k`

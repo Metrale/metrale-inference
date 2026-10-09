@@ -163,16 +163,32 @@ impl Glm5NextKdaLayer {
         snapshots: &[(DevicePtr, DevicePtr)],
         stream: u64,
     ) -> Result<()> {
-        let c = &self.cfg;
-        let (h_bytes, conv_bytes) = (c.recurrent_state_elems() * 4, c.conv_state_elems() * 4);
         self.rows_with(gpu, hidden, k, ws, stream, |row| {
-            self.stateful_row(gpu, RowIo::workspace(c, ws, row), state, stream)?;
-            if let Some((h_dst, conv_dst)) = snapshots.get(row) {
-                gpu.copy_d2d_async(state.recurrent, *h_dst, h_bytes, stream)?;
-                gpu.copy_d2d_async(state.conv, *conv_dst, conv_bytes, stream)?;
+            self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, row), state, stream)?;
+            match snapshots.get(row) {
+                Some(dst) => self.snapshot_state(gpu, state, *dst, stream),
+                None => Ok(()),
             }
-            Ok(())
         })
+    }
+
+    /// 2026-10-09: Copy `state` (recurrent, then conv) to `(h_dst, conv_dst)`: the per-row
+    /// snapshot a verify takes when the pool keeps one state per verify row.
+    pub fn snapshot_state(
+        &self,
+        gpu: &dyn GpuBackend,
+        state: &KdaSeqState,
+        (h_dst, conv_dst): (DevicePtr, DevicePtr),
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        gpu.copy_d2d_async(
+            state.recurrent,
+            h_dst,
+            c.recurrent_state_elems() * 4,
+            stream,
+        )?;
+        gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)
     }
 
     /// 2026-10-08: One token for each of `states.len()` sequences: row `r` of `hidden` advances
@@ -189,13 +205,30 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
+        self.decode_rows_then(gpu, hidden, states, ws, stream, |_| Ok(()))
+    }
+
+    /// 2026-10-09: [`Self::decode_rows`] with `after_row(row)` called after row `row`'s
+    /// recurrent step and before the next row's. A batched verify hands one sequence's state
+    /// to several consecutive rows, which then step it in row order as [`Self::decode_k`]
+    /// does, and takes that sequence's per-row snapshots in `after_row`.
+    pub fn decode_rows_then(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        states: &[KdaSeqState],
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+        mut after_row: impl FnMut(usize) -> Result<()>,
+    ) -> Result<()> {
         self.rows_with(gpu, hidden, states.len(), ws, stream, |row| {
             self.stateful_row(
                 gpu,
                 RowIo::workspace(&self.cfg, ws, row),
                 &states[row],
                 stream,
-            )
+            )?;
+            after_row(row)
         })
     }
 

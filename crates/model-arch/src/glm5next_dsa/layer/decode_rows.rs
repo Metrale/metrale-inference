@@ -9,7 +9,8 @@
 //!   first launch.
 //! - Row `r` reads and writes only sequence `r`'s state and metadata row
 //!   `meta_row_base + r`; the projections, the latent write and the attend are the only
-//!   launches that span rows, and each computes every row on its own.
+//!   launches that span rows, and each computes every row on its own. (2026-10-09: under
+//!   `decode_spans`, "sequence `r`" is the sequence whose span holds row `r`.)
 //!
 //! # Why a row's output equals the single-sequence decode's
 //!
@@ -47,11 +48,20 @@ fn dsa_row<'a>(
         })
 }
 
+/// 2026-10-09: Consecutive rows of one sequence in a [`Glm5NextDsaLayer::decode_spans`] call:
+/// `rows` tokens at positions `first_pos..first_pos + rows`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DsaRowSpan {
+    pub first_pos: usize,
+    pub rows: usize,
+}
+
 impl Glm5NextDsaLayer {
     /// 2026-10-08: One decode token for each of `states.len()` sequences: row `r` of `hidden`
     /// is sequence `r`'s token at position `seq_lens[r]`, and its position, KV slot,
     /// `seq_len` and block table are row `meta_row_base + r` of `meta`. The output projection
-    /// is written over `hidden`, as `decode_k` writes it.
+    /// is written over `hidden`, as `decode_k` writes it. 2026-10-09: [`Self::decode_spans`]
+    /// with one row per sequence.
     ///
     /// Errors before any launch when the row counts disagree, the rows do not fit the
     /// workspace or the metadata, a capture lacks the replay-safe kernels, or a row's
@@ -69,13 +79,57 @@ impl Glm5NextDsaLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        let spans: Vec<DsaRowSpan> = seq_lens
+            .iter()
+            .map(|&first_pos| DsaRowSpan { first_pos, rows: 1 })
+            .collect();
+        self.decode_spans(
+            hidden,
+            states,
+            &spans,
+            kv_cache,
+            meta,
+            meta_row_base,
+            ctx,
+            stream,
+        )
+    }
+
+    /// 2026-10-09: `spans[s].rows` consecutive tokens for each sequence `s` (`states[s]`), the
+    /// rows sequence-major: the batched speculative verify's DSA mixer, and with one row per
+    /// sequence the batched decode's. Per row, in row order: the indexer write and that row's
+    /// selection, as `decode_k` issues them for one sequence, so a row selects over its own
+    /// sequence's indexer rows up to its own position and never sees a later row's. The
+    /// projections, the latent write and the attend each run once over all rows; row `r`'s
+    /// position, KV slot, `seq_len` and block table are metadata row `meta_row_base + r`.
+    ///
+    /// Errors before any launch on the conditions [`Self::decode_rows`] lists, checked per
+    /// sequence at the span's first position and for room for all its rows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_spans(
+        &self,
+        hidden: DevicePtr,
+        states: &mut [&mut (dyn LayerState + 'static)],
+        spans: &[DsaRowSpan],
+        kv_cache: &mut PagedKvCache,
+        meta: &AttnMetadataDev,
+        meta_row_base: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
         use crate::glm5next_layer::profile;
-        let n = states.len();
-        if n == 0 || n != seq_lens.len() || n > self.workspace.max_rows {
+        let n: usize = spans.iter().map(|s| s.rows).sum();
+        if n == 0
+            || states.len() != spans.len()
+            || spans.iter().any(|s| s.rows == 0)
+            || n > self.workspace.max_rows
+        {
             bail!(
-                "DSA layer {}: {n} row states and {} seq_lens for a workspace built for {} rows",
+                "DSA layer {}: {} row states and {} spans of {n} rows for a workspace built for \
+                 {} rows",
                 self.layer_idx,
-                seq_lens.len(),
+                states.len(),
+                spans.len(),
                 self.workspace.max_rows
             );
         }
@@ -100,11 +154,16 @@ impl Glm5NextDsaLayer {
                 self.layer_idx
             );
         }
-        for (r, &seq_len) in seq_lens.iter().enumerate() {
-            let st = dsa_row(states, r)?;
-            self.check_lockstep(st, seq_len)?;
-            st.ensure_room(1)?;
+        for (s, span) in spans.iter().enumerate() {
+            let st = dsa_row(states, s)?;
+            self.check_lockstep(st, span.first_pos)?;
+            st.ensure_room(span.rows)?;
         }
+        let row_seq: Vec<usize> = spans
+            .iter()
+            .enumerate()
+            .flat_map(|(s, span)| std::iter::repeat_n(s, span.rows))
+            .collect();
 
         let gpu = ctx.gpu;
         let block_size = kv_cache.config().block_size;
@@ -124,7 +183,7 @@ impl Glm5NextDsaLayer {
         for r in 0..n {
             let mr = meta_row_base + r;
             let t = profile::start();
-            let st = dsa_row(states, r)?;
+            let st = dsa_row(states, row_seq[r])?;
             let pos_dev = replay_safe.then(|| meta.positions.offset(mr * 4));
             self.indexer_forward(
                 gpu,

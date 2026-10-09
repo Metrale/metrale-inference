@@ -120,6 +120,34 @@ impl TransformerLayer for Glm5NextLayer {
         self.forward_multi(hidden, num_seqs, states, kv_cache, seq_lens, ctx, stream)
     }
 
+    /// 2026-10-09: The batched speculative verify: `ks[i]` rows for each of `n_seqs`
+    /// sequences, sequence-major, through `forward_verify_multi`. Each sequence's rows are
+    /// the rows its own `decode_batched` verify runs (`steps/verify_multi.rs`). `wy_tables`
+    /// (a GDN layer's) and `residual` (the highway is the residual) are not read.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_verify_multi<'a, 'b: 'a>(
+        &self,
+        hidden: DevicePtr,
+        _residual: DevicePtr,
+        n_seqs: usize,
+        ks: &[usize],
+        seq_lens: &[usize],
+        states: &'a mut [&'b mut (dyn LayerState + 'static)],
+        kv_cache: &mut PagedKvCache,
+        _wy_tables: DevicePtr,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        if ks.len() != n_seqs {
+            bail!(
+                "GLM layer {}: a {n_seqs}-sequence batched verify got {} row counts",
+                self.layer_idx,
+                ks.len()
+            );
+        }
+        self.forward_verify_multi(hidden, ks, seq_lens, states, kv_cache, ctx, stream)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn decode(
         &self,
@@ -362,10 +390,17 @@ impl LayerCapabilities for Glm5NextLayer {
         true
     }
 
-    /// 2026-09-25: True. This layer has no `decode_verify_multi`, and the trait's default
-    /// returns an error; answering true makes `can_batch_verify_dispatch` refuse the batched
-    /// verify.
+    /// 2026-09-25: Was true while this layer had no `decode_verify_multi`.
+    /// 2026-10-09: False for a text layer (`steps/verify_multi.rs`); true for the MTP block,
+    /// which has no hyper-connection and which `forward_spans` refuses.
     fn decode_verify_multi_unsupported(&self) -> bool {
+        self.mhc.is_none()
+    }
+
+    /// 2026-10-09: True: the batched verify issues the same collectives on every rank (one
+    /// all-reduce per mixer and MLP site per row group) and keeps no rank-local choice, so
+    /// the worker ranks can run it from the batch rank 0 announces.
+    fn batch_verify_across_ranks(&self) -> bool {
         true
     }
 
