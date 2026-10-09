@@ -316,6 +316,14 @@ pub trait ModelWeightLoader {
         true
     }
 
+    /// 2026-10-09: Does this loader honour `ModelConfig::moe_expert_layout`'s `tp` value,
+    /// slicing every routed expert over the TP ranks? Startup refuses
+    /// `--moe-expert-layout tp` for a loader that returns `false`, which every loader that
+    /// does not override this does.
+    fn slices_experts_over_tp(&self) -> bool {
+        false
+    }
+
     /// 2026-10-02: Does this loader read the serve's MoE expert-table decision
     /// (`metrale_model_layers::layers::MoeExpertTables`)? The serve plans and publishes it before
     /// load only for a loader that does.

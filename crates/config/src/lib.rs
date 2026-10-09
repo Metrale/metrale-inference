@@ -268,6 +268,7 @@ mod kv_completeness_tests;
 pub mod levers;
 mod methods;
 mod model_config;
+pub mod moe_expert_layout;
 mod parsers;
 mod position_encoding;
 pub mod precision_plan;
@@ -282,6 +283,7 @@ pub use dispatch::parse_config;
 pub use gguf::{GgufConfigInputs, GgufMeta, config_from_gguf};
 pub use kv_completeness::glm_dsa_indexer_paged;
 pub use model_config::ModelConfig;
+pub use moe_expert_layout::MoeExpertLayout;
 pub use parsers::{
     PEFT_SUPPORTED_TARGET_MODULES, PeftAdapterConfig, allow_partial_targets,
     glm5_next_mtp_layer_index, parse_mistral_params, parse_peft_adapter_config,

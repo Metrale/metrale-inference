@@ -36,18 +36,28 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     /// are U8 defers nothing. 2026-10-08: Also every text layer's F32
     /// `*.input_scale` (`is_activation_scale`): one scalar per projection, read
     /// on the host by `act_scale::input_scale` rather than given an allocation
-    /// granule each.
+    /// granule each. 2026-10-09: Under `--moe-expert-layout tp`, also every
+    /// routed-expert tensor of every layer (`expert_tp::is_routed_expert_tensor`):
+    /// each rank uploads only its slices of them.
     fn defer_predicate(
         &self,
         config: &ModelConfig,
     ) -> Option<metrale_model_weights::weights::DeferHook> {
         let num_layers = config.num_hidden_layers;
+        let sliced = config.moe_expert_layout == metrale_config::MoeExpertLayout::Tp;
         Some(std::sync::Arc::new(
             move |name: &str, dtype: WeightDtype| {
                 is_full_width_mtp_expert(name, dtype, num_layers)
                     || is_activation_scale(name, dtype)
+                    || (sliced && expert_tp::is_routed_expert_tensor(name))
             },
         ))
+    }
+
+    /// 2026-10-09: The MLP plan slices every routed expert over TP under
+    /// `--moe-expert-layout tp` (`glm5next_mlp::expert_tp`).
+    fn slices_experts_over_tp(&self) -> bool {
+        true
     }
 
     /// 2026-09-25: DSA, KDA and the MLP all shard under TP (see `glm5_next_load.rs`);
@@ -197,7 +207,9 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     verify_k,
                 )?)),
                 Mlp::RoutedMoe => {
-                    let expert = |id: usize| bind_expert(gpu, store, idx, id);
+                    let expert = |id: usize| {
+                        expert_tp::bind_routed_expert(gpu, store, idx, id, mlp_cfg.expert_shard)
+                    };
                     let precision = |has_scales: bool| {
                         mlp_precision::group_precision(
                             config,

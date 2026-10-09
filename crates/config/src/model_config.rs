@@ -344,6 +344,11 @@ pub struct ModelConfig {
     pub tp_rank: usize,
     #[serde(skip)]
     pub tp_world_size: usize,
+    /// 2026-10-09: Serve's `--moe-expert-layout`: whole experts over EP ranks, or every expert
+    /// sliced over TP ranks (`MoeExpertLayout`). Only a loader whose
+    /// `ModelWeightLoader::slices_experts_over_tp` is true reads it.
+    #[serde(skip)]
+    pub moe_expert_layout: crate::MoeExpertLayout,
     /// 2026-10-08: The head counts before serve divided them for TP
     /// (`ModelConfig::shard_heads_for_tp`); `None` until then. Read through
     /// `ModelConfig::pre_shard_heads`.

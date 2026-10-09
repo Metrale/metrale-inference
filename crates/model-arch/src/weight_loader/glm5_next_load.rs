@@ -42,6 +42,7 @@ mod act_scale;
 #[cfg(test)]
 mod defer_hook_tests;
 mod expert_quant;
+mod expert_tp;
 #[cfg(test)]
 mod export_layout_tests;
 mod loader;
@@ -404,14 +405,16 @@ pub(super) fn layer_source(
     LayerSource::collect(gpu, store, layer)
 }
 
-/// 2026-09-25: [`bind_expert`], for the MTP loader.
+/// 2026-09-25: [`bind_expert`], for the MTP loader. 2026-10-09: Under the MLP config's
+/// `shard` (`expert_tp::bind_routed_expert`).
 pub(super) fn bind_expert_at(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
     layer: usize,
     id: usize,
+    shard: crate::glm5next_mlp::ExpertShard,
 ) -> Result<Glm5NextExpertWeights> {
-    bind_expert(gpu, store, layer, id)
+    expert_tp::bind_routed_expert(gpu, store, layer, id, shard)
 }
 
 /// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.

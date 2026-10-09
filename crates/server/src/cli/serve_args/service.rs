@@ -14,7 +14,7 @@
 use clap::Args;
 use metrale_model_layers::layers::DenseQuantization;
 
-use super::super::flag_values::DenseQuantizationArg;
+use super::super::flag_values::{DenseQuantizationArg, MoeExpertLayoutArg};
 use super::{DEFAULT_REQUEST_TIMEOUT_SECS, parse_lora_adapter_spec, parse_lora_stageable_spec};
 
 /// 2026-09-30: `--activation-quantization`, parsed by the config crate's one grammar.
@@ -122,6 +122,18 @@ pub struct ServeServiceArgs {
     /// other model refuses it. Unmeasured.
     #[arg(long, value_enum, default_value_t = DenseQuantizationArg(DenseQuantization::Declared))]
     pub dense_quantization: DenseQuantizationArg,
+
+    /// How a routed MoE's experts are laid out over the ranks.
+    ///
+    /// `ep` (the default) gives each expert whole to one of the `--ep-size` ranks, so a token's
+    /// routed experts land unevenly on the ranks and the MoE all-reduce waits for the busiest.
+    /// `tp` splits every expert's intermediate width over the `--tp-size` ranks the way the
+    /// shared expert is split, so every routed slot is local on every rank and each rank reads
+    /// the same bytes per token; each rank holds about the same expert bytes as under `ep`. It
+    /// needs `--ep-size 1` and `--tp-size` of 2 or more. GLM-5.3 (`glm5_next`) only; any other
+    /// model refuses it. Unmeasured.
+    #[arg(long, value_enum, default_value_t = MoeExpertLayoutArg(metrale_config::MoeExpertLayout::Ep))]
+    pub moe_expert_layout: MoeExpertLayoutArg,
 
     /// Vision input area bound in pixels, applied before patching. A non-zero
     /// value overrides the checkpoint in both directions: it may raise the bound

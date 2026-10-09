@@ -71,6 +71,7 @@ fn cfg() -> Glm5NextMlpConfig {
         router_bf16_ladder: false,
         tp_world_size: 1,
         ep_world_size: 1,
+        expert_shard: metrale_model_arch::glm5next_mlp::ExpertShard::Whole,
     }
 }
 
