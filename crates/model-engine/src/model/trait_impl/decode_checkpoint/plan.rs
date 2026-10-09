@@ -65,6 +65,16 @@ const _: () = assert!(
     "EP_CMD_VERIFY_KGAMMA would be dispatched as a decode token id"
 );
 const _: () = assert!(
+    EP_CMD_DECODE_CKPT != metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH,
+    "collides with the batched DFlash verify"
+);
+const _: () = assert!(
+    metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH > 0xFFFF_FFEF
+        && metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH != 0xFFFF_FFF7
+        && metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH != 0xFFFF_FFFF,
+    "EP_CMD_VERIFY_BATCH would be a decode token id, the reserved ctx-commit or shutdown"
+);
+const _: () = assert!(
     EP_CMD_DECODE_CKPT != 0xFFFF_FFF7,
     "reserved: DFlash ctx-commit (A113)"
 );

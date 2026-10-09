@@ -5,6 +5,11 @@
 //! Owner: scheduler.
 //! Invariants:
 //! - Every read of the shared verify outputs (the accept walk, `commit_ctx`, the hidden stash) happens for all sequences before the first propose; the early returns before that point propose nothing.
+//! - Multi-rank (2026-10-09): the workers run the same batched forward, announced by
+//!   `EP_CMD_VERIFY_BATCH` before it, and receive every sequence's committed row count before
+//!   any token is emitted; a failed forward sends the all-zero verdict and finishes the batch,
+//!   because the workers' state can no longer be trusted to match. The wire shape is in
+//!   `metrale_model_layers::speculative::verify_batch_wire`. A single rank sends nothing.
 //!
 //! The single-sequence [`super::verify_dflash_step::step_verify_dflash`] runs
 //! one target forward per sequence. This step packs the `n` sequences'
@@ -52,6 +57,18 @@ pub fn step_verify_dflash_batched(
     }
     let ks = vec![k; n];
 
+    let ep = model.is_ep();
+    if ep {
+        let slots: Vec<u32> = batch.iter().map(|a| a.seq.slot_idx as u32).collect();
+        if let Err(e) = ep_send_verify_batch(model, &slots, k, &tokens) {
+            tracing::error!("EP broadcast verify_batch: {e:#}");
+            for a in batch.iter_mut() {
+                super::lifecycle::fail_sequence(a, format!("EP broadcast verify_batch: {e:#}"));
+            }
+            return;
+        }
+    }
+
     let t_verify = sched.io.clock.now();
     let results = {
         let mut seq_refs: Vec<&mut SequenceState> = batch.iter_mut().map(|a| &mut a.seq).collect();
@@ -64,10 +81,16 @@ pub fn step_verify_dflash_batched(
         match model.decode_verify_batched(&tokens, &ks, &mut seq_refs, 0, opts) {
             Ok(v) => v,
             Err(e) => {
+                tracing::error!("decode_verify_batched (dflash): {e:#}");
+                // 2026-10-09: Multi-rank: the workers ran their forward and wait for a
+                // verdict; send the failed one and finish the batch.
+                if ep {
+                    ep_fail_verify_batch(model, batch, n, &format!("{e:#}"));
+                    return;
+                }
                 // 2026-09-25: per the `decode_verify_batched` contract no
                 // sequence state advanced on Err; put the drafts back so
                 // the next tick verifies them again.
-                tracing::error!("decode_verify_batched (dflash): {e:#}");
                 for (a, d) in batch.iter_mut().zip(drafts_all.into_iter()) {
                     a.pending_drafts = d;
                 }
@@ -88,10 +111,34 @@ pub fn step_verify_dflash_batched(
             results.len(),
             n * k
         );
+        if ep {
+            ep_fail_verify_batch(model, batch, n, "short result");
+            return;
+        }
         for a in batch.iter_mut() {
             a.finished = true;
         }
         return;
+    }
+
+    // 2026-10-09: Every sequence's verdict before any emit: judged on the raw argmax, the
+    // basis the drafter proposes on. Unlike `verify_dflash_step`, this path does not read
+    // `dflash_masked_verify`. Multi-rank, the counts go to the workers here.
+    let verdicts: Vec<usize> = (0..n)
+        .map(|i| accepted_prefix(&drafts_all[i], &results[i * k..i * k + k]))
+        .collect();
+    if ep {
+        let words: Vec<u32> = verdicts.iter().map(|&na| (na + 1) as u32).collect();
+        if let Err(e) = model.ep_broadcast_tokens(&words) {
+            tracing::error!("EP broadcast verify_batch verdict: {e:#}");
+            for a in batch.iter_mut() {
+                super::lifecycle::fail_sequence(
+                    a,
+                    format!("EP broadcast verify_batch verdict: {e:#}"),
+                );
+            }
+            return;
+        }
     }
 
     // 2026-09-25: First pass, per sequence: verdict, rewind, ctx commit and
@@ -105,16 +152,7 @@ pub fn step_verify_dflash_batched(
         let drafts = &drafts_all[i];
         a.last_token_time = now;
 
-        // 2026-09-25: judged on the raw argmax, the basis the drafter
-        // proposes on. Unlike `verify_dflash_step`, this path does not
-        // read `dflash_masked_verify`.
-        let mut num_accepted = 0usize;
-        for j in 0..drafts.len() {
-            if j + 1 >= verified.len() || drafts[j] != verified[j] {
-                break;
-            }
-            num_accepted += 1;
-        }
+        let num_accepted = verdicts[i];
         accepted_per_seq.push(num_accepted);
         crate::scheduler::adaptive_spec::record_verify(a, num_accepted, sched);
 
@@ -333,4 +371,69 @@ pub fn step_verify_dflash_batched(
             .as_secs_f64()
             * 1000.0,
     );
+}
+
+/// 2026-10-09: The drafts accepted against `verified`, the argmax of the rows
+/// `[last_token, drafts..]`: `drafts[j]` is accepted while it equals `verified[j]`, the pick
+/// for the token after row `j`, and only while a bonus row `verified[j + 1]` exists.
+fn accepted_prefix(drafts: &[u32], verified: &[u32]) -> usize {
+    let mut num_accepted = 0usize;
+    for j in 0..drafts.len() {
+        if j + 1 >= verified.len() || drafts[j] != verified[j] {
+            break;
+        }
+        num_accepted += 1;
+    }
+    num_accepted
+}
+
+/// 2026-10-09: Announce a batched verify to the worker ranks: the `(0, cmd)` preamble, `n` and
+/// `k`, the slots, then the sequence-major tokens. Refuses a shape the worker would refuse,
+/// before sending anything.
+fn ep_send_verify_batch(
+    model: &dyn Model,
+    slots: &[u32],
+    k: usize,
+    tokens: &[u32],
+) -> anyhow::Result<()> {
+    use metrale_model_layers::speculative::{EP_CMD_VERIFY_BATCH, verify_batch_shape};
+    let (n, k) = verify_batch_shape(slots.len() as u32, k as u32)?;
+    anyhow::ensure!(
+        tokens.len() == n * k,
+        "batched verify: {} tokens for {n} sequences of {k} rows",
+        tokens.len()
+    );
+    model.ep_broadcast_cmd_for_seq(0, EP_CMD_VERIFY_BATCH)?;
+    model.ep_broadcast_cmd(n as u32)?;
+    model.ep_broadcast_cmd(k as u32)?;
+    model.ep_broadcast_tokens(slots)?;
+    model.ep_broadcast_tokens(tokens)?;
+    Ok(())
+}
+
+/// 2026-10-09: After a failed multi-rank batched forward: send the all-zero verdict the
+/// workers wait for, then finish every sequence of the batch with `why`.
+fn ep_fail_verify_batch(model: &dyn Model, batch: &mut [&mut ActiveSeq], n: usize, why: &str) {
+    let words = metrale_model_layers::speculative::verify_batch_failed_verdict(n);
+    if let Err(e) = model.ep_broadcast_tokens(&words) {
+        tracing::error!("EP broadcast verify_batch failed verdict: {e:#}");
+    }
+    for a in batch.iter_mut() {
+        super::lifecycle::fail_sequence(a, format!("batched verify (multi-rank): {why}"));
+    }
+}
+
+#[cfg(test)]
+mod accepted_prefix_tests {
+    use super::accepted_prefix;
+
+    /// 2026-10-09: The walk the verdict and the emits share: stop at the first mismatch, and
+    /// accept the last draft only when its bonus row exists.
+    #[test]
+    fn the_prefix_stops_at_the_first_mismatch_and_needs_a_bonus_row() {
+        assert_eq!(accepted_prefix(&[5, 6, 7], &[5, 6, 7, 8]), 3);
+        assert_eq!(accepted_prefix(&[5, 9, 7], &[5, 6, 7, 8]), 1);
+        assert_eq!(accepted_prefix(&[9, 6, 7], &[5, 6, 7, 8]), 0);
+        assert_eq!(accepted_prefix(&[5, 6, 7], &[5, 6, 7]), 2);
+    }
 }

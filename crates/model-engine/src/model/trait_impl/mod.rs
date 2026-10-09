@@ -75,6 +75,7 @@ mod ssm_replay;
 mod verify_a;
 mod verify_a_ssm;
 mod verify_b;
+pub(in crate::model) mod verify_batch_ep;
 mod verify_c;
 mod verify_c2;
 mod verify_d;

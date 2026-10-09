@@ -62,7 +62,8 @@ impl TransformerModel {
     /// one at a time when it returns false.
     ///
     /// It requires `2 <= n <= VERIFY_WY_TABLE_SEQS`, `Σ ks <= VERIFY_ROW_CAP`,
-    /// no EP comm backend, a verify hidden stash (allocated only with a
+    /// no EP comm backend unless every layer answers `batch_verify_across_ranks`
+    /// (2026-10-09), a verify hidden stash (allocated only with a
     /// proposer), no layer that declines `decode_verify_multi`, no HSS
     /// (`cache_blocks_per_seq`), and, with an adapter loaded, no
     /// `METRALE_LORA_NO_BATCH_VERIFY=1`. Without DFlash every `ks[i]` must be
@@ -84,7 +85,12 @@ impl TransformerModel {
         (2..=metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS).contains(&n)
             && shape_ok
             && ks.iter().sum::<usize>() <= super::verify_e2::VERIFY_ROW_CAP
-            && self.comm.is_none()
+            // 2026-10-09: Multi-rank only under the slot-addressed worker protocol (v2) and
+            // when every layer runs its batched verify the same way on every rank; the
+            // scheduler then announces the batch to the workers (`EP_CMD_VERIFY_BATCH`).
+            && (self.comm.is_none()
+                || (self.ep_protocol_v2
+                    && self.layers.iter().all(|l| l.batch_verify_across_ranks())))
             // 2026-09-30: Under `--forward circuit` only when the executor compiles batched
             // verifies (`CircuitExec::verify_batch`).
             && self
