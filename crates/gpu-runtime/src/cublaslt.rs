@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 mod fp8;
 pub use fp8::{
     fp8_gemm_act_weight_t_blkscaled, fp8_gemm_act_weight_t_blkscaled_ldc,
-    fp8_gemm_act_weight_t_rowwise,
+    fp8_gemm_act_weight_t_rowwise, fp8_gemm_act_weight_t_rowwise_ldc,
 };
 
 pub mod scale_layout;

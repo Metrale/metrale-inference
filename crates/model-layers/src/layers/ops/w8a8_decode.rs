@@ -390,6 +390,9 @@ pub fn w8a8_gemv(
         w.scale
     );
     ensure!(ldc >= w.n, "w8a8_gemv: ldc={ldc} < N={}", w.n);
+    if lt::try_w8a8_gemm_lt(w, scratch, rows, out, ldc, stream)? {
+        return Ok(());
+    }
     let (n1, n2) = w.boundaries();
     let s = &w.segs;
     let a_scales = w.scale.act_scales_per_row(w.k) * 4;
@@ -453,8 +456,11 @@ pub fn w8a8_proj(
     w8a8_gemv(gpu, kernels, w, scratch, rows, out, ldc, stream)
 }
 
+#[path = "w8a8_decode/lt.rs"]
+mod lt;
 #[path = "w8a8_decode/parts.rs"]
 mod parts;
+pub use lt::w8a8_lt_min_rows;
 
 #[cfg(test)]
 #[path = "w8a8_decode_tests.rs"]
