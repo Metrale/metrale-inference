@@ -248,9 +248,9 @@ impl Glm5NextKdaLayer {
         stream: u64,
     ) -> Result<()> {
         let n = states.len();
-        let batched = (2..=KDA_ROWS_MAX).contains(&n)
-            && self.kernels.recurrent_smem_rows.0 != 0
-            && self.smem_geometry().is_some();
+        // 2026-10-09: Above `KDA_ROWS_MAX` rows the recurrence runs in launches of that many.
+        let batched =
+            n >= 2 && self.kernels.recurrent_smem_rows.0 != 0 && self.smem_geometry().is_some();
         if !batched {
             return self.decode_rows_then(gpu, hidden, states, ws, stream, |_| Ok(()));
         }
@@ -311,7 +311,9 @@ impl Glm5NextKdaLayer {
     }
 
     /// 2026-10-09: `kda_recurrent_decode_bf16_smem_rows` over `states.len()` rows (at most
-    /// `KDA_ROWS_MAX`), with the 1R+1W geometry.
+    /// `KDA_ROWS_MAX`), with the 1R+1W geometry; `kda_recurrent_decode_bf16_rows_reg` instead
+    /// under `METRALE_GLM_KDA_ROWS_REG=1` at head_dim `KDA_REG_D`. Both give each row the
+    /// single-row kernel's bits.
     fn recurrent_rows(
         &self,
         gpu: &dyn GpuBackend,
@@ -319,27 +321,74 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
-        let c = &self.cfg;
-        let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
         let Some((vpb, smem)) = self.smem_geometry() else {
             bail!("KDA batched recurrence without the 1R+1W geometry");
         };
-        if states.is_empty() || states.len() > KDA_ROWS_MAX {
-            bail!(
-                "KDA batched recurrence of {} rows (1..={KDA_ROWS_MAX})",
-                states.len()
-            );
+        if states.is_empty() {
+            bail!("KDA batched recurrence of no rows");
+        }
+        // 2026-10-09: One launch per `KDA_ROWS_MAX` rows (a wider `METRALE_GLM_ROW_GROUP`
+        // group takes several); chunk `c0` reads and writes the rows from `c0` on.
+        for c0 in (0..states.len()).step_by(KDA_ROWS_MAX) {
+            let chunk = &states[c0..states.len().min(c0 + KDA_ROWS_MAX)];
+            self.recurrent_rows_chunk(gpu, chunk, c0, ws, vpb, smem, stream)?;
+        }
+        Ok(())
+    }
+
+    /// 2026-10-09: One rows launch over `states` (at most `KDA_ROWS_MAX`), the workspace rows
+    /// from `row0` on.
+    #[allow(clippy::too_many_arguments)]
+    fn recurrent_rows_chunk(
+        &self,
+        gpu: &dyn GpuBackend,
+        states: &[KdaSeqState],
+        row0: usize,
+        ws: &Glm5NextKdaWorkspace,
+        vpb: usize,
+        smem: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
+        let conv_out = ws.conv_out.offset(row0 * cd * 2);
+        let (gate, beta, core) = (
+            ws.gate.offset(row0 * qkv * 4),
+            ws.beta.offset(row0 * c.heads * 4),
+            ws.core.offset(row0 * qkv * 4),
+        );
+        if self.kernels.recurrent_rows_reg.0 != 0 && d == KDA_REG_D && kda_rows_reg() {
+            let mut launch = KernelLaunch::new(gpu, self.kernels.recurrent_rows_reg)
+                .grid([c.heads as u32, 1, states.len() as u32])
+                .block([KDA_REG_D as u32, 1, 1])
+                .shared_mem((3 * d * 4) as u32)
+                .arg_ptr(conv_out)
+                .arg_ptr(conv_out.offset(qkv * 2))
+                .arg_ptr(conv_out.offset(qkv * 4))
+                .arg_ptr(gate)
+                .arg_ptr(beta)
+                .arg_ptr(core)
+                .arg_u32(c.heads as u32)
+                .arg_f32(1.0 / (d as f32).sqrt())
+                .arg_u32(cd as u32)
+                .arg_u32(qkv as u32)
+                .arg_u32(c.heads as u32)
+                .arg_u32(qkv as u32);
+            for r in 0..KDA_ROWS_MAX {
+                launch = launch.arg_u64(states.get(r).map_or(0, |s| s.recurrent.0));
+            }
+            return launch.launch(stream);
         }
         let mut launch = KernelLaunch::new(gpu, self.kernels.recurrent_smem_rows)
             .grid([c.heads as u32, (d / vpb) as u32, states.len() as u32])
             .block([vpb as u32, 1, 1])
             .shared_mem(smem as u32)
-            .arg_ptr(ws.conv_out)
-            .arg_ptr(ws.conv_out.offset(qkv * 2))
-            .arg_ptr(ws.conv_out.offset(qkv * 4))
-            .arg_ptr(ws.gate)
-            .arg_ptr(ws.beta)
-            .arg_ptr(ws.core)
+            .arg_ptr(conv_out)
+            .arg_ptr(conv_out.offset(qkv * 2))
+            .arg_ptr(conv_out.offset(qkv * 4))
+            .arg_ptr(gate)
+            .arg_ptr(beta)
+            .arg_ptr(core)
             .arg_u32(c.heads as u32)
             .arg_u32(d as u32)
             .arg_f32(1.0 / (d as f32).sqrt())

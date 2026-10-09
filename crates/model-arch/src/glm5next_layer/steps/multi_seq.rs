@@ -201,6 +201,18 @@ impl Glm5NextLayer {
                         .iter()
                         .flat_map(|sp| std::iter::repeat_n(kda[sp.seq], sp.rows))
                         .collect();
+                    // 2026-10-09: A decode group (one row per sequence, nothing kept) steps
+                    // every row's state in one recurrent launch per 16 rows (`decode_rows`);
+                    // a verify group, whose rows of one sequence share a state, steps row by
+                    // row.
+                    let one_row_each = keep.is_none() && spans.iter().all(|sp| sp.rows == 1);
+                    if one_row_each {
+                        self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, |normed| {
+                            layer.decode_rows(ctx.gpu, normed, &row_states, ws, stream)?;
+                            Ok(ws.final_out)
+                        })?;
+                        continue;
+                    }
                     self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, |normed| {
                         layer.decode_rows_then(
                             ctx.gpu,

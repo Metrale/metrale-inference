@@ -9,6 +9,8 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
+use crate::glm5next_layer::wide_gemv::Batchm;
+
 /// 2026-09-25: The projection, norm and latent-write kernels of a DSA block. The selection
 /// kernels are in `Glm5NextDsaKernels`, the decode kernel in `attend`.
 #[derive(Clone, Copy)]
@@ -29,6 +31,11 @@ pub struct Glm5NextDsaLayerKernels {
     /// `gemv_f32`'s result for that row. `KernelHandle(0)` when the target lacks it; the
     /// batched decode then computes the indexer query and head weights one row at a time.
     pub gemv_batchm_f32: KernelHandle,
+    /// 2026-10-09: `dense_gemv_bf16_batchm_wide` and its FP32-out twin: 9..=16 rows with the
+    /// accumulators in registers; `KernelHandle(0)` when the target lacks them
+    /// (`glm5next_layer::wide_gemv`).
+    pub gemv_batchm_wide: KernelHandle,
+    pub gemv_batchm_wide_f32: KernelHandle,
     /// 2026-09-25: `rms_norm_vanilla`; see the module header.
     pub rms_norm: KernelHandle,
     /// 2026-09-25: `glm5next_mla_latent_write_fp8`: RMSNorm, FP8 quantisation and the paged
@@ -60,9 +67,37 @@ impl Glm5NextDsaLayerKernels {
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm_fp32out",
             ),
+            gemv_batchm_wide: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "dense_gemv_bf16_batchm",
+                "dense_gemv_bf16_batchm_wide",
+            ),
+            gemv_batchm_wide_f32: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "dense_gemv_bf16_batchm",
+                "dense_gemv_bf16_batchm_wide_fp32out",
+            ),
             rms_norm: gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?,
             latent_write: gpu
                 .kernel("glm5next_mla_latent_write", "glm5next_mla_latent_write_fp8")?,
         })
+    }
+}
+
+impl Glm5NextDsaLayerKernels {
+    /// 2026-10-09: The BF16-out batched GEMV pair `glm_mm` takes.
+    pub(crate) fn batchm_bf16(&self) -> Batchm {
+        Batchm {
+            narrow: self.gemv_batchm,
+            wide: self.gemv_batchm_wide,
+        }
+    }
+
+    /// 2026-10-09: The FP32-out batched GEMV pair.
+    pub(crate) fn batchm_f32(&self) -> Batchm {
+        Batchm {
+            narrow: self.gemv_batchm_f32,
+            wide: self.gemv_batchm_wide_f32,
+        }
     }
 }

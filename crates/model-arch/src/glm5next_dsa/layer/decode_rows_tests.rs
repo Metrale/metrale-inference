@@ -296,3 +296,24 @@ fn padding_rows_write_the_workspace_padding_buffers() {
         assert_eq!(w.args[0], ptr(layer.workspace.pad_k));
     }
 }
+
+/// 2026-10-09: At 9..=16 rows the projections run the register-resident batched GEMV (BF16
+/// and FP32 out) and the runtime-M one not at all; at 8 rows the runtime-M one runs.
+#[test]
+fn nine_rows_or_more_take_the_wide_batched_gemv() {
+    for (n, wide) in [(8usize, false), (9, true), (16, true)] {
+        let rig = Rig::new();
+        let layer = rig.layer();
+        let meta = rig.meta(n);
+        let lens: Vec<usize> = (0..n).map(|r| 4 + r).collect();
+        let mut boxes = rig.states(&lens);
+        let from = rig.gpu.launch_count();
+        run_rows(&rig, &layer, &mut boxes, &lens, &meta, 0, false).unwrap();
+        let l = rig.since(from);
+        let (bf, f32_) = if wide { (4, 2) } else { (0, 0) };
+        assert_eq!(of(&l, BATCHM_WIDE).len(), bf, "n={n}");
+        assert_eq!(of(&l, BATCHM_WIDE_F32).len(), f32_, "n={n}");
+        assert_eq!(of(&l, BATCHM).len(), 4 - bf, "n={n}");
+        assert_eq!(of(&l, BATCHM_F32).len(), 2 - f32_, "n={n}");
+    }
+}

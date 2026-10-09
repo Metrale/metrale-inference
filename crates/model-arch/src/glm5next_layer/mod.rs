@@ -60,6 +60,7 @@ pub use state::alloc_kda_ssm_state;
 mod levers;
 mod steps;
 mod types;
+pub(crate) mod wide_gemv;
 pub use levers::prefill_rows;
 pub(crate) use levers::{
     PREFILL_ROWS, cublas_wide_proj, dsa_batch_qidx, multi_seq_chunk_rows, multi_seq_chunks,

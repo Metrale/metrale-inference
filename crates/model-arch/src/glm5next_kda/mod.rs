@@ -40,7 +40,7 @@ mod kernels;
 mod prefill;
 mod replay;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
-pub use kernels::{Glm5NextKdaKernels, KDA_ROWS_MAX};
+pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX};
 pub use replay::KdaVerifyRecord;
 
 use anyhow::{Result, bail};
@@ -62,6 +62,13 @@ const KDA_V_PER_BLOCK: usize = 32;
 /// 2026-09-25: Largest shared memory `stateful_row` requests for the 1R+1W kernel; a larger need
 /// launches the 2R+2W kernel instead.
 const KDA_SMEM_BUDGET: usize = 48 * 1024;
+
+/// 2026-10-09: `METRALE_GLM_KDA_ROWS_REG=1` runs the batched decode's KDA recurrence on the
+/// register-resident rows kernel; off until a measurement shows it faster. Read once.
+fn kda_rows_reg() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROWS_REG").as_deref() == Ok("1"))
+}
 
 /// 2026-09-25: `METRALE_GLM_KDA_NO_SMEM=1` selects the 2R+2W recurrent kernel. Read once per
 /// process; it is checked on every decode row.
@@ -204,30 +211,19 @@ impl Glm5NextKdaLayer {
         k: usize,
         stream: u64,
     ) -> Result<()> {
-        // 2026-10-09: `--dense-quantization fp8` serves registered weights W8A8.
-        if crate::glm5next_fp8_dense::proj(gpu, weight.weight, input, out, m, n, k, stream)? {
-            return Ok(());
-        }
+        // 2026-10-09: `--dense-quantization fp8` (registered weights, W8A8) is checked first in
+        // `glm_mm`, as for every GLM projection.
         // 2026-09-25: Only M above `DENSE_GEMV_BATCHM_MAX_M` goes to cuBLASLt. Below it
         // `dense_mm_bf16` runs the M = 1 GEMV or the batched GEMV, whose rows carry the same
-        // bits, so the cuBLASLt switch never changes those widths.
-        if m > ops::DENSE_GEMV_BATCHM_MAX_M as usize && crate::glm5next_layer::cublas_wide_proj() {
-            return ops::cublas_bf16_proj_dense(
-                input,
-                weight.weight,
-                out,
-                m as u32,
-                n as u32,
-                k as u32,
-                stream,
-            );
-        }
-        ops::dense_mm_bf16(
+        // bits, so the cuBLASLt switch never changes those widths. 2026-10-09: the dispatch is
+        // `glm_mm`'s, with the register-resident batched GEMV at 9..=16 rows.
+        crate::glm5next_layer::wide_gemv::glm_mm(
             gpu,
-            &ops::DenseMmKernels {
-                gemm: self.kernels.gemm,
-                gemv: self.kernels.gemv,
-                batchm: self.kernels.gemv_batchm,
+            self.kernels.gemm,
+            self.kernels.gemv,
+            crate::glm5next_layer::wide_gemv::Batchm {
+                narrow: self.kernels.gemv_batchm,
+                wide: self.kernels.gemv_batchm_wide,
             },
             input,
             weight.weight,

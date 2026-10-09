@@ -35,6 +35,19 @@ fn row_groups_at_the_shipping_widths() {
     assert_eq!(moe_row_groups(16, 8), vec![(0, 8), (8, 8)]);
     assert_eq!(moe_row_groups(8, 8), vec![(0, 8)]);
     assert_eq!(moe_row_groups(9, 8), vec![(0, 5), (5, 4)]);
+    // 2026-10-09: At the default cap a 16-row decode group is one sweep.
+    assert_eq!(moe_row_groups(16, MOE_ROW_BATCH_MAX_ROWS), vec![(0, 16)]);
+    assert_eq!(
+        moe_row_groups(17, MOE_ROW_BATCH_MAX_ROWS),
+        vec![(0, 9), (9, 8)]
+    );
+}
+
+/// 2026-10-09: The widest group fits the union kernel's id bound at GLM-5.3's top-8, so the
+/// default cap never falls back to per-row sweeps for want of union ids.
+#[test]
+fn the_widest_group_fits_the_union() {
+    const { assert!(MOE_ROW_BATCH_MAX_ROWS * 8 <= super::MOE_ROW_UNION_MAX_IDS) };
 }
 
 mod ws_sizing {

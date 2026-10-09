@@ -308,3 +308,82 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem_rows(
         out + (size_t)r * out_row_stride,
         H, D, scale, VPB);
 }
+
+// 2026-10-09: The rows kernel with the decayed column in registers instead of shared memory.
+// The smem kernel keeps (D + 1) floats of column per thread in shared memory, which limits a
+// GB10 SM to a few resident warps (18,048 B per 32-thread block at D = 128); here head_dim is
+// the compile-time KDA_REG_D, both kk loops are unrolled, the column lives in KDA_REG_D
+// registers, and shared memory holds only the 3 * D staged vectors. Per (h, vi, row) the
+// expressions and their order are kda_recurrent_decode_bf16_smem_body's: the same staging, the
+// same pass-one products and kv sum, the same delta, the same pass-two update and o sum. Launch:
+// grid (H, 1, rows), block KDA_REG_D (one thread per v column of the head), 3 * D floats of
+// dynamic shared memory; D must equal KDA_REG_D and the state arguments are as for _rows.
+#define KDA_REG_D 128
+extern "C" __global__ void kda_recurrent_decode_bf16_rows_reg(
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ out,
+    unsigned int H,
+    float scale,
+    unsigned int qkv_row_stride,
+    unsigned int gate_row_stride,
+    unsigned int beta_row_stride,
+    unsigned int out_row_stride,
+    unsigned long long s0, unsigned long long s1, unsigned long long s2, unsigned long long s3,
+    unsigned long long s4, unsigned long long s5, unsigned long long s6, unsigned long long s7,
+    unsigned long long s8, unsigned long long s9, unsigned long long s10, unsigned long long s11,
+    unsigned long long s12, unsigned long long s13, unsigned long long s14, unsigned long long s15
+) {
+    const unsigned int r = blockIdx.z;
+    const unsigned int h = blockIdx.x;
+    if (r >= KDA_ROWS_MAX || h >= H) return;
+    const unsigned long long sp[KDA_ROWS_MAX] = {s0, s1, s2, s3, s4, s5, s6, s7,
+                                                 s8, s9, s10, s11, s12, s13, s14, s15};
+    float* state = (float*)sp[r];
+    if (state == nullptr) return;
+    q += (size_t)r * qkv_row_stride;
+    k += (size_t)r * qkv_row_stride;
+    v += (size_t)r * qkv_row_stride;
+    gate += (size_t)r * gate_row_stride;
+    beta += (size_t)r * beta_row_stride;
+    out += (size_t)r * out_row_stride;
+
+    constexpr unsigned int D = KDA_REG_D;
+    extern __shared__ float sh_reg[];
+    float* sh_decay = sh_reg;
+    float* sh_k = sh_reg + D;
+    float* sh_q = sh_reg + 2u * D;
+    const size_t hd = (size_t)h * D;
+    for (unsigned int i = threadIdx.x; i < D; i += blockDim.x) {
+        sh_decay[i] = expf(gate[hd + i]);
+        sh_k[i] = __bfloat162float(k[hd + i]);
+        sh_q[i] = __bfloat162float(q[hd + i]) * scale;
+    }
+    __syncthreads();
+
+    const float b = beta[h];
+    float* S = state + hd * D;
+    const unsigned int vi = threadIdx.x;
+    if (vi >= D) return;
+
+    float col[D];
+    float kv = 0.0f;
+    #pragma unroll
+    for (unsigned int kk = 0; kk < D; ++kk) {
+        const float s = S[(size_t)kk * D + vi] * sh_decay[kk];
+        col[kk] = s;
+        kv += s * sh_k[kk];
+    }
+    const float delta = (__bfloat162float(v[hd + vi]) - kv) * b;
+    float o = 0.0f;
+    #pragma unroll
+    for (unsigned int kk = 0; kk < D; ++kk) {
+        const float s = col[kk] + sh_k[kk] * delta;
+        S[(size_t)kk * D + vi] = s;
+        o += s * sh_q[kk];
+    }
+    out[hd + vi] = o;
+}

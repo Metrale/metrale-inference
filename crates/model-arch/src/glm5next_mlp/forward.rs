@@ -176,10 +176,12 @@ pub fn row_batch_max() -> usize {
 }
 
 /// 2026-09-25: Widest compiled `w4a16_gemv_sw_moe_batchm_mR` tier: the
-/// `METRALE_MOE_BATCHM_ENTRY(2..=8)` instances in `kernels/gb10/common/w4a16_gemv.cu`, held at
+/// `METRALE_MOE_BATCHM_ENTRY(2..=16)` instances in `kernels/gb10/common/w4a16_gemv.cu`, held at
 /// index `R - 2` of `Glm5NextMlpKernels::w4a16_gemv_sw_moe_batchm`. `forward_moe` splits a wider
-/// row group into sub-groups no wider than this.
-pub const MOE_ROW_BATCH_MAX_ROWS: usize = 8;
+/// row group into sub-groups no wider than this. 2026-10-09: 16 (was 8), so a 16-row decode
+/// group reads each union expert once instead of once per 8-row half;
+/// `METRALE_GLM_MOE_ROW_BATCH_MAX=8` restores the halves.
+pub const MOE_ROW_BATCH_MAX_ROWS: usize = 16;
 
 /// 2026-09-25: Split `rows` into consecutive `(start, width)` sub-groups of at most `cap`, as
 /// even as the count allows. There is no width-1 tier; at `cap = MOE_ROW_BATCH_MAX_ROWS` no
@@ -203,7 +205,8 @@ fn moe_row_groups(rows: usize, cap: usize) -> Vec<(usize, usize)> {
 
 /// 2026-09-25: Most ids `glm5next_moe_row_union` resolves: it runs as one block of
 /// `rows * top_k` threads, and `forward_moe` does not take the row-batched path above this.
-pub const MOE_ROW_UNION_MAX_IDS: usize = 64;
+/// 2026-10-09: 128 (was 64): `MOE_ROW_BATCH_MAX_ROWS` rows at GLM-5.3's top-8.
+pub const MOE_ROW_UNION_MAX_IDS: usize = 128;
 
 /// 2026-09-25: Log once per row count (counts from 15 up share one bit) whether the routed
 /// experts took the row-batched path.
@@ -296,6 +299,9 @@ pub fn forward_moe(
     out: DevicePtr,
     rows: usize,
     ws: &Glm5NextMlpWorkspace,
+    // 2026-10-09: True while a CUDA graph is captured: the grouped GEMM then sizes its grid
+    // from the worst case instead of reading the expert histogram back to the host.
+    capturing: bool,
     stream: u64,
 ) -> Result<()> {
     if rows == 0 || rows > ws.max_rows {
@@ -421,7 +427,9 @@ pub fn forward_moe(
         // 2026-09-25: Leaves the routed outputs in expert-sorted order; the combine below reads
         // them through `token_to_perm`.
         let t = profile::start();
-        forward_prefill_gemm::forward_moe_grouped_prefill(gpu, k, cfg, w, x, rows, ws, stream)?;
+        forward_prefill_gemm::forward_moe_grouped_prefill(
+            gpu, k, cfg, w, x, rows, ws, !capturing, stream,
+        )?;
         profile::end(profile::MOE_EXPERTS, t, gpu, stream);
     }
 
