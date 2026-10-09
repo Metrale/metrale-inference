@@ -27,7 +27,7 @@ use super::accuracy_gpu::Dev;
 #[error("{0}")]
 struct NotRunnable(String);
 
-fn not_runnable(why: String) -> anyhow::Error {
+pub(crate) fn not_runnable(why: String) -> anyhow::Error {
     anyhow::Error::new(NotRunnable(why))
 }
 
@@ -39,7 +39,7 @@ macro_rules! need {
     };
 }
 
-fn handle(dev: &Dev<'_>, kernel: &str) -> Result<KernelHandle> {
+pub(crate) fn handle(dev: &Dev<'_>, kernel: &str) -> Result<KernelHandle> {
     let (m, f) = kernel
         .split_once("::")
         .ok_or_else(|| not_runnable(format!("`{kernel}` is not module::function")))?;
@@ -50,11 +50,11 @@ fn handle(dev: &Dev<'_>, kernel: &str) -> Result<KernelHandle> {
     })
 }
 
-fn at(p: DevicePtr, bytes: usize) -> DevicePtr {
+pub(crate) fn at(p: DevicePtr, bytes: usize) -> DevicePtr {
     DevicePtr(p.0 + bytes as u64)
 }
 
-fn shards(case: &Case, n: usize) -> Vec<Shard> {
+pub(crate) fn shards(case: &Case, n: usize) -> Vec<Shard> {
     if case.split.is_empty() {
         vec![Shard {
             lo: 0,
@@ -79,10 +79,11 @@ fn linear_dims(case: &Case) -> Result<(usize, usize, usize)> {
     Ok((x.dims[0], x.dims[1], w.dims[0]))
 }
 
-type Adapter = fn(&mut Dev<'_>, &Case, KernelHandle) -> Result<Vec<u8>>;
+/// 2026-10-09: An adapter: launch `case` with the resolved entry point; the output bytes.
+pub(crate) type Adapter = fn(&mut Dev<'_>, &Case, KernelHandle) -> Result<Vec<u8>>;
 
 /// 2026-10-09: The adapter of each launcher.
-const ADAPTERS: &[(&str, Adapter)] = &[
+pub(crate) const ADAPTERS: &[(&str, Adapter)] = &[
     ("w4a16_gemv::w4a16_gemv_sw", w4a16_one_row),
     ("w4a16_gemv::w4a16_gemv", w4a16_one_row),
     ("w4a16_gemv::w4a16_gemv_batch2", w4a16_batch),
@@ -94,14 +95,18 @@ const ADAPTERS: &[(&str, Adapter)] = &[
     ),
 ];
 
+/// 2026-10-09: Every adapter table: this file's projections and each op class's own file.
+const TABLES: &[&[(&str, Adapter)]] = &[ADAPTERS];
+
 /// 2026-10-09: Launch `case` and return its output bytes.
 pub(crate) fn launch(dev: &mut Dev<'_>, case: &Case) -> std::result::Result<Vec<u8>, RunError> {
     let classify = |e: anyhow::Error| match e.downcast_ref::<NotRunnable>() {
         Some(n) => RunError::Unavailable(n.0.clone()),
         None => RunError::Fault(format!("{e:#}")),
     };
-    let adapter = ADAPTERS
+    let adapter = TABLES
         .iter()
+        .flat_map(|t| t.iter())
         .find(|(l, _)| *l == case.launcher)
         .map(|(_, a)| *a)
         .ok_or_else(|| {
