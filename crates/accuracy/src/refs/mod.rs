@@ -25,6 +25,8 @@ use crate::mutation::Mutation;
 use crate::plan::Plan;
 use crate::points::Shape;
 
+pub mod attention;
+pub mod attention_impl;
 pub mod linear;
 pub mod linear_impl;
 pub mod linear_mutate;
@@ -80,7 +82,7 @@ pub trait RefImpl: Sync {
 }
 
 /// 2026-10-09: The references, by contract spelling.
-pub const REFS: &[&dyn RefImpl] = &[&linear_impl::Linear];
+pub const REFS: &[&dyn RefImpl] = &[&linear_impl::Linear, &attention_impl::PagedAttention];
 
 /// 2026-10-09: Random output columns a sample adds to the structural ones.
 const EXTRA_COLUMNS: usize = 48;
