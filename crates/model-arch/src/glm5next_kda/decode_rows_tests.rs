@@ -14,11 +14,13 @@ use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 use metrale_model_layers::weight_map::DenseWeight;
 
 use super::*;
+use crate::glm5next_kda::KDA_ROWS_MAX;
 
 const BATCHM: u64 = 0x305;
 const CONV: u64 = 0x306;
 const RECUR: u64 = 0x30B;
 const RECUR_SMEM: u64 = 0x30C;
+const RECUR_ROWS: u64 = 0x313;
 
 fn cfg() -> Glm5NextKdaConfig {
     Glm5NextKdaConfig {
@@ -65,6 +67,7 @@ fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         chunk_scan: k(0x30D),
         recurrent: k(RECUR),
         recurrent_smem: k(RECUR_SMEM),
+        recurrent_smem_rows: k(RECUR_ROWS),
         o_norm: k(0x30E),
         split_widen: k(0x30F),
         sigmoid: k(0x310),
@@ -124,15 +127,32 @@ fn each_row_steps_only_its_own_sequence_state() {
         );
         assert_eq!(c.args[1], MockArg::Buffer(ws.qkv_proj.offset(r * cd * 2)));
     }
-    let rec = recurrent_launches(&launches);
-    assert_eq!(rec.len(), 3);
-    for (r, c) in rec.iter().enumerate() {
+    // 2026-10-09: One recurrent launch for the three rows: grid z is the row, and the state
+    // arguments are the rows' states in order, then zeros.
+    assert!(
+        recurrent_launches(&launches).is_empty(),
+        "no per-row recurrent launch"
+    );
+    let rows: Vec<_> = launches.iter().filter(|x| x.func == RECUR_ROWS).collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].grid[2], 3);
+    let ptrs = &rows[0].args[14..];
+    assert_eq!(ptrs.len(), KDA_ROWS_MAX);
+    for (r, a) in ptrs.iter().enumerate() {
+        let want = states.get(r).map_or(0, |s| s.recurrent.0);
         assert_eq!(
-            c.args[5],
-            MockArg::Buffer(states[r].recurrent),
-            "row {r}'s state"
+            *a,
+            MockArg::Bytes(want.to_le_bytes().to_vec()),
+            "state argument {r}"
         );
     }
+    // 2026-10-09: The row strides: q/k/v by `conv_dim`, gate and out by `qkv`, beta by heads.
+    let u = |v: usize| MockArg::Bytes((v as u32).to_le_bytes().to_vec());
+    let c = cfg();
+    assert_eq!(
+        rows[0].args[10..14],
+        [u(c.conv_dim()), u(c.qkv_dim()), u(c.heads), u(c.qkv_dim())]
+    );
     let proj: Vec<_> = launches.iter().filter(|x| x.func == BATCHM).collect();
     assert!(!proj.is_empty());
     for p in proj {
@@ -161,12 +181,14 @@ fn one_row_launches_what_decode_launches() {
 }
 
 /// 2026-10-08: `decode_k` over one sequence's `k` rows, without snapshots, launches what
-/// `decode_rows` launches with that sequence's state on every row: the two share
+/// `decode_rows` launches with that sequence's state on every row when the rows kernel is
+/// absent (2026-10-09): the two share
 /// `rows_with`, and `decode_k` adds only the snapshot copies.
 #[test]
 fn decode_k_is_decode_rows_over_one_repeated_state() {
     let gpu = MockGpuBackend::new();
-    let l = layer(&gpu);
+    let mut l = layer(&gpu);
+    l.kernels.recurrent_smem_rows = KernelHandle(0);
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
     let st = seq_state(&gpu);
     let hidden = gpu.alloc(4 * 256 * 2).unwrap();
