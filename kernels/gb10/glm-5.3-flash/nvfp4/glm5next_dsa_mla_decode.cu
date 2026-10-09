@@ -9,7 +9,7 @@
 // arm. The MLA decode kernels in deepseek-v4-flash/nvfp4/ assume a 64-dim rope tail
 // (`ROPE_DIM 64`), so GLM does not use them.
 //
-// One block per (q_head, row), 8 warps (blockDim 256). The warps split the row's selection
+// One block per (q_head, row), 16 warps (blockDim 512; 2026-10-09: was 8). The warps split the row's selection
 // `sel_indices[row, 0..sel_width)` and gather each selected token through the block table,
 // one token at a time, with a per-warp online softmax and a cross-warp merge.
 //
@@ -64,7 +64,7 @@
 #define WARP_SIZE 32
 #define VEC_BF16 16
 #define VEC_U32  8
-#define NUM_WARPS 8
+#define NUM_WARPS 16
 // 2026-10-09: Selection entries a warp keeps in flight per pass of the main loop.
 #define DSA_DECODE_GROUP 4
 

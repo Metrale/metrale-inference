@@ -411,7 +411,7 @@ extern "C" __global__ void dsa_expand_selection(
     // to this row's own pool count (q_pos[r] + 1) / KP gives the row the select_k, and so the
     // tail base below, that a single-row pass at that row's length plans. `selected` keeps
     // the pass stride; only the count is per row. The tail slot matters because
-    // glm5next_dsa_mla_decode_fp8 splits the row into NUM_WARPS = 8 slices merged across
+    // glm5next_dsa_mla_decode_fp8 splits the row into NUM_WARPS (16) slices merged across
     // warps. Measured 2026-09-06 on that kernel without the clamp: 14 of 18 configurations
     // where a tail token crossed a slice boundary differed, by up to 2 BF16 ulp.
 

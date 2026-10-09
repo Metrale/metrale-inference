@@ -36,8 +36,10 @@ use super::{Glm5NextDsaConfig, select::DsaSelectGeometry};
 /// takes its file stem, and this one lives in the `glm-5.3-flash` target.
 pub const DSA_DECODE_MODULE: &str = "glm5next_dsa_mla_decode";
 
-/// 2026-09-25: Threads per block: `NUM_WARPS * WARP_SIZE` (8 × 32) in the kernel.
-const DECODE_BLOCK: u32 = 256;
+/// 2026-09-25: Threads per block: `NUM_WARPS * WARP_SIZE` in the kernel. 2026-10-09: 16 × 32: the
+/// decode is latency-bound on each warp's serial walk of its selection slice, so twice the warps
+/// halve the walk.
+const DECODE_BLOCK: u32 = 512;
 
 /// 2026-09-25: The selected-index MLA decode entry point.
 #[derive(Clone, Copy)]
