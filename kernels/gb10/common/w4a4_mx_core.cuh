@@ -29,8 +29,18 @@ __device__ __forceinline__ void w4a4_mma(float (&d)[4], uint32_t a0, uint32_t a1
 #endif
 }
 
-template <int MB, int KU>
-__device__ __forceinline__ void w4a4_gemv_mx_impl(
+// 2026-10-09: Token addressing of w4a4_gemv_mx_tok_impl: token `tok < m` reads activation row
+// a(tok) (its Aq, As and Ag row) and writes output row c(tok). W4a4RowsIdentity is the one-tile
+// GEMV's contiguous [M] rows; w4a4_gemv_mx_moe.cu maps a routed expert's tokens through
+// shared-memory tables.
+struct W4a4RowsIdentity {
+    unsigned int m;
+    __device__ __forceinline__ unsigned int a(unsigned int tok) const { return tok; }
+    __device__ __forceinline__ unsigned int c(unsigned int tok) const { return tok; }
+};
+
+template <int MB, int KU, class Rows>
+__device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
     const unsigned char* __restrict__ Aq,
     const unsigned char* __restrict__ As,
     const float* __restrict__ Ag,
@@ -38,8 +48,9 @@ __device__ __forceinline__ void w4a4_gemv_mx_impl(
     const unsigned char* __restrict__ Bs,
     const float scale2,
     __nv_bfloat16* __restrict__ C,
-    unsigned int M, unsigned int N, unsigned int K)
+    const Rows rows, unsigned int N, unsigned int K)
 {
+    const unsigned int M = rows.m;
     const unsigned int warp = threadIdx.x >> 5;
     const unsigned int lane = threadIdx.x & 31u;
     const unsigned int g = lane >> 2;
@@ -63,8 +74,9 @@ __device__ __forceinline__ void w4a4_gemv_mx_impl(
     for (int j = 0; j < MB; j++) {
         const unsigned int tok = (unsigned int)j * 8u + g;
         tl[j] = tok < M;
-        aq[j] = Aq + (unsigned long long)tok * half_K + t * 16u;
-        as[j] = As + (unsigned long long)tok * groups;
+        const unsigned int ar = rows.a(tok);
+        aq[j] = Aq + (unsigned long long)ar * half_K + t * 16u;
+        as[j] = As + (unsigned long long)ar * groups;
     }
 
     float acc[MB][4];
@@ -140,10 +152,26 @@ __device__ __forceinline__ void w4a4_gemv_mx_impl(
             const unsigned int n = (c < 2) ? r0 : r1;
             const unsigned int tok = j * 8u + t * 2u + (unsigned int)(c & 1);
             if (n < N && tok < M) {
-                C[(unsigned long long)tok * N + n] = __float2bfloat16_rn(r[c] * (Ag[tok] * scale2));
+                C[(unsigned long long)rows.c(tok) * N + n] =
+                    __float2bfloat16_rn(r[c] * (Ag[rows.a(tok)] * scale2));
             }
         }
     }
+}
+
+// 2026-10-09: The one-tile GEMV over contiguous rows (the w4a4_gemv_mx* entries).
+template <int MB, int KU>
+__device__ __forceinline__ void w4a4_gemv_mx_impl(
+    const unsigned char* __restrict__ Aq,
+    const unsigned char* __restrict__ As,
+    const float* __restrict__ Ag,
+    const unsigned char* __restrict__ Bq,
+    const unsigned char* __restrict__ Bs,
+    const float scale2,
+    __nv_bfloat16* __restrict__ C,
+    unsigned int M, unsigned int N, unsigned int K)
+{
+    w4a4_gemv_mx_tok_impl<MB, KU>(Aq, As, Ag, Bq, Bs, scale2, C, W4a4RowsIdentity{M}, N, K);
 }
 
 // 2026-09-25: E2M1 code of x, rounded to nearest with ties to even and saturated at 6.

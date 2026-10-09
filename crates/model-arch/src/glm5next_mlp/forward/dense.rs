@@ -44,6 +44,8 @@ pub fn forward_dense(
             ws.max_rows
         );
     }
+    // 2026-10-09: gate and up read `x` unchanged: one FP8 quantization under the FP8 tier.
+    let stable = crate::glm5next_fp8_dense::stable_input(x);
     gemm(
         gpu,
         k.gemm,
@@ -70,6 +72,7 @@ pub fn forward_dense(
         cfg.hidden,
         stream,
     )?;
+    drop(stable);
     swiglu(
         gpu,
         k.swiglu,

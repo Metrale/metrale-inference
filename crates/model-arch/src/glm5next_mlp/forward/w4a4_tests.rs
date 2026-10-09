@@ -27,6 +27,9 @@ const MX8: u64 = 0x58;
 const MX16: u64 = 0x5A;
 const MX32: u64 = 0x5C;
 const SWIGLU: u64 = 0x5E;
+const UNION8: u64 = 0x60;
+const UNION16: u64 = 0x62;
+const ROW_UNION: u64 = 0x64;
 
 /// 2026-10-08: GLM-5.3-Flash at TP=3, EP=3, rank 0.
 fn cfg() -> Glm5NextMlpConfig {
@@ -56,6 +59,8 @@ fn kernels(gpu: &MockGpuBackend) -> Glm5NextMlpKernels {
     k.w4a4_moe_slots = KernelHandle(SLOTS);
     k.w4a4_mx = [KernelHandle(MX8), KernelHandle(MX16), KernelHandle(MX32)];
     k.swiglu = KernelHandle(SWIGLU);
+    k.w4a4_moe_union = [KernelHandle(UNION8), KernelHandle(UNION16)];
+    k.moe_row_union = KernelHandle(ROW_UNION);
     k
 }
 
@@ -184,40 +189,44 @@ fn moe_weights() -> Glm5NextMoeWeights {
     }
 }
 
-/// 2026-10-08: 3 rows of routed experts: the 3 rows quantized once under the gate/up scale,
-/// gate and up over all 24 slots reading row `slot / 8` (act_div = top_k), the SwiGLU over
-/// 24 x 2048, the 24 slot products quantized under the down scale, and down over the 24 slots
-/// reading their own rows (act_div = 1) into `expert_out`.
-#[test]
-fn routed_experts_quantize_once_per_token_and_once_per_slot() {
+fn run_experts(rows: usize) -> (MockGpuBackend, Vec<MockLaunch>, Glm5NextMlpWorkspace) {
     let gpu = MockGpuBackend::new();
     let (c, k) = (cfg(), kernels(&gpu));
     let ws = Glm5NextMlpWorkspace::new(&gpu, &c, 16).unwrap();
     let w = moe_weights();
-    let x = DevicePtr(0x9000_0000);
     let site = MoeSite {
         gpu: &gpu,
         k: &k,
         cfg: &c,
         w: &w,
-        x,
-        rows: 3,
+        x: X,
+        rows,
         ws: &ws,
         stream: 5,
     };
     w4a4_experts(&site, SCALES).unwrap();
     let l = gpu.launches_snapshot();
+    (gpu, l, ws)
+}
+
+const X: DevicePtr = DevicePtr(0x9000_0000);
+
+/// 2026-10-08: One row of routed experts: the row quantized under the gate/up scale, gate and up
+/// over its 8 slots on the slot GEMV reading row `slot / 8` (act_div = top_k), the SwiGLU over
+/// 8 x 2048, the 8 slot products quantized under the down scale, and down over the 8 slots
+/// reading their own rows (act_div = 1) into `expert_out`.
+#[test]
+fn one_routed_row_runs_the_slot_gemv() {
+    let (_gpu, l, ws) = run_experts(1);
     let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
     assert_eq!(funcs, vec![QUANT, SLOTS, SLOTS, SWIGLU, QUANT, SLOTS]);
-
-    assert_eq!((l[0].grid[0], u32_arg(&l[0], 4)), (3, 4096));
+    assert_eq!((l[0].grid[0], u32_arg(&l[0], 4)), (1, 4096));
     assert_eq!(f32_arg(&l[0], 5), SCALES.gate_up);
-    assert_eq!(ptr_arg(&l[0], 0), x);
-    assert_eq!((l[4].grid[0], u32_arg(&l[4], 4)), (24, 2048));
+    assert_eq!(ptr_arg(&l[0], 0), X);
+    assert_eq!((l[4].grid[0], u32_arg(&l[4], 4)), (8, 2048));
     assert_eq!(f32_arg(&l[4], 5), SCALES.down);
     assert_eq!(ptr_arg(&l[4], 0), ws.a_act);
-
-    // 2026-10-08: Slot GEMVs: table, output, N, K, act_div, num_experts, grid (ceil(N/16), 24).
+    // 2026-10-08: Slot GEMVs: table, output, N, K, act_div, num_experts, grid (ceil(N/16), 8).
     for (i, t, dst, n, kk, div) in [
         (1, 0x1000, ws.a_gate, 2048, 4096, 8),
         (2, 0x2000, ws.a_up, 2048, 4096, 8),
@@ -227,17 +236,47 @@ fn routed_experts_quantize_once_per_token_and_once_per_slot() {
         assert_eq!(ptr_arg(&l[i], 4), DevicePtr(t), "launch {i}");
         assert_eq!(ptr_arg(&l[i], 6), DevicePtr(t + 2), "launch {i}");
         assert_eq!(ptr_arg(&l[i], 7), dst, "launch {i}");
+        let args: Vec<u32> = (8..12).map(|a| u32_arg(&l[i], a)).collect();
+        assert_eq!(args, vec![n, kk, div, 288], "launch {i}");
+        assert_eq!(l[i].grid, [n / 16, 8, 1], "launch {i}");
+    }
+}
+
+/// 2026-10-09: 3 and 12 rows build the experts' union once (one block of rows x top_k threads)
+/// and run every projection on the union GEMV (the 8-token entry up to 8 rows, the 16-token one
+/// above), one block row per union entry, reading the union tables; the quantizations are those
+/// of the slot path (rows, then rows x top_k slot products).
+#[test]
+fn several_routed_rows_sweep_each_union_expert_once() {
+    for (rows, union) in [(3usize, UNION8), (12, UNION16)] {
+        let (_gpu, l, ws) = run_experts(rows);
+        let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
         assert_eq!(
-            [
-                u32_arg(&l[i], 8),
-                u32_arg(&l[i], 9),
-                u32_arg(&l[i], 10),
-                u32_arg(&l[i], 11)
-            ],
-            [n, kk, div, 288],
-            "launch {i}"
+            funcs,
+            vec![QUANT, ROW_UNION, union, union, SWIGLU, QUANT, union],
+            "{rows} rows"
         );
-        assert_eq!(l[i].grid, [n / 16, 24, 1], "launch {i}");
+        let slots = (rows * 8) as u32;
+        assert_eq!(l[0].grid[0], rows as u32);
+        assert_eq!(
+            (l[1].block[0], u32_arg(&l[1], 3), u32_arg(&l[1], 4)),
+            (slots, rows as u32, 8)
+        );
+        assert_eq!(l[5].grid[0], slots);
+        for (i, t, dst, n, kk, div) in [
+            (2, 0x1000, ws.a_gate, 2048, 4096, 8),
+            (3, 0x2000, ws.a_up, 2048, 4096, 8),
+            (6, 0x3000, ws.expert_out, 4096, 2048, 1),
+        ] {
+            assert_eq!(ptr_arg(&l[i], 3), ws.u_eid, "launch {i}");
+            assert_eq!(ptr_arg(&l[i], 4), ws.u_slot, "launch {i}");
+            assert_eq!(ptr_arg(&l[i], 5), DevicePtr(t), "launch {i}");
+            assert_eq!(ptr_arg(&l[i], 7), DevicePtr(t + 2), "launch {i}");
+            assert_eq!(ptr_arg(&l[i], 8), dst, "launch {i}");
+            let args: Vec<u32> = (9..15).map(|a| u32_arg(&l[i], a)).collect();
+            assert_eq!(args, vec![n, kk, rows as u32, 8, div, 288], "launch {i}");
+            assert_eq!(l[i].grid, [n / 16, slots, 1], "launch {i}");
+        }
     }
 }
 
