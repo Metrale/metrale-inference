@@ -742,3 +742,79 @@ effort_hours = 1
 transferability = "register-ring prefetch rarely helps an MMA kernel already at 2+ IPC per active scheduler; cp.async/TMA smem staging is the lever that adds bytes in flight without registers"
 links = { pr = "", commit = "5b92d0599 (points), 30a9e4009 (routing, default 1)", evidence = "H100 ~/runs/micro-l9/w4a16_m17_bench.log, w4a16_parity_microtest.log (0 differing)" }
 notes = "default stays PF 1 on every class; the points remain as data for other classes"
+
+[[lever]]
+id = "hopper-dense27b-l5-prefill-varlen-with-decode"
+date = "2026-10-09"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense), --weight-quantization declared"
+recipe_or_tier = "flags27b-d2 + --prefill-varlen-with-decode (new opt-in flag)"
+symptom = "TTFT grows linearly with the burst (3.2 s at C32, 6.3 s C64, 13.7 s C128): a burst landing while others decode runs one inline chunk-0 prefill per request"
+diagnosis_tool = "manual-inspection"
+root_cause_class = "scheduler-serialization"
+lever_type = "scheduler"
+lkb_effect = "n/a (scheduler)"
+parity_tier_kept = "accuracy-gated (batched prefill rows; T1 lite seq/conc 16/16 on the head that carries it, flag off)"
+per_rung = [
+  { c = 32, tok_s_before = 743, tok_s_after = 769, note = "all-waves variant, A n=2 B n=1" },
+  { c = 64, tok_s_before = 941, tok_s_after = 1014 },
+  { c = 128, tok_s_before = 431, tok_s_after = 445 },
+]
+verdict = "marginal"
+verdict_reason = "tok/s +3..+8% but TTFT p50 WORSE (2.9 -> 3.6 s C32, 5.9 -> 7.0 s C64): every wave ran in one call, so every request waited for the whole burst; reworked to one wave per tick (75288787d), measured inside the stack A/B"
+failure_mode = "batching the burst without letting the decode run between waves moved the wait instead of removing it"
+caught_by = "TTFT column of the same A/B"
+time_lost_hours = 1
+would_catch_earlier = "reason about per-request first-token time, not only aggregate tok/s, before running the A/B"
+effort_hours = 2
+transferability = "any class with chunked varlen prefill: batch the burst but release each wave to decode"
+links = { pr = "", commit = "f94e2e63e, 75288787d", evidence = "H100 ~/runs/ab-l5" }
+notes = "the bigger TTFT lever on H100 is the prefill kernels themselves (FFN tile GEMMs at 12% of peak; L9)"
+
+[[lever]]
+id = "hopper-dense27b-l7-w4a16-gemv-tc-schedule-points"
+date = "2026-10-09"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense)"
+recipe_or_tier = "w4a16_gemv_tc8 / tc16 (NVFP4 FFN decode, 1-16 rows)"
+symptom = "the one-block-per-SM tc8/tc16 GEMVs stream the FFN weights at 33-44% of HBM"
+diagnosis_tool = "microbench"
+root_cause_class = "inherited-constant-underfill"
+lever_type = "parameterization"
+lkb_effect = "new schedule points (NT, KU, blocks per SM) of the w4a16_tc family, routed by a class default row"
+parity_tier_kept = "bit-identical (schedule_points_identity_microtest: 213 comparisons identical)"
+per_rung = []
+verdict = "kept"
+verdict_reason = "w4a16_gemv_tc_bench: gate 4 rows 33.8 -> 27.3 us, 8 rows 39.9 -> 29.1, 16 rows 44.6 -> 33.2; down 8 rows 46.6 -> 32.5 (hopper defaults tc8_nt2_ku2_o3, tc16_nt4_ku1_o2); serve A/B inside the stack A/B"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 2
+transferability = "same P1 pattern as the W8A8 GEMV points (L2): GB10-tuned occupancy constants underfill HBM classes"
+links = { pr = "", commit = "a0237d986, 09c921101", evidence = "H100 ~/runs/micro-l5, micro-l9" }
+notes = ""
+
+[[lever]]
+id = "hopper-dense27b-l6-l9-cublaslt-wide-rows"
+date = "2026-10-09"
+hardware_class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense)"
+recipe_or_tier = "declared W8A8 projections >= 64 rows; NVFP4 FFN >= 129 rows (adaptive routing only)"
+symptom = "C128 decode and prefill waves: the W8A8 skinny GEMV re-reads weights per 128-row launch (qkv|z 195 us at 128 rows vs 25 us floor); the NVFP4 tile GEMMs reach ~12% of BF16 peak (2243 us at 2048 rows)"
+diagnosis_tool = "nsys + microbench"
+root_cause_class = "kernel-shape-mismatch"
+lever_type = "vendor-gemm-arm"
+lkb_effect = "single-class residual bucket (vendor cuBLASLt arms behind class rows); new exact dequant point dequant_nvfp4_to_bf16_g16"
+parity_tier_kept = "accuracy-gated (not row-invariant; off under a fixed activation format)"
+per_rung = []
+verdict = "pending"
+verdict_reason = "micro: W8A8 qkv|z 64/128/256 rows 98.8/195.3/388.0 -> 50.7/48.4/63.6 us; FFN gate 2048 rows 2243 -> 538 us (dequant 114 + GEMM 424). First serve hit cuBLASLt status 15 at decode 70-96 rows (requests 500) -> fallback 2ecb42c29; serve A/B interrupted by the box stop"
+failure_mode = "cuBLASLt declines some decode shapes (status 15, NOT_SUPPORTED) that the bench never hit"
+caught_by = "a C128 diagnosis serve before the timed A/B"
+time_lost_hours = 0.5
+would_catch_earlier = "bench the arm at every row count a serve can produce (odd and non-power-of-two widths), not only powers of two"
+effort_hours = 3
+transferability = "any vendor-GEMM arm: wrap it with a decline fallback and a once-per-shape log"
+links = { pr = "", commit = "85ba8c9fa, 09c921101, 5d44b86e8, 2ecb42c29", evidence = "H100 ~/runs/micro-l5, micro-l9, diag-host" }
+notes = ""
