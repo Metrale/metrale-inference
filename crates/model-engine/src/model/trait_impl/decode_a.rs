@@ -253,7 +253,10 @@ impl TransformerModel {
         // graphs for the whole model: a graph captured on the dense path would
         // replay the wrong attention once selection activates.
         let layer_veto = self.decode_graph_veto;
-        let use_graphs = (self.comm.is_none() || ep_graphs || gdn_graphs)
+        // 2026-10-09: Or every layer declares its decode capturable with a communicator
+        // (GLM-5.3; `layers_capture_with_comm`, `METRALE_COMM_DECODE_GRAPHS=0` turns it off).
+        let layer_comm_graphs = self.layers_capture_with_comm();
+        let use_graphs = (self.comm.is_none() || ep_graphs || gdn_graphs || layer_comm_graphs)
             && !self.profile
             && !self
                 .suppress_graphs

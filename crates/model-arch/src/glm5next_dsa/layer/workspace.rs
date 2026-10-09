@@ -58,6 +58,9 @@ pub struct Glm5NextDsaWorkspace {
     pub(super) kv_a: DevicePtr,
     pub(super) q_idx: DevicePtr,
     pub(super) head_weights: DevicePtr,
+    /// 2026-10-09: `[max_rows]` i32 query positions and (`slot`) `[max_rows]` i64 KV slots
+    /// of `decode_k`'s host path, uploaded once per call (`host_rows.rs`). Row 0 is the
+    /// single-row slot the drafter's `write_kv_row` uses.
     pub(super) q_pos: DevicePtr,
     pub(super) q_mask: DevicePtr,
     /// 2026-09-25: `[max_rows, ...]` copies of `q_idx` / `head_weights` / `q_pos` / `q_mask`
@@ -122,7 +125,7 @@ impl Glm5NextDsaWorkspace {
             kv_a: gpu.alloc(rows * (cfg.kv_lora_rank * 2))?,
             q_idx: gpu.alloc(cfg.index_heads * cfg.index_head_dim * 4)?,
             head_weights: gpu.alloc(cfg.index_heads * 4)?,
-            q_pos: gpu.alloc(4)?,
+            q_pos: gpu.alloc(rows * 4)?,
             q_idx_rows: if batch_select {
                 gpu.alloc(rows * cfg.index_heads * cfg.index_head_dim * 4)?
             } else {
@@ -154,7 +157,7 @@ impl Glm5NextDsaWorkspace {
                 gpu.synchronize(0)?;
                 p
             },
-            slot: gpu.alloc(8)?,
+            slot: gpu.alloc(rows * 8)?,
             attn_out: gpu.alloc(rows * (cfg.local_heads * cfg.kv_lora_rank * 2))?,
             bt: if persist {
                 gpu.alloc(bt_cap * 4)?

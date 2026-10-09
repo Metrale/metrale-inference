@@ -93,34 +93,35 @@ impl Glm5NextDsaLayer {
         let batch_select =
             batch_select_enabled(w.q_idx_rows.0 != 0, is_prefill, ctx.graph_capture, k);
         let mut batch_q_pos: Vec<i32> = Vec::with_capacity(if batch_select { k } else { 0 });
+        let block_size = kv_cache.config().block_size;
+        // 2026-09-25: With `meta`, the row's position, KV slot, `seq_len` and block table are
+        // read from device arrays and nothing is copied from the host; without it they are
+        // computed on the host. 2026-10-09: and uploaded once for all rows, stream-ordered
+        // (`stage_host_rows`), instead of four synchronous copies per row.
+        let meta = if ctx.decode_step {
+            ctx.attn_metadata.as_ref()
+        } else {
+            rowwise_meta
+        };
+        let host = match meta {
+            Some(_) => None,
+            None => Some(self.stage_host_rows(
+                gpu,
+                k,
+                seq_len,
+                block_table,
+                block_size,
+                bt_block_size,
+                stream,
+            )?),
+        };
         for row in 0..k {
             let pos = seq_len + row;
-            let block_size = kv_cache.config().block_size;
-            // 2026-09-25: With `meta`, the row's position, KV slot, `seq_len` and block table
-            // are read from device arrays and nothing is copied from the host; without it they
-            // are computed here and copied host-to-device.
-            let meta = if ctx.decode_step {
-                ctx.attn_metadata.as_ref()
-            } else {
-                rowwise_meta
-            };
             let bt_stride = meta.map_or(0, |m| m.max_blocks_per_seq as usize) * 4;
-            let slot_dev = match meta {
-                Some(m) => m.slot.offset(row * 8),
-                None => {
-                    let logical = pos / block_size;
-                    let physical = *block_table.get(logical).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "DSA layer {}: block table has {} entries, needs logical block \
-                             {logical} for position {pos}",
-                            self.layer_idx,
-                            block_table.len()
-                        )
-                    })? as usize;
-                    let slot = (physical * block_size + pos % block_size) as i64;
-                    gpu.copy_h2d(&slot.to_le_bytes(), w.slot)?;
-                    w.slot
-                }
+            let slot_dev = match (meta, &host) {
+                (Some(m), _) => m.slot.offset(row * 8),
+                (None, Some(h)) => h.slot.offset(row * 8),
+                (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
             self.write_latent_rows(gpu, row, 1, kv_cache, slot_dev, stream)?;
 
@@ -148,61 +149,21 @@ impl Glm5NextDsaLayer {
             )?;
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
 
-            let (q_pos_dev, bt_dev_meta, sl_dev_meta) = match meta {
-                Some(m) => (
+            // 2026-09-25: The attend reads `bt`/`sl` after the row loop. On the host path the
+            // block table is the same for every row (the rows are one sequence, and
+            // `bt_entries_needed` does not depend on `row`) and is read with a row stride of 0
+            // (`max_blocks_per_seq` below); `sl[row]` is row `row`'s length. On that path
+            // `d_sl` is the array's base, as the attend takes it.
+            let (q_pos_dev, d_bt, d_sl, owns_bt) = match (meta, &host) {
+                (Some(m), _) => (
                     m.positions.offset(row * 4),
-                    Some(m.block_table.offset(row * bt_stride)),
-                    Some(m.seq_len.offset(row * 4)),
+                    m.block_table.offset(row * bt_stride),
+                    m.seq_len.offset(row * 4),
+                    false,
                 ),
-                None => {
-                    let qp = pos as i32;
-                    gpu.copy_h2d(&qp.to_le_bytes(), w.q_pos)?;
-                    (w.q_pos, None, None)
-                }
+                (None, Some(h)) => (h.q_pos.offset(row * 4), h.bt, h.sl, h.owned),
+                (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
-            let (d_bt, d_sl) = match (bt_dev_meta, sl_dev_meta) {
-                // 2026-09-25: The metadata already holds both; nothing to copy.
-                (Some(b), Some(l)) => (b, l),
-                _ => {
-                    // 2026-09-25: Upload only the prefix the gather can index
-                    // ([`bt_entries_needed`]), not the caller's whole table.
-                    let bt_used = {
-                        let needed = bt_entries_needed(seq_len, k, bt_block_size);
-                        &block_table[..needed.min(block_table.len())]
-                    };
-                    let bt: Vec<u8> = bt_used.iter().flat_map(|b| b.to_le_bytes()).collect();
-                    if bt_used.len() > w.bt_cap {
-                        anyhow::bail!(
-                            "DSA layer {}: block table needs {} entries for seq_len {} + {} rows \
-                     but the persistent buffer holds {}. This is a BLOCK count against a buffer \
-                     sized by max_dsa_context (a TOKEN count); do not write past the allocation.",
-                            self.layer_idx,
-                            bt_used.len(),
-                            seq_len,
-                            k,
-                            w.bt_cap
-                        );
-                    }
-                    // 2026-09-25: `attend_rows` reads these buffers after the row loop, so they
-                    // outlive the row that wrote them. Each row writes its own `sl[row]`. The
-                    // block table is the same for every row (the rows are one sequence, and
-                    // `bt_entries_needed` does not depend on `row`), and it is read with a row
-                    // stride of 0 (`max_blocks_per_seq` below).
-                    let (d_bt, d_sl) = if self.persist_bt {
-                        (w.bt, w.sl)
-                    } else if row == 0 {
-                        (gpu.alloc(bt.len().max(4))?, gpu.alloc(k * 4)?)
-                    } else {
-                        // 2026-09-25: Row 0 allocated these; later rows write their own `sl`
-                        // slot into them.
-                        (attend_bt, attend_sl)
-                    };
-                    gpu.copy_h2d(&bt, d_bt)?;
-                    gpu.copy_h2d(&((pos + 1) as i32).to_le_bytes(), d_sl.offset(row * 4))?;
-                    (d_bt, d_sl)
-                }
-            };
-            let owns_bt = bt_dev_meta.is_none();
 
             let paging = DsaDecodePaging {
                 num_seqs: 1,
@@ -233,7 +194,7 @@ impl Glm5NextDsaLayer {
                 )?;
                 batch_q_pos.push(pos as i32);
             } else {
-                self.select_row(gpu, row, st, q_pos_dev, replay_safe, stream)?;
+                self.select_row(gpu, row, st, q_pos_dev, replay_safe, None, stream)?;
             }
             // 2026-09-25: The attend takes row 0's pointers, the base of the per-row arrays,
             // and indexes rows itself on grid y.

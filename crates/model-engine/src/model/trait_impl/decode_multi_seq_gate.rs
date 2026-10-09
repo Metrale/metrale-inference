@@ -92,6 +92,10 @@ mod tests {
             "default must be false"
         );
         assert!(
+            !Plain.decode_graph_with_comm(),
+            "default must be false — a layer that does not opt in keeps its decode eager under TP/EP"
+        );
+        assert!(
             !Plain.decode_multi_seq_selects_index_per_row(),
             "default must be false — a layer that does not opt in keeps the QSA per-sequence rule"
         );
@@ -118,6 +122,21 @@ mod tests {
         let vote = block(&hooks, "fn layers_select_index_per_row", "\n    }\n");
         assert!(vote.contains("!self.layers.is_empty()"));
         assert!(vote.contains(".all(|l| l.decode_multi_seq_selects_index_per_row())"));
+    }
+
+    /// 2026-10-09: The single-sequence decode captures with a communicator only under a lever
+    /// or when every layer opts in, and the opt-in can be turned off.
+    #[test]
+    fn single_sequence_decode_captures_with_comm_only_when_every_layer_opts_in() {
+        let a = src("src/model/trait_impl/decode_a.rs");
+        assert!(a.contains(
+            "let use_graphs = (self.comm.is_none() || ep_graphs || gdn_graphs || layer_comm_graphs)"
+        ));
+        let hooks = src("src/model/trait_impl/decode_a2/batch_hooks.rs");
+        let vote = block(&hooks, "fn layers_capture_with_comm", "\n    }\n");
+        assert!(vote.contains(".all(|l| l.decode_graph_with_comm())"));
+        assert!(vote.contains("!self.layers.is_empty()"));
+        assert!(vote.contains("\"METRALE_COMM_DECODE_GRAPHS\").as_deref() == Ok(\"0\")"));
     }
 
     /// 2026-10-08: A replayed batched-decode graph checks every row's room before the launch

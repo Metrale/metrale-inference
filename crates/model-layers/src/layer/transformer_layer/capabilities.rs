@@ -32,6 +32,16 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-09: True when this layer's single-sequence decode may be captured into a CUDA
+    /// graph with a communicator (TP/EP): its collectives go through the same stream as its
+    /// kernels, and every per-step input it reads is uploaded before the replay. The model's
+    /// single-sequence decode (`decode_a.rs`) captures with a communicator when every layer
+    /// says so (unless `METRALE_COMM_DECODE_GRAPHS=0`), as it does under the `ep_graphs` and
+    /// `gdn_decode_graph` levers. Default false.
+    fn decode_graph_with_comm(&self) -> bool {
+        false
+    }
+
     /// 2026-09-25: True when this layer cannot serve a batched multi-sequence decode step.
     /// The batched decode ORs it across layers into `hc_perseq` (`decode_a2.rs`) and then
     /// runs each sequence through `decode`; the single-GPU fused decode+prefill ORs it into
