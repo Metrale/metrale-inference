@@ -16,7 +16,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState};
 
 use super::super::attend::DsaDecodePaging;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, batch_select_enabled};
+use super::{Glm5NextDsaLayer, IndexerPlace, batch_select_enabled};
 
 impl Glm5NextDsaLayer {
     /// 2026-09-25: `k` consecutive tokens of one sequence, from position `seq_len`.
@@ -134,16 +134,23 @@ impl Glm5NextDsaLayer {
                 && meta.is_some()
                 && self.select_kernels.indexer_store.0 != 0
                 && self.select_kernels.write_geom.0 != 0;
-            let pos_dev = if replay_safe {
-                meta.map(|m| m.positions.offset(row * 4))
-            } else {
-                None
+            // 2026-10-09: The device placement carries the row's block table (`bt_stride` is
+            // the metadata's, so this is the row's own table); a flat state ignores it.
+            let place = match meta {
+                Some(m) if replay_safe => IndexerPlace::Device {
+                    pos: m.positions.offset(row * 4),
+                    bt: m.block_table.offset(row * bt_stride),
+                },
+                _ => IndexerPlace::Host {
+                    block_table: block_table.as_slice(),
+                },
             };
             self.indexer_forward(
                 gpu,
                 hidden.offset(row * self.cfg.hidden * 2),
                 st,
-                pos_dev,
+                kv_cache,
+                place,
                 stream,
             )?;
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
@@ -233,7 +240,8 @@ impl Glm5NextDsaLayer {
                 )?;
                 batch_q_pos.push(pos as i32);
             } else {
-                self.select_row(gpu, row, st, q_pos_dev, replay_safe, stream)?;
+                let rows = self.indexer_rows(st, kv_cache, d_bt)?;
+                self.select_row(gpu, row, st, rows, q_pos_dev, replay_safe, stream)?;
             }
             // 2026-09-25: The attend takes row 0's pointers, the base of the per-row arrays,
             // and indexes rows itself on grid y.
@@ -249,7 +257,9 @@ impl Glm5NextDsaLayer {
         // write is in the cache. Row `r` only takes pools that end at or before `q_pos[r]`,
         // so the rows written after it do not change its selection.
         if batch_select && !batch_q_pos.is_empty() {
-            self.select_rows_batched(gpu, k, st, &batch_q_pos, stream)?;
+            // 2026-10-09: Every row is this one sequence, so row 0's block table serves all.
+            let rows = self.indexer_rows(st, kv_cache, attend_bt)?;
+            self.select_rows_batched(gpu, k, st, rows, &batch_q_pos, stream)?;
         }
 
         if let Some(paging) = attend_paging {

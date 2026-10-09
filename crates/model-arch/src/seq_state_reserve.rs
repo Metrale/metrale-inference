@@ -9,7 +9,8 @@
 //! `ssm_reserve` terms.
 //!
 //! Charged, per sequence:
-//!   * the target stack's DSA indexer caches (`Glm5NextDsaState`), one per text DSA layer;
+//!   * the target stack's DSA indexer caches (`Glm5NextDsaState`), one per text DSA layer,
+//!     when they are flat (2026-10-09: a paged cache lives in the KV pool and is not charged);
 //!   * the draft proposer's own state (what `Glm5NextMtpHead`'s `alloc_state` allocates),
 //!     in its own field: the proposer is not a `TransformerLayer` and is not in the layer list.
 //!
@@ -28,6 +29,7 @@
 use anyhow::Result;
 use metrale_config::{LayerType, ModelConfig};
 
+use crate::glm5next_dsa::paged::IndexerCache;
 use crate::glm5next_dsa::state::{dsa_capacity, indexer_state_bytes};
 use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer};
 
@@ -63,6 +65,22 @@ pub fn per_sequence_state_bytes(
     max_seq_len: usize,
     spec_on: bool,
 ) -> Result<PerSequenceState> {
+    per_sequence_state_bytes_for(
+        config,
+        max_seq_len,
+        spec_on,
+        crate::glm5next_dsa::paged::text_stack_indexer_cache(),
+    )
+}
+
+/// 2026-10-09: [`per_sequence_state_bytes`] with the text stack's indexer mode as an argument
+/// (env-free).
+pub fn per_sequence_state_bytes_for(
+    config: &ModelConfig,
+    max_seq_len: usize,
+    spec_on: bool,
+    text_indexer: IndexerCache,
+) -> Result<PerSequenceState> {
     if config.model_type != "glm5_next" {
         return Ok(PerSequenceState::default());
     }
@@ -79,7 +97,13 @@ pub fn per_sequence_state_bytes(
         .filter(|l| l.mixer == Mixer::Dsa)
         .count();
 
-    let target_layers = dsa_layers * per_layer;
+    // 2026-10-09: A paged indexer cache keeps the text stack's rows in the KV pool's blocks
+    // (`glm5next_dsa::paged`), which the KV budget already prices; nothing is owned per
+    // sequence.
+    let target_layers = match text_indexer {
+        IndexerCache::Flat => dsa_layers * per_layer,
+        IndexerCache::Paged => 0,
+    };
 
     // 2026-09-25: The GLM MTP head's `alloc_state` (`glm5next_mtp_head/proposer.rs`)
     // allocates one DSA indexer block for its drafter layer and five buffers: `concat`,

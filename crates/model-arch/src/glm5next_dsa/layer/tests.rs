@@ -78,10 +78,16 @@ fn q_is_absorbed_to_the_latent_width() {
 }
 
 /// 2026-09-25: `decode_k` rewinds an indexer cache that is ahead of the sequence (a rejected
-/// draft) and refuses one that is behind (rows never written).
+/// draft) and refuses one that is behind (rows never written). 2026-10-09: The guard moved to
+/// `layer/indexer_place.rs`; a paged cache behind its sequence adopts the KV blocks' rows
+/// (`state/tests.rs` checks both arms on a live state).
 #[test]
 fn a_lockstep_drift_is_refused_behind_and_rewound_ahead() {
-    let src = include_str!("../layer.rs");
+    let src = include_str!("indexer_place.rs");
+    assert!(
+        src.contains("Ordering::Less if st.cache() == IndexerCache::Paged"),
+        "only a PAGED cache may be behind; its rows are in the KV blocks"
+    );
     assert!(
         src.contains("must advance in lockstep"),
         "the drift guard must state why it exists"

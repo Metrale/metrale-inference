@@ -25,6 +25,15 @@ pub(crate) fn build_prefix_cache(
         return Box::new(metrale_telemetry::prefix_cache::NoPrefixCaching);
     }
     if args.prefix_caching_enabled() {
+        // 2026-10-09: GLM-5.3 opens the gate only with its indexer rows paged into the KV
+        // blocks; a hit then needs a KDA state snapshot, or it recomputes the whole prompt.
+        if matches!(config.model_type.as_str(), "glm5_next" | "glm5_next_text") {
+            tracing::info!(
+                ssm_cache_slots = args.ssm_cache_slots,
+                "Prefix caching (GLM-5.3): indexer rows paged in the KV blocks; KDA state \
+                 restored from SSM snapshots. With --ssm-cache-slots 0 every hit recomputes."
+            );
+        }
         if args.high_speed_swap {
             tracing::info!(
                 "Prefix caching: ENABLED (radix tree, with --high-speed-swap disk-side refcounts)"
@@ -370,13 +379,17 @@ mod prefix_cache_tests {
         assert!(!cache.is_active());
     }
 
+    /// 2026-10-09: GLM-5.3's indexer rows are paged into the KV blocks by default, so the
+    /// requested cache stays on (the flat arm, which closes it, is the config crate's
+    /// env-free `glm_flat_indexer_state_is_not_kv_cache_complete`). Assumes
+    /// `METRALE_GLM_DSA_INDEXER_FLAT` is unset, as the sibling tests assume the override is.
     #[test]
-    fn glm5_next_disables_incomplete_prefix_cache() {
+    fn glm5_next_with_the_paged_indexer_keeps_the_prefix_cache() {
         let mut config = ModelConfig::qwen3_next_80b_nvfp4();
         config.model_type = "glm5_next".to_string();
 
         let cache = build_prefix_cache(&enabled_args(), &config);
-        assert!(!cache.is_active());
+        assert!(cache.is_active());
     }
 }
 

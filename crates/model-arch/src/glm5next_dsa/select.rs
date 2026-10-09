@@ -173,12 +173,10 @@ impl DsaSelectGeometry {
 /// 2026-09-25: Device-side inputs to a selection pass, all owned by the caller.
 #[derive(Debug, Clone, Copy)]
 pub struct DsaSelectInputs {
-    /// 2026-09-25: `[seq, index_head_dim]` BF16 indexer keys, after the `k_norm` LayerNorm.
-    pub k_normed: DevicePtr,
-    /// 2026-09-25: `[seq, index_head_dim]` BF16 `index_kpool_compress_gate` projection.
-    pub gate: DevicePtr,
-    /// 2026-09-25: `[seq]` u8 per-key validity.
-    pub valid: DevicePtr,
+    /// 2026-10-09: The indexer cache: BF16 keys (after the `k_norm` LayerNorm) and
+    /// `index_kpool_compress_gate` rows, the u8 per-key validity, and for a paged cache the
+    /// block table that addresses them (`super::paged`).
+    pub rows: super::paged::IndexerRowsDev,
     /// 2026-09-25: `[index_kpool, index_head_dim]` f32 APE table. The checkpoint stores BF16;
     /// `build_dsa_weights` uploads it as f32.
     pub ape: DevicePtr,

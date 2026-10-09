@@ -12,16 +12,18 @@
 //! `index_kpool_compress_gate`), which the MLA latent cache does not hold, so they get their
 //! own cache. It is a `LayerState`, allocated per sequence by `TransformerLayer::alloc_state`.
 //!
-//! # Flat, not paged
+//! # Flat or paged
 //!
-//! `dsa_kpool_compress` reads `k[raw * D + d]` and `gate[raw * D + d]` at absolute
-//! positions, so this is one contiguous buffer per sequence. The MLA latent cache stays
-//! paged.
+//! A flat state ([`Glm5NextDsaState::alloc`]) owns one contiguous buffer per sequence,
+//! reserved at `--max-seq-len`. 2026-10-09: A paged state ([`Glm5NextDsaState::paged`]) owns
+//! no buffer: its rows sit in the KV blocks of its sequence (`super::paged`), and the state
+//! keeps only the row counter.
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::Glm5NextDsaConfig;
+use super::paged::{IndexerCache, IndexerRowsDev};
 use super::select::DsaSelectGeometry;
 use metrale_model_layers::layer::LayerState;
 
@@ -73,6 +75,9 @@ pub struct Glm5NextDsaState {
     released: bool,
     /// 2026-10-08: False for a [`Self::borrowed`] view, whose buffers `free` leaves alone.
     owned: bool,
+    /// 2026-10-09: Flat buffers above, or rows in the sequence's KV blocks (the three
+    /// pointers are then NULL).
+    cache: IndexerCache,
 }
 
 impl Glm5NextDsaState {
@@ -91,7 +96,53 @@ impl Glm5NextDsaState {
             index_head_dim: d,
             released: false,
             owned: true,
+            cache: IndexerCache::Flat,
         })
+    }
+
+    /// 2026-10-09: A state whose rows live in its sequence's KV blocks: no device memory,
+    /// the same row cap as a flat state ([`max_dsa_context`]).
+    pub fn paged(cfg: &Glm5NextDsaConfig) -> Result<Self> {
+        cfg.validate()?;
+        Ok(Self {
+            k_normed: DevicePtr::NULL,
+            gate: DevicePtr::NULL,
+            valid: DevicePtr::NULL,
+            len: 0,
+            capacity: max_dsa_context(cfg),
+            index_head_dim: cfg.index_head_dim,
+            released: false,
+            owned: false,
+            cache: IndexerCache::Paged,
+        })
+    }
+
+    pub fn cache(&self) -> IndexerCache {
+        self.cache
+    }
+
+    /// 2026-10-09: The flat buffers as kernel addressing; `None` for a paged state, whose
+    /// addressing needs the KV pool and a block table (`Glm5NextDsaLayer::indexer_rows`).
+    pub fn flat_rows(&self) -> Option<IndexerRowsDev> {
+        (self.cache == IndexerCache::Flat)
+            .then(|| IndexerRowsDev::flat(self.k_normed, self.gate, self.valid))
+    }
+
+    /// 2026-10-09: Move a paged state's counter up to `seq_len`. The rows below it are in the
+    /// sequence's KV blocks, written with their latents or shared by a prefix-cache hit, so
+    /// a counter behind the sequence is not missing rows. Refused for a flat state, whose
+    /// rows below `seq_len` would never have been written.
+    pub fn adopt_kv_rows(&mut self, seq_len: usize) -> Result<()> {
+        if self.cache != IndexerCache::Paged {
+            bail!(
+                "DSA indexer cache holds {} tokens but the sequence is at {seq_len}: a flat \
+                 cache cannot adopt rows it never wrote",
+                self.len
+            );
+        }
+        self.ensure_room_through(seq_len)?;
+        self.len = self.len.max(seq_len);
+        Ok(())
     }
 
     /// 2026-10-08: An empty state over `capacity` rows of buffers the caller owns and keeps
@@ -113,6 +164,7 @@ impl Glm5NextDsaState {
             index_head_dim,
             released: false,
             owned: false,
+            cache: IndexerCache::Flat,
         }
     }
 
@@ -197,6 +249,9 @@ impl Glm5NextDsaState {
     pub fn sync_to(&mut self, seq_len: usize, k: usize) -> Result<()> {
         match self.len.cmp(&seq_len) {
             std::cmp::Ordering::Greater => self.rewind_to(seq_len)?,
+            std::cmp::Ordering::Less if self.cache == IndexerCache::Paged => {
+                self.adopt_kv_rows(seq_len)?
+            }
             std::cmp::Ordering::Less => bail!(
                 "DSA indexer cache holds {} tokens but the replayed step starts at {seq_len} \
                  — rows are MISSING, not merely stale.",

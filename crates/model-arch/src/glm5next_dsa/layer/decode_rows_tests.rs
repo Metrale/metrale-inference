@@ -15,9 +15,7 @@ use metrale_model_layers::layer::LayerState;
 
 use crate::glm5next_dsa::state::Glm5NextDsaState;
 
-#[path = "decode_rows_fixture.rs"]
-mod fixture;
-use fixture::*;
+use super::super::decode_rows_fixture::*;
 
 /// 2026-10-08: Three sequences at different lengths. One latent write covers the rows,
 /// reading the metadata slots and `kv_a` from row 0; row `r`'s indexer row lands at its own

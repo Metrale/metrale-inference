@@ -79,6 +79,9 @@ pub fn load_glm5next_mtp_module(
         attn_layer_idx: 0,
         rms_eps: config.rms_norm_eps as f32,
         kv_scale: 1.0,
+        // 2026-10-09: The drafter's one-layer pool is sized apart from the text stack's; its
+        // indexer stays flat.
+        indexer_cache: crate::glm5next_dsa::paged::IndexerCache::Flat,
     }));
 
     let expert = |id: usize| super::glm5_next_load::bind_expert_at(gpu, store, idx, id);

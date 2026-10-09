@@ -36,6 +36,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::glm5next_dsa::layer::Glm5NextDsaLayer;
+use crate::glm5next_dsa::paged::IndexerCache;
 use crate::glm5next_dsa::state::Glm5NextDsaState;
 use crate::glm5next_kda::{Glm5NextKdaConfig, Glm5NextKdaLayer, Glm5NextKdaWorkspace, KdaSeqState};
 use crate::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_dense, forward_moe};
@@ -72,7 +73,7 @@ impl TransformerLayer for Glm5NextLayer {
             // 2026-09-25: On the model path a KDA layer gets SSM pool addresses instead
             // (`uses_ssm_pool`); this builds a zeroed, pool-free state for any other caller.
             Glm5NextMixer::Kda { cfg, .. } => Box::new(alloc_kda_ssm_state(gpu, cfg)?),
-            Glm5NextMixer::Dsa(l) => Box::new(Glm5NextDsaState::alloc(gpu, &l.cfg)?),
+            Glm5NextMixer::Dsa(l) => Box::new(l.alloc_dsa_state(gpu)?),
         })
     }
 
@@ -390,9 +391,10 @@ impl LayerGraphHooks for Glm5NextLayer {
 impl LayerAuxState for Glm5NextLayer {
     /// 2026-09-25: True for a DSA layer: its indexer cache is the state `snapshot_aux` and
     /// `restore_aux` carry. A KDA layer's state is in the SSM pool (`uses_ssm_pool`) and is not
-    /// carried here.
+    /// carried here. 2026-10-09: False for a paged indexer cache, whose rows are in the KV
+    /// blocks the prefix cache already shares.
     fn has_aux_state(&self) -> bool {
-        matches!(self.mixer, Glm5NextMixer::Dsa(_))
+        matches!(&self.mixer, Glm5NextMixer::Dsa(l) if l.indexer_cache == IndexerCache::Flat)
     }
 
     fn snapshot_aux(
@@ -401,7 +403,7 @@ impl LayerAuxState for Glm5NextLayer {
         gpu: &dyn GpuBackend,
         stream: u64,
     ) -> Result<Option<Vec<u8>>> {
-        if !matches!(self.mixer, Glm5NextMixer::Dsa(_)) {
+        if !self.has_aux_state() {
             return Ok(None);
         }
         let st = state

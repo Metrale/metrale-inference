@@ -10,7 +10,7 @@
 
 use crate::*;
 use anyhow::{Result, bail};
-use metrale_gpu_runtime::gpu::GpuBackend;
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_arch::glm5next_dsa_ref as dref;
 use metrale_model_arch::glm5next_dsa_ref::{DsaDims, INVALID};
@@ -146,6 +146,13 @@ pub(crate) fn indexer_layer(
                 .arg_u32(ihd as u32)
                 .arg_u32(kp as u32)
                 .arg_i32(first_key)
+                // 2026-10-09: No device geometry, and the flat address path (no block table).
+                // The launch passed neither before, which left the kernel reading parameters
+                // past the end of the list.
+                .arg_ptr(DevicePtr::NULL)
+                .arg_ptr(DevicePtr::NULL)
+                .arg_u32(0)
+                .arg_u32(0)
                 .launch(0)?;
             let d_keep = up_i32(gpu, &keep)?;
             let d_pk = gpu.alloc(n_pools.max(1) * ihd * 4)?;
@@ -193,6 +200,7 @@ pub(crate) fn indexer_layer(
                 .arg_u32(kp as u32)
                 .arg_u32(s as u32)
                 .arg_f32((ihd as f32).powf(-0.5))
+                .arg_ptr(DevicePtr::NULL)
                 .launch(0)?;
 
             let np2 = n_pools.next_power_of_two().max(2);
@@ -211,6 +219,7 @@ pub(crate) fn indexer_layer(
                 .arg_u32(n_pools as u32)
                 .arg_u32(np2 as u32)
                 .arg_u32(select_k as u32)
+                .arg_ptr(DevicePtr::NULL)
                 .launch(0)?;
 
             let d_qm = up_u8(gpu, &q_mask)?;
@@ -233,6 +242,7 @@ pub(crate) fn indexer_layer(
                 .arg_u32(width as u32)
                 .arg_i32(first_key)
                 .arg_i32(dims.always_select_tail as i32)
+                .arg_ptr(DevicePtr::NULL)
                 .launch(0)?;
             gpu.synchronize(0)?;
 

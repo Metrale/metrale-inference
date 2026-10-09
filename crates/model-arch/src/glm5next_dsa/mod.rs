@@ -47,6 +47,7 @@ pub mod aux_state;
 pub mod binding;
 pub mod build;
 pub mod layer;
+pub mod paged;
 pub mod select;
 pub mod state;
 pub mod tp;

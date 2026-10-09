@@ -121,3 +121,20 @@ fn a_non_glm_config_is_charged_nothing() {
     assert_eq!(s, PerSequenceState::default());
     assert_eq!(s.total(), 0);
 }
+
+const GLM_CONFIG: &str =
+    include_str!("../../model-engine/tests/fixtures/glm53-nvfp4-9e0d74e3-config.json");
+
+/// 2026-10-09: The flat indexer is charged per sequence (11 layers at 513 B per token); the
+/// paged one lives in the KV pool and is charged nothing per sequence. The MTP proposer's own
+/// flat indexer is charged either way.
+#[test]
+fn a_paged_text_indexer_is_not_charged_per_sequence() {
+    let cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
+    let flat = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Flat).unwrap();
+    let paged = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Paged).unwrap();
+    assert_eq!(flat.target_layers, 739_639_296);
+    assert_eq!(paged.target_layers, 0);
+    assert_eq!(paged.proposer, flat.proposer);
+    assert_eq!(paged.proposer, 67_574_292);
+}

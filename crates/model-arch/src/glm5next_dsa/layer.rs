@@ -35,12 +35,13 @@
 //!   K half, so it is in the `kv_lora_rank`-wide latent space the kernel dots against. The
 //!   raw `q_b_proj` is `qk_head_dim` (256) per head.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::attend::{DsaDecodeInputs, DsaDecodePaging, Glm5NextDsaDecodeKernel, decode_attention};
+use super::paged::{IndexerCache, IndexerRowsDev};
 use super::select::{DsaSelectInputs, select_tokens};
 use super::state::Glm5NextDsaState;
 use super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
@@ -48,11 +49,16 @@ use metrale_model_layers::layer::{ForwardContext, LayerState, TransformerLayer};
 
 mod decode_k;
 mod decode_rows;
+// 2026-10-09: The mock-backend rig the `decode_rows` and paged-row tests share.
+#[cfg(test)]
+mod decode_rows_fixture;
+mod indexer_place;
 mod proj_gemm;
 mod row_ops;
 mod rows;
 mod workspace;
 
+pub use indexer_place::IndexerPlace;
 use proj_gemm::gemm;
 pub use workspace::Glm5NextDsaWorkspace;
 pub(crate) use workspace::batch_select_enabled;
@@ -155,21 +161,26 @@ pub struct Glm5NextDsaLayer {
     /// 2026-09-25: Use the workspace's `bt`/`sl` rather than allocating them per call. The
     /// loaders set it true unless `METRALE_GLM_DSA_ALLOC_PER_STEP=1`.
     pub persist_bt: bool,
+    /// 2026-10-09: Where `alloc_state` puts a sequence's indexer rows. The text stack's
+    /// loader sets `paged::text_stack_indexer_cache()`; the MTP drafter's layer is flat.
+    pub indexer_cache: IndexerCache,
 }
 
 impl Glm5NextDsaLayer {
     /// 2026-09-25: Project `hidden` into indexer cache row `state.len()`, then advance by one.
     ///
-    /// With `pos_dev`, `k_normed` and `gate` go to the workspace staging rows and
-    /// `dsa_indexer_store` places them at the device-side position; without it they are
-    /// written straight into the cache row. Also leaves this row's selector head weights in
-    /// the workspace. Fails before any write when the cache is full.
+    /// With [`IndexerPlace::Device`], `k_normed` and `gate` go to the workspace staging rows
+    /// and `dsa_indexer_store` places them at the device-side position; with
+    /// [`IndexerPlace::Host`] they are written straight into the cache row. Also leaves this
+    /// row's selector head weights in the workspace. Fails before any write when the cache is
+    /// full.
     pub fn indexer_forward(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         state: &mut Glm5NextDsaState,
-        pos_dev: Option<DevicePtr>,
+        kv_cache: &PagedKvCache,
+        place: IndexerPlace<'_>,
         stream: u64,
     ) -> Result<()> {
         // 2026-09-25: Checked before any write: everything below writes row `state.len()`,
@@ -177,11 +188,12 @@ impl Glm5NextDsaLayer {
         state.ensure_room(1)?;
         let d = self.cfg.index_head_dim;
         let pos = state.len();
-        let off = state.row_offset(pos);
         let w = &self.workspace;
-        let (k_dst, gate_dst) = match pos_dev {
-            Some(_) => (w.stage_k, w.stage_gate),
-            None => (state.k_normed.offset(off), state.gate.offset(off)),
+        let (k_dst, gate_dst) = match place {
+            IndexerPlace::Device { .. } => (w.stage_k, w.stage_gate),
+            IndexerPlace::Host { block_table } => {
+                self.host_row_ptrs(state, kv_cache, block_table)?
+            }
         };
 
         gemm(
@@ -243,7 +255,7 @@ impl Glm5NextDsaLayer {
             stream,
         )?;
 
-        self.store_indexer_row(gpu, state, pos_dev, pos, d, stream)
+        self.store_indexer_row(gpu, state, kv_cache, place, pos, d, stream)
     }
 
     /// 2026-09-25: The selector query projection and the selection for one query row, written
@@ -257,6 +269,7 @@ impl Glm5NextDsaLayer {
         gpu: &dyn GpuBackend,
         row: usize,
         state: &Glm5NextDsaState,
+        rows: IndexerRowsDev,
         q_pos_dev: DevicePtr,
         replay_safe: bool,
         stream: u64,
@@ -282,9 +295,7 @@ impl Glm5NextDsaLayer {
         // 2026-09-25: `head_weights` comes from `indexer_forward`, which has the layer input.
 
         let inputs = DsaSelectInputs {
-            k_normed: state.k_normed,
-            gate: state.gate,
-            valid: state.valid,
+            rows,
             ape: self.weights.ape,
             q: w.q_idx,
             weights: w.head_weights,
@@ -379,35 +390,11 @@ impl Glm5NextDsaLayer {
         profile::end(profile::DSA_ATTEND, t, gpu, stream);
         Ok(())
     }
-
-    /// 2026-09-26: `decode_k`'s check that the indexer cache is in lockstep with the KV
-    /// cache: rewinds `st` when it is ahead of `seq_len`, fails when it is behind.
-    fn check_lockstep(&self, st: &mut Glm5NextDsaState, seq_len: usize) -> Result<()> {
-        // 2026-09-25: The indexer cache must advance in lockstep with the KV cache.
-        //
-        // * Ahead (`len > seq_len`) follows a rejected speculative draft: rewinding to
-        //   `seq_len` makes the rows past it unreachable (the selector reads `[0, len)`) and
-        //   the next write overwrites them.
-        // * Behind (`len < seq_len`) means rows were never written, which is an error.
-        match st.len().cmp(&seq_len) {
-            std::cmp::Ordering::Greater => st.rewind_to(seq_len)?,
-            std::cmp::Ordering::Less => bail!(
-                "DSA layer {}: indexer cache holds {} tokens but the sequence is at {} — \
-                 rows are MISSING, not merely stale. The indexer stream must advance in \
-                 lockstep with the KV cache.",
-                self.layer_idx,
-                st.len(),
-                seq_len
-            ),
-            std::cmp::Ordering::Equal => {}
-        }
-        Ok(())
-    }
 }
 
 impl TransformerLayer for Glm5NextDsaLayer {
     fn alloc_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn LayerState>> {
-        Ok(Box::new(Glm5NextDsaState::alloc(gpu, &self.cfg)?))
+        Ok(Box::new(self.alloc_dsa_state(gpu)?))
     }
 
     /// 2026-09-25: Frees a `Glm5NextDsaState`; any other state type is left alone. The

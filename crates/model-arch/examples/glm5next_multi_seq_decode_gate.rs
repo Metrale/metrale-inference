@@ -236,6 +236,7 @@ fn dsa_layer(
         rms_eps: 1e-6,
         kv_scale: 1.0,
         persist_bt: true,
+        indexer_cache: metrale_model_arch::glm5next_dsa::paged::IndexerCache::Flat,
     })
 }
 

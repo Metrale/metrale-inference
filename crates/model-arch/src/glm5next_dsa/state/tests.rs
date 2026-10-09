@@ -263,3 +263,42 @@ fn freeing_a_borrowed_view_leaves_the_owners_buffers_live() {
         gpu.free(p).expect("the owner still holds every buffer");
     }
 }
+
+/// 2026-10-09: A paged state allocates nothing, frees nothing, and has no flat rows.
+#[test]
+fn a_paged_state_owns_no_device_memory() {
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+    let gpu = MockGpuBackend::new();
+    let base = gpu.alloc_count();
+    let mut s = Glm5NextDsaState::paged(&cfg()).unwrap();
+    assert_eq!(gpu.alloc_count(), base);
+    assert_eq!(s.cache(), IndexerCache::Paged);
+    assert!(s.flat_rows().is_none());
+    assert_eq!(s.capacity(), max_dsa_context(&cfg()));
+    s.free(&gpu).unwrap();
+    assert_eq!(gpu.alloc_count(), base);
+}
+
+/// 2026-10-09: Behind its sequence, a paged state adopts the KV blocks' rows (a prefix-cache
+/// hit) and a flat one refuses (rows never written), on both the eager path
+/// (`adopt_kv_rows`) and the graph-replay path (`sync_to`). Past the cap both refuse.
+#[test]
+fn only_a_paged_state_may_adopt_rows_behind_it() {
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+    let gpu = MockGpuBackend::new();
+    let mut p = Glm5NextDsaState::paged(&cfg()).unwrap();
+    p.adopt_kv_rows(4_096).unwrap();
+    assert_eq!(p.len(), 4_096);
+    p.sync_to(8_192, 1).unwrap();
+    assert_eq!(p.len(), 8_193);
+    assert!(p.adopt_kv_rows(16_385).is_err(), "past the cap");
+    assert_eq!(p.len(), 8_193, "a refused adopt moves nothing");
+
+    let mut f = Glm5NextDsaState::alloc(&gpu, &cfg()).unwrap();
+    let e = f.adopt_kv_rows(4_096).unwrap_err().to_string();
+    assert!(e.contains("cannot adopt"), "{e}");
+    let e = f.sync_to(4_096, 1).unwrap_err().to_string();
+    assert!(e.contains("MISSING"), "{e}");
+    assert_eq!(f.len(), 0);
+    f.free(&gpu).unwrap();
+}

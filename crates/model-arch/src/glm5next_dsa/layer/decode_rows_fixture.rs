@@ -163,6 +163,7 @@ impl Rig {
             rms_eps: 1e-6,
             kv_scale: 1.0,
             persist_bt: true,
+            indexer_cache: crate::glm5next_dsa::paged::IndexerCache::Flat,
         }
     }
 
