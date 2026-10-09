@@ -92,6 +92,33 @@ fn each_row_reads_and_writes_only_its_own_sequence() {
     for p in &proj {
         assert_eq!(p.args[3], MockArg::Bytes(3u32.to_le_bytes().to_vec()));
     }
+    // 2026-10-09: The selector query and head weights run once for the three rows (FP32
+    // batched GEMV), never as per-row FP32 GEMVs, and row `r`'s scores read row `r` of each.
+    let f32_rows = of(&l, BATCHM_F32);
+    assert_eq!(f32_rows.len(), 2, "wq_b and weights_proj, each once");
+    for p in &f32_rows {
+        assert_eq!(p.args[3], MockArg::Bytes(3u32.to_le_bytes().to_vec()));
+    }
+    assert!(of(&l, GEMV_F32).is_empty(), "no per-row FP32 GEMV");
+    let c = cfg();
+    let (heads, idx_row) = (c.index_heads, c.index_heads * c.index_head_dim);
+    // 2026-10-09: Rows 0 and 1 have complete pools after this step's row (6 and 10 tokens
+    // at kpool 4), so they score; row 2 (3 tokens) has none and launches no scoring.
+    let scores = of(&l, SCORES);
+    assert_eq!(scores.len(), 2);
+    for (r, sc) in scores.iter().enumerate() {
+        let w = &layer.workspace;
+        assert_eq!(
+            sc.args[0],
+            ptr(w.q_idx_rows.offset(r * idx_row * 4)),
+            "row {r}'s query"
+        );
+        assert_eq!(
+            sc.args[2],
+            ptr(w.head_weights_rows.offset(r * heads * 4)),
+            "row {r}'s weights"
+        );
+    }
     let after: Vec<usize> = boxes.iter().map(|b| dsa(b.as_ref()).len()).collect();
     assert_eq!(after, vec![6, 10, 3]);
 }

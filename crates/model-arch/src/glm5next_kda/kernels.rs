@@ -4,8 +4,9 @@
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants:
-//! - `resolve` fails if any entry point other than `dense_gemv_bf16_batchm` and
-//!   `kda_recurrent_decode_bf16_smem` is missing; those two resolve to handle 0 when absent.
+//! - `resolve` fails if any entry point other than `dense_gemv_bf16_batchm`,
+//!   `kda_recurrent_decode_bf16_smem` and (2026-10-09) `kda_recurrent_decode_bf16_smem_rows`
+//!   is missing; those resolve to handle 0 when absent.
 
 use super::*;
 
@@ -29,6 +30,10 @@ pub struct Glm5NextKdaKernels {
     /// 2026-09-25: 1R+1W sibling of `recurrent`: the decayed state column stays in shared memory
     /// between the two passes. Resolved with `try_kernel`; `0` selects the 2R+2W kernel.
     pub recurrent_smem: KernelHandle,
+    /// 2026-10-09: `kda_recurrent_decode_bf16_smem_rows`: the 1R+1W step for up to
+    /// [`KDA_ROWS_MAX`] rows of different sequences in one launch, each row's state a kernel
+    /// argument. Resolved with `try_kernel`; `0` keeps one launch per row.
+    pub recurrent_smem_rows: KernelHandle,
     pub o_norm: KernelHandle,
     pub split_widen: KernelHandle,
     pub sigmoid: KernelHandle,
@@ -60,6 +65,11 @@ impl Glm5NextKdaKernels {
                 "kda_recurrent",
                 "kda_recurrent_decode_bf16_smem",
             ),
+            recurrent_smem_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_recurrent",
+                "kda_recurrent_decode_bf16_smem_rows",
+            ),
             o_norm: gpu.kernel("kda_layer_ops", "kda_o_norm_gated_bf16")?,
             split_widen: gpu.kernel("kda_layer_ops", "kda_split_widen")?,
             sigmoid: gpu.kernel("kda_layer_ops", "kda_sigmoid_bf16_f32")?,
@@ -68,3 +78,8 @@ impl Glm5NextKdaKernels {
         })
     }
 }
+
+/// 2026-10-09: `#define KDA_ROWS_MAX` in `kernels/gb10/common/kda_recurrent.cu`: the state
+/// arguments `kda_recurrent_decode_bf16_smem_rows` takes. Wider groups keep one launch per
+/// row.
+pub const KDA_ROWS_MAX: usize = 16;

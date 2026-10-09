@@ -38,8 +38,10 @@ mod decode;
 mod decode_rows_tests;
 mod kernels;
 mod prefill;
+mod replay;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
-pub use kernels::Glm5NextKdaKernels;
+pub use kernels::{Glm5NextKdaKernels, KDA_ROWS_MAX};
+pub use replay::KdaVerifyRecord;
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};

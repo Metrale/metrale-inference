@@ -211,8 +211,14 @@ pub fn build_model(
     // proposer is built after the model (Steps 6b and 6c). The GLM-5.3 module
     // (`layers.{num_hidden_layers}`) is loaded on every EP rank; the
     // DeepSeek-V4 module only on rank 0.
-    let glm_mtp_module =
-        mtp_modules::load_glm_mtp_module(&store, &config, gpu.as_ref(), use_speculative);
+    // 2026-10-08: Not with DFlash: its drafter replaces the MTP proposer
+    // (`install_dflash_drafter`), so a module built here would stay resident unused.
+    let glm_mtp_module = mtp_modules::load_glm_mtp_module(
+        &store,
+        &config,
+        gpu.as_ref(),
+        use_speculative && dflash_args.is_none(),
+    );
     let glm_mtp_embed = embed;
     let glm_mtp_lm_head = lm_head;
 
@@ -287,6 +293,9 @@ pub fn build_model(
     // own copies of (the default is a no-op). This runs after every `load_*`
     // above and before the KV budget is computed, so the freed memory counts.
     loader.prune_after_load(&mut store, &config, gpu.as_ref())?;
+    if dflash_args.is_some() {
+        weights_prep::release_unused_glm_mtp_block(&mut store, gpu.as_ref(), &config)?;
+    }
     mem.mark("prune_after_load");
     tracing::info!(
         "WeightStore after prune: {} tensors, {:.3} GiB still resident",

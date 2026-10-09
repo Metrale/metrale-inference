@@ -22,8 +22,8 @@ pub(in crate::model) const EP_CMD_DECODE_CKPT: u32 = 0xFFFF_FFF8;
 
 // 2026-09-25: The worker dispatches any code it does not match as a decode token id, so a
 // command sits above `0xFFFF_FFEF`. It must also differ from the other codes, by last byte: E0 batched
-// decode, F0 prefill chunk, F1 alloc-slot, F2/F3/F4 verify K=2/3/4, F5 MTP propose, F6/F7
-// reserved, FF shutdown.
+// decode, F0 prefill chunk, F1 alloc-slot, F2/F3/F4 verify K=2/3/4, F5 MTP propose, F6 DFlash
+// K=γ verify, F7 reserved, FF shutdown.
 const _: () = assert!(
     EP_CMD_DECODE_CKPT > 0xFFFF_FFEF,
     "EP_CMD_DECODE_CKPT would be dispatched as a decode token id"
@@ -57,8 +57,22 @@ const _: () = assert!(
     "collides with MTP propose"
 );
 const _: () = assert!(
-    EP_CMD_DECODE_CKPT != 0xFFFF_FFF6,
-    "reserved: DFlash EP_CMD_VERIFY_KGAMMA (A113)"
+    EP_CMD_DECODE_CKPT != metrale_model_layers::speculative::EP_CMD_VERIFY_KGAMMA,
+    "collides with DFlash K=γ verify"
+);
+const _: () = assert!(
+    metrale_model_layers::speculative::EP_CMD_VERIFY_KGAMMA > 0xFFFF_FFEF,
+    "EP_CMD_VERIFY_KGAMMA would be dispatched as a decode token id"
+);
+const _: () = assert!(
+    EP_CMD_DECODE_CKPT != metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH,
+    "collides with the batched DFlash verify"
+);
+const _: () = assert!(
+    metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH > 0xFFFF_FFEF
+        && metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH != 0xFFFF_FFF7
+        && metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH != 0xFFFF_FFFF,
+    "EP_CMD_VERIFY_BATCH would be a decode token id, the reserved ctx-commit or shutdown"
 );
 const _: () = assert!(
     EP_CMD_DECODE_CKPT != 0xFFFF_FFF7,

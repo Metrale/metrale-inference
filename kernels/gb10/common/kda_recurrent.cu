@@ -182,7 +182,9 @@ extern "C" __global__ void kda_recurrent_decode_bf16(
 
 
 
-extern "C" __global__ void kda_recurrent_decode_bf16_smem(
+// 2026-10-09: The body of kda_recurrent_decode_bf16_smem, for one sequence's row; the
+// _rows entry below runs it for several sequences, each with its own state.
+__device__ __forceinline__ void kda_recurrent_decode_bf16_smem_body(
     const __nv_bfloat16* __restrict__ q,
     const __nv_bfloat16* __restrict__ k,
     const __nv_bfloat16* __restrict__ v,
@@ -195,22 +197,22 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem(
     float scale,
     unsigned int VPB
 ) {
-    extern __shared__ float sh[];
+    extern __shared__ float sh_rec[];
     const unsigned int h = blockIdx.x;
     if (h >= H) return;
     const unsigned int v0 = blockIdx.y * VPB;
     if (v0 >= D) return;
 
-    float* sh_decay = sh;
-    float* sh_k = sh + D;
-    float* sh_q = sh + 2u * D;
+    float* sh_decay = sh_rec;
+    float* sh_k = sh_rec + D;
+    float* sh_q = sh_rec + 2u * D;
 // 2026-09-25: [VPB, D + 1]: column threadIdx.x of this block's slice, k-major. The +1 pad
 // avoids bank conflicts: at a stride of D = 128 floats every thread of a warp would hit
 // the same bank (128 % 32 == 0); a stride of D + 1 moves each thread to the next bank.
 
 
 
-    float* sh_s = sh + 3u * D;
+    float* sh_s = sh_rec + 3u * D;
     const unsigned int col_stride = D + 1u;
 
     const size_t hd = (size_t)h * D;
@@ -243,4 +245,66 @@ extern "C" __global__ void kda_recurrent_decode_bf16_smem(
         o += s * sh_q[kk];
     }
     out[hd + vi] = o;
+}
+
+extern "C" __global__ void kda_recurrent_decode_bf16_smem(
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ state,
+    float* __restrict__ out,
+    unsigned int H,
+    unsigned int D,
+    float scale,
+    unsigned int VPB
+) {
+    kda_recurrent_decode_bf16_smem_body(q, k, v, gate, beta, state, out, H, D, scale, VPB);
+}
+
+// 2026-10-09: kda_recurrent_decode_bf16_smem for up to KDA_ROWS_MAX rows of different
+// sequences in one launch: grid (H, D / VPB, rows), and block (h, v-slice, r) is the block
+// (h, v-slice) of the single-row kernel on row r, so each row's state and output are the
+// single-row launch's. Row r reads q/k/v at r * qkv_row_stride elements past the given
+// bases, gate at r * gate_row_stride, beta at r * beta_row_stride, writes out at
+// r * out_row_stride, and updates the state at s<r>. The per-row state pointers are kernel
+// arguments, so a captured graph keeps the ones it was captured with; a null pointer skips
+// the row. The launcher must pass exactly KDA_ROWS_MAX state arguments.
+#define KDA_ROWS_MAX 16
+extern "C" __global__ void kda_recurrent_decode_bf16_smem_rows(
+    const __nv_bfloat16* __restrict__ q,
+    const __nv_bfloat16* __restrict__ k,
+    const __nv_bfloat16* __restrict__ v,
+    const float* __restrict__ gate,
+    const float* __restrict__ beta,
+    float* __restrict__ out,
+    unsigned int H,
+    unsigned int D,
+    float scale,
+    unsigned int VPB,
+    unsigned int qkv_row_stride,
+    unsigned int gate_row_stride,
+    unsigned int beta_row_stride,
+    unsigned int out_row_stride,
+    unsigned long long s0, unsigned long long s1, unsigned long long s2, unsigned long long s3,
+    unsigned long long s4, unsigned long long s5, unsigned long long s6, unsigned long long s7,
+    unsigned long long s8, unsigned long long s9, unsigned long long s10, unsigned long long s11,
+    unsigned long long s12, unsigned long long s13, unsigned long long s14, unsigned long long s15
+) {
+    const unsigned int r = blockIdx.z;
+    if (r >= KDA_ROWS_MAX) return;
+    const unsigned long long sp[KDA_ROWS_MAX] = {s0, s1, s2, s3, s4, s5, s6, s7,
+                                                 s8, s9, s10, s11, s12, s13, s14, s15};
+    float* state = (float*)sp[r];
+    if (state == nullptr) return;
+    kda_recurrent_decode_bf16_smem_body(
+        q + (size_t)r * qkv_row_stride,
+        k + (size_t)r * qkv_row_stride,
+        v + (size_t)r * qkv_row_stride,
+        gate + (size_t)r * gate_row_stride,
+        beta + (size_t)r * beta_row_stride,
+        state,
+        out + (size_t)r * out_row_stride,
+        H, D, scale, VPB);
 }

@@ -128,7 +128,8 @@ impl Glm5NextDsaLayer {
             }
         }
         let q_pos_bytes: Vec<u8> = q_pos_host.iter().flat_map(|p| p.to_le_bytes()).collect();
-        gpu.copy_h2d(&q_pos_bytes, w.q_pos_rows)?;
+        // 2026-10-09: Stream-ordered, without a host sync; the selection below is on `stream`.
+        gpu.copy_h2d_async(&q_pos_bytes, w.q_pos_rows, stream)?;
         let inputs = DsaSelectInputs {
             rows,
             ape: self.weights.ape,

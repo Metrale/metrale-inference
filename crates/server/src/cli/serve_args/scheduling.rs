@@ -102,7 +102,8 @@ pub struct ServeSchedulingArgs {
     /// Ignore the `jinja-templates/` override directory and render every
     /// model with its own chat template (from the checkpoint; ChatML when it
     /// has none). Default off: an override file's presence is the opt-in
-    /// signal for its model type (see `jinja-templates/README.md`).
+    /// signal for its model type (see `jinja-templates/README.md`). To render
+    /// with a template file instead, see `--chat-template`.
     #[arg(long, default_value_t = false)]
     pub disable_template_overrides: bool,
 
@@ -162,6 +163,18 @@ pub struct ServeSchedulingArgs {
     /// window (full-prefix attention).
     #[arg(long, default_value_t = 4096)]
     pub dflash_window_size: usize,
+
+    /// 2026-10-09: DFlash drafts per step by concurrency, as `min_active:drafts` pairs from 1
+    /// active sequence up, e.g. `1:7,2:5,3:4,4:3,5:2,6:7`. Each rung is capped at γ - 1 and a
+    /// rung above it is refused at startup. Unset (the default): the γ resolver decides
+    /// (`--dflash-gamma` pins it).
+    #[arg(long, requires = "dflash")]
+    pub dflash_draft_ladder: Option<String>,
+
+    /// 2026-10-09: `dflash_draft_ladder` parsed and checked against the resolved γ by
+    /// `serve_phases::apply_dflash_gamma`.
+    #[arg(skip)]
+    pub dflash_draft_ladder_resolved: Option<metrale_speculative::dflash_ladder::DraftLadder>,
 
     /// Number of draft tokens per speculative step (1=K=2, 2=K=3, 3=K=4 verify).
     /// Precedence (highest wins): this flag → MODEL.toml
@@ -337,8 +350,8 @@ pub struct ServeSchedulingArgs {
 
     /// Tool call parser format. Enables OpenAI-compatible tool calling.
     /// Supported: "hermes", "qwen3_coder", "qwen3_xml", "gemma4", "mistral",
-    /// "minimax_xml", "bare_json", "poolside_v1". See the `FromStr for
-    /// ToolCallFormat` in tool_parser.rs.
+    /// "minimax_xml", "bare_json", "poolside_v1", "glm47". See the `FromStr
+    /// for ToolCallFormat` in tool_parser.rs.
     /// Unset: MODEL.toml `[behavior].tool_call_parser`, else the mapping for the
     /// model's `model_type` in `tool_defaults.toml`, else tool calling is off.
     #[arg(long, value_name = "FORMAT")]

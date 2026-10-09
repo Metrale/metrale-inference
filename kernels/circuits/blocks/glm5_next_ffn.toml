@@ -1,0 +1,303 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-08: The GLM-5 (`glm5_next`) FFN sites: the dense SwiGLU of the first
+# `first_k_dense_replace` layers (`mlp`) and the routed MoE (`moe`), each under the FFN-site
+# hyper-connection, and the MTP layer's MoE on a plain residual (`mtp_moe`). Split out of
+# kernels/circuits/glm5_next.toml to keep each file short; only that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - Every SwiGLU is clamped first (`swiglu_limit`): the gate to at most the limit, the up half to
+#   [-limit, limit] (`swiglu_clamp`), then `silu_mul`. The shared expert is clamped too.
+# - Routing: sigmoid scores, the top-8 chosen on score + `e_score_correction_bias`, the selected
+#   scores renormalised and scaled by `routed_scaling_factor` (2.5); the router's logits are
+#   FP32 (`moe_router_dtype`). One ungated shared expert, added unscaled.
+# - Declared precision (precision/glm-5.3-flash-nvfp4.toml): the routed experts and the dense
+#   MLP are NVFP4 W4A4 (weights and input activations FP4 with 16-wide groups, static global
+#   input scales), so the circuit's 16-bit inputs get NVFP4 quantizer nodes from the
+#   precision; the router, the shared expert and the whole MTP layer are BF16.
+
+schema = 1
+description = "GLM-5 FFN sites: dense SwiGLU and routed MoE under the hyper-connection, the MTP layer's MoE"
+
+[block.mlp]
+stream_in = "x"
+stream_out = "y"
+
+[[block.mlp.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_ffn_fn"]
+unquantized = true
+
+[[block.mlp.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_ffn_scale", "{L}.hc_ffn_base"]
+
+[[block.mlp.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.mlp.node]]
+id = "gate_up"
+op = "linear"
+role = "gate_up"
+in = ["xn"]
+out = [{ edge = "gu", format = "bf16", shape = "n x inter*2" }]
+binding = ["{L}.mlp.gate_proj", "{L}.mlp.up_proj"]
+
+[[block.mlp.node]]
+id = "clamp"
+op = "swiglu_clamp"
+in = ["gu"]
+out = [{ edge = "guc", format = "bf16", shape = "n x inter*2" }]
+
+[[block.mlp.node]]
+id = "act"
+op = "silu_mul"
+in = ["guc"]
+out = [{ edge = "a", format = "bf16", shape = "n x inter" }]
+
+[[block.mlp.node]]
+id = "down"
+op = "linear"
+role = "down"
+in = ["a"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.down_proj"]
+
+[[block.mlp.node]]
+id = "post"
+op = "hc_post"
+in = ["f", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
+
+[block.moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_ffn_fn"]
+unquantized = true
+
+[[block.moe.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_ffn_scale", "{L}.hc_ffn_base"]
+
+[[block.moe.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.moe.node]]
+id = "gate"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
+binding = ["{L}.mlp.gate"]
+
+[[block.moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.mlp.gate.e_score_correction_bias"]
+params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
+
+[[block.moe.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.mlp.experts.*.gate_proj", "{L}.mlp.experts.*.up_proj"]
+
+[[block.moe.node]]
+id = "experts_clamp"
+op = "swiglu_clamp"
+in = ["egu"]
+out = [{ edge = "egc", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+
+[[block.moe.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egc"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.mlp.experts.*.down_proj"]
+
+[[block.moe.node]]
+id = "shared_gate_up"
+op = "linear"
+role = "shared_gate_up"
+in = ["xn"]
+out = [{ edge = "sgu", format = "bf16", shape = "n x shared_inter*2" }]
+binding = ["{L}.mlp.shared_experts.gate_proj", "{L}.mlp.shared_experts.up_proj"]
+
+[[block.moe.node]]
+id = "shared_clamp"
+op = "swiglu_clamp"
+in = ["sgu"]
+out = [{ edge = "sgc", format = "bf16", shape = "n x shared_inter*2" }]
+
+[[block.moe.node]]
+id = "shared_act"
+op = "silu_mul"
+in = ["sgc"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.moe.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.shared_experts.down_proj"]
+
+[[block.moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared_gate = "none" }
+
+[[block.moe.node]]
+id = "post"
+op = "hc_post"
+in = ["f", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
+
+# 2026-10-08: The MTP layer's MoE (`layers.{num_hidden_layers}`): the same routing and experts,
+# stored BF16 (the MTP layer is excluded from the quantization), on a plain residual.
+[block.mtp_moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.mtp_moe.node]]
+id = "post_norm"
+op = "rms_norm"
+in = ["x"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.post_attention_layernorm"]
+params = { weight_form = "plain" }
+
+[[block.mtp_moe.node]]
+id = "gate"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
+binding = ["{L}.mlp.gate"]
+
+[[block.mtp_moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.mlp.gate.e_score_correction_bias"]
+params = { top_k = "{top_k}", scoring = "sigmoid_bias", renormalize = "true" }
+
+[[block.mtp_moe.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.mlp.experts.*.gate_proj", "{L}.mlp.experts.*.up_proj"]
+
+[[block.mtp_moe.node]]
+id = "experts_clamp"
+op = "swiglu_clamp"
+in = ["egu"]
+out = [{ edge = "egc", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+
+[[block.mtp_moe.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egc"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.mtp_moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.mlp.experts.*.down_proj"]
+
+[[block.mtp_moe.node]]
+id = "shared_gate_up"
+op = "linear"
+role = "shared_gate_up"
+in = ["xn"]
+out = [{ edge = "sgu", format = "bf16", shape = "n x shared_inter*2" }]
+binding = ["{L}.mlp.shared_experts.gate_proj", "{L}.mlp.shared_experts.up_proj"]
+
+[[block.mtp_moe.node]]
+id = "shared_clamp"
+op = "swiglu_clamp"
+in = ["sgu"]
+out = [{ edge = "sgc", format = "bf16", shape = "n x shared_inter*2" }]
+
+[[block.mtp_moe.node]]
+id = "shared_act"
+op = "silu_mul"
+in = ["sgc"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.mtp_moe.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.mlp.shared_experts.down_proj"]
+
+[[block.mtp_moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared_gate = "none" }
+
+[[block.mtp_moe.node]]
+id = "add"
+op = "residual_add"
+in = ["x", "f"]
+out = [{ edge = "y", format = "bf16", shape = "n x hidden" }]

@@ -11,6 +11,9 @@ use super::*;
 mod drafter;
 mod forward;
 mod multi_seq;
+pub use multi_seq::{GroupSpan, group_spans};
+mod replay;
+mod verify_multi;
 
 impl Glm5NextLayer {
     /// 2026-09-25: `rms_norm_vanilla` over `rows` contiguous `[hidden]` rows in one launch. The

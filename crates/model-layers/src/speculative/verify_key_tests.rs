@@ -384,3 +384,18 @@ fn kill_switch_dominates_width_and_override() {
         assert_eq!(key_through_gate(&n8, min_width, false), key_for(&n8, false));
     }
 }
+
+/// 2026-10-09: Only a pair's slot word matches: a row count or the sentinel equal to the
+/// slot does not.
+#[test]
+fn a_key_names_a_slot_only_through_its_pairs() {
+    let key = verify_graph_key(&[(3, 6), (6, 6)], true, false);
+    assert!(verify_graph_key_has_slot(&key, 3));
+    assert!(verify_graph_key_has_slot(&key, 6));
+    assert!(!verify_graph_key_has_slot(
+        &verify_graph_key(&[(3, 6)], true, false),
+        6
+    ));
+    assert!(!verify_graph_key_has_slot(&key, u32::MAX - 1));
+    assert!(!verify_graph_key_has_slot(&[], 0));
+}

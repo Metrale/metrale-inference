@@ -300,21 +300,20 @@ impl TransformerModel {
     /// 2026-09-25: `(begin, len)` rows of the BF16 LM head this rank computes,
     /// or `None` for the whole-vocab projection.
     ///
-    /// `None` unless there is a communicator with at least 2 ranks and the vocab
-    /// divides evenly by the world size, or when `METRALE_NO_LMHEAD_VOCAB_TP=1`
-    /// (read once per process). Only the BF16 dense-head paths call it.
+    /// `None` unless there is a communicator with at least 2 ranks, or when
+    /// `METRALE_NO_LMHEAD_VOCAB_TP=1` (read once per process). Only the BF16 dense-head
+    /// paths call it. 2026-10-08: the rows split with `tp_split` in
+    /// [`LMHEAD_VOCAB_SPLIT_ALIGN`]-row units, so a vocab that does not divide by the world
+    /// size (154,880 rows over 3 ranks) still shards; an evenly dividing vocab gets the same
+    /// ranges as before. The pieces meet in a zeroed buffer summed by an all-reduce, so
+    /// uneven lengths need nothing else, and adding the other ranks' zeros is exact.
     fn lmhead_vocab_shard(&self, v: u32) -> Option<(usize, usize)> {
         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *OFF.get_or_init(|| std::env::var("METRALE_NO_LMHEAD_VOCAB_TP").as_deref() == Ok("1")) {
             return None;
         }
         let comm = self.comm_ref()?;
-        let ws = comm.world_size();
-        if ws < 2 || !(v as usize).is_multiple_of(ws) {
-            return None;
-        }
-        let len = v as usize / ws;
-        Some((comm.rank() * len, len))
+        lmhead_vocab_split(v as usize, comm.world_size(), comm.rank())
     }
 
     pub(super) fn lm_head(&self, hidden: DevicePtr, stream: u64) -> Result<DevicePtr> {
@@ -424,5 +423,55 @@ impl TransformerModel {
             self.apply_logit_softcap_dtype(logits, v, cap, fp32, stream)?;
         }
         Ok(logits)
+    }
+}
+
+/// 2026-10-08: Row granularity of the vocab-parallel LM head split: the shard starts stay
+/// 64-row aligned, as the even splits of every vocab served so far already were.
+const LMHEAD_VOCAB_SPLIT_ALIGN: usize = 64;
+
+/// 2026-10-08: `(begin, len)` of `rank`'s rows of a `v`-row head over `world` ranks, or `None`
+/// at one rank or when the vocab is not a whole number of split units (then every rank
+/// computes the whole head, as before).
+fn lmhead_vocab_split(v: usize, world: usize, rank: usize) -> Option<(usize, usize)> {
+    if world < 2 {
+        return None;
+    }
+    if v.is_multiple_of(world) {
+        // 2026-10-08: The previous rule, byte for byte.
+        return Some((rank * (v / world), v / world));
+    }
+    metrale_config::tp_split(v, world, rank, LMHEAD_VOCAB_SPLIT_ALIGN)
+        .ok()
+        .map(|s| (s.start, s.len))
+}
+
+#[cfg(test)]
+mod vocab_split_tests {
+    use super::lmhead_vocab_split;
+
+    #[test]
+    fn an_even_vocab_keeps_the_even_split() {
+        assert_eq!(lmhead_vocab_split(248_320, 2, 1), Some((124_160, 124_160)));
+        assert_eq!(lmhead_vocab_split(154_880, 2, 0), Some((0, 77_440)));
+        assert_eq!(lmhead_vocab_split(154_880, 1, 0), None);
+    }
+
+    #[test]
+    fn glm_vocab_over_three_ranks_partitions_in_aligned_pieces() {
+        let parts: Vec<_> = (0..3)
+            .map(|r| lmhead_vocab_split(154_880, 3, r).unwrap())
+            .collect();
+        let mut next = 0;
+        for (b, l) in &parts {
+            assert_eq!(*b, next);
+            assert_eq!(b % 64, 0);
+            next = b + l;
+        }
+        assert_eq!(next, 154_880);
+        assert_eq!(
+            parts,
+            vec![(0, 51_648), (51_648, 51_648), (103_296, 51_584)]
+        );
     }
 }

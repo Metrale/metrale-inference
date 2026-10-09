@@ -20,6 +20,10 @@ pub struct SchedLimits {
     /// Emitting it stops the sequence only while `SchedLevers::tool_response_stop`
     /// is set (on unless `METRALE_TOOL_RESPONSE_STOP` is `0` or `false`).
     pub tool_response_hard_stop: Option<u32>,
+    /// 2026-10-09: The tool-call opener's id when the reasoning format's tool call also
+    /// closes the thinking block (`ReasoningParser::tool_call_closes_reasoning`):
+    /// `scheduler::think_close`. `None` → only `</think>` closes it.
+    pub thinking_closed_by: Option<u32>,
     /// 2026-09-25: Served-context ceiling (`--max-seq-len`), checked per decode step.
     /// `0` means no ceiling: `helpers::seqlen_force_stop` then never fires.
     pub max_seq_len: usize,
@@ -31,6 +35,7 @@ impl SchedLimits {
     pub const NONE: Self = Self {
         im_start_hard_stop: None,
         tool_response_hard_stop: None,
+        thinking_closed_by: None,
         max_seq_len: 0,
     };
 }

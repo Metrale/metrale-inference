@@ -2,12 +2,14 @@
 
 //! 2026-09-26: Load-time steps of `build_model` that adjust the config or the
 //! weight store: the DFlash capture layers and γ, and the release of a vision
-//! tower that no encoder bound.
+//! tower that no encoder bound and of a GLM-5.3 MTP block DFlash replaces.
 //!
 //! Owner: metrale-model-engine.
 //! Invariants:
 //! - `release_unbound_vision_tower` frees only store tensors whose names start
 //!   with a vision-tower prefix.
+//! - `release_unused_glm_mtp_block` frees only a GLM-5.3 store's
+//!   `layers.{num_hidden_layers}.` tensors, and only on a DFlash build.
 
 use anyhow::Result;
 use metrale_config::ModelConfig;
@@ -64,5 +66,25 @@ pub(super) fn release_unbound_vision_tower(
             config.model_type,
         );
     }
+    Ok(())
+}
+
+/// 2026-10-08: With DFlash on a GLM-5.3 target, frees the store tensors of the MTP block
+/// (`layers.{num_hidden_layers}`): the loader keeps them for the MTP module, which a DFlash serve
+/// does not build (`load_glm_mtp_module`). A no-op for any other `model_type`.
+pub(super) fn release_unused_glm_mtp_block(
+    store: &mut WeightStore,
+    gpu: &dyn GpuBackend,
+    config: &ModelConfig,
+) -> Result<()> {
+    if config.model_type != "glm5_next" {
+        return Ok(());
+    }
+    let prefix = format!("model.language_model.layers.{}.", config.num_hidden_layers);
+    let (n, bytes) = store.free_matching(gpu, |name| name.starts_with(&prefix))?;
+    tracing::info!(target: "metrale_model_engine::factory::build", "GLM-5.3 MTP block: {n} store tensors ({:.2} GiB) released; DFlash replaces the \
+         MTP proposer",
+        bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+    );
     Ok(())
 }

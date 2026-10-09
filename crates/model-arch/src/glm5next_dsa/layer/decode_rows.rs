@@ -8,8 +8,10 @@
 //! - Every check (row counts, metadata rows, each row's lockstep and room) runs before the
 //!   first launch.
 //! - Row `r` reads and writes only sequence `r`'s state and metadata row
-//!   `meta_row_base + r`; the projections, the latent write and the attend are the only
-//!   launches that span rows, and each computes every row on its own.
+//!   `meta_row_base + r`; the projections (the selector query and head weights among them),
+//!   the latent write and the attend are the only launches that span rows, and each computes
+//!   every row on its own. (2026-10-09: under `decode_spans`, "sequence `r`" is the sequence
+//!   whose span holds row `r`.)
 //!
 //! # Why a row's output equals the single-sequence decode's
 //!
@@ -17,10 +19,11 @@
 //! decode step: `indexer_forward` (M = 1 GEMVs), the device geometry when capturing, and
 //! `select_row` over the row's own indexer cache. The spanning launches give each row the
 //! single-row bits: the latent write runs one block per row, reading the row's metadata slot;
-//! `project_in`/`project_out` run the
-//! M = 1 GEMV at one row and `dense_gemv_bf16_batchm` at 2..=`DENSE_GEMV_BATCHM_MAX_M`
-//! (`kernels/gb10/common/dense_gemv_bf16_batchm.cu`: each row's result is bit-identical to
-//! `dense_gemv_bf16`); the RMSNorm runs one block per row; `glm5next_dsa_mla_decode_fp8` runs
+//! `project_in`/`project_out` run the M = 1 GEMV at one row and `dense_gemv_bf16_batchm` at
+//! 2..=`DENSE_GEMV_BATCHM_MAX_M` (`kernels/gb10/common/dense_gemv_bf16_batchm.cu`: each row's
+//! result is bit-identical to `dense_gemv_bf16`); from two rows on (2026-10-09) the selector
+//! query and head weights run `dense_gemv_bf16_batchm_fp32out`, whose rows are the M = 1
+//! `dense_gemv_bf16_fp32out`'s; the RMSNorm runs one block per row; `glm5next_dsa_mla_decode_fp8` runs
 //! one block per (head, row) reading that row's block table, `seq_len` and selection row.
 //! Above `DENSE_GEMV_BATCHM_MAX_M` rows the projections move to cuBLASLt and the identity is
 //! lost, so the layer above hands this at most that many rows (`multi_seq_chunk_rows`).
@@ -33,7 +36,7 @@ use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, LayerState};
 use super::super::attend::DsaDecodePaging;
 use super::super::paged::IndexerCache;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, IndexerPlace};
+use super::{Glm5NextDsaLayer, IndexerPlace, gemm};
 
 /// 2026-10-08: Row `r`'s `Glm5NextDsaState`; errors on any other state type.
 fn dsa_row<'a>(
@@ -48,11 +51,20 @@ fn dsa_row<'a>(
         })
 }
 
+/// 2026-10-09: Consecutive rows of one sequence in a [`Glm5NextDsaLayer::decode_spans`] call:
+/// `rows` tokens at positions `first_pos..first_pos + rows`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DsaRowSpan {
+    pub first_pos: usize,
+    pub rows: usize,
+}
+
 impl Glm5NextDsaLayer {
     /// 2026-10-08: One decode token for each of `states.len()` sequences: row `r` of `hidden`
     /// is sequence `r`'s token at position `seq_lens[r]`, and its position, KV slot,
     /// `seq_len` and block table are row `meta_row_base + r` of `meta`. The output projection
-    /// is written over `hidden`, as `decode_k` writes it.
+    /// is written over `hidden`, as `decode_k` writes it. 2026-10-09: [`Self::decode_spans`]
+    /// with one row per sequence.
     ///
     /// Errors before any launch when the row counts disagree, the rows do not fit the
     /// workspace or the metadata, a capture lacks the replay-safe kernels, or a row's
@@ -70,13 +82,57 @@ impl Glm5NextDsaLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
+        let spans: Vec<DsaRowSpan> = seq_lens
+            .iter()
+            .map(|&first_pos| DsaRowSpan { first_pos, rows: 1 })
+            .collect();
+        self.decode_spans(
+            hidden,
+            states,
+            &spans,
+            kv_cache,
+            meta,
+            meta_row_base,
+            ctx,
+            stream,
+        )
+    }
+
+    /// 2026-10-09: `spans[s].rows` consecutive tokens for each sequence `s` (`states[s]`), the
+    /// rows sequence-major: the batched speculative verify's DSA mixer, and with one row per
+    /// sequence the batched decode's. Per row, in row order: the indexer write and that row's
+    /// selection, as `decode_k` issues them for one sequence, so a row selects over its own
+    /// sequence's indexer rows up to its own position and never sees a later row's. The
+    /// projections, the latent write and the attend each run once over all rows; row `r`'s
+    /// position, KV slot, `seq_len` and block table are metadata row `meta_row_base + r`.
+    ///
+    /// Errors before any launch on the conditions [`Self::decode_rows`] lists, checked per
+    /// sequence at the span's first position and for room for all its rows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_spans(
+        &self,
+        hidden: DevicePtr,
+        states: &mut [&mut (dyn LayerState + 'static)],
+        spans: &[DsaRowSpan],
+        kv_cache: &mut PagedKvCache,
+        meta: &AttnMetadataDev,
+        meta_row_base: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
         use crate::glm5next_layer::profile;
-        let n = states.len();
-        if n == 0 || n != seq_lens.len() || n > self.workspace.max_rows {
+        let n: usize = spans.iter().map(|s| s.rows).sum();
+        if n == 0
+            || states.len() != spans.len()
+            || spans.iter().any(|s| s.rows == 0)
+            || n > self.workspace.max_rows
+        {
             bail!(
-                "DSA layer {}: {n} row states and {} seq_lens for a workspace built for {} rows",
+                "DSA layer {}: {} row states and {} spans of {n} rows for a workspace built for \
+                 {} rows",
                 self.layer_idx,
-                seq_lens.len(),
+                states.len(),
+                spans.len(),
                 self.workspace.max_rows
             );
         }
@@ -101,12 +157,12 @@ impl Glm5NextDsaLayer {
                 self.layer_idx
             );
         }
-        for (r, &seq_len) in seq_lens.iter().enumerate() {
-            let st = dsa_row(states, r)?;
-            self.check_lockstep(st, seq_len)?;
-            st.ensure_room(1)?;
-            // 2026-10-09: A paged row is always placed on the device, through its metadata
-            // block table: this call has no host block tables.
+        for (s, span) in spans.iter().enumerate() {
+            let st = dsa_row(states, s)?;
+            self.check_lockstep(st, span.first_pos)?;
+            st.ensure_room(span.rows)?;
+            // 2026-10-09: A paged row is always placed on the device, at its metadata
+            // position through its metadata block-table row: this call has no host tables.
             if st.cache() == IndexerCache::Paged {
                 if self.select_kernels.indexer_store.0 == 0 {
                     bail!(
@@ -119,6 +175,11 @@ impl Glm5NextDsaLayer {
             }
         }
         let bt_stride = meta.max_blocks_per_seq as usize * 4;
+        let row_seq: Vec<usize> = spans
+            .iter()
+            .enumerate()
+            .flat_map(|(s, span)| std::iter::repeat_n(s, span.rows))
+            .collect();
 
         let gpu = ctx.gpu;
         let block_size = kv_cache.config().block_size;
@@ -135,10 +196,55 @@ impl Glm5NextDsaLayer {
             stream,
         )?;
         profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
+        // 2026-10-09: The selector query (`wq_b` over `q_resid`) and head weights
+        // (`weights_proj` over the layer input) of every row in one launch each, so `wq_b`
+        // (12.6 MB on GLM-5.3) is read once per group instead of once per row. Each row of
+        // `dense_gemv_bf16_batchm_fp32out` is the M = 1 `gemv_f32`'s result for that row, so
+        // this runs only where the single-row path would take `gemv_f32`, and only for two
+        // rows or more: one row keeps the single-sequence launches.
+        let w = &self.workspace;
+        let (heads, idx_row) = (
+            self.cfg.index_heads,
+            self.cfg.index_heads * self.cfg.index_head_dim,
+        );
+        let batched_idx = n > 1
+            && self.kernels.gemv_batchm_f32.0 != 0
+            && self.kernels.gemv_f32.0 != 0
+            && w.q_idx_rows.0 != 0
+            && w.head_weights_rows.0 != 0;
+        if batched_idx {
+            let k = &self.kernels;
+            gemm(
+                gpu,
+                k.gemm_f32,
+                k.gemv_f32,
+                k.gemv_batchm_f32,
+                w.q_resid,
+                self.weights.wq_b,
+                w.q_idx_rows,
+                n,
+                idx_row,
+                self.cfg.q_lora_rank,
+                stream,
+            )?;
+            gemm(
+                gpu,
+                k.gemm_f32,
+                k.gemv_f32,
+                k.gemv_batchm_f32,
+                hidden,
+                self.weights.weights_proj,
+                w.head_weights_rows,
+                n,
+                heads,
+                self.cfg.hidden,
+                stream,
+            )?;
+        }
         for r in 0..n {
             let mr = meta_row_base + r;
             let t = profile::start();
-            let st = dsa_row(states, r)?;
+            let st = dsa_row(states, row_seq[r])?;
             let bt_row = meta.block_table.offset(mr * bt_stride);
             let place = if replay_safe || st.cache() == IndexerCache::Paged {
                 IndexerPlace::Device {
@@ -149,18 +255,25 @@ impl Glm5NextDsaLayer {
                 // 2026-10-09: A flat row's host address is `pos * D`; it needs no table.
                 IndexerPlace::Host { block_table: &[] }
             };
-            self.indexer_forward(
+            self.indexer_forward_with(
                 gpu,
                 hidden.offset(r * self.cfg.hidden * 2),
                 st,
                 kv_cache,
                 place,
+                !batched_idx,
                 stream,
             )?;
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
             if replay_safe {
                 self.write_geom(gpu, meta.seq_len.offset(mr * 4), stream)?;
             }
+            let pre = batched_idx.then(|| {
+                (
+                    w.q_idx_rows.offset(r * idx_row * 4),
+                    w.head_weights_rows.offset(r * heads * 4),
+                )
+            });
             let rows = self.indexer_rows(st, kv_cache, bt_row)?;
             self.select_row(
                 gpu,
@@ -169,6 +282,7 @@ impl Glm5NextDsaLayer {
                 rows,
                 meta.positions.offset(mr * 4),
                 replay_safe,
+                pre,
                 stream,
             )?;
         }

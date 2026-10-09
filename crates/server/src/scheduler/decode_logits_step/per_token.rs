@@ -90,6 +90,14 @@ pub(super) fn process_decoded_token(
         a.think_skip_count = 0;
     }
 
+    // 2026-10-09: Under a format whose tool call closes the thinking block, the opener
+    // leaves thinking here and is handled below as the first content token.
+    crate::scheduler::think_close::close_thinking_at_tool_call(
+        a,
+        tok,
+        sched.limits.thinking_closed_by,
+    );
+
     // 2026-09-25: Advance the grammar matcher only outside thinking; thinking tokens
     // (the closing `</think>` included) are not part of the constrained output.
     if !a.inside_thinking

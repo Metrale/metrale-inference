@@ -25,6 +25,9 @@ use crate::glm5next_dsa::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 /// 2026-10-08: Distinct handles, so a launch names its kernel. The decode kernel resolves
 /// through the mock to `MOCK_K`.
 pub(super) const BATCHM: u64 = 0x105;
+pub(super) const BATCHM_F32: u64 = 0x108;
+pub(super) const GEMV_F32: u64 = 0x104;
+pub(super) const SCORES: u64 = 0x203;
 pub(super) const LATENT: u64 = 0x107;
 pub(super) const KPOOL: u64 = 0x201;
 pub(super) const EXPAND: u64 = 0x205;
@@ -139,15 +142,16 @@ impl Rig {
                 gemm: k(0x101),
                 gemm_f32: k(0x102),
                 gemv: k(0x103),
-                gemv_f32: k(0x104),
+                gemv_f32: k(GEMV_F32),
                 gemv_batchm: k(BATCHM),
+                gemv_batchm_f32: k(BATCHM_F32),
                 rms_norm: k(0x106),
                 latent_write: k(LATENT),
             },
             select_kernels: Glm5NextDsaKernels {
                 kpool_compress: k(KPOOL),
                 compact_pools: k(0x202),
-                index_scores: k(0x203),
+                index_scores: k(SCORES),
                 topk_pools: k(0x204),
                 expand_selection: k(EXPAND),
                 k_norm: k(KNORM),
