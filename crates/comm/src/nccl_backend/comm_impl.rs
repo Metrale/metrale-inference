@@ -307,13 +307,17 @@ impl NcclBackend {
         };
         nccl::check_nccl(result, "ncclBroadcast")?;
 
-        // 2026-09-26: Poll `cuStreamQuery` with a 1 ms pause, so the deadline
-        // applies while waiting, not after an unbounded synchronise.
+        // 2026-09-26: Poll `cuStreamQuery`, so the deadline applies while waiting,
+        // not after an unbounded synchronise. 2026-10-09: The pause between polls is
+        // `self.poll` (yield, then short sleeps), no longer a fixed 1 ms sleep.
         let ready = || {
             ensure!(self.check_async_error(comm), "NCCL asynchronous failure");
             nccl::stream_ready(self.legacy_stream)
         };
-        let pause = || std::thread::sleep(Duration::from_millis(1));
+        let pause = || match self.poll.action(start.elapsed()) {
+            crate::collective_wait::PauseAction::Yield => std::thread::yield_now(),
+            crate::collective_wait::PauseAction::Sleep(d) => std::thread::sleep(d),
+        };
         let completion = if idle_command {
             crate::collective_wait::poll_idle_command(ready, pause)
         } else {

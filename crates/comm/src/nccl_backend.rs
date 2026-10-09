@@ -72,6 +72,8 @@ pub struct NcclBackend {
     /// holds the lock while it replaces the handle.
     comm: Mutex<NcclComm>,
     diagnostics: crate::collective_diagnostics::Diagnostics,
+    /// 2026-10-09: The pause between broadcast completion polls (`METRALE_COMM_POLL`).
+    poll: crate::collective_wait::PollPause,
     rank: usize,
     world_size: usize,
     /// 2026-09-26: Stream this backend creates for `all_reduce_async`.
@@ -125,10 +127,10 @@ impl NcclBackend {
     /// when `world_size == 2`.
     ///
     /// # Errors
-    /// An invalid `METRALE_COMM_DIAGNOSTICS` value or rank/world pair, a failed
-    /// bootstrap or NCCL init, a failed stream or event creation, a zero
-    /// `recv_capacity` at `world_size == 2`, or a failed receive-buffer
-    /// allocation. A failed registration of the receive buffer is only logged.
+    /// An invalid `METRALE_COMM_DIAGNOSTICS` or `METRALE_COMM_POLL` value or
+    /// rank/world pair, a failed bootstrap or NCCL init, a failed stream or event
+    /// creation, a zero `recv_capacity` at `world_size == 2`, or a failed
+    /// receive-buffer allocation. A failed registration of the receive buffer is only logged.
     pub fn new(
         rank: usize,
         world_size: usize,
@@ -144,6 +146,8 @@ impl NcclBackend {
             rank,
             world_size,
         )?;
+        let poll_env = std::env::var(crate::collective_wait::POLL_ENV).ok();
+        let poll = crate::collective_wait::PollPause::parse(poll_env.as_deref())?;
         Self::log_nccl_env_vars();
 
         let unique_id = if rank == 0 {
@@ -197,6 +201,7 @@ impl NcclBackend {
         Ok(Self {
             comm: Mutex::new(comm),
             diagnostics,
+            poll,
             rank,
             world_size,
             comm_stream,
