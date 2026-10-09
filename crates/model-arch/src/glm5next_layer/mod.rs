@@ -64,6 +64,7 @@ pub use levers::prefill_rows;
 pub(crate) use levers::{
     PREFILL_ROWS, cublas_wide_proj, dsa_batch_qidx, multi_seq_chunk_rows, multi_seq_chunks,
 };
+pub use steps::{GroupSpan, group_spans};
 pub use types::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
 
 impl TransformerLayer for Glm5NextLayer {

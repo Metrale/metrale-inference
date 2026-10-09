@@ -11,9 +11,13 @@
 //! Environment (all required; a missing one fails the test):
 //! - `METRALE_GLM_URL`: the serve's base URL, e.g. `http://<host>:<port>`.
 //! - `METRALE_GLM_MODEL`: the served model name.
-//! - `METRALE_GLM_TRANSCRIPTS`: transcript file (transcript test only).
+//! - `METRALE_GLM_TRANSCRIPTS`: transcript file (transcript and concurrent tests).
 //! - `METRALE_GLM_TRANSCRIPT_MODE`: `record` (the serve without DFlash) or `compare` (the serve
 //!   with it) (transcript test only).
+//! - `METRALE_GLM_CONCURRENCY` (2026-10-09, concurrent test only): comma-separated widths, e.g.
+//!   `2,4,16`.
+//! - `METRALE_GLM_SERVE_LOG` (concurrent test only): the DFlash serve's log file, read for its
+//!   `DFLASH BATCHED verify: n=` lines (logged at info level).
 //!
 //!   cargo test -p metrale-server --release --test glm_dflash_window -- --ignored --nocapture
 
@@ -161,10 +165,7 @@ fn glm_dflash_greedy_transcripts_match_plain_decode() -> Result<()> {
     let mut got = BTreeMap::new();
     for (id, prompt) in PROMPTS {
         let (text, n) = complete(&url, &model, prompt)?;
-        got.insert(
-            id.to_string(),
-            json!({"text": text, "completion_tokens": n}),
-        );
+        got.insert(id.to_string(), transcript(text, n));
     }
     match mode.as_str() {
         "record" => std::fs::write(&path, serde_json::to_string_pretty(&got)?)?,
@@ -182,5 +183,87 @@ fn glm_dflash_greedy_transcripts_match_plain_decode() -> Result<()> {
         }
         other => bail!("METRALE_GLM_TRANSCRIPT_MODE must be record or compare, not {other}"),
     }
+    Ok(())
+}
+
+/// 2026-10-09: The transcript of each `PROMPTS` entry as `complete` returns it.
+fn transcript(text: String, n: u64) -> Value {
+    json!({"text": text, "completion_tokens": n})
+}
+
+/// 2026-10-09: The `n` of every `DFLASH BATCHED verify: n=<n>` line in the serve log.
+fn batched_verify_widths(log: &str) -> Result<Vec<usize>> {
+    let page = std::fs::read_to_string(log).with_context(|| format!("read {log}"))?;
+    page.lines()
+        .filter_map(|l| l.split_once("DFLASH BATCHED verify: n=").map(|(_, r)| r))
+        .map(|r| {
+            let digits: String = r.chars().take_while(char::is_ascii_digit).collect();
+            digits
+                .parse::<usize>()
+                .context("malformed batched verify line")
+        })
+        .collect()
+}
+
+/// 2026-10-09: The batched verify is lossless too: at each width C in
+/// `METRALE_GLM_CONCURRENCY`, C requests start together (prompt `i % 8` for request `i`) on the
+/// DFlash serve, and every transcript must equal the plain decode's (`record` file of the
+/// transcript test). Each width must also log at least one batched verify of 2 or more
+/// sequences, so a serve that fell back to per-sequence verifies does not pass by default.
+///
+/// On one GPU and over two ranks a row's bits do not depend on its batch-mates
+/// (`glm5next_layer/steps/multi_seq.rs`). Over three ranks the all-reduce order may depend on the
+/// message size, so a difference there is first checked against the per-sequence path
+/// (`METRALE_NO_MTP_BATCH_VERIFY=1` on the same serve flags) before it is called a defect.
+#[test]
+#[ignore = "needs a live GLM-5.3 DFlash serve and the plain-decode transcripts (GPU window)"]
+fn glm_dflash_concurrent_transcripts_match_plain_decode() -> Result<()> {
+    let (url, model) = (env("METRALE_GLM_URL")?, env("METRALE_GLM_MODEL")?);
+    let want: BTreeMap<String, Value> =
+        serde_json::from_str(&std::fs::read_to_string(env("METRALE_GLM_TRANSCRIPTS")?)?)?;
+    let log = env("METRALE_GLM_SERVE_LOG")?;
+    let widths: Vec<usize> = env("METRALE_GLM_CONCURRENCY")?
+        .split(',')
+        .map(|w| w.trim().parse::<usize>().context("METRALE_GLM_CONCURRENCY"))
+        .collect::<Result<_>>()?;
+    let mut failures = Vec::new();
+    for c in widths {
+        let logged_before = batched_verify_widths(&log)?.len();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(c));
+        let handles: Vec<_> = (0..c)
+            .map(|i| {
+                let (url, model, barrier) = (url.clone(), model.clone(), barrier.clone());
+                std::thread::spawn(move || -> Result<(String, Value)> {
+                    let (id, prompt) = PROMPTS[i % PROMPTS.len()];
+                    barrier.wait();
+                    let (text, n) = complete(&url, &model, prompt)?;
+                    Ok((id.to_string(), transcript(text, n)))
+                })
+            })
+            .collect();
+        for h in handles {
+            let (id, got) = h
+                .join()
+                .map_err(|_| anyhow::anyhow!("request thread panicked"))??;
+            if want.get(&id) != Some(&got) {
+                failures.push(format!("C={c} {id}"));
+            }
+        }
+        let batched: Vec<usize> = batched_verify_widths(&log)?
+            .into_iter()
+            .skip(logged_before)
+            .collect();
+        let widest = batched.iter().copied().max().unwrap_or(0);
+        println!(
+            "C={c}: {} batched verifies, widest n={widest}",
+            batched.len()
+        );
+        if widest < 2 {
+            failures.push(format!(
+                "C={c}: no batched verify of 2+ sequences was logged"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
     Ok(())
 }

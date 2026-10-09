@@ -45,7 +45,7 @@ use crate::glm5next_kda::KdaVerifyRecord;
 /// 2026-10-09: One sequence's rows inside one row group of `forward_spans`: group rows
 /// `row0..row0 + rows` are the sequence's rows `t0..t0 + rows`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::glm5next_layer) struct GroupSpan {
+pub struct GroupSpan {
     pub seq: usize,
     pub row0: usize,
     pub t0: usize,
@@ -55,11 +55,7 @@ pub(in crate::glm5next_layer) struct GroupSpan {
 /// 2026-10-09: The spans of the group of `m` rows starting at row `base` of a pass whose rows
 /// are sequence-major with `ks[s]` rows for sequence `s`, in row order. Sequences with no row in
 /// the group are absent, so the spans' sequences are consecutive.
-pub(in crate::glm5next_layer) fn group_spans(
-    ks: &[usize],
-    base: usize,
-    m: usize,
-) -> Vec<GroupSpan> {
+pub fn group_spans(ks: &[usize], base: usize, m: usize) -> Vec<GroupSpan> {
     let mut spans = Vec::new();
     let mut off = 0usize;
     for (seq, &k) in ks.iter().enumerate() {

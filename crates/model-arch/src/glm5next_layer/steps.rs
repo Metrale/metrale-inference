@@ -11,6 +11,7 @@ use super::*;
 mod drafter;
 mod forward;
 mod multi_seq;
+pub use multi_seq::{GroupSpan, group_spans};
 mod replay;
 mod verify_multi;
 
