@@ -187,11 +187,14 @@ pub(crate) fn load_model(
     // on|off` toggles this run's flag. Its starting value is
     // `--content-loop-watchdog`, else `METRALE_CONTENT_LOOP_WATCHDOG`, else
     // MODEL.toml `[behavior].enable_loop_watchdog`.
-    let sched_levers = std::sync::Arc::new(crate::scheduler::levers::SchedLevers::from_env(
-        args.mtp_gate_force(),
-        args.mtp_shape.mtp_dcut_ratio,
-        spec_cost,
-    ));
+    let sched_levers = std::sync::Arc::new(
+        crate::scheduler::levers::SchedLevers::from_env(
+            args.mtp_gate_force(),
+            args.mtp_shape.mtp_dcut_ratio,
+            spec_cost,
+        )
+        .with_prefill_varlen_with_decode(args.prefill_batch.prefill_varlen_with_decode)?,
+    );
     sched_levers.set_loop_watchdog(crate::scheduler::resolve_content_loop_watchdog(
         ptx_set.behavior.enable_loop_watchdog,
         std::env::var("METRALE_CONTENT_LOOP_WATCHDOG")

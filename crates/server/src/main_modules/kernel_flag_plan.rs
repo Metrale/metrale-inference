@@ -73,8 +73,8 @@ impl KernelFlagPlan {
                 .weight_quant_tier()
                 .expect("validated by validate_serve_args"),
             expert_quantization: args.expert_quantization.0,
-            prefill_codispatch: args.prefill_codispatch.then_some(true),
-            prefill_varlen: args.prefill_varlen_batch.then_some(true),
+            prefill_codispatch: args.prefill_batch.prefill_codispatch.then_some(true),
+            prefill_varlen: args.prefill_batch.prefill_varlen_batch.then_some(true),
             ssm_tail_midchunk: args.no_ssm_tail_midchunk.then_some(false),
             hermetic: args.hermetic,
         }

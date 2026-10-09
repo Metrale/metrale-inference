@@ -45,6 +45,7 @@ pub(crate) mod ml_utils_io;
 mod serve_args;
 mod serve_args_mtp;
 mod serve_args_mtp_draft;
+mod serve_args_prefill;
 mod serve_args_prompt_lookup;
 pub(crate) mod serve_args_spec_cost;
 pub(crate) mod sync_recipes;

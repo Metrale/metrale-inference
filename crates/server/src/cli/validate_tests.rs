@@ -119,8 +119,14 @@ fn an_absent_lever_flag_parses_as_unspecified() {
         "METRALE_SSM_BATCHED_RECURRENT"
     );
     assert!(!a.exact_verify, "--exact-verify");
-    assert!(!a.prefill_varlen_batch, "METRALE_PREFILL_VARLEN");
-    assert!(!a.prefill_codispatch, "METRALE_PREFILL_CODISPATCH");
+    assert!(
+        !a.prefill_batch.prefill_varlen_batch,
+        "METRALE_PREFILL_VARLEN"
+    );
+    assert!(
+        !a.prefill_batch.prefill_codispatch,
+        "METRALE_PREFILL_CODISPATCH"
+    );
 
     let a = parse(&["--no-ssm-tail-midchunk", "--mtp-gate", "force"]);
     assert!(a.no_ssm_tail_midchunk, "given, it still wins");
@@ -136,7 +142,7 @@ fn the_bare_gdn_switches_still_mean_on() {
         "--prefill-codispatch",
     ]);
     assert!(a.gdn_fused_norm && a.exact_verify);
-    assert!(a.prefill_varlen_batch && a.prefill_codispatch);
+    assert!(a.prefill_batch.prefill_varlen_batch && a.prefill_batch.prefill_codispatch);
 }
 
 /// 2026-10-01: The exact verify, asked for or implied by a fixed GDN format, runs on an FP16

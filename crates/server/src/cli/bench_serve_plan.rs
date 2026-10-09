@@ -167,7 +167,7 @@ pub(crate) fn disclosed_from(args: &crate::cli::ServeArgs) -> BTreeMap<String, S
     gate::record_serve::disclosure(
         args.mtp_gate_force(),
         args.speculative,
-        args.prefill_codispatch,
+        args.prefill_batch.prefill_codispatch,
         args.w4a4_downcast,
         (args.expert_quantization.0 != metrale_model_layers::layers::ExpertQuantization::Fp8)
             .then(|| args.expert_quantization.0.name()),
