@@ -14,6 +14,8 @@ mod group_g_parallel;
 mod group_h_salvage;
 mod group_i_poolside_safety;
 mod group_j_glm5_next;
+mod group_k_glm47;
+mod group_k_glm47_streaming;
 mod streaming_frag;
 mod streaming_frag_env;
 mod streaming_leak;

@@ -127,7 +127,7 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = 16)]
     pub block_size: usize,
 
-    /// KV cache dtype (fp8, bf16, or nvfp4).
+    /// KV cache dtype (fp8, also spelled fp8_e4m3; bf16; or nvfp4).
     /// Precedence (highest wins): this flag → MODEL.toml
     /// `[behavior].default_kv_dtype` → fp8 (`DEFAULT_KV_CACHE_DTYPE`). An
     /// explicitly passed value always wins, including `fp8` itself.
@@ -136,7 +136,7 @@ pub struct ServeArgs {
     /// `*k_*v` pairs built from them) are experimental: they are not built for
     /// every kernel target, and a target that lacks them fails the kv-cache kernel
     /// preflight at startup.
-    #[arg(long)]
+    #[arg(long, value_parser = super::flag_values::canonical_kv_cache_dtype)]
     pub kv_cache_dtype: Option<String>,
 
     /// Storage dtype for the GDN decode h-state: `f32` (default), `f16`, or

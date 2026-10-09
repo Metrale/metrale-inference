@@ -39,6 +39,8 @@ impl StreamingToolDetector {
             args_open: false,
             emitted_keys: Vec::new(),
             incremental_emitted: false,
+            fail_closed: false,
+            header_decided: false,
         }
     }
 
@@ -68,6 +70,7 @@ impl StreamingToolDetector {
         self.args_open = false;
         self.emitted_keys.clear();
         self.incremental_emitted = false;
+        self.header_decided = false;
     }
 
     /// 2026-09-26: Feed a text delta and return the events it completes:
@@ -76,6 +79,10 @@ impl StreamingToolDetector {
     pub fn process(&mut self, new_text: &str) -> Vec<DetectorOutput> {
         let mut outputs = Vec::new();
         self.buffer.push_str(new_text);
+        if self.fail_closed {
+            self.process_fail_closed(&mut outputs);
+            return outputs;
+        }
         loop {
             match self.process_dsml(&mut outputs) {
                 DsmlStreamAction::Continue => continue,

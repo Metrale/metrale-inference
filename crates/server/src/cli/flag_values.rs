@@ -107,6 +107,18 @@ impl Tristate {
     }
 }
 
+/// 2026-10-08: `--kv-cache-dtype` parser: the canonical name for a value that has a
+/// second spelling, so every consumer of the flag sees one spelling. `fp8_e4m3` is the
+/// format `fp8` stores (E4M3, `metrale_cache::kv_cache::KvCacheDtype::Fp8`). Any other
+/// value passes through unchanged and is checked by `validate_serve_args`.
+pub(crate) fn canonical_kv_cache_dtype(raw: &str) -> Result<String, String> {
+    let canonical = match raw {
+        "fp8_e4m3" => "fp8",
+        other => other,
+    };
+    Ok(canonical.to_string())
+}
+
 pub(crate) const LM_HEAD_DTYPES: &[&str] = &["default", "bf16", "nvfp4", "fp8"];
 pub(crate) const MTP_QUANTS: &[&str] = &["bf16", "fp8", "nvfp4"];
 pub(crate) const SCHEDULERS: &[&str] = &["fifo", "slai"];
@@ -128,6 +140,7 @@ pub(crate) const TOOL_CALL_PARSERS: &[&str] = &[
     "minimax_xml",
     "bare_json",
     "poolside_v1",
+    "glm47",
 ];
 
 /// 2026-09-27: `--expert-quantization`: a clap value enum over the model layer's tiers

@@ -13,6 +13,7 @@ use tokenizers::Tokenizer;
 #[path = "chat_impl/vision_pads.rs"]
 mod vision_pads;
 
+use super::chat_render::ThinkingVars;
 use super::{
     ChatEncoding, ChatTokenizer, StreamingDecoder, autoclose_assistant_think,
     normalize_tool_call_arguments, remap_developer_role, resolve_think_control,
@@ -45,7 +46,7 @@ impl ChatTokenizer {
         supports_thinking: bool,
         model_type: &str,
         repo_root: Option<&Path>,
-        disable_template_overrides: bool,
+        source: super::TemplateSource<'_>,
     ) -> Result<Self> {
         let official_k3 = super::kimi_k3::uses_xtml(model_dir, model_type)?;
         let tokenizer_path = model_dir.join("tokenizer.json");
@@ -56,13 +57,18 @@ impl ChatTokenizer {
             .map_err(|e| anyhow::anyhow!("Failed to disable tokenizer truncation: {e}"))?;
 
         // 2026-09-26: Template source, first match wins: an official Kimi K3 checkpoint gets
-        // no chat template; then `jinja-templates/{model_type}.jinja` when the file exists and
-        // `--disable-template-overrides` is off; then the model's own template
-        // (`load_config_template`); then the ChatML default.
-        let override_tmpl = if disable_template_overrides {
-            None
-        } else {
-            super::jinja_helpers::load_override_template(model_type, repo_root)
+        // no chat template; then the `--chat-template` file, or
+        // `jinja-templates/{model_type}.jinja` when the file exists and
+        // `--disable-template-overrides` is off (`TemplateSource`); then the model's own
+        // template (`load_config_template`); then the ChatML default.
+        let override_tmpl = match source {
+            super::TemplateSource::OverrideDir => {
+                super::jinja_helpers::load_override_template(model_type, repo_root)
+            }
+            super::TemplateSource::Checkpoint => None,
+            super::TemplateSource::File(path) => {
+                Some(super::jinja_helpers::load_template_file(path)?)
+            }
         };
         let (chat_template, checkpoint_template) = if official_k3 {
             tracing::warn!("Official Kimi K3: raw completions only; XTML chat is unavailable");
@@ -82,11 +88,17 @@ impl ChatTokenizer {
         let jinja_env = super::jinja_helpers::build_jinja_env(&chat_template)?;
 
         // 2026-09-26: A variant template that fails to compile is dropped without a log line.
-        let openai_jinja_env = super::jinja_helpers::load_openai_template(model_type, repo_root)
-            .and_then(|tmpl| {
-                tracing::info!("Loaded OpenAI-variant Jinja template for {model_type}");
-                super::jinja_helpers::build_jinja_env(&tmpl).ok()
-            });
+        // 2026-10-08: A `--chat-template` file serves the OpenAI apply paths too.
+        let openai_template = match source {
+            super::TemplateSource::File(_) => None,
+            super::TemplateSource::OverrideDir | super::TemplateSource::Checkpoint => {
+                super::jinja_helpers::load_openai_template(model_type, repo_root)
+            }
+        };
+        let openai_jinja_env = openai_template.and_then(|tmpl| {
+            tracing::info!("Loaded OpenAI-variant Jinja template for {model_type}");
+            super::jinja_helpers::build_jinja_env(&tmpl).ok()
+        });
         let chat_encoding = if official_k3 {
             ChatEncoding::KimiK3XtmlUnsupported
         } else if model_type == "deepseek_v4" || model_type == "deepseek_v41" {
@@ -189,7 +201,7 @@ impl ChatTokenizer {
     }
 
     /// 2026-09-26: `apply_chat_template_jinja_with_effort` with no reasoning effort and
-    /// `preserve_thinking` unset.
+    /// `preserve_thinking` and `thinking` unset.
     pub fn apply_chat_template_jinja(
         &self,
         messages: &[serde_json::Value],
@@ -203,7 +215,7 @@ impl ChatTokenizer {
             enable_thinking,
             disable_tool_steering,
             None,
-            None,
+            ThinkingVars::default(),
         )
     }
 
@@ -214,7 +226,7 @@ impl ChatTokenizer {
         enable_thinking: bool,
         disable_tool_steering: bool,
         reasoning_effort: Option<&str>,
-        preserve_thinking: Option<bool>,
+        thinking_vars: ThinkingVars,
     ) -> Result<Vec<u32>> {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
         if self.chat_encoding == ChatEncoding::DeepseekV4 {
@@ -235,7 +247,8 @@ impl ChatTokenizer {
                 enable_thinking,
                 disable_tool_steering,
                 reasoning_effort,
-                preserve_thinking,
+                preserve_thinking: thinking_vars.preserve_thinking,
+                thinking: thinking_vars.thinking,
                 allow_continue_final: true,
             },
         )?;
@@ -253,7 +266,7 @@ impl ChatTokenizer {
     }
 
     /// 2026-09-26: `apply_chat_template_openai_with_effort` with no reasoning effort and
-    /// `preserve_thinking` unset.
+    /// `preserve_thinking` and `thinking` unset.
     pub fn apply_chat_template_openai(
         &self,
         messages: &[serde_json::Value],
@@ -267,7 +280,7 @@ impl ChatTokenizer {
             enable_thinking,
             disable_tool_steering,
             None,
-            None,
+            ThinkingVars::default(),
         )
     }
 
@@ -278,7 +291,7 @@ impl ChatTokenizer {
         enable_thinking: bool,
         disable_tool_steering: bool,
         reasoning_effort: Option<&str>,
-        preserve_thinking: Option<bool>,
+        thinking_vars: ThinkingVars,
     ) -> Result<Vec<u32>> {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
         if self.chat_encoding == ChatEncoding::DeepseekV4 {
@@ -288,7 +301,7 @@ impl ChatTokenizer {
                 enable_thinking,
                 disable_tool_steering,
                 reasoning_effort,
-                preserve_thinking,
+                thinking_vars,
             );
         }
         if let Some(ref env) = self.openai_jinja_env {
@@ -300,7 +313,8 @@ impl ChatTokenizer {
                     enable_thinking,
                     disable_tool_steering,
                     reasoning_effort,
-                    preserve_thinking,
+                    preserve_thinking: thinking_vars.preserve_thinking,
+                    thinking: thinking_vars.thinking,
                     allow_continue_final: false,
                 },
             )
@@ -313,7 +327,7 @@ impl ChatTokenizer {
                 enable_thinking,
                 disable_tool_steering,
                 reasoning_effort,
-                preserve_thinking,
+                thinking_vars,
             )
         }
     }

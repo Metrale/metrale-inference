@@ -62,6 +62,9 @@ pub struct AppState {
     /// 2026-09-26: Whether and how `image_url` parts with an http(s) URL are
     /// fetched; off unless `--vision-allow-remote-images`.
     pub remote_image_policy: crate::api::chat::remote_image::RemoteImagePolicy,
+    /// 2026-10-08: `--limit-images-per-prompt` / `--limit-videos-per-prompt`
+    /// (`api/chat/media_limits.rs`).
+    pub media_limits: crate::api::chat::media_limits::MediaLimits,
     /// 2026-09-26: ffmpeg subprocess policy for video parts; off unless
     /// `--video-allow-ffmpeg`.
     pub video_ffmpeg: metrale_model_layers::video_decode_ffmpeg::FfmpegPolicy,
@@ -115,6 +118,9 @@ pub struct AppState {
     /// 2026-09-26: `--disable-thinking`: `resolve_thinking` turns thinking off
     /// whatever the request or MODEL.toml asks (`api/chat/thinking.rs`).
     pub disable_thinking: bool,
+    /// 2026-10-08: `--uncapped-thinking`: `resolve_thinking` and the template-opened
+    /// block arm no budget of the server's own (`api/chat/thinking.rs`).
+    pub uncapped_thinking: bool,
     /// 2026-09-26: The thinking directive from `--default-chat-template-kwargs`,
     /// used when the request gives no explicit one (`api/chat/prepare.rs`).
     pub default_thinking: crate::ir::ThinkingDirective,

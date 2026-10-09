@@ -160,3 +160,27 @@ fn a_tristate_is_exactly_auto_on_off() {
         );
     }
 }
+
+/// 2026-10-08: `--kv-cache-dtype fp8_e4m3` is stored as `fp8`, so every consumer of the
+/// flag (validation, the MODEL.toml default comparison, the KV config) sees the
+/// canonical name; every other value is stored as written.
+#[test]
+fn fp8_e4m3_is_stored_as_fp8_and_other_values_pass_through() {
+    let parse = |v: &str| {
+        crate::cli::ServeArgs::try_parse_from(["serve", "--kv-cache-dtype", v])
+            .expect("parses")
+            .kv_cache_dtype
+    };
+    assert_eq!(parse("fp8_e4m3").as_deref(), Some("fp8"));
+    for v in ["fp8", "bf16", "nvfp4", "turbo4k_turbo3v", "bogus"] {
+        assert_eq!(parse(v).as_deref(), Some(v));
+    }
+    assert_eq!(
+        "fp8"
+            .parse::<metrale_cache::kv_cache::KvCacheDtype>()
+            .map(|d| d == metrale_cache::kv_cache::KvCacheDtype::Fp8)
+            .ok(),
+        Some(true),
+        "the canonical name parses to the FP8 (E4M3) cache format"
+    );
+}
