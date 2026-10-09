@@ -51,6 +51,7 @@ pub(crate) fn dispatch(args: AccuracyArgs) -> Result<i32> {
         AccuracyAction::Points(sel) => points(&sel),
         AccuracyAction::Check(a) => check(&a, false),
         AccuracyAction::Calibrate(a) => check(&a, true),
+        AccuracyAction::Model(a) => super::accuracy_model::run(&a),
     }
 }
 
@@ -96,8 +97,19 @@ fn points(sel: &AccuracySelectArgs) -> Result<i32> {
     for ((f, k), n) in &by {
         println!("covered  {f:<24} {k:<56} {n} checks (full)");
     }
+    let mut gaps: BTreeMap<(String, String), (Vec<String>, String)> = BTreeMap::new();
     for ((f, k, op), why) in &cov.uncovered {
-        println!("UNCOVERED {f:<23} {op:<24} {k} — {why}");
+        let e = gaps
+            .entry((f.clone(), why.clone()))
+            .or_insert_with(|| (Vec::new(), k.clone()));
+        e.0.push(op.clone());
+    }
+    for ((f, why), (ops, k)) in &gaps {
+        println!(
+            "UNCOVERED {f:<23} {} op(s) e.g. {} via {k} — {why}",
+            ops.len(),
+            ops[0]
+        );
     }
     for (f, k) in &cov.unused {
         println!("UNSWEPT  {f:<24} {k} — contracted, no described model runs it");

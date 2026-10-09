@@ -11,6 +11,7 @@ use clap::Parser;
 pub(crate) mod accuracy;
 mod accuracy_adapters;
 mod accuracy_adapters_w8a8;
+mod accuracy_model;
 mod accuracy_gpu;
 pub mod bench_aggregate;
 mod bench_args;
@@ -137,6 +138,32 @@ pub enum AccuracyAction {
     /// As `check`, and also print the `[[contract.calibration]]` rows the passing checks
     /// measured, for review into ACCURACY.toml.
     Calibrate(AccuracyRunArgs),
+    /// Judge a teacher-forced model check: a run's logits against a pinned reference's on the
+    /// same corpus (per-token KL, top-1 agreement, max |dlogit|), and, with per-stage deltas,
+    /// the first stage that leaves its composed budget. Exits non-zero when a limit is exceeded.
+    Model(AccuracyModelArgs),
+}
+
+/// `met accuracy model` options. Each side is `<prefix>.f32` (little-endian f32 logits,
+/// `[positions, vocab]` row-major) and `<prefix>.toml` (`corpus_sha256`, `reference_sha256`,
+/// `vocab`).
+#[derive(clap::Args, Debug, Clone)]
+pub struct AccuracyModelArgs {
+    /// The run's logits prefix.
+    #[arg(long)]
+    pub run: std::path::PathBuf,
+    /// The reference's logits prefix.
+    #[arg(long)]
+    pub reference: std::path::PathBuf,
+    /// Fail when the mean per-token KL (nats) exceeds this.
+    #[arg(long)]
+    pub max_mean_kl: f64,
+    /// Fail when the top-1 agreement falls below this share.
+    #[arg(long)]
+    pub min_top1: f64,
+    /// Fail when any |dlogit| exceeds this.
+    #[arg(long)]
+    pub max_dlogit: f64,
 }
 
 /// `met accuracy points` options.
