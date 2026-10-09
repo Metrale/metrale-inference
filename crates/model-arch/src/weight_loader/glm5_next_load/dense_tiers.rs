@@ -23,11 +23,16 @@ use crate::glm5next_w4a16_dense::{self as w4a16, ProjTier};
 type Proj = (DevicePtr, usize, usize, &'static str);
 
 /// 2026-10-09: Split the layer's projections by tier: all FP8 unless `w4a16`, then by
-/// `tier_of`. Pure, so the decision is tested without a GPU.
-pub(super) fn split_by_tier(projs: Vec<Proj>, w4a16_on: bool) -> Result<(Vec<Proj>, Vec<Proj>)> {
+/// `tier_of` (with `dsa_absorbed`, `glm5next_w4a16_dense::dsa_absorbed_lever`). Pure, so the
+/// decision is tested without a GPU.
+pub(super) fn split_by_tier(
+    projs: Vec<Proj>,
+    w4a16_on: bool,
+    dsa_absorbed: bool,
+) -> Result<(Vec<Proj>, Vec<Proj>)> {
     let (mut fp8, mut w4) = (Vec::new(), Vec::new());
     for p in projs {
-        if w4a16_on && w4a16::tier_of(p.3)? == ProjTier::W4a16 {
+        if w4a16_on && w4a16::tier_of(p.3, dsa_absorbed)? == ProjTier::W4a16 {
             w4.push(p);
         } else {
             fp8.push(p);
@@ -60,6 +65,7 @@ pub(super) fn register_dense_tiers(
         projs,
         &mut weight_slots(mixer, mlp),
         w4a16::enabled(),
+        w4a16::dsa_absorbed_lever()?,
         idx,
     )
 }
@@ -72,9 +78,10 @@ pub(super) fn register_projections(
     projs: Vec<Proj>,
     slots: &mut [&mut DevicePtr],
     w4a16_on: bool,
+    dsa_absorbed: bool,
     idx: usize,
 ) -> Result<()> {
-    let (fp8, w4) = split_by_tier(projs, w4a16_on)?;
+    let (fp8, w4) = split_by_tier(projs, w4a16_on, dsa_absorbed)?;
     if !fp8.is_empty() {
         let max_k = fp8.iter().map(|p| p.2).max().unwrap_or(0);
         crate::glm5next_fp8_dense::prepare(gpu, max_k)?;
@@ -103,26 +110,32 @@ pub(super) fn register_projections(
     Ok(())
 }
 
-/// 2026-10-09: Every weight field a W4A16 projection can live in: the KDA projections'
-/// and the shared expert's. A DSA layer has none (`tier_of` keeps it FP8).
+/// 2026-10-09: Every weight field a W4A16 projection can live in: the KDA projections', the
+/// shared expert's, and the DSA projections `tier_of` can move (under `METRALE_GLM_DSA_W4A16`).
 fn weight_slots<'a>(
     mixer: &'a mut Glm5NextMixer,
     mlp: &'a mut Glm5NextMlpSite,
 ) -> Vec<&'a mut DevicePtr> {
     let mut slots = Vec::new();
-    if let Glm5NextMixer::Kda { layer, .. } = mixer {
-        let w = &mut layer.weights;
-        slots.extend([
-            &mut w.q_proj.weight,
-            &mut w.k_proj.weight,
-            &mut w.v_proj.weight,
-            &mut w.f_a.weight,
-            &mut w.f_b.weight,
-            &mut w.b_proj.weight,
-            &mut w.g_a.weight,
-            &mut w.g_b.weight,
-            &mut w.o_proj.weight,
-        ]);
+    match mixer {
+        Glm5NextMixer::Kda { layer, .. } => {
+            let w = &mut layer.weights;
+            slots.extend([
+                &mut w.q_proj.weight,
+                &mut w.k_proj.weight,
+                &mut w.v_proj.weight,
+                &mut w.f_a.weight,
+                &mut w.f_b.weight,
+                &mut w.b_proj.weight,
+                &mut w.g_a.weight,
+                &mut w.g_b.weight,
+                &mut w.o_proj.weight,
+            ]);
+        }
+        Glm5NextMixer::Dsa(layer) => {
+            let w = &mut layer.weights;
+            slots.extend([&mut w.q_a_proj, &mut w.q_absorb, &mut w.o_absorb]);
+        }
     }
     if let Glm5NextMlpSite::Moe(w) = mlp {
         slots.extend([

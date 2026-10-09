@@ -387,6 +387,7 @@ impl Glm5NextDsaLayer {
                 sel_indices: w.select.tokens(),
                 k_scale: self.kv_scale,
                 v_scale: self.kv_scale,
+                split_ws: w.split_ws,
             },
             stream,
         )?;
