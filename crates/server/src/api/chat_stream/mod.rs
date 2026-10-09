@@ -215,6 +215,10 @@ pub(crate) async fn run_chat_stream(
             .as_ref()
             .is_some_and(|p| p.wants_typed_arguments()),
         call_policy,
+        tool_call_closes_reasoning: state
+            .reasoning_parser
+            .as_ref()
+            .is_some_and(|p| p.tool_call_closes_reasoning()),
         max_tool_calls_per_response,
         req_return_token_ids,
         req_ctx,

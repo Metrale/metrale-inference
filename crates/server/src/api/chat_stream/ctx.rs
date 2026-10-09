@@ -49,6 +49,10 @@ pub(super) struct StreamCtx {
     /// parser. Under `FailClosed` the detector judges calls itself and
     /// `tool_dispatch::push_keepalive_if_due` keeps a held call's stream alive.
     pub(super) call_policy: tool_parser::CallPolicy,
+    /// 2026-10-08: The reasoning parser's `tool_call_closes_reasoning`; false without
+    /// one. `handle_token` then ends the reasoning at `<tool_call>` too, and keeps
+    /// marker text inside a call.
+    pub(super) tool_call_closes_reasoning: bool,
     pub(super) max_tool_calls_per_response: usize,
     pub(super) req_return_token_ids: bool,
     pub(super) req_ctx: Option<crate::rate_limiter::RequestContext>,

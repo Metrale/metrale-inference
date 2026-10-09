@@ -258,6 +258,15 @@ fn decode_response_text(
 ) -> (Option<String>, String) {
     let output_tokens =
         output_tokens_without_stop(&response.output_tokens, response.finish_reason.as_str());
+    // 2026-10-08: A format whose tool call also closes the reasoning splits on the text
+    // and keeps marker text inside a call, so neither the token split nor the marker
+    // scrub below applies (`ReasoningParser::tool_call_closes_reasoning`).
+    if let Some(parser) = state.reasoning_parser.as_deref()
+        && parser.tool_call_closes_reasoning()
+    {
+        let text = state.tokenizer.decode(output_tokens).unwrap_or_default();
+        return parser.extract_thinking(&text, enable_thinking);
+    }
     if let Some(think_tok) = state.think_end_token_id {
         if let Some((thinking_tokens, content_tokens)) =
             split_at_first_think_end(output_tokens, think_tok, enable_thinking)

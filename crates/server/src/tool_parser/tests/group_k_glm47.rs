@@ -393,3 +393,32 @@ fn glm47_shares_poolside_v1_rendering_and_markers() {
     assert_eq!(fmt.name(), "glm47");
     assert_eq!(fmt.into_parser().name(), "glm47");
 }
+
+#[test]
+fn the_glm47_reasoning_split_hands_a_nested_call_to_the_judge_intact() {
+    let tool = |name: &str, key: &str| ToolDefinition {
+        tool_type: "function".into(),
+        function: FunctionDefinition {
+            name: name.into(),
+            description: None,
+            parameters: Some(serde_json::json!({"properties": {key: {"type": "string"}}})),
+        },
+    };
+    let tools = [tool("bash", "command"), tool("web_search", "query")];
+    let text = "check<tool_call>bash<arg_key>command</arg_key><arg_value>ls\nno, search\
+                </think><tool_call>web_search<arg_key>query</arg_key><arg_value>q</arg_value>\
+                </tool_call>";
+    let (_, answer) = crate::reasoning_parser::ReasoningFormat::Glm47
+        .into_parser()
+        .extract_thinking(text, true);
+    let (_, verdicts) = parse_glm47_answer(&answer, &tools);
+    assert_eq!(verdicts.len(), 1);
+    let Verdict::Refuse { name, reason, .. } = &verdicts[0] else {
+        panic!("the nested call must be refused: {verdicts:#?}");
+    };
+    assert_eq!(name, "bash");
+    assert!(
+        reason.contains(r#"web_search with arguments {"query":"q"}"#),
+        "{reason}"
+    );
+}
