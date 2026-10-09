@@ -11,6 +11,7 @@ use clap::Parser;
 pub(crate) mod accuracy;
 mod accuracy_adapters;
 mod accuracy_adapters_w8a8;
+mod accuracy_adapters_tc;
 mod accuracy_model;
 mod accuracy_gpu;
 pub mod bench_aggregate;

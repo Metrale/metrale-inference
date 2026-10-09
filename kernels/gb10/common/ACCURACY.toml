@@ -159,3 +159,151 @@ approx = {}
 scale_fold = "group"
 inputs = ["gaussian", "outliers", "near_overflow", "zero_rows"]
 mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: dense_gemv_bf16_tc.cu: BF16 MMA m16n8k16 (the atom's internal order over its 16
+# products is not documented: declared as a 16-term chain, the worst case) into the running
+# FP32 accumulator (:63-71); per 64-K block four MMAs (:175-186); warp w takes blocks w, w + 8,
+# ... in ascending order (:138-142, :158-161), so it chains ceil(K / 512) * 4 MMAs, at most
+# k/128 + 3 (the `tail` level covers a K that is not a multiple of 512); the 8 warps' partials
+# summed in warp order through shared memory (:205-216); one BF16 rounding (:225).
+# Inputs: MMA subnormal handling is not documented, so the denormal class is left out, as the
+# W8A8 MMA contracts do.
+[[contract]]
+family = "dense_bf16_tc"
+kernels = [
+  "dense_gemv_bf16_tc::dense_gemv_bf16_tc8", "dense_gemv_bf16_tc::dense_gemv_bf16_tc16",
+  "dense_gemv_bf16_tc::dense_gemv_bf16_tc32",
+]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "warp", width = "k/128", order = "sequential" },
+  { level = "tail", width = "3", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "none"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["accumulate:bf16", "symbol:dense_gemv_bf16_batchm::dense_gemv_bf16_batchm"]
+
+# 2026-10-09: w4a16_gemv_tc.cu: each weight enters the MMA as BF16(E2M1 * E4M3 * 2^-26), exact
+# (:23-28, :199-204), so the block scale folds per element; BF16 MMA m16n8k16 (declared as a
+# 16-term chain) into the running FP32 accumulator (:65-73, :205-206); per 128-K block eight
+# MMAs (:183-207); warp w takes blocks w, w + 8, ... ascending (:153-158, :171-173), so it chains
+# ceil(K / 1024) * 8 MMAs, at most k/128 + 7 (`tail`); the 8 warps' partials summed in warp order
+# (:227-229), times scale2 * 2^26 in FP32 (:221, :230); one BF16 rounding (:98-106).
+# Inputs: besides the undocumented MMA subnormal handling, the 2^-26 operand pre-scale moves FP32
+# underflow 26 binades into the range the reference treats as normal; no denormal class.
+# No symbol mutation: the engine launcher (ops::w4a16_gemv_batchm) resolves its own tensor-core
+# entry from the row count (gemv_tc::tc_kernel) and takes no entry point.
+[[contract]]
+family = "w4a16_tc"
+kernels = ["w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16"]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "warp", width = "k/128", order = "sequential" },
+  { level = "tail", width = "7", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: The same kernels as the 27B's NVFP4 head (the reduction above).
+[[contract]]
+family = "w4a16_tc"
+kernels = ["w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16"]
+op = "lm_head"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "warp", width = "k/128", order = "sequential" },
+  { level = "tail", width = "7", order = "sequential" },
+  { level = "cta", width = "8", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: tc_rows.cuh at the NVFP4 point (Nvfp4G16): each weight enters as BF16(E2M1 * E4M3),
+# exact (tc_weight_formats.cuh:124-136), so the block scale folds per element; one warp owns 16
+# columns over the whole K: 128-K chunks in ascending order (tc_rows.cuh:114-132), eight BF16
+# MMA m16n8k16 per chunk (declared as 16-term chains) into one FP32 accumulator (FOLDS = false,
+# :147), K / 16 MMAs in all; no cross-warp sum; times s2 in FP32 (tc_weight_formats.cuh:139);
+# one BF16 rounding (tc_rows.cuh:171). Rows, NT and G never change a row's order (:14-16, :40).
+# No symbol mutation: ops::w4a16_tc_rows resolves its entry (_16/_32/_64) from the row count.
+[[contract]]
+family = "tc_rows"
+kernels = ["w4a16_tc_rows::w4a16_tc_rows_64"]
+op = "lm_head"
+reference = "linear"
+class = "derived"
+reduction.k = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "warp", width = "k/16", order = "sequential" },
+]
+ftz = false
+approx = {}
+scale_fold = "element"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16"]
+
+# 2026-10-09: w8a16_gemm_pipelined_m32.cu: E4M3 to BF16 exactly (the LUT, :243-249; the skinny
+# body's bit move, w8a16_gemm_pipelined_m16.cuh:50-56; m64's pm64_b_pair, :310); each 128-K step runs
+# eight BF16 MMA m16n8k16 (declared as 16-term chains) into a zeroed FP32 inner sum (:116-155,
+# :399-429; m16.cuh:115-138); the step's sum times its FP32 block scale is added to the outer
+# sum in ascending step order (:275-281, :431-438; m16.cuh:140, :154-160); one BF16 rounding
+# (:288-291). The 32-row, 64-row and skinny bodies share that order per output.
+# The symbol arm runs the 16-row scalar GEMV (same arguments) on this launcher's grid: it covers
+# a fraction of the columns and only 16 rows.
+[[contract]]
+family = "w8a16_gemm"
+kernels = [
+  "w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m32",
+  "w8a16_gemm_pipelined_m32::w8a16_gemm_pipelined_m64",
+]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.group = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "step", width = "8", order = "sequential" },
+]
+reduction.k = [{ level = "steps", width = "k/128", order = "sequential" }]
+ftz = false
+approx = {}
+scale_fold = "group"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16", "symbol:w8a16_gemv_batch4::w8a16_gemv_batch16_strided"]
+
+# 2026-10-09: w8a16_gemm_pipelined.cu: the same order with 32-K steps: E4M3 to BF16 exactly
+# (:302-310); two BF16 MMA m16n8k16 per step (:133-169), four steps per 128-K block (:233-234)
+# into a zeroed FP32 inner sum; at each block boundary outer += inner * block scale in ascending
+# block order (:354-369); one BF16 rounding (:394-397).
+[[contract]]
+family = "w8a16_gemm"
+kernels = ["w8a16_gemm_pipelined::w8a16_gemm_pipelined"]
+op = "linear"
+reference = "linear"
+class = "derived"
+reduction.group = [
+  { level = "mma", width = "16", order = "sequential" },
+  { level = "step", width = "8", order = "sequential" },
+]
+reduction.k = [{ level = "steps", width = "k/128", order = "sequential" }]
+ftz = false
+approx = {}
+scale_fold = "group"
+inputs = ["gaussian", "outliers", "near_overflow", "all_equal", "zero_rows"]
+mutations = ["corrupt_block_scale", "swap_scale_granularity", "accumulate:bf16", "symbol:w8a16_gemv_batch4::w8a16_gemv_batch16"]
