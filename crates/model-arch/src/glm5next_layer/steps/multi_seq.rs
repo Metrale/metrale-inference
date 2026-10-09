@@ -201,37 +201,27 @@ impl Glm5NextLayer {
                         .iter()
                         .flat_map(|sp| std::iter::repeat_n(kda[sp.seq], sp.rows))
                         .collect();
-                    // 2026-10-09: A decode group (one row per sequence, nothing kept) steps
-                    // every row's state in one recurrent launch per 16 rows (`decode_rows`);
-                    // a verify group, whose rows of one sequence share a state, steps row by
-                    // row.
-                    let one_row_each = keep.is_none() && spans.iter().all(|sp| sp.rows == 1);
-                    if one_row_each {
-                        self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, |normed| {
-                            layer.decode_rows(ctx.gpu, normed, &row_states, ws, stream)?;
-                            Ok(ws.final_out)
-                        })?;
-                        continue;
+                    // 2026-10-09: Every sequence of the group steps together: row `t` of all of
+                    // them in one conv and one recurrent launch per 16 rows (`decode_seq_rows`),
+                    // each row on its sequence's state, in row order within a sequence. The
+                    // spans are laid out sequence-major from group row 0.
+                    let mut next = 0usize;
+                    for sp in &spans {
+                        if sp.row0 != next {
+                            bail!(
+                                "GLM layer {}: group spans are not contiguous (row {} after {next})",
+                                self.layer_idx,
+                                sp.row0
+                            );
+                        }
+                        next += sp.rows;
                     }
+                    let seqs: Vec<(KdaSeqState, usize)> =
+                        spans.iter().map(|sp| (kda[sp.seq], sp.rows)).collect();
                     self.forward_rows_with(mhc, x, m, slot_base, ctx, stream, |normed| {
-                        layer.decode_rows_then(
-                            ctx.gpu,
-                            normed,
-                            &row_states,
-                            ws,
-                            stream,
-                            |row| {
-                                self.kda_after_row(
-                                    layer,
-                                    &spans,
-                                    keep,
-                                    &row_states,
-                                    row,
-                                    ctx,
-                                    stream,
-                                )
-                            },
-                        )?;
+                        layer.decode_seq_rows(ctx.gpu, normed, &seqs, ws, stream, |row| {
+                            self.kda_after_row(layer, &spans, keep, &row_states, row, ctx, stream)
+                        })?;
                         if let Some(keep) = keep {
                             for sp in &spans {
                                 if let KdaRowKeep::Record { record, rows } = &keep[sp.seq] {

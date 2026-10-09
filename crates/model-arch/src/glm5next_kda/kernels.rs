@@ -24,6 +24,10 @@ pub struct Glm5NextKdaKernels {
     /// `0` when absent (`glm5next_layer::wide_gemv`).
     pub gemv_batchm_wide: KernelHandle,
     pub conv_decode: KernelHandle,
+    /// 2026-10-09: `causal_conv1d_update_l2norm_rows`: `conv_decode` for up to
+    /// [`KDA_ROWS_MAX`] rows of different sequences, each row's window and workspace row a kernel
+    /// argument. Resolved with `try_kernel`; `0` keeps one launch per row.
+    pub conv_decode_rows: KernelHandle,
     pub conv_prefill: KernelHandle,
     pub l2: KernelHandle,
     pub gate: KernelHandle,
@@ -66,6 +70,11 @@ impl Glm5NextKdaKernels {
                 "dense_gemv_bf16_batchm_wide",
             ),
             conv_decode: gpu.kernel("causal_conv1d", "causal_conv1d_update_l2norm")?,
+            conv_decode_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "causal_conv1d",
+                "causal_conv1d_update_l2norm_rows",
+            ),
             conv_prefill: gpu.kernel("causal_conv1d", "causal_conv1d_update_prefill")?,
             l2: gpu.kernel("norm", "l2_norm_bf16")?,
             gate: gpu.kernel("kda_gate", "kda_gate_bf16")?,

@@ -39,6 +39,7 @@ mod decode_rows_tests;
 mod kernels;
 mod prefill;
 mod replay;
+mod rows;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
 pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX};
 pub use replay::KdaVerifyRecord;

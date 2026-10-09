@@ -374,6 +374,10 @@ fn kda(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
         for r in 0..16 {
             l = l.arg_u64(states.get(r).map_or(0, |s| s.0));
         }
+        // 2026-10-09: Grid z index r takes workspace row r.
+        for r in 0..16u32 {
+            l = l.arg_u32(r);
+        }
         l.launch(0)
     };
     let reg = |states: &[DevicePtr], out: DevicePtr| -> Result<()> {
@@ -395,6 +399,10 @@ fn kda(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
             .arg_u32(qkv as u32);
         for r in 0..16 {
             l = l.arg_u64(states.get(r).map_or(0, |s| s.0));
+        }
+        // 2026-10-09: Grid z index r takes workspace row r.
+        for r in 0..16u32 {
+            l = l.arg_u32(r);
         }
         l.launch(0)
     };
