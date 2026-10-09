@@ -154,6 +154,8 @@ impl TransformerModel {
     ///   then the committed row count
     /// - 0xFFFFFFF9 (`EP_CMD_VERIFY_BATCH`, seq_id 0): batched DFlash verify → `n`, `k`,
     ///   `slots[n]`, `tokens[n * k]`, then `committed[n]`
+    /// - 0xFFFFFFFA (`EP_CMD_PREFILL_SPANS`, seq_id 0): one chunk of each of `n` sequences in
+    ///   one multi-sequence prefill → `n`, the header, the prompts (`prefill_b/spans_wire.rs`)
     /// - 0xFFFFFFF8 (`EP_CMD_DECODE_CKPT`): decode-time Marconi checkpoint →
     ///   `EP_CKPT_WORDS` words in one bulk broadcast
     /// - 0xFFFFFFFF: shutdown (seq_id is ignored)
@@ -190,6 +192,10 @@ impl TransformerModel {
         // 2026-10-09: Batched DFlash verify: the slots travel in its payload, as above.
         if cmd == metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH {
             return self.ep_worker_verify_batch(slots);
+        }
+        // 2026-10-09: Multi-sequence prefill: the slots travel in its payload, as above.
+        if cmd == crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS {
+            return self.ep_worker_prefill_spans(slots);
         }
 
         let slot_idx = seq_id as usize;

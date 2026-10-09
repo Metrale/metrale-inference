@@ -41,6 +41,11 @@ impl TransformerModel {
         stream: u64,
         row_base: usize,
     ) -> Result<Vec<DevicePtr>> {
+        // 2026-10-09: A multi-rank serve must announce the pass to its workers; the per-stream
+        // loop below sends nothing, so every batch takes the multi-sequence pass (`spans.rs`).
+        if self.multi_rank_protocol_active() {
+            return self.prefill_spans_dispatch(streams, row_base);
+        }
         let n = streams.len();
         // 2026-09-25: `METRALE_NO_PREFILL_ROW_SHIFT` set to 1 or true forces
         // `row_base = 0`, which puts prefill logits on the decode lanes' rows.
