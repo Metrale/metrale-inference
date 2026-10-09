@@ -119,6 +119,9 @@ pub(super) fn handle_token(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -
 
 fn handle_token_inner(state: &mut StreamState, ctx: &StreamCtx, tok: u32) -> DeltaVec {
     let mut deltas: DeltaVec = Vec::new();
+    if let Some(raw) = state.raw_toks.as_mut() {
+        raw.push(tok);
+    }
     state.all_toks.push(tok);
     // 2026-09-26: One id per streamed token, drained onto the next client-visible chunk
     // when the request asked for `return_token_ids`.
