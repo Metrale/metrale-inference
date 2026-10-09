@@ -110,6 +110,9 @@ fn the_numeric_path_levers_default_to_unbounded() {
         resolve(&[("METRALE_DFLASH_DRAFT_CAP", "1")]).draft_cap,
         Some(1)
     );
+    // 2026-10-09: The full-block lever is opt-in.
+    assert!(!resolve(&[]).full_block);
+    assert!(resolve(&[("METRALE_DFLASH_FULL_BLOCK", "1")]).full_block);
 }
 
 #[test]

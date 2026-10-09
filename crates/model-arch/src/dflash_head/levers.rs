@@ -82,6 +82,12 @@ pub struct DFlashLevers {
     /// 2026-09-25: `METRALE_DFLASH_DRAFT_CAP=<n>`: return at most n drafts per
     /// propose. `None` caps at the block width in flight (`block_g`).
     pub draft_cap: Option<usize>,
+    /// 2026-10-09: `METRALE_DFLASH_FULL_BLOCK=1`: draft at the head's full block width
+    /// (gamma) whatever the step's draft count, and return that many drafts from the front of
+    /// the block. A drafter with non-causal attention predicts each mask row from every row
+    /// of the block, so a narrower block is a different input from the one it was trained on;
+    /// the reference serve drafts the full block and verifies a prefix. Off by default.
+    pub full_block: bool,
 
     /// 2026-09-25: `METRALE_DFLASH_VERIFY_TRACE=1`: log every propose's drafts
     /// before the row-0 drop and the cap.
@@ -175,6 +181,7 @@ fn from_values(
         batch_propose_width: parsed(value("METRALE_DFLASH_BATCH_PROPOSE").as_deref())
             .unwrap_or(usize::MAX),
         draft_cap: parsed(value("METRALE_DFLASH_DRAFT_CAP").as_deref()),
+        full_block: opt_in(value("METRALE_DFLASH_FULL_BLOCK").as_deref()),
 
         verify_trace: opt_in(value("METRALE_DFLASH_VERIFY_TRACE").as_deref()),
         precompute_dump: opt_in(value("METRALE_DFLASH_PRECOMPUTE_DUMP").as_deref()),

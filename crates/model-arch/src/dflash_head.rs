@@ -124,6 +124,10 @@ pub struct BlockDiffusionDraftHead {
     /// 2026-09-25: Widest cross-sequence batch the scratch bands can hold.
     pub(super) max_batch: usize,
     pub mask_token_id: u32,
+    /// 2026-10-09: The sliding window the drafter's attention applies (the paged path's
+    /// indirect attention, `attn_window_arg`); `None` attends every ctx row. The factory
+    /// sets it only when the serve's `--dflash-window-size` equals the window the drafter
+    /// was trained at (`install_dflash_drafter`).
     pub window_size: Option<usize>,
     /// 2026-09-25: The target layers whose hidden states the drafter is
     /// conditioned on, from the drafter config's `dflash_config.target_layer_ids`.
@@ -304,13 +308,31 @@ impl BlockDiffusionDraftHead {
         self.block_gamma.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// 2026-10-09: How many of a block's drafts a propose of `num_drafts` returns:
+    /// `METRALE_DFLASH_DRAFT_CAP` when set, else the block's own count (`block_g`), and under
+    /// `METRALE_DFLASH_FULL_BLOCK=1` never more than `num_drafts`.
+    pub(super) fn drafts_to_return(&self, num_drafts: usize) -> usize {
+        let cap = self.levers.draft_cap.unwrap_or(self.block_g());
+        if self.levers.full_block {
+            cap.min(num_drafts)
+        } else {
+            cap
+        }
+    }
+
     /// 2026-09-25: Arm the block width for the next propose from the
     /// scheduler's draft count: `num_drafts + 1` rows (anchor + masks),
     /// clamped to `2..=gamma.max(2)`, so a request above the head's sizing
     /// gets the widest block.
     #[inline]
     pub(super) fn set_block_g(&self, num_drafts: usize) {
-        let g = (num_drafts + 1).clamp(2, self.gamma.max(2));
+        // 2026-10-09: `METRALE_DFLASH_FULL_BLOCK=1` keeps the full width; the caller then
+        // returns `num_drafts` drafts from it (`drafts_to_return`).
+        let g = if self.levers.full_block {
+            self.gamma.max(2)
+        } else {
+            (num_drafts + 1).clamp(2, self.gamma.max(2))
+        };
         self.block_gamma
             .store(g, std::sync::atomic::Ordering::Relaxed);
     }
