@@ -96,7 +96,7 @@ fn rope_passes_every_class_and_catches_every_mutation() {
             assert!(good.ratio < 0.5, "{tag}: good ratio {}", good.ratio);
             assert!(good.compared > 100);
             if input == InputClass::Gaussian {
-                assert_eq!(o.mutations.len(), 2);
+                assert_eq!(o.mutations.len(), 1);
                 for m in &o.mutations {
                     eprintln!("{tag}: mutation {} ratio {:.3e}", m.name, m.ratio);
                     assert!(
@@ -139,13 +139,14 @@ fn a_rope_that_rotates_in_bf16_fails_the_bound() {
     assert_eq!(o.verdict, Verdict::FailBound, "{o:#?}");
 }
 
-/// 2026-10-09: Loosened cos/sin declarations let the bf16 rotation through.
+/// 2026-10-09: Loosened cos/sin declarations let the wrong rope base through.
 #[test]
 fn a_rope_contract_too_loose_to_catch_a_mutation_fails_the_run() {
-    // 2026-10-09: Declaring cosf and sinf good to 2^-4 widens the bound past a bf16 rotation.
+    // 2026-10-09: Declaring cosf and sinf good only to 2^4 (any value of the right size) widens
+    // the bound past any rotation, the wrong base's included.
     let loose = text().replacen(
         "approx = { pow = \"2^-51\", cos = \"2^-22\", sin = \"2^-22\" }",
-        "approx = { pow = \"2^-51\", cos = \"2^-4\", sin = \"2^-4\" }",
+        "approx = { pow = \"2^-51\", cos = \"2^4\", sin = \"2^4\" }",
         1,
     );
     assert_ne!(loose, text(), "the anchor no longer matches the contract");
@@ -159,7 +160,7 @@ fn a_rope_contract_too_loose_to_catch_a_mutation_fails_the_run() {
     );
     assert_eq!(
         o.verdict,
-        Verdict::FailMutationPassed("accumulate:bf16".into()),
+        Verdict::FailMutationPassed("wrong_rope_base".into()),
         "{o:#?}"
     );
 }

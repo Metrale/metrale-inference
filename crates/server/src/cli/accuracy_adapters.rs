@@ -228,23 +228,26 @@ fn dense_batchm(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<
     let x = dev.upload(case.tensor("x").map_err(not_runnable)?)?;
     let w = dev.upload(case.tensor("w").map_err(not_runnable)?)?;
     let y = dev.output(rows * n * 2)?;
+    // 2026-10-09: Above the kernel's MAX_M rows the engine splits the rows over block rows
+    // (`dense_gemv_batchm_split`, the router's launch); a row's result is the same in any split,
+    // so the fewest block rows that fit are used.
+    let max_m = ops::DENSE_GEMV_BATCHM_MAX_M as usize;
     for s in shards(case, n) {
         let ws = DenseWeight {
             weight: at(w, s.lo * k * 2),
         };
         let yo = at(y, s.out_at * 2);
-        ops::dense_gemv_batchm(
-            dev.gpu,
-            kernel,
-            x,
-            &ws,
-            yo,
-            rows as u32,
-            (s.hi - s.lo) as u32,
-            k as u32,
-            n as u32,
-            dev.stream,
-        )?;
+        let (m, ns) = (rows as u32, (s.hi - s.lo) as u32);
+        if rows <= max_m {
+            ops::dense_gemv_batchm(
+                dev.gpu, kernel, x, &ws, yo, m, ns, k as u32, n as u32, dev.stream,
+            )?;
+        } else {
+            let y_blocks = rows.div_ceil(max_m) as u32;
+            ops::dense_gemv_batchm_split(
+                dev.gpu, kernel, x, &ws, yo, m, y_blocks, ns, k as u32, n as u32, dev.stream,
+            )?;
+        }
     }
     dev.read(y, rows * n * 2)
 }

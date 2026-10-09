@@ -330,11 +330,20 @@ fn derived_mutation(
     let mut at: Vec<usize> = idx.to_vec();
     let got = match m {
         Mutation::Accumulate(e) => {
+            // 2026-10-09: The emulated arm runs every legitimate bracketing and keeps the one
+            // that strays furthest: a narrower accumulator in one row's single reduction (a norm
+            // at one row) can land near the exact sum by chance in one order, and the arm proves
+            // the contract can see the narrower accumulator, not that one order is unlucky.
             let want = reference.reference(case, plan, &at).map_err(err)?;
-            let em = reference
-                .emulate(case, plan, Some(*e), 0, &at)
-                .map_err(err)?;
-            return arm(m, true, &em, &want, out);
+            let mut worst: Option<Arm> = None;
+            for v in 0..crate::emulate::VARIANTS {
+                let em = reference.emulate(case, plan, Some(*e), v, &at).map_err(err)?;
+                let a = arm(m, true, &em, &want, out)?;
+                if worst.as_ref().is_none_or(|w| a.ratio > w.ratio) {
+                    worst = Some(a);
+                }
+            }
+            return worst.ok_or_else(|| err("no bracketing ran".into()));
         }
         Mutation::Symbol(s) => {
             mutated.kernel = s.clone();

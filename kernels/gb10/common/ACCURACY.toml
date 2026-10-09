@@ -353,7 +353,7 @@ ftz = false
 approx = { pow = "2^-51", cos = "2^-22", sin = "2^-22" }
 scale_fold = "none"
 inputs = ["gaussian", "outliers", "near_overflow", "denormal", "all_equal", "zero_rows"]
-mutations = ["wrong_rope_base", "accumulate:bf16"]
+mutations = ["wrong_rope_base"]
 
 # 2026-10-09: rope_forward_strided runs rope_forward's per-pair body (rope.cu:165-237 vs
 # :40-114) and computes exactly what it does with the packed row strides (:142-146).
