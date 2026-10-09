@@ -29,6 +29,8 @@
 mod fixture;
 #[path = "common/glm5next_rowbatch_gemv.rs"]
 mod gemv_parts;
+#[path = "common/glm5next_kda_tokens_bench.rs"]
+mod kda_tokens;
 #[path = "common/graph_timing.rs"]
 mod timing;
 
@@ -292,6 +294,7 @@ fn main() -> Result<()> {
     let s = g.create_stream()?;
     let mut rng = Lcg(0x6c6d_7262_0001);
     kda(g, s, &mut rng)?;
+    kda_tokens::kda_tokens(g, s, &mut rng)?;
     let f32_out = [
         g.kernel("gemv", "dense_gemv_bf16_fp32out")?,
         g.kernel("dense_gemv_bf16_batchm", "dense_gemv_bf16_batchm_fp32out")?,

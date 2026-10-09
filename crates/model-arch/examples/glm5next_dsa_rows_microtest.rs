@@ -6,6 +6,8 @@
 //! of different lengths (up to ~3.9k tokens of an 8k context), on the replay-safe path a
 //! captured decode runs: `decode_spans_with` per row (`indexer_rows` false) against the batched
 //! indexer (`true`: staged projections, one store and one selection launch per stage).
+//! 2026-10-09: Then a prefill sub-chunk (T = 77, 198) of one sequence on the host path, per row
+//! against the batched indexer (`decode_k_with`), byte for byte, with its wall time.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -33,7 +35,7 @@ use metrale_model_arch::glm5next_dsa::layer::{DsaRowSpan, Glm5NextDsaLayer};
 use metrale_model_arch::glm5next_dsa::state::Glm5NextDsaState;
 use metrale_model_layers::layer::{AttnMetadataDev, LayerState};
 use metrale_model_layers::layers::ops::{DerivedWeights, GemmDispatch, ModelLevers, ModelStats};
-use rig::{BLOCK, Fwd, Lcg, kv, layer, meta_mb, read, same, stream, up};
+use rig::{BLOCK, Fwd, Lcg, kv, layer, layer_rows, meta_mb, read, same, stream, up};
 
 const ROWS: [usize; 3] = [1, 4, 16];
 /// 2026-10-09: The context the indexer cache and selection ceiling are sized for.
@@ -187,6 +189,90 @@ fn main() -> Result<()> {
         let new = timing::time_graph(g, s, COPIES, &mut |s| run(&mut b, true, s))?;
         timing::report("DSA mixer (decode_spans)", r, old, new);
     }
+    prefill(g, &fwd, &c, &mut rng)?;
     println!("PASS: the batched DSA indexer is byte-identical to per row");
+    Ok(())
+}
+
+/// 2026-10-09: A prefill sub-chunk of T tokens of one sequence on a paged cache after a
+/// 700-token history, on the host path the serve's prefill runs: `decode_k_with` per row
+/// against the batched indexer, byte for byte (output, latent pool, indexer pool), and the
+/// wall time of one call each (eager, as the prefill runs; median of 7 after 2 warm-ups).
+fn prefill(g: &dyn GpuBackend, fwd: &Fwd, c: &Glm5NextDsaConfig, rng: &mut Lcg) -> Result<()> {
+    let l = layer_rows(g, c, rng, 512)?;
+    let s = stream(g);
+    let len = 700;
+    for t in [77usize, 198] {
+        let table: Vec<u32> = (0..MBX as u32).collect();
+        let x = rng.bf16_bytes(t * c.hidden, 1.0);
+        let probe = kv(g, MBX)?;
+        let (kb, vb) = pools(&probe);
+        let (kh, vh) = history_bytes(rng, kb, vb);
+        drop(probe);
+        let arm = || -> Result<Arm> {
+            let cache = kv(g, MBX)?;
+            g.copy_h2d(&kh, cache.k_pool_ptr(0))?;
+            g.copy_h2d(&vh, cache.v_pool_ptr(0))?;
+            let mut st = Glm5NextDsaState::paged(c)?;
+            st.advance(len)?;
+            Ok(Arm {
+                kv: cache,
+                states: vec![Box::new(st)],
+                hidden: up(g, &x)?,
+            })
+        };
+        let (mut a, mut b) = (arm()?, arm()?);
+        let ctx = fwd.ctx(g, false, false, None);
+        let run = |arm: &mut Arm, batched: bool| -> Result<()> {
+            let mut bt = table.clone();
+            g.copy_h2d(&x, arm.hidden)?;
+            l.decode_k_with(
+                arm.hidden,
+                t,
+                arm.states[0].as_mut(),
+                &mut arm.kv,
+                len,
+                &mut bt,
+                &ctx,
+                s,
+                true,
+                batched,
+            )
+        };
+        run(&mut a, false)?;
+        run(&mut b, true)?;
+        same(
+            &format!("prefill T={t} output"),
+            &read(g, a.hidden, t * c.hidden * 2)?,
+            &read(g, b.hidden, t * c.hidden * 2)?,
+        )?;
+        same(
+            &format!("prefill T={t} latent pool"),
+            &read(g, a.kv.k_pool_ptr(0), kb)?,
+            &read(g, b.kv.k_pool_ptr(0), kb)?,
+        )?;
+        same(
+            &format!("prefill T={t} indexer pool"),
+            &read(g, a.kv.v_pool_ptr(0), vb)?,
+            &read(g, b.kv.v_pool_ptr(0), vb)?,
+        )?;
+        let wall = |arm: &mut Arm, batched: bool| -> Result<(f64, f64, f64)> {
+            let mut v = Vec::new();
+            for i in 0..9 {
+                g.synchronize(s)?;
+                let t0 = std::time::Instant::now();
+                run(arm, batched)?;
+                g.synchronize(s)?;
+                if i >= 2 {
+                    v.push(t0.elapsed().as_secs_f64() * 1e6);
+                }
+            }
+            v.sort_by(f64::total_cmp);
+            Ok((v[v.len() / 2], v[0], v[v.len() - 1]))
+        };
+        let old = wall(&mut a, false)?;
+        let new = wall(&mut b, true)?;
+        timing::report("DSA prefill chunk (decode_k)", t, old, new);
+    }
     Ok(())
 }
