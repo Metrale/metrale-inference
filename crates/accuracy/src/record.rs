@@ -43,6 +43,7 @@ fn arm(a: &Arm) -> Value {
     t.insert("ratio".into(), Value::Float(a.ratio));
     t.insert("max_err".into(), Value::Float(a.max_err));
     t.insert("compared".into(), Value::Integer(a.compared as i64));
+    t.insert("misrounded".into(), Value::Float(a.misrounded));
     Value::Table(t)
 }
 
@@ -159,19 +160,20 @@ pub fn calibration_rows(outcomes: &[Outcome], closure: &str) -> String {
         let min_m = o
             .mutations
             .iter()
-            .map(|m| m.ratio)
+            .map(|m| m.misrounded)
             .fold(f64::INFINITY, f64::min);
         if !min_m.is_finite() {
             continue;
         }
         s.push_str(&format!(
-            "# {} {}\n[[contract.calibration]]\npoint = {:?}\ninput = {:?}\nratio = {:e}\nfloor = {:e}\nmutation_min_ratio = {:e}\nclosure = {:?}\n\n",
+            "# {} {}\n[[contract.calibration]]\npoint = {:?}\ninput = {:?}\nratio = {:e}\nmisrounded = {:e}\nfloor_misrounded = {:e}\nmutation_min_misrounded = {:e}\nclosure = {:?}\n\n",
             o.family,
             o.kernel,
             o.key,
             o.input.name(),
             g.ratio,
-            f.ratio,
+            g.misrounded,
+            f.misrounded,
             min_m,
             closure
         ));

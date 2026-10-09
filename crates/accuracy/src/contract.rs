@@ -78,10 +78,12 @@ pub struct Calibration {
     pub input: String,
     /// 2026-10-09: The good arm's max err/bound.
     pub ratio: f64,
-    /// 2026-10-09: An independent f32 emulation's max err/bound (the noise floor).
-    pub floor: f64,
-    /// 2026-10-09: The smallest max err/bound over the mutation arms.
-    pub mutation_min_ratio: f64,
+    /// 2026-10-09: The good arm's share of misrounded outputs.
+    pub misrounded: f64,
+    /// 2026-10-09: The noise floor's (worst legitimate bracketing's) share of misrounded outputs.
+    pub floor_misrounded: f64,
+    /// 2026-10-09: The smallest share of misrounded outputs over the mutation arms.
+    pub mutation_min_misrounded: f64,
     /// 2026-10-09: The target closure hash the arms ran on.
     pub closure: String,
 }

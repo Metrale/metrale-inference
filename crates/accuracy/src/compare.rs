@@ -23,6 +23,10 @@ pub struct Bounds {
     pub worst: usize,
     /// 2026-10-09: Elements compared.
     pub compared: usize,
+    /// 2026-10-09: Elements whose kernel value is not a correct rounding of `v` (a positive
+    /// error): the drift statistic, which a legitimate reordering moves by a few elements and a
+    /// numerics change by many.
+    pub misrounded: usize,
 }
 
 /// 2026-10-09: A comparison that cannot support a verdict.
@@ -77,6 +81,7 @@ pub fn bounded(got: &[f64], want: &[Bounded], out: Elem) -> Result<Bounds, Vacuo
         max_ratio: 0.0,
         worst: 0,
         compared: want.len(),
+        misrounded: 0,
     };
     for (i, (g, w)) in got.iter().zip(want).enumerate() {
         let err = if g.is_finite() {
@@ -92,6 +97,9 @@ pub fn bounded(got: &[f64], want: &[Bounded], out: Elem) -> Result<Bounds, Vacuo
         } else {
             f64::INFINITY
         };
+        if err > 0.0 {
+            b.misrounded += 1;
+        }
         if err > b.max_err {
             b.max_err = err;
         }

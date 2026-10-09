@@ -196,3 +196,20 @@ fn a_contract_too_loose_to_catch_a_mutation_fails_the_run() {
         o.verdict
     );
 }
+
+#[test]
+fn the_drift_threshold_sits_between_the_spread_and_the_nearest_mutation() {
+    let body = format!(
+        "{W4A16_SW}\n[[contract.calibration]]\npoint = \"p\"\ninput = \"gaussian\"\nratio = 0.0\nmisrounded = 0.0\nfloor_misrounded = 0.0\nmutation_min_misrounded = 0.5\nclosure = \"c\"\n"
+    );
+    let c = contract(&body);
+    // 2026-10-09: The spread is one element in 512 (no flip was calibrated): the threshold is
+    // sqrt(1/512 * 0.5) = 1/32 — sixteen flips in 512 trip it, one flip does not.
+    let t = metrale_accuracy::check::drift_threshold(&c, "p", InputClass::Gaussian, 512).unwrap();
+    assert!((t - 1.0 / 32.0).abs() < 1e-12, "{t}");
+    assert!(1.0 / 512.0 < t && 16.0 / 512.0 >= t);
+    assert!(
+        metrale_accuracy::check::drift_threshold(&c, "other", InputClass::Gaussian, 512).is_none()
+    );
+    assert!(metrale_accuracy::check::drift_threshold(&c, "p", InputClass::Outliers, 512).is_none());
+}

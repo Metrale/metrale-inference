@@ -44,6 +44,9 @@ pub struct Arm {
     pub max_err: f64,
     /// 2026-10-09: Elements (or bytes) compared.
     pub compared: usize,
+    /// 2026-10-09: Share of compared elements not correctly rounded from the reference value
+    /// (derived), or of differing bytes (bit_identical): the drift statistic.
+    pub misrounded: f64,
 }
 
 /// 2026-10-09: The verdict of one check.
@@ -224,6 +227,7 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
                 ratio: g.max_ratio,
                 max_err: g.max_err,
                 compared: g.compared,
+                misrounded: g.misrounded as f64 / g.compared.max(1) as f64,
             });
             let mut floor = Arm {
                 name: "floor".into(),
@@ -231,6 +235,7 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
                 ratio: 0.0,
                 max_err: 0.0,
                 compared: 0,
+                misrounded: 0.0,
             };
             for v in 0..crate::emulate::VARIANTS {
                 let fl = reference
@@ -240,6 +245,9 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
                 floor.ratio = floor.ratio.max(f.max_ratio);
                 floor.max_err = floor.max_err.max(f.max_err);
                 floor.compared = f.compared;
+                floor.misrounded = floor
+                    .misrounded
+                    .max(f.misrounded as f64 / f.compared.max(1) as f64);
             }
             o.floor = Some(floor);
             if job.input == InputClass::Gaussian {
@@ -252,8 +260,9 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
             if g.max_ratio > 1.0 {
                 return Err(Verdict::FailBound);
             }
-            if let Some(t) = drift_threshold(job.contract, &o.key, job.input) {
-                if g.max_ratio > t {
+            let observed = g.misrounded as f64 / g.compared.max(1) as f64;
+            if let Some(t) = drift_threshold(job.contract, &o.key, job.input, g.compared) {
+                if observed > t {
                     return Err(Verdict::FailDrift { threshold: t });
                 }
             }
@@ -270,6 +279,7 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
                 ratio: b.differing as f64,
                 max_err: 0.0,
                 compared: b.compared,
+                misrounded: b.differing as f64 / b.compared.max(1) as f64,
             });
             if job.input == InputClass::Gaussian {
                 for m in &job.contract.mutations {
@@ -357,6 +367,7 @@ fn faulted(m: &Mutation, e: RunError) -> Result<Arm, Verdict> {
             ratio: f64::INFINITY,
             max_err: f64::INFINITY,
             compared: 0,
+            misrounded: 1.0,
         }),
         RunError::Unavailable(why) => Err(Verdict::Error(format!("{}: {why}", m.name()))),
     }
@@ -376,6 +387,7 @@ fn arm(
         ratio: b.max_ratio,
         max_err: b.max_err,
         compared: b.compared,
+        misrounded: b.misrounded as f64 / b.compared.max(1) as f64,
     })
 }
 
@@ -419,18 +431,23 @@ fn identical_mutation(
         ratio: b.differing as f64,
         max_err: 0.0,
         compared: b.compared,
+        misrounded: b.differing as f64 / b.compared.max(1) as f64,
     })
 }
 
-/// 2026-10-09: The drift threshold of a calibrated (point, input): the geometric midpoint of the
-/// expected spread (the larger of the calibrated good ratio and the noise floor, the worst of
-/// the legitimate bracketings) and the smaller of 1 and the nearest mutation's ratio. A
-/// legitimate reordering stays under it; a kernel moving toward a mutation crosses it first.
-pub fn drift_threshold(c: &Contract, key: &str, input: InputClass) -> Option<f64> {
+/// 2026-10-09: The drift threshold of a calibrated (point, input), on the share of misrounded
+/// outputs: the geometric midpoint between the expected spread (the larger of the calibrated
+/// good share, the noise floor's share over the legitimate bracketings, and one element in
+/// `compared`) and the nearest mutation's share. A legitimate reordering flips a few elements
+/// and stays under it; a kernel moving toward a mutation crosses it before the bound.
+pub fn drift_threshold(c: &Contract, key: &str, input: InputClass, compared: usize) -> Option<f64> {
     let cal = c
         .calibration
         .iter()
         .find(|r| r.point == key && r.input == input.name())?;
-    let spread = cal.ratio.max(cal.floor).max(f64::MIN_POSITIVE);
-    Some((spread * cal.mutation_min_ratio.min(1.0)).sqrt())
+    let spread = cal
+        .misrounded
+        .max(cal.floor_misrounded)
+        .max(1.0 / compared.max(1) as f64);
+    Some((spread * cal.mutation_min_misrounded.min(1.0)).sqrt())
 }
