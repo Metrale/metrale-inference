@@ -12,6 +12,8 @@
 //! 3. KDA recurrence: sixteen `kda_recurrent_decode_bf16_smem` launches against one
 //!    `kda_recurrent_decode_bf16_smem_rows` and one `kda_recurrent_decode_bf16_rows_reg`.
 //!    Outputs and states must be byte-identical.
+//! 4. mHC mix: `glm5next_hc_mix_bf16` against `glm5next_hc_mix_bf16_rows` at 16, 32 and 128
+//!    tokens, byte-identical.
 //!
 //! Owner: model-arch examples (GLM-5.3).
 //! Invariants:
@@ -441,6 +443,42 @@ fn kda(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
     Ok(())
 }
 
+/// 2026-10-09: Part 4. The mHC mix at hidden 4096, hc 4 (24 mixing rows, BF16 hc_fn): one
+/// block per (token, row) against one per (token, 8 rows), at 16, 32 and 128 tokens.
+fn hc_mix(g: &dyn GpuBackend, rng: &mut Lcg) -> Result<()> {
+    const HID: usize = 4096;
+    const HC: usize = 4;
+    const MIX: usize = 24;
+    let per_row = g.kernel("glm5next_mhc", "glm5next_hc_mix_bf16")?;
+    let grouped = g.kernel("glm5next_mhc", "glm5next_hc_mix_bf16_rows")?;
+    let fn_w = up_bf16(g, rng, MIX * HC * HID, 0.03)?;
+    for t in [16usize, 32, 128] {
+        let streams = up_f32(g, &(0..t * HC * HID).map(|_| rng.f()).collect::<Vec<_>>())?;
+        let (a, b) = (zeros(g, t * MIX * 4)?, zeros(g, t * MIX * 4)?);
+        let launch = |k: KernelHandle, gy: usize, out: DevicePtr| {
+            KernelLaunch::new(g, k)
+                .grid([t as u32, gy as u32, 1])
+                .block([256, 1, 1])
+                .arg_ptr(streams)
+                .arg_ptr(fn_w)
+                .arg_ptr(out)
+                .arg_u32(HID as u32)
+                .arg_u32(HC as u32)
+                .arg_f32(1e-6)
+                .launch(0)
+        };
+        let tp = time(g, || launch(per_row, MIX, a))?;
+        let tg = time(g, || launch(grouped, MIX.div_ceil(8), b))?;
+        same(
+            &format!("hc_mix T={t}"),
+            &read(g, a, t * MIX * 4)?,
+            &read(g, b, t * MIX * 4)?,
+        )?;
+        println!("hc_mix T={t:>3}: per-row blocks {tp:.1} us, 8-row blocks {tg:.1} us");
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let sets = metrale_kernels::all_ptx_sets();
     let glm = sets
@@ -452,6 +490,7 @@ fn main() -> Result<()> {
     dense(&gpu, &mut rng)?;
     moe(&gpu, &mut rng)?;
     kda(&gpu, &mut rng)?;
+    hc_mix(&gpu, &mut rng)?;
     println!("PASS: every batched result is byte-identical to its reference");
     Ok(())
 }
