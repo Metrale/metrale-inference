@@ -9,6 +9,7 @@
 
 use anyhow::Result;
 use metrale_cache::kv_cache::PagedKvCache;
+use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::{ForwardContext, GdnPrefillBuffers, LayerState};
@@ -241,7 +242,9 @@ pub trait TransformerLayer:
     /// (`verify_e.rs`) runs attention layers through `decode_multi_seq` and every other
     /// layer through this. `wy_tables` is this layer's slice of the staged WY pointer
     /// tables (layout at [`VERIFY_WY_TABLE_SEQS`]), or NULL when none were staged or the
-    /// layer is not linear attention. The default returns an error.
+    /// layer is not linear attention. 2026-10-09: `seq_lens[i]` is sequence `i`'s length
+    /// before the verify, so its row `t` is the token at position `seq_lens[i] + t`. The
+    /// default returns an error.
     #[allow(clippy::too_many_arguments)]
     fn decode_verify_multi<'a, 'b: 'a>(
         &self,
@@ -249,6 +252,7 @@ pub trait TransformerLayer:
         _residual: DevicePtr,
         _n_seqs: usize,
         _ks: &[usize],
+        _seq_lens: &[usize],
         _states: &'a mut [&'b mut (dyn LayerState + 'static)],
         _kv_cache: &mut PagedKvCache,
         _wy_tables: DevicePtr,
@@ -256,6 +260,27 @@ pub trait TransformerLayer:
         _stream: u64,
     ) -> Result<()> {
         anyhow::bail!("decode_verify_multi: unsupported for this layer type")
+    }
+
+    /// 2026-10-08: Write this layer's DFlash capture rows when its completed output is not
+    /// the `hidden` buffer the layer leaves behind. Row `r` of the pass just run (buffer
+    /// row `src_row0 + r`) lands at `dst + r * dst_row_stride_bytes` as `[hidden_size]`
+    /// BF16, for `r < rows`. `Ok(true)` means the rows were written here; `Ok(false)` (the
+    /// default) means the layer's `hidden` rows are its completed output and the caller
+    /// copies them. The model calls it only for a DFlash capture layer, so a serve without
+    /// DFlash never reaches it.
+    #[allow(clippy::too_many_arguments)]
+    fn dflash_tap_rows(
+        &self,
+        _gpu: &dyn GpuBackend,
+        _buffers: &BufferArena,
+        _src_row0: usize,
+        _rows: usize,
+        _dst: DevicePtr,
+        _dst_row_stride_bytes: usize,
+        _stream: u64,
+    ) -> Result<bool> {
+        Ok(false)
     }
 
     /// 2026-09-25: Allocate this layer's per-sequence state. Sequence setup (model-engine

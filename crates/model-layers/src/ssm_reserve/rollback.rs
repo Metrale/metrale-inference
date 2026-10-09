@@ -14,9 +14,11 @@
 ///   intermediates, and a partial accept restores from them. The only mode
 ///   with a device path.
 /// * `Replay`: keeps only the pre-verify checkpoint per verify slot plus a
-///   ring sized for the verify window's per-token GDN inputs. Capture and
-///   replay are not implemented: a serve in this mode boots, and every
-///   speculative verify entry refuses
+///   ring sized for the verify window's per-token recurrent inputs. A layer
+///   that supports it (2026-10-08: GLM-5.3's KDA, `supports_ssm_replay`)
+///   checkpoints and records in its verify and replays the accepted rows in
+///   the commit. On a model with any other pool-backed recurrent layer the
+///   serve boots and every speculative verify entry refuses
 ///   (`SsmStatePool::require_verify_rollback_supported`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SsmRollbackMode {
@@ -63,6 +65,20 @@ pub fn ssm_rollback_mode() -> SsmRollbackMode {
 /// rows of `ConvGdnArgs::gates_buf`).
 pub fn ssm_replay_row_bytes(qkvz_elems: usize, nv: usize) -> usize {
     qkvz_elems * 2 + nv * 2 * 4
+}
+
+/// 2026-10-08: Bytes of one replay verify row per recurrent layer of `config`. GLM-5.3's KDA
+/// layer records its pre-conv q|k|v row (`3 * heads * head_dim` BF16), its per-channel
+/// decay (`heads * head_dim` FP32) and beta (`heads` FP32), the inputs its recurrent step
+/// reads (`glm5next_kda/replay.rs`, whose `replay_row_bytes` a model-arch test holds equal
+/// to this). Every other model: [`ssm_replay_row_bytes`] of its GDN geometry.
+pub fn ssm_replay_row_bytes_for(config: &metrale_config::ModelConfig) -> usize {
+    if matches!(config.model_type.as_str(), "glm5_next" | "glm5_next_text") {
+        let heads = config.linear_num_value_heads;
+        let qkv = heads * config.linear_value_head_dim;
+        return 3 * qkv * 2 + qkv * 4 + heads * 4;
+    }
+    ssm_replay_row_bytes(config.ssm_qkvz_size(), config.linear_num_value_heads)
 }
 
 /// 2026-09-25: Replay-mode verify-window input ring:

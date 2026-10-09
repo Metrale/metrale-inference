@@ -215,6 +215,10 @@ name = "glm5next_multi_seq_decode_gate"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "glm5next_verify_spans_gate"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "attn_prefill_fa128_microtest"
 required-features = ["cuda", "gpu-examples"]
 
@@ -240,6 +244,10 @@ required-features = ["cuda", "gpu-examples"]
 
 [[example]]
 name = "kda_layer_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
+name = "kda_replay_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]

@@ -166,9 +166,11 @@ pub struct ServeArgs {
     ///
     /// `snapshot`: every verify writes per-token h/conv state snapshots and a
     /// partial accept restores from them. `replay` allocates no per-token h
-    /// snapshots and reserves a verify-window input ring instead, but the replay
-    /// itself is not implemented: a replay serve boots, and every speculative
-    /// verify step on a model with SSM layers returns an error.
+    /// snapshots and reserves a verify-window input ring instead: a verify
+    /// checkpoints the state and records each row's recurrent inputs, and the
+    /// commit replays the accepted rows. Implemented for GLM-5.3's KDA layers;
+    /// on any other model with SSM layers a replay serve boots, and every
+    /// speculative verify step returns an error.
     /// The default is explicit and published on every serve.
     #[arg(long, default_value = "snapshot")]
     pub ssm_rollback_mode: String,

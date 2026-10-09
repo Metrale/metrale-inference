@@ -77,6 +77,14 @@ pub trait LayerCapabilities {
         false
     }
 
+    /// 2026-10-09: True when this layer's batched verify (`decode_verify_multi`) may run on a
+    /// multi-rank serve, every rank running it from the batch rank 0 announces
+    /// (`EP_CMD_VERIFY_BATCH`). The model admits a multi-rank batched verify only when every
+    /// layer says so; the default keeps it single-rank.
+    fn batch_verify_across_ranks(&self) -> bool {
+        false
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// 2026-09-25: True when a captured decode graph goes stale once a new sequence takes
     /// this slot. Decode graphs are keyed by `slot_idx`, which is safe only while every
@@ -112,6 +120,16 @@ pub trait LayerCapabilities {
     /// (`TransformerModel::inpass_cut_capture_supported`); otherwise it keeps the
     /// two-pass tail split.
     fn supports_replay_tail_split(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-08: True when this layer, a recurrent layer on the SSM pool, can roll a
+    /// speculative verify back under `--ssm-rollback-mode replay`: its K-row verify copies
+    /// the state to the slot's checkpoint and records each row's recurrent inputs in the
+    /// slot's `SsmLayerState::replay_ring`, and `LayerWriteOnAccept::ssm_replay_commit`
+    /// restores and replays. The model admits a replay-mode verify only when every
+    /// pool-backed recurrent layer answers true.
+    fn supports_ssm_replay(&self) -> bool {
         false
     }
 }

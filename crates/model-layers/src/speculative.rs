@@ -17,11 +17,18 @@ pub use ladder::{
     mtp_ladder_disabled, mtp_ladder_drafts, mtp_ladder_pinned, mtp_max_seqs, parse_mtp_k_ladder,
     resolve_mtp_max_seqs, set_mtp_k_ladder, set_mtp_max_seqs,
 };
+mod kgamma_wire;
 mod knobs;
+mod verify_batch_wire;
+pub use kgamma_wire::{EP_CMD_VERIFY_KGAMMA, KGAMMA_MAX_ROWS, kgamma_committed_len, kgamma_width};
 pub use knobs::{
     EP_CMD_MTP_PROPOSE, hidden_fingerprint, mtp_accept_debug, mtp_catchup_enabled,
     mtp_ep_propose_enabled, mtp_multi_seq_mode, mtp_refeed_accepted_enabled, mtp_refeed_debug,
     mtp_refeed_shift, shadow_topk,
+};
+pub use verify_batch_wire::{
+    EP_CMD_VERIFY_BATCH, VERIFY_BATCH_MAX_SEQS, verify_batch_failed_verdict, verify_batch_shape,
+    verify_batch_verdict,
 };
 
 use std::any::Any;

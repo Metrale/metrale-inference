@@ -56,18 +56,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
         _layer_kv_dtypes: &[KvCacheDtype],
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let skeleton = Glm5NextTextSkeleton::from_config(config)?;
-        // 2026-09-25: `l2_eps` and `chunk` are fixed here; every other field is
-        // read from the config.
-        let kda_cfg = Glm5NextKdaConfig {
-            hidden: config.hidden_size,
-            heads: config.linear_num_value_heads,
-            head_dim: config.linear_value_head_dim,
-            conv_kernel: config.linear_conv_kernel_dim,
-            gate_lower_bound: config.linear_gate_lower_bound,
-            rms_norm_eps: config.rms_norm_eps as f32,
-            l2_eps: 1e-6,
-            chunk: 32,
-        };
+        let kda_cfg = Glm5NextKdaConfig::from_model_config(config);
         kda_cfg.validate()?;
         // 2026-09-25: `gate_rank` is the row count of layer 0's `f_a_proj`; the
         // config has no such key.

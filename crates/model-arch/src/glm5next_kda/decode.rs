@@ -9,9 +9,41 @@
 
 use super::*;
 
+/// 2026-10-08: The buffers one `stateful_row` step reads and writes: the row's pre-conv q|k|v
+/// input (`[conv_dim]` BF16), the conv output it writes (`[conv_dim]` BF16), the bounded
+/// log-decay (`[heads, head_dim]` FP32), beta (`[heads]` FP32) and the core output it writes
+/// (`[heads, head_dim]` FP32). A forward row points all five into the workspace; a replay row
+/// (`replay.rs`) reads its inputs from the verify record.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct RowIo {
+    pub qkv_in: DevicePtr,
+    pub conv_out: DevicePtr,
+    pub gate: DevicePtr,
+    pub beta: DevicePtr,
+    pub core: DevicePtr,
+}
+
+impl RowIo {
+    /// 2026-10-08: Workspace row `row`, the buffers the forward paths use.
+    pub(super) fn workspace(
+        cfg: &Glm5NextKdaConfig,
+        ws: &Glm5NextKdaWorkspace,
+        row: usize,
+    ) -> Self {
+        let (cd, qkv) = (cfg.conv_dim(), cfg.qkv_dim());
+        Self {
+            qkv_in: ws.qkv_proj.offset(row * cd * 2),
+            conv_out: ws.conv_out.offset(row * cd * 2),
+            gate: ws.gate.offset(row * qkv * 4),
+            beta: ws.beta.offset(row * cfg.heads * 4),
+            core: ws.core.offset(row * qkv * 4),
+        }
+    }
+}
+
 impl Glm5NextKdaLayer {
     /// 2026-09-25: The stateful half of one KDA token: the conv window update (SiLU and L2 fused),
-    /// then one recurrent step, both on row `row` of the workspace, updating `state` in place.
+    /// then one recurrent step, both on the row buffers `io`, updating `state` in place.
     ///
     /// The state after row `t + 1` depends on the state after row `t`, so [`Self::decode_k`] calls
     /// this once per row, in order, and batches only the projections around it. The chunked
@@ -20,37 +52,34 @@ impl Glm5NextKdaLayer {
     ///
     /// `q`/`k` reach `kda_recurrent` already L2-normalised by the conv, which is the input that
     /// kernel expects; normalising them again would change the bf16-rounded values.
-    fn stateful_row(
+    pub(super) fn stateful_row(
         &self,
         gpu: &dyn GpuBackend,
-        row: usize,
+        io: RowIo,
         state: &KdaSeqState,
-        ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
-        self.conv_row(gpu, row, state, ws, stream)?;
-        self.recurrent_row(gpu, row, state, ws, stream)
+        self.conv_row(gpu, io, state, stream)?;
+        self.recurrent_row(gpu, io, state, stream)
     }
 
-    /// 2026-10-09: The conv window update (SiLU and L2 fused) of row `row` on `state.conv`, the
+    /// 2026-10-09: The conv window update (SiLU and L2 fused) of the row buffers `io` on `state.conv`, the
     /// first half of [`Self::stateful_row`].
     fn conv_row(
         &self,
         gpu: &dyn GpuBackend,
-        row: usize,
+        io: RowIo,
         state: &KdaSeqState,
-        ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
-        let cd = c.conv_dim();
         ops::conv1d_update_l2norm(
             gpu,
             self.kernels.conv_decode,
             state.conv,
-            ws.qkv_proj.offset(row * cd * 2),
+            io.qkv_in,
             &self.weights.conv,
-            ws.conv_out.offset(row * cd * 2),
+            io.conv_out,
             c.conv_dim() as u32,
             c.conv_kernel as u32,
             1,
@@ -75,19 +104,17 @@ impl Glm5NextKdaLayer {
         .then_some((vpb, smem))
     }
 
-    /// 2026-10-09: One recurrent step of row `row` on `state.recurrent`, the second half of
+    /// 2026-10-09: One recurrent step of the row buffers `io` on `state.recurrent`, the second half of
     /// [`Self::stateful_row`].
     fn recurrent_row(
         &self,
         gpu: &dyn GpuBackend,
-        row: usize,
+        io: RowIo,
         state: &KdaSeqState,
-        ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
         let c = &self.cfg;
         let qkv = c.qkv_dim();
-        let cd = c.conv_dim();
         let d = c.head_dim;
         // 2026-09-25: 1R+1W when the target has the shared-memory kernel. Each block owns `vpb`
         // V columns and grid.y covers the rest; the request is `3 * d` floats plus
@@ -97,13 +124,13 @@ impl Glm5NextKdaLayer {
                 .grid([c.heads as u32, (d / vpb) as u32, 1])
                 .block([vpb as u32, 1, 1])
                 .shared_mem(smem_smem as u32)
-                .arg_ptr(ws.conv_out.offset(row * cd * 2))
-                .arg_ptr(ws.conv_out.offset(row * cd * 2 + qkv * 2))
-                .arg_ptr(ws.conv_out.offset(row * cd * 2 + qkv * 4))
-                .arg_ptr(ws.gate.offset(row * qkv * 4))
-                .arg_ptr(ws.beta.offset(row * c.heads * 4))
+                .arg_ptr(io.conv_out)
+                .arg_ptr(io.conv_out.offset(qkv * 2))
+                .arg_ptr(io.conv_out.offset(qkv * 4))
+                .arg_ptr(io.gate)
+                .arg_ptr(io.beta)
                 .arg_ptr(state.recurrent)
-                .arg_ptr(ws.core.offset(row * qkv * 4))
+                .arg_ptr(io.core)
                 .arg_u32(c.heads as u32)
                 .arg_u32(d as u32)
                 .arg_f32(1.0 / (d as f32).sqrt())
@@ -114,13 +141,13 @@ impl Glm5NextKdaLayer {
                 .grid([c.heads as u32, 1, 1])
                 .block([BLOCK.min(d as u32), 1, 1])
                 .shared_mem((3 * d * 4) as u32)
-                .arg_ptr(ws.conv_out.offset(row * cd * 2))
-                .arg_ptr(ws.conv_out.offset(row * cd * 2 + qkv * 2))
-                .arg_ptr(ws.conv_out.offset(row * cd * 2 + qkv * 4))
-                .arg_ptr(ws.gate.offset(row * qkv * 4))
-                .arg_ptr(ws.beta.offset(row * c.heads * 4))
+                .arg_ptr(io.conv_out)
+                .arg_ptr(io.conv_out.offset(qkv * 2))
+                .arg_ptr(io.conv_out.offset(qkv * 4))
+                .arg_ptr(io.gate)
+                .arg_ptr(io.beta)
                 .arg_ptr(state.recurrent)
-                .arg_ptr(ws.core.offset(row * qkv * 4))
+                .arg_ptr(io.core)
                 .arg_u32(c.heads as u32)
                 .arg_u32(d as u32)
                 .arg_f32(1.0 / (d as f32).sqrt())
@@ -141,7 +168,7 @@ impl Glm5NextKdaLayer {
         stream: u64,
     ) -> Result<()> {
         self.front_end(gpu, hidden, 1, ws, stream)?;
-        self.stateful_row(gpu, 0, state, ws, stream)?;
+        self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, 0), state, stream)?;
         self.back_end(gpu, 1, ws, stream)
     }
 
@@ -167,8 +194,6 @@ impl Glm5NextKdaLayer {
         snapshots: &[(DevicePtr, DevicePtr)],
         stream: u64,
     ) -> Result<()> {
-        let c = &self.cfg;
-        let (h_bytes, conv_bytes) = (c.recurrent_state_elems() * 4, c.conv_state_elems() * 4);
         self.rows_with(
             gpu,
             hidden,
@@ -176,15 +201,33 @@ impl Glm5NextKdaLayer {
             ws,
             stream,
             |row| {
-                self.stateful_row(gpu, row, state, ws, stream)?;
-                if let Some((h_dst, conv_dst)) = snapshots.get(row) {
-                    gpu.copy_d2d_async(state.recurrent, *h_dst, h_bytes, stream)?;
-                    gpu.copy_d2d_async(state.conv, *conv_dst, conv_bytes, stream)?;
+                self.stateful_row(gpu, RowIo::workspace(&self.cfg, ws, row), state, stream)?;
+                match snapshots.get(row) {
+                    Some(dst) => self.snapshot_state(gpu, state, *dst, stream),
+                    None => Ok(()),
                 }
-                Ok(())
             },
             || Ok(()),
         )
+    }
+
+    /// 2026-10-09: Copy `state` (recurrent, then conv) to `(h_dst, conv_dst)`: the per-row
+    /// snapshot a verify takes when the pool keeps one state per verify row.
+    pub fn snapshot_state(
+        &self,
+        gpu: &dyn GpuBackend,
+        state: &KdaSeqState,
+        (h_dst, conv_dst): (DevicePtr, DevicePtr),
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        gpu.copy_d2d_async(
+            state.recurrent,
+            h_dst,
+            c.recurrent_state_elems() * 4,
+            stream,
+        )?;
+        gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)
     }
 
     /// 2026-10-08: One token for each of `states.len()` sequences: row `r` of `hidden` advances
@@ -209,28 +252,61 @@ impl Glm5NextKdaLayer {
             && self.kernels.recurrent_smem_rows.0 != 0
             && self.smem_geometry().is_some();
         if !batched {
-            return self.rows_with(
-                gpu,
-                hidden,
-                n,
-                ws,
-                stream,
-                |row| self.stateful_row(gpu, row, &states[row], ws, stream),
-                || Ok(()),
-            );
+            return self.decode_rows_then(gpu, hidden, states, ws, stream, |_| Ok(()));
         }
         // 2026-10-09: Every row's conv first, then one recurrent launch for all rows. Row
         // `r`'s recurrence reads only row `r`'s conv output and state, so the order across
         // rows does not change a row's bits, and block (h, v-slice, r) of the rows kernel is
-        // the single-row kernel's block (h, v-slice) on row `r`.
+        // the single-row kernel's block (h, v-slice) on row `r`. This needs distinct states:
+        // the verify's rows of one sequence go through `decode_rows_then`.
         self.rows_with(
             gpu,
             hidden,
             n,
             ws,
             stream,
-            |row| self.conv_row(gpu, row, &states[row], ws, stream),
+            |row| {
+                self.conv_row(
+                    gpu,
+                    RowIo::workspace(&self.cfg, ws, row),
+                    &states[row],
+                    stream,
+                )
+            },
             || self.recurrent_rows(gpu, states, ws, stream),
+        )
+    }
+
+    /// 2026-10-09: [`Self::decode_rows`] one row at a time, with `after_row(row)` called after
+    /// row `row`'s recurrent step and before the next row's. A batched verify hands one
+    /// sequence's state to several consecutive rows, which then step it in row order as
+    /// [`Self::decode_k`] does (the one-launch recurrence of `decode_rows` would run them
+    /// concurrently on one state), and takes that sequence's per-row snapshots in `after_row`.
+    pub fn decode_rows_then(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        states: &[KdaSeqState],
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+        mut after_row: impl FnMut(usize) -> Result<()>,
+    ) -> Result<()> {
+        self.rows_with(
+            gpu,
+            hidden,
+            states.len(),
+            ws,
+            stream,
+            |row| {
+                self.stateful_row(
+                    gpu,
+                    RowIo::workspace(&self.cfg, ws, row),
+                    &states[row],
+                    stream,
+                )?;
+                after_row(row)
+            },
+            || Ok(()),
         )
     }
 

@@ -64,6 +64,7 @@ pub use levers::prefill_rows;
 pub(crate) use levers::{
     PREFILL_ROWS, cublas_wide_proj, dsa_batch_qidx, multi_seq_chunk_rows, multi_seq_chunks,
 };
+pub use steps::{GroupSpan, group_spans};
 pub use types::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
 
 impl TransformerLayer for Glm5NextLayer {
@@ -118,6 +119,34 @@ impl TransformerLayer for Glm5NextLayer {
         stream: u64,
     ) -> Result<()> {
         self.forward_multi(hidden, num_seqs, states, kv_cache, seq_lens, ctx, stream)
+    }
+
+    /// 2026-10-09: The batched speculative verify: `ks[i]` rows for each of `n_seqs`
+    /// sequences, sequence-major, through `forward_verify_multi`. Each sequence's rows are
+    /// the rows its own `decode_batched` verify runs (`steps/verify_multi.rs`). `wy_tables`
+    /// (a GDN layer's) and `residual` (the highway is the residual) are not read.
+    #[allow(clippy::too_many_arguments)]
+    fn decode_verify_multi<'a, 'b: 'a>(
+        &self,
+        hidden: DevicePtr,
+        _residual: DevicePtr,
+        n_seqs: usize,
+        ks: &[usize],
+        seq_lens: &[usize],
+        states: &'a mut [&'b mut (dyn LayerState + 'static)],
+        kv_cache: &mut PagedKvCache,
+        _wy_tables: DevicePtr,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        if ks.len() != n_seqs {
+            bail!(
+                "GLM layer {}: a {n_seqs}-sequence batched verify got {} row counts",
+                self.layer_idx,
+                ks.len()
+            );
+        }
+        self.forward_verify_multi(hidden, ks, seq_lens, states, kv_cache, ctx, stream)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -255,24 +284,31 @@ impl TransformerLayer for Glm5NextLayer {
     ) -> Result<()> {
         // 2026-09-25: For a KDA layer, row `t < K - 1` writes intermediate `t`, and
         // `rollback_ssm_states_dispatch` restores intermediate `num_accepted - 1`.
-        let kda_bytes = matches!(self.mixer, Glm5NextMixer::Kda { .. }).then_some(());
-        if kda_bytes.is_some() && num_tokens > 1 {
+        // 2026-10-08: Under `--ssm-rollback-mode replay` the pool has no intermediates; the
+        // slot's checkpoint and verify record stand in for them (`replay_verify_prepare`).
+        let mut replay = None;
+        if let (Glm5NextMixer::Kda { layer, .. }, true) = (&self.mixer, num_tokens > 1) {
             let st = self.kda_state(state)?;
-            // 2026-09-25: Error rather than run without the intermediates: a rejected draft
-            // could then not be rewound.
-            if st.h_state_intermediates.len() + 1 < num_tokens
-                || st.conv_state_intermediates.len() + 1 < num_tokens
-            {
-                bail!(
-                    "GLM layer {}: a {num_tokens}-token verify needs {} per-token state \
-                     snapshots but the pool has h={} conv={}. With none, this is the \
-                     self-speculative / ngram path on a model whose MTP pool was never \
-                     sized; with too few, --num-drafts exceeds the pool's tier.",
-                    self.layer_idx,
-                    num_tokens - 1,
-                    st.h_state_intermediates.len(),
-                    st.conv_state_intermediates.len(),
-                );
+            let snapshots = st.h_state_intermediates.len() + 1 >= num_tokens
+                && st.conv_state_intermediates.len() + 1 >= num_tokens;
+            if !snapshots {
+                let Some(r) = self.replay_verify_prepare(layer, st, num_tokens, ctx, stream)?
+                else {
+                    // 2026-09-25: Error rather than run without the intermediates: a rejected
+                    // draft could then not be rewound.
+                    bail!(
+                        "GLM layer {}: a {num_tokens}-token verify needs {} per-token state \
+                         snapshots but the pool has h={} conv={}, and no replay record \
+                         (--ssm-rollback-mode replay). With none, this is the \
+                         self-speculative / ngram path on a model whose MTP pool was never \
+                         sized; with too few, --num-drafts exceeds the pool's tier.",
+                        self.layer_idx,
+                        num_tokens - 1,
+                        st.h_state_intermediates.len(),
+                        st.conv_state_intermediates.len(),
+                    );
+                };
+                replay = Some(r);
             }
         }
 
@@ -285,13 +321,56 @@ impl TransformerLayer for Glm5NextLayer {
             block_table,
             ctx,
             stream,
-            true,
+            // 2026-10-08: A replay-mode verify takes no snapshots; it records after the forward.
+            replay.is_none(),
             0,
             // 2026-09-25: `is_prefill` is false here.
             // A speculative verify, NOT a prefill sub-chunk: true here would give an eager
             // verify the prefill-only batched DSA selector (`batch_select_enabled`).
             false,
-        )
+        )?;
+        if let (Some(record), Glm5NextMixer::Kda { layer, ws, .. }) = (replay, &self.mixer) {
+            layer.record_verify_rows(ctx.gpu, ws, num_tokens - 1, &record, stream)?;
+        }
+        Ok(())
+    }
+
+    /// 2026-10-08: The DFlash drafter reads each target layer's completed output averaged
+    /// over the `hc_mult` streams. After `forward_one` / `forward_k` return, the FFN site's
+    /// `hc_post` has folded the MLP output into the highway, so highway slot `r` holds this
+    /// layer's completed streams for row `r` (decode: slot 0; prefill and verify: slot `t`
+    /// for row `t`) until the next layer's `hc_pre` reads them; `hidden` instead holds the
+    /// FFN site's pre-mix `y` (the last layer alone collapses the highway into it).
+    /// `hc_head_mean` is that unweighted mean, one launch per row so each row lands at its
+    /// strided slot. The MTP block (`mhc: None`) has no highway; its `hidden` is the
+    /// completed output.
+    fn dflash_tap_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        buffers: &metrale_gpu_runtime::buffers::BufferArena,
+        src_row0: usize,
+        rows: usize,
+        dst: DevicePtr,
+        dst_row_stride_bytes: usize,
+        stream: u64,
+    ) -> Result<bool> {
+        let Some(mhc) = self.mhc.as_ref() else {
+            return Ok(false);
+        };
+        let (h, hc) = (self.hidden, mhc.hc_mult);
+        for r in 0..rows {
+            hc_head_mean(
+                gpu,
+                mhc.kernels.hc_head,
+                buffers.hc_streams().offset((src_row0 + r) * hc * h * 4),
+                dst.offset(r * dst_row_stride_bytes),
+                1,
+                h as u32,
+                hc as u32,
+                stream,
+            )?;
+        }
+        Ok(true)
     }
 }
 
@@ -321,10 +400,17 @@ impl LayerCapabilities for Glm5NextLayer {
         true
     }
 
-    /// 2026-09-25: True. This layer has no `decode_verify_multi`, and the trait's default
-    /// returns an error; answering true makes `can_batch_verify_dispatch` refuse the batched
-    /// verify.
+    /// 2026-09-25: Was true while this layer had no `decode_verify_multi`.
+    /// 2026-10-09: False for a text layer (`steps/verify_multi.rs`); true for the MTP block,
+    /// which has no hyper-connection and which `forward_spans` refuses.
     fn decode_verify_multi_unsupported(&self) -> bool {
+        self.mhc.is_none()
+    }
+
+    /// 2026-10-09: True: the batched verify issues the same collectives on every rank (one
+    /// all-reduce per mixer and MLP site per row group) and keeps no rank-local choice, so
+    /// the worker ranks can run it from the batch rank 0 announces.
+    fn batch_verify_across_ranks(&self) -> bool {
         true
     }
 
@@ -345,10 +431,44 @@ impl LayerCapabilities for Glm5NextLayer {
     fn is_ssm_layer(&self) -> bool {
         matches!(self.mixer, Glm5NextMixer::Kda { .. })
     }
+
+    /// 2026-10-08: True for a KDA layer: `decode_batched` checkpoints and records a
+    /// replay-mode verify, and `ssm_replay_commit` rebuilds the accepted state.
+    fn supports_ssm_replay(&self) -> bool {
+        matches!(self.mixer, Glm5NextMixer::Kda { .. })
+    }
 }
 
 impl LayerWeightSetup for Glm5NextLayer {}
-impl LayerWriteOnAccept for Glm5NextLayer {}
+impl LayerWriteOnAccept for Glm5NextLayer {
+    /// 2026-10-08: A KDA layer's replay commit (`Glm5NextKdaLayer::commit_replay`); `Ok(false)`
+    /// on a DSA layer, which keeps no recurrent state.
+    fn ssm_replay_commit(
+        &self,
+        gpu: &dyn GpuBackend,
+        state: &mut dyn LayerState,
+        accepted: usize,
+        k_rows: usize,
+        stream: u64,
+    ) -> Result<bool> {
+        let Glm5NextMixer::Kda { layer, ws, .. } = &self.mixer else {
+            return Ok(false);
+        };
+        let st = self.kda_state(state)?;
+        let (live, checkpoint, record) = self.replay_parts(layer, st)?;
+        layer.commit_replay(
+            gpu,
+            &live,
+            &checkpoint,
+            &record,
+            accepted,
+            k_rows,
+            ws,
+            stream,
+        )?;
+        Ok(true)
+    }
+}
 
 impl LayerGraphHooks for Glm5NextLayer {
     /// 2026-09-25: A graph replay runs only kernels, so the host-side length of the DSA indexer

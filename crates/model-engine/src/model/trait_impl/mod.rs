@@ -71,15 +71,18 @@ mod sequence_compact;
 mod speculative;
 mod speculative_mtp;
 pub(in crate::model) mod ssm_fault_in;
+mod ssm_replay;
 mod verify_a;
 mod verify_a_ssm;
 mod verify_b;
+pub(in crate::model) mod verify_batch_ep;
 mod verify_c;
 mod verify_c2;
 mod verify_d;
 mod verify_e;
 pub(in crate::model) mod verify_e2;
 mod verify_fused;
+mod verify_kgamma_ep;
 
 impl Model for TransformerModel {}
 

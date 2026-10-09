@@ -326,6 +326,8 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
         include_str!("../../glm5next_layer/steps/drafter.rs"),
         include_str!("../../glm5next_layer/steps/forward.rs"),
         include_str!("../../glm5next_layer/steps/multi_seq.rs"),
+        include_str!("../../glm5next_layer/steps/replay.rs"),
+        include_str!("../../glm5next_layer/steps/verify_multi.rs"),
         include_str!("../../glm5next_layer/types.rs"),
     );
     assert_eq!(
@@ -339,6 +341,8 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
             "steps/drafter.rs",
             "steps/forward.rs",
             "steps/multi_seq.rs",
+            "steps/replay.rs",
+            "steps/verify_multi.rs",
             "tests.rs",
             "types.rs",
         ],

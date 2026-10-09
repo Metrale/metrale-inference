@@ -5,8 +5,11 @@
 //!
 //! Owner: scheduler.
 //! Invariants:
-//! - No EP broadcast: this step issues no worker command, unlike the
-//!   single-sequence K=2/3/4 steps.
+//! - Multi-rank (2026-10-08): the workers run the same K-row verify forward,
+//!   announced by `EP_CMD_VERIFY_KGAMMA` before it, and receive the committed
+//!   row count before any token is emitted (an emit can finish the sequence).
+//!   The wire shape is in `metrale_model_layers::speculative::kgamma_wire`.
+//!   A single rank sends nothing.
 //! - No logprobs: tokens are emitted with `None`.
 
 use super::*;
@@ -36,6 +39,13 @@ pub fn step_verify_dflash(
     tokens.push(a.last_token);
     tokens.extend_from_slice(drafts);
 
+    let ep = model.is_ep();
+    if ep && let Err(e) = ep_send_verify_kgamma(model, a.seq.slot_idx as u32, &tokens) {
+        tracing::error!("EP broadcast verify_kgamma: {e:#}");
+        super::lifecycle::fail_sequence(a, format!("EP broadcast verify_kgamma: {e:#}"));
+        return;
+    }
+
     // 2026-09-25: `METRALE_DFLASH_STEP_TIMING=1` logs the verify and propose
     // walls separately at the end of the step.
     let step_timing = sched.levers.dflash_step_timing;
@@ -44,6 +54,11 @@ pub fn step_verify_dflash(
         Ok(v) => v,
         Err(e) => {
             tracing::error!("decode_verify_dflash: {e:#}");
+            // 2026-10-08: The workers wait for a verdict after their verify; send the anchor
+            // row alone so none takes the next command for it.
+            if ep && let Err(e2) = model.ep_broadcast_cmd(1) {
+                tracing::error!("EP broadcast verify_kgamma verdict after a failed verify: {e2:#}");
+            }
             a.finished = true;
             return;
         }
@@ -88,6 +103,13 @@ pub fn step_verify_dflash(
         } else {
             break;
         }
+    }
+
+    // 2026-10-08: The workers commit the anchor row plus the accepted drafts.
+    if ep && let Err(e) = model.ep_broadcast_cmd((num_accepted + 1) as u32) {
+        tracing::error!("EP broadcast verify_kgamma verdict: {e:#}");
+        super::lifecycle::fail_sequence(a, format!("EP broadcast verify_kgamma verdict: {e:#}"));
+        return;
     }
 
     // 2026-09-25: with `METRALE_DFLASH_ADAPTIVE=1`, a low mean over the
@@ -232,4 +254,18 @@ pub fn step_verify_dflash(
             num_accepted,
         );
     }
+}
+
+/// 2026-10-08: Announce a K=γ verify of `tokens` in slot `slot` to the worker ranks: the
+/// `(seq_id, cmd)` preamble, K, then the tokens in one bulk broadcast. Refuses a width the
+/// worker would refuse, before sending anything.
+fn ep_send_verify_kgamma(model: &dyn Model, slot: u32, tokens: &[u32]) -> anyhow::Result<()> {
+    let k = metrale_model_layers::speculative::kgamma_width(tokens.len() as u32)?;
+    model.ep_broadcast_cmd_for_seq(
+        slot,
+        metrale_model_layers::speculative::EP_CMD_VERIFY_KGAMMA,
+    )?;
+    model.ep_broadcast_cmd(k as u32)?;
+    model.ep_broadcast_tokens(tokens)?;
+    Ok(())
 }

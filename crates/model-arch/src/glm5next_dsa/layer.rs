@@ -55,6 +55,7 @@ mod row_ops;
 mod rows;
 mod workspace;
 
+pub use decode_rows::DsaRowSpan;
 pub use kernels::Glm5NextDsaLayerKernels;
 use proj_gemm::gemm;
 pub use workspace::Glm5NextDsaWorkspace;

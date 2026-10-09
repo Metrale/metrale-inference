@@ -86,6 +86,17 @@ impl TransformerModel {
     ) -> Result<()> {
         use metrale_model_layers::layer::SsmLayerState;
 
+        // 2026-10-08: Replay mode keeps no intermediates. Every caller (the EP worker's K=2/3/4
+        // verify) rolls back a partial accept, fewer rows than it verified, so the commit of
+        // `num_accepted` rows of a `num_accepted + 1`-row verify restores and replays exactly
+        // those rows. Each layer checkpoints itself before its next verify.
+        if num_accepted > 0
+            && self.ssm_pool.rollback_mode
+                == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
+        {
+            return self.commit_replay_prefix(seq, num_accepted, num_accepted + 1);
+        }
+
         let stream = self.secondary_stream;
         let mut ssm_layer_idx = 0usize;
         // 2026-09-25: All rollback copies are issued before all checkpoint copies,
@@ -256,6 +267,13 @@ impl TransformerModel {
                  Use rollback_ssm_states() for a full-reject rewind to the pre-verify \
                  checkpoint."
             );
+        }
+
+        // 2026-10-08: Replay mode keeps no intermediates: each layer rebuilds its state from the
+        // slot's checkpoint and verify record (`ssm_replay.rs`).
+        if self.ssm_pool.rollback_mode == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
+        {
+            return self.commit_replay_prefix(seq, num_accepted, k);
         }
 
         let stream = self.secondary_stream;
