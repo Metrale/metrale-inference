@@ -96,8 +96,10 @@ fn outputs(lines: &[String]) -> Vec<String> {
     out
 }
 
-/// 2026-10-09: The inline chunk-0 prefills of the burst's requests.
-fn inline_chunk0(lines: &[String]) -> usize {
+/// 2026-10-09: The inline chunk-0 prefills of the burst's requests on the tick they land (a
+/// later tick's single-stream chunk of a deferred request is not inline).
+fn inline_chunk0(run: &[String]) -> usize {
+    let lines = burst_tick(run);
     lines
         .iter()
         .filter(|l| l.starts_with("prefill_chunk(start=0") && !l.contains("s1@"))

@@ -460,7 +460,7 @@ pub fn w8a8_proj(
 mod lt;
 #[path = "w8a8_decode/parts.rs"]
 mod parts;
-pub use lt::w8a8_lt_min_rows;
+pub use lt::{lt_decline_log, w8a8_lt_min_rows};
 
 #[cfg(test)]
 #[path = "w8a8_decode_tests.rs"]

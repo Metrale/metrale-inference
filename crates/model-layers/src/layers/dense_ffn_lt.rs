@@ -102,7 +102,7 @@ impl DenseFfnLayer {
             .arg_ptr(scratch)
             .arg_u64(groups)
             .launch(stream)?;
-        metrale_gpu_runtime::cublaslt::bf16_gemm_act_weight_t_alpha(
+        if let Err(e) = metrale_gpu_runtime::cublaslt::bf16_gemm_act_weight_t_alpha(
             input.0,
             scratch.0,
             output.0,
@@ -111,7 +111,12 @@ impl DenseFfnLayer {
             k,
             weight.weight_scale_2,
             stream,
-        )?;
+        ) {
+            // 2026-10-09: A declined shape keeps the in-tree kernels, which rewrite all of
+            // `output`; the dequant wrote only the scratch.
+            ops::lt_decline_log("ffn bf16", m as usize, n, k, n, &e);
+            return Ok(false);
+        }
         Ok(true)
     }
 }

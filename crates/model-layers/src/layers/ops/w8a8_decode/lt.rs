@@ -38,6 +38,21 @@ pub fn w8a8_lt_min_rows() -> usize {
         .value as usize
 }
 
+/// 2026-10-09: Log a cuBLASLt arm that declined a shape: the first time per (arm, rows, n, k),
+/// at WARN, so a decline is visible without flooding a long serve.
+pub fn lt_decline_log(arm: &str, rows: usize, n: u32, k: u32, ldc: u32, e: &anyhow::Error) {
+    static SEEN: std::sync::Mutex<Vec<(String, usize, u32, u32)>> =
+        std::sync::Mutex::new(Vec::new());
+    let key = (arm.to_string(), rows, n, k);
+    let mut seen = SEEN.lock().unwrap_or_else(|p| p.into_inner());
+    if !seen.contains(&key) {
+        seen.push(key);
+        tracing::warn!(
+            "cuBLASLt arm {arm} declined rows={rows} n={n} k={k} ldc={ldc}: {e:#}; the in-tree kernel serves it"
+        );
+    }
+}
+
 /// 2026-10-09: Whether the arm takes a launch of `rows` rows of a `scale` weight, under the
 /// threshold `min_rows` (0 = off).
 fn takes(scale: W8a8Scale, rows: usize, min_rows: usize) -> bool {
@@ -59,7 +74,7 @@ pub(super) fn try_w8a8_gemm_lt(
     }
     let mut col = 0u32;
     for seg in &w.segs[..w.count] {
-        metrale_gpu_runtime::cublaslt::fp8_gemm_act_weight_t_rowwise_ldc(
+        if let Err(e) = metrale_gpu_runtime::cublaslt::fp8_gemm_act_weight_t_rowwise_ldc(
             scratch.q.0,
             scratch.scale.0,
             seg.weight.0,
@@ -70,7 +85,13 @@ pub(super) fn try_w8a8_gemm_lt(
             w.k,
             ldc,
             stream,
-        )?;
+        ) {
+            // 2026-10-09: cuBLASLt declines some shapes (an AlgoGetHeuristic NOT_SUPPORTED seen at
+            // decode widths on the H100). The GEMV then writes every column, the segments this
+            // call already wrote included, so the result is the GEMV's.
+            lt_decline_log("w8a8 rowwise", rows, seg.n, w.k, ldc, &e);
+            return Ok(false);
+        }
         col += seg.n;
     }
     Ok(true)
