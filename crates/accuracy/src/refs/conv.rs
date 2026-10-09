@@ -12,10 +12,11 @@
 //! out    = s                                        v channels
 //! ```
 //!
-//! Tensors of a case: `x` `[rows, dim]` (the token's q|k|v projection, bf16), `w`
+//! Tensors of a case: `x` `[rows, in_dim]` (the token's projection row, q|k|v then z, bf16; the
+//! kernel reads its first `dim` channels), `w`
 //! `[dim, d_conv]` (bf16), `window` `[rows, dim, d_conv]` (f32, oldest first: the previous
 //! `d_conv` inputs) and `window_prev` (the window one token earlier). Scalars `dim`, `d_conv`,
-//! `qk_channels`, `head_dim`, `eps`. Output `[rows, dim + dim * d_conv]`: each row's conv
+//! `in_dim`, `qk_channels`, `head_dim`, `eps`. Output `[rows, dim + dim * d_conv]`: each row's conv
 //! output followed by its updated window.
 //!
 //! Owner: metrale-accuracy.
@@ -41,8 +42,11 @@ use crate::points::Shape;
 pub struct Geom {
     /// 2026-10-09: Sequences.
     pub rows: usize,
-    /// 2026-10-09: Channels (q|k|v).
+    /// 2026-10-09: Channels convolved and written (q|k|v).
     pub dim: usize,
+    /// 2026-10-09: The input row's width: the projection row the kernel reads its first `dim`
+    /// channels from (q|k|v|z), its row stride in the batched launch.
+    pub in_dim: usize,
     /// 2026-10-09: Taps.
     pub d_conv: usize,
     /// 2026-10-09: The channels the L2 norm covers (q and k).
@@ -57,8 +61,9 @@ pub struct Geom {
 pub const BLOCK: usize = 256;
 
 impl Geom {
-    /// 2026-10-09: The geometry of a swept shape: `dim` is the node's width; the runtime
-    /// values `k_heads`, `k_dim`, `d_conv` and `l2_eps` give the rest.
+    /// 2026-10-09: The geometry of a swept shape: `dim` is the node's output width, `in_dim`
+    /// its input row's (at least `dim`); the runtime values `k_heads`, `k_dim`, `d_conv` and
+    /// `l2_eps` give the rest.
     pub fn of_shape(shape: &Shape) -> Result<Geom, String> {
         let get = |name: &str| -> Result<f64, String> {
             shape
@@ -75,15 +80,16 @@ impl Geom {
         let (k_heads, k_dim) = (get("k_heads")? as usize, get("k_dim")? as usize);
         let g = Geom {
             rows: shape.rows as usize,
-            dim: shape.in_dim as usize,
+            dim: shape.out_dim as usize,
+            in_dim: shape.in_dim as usize,
             d_conv: get("d_conv")? as usize,
             qk_channels: 2 * k_heads * k_dim,
             head_dim: k_dim,
             eps: f64::from(get("l2_eps")? as f32),
         };
-        if shape.out_dim != shape.in_dim {
+        if shape.out_dim > shape.in_dim {
             return Err(format!(
-                "a conv node of in {} out {}: the step keeps the width",
+                "a conv node of in {} out {}: the kernel reads its channels from the input row",
                 shape.in_dim, shape.out_dim
             ));
         }
@@ -97,6 +103,7 @@ impl Geom {
         Ok(Geom {
             rows: case.out.0[0],
             dim: s("dim")? as usize,
+            in_dim: s("in_dim")? as usize,
             d_conv: s("d_conv")? as usize,
             qk_channels: s("qk_channels")? as usize,
             head_dim: s("head_dim")? as usize,
@@ -217,7 +224,7 @@ pub fn fill(
 ) -> Result<(), String> {
     g.check()?;
     let f = formats(plan)?;
-    let x = tensor(&mut stream("x"), class, g.rows, g.dim, 1.0, f.input);
+    let x = tensor(&mut stream("x"), class, g.rows, g.in_dim, 1.0, f.input);
     let w = tensor(
         &mut stream("w"),
         InputClass::Gaussian,
@@ -244,7 +251,7 @@ pub fn fill(
     };
     let (ie, se) = (enc(f.input)?, enc(f.state)?);
     case.tensors
-        .insert("x".into(), Tensor::encode(ie, vec![g.rows, g.dim], &x)?);
+        .insert("x".into(), Tensor::encode(ie, vec![g.rows, g.in_dim], &x)?);
     case.tensors
         .insert("w".into(), Tensor::encode(ie, vec![g.dim, g.d_conv], &w)?);
     let dims = vec![g.rows, g.dim, g.d_conv];
@@ -256,6 +263,7 @@ pub fn fill(
         .insert("window_prev".into(), Tensor::encode(se, dims, &window(0))?);
     for (k, v) in [
         ("dim", g.dim as f64),
+        ("in_dim", g.in_dim as f64),
         ("d_conv", g.d_conv as f64),
         ("qk_channels", g.qk_channels as f64),
         ("head_dim", g.head_dim as f64),

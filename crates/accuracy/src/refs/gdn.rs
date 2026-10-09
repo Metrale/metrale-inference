@@ -7,9 +7,14 @@
 //! g  = clamp(decay, 1e-6, 1 - 1e-6)
 //! u  = (v - g * (S^T k)) * beta              per value column
 //! S' = g * S + k (outer) u                   the new state, stored
-//! o  = (S'^T q) * rsqrt(k_dim)               from the stored S', before the clamp
-//! if ||S'||_F^2 > 1000^2:  S' *= 1000 * rsqrt(||S'||_F^2)
+//! o  = (S'^T q) * rsqrt(k_dim)               from the stored S', before any clamp
+//! if ||S'||_F^2 > M^2:  S' *= M * rsqrt(||S'||_F^2)    M = the contract's `state_max_norm`
 //! ```
+//!
+//! The clamp is a kernel constant the contract declares (`constants.state_max_norm`): `1000`
+//! where the kernel compiles `SSM_STATE_MAX_NORM`'s clamp, `inf` where it has none. The same
+//! symbol differs across the targets' sources (the shadows of gated_delta_rule.cu), so the
+//! contract states which computation it holds the symbol to.
 //!
 //! Value head `vh` reads key head `vh / (v_heads / k_heads)`. q/k/v are NOT normalized inside
 //! the kernel (the conv kernel's L2 norm precedes it).
@@ -38,10 +43,6 @@ use crate::inputs::{InputClass, SplitMix64, tensor};
 use crate::mutation::Mutation;
 use crate::plan::Plan;
 use crate::points::Shape;
-
-/// 2026-10-09: The state norm the decode kernels clamp each head to
-/// (`SSM_STATE_MAX_NORM`, gated_delta_rule.cu:61-64).
-pub const STATE_MAX_NORM: f64 = 1000.0;
 
 /// 2026-10-09: Distinct (state, previous token) head slots drawn before tiling over (row,
 /// head): prime, so neither a head pitch nor a row pitch maps a slot onto its neighbour's.
@@ -130,17 +131,18 @@ impl Geom {
         })
     }
 
-    /// 2026-10-09: The kernel's preconditions (gated_delta_rule.cu:12-16, 789-797): a value head
-    /// reads one key head; `k_dim <= 128`, a multiple of 4 (shared arrays of 128, j stepped by
-    /// 4); `v_dim == 128`, the block, whose four warps' partials the clamp's reduction reads.
+    /// 2026-10-09: The kernels' preconditions: a value head reads one key head; `k_dim == 128`
+    /// and `v_dim == 128` (the qwen3.6-35b-a3b sources fix both, `K_DIM` and `V_DIM_DECODE`,
+    /// :22-26; the block is 128 threads, one value column each, and a clamp's reduction reads
+    /// four warps' partials).
     pub fn check(&self) -> Result<(), String> {
         if self.k_heads == 0 || !self.v_heads.is_multiple_of(self.k_heads) {
             return Err(format!(
                 "{self:?}: value heads are not a multiple of key heads"
             ));
         }
-        if self.k_dim == 0 || self.k_dim > 128 || !self.k_dim.is_multiple_of(4) {
-            return Err(format!("{self:?}: k_dim must be a multiple of 4 up to 128"));
+        if self.k_dim != 128 {
+            return Err(format!("{self:?}: the decode kernels run k_dim = 128"));
         }
         if self.v_dim != 128 {
             return Err(format!(

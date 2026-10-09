@@ -12,9 +12,9 @@
 //!   (model-layers circuit_exec/emitters/gdn_batched.rs), so its row strides are exercised.
 //! - The state is updated in place inside a guarded buffer: a write outside it is a fault.
 //! - The conv step (`conv1d_l2norm` reference) runs through `ops::conv1d_update_l2norm_strided`
-//!   and `ops::conv1d_update_l2norm`; the strided launch reads input rows padded past `dim`
-//!   (the engine reads QKVZ rows, wider than the output's), so a kernel that read the input at
-//!   the output stride would read the padding.
+//!   and `ops::conv1d_update_l2norm` as the GDN emitters launch them: the input rows are the
+//!   projection's (q|k|v|z, wider than the output's), so a kernel that read the input at the
+//!   output stride would read the wrong channels.
 
 use anyhow::Result;
 use metrale_accuracy::case::{Case, Enc, Tensor};
@@ -196,14 +196,11 @@ fn gdn_rows(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<
     joined(dev, &g, o, st)
 }
 
-/// 2026-10-09: bf16 columns padding each strided conv input row; filled with the largest bf16,
-/// so a read of the padding as a channel leaves every bound.
-const CONV_PAD: usize = 256;
-
 /// 2026-10-09: The geometry and launch scalars a conv case records.
 struct Conv {
     rows: usize,
     dim: usize,
+    in_dim: usize,
     d_conv: usize,
     qk_channels: usize,
     head_dim: usize,
@@ -216,6 +213,7 @@ impl Conv {
         let c = Conv {
             rows: case.out.0[0],
             dim: s("dim")? as usize,
+            in_dim: s("in_dim")? as usize,
             d_conv: s("d_conv")? as usize,
             qk_channels: s("qk_channels")? as usize,
             head_dim: s("head_dim")? as usize,
@@ -227,16 +225,21 @@ impl Conv {
                 case.out, c.dim, c.d_conv
             )));
         }
-        let bf16 = |n: &str| -> Result<()> {
-            match case.tensor(n).map_err(not_runnable)?.enc {
-                Enc::Bf16 => Ok(()),
-                e => Err(not_runnable(format!(
+        let x = case.tensor("x").map_err(not_runnable)?;
+        if x.dims != [c.rows, c.in_dim] || c.in_dim < c.dim {
+            return Err(not_runnable(format!(
+                "an input {:?} for {} rows of {} channels read from {}",
+                x.dims, c.rows, c.dim, c.in_dim
+            )));
+        }
+        for n in ["x", "w"] {
+            let e = case.tensor(n).map_err(not_runnable)?.enc;
+            if e != Enc::Bf16 {
+                return Err(not_runnable(format!(
                     "`{n}` is {e:?}; the kernel reads bf16"
-                ))),
+                )));
             }
-        };
-        bf16("x")?;
-        bf16("w")?;
+        }
         Ok(c)
     }
 }
@@ -269,23 +272,12 @@ fn conv_joined(dev: &mut Dev<'_>, c: &Conv, y: DevicePtr, w: DevicePtr) -> Resul
     Ok(out)
 }
 
+/// 2026-10-09: The batched conv as the batched GDN emitter launches it
+/// (circuit_exec/emitters/gdn_batched.rs): every row in one launch, the input read at the
+/// projection row's stride (`in_dim`), the output written at `dim`.
 fn conv_strided(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<u8>> {
     let c = Conv::of(case)?;
-    let x = case.tensor("x").map_err(not_runnable)?;
-    let stride = c.dim + CONV_PAD;
-    let pad = 0x7f7fu16.to_le_bytes();
-    let mut rows = Vec::with_capacity(c.rows * stride * 2);
-    for r in 0..c.rows {
-        rows.extend_from_slice(&x.bytes[r * c.dim * 2..(r + 1) * c.dim * 2]);
-        for _ in 0..CONV_PAD {
-            rows.extend_from_slice(&pad);
-        }
-    }
-    let input = dev.upload(&Tensor {
-        enc: Enc::Bf16,
-        dims: vec![c.rows, stride],
-        bytes: std::sync::Arc::new(rows),
-    })?;
+    let input = dev.upload(case.tensor("x").map_err(not_runnable)?)?;
     let w = DenseWeight {
         weight: dev.upload(case.tensor("w").map_err(not_runnable)?)?,
     };
@@ -304,13 +296,16 @@ fn conv_strided(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<
         c.qk_channels as u32,
         c.head_dim as u32,
         c.eps,
-        stride as u32,
+        c.in_dim as u32,
         c.dim as u32,
         dev.stream,
     )?;
     conv_joined(dev, &c, y, st)
 }
 
+/// 2026-10-09: The per-sequence conv as the GDN emitter launches it
+/// (circuit_exec/emitters/gdn.rs): one launch of batch 1 per row, at that row's input, output
+/// and window (the kernel reads its input at `dim`, so a wider row needs the per-row pointer).
 fn conv_rows(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<u8>> {
     let c = Conv::of(case)?;
     let input = dev.upload(case.tensor("x").map_err(not_runnable)?)?;
@@ -319,20 +314,22 @@ fn conv_rows(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec
     };
     let st = window(dev, case, &c)?;
     let y = dev.output(c.rows * c.dim * 4)?;
-    ops::conv1d_update_l2norm(
-        dev.gpu,
-        kernel,
-        st,
-        input,
-        &w,
-        y,
-        c.dim as u32,
-        c.d_conv as u32,
-        c.rows as u32,
-        c.qk_channels as u32,
-        c.head_dim as u32,
-        c.eps,
-        dev.stream,
-    )?;
+    for r in 0..c.rows {
+        ops::conv1d_update_l2norm(
+            dev.gpu,
+            kernel,
+            at(st, r * c.dim * c.d_conv * 4),
+            at(input, r * c.in_dim * 2),
+            &w,
+            at(y, r * c.dim * 4),
+            c.dim as u32,
+            c.d_conv as u32,
+            1,
+            c.qk_channels as u32,
+            c.head_dim as u32,
+            c.eps,
+            dev.stream,
+        )?;
+    }
     conv_joined(dev, &c, y, st)
 }
