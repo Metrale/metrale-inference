@@ -337,7 +337,9 @@ fn derived_mutation(
             let want = reference.reference(case, plan, &at).map_err(err)?;
             let mut worst: Option<Arm> = None;
             for v in 0..crate::emulate::VARIANTS {
-                let em = reference.emulate(case, plan, Some(*e), v, &at).map_err(err)?;
+                let em = reference
+                    .emulate(case, plan, Some(*e), v, &at)
+                    .map_err(err)?;
                 let a = arm(m, true, &em, &want, out)?;
                 if worst.as_ref().is_none_or(|w| a.ratio > w.ratio) {
                     worst = Some(a);

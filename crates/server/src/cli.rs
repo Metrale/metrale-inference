@@ -16,6 +16,7 @@ mod accuracy_adapters_quant;
 mod accuracy_adapters_w8a8;
 mod accuracy_adapters_tc;
 mod accuracy_model;
+mod accuracy_adapters_gdn;
 mod accuracy_gpu;
 pub mod bench_aggregate;
 mod bench_args;
