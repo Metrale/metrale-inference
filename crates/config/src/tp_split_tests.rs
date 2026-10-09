@@ -161,7 +161,10 @@ fn glm_heads_split_unevenly_at_tp3() {
     let want = [22usize, 21, 21];
     for (rank, w) in want.iter().enumerate() {
         let mut c = glm_at(3, rank);
-        c.shard_heads_for_tp(TpSupport::Uneven).unwrap();
+        c.shard_heads_for_tp(TpSupport::Uneven {
+            linear_channel_unit: 1,
+        })
+        .unwrap();
         assert_eq!(
             (
                 c.num_attention_heads,
@@ -207,7 +210,10 @@ fn even_and_uneven_agree_at_tp2() {
     for rank in 0..2 {
         let (mut e, mut u) = (glm_at(2, rank), glm_at(2, rank));
         e.shard_heads_for_tp(TpSupport::Even).unwrap();
-        u.shard_heads_for_tp(TpSupport::Uneven).unwrap();
+        u.shard_heads_for_tp(TpSupport::Uneven {
+            linear_channel_unit: 1,
+        })
+        .unwrap();
         assert_eq!(e.num_attention_heads, 32);
         assert_eq!(
             (
@@ -231,8 +237,15 @@ fn even_and_uneven_agree_at_tp2() {
 #[test]
 fn the_division_runs_once_and_only_where_supported() {
     let mut c = glm_at(3, 1);
-    c.shard_heads_for_tp(TpSupport::Uneven).unwrap();
-    let err = c.shard_heads_for_tp(TpSupport::Uneven).unwrap_err();
+    c.shard_heads_for_tp(TpSupport::Uneven {
+        linear_channel_unit: 1,
+    })
+    .unwrap();
+    let err = c
+        .shard_heads_for_tp(TpSupport::Uneven {
+            linear_channel_unit: 1,
+        })
+        .unwrap_err();
     assert!(err.to_string().contains("already divided"), "{err}");
     assert_eq!(c.num_attention_heads, 21);
 
@@ -265,7 +278,10 @@ fn grouped_heads_split_in_whole_groups() {
         let mut c = glm_at(3, rank);
         c.num_attention_heads = 32;
         c.num_key_value_heads = 8;
-        c.shard_heads_for_tp(TpSupport::Uneven).unwrap();
+        c.shard_heads_for_tp(TpSupport::Uneven {
+            linear_channel_unit: 1,
+        })
+        .unwrap();
         assert_eq!(c.num_attention_heads, 4 * c.num_key_value_heads);
         got.push((c.num_key_value_heads, c.num_attention_heads));
     }
@@ -274,6 +290,47 @@ fn grouped_heads_split_in_whole_groups() {
     let mut c = glm_at(3, 0);
     c.num_attention_heads = 30;
     c.num_key_value_heads = 8;
-    let err = c.shard_heads_for_tp(TpSupport::Uneven).unwrap_err();
+    let err = c
+        .shard_heads_for_tp(TpSupport::Uneven {
+            linear_channel_unit: 1,
+        })
+        .unwrap_err();
     assert!(err.to_string().contains("whole groups"), "{err}");
+}
+
+/// 2026-10-09: With a 256-channel linear unit GLM-5.3's 128-wide KDA heads split in pairs at TP=3
+/// (22/22/20, every rank a multiple of 256 channels) while its attention heads stay 22/21/21;
+/// a unit of 1 is the head-by-head split. The widest rank keeps 22 heads either way.
+#[test]
+fn a_linear_channel_unit_splits_kda_heads_in_whole_units() {
+    let split = |unit: usize| -> Vec<(usize, usize, usize)> {
+        (0..3)
+            .map(|rank| {
+                let mut c = glm_at(3, rank);
+                c.shard_heads_for_tp(TpSupport::Uneven {
+                    linear_channel_unit: unit,
+                })
+                .unwrap();
+                (
+                    c.num_attention_heads,
+                    c.linear_num_key_heads,
+                    c.linear_num_value_heads,
+                )
+            })
+            .collect()
+    };
+    assert_eq!(split(256), vec![(22, 22, 22), (21, 22, 22), (21, 20, 20)]);
+    assert_eq!(split(1), vec![(22, 22, 22), (21, 21, 21), (21, 21, 21)]);
+    assert!(
+        split(256)
+            .iter()
+            .all(|&(_, lk, _)| (lk * 128).is_multiple_of(256))
+    );
+
+    assert_eq!(linear_head_unit(128, 256).unwrap(), 2);
+    assert_eq!(linear_head_unit(128, 1).unwrap(), 1);
+    assert_eq!(linear_head_unit(128, 128).unwrap(), 1);
+    assert_eq!(linear_head_unit(96, 256).unwrap(), 8);
+    assert_eq!(linear_head_unit(0, 1).unwrap(), 1);
+    assert!(linear_head_unit(128, 0).is_err());
 }

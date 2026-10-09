@@ -13,10 +13,13 @@
 //! three GLM projection launchers (`glm5next_kda`, `glm5next_dsa::layer::proj_gemm`,
 //! `glm5next_mlp::forward::launch`) ask [`proj`] first and run BF16 only when it declines.
 //!
+//! 2026-10-09: Under `--dense-quantization w4a16` this registry serves the part of the set the
+//! W4A16 tier leaves at FP8 (`glm5next_w4a16_dense::tier_of`), unchanged.
+//!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - [`proj`] declines (`Ok(false)`) unless the tier is `fp8` and the weight was registered;
-//!   with the tier at `declared` nothing is registered and every launch is unchanged.
+//! - [`proj`] declines (`Ok(false)`) unless the tier is `fp8` or `w4a16` and the weight was
+//!   registered; with the tier at `declared` nothing is registered and every launch is unchanged.
 //! - A registered weight is used only at the shape it was registered with; any other shape is
 //!   an error, never a silent BF16 run.
 //! - A row's output does not depend on the row count: the W8A8 family is row-invariant and
@@ -80,15 +83,31 @@ impl Drop for StableInput {
     }
 }
 
+/// 2026-10-09: For the tests that touch the process-wide dense registries (this one and
+/// `glm5next_w4a16_dense`'s): one at a time, each from empty registries. The mock backends
+/// hand out the same addresses, so a key left by another test could otherwise collide.
+#[cfg(test)]
+pub(crate) fn lock_registries_for_test() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: Mutex<()> = Mutex::new(());
+    let g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    *state().lock().unwrap_or_else(|e| e.into_inner()) = None;
+    crate::glm5next_w4a16_dense::clear_for_test();
+    g
+}
+
 fn state() -> &'static Mutex<Option<Fp8Dense>> {
     static S: OnceLock<Mutex<Option<Fp8Dense>>> = OnceLock::new();
     S.get_or_init(|| Mutex::new(None))
 }
 
-/// 2026-10-09: Whether `--dense-quantization fp8` is in force.
+/// 2026-10-09: Whether this FP8 registry is in use: `--dense-quantization fp8`, or `w4a16`,
+/// which serves the rest of `fp8`'s set here.
 pub fn enabled() -> bool {
-    metrale_model_layers::layers::dense_quantization()
-        == metrale_model_layers::layers::DenseQuantization::Fp8
+    use metrale_model_layers::layers::DenseQuantization as D;
+    matches!(
+        metrale_model_layers::layers::dense_quantization(),
+        D::Fp8 | D::W4a16
+    )
 }
 
 /// 2026-10-09: The W8A8 family's K unit: the activation quantizer and the GEMV read K in
@@ -97,13 +116,25 @@ pub const FP8_K_UNIT: usize = 128;
 
 /// 2026-10-09: The unit the shared expert's width splits over TP in: [`FP8_K_UNIT`] under the
 /// fp8 tier, so each rank's down projection has a whole number of chunks (2048 over three ranks:
-/// 768/640/640), else the BF16 kernels' `bf16_unit` (688/680/680).
+/// 768/640/640); the W4A16 row-tile unit under w4a16 (`glm5next_w4a16_dense::W4A16_K_UNIT`:
+/// 768/768/512, the widest rank unchanged); else the BF16 kernels' `bf16_unit` (688/680/680).
 pub fn shared_split_unit(bf16_unit: usize) -> usize {
-    shared_split_unit_for(enabled(), bf16_unit)
+    shared_split_unit_for(
+        metrale_model_layers::layers::dense_quantization(),
+        bf16_unit,
+    )
 }
 
-fn shared_split_unit_for(fp8: bool, bf16_unit: usize) -> usize {
-    if fp8 { FP8_K_UNIT } else { bf16_unit }
+fn shared_split_unit_for(
+    tier: metrale_model_layers::layers::DenseQuantization,
+    bf16_unit: usize,
+) -> usize {
+    use metrale_model_layers::layers::DenseQuantization as D;
+    match tier {
+        D::Declared => bf16_unit,
+        D::Fp8 => FP8_K_UNIT,
+        D::W4a16 => crate::glm5next_w4a16_dense::W4A16_K_UNIT,
+    }
 }
 
 /// 2026-10-09: Resolve the W8A8 kernels and allocate the activation scratch for K up to

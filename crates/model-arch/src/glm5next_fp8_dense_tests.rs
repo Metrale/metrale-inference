@@ -11,22 +11,31 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
 use super::*;
 
-/// 2026-10-09: The registry is process-wide; its tests run one at a time.
-static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// 2026-10-09: Under the tier the shared expert (2048 wide) splits over three ranks in 128-wide
-/// units, so every rank's down projection has whole W8A8 chunks; otherwise in the BF16 unit.
+/// units, so every rank's down projection has whole W8A8 chunks; under w4a16 in the row-tile
+/// kernel's 256-wide units; under declared in the BF16 unit. The widest rank is 768 under both
+/// quantized tiers.
 #[test]
 fn the_shared_expert_splits_in_whole_fp8_chunks_under_the_tier() {
+    use metrale_model_layers::layers::DenseQuantization as D;
     let widths = |unit| -> Vec<usize> {
         (0..3)
             .map(|r| metrale_config::tp_split(2048, 3, r, unit).unwrap().len)
             .collect()
     };
-    let fp8 = widths(shared_split_unit_for(true, 8));
+    let fp8 = widths(shared_split_unit_for(D::Fp8, 8));
     assert_eq!(fp8, vec![768, 640, 640]);
     assert!(fp8.iter().all(|k| k % FP8_K_UNIT == 0));
-    assert_eq!(widths(shared_split_unit_for(false, 8)), vec![688, 680, 680]);
+    let w4 = widths(shared_split_unit_for(D::W4a16, 8));
+    assert_eq!(w4, vec![768, 768, 512]);
+    assert!(
+        w4.iter()
+            .all(|&k| crate::glm5next_w4a16_dense::shape_ok(4096, k))
+    );
+    assert_eq!(
+        widths(shared_split_unit_for(D::Declared, 8)),
+        vec![688, 680, 680]
+    );
 }
 
 /// 2026-10-09: One test owns the process-wide registry. A registered weight runs W8A8 in
@@ -35,7 +44,7 @@ fn the_shared_expert_splits_in_whole_fp8_chunks_under_the_tier() {
 /// `prepare` is refused; re-registering the same shape quantizes nothing new.
 #[test]
 fn registered_weights_run_w8a8_and_everything_else_declines_or_errors() {
-    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
     let gpu = MockGpuBackend::new();
     let reg_before = registered();
     let quant = KernelHandle(0x77);
@@ -115,7 +124,7 @@ fn registered_weights_run_w8a8_and_everything_else_declines_or_errors() {
 /// with it `stable_input`) is process-wide and `declared` in tests.
 #[test]
 fn a_stable_input_is_quantized_once_until_another_input_takes_the_scratch() {
-    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = crate::glm5next_fp8_dense::lock_registries_for_test();
     let gpu = MockGpuBackend::new();
     let quant = KernelHandle(0x78);
     prepare(&gpu, 4096).unwrap();

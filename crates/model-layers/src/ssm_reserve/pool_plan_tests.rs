@@ -28,8 +28,10 @@ fn local(tp: usize, rank: usize) -> ModelConfig {
     let mut c = glm_config();
     c.tp_world_size = tp;
     c.tp_rank = rank;
-    c.shard_heads_for_tp(TpSupport::Uneven)
-        .expect("GLM heads shard");
+    c.shard_heads_for_tp(TpSupport::Uneven {
+        linear_channel_unit: 1,
+    })
+    .expect("GLM heads shard");
     c
 }
 

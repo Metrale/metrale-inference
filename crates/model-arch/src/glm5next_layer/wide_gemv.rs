@@ -54,7 +54,7 @@ pub(crate) fn takes_wide(wide: KernelHandle, m: usize) -> bool {
 }
 
 /// 2026-10-09: `C[M, N] = A[M, K] @ B[N, K]^T` with BF16 inputs (the output element is the
-/// kernels'): the FP8 dense path for a registered weight, then cuBLASLt above `DENSE_GEMV_BATCHM_MAX_M` rows when `cublas_wide_proj` is on (BF16
+/// kernels'): the W4A16 or FP8 dense path for a registered weight, then cuBLASLt above `DENSE_GEMV_BATCHM_MAX_M` rows when `cublas_wide_proj` is on (BF16
 /// out), the wide batched GEMV at 9..=16 rows when `batchm.wide` is set, else
 /// `ops::dense_mm_bf16` (GEMV at one row, `batchm.narrow` at 2..=16, the tile GEMM otherwise).
 #[allow(clippy::too_many_arguments)]
@@ -72,7 +72,11 @@ pub(crate) fn glm_mm(
     stream: u64,
 ) -> Result<()> {
     // 2026-10-09: `--dense-quantization fp8` serves registered weights W8A8; only BF16-output
-    // projections are registered (each block's `dense_projections`).
+    // projections are registered (each block's `dense_projections`). Under `w4a16` the W4A16
+    // registry answers first, then the FP8 one for the rest of the set.
+    if crate::glm5next_w4a16_dense::proj(gpu, b, a, c, m, n, kk, stream)? {
+        return Ok(());
+    }
     if crate::glm5next_fp8_dense::proj(gpu, b, a, c, m, n, kk, stream)? {
         return Ok(());
     }

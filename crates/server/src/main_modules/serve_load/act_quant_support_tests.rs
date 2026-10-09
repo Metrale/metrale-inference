@@ -183,13 +183,17 @@ fn glm_honours_its_declared_mlp_and_refuses_fp8() {
     );
 }
 
-/// 2026-10-09: `--dense-quantization fp8` is accepted on glm5_next only; `declared` everywhere.
+/// 2026-10-09: `--dense-quantization fp8` and `w4a16` are accepted on glm5_next only;
+/// `declared` everywhere.
 #[test]
 fn dense_fp8_is_refused_off_glm() {
     use metrale_model_layers::layers::DenseQuantization;
-    assert!(dense_quant_refusal("glm5_next", DenseQuantization::Fp8).is_none());
-    let why = dense_quant_refusal("qwen3_5_moe", DenseQuantization::Fp8).expect("refused");
-    assert!(why.contains("only glm5_next"), "{why}");
+    for tier in [DenseQuantization::Fp8, DenseQuantization::W4a16] {
+        assert!(dense_quant_refusal("glm5_next", tier).is_none());
+        let why = dense_quant_refusal("qwen3_5_moe", tier).expect("refused");
+        assert!(why.contains("only glm5_next"), "{why}");
+        assert!(why.contains(tier.name()), "{why}");
+    }
     for m in ["glm5_next", "qwen3_5_moe", "llama"] {
         assert!(
             dense_quant_refusal(m, DenseQuantization::Declared).is_none(),
