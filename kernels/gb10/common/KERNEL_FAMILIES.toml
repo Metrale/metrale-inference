@@ -1119,7 +1119,8 @@ kernels = [
 ]
 rows = [1, 32]
 # 2026-10-02: Per-row F32 global, E4M3 group scale, E2M1 round to nearest even
-# (w4a4_gemv_mx.cu:401-460); FP32 sums, scales applied to the FP32 sum (:189, :344). With
+# (2026-10-08: now w4a4_mx_core.cuh, w4a4_quant_rows_impl<false>); FP32 sums, scales applied to
+# the FP32 sum (w4a4_mx_core.cuh w4a4_gemv_mx_impl, w4a4_gemv_mx.cu nt impl). With
 # `w4a4_quant_rows` in its group a projection reads BF16 and quantizes it (the downcast).
 pipeline.linear = { in = ["nvfp4/g16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline."act_quant:nvfp4/g16" = { in = ["bf16"], compute = "f32", out = ["nvfp4/g16"] }
@@ -1138,6 +1139,33 @@ why = "w4a4_proj.rs:162-166 at max_m = 64"
 values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/w4a4_gemv_mx.cu"]
+
+# 2026-10-08: W4A4 under a checkpoint's STATIC activation scale (ModelOpt `input_scale`, declared
+# `dynamic: false`), over the w4a4_mx core (w4a4_mx_core.cuh, no new MMA code): the static-scale row
+# quantizer (w4a4_quant_rows_impl<true>) and the routed-expert slot GEMV (the mx8 body with M = 1,
+# one block row per (token, slot), weights and weight_scale_2 from global-id pointer tables).
+# GLM-5.3-Flash's declared W4A4 routed experts at 1..=16 rows; its dense MLP pairs the quantizer
+# with the w4a4_mx GEMVs (glm5next_mlp/forward/w4a4.rs).
+[[family]]
+id = "w4a4_mx_static"
+description = "W4A4 MX with static NVFP4 activation scales: static row quantize and the routed-expert slot GEMV"
+compute = "tensor_core"
+mma = "mma.sync.m16n8k64.mxf4nvf4.block_scale"
+kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static" = { compute = "memory" }
+kernels = ["w4a4_gemv_mx_moe::w4a4_quant_rows_static", "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots"]
+rows = [1, 16]
+pipeline.expert_gate_up = { in = ["nvfp4/g16", "i32"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline.expert_down = { in = ["nvfp4/g16", "i32"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline."act_quant:nvfp4/g16" = { in = ["bf16"], compute = "f32", out = ["nvfp4/g16"] }
+op = [
+  { op = "expert_gate_up", weight = ["nvfp4/g16"], activation = ["nvfp4/g16"] },
+  { op = "expert_down", weight = ["nvfp4/g16"], activation = ["nvfp4/g16"] },
+  { op = "act_quant:nvfp4/g16" },
+]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/w4a4_gemv_mx_moe.cu"]
 
 [[family]]
 id = "w8a16_gemm"
