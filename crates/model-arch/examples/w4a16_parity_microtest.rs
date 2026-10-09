@@ -245,10 +245,17 @@ fn main() -> Result<()> {
         }
         // 2026-10-05: The row tiles' N tile: each `_w2` entry (32 columns, 2 warps) against its
         // 4-warp twin on the row-major weight, byte for byte, at every row count it serves.
+        // 2026-10-09: The prefetch-distance points (`_pf2`, `_pf3`, 4 warps) against their PF 1
+        // twin the same way; `cols` below is 64 for them.
         for (four, two, rows) in [
             ("w4a16_tc_rows_16", "w4a16_tc_rows_16_w2", 16usize),
             ("w4a16_tc_rows_32", "w4a16_tc_rows_32_w2", 32),
             ("w4a16_tc_rows_64", "w4a16_tc_rows_64_w2", 64),
+            ("w4a16_tc_rows_16", "w4a16_tc_rows_16_pf2", 16),
+            ("w4a16_tc_rows_32", "w4a16_tc_rows_32_pf2", 32),
+            ("w4a16_tc_rows_32", "w4a16_tc_rows_32_pf3", 32),
+            ("w4a16_tc_rows_64", "w4a16_tc_rows_64_pf2", 64),
+            ("w4a16_tc_rows_64", "w4a16_tc_rows_64_pf3", 64),
         ] {
             let (Ok(k4), Ok(k2)) = (
                 g.kernel("w4a16_tc_rows", four),
@@ -259,7 +266,8 @@ fn main() -> Result<()> {
             };
             for m in [1, rows / 2 + 1, rows] {
                 let mut out = Vec::new();
-                for (kh, cols) in [(k4, 64u32), (k2, 32)] {
+                let cols2 = if two.ends_with("_w2") { 32u32 } else { 64 };
+                for (kh, cols) in [(k4, 64u32), (k2, cols2)] {
                     g.memset(c_test, 0, m * n * 2)?;
                     KernelLaunch::new(g, kh)
                         .grid([div_ceil(n as u32, cols), 1, 1])

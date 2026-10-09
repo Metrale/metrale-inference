@@ -76,3 +76,21 @@ extern "C" __global__ void __launch_bounds__(64) w4a16_tc_rows_64_w2(
 ) {
     tr_block<Nvfp4G16, 8, 1, true, 2>(A, {packed, scale, s2}, C, M, N, K, lda, ldc, blockIdx.x);
 }
+
+// 2026-10-09: Prefetch-distance points (tc_rows.cuh PF): the same tiles with the weight loads two
+// or three groups ahead, for a class whose DRAM needs more bytes in flight per warp (on the H100
+// SXM the PF 1 entries hold ~8 warps per SM and reach 20-33 % of HBM). PF moves loads, not sums,
+// so each point gives its PF 1 twin's bits.
+#define W4TCR_PF(NAME, NT, G, PF)                                                                     \
+    extern "C" __global__ void __launch_bounds__(TR_THREADS) NAME(                                    \
+        const __nv_bfloat16* __restrict__ A, const unsigned char* __restrict__ packed,                \
+        const unsigned char* __restrict__ scale, float s2, __nv_bfloat16* __restrict__ C,             \
+        unsigned int M, unsigned int N, unsigned int K, unsigned int lda, unsigned int ldc) {         \
+        tr_block<Nvfp4G16, NT, G, true, TR_WARPS, PF>(A, {packed, scale, s2}, C, M, N, K, lda, ldc,   \
+                                                      blockIdx.x);                                     \
+    }
+W4TCR_PF(w4a16_tc_rows_16_pf2, 2, 2, 2)
+W4TCR_PF(w4a16_tc_rows_32_pf2, 4, 1, 2)
+W4TCR_PF(w4a16_tc_rows_32_pf3, 4, 1, 3)
+W4TCR_PF(w4a16_tc_rows_64_pf2, 8, 1, 2)
+W4TCR_PF(w4a16_tc_rows_64_pf3, 8, 1, 3)

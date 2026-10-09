@@ -213,6 +213,31 @@ fn main() -> Result<()> {
             "w4a16_tc_rows_64_w2",
             Geom::TcRows { rows: 64, cols: 32 },
         ),
+        (
+            "w4a16_tc_rows_16_pf2",
+            "w4a16_tc_rows_16_pf2",
+            Geom::TcRows { rows: 16, cols: 64 },
+        ),
+        (
+            "w4a16_tc_rows_32_pf2",
+            "w4a16_tc_rows_32_pf2",
+            Geom::TcRows { rows: 32, cols: 64 },
+        ),
+        (
+            "w4a16_tc_rows_32_pf3",
+            "w4a16_tc_rows_32_pf3",
+            Geom::TcRows { rows: 32, cols: 64 },
+        ),
+        (
+            "w4a16_tc_rows_64_pf2",
+            "w4a16_tc_rows_64_pf2",
+            Geom::TcRows { rows: 64, cols: 64 },
+        ),
+        (
+            "w4a16_tc_rows_64_pf3",
+            "w4a16_tc_rows_64_pf3",
+            Geom::TcRows { rows: 64, cols: 64 },
+        ),
         ("w4a16_gemv_batch4", "w4a16_gemv_batch4", Geom::GemvN4),
         ("w4a16_gemv_batch8", "w4a16_gemv_batch8", Geom::GemvN4),
         ("w4a16_gemv_batch16", "w4a16_gemv_batch16", Geom::GemvN4),
