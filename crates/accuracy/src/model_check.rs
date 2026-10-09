@@ -120,7 +120,11 @@ pub fn compare(
             reference: format!("{ref_pins:?}"),
         });
     }
-    if vocab == 0 || run.is_empty() || run.len() != reference.len() || run.len() % vocab != 0 {
+    if vocab == 0
+        || run.is_empty()
+        || run.len() != reference.len()
+        || !run.len().is_multiple_of(vocab)
+    {
         return Err(ModelCheckError::Shape(format!(
             "{} run and {} reference logits for vocab {vocab}",
             run.len(),

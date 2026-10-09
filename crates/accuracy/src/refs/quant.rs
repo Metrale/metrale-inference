@@ -139,7 +139,7 @@ pub fn quantize(
             })
         }
         Layout::Fp8Group(g) | Layout::Fp8Block(_, g) => {
-            if k % g != 0 {
+            if !k.is_multiple_of(g) {
                 return Err(format!("k={k} is not a multiple of the scale group {g}"));
             }
             let br = if let Layout::Fp8Block(r, _) = layout {
@@ -185,7 +185,7 @@ fn quantize_nvfp4(
     g: usize,
     per_row_global: bool,
 ) -> Result<Stored, String> {
-    if k % g != 0 {
+    if !k.is_multiple_of(g) {
         return Err(format!("k={k} is not a multiple of the NVFP4 group {g}"));
     }
     let gk = k / g;
@@ -253,7 +253,7 @@ impl Stored {
     /// the tiled bytes, so the tiling is part of the operand, not an approximation.
     pub fn tile(&self, rows: usize) -> Result<Stored, String> {
         let p = self.values.dims[0];
-        if self.block.is_some() && p % self.block_rows != 0 {
+        if self.block.is_some() && !p.is_multiple_of(self.block_rows) {
             return Err(format!(
                 "a period of {p} rows splits {}-row scale blocks",
                 self.block_rows

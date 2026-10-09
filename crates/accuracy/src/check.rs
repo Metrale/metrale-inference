@@ -261,10 +261,10 @@ fn arms(job: &Job<'_>, runner: &mut dyn KernelRunner, o: &mut Outcome) -> Result
                 return Err(Verdict::FailBound);
             }
             let observed = g.misrounded as f64 / g.compared.max(1) as f64;
-            if let Some(t) = drift_threshold(job.contract, &o.key, job.input, g.compared) {
-                if observed > t {
-                    return Err(Verdict::FailDrift { threshold: t });
-                }
+            if let Some(t) = drift_threshold(job.contract, &o.key, job.input, g.compared)
+                && observed > t
+            {
+                return Err(Verdict::FailDrift { threshold: t });
             }
         }
         Class::BitIdentical { against } => {

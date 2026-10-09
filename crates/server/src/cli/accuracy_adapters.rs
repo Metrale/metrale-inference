@@ -141,7 +141,7 @@ pub(crate) fn nvfp4_weight(dev: &mut Dev<'_>, case: &Case) -> Result<QuantizedWe
 
 /// 2026-10-09: The shard's slice of an NVFP4 weight (rows `lo..`): packed and scale rows move.
 fn nvfp4_rows(w: &QuantizedWeight, lo: usize, k: usize) -> QuantizedWeight {
-    let mut s = w.clone();
+    let mut s = *w;
     s.weight = at(w.weight, lo * k / 2);
     s.weight_scale = at(w.weight_scale, lo * k / 16);
     s

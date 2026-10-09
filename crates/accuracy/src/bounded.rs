@@ -49,6 +49,10 @@ fn slack(v: f64, e: f64) -> f64 {
     (e + 4.0 * u * v.abs()) * (1.0 + 4.0 * u)
 }
 
+// 2026-10-09: `add`/`mul`/... name the exact operations of the declared computation, each
+// carrying its bound; they take no operator syntax on purpose, so every rounding a reference
+// applies stays an explicit, named call.
+#[allow(clippy::should_implement_trait)]
 impl Bounded {
     /// 2026-10-09: An operand the kernel reads exactly (a decoded weight, an input element).
     pub fn exact(v: f64) -> Self {

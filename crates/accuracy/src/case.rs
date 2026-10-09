@@ -168,7 +168,7 @@ impl Tensor {
             Enc::E4m3 => elem::e4m3_to_f64(b[i]),
             Enc::Ue4m3 => elem::ue4m3_to_f64(b[i]),
             Enc::Ue8m0 => elem::ue8m0_to_f64(b[i]),
-            Enc::E2m1x2 => elem::e2m1_to_f64(if i % 2 == 0 {
+            Enc::E2m1x2 => elem::e2m1_to_f64(if i.is_multiple_of(2) {
                 b[i / 2] & 0xf
             } else {
                 b[i / 2] >> 4
