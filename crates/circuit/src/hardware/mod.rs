@@ -34,6 +34,7 @@ mod render_routes;
 pub mod sources;
 pub mod tc_policy;
 mod tc_policy_render;
+mod venn_on;
 
 #[cfg(test)]
 mod fp4_costing_tests;
@@ -60,6 +61,7 @@ pub use render::render_report;
 pub use render_matrix::{PortList, port_lists, summary_row};
 pub use render_routes::plan_text;
 pub use sources::{ClassSources, KernelTree, Module};
+pub use venn_on::venn_text;
 
 /// 2026-09-30: Why a hardware plan could not be built.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]

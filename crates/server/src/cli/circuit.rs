@@ -15,9 +15,12 @@ use std::io::{IsTerminal, Write};
 
 use anyhow::{Context, Result, bail};
 use metrale_circuit::display::{DisplayOpts, Expand, Glyphs};
+use metrale_circuit::hardware::CircuitSource;
 use metrale_circuit::{AvailableKernels, Instance, Mode};
 
-use super::{CircuitAction, CircuitArgs, CircuitMode, CircuitPlanArgs, circuit_paint};
+use super::{
+    CircuitAction, CircuitArgs, CircuitDisplayArgs, CircuitMode, CircuitPlanArgs, circuit_paint,
+};
 
 // 2026-09-28: The embedded texts and the instance lookups live with the executor, so the view
 // and the executor read one copy.
@@ -135,6 +138,11 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
     let rows = rows_of(&inst, &plan_args)?;
     let mode = mode_of(plan_args.mode);
     check_shape(&inst)?;
+    // 2026-10-05: `--hardware`: the device's class plans it from the working tree, for `show`
+    // and `display` alike (the plan `met circuit plan --format plan` prints).
+    if let Some(hw) = &plan_args.device.hardware {
+        return emit(&device_text(&args.action, &inst, hw, (mode, rows))?);
+    }
     let loaded = metrale_circuit::load(&inst, sources(&inst)?)?;
     // 2026-09-28: Offline, no target is probed: every kernel a rule names counts as built.
     let avail = AvailableKernels::all_named_by(&loaded.rules);
@@ -154,61 +162,85 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             unreachable!("returned above")
         }
         CircuitAction::Display(d) => {
-            let tty = std::io::stdout().is_terminal();
-            let width = if tty {
-                crossterm::terminal::size().map_or(100, |(w, _)| w as usize)
-            } else {
-                100
-            };
-            let expand = match (d.layer, d.all_layers) {
-                (Some(n), _) => Expand::Layer(n),
-                (None, true) => Expand::AllLayers,
-                (None, false) => Expand::Summary,
-            };
-            let glyphs = if d.ascii {
-                Glyphs::Ascii
-            } else {
-                Glyphs::Unicode
-            };
-            let opts = DisplayOpts {
-                width,
-                glyphs,
-                expand,
-            };
-            let doc = match &d.hardware {
-                // 2026-09-30: The device's class plans it from the working tree.
-                Some(hw) => {
-                    let (tree, reg, _) = super::circuit_hw::tree_here()?;
-                    let model = metrale_circuit::hardware::model::model_of(
-                        &tree,
-                        &inst,
-                        format!("recipe {}", inst.recipe),
-                        metrale_circuit::hardware::PrecisionChoice::Recipe,
-                    )?;
-                    let run = metrale_circuit::venn::Run { mode, rows };
-                    let one = metrale_circuit::hardware::plan_one(&reg, hw, &tree, &model, run)?;
-                    metrale_circuit::hardware::display_on(&model, &one, &opts)?
-                }
-                None => metrale_circuit::display_plan(
-                    &inst,
-                    &loaded,
-                    &avail,
-                    (mode, rows),
-                    &opts,
-                    &families_for(&inst)?,
-                )?,
-            };
-            let depth = circuit_paint::resolve_depth(
-                d.color,
-                tty,
-                std::env::var("NO_COLOR").ok().as_deref(),
-                std::env::var("COLORTERM").ok().as_deref(),
-            );
-            circuit_paint::paint(&doc, depth)
+            let doc = metrale_circuit::display_plan(
+                &inst,
+                &loaded,
+                &avail,
+                (mode, rows),
+                &display_opts(&d),
+                &families_for(&inst)?,
+            )?;
+            paint(&d, &doc)
         }
     };
-    // 2026-09-28: A reader that closes early (`| head`) has what it asked for; that is not
-    // a failure of the command.
+    emit(&text)
+}
+
+/// 2026-10-05: `show` or `display` of `inst` planned on device `hw`: `show` prints the plan
+/// `met circuit plan --format plan` prints, `display` draws it.
+pub(crate) fn device_text(
+    action: &CircuitAction,
+    inst: &Instance,
+    hw: &str,
+    (mode, rows): (Mode, u64),
+) -> Result<String> {
+    let (tree, reg, _) = super::circuit_hw::tree_here()?;
+    // 2026-10-05: The model `met circuit plan --checkpoint <recipe> --precision recipe` plans.
+    let model = super::circuit_hw::source(&tree).model(&metrale_circuit::hardware::ModelSpec {
+        checkpoint: &inst.recipe,
+        config_json: None,
+        hf_quant: None,
+        precision: metrale_circuit::hardware::PrecisionChoice::Recipe,
+    })?;
+    let run = metrale_circuit::venn::Run { mode, rows };
+    let one = metrale_circuit::hardware::plan_one(&reg, hw, &tree, &model, run)?;
+    Ok(match action {
+        CircuitAction::Display(d) => {
+            let doc = metrale_circuit::hardware::display_on(&model, &one, &display_opts(d))?;
+            paint(d, &doc)
+        }
+        _ => metrale_circuit::hardware::plan_text(&model.circuit, &one),
+    })
+}
+
+/// 2026-10-05: The terminal drawing options `display` asks for.
+fn display_opts(d: &CircuitDisplayArgs) -> DisplayOpts {
+    let width = if std::io::stdout().is_terminal() {
+        crossterm::terminal::size().map_or(100, |(w, _)| w as usize)
+    } else {
+        100
+    };
+    let expand = match (d.layer, d.all_layers) {
+        (Some(n), _) => Expand::Layer(n),
+        (None, true) => Expand::AllLayers,
+        (None, false) => Expand::Summary,
+    };
+    let glyphs = if d.ascii {
+        Glyphs::Ascii
+    } else {
+        Glyphs::Unicode
+    };
+    DisplayOpts {
+        width,
+        glyphs,
+        expand,
+    }
+}
+
+/// 2026-10-05: Colour a drawing as `--color`, the terminal and the environment allow.
+fn paint(d: &CircuitDisplayArgs, doc: &metrale_circuit::display::Document) -> String {
+    let depth = circuit_paint::resolve_depth(
+        d.color,
+        std::io::stdout().is_terminal(),
+        std::env::var("NO_COLOR").ok().as_deref(),
+        std::env::var("COLORTERM").ok().as_deref(),
+    );
+    circuit_paint::paint(doc, depth)
+}
+
+/// 2026-09-28: Write the view. A reader that closes early (`| head`) has what it asked for;
+/// that is not a failure of the command.
+fn emit(text: &str) -> Result<()> {
     match std::io::stdout().lock().write_all(text.as_bytes()) {
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         other => Ok(other?),

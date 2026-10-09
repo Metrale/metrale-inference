@@ -348,7 +348,7 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
         return Ok(());
     }
     let (Some(checkpoint), Some(device), Some(precision)) =
-        (&a.checkpoint, &a.hardware, a.precision)
+        (&a.checkpoint, &a.device.hardware, a.precision)
     else {
         bail!("--checkpoint, --hardware and --precision are required without --matrix");
     };

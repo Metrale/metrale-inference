@@ -31,7 +31,56 @@ The checkpoint's formats are kept; this is how the device and its class's compil
 
 ## Tensor-core policy
 
-kernels/hopper/HARDWARE.toml states no `[tensor_core_policy]`: nothing is enforced on this class. The gap report names the compute unit of every planned group.
+kernels/hopper/HARDWARE.toml `[tensor_core_policy]`: a plan that runs one of these ops off tensor cores is refused unless an exemption lists the op, mode, rows and kernels. Compute units are the kernel families' (`compute`, `mma`).
+
+| ops | modes | from rows | weights |
+|---|---|---:|---|
+| linear, lm_head, router, expert_gate_up, expert_down, paged_attention | decode, multi_seq, verify, draft | 1 | any |
+
+| run | covered nodes | on tensor cores | exempted sites |
+|---|---:|---:|---:|
+| decode n=1 | 47 | 47 | 0 |
+| multi_seq n=16 | 47 | 47 | 0 |
+| multi_seq n=128 | 1 | 1 | 0 |
+
+Covered sites no kernel of this class plans (gaps; their kernel is tensor-core work):
+
+| run | site | op | weight |
+|---|---|---|---|
+| decode n=1 | `mamba.in_proj` | linear:mamba_in | fp8/tensor |
+| decode n=1 | `mamba.out_proj` | linear:mamba_out | fp8/tensor |
+| decode n=1 | `moe.router` | router | bf16 |
+| decode n=1 | `moe.experts_up` | expert_gate_up | nvfp4/g16 |
+| decode n=1 | `moe.shared_up` | linear:shared_up | nvfp4/g16 |
+| decode n=1 | `attn.q` | linear:q | bf16 |
+| decode n=1 | `attn.k` | linear:k | bf16 |
+| decode n=1 | `attn.v` | linear:v | bf16 |
+| decode n=1 | `attn.attend` | paged_attention | - |
+| decode n=1 | `attn.o` | linear:o | bf16 |
+| multi_seq n=16 | `mamba.in_proj` | linear:mamba_in | fp8/tensor |
+| multi_seq n=16 | `mamba.out_proj` | linear:mamba_out | fp8/tensor |
+| multi_seq n=16 | `moe.router` | router | bf16 |
+| multi_seq n=16 | `moe.experts_up` | expert_gate_up | nvfp4/g16 |
+| multi_seq n=16 | `moe.shared_up` | linear:shared_up | nvfp4/g16 |
+| multi_seq n=16 | `attn.q` | linear:q | bf16 |
+| multi_seq n=16 | `attn.k` | linear:k | bf16 |
+| multi_seq n=16 | `attn.v` | linear:v | bf16 |
+| multi_seq n=16 | `attn.attend` | paged_attention | - |
+| multi_seq n=16 | `attn.o` | linear:o | bf16 |
+| multi_seq n=128 | `mamba.in_proj` | linear:mamba_in | fp8/tensor |
+| multi_seq n=128 | `mamba.out_proj` | linear:mamba_out | fp8/tensor |
+| multi_seq n=128 | `moe.router` | router | bf16 |
+| multi_seq n=128 | `moe.experts_up` | expert_gate_up | nvfp4/g16 |
+| multi_seq n=128 | `moe.experts_down` | expert_down | nvfp4/g16 |
+| multi_seq n=128 | `moe.shared_up` | linear:shared_up | nvfp4/g16 |
+| multi_seq n=128 | `moe.shared_down` | linear:shared_down | nvfp4/g16 |
+| multi_seq n=128 | `attn.q` | linear:q | bf16 |
+| multi_seq n=128 | `attn.k` | linear:k | bf16 |
+| multi_seq n=128 | `attn.v` | linear:v | bf16 |
+| multi_seq n=128 | `attn.attend` | paged_attention | - |
+| multi_seq n=128 | `attn.o` | linear:o | bf16 |
+
+Every planned covered node runs on tensor cores.
 
 ## Roofline estimates
 

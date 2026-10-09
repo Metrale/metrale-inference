@@ -1,0 +1,207 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-05: The bring-up ledger of the Hardware Beachhead Campaign: H100 (class `hopper`), one
+# [[combo]] per hardware + model combination, in campaign order. Machine-readable so later
+# campaigns can compare: read every ledger under .claude/skills/new-hardware/ledger/ before
+# starting a new one, and update this one at every milestone (bit parity on the mock, bit parity
+# on the real model, each loop iteration, victory, certification).
+#
+# Schema (every key present; a milestone not reached yet is the empty string, a count not
+# started is 0):
+#   device, class, model, checkpoint, revision  what the combo is (revision: the checkpoint commit)
+#   started            RFC 3339 UTC: the campaign start for this combo
+#   ttbp_mock_at       RFC 3339 UTC: Tier 1 parity recorded on the mock (references/bit-parity.md)
+#   ttbp_real_at       RFC 3339 UTC: Tier 1 + Tier 2 parity recorded on the real model
+#   ttpv_speed_at      RFC 3339 UTC: first same-box scoreboard faster (tok/s) at every rung C1-C128
+#   ttpv_energy_at     RFC 3339 UTC: first same-box scoreboard cheaper (J/tok) at every rung but at
+#                      most one mid-ladder rung lost by a small margin
+#   ttpv_at            RFC 3339 UTC: the later of the two (the loop's exit criterion), PARITY-PASS
+#   certified_at       RFC 3339 UTC: the certification campaign passed
+#   ttbp_mock_h, ttbp_real_h, ttpv_speed_h, ttpv_energy_h, ttpv_h
+#                      hours from `started` to the milestones above (0.0 until reached)
+#   loop_budget        the improvement loop's time budget for this combo (the target file's)
+#   escalations        one line per escalation: when, why (stall limit or budget), objectives won
+#   iterations         improvement-loop iterations run
+#   levers_kept, levers_discarded      one short name per lever, with the PR or commit
+#   loc_added, loc_removed             lines added and removed by the campaign's PRs
+#   loc_removed_by_parameterization    the part of loc_removed a parameterization deleted
+#   LKB convergence (references/lkb.md), each at campaign start and now:
+#   lkb_coverage_pct_start, lkb_coverage_pct      share of the step (C1 / C16 / C128) run by
+#                      LKB-registered families on the class, as "C1/C16/C128". 2026-10-05: read
+#                      it from `met circuit lkb --hardware <device> --format toml`, which counts
+#                      placeholder rows (ops a family implements but no rule of the class lowers)
+#                      as uncovered; 100 minus the plan report's "novel" share overstates it
+#   lkb_measured_pct_start, lkb_measured_pct      the part of it inside the evidence envelope
+#   residual_count_start, residual_loc_start, residual_count, residual_loc
+#                      the class's hardware-specific kernels (own sources, shadows, copies)
+#   residual_copy_points_start, residual_copy_points   family points realized as file copies
+#   residual_single_class_start, residual_single_class 2026-10-05 (owner): declared family
+#                      points on an atom bundle only one class realizes (cluster multicast,
+#                      tensor-memory accumulators, block-scaled FP4 MMA), counted apart until a
+#                      second class realizes the bundle
+#   LAB convergence (book/src/architecture/lab.md), each at campaign start and now:
+#   lab_arch_coverage_start, lab_arch_coverage  "<fixture checkpoints that instantiate>/<all>;
+#                      <architectures the circuit executor runs>/<circuit architectures>"
+#   lab_param_points_start, lab_param_points    checkpoints that instantiate with only a
+#                      config-map change (no circuit or block edit)
+#   lab_residual_start, lab_residual            refused model_types, each with the generator it
+#                      is missing
+#   lab_promoted       block families, parameters or variants promoted into the LAB
+#   promoted           families, points, policies or numerics points promoted into the LKB
+#   zero_day_ttbp_h    for a model added on already-supported hardware: its TTBP (0.0 otherwise)
+#   evidence           where the records are (PR comments, files in the tree)
+#   notes              one line
+
+[[combo]]
+device = "h100-sxm"
+class = "hopper"
+model = "qwen3.8-27b-nvfp4 (dense, W4A16 fallback on Hopper)"
+checkpoint = "unsloth/Qwen3.8-27B-NVFP4"
+revision = ""
+started = "2026-10-05T14:45:20Z"
+ttbp_mock_at = ""
+ttbp_real_at = ""
+ttpv_speed_at = ""
+ttpv_energy_at = ""
+ttpv_at = ""
+certified_at = ""
+ttbp_mock_h = 0.0
+ttbp_real_h = 0.0
+ttpv_speed_h = 0.0
+ttpv_energy_h = 0.0
+ttpv_h = 0.0
+loop_budget = "3 calendar days or 40 device-hours of loop measurement, whichever comes first"
+escalations = []
+iterations = 0
+levers_kept = []
+levers_discarded = []
+loc_added = 0
+loc_removed = 0
+loc_removed_by_parameterization = 0
+# 2026-10-05: The coverage first recorded here (100/100/100) was 100 minus the plan report's
+# "novel" share, which files the ops no Hopper rule lowers (placeholder groups, no kernel runs
+# them) under "Shared, unmeasured". Counting them as uncovered (`met circuit lkb --checkpoint
+# unsloth/Qwen3.8-27B-NVFP4 --hardware h100-sxm --precision declared`) reads 49.8/55.3/65.3.
+lkb_coverage_pct_start = "49.8/55.3/65.3"
+lkb_coverage_pct = "49.8/55.3/65.3"
+lkb_measured_pct_start = "0/0/0"
+lkb_measured_pct = "0/0/0"
+residual_count_start = 17
+residual_loc_start = 4062
+residual_count = 17
+residual_loc = 4062
+residual_copy_points_start = 40
+residual_copy_points = 40
+residual_single_class_start = 0
+residual_single_class = 0
+lab_arch_coverage_start = "22/35; 1/4"
+lab_arch_coverage = "22/35; 1/4"
+lab_param_points_start = 22
+lab_param_points = 22
+lab_residual_start = ["qwen3_next", "qwen3_vl_moe", "gemma4", "diffusion_gemma", "minimax_m2", "deepseek_v4", "step3p7", "qwen4_exp"]
+lab_residual = ["qwen3_next", "qwen3_vl_moe", "gemma4", "diffusion_gemma", "minimax_m2", "deepseek_v4", "step3p7", "qwen4_exp"]
+lab_promoted = []
+promoted = []
+zero_day_ttbp_h = 0.0
+evidence = "the campaign PR, Hardware Beachhead Campaign: H100"
+notes = "campaign opened with code-free preparation only; nothing has run on an H100"
+
+[[combo]]
+device = "h100-sxm"
+class = "hopper"
+model = "qwen3.6-35b-a3b-fp8 (MoE)"
+checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
+revision = ""
+started = ""
+ttbp_mock_at = ""
+ttbp_real_at = ""
+ttpv_speed_at = ""
+ttpv_energy_at = ""
+ttpv_at = ""
+certified_at = ""
+ttbp_mock_h = 0.0
+ttbp_real_h = 0.0
+ttpv_speed_h = 0.0
+ttpv_energy_h = 0.0
+ttpv_h = 0.0
+loop_budget = "3 calendar days or 40 device-hours of loop measurement, whichever comes first"
+escalations = []
+iterations = 0
+levers_kept = []
+levers_discarded = []
+loc_added = 0
+loc_removed = 0
+loc_removed_by_parameterization = 0
+lkb_coverage_pct_start = ""
+lkb_coverage_pct = ""
+lkb_measured_pct_start = ""
+lkb_measured_pct = ""
+residual_count_start = 17
+residual_loc_start = 4062
+residual_count = 17
+residual_loc = 4062
+residual_copy_points_start = 0
+residual_copy_points = 0
+residual_single_class_start = 0
+residual_single_class = 0
+lab_arch_coverage_start = ""
+lab_arch_coverage = ""
+lab_param_points_start = 0
+lab_param_points = 0
+lab_residual_start = []
+lab_residual = []
+lab_promoted = []
+promoted = []
+zero_day_ttbp_h = 0.0
+evidence = ""
+notes = "starts after the 27B is certified"
+
+[[combo]]
+device = "h100-sxm"
+class = "hopper"
+model = "qwen3.6-35b-a3b-nvfp4 (MoE)"
+checkpoint = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+revision = ""
+started = ""
+ttbp_mock_at = ""
+ttbp_real_at = ""
+ttpv_speed_at = ""
+ttpv_energy_at = ""
+ttpv_at = ""
+certified_at = ""
+ttbp_mock_h = 0.0
+ttbp_real_h = 0.0
+ttpv_speed_h = 0.0
+ttpv_energy_h = 0.0
+ttpv_h = 0.0
+loop_budget = "3 calendar days or 40 device-hours of loop measurement, whichever comes first"
+escalations = []
+iterations = 0
+levers_kept = []
+levers_discarded = []
+loc_added = 0
+loc_removed = 0
+loc_removed_by_parameterization = 0
+lkb_coverage_pct_start = ""
+lkb_coverage_pct = ""
+lkb_measured_pct_start = ""
+lkb_measured_pct = ""
+residual_count_start = 17
+residual_loc_start = 4062
+residual_count = 17
+residual_loc = 4062
+residual_copy_points_start = 0
+residual_copy_points = 0
+residual_single_class_start = 0
+residual_single_class = 0
+lab_arch_coverage_start = ""
+lab_arch_coverage = ""
+lab_param_points_start = 0
+lab_param_points = 0
+lab_residual_start = []
+lab_residual = []
+lab_promoted = []
+promoted = []
+zero_day_ttbp_h = 0.0
+evidence = ""
+notes = "starts after the 35B FP8 is certified"
