@@ -37,6 +37,12 @@ pub(super) const KNORM: u64 = 0x206;
 pub(super) const GEOM: u64 = 0x207;
 pub(super) const STORE: u64 = 0x208;
 pub(super) const MOCK_K: u64 = 0xDEAD;
+/// 2026-10-09: The rows store and selection (`dsa_indexer_rows.cu`).
+pub(super) const STORE_ROWS: u64 = 0x20B;
+pub(super) const GEOM_ROWS: u64 = 0x20C;
+pub(super) const SCORES_ROWS: u64 = 0x20D;
+pub(super) const TOPK_ROWS: u64 = 0x20E;
+pub(super) const EXPAND_ROWS: u64 = 0x20F;
 /// 2026-10-08: Block-table entries per metadata row.
 pub(super) const MB: usize = 4;
 pub(super) const HIDDEN: usize = 64;
@@ -163,6 +169,13 @@ impl Rig {
                 indexer_store: k(STORE),
                 topk_to_mask: k(0x209),
                 mla_masked_attn: k(0x20A),
+                rows: crate::glm5next_dsa::DsaRowsKernels {
+                    store: k(STORE_ROWS),
+                    write_geom: k(GEOM_ROWS),
+                    pool_scores: k(SCORES_ROWS),
+                    topk_pools: k(TOPK_ROWS),
+                    expand_selection: k(EXPAND_ROWS),
+                },
             },
             decode_kernel: Glm5NextDsaDecodeKernel::resolve(&self.gpu).unwrap(),
             workspace: Glm5NextDsaWorkspace::new(&self.gpu, &c, 16).unwrap(),

@@ -97,6 +97,49 @@ pub struct Glm5NextDsaKernels {
     pub topk_to_mask: KernelHandle,
     /// 2026-09-25: Oracle only; no code under `src/` launches it. See [`MASKED_ATTN_MAX_KEYS`].
     pub mla_masked_attn: KernelHandle,
+    /// 2026-10-09: The one-launch-per-stage store and selection over the decode rows of
+    /// several sequences (`dsa_indexer_rows.cu`); all `KernelHandle(0)` on a target without
+    /// them.
+    pub rows: DsaRowsKernels,
+}
+
+/// 2026-10-09: Module of the rows kernels: `dsa_indexer_rows.cu`, named by its file stem.
+pub const DSA_ROWS_MODULE: &str = "dsa_indexer_rows";
+
+/// 2026-10-09: The entries of `dsa_indexer_rows.cu`, resolved with `try_kernel`.
+#[derive(Clone, Copy, Debug)]
+pub struct DsaRowsKernels {
+    pub store: KernelHandle,
+    pub write_geom: KernelHandle,
+    pub pool_scores: KernelHandle,
+    pub topk_pools: KernelHandle,
+    pub expand_selection: KernelHandle,
+}
+
+impl DsaRowsKernels {
+    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+        let k = |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_ROWS_MODULE, name);
+        Self {
+            store: k("dsa_indexer_store_rows"),
+            write_geom: k("dsa_write_geom_rows"),
+            pool_scores: k("dsa_pool_scores_rows"),
+            topk_pools: k("dsa_topk_pools_rows"),
+            expand_selection: k("dsa_expand_selection_rows"),
+        }
+    }
+
+    /// 2026-10-09: Whether every entry resolved.
+    pub fn ready(&self) -> bool {
+        [
+            self.store,
+            self.write_geom,
+            self.pool_scores,
+            self.topk_pools,
+            self.expand_selection,
+        ]
+        .iter()
+        .all(|k| k.0 != 0)
+    }
 }
 
 /// 2026-09-25: The most keys `dsa_mla_masked_attn` takes: it stages the `[S]` f32 score row
@@ -125,6 +168,7 @@ impl Glm5NextDsaKernels {
             ),
             topk_to_mask: gpu.kernel(DSA_MODULE, "dsa_topk_to_mask")?,
             mla_masked_attn: gpu.kernel(DSA_MODULE, "dsa_mla_masked_attn")?,
+            rows: DsaRowsKernels::resolve(gpu),
         })
     }
 }

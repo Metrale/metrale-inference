@@ -133,10 +133,12 @@ impl Glm5NextDsaLayer {
         )
     }
 
-    /// 2026-10-09: [`Self::decode_spans`] with the batched indexer projections
-    /// (`METRALE_GLM_DSA_INDEXER_ROWS`) explicit.
+    /// 2026-10-09: [`Self::decode_spans`] with the batched indexer (`indexer_rows`, the
+    /// `METRALE_GLM_DSA_INDEXER_ROWS` lever) explicit: the indexer projections staged for all
+    /// rows, and on a captured decode the paged rows' store and selection in one launch per
+    /// stage (`select_paged_rows`).
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn decode_spans_with(
+    pub fn decode_spans_with(
         &self,
         hidden: DevicePtr,
         states: &mut [&mut (dyn LayerState + 'static)],
@@ -308,7 +310,35 @@ impl Glm5NextDsaLayer {
             self.indexer_project_rows(gpu, hidden, n, stream)?;
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
         }
-        for r in 0..n {
+        // 2026-10-09: Staged on the replay-safe path, the leading rows that are each one
+        // sequence's decode row on a paged cache store and select in one launch per stage
+        // (`select_paged_rows`); the rest (a padding row's flat cache) run row by row below.
+        let paged_rows = if staged && replay_safe && spans.iter().all(|s| s.rows == 1) {
+            let mut m = 0;
+            while m < n && dsa_row(states, m)?.cache() == IndexerCache::Paged {
+                m += 1;
+            }
+            if m >= 2 && self.paged_rows_ready(m) {
+                m
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        if paged_rows > 0 {
+            let t = profile::start();
+            let bt0 = meta.block_table.offset(meta_row_base * bt_stride);
+            let rows0 = self.indexer_rows(dsa_row(states, 0)?, kv_cache, bt0)?;
+            self.select_paged_rows(gpu, paged_rows, rows0, meta, meta_row_base, stream)?;
+            for s in 0..paged_rows {
+                let st = dsa_row(states, s)?;
+                st.ensure_room(1)?;
+                st.advance(1)?;
+            }
+            profile::end(profile::DSA_SELECT, t, gpu, stream);
+        }
+        for r in paged_rows..n {
             let mr = meta_row_base + r;
             let t = profile::start();
             let st = dsa_row(states, row_seq[r])?;

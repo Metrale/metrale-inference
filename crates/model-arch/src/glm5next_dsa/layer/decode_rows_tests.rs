@@ -427,3 +427,66 @@ fn eager_flat_rows_keep_the_per_row_indexer() {
         assert_eq!(k.args[0], ptr(caches[r].offset(row)));
     }
 }
+
+/// 2026-10-09: Staged and captured, three paged rows followed by a flat one (a padding row):
+/// the paged rows store and select in one launch per stage over all three (staging rows,
+/// metadata positions, `seq_len` and block-table rows from row 0, geometry rows, token rows
+/// from row 0), and the flat row alone takes the per-row store and selection. Every state
+/// grows by one row. A bug that sent the flat row through the rows kernels, or kept per-row
+/// launches for the paged rows, fails here.
+#[test]
+fn paged_rows_store_and_select_in_one_launch_per_stage() {
+    let rig = Rig::new();
+    let layer = rig.layer();
+    let meta = rig.meta(4);
+    let lens = [5usize, 9, 2, 0];
+    let mut boxes: Vec<Box<dyn LayerState>> = lens[..3]
+        .iter()
+        .map(|&len| {
+            let mut s = Glm5NextDsaState::paged(&cfg()).unwrap();
+            s.advance(len).unwrap();
+            Box::new(s) as Box<dyn LayerState>
+        })
+        .collect();
+    boxes.extend(rig.states(&lens[3..]));
+    let from = rig.gpu.launch_count();
+    run_indexer_rows(&rig, &layer, &mut boxes, &lens, &meta, true, true)
+        .1
+        .unwrap();
+    let l = rig.since(from);
+    let w = &layer.workspace;
+    for (func, grid) in [
+        (STORE_ROWS, [1, 3, 1]),
+        (GEOM_ROWS, [3, 1, 1]),
+        (TOPK_ROWS, [1, 3, 1]),
+        (EXPAND_ROWS, [1, 3, 1]),
+    ] {
+        let rows = of(&l, func);
+        assert_eq!(rows.len(), 1, "{func:#x}");
+        assert_eq!(rows[0].grid, grid, "{func:#x}");
+    }
+    let store = &of(&l, STORE_ROWS)[0];
+    assert_eq!(
+        store.args[..3],
+        [ptr(w.stage_k), ptr(w.stage_gate), ptr(meta.positions)]
+    );
+    assert_eq!(store.args[6], ptr(meta.block_table));
+    assert_eq!(of(&l, GEOM_ROWS)[0].args[0], ptr(meta.seq_len));
+    let scores = of(&l, SCORES_ROWS);
+    assert_eq!(scores.len(), 1);
+    assert_eq!(scores[0].grid[2], 3, "grid z is the row");
+    assert_eq!(scores[0].args[3], ptr(w.q_idx_rows));
+    assert_eq!(of(&l, EXPAND_ROWS)[0].args[4], ptr(w.select.tokens()));
+    // 2026-10-09: The flat row: one per-row store at metadata row 3, one per-row selection.
+    let one = of(&l, STORE);
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0].args[2], ptr(meta.positions.offset(3 * 4)));
+    assert_eq!(
+        one[0].args[0],
+        ptr(w.stage_k.offset(3 * cfg().index_head_dim * 2))
+    );
+    assert_eq!(of(&l, KPOOL).len(), 1);
+    assert_eq!(of(&l, EXPAND).len(), 1);
+    let after: Vec<usize> = boxes.iter().map(|b| dsa(b.as_ref()).len()).collect();
+    assert_eq!(after, vec![6, 10, 3, 1]);
+}

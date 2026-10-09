@@ -77,7 +77,9 @@ pub(crate) fn router_rows() -> bool {
 /// 2026-10-09: `METRALE_GLM_DSA_INDEXER_ROWS=1` runs the DSA indexer's key and gate
 /// projections and the key norm of a batched decode or verify group once over all its rows
 /// (`Glm5NextDsaLayer::indexer_project_rows`) instead of once per row; each row is then placed
-/// from its staging row. Each row keeps its bits. Off until measured end to end. Read once.
+/// from its staging row. On a captured decode the paged rows also store and select in one
+/// launch per stage (`select_paged_rows`) instead of seven launches per row. Each row keeps its
+/// bits. Off until measured end to end. Read once.
 pub(crate) fn dsa_indexer_rows() -> bool {
     static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *E.get_or_init(|| std::env::var("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() == Ok("1"))

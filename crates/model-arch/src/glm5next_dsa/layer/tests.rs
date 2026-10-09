@@ -383,7 +383,8 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
 /// token across a slice boundary differed, by up to 2 BF16 ulp.
 #[test]
 fn expand_selection_clamps_select_k_to_the_row() {
-    let src = include_str!("../../../../../kernels/gb10/common/dsa_indexer.cu");
+    // 2026-10-09: The body moved to dsa_indexer_body.cuh, which both entries use.
+    let src = include_str!("../../../../../kernels/gb10/common/dsa_indexer_body.cuh");
     assert!(
         src.contains("const unsigned int row_pools = (unsigned int)(q_pos[r] + 1) / KP;"),
         "the row's own pool count must come from its own q_pos"

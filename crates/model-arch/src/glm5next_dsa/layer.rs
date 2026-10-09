@@ -55,6 +55,7 @@ mod kernels;
 mod proj_gemm;
 mod row_ops;
 mod rows;
+mod select_rows;
 mod workspace;
 
 pub use decode_rows::DsaRowSpan;

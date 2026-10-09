@@ -92,6 +92,9 @@ pub struct Glm5NextDsaWorkspace {
     /// 2026-09-25: `[5]` i32 selector geometry, written on the device by `dsa_write_geom`
     /// for each row on the replay-safe path.
     pub(super) geom_dev: DevicePtr,
+    /// 2026-10-09: `[max_rows, 5]` i32: one geometry per row for the rows selection
+    /// (`select_paged_rows`), written on the device by `dsa_write_geom_rows`.
+    pub(super) geom_rows: DevicePtr,
     pub(super) select: DsaSelectScratch,
     /// 2026-10-08: `[index_kpool, index_head_dim]` BF16 `k_normed` and `gate` rows and
     /// `[index_kpool]` u8 `valid`, the indexer cache every padding row of a batched decode
@@ -178,6 +181,7 @@ impl Glm5NextDsaWorkspace {
             stage_k: gpu.alloc(rows * cfg.index_head_dim * 2)?,
             stage_gate: gpu.alloc(rows * cfg.index_head_dim * 2)?,
             geom_dev: gpu.alloc(5 * 4)?,
+            geom_rows: gpu.alloc(rows * 5 * 4)?,
             select: DsaSelectScratch::alloc(gpu, cfg, &geom)?,
             pad_k: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,
             pad_gate: gpu.alloc(cfg.index_kpool * cfg.index_head_dim * 2)?,
