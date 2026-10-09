@@ -22,12 +22,13 @@ fn slices(full: usize, tp: usize) -> Vec<ExpertSlice> {
         .collect()
 }
 
-/// 2026-10-09: GLM-5.3's 2048 over three ranks: 768 / 640 / 640, contiguous, no padding.
+/// 2026-10-09: GLM-5.3's 2048 over three ranks, contiguous, no padding. 2026-10-10: 704 / 704 /
+/// 640 in 64-column units (768 / 640 / 640 in 128-column ones).
 #[test]
-fn glm53_width_splits_768_640_640() {
+fn glm53_width_splits_704_704_640() {
     let s = slices(2048, 3);
     let got: Vec<_> = s.iter().map(|s| (s.start, s.real, s.len)).collect();
-    assert_eq!(got, [(0, 768, 768), (768, 640, 640), (1408, 640, 640)]);
+    assert_eq!(got, [(0, 704, 704), (704, 704, 704), (1408, 640, 640)]);
     assert!(s.iter().all(|s| s.pad() == 0 && s.full == 2048));
 }
 
@@ -64,7 +65,7 @@ fn slices_partition_the_width_and_pad_only_the_tail() {
 /// 2026-10-09: A width that is not a 16-multiple, a zero width, or too few units are refused.
 #[test]
 fn bad_widths_are_refused() {
-    for (full, tp) in [(0, 3), (2040, 3), (128, 3), (256, 3)] {
+    for (full, tp) in [(0, 3), (2040, 3), (128, 3), (64, 2)] {
         assert!(expert_slice(full, tp, 0).is_err(), "{full} over {tp}");
     }
     assert!(expert_slice(384, 3, 3).is_err(), "rank out of range");
@@ -267,7 +268,7 @@ fn tp_layout_config_holds_every_expert_sliced() {
             c.moe_intermediate
         })
         .collect();
-    assert_eq!(widths, [768, 640, 640]);
+    assert_eq!(widths, [704, 704, 640]);
 }
 
 /// 2026-10-09: The ep layout at TP 3 / EP 3 is the whole-expert plan: 96 experts of 2048 each.

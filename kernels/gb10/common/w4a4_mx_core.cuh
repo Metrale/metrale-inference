@@ -35,13 +35,22 @@ __device__ __forceinline__ void w4a4_mma(float (&d)[4], uint32_t a0, uint32_t a1
 // shared-memory tables.
 // 2026-10-09: The weight tile is rows 16 * n_tile .. 16 * n_tile + 15 (the one-tile entries pass
 // blockIdx.x; the persistent union sweep walks its tiles).
+// 2026-10-10: KH (K half-chunk): K a multiple of 64 rather than 128. The weights keep their
+// natural [N, K] layout (row stride K / 2 bytes, K / 16 scales, so the scale rows are only 4-byte
+// aligned and are read as two 32-bit words); the activations are read at the padded width
+// Kp = round_up(K, 128) as w4a4_quant_rows_impl<.., true> writes them, groups K / 16 .. Kp / 16
+// zero. In the last chunk of a K % 128 == 64 row, the weight's groups 4..7 (threads t = 2, 3 and
+// the second scale word) are not read and enter the MMA as zero codes under zero scales, so
+// every product there is an exact zero: the result is bit-identical to the KH = false kernel at
+// K = Kp over weights zero-padded to Kp (the model-arch example glm5next_expert_tp_bench checks
+// it). KH = false is the K % 128 == 0 code, unchanged.
 struct W4a4RowsIdentity {
     unsigned int m;
     __device__ __forceinline__ unsigned int a(unsigned int tok) const { return tok; }
     __device__ __forceinline__ unsigned int c(unsigned int tok) const { return tok; }
 };
 
-template <int MB, int KU, class Rows>
+template <int MB, int KU, class Rows, bool KH = false>
 __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
     const unsigned char* __restrict__ Aq,
     const unsigned char* __restrict__ As,
@@ -61,7 +70,11 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
     const unsigned int n0 = n_tile * 16u;
     const unsigned int half_K = K >> 1;
     const unsigned int groups = K >> 4;
-    const unsigned int num_c = K >> 7;
+    const unsigned int num_c = KH ? (K + 127u) >> 7 : K >> 7;
+    // 2026-10-10: KH: the activation row strides of the padded width, and the half chunk.
+    const unsigned int a_half_K = KH ? num_c << 6 : half_K;
+    const unsigned int a_groups = KH ? num_c << 3 : groups;
+    const unsigned int tail_c = (KH && (K & 127u) != 0u) ? num_c - 1u : 0xFFFFFFFFu;
 
     const unsigned int r0 = n0 + g, r1 = n0 + g + 8u, rs = n0 + g + (odd ? 8u : 0u);
     const bool l0 = r0 < N, l1 = r1 < N, ls = rs < N;
@@ -77,8 +90,8 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
         const unsigned int tok = (unsigned int)j * 8u + g;
         tl[j] = tok < M;
         const unsigned int ar = rows.a(tok);
-        aq[j] = Aq + (unsigned long long)ar * half_K + t * 16u;
-        as[j] = As + (unsigned long long)ar * groups;
+        aq[j] = Aq + (unsigned long long)ar * a_half_K + t * 16u;
+        as[j] = As + (unsigned long long)ar * a_groups;
     }
 
     float acc[MB][4];
@@ -97,9 +110,16 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
             const bool live = c < num_c;
             const uint4 z4 = make_uint4(0u, 0u, 0u, 0u);
             const uint2 z2 = make_uint2(0u, 0u);
-            wl[u] = (live && l0) ? *(const uint4*)(w0 + c * 64u) : z4;
-            wh[u] = (live && l1) ? *(const uint4*)(w1 + c * 64u) : z4;
-            sw[u] = (live && ls) ? *(const uint2*)(ws + c * 8u) : z2;
+            // 2026-10-10: KH: this thread's 32 columns of chunk c lie inside K.
+            const bool hv = !KH || c != tail_c || t < 2u;
+            wl[u] = (live && l0 && hv) ? *(const uint4*)(w0 + c * 64u) : z4;
+            wh[u] = (live && l1 && hv) ? *(const uint4*)(w1 + c * 64u) : z4;
+            if constexpr (KH) {
+                const unsigned int* s32 = (const unsigned int*)(ws + c * 8u);
+                sw[u] = (live && ls) ? make_uint2(s32[0], c != tail_c ? s32[1] : 0u) : z2;
+            } else {
+                sw[u] = (live && ls) ? *(const uint2*)(ws + c * 8u) : z2;
+            }
             #pragma unroll
             for (int j = 0; j < MB; j++) {
                 b[u][j] = (live && tl[j]) ? *(const uint4*)(aq[j] + c * 64u) : z4;
@@ -196,12 +216,17 @@ __device__ __forceinline__ unsigned int w4a4_e2m1_rne(float x) {
 // 2026-10-08: STATIC_GS: the row's global scale is the caller's `static_gs` (a checkpoint's
 // per-tensor activation scale, ModelOpt's `input_scale`), not amax(row) / (6 * 448); values past
 // 6 * 448 * static_gs saturate (E4M3 group scale at 448, E2M1 at 6).
-template <bool STATIC_GS>
+// 2026-10-10: PAD128: K a multiple of 16; the row is written at the padded width
+// Kp = round_up(K, 128) (Aq row stride Kp / 2, As row stride Kp / 16), groups K / 16 .. Kp / 16
+// as zero codes under zero scales: the activations the KH GEMVs read. Groups below K / 16 are
+// the PAD128 = false bytes; PAD128 = false is that code, unchanged.
+template <bool STATIC_GS, bool PAD128 = false>
 __device__ __forceinline__ void w4a4_quant_rows_impl(
     const __nv_bfloat16* __restrict__ A, unsigned char* __restrict__ Aq,
     unsigned char* __restrict__ As, float* __restrict__ Ag, unsigned int K, float static_gs)
 {
     const unsigned int row = blockIdx.x;
+    const unsigned int Kp = PAD128 ? (K + 127u) & ~127u : K;
     const __nv_bfloat16* x = A + (unsigned long long)row * K;
     float gs;
     if constexpr (STATIC_GS) {
@@ -222,7 +247,21 @@ __device__ __forceinline__ void w4a4_quant_rows_impl(
     if (threadIdx.x == 0) Ag[row] = gs;
     const float inv_gs = 1.0f / gs;
 
-    for (unsigned int grp = threadIdx.x; grp < (K >> 4); grp += 256u) {
+    for (unsigned int grp = threadIdx.x; grp < (Kp >> 4); grp += 256u) {
+        if constexpr (PAD128) {
+            if (grp >= (K >> 4)) {
+                // 2026-10-10: A padding group: zero scale, zero codes, at the positions below.
+                const unsigned int chunk = grp >> 3, q = grp & 7u;
+                const unsigned int spos = ((q & 1u) << 2) | ((q >> 2) & 1u) | (q & 2u);
+                As[(unsigned long long)row * (Kp >> 4) + chunk * 8u + spos] = 0u;
+                const unsigned int pr = (q & 3u) == 1u ? 2u : (q & 3u) == 2u ? 1u : (q & 3u);
+                unsigned char* dst = Aq + (unsigned long long)row * (Kp >> 1) + chunk * 64u;
+                #pragma unroll
+                for (unsigned int h = 0; h < 2u; h++)
+                    *(uint32_t*)(dst + ((2u * (q >> 2) + h) * 4u + pr) * 4u) = 0u;
+                continue;
+            }
+        }
         const uint4* src = (const uint4*)(x + grp * 16u);
         const uint4 v0 = src[0], v1 = src[1];
         const unsigned int w[8] = {v0.x, v0.y, v0.z, v0.w, v1.x, v1.y, v1.z, v1.w};
@@ -241,7 +280,7 @@ __device__ __forceinline__ void w4a4_quant_rows_impl(
         // (2 * (q >> 2) + half) * 4 + perm[q & 3], perm = {0, 2, 1, 3}.
         const unsigned int chunk = grp >> 3, q = grp & 7u;
         const unsigned int spos = ((q & 1u) << 2) | ((q >> 2) & 1u) | (q & 2u);
-        As[(unsigned long long)row * (K >> 4) + chunk * 8u + spos] = *(const unsigned char*)&s8;
+        As[(unsigned long long)row * (Kp >> 4) + chunk * 8u + spos] = *(const unsigned char*)&s8;
         const float inv = s > 0.0f ? 1.0f / (s * gs) : 0.0f;
         uint2 packed;
         unsigned int p[2] = {0u, 0u};
@@ -249,7 +288,7 @@ __device__ __forceinline__ void w4a4_quant_rows_impl(
         for (int i = 0; i < 16; i++) p[i >> 3] |= w4a4_e2m1_rne(f[i] * inv) << ((i & 7) * 4);
         (void)packed;
         const unsigned int pr = (q & 3u) == 1u ? 2u : (q & 3u) == 2u ? 1u : (q & 3u);
-        unsigned char* dst = Aq + (unsigned long long)row * (K >> 1) + chunk * 64u;
+        unsigned char* dst = Aq + (unsigned long long)row * (Kp >> 1) + chunk * 64u;
         #pragma unroll
         for (unsigned int h = 0; h < 2u; h++) {
             const unsigned int slot = (2u * (q >> 2) + h) * 4u + pr;

@@ -14,6 +14,8 @@
 //! - The slices are pure functions of host bytes; only [`build_dense_nvfp4`] touches the device.
 //! - A W4A4 projection's K is a multiple of 128 (the mx kernels read whole k128 chunks and drop
 //!   a tail) and at most 32768; [`check_w4a4_k`] refuses anything else before a launch exists.
+//!   2026-10-10: Except a routed down projection on the `_k64` twins: K a multiple of 64
+//!   ([`check_w4a4_k64`]).
 
 use anyhow::{Result, bail};
 use metrale_config::TpSlice;
@@ -35,6 +37,19 @@ pub fn check_w4a4_k(k: usize, what: &str) -> Result<()> {
             "GLM W4A4 {what}: K = {k} must be a positive multiple of 128 and at most \
              {W4A4_MAX_K} (the mx kernels read whole k128 chunks); serve this group with \
              --activation-quantization ffn:bf16 or moe:bf16 instead"
+        );
+    }
+    Ok(())
+}
+
+/// 2026-10-10: Refuse a routed down projection the `_k64` twins (`w4a4_gemv_mx_moe.cu`) would
+/// mis-read: K must be a positive multiple of 64 whose 128-padded activation width fits.
+pub fn check_w4a4_k64(k: usize, what: &str) -> Result<()> {
+    if k == 0 || !k.is_multiple_of(64) || k.next_multiple_of(128) > W4A4_MAX_K {
+        bail!(
+            "GLM W4A4 {what}: K = {k} must be a positive multiple of 64 whose 128-padded width \
+             is at most {W4A4_MAX_K} (the _k64 kernels read a half k128 chunk at most); serve \
+             this group with --activation-quantization moe:bf16 instead"
         );
     }
     Ok(())

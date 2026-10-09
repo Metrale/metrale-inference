@@ -1243,9 +1243,15 @@ description = "W4A4 MX with static NVFP4 activation scales: static row quantize 
 compute = "tensor_core"
 mma = "mma.sync.m16n8k64.mxf4nvf4.block_scale"
 kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static" = { compute = "memory" }
+# 2026-10-10: The `_k64` twins (K % 64 for a routed down projection of a 64-unit expert slice,
+# activations at the 128-padded width) are the KH / PAD128 instantiations of the same bodies.
+kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static_k64" = { compute = "memory" }
 kernels = [
   "w4a4_gemv_mx_moe::w4a4_quant_rows_static", "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union", "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union",
+  "w4a4_gemv_mx_moe::w4a4_quant_rows_static_k64", "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_k64",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64",
 ]
 rows = [1, 16]
 pipeline.expert_gate_up = { in = ["nvfp4/g16", "i32"], gather = "nvfp4/g16", act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "f32", out = ["bf16"] }
