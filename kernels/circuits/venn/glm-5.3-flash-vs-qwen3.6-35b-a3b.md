@@ -81,8 +81,8 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | # | Layer kind | Mode | Rows | Est. added time | vs. multi-row step | Source | Note |
 |---|---|---|---|---|---|---|---|
 | 1 | deepseek_sparse_attention | multi_seq | 128 | 11765.9 µs | +1.3% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341 | DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage) |
-| 2 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:315 | KDA verify: conv and recurrence one row per launch (stateful_row) |
-| 3 | deepseek_sparse_attention | verify | 4 | 2015.0 µs | +1.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:118 | DSA verify: latent write, indexer projections, store and selection one row per launch |
+| 2 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:353 | KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS |
+| 3 | deepseek_sparse_attention | verify | 4 | 2015.0 µs | +1.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:169 | DSA verify: latent write, indexer projections, store and selection one row per launch |
 | 4 | deepseek_sparse_attention | multi_seq | 16 | 1389.7 µs | +0.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:341 | DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage) |
 | 5 | deepseek_sparse_attention | verify | 4 | 34.7 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
 | 6 | deepseek_sparse_attention | multi_seq | 16 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |

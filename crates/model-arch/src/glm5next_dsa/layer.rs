@@ -52,6 +52,7 @@ mod decode_rows;
 mod host_rows;
 mod indexer_place;
 mod kernels;
+mod prefill_rows;
 mod proj_gemm;
 mod row_ops;
 mod rows;
