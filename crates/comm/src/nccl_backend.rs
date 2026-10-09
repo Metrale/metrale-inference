@@ -6,7 +6,9 @@
 //!
 //! At `world_size == 2`, once the add kernel is set, all-reduce is a grouped
 //! `ncclSend`/`ncclRecv` into a registered receive buffer plus a local BF16
-//! add; otherwise it is `ncclAllReduce`. After each collective the backend
+//! add; at `world_size >= 3` with the one-shot path enabled, a payload of at most
+//! its bound is exchanged with every peer and summed in rank order
+//! (`sendrecv.rs`); otherwise it is `ncclAllReduce`. After each collective the backend
 //! queries `ncclCommGetAsyncError`; a broadcast waits for completion for at
 //! most `COLLECTIVE_TIMEOUT_SECS`, an idle command receive without a deadline,
 //! and a failure in either marks the communicator unhealthy. `attempt_reconnect`
@@ -33,7 +35,7 @@ use std::net::{TcpListener, TcpStream};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use metrale_gpu_sys::nccl::{self, NcclComm, NcclDataType, NcclResult, NcclUniqueId};
+use metrale_gpu_sys::nccl::{self, NcclComm, NcclResult, NcclUniqueId};
 
 // 2026-09-26: CUDA driver calls for the receive buffer and the add kernel.
 unsafe extern "C" {
@@ -87,6 +89,8 @@ pub struct NcclBackend {
     recv_buffer: u64,
     /// 2026-09-26: Size of `recv_buffer` in bytes; 0 when `world_size != 2`.
     recv_capacity: usize,
+    /// 2026-10-08: The one-shot all-reduce at `world_size >= 3` (off unless serve enables it).
+    oneshot: sendrecv::OneShot,
     /// 2026-09-26: Handles from `register_buffer`, deregistered in `Drop` and
     /// dropped without deregistering on reconnect.
     registered_handles: Mutex<Vec<*mut c_void>>,
@@ -115,7 +119,8 @@ impl NcclBackend {
     /// 2026-09-26: Bootstrap the communicator. Rank 0 binds `0.0.0.0:master_port`
     /// and sends the unique id to `world_size - 1` connections; other ranks
     /// connect to `master_addr:master_port`, retrying once a second for up to
-    /// 600 attempts. `recv_capacity` is the largest 2-rank all-reduce payload
+    /// 600 attempts. `oneshot_max_bytes` enables the one-shot all-reduce at
+    /// `world_size >= 3` (0 disables it; see `sendrecv.rs`). `recv_capacity` is the largest 2-rank all-reduce payload
     /// in bytes (serve passes [`required_model_recv_bytes`]); it is used only
     /// when `world_size == 2`.
     ///
@@ -131,6 +136,7 @@ impl NcclBackend {
         master_port: u16,
         stream: u64,
         recv_capacity: usize,
+        oneshot_max_bytes: usize,
     ) -> Result<Self> {
         let diagnostic_env = std::env::var(crate::collective_diagnostics::ENV).ok();
         let diagnostics = crate::collective_diagnostics::Diagnostics::new(
@@ -186,6 +192,8 @@ impl NcclBackend {
             }
         }
 
+        let oneshot = sendrecv::OneShot::new(comm, world_size, oneshot_max_bytes)?;
+
         Ok(Self {
             comm: Mutex::new(comm),
             diagnostics,
@@ -197,6 +205,7 @@ impl NcclBackend {
             legacy_stream: stream,
             recv_buffer,
             recv_capacity: if world_size == 2 { recv_capacity } else { 0 },
+            oneshot,
             registered_handles: Mutex::new(Vec::new()),
             add_kernel: AtomicU64::new(0),
             unhealthy: AtomicBool::new(false),
@@ -345,92 +354,6 @@ impl NcclBackend {
         Ok(())
     }
 
-    /// 2026-09-26: 2-rank all-reduce: refuse a payload larger than
-    /// `recv_capacity`, then a grouped `ncclSend`/`ncclRecv` with the partner
-    /// rank, then `ptr[i] += recv_buffer[i]` with the BF16 add kernel on
-    /// `stream`. Errors when the add kernel is not set.
-    fn all_reduce_2rank(&self, ptr: u64, bytes: usize, stream: u64) -> Result<()> {
-        ensure_payload_fits(bytes, self.recv_capacity, self.rank, self.world_size)?;
-
-        // 2026-09-26: Nothing to reduce, and a zero-block launch is invalid.
-        // Both ranks skip the send/recv, provided both pass the same `bytes`.
-        if bytes == 0 {
-            return Ok(());
-        }
-
-        let count = bytes / ALL_REDUCE_DTYPE_BYTES;
-        let partner = (1 - self.rank) as i32;
-        let comm = *self.comm.lock();
-
-        let result = unsafe { nccl::ncclGroupStart() };
-        nccl::check_nccl(result, "ncclGroupStart")?;
-
-        let result = unsafe {
-            nccl::ncclSend(
-                ptr as *const c_void,
-                count,
-                NcclDataType::Bfloat16,
-                partner,
-                comm,
-                stream,
-            )
-        };
-        nccl::check_nccl(result, "ncclSend")?;
-
-        let result = unsafe {
-            nccl::ncclRecv(
-                self.recv_buffer as *mut c_void,
-                count,
-                NcclDataType::Bfloat16,
-                partner,
-                comm,
-                stream,
-            )
-        };
-        nccl::check_nccl(result, "ncclRecv")?;
-
-        let result = unsafe { nccl::ncclGroupEnd() };
-        nccl::check_nccl(result, "ncclGroupEnd")?;
-
-        self.check_async_error(comm);
-
-        let kernel = self.add_kernel.load(Ordering::Relaxed);
-        if kernel != 0 {
-            let threads: u32 = 256;
-            let blocks: u32 = (count as u32).div_ceil(threads);
-            let mut p_dst = ptr;
-            let mut p_src = self.recv_buffer;
-            let mut p_n = count as i32;
-            let mut params: [*mut c_void; 3] = [
-                &mut p_dst as *mut u64 as *mut c_void,
-                &mut p_src as *mut u64 as *mut c_void,
-                &mut p_n as *mut i32 as *mut c_void,
-            ];
-            let status = unsafe {
-                cuLaunchKernel(
-                    kernel,
-                    blocks,
-                    1,
-                    1,
-                    threads,
-                    1,
-                    1,
-                    0,
-                    stream,
-                    params.as_mut_ptr(),
-                    ptr::null_mut(),
-                )
-            };
-            if status != 0 {
-                anyhow::bail!("cuLaunchKernel (bf16_add_inplace) failed: status {status}");
-            }
-        } else {
-            anyhow::bail!("bf16_add_inplace kernel not set — call set_add_kernel() first");
-        }
-
-        Ok(())
-    }
-
     fn generate_unique_id() -> Result<NcclUniqueId> {
         let mut id = NcclUniqueId {
             internal: [0u8; 128],
@@ -525,6 +448,7 @@ impl Drop for NcclBackend {
         if self.recv_buffer != 0 {
             unsafe { cuMemFree_v2(self.recv_buffer) };
         }
+        self.oneshot.free();
         nccl::destroy_event(self.compute_done_event);
         nccl::destroy_event(self.comm_done_event);
         nccl::destroy_stream(self.comm_stream);
@@ -535,3 +459,4 @@ impl Drop for NcclBackend {
 }
 
 mod comm_impl;
+mod sendrecv;

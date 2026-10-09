@@ -49,6 +49,8 @@ mod nvfp4_quant;
 #[cfg(test)]
 mod plan_cast_tests;
 mod plan_dtype;
+#[cfg(test)]
+mod tp_shapes_tests;
 
 use expert_quant::{quantize_deferred_expert_proj, quantize_expert_proj};
 

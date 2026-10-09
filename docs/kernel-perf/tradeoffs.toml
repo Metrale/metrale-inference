@@ -99,7 +99,7 @@ source = "kernels/gb10/common/attn_prefill_v47.cu:3"
 
 [[t]]
 match = "kernels/gb10/common/bf16_add.cu"
-text = "Scalar BF16 loads and one element per thread (no 32-bit packing as in the norm kernels); the add rounds once via __hadd. Used by the 2-rank all-reduce and the GLM-5-Next MTP residual add."
+text = "Scalar BF16 loads and one element per thread (no 32-bit packing as in the norm kernels); the add rounds once via __hadd. Used by the 2-rank all-reduce and the GLM-5-Next MTP residual add. bf16_add_rank_sum (world >= 3 one-shot all-reduce) sums all ranks in rank order in FP32, rounded once: same bytes on every rank."
 prs = []
 source = "kernels/gb10/common/bf16_add.cu:3"
 

@@ -47,8 +47,10 @@ mod ws_sizing {
         Glm5NextMlpConfig {
             hidden: 4096,
             local_dense_intermediate: 12288 / 2,
+            dense_start: 0,
             moe_intermediate: 2048,
             local_shared_intermediate: 2048 / 2,
+            shared_start: 0,
             num_experts: 288,
             local_experts: 144,
             ep_rank: 0,

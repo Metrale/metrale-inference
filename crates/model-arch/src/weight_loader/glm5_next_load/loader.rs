@@ -42,9 +42,10 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
     }
 
     /// 2026-09-25: DSA, KDA and the MLP all shard under TP (see `glm5_next_load.rs`);
-    /// routed experts are also split by EP (`local_expert_range`).
-    fn supports_tp(&self) -> bool {
-        true
+    /// routed experts are also split by EP (`local_expert_range`). 2026-10-08: The head and
+    /// width splits come from `metrale_config::tp_split`, so they need not divide evenly.
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Uneven
     }
 
     fn load_layers(
@@ -116,11 +117,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             None
         };
 
-        let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::new(
-            config.tp_rank,
-            config.tp_world_size.max(1),
-            &dsa_cfg,
-        )?;
+        let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
         let last = skeleton.layers.len() - 1;
         let mut out: Vec<Box<dyn TransformerLayer>> = Vec::with_capacity(skeleton.layers.len());
 
@@ -180,8 +177,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 Mlp::Dense => Glm5NextMlpSite::Dense(mlp_build::build_dense_mlp(
                     gpu,
                     &mlp_cfg,
-                    config.tp_rank,
                     config.intermediate_size,
+                    mlp_cfg.dense_slice(),
                     "mlp",
                     &load,
                 )?),
@@ -190,7 +187,6 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     Glm5NextMlpSite::Moe(Box::new(mlp_build::build_moe(
                         gpu,
                         &mlp_cfg,
-                        config.tp_rank,
                         config.shared_expert_intermediate_size,
                         &load,
                         &expert,

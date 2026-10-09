@@ -10,6 +10,7 @@ use super::*;
 
 mod drafter;
 mod forward;
+mod multi_seq;
 mod replay;
 
 impl Glm5NextLayer {

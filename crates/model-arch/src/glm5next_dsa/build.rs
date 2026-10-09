@@ -266,28 +266,22 @@ fn up_f32(gpu: &dyn GpuBackend, v: &[f32]) -> Result<DevicePtr> {
     Ok(p)
 }
 
-/// 2026-09-25: Load, transform, shard and upload one DSA block for this rank.
-pub fn build_dsa_weights(
-    gpu: &dyn GpuBackend,
+/// 2026-10-08: This rank's `(q_absorb, o_absorb)` host values: transforms 1 and 3 restricted to
+/// the plan's head range `[head_start, head_start + local_heads)`. `load` returns a checkpoint
+/// tensor by layer-relative name, as for [`build_dsa_weights`].
+pub fn absorb_for_rank(
     cfg: &Glm5NextDsaConfig,
     plan: &DsaTpPlan,
     load: LoadFn<'_>,
-) -> Result<Glm5NextDsaWeights> {
+) -> Result<(Vec<f32>, Vec<f32>)> {
     let get = |n: &str| -> Result<Vec<f32>> { load(&format!("self_attn.{n}")) };
-    let shard = |n: &'static str, full: Vec<f32>| -> Result<Vec<f32>> {
-        let p = plan
-            .get(n)
-            .ok_or_else(|| anyhow::anyhow!("no shard plan for {n}"))?;
-        Ok(shard_host(p, &full))
-    };
-
     let kv_b = get("kv_b_proj.weight")?;
 
     // 2026-09-25: Transform 1 over all heads, then this rank's rows: heads
-    // `tp_rank * local_heads ..`, `kv_lora_rank` rows each.
+    // `plan.head_start ..`, `kv_lora_rank` rows each.
     let q_absorb_full = absorb_q(cfg, &get("q_b_proj.weight")?, &kv_b, plan.full_heads)?;
     let per_head = cfg.kv_lora_rank;
-    let start = plan.tp_rank * plan.local_heads * per_head;
+    let start = plan.head_start * per_head;
     let len = plan.local_heads * per_head;
     let q_absorb = row_slice(&q_absorb_full, cfg.q_lora_rank, start, start + len);
 
@@ -297,15 +291,30 @@ pub fn build_dsa_weights(
     let kv_b_local = row_slice(
         &kv_b,
         cfg.kv_lora_rank,
-        plan.tp_rank * plan.local_heads * kv_b_rows,
-        (plan.tp_rank + 1) * plan.local_heads * kv_b_rows,
+        plan.head_start * kv_b_rows,
+        (plan.head_start + plan.local_heads) * kv_b_rows,
     );
+    let o_plan = plan
+        .get("o_proj")
+        .ok_or_else(|| anyhow::anyhow!("no shard plan for o_proj"))?;
     let o_absorb = absorb_o(
         cfg,
-        &shard("o_proj", get("o_proj.weight")?)?,
+        &shard_host(o_plan, &get("o_proj.weight")?),
         &kv_b_local,
         plan.local_heads,
     )?;
+    Ok((q_absorb, o_absorb))
+}
+
+/// 2026-09-25: Load, transform, shard and upload one DSA block for this rank.
+pub fn build_dsa_weights(
+    gpu: &dyn GpuBackend,
+    cfg: &Glm5NextDsaConfig,
+    plan: &DsaTpPlan,
+    load: LoadFn<'_>,
+) -> Result<Glm5NextDsaWeights> {
+    let get = |n: &str| -> Result<Vec<f32>> { load(&format!("self_attn.{n}")) };
+    let (q_absorb, o_absorb) = absorb_for_rank(cfg, plan, load)?;
 
     // 2026-09-25: Transform 2: fold index_heads^-0.5 into weights_proj.
     let scale = (cfg.index_heads as f32).powf(-0.5);

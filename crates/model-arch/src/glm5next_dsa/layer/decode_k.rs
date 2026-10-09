@@ -12,12 +12,11 @@
 use anyhow::{Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::DevicePtr;
-use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
 
 use super::super::attend::DsaDecodePaging;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, batch_select_enabled, gemm};
+use super::{Glm5NextDsaLayer, batch_select_enabled};
 
 impl Glm5NextDsaLayer {
     /// 2026-09-25: `k` consecutive tokens of one sequence, from position `seq_len`.
@@ -47,7 +46,6 @@ impl Glm5NextDsaLayer {
         // it; see `batch_select_enabled`.
         is_prefill: bool,
     ) -> Result<()> {
-        use crate::glm5next_layer::profile;
         let bt_block_size = kv_cache.block_size().max(1);
         let st = state
             .as_any_mut()
@@ -83,57 +81,7 @@ impl Glm5NextDsaLayer {
         let w = &self.workspace;
         let t_proj = crate::glm5next_layer::profile::start();
 
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.gemv_batchm,
-            hidden,
-            self.weights.q_a_proj,
-            w.q_a,
-            k,
-            self.cfg.q_lora_rank,
-            self.cfg.hidden,
-            stream,
-        )?;
-        KernelLaunch::new(gpu, self.kernels.rms_norm)
-            // 2026-09-25: `rms_norm_vanilla` runs one block per row, so one launch covers all
-            // k rows.
-            .grid([k as u32, 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(w.q_a)
-            .arg_ptr(self.weights.q_a_layernorm)
-            .arg_ptr(w.q_resid)
-            .arg_u32(self.cfg.q_lora_rank as u32)
-            .arg_f32(self.rms_eps)
-            .launch(stream)?;
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.gemv_batchm,
-            w.q_resid,
-            self.weights.q_absorb,
-            w.q_abs,
-            k,
-            self.cfg.local_heads * self.cfg.kv_lora_rank,
-            self.cfg.q_lora_rank,
-            stream,
-        )?;
-
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.gemv_batchm,
-            hidden,
-            self.weights.kv_a_proj,
-            w.kv_a,
-            k,
-            self.cfg.kv_lora_rank,
-            self.cfg.hidden,
-            stream,
-        )?;
+        self.project_in(gpu, hidden, k, stream)?;
         let mut attend_bt = DevicePtr::NULL;
         let mut attend_sl = DevicePtr::NULL;
         // 2026-09-25: On the host path without `persist_bt`, row 0 allocates the shared bt/sl
@@ -174,17 +122,7 @@ impl Glm5NextDsaLayer {
                     w.slot
                 }
             };
-            KernelLaunch::new(gpu, self.kernels.latent_write)
-                .grid([1, 1, 1])
-                .block([self.cfg.kv_lora_rank as u32, 1, 1])
-                .arg_ptr(w.kv_a.offset(row * self.cfg.kv_lora_rank * 2))
-                .arg_ptr(self.weights.kv_a_layernorm)
-                .arg_ptr(kv_cache.k_pool_ptr(self.attn_layer_idx))
-                .arg_ptr(slot_dev)
-                .arg_u32(self.cfg.kv_lora_rank as u32)
-                .arg_f32(self.rms_eps)
-                .arg_f32(1.0 / self.kv_scale)
-                .launch(stream)?;
+            self.write_latent_rows(gpu, row, 1, kv_cache, slot_dev, stream)?;
 
             use crate::glm5next_layer::profile;
             profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
@@ -282,17 +220,7 @@ impl Glm5NextDsaLayer {
                 cache_stride_bytes: (block_size * self.cfg.kv_lora_rank) as u64,
             };
             if replay_safe {
-                // 2026-09-25: `dsa_write_geom` reads S from `d_sl`, this row's `seq_len` entry
-                // in the metadata.
-                KernelLaunch::new(gpu, self.select_kernels.write_geom)
-                    .grid([1, 1, 1])
-                    .block([1, 1, 1])
-                    .arg_ptr(d_sl)
-                    .arg_ptr(w.geom_dev)
-                    .arg_u32(self.cfg.index_kpool as u32)
-                    .arg_u32(self.cfg.index_topk as u32)
-                    .arg_u32(super::super::select::topk_tile() as u32)
-                    .launch(stream)?;
+                self.write_geom(gpu, d_sl, stream)?;
             }
             if batch_select {
                 // 2026-09-25: `indexer_forward` left this row's head weights in the single-row
@@ -333,22 +261,7 @@ impl Glm5NextDsaLayer {
             gpu.free(attend_sl)?;
         }
 
-        let t_proj = profile::start();
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.gemv_batchm,
-            w.attn_out,
-            self.weights.o_absorb,
-            hidden,
-            k,
-            self.cfg.hidden,
-            self.cfg.local_heads * self.cfg.kv_lora_rank,
-            stream,
-        )?;
-        profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
-        Ok(())
+        self.project_out(gpu, hidden, k, stream)
     }
 }
 

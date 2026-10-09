@@ -22,6 +22,7 @@ use crate::traits::{ModelEp, ModelForward};
 use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState};
 use metrale_model_layers::layers::ops;
 
+mod batch_hooks;
 mod pad_states;
 mod perseq;
 
@@ -63,7 +64,8 @@ impl TransformerModel {
         // worker from `ep_worker_decode_batch`), so each layer's collectives match
         // in shape and order across ranks.
         let mla_perseq_fallback = self.is_mla_dispatch() && self.levers.mla_perseq_fallback;
-        let qsa_active = self.config.index_topk > 0 && {
+        // 2026-10-08: Never active when every layer selects per row (`batch_hooks.rs`).
+        let qsa_active = self.config.index_topk > 0 && !self.layers_select_index_per_row() && {
             // 2026-09-25: `QsaIndexer::inert_bound`: below `index_topk +
             // index_compress_ratio - 1` visible tokens every block is selected,
             // so selection is inert.
@@ -298,9 +300,12 @@ impl TransformerModel {
         };
 
         if let Some(graph) = replay {
+            // 2026-10-08: Room before the launch, host bookkeeping after (`batch_hooks.rs`).
+            self.batch_replay_check_room(seqs)?;
             if graph.0 != 0 {
                 self.gpu.launch_graph(graph, stream)?;
             }
+            self.batch_replay_sync(seqs)?;
 
             if let Some(tokens) = input.host() {
                 for (i, seq) in seqs.iter_mut().enumerate() {

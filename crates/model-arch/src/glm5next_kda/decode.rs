@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: The KDA recurrent path: single-token `decode` and K-row `decode_k`.
+//! 2026-09-25: The KDA recurrent path: single-token `decode`, K-row `decode_k`, and
+//! (2026-10-08) `decode_rows`, one row per sequence.
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants:
@@ -162,15 +163,61 @@ impl Glm5NextKdaLayer {
         snapshots: &[(DevicePtr, DevicePtr)],
         stream: u64,
     ) -> Result<()> {
+        let c = &self.cfg;
+        let (h_bytes, conv_bytes) = (c.recurrent_state_elems() * 4, c.conv_state_elems() * 4);
+        self.rows_with(gpu, hidden, k, ws, stream, |row| {
+            self.stateful_row(gpu, RowIo::workspace(c, ws, row), state, stream)?;
+            if let Some((h_dst, conv_dst)) = snapshots.get(row) {
+                gpu.copy_d2d_async(state.recurrent, *h_dst, h_bytes, stream)?;
+                gpu.copy_d2d_async(state.conv, *conv_dst, conv_bytes, stream)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// 2026-10-08: One token for each of `states.len()` sequences: row `r` of `hidden` advances
+    /// `states[r]`. The projections run once over all rows, as in [`Self::decode_k`], and each
+    /// row's conv and recurrent step is [`Self::decode`]'s own launch on that row's state, so
+    /// for up to `DENSE_GEMV_BATCHM_MAX_M` rows a row's output and state equal a lone
+    /// [`Self::decode`] of its sequence bit for bit (the argument in [`Self::decode_k`]).
+    /// Refuses no rows or more rows than the workspace holds.
+    pub fn decode_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        states: &[KdaSeqState],
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
+        self.rows_with(gpu, hidden, states.len(), ws, stream, |row| {
+            self.stateful_row(
+                gpu,
+                RowIo::workspace(&self.cfg, ws, row),
+                &states[row],
+                stream,
+            )
+        })
+    }
+
+    /// 2026-10-08: `front_end` over `k` rows, `per_row(row)` for each row in order, then
+    /// `back_end`, each span in its profile bucket. Refuses `k == 0` or `k` above the
+    /// workspace before any launch.
+    fn rows_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        k: usize,
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+        mut per_row: impl FnMut(usize) -> Result<()>,
+    ) -> Result<()> {
         if k == 0 || k > ws.max_tokens {
             bail!(
-                "KDA decode_k of {k} tokens does not fit a workspace built for {}",
+                "KDA decode of {k} rows does not fit a workspace built for {}",
                 ws.max_tokens
             );
         }
         use crate::glm5next_layer::profile;
-        let c = &self.cfg;
-        let (h_bytes, conv_bytes) = (c.recurrent_state_elems() * 4, c.conv_state_elems() * 4);
         // 2026-09-25: Three profile buckets (front, recurrence, back), each closed where its span
         // ends.
         let t_front = profile::start();
@@ -178,11 +225,7 @@ impl Glm5NextKdaLayer {
         profile::end(profile::KDA_FRONT, t_front, gpu, stream);
         let t_recur = profile::start();
         for row in 0..k {
-            self.stateful_row(gpu, RowIo::workspace(c, ws, row), state, stream)?;
-            if let Some((h_dst, conv_dst)) = snapshots.get(row) {
-                gpu.copy_d2d_async(state.recurrent, *h_dst, h_bytes, stream)?;
-                gpu.copy_d2d_async(state.conv, *conv_dst, conv_bytes, stream)?;
-            }
+            per_row(row)?;
         }
         profile::end(profile::KDA_RECUR, t_recur, gpu, stream);
         let t_back = profile::start();

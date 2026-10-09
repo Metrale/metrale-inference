@@ -285,6 +285,16 @@ pub trait TransformerLayer:
     /// uses the SSM pool, which gets pool addresses instead.
     fn alloc_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn LayerState>>;
 
+    /// 2026-10-08: The state of a padding row in a batched decode (rows past the real
+    /// sequences, up to the padded width). The batched decode builds one per padding row
+    /// per step and drops it afterwards without `release_state`, and a captured graph keeps
+    /// its addresses for later replays, so a layer whose `alloc_state` allocates device
+    /// memory per call overrides this with a view of a buffer it owns for its lifetime.
+    /// Default: `alloc_state`.
+    fn alloc_pad_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn LayerState>> {
+        self.alloc_state(gpu)
+    }
+
     /// 2026-09-25: Free the device memory this layer allocated for one sequence, in
     /// `alloc_state` or attached to the state later. `LayerState` holds bare `DevicePtr`s,
     /// so dropping it frees only the host struct.

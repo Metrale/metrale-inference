@@ -91,6 +91,72 @@ mod tests {
             !Plain.decode_verify_multi_unsupported(),
             "default must be false"
         );
+        assert!(
+            !Plain.decode_multi_seq_selects_index_per_row(),
+            "default must be false — a layer that does not opt in keeps the QSA per-sequence rule"
+        );
+    }
+
+    /// 2026-10-08: The QSA per-sequence term is lifted only by the all-layers vote, at both
+    /// dispatch sites, and the vote is `all` over a non-empty stack. Dropping the term at a
+    /// site, or voting with `any`, fails this test.
+    #[test]
+    fn the_qsa_term_is_lifted_only_when_every_layer_selects_per_row() {
+        let a2 = src("src/model/trait_impl/decode_a2.rs");
+        let b = block(&a2, "let qsa_active", "let ms_layer_veto");
+        assert!(
+            b.contains("self.config.index_topk > 0 && !self.layers_select_index_per_row()"),
+            "decode_a2's qsa_active must consult the vote"
+        );
+        let fused = src("src/model/trait_impl/decode_b.rs");
+        let b = block(&fused, "let hc_qsa_perseq", "if self.comm.is_some()");
+        assert!(
+            b.contains("&& self.config.index_topk > 0\n                && !self.layers_select_index_per_row()"),
+            "decode_b's QSA conjunct must consult the vote"
+        );
+        let hooks = src("src/model/trait_impl/decode_a2/batch_hooks.rs");
+        let vote = block(&hooks, "fn layers_select_index_per_row", "\n    }\n");
+        assert!(vote.contains("!self.layers.is_empty()"));
+        assert!(vote.contains(".all(|l| l.decode_multi_seq_selects_index_per_row())"));
+    }
+
+    /// 2026-10-08: A replayed batched-decode graph checks every row's room before the launch
+    /// and reconciles every row's host bookkeeping after it, as `decode_a.rs` does for one
+    /// sequence; a replay writes GLM-5.3's DSA indexer rows with no host code in the loop.
+    #[test]
+    fn a_batched_replay_checks_room_before_and_syncs_after_the_launch() {
+        let a2 = src("src/model/trait_impl/decode_a2.rs");
+        let room = a2
+            .find("self.batch_replay_check_room(seqs)?")
+            .expect("room check");
+        let launch = a2.find("self.gpu.launch_graph(").expect("replay launch");
+        let sync = a2.find("self.batch_replay_sync(seqs)?").expect("reconcile");
+        assert!(
+            room < launch && launch < sync,
+            "room, launch, sync — in that order"
+        );
+        let hooks = src("src/model/trait_impl/decode_a2/batch_hooks.rs");
+        assert!(hooks.contains("layer.check_replay_room(&*seq.layer_states[i], seq.seq_len, 1)?"));
+        assert!(
+            hooks.contains("layer.sync_replayed_step(seq.layer_states[i].as_mut(), seq_len, 1)?")
+        );
+    }
+
+    /// 2026-10-08: Both padding-row builders take the layer's padding state, not `alloc_state`,
+    /// which for GLM-5.3's DSA layer allocates a context-sized cache that nothing frees.
+    #[test]
+    fn padding_rows_take_the_layers_padding_state() {
+        for rel in [
+            "src/model/trait_impl/decode_a2/pad_states.rs",
+            "src/model/trait_impl/decode_b/build_states.rs",
+        ] {
+            let s = src(rel);
+            assert!(
+                s.contains("layer.alloc_pad_state(self.gpu.as_ref())?"),
+                "{rel}"
+            );
+            assert!(!s.contains("layer.alloc_state("), "{rel}");
+        }
     }
 
     #[test]

@@ -1,0 +1,39 @@
+# GLM-5.3-Flash NVFP4: every tensor a TP split touches in layer 0 (KDA mixer, dense FFN) and
+# layer 3 (DSA mixer, routed MoE with its shared expert), read from the checkpoint's safetensors
+# headers on 2026-10-08. The KDA and DSA sizes agree with glm53-nvfp4-9e0d74e3-families.tsv.
+# name<TAB>dtype<TAB>shape (comma-separated). U8 tensors are packed NVFP4, two values per byte.
+model.language_model.layers.0.mlp.down_proj.weight	U8	4096,6144
+model.language_model.layers.0.mlp.gate_proj.weight	U8	12288,2048
+model.language_model.layers.0.mlp.up_proj.weight	U8	12288,2048
+model.language_model.layers.0.self_attn.A_log	F32	64
+model.language_model.layers.0.self_attn.b_proj.weight	BF16	64,4096
+model.language_model.layers.0.self_attn.dt_bias	F32	8192
+model.language_model.layers.0.self_attn.f_a_proj.weight	BF16	128,4096
+model.language_model.layers.0.self_attn.f_b_proj.weight	BF16	8192,128
+model.language_model.layers.0.self_attn.g_a_proj.weight	BF16	128,4096
+model.language_model.layers.0.self_attn.g_b_proj.weight	BF16	8192,128
+model.language_model.layers.0.self_attn.k_conv1d.weight	F32	8192,1,4
+model.language_model.layers.0.self_attn.k_proj.weight	BF16	8192,4096
+model.language_model.layers.0.self_attn.o_norm.weight	BF16	128
+model.language_model.layers.0.self_attn.o_proj.weight	BF16	4096,8192
+model.language_model.layers.0.self_attn.q_conv1d.weight	F32	8192,1,4
+model.language_model.layers.0.self_attn.q_proj.weight	BF16	8192,4096
+model.language_model.layers.0.self_attn.v_conv1d.weight	F32	8192,1,4
+model.language_model.layers.0.self_attn.v_proj.weight	BF16	8192,4096
+model.language_model.layers.3.mlp.shared_experts.down_proj.weight	BF16	4096,2048
+model.language_model.layers.3.mlp.shared_experts.gate_proj.weight	BF16	2048,4096
+model.language_model.layers.3.mlp.shared_experts.up_proj.weight	BF16	2048,4096
+model.language_model.layers.3.self_attn.indexer.index_kpool_compress_ape	BF16	4,128
+model.language_model.layers.3.self_attn.indexer.index_kpool_compress_gate	BF16	128,4096
+model.language_model.layers.3.self_attn.indexer.k_norm.bias	BF16	128
+model.language_model.layers.3.self_attn.indexer.k_norm.weight	BF16	128
+model.language_model.layers.3.self_attn.indexer.weights_proj.weight	BF16	32,4096
+model.language_model.layers.3.self_attn.indexer.wk.weight	BF16	128,4096
+model.language_model.layers.3.self_attn.indexer.wq_b.weight	BF16	4096,1536
+model.language_model.layers.3.self_attn.kv_a_layernorm.weight	BF16	512
+model.language_model.layers.3.self_attn.kv_a_proj_with_mqa.weight	BF16	512,4096
+model.language_model.layers.3.self_attn.kv_b_proj.weight	BF16	32768,512
+model.language_model.layers.3.self_attn.o_proj.weight	BF16	4096,16384
+model.language_model.layers.3.self_attn.q_a_layernorm.weight	BF16	1536
+model.language_model.layers.3.self_attn.q_a_proj.weight	BF16	1536,4096
+model.language_model.layers.3.self_attn.q_b_proj.weight	BF16	16384,1536

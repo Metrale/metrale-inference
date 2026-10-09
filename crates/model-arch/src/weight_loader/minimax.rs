@@ -34,10 +34,10 @@ use metrale_model_layers::weight_map::{
 pub struct MinimaxM2WeightLoader;
 
 impl ModelWeightLoader for MinimaxM2WeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: `load_layers` shards Q/K/V/O and the q/k norms by
         // `config.tp_rank` / `config.tp_world_size`.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(

@@ -274,6 +274,7 @@ pub mod precision_plan;
 pub mod recipe_yaml;
 #[cfg(test)]
 mod tests;
+mod tp_split;
 pub mod weight_quantization;
 
 pub use activation_quantization::{ActQuantFormat, ActivationQuantization, ProjFamily};
@@ -293,6 +294,7 @@ pub(crate) use parsers::{
 pub use position_encoding::AttnPositionEncoding;
 pub(crate) use position_encoding::resolve_attn_position_encoding;
 pub use precision_plan::{DeclaredPrecisionPlan, LayerPrecision};
+pub use tp_split::{TpPreShardHeads, TpSlice, TpSupport, tp_split};
 pub use weight_quantization::{
     Nvfp4Act, W4a4Downcast, WeightQuantPolicy, WeightQuantTier, WeightQuantization,
 };

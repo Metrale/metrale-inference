@@ -7,6 +7,8 @@
 //! Invariants:
 //! - A `Topology` from `resolve_topology` has `world_size == tp_size * ep_size`,
 //!   or `world_size == tp_size == ep_size > 1`.
+//! - Above one TP rank, `config`'s head counts are this rank's and its
+//!   `pre_shard_heads()` are the checkpoint's.
 
 #[cfg(feature = "nccl")]
 use anyhow::Context;
@@ -75,51 +77,21 @@ pub(crate) fn resolve_topology(
     config.ep_world_size = ep_size;
     if tp_size > 1 {
         let loader = metrale_model_engine::factory::loader_for_config(config)?;
-        if !loader.supports_tp() {
+        let support = loader.tp_support();
+        drop(loader);
+        if support == metrale_config::TpSupport::Unsupported {
             anyhow::bail!(
                 "TP (--tp-size > 1) is not supported by the {} weight loader. \
                  Run with --tp-size 1 (EP-only). To extend TP to this architecture, \
                  wire `crate::tp_shard::slice_for_rank` per attention/MoE/SSM \
-                 tensor in the loader and override `ModelWeightLoader::supports_tp()` \
-                 to return true. See `weight_loader/minimax.rs` as the reference.",
+                 tensor in the loader and override `ModelWeightLoader::tp_support()` \
+                 to return `Even`. See `weight_loader/minimax.rs` as the reference.",
                 config.model_type,
             );
         }
-        drop(loader);
-        if !config.num_attention_heads.is_multiple_of(tp_size) {
-            anyhow::bail!(
-                "TP requires num_attention_heads ({}) divisible by tp_size ({})",
-                config.num_attention_heads,
-                tp_size,
-            );
-        }
-        if !config.num_key_value_heads.is_multiple_of(tp_size) {
-            anyhow::bail!(
-                "TP requires num_key_value_heads ({}) divisible by tp_size ({})",
-                config.num_key_value_heads,
-                tp_size,
-            );
-        }
-        config.num_attention_heads /= tp_size;
-        config.num_key_value_heads /= tp_size;
-        if config.linear_num_key_heads > 0 || config.linear_num_value_heads > 0 {
-            if !config.linear_num_key_heads.is_multiple_of(tp_size) {
-                anyhow::bail!(
-                    "TP requires linear_num_key_heads ({}) divisible by tp_size ({})",
-                    config.linear_num_key_heads,
-                    tp_size,
-                );
-            }
-            if !config.linear_num_value_heads.is_multiple_of(tp_size) {
-                anyhow::bail!(
-                    "TP requires linear_num_value_heads ({}) divisible by tp_size ({})",
-                    config.linear_num_value_heads,
-                    tp_size,
-                );
-            }
-            config.linear_num_key_heads /= tp_size;
-            config.linear_num_value_heads /= tp_size;
-        }
+        // 2026-10-08: `Even` refuses a head count that does not divide over `tp_size`, as
+        // this phase always did; `Uneven` (GLM-5.3) splits it with `metrale_config::tp_split`.
+        config.shard_heads_for_tp(support)?;
         tracing::info!(
             "TP-local head counts: num_attention_heads={}, num_key_value_heads={}, \
              linear_num_key_heads={}, linear_num_value_heads={}",
@@ -194,6 +166,9 @@ pub(crate) fn init_nccl_comm(
         args.master_port,
         cuda_stream,
         recv_capacity,
+        args.all_reduce_oneshot_max_kb
+            .checked_mul(1024)
+            .context("--all-reduce-oneshot-max-kb overflows")?,
     )
     .context("Failed to initialize NCCL")?;
     tracing::info!("NCCL initialized: rank {}", backend.rank());

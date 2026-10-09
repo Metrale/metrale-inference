@@ -69,13 +69,17 @@ impl TransformerModel {
         // with QSA active, since the fused batched decode has no per-sequence QSA
         // arm. The veto is needed here as well: this is the single-GPU fused
         // caller, and it keeps a declining layer away from `prefill_ctx`, the one
-        // context built with a non-zero `hc_row_offset`.
+        // context built with a non-zero `hc_row_offset`. 2026-10-08: The QSA term is
+        // skipped when every layer selects per row (`layers_select_index_per_row`).
         let ms_layer_veto = self.layers.iter().any(|l| l.decode_multi_seq_unsupported());
         let hc_qsa_perseq = ms_layer_veto
-            || (self.config.hc_mult > 0 && self.config.index_topk > 0 && {
-                let bound = self.config.index_topk + self.config.index_compress_ratio - 1;
-                decode_seqs.iter().any(|s| s.seq_len >= bound)
-            });
+            || (self.config.hc_mult > 0
+                && self.config.index_topk > 0
+                && !self.layers_select_index_per_row()
+                && {
+                    let bound = self.config.index_topk + self.config.index_compress_ratio - 1;
+                    decode_seqs.iter().any(|s| s.seq_len >= bound)
+                });
         if self.comm.is_some()
             || self.is_mla_dispatch()
             || hc_qsa_perseq

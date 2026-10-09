@@ -15,6 +15,10 @@ use super::super::super::types::TransformerModel;
 impl TransformerModel {
     /// 2026-09-26: Append one freshly built layer-state row to `all_layer_states` for each
     /// padding position in `n..padded_n`.
+    ///
+    /// 2026-10-08: A non-SSM layer's padding state comes from `alloc_pad_state`, which a
+    /// layer with per-call device allocations points at a buffer it owns: these rows drop
+    /// without `release_state`, and a captured graph replays their addresses.
     pub(super) fn decode_batch_push_pad_states(
         &self,
         all_layer_states: &mut Vec<Vec<Box<dyn LayerState>>>,
@@ -45,7 +49,7 @@ impl TransformerModel {
                     }));
                     ssm_idx += 1;
                 } else {
-                    dummy.push(layer.alloc_state(self.gpu.as_ref())?);
+                    dummy.push(layer.alloc_pad_state(self.gpu.as_ref())?);
                 }
             }
             all_layer_states.push(dummy);

@@ -320,3 +320,63 @@ fn absorb_q_single_thread_matches_reference() {
         assert_eq!(g.to_bits(), w.to_bits());
     }
 }
+
+/// 2026-10-08: Five heads over three ranks (2/2/1): each rank's absorbed `q` rows and `o`
+/// columns are exactly (bit for bit) its heads' rows and columns of the one-rank absorption,
+/// so the per-rank partial outputs sum to the one-rank output under the existing all-reduce.
+#[test]
+fn uneven_ranks_absorb_exactly_their_heads() {
+    let heads = 5usize;
+    let c = cfg(heads);
+    let (nope, vd, kvl, ql, hid) = (
+        c.qk_nope_head_dim,
+        c.v_head_dim,
+        c.kv_lora_rank,
+        c.q_lora_rank,
+        c.hidden,
+    );
+    let wave = |n: usize, k: f32| -> Vec<f32> { (0..n).map(|i| ((i as f32) * k).sin()).collect() };
+    let (q_b, kv_b, o) = (
+        wave(heads * nope * ql, 0.37),
+        wave(heads * (nope + vd) * kvl, 0.11),
+        wave(hid * heads * vd, 0.23),
+    );
+    let load = |n: &str| -> Result<Vec<f32>> {
+        Ok(match n {
+            "self_attn.q_b_proj.weight" => q_b.clone(),
+            "self_attn.kv_b_proj.weight" => kv_b.clone(),
+            "self_attn.o_proj.weight" => o.clone(),
+            other => bail!("unexpected tensor {other}"),
+        })
+    };
+    let one = DsaTpPlan::new(0, 1, heads, &c).unwrap();
+    let (q_full, o_full) = absorb_for_rank(&c, &one, &load).unwrap();
+
+    let mut starts = Vec::new();
+    for rank in 0..3 {
+        let local = metrale_config::tp_split(heads, 3, rank, 1).unwrap().len;
+        let plan = DsaTpPlan::new(rank, 3, heads, &cfg(local)).unwrap();
+        starts.push((plan.head_start, plan.local_heads));
+        let (q, o_abs) = absorb_for_rank(&cfg(local), &plan, &load).unwrap();
+        let (h0, h1) = (plan.head_start, plan.head_start + plan.local_heads);
+        assert_eq!(
+            q,
+            row_slice(&q_full, ql, h0 * kvl, h1 * kvl),
+            "rank {rank} q"
+        );
+        assert_eq!(
+            o_abs,
+            col_slice(&o_full, heads * kvl, h0 * kvl, h1 * kvl),
+            "rank {rank} o"
+        );
+    }
+    assert_eq!(starts, vec![(0, 2), (2, 2), (4, 1)]);
+}
+
+/// 2026-10-08: A layer config whose `local_heads` is not the rank's share of the full count is
+/// refused rather than sliced at the wrong offset.
+#[test]
+fn a_local_head_count_that_disagrees_with_the_split_is_refused() {
+    let e = DsaTpPlan::new(2, 3, 5, &cfg(2)).unwrap_err();
+    assert!(e.to_string().contains("owns 1 of 5 heads"), "{e}");
+}
