@@ -17,6 +17,7 @@ use metrale_config::TpSlice;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::Glm5NextMlpConfig;
+use super::precision::{GroupPrecision, MlpKernel};
 use super::weights::{
     Glm5NextDenseMlpWeights, Glm5NextExpertPtrTable, Glm5NextExpertWeights, Glm5NextMoePtrTables,
     Glm5NextMoeWeights, Nvfp4Proj,
@@ -153,15 +154,22 @@ fn build_expert_ptr_table(
     })
 }
 
+/// 2026-10-08: The routed experts' precision plan, given whether every bound projection carries
+/// a static activation scale (`precision::GroupPrecision::resolve`).
+pub type PrecisionFn<'a> = &'a dyn Fn(bool) -> Result<GroupPrecision>;
+
 /// 2026-09-25: Bind one routed MoE site for this rank: the router and bias unsliced, the shared
 /// expert TP-sliced (`cfg.shared_slice()`), and the `local_experts` routed experts this EP rank
-/// owns.
+/// owns. 2026-10-08: Then the experts' precision plan, and their uniform activation scales when
+/// the plan reaches W4A4 at some row count up to `max_rows`.
 pub fn build_moe(
     gpu: &dyn GpuBackend,
     cfg: &Glm5NextMlpConfig,
     full_shared_inter: usize,
     load: LoadFn<'_>,
     expert: ExpertFn<'_>,
+    precision: PrecisionFn<'_>,
+    max_rows: usize,
 ) -> Result<Glm5NextMoeWeights> {
     // 2026-09-25: The router weight and bias are loaded whole on every rank, so every rank
     // selects the same experts.
@@ -200,6 +208,13 @@ pub fn build_moe(
         experts.push(expert(id)?);
     }
 
+    let precision = precision(super::build_w4a4::experts_have_scales(&experts))?;
+    let act_scales = if precision.reaches(MlpKernel::W4a4Static, max_rows) {
+        Some(super::build_w4a4::expert_act_scales(&experts)?)
+    } else {
+        None
+    };
+
     let ptrs = Glm5NextMoePtrTables {
         gate: build_expert_ptr_table(gpu, cfg, &experts, |e| e.gate_proj)?,
         up: build_expert_ptr_table(gpu, cfg, &experts, |e| e.up_proj)?,
@@ -213,6 +228,8 @@ pub fn build_moe(
         shared,
         experts,
         ptrs,
+        precision,
+        act_scales,
     })
 }
 

@@ -10,6 +10,9 @@
 //!   (`require_verify_rollback`); the commit then finds a replay commit on each of them.
 //! - The replay launches run on the default stream, in order with every forward, because they
 //!   use the layers' shared forward workspace as scratch.
+//! - 2026-10-09: When graphs are allowed (the verify graphs' rule) and the sequence has an SSM
+//!   slot, a commit is captured once per `(slot, accepted, k)` and replayed after; its
+//!   launches and addresses depend only on that key.
 
 use anyhow::{Result, bail};
 use metrale_config::LayerType;
@@ -48,6 +51,39 @@ impl TransformerModel {
         k: usize,
     ) -> Result<()> {
         let stream = self.gpu.default_stream();
+        let key = seq.ssm_slot_idx().map(|s| (s, num_accepted, k));
+        let graphs_on =
+            (self.comm.is_none() || self.levers.ep_graphs || self.layers_capture_with_comm())
+                && !self
+                    .suppress_graphs
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                && std::env::var_os("METRALE_NO_REPLAY_COMMIT_GRAPHS").is_none();
+        let Some(key) = key.filter(|_| graphs_on) else {
+            return self.commit_replay_layers(seq, num_accepted, k, stream);
+        };
+        let mut cache = self.replay_commit_graphs.lock();
+        if let Some(&graph) = cache.get(&key) {
+            return self.gpu.launch_graph(graph, stream);
+        }
+        self.gpu.begin_capture(stream)?;
+        let ran = self.commit_replay_layers(seq, num_accepted, k, stream);
+        let graph = self.gpu.end_capture(stream)?;
+        ran?;
+        if graph.0 != 0 {
+            cache.insert(key, graph);
+            self.gpu.launch_graph(graph, stream)?;
+        }
+        Ok(())
+    }
+
+    /// 2026-10-09: The per-layer replay commits of `commit_replay_prefix`, launched on `stream`.
+    fn commit_replay_layers(
+        &self,
+        seq: &mut SequenceState,
+        num_accepted: usize,
+        k: usize,
+        stream: u64,
+    ) -> Result<()> {
         let layers: Vec<usize> = self.ssm_pool_layers().map(|(i, _)| i).collect();
         for i in layers {
             if !self.layers[i].ssm_replay_commit(

@@ -92,9 +92,14 @@ mod ws_sizing {
             assert_eq!(b[7], rows * 4096 * 2, "shared_out at {rows}");
             assert_eq!(b[9], rows * 8 * rows * 4, "u_slot at {rows}");
             assert_eq!(b[12], 289 * 4, "expert_offsets is row-independent");
+            // 2026-10-08: The W4A4 scratch: 16 routed rows x top_k 8 = 128 quantized rows of
+            // the widest K, the 6144-wide TP=2 dense share; row-independent from 16 rows up.
+            assert_eq!(b[14], 128 * 6144 / 2, "w4a4 codes at {rows}");
+            assert_eq!(b[15], 128 * 6144 / 16, "w4a4 scales at {rows}");
+            assert_eq!(b[16], 128 * 4, "w4a4 globals at {rows}");
             assert_eq!(
                 mlp_ws_total_bytes(&c, rows),
-                rows * 173_376 + 32 * rows * rows + 1156
+                rows * 173_376 + 32 * rows * rows + 1156 + 442_880
             );
         }
     }
@@ -107,9 +112,9 @@ mod ws_sizing {
         // 2026-09-25: Decimal units, as the loader's log prints them.
         let mb = |n: usize| n as f64 / 1e6;
         for (rows, per_layer_mb, stack_gb) in [
-            (256usize, 46.48, 2.092),
-            (512, 97.16, 4.372),
-            (1024, 211.09, 9.499),
+            (256usize, 46.93, 2.112),
+            (512, 97.60, 4.392),
+            (1024, 211.54, 9.519),
         ] {
             let one = mlp_ws_total_bytes(&c, rows);
             assert!(

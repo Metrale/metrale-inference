@@ -12,7 +12,9 @@
 //! struct's fields sit where its `#[command(flatten)]` field is: last.
 
 use clap::Args;
+use metrale_model_layers::layers::DenseQuantization;
 
+use super::super::flag_values::DenseQuantizationArg;
 use super::{DEFAULT_REQUEST_TIMEOUT_SECS, parse_lora_adapter_spec, parse_lora_stageable_spec};
 
 /// 2026-09-30: `--activation-quantization`, parsed by the config crate's one grammar.
@@ -108,6 +110,18 @@ pub struct ServeServiceArgs {
     /// row-invariant path for a family, that family runs `adaptive` and the load log says so.
     #[arg(long, value_name = "SPEC", default_value = "declared", value_parser = parse_activation_quantization)]
     pub activation_quantization: metrale_config::ActivationQuantization,
+
+    /// Precision of the checkpoint's 16-bit (unquantized) dense projections.
+    ///
+    /// `declared` (the default) serves them at the checkpoint's width. `fp8` quantizes them at
+    /// load to FP8 E4M3 with one scale per output channel and decodes them W8A8 with dynamic
+    /// per-token FP8 activations: BELOW the checkpoint's declared precision, so the model's
+    /// answers change; the boot log and benchmark records say so. GLM-5.3 (`glm5_next`) only:
+    /// its attention (KDA, DSA latent, indexer) and shared-expert projections; pair it with
+    /// `--lm-head-dtype fp8` for the head. The FP8 copies sit beside the 16-bit weights. Any
+    /// other model refuses it. Unmeasured.
+    #[arg(long, value_enum, default_value_t = DenseQuantizationArg(DenseQuantization::Declared))]
+    pub dense_quantization: DenseQuantizationArg,
 
     /// Vision input area bound in pixels, applied before patching. A non-zero
     /// value overrides the checkpoint in both directions: it may raise the bound
