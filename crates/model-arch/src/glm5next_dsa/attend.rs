@@ -113,6 +113,9 @@ impl Glm5NextDsaDecodeKernel {
                 if !(1..=HB_MAX_SPLITS).contains(&splits) {
                     bail!("DSA head-batched decode: {splits} splits, expected 1..={HB_MAX_SPLITS}");
                 }
+                tracing::warn!(
+                    "METRALE_GLM_DSA_DECODE_HB={splits}: DSA decode on the head-batched kernel"
+                );
                 Some(HeadBatched {
                     decode: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_decode_hb_fp8")?,
                     merge: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_merge")?,
@@ -287,10 +290,24 @@ pub fn decode_attention(
 
     if let Some(hb) = kernel.head_batched {
         decode_head_batched(gpu, hb, cfg, geom, paging, inputs, stream)?;
-        if let Some(dir) = check::check_dir()?
-            && !gpu.stream_is_capturing(stream)
-        {
-            check::against_per_head(gpu, kernel.per_head, cfg, geom, paging, inputs, stream, dir)?;
+        if let Some(dir) = check::check_dir()? {
+            if gpu.stream_is_capturing(stream) {
+                check::note_captured_skip(paging.num_seqs);
+            } else {
+                check::against_per_head(
+                    gpu,
+                    kernel.per_head,
+                    cfg,
+                    geom,
+                    paging,
+                    inputs,
+                    stream,
+                    dir,
+                )?;
+            }
+        }
+        if check::serve_reference()? {
+            launch_per_head(gpu, kernel.per_head, cfg, geom, paging, inputs, stream)?;
         }
         return Ok(());
     }
