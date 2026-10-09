@@ -315,6 +315,10 @@ pub(crate) fn load_model(
         vision_config: config.vision.clone(),
         vision_max_pixels,
         remote_image_policy,
+        media_limits: crate::api::chat::media_limits::MediaLimits {
+            images: args.chat_surface.limit_images_per_prompt,
+            videos: args.chat_surface.limit_videos_per_prompt,
+        },
         video_ffmpeg,
         video_fps: args.video_fps,
         default_temperature,

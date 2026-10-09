@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-08: The chat-surface serve flags (flattened last into `ServeServiceArgs`):
-//! the chat template file and uncapped thinking.
+//! the chat template file, the per-request media caps and uncapped thinking.
 //!
 //! Owner: server CLI.
 //! Invariants: the `///` text on the struct's fields is the `--help` output and
@@ -23,6 +23,18 @@ pub struct ServeChatSurfaceArgs {
         conflicts_with = "disable_template_overrides"
     )]
     pub chat_template: Option<std::path::PathBuf>,
+
+    /// Most images one chat request may carry, counted over all its messages. A
+    /// request with more is refused with a 400 before any image is fetched or
+    /// decoded. Unset: no cap.
+    #[arg(long, value_name = "N")]
+    pub limit_images_per_prompt: Option<usize>,
+
+    /// Most videos one chat request may carry, counted over all its messages; 0
+    /// refuses any video. A request with more is refused with a 400 before any
+    /// video is decoded. Unset: no cap.
+    #[arg(long, value_name = "N")]
+    pub limit_videos_per_prompt: Option<usize>,
 
     /// Arm no thinking budget of the server's own: reasoning runs until the model
     /// closes it or `max_tokens` ends the response. Effort levels, the

@@ -62,6 +62,9 @@ pub struct AppState {
     /// 2026-09-26: Whether and how `image_url` parts with an http(s) URL are
     /// fetched; off unless `--vision-allow-remote-images`.
     pub remote_image_policy: crate::api::chat::remote_image::RemoteImagePolicy,
+    /// 2026-10-08: `--limit-images-per-prompt` / `--limit-videos-per-prompt`
+    /// (`api/chat/media_limits.rs`).
+    pub media_limits: crate::api::chat::media_limits::MediaLimits,
     /// 2026-09-26: ffmpeg subprocess policy for video parts; off unless
     /// `--video-allow-ffmpeg`.
     pub video_ffmpeg: metrale_model_layers::video_decode_ffmpeg::FfmpegPolicy,
