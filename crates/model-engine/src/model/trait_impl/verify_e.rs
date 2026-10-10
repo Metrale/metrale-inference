@@ -246,7 +246,10 @@ impl TransformerModel {
         // every rank runs this verify, so every rank captures and replays the same collectives.
         let graphs_on = super::verify_e2::verify_graphs_enabled()
             && !k4_diag
-            && (self.comm.is_none() || self.levers.ep_graphs || self.layers_capture_with_comm());
+            && (self.comm.is_none() || self.levers.ep_graphs || self.layers_capture_with_comm())
+            // 2026-10-10: No capture past a layer's captured-row limit (GLM-5.3: below the
+            // routed-MoE grouped floor, whose host-side tile sizing a capture cannot run).
+            && self.rows_capturable(r_total);
         let graph_key = if graphs_on {
             self.verify_batched_graph_key(
                 &*seqs,

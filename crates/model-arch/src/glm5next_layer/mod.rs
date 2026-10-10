@@ -397,6 +397,12 @@ impl LayerCapabilities for Glm5NextLayer {
         true
     }
 
+    /// 2026-10-10: Below the routed-MoE grouped GEMM's row floor (`grouped_row_floor`): from
+    /// there the grouped path's host-side tile sizing is what a capture must not run.
+    fn max_captured_rows(&self) -> Option<usize> {
+        Some(crate::glm5next_mlp::forward::grouped_row_floor() - 1)
+    }
+
     /// 2026-10-08: True: a DSA row selects over its own sequence's indexer cache
     /// (`Glm5NextDsaLayer::decode_rows`) and a KDA layer has no index, so the model's mHC +
     /// sparse-index per-sequence rule does not apply to this layer.
