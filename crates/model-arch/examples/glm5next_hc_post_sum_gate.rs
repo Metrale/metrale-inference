@@ -11,8 +11,10 @@
 //! - The run fails unless the reduced row (`block_out`) and the post-mixed highway are
 //!   byte-identical between the two arms for every case (in place, `out` aliasing `residual`, as
 //!   the layer launches it).
-//! - Two negative controls must DIFFER from the oracle: the fused arm told the wrong rank (the
-//!   slot mapping, so a partial is counted twice), and `hc_post` on the unsummed partial.
+//! - Two negative controls must DIFFER from the oracle: the fused arm given a slot stride that
+//!   misses the second peer's partial, and `hc_post` on the unsummed partial. (A wrong rank is
+//!   no control: it only reorders the three terms, and a sum of three BF16 values is almost
+//!   always exact in FP32, so the bytes rarely move.)
 //!
 //!   cargo run -p metrale-model-arch --release --example glm5next_hc_post_sum_gate \
 //!       --features cuda,gpu-examples
@@ -254,10 +256,12 @@ fn main() -> Result<()> {
         post(g, &k, &a, shape, 0)?;
         let b = upload(g, &h)?;
         fused(g, &k, &b, &partials(&b, world, rank), shape, 0)?;
-        // 2026-10-10: Control 1: the fused kernel told the wrong rank.
+        // 2026-10-10: Control 1: the fused kernel given half the slot stride, so every peer past
+        // the first is read from the wrong place.
         let c1 = upload(g, &h)?;
-        let wrong = (rank + 1) % world;
-        fused(g, &k, &c1, &partials(&c1, world, wrong), shape, 0)?;
+        let mut short = partials(&c1, world, rank);
+        short.slot_elems /= 2;
+        fused(g, &k, &c1, &short, shape, 0)?;
         // 2026-10-10: Control 2: hc_post on the partial, no sum.
         let c2 = upload(g, &h)?;
         post(g, &k, &c2, shape, 0)?;
@@ -269,7 +273,7 @@ fn main() -> Result<()> {
         let c2_differs = o2[1] != oa[1];
         println!(
             "  H={hid:5} hc={hc} T={t:3} world={world} rank={rank}: reduced row {} highway {} | \
-             control wrong-rank {} | control no-sum {}",
+             control short-stride {} | control no-sum {}",
             if oa[0] == ob[0] { "SAME" } else { "DIFF" },
             if oa[1] == ob[1] { "SAME" } else { "DIFF" },
             if c1_differs {
