@@ -27,7 +27,7 @@ use super::block_mgmt::{
 };
 use super::ssm_pool::SsmStatePool;
 use super::ssm_snapshot::SsmSnapshotPool;
-use super::types::{PinnedMetaStaging, TransformerModel};
+use super::types::TransformerModel;
 use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
@@ -248,6 +248,7 @@ impl TransformerModel {
 
         // 2026-09-25: The EP command broadcast; 2026-10-10: a whole v3 block (`ep_wire.rs`).
         let ep_cmd_buf = gpu.alloc(metrale_model_layers::ep_wire::CMD_BLOCK_BYTES)?;
+        let device_argmax = super::device_argmax::DeviceArgmax::new(gpu.as_ref())?;
 
         // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched
         // decode MoE per-row adapter map, 4 bytes per batch row, uploaded each
@@ -294,18 +295,8 @@ impl TransformerModel {
                 feed_resolve_kernel,
                 gpu.as_ref(),
             )?;
-        let pinned_bytes = buffers.sizes().scratch.max(64 * 1024);
-        let pinned_ptr = gpu.alloc_host_pinned(pinned_bytes)?;
-        tracing::info!("Pinned metadata staging: {} KB", pinned_bytes / 1024);
         let max_batch_tokens = buffers.max_batch_tokens();
-        let pinned_staging = std::cell::UnsafeCell::new(PinnedMetaStaging {
-            ptr: pinned_ptr,
-            bytes: pinned_bytes,
-            positions: Vec::with_capacity(max_batch_tokens),
-            positions_h: Vec::with_capacity(max_batch_tokens),
-            positions_w: Vec::with_capacity(max_batch_tokens),
-            slots: Vec::with_capacity(max_batch_tokens),
-        });
+        let pinned_staging = kernels::alloc_pinned_staging(&buffers, gpu.as_ref())?;
 
         let AuxKernels {
             ssm_norm_k,
@@ -464,6 +455,7 @@ impl TransformerModel {
             comm,
             ep_cmd_buf,
             ep_protocol_v2: metrale_model_layers::ep_wire::EpWire::get().has_seq_preamble(),
+            device_argmax,
             self_speculative,
             last_mtp_hidden_idx: std::sync::atomic::AtomicUsize::new(0),
             vision_encoder,

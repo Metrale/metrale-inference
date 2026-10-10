@@ -122,6 +122,9 @@ pub struct AsyncDeviceIo {
     pending_reserve: RefCell<Vec<(usize, usize)>>,
     /// 2026-09-25: The reservations of each launched ticket, in launch order.
     ledger: RefCell<VecDeque<LedgerEntry>>,
+    /// 2026-10-10: The last launch ended in the model's device argmax, so its logits were not
+    /// gathered and must not be read (`ReadLogits` refuses).
+    last_device_argmax: Cell<bool>,
 }
 
 // 2026-09-25: SAFETY: the ring is page-locked host memory this router owns
@@ -155,6 +158,7 @@ impl AsyncDeviceIo {
             next_ticket: Cell::new(0),
             pending_reserve: RefCell::new(Vec::new()),
             ledger: RefCell::new(VecDeque::new()),
+            last_device_argmax: Cell::new(false),
         })
     }
 
@@ -180,6 +184,7 @@ impl AsyncDeviceIo {
         logits: DevicePtr,
         masks: &[metrale_scheduler::RowMask],
         fed: bool,
+        device_argmax: bool,
     ) -> Result<Ticket, DeviceError> {
         let n = masks.len();
         if n > self.max_rows {
@@ -189,10 +194,23 @@ impl AsyncDeviceIo {
             )));
         }
         let slot = self.take_slot()?;
-        self.inner
-            .model()
-            .argmax_batch_to_feed(logits, masks, self.slot_ptr(slot), self.events[slot], 0)
-            .map_err(DeviceError::Readback)?;
+        if device_argmax {
+            // 2026-10-10: The step resolved its token in its graph (`arm_device_argmax`); only
+            // the cells are read back.
+            // 2026-10-10: SAFETY: the slot is `max_rows` cells of the ring and `n <= max_rows`;
+            // nothing reads or rewrites it until the event completes and the slot is released.
+            let dst =
+                unsafe { std::slice::from_raw_parts_mut(self.slot_ptr(slot) as *mut u8, n * 4) };
+            self.inner
+                .model()
+                .device_argmax_to_host(dst, Some(self.events[slot]))
+                .map_err(DeviceError::Readback)?;
+        } else {
+            self.inner
+                .model()
+                .argmax_batch_to_feed(logits, masks, self.slot_ptr(slot), self.events[slot], 0)
+                .map_err(DeviceError::Readback)?;
+        }
         let ticket = Ticket(self.next_ticket.get());
         self.next_ticket.set(ticket.0.wrapping_add(1));
         self.in_flight.borrow_mut().insert(
@@ -226,6 +244,28 @@ impl AsyncDeviceIo {
         STATS
             .reserved_blocks_max_inflight
             .fetch_max(held as u64, Ordering::Relaxed);
+    }
+
+    /// 2026-10-10: Ask the model to end the next step in its device argmax under `masks`
+    /// (`ModelDeviceFeed::arm_device_argmax`); records the answer for `ReadLogits`.
+    fn arm(&self, masks: &[metrale_scheduler::RowMask]) -> Result<bool, DeviceError> {
+        let armed = self
+            .inner
+            .model()
+            .arm_device_argmax(masks)
+            .map_err(DeviceError::Forward)?;
+        self.last_device_argmax.set(armed);
+        Ok(armed)
+    }
+
+    /// 2026-10-10: A forward failed after `arm`: drop the arming, so the next step does not
+    /// take it, and pass the error on.
+    fn disarm(&self, e: anyhow::Error) -> DeviceError {
+        if let Err(d) = self.inner.model().arm_device_argmax(&[]) {
+            tracing::error!("device argmax disarm: {d:#}");
+        }
+        self.last_device_argmax.set(false);
+        DeviceError::Forward(e)
     }
 
     fn wait(&self, event: u64) -> Result<(), DeviceError> {
@@ -271,11 +311,12 @@ impl DeviceIo for AsyncDeviceIo {
                 readback: Readback::ArgmaxMasked { masks },
             } => {
                 let m = self.inner.model();
+                let armed = self.arm(&masks)?;
                 let logits = m
                     .decode_batch(&tokens, rows, 0)
-                    .map_err(DeviceError::Forward)?;
+                    .map_err(|e| self.disarm(e))?;
                 super::sync_device::commit_decode_ctx(m, ctx, rows);
-                self.issue(logits, &masks, false)
+                self.issue(logits, &masks, false, armed)
             }
             StepPlan::DecodeFed {
                 sources,
@@ -283,16 +324,18 @@ impl DeviceIo for AsyncDeviceIo {
                 ctx,
             } => {
                 let m = self.inner.model();
+                let armed = self.arm(&masks)?;
                 let logits = m
                     .decode_batch_fed(&sources, rows, 0)
-                    .map_err(DeviceError::Forward)?;
+                    .map_err(|e| self.disarm(e))?;
                 super::sync_device::commit_decode_ctx(m, ctx, rows);
                 STATS.ahead_launches.fetch_add(1, Ordering::Relaxed);
-                self.issue(logits, &masks, true)
+                self.issue(logits, &masks, true, armed)
             }
             // 2026-09-25: A decode with the plain argmax or the host-logits
             // readback is the synchronous step, settled at once.
             other => {
+                self.last_device_argmax.set(false);
                 let ticket = self.inner.launch(other, rows)?;
                 // 2026-09-25: One ticket space: a settled step is found by number, and
                 // the next issued number stays above every number in use.
@@ -373,6 +416,13 @@ impl DeviceIo for AsyncDeviceIo {
                     .release_decode_blocks(seq, blocks)
                     .map_err(DeviceError::Effect)?;
                 Ok(EffectOutcome::Unit)
+            }
+            // 2026-10-10: A device-argmax step gathered no logits; reading them would hand the
+            // sampler one rank's slice.
+            Effect::ReadLogits { .. } if self.last_device_argmax.get() => {
+                Err(DeviceError::Readback(anyhow::anyhow!(
+                    "the last step ended in the device argmax: its logits were not gathered"
+                )))
             }
             other => self.inner.apply(other),
         }

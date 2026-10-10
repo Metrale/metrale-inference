@@ -45,6 +45,22 @@ pub trait ModelDeviceFeed {
         FedAheadPolicy::Redo
     }
 
+    /// 2026-10-10: Before a decode step whose readback is the device argmax under `masks`: let
+    /// the step end in the model's own device argmax, so the token is resolved in the step's
+    /// graph into the feed cells (`device_argmax_to_host` reads it) and the logits are not
+    /// gathered. `Ok(false)`, the default, when the model cannot: nothing is armed, and the
+    /// caller runs its argmax over the logits.
+    fn arm_device_argmax(&self, _masks: &[RowMask]) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// 2026-10-10: Copy the feed cells an armed step resolved to `dst` (`4 * rows` bytes): with
+    /// `event`, an async copy that `event` completes; without, a blocking copy. Default: an
+    /// error.
+    fn device_argmax_to_host(&self, _dst: &mut [u8], _event: Option<u64>) -> Result<()> {
+        bail!("device_argmax_to_host: this model has no device argmax")
+    }
+
     /// 2026-09-25: The decode step over `seqs` with each row's input id read on the device from
     /// `sources`: the forward, KV writes and block allocation of `decode_batch`, but it does not
     /// push the token or advance `seq_len`, because the router does not know a fed row's id at

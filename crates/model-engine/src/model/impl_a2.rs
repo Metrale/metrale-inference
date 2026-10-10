@@ -167,8 +167,8 @@ impl TransformerModel {
         // head is gone and the worker must exit. An error while executing the
         // command is request-scoped, so it is tagged `EpCommandFailed` and the
         // worker loop keeps running.
-        let (seq_id, cmd) = self.ep_recv_seq_and_cmd(self.ep_protocol_v2)?;
-        self.ep_worker_execute(seq_id, cmd, slots)
+        let block = self.ep_recv_seq_and_cmd(self.ep_protocol_v2)?;
+        self.ep_worker_execute(block, slots)
             .map_err(|e| anyhow::Error::new(crate::traits::EpCommandFailed(e)))
     }
 
@@ -176,10 +176,12 @@ impl TransformerModel {
     /// error from here as `EpCommandFailed`.
     fn ep_worker_execute(
         &self,
-        seq_id: u32,
-        cmd: u32,
+        block: metrale_model_layers::ep_wire::CmdBlock,
         slots: &mut [Option<SequenceState>],
     ) -> Result<bool> {
+        let (seq_id, cmd) = (block.seq_id, block.cmd);
+        // 2026-10-10: Each command starts unarmed; only its own block arms the device argmax.
+        self.device_argmax.disarm();
         // 2026-09-25: Shutdown applies to the whole worker; seq_id is ignored.
         if cmd == 0xFFFFFFFF {
             return Ok(false);
@@ -254,6 +256,11 @@ impl TransformerModel {
             )
         })?;
 
+        // 2026-10-10: A decode step rank 0 armed for the sharded device argmax
+        // (`device_argmax.rs`); only decode commands carry the flag.
+        if block.flags & metrale_model_layers::ep_wire::FLAG_DEVICE_ARGMAX != 0 {
+            self.arm_device_argmax_from_block(block.mask)?;
+        }
         self.ep_worker_dispatch_cmd(cmd, seq)
     }
 

@@ -25,6 +25,9 @@ pub(crate) struct SlotGraphKey {
     pub lora_pair: bool,
     /// 2026-10-03: The MoE LoRA fold decision, as a stable code.
     pub moe_route: u8,
+    /// 2026-10-10: The step ends in the sharded device argmax (`device_argmax.rs`) instead of
+    /// the gathered logits: a different head tail is captured.
+    pub device_argmax: bool,
 }
 
 impl SlotGraphKey {
@@ -39,6 +42,15 @@ impl SlotGraphKey {
                 MoeLoraRoute::Skip => 1,
                 MoeLoraRoute::Refuse => 2,
             },
+            device_argmax: false,
+        }
+    }
+
+    /// 2026-10-10: This key for a step that ends in the device argmax when `on`.
+    pub(crate) fn with_device_argmax(self, on: bool) -> Self {
+        SlotGraphKey {
+            device_argmax: on,
+            ..self
         }
     }
 }

@@ -72,6 +72,9 @@ impl TransformerModel {
         // 2026-09-25: The backend's own stream (`default_stream`), which CUDA-graph
         // capture records.
         let stream = self.gpu.default_stream();
+        // 2026-10-10: Whether this step ends in the sharded device argmax; taking the arming
+        // here consumes it on every path, including an early error.
+        let head_keys = self.device_argmax.begin_step();
         // 2026-09-25: `--ssm-h-dtype f16`: narrow this sequence's SSM h-state to FP16
         // here, before any graph region. No-op without the flag.
         self.ssm_h_to_f16_dispatch(seq)?;
@@ -293,7 +296,8 @@ impl TransformerModel {
         };
 
         // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
-        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
+        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route)
+            .with_device_argmax(head_keys);
 
         // 2026-09-25: Profile mode: per-layer synchronised decode for a timing breakdown.
         if let (true, Some(token)) = (self.profile, input.host()) {
