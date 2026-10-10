@@ -317,8 +317,18 @@ impl Glm5NextKdaLayer {
             .enumerate()
             .map(|(i, p)| (p.weight, ws.qkv_parts.offset(i * t * qkv * 2), qkv))
             .collect();
-        let grouped =
-            crate::glm5next_w4a16_dense::proj_group(gpu, &qkv_group, hidden, t, hid, stream)?;
+        let low_group = [
+            (w.f_a.weight, ws.lowrank, hd),
+            (w.b_proj.weight, ws.beta_bf16, c.heads),
+            (w.g_a.weight, ws.lowrank_g, hd),
+        ];
+        // 2026-10-10: One row under `METRALE_GLM_W4A16_GEMV_SEG`: all six in one launch.
+        let front = t == 1 && {
+            let all: Vec<_> = qkv_group.iter().chain(&low_group).copied().collect();
+            crate::glm5next_w4a16_dense::proj_group(gpu, &all, hidden, t, hid, stream)?
+        };
+        let grouped = front
+            || crate::glm5next_w4a16_dense::proj_group(gpu, &qkv_group, hidden, t, hid, stream)?;
         for (i, w) in [
             &self.weights.q_proj,
             &self.weights.k_proj,
@@ -355,12 +365,8 @@ impl Glm5NextKdaLayer {
         // `A_log` is per head and `dt_bias` per channel.
         // 2026-10-09: f_a, b_proj and g_a read `hidden` too: one launch under
         // `METRALE_GLM_W4A16_SEG`, with g_a(h) in its own buffer; else one each, as below.
-        let low_group = [
-            (w.f_a.weight, ws.lowrank, hd),
-            (w.b_proj.weight, ws.beta_bf16, c.heads),
-            (w.g_a.weight, ws.lowrank_g, hd),
-        ];
-        let low = crate::glm5next_w4a16_dense::proj_group(gpu, &low_group, hidden, t, hid, stream)?;
+        let low = front
+            || crate::glm5next_w4a16_dense::proj_group(gpu, &low_group, hidden, t, hid, stream)?;
         if !low {
             self.gemm(
                 gpu,

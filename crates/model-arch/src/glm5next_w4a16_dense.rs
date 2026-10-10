@@ -28,6 +28,8 @@
 //!   ([`W4A16_LAUNCH_ROWS`]). 2026-10-09: one row takes `w4a16_gemv` instead, whose bits differ.
 //!   2026-10-10: Under `METRALE_GLM_W4A16_GEMV_ROWS=<r>` launches of 2..=r rows take the GEMV
 //!   tiers, whose rows are the one-row GEMV's bytes, so rows 1..=r are row-invariant.
+//!   2026-10-10: Under `METRALE_GLM_W4A16_GEMV_SEG=1` one row takes `w4a16_gemv_seg` (grouped),
+//!   whose bytes are `w4a16_gemv`'s, so that invariant holds with it.
 //! - 2026-10-09: `METRALE_GLM_W4A16_SEG` (`glm5next_w4a16_seg`) moves the launches of 2 rows
 //!   and up to the segmented row tiles; [`proj_group`] runs projections that share their input
 //!   in one launch there and declines otherwise. Unset, every launch is as before.
@@ -314,6 +316,15 @@ fn proj_registered(
         return Ok(false);
     };
     let (n32, k32) = (n as u32, k as u32);
+    if m == 1 && plan.one_row {
+        let segs = [W4a16Seg {
+            weight: e.w,
+            output: c,
+            n: n32,
+        }];
+        seg::launch_one_row(gpu, a, &segs, k32, plan.sms, stream)?;
+        return Ok(true);
+    }
     if m == 1 {
         // 2026-10-09: One row takes the NVFP4 GEMV, which streams the weight across every SM;
         // the 64-column row tile left the KDA projections at 44 CTAs (C1 nsys: 34.6 us for a
@@ -360,7 +371,9 @@ fn proj_registered(
 }
 
 /// 2026-10-09: `members[i] = (weight, output, n_i)`: `output_i [m, n_i] = a [m, k] @ W_i^T` for
-/// projections that share the input `a`, in one launch per 64 rows (`glm5next_w4a16_seg`).
+/// projections that share the input `a`, in one launch per 64 rows (`glm5next_w4a16_seg`);
+/// 2026-10-10: at one row, under `METRALE_GLM_W4A16_GEMV_SEG`, one `w4a16_gemv_seg` launch of up
+/// to six members (more than three only there).
 /// `Ok(false)`, launching nothing, unless the tier is on, `METRALE_GLM_W4A16_SEG` is not `off`,
 /// `m` is 2 or more (one row keeps the GEMV) and every member is registered: the caller then
 /// runs them one by one. A registered member at another shape is an error. 2026-10-10: Also
@@ -390,8 +403,9 @@ fn proj_group_registered(
     stream: u64,
 ) -> Result<bool> {
     // 2026-10-10: A launch the GEMV tiers take declines too: its members then run one by one
-    // on them (`proj`).
-    if plan.mode == SegMode::Off || m < 2 || plan.gemv_tier(m) {
+    // on them (`proj`). One row runs as a group only under `METRALE_GLM_W4A16_GEMV_SEG`.
+    let one_row = m == 1 && plan.one_row;
+    if !one_row && (plan.mode == SegMode::Off || m < 2 || plan.gemv_tier(m)) {
         return Ok(false);
     }
     let mut segs = Vec::with_capacity(members.len());
@@ -405,8 +419,12 @@ fn proj_group_registered(
             n: n as u32,
         });
     }
-    let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
     let k32 = k as u32;
+    if one_row {
+        seg::launch_one_row(gpu, a, &segs, k32, plan.sms, stream)?;
+        return Ok(true);
+    }
+    let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
     seg::launch(gpu, a, &segs, m, k32, plan.split(&ns, k32), stream)?;
     Ok(true)
 }

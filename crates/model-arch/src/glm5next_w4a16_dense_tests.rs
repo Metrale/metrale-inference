@@ -16,16 +16,19 @@ const OFF: SegPlan = SegPlan {
     mode: SegMode::Off,
     sms: 0,
     gemv_rows: 0,
+    one_row: false,
 };
 const FUSE: SegPlan = SegPlan {
     mode: SegMode::Fuse,
     sms: 48,
     gemv_rows: 0,
+    one_row: false,
 };
 const SPLIT: SegPlan = SegPlan {
     mode: SegMode::Split,
     sms: 48,
     gemv_rows: 0,
+    one_row: false,
 };
 
 /// 2026-10-09: The KDA q/k/v, f_a, b, g_a, o and the shared expert go W4A16; KDA f_b/g_b and
@@ -482,3 +485,6 @@ fn gemv_rows_take_the_gemv_tiers_up_to_their_edge() {
         .is_err()
     );
 }
+
+#[path = "glm5next_w4a16_dense_one_row_tests.rs"]
+mod one_row;
