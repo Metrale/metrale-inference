@@ -9,8 +9,9 @@
 //!   fitted on the other run, as a serve plans from an earlier bench) against the controller with the measured table (Throughput, and
 //!   Energy with the planner's floor). The adaptive rung adapts widths 9..=16 only, where no
 //!   trace was recorded; at these widths it is the ladder.
-//! - GLM-5.3 Flash DFlash2, one stream: the logged fixed depth, the gamma resolver and the gate
-//!   against the controller configured as `--dflash-adaptive-k`.
+//! - GLM-5.3 Flash DFlash2, one stream: the logged fixed depth, the gamma resolver, the gate
+//!   and the GLM branch's per-stream adaptive count (its exact port) against the controller
+//!   with a cold-start prior and a re-probe window.
 //! - Both also against the controller with measured-only costs (no table, no reference
 //!   rates: a chained cold prior): the configuration that replaces the gate where no table exists.
 //!
@@ -222,6 +223,20 @@ const REFERENCE: [f64; 5] = [0.611, 0.312, 0.117, 0.028, 0.008];
 
 /// 2026-10-10: The controller as `--dflash-adaptive-k` configures it, with the reference
 /// acceptance as its cold-start prior and a 16-step re-probe window.
+/// 2026-10-10: The GLM branch's `--dflash-adaptive-k` (`dflash_adaptive_k.rs` + its
+/// `adaptive_spec.rs` suspension) as an exact configuration of the controller: no cold-start
+/// prior, no re-probe window, a fixed exploration cadence of 16, suspension re-probed after
+/// 256 plain tokens with counts softened by 0.25. (Checked off-tree against that file on the
+/// six GLM traces: the same draft count on every one of 24 000 replayed decisions.)
+fn adaptive_k_exact_port(step_ms: &[f64], cap: usize) -> Controlled {
+    let mut c = dflash_controller(step_ms, cap);
+    c.ctl.cold = ColdPrior::None;
+    c.ctl.cfg.accept.cold_weight = 0.0;
+    c.ctl.cfg.reprobe.probe_steps = 0;
+    c.ctl.cfg.reprobe.explore_max = 16;
+    c
+}
+
 fn dflash_controller(step_ms: &[f64], cap: usize) -> Controlled {
     let spec: Vec<String> = step_ms
         .iter()
@@ -385,7 +400,8 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
 }
 
 /// 2026-10-10: GLM DFlash, one stream: the controller with the step table delivers at least the
-/// tokens/ms of the logged fixed depth, the gamma resolver and the gate on every trace; with
+/// tokens/ms of the logged fixed depth, the gamma resolver and the gate on every trace, and of
+/// the adaptive-K exact port up to the trace's sampling noise; with
 /// measured-only costs and no reference rates (what replaces the gate where no table exists)
 /// it does too, up to the trace's sampling noise.
 #[test]
@@ -406,6 +422,7 @@ fn glm_dflash_traces_the_controller_is_at_least_as_good_as_every_old_mechanism()
             k,
         });
         let ctl = run_p(&mut dflash_controller(&f.step_ms[..=k], k));
+        let adaptive_k = run_p(&mut adaptive_k_exact_port(&f.step_ms[..=k], k));
         let mut online = dflash_controller(&f.step_ms[..=k], k);
         online.ctl.cost.source = CostSource::Online(OnlineTable::new(0.3, 256));
         online.ctl.cold = ColdPrior::Chained;
@@ -415,11 +432,23 @@ fn glm_dflash_traces_the_controller_is_at_least_as_good_as_every_old_mechanism()
             ("fixed (logged)", &fixed),
             ("gamma resolver", &resolved),
             ("mtp gate", &gated),
+            ("adaptive-K port", &adaptive_k),
             ("ctl latency", &ctl),
             ("ctl online", &onl),
         ] {
             row(&tr.name, 1, name, o);
         }
+        println!("REPLAY {} sampling noise {noise:.4}", tr.name);
+        // 2026-10-10: Where plain decode is best the exact port suspends almost at once and
+        // the cold-start prior keeps re-probing, so against the port the controller is held to
+        // the trace's sampling noise; where speculation pays it is ahead (table in the PR).
+        assert!(
+            ctl.tok_per_ms() >= adaptive_k.tok_per_ms() * (1.0 - noise),
+            "{}: controller {:.5} tok/ms < adaptive-K port {:.5}",
+            tr.name,
+            ctl.tok_per_ms(),
+            adaptive_k.tok_per_ms()
+        );
         for (name, old) in [("fixed", &fixed), ("resolver", &resolved), ("gate", &gated)] {
             assert!(
                 onl.tok_per_ms() >= old.tok_per_ms() * (1.0 - noise),
