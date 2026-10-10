@@ -9,6 +9,7 @@ Inputs (one greedy single-stream request, see dflash_capture.py):
   --log L       the serve log with one `DFLASH TRACE drafts: token_in=.. position=.. drafts_pre_cap=[..]`
                 line per propose (row 0 first) and the `DFLASH K=γ verify: .. accepted=a/k` lines
   --block-dir B optional: metrale_block_drafts.json + metrale_block_logits.bin of one propose
+  --layers-dir  optional: that propose's per-layer block intermediates, compared stage by stage
 
 Reports, with the reference math of dflash2_ref.py:
   consistency  ctx positions contiguous; every traced anchor equals the generated token at its
@@ -103,6 +104,7 @@ def main():
     ap.add_argument("--gen", required=True)
     ap.add_argument("--log")
     ap.add_argument("--block-dir")
+    ap.add_argument("--layers-dir", help="per-layer block dumps (metrale_blk_L<i>_<stage>.bin) of the --block-dir propose")
     ap.add_argument("--ctx-dir-b", help="second ctx dump of the same ids, for the taps comparison")
     ap.add_argument("--weights", choices=["bf16", "fp8row"], required=True)
     ap.add_argument("--width", type=int, required=True, help="block rows (anchor + drafts)")
@@ -146,15 +148,35 @@ def main():
         blk = json.load(open(os.path.join(a.block_dir, "metrale_block_drafts.json")))
         lg = ref.bf16_to_f32(np.fromfile(os.path.join(a.block_dir, "metrale_block_logits.bin"),
                                          dtype=np.uint16)).reshape(blk["gamma"], -1)
-        r = run([blk["last_token"]], [blk["position"]])[0]
+        stages = []
+        n_ctx = int(np.searchsorted(pos, blk["position"]))
+        out = d.forward([blk["last_token"]], [blk["position"]], [n_ctx], W, stages)
+        r = d.propose([blk["last_token"]], [blk["position"]], [n_ctx], W)[0]
         print(f"BLOCK at position {blk['position']}: engine {blk['drafts'][1:]} ref {r['drafts']}")
         for t in range(W - 1):
             ours = lg[t + 1]
-            kept = ours > -1e29
+            # 2026-10-10: The dump holds the logits as token selection left them: the engine's
+            # top-k entries are the ones it overwrote with a large negative value.
+            picked = set(np.nonzero(ours <= -1e29)[0].tolist())
+            kept = ~np.isin(np.arange(len(ours)), list(picked))
             diff = np.abs(ours[kept] - r["logits"][t][kept])
             print(f"  row {t + 1}: draft {'==' if blk['drafts'][t + 1] == r['drafts'][t] else '!='} "
-                  f"masked {int((~kept).sum())} | |dlogit| unmasked mean {diff.mean():.4f} max {diff.max():.4f} "
-                  f"| ref top1 {int(r['top_ids'][t][0])} engine top1 {int(np.argmax(ours))}")
+                  f"top-k overlap {len(picked & set(r['top_ids'][t].tolist()))}/{len(r['top_ids'][t])} "
+                  f"| |dlogit| outside it mean {diff.mean():.4f} max {diff.max():.4f}")
+        if a.layers_dir:
+            # 2026-10-10: Per-layer block intermediates (BF16 [width, cols] per stage file),
+            # relative L2 error of the engine's against the reference's; the first stage that
+            # jumps above the BF16 floor (~0.3%) is where the engine departs from the math.
+            for li, st in enumerate(stages):
+                cells = []
+                for name, refv in st.items():
+                    f = os.path.join(a.layers_dir, f"metrale_blk_L{li}_{name}.bin")
+                    if not os.path.exists(f):
+                        continue
+                    e = ref.bf16_to_f32(np.fromfile(f, dtype=np.uint16)).reshape(W, -1)
+                    cells.append(f"{name} {np.linalg.norm(e - refv) / np.linalg.norm(refv):.4f}")
+                print(f"  L{li}: " + " | ".join(cells))
+        del out
 
     if a.log:
         steps, verifies = parse_log(a.log)

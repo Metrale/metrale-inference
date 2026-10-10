@@ -170,10 +170,12 @@ class RefDrafter:
             self.ctx_k.append(rope(k, self.ctx_pos, self.theta))
             self.ctx_v.append((c @ L["v_ctx"]).reshape(n, self.nkv, self.hd))
 
-    def forward(self, anchors, positions, ctx_counts, width):
+    def forward(self, anchors, positions, ctx_counts, width, stages=None):
         """`len(anchors)` independent blocks of `width` rows (anchor + masks); block b sits at
         positions[b] .. positions[b]+width-1 and attends the first ctx_counts[b] ctx rows given
-        to `set_ctx`. Returns the final normed rows [b, w, h]."""
+        to `set_ctx`. Returns the final normed rows [b, w, h]. With a `stages` list, appends one
+        dict per layer of block 0's intermediates (input_norm, q/k post proj/norm/rope, v,
+        attn_out before o_proj, layer_out = the residual stream after the layer)."""
         b = len(anchors)
         ids = np.array([[a] + [self.mask_id] * (width - 1) for a in anchors])
         r = (bf16_to_f32(self.embed[ids.reshape(-1)]) * self.embed_scale).reshape(b, width, -1)
@@ -187,6 +189,13 @@ class RefDrafter:
             k = rms_norm(mm(h1, L["k"]).reshape(b, width, self.nkv, self.hd), L["k_norm"], self.eps)
             v = mm(h1, L["v"]).reshape(b, width, self.nkv, self.hd)
             att = np.empty((b, width, self.nh * self.hd), dtype=np.float32)
+            if stages is not None:
+                qp, kp = mm(h1[:1], L["q"])[0], mm(h1[:1], L["k"])[0]
+                stages.append({"input_norm": h[0], "q_postproj": qp, "k_postproj": kp,
+                               "q_postnorm": q[0].reshape(width, -1), "k_postnorm": k[0].reshape(width, -1),
+                               "q_postrope": rope(q[0], q_pos[0], self.theta).reshape(width, -1),
+                               "k_postrope": rope(k[0], q_pos[0], self.theta).reshape(width, -1),
+                               "v": v[0].reshape(width, -1)})
             for i in range(b):
                 n = int(ctx_counts[i])
                 qi = rope(q[i], q_pos[i], self.theta)
@@ -200,6 +209,8 @@ class RefDrafter:
                 pr = np.exp(s)
                 pr /= pr.sum(-1, keepdims=True)
                 att[i] = np.einsum("hqk,khd->qhd", pr, V).reshape(width, -1)
+            if stages is not None:
+                stages[-1]["attn_out"] = att[0].copy()
             r = r + grouped_conv(mm(att, L["o"]), dyn[:, :, 1], L["a_base"][1], self.group)
             h = rms_norm(r, L["post_ln"], self.eps)
             dyn = mm(h, L["m_proj"]).reshape(b, width, 2, L["m_base"].shape[1], -1)
@@ -207,6 +218,8 @@ class RefDrafter:
             g = mm(h1, L["gate"])
             m = mm(g * 0.5 * (1.0 + np.tanh(0.5 * g)) * mm(h1, L["up"]), L["down"])
             r = r + grouped_conv(m, dyn[:, :, 1], L["m_base"][1], self.group)
+            if stages is not None:
+                stages[-1]["layer_out"] = r[0].copy()
         return rms_norm(r, self.norm, self.eps)
 
     def propose(self, anchors, positions, ctx_counts, width):
