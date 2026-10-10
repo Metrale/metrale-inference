@@ -5,7 +5,6 @@
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
 
-mod adaptive_spec;
 mod admission;
 mod beam_prefill;
 mod confidence;
@@ -68,6 +67,7 @@ pub(crate) mod shared_lookup_step;
 mod shutdown_drain;
 #[cfg(test)]
 mod shutdown_drain_tests;
+mod spec_host;
 mod spec_step;
 mod ssm_decode_ring;
 #[cfg(test)]

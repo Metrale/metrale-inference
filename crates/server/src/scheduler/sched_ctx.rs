@@ -50,9 +50,6 @@ pub struct SchedCtx {
     pub rom_head: Option<std::sync::Arc<dyn crate::scheduler::rollback::RomHead>>,
     /// 2026-09-25: The n=16 MTP rung controller for this run.
     pub rung: metrale_speculative::adaptive_rung::AdaptiveRung,
-    /// 2026-09-25: The DFlash gamma resolver for this run, configured at
-    /// serve time.
-    pub dflash_rung: metrale_speculative::dflash_rung::DflashRung,
     /// 2026-09-25: Width-attributed accept accounting for this run.
     pub accept: crate::scheduler::mtp_accept_debug::AcceptBuckets,
     /// 2026-09-25: D-Cut retained-rows telemetry for this run.
@@ -85,7 +82,6 @@ impl SchedCtx {
         limits: SchedLimits,
         watchdog: crate::scheduler::helpers::WatchdogParams,
         rung: metrale_speculative::adaptive_rung::AdaptiveRung,
-        dflash_rung: metrale_speculative::dflash_rung::DflashRung,
     ) -> Self {
         let accept =
             crate::scheduler::mtp_accept_debug::AcceptBuckets::new(levers.mtp_accept_fold_at_16);
@@ -98,7 +94,6 @@ impl SchedCtx {
             watchdog,
             rom_head: None,
             rung,
-            dflash_rung,
             accept,
             dcut: crate::scheduler::mtp_dcut::DcutTelemetry::default(),
             admit_last_queued: std::cell::Cell::new(0),
@@ -131,7 +126,6 @@ impl SchedCtx {
             metrale_speculative::adaptive_rung::AdaptiveRung::new(
                 metrale_speculative::adaptive_rung::RungParams::DEFAULTS,
             ),
-            metrale_speculative::dflash_rung::DflashRung::new(),
         )
     }
 }
@@ -145,7 +139,7 @@ mod tests {
         let c = SchedCtx::for_test();
         assert!(c.masks.numeric.is_none());
         assert!(c.levers.fast_masked, "an opt-out lever, on by default");
-        assert!(!c.levers.dflash_adaptive);
+        assert!(!c.levers.dflash_spec_think);
     }
 
     #[test]

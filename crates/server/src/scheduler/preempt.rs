@@ -172,7 +172,7 @@ pub(super) fn preempt_requeue(io: &SchedIo, mut a: ActiveSeq) -> PreemptedSeq {
     });
     a.pending_drafts.clear();
     a.pending_draft_conf.clear();
-    a.spec_adapt = Default::default();
+    a.spec_ctl = Default::default();
     PreemptedSeq { a, tokens }
 }
 

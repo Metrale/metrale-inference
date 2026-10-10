@@ -76,6 +76,9 @@ defaults:
   ssm_cache_slots: 128
   ssm_checkpoint_interval: 32
   speculative: true
+  # 2026-10-10: the speculation controller's objective (no default); throughput is what
+  # the MTP gate it replaced maximised (delivered tokens per second).
+  spec_objective: throughput
   # Measured optimum for the 27B dense NVFP4 family (see description).
   # `speculative: true` alone does not pick this — pin it.
   num_drafts: 1

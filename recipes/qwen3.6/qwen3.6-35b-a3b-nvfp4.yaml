@@ -80,6 +80,9 @@ defaults:
   gpu_memory_utilization: 0.85
   scheduler: slai
   speculative: true
+  # 2026-10-10: the speculation controller's objective (no default); throughput is what
+  # the MTP gate it replaced maximised (delivered tokens per second).
+  spec_objective: throughput
   # Measured optimum for this checkpoint (see description): K=1 = 116.5
   # tok/s vs 89.7 no-spec vs 82.2 at K=2. K=2 is a net LOSS — do not raise.
   num_drafts: 1

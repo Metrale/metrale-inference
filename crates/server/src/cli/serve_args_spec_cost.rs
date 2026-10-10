@@ -3,13 +3,23 @@
 //! 2026-10-04: `--spec-cost-model`, `--spec-cost-table`, `--spec-cost-calibration` and
 //! `--spec-cost-slack`: the measured speculative-depth planner, flattened into
 //! `ServeSchedulingArgs` after `--mtp-dcut-ratio`. It replaces `--mtp-k-ladder` and D-Cut
-//! (`validate.rs` refuses them together) and is off by default.
+//! (`validate.rs` refuses them together) and is off by default. 2026-10-10: and
+//! `--spec-objective`, the speculation controller's objective, which has no default.
 //!
 //! Owner: server CLI.
 //! Invariants: the `///` text on the struct's fields is the `--help` output and
 //! carries no date.
 
 use clap::{Args, ValueEnum};
+
+/// 2026-10-10: `--spec-objective`'s value: what the speculation controller maximises
+/// (`metrale_speculative::spec_ctl::decide::Objective`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum SpecObjective {
+    Latency,
+    Throughput,
+    Energy,
+}
 
 /// 2026-10-04: `--spec-cost-model`'s value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -53,4 +63,31 @@ pub struct ServeSpecCostArgs {
     /// trade the operator did not ask for.
     #[arg(long, value_name = "EPSILON")]
     pub spec_cost_slack: Option<f64>,
+
+    /// What the speculation controller maximises when it chooses, each step, plain decode or a
+    /// draft depth: `latency` (the slowest stream's tokens per ms), `throughput` (all streams'
+    /// tokens per ms) or `energy` (tokens per joule, no slower than one draft by more than
+    /// `--spec-cost-slack`; needs `--spec-cost-model measured`, the only cost source with
+    /// joules). Required whenever MTP or DFlash runs without `--mtp-gate force`; no default.
+    #[arg(long, value_enum)]
+    pub spec_objective: Option<SpecObjective>,
+}
+
+impl ServeSpecCostArgs {
+    /// 2026-10-10: `--spec-objective` as the controller's objective. `energy` takes
+    /// `--spec-cost-slack` as its floor slack against one draft (`validate_serve_args` refuses
+    /// `energy` without `--spec-cost-model measured`, which requires the slack).
+    pub fn objective(&self) -> Option<metrale_speculative::spec_ctl::decide::Objective> {
+        use metrale_speculative::spec_ctl::decide::{FloorRef, Objective};
+        self.spec_objective.map(|o| match o {
+            SpecObjective::Latency => Objective::Latency,
+            SpecObjective::Throughput => Objective::Throughput,
+            SpecObjective::Energy => Objective::Energy {
+                slack: self
+                    .spec_cost_slack
+                    .expect("validate_serve_args: --spec-objective energy needs --spec-cost-slack"),
+                floor: FloorRef::Depth(1),
+            },
+        })
+    }
 }

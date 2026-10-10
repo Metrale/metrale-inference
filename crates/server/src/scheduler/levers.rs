@@ -67,11 +67,10 @@ pub struct SchedLevers {
     pub vision_timing: bool,
     pub dflash_masked_verify: bool,
     pub dflash_seam_serial: bool,
-    pub dflash_adaptive: bool,
     pub dflash_serial_append: bool,
     pub dflash_unified_ctx: bool,
     pub dflash_spec_think: bool,
-    /// 2026-09-25: Pin the MTP throughput gate to the verify arm for DFlash
+    /// 2026-09-25: Pin the speculation controller's batch decision to the verify arm for DFlash
     /// at `active.len() <= 2` (`METRALE_DFLASH_GATE_PIN_C2=0` turns it
     /// off). Measured 2026-08-19 (qwen3.8-27B+DFlash2, C=2):
     /// arbitration was par on tok/s (25.4 vs 24.4) but its serial/batch-K
@@ -86,11 +85,6 @@ pub struct SchedLevers {
     /// rows verify (also needs `mtp_batch_verify`).
     /// `METRALE_DFLASH_BATCH_VERIFY=0` forces the per-sequence loop.
     pub dflash_batch_verify: bool,
-    /// 2026-09-25: Mean accepted drafts below which adaptive speculation
-    /// suspends.
-    pub dflash_adaptive_min: f32,
-    /// 2026-09-25: Serially-decoded tokens between adaptive re-probes.
-    pub dflash_adaptive_reprobe: u32,
     /// 2026-09-25: `METRALE_DFLASH_RESUME_GUARD=N` (0 = off): the number of
     /// post-`</think>` tokens kept on serial decode.
     pub dflash_resume_guard: u32,
@@ -191,7 +185,7 @@ pub struct SchedLevers {
     pub mtp_max_seqs: usize,
     /// 2026-09-25: `METRALE_SPEC_ENTRY_PIN` (default 8): while a batch row
     /// has emitted fewer post-`</think>` tokens than this, the MTP gate is
-    /// pinned to verify (`mtp_gate::entry_pin_forces_verify`).
+    /// pinned to verify (`spec_eligibility::entry_pin_forces_verify`).
     pub spec_entry_pin_tokens: u32,
     /// 2026-09-25: `METRALE_SSM_TAIL_CKPT=1`, as the runtime resolved it.
     pub ssm_tail_ckpt: bool,
@@ -294,18 +288,15 @@ impl SchedLevers {
             vision_timing: present("METRALE_VISION_TIMING"),
             dflash_masked_verify: on_unless_zero("METRALE_DFLASH_MASKED_VERIFY"),
             dflash_seam_serial: on_unless_zero("METRALE_DFLASH_SEAM_SERIAL"),
-            dflash_adaptive: opt_in("METRALE_DFLASH_ADAPTIVE"),
             dflash_serial_append: opt_in("METRALE_DFLASH_SERIAL_APPEND"),
             dflash_unified_ctx: on_unless_zero("METRALE_DFLASH_UNIFIED_CTX"),
-            // 2026-09-25: Opt-in. `mtp_gate::spec_dispatch_eligible` reads it
+            // 2026-09-25: Opt-in. `spec_eligibility::spec_dispatch_eligible` reads it
             // on both lanes (`if inside_thinking && !spec_think { return
             // false; }`), so turning it on lets plain MTP speculate inside
             // `<think>` too.
             dflash_spec_think: opt_in("METRALE_DFLASH_SPEC_THINK"),
             dflash_gate_pin_c2: on_unless_zero("METRALE_DFLASH_GATE_PIN_C2"),
             dflash_batch_verify: on_unless_zero("METRALE_DFLASH_BATCH_VERIFY"),
-            dflash_adaptive_min: num("METRALE_DFLASH_ADAPTIVE_MIN", 2.0),
-            dflash_adaptive_reprobe: num("METRALE_DFLASH_ADAPTIVE_REPROBE", 256),
             dflash_resume_guard: num("METRALE_DFLASH_RESUME_GUARD", 0),
             shadow_topk: metrale_model_layers::speculative::shadow_topk(),
 
@@ -355,7 +346,8 @@ impl SchedLevers {
             mtp_accept_fold_at_16: present("METRALE_MTP_ACCEPT_FOLD_AT_16"),
             mtp_accept_debug: metrale_model_layers::speculative::mtp_accept_debug(),
             mtp_max_seqs: metrale_model_layers::speculative::mtp_max_seqs(),
-            spec_entry_pin_tokens: metrale_speculative::mtp_gate::entry_pin_tokens_from_env(),
+            spec_entry_pin_tokens: metrale_speculative::spec_eligibility::entry_pin_tokens_from_env(
+            ),
             ssm_tail_ckpt: metrale_gpu_runtime::ssm_tail_ckpt_enabled(),
             ssm_tail_midchunk: metrale_gpu_runtime::ssm_tail_midchunk_enabled(),
 
@@ -382,14 +374,11 @@ impl SchedLevers {
             vision_timing: false,
             dflash_masked_verify: false,
             dflash_seam_serial: false,
-            dflash_adaptive: false,
             dflash_serial_append: false,
             dflash_unified_ctx: true,
             dflash_spec_think: false,
             dflash_gate_pin_c2: true,
             dflash_batch_verify: true,
-            dflash_adaptive_min: 2.0,
-            dflash_adaptive_reprobe: 256,
             dflash_resume_guard: 0,
             shadow_topk: 0,
             disable_watchdogs: false,

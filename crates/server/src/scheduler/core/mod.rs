@@ -57,7 +57,11 @@ pub struct SchedulerCore {
     spontaneous_think_budget: u32,
     use_mtp: bool,
     chunked: bool,
-    mtp_gate: Option<metrale_speculative::mtp_gate::MtpGate>,
+    /// 2026-10-10: The per-step speculation decision (`spec_host`); `None` under `--mtp-gate
+    /// force` or without MTP/DFlash.
+    spec_host: Option<metrale_speculative::spec_ctl::batch::BatchSpec>,
+    /// 2026-10-10: Whether an explicit `--dflash-gamma` pins the DFlash depth.
+    dflash_depth_pinned: bool,
     ngram_proposer: Option<NgramProposer>,
     spec_slot_cap: usize,
     always_mixed: bool,
@@ -115,7 +119,7 @@ impl SchedulerCore {
             watchdog,
             levers,
             snapshot,
-            dflash_rung,
+            spec,
             telemetry,
             pipeline_faults,
         } = cfg;
@@ -152,7 +156,6 @@ impl SchedulerCore {
             limits,
             watchdog,
             metrale_speculative::adaptive_rung::AdaptiveRung::from_env(),
-            dflash_rung,
         );
         sched
             .io
@@ -190,17 +193,22 @@ impl SchedulerCore {
             0
         };
         let chunked = max_prefill_tokens > 0;
-        // 2026-09-25: The MTP runtime gate (`metrale_speculative::mtp_gate`), which
-        // switches between MTP and plain decode by measured delivered throughput.
-        // Armed whenever MTP is on, unless `--mtp-gate force` (or
-        // `METRALE_MTP_GATE_FORCE`) disarms it.
-        let mtp_gate = if use_mtp && !sched.levers.mtp_gate_force {
-            Some(metrale_speculative::mtp_gate::MtpGate::new(num_drafts))
+        // 2026-10-10: The speculation controller's batch decision (`spec_host`), which
+        // chooses each step between plain decode and the speculative depth(s) by the
+        // serve's objective. Armed whenever MTP or DFlash is on, unless `--mtp-gate force`
+        // (or `METRALE_MTP_GATE_FORCE`) disarms it.
+        let spec_host = if use_mtp && !sched.levers.mtp_gate_force {
+            Some(crate::scheduler::spec_host::build(
+                &spec,
+                sched.levers.spec_cost.as_ref().map(|c| &c.table),
+                num_drafts,
+                dflash_verify_raw_argmax,
+            ))
         } else {
             if use_mtp && sched.levers.mtp_gate_force {
                 tracing::warn!(
-                    "--mtp-gate force: MTP throughput gate DISARMED (diagnostic; \
-                     verify runs even where the gate would measure it net-negative)"
+                    "--mtp-gate force: speculation controller DISARMED (diagnostic; \
+                     verify runs even where the controller would measure it net-negative)"
                 );
             }
             None
@@ -298,7 +306,8 @@ impl SchedulerCore {
             spontaneous_think_budget,
             use_mtp,
             chunked,
-            mtp_gate,
+            spec_host,
+            dflash_depth_pinned: spec.dflash_depth_pinned,
             ngram_proposer,
             spec_slot_cap,
             always_mixed,

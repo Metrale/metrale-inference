@@ -13,51 +13,24 @@ use super::*;
 
 mod serial_bootstrap;
 
-/// 2026-09-25: One speculative step: bootstrap the sequences without drafts,
-/// then verify the ones with drafts.
-///
-/// `verify_ctx` is the `logit_processors` context handed to every bootstrap
-/// and verify call, so verified tokens go through the logits processors
-/// (`verify_pipeline_helper`).
-pub fn step_mtp(
+/// 2026-10-10: The draft depth a speculative step over `active` runs: DFlash's `num_drafts`
+/// (the speculation controller's choice), or MTP's ladder / adaptive rung / measured-planner
+/// depth, clamped to every slot's verify capacity. `step_mtp` runs it, and the controller
+/// (`core/lane_decode.rs`) offers it as the speculative candidate, so both read one function.
+pub(crate) fn step_depth(
     model: &dyn Model,
-    active: &mut [ActiveSeq],
+    active: &[ActiveSeq],
     sched: &crate::scheduler::sched_ctx::SchedCtx,
     num_drafts: usize,
-    verify_ctx: &crate::scheduler::logit_processors::LogitsContext,
     dflash_verify_raw_argmax: bool,
-) {
-    // 2026-09-25: Start of the `Phase::StepOuter` span, recorded at both
-    // exits of this function.
-    let t_step_outer = sched.io.clock.now();
-    // 2026-09-25: DFlash: this step's draft count from the gamma resolver
-    // (`dflash_rung`), keyed on `active.len()`, which counts bootstrap
-    // sequences as well as verifying ones. It shadows the serve-wide value
-    // for every propose below. The resolver returns `num_drafts` unchanged
-    // when it is not armed (pinned by `--dflash-gamma` or
-    // `METRALE_DFLASH_STATIC_GAMMA`, or a cap below K=3).
-    let num_drafts = if dflash_verify_raw_argmax {
-        sched.dflash_rung.drafts_for(active.len(), num_drafts)
-    } else {
-        num_drafts
-    };
-    let mut bootstrap_idxs: Vec<usize> = Vec::new();
-    let mut verify_idxs: Vec<usize> = Vec::new();
-    for (i, a) in active.iter().enumerate() {
-        if !a.pending_drafts.is_empty() {
-            verify_idxs.push(i);
-        } else {
-            bootstrap_idxs.push(i);
-        }
-    }
-
+) -> usize {
     // 2026-09-25: MTP: the draft count depends on the number of active
     // sequences. The static ladder (`metrale_model_layers::speculative::ladder`,
     // default `4:3,8:3,16:1,32:1`, overridden by `METRALE_MTP_K_LADDER` or
     // `METRALE_NO_MTP_K_LADDER`) gives 3 drafts through n=8 and 1 above,
     // clamped to `[1, num_drafts]`. `adaptive_rung::drafts_for` may raise
-    // n in 9..=16 to 2 drafts from the observed accept rates. DFlash keeps
-    // the resolver's count.
+    // n in 9..=16 to 2 drafts from the observed accept rates. DFlash runs
+    // the depth the speculation controller chose (`spec_host`), passed in as `num_drafts`.
     let ladder_nd = if dflash_verify_raw_argmax {
         num_drafts
     } else if let Some(sc) = &sched.levers.spec_cost {
@@ -69,7 +42,7 @@ pub fn step_mtp(
         // wired to suspend MTP mid-run from an energy preference alone — floored to 1, same
         // policy as the static ladder; pass `--num-drafts 0` to turn drafting off instead).
         // Telling them apart needs the same cap check `propose_depth` made internally.
-        let depth = metrale_speculative::spec_cost::plan::propose_depth(
+        let depth = metrale_speculative::spec_ctl::measured::propose_depth(
             &sc.table,
             &sc.calibration,
             active.len(),
@@ -87,12 +60,42 @@ pub fn step_mtp(
     // 2026-09-25: Clamp to the smallest draft capacity of any active
     // sequence's verify slot (`mtp_slot_draft_capacity`), so no sequence gets
     // more drafts than its slot holds. `usize::MAX` means no limit.
-    let ladder_nd = metrale_speculative::spec_capacity::clamp_drafts_to_slot_capacity(
+    metrale_speculative::spec_capacity::clamp_drafts_to_slot_capacity(
         ladder_nd,
         active
             .iter()
             .map(|a| model.mtp_slot_draft_capacity(a.seq.slot_idx)),
-    );
+    )
+}
+
+/// 2026-09-25: One speculative step: bootstrap the sequences without drafts,
+/// then verify the ones with drafts.
+///
+/// `verify_ctx` is the `logit_processors` context handed to every bootstrap
+/// and verify call, so verified tokens go through the logits processors
+/// (`verify_pipeline_helper`).
+pub fn step_mtp(
+    model: &dyn Model,
+    active: &mut [ActiveSeq],
+    sched: &crate::scheduler::sched_ctx::SchedCtx,
+    num_drafts: usize,
+    verify_ctx: &crate::scheduler::logit_processors::LogitsContext,
+    dflash_verify_raw_argmax: bool,
+) {
+    // 2026-09-25: Start of the `Phase::StepOuter` span, recorded at both
+    // exits of this function.
+    let t_step_outer = sched.io.clock.now();
+    let mut bootstrap_idxs: Vec<usize> = Vec::new();
+    let mut verify_idxs: Vec<usize> = Vec::new();
+    for (i, a) in active.iter().enumerate() {
+        if !a.pending_drafts.is_empty() {
+            verify_idxs.push(i);
+        } else {
+            bootstrap_idxs.push(i);
+        }
+    }
+
+    let ladder_nd = step_depth(model, active, sched, num_drafts, dflash_verify_raw_argmax);
 
     // 2026-09-25: Bootstrap: the sequences without drafts.
     if !bootstrap_idxs.is_empty() {

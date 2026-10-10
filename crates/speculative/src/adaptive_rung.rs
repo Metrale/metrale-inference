@@ -21,6 +21,13 @@
 //! tiered verify pools the scheduler clamps the lift back to one draft
 //! (`spec_capacity::clamp_drafts_to_slot_capacity`; see that module).
 //!
+//! 2026-10-10: The decision is the speculation controller's (`crate::spec_ctl`). The two
+//! thresholds are a cost model in disguise: "two drafts when `E(2)/E(1) >= enter`" is
+//! `E(2)/cost(2) >= E(1)/cost(1)` with `cost(2)/cost(1) = enter`, and `leave` is a hysteresis
+//! margin `enter/leave - 1` against leaving depth ([`next_state`]). The EWMAs are
+//! `spec_ctl::accept::AcceptCounts` in rate form with a steady-state seed (equal to a seeded
+//! EWMA), and the probe triggers are `spec_ctl::reprobe::DeepProbe`.
+//!
 //! At one draft nothing proposes a second token, so `p2_cond` cannot be
 //! observed there. The controller then runs two drafts for a flush (a probe)
 //! only on evidence or after a long backstop; see `drafts_for`. Measured
@@ -29,6 +36,14 @@
 //! 1.74 s.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+use parking_lot::Mutex;
+
+use crate::spec_ctl::accept::{AcceptCounts, AcceptParams, SeedWeight};
+use crate::spec_ctl::chain::expected_tokens;
+use crate::spec_ctl::cost::StepCost;
+use crate::spec_ctl::decide::{Candidate, Margins, Objective, choose};
+use crate::spec_ctl::reprobe::{DeepProbe, DeepProbeState};
 
 /// 2026-09-25: The batch widths the controller adapts. Every other width
 /// keeps the static ladder's count.
@@ -122,7 +137,8 @@ pub fn token_ratio(p1: f64, p2_cond: f64) -> f64 {
     if p1 <= 0.0 || !p1.is_finite() || !p2_cond.is_finite() {
         return 1.0;
     }
-    1.0 + p1 * p2_cond / (1.0 + p1)
+    let c = [p1, p2_cond];
+    expected_tokens(&c, 2) / expected_tokens(&c, 1)
 }
 
 /// 2026-09-25: The second-draft conditional accept implied by a flush at two
@@ -135,35 +151,69 @@ pub fn p2_cond_from(p1: f64, mean_na: f64) -> Option<f64> {
 /// 2026-09-25: The next state from the current one and the smoothed token
 /// ratio; `true` means two drafts.
 pub fn next_state(at_depth: bool, tr: f64, p: &RungParams) -> bool {
-    if at_depth {
-        tr >= p.leave
-    } else {
-        tr >= p.enter
+    let one = Candidate {
+        k: 1,
+        tokens: 1.0,
+        slowest: 1.0,
+        cost: StepCost { ms: 1.0, j: None },
+    };
+    let two = Candidate {
+        k: 2,
+        tokens: tr,
+        slowest: tr,
+        cost: StepCost {
+            ms: p.enter,
+            j: None,
+        },
+    };
+    let margins = Margins {
+        deeper: 0.0,
+        shallower: p.enter / p.leave - 1.0,
+        suspend: 0.0,
+    };
+    let incumbent = Some(if at_depth { 2 } else { 1 });
+    choose(&Objective::Throughput, &margins, incumbent, &[one, two]) == Some(2)
+}
+
+impl RungParams {
+    fn fast(&self) -> AcceptParams {
+        AcceptParams {
+            decay: 1.0 - self.alpha,
+            prior_weight: 0.0,
+            cold_weight: 0.0,
+            seed: SeedWeight::SteadyState,
+        }
+    }
+
+    fn probe(&self) -> DeepProbe {
+        DeepProbe {
+            backstop: self.probe_ticks,
+            rise: self.p1_trigger,
+            slow: AcceptParams {
+                decay: 1.0 - self.alpha_slow,
+                prior_weight: 0.0,
+                cold_weight: 0.0,
+                seed: SeedWeight::SteadyState,
+            },
+        }
     }
 }
 
+/// 2026-10-10: The rung's state: the fast estimates the decision reads (position 1 = `p1`,
+/// position 2 = `p2_cond`), the probe trigger, the state and its flip count.
+#[derive(Default)]
 struct Ctl {
-    p1: AtomicU64,
-    /// 2026-09-25: Slow-EWMA `p1`, read only by the probe trigger in
-    /// `drafts_for`.
-    p1_slow: AtomicU64,
-    p2: AtomicU64,
-    seeded_p1: AtomicBool,
-    seeded_p1_slow: AtomicBool,
-    seeded_p2: AtomicBool,
-    at_depth: AtomicBool,
-    tick: AtomicU64,
-    last_probe: AtomicU64,
-    /// 2026-09-25: Slow-EWMA `p1` at the last depth flush (`k_drafts >= 2`).
-    p1_at_decision: AtomicU64,
-    flips: AtomicU64,
+    fast: AcceptCounts,
+    probe: DeepProbeState,
+    at_depth: bool,
+    flips: u64,
 }
 
 /// 2026-09-25: The controller. Each scheduler context owns one
 /// (`SchedCtx::rung`), so accept history is not shared between contexts.
 pub struct AdaptiveRung {
     params: RungParams,
-    ctl: Ctl,
+    ctl: Mutex<Ctl>,
     /// 2026-09-25: The last `engaged` passed to `note_width_regime`; starts
     /// `true`.
     width_engaged: AtomicBool,
@@ -171,34 +221,11 @@ pub struct AdaptiveRung {
     width_flips: AtomicU64,
 }
 
-fn ewma_a(cell: &AtomicU64, seeded: &AtomicBool, sample: f64, a: f64) -> f64 {
-    let prev = f64::from_bits(cell.load(Ordering::Relaxed));
-    let next = if seeded.swap(true, Ordering::Relaxed) {
-        a * sample + (1.0 - a) * prev
-    } else {
-        sample
-    };
-    cell.store(next.to_bits(), Ordering::Relaxed);
-    next
-}
-
 impl AdaptiveRung {
-    pub const fn new(params: RungParams) -> Self {
+    pub fn new(params: RungParams) -> Self {
         Self {
             params,
-            ctl: Ctl {
-                p1: AtomicU64::new(0),
-                p1_slow: AtomicU64::new(0),
-                p2: AtomicU64::new(0),
-                seeded_p1: AtomicBool::new(false),
-                seeded_p1_slow: AtomicBool::new(false),
-                seeded_p2: AtomicBool::new(false),
-                at_depth: AtomicBool::new(false),
-                tick: AtomicU64::new(0),
-                last_probe: AtomicU64::new(0),
-                p1_at_decision: AtomicU64::new(0),
-                flips: AtomicU64::new(0),
-            },
+            ctl: Mutex::new(Ctl::default()),
             width_engaged: AtomicBool::new(true),
             width_flips: AtomicU64::new(0),
         }
@@ -214,12 +241,12 @@ impl AdaptiveRung {
 
     /// 2026-09-25: `true` while the controller's state is two drafts.
     pub fn at_depth(&self) -> bool {
-        self.ctl.at_depth.load(Ordering::Relaxed)
+        self.ctl.lock().at_depth
     }
 
     /// 2026-09-25: Number of state changes so far.
     pub fn flips(&self) -> u64 {
-        self.ctl.flips.load(Ordering::Relaxed)
+        self.ctl.lock().flips
     }
 
     pub fn width_engaged(&self) -> bool {
@@ -236,35 +263,39 @@ impl AdaptiveRung {
     /// scheduler's `AcceptBuckets::record` is the caller; this type keeps no
     /// accept counters of its own.
     pub fn observe(&self, n: usize, k_drafts: usize, p1: f64, mean_na: f64) {
-        let (p, c) = (&self.params, &self.ctl);
+        let p = &self.params;
         if p.disabled || !BAND.contains(&n) {
             return;
         }
-        let p1_e = ewma_a(&c.p1, &c.seeded_p1, p1, p.alpha);
-        let p1_slow = ewma_a(&c.p1_slow, &c.seeded_p1_slow, p1, p.alpha_slow);
-        let tick = c.tick.fetch_add(1, Ordering::Relaxed) + 1;
-        if k_drafts >= 2 {
-            // 2026-09-25: A depth flush observes p2_cond and resets both probe
-            // triggers read by `drafts_for` (`last_probe`, `p1_at_decision`).
-            c.last_probe.store(tick, Ordering::Relaxed);
-            c.p1_at_decision.store(p1_slow.to_bits(), Ordering::Relaxed);
-            if let Some(p2) = p2_cond_from(p1, mean_na) {
-                let p2_e = ewma_a(&c.p2, &c.seeded_p2, p2, p.alpha);
-                let tr = token_ratio(p1_e, p2_e);
-                let was = c.at_depth.load(Ordering::Relaxed);
-                let now = next_state(was, tr, p);
-                if now != was {
-                    c.at_depth.store(now, Ordering::Relaxed);
-                    let flips = c.flips.fetch_add(1, Ordering::Relaxed) + 1;
-                    tracing::info!(
-                        "MTP rung n={n} -> k_drafts={} (token_ratio={tr:.4} p1={p1_e:.3} \
-                         p2_cond={p2_e:.3} enter={:.3} leave={:.3} tick={tick} flips={flips})",
-                        if now { 2 } else { 1 },
-                        p.enter,
-                        p.leave,
-                    );
-                }
-            }
+        let (fast, probe) = (p.fast(), p.probe());
+        let mut c = self.ctl.lock();
+        c.fast.observe_rate(&fast, 1, p1);
+        // 2026-09-25: A depth flush observes p2_cond and resets both probe
+        // triggers read by `drafts_for`.
+        let deep = k_drafts >= 2;
+        c.probe.observe(&probe, p1, deep);
+        if !deep {
+            return;
+        }
+        let Some(p2) = p2_cond_from(p1, mean_na) else {
+            return;
+        };
+        c.fast.observe_rate(&fast, 2, p2);
+        let (p1_e, p2_e) = (c.fast.rate(1).unwrap_or(0.0), c.fast.rate(2).unwrap_or(0.0));
+        let tr = token_ratio(p1_e, p2_e);
+        let was = c.at_depth;
+        let now = next_state(was, tr, p);
+        if now != was {
+            c.at_depth = now;
+            c.flips += 1;
+            tracing::info!(
+                "MTP rung n={n} -> k_drafts={} (token_ratio={tr:.4} p1={p1_e:.3} \
+                 p2_cond={p2_e:.3} enter={:.3} leave={:.3} flips={})",
+                if now { 2 } else { 1 },
+                p.enter,
+                p.leave,
+                c.flips,
+            );
         }
     }
 
@@ -272,7 +303,7 @@ impl AdaptiveRung {
     /// ladder's count, raised to `min(2, num_drafts)` inside the adapted band
     /// while the state is two drafts or a probe is due.
     pub fn drafts_for(&self, n_active: usize, num_drafts: usize) -> usize {
-        let (p, c) = (&self.params, &self.ctl);
+        let p = &self.params;
         let base = metrale_model_layers::speculative::mtp_ladder_drafts(n_active, num_drafts);
         if p.disabled
             || metrale_model_layers::speculative::mtp_ladder_disabled()
@@ -283,17 +314,10 @@ impl AdaptiveRung {
         }
         // 2026-09-25: A probe is due when p2_cond has never been observed,
         // when the slow p1 has risen by `p1_trigger` since the last depth
-        // flush, or when `probe_ticks` flushes have passed since it. Only a
-        // rise counts: `token_ratio` increases with p1, so a fall cannot make
-        // two drafts newly worthwhile.
-        let tick = c.tick.load(Ordering::Relaxed);
-        let p1_moved = f64::from_bits(c.p1_slow.load(Ordering::Relaxed))
-            - f64::from_bits(c.p1_at_decision.load(Ordering::Relaxed))
-            >= p.p1_trigger;
-        let probing = !c.seeded_p2.load(Ordering::Relaxed)
-            || p1_moved
-            || tick.saturating_sub(c.last_probe.load(Ordering::Relaxed)) >= p.probe_ticks;
-        if c.at_depth.load(Ordering::Relaxed) || probing {
+        // flush, or when `probe_ticks` flushes have passed since it
+        // (`DeepProbeState::due`).
+        let c = self.ctl.lock();
+        if c.at_depth || c.probe.due(&p.probe(), c.fast.observed(2)) {
             return 2.min(num_drafts).max(base);
         }
         base

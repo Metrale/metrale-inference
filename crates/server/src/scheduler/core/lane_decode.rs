@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: The decode lane: one step of n-gram, self-speculative, MTP (through
-//! its runtime gate) or plain decode, the plain step pipelined when the router
-//! allows it. Skipped on a tick whose prefill lane already ran a mixed step.
+//! 2026-09-25: The decode lane: one step of n-gram, self-speculative, MTP or DFlash
+//! (through the speculation controller, `spec_host`) or plain decode, the plain step
+//! pipelined when the router allows it. Skipped on a tick whose prefill lane already ran a
+//! mixed step.
 //!
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
@@ -19,7 +20,8 @@ impl SchedulerCore {
             prefilling,
             swapped,
             preempted,
-            mtp_gate,
+            spec_host,
+            dflash_depth_pinned,
             ngram_proposer,
             pipeline,
             ..
@@ -121,7 +123,7 @@ impl SchedulerCore {
                     // 2026-09-25: Every active sequence must be eligible, not only
                     // `active[0]`.
                     active.iter().all(|a| {
-                        metrale_speculative::mtp_gate::spec_dispatch_eligible(
+                        metrale_speculative::spec_eligibility::spec_dispatch_eligible(
                             a.inside_thinking,
                             a.post_think_emitted,
                             a.output_tokens.len() as u32,
@@ -134,155 +136,146 @@ impl SchedulerCore {
                     })
                 )
             {
-                // 2026-09-25: The MTP gate chooses each step (plain decode or MTP verify)
-                // by measured delivered throughput (`metrale_speculative::mtp_gate`).
-                if let Some(gate) = mtp_gate.as_mut() {
-                    if gate.maybe_remeasure(active[0].seq.seq_len) {
-                        for a in active.iter_mut() {
-                            a.mtp_acct.note_regime_reprobe();
-                        }
-                    }
-                    gate.note_depth(active[0].seq.seq_len);
-                    // 2026-09-25: Spec-entry pin (`METRALE_SPEC_ENTRY_PIN`): while any
-                    // active sequence has emitted fewer than that many tokens after
-                    // `</think>`, run the verify step even where the gate would run
-                    // plain decode. Pinned steps are not recorded in the gate.
-                    let min_post_think_emitted = active
-                        .iter()
-                        .map(|a| a.post_think_emitted)
-                        .min()
-                        .unwrap_or(u32::MAX);
-                    // 2026-09-25: DFlash pin (`SchedLevers::dflash_gate_pin_c2`, whose doc
-                    // gives the reason): with raw-argmax DFlash verify and at most 2
-                    // active sequences, always run the verify step. Not recorded in
-                    // the gate either.
-                    let dflash_pin = dflash_verify_raw_argmax
-                        && active.len() <= 2
-                        && sched.levers.dflash_gate_pin_c2;
-                    if (dflash_pin
-                        || metrale_speculative::mtp_gate::entry_pin_forces_verify(
-                            min_post_think_emitted,
-                            sched.levers.spec_entry_pin_tokens,
-                        ))
-                        && gate.next_step()
-                            == metrale_speculative::mtp_gate::GateStep::MeasureDecode
-                    {
-                        let lens_before: Vec<usize> =
-                            active.iter().map(|a| a.seq.seq_len).collect();
-                        step_mtp(
-                            sched.io.dev.model(),
-                            active,
-                            sched,
-                            num_drafts,
-                            &verify_ctx,
-                            dflash_verify_raw_argmax,
-                        );
-                        for (a, &b) in active.iter_mut().zip(lens_before.iter()) {
-                            a.mtp_acct
-                                .record_verify_emitted(a.seq.seq_len.saturating_sub(b));
-                        }
-                    } else {
-                        match gate.next_step() {
-                            metrale_speculative::mtp_gate::GateStep::MeasureDecode => {
-                                let t0 = sched.io.clock.now();
-                                step_decode_only(
-                                    active,
-                                    think_end_token,
-                                    think_start_token,
-                                    code_fence_token,
-                                    tool_call_start_token,
-                                    tool_call_end_token,
-                                    adaptive_sampling,
-                                    sched,
-                                    sched.io.spill.as_deref(),
-                                    swapped,
-                                    preempted,
-                                );
-                                // 2026-09-25: A plain decode step emits one token per
-                                // sequence, so it is charged `active.len()` tokens.
-                                gate.record_decode(
-                                    sched.io.clock.now().saturating_duration_since(t0),
-                                    active.len(),
-                                );
-                                for a in active.iter_mut() {
-                                    a.mtp_acct.record_serial();
-                                }
-                                // 2026-09-25: Single-sequence batches only (the ring has one
-                                // label space): copy row 0's hidden into the MTP catch-up
-                                // ring at label `seq_len`, which this step has already
-                                // advanced past its input token. A no-op when the model
-                                // allocated no ring.
-                                if active.len() == 1
-                                    && let Err(e) =
-                                        sched.io.dev.apply(io::Effect::SaveHiddenCatchup {
-                                            row: 0,
-                                            pos: active[0].seq.seq_len,
-                                        })
-                                {
-                                    tracing::warn!("save_hidden_for_catchup: {e}");
-                                }
-                            }
-                            metrale_speculative::mtp_gate::GateStep::MeasureVerify => {
-                                // 2026-09-25: Charged to the MTP arm: the tokens every
-                                // active sequence emitted, bootstrap-only steps included.
-                                let lens_before: Vec<usize> =
-                                    active.iter().map(|a| a.seq.seq_len).collect();
-                                let t0 = sched.io.clock.now();
-                                step_mtp(
-                                    sched.io.dev.model(),
-                                    active,
-                                    sched,
-                                    num_drafts,
-                                    &verify_ctx,
-                                    dflash_verify_raw_argmax,
-                                );
-                                let emitted: usize = active
-                                    .iter()
-                                    .zip(lens_before.iter())
-                                    .map(|(a, &b)| a.seq.seq_len.saturating_sub(b))
-                                    .sum();
-                                gate.record_verify_step(
-                                    sched.io.clock.now().saturating_duration_since(t0),
-                                    emitted,
-                                    active.len(),
-                                );
-                                for (a, &b) in active.iter_mut().zip(lens_before.iter()) {
-                                    a.mtp_acct
-                                        .record_verify_emitted(a.seq.seq_len.saturating_sub(b));
-                                }
-                            }
-                        }
-                    }
-                    // 2026-09-25: When the gate switches to plain decode, drop pending
-                    // drafts and order the secondary stream before the next plain
-                    // decode. Switching back needs nothing: the next MTP step
-                    // bootstraps from empty drafts.
-                    if gate.take_fresh_decision()
-                        == Some(metrale_speculative::mtp_gate::GateDecision::DisableMtp)
-                    {
-                        for a in active.iter_mut() {
-                            a.pending_drafts.clear();
-                            a.pending_draft_conf.clear();
-                        }
-                        if let Err(e) = sched.io.dev.apply(io::Effect::SyncSecondary) {
-                            tracing::error!("mtp-gate→decode sync_secondary: {e}");
-                        }
-                    }
-                } else {
-                    // 2026-09-25: Gate disarmed (`--mtp-gate force` or
-                    // `METRALE_MTP_GATE_FORCE`): always MTP.
-                    let lens_before: Vec<usize> = active.iter().map(|a| a.seq.seq_len).collect();
-                    step_mtp(
+                // 2026-10-10: The speculation controller (`spec_host`) chooses each step
+                // between plain decode and the speculative depth(s), from per-sequence
+                // acceptance and measured step costs. Without it (`--mtp-gate force` or
+                // `METRALE_MTP_GATE_FORCE`) every eligible step speculates.
+                // 2026-09-25: Spec-entry pin (`METRALE_SPEC_ENTRY_PIN`): while any active
+                // sequence has emitted fewer than that many tokens after `</think>`, run the
+                // verify step even where the controller would plain-decode. DFlash pin
+                // (`SchedLevers::dflash_gate_pin_c2`, whose doc gives the reason): with
+                // raw-argmax DFlash verify and at most 2 active sequences, always verify.
+                let min_post_think_emitted = active
+                    .iter()
+                    .map(|a| a.post_think_emitted)
+                    .min()
+                    .unwrap_or(u32::MAX);
+                let pinned = (dflash_verify_raw_argmax
+                    && active.len() <= 2
+                    && sched.levers.dflash_gate_pin_c2)
+                    || metrale_speculative::spec_eligibility::entry_pin_forces_verify(
+                        min_post_think_emitted,
+                        sched.levers.spec_entry_pin_tokens,
+                    );
+                // 2026-10-10: `k` is the controller's depth (0 = plain decode); without the
+                // controller the step speculates at `num_drafts` as before (`None`).
+                let mut decision = None;
+                let mut k: Option<usize> = None;
+                if let Some(h) = spec_host.as_mut() {
+                    let spec_k = crate::scheduler::mtp_step::step_depth(
                         sched.io.dev.model(),
                         active,
                         sched,
                         num_drafts,
+                        dflash_verify_raw_argmax,
+                    );
+                    let allowed = crate::scheduler::spec_host::allowed(
+                        dflash_verify_raw_argmax,
+                        *dflash_depth_pinned,
+                        spec_k,
+                    );
+                    let states: Vec<_> = active.iter().map(|a| &a.spec_ctl).collect();
+                    let d = h.decide(&states, &allowed);
+                    k = Some(if d.k == 0 && pinned { spec_k } else { d.k });
+                    decision = Some(d);
+                }
+                if decision.is_some_and(|d| d.probe) {
+                    for a in active.iter_mut() {
+                        a.mtp_acct.note_regime_reprobe();
+                    }
+                }
+                // 2026-09-25: On a switch to plain decode, drop pending drafts and order the
+                // secondary stream before the plain step. Switching back needs nothing: the
+                // next speculative step bootstraps from empty drafts.
+                if k == Some(0) && decision.is_some_and(|d| d.entered_plain) {
+                    for a in active.iter_mut() {
+                        a.pending_drafts.clear();
+                        a.pending_draft_conf.clear();
+                    }
+                    if let Err(e) = sched.io.dev.apply(io::Effect::SyncSecondary) {
+                        tracing::error!("controller→decode sync_secondary: {e}");
+                    }
+                }
+                let t0 = sched.io.clock.now();
+                if k == Some(0) {
+                    step_decode_only(
+                        active,
+                        think_end_token,
+                        think_start_token,
+                        code_fence_token,
+                        tool_call_start_token,
+                        tool_call_end_token,
+                        adaptive_sampling,
+                        sched,
+                        sched.io.spill.as_deref(),
+                        swapped,
+                        preempted,
+                    );
+                    let ms = sched
+                        .io
+                        .clock
+                        .now()
+                        .saturating_duration_since(t0)
+                        .as_secs_f64()
+                        * 1e3;
+                    if let Some(h) = spec_host.as_mut() {
+                        h.settle(active.iter_mut().map(|a| &mut a.spec_ctl), 0);
+                        h.observe_plain(active.iter_mut().map(|a| &mut a.spec_ctl));
+                        h.observe_step(active.len(), 0, ms, None, active.len());
+                    }
+                    for a in active.iter_mut() {
+                        a.mtp_acct.record_serial();
+                    }
+                    // 2026-09-25: Single-sequence batches only (the ring has one label
+                    // space): copy row 0's hidden into the MTP catch-up ring at label
+                    // `seq_len`, which this step has already advanced past its input token.
+                    // A no-op when the model allocated no ring.
+                    if active.len() == 1
+                        && let Err(e) = sched.io.dev.apply(io::Effect::SaveHiddenCatchup {
+                            row: 0,
+                            pos: active[0].seq.seq_len,
+                        })
+                    {
+                        tracing::warn!("save_hidden_for_catchup: {e}");
+                    }
+                } else {
+                    // 2026-10-10: Each sequence's drafts before the step, and its length, give
+                    // its verify outcome: `emitted - 1` of the drafts it held were accepted (a
+                    // bootstrap step holds none and observes nothing).
+                    let before: Vec<(usize, usize)> = active
+                        .iter()
+                        .map(|a| (a.seq.seq_len, a.pending_drafts.len()))
+                        .collect();
+                    step_mtp(
+                        sched.io.dev.model(),
+                        active,
+                        sched,
+                        match k {
+                            Some(k) if dflash_verify_raw_argmax => k,
+                            _ => num_drafts,
+                        },
                         &verify_ctx,
                         dflash_verify_raw_argmax,
                     );
-                    for (a, &b) in active.iter_mut().zip(lens_before.iter()) {
-                        a.mtp_acct
-                            .record_verify_emitted(a.seq.seq_len.saturating_sub(b));
+                    let ms = sched
+                        .io
+                        .clock
+                        .now()
+                        .saturating_duration_since(t0)
+                        .as_secs_f64()
+                        * 1e3;
+                    let mut emitted_all = 0;
+                    for (a, &(len, drafts)) in active.iter_mut().zip(before.iter()) {
+                        let emitted = a.seq.seq_len.saturating_sub(len);
+                        emitted_all += emitted;
+                        a.mtp_acct.record_verify_emitted(emitted);
+                        if let Some(h) = spec_host.as_mut() {
+                            h.observe_stream(&mut a.spec_ctl, drafts, emitted.saturating_sub(1));
+                        }
+                    }
+                    if let (Some(h), Some(k)) = (spec_host.as_mut(), k) {
+                        h.settle(active.iter_mut().map(|a| &mut a.spec_ctl), k);
+                        h.observe_step(active.len(), k, ms, None, emitted_all);
                     }
                 }
             } else {

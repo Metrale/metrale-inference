@@ -94,6 +94,9 @@ defaults:
   ssm_checkpoint_interval: 16
   # ── DFlash2 ──
   dflash: true
+  # 2026-10-10: the speculation controller's objective (no default); throughput is what
+  # the MTP gate it replaced maximised (delivered tokens per second).
+  spec_objective: throughput
   draft_model: incoai/Qwen3.8-27B-DFlash2
   # The drafter's own trained block size. See the warning above.
   dflash_gamma: 8

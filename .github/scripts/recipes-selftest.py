@@ -90,7 +90,7 @@ def c_render() -> None:
     argv = lib.render_argv(good(), lib.flag_table(manifest()))
     assert argv == ["met", "serve", "example/model", "--ep-size", "2", "--gpu-memory-utilization", "0.85",
                     "--bind", "0.0.0.0", "--max-seq-len", "4096", "--port", "8888", "--scheduler", "slai",
-                    "--speculative", "--world-size", "2"], argv
+                    "--spec-objective", "throughput", "--speculative", "--world-size", "2"], argv
     cmd = lib.met_command("met", argv)
     assert cmd[:2] == ["met", "serve"] and "example/model" not in cmd and cmd[-1] == "--no-tui", cmd
     assert lib.met_command("met", argv + ["--no-tui"]).count("--no-tui") == 1
