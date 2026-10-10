@@ -965,3 +965,75 @@ effort_hours = 0.0
 transferability = "GLM mHC; multi-rank heads; MoE speculation economics"
 links = { pr = "", commit = "", evidence = "exclusive same-box A/B + accuracy microtest (pin + fixed anchor)" }
 notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-prefill-head-shard"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "1-row prefill first-token head on the vocab-sharded GEMV"
+symptom = "14.4 ms whole-vocab tile GEMM per prompt in a prefill burst"
+diagnosis_tool = "nsys"
+root_cause_class = "redundant-work"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C16", tok_s_pct = 0, j_tok_pct = 0.0, n = 2 }]
+verdict = "kept"
+verdict_reason = "accuracy identical on all legs; C16 burst client TTFT median 7.5 -> 4.9 s"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank serving; hybrid prefix caching"
+links = { pr = "", commit = "", evidence = "exclusive A/B + accuracy microtest + bring-up bench TTFT" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-tp-drafter-fp8"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--draft-tp-size auto (TP drafter, FP8 + aux FP8)"
+symptom = "drafter propose 9-12 ms on rank 0 only"
+diagnosis_tool = "nsys"
+root_cause_class = "speculation-economics"
+lever_type = "code"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = -5.9, j_tok_pct = 0.0, n = 2 }, { rung = "C2", tok_s_pct = -13.1, j_tok_pct = 0.0, n = 2 }, { rung = "C4", tok_s_pct = -14.0, j_tok_pct = 0.0, n = 2 }]
+verdict = "discarded"
+verdict_reason = "correct but 4.1 ms/rank propose (bandwidth-bound FP8 weights) + ~4.4 ms of extra expert reads per verify row; NVFP4 drafter tier next"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank serving; hybrid prefix caching"
+links = { pr = "", commit = "", evidence = "exclusive A/B + accuracy microtest + bring-up bench TTFT" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-prefix-cache-on"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--enable-prefix-caching (hybrid: paged DSA indexer + KDA SSM snapshots)"
+symptom = "warm TTFT == cold TTFT (cache never enabled in the recipe)"
+diagnosis_tool = "nsys"
+root_cause_class = "config-gap"
+lever_type = "config"
+lkb_effect = "no new kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 0, j_tok_pct = 0.0, n = 2 }]
+verdict = "kept"
+verdict_reason = "repeated 5.5k prompt warm TTFT 10.5 s -> 0.20 s (vLLM ~0.15 s)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank serving; hybrid prefix caching"
+links = { pr = "", commit = "", evidence = "exclusive A/B + accuracy microtest + bring-up bench TTFT" }
+notes = ""
