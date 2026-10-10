@@ -15,7 +15,7 @@
 //! - Exit 1 on any mismatch; each check prints its mismatch count.
 //!
 //! `ROUNDS` rounds per K, each from the states the previous round left; the first state's head
-//! norm is above the decode's clamp threshold.
+//! norm is above 1000 (no path rescales it).
 //!
 //!   cargo run -p metrale-model-arch --release --features cuda,gpu-examples \
 //!       --example exact_chain_f16_microtest
@@ -108,7 +108,7 @@ fn main() -> Result<()> {
     for kk in 2..=4usize {
         let chain = g.kernel("gdn_exact_carry", &format!("gdn_exact_chain_f16_{kk}"))?;
         for n in [1usize, seqs] {
-            // 2026-10-01: Head norm near 1500 at the start, above the clamp threshold.
+            // 2026-10-01: Head norm near 1500 at the start, past 1000.
             let h0: Vec<u8> = (0..n * h_pitch)
                 .flat_map(|_| f16::from_f32(rng.next_f32() * 20.0).to_bits().to_le_bytes())
                 .collect();

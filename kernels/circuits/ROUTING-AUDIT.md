@@ -67,7 +67,7 @@ class and exact citation.
 | `gdn_conv_l2_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:213-233; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:99-113 |
 | `gdn_conv_l2_bf16_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:105-110 (BF16 conv rows, not bitwise equal to decode's FP32 conv), :114-331 (the conv window copied to conv_state_intermediates[t] after each row but the last) |
 | `gdn_recurrence_f32_per_row` | reference | ml/qwen3_ssm/ssm_forward.rs:266,330-347; ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:195-212 |
-| `gdn_recurrence_f32_fused_norm` | differs (gdn_fused_norm) | ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:940-942,1051 (the fused kernel clamps the state norm, the unfused one does not) |
+| `gdn_recurrence_f32_fused_norm` | differs (gdn_fused_norm) | ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:265 (the gated RMS norm runs inside the recurrence's block, not in gated_rms_norm; not proven bit-identical to the unfused chain) |
 | `gdn_recurrence_f32_fused_norm_per_row` | differs (gdn_fused_norm) | ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent/per_seq.rs:160-190 (the per-sequence arm's fused norm); ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:221-262 (the batched arm's strided fused norm, not modelled) |
 | `gdn_recurrence_wy2_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
 | `gdn_recurrence_wy3_verify` | reference | ml/qwen3_ssm/trait_decode_batched_conv_gdn.rs:114-331; ml/qwen3_ssm/trait_decode_batched_conv_gdn/wy_select.rs:156-163 |
@@ -247,7 +247,7 @@ These are facts about the code, found while encoding it. They are not changes.
    - `load_kv_scales` looks up `{p}.k_proj.k_scale`; the checkpoint ships `self_attn.k_scale`.
    - Not exercised by the golden policy (bf16 KV). It matters for the throughput recipe's fp8 KV.
 5. **The GDN batched recurrence almost never engages at a padded width.** Padding rows share one dummy slot, so the contiguity check fails (ml/qwen3_ssm/trait_decode_multi_seq/ssm_batched_recurrent.rs:93-149). 2026-09-30: the check is now the `gdn_state_slots_fragmented` runtime route: every multi-sequence plan under `ssm_batched_recurrent = on` carries the per-row arm beside the batched one, and the executor runs whichever the step's slots select.
-6. **`gdn_fused_norm` is not only a fusion.** The fused kernel clamps the state's Frobenius norm and the unfused one does not (k/gated_delta_rule.cu:940-942, 1051). The rule is therefore `differs`, not `bit_identical`.
+6. **`gdn_fused_norm` is not proven a pure fusion.** Its gated RMS norm is computed inside the recurrence's block rather than by gated_rms_norm (k/gated_delta_rule.cu:265), and no microtest proves the two bit-identical. The rule is therefore `differs`, not `bit_identical`. 2026-10-10: the fused kernel no longer clamps the state norm (no GDN path does).
 7. **The dense throughput recipe's K ladder disagrees with its BENCH pin.** The recipe prose says `1:3,2:1,4:2,8:2,16:1`; BENCH.toml says `1:3,2:2,4:1,8:1,16:1`, and the BENCH pin wins.
 
 ## Open items: routing the circuit cannot express yet

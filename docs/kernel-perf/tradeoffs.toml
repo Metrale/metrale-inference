@@ -393,9 +393,9 @@ source = "kernels/gb10/common/fused_k_norm_rope_cache.cu:3"
 
 [[t]]
 match = "kernels/gb10/common/gated_delta_rule.cu"
-text = "Only the single-token decode kernels apply the SSM_STATE_MAX_NORM (1000) Frobenius clamp and the [1e-6, 1-1e-6] decay clamp; chunk2, chunk3 and prefill apply neither, and the clamped step's output uses the pre-clamp state. Decode and multi-token paths therefore diverge once a head exceeds the norm."
+text = "Only the single-token decode kernels apply the [1e-6, 1-1e-6] decay clamp; chunk2, chunk3 and prefill do not, so decode and multi-token paths diverge once a decay leaves that range. No kernel bounds the state norm (the reference does not)."
 prs = []
-source = "kernels/gb10/common/gated_delta_rule.cu:53"
+source = "kernels/gb10/common/gated_delta_rule.cu:106"
 
 [[t]]
 match = "kernels/gb10/common/gated_delta_rule.cu"
@@ -405,15 +405,15 @@ source = "kernels/gb10/common/gated_delta_rule.cu:12"
 
 [[t]]
 match = "kernels/gb10/common/gated_delta_rule.cu::gated_delta_rule_chunk2"
-text = "Two-token step stores H_1 to h_state_intermediate so a rejected draft can roll back; three passes over H (the WY kernels do two) and no decay or state-norm clamp, unlike decode."
+text = "Two-token step stores H_1 to h_state_intermediate so a rejected draft can roll back; three passes over H (the WY kernels do two) and no decay clamp, unlike decode."
 prs = []
-source = "kernels/gb10/common/gated_delta_rule.cu:998"
+source = "kernels/gb10/common/gated_delta_rule.cu:785"
 
 [[t]]
 match = "kernels/gb10/common/gated_delta_rule.cu::gated_delta_rule_decode_f32_conv_norm"
-text = "Fuses conv1d+SiLU+L2, recurrence, state clamp and gated RMS norm in one launch, but only for k_dim == v_dim == 128 and head_repeat == 2 (256 threads, eight-warp warp_sums); a block owns a k-head so it is the sole conv_state writer. Other shapes take the unfused path."
+text = "Fuses conv1d+SiLU+L2, recurrence and gated RMS norm in one launch, but only for k_dim == v_dim == 128 and head_repeat == 2 (256 threads, eight-warp warp_sums); a block owns a k-head so it is the sole conv_state writer. Other shapes take the unfused path."
 prs = []
-source = "kernels/gb10/common/gated_delta_rule.cu:522"
+source = "kernels/gb10/common/gated_delta_rule.cu:410"
 
 [[t]]
 match = "kernels/gb10/common/gated_delta_rule.cu::gated_delta_rule_decode_f32_norm"
@@ -621,7 +621,7 @@ source = "crates/model-layers/src/layers/qwen3_ssm/trait_prefill_recur.rs:39"
 
 [[t]]
 match = "kernels/gb10/common/gated_delta_rule_regresident.cu"
-text = "One warp per value column (4 rows per lane), all tokens on registers with warp-butterfly sums: no smem, no block barrier. Sum order differs from gated_delta_rule_decode (not bit-identical) and there is no state-norm clamp since no block sees a whole head. k_dim == 128, batch_size 1 only."
+text = "One warp per value column (4 rows per lane), all tokens on registers with warp-butterfly sums: no smem, no block barrier. Sum order differs from gated_delta_rule_decode (not bit-identical). k_dim == 128, batch_size 1 only."
 prs = []
 source = "kernels/gb10/common/gated_delta_rule_regresident.cu:6"
 
@@ -2565,7 +2565,7 @@ source = "kernels/gb10/gemma-4-26b-a4b/nvfp4/attn_prefill_512.cu:4"
 
 [[t]]
 match = "kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu"
-text = "State clamps differ by kernel: single-stream prefill scales to norm 50 when seq_len <= 1, the four fused/strided FP32 decodes clamp at SSM_STATE_MAX_NORM (1000), the rest not at all. chunk2/chunk3 write no intermediates. Also compiled for qwen3.5-35b-a3b and qwen3.5-397b-a17b."
+text = "chunk2/chunk3 write no intermediates. Also compiled for qwen3.5-35b-a3b and qwen3.5-397b-a17b."
 prs = []
 source = "kernels/gb10/gemma-4-26b-a4b/nvfp4/gated_delta_rule.cu:10"
 
@@ -2805,7 +2805,7 @@ source = "kernels/gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/w4a4_gemm.cu:124"
 
 [[t]]
 match = "kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu"
-text = "Differs from common in numerics: decode and decode_f32 take FP32 q/k/v and have no state-norm clamp, chunk2/chunk3 clamp the gate, and the prefill clamps to norm 100 only at seq_len <= 1. Also compiled for qwen3.5-27b."
+text = "Differs from common in numerics: decode and decode_f32 take FP32 q/k/v, and chunk2/chunk3 clamp the gate. Also compiled for qwen3.5-27b."
 prs = []
 source = "kernels/gb10/qwen3-next-80b-a3b/nvfp4/gated_delta_rule.cu:595"
 
@@ -2829,13 +2829,13 @@ source = "kernels/gb10/qwen3-vl-30b-a3b/nvfp4/vision_encoder.cu:65"
 
 [[t]]
 match = "kernels/gb10/qwen3.5-122b-a10b/nvfp4/gated_delta_rule.cu"
-text = "decode and decode_f32 apply their own state-norm clamp at MAX_NORM 50, not SSM_STATE_MAX_NORM (1000) as the fused kernels do; chunk2/chunk3 clamp the gate to [1e-6, 1-1e-6]."
+text = "decode and decode_f32 take FP32 q/k/v; chunk2/chunk3 clamp the gate to [1e-6, 1-1e-6]."
 prs = []
 source = "kernels/gb10/qwen3.5-122b-a10b/nvfp4/gated_delta_rule.cu:596"
 
 [[t]]
 match = "kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu"
-text = "Shadows gb10/common/gated_delta_rule.cu by stem, so a kernel defined only in common does not exist for this target. Assumes k_dim <= 128 unchecked; the single-stream prefill clamps H to Frobenius norm 100 only when seq_len <= 1, while decode uses SSM_STATE_MAX_NORM 1000."
+text = "Shadows gb10/common/gated_delta_rule.cu by stem, so a kernel defined only in common does not exist for this target. Assumes k_dim <= 128 unchecked."
 prs = []
 source = "kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:12"
 
@@ -2865,13 +2865,13 @@ source = "crates/model-layers/src/layers/qwen3_ssm/trait_decode_multi_seq/ssm_ba
 
 [[t]]
 match = "kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu::gated_delta_rule_prefill_split4"
-text = "Splits v_dim over four 32-thread blocks per head (4x the CTAs of the plain prefill), each thread still holding all 128 rows of its column and loading 4 of the k/q values; drops the plain prefill's seq_len <= 1 norm clamp."
+text = "Splits v_dim over four 32-thread blocks per head (4x the CTAs of the plain prefill), each thread still holding all 128 rows of its column and loading 4 of the k/q values."
 prs = []
-source = "kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:319"
+source = "kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu:283"
 
 [[t]]
 match = "kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule_snap.cu"
-text = "Parent fused-norm decode plus per-token h_inter snapshot stores (including the clamp rescale) for exact verify; byte-identical to the sequential parent chain under --fmad=false. SSM_STATE_MAX_NORM must equal the parent's or the bit match breaks."
+text = "Parent fused-norm decode plus per-token h_inter snapshot stores for exact verify; byte-identical to the sequential parent chain under --fmad=false."
 prs = []
 source = "kernels/gb10/qwen3.6-27b/nvfp4/gated_delta_rule_snap.cu:3"
 
@@ -3036,12 +3036,6 @@ match = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu"
 text = "chunk2 and chunk3 keep the state in registers across tokens and store only the final state: h_state_intermediate/h_state_inter0/1 are neither read nor written, so unlike common chunk2/chunk3 they give no rollback point."
 prs = []
 source = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:1069"
-
-[[t]]
-match = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu"
-text = "Only decode_f32_strided_norm and decode_f32_conv_norm apply the SSM_STATE_MAX_NORM (1000) clamp; plain decode does not (unlike common), and the single-stream prefill clamps to 50 only when seq_len <= 1."
-prs = []
-source = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu:24"
 
 [[t]]
 match = "kernels/gb10/qwen3.6-35b-a3b/nvfp4/gated_delta_rule.cu::gated_delta_rule_decode"
@@ -3573,7 +3567,7 @@ source = "kernels/metal/common/embed_lookup.metal:5"
 
 [[t]]
 match = "kernels/metal/common/gated_delta_rule_decode.metal"
-text = "Same update, gate clamp and state-norm clamp as the gb10 decode (output taken before the clamp); requires threadgroup size == v_dim <= 128 and k_dim <= 128 with k_dim a multiple of 4."
+text = "Same update and gate clamp as the gb10 decode; requires threadgroup size == v_dim <= 128 and k_dim <= 128 with k_dim a multiple of 4."
 prs = []
 source = "kernels/metal/common/gated_delta_rule_decode.metal:12"
 

@@ -11,7 +11,7 @@
 //! - Exit 1 on any mismatch below; each check prints its mismatch count and max ULP delta.
 //!
 //! One sequence, `ROUNDS` rounds per K = 2, 3, 4, each from the state the previous round left
-//! (the first one's head norm above the 27B decode's clamp threshold). Each round checks the
+//! (the first one's head norm above 1000, which no path rescales). Each round checks the
 //! outputs, every intermediate (the state, or window, after rows 0..K-2) and the final state bit
 //! for bit.
 //!
@@ -86,7 +86,7 @@ fn main() -> Result<()> {
     };
     for kk in 2..=4usize {
         let gdn_chain = g.kernel("gdn_exact_carry", &format!("gdn_exact_chain{kk}"))?;
-        // 2026-10-01: Head norm near 1500 at the start, above the 27B clamp threshold.
+        // 2026-10-01: Head norm near 1500 at the start, past 1000.
         let h0: Vec<f32> = (0..h_numel).map(|_| rng.next_f32() * 20.0).collect();
         let c0: Vec<f32> = (0..state).map(|_| rng.next_f32()).collect();
         let (h_ref, h_c) = (

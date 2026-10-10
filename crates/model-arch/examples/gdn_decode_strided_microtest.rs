@@ -9,8 +9,9 @@
 //! Invariants:
 //! - Returns an error unless, for B = 1..=128 sequences (powers of two), the strided launch's output
 //!   and final state equal the per-sequence launches' byte for byte, with one head of one
-//!   sequence driven past the state-norm clamp (`SSM_state()_MAX_NORM`) so the clamp branch is
-//!   compared too.
+//!   sequence driven to a state norm far past 1000 (where a strided kernel once rescaled it).
+//! - 2026-10-10: Neither form bounds the state norm (the reference does not): the driven head's
+//!   norm must stay above `DRIVEN_NORM_FLOOR` after the step, on every target.
 //! - Before the sweep, a flipped output bit must be refused by the same check.
 //!
 //! Prints the mean time of each form (20 launches) at every B, the strided one at several
@@ -35,6 +36,10 @@ const NK: usize = 16;
 const KD: usize = 128;
 const VD: usize = 128;
 const MAX_B: usize = 128;
+
+/// 2026-10-10: The driven head starts near norm 2600 and one decayed step keeps it far above
+/// this floor; a kernel that rescaled it (as the 1000 clamp did) lands at or below it.
+const DRIVEN_NORM_FLOOR: f64 = 1000.5;
 
 /// 2026-09-29: Value heads, the first argument: 32 (Qwen3.6-35B-A3B, the default) or 48
 /// (Qwen3.8-27B).
@@ -172,8 +177,8 @@ fn strided(
 }
 
 /// 2026-09-29: Two PTX builds of gated_delta_rule (`old,new`): the per-sequence and strided
-/// entries of `new` must reproduce `old`'s output and state bytes at B = 1 and 128, with the
-/// state-norm clamp head driven as in the main sweep. A flipped bit is refused first.
+/// entries of `new` must reproduce `old`'s output and state bytes at B = 1 and 128, with one head
+/// driven past norm 1000 as in the main sweep. A flipped bit is refused first.
 fn ab_ptx(pair: &str) -> Result<()> {
     let (old, new) = pair
         .split_once(',')
@@ -271,8 +276,8 @@ fn main() -> Result<()> {
     let str_k = g.kernel("gated_delta_rule", "gated_delta_rule_decode_f32_strided")?;
     let mut rng = Lcg(0x6764_6e2d_7374);
     let mut h0 = rng.v(MAX_B * state(), -0.05, 0.05);
-    // 2026-09-29: Head 5 of sequence 1 starts far past the clamp norm (1000): 16384 entries of
-    // magnitude ~20 give a norm of ~2600.
+    // 2026-09-29: Head 5 of sequence 1 starts far past norm 1000: 16384 entries of magnitude ~20
+    // give a norm of ~2600.
     for e in &mut h0[state() + 5 * KD * VD..state() + 6 * KD * VD] {
         *e *= 400.0;
     }
@@ -369,10 +374,8 @@ fn main() -> Result<()> {
         }
         same(&format!("B={b_count} state"), &sa, &sb)?;
         same(&format!("B={b_count} output"), &oa, &ob)?;
-        // 2026-09-29: The common module clamps the state norm; a model shadow may not (the
-        // qwen3.6-35b-a3b decode kernels do not), and byte equality covers both.
-        if b_count >= 2 && std::env::args().nth(2).is_none() {
-            // 2026-09-29: The clamp fired on the driven head: its state norm is at most 1000.
+        // 2026-10-10: No target rescales the driven head: its state norm stays above the floor.
+        if b_count >= 2 {
             let head = &sb[(state() + 5 * KD * VD) * 4..(state() + 6 * KD * VD) * 4];
             let norm: f64 = head
                 .chunks_exact(4)
@@ -380,7 +383,11 @@ fn main() -> Result<()> {
                 .map(|v| v * v)
                 .sum::<f64>()
                 .sqrt();
-            ensure!(norm <= 1000.5, "clamp head norm {norm}");
+            ensure!(
+                norm > DRIVEN_NORM_FLOOR,
+                "driven head norm {norm}: the state was rescaled"
+            );
+            println!("B={b_count}: driven head norm {norm:.1} (unbounded)");
         }
         let time = |f: &dyn Fn() -> Result<()>| -> Result<f64> {
             g.synchronize(0)?;

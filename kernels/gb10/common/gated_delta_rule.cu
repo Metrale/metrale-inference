@@ -14,6 +14,8 @@
 // - Value head vh reads key head vh / (num_v_heads / num_k_heads).
 // - k_dim <= 128 and k_dim % 4 == 0 (the shared q/k arrays hold 128 floats, and the
 //   loops step j by 4); v_dim <= blockDim.x.
+// - 2026-10-10: No kernel bounds the state norm, as the reference recurrence does not: a
+//   state is never rescaled, so every decode path computes the same step.
 
 
 
@@ -50,18 +52,9 @@ __device__ __forceinline__ float gdn_warp_reduce_sum(float val) {
     return val;
 }
 
-// 2026-09-25: State-norm clamp, applied by every single-token decode kernel below (not by
-// chunk2, chunk3 or prefill): after the update, a head whose state Frobenius norm exceeds
-// SSM_STATE_MAX_NORM is scaled down to that norm. The output of that step uses the state
-// before the clamp.
 
 
 
-
-#ifndef SSM_STATE_NORM_ENABLED
-#define SSM_STATE_NORM_ENABLED
-#define SSM_STATE_MAX_NORM 1000.0f
-#endif
 
 // 2026-09-25: Single-token decode, BF16 q/k/v and output, one block per (value head, batch).
 // Launch: grid (num_v_heads, batch, 1), block (128, 1, 1).
@@ -176,57 +169,13 @@ extern "C" __global__ void gated_delta_rule_decode(
 
 
 
-        #ifdef SSM_STATE_NORM_ENABLED
-        {
-
-            float local_sq = 0.0f;
-            for (unsigned int j = 0; j < k_dim; j++) {
-                float hv = H[j * v_dim + tid];
-                local_sq += hv * hv;
-            }
-
-
-            unsigned int mask = __activemask();
-            float warp_sum = local_sq;
-            warp_sum += __shfl_down_sync(mask, warp_sum, 16);
-            warp_sum += __shfl_down_sync(mask, warp_sum, 8);
-            warp_sum += __shfl_down_sync(mask, warp_sum, 4);
-            warp_sum += __shfl_down_sync(mask, warp_sum, 2);
-            warp_sum += __shfl_down_sync(mask, warp_sum, 1);
-
-            __shared__ float norm_sums[4];
-            unsigned int warp_id = tid / 32;
-            unsigned int lane_id = tid % 32;
-            if (lane_id == 0) norm_sums[warp_id] = warp_sum;
-            __syncthreads();
-
-            float head_norm_sq;
-            if (tid < 4) {
-                float s = norm_sums[tid];
-                s += __shfl_down_sync(0xf, s, 2);
-                s += __shfl_down_sync(0xf, s, 1);
-                norm_sums[0] = s;
-            }
-            __syncthreads();
-            head_norm_sq = norm_sums[0];
-
-            if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-                float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-                for (unsigned int j = 0; j < k_dim; j++) {
-                    H[j * v_dim + tid] *= scale;
-                }
-            }
-        }
-        #endif
-
 
         float inv_sqrt_d = rsqrtf((float)k_dim);
         output[(b * num_v_heads + vh) * v_dim + tid] = __float2bfloat16(q_dot * inv_sqrt_d);
     }
 }
 
-// 2026-09-25: gated_delta_rule_decode with FP32 q/k/v/output. The state-norm sum of squares
-// is accumulated from the just-stored registers instead of a second read of H.
+// 2026-09-25: gated_delta_rule_decode with FP32 q/k/v/output.
 
 
 
@@ -286,9 +235,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -304,42 +250,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: Sum of squares of the stored state, in ascending j, for the clamp below.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     float inv_sqrt_d = rsqrtf((float)k_dim);
     output[(b * num_v_heads + vh) * v_dim + tid] = q_dot * inv_sqrt_d;
@@ -410,9 +321,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_norm(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -428,42 +336,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_norm(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: Sum of squares of the stored state, in ascending j, for the clamp below.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;
@@ -645,29 +518,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_conv_norm(
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
     }
 
-    // 2026-09-25: State-norm clamp, reduced within this value head's 128-thread group.
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = 0.0f;
-        for (unsigned int j = 0; j < k_dim; j++) {
-            float hv = H[j * v_dim + vlocal];
-            local_sq += hv * hv;
-        }
-        for (int off = 16; off >= 1; off >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, off);
-        __syncthreads();   // 2026-09-25: warp_sums is reused
-        if ((tid & 31) == 0) warp_sums[tid >> 5] = local_sq;
-        __syncthreads();
-        const unsigned int grp = tid >> 7;
-        float head_norm_sq = warp_sums[grp*4+0] + warp_sums[grp*4+1]
-                           + warp_sums[grp*4+2] + warp_sums[grp*4+3];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) H[j * v_dim + vlocal] *= scale;
-        }
-    }
-    #endif
-
     // 2026-09-25: Step 3: gated RMS norm per value head, then the BF16 output.
     const float x = q_dot * rsqrtf((float)k_dim);
     float sum_sq = x * x;
@@ -753,9 +603,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -771,42 +618,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: Sum of squares of the stored state, in ascending j, for the clamp below.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     float inv_sqrt_d = rsqrtf((float)k_dim);
     output[(unsigned long long)b * out_stride + vh * v_dim + tid] = q_dot * inv_sqrt_d;
@@ -882,9 +694,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -900,42 +709,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm(
         H[(j + 2) * v_dim + tid] = h2;
         H[(j + 3) * v_dim + tid] = h3;
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: Sum of squares of the stored state, in ascending j, for the clamp below.
-
-
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                H[j * v_dim + tid] *= scale;
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;
@@ -999,7 +773,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm(
 // the intermediate state H_1 in h_state_intermediate and the final H_2 in h_state, so a
 // caller can roll back to H_1. Token t of batch row b reads its q/k/v/gate/beta row
 // (b * 2 + t) at the given strides; output is [batch, 2, num_v_heads, v_dim]. Unlike the
-// decode kernels it applies neither the decay clamp nor the state-norm clamp.
+// decode kernels it does not clamp the decay.
 // Launch: grid (num_v_heads, batch, 1); v_dim <= blockDim.x.
 
 
@@ -1168,7 +942,7 @@ extern "C" __global__ void gated_delta_rule_chunk2(
 // 2026-09-25: Prefill: one block per (value head, batch) walks all seq_len tokens in order,
 // with the head's state held in dynamic shared memory. Token t reads q/k at t * qk_stride,
 // v at t * v_stride and gate/beta at t * gb_stride (not offset by batch row); the output
-// is [batch, seq_len, num_v_heads, v_dim]. No decay clamp and no state-norm clamp.
+// is [batch, seq_len, num_v_heads, v_dim]. No decay clamp.
 // Dynamic shared memory must hold k_dim * v_dim + 2 * k_dim floats (H, then k and q).
 
 
@@ -1291,7 +1065,7 @@ extern "C" __global__ void gated_delta_rule_prefill(
 }
 // 2026-09-25: Three-token step: like gated_delta_rule_chunk2, storing H_1 and H_2 in
 // h_state_inter0 / h_state_inter1 and H_3 in h_state. Token t of batch row b reads row
-// (b * 3 + t); output is [batch, 3, num_v_heads, v_dim]. No decay or state-norm clamp.
+// (b * 3 + t); output is [batch, 3, num_v_heads, v_dim]. No decay clamp.
 
 extern "C" __global__ void gated_delta_rule_chunk3(
 

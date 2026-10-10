@@ -11,12 +11,11 @@
 // Owner: gb10 kernels (qwen3.6-27b).
 // Invariants:
 // - Each token runs gdn_decode_f32_strided_body's expressions in its order (gated_delta_rule.cu
-//   here, built under the same --fmad=false), including the per-head Frobenius clamp after the
-//   update (SSM_STATE_MAX_NORM, the same value), with the state kept in registers between tokens:
+//   here, built under the same --fmad=false), with the state kept in registers between tokens:
 //   an FP32 store and reload is exact, so the outputs are the bits of K strided decode launches.
-// - Pending rows are applied first with the decode's update and clamp, as gdn_exact_carry_flush
-//   applies them. common's gdn_carry_flush has no clamp, so a model served from this directory
-//   folds through gdn_exact_carry_flush under the exact verify.
+// - Pending rows are applied first with the decode's update, as gdn_exact_carry_flush applies
+//   them; a model served from this directory folds through gdn_exact_carry_flush under the exact
+//   verify.
 // - Write-back, stash and engaged words follow gated_delta_rule_carry.cu: the state (pending rows
 //   folded) is written back when the eager form runs or pend + K > CARRY_CAP; engaged_flag[b] is
 //   2 after a write-back, else 1.
@@ -31,39 +30,9 @@
 #include "../../common/gdn_carry_stash.cuh"
 #include "../../common/gdn_f16_state.cuh"
 
-// 2026-10-01: gated_delta_rule.cu's clamp threshold; a different value here breaks the bit match.
-#define EXACT_MAX_NORM 1000.0f
-
-// 2026-10-01: The decode body's clamp: the block's sum of `norm_acc`, reduced in its order, and
-// the rescale of the head's state when it exceeds the threshold. Every thread of the block calls
-// it; `sums` is 4 floats of shared memory.
-__device__ __forceinline__ void exact_clamp(float (&H_reg)[CARRY_KD], float norm_acc, float* sums,
-                                            unsigned int tid) {
-    float local_sq = norm_acc;
-    for (int offset = 16; offset >= 1; offset >>= 1)
-        local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-    if (tid % 32 == 0) sums[tid / 32] = local_sq;
-    __syncthreads();
-    if (tid == 0) {
-        float total = 0.0f;
-        for (int w = 0; w < 4; w++) total += sums[w];
-        sums[0] = total;
-    }
-    __syncthreads();
-    const float head_norm_sq = sums[0];
-    // 2026-10-01: The next call's lane-0 writes stay behind every thread's read of sums[0].
-    __syncthreads();
-    if (head_norm_sq > EXACT_MAX_NORM * EXACT_MAX_NORM) {
-        const float scale = EXACT_MAX_NORM * rsqrtf(head_norm_sq);
-        #pragma unroll
-        for (int j = 0; j < CARRY_KD; j++) H_reg[j] *= scale;
-    }
-}
-
-// 2026-10-01: One pending row applied to the column: the decode's update, then its clamp.
+// 2026-10-01: One pending row applied to the column: the decode's update.
 __device__ __forceinline__ void exact_fold_row(float (&H_reg)[CARRY_KD], const volatile float* k,
-                                               float g, float vn, float* sums, unsigned int tid) {
-    float norm_acc = 0.0f;
+                                               float g, float vn) {
     #pragma unroll
     for (int j = 0; j < CARRY_KD; j += 4) {
         const float h0 = g * H_reg[j]     + k[j]     * vn;
@@ -71,20 +40,13 @@ __device__ __forceinline__ void exact_fold_row(float (&H_reg)[CARRY_KD], const v
         const float h2 = g * H_reg[j + 2] + k[j + 2] * vn;
         const float h3 = g * H_reg[j + 3] + k[j + 3] * vn;
         H_reg[j] = h0; H_reg[j + 1] = h1; H_reg[j + 2] = h2; H_reg[j + 3] = h3;
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
     }
-    exact_clamp(H_reg, norm_acc, sums, tid);
 }
 
 // 2026-10-01: The K rows of one (v-head, sequence): row t runs gdn_decode_f32_strided_body's
-// expressions in its order on the state in registers, the per-head clamp included, writes its
-// output, and leaves its vn and clamped gate in vn[t] and gs[t]. With `snap` non-null, the state
-// after row t < K - 1 (after its clamp) is also stored at snap[t] (this head's slice), as the
-// per-row exact arm's snapshots hold it. Every thread of the block calls it; `sums` is 4 floats
-// of shared memory.
+// expressions in its order on the state in registers, writes its output, and leaves its vn and
+// clamped gate in vn[t] and gs[t]. With `snap` non-null, the state after row t < K - 1 is also
+// stored at snap[t] (this head's slice), as the per-row exact arm's snapshots hold it.
 template <int K>
 __device__ __forceinline__ void exact_rows(
     float (&H_reg)[CARRY_KD],
@@ -103,7 +65,6 @@ __device__ __forceinline__ void exact_rows(
     unsigned int out_stride,
     float* vn,
     float* gs,
-    float* sums,
     float* const* snap
 ) {
     const unsigned int v_dim = CARRY_VD;
@@ -125,7 +86,6 @@ __device__ __forceinline__ void exact_rows(
         const float v_new_i = (v_i - g * hk_dot) * bt;
 
         float q_dot = 0.0f;
-        float norm_acc = 0.0f;
         #pragma unroll
         for (int j = 0; j < CARRY_KD; j += 4) {
             const float h0 = g * H_reg[j]     + smem_k[j]     * v_new_i;
@@ -134,12 +94,7 @@ __device__ __forceinline__ void exact_rows(
             const float h3 = g * H_reg[j + 3] + smem_k[j + 3] * v_new_i;
             H_reg[j] = h0; H_reg[j + 1] = h1; H_reg[j + 2] = h2; H_reg[j + 3] = h3;
             q_dot += h0 * smem_q[j] + h1 * smem_q[j + 1] + h2 * smem_q[j + 2] + h3 * smem_q[j + 3];
-            norm_acc += h0 * h0;
-            norm_acc += h1 * h1;
-            norm_acc += h2 * h2;
-            norm_acc += h3 * h3;
         }
-        exact_clamp(H_reg, norm_acc, sums, tid);
 
         const float inv_sqrt_d = rsqrtf((float)k_dim);
         output[row * out_stride + vh * v_dim + tid] = q_dot * inv_sqrt_d;
@@ -193,7 +148,6 @@ __device__ __forceinline__ void gdn_exact_carry_body(
 
     __shared__ float sk[K][CARRY_KD], sq[K][CARRY_KD];
     __shared__ float pk[CARRY_CAP][CARRY_KD], pg[CARRY_CAP];
-    __shared__ float sums[4];
     #pragma unroll
     for (int t = 0; t < K; ++t) {
         const unsigned long long row = (unsigned long long)b * K + t;
@@ -210,7 +164,7 @@ __device__ __forceinline__ void gdn_exact_carry_body(
     #pragma unroll
     for (int j = 0; j < CARRY_KD; j++) H_reg[j] = H_global[j * CARRY_VD + tid];
     for (unsigned int t = 0; t < np; ++t)
-        exact_fold_row(H_reg, pk[t], pg[t], CARRY_VN(S, t, vh)[tid], sums, tid);
+        exact_fold_row(H_reg, pk[t], pg[t], CARRY_VN(S, t, vh)[tid]);
     if (wb && np > 0) {
         #pragma unroll
         for (int j = 0; j < CARRY_KD; j++) H_global[j * CARRY_VD + tid] = H_reg[j];
@@ -218,7 +172,7 @@ __device__ __forceinline__ void gdn_exact_carry_body(
 
     float vn[K], gs[K];
     exact_rows<K>(H_reg, sk, sq, value, gate, beta, output, (unsigned long long)b * K, vh, tid,
-                  k_dim, v_stride, gb_stride, out_stride, vn, gs, sums, nullptr);
+                  k_dim, v_stride, gb_stride, out_stride, vn, gs, nullptr);
 
     #pragma unroll
     for (int t = 0; t < K; ++t) {
@@ -252,7 +206,7 @@ EXACT_CARRY_ENTRY(gdn_exact_carry4_lazy, 4, true)
 
 // 2026-10-01: The single-sequence exact verify (gdn_exact_chain{2,3,4}): K rows of one sequence
 // in one launch, the state read once, the per-row exact arm's snapshots written inline (the state
-// after row t < K - 1, clamp applied, at h_inter[t]) and the final state written back. Row t's q
+// after row t < K - 1 at h_inter[t]) and the final state written back. Row t's q
 // and k are at t * qk_stride, v at t * v_stride, gate and beta at t * gb_stride, its FP32 output
 // at t * out_stride. Grid (num_v_heads, 1), block 128.
 template <int K>
@@ -283,7 +237,6 @@ __device__ __forceinline__ void gdn_exact_chain_body(
     float* H_global = h_state + head;
 
     __shared__ float sk[K][CARRY_KD], sq[K][CARRY_KD];
-    __shared__ float sums[4];
     #pragma unroll
     for (int t = 0; t < K; ++t) {
         sk[t][tid] = key[(unsigned long long)t * qk_stride + kh * k_dim + tid];
@@ -297,7 +250,7 @@ __device__ __forceinline__ void gdn_exact_chain_body(
     float* const snap[3] = {h_inter0 + head, h_inter1 + head, h_inter2 + head};
     float vn[K], gs[K];
     exact_rows<K>(H_reg, sk, sq, value, gate, beta, output, 0ull, vh, tid, k_dim, v_stride,
-                  gb_stride, out_stride, vn, gs, sums, snap);
+                  gb_stride, out_stride, vn, gs, snap);
     #pragma unroll
     for (int j = 0; j < CARRY_KD; j++) H_global[j * CARRY_VD + tid] = H_reg[j];
 }
@@ -318,8 +271,8 @@ EXACT_CHAIN_ENTRY(gdn_exact_chain2, 2)
 EXACT_CHAIN_ENTRY(gdn_exact_chain3, 3)
 EXACT_CHAIN_ENTRY(gdn_exact_chain4, 4)
 
-// 2026-10-01: gdn_carry_flush's twin with the clamp: apply pending rows without a verify and write
-// H. Same arguments and grid as gdn_carry_flush (grid (num_v_heads, batch, layers), block 128).
+// 2026-10-01: gdn_carry_flush's twin in the decode's expression order: apply pending rows without
+// a verify and write H. Same arguments and grid as gdn_carry_flush (grid (num_v_heads, batch, layers), block 128).
 extern "C" __global__ void __launch_bounds__(128, 1) gdn_exact_carry_flush(
     float* const* __restrict__ h_table,
     unsigned long long table_layer_entries,
@@ -343,7 +296,6 @@ extern "C" __global__ void __launch_bounds__(128, 1) gdn_exact_carry_flush(
     float* H = h_table[l * table_layer_entries + b] + (unsigned long long)vh * CARRY_KD * CARRY_VD;
     const float* S = carry_base + l * carry_layer_floats + (unsigned long long)slot * seq_floats;
     __shared__ float pk[CARRY_CAP][CARRY_KD], pg[CARRY_CAP];
-    __shared__ float sums[4];
     for (unsigned int t = 0; t < np; ++t) pk[t][tid] = CARRY_SK(S, t, vh)[tid];
     if (tid < np) pg[tid] = *CARRY_G(S, tid, vh);
     __syncthreads();
@@ -351,7 +303,7 @@ extern "C" __global__ void __launch_bounds__(128, 1) gdn_exact_carry_flush(
     #pragma unroll
     for (int j = 0; j < CARRY_KD; j++) H_reg[j] = H[j * CARRY_VD + tid];
     for (unsigned int t = 0; t < np; ++t)
-        exact_fold_row(H_reg, pk[t], pg[t], CARRY_VN(S, t, vh)[tid], sums, tid);
+        exact_fold_row(H_reg, pk[t], pg[t], CARRY_VN(S, t, vh)[tid]);
     #pragma unroll
     for (int j = 0; j < CARRY_KD; j++) H[j * CARRY_VD + tid] = H_reg[j];
 }
@@ -359,10 +311,9 @@ extern "C" __global__ void __launch_bounds__(128, 1) gdn_exact_carry_flush(
 // 2026-10-01: The FP16 h-state exact verify (gdn_exact_chain_f16{2,3,4}): K rows per sequence of
 // gated_delta_rule.cu's gated_delta_rule_decode_f16_norm / _f16_strided_norm_half (the two run one
 // expression order), with the state in registers between rows.
-// - Each row widens the stored FP16 state, computes hk_dot, v_new, the update, q_dot and the clamp
-//   accumulator on the unrounded update, as the decode does, then keeps the value the decode
-//   stores: H_reg = (float)gdn_f16_store(h). The clamp rescales those stored values and rounds
-//   again, as the decode's clamp does. A widened FP16 value round-trips exactly, so the state the
+// - Each row widens the stored FP16 state, computes hk_dot, v_new, the update and q_dot on the
+//   unrounded update, as the decode does, then keeps the value the decode stores:
+//   H_reg = (float)gdn_f16_store(h). A widened FP16 value round-trips exactly, so the state the
 //   next row reads is the decode's stored state bit for bit.
 // - The decode's fused gated RMS norm follows per row, writing the BF16 output.
 // - The state after row t < K - 1 is stored (FP16) at that sequence's intermediate t, and the
@@ -434,7 +385,6 @@ __device__ __forceinline__ void gdn_exact_chain_f16_body(
     __half* H = ptr[0];
 
     __shared__ float sk[K][CARRY_KD], sq[K][CARRY_KD];
-    __shared__ float sums[4];
     __shared__ float x_cache[CARRY_VD];
     __shared__ float rms_sums[4];
     const unsigned long long row0 = (unsigned long long)b * K;
@@ -467,7 +417,6 @@ __device__ __forceinline__ void gdn_exact_chain_f16_body(
         const float v_new_i = (v_i - g * hk_dot) * bt;
 
         float q_dot = 0.0f;
-        float norm_acc = 0.0f;
         #pragma unroll
         for (int j = 0; j < CARRY_KD; j += 4) {
             const float h0 = g * H_reg[j]     + smem_k[j]     * v_new_i;
@@ -479,32 +428,7 @@ __device__ __forceinline__ void gdn_exact_chain_f16_body(
             H_reg[j + 2] = __half2float(gdn_f16_store(h2));
             H_reg[j + 3] = __half2float(gdn_f16_store(h3));
             q_dot += h0 * smem_q[j] + h1 * smem_q[j + 1] + h2 * smem_q[j + 2] + h3 * smem_q[j + 3];
-            norm_acc += h0 * h0;
-            norm_acc += h1 * h1;
-            norm_acc += h2 * h2;
-            norm_acc += h3 * h3;
         }
-        {
-            float local_sq = norm_acc;
-            for (int offset = 16; offset >= 1; offset >>= 1)
-                local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-            if (tid % 32 == 0) sums[tid / 32] = local_sq;
-            __syncthreads();
-            if (tid == 0) {
-                float total = 0.0f;
-                for (int w = 0; w < 4; w++) total += sums[w];
-                sums[0] = total;
-            }
-            __syncthreads();
-            const float head_norm_sq = sums[0];
-            if (head_norm_sq > EXACT_MAX_NORM * EXACT_MAX_NORM) {
-                const float scale = EXACT_MAX_NORM * rsqrtf(head_norm_sq);
-                #pragma unroll
-                for (int j = 0; j < CARRY_KD; j++)
-                    H_reg[j] = __half2float(gdn_f16_store(H_reg[j] * scale));
-            }
-        }
-
         const float inv_sqrt_d = rsqrtf((float)k_dim);
         const float x = q_dot * inv_sqrt_d;
         x_cache[tid] = x;
@@ -553,7 +477,7 @@ __device__ __forceinline__ void gdn_exact_chain_f16_body(
             #pragma unroll
             for (int j = 0; j < CARRY_KD; j++) snap[j * CARRY_VD + tid] = gdn_f16_store(H_reg[j]);
         }
-        // 2026-10-01: The next row's writes to sums, x_cache and rms_sums stay behind this row's
+        // 2026-10-01: The next row's writes to x_cache and rms_sums stay behind this row's
         // reads.
         __syncthreads();
     }
