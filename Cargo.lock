@@ -1702,6 +1702,7 @@ dependencies = [
  "metrale-closure",
  "metrale-core",
  "serde_json",
+ "sha2",
  "toml",
 ]
 
