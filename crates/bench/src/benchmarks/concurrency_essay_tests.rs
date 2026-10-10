@@ -60,6 +60,7 @@ fn essay_requests_pin_penalty_free_sampling_and_only_by_name() {
     assert_eq!(essay["frequency_penalty"], 0.0);
     assert_eq!(essay["temperature"], 0.0);
     assert_eq!(essay["reasoning_effort"], "none");
+    assert_eq!(essay["stream_options"]["include_usage"], true);
     let content = essay["messages"][0]["content"].as_str().unwrap();
     assert!(content.ends_with(ESSAY_TASK), "{content}");
     for name in ["natural", "count"] {

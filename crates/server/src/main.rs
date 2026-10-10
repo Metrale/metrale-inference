@@ -124,9 +124,10 @@ async fn serve_main() -> Result<()> {
         return cli::circuit::dispatch(args);
     }
 
-    // 2026-10-03: `ml-utils` plans and writes from checkpoint metadata; no subscriber, TUI or GPU.
+    // 2026-10-03: `ml-utils` plans and writes from checkpoint metadata, or (2026-10-10)
+    // benches an endpoint over HTTP; no subscriber, TUI or GPU.
     if let Command::MlUtils(args) = cli.command {
-        return cli::ml_utils::dispatch(args);
+        return cli::ml_utils::dispatch(args).await;
     }
 
     let no_tui = match &cli.command {

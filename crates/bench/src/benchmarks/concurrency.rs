@@ -74,6 +74,13 @@ fn essay_nonce_tag(i: usize) -> String {
     format!("req {:0width$}", i % modulus, width = ESSAY_NONCE_WIDTH)
 }
 
+/// 2026-10-10: Now, in unix seconds (0 if the clock reads before the epoch).
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
 /// 2026-09-26: What one completed request delivered, as parsed by
 /// `http::ChatOutcome` from the stream.
 #[derive(Clone, Debug, Default)]
@@ -107,6 +114,9 @@ struct CellRow {
     cache_uncontrolled: bool,
     gaps: Option<GapStats>,
     energy: Option<EnergyWindow>,
+    /// 2026-10-10: The measured batch's start and end, unix seconds, so an energy
+    /// source outside this process can integrate exactly the window `throughput` covers.
+    window_unix: (f64, f64),
 }
 
 #[derive(Default)]

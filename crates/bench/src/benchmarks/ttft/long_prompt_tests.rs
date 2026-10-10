@@ -42,7 +42,9 @@ fn sha256(text: &str) -> String {
 /// 2026-09-27: A loopback endpoint that answers `/v1/models` and every chat
 /// request with one streamed token, then a usage frame carrying
 /// `prompt_tokens` (none when `None`). It keeps every request body.
-async fn endpoint(prompt_tokens: Option<u64>) -> (TargetEndpoint, Arc<Mutex<Vec<Value>>>) {
+pub(crate) async fn endpoint(
+    prompt_tokens: Option<u64>,
+) -> (TargetEndpoint, Arc<Mutex<Vec<Value>>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind loopback");
@@ -136,7 +138,7 @@ async fn gate(
     (g, store)
 }
 
-async fn run(g: &mut Box<dyn DynBenchmark>) -> Result<BenchmarkResult> {
+pub(crate) async fn run(g: &mut Box<dyn DynBenchmark>) -> Result<BenchmarkResult> {
     loop {
         let frame = g.next().await?;
         if frame.status != RunStatus::Running {
@@ -147,7 +149,7 @@ async fn run(g: &mut Box<dyn DynBenchmark>) -> Result<BenchmarkResult> {
 
 /// 2026-09-27: The user messages sent, after checking that the first is the
 /// run's one unmeasured warm-up and that no other request carries its tag.
-fn measured_contents(bodies: &Mutex<Vec<Value>>) -> Vec<String> {
+pub(crate) fn measured_contents(bodies: &Mutex<Vec<Value>>) -> Vec<String> {
     let sent = contents(bodies);
     let (first, rest) = sent.split_first().expect("a warm-up request");
     assert!(
@@ -166,7 +168,7 @@ fn measured_contents(bodies: &Mutex<Vec<Value>>) -> Vec<String> {
     rest.to_vec()
 }
 
-fn contents(bodies: &Mutex<Vec<Value>>) -> Vec<String> {
+pub(crate) fn contents(bodies: &Mutex<Vec<Value>>) -> Vec<String> {
     bodies
         .lock()
         .expect("bodies")

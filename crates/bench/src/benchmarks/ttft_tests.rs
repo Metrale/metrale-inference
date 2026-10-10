@@ -11,6 +11,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::*;
 use crate::artifacts::ArtifactStore;
+use crate::params::ParamValue;
 use crate::plugin::TargetEndpoint;
 use crate::result::{CellStyle, Stat, Verdict, VerdictKind};
 

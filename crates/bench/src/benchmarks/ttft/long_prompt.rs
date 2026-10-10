@@ -147,14 +147,17 @@ impl TtftGate {
     }
 
     /// 2026-09-27: Send the unmeasured warm-up request of a high-ISL gate; a
-    /// synthetic gate sends none. A warm-up that fails or emits no token ends
+    /// synthetic gate without a tokenizer sends none. A warm-up that fails or emits no token ends
     /// the run: the server cannot be measured.
     pub(super) async fn warm_up(&self) -> Result<()> {
-        let Some(long) = &self.long else {
-            return Ok(());
+        // 2026-10-10: A token-exact synthetic gate warms up as a high-ISL one does.
+        let salt = match (&self.long, &self.exact) {
+            (Some(long), _) => long.salt,
+            (None, Some(exact)) => exact.salt,
+            (None, None) => return Ok(()),
         };
         let outcome = self
-            .measure(&warm_up_content(long.salt))
+            .measure(&warm_up_content(salt))
             .await
             .context("the unmeasured warm-up request failed")?;
         if outcome.ttft_ms.is_none() {
@@ -164,9 +167,12 @@ impl TtftGate {
     }
 
     /// 2026-09-27: The smallest server-reported prompt size so far; `None` for
-    /// a synthetic gate or before the first measured sample.
+    /// a synthetic gate without a tokenizer or before the first measured sample.
     pub(super) fn observed_prompt_tokens(&self) -> Option<usize> {
-        self.long.as_ref().and_then(|long| long.prompt_tokens)
+        match &self.exact {
+            Some(exact) => exact.smallest_reported(),
+            None => self.long.as_ref().and_then(|long| long.prompt_tokens),
+        }
     }
 }
 
@@ -252,4 +258,4 @@ pub(crate) fn source_parameters() -> Vec<ParamSpec> {
 
 #[cfg(test)]
 #[path = "long_prompt_tests.rs"]
-mod tests;
+pub(super) mod tests;

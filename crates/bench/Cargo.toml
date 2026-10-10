@@ -53,6 +53,10 @@ tokio = { version = "1", features = [
     "sync",
     "time",
 ] }
+# 2026-10-10: The served model's tokenizer, so a TTFT gate can cut its prompts to an exact
+# token count of that model (`benchmarks/ttft/token_prompt.rs`). The server crate's pin and
+# features, so the build graph gains an edge and no package.
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

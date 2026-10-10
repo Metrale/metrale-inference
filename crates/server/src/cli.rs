@@ -22,6 +22,12 @@ pub mod bench_run;
 mod bench_selfstart;
 mod bench_serve_plan;
 pub mod bench_spec_cost;
+pub(crate) mod bring_up;
+mod bring_up_conc;
+mod bring_up_core;
+mod bring_up_discover;
+mod bring_up_energy;
+mod bring_up_render;
 pub(crate) mod circuit;
 mod circuit_args;
 mod circuit_diff;
@@ -113,8 +119,10 @@ pub enum Command {
     /// with (`kernels/circuits/`, `kernels/<hw>/common/FUSIONS.toml`).
     Circuit(CircuitArgs),
     /// Model utilities: inspect a checkpoint from its metadata, write a mock (rehearsal)
-    /// checkpoint that keeps the architecture with fewer layers and synthetic weights, and
-    /// extrapolate full-model numbers from mock measurements.
+    /// checkpoint that keeps the architecture with fewer layers and synthetic weights,
+    /// extrapolate full-model numbers from mock measurements, and bench a model's bring-up
+    /// (single-stream TTFT and the concurrency ladder) on any OpenAI-compatible endpoint.
+    #[command(visible_alias = "dev-tools")]
     MlUtils(MlUtilsArgs),
 }
 
@@ -146,6 +154,72 @@ pub enum MlUtilsAction {
     /// (`met serve --mock <spec> --record-routing <file>`), so the next mock built with the
     /// calibration reproduces the profile under its own activations.
     CalibrateRouting(CalibrateRoutingArgs),
+    /// Bring-up bench of a served model, vLLM or Metrale alike: single-stream (C=1) cold, warm,
+    /// high-ISL cold and high-ISL warm TTFT, run sequentially with prompts cut to exact token
+    /// counts of the model's own tokenizer, then the concurrency ladder; prints one table and
+    /// writes a JSON record. `--compare A B` renders two records side by side with the winner
+    /// per metric and every asymmetry between the runs.
+    ModelBringUpBench(BringUpArgs),
+}
+
+/// `met ml-utils model-bring-up-bench` options.
+#[derive(clap::Args, Debug)]
+pub struct BringUpArgs {
+    /// The OpenAI-compatible base URL to measure, e.g. http://127.0.0.1:8888. Omitted, the
+    /// local `met serve` that confirms its own identity (`/serve-config`) on the port its
+    /// argv names; none or several is an error, never a guessed port.
+    #[arg(long)]
+    pub url: Option<String>,
+    /// The model to request. Omitted, the one model the endpoint's /v1/models lists.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// The served model's tokenizer: a tokenizer.json, its checkpoint directory, or a Hub id in
+    /// the local cache. Omitted, the discovered local serve's --model-from-path.
+    #[arg(long)]
+    pub tokenizer: Option<String>,
+    /// Samples per TTFT bench. Omitted, each TTFT gate's own default (printed in the plan).
+    #[arg(long)]
+    pub reps: Option<usize>,
+    /// Cold and warm prompt sizes in tokens, comma-separated. Omitted, the TTFT gates' own
+    /// `prompt_lengths` default.
+    #[arg(long, value_delimiter = ',')]
+    pub isl: Option<Vec<usize>>,
+    /// High-ISL prompt size in tokens. Omitted, the high-ISL gates' own `min_prompt_tokens`
+    /// default (32768).
+    #[arg(long)]
+    pub high_isl: Option<usize>,
+    /// Concurrency rungs. One standard rung N runs every standard rung up to and including N
+    /// (standard: 1,2,4,8,12,16,32,64,128; e.g. `--concs 128`); a comma-separated, strictly
+    /// increasing list runs exactly those (e.g. `--concs 1,4,16,64,128`).
+    #[arg(long, default_value = bring_up_conc::DEFAULT_CONCS_ARG)]
+    pub concs: String,
+    /// Concurrency ladder prompt size in tokens (the GLM campaign's ladder instrument).
+    #[arg(long, default_value_t = 128)]
+    pub conc_isl: usize,
+    /// Concurrency ladder output tokens per request (the GLM campaign's ladder instrument).
+    #[arg(long, default_value_t = 1024)]
+    pub conc_osl: usize,
+    /// Read GPU-rail energy during the ladder from the NVML counters of these hosts
+    /// (`localhost` or ssh destinations, comma-separated; every box the serve runs on). Omitted,
+    /// J/tok is reported as not measured.
+    #[arg(long, value_delimiter = ',')]
+    pub energy: Vec<String>,
+    /// Skip the TTFT benches.
+    #[arg(long)]
+    pub skip_ttft: bool,
+    /// Skip the concurrency ladder.
+    #[arg(long)]
+    pub skip_concurrency: bool,
+    /// Where to write the JSON record (created if absent). Required when measuring.
+    #[arg(long, required_unless_present = "compare")]
+    pub out: Option<std::path::PathBuf>,
+    /// The engine's name in the table and the record. Omitted, the kind the endpoint reports
+    /// (metrale, vllm or unknown).
+    #[arg(long)]
+    pub label: Option<String>,
+    /// Render two records (A B) side by side instead of measuring.
+    #[arg(long, num_args = 2, value_names = ["A", "B"])]
+    pub compare: Option<Vec<std::path::PathBuf>>,
 }
 
 /// `met ml-utils value-stats` options.
