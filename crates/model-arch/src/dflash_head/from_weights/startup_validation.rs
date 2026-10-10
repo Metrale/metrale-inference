@@ -7,7 +7,6 @@
 /// model or GPU backend.
 pub(super) fn validate_tp_startup(
     tensor_parallel: bool,
-    fp8_requested: bool,
     topk16_split: bool,
     dflash2_selector_active: bool,
     topk16_part_present: bool,
@@ -18,9 +17,8 @@ pub(super) fn validate_tp_startup(
         return Ok(());
     }
 
-    // 2026-10-10: FP8 is supported: the column-sliced o_proj / down keep the whole rows'
-    // scales (`fp8_weights::quantize_cols`), the row slices' scales are their own rows'.
-    let _ = fp8_requested;
+    // 2026-10-10: Every `--draft-weight-quantization` tier is supported: each rank's copies are
+    // the one-rank copies' parts (`draft_weight.rs`).
     anyhow::ensure!(
         topk16_split,
         "DFlash TP requires the split top-16 path; METRALE_DFLASH2_TOPK_SPLIT=0 is unsupported"
@@ -52,26 +50,25 @@ mod tests {
 
     #[test]
     fn non_tp_is_unaffected_by_tp_only_settings() {
-        assert!(validate_tp_startup(false, true, false, true, false, false, 51_648).is_ok());
+        assert!(validate_tp_startup(false, false, true, false, false, 51_648).is_ok());
     }
 
     #[test]
-    fn tp_accepts_the_fp8_drafter() {
-        assert!(validate_tp_startup(true, true, true, true, true, true, 51_648).is_ok());
+    fn tp_accepts_an_active_selector_with_both_kernels() {
+        assert!(validate_tp_startup(true, true, true, true, true, 51_648).is_ok());
     }
 
     #[test]
     fn tp_refuses_disabled_split_topk() {
-        let err = validate_tp_startup(true, false, false, false, true, true, 51_648).unwrap_err();
+        let err = validate_tp_startup(true, false, false, true, true, 51_648).unwrap_err();
         assert!(err.to_string().contains("METRALE_DFLASH2_TOPK_SPLIT=0"));
     }
 
     #[test]
     fn active_tp_selector_requires_both_distributed_topk_kernels() {
         for (part_present, merge_present) in [(false, false), (false, true), (true, false)] {
-            let err =
-                validate_tp_startup(true, false, true, true, part_present, merge_present, 51_648)
-                    .unwrap_err();
+            let err = validate_tp_startup(true, true, true, part_present, merge_present, 51_648)
+                .unwrap_err();
             assert!(
                 err.to_string()
                     .contains("requires both dflash2_topk16_part")
@@ -81,12 +78,12 @@ mod tests {
 
     #[test]
     fn active_tp_selector_succeeds_with_both_kernels() {
-        assert!(validate_tp_startup(true, false, true, true, true, true, 51_648).is_ok());
+        assert!(validate_tp_startup(true, true, true, true, true, 51_648).is_ok());
     }
 
     #[test]
     fn inactive_tp_selector_does_not_require_distributed_topk_kernels() {
-        assert!(validate_tp_startup(true, false, true, false, false, false, 51_648).is_ok());
+        assert!(validate_tp_startup(true, true, false, false, false, 51_648).is_ok());
     }
 
     #[test]

@@ -86,6 +86,7 @@ pub(super) fn dflash_build_args<'a>(
             },
             // 2026-10-10: `--draft-tp-size`, resolved by `apply_dflash_gamma`.
             tp_size: args.dflash_args.draft_tp_size_resolved.unwrap_or(1),
+            weight_quant: args.dflash_args.draft_weight_quantization,
         })
 }
 

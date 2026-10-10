@@ -174,3 +174,45 @@ fn draft_tp_size_resolves_and_refuses() {
             .is_err()
     );
 }
+
+/// 2026-10-10: `--draft-weight-quantization`: unset is `fp8` (the drafter build's behaviour
+/// before the flag); every tier parses by name; a misspelt or empty value is refused by the
+/// parser; an explicit value needs `--dflash`.
+#[test]
+fn draft_weight_quantization_parses_every_tier_and_refuses_junk() {
+    use metrale_model_arch::dflash_head::DraftWeightQuantization as Q;
+    let parse = |extra: &[&str]| {
+        let mut argv = vec!["serve", "some/model", "--dflash"];
+        argv.extend_from_slice(extra);
+        cli::ServeArgs::try_parse_from(argv)
+    };
+    assert_eq!(
+        parse(&[]).unwrap().dflash_args.draft_weight_quantization,
+        Q::Fp8
+    );
+    for t in Q::ALL {
+        assert_eq!(
+            parse(&["--draft-weight-quantization", t.name()])
+                .unwrap()
+                .dflash_args
+                .draft_weight_quantization,
+            t
+        );
+    }
+    for bad in ["", "FP8", "fp4", "bf16", "nvfp4-gate-up"] {
+        assert!(
+            parse(&["--draft-weight-quantization", bad]).is_err(),
+            "{bad:?} accepted"
+        );
+    }
+    assert!(
+        cli::ServeArgs::try_parse_from([
+            "serve",
+            "some/model",
+            "--draft-weight-quantization",
+            "nvfp4"
+        ])
+        .is_err(),
+        "--draft-weight-quantization without --dflash"
+    );
+}

@@ -35,7 +35,6 @@ use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::{BlockDiffusionDraftHead, DflashLayer};
 use metrale_model_layers::layer::ForwardContext;
-use metrale_model_layers::weight_map::Fp8DenseWeight;
 
 /// 2026-10-10: `TOPK16_PART_THREADS` of `dflash2.cu`: the block of both top-16 stages.
 const TOPK16_THREADS: u32 = 256;
@@ -106,22 +105,22 @@ impl BlockDiffusionDraftHead {
     }
 
     /// 2026-09-25: The site's base kernel and kernel projection. 2026-10-10: and the
-    /// projection's FP8 copy under `METRALE_DFLASH_AUX_FP8=1`.
+    /// projection's quantized copy on the tiers that copy the auxiliary GEMMs (`aux_quant.rs`).
     fn conv_weights(
         &self,
         layer: &DflashLayer,
         site: ConvSite,
-    ) -> Option<(DevicePtr, DevicePtr, Option<Fp8DenseWeight>)> {
+    ) -> Option<(DevicePtr, DevicePtr, Option<super::DraftWeight>)> {
         match site {
             ConvSite::Attention => Some((
                 layer.attention_conv_base.as_ref()?.weight,
                 layer.attention_conv_proj.as_ref()?.weight,
-                layer.attention_conv_proj_fp8,
+                layer.attention_conv_proj_q,
             )),
             ConvSite::Mlp => Some((
                 layer.mlp_conv_base.as_ref()?.weight,
                 layer.mlp_conv_proj.as_ref()?.weight,
-                layer.mlp_conv_proj_fp8,
+                layer.mlp_conv_proj_q,
             )),
         }
     }
@@ -183,7 +182,7 @@ impl BlockDiffusionDraftHead {
         if !self.dflash2_active() {
             return Ok(hidden_in);
         }
-        let Some((base, proj, proj_fp8)) = self.conv_weights(layer, site) else {
+        let Some((base, proj, proj_q)) = self.conv_weights(layer, site) else {
             return Ok(hidden_in);
         };
         let g = self.block_g() as u32 * n_seq.max(1);
@@ -195,7 +194,7 @@ impl BlockDiffusionDraftHead {
             ctx.gpu,
             hidden_in,
             &metrale_model_layers::weight_map::DenseWeight { weight: proj },
-            proj_fp8.as_ref(),
+            proj_q.as_ref(),
             self.scratch.conv_dyn,
             g,
             dyn_cols,
@@ -388,7 +387,7 @@ impl BlockDiffusionDraftHead {
             gpu,
             norm_noise,
             hproj,
-            self.aux_fp8
+            self.aux_q
                 .as_ref()
                 .and_then(|a| a.selector_hidden_proj.as_ref()),
             self.scratch.sel_hproj,

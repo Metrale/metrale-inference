@@ -123,6 +123,7 @@ pub(super) fn install_dflash_drafter(
                 max_seq_len,
                 max_batch_size,
                 tp,
+                args.weight_quant,
             )?;
             // 2026-10-10: The tensor-parallel propose runs the paged DFlash2 path only.
             anyhow::ensure!(
@@ -144,7 +145,7 @@ pub(super) fn install_dflash_drafter(
 
 /// 2026-10-10: The drafter inputs of this rank: with `--draft-tp-size` above 1 (`tp_size`, the
 /// world size), the weights cut to this rank's part (`dflash_head::tp`), the LM head pointer at its
-/// first vocab row and no NVFP4 or native FP8 head share (the FP8 head is quantized from those
+/// first vocab row and no NVFP4 or native FP8 head share (the head's copy is quantized from those
 /// rows); otherwise everything unchanged. A target whose LM head is NVFP4 is refused under the
 /// lever: the row offset assumes BF16 rows.
 #[allow(clippy::type_complexity)]
@@ -194,7 +195,6 @@ fn dflash_tp_split(
         world,
         rank,
     )?;
-    let hidden = c.hidden_size;
     tracing::info!(
         target: "metrale_model_engine::factory::build",
         "DFlash TP: rank {rank}/{world}: q heads {:?}, KV heads {:?}, MLP {:?}, vocab {:?}",
@@ -203,11 +203,15 @@ fn dflash_tp_split(
         plan.inter,
         plan.vocab
     );
-    let weights =
-        metrale_model_arch::dflash_head::tp::shard_weights(weights, &plan, model.gpu_backend())?;
+    let (weights, lm_head) = metrale_model_arch::dflash_head::tp::shard_weights(
+        weights,
+        &plan,
+        lm_head,
+        model.gpu_backend(),
+    )?;
     Ok((
         weights,
-        lm_head.offset(plan.vocab.0 * hidden * 2),
+        lm_head,
         None,
         None,
         Some(metrale_model_arch::dflash_head::tp::DflashTp {

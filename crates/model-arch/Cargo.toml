@@ -103,6 +103,10 @@ name = "dflash_aux_fp8_bench"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "dflash_nvfp4_rows_check"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "glm5next_w4a16_rows_bench"
 required-features = ["cuda", "gpu-examples"]
 

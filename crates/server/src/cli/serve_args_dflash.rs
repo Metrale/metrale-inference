@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-10: `--dflash-adaptive-k` and `--draft-tp-size`, flattened into
-//! `ServeSchedulingArgs` after `--dflash-draft-ladder`. Both are parsed here and resolved
-//! against the drafter and the topology once, by `serve_phases::apply_dflash_gamma`, which is
-//! their only reader.
+//! 2026-10-10: `--dflash-adaptive-k`, `--draft-tp-size` and `--draft-weight-quantization`,
+//! flattened into `ServeSchedulingArgs` after `--dflash-draft-ladder`. The first two are parsed
+//! here and resolved against the drafter and the topology once, by
+//! `serve_phases::apply_dflash_gamma`, which is their only reader; the third is a tier the
+//! drafter build (`serve_load::adapters`) and the drafter's memory estimate
+//! (`serve_phases::weights`) both take as parsed.
 //!
 //! Owner: server CLI.
 //! Invariants: the `///` text on the struct's fields is the `--help` output and carries no
 //! date.
 
 use clap::Args;
+use metrale_model_arch::dflash_head::DraftWeightQuantization;
 
 /// 2026-10-10: `--draft-tp-size`'s value: the serve's world size, or a rank count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +42,11 @@ pub fn parse_draft_tp_size(s: &str) -> Result<DraftTpSize, String> {
             "expected `auto` or a rank count of at least 1, got {s:?}"
         )),
     }
+}
+
+/// 2026-10-10: A `--draft-weight-quantization` tier by name.
+pub fn parse_draft_weight_quantization(s: &str) -> Result<DraftWeightQuantization, String> {
+    DraftWeightQuantization::parse(s)
 }
 
 #[derive(Args, Debug, Clone, PartialEq)]
@@ -73,4 +81,22 @@ pub struct ServeDflashArgs {
     /// `serve_phases::apply_dflash_gamma` (1 when unset).
     #[arg(skip)]
     pub draft_tp_size_resolved: Option<usize>,
+
+    /// Format of the DFlash drafter's GEMM weights; activations stay BF16 at every tier,
+    /// and only the drafts move (the target verifies every token). `declared`: the
+    /// checkpoint's own weights (BF16). `fp8`: FP8 E4M3 copies, one scale per row, of each
+    /// layer's q/k/v/o/gate/up/down and of the LM head. `fp8-aux`: `fp8` plus FP8 copies of
+    /// the context `fc` and K/V projections and the DFlash2 conv and selector projections
+    /// (GLM-5.3 drafter, rank 0 of 3 at C = 1, GB10: 4.1 ms per propose against 6.5 ms).
+    /// `nvfp4`: NVFP4 copies (4-bit E2M1, one FP8 scale per 16 weights) of everything
+    /// `fp8-aux` copies, run as W4A16; each tensor's scale comes from the whole unsharded
+    /// tensor, so `--draft-tp-size` ranks hold exactly the one-rank drafter's bytes.
+    #[arg(
+        long,
+        requires = "dflash",
+        value_name = "declared|fp8|fp8-aux|nvfp4",
+        default_value = "fp8",
+        value_parser = parse_draft_weight_quantization
+    )]
+    pub draft_weight_quantization: DraftWeightQuantization,
 }

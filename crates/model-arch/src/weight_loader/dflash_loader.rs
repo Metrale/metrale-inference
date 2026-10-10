@@ -87,6 +87,9 @@ pub struct DflashWeights {
     pub selector_succ: Option<DenseWeight>,
     /// 2026-09-25: `candidate_selector.hidden_projection.weight`.
     pub selector_hidden_proj: Option<DenseWeight>,
+    /// 2026-10-10: Under the tensor-parallel drafter, the whole LM head this rank's rows were
+    /// cut from (`dflash_head::tp::shard_weights`); `None` otherwise.
+    pub tp_lm_head: Option<crate::dflash_head::tp::FullWeight>,
 }
 
 /// 2026-09-25: One drafter layer's weights. The projections go through
@@ -114,11 +117,10 @@ pub struct DflashLayerWeights {
     pub mlp_conv_base: Option<DenseWeight>,
     /// 2026-09-25: `mlp_conv.kernel_projection.weight`.
     pub mlp_conv_proj: Option<DenseWeight>,
-    /// 2026-10-10: Under the tensor-parallel drafter, the whole o_proj / down_proj and this
-    /// rank's columns of it (`dflash_head::tp::shard_weights`), so the FP8 copy keeps the
-    /// whole row's scale; `None` otherwise.
-    pub o_proj_cols: Option<crate::dflash_head::tp::ColSlice>,
-    pub down_proj_cols: Option<crate::dflash_head::tp::ColSlice>,
+    /// 2026-10-10: Under the tensor-parallel drafter, the whole weights this layer's slices
+    /// were cut from (`dflash_head::tp::shard_weights`), so the FP8 and NVFP4 copies keep the
+    /// whole tensor's scales; `None` otherwise.
+    pub tp_src: Option<crate::dflash_head::tp::LayerSources>,
 }
 
 /// 2026-09-25: True when the store has `fc.weight` or `model.fc.weight`. Loads
@@ -243,8 +245,7 @@ pub fn load_dflash_weights(
             attention_conv_proj,
             mlp_conv_base,
             mlp_conv_proj,
-            o_proj_cols: None,
-            down_proj_cols: None,
+            tp_src: None,
         };
         layers.push(layer);
     }
@@ -397,6 +398,7 @@ pub fn load_dflash_weights(
         selector_pred,
         selector_succ,
         selector_hidden_proj,
+        tp_lm_head: None,
     }))
 }
 

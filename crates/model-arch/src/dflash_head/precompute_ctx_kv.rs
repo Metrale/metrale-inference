@@ -125,12 +125,12 @@ impl BlockDiffusionDraftHead {
         };
 
         // 2026-09-25: Step 1: `fc` maps `[n, L_t * h_t]` to `[n, h]`.
-        // 2026-10-10: On the FP8 copy under `METRALE_DFLASH_AUX_FP8=1` (`aux_fp8.rs`).
+        // 2026-10-10: On its quantized copy when the tier copies it (`aux_quant.rs`).
         self.aux_gemm(
             gpu,
             src,
             &self.fc,
-            self.aux_fp8.as_ref().map(|a| &a.fc),
+            self.aux_q.as_ref().map(|a| &a.fc),
             self.scratch.fc_proj,
             n,
             h,
@@ -208,7 +208,7 @@ impl BlockDiffusionDraftHead {
             gpu,
             self.scratch.fc_proj,
             &fused_w,
-            self.aux_fp8.as_ref().map(|a| &a.fused_kv),
+            self.aux_q.as_ref().map(|a| &a.fused_kv),
             self.scratch.fused_kv_out,
             n,
             fused_n_cols,
