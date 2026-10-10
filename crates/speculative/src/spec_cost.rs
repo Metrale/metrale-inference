@@ -362,16 +362,14 @@ impl AcceptanceCalibration {
     /// 2026-10-04: Expected accepted drafts of a chain whose drafts have confidences `lps`
     /// (missing entries take the position prior), counting only the first `k`.
     pub fn expected_accepted(&self, lps: &[f32], k: usize) -> f64 {
-        let mut run = 1.0;
-        let mut total = 0.0;
-        for j in 1..=k {
-            let p = lps
-                .get(j - 1)
-                .map_or_else(|| self.prior(j), |&lp| self.p_given_lp(lp));
-            run *= p;
-            total += run;
-        }
-        total
+        crate::spec_ctl::chain::chain_sum(
+            |j| {
+                lps.get(j - 1)
+                    .map_or_else(|| self.prior(j), |&lp| self.p_given_lp(lp))
+            },
+            k,
+            0.0,
+        )
     }
 }
 
@@ -387,8 +385,6 @@ pub struct SpecCostState {
 #[path = "spec_cost_fit.rs"]
 mod fit;
 pub use fit::MIN_OUTCOMES;
-#[path = "spec_cost_plan.rs"]
-pub mod plan;
 
 #[cfg(test)]
 #[path = "spec_cost_tests.rs"]

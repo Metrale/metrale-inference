@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-04: Tests for the measured planner, on synthetic tables whose answer is known.
+//! 2026-10-10: Moved unchanged from `spec_cost_plan_tests.rs` onto the controller.
 //!
 //! Owner: speculative.
 //! Invariants: none beyond the types.
 
 use std::collections::BTreeMap;
 
-use super::super::{SCHEMA, TableKey};
 use super::*;
+use crate::spec_cost::{Cell, SCHEMA, TableKey};
 
 /// 2026-10-04: A table over widths 1, 2, 4, 8 and depths 0..=3: a step at width `n`, depth `k`
 /// takes `10 + n + row_ms·n·k` ms and `1 + 0.1n + row_j·n·k` J to verify, and `k` ms and

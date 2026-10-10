@@ -69,7 +69,7 @@ pub fn step_mtp(
         // wired to suspend MTP mid-run from an energy preference alone — floored to 1, same
         // policy as the static ladder; pass `--num-drafts 0` to turn drafting off instead).
         // Telling them apart needs the same cap check `propose_depth` made internally.
-        let depth = metrale_speculative::spec_cost::plan::propose_depth(
+        let depth = metrale_speculative::spec_ctl::measured::propose_depth(
             &sc.table,
             &sc.calibration,
             active.len(),
