@@ -57,11 +57,12 @@ pub fn mtp_state_slots(max_batch_size: usize) -> usize {
 }
 
 /// 2026-09-25: True when `METRALE_MTP_POOL_FULL_WIDTH` is present (any value, `0`
-/// included) or `METRALE_EP_PROTOCOL` is `v2`. Then [`mtp_state_slots`] is
+/// included) or the EP wire routes commands by slot (`v2`, and since 2026-10-10 `v3`;
+/// `crate::ep_wire`). Then [`mtp_state_slots`] is
 /// `max_batch_size` and [`verify_slot_drafts`] is `num_drafts` for every slot.
 pub fn mtp_pool_full_width() -> bool {
     std::env::var_os("METRALE_MTP_POOL_FULL_WIDTH").is_some()
-        || matches!(std::env::var("METRALE_EP_PROTOCOL").as_deref(), Ok("v2"))
+        || crate::ep_wire::EpWire::get().has_seq_preamble()
 }
 
 /// 2026-09-29: The fewest slots the verify pools cover (when `max_batch_size` allows): the

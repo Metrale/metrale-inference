@@ -157,7 +157,7 @@ impl TransformerModel {
     /// - 0xFFFFFFFA (`EP_CMD_PREFILL_SPANS`, seq_id 0): one chunk of each of `n` sequences in
     ///   one multi-sequence prefill → `n`, the header, the prompts (`prefill_b/spans_wire.rs`)
     /// - 0xFFFFFFE1 (`EP_CMD_DECODE_FED`): fed single-row decode → the 4-byte token from rank
-    ///   0's feed ids (`decode_fed_ep.rs`)
+    ///   0's feed ids, or on the v3 wire the block's `arg` (`decode_fed_ep.rs`)
     /// - 0xFFFFFFF8 (`EP_CMD_DECODE_CKPT`): decode-time Marconi checkpoint →
     ///   `EP_CKPT_WORDS` words in one bulk broadcast
     /// - 0xFFFFFFFF: shutdown (seq_id is ignored)

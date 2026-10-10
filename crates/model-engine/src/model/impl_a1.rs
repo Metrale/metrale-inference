@@ -246,8 +246,8 @@ impl TransformerModel {
                 gpu.as_ref(),
             )?;
 
-        // 2026-09-25: One u32 for the EP command broadcast.
-        let ep_cmd_buf = gpu.alloc(4)?;
+        // 2026-09-25: The EP command broadcast; 2026-10-10: a whole v3 block (`ep_wire.rs`).
+        let ep_cmd_buf = gpu.alloc(metrale_model_layers::ep_wire::CMD_BLOCK_BYTES)?;
 
         // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched
         // decode MoE per-row adapter map, 4 bytes per batch row, uploaded each
@@ -463,7 +463,7 @@ impl TransformerModel {
             snapshot_event,
             comm,
             ep_cmd_buf,
-            ep_protocol_v2: matches!(std::env::var("METRALE_EP_PROTOCOL").as_deref(), Ok("v2")),
+            ep_protocol_v2: metrale_model_layers::ep_wire::EpWire::get().has_seq_preamble(),
             self_speculative,
             last_mtp_hidden_idx: std::sync::atomic::AtomicUsize::new(0),
             vision_encoder,

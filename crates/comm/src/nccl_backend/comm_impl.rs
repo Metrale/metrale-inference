@@ -199,11 +199,15 @@ impl CommBackend for NcclBackend {
     }
 
     fn recv_command_u32(&self, ptr: u64, root: usize) -> Result<()> {
+        self.recv_command_block(ptr, 4, root)
+    }
+
+    fn recv_command_block(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
         ensure!(
             self.rank != root,
             "idle command receive requires non-root rank"
         );
-        self.broadcast_with_wait(ptr, 4, root, BroadcastWait::Idle)
+        self.broadcast_with_wait(ptr, bytes, root, BroadcastWait::Idle)
     }
 
     fn barrier(&self) -> Result<()> {

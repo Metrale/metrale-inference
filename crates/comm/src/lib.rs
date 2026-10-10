@@ -68,6 +68,17 @@ pub trait CommBackend: Send + Sync {
         self.broadcast(ptr, 4, root)
     }
 
+    /// 2026-10-10: `recv_command_u32` for a whole command block of `bytes` (the v3 wire's
+    /// `[seq_id, cmd, arg]`): the same wait without a deadline. The default refuses `root` and
+    /// otherwise calls `broadcast(ptr, bytes, root)`.
+    fn recv_command_block(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
+        anyhow::ensure!(
+            self.rank() != root,
+            "idle command receive requires non-root rank"
+        );
+        self.broadcast(ptr, bytes, root)
+    }
+
     /// 2026-10-10: `broadcast` for a rendezvous whose ranks may arrive far apart: the first
     /// collective after each rank has built its model, whose ranks load different weight bytes
     /// at different speeds (a three-rank GLM-5.3 serve measured 24 s between its first and last
