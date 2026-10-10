@@ -75,12 +75,12 @@ pub(super) fn load_kernels(gpu: &dyn GpuBackend) -> Result<DflashKernels> {
         // 2026-10-10: Used only at load, for the NVFP4 tier's copies.
         nvfp4_global_absmax: metrale_model_layers::layers::try_kernel(
             gpu,
-            "quantize_bf16_to_nvfp4",
+            "quantize_nvfp4",
             "nvfp4_global_absmax",
         ),
         quantize_bf16_to_nvfp4: metrale_model_layers::layers::try_kernel(
             gpu,
-            "quantize_bf16_to_nvfp4",
+            "quantize_nvfp4",
             "quantize_bf16_to_nvfp4",
         ),
         // 2026-09-25: The row-scaled FP8 GEMM from the `w4a16` module (2026-10-09: or

@@ -120,8 +120,8 @@ fn main() -> Result<()> {
             gpu: &gpu,
             nvfp4,
             fp8_k: gpu.kernel("gemv_fp8w", "quantize_bf16_to_fp8")?,
-            absmax_k: gpu.kernel("quantize_bf16_to_nvfp4", "nvfp4_global_absmax")?,
-            nvfp4_k: gpu.kernel("quantize_bf16_to_nvfp4", "quantize_bf16_to_nvfp4")?,
+            absmax_k: gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?,
+            nvfp4_k: gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?,
             stream: 0,
         })
     };

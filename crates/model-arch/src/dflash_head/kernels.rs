@@ -49,7 +49,7 @@ pub struct DflashKernels {
     /// dense GEMM weights (q/k/v/o/gate/up/down) and, when the checkpoint has
     /// no FP8 lm_head, the lm_head.
     pub quantize_bf16_to_fp8: KernelHandle,
-    /// 2026-10-10: The NVFP4 weight quantizers (`quantize_bf16_to_nvfp4.cu`): the absolute
+    /// 2026-10-10: The NVFP4 weight quantizers (module `quantize_nvfp4`, `quantize_bf16_to_nvfp4.cu`): the absolute
     /// maximum and the packing, run only in `from_weights` on the NVFP4 tier of
     /// `--draft-weight-quantization`. `KernelHandle(0)` when the target's build lacks the module;
     /// the NVFP4 tier then refuses to build.

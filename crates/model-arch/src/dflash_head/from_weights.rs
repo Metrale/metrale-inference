@@ -404,7 +404,7 @@ impl BlockDiffusionDraftHead {
                 || (head.kernels.nvfp4_global_absmax.0 != 0
                     && head.kernels.quantize_bf16_to_nvfp4.0 != 0),
             "--draft-weight-quantization nvfp4: this target's kernels have no \
-             quantize_bf16_to_nvfp4 module"
+             quantize_nvfp4 module"
         );
         let quantize = weight_quant.quantizes_layers() && (nvfp4 || fp8_kernels_present);
         if weight_quant.quantizes_layers() && !quantize {

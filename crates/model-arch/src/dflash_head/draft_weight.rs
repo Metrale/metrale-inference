@@ -43,7 +43,7 @@ pub fn row_chunks(g: u32, max: u32) -> impl Iterator<Item = (u32, u32)> {
 
 /// 2026-10-10: Builds [`DraftWeight`] copies in one format with the drafter's quantizer
 /// kernels (`quantize_bf16_to_fp8` of `gemv_fp8w`; `nvfp4_global_absmax` and
-/// `quantize_bf16_to_nvfp4` of `quantize_bf16_to_nvfp4`).
+/// `quantize_bf16_to_nvfp4` of `quantize_nvfp4`).
 pub struct DraftQuantizer<'a> {
     pub gpu: &'a dyn GpuBackend,
     /// 2026-10-10: NVFP4 copies when true, else FP8.
