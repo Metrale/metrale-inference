@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-10: No gated delta rule (GDN) recurrence source, in any hardware tree or model copy,
-//! rescales the recurrent state by its norm. The reference recurrence bounds nothing; a kernel
+//! and no per-chunk SSM state pass rescales the recurrent state by its norm. The reference recurrence bounds nothing; a kernel
 //! that clamps the state's Frobenius norm gives a sequence whose norm passes the bound different
 //! bits from a kernel that does not, so the batched and per-sequence decodes stop agreeing.
 //!
@@ -16,9 +16,10 @@
 
 use std::path::{Path, PathBuf};
 
-/// 2026-10-10: File-name fragments of the recurrence sources: every `gated_delta_rule*` and
-/// `gdn_*` source, its shadows and its Metal port.
-const RECURRENCE_FILES: &[&str] = &["gated_delta", "gdn"];
+/// 2026-10-10: File-name fragments of the sources that write a GDN state: every
+/// `gated_delta_rule*` and `gdn_*` source, its shadows and its Metal port, and `ssm_state_norm`
+/// (the pass the engine runs over every SSM state after each prefill chunk).
+const RECURRENCE_FILES: &[&str] = &["gated_delta", "gdn", "ssm_state_norm"];
 
 /// 2026-10-10: Extensions of kernel sources across the hardware trees.
 const SOURCE_EXT: &[&str] = &["cu", "cuh", "metal", "hip", "h"];

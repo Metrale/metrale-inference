@@ -22,7 +22,7 @@ impl TransformerModel {
         let num_ssm = self.ssm_pool.num_ssm_layers;
         let gpu = self.gpu.as_ref();
         let cache = gpu.op_cache();
-        let kernel = cache.kernel(gpu, "ssm_state_norm", "ssm_state_nonfinite_count")?;
+        let kernel = self.ssm_nonfinite_kernel;
         let count = cache.scratch(gpu, "mamba2_nonfinite_count", 4)?;
         let ptrs: Vec<u8> = (0..num_ssm)
             .flat_map(|i| self.ssm_pool.h_state(i, seq.slot_idx).0.to_le_bytes())

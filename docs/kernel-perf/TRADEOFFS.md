@@ -1123,7 +1123,7 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/common/ssm_state_norm.cu](../../kernels/gb10/common/ssm_state_norm.cu)
 
-- *whole file*: Clamps every SSM layer's heads in one launch; the block reduction assumes v_dim == 128 (4 warp slots). The FP16 variant widens, computes the norm and scale in FP32, and rounds each scaled value back to FP16. — source: kernels/gb10/common/ssm_state_norm.cu:9
+- *whole file*: Only the Mamba-2 non-finite count remains (one launch over every SSM layer, an atomic add per column with a non-finite value); the per-head norm clamp it replaced, also run on GDN states after every prefill chunk, was removed so no state is rescaled. FP32 states only. — source: kernels/gb10/common/ssm_state_norm.cu:3
 
 <a id="to-kernels-gb10-common-token-overlay-cu"></a>
 

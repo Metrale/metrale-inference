@@ -294,9 +294,9 @@ pub(super) fn run_standard_chunk_loop(
                 p.chunk_offset,
                 p.prompt_tokens.len(),
             );
-            // 2026-09-25: Normalize the SSM state after every plain chunk
-            // (`Model::normalize_ssm_states` bounds h_state norms over a long
-            // chunked prefill); a failure is logged.
+            // 2026-09-25: `Model::normalize_ssm_states` after every plain chunk
+            // (2026-10-10: a Mamba-2 non-finite check; no state is rescaled); a
+            // failure is logged.
             if let Err(e) = model.normalize_ssm_states(&p.seq, prefill_stream) {
                 tracing::warn!("SSM state normalization failed: {e:#}");
             }

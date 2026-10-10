@@ -1917,9 +1917,9 @@ source = "crates/model-layers/src/layers/qwen3_ssm/trait_decode_batched/gates_no
 
 [[t]]
 match = "kernels/gb10/common/ssm_state_norm.cu"
-text = "Clamps every SSM layer's heads in one launch; the block reduction assumes v_dim == 128 (4 warp slots). The FP16 variant widens, computes the norm and scale in FP32, and rounds each scaled value back to FP16."
+text = "Only the Mamba-2 non-finite count remains (one launch over every SSM layer, an atomic add per column with a non-finite value); the per-head norm clamp it replaced, also run on GDN states after every prefill chunk, was removed so no state is rescaled. FP32 states only."
 prs = []
-source = "kernels/gb10/common/ssm_state_norm.cu:9"
+source = "kernels/gb10/common/ssm_state_norm.cu:3"
 
 [[t]]
 match = "kernels/gb10/common/token_overlay.cu"
