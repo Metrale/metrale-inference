@@ -773,3 +773,123 @@ effort_hours = 0.0
 transferability = "MoE serving on GB10 multi-rank; GLM kernels"
 links = { pr = "", commit = "", evidence = "chat-prose probes (OSL 512, n = 1), nsys rank 0, accuracy microtest (bench/glm53/accuracy_micro.py)" }
 notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-host-poll"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_COMM_POLL default 200:50 (spin then 50 us sleep) + row-0 logits memset"
+symptom = "~2.4 ms host gap per C1 step: two 1 ms sleep-polls on EP broadcasts + 79 MB memset"
+diagnosis_tool = "nsys"
+root_cause_class = "host-overhead"
+lever_type = "code"
+lkb_effect = "no kernel"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 5.2, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 5.2, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "EXACT PASS"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-expert-tp-balanced"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "--moe-expert-layout tp, 704/704/640 with k64 kernels (+ startup lever-agreement deadline fix)"
+symptom = "post-MoE all-reduce waits on the EP rank with most experts (~5 ms/step C1)"
+diagnosis_tool = "nsys"
+root_cause_class = "load-imbalance"
+lever_type = "code"
+lkb_effect = "k64 twins in the w4a4 mx MoE family"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 8.1, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 4.3, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 3.1, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "numerics PASS tf KL 0.0104 vs pin; cumulative vs declared 0.0315"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-moe-1row-sweep"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "1-row own-slots persistent MoE sweep (default)"
+symptom = "1-row slot GEMV at ~180-210 GB/s"
+diagnosis_tool = "bench"
+root_cause_class = "bandwidth-underutilization"
+lever_type = "kernel"
+lkb_effect = "own-slots flag on the union sweep body"
+parity_tier_kept = "bit-identical"
+per_rung = [{ rung = "C1", tok_s_pct = 2.0, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 2.8, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 1.8, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "dec1 exact; dec4 0.125-margin batching tie"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dsa-hb-recheck"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_DECODE_HB=8 under the recalibrated microtest"
+symptom = "DSA decode latency-bound at 22 CTAs"
+diagnosis_tool = "nsys"
+root_cause_class = "latency-bound"
+lever_type = "kernel"
+lkb_effect = "glm_mla_decode_hb family"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 2.2, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 2.3, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 6.0, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "old 0.002 gate was a false positive; per-lever tf KL 0.0085 (= benign K-split), cumulative 0.0335"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
+
+[[lever]]
+id = "gb10x3-glm53-dsa-w4a16-tier"
+date = "2026-10-10"
+hardware_class = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4 (MoE) at TP=3 over three boxes"
+recipe_or_tier = "METRALE_GLM_DSA_W4A16=1 (DSA q_a/q_absorb/o_absorb NVFP4 W4A16, disclosed tier change)"
+symptom = "DSA absorbed FP8 GEMVs ~4 ms/step C1"
+diagnosis_tool = "nsys"
+root_cause_class = "bandwidth-bound"
+lever_type = "config"
+lkb_effect = "existing NVFP4 kernels"
+parity_tier_kept = "accuracy-gated"
+per_rung = [{ rung = "C1", tok_s_pct = 7.2, j_tok_pct = 0.0, n = 3 }, { rung = "C8", tok_s_pct = 2.9, j_tok_pct = 0.0, n = 3 }, { rung = "C16", tok_s_pct = 2.1, j_tok_pct = 0.0, n = 3 }]
+verdict = "kept"
+verdict_reason = "tier change judged on the fixed anchor: cumulative tf KL 0.0332 <= 0.040; per-lever 0.024; the reference engine keeps these FP8 (disclosed)"
+failure_mode = ""
+caught_by = ""
+time_lost_hours = 0
+would_catch_earlier = ""
+effort_hours = 0.0
+transferability = "multi-rank MoE serving on GB10"
+links = { pr = "", commit = "", evidence = "exclusive same-box A/B (C1 x3, C8 x2, C16 x1, chat prose OSL 512) + accuracy microtest (per-lever pin and fixed declared anchor)" }
+notes = ""
