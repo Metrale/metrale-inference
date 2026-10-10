@@ -63,6 +63,10 @@ name = "dsa_indexer_microtest"
 required-features = ["cuda", "gpu-examples"]
 
 [[example]]
+name = "dsa_topk_radix_microtest"
+required-features = ["cuda", "gpu-examples"]
+
+[[example]]
 name = "fp8_gemm_blockscaled_pipe_microtest"
 required-features = ["cuda", "gpu-examples"]
 
