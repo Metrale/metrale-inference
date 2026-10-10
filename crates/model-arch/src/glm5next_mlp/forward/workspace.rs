@@ -107,12 +107,26 @@ impl Glm5NextMlpWorkspace {
     }
 
     /// 2026-10-10: The workspace of `max_rows` rows; `grouped` sizes the W4A4 scratch for every
-    /// routed slot (the grouped W4A4 GEMM).
+    /// routed slot (the grouped W4A4 GEMM). 2026-10-11: The shared-expert fork follows
+    /// `METRALE_GLM_SHARED_FORK` ([`Self::new_forked`]).
     pub fn new_with(
         gpu: &dyn GpuBackend,
         cfg: &Glm5NextMlpConfig,
         max_rows: usize,
         grouped: bool,
+    ) -> Result<Self> {
+        let fork_rows = super::shared_fork::shared_fork_rows()?;
+        Self::new_forked(gpu, cfg, max_rows, grouped, fork_rows)
+    }
+
+    /// 2026-10-11: [`Self::new_with`] with the shared-expert fork for launches of up to
+    /// `fork_rows` rows (0: none), whatever the lever says (parity examples build both).
+    pub fn new_forked(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextMlpConfig,
+        max_rows: usize,
+        grouped: bool,
+        fork_rows: usize,
     ) -> Result<Self> {
         let rows = max_rows.max(1);
         let sizes = mlp_ws_bytes(cfg, rows, grouped);
@@ -153,6 +167,7 @@ impl Glm5NextMlpWorkspace {
             max_inter,
             max_rows: rows,
             max_total_expanded: rows * cfg.top_k,
+            shared_fork: super::shared_fork::SharedFork::new(gpu, cfg, rows, fork_rows)?,
         })
     }
 }

@@ -18,7 +18,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::super::weights::Glm5NextMoeWeights;
 use super::super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 use super::Glm5NextMlpWorkspace;
-use super::dense::forward_dense;
+use super::dense::{DenseScratch, forward_dense};
 
 /// 2026-10-09: Errors when `pieces` do not split `rows` rows into non-empty pieces.
 pub(crate) fn check_pieces(rows: usize, pieces: &[usize]) -> Result<()> {
@@ -71,6 +71,7 @@ pub(super) fn shared_expert(
     w: &Glm5NextMoeWeights,
     x: DevicePtr,
     ws: &Glm5NextMlpWorkspace,
+    scratch: DenseScratch,
     pieces: &[usize],
     stream: u64,
 ) -> Result<()> {
@@ -85,7 +86,7 @@ pub(super) fn shared_expert(
             x.offset(r0 * cfg.hidden * 2),
             ws.shared_out.offset(r0 * cfg.hidden * 2),
             n,
-            ws,
+            scratch,
             stream,
         )?;
         r0 += n;
