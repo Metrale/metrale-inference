@@ -323,6 +323,13 @@ fn bind_mhc_site(
         // 2026-09-25: The `hc_mix` to `hc_finish` scratch; one per site, so a
         // layer's two sites never share it.
         mix: gpu.alloc(mhc_mix_max_tokens() * mix_hc(hc_mult) * 4)?,
+        // 2026-10-09: `glm5next_hc_pre_norm` requires its counters zero before the first launch.
+        done: {
+            let bytes = mhc_mix_max_tokens() * 4;
+            let p = gpu.alloc(bytes)?;
+            gpu.memset(p, 0, bytes)?;
+            p
+        },
     })
 }
 

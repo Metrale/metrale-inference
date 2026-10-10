@@ -40,12 +40,22 @@ pub struct Glm5NextMhcKernels {
     /// 2026-09-25: `glm5next_hc_finish`: from the mixes, `post`, `comb` (Sinkhorn) and the
     /// collapsed row `y`.
     pub hc_finish: KernelHandle,
+    /// 2026-10-09: `glm5next_hc_pre_norm` (module [`GLM5NEXT_MHC_FUSED_MODULE`]): `hc_mix_bf16`,
+    /// `hc_finish` and the following `rms_norm_vanilla` in one launch, bit for bit; launched by
+    /// `glm5next_mhc_fused::glm_hc_pre_norm`. Optional (`try_kernel`, 0 when absent).
+    pub hc_pre_norm: KernelHandle,
+    /// 2026-10-09: `glm5next_hc_pre_norm_rows`: `hc_pre_norm` with `hc_mix_bf16_rows`'s grid.
+    /// Optional (`try_kernel`, 0 when absent).
+    pub hc_pre_norm_rows: KernelHandle,
     pub hc_post: KernelHandle,
     pub hc_head: KernelHandle,
 }
 
 /// 2026-09-25: The kernel module every GLM mHC kernel resolves from.
 pub const GLM5NEXT_MHC_MODULE: &str = "glm5next_mhc";
+
+/// 2026-10-09: The kernel module of the fused pre-mix + norm (`glm5next_mhc_fused.cu`).
+pub const GLM5NEXT_MHC_FUSED_MODULE: &str = "glm5next_mhc_fused";
 
 impl Glm5NextMhcKernels {
     /// 2026-09-25: Resolve the kernels. A missing one is an error, except `hc_mix_bf16`, which is
@@ -66,6 +76,16 @@ impl Glm5NextMhcKernels {
                 "glm5next_hc_mix_bf16_rows",
             ),
             hc_finish: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_finish")?,
+            hc_pre_norm: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_FUSED_MODULE,
+                "glm5next_hc_pre_norm",
+            ),
+            hc_pre_norm_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_FUSED_MODULE,
+                "glm5next_hc_pre_norm_rows",
+            ),
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
             hc_head: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_head")?,
         })
@@ -132,6 +152,10 @@ pub struct Glm5NextMhcSiteWeights {
     /// 2026-09-25: `[mhc_mix_max_tokens(), mix_hc]` FP32 scratch that `hc_mix` writes and
     /// `hc_finish` reads; the loader allocates one per site.
     pub mix: DevicePtr,
+    /// 2026-10-09: `[mhc_mix_max_tokens()]` u32, zeroed at allocation: the per-token arrival
+    /// counters of `glm5next_hc_pre_norm`, whose last block for a token zeroes its counter
+    /// again. One per site, like `mix`.
+    pub done: DevicePtr,
 }
 
 /// 2026-10-09: `#define GLM_HC_MIX_ROWS` in `glm5next_mhc.cu`: mixing rows per block of
@@ -348,6 +372,8 @@ mod mhc_shape_tests {
             hc_mix_bf16: k(4),
             hc_mix_bf16_rows: k(5),
             hc_finish: k(6),
+            hc_pre_norm: k(9),
+            hc_pre_norm_rows: k(10),
             hc_post: k(7),
             hc_head: k(8),
         };
@@ -357,6 +383,7 @@ mod mhc_shape_tests {
             hc_scale: DevicePtr(0x200),
             hc_base: DevicePtr(0x300),
             mix: DevicePtr(0x400),
+            done: DevicePtr(0x480),
         };
         let first_mix = |t: u32, bf16: bool| {
             let from = gpu.launch_count();

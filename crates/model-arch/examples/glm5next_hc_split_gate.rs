@@ -170,6 +170,8 @@ fn main() -> Result<()> {
             hc_scale: d_scale,
             hc_base: d_base,
             mix: gpu.alloc(mhc_mix_max_tokens() * m * 4)?,
+            // 2026-10-09: Read only by the fused kernel, which this gate does not launch.
+            done: DevicePtr(0),
         };
         let (yb, pb, cb) = (gpu.alloc(y_b)?, gpu.alloc(post_b)?, gpu.alloc(comb_b)?);
         poison(&gpu, yb, y_b)?;
@@ -258,6 +260,8 @@ fn main() -> Result<()> {
             hc_scale: d_scale,
             hc_base: d_base,
             mix: gpu.alloc(mhc_mix_max_tokens() * m * 4)?,
+            // 2026-10-09: Read only by the fused kernel, which this gate does not launch.
+            done: DevicePtr(0),
         };
         let (yd, pd, cd) = (gpu.alloc(y_b)?, gpu.alloc(post_b)?, gpu.alloc(comb_b)?);
         for (p, n) in [(yd, y_b), (pd, post_b), (cd, comb_b)] {
