@@ -11,7 +11,12 @@
 //!   GatedDeltaNet and Mamba2 recurrent states (FP32, read and written once per sequence).
 //!   2026-10-08: Latent attention reads `kv_b_proj` and the latent rows it attends (the selected
 //!   ones under an indexer), the indexer's selection every pool key; both at the declared state
-//!   format.
+//!   format. 2026-10-10: Paged attention reads one unit of every state it reads (a token of K
+//!   and of V, at their declared formats) per attended token, its query width is its first
+//!   input's, and a `window` param bounds the attended tokens: a layer kind with its own head
+//!   geometry or a sliding window is costed as declared, not at the circuit's global dims.
+//! - 2026-10-10: Elementwise ops cost their edges' bytes; the Gemma-4 ones also state their
+//!   FLOPs per output element (GeGLU 10, logit softcap 3, scalar multiply 1).
 //! - Routed experts read `E * (1 - (1 - k/E)^T)` distinct experts' weights for `T` tokens
 //!   (uniform routing).
 //! - The peak is the MMA class of the node's input activation: FP8 or NVFP4 activations run the
@@ -119,15 +124,36 @@ pub fn node_cost(
             flops = 2.0 * t * top * k * out;
         }
         OpKind::PagedAttention => {
-            let kv = match settings.get("kv_cache_dtype").map(String::as_str) {
-                Some("bf16") => 2.0,
-                Some("fp8") => 1.0,
-                other => return Err(CostError::KvDtype(other.unwrap_or("<unset>").to_string())),
-            };
             let ctx = r.context_tokens as f64;
-            let (kvh, hd, qh) = (dim("kv_heads")?, dim("head_dim")?, dim("q_heads")?);
-            bytes += seqs * ctx * kvh * hd * 2.0 * kv;
-            flops = 4.0 * t * ctx * qh * hd;
+            let attended = match n.params.get("window") {
+                None => ctx,
+                Some(w) => ctx.min(w.parse::<f64>().map_err(|_| CostError::Node {
+                    node: n.id.clone(),
+                    detail: format!("window `{w}` is not a token count"),
+                })?),
+            };
+            let q = n
+                .inputs
+                .first()
+                .map(|&e| c.edges[e].dim_value as f64)
+                .ok_or_else(|| CostError::Node {
+                    node: n.id.clone(),
+                    detail: "attention reads no query".into(),
+                })?;
+            bytes += seqs * attended * read_units_bytes(c, n, settings)?;
+            flops = 4.0 * t * attended * q;
+        }
+        OpKind::GeluTanhMul | OpKind::LogitSoftcap | OpKind::ScalarMul => {
+            let per = match n.op {
+                OpKind::GeluTanhMul => 10.0,
+                OpKind::LogitSoftcap => 3.0,
+                _ => 1.0,
+            };
+            let mut elems = 0.0;
+            for &e in &n.outputs {
+                elems += edge_elems(c, n, e, rows)?;
+            }
+            flops = per * elems;
         }
         OpKind::MlaAttention => {
             // 2026-10-08: `kv_b_proj` (both halves, the query absorption and the value
@@ -193,16 +219,50 @@ pub(crate) fn read_unit_bytes(
     n: &Node,
     settings: &BTreeMap<String, String>,
 ) -> Result<f64, CostError> {
-    let fail = |detail: String| CostError::Node {
-        node: n.id.clone(),
-        detail,
-    };
     let (idx, _) = n
         .state
         .iter()
         .find(|(_, a)| *a == StateAccess::Read)
-        .ok_or_else(|| fail("the estimate needs the state it reads".into()))?;
-    let decl = &c.states[*idx];
+        .ok_or_else(|| CostError::Node {
+            node: n.id.clone(),
+            detail: "the estimate needs the state it reads".into(),
+        })?;
+    unit_bytes(c, n, *idx, settings)
+}
+
+/// 2026-10-10: Bytes of one unit of every state `n` reads, summed (paged attention: one token of
+/// K and one of V).
+pub(crate) fn read_units_bytes(
+    c: &Circuit,
+    n: &Node,
+    settings: &BTreeMap<String, String>,
+) -> Result<f64, CostError> {
+    let mut total = 0.0;
+    for &(idx, a) in &n.state {
+        if a == StateAccess::Read {
+            total += unit_bytes(c, n, idx, settings)?;
+        }
+    }
+    match total > 0.0 {
+        true => Ok(total),
+        false => Err(CostError::Node {
+            node: n.id.clone(),
+            detail: "the estimate needs the state it reads".into(),
+        }),
+    }
+}
+
+fn unit_bytes(
+    c: &Circuit,
+    n: &Node,
+    idx: usize,
+    settings: &BTreeMap<String, String>,
+) -> Result<f64, CostError> {
+    let fail = |detail: String| CostError::Node {
+        node: n.id.clone(),
+        detail,
+    };
+    let decl = &c.states[idx];
     let dtype = match &decl.format {
         StateFormat::Fixed(d) => *d,
         StateFormat::Keyed(key) => {
@@ -223,6 +283,19 @@ pub fn nvfp4_mma(c: &Circuit, n: &Node) -> bool {
             n.inputs.first().map(|&e| c.edges[e].format),
             Some(Format::Nvfp4 { .. })
         )
+}
+
+/// 2026-10-10: Elements of edge `e` at `rows` rows.
+fn edge_elems(c: &Circuit, n: &Node, e: usize, rows: u64) -> Result<f64, CostError> {
+    let edge = &c.edges[e];
+    let mut dims = c.dims.clone();
+    dims.insert("n".into(), rows);
+    let r = edge.rows.eval(&dims).map_err(|_| CostError::Edge {
+        node: n.id.clone(),
+        edge: edge.id.clone(),
+        rows,
+    })?;
+    Ok(r as f64 * edge.dim_value as f64)
 }
 
 fn edge_bytes(c: &Circuit, n: &Node, e: usize, rows: u64) -> Result<f64, CostError> {

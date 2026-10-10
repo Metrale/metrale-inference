@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-08: The op and role vocabulary round-trips its spellings, the GLM-5 additions keep
-//! their qualifier rules, and latent attention's weight is `kv_b_proj`.
+//! their qualifier rules, and latent attention's weight is `kv_b_proj`. 2026-10-10: The Gemma-4
+//! ops and layer kind.
 //!
 //! Owner: metrale-circuit.
 //! Invariants: none beyond the types.
@@ -84,6 +85,26 @@ fn the_glm_ops_are_opaque_where_they_scan_or_read_weights() {
         assert_eq!(op.is_heavy(), heavy, "{op:?}");
         assert_eq!(op.reads_linear_weight(), weight, "{op:?}");
     }
+}
+
+/// 2026-10-10: The Gemma-4 additions: three elementwise ops (cheap, no weight a precision
+/// answers; `scalar_mul` may bind a learned scalar) and the sliding-window layer kind's spelling.
+#[test]
+fn the_gemma4_ops_are_elementwise_and_the_sliding_kind_round_trips() {
+    for op in [OpKind::GeluTanhMul, OpKind::ScalarMul, OpKind::LogitSoftcap] {
+        assert!(!op.is_heavy(), "{op:?}");
+        assert!(!op.reads_linear_weight(), "{op:?}");
+        assert_eq!(
+            OpKind::parse(op.base_name(), Some("q"), None),
+            Err(OpParseError::StrayQualifier(op.base_name().into()))
+        );
+    }
+    assert_eq!(
+        LayerKind::parse("sliding_attention"),
+        Some(LayerKind::SlidingAttention)
+    );
+    assert_eq!(LayerKind::SlidingAttention.name(), "sliding_attention");
+    assert_eq!(LayerKind::parse("sliding"), None);
 }
 
 fn node(op: OpKind, inputs: Vec<EdgeIdx>, outputs: Vec<EdgeIdx>) -> Node {

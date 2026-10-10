@@ -119,9 +119,19 @@ pub enum OpKind {
     HcPost,
     /// 2026-10-08: The streams' mean: one hidden row per token again (before the final norm).
     HcContract,
+    /// 2026-10-10: `gelu_tanh(gate) * up` over a packed gate|up input: the GeGLU of Gemma-4's
+    /// MLP and experts (`gelu_pytorch_tanh`, the tanh approximation of GELU).
+    GeluTanhMul,
+    /// 2026-10-10: Every element of a row times one scalar: a constant of the arch (`by`, e.g.
+    /// Gemma-4's embedding scale `sqrt(hidden)`) or a learned scalar the node binds (Gemma-4's
+    /// per-layer `layer_scalar`).
+    ScalarMul,
+    /// 2026-10-10: `cap * tanh(x / cap)` of every logit (Gemma-4 `final_logit_softcapping`; the
+    /// cap is a runtime argument from the config).
+    LogitSoftcap,
 }
 
-const PLAIN_OPS: [(OpKind, &str); 38] = [
+const PLAIN_OPS: [(OpKind, &str); 41] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -160,6 +170,9 @@ const PLAIN_OPS: [(OpKind, &str); 38] = [
     (OpKind::HcPre, "hc_pre"),
     (OpKind::HcPost, "hc_post"),
     (OpKind::HcContract, "hc_contract"),
+    (OpKind::GeluTanhMul, "gelu_tanh_mul"),
+    (OpKind::ScalarMul, "scalar_mul"),
+    (OpKind::LogitSoftcap, "logit_softcap"),
 ];
 
 impl OpKind {
@@ -342,6 +355,11 @@ pub enum LayerKind {
     /// 2026-10-08: A sparse-attention layer: latent attention over the tokens an indexer
     /// selects (`deepseek_sparse_attention`, GLM-5).
     SparseAttention,
+    /// 2026-10-10: A sliding-window softmax attention layer: each query attends the last
+    /// `window` tokens (`sliding_attention`, Gemma-4). The math is the full layer's paged
+    /// attention with a `window` param; the kind exists because the layer's head geometry
+    /// differs from the full layers' (Gemma-4: head_dim 256 here, 512 there).
+    SlidingAttention,
 }
 
 impl LayerKind {
@@ -353,6 +371,7 @@ impl LayerKind {
             LayerKind::Mamba => "mamba",
             LayerKind::Moe => "moe",
             LayerKind::SparseAttention => "deepseek_sparse_attention",
+            LayerKind::SlidingAttention => "sliding_attention",
         }
     }
 
@@ -364,6 +383,7 @@ impl LayerKind {
             "mamba" => Some(LayerKind::Mamba),
             "moe" => Some(LayerKind::Moe),
             "deepseek_sparse_attention" => Some(LayerKind::SparseAttention),
+            "sliding_attention" => Some(LayerKind::SlidingAttention),
             _ => None,
         }
     }

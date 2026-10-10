@@ -147,6 +147,9 @@ fn draw_segment(doc: &mut Document, pen: &Pen<'_>, s: &Segment, layers: &[usize]
                 LayerKind::SparseAttention => {
                     (g.layer[1], Style::LayerAttn, "Sparse-attention layer")
                 }
+                LayerKind::SlidingAttention => {
+                    (g.layer[1], Style::LayerAttn, "Sliding-attention layer")
+                }
             };
             title.push(format!("{glyph} "), style);
             title.push(name, Style::Heading);

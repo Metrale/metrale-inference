@@ -201,7 +201,8 @@ pub(crate) struct DimFull {
     #[serde(default)]
     pub bool: bool,
     /// 2026-09-30: 1 when the key is present (not null), else 0: a switch on an optional
-    /// feature whose size is another dim (`moe_latent_size`).
+    /// feature whose size is another dim (`moe_latent_size`). 2026-10-10: It does not consume
+    /// the key, so the value is still classified (a dim, or a key rule such as a param).
     #[serde(default)]
     pub bool_present: bool,
     /// 2026-09-30: A fixed value.

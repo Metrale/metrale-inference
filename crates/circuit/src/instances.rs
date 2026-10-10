@@ -12,8 +12,8 @@
 //! - Every policy setting is stated; nothing is filled from an engine default.
 //! - `layer_kinds` spells one letter per layer: `G` a GatedDeltaNet (linear attention) layer,
 //!   `A` a full-attention layer, `M` a Mamba2 layer, `E` a MoE-only layer (the Nemotron-H
-//!   hybrid-pattern letters); 2026-10-08: `S` a sparse-attention layer (GLM-5 DSA); whitespace
-//!   is ignored.
+//!   hybrid-pattern letters); 2026-10-08: `S` a sparse-attention layer (GLM-5 DSA); 2026-10-10:
+//!   `W` a sliding-window attention layer (Gemma-4); whitespace is ignored.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -233,9 +233,10 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
                 'M' => LayerKind::Mamba,
                 'E' => LayerKind::Moe,
                 'S' => LayerKind::SparseAttention,
+                'W' => LayerKind::SlidingAttention,
                 other => {
                     return Err(field(format!(
-                        "layer kind `{other}` is not G, A, M, E or S"
+                        "layer kind `{other}` is not G, A, M, E, S or W"
                     )));
                 }
             });
