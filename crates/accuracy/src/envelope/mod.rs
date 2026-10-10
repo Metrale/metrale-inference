@@ -14,5 +14,9 @@
 //!   opt-in; it never becomes a default here.
 //! - A candidate that failed or could not run its accuracy contract never wins.
 
+pub mod fusions;
 pub mod grid;
 pub mod record;
+pub mod schedules;
+pub mod select;
+pub mod sources;
