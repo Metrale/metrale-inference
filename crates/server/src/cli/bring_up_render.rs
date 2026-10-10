@@ -37,6 +37,18 @@ fn cache(r: &Row) -> String {
     }
 }
 
+/// 2026-10-10: Whether a gate run's hardware postcheck marked its speed numbers invalid (a
+/// thermal or power-cap counter advanced), read from the embedded run record with the bench
+/// crate's own rule.
+fn throttled(run: &serde_json::Value) -> bool {
+    serde_json::from_value::<metrale_bench::HardwareStateReport>(
+        run["frame"]["hardware_state"].clone(),
+    )
+    .is_ok_and(|h| h.invalidated())
+}
+
+const THROTTLED: &str = "the box throttled during the run (hardware postcheck INVALID)";
+
 fn bench_name(r: &Row) -> String {
     format!("{} @{}", r.bench.label(), r.tokens)
 }
@@ -74,6 +86,9 @@ pub(crate) fn table(rec: &Record) -> String {
     }
     for r in rec.ttft.iter().filter(|r| r.status != "completed") {
         let _ = writeln!(out, "  {}: {}", bench_name(r), r.status);
+    }
+    for r in rec.ttft.iter().filter(|r| throttled(&r.run)) {
+        let _ = writeln!(out, "  {}: {THROTTLED}", bench_name(r));
     }
     if let Some(c) = &rec.concurrency {
         out.push_str(&conc_table(c, &rec.engine.label));
@@ -137,6 +152,9 @@ fn conc_table(s: &Section, engine: &str) -> String {
     }
     if s.status != "completed" {
         let _ = writeln!(out, "  concurrency: {}", s.status);
+    }
+    if throttled(&s.run) {
+        let _ = writeln!(out, "  concurrency: {THROTTLED}");
     }
     out
 }
@@ -218,6 +236,13 @@ fn asymmetries(a: &Record, b: &Record) -> Vec<String> {
                     r.status
                 ));
             }
+            if throttled(&r.run) {
+                out.push(format!(
+                    "{} on {}: {THROTTLED}",
+                    bench_name(r),
+                    rec.engine.label
+                ));
+            }
         }
     }
     for rb in &b.ttft {
@@ -248,6 +273,9 @@ fn asymmetries(a: &Record, b: &Record) -> Vec<String> {
                 }
                 if s.status != "completed" {
                     out.push(format!("concurrency on {}: {}", rec.engine.label, s.status));
+                }
+                if throttled(&s.run) {
+                    out.push(format!("concurrency on {}: {THROTTLED}", rec.engine.label));
                 }
             }
         }

@@ -180,3 +180,25 @@ fn a_table_says_not_measured_for_energy_never_zero() {
     );
     assert!(!text.contains("0.000"), "{text}");
 }
+
+/// 2026-10-10: A real hardware report (the 2026-10-10 Metrale high-ISL cold run, machine id
+/// zeroed), whose power-cap counter advanced while it measured.
+const INVALID_REPORT: &str = include_str!("../../../../test_data/bring-up/hardware_invalid.json");
+
+#[test]
+fn a_throttled_run_is_disclosed_and_a_valid_or_missing_report_is_not() {
+    let report: serde_json::Value = serde_json::from_str(INVALID_REPORT).unwrap();
+    let mut row = ttft_row(Bench::HighIslCold, 65000.0, 32780.0, CacheVerdict::Verified);
+    row.run = json!({"frame": {"hardware_state": report.clone()}});
+    assert!(throttled(&row.run));
+    let a = record("vllm", vec![row.clone()], vec![rung(1, 30.0, None)], &[]);
+    assert!(table(&a).contains(THROTTLED), "{}", table(&a));
+    let mut b = record("metrale", vec![row.clone()], vec![rung(1, 30.0, None)], &[]);
+    let mut valid = report;
+    valid["postcheck"]["validity"] = json!("valid");
+    b.ttft[0].run = json!({"frame": {"hardware_state": valid}});
+    assert!(!throttled(&b.ttft[0].run));
+    let text = compare(&a, &b).unwrap();
+    assert_eq!(text.matches(THROTTLED).count(), 1, "{text}");
+    assert!(!throttled(&json!({})), "no report is not a throttle");
+}

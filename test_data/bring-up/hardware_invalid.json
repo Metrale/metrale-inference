@@ -1,0 +1,171 @@
+{
+ "sensitivity": "speed",
+ "before": {
+  "captured_at": 1791645738,
+  "machine": {
+   "hostname": "spark-256a",
+   "machine_id": "00000000000000000000000000000000",
+   "gpu": "NVIDIA GB10",
+   "driver": "580.126.09"
+  },
+  "gpu_temp_c": 71.0,
+  "chassis_temps_c": [
+   {
+    "name": "acpitz",
+    "temp_c": 84.6
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 74.2
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 82.7
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 74.8
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 83.2
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 84.6
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 79.6
+   }
+  ],
+  "sm_clock_mhz": 2398.0,
+  "sm_clock_max_mhz": 3003.0,
+  "throttle_counters": {
+   "sw_power_cap_us": 267876890703,
+   "sw_thermal_us": 197893716,
+   "hw_thermal_us": 4716753,
+   "hw_power_brake_us": 0,
+   "sync_boost_us": 0
+  },
+  "throttle_active": {
+   "sw_power_cap": false,
+   "sw_thermal": false,
+   "hw_thermal": false,
+   "hw_power_brake": false
+  },
+  "mem_available_kb": 12006364,
+  "mem_total_kb": 127601452,
+  "page_cache_kb": 8121760,
+  "gpu_compute_apps": [
+   {
+    "pid": 2558358,
+    "name": "/home/claude/glm-bench/met",
+    "used_mib": 99787
+   }
+  ],
+  "cpu_governor": "performance",
+  "persistence_mode": true,
+  "sources": [
+   "nvidia-smi",
+   "procfs",
+   "sysfs"
+  ]
+ },
+ "after": {
+  "captured_at": 1791646066,
+  "machine": {
+   "hostname": "spark-256a",
+   "machine_id": "00000000000000000000000000000000",
+   "gpu": "NVIDIA GB10",
+   "driver": "580.126.09"
+  },
+  "gpu_temp_c": 74.0,
+  "chassis_temps_c": [
+   {
+    "name": "acpitz",
+    "temp_c": 91.7
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 70.5
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 70.6
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 71.8
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 91.7
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 86.2
+   },
+   {
+    "name": "acpitz",
+    "temp_c": 73.7
+   }
+  ],
+  "sm_clock_mhz": 2431.0,
+  "sm_clock_max_mhz": 3003.0,
+  "throttle_counters": {
+   "sw_power_cap_us": 267876890703,
+   "sw_thermal_us": 200863747,
+   "hw_thermal_us": 4865207,
+   "hw_power_brake_us": 0,
+   "sync_boost_us": 0
+  },
+  "throttle_active": {
+   "sw_power_cap": false,
+   "sw_thermal": false,
+   "hw_thermal": false,
+   "hw_power_brake": false
+  },
+  "mem_available_kb": 11922972,
+  "mem_total_kb": 127601452,
+  "page_cache_kb": 8127080,
+  "gpu_compute_apps": [
+   {
+    "pid": 2558358,
+    "name": "/home/claude/glm-bench/met",
+    "used_mib": 99787
+   }
+  ],
+  "cpu_governor": "performance",
+  "persistence_mode": true,
+  "sources": [
+   "nvidia-smi",
+   "procfs",
+   "sysfs"
+  ]
+ },
+ "delta": {
+  "elapsed_s": 328,
+  "sw_power_cap_us": 0,
+  "sw_thermal_us": 2970031,
+  "hw_thermal_us": 148454,
+  "hw_power_brake_us": 0,
+  "gpu_temp_delta_c": 3.0,
+  "hottest_chassis_delta_c": 7.1000000000000085
+ },
+ "precheck": {
+  "decision": "warn",
+  "concerns": [
+   "no temperature ceilings are declared for this box class, so the capture's temperatures were recorded and not judged"
+  ]
+ },
+ "postcheck": {
+  "validity": "invalid",
+  "concerns": [
+   "thermally throttled for 0.95% of the run",
+   "hottest chassis zone moved +7 \u00b0C",
+   "a thermal throttle counter advanced during the run (sw 2970031 \u00b5s, hw 148454 \u00b5s, brake 0 \u00b5s) \u2014 this speed number is not comparable"
+  ]
+ },
+ "perf_class": "gb10@spark-256a"
+}
