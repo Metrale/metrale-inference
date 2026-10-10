@@ -152,6 +152,30 @@ impl TransformerModel {
         }
         if self.lm_head_fp8_run(hidden, num_tokens as usize, logits, ranks, stream)? {
             // 2026-09-28: FP8 E4M3 head, one weight pass per launch (`lm_head_fp8_rows.rs`).
+        } else if num_tokens == 1
+            && self.lm_head_nvfp4.is_none()
+            && let Some((begin, len)) = self.lmhead_vocab_shard(v, ranks)
+        {
+            // 2026-10-10: One row on a vocab-parallel BF16 head takes `lm_head`'s sharded GEMV,
+            // so a prefill's first token gets the bits a decode step gets. It fell through to the
+            // whole-vocab tile GEMM on every rank: 14.4 ms per prompt on GLM-5.3 (nsys of a
+            // 16-prompt prefill burst), against ~1.8 ms for the shard.
+            self.gpu.memset_async(logits, 0, v as usize * 2, stream)?;
+            ops::dense_gemv(
+                self.gpu.as_ref(),
+                self.dense_gemv_kernel,
+                hidden,
+                &metrale_model_layers::weight_map::DenseWeight {
+                    weight: self.lm_head_weight.weight.offset(begin * h as usize * 2),
+                },
+                logits.offset(begin * 2),
+                len as u32,
+                h,
+                stream,
+            )?;
+            if let Some(comm) = self.comm_ref() {
+                comm.all_reduce_async(logits.0, v as usize * 2, stream)?;
+            }
         } else if self.lm_head_nvfp4.is_none()
             && (2..=ops::DENSE_GEMV_BATCHM_DECODE_MAX_M).contains(&num_tokens)
             && self.dense_gemv_batchm_kernel.0 != 0
