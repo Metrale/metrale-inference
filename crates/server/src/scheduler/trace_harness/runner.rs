@@ -350,7 +350,15 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                 watchdog: WatchdogParams::default(),
                 levers,
                 snapshot,
-                dflash_rung: metrale_speculative::dflash_rung::DflashRung::new(),
+                dflash_rung: {
+                    let r = metrale_speculative::dflash_rung::DflashRung::new();
+                    r.set_adaptive_k(
+                        opts.dflash_adaptive_k
+                            .clone()
+                            .map(metrale_speculative::dflash_adaptive_k::AdaptiveK::new),
+                    );
+                    r
+                },
                 telemetry: opts.telemetry,
                 pipeline_faults: opts.pipeline_faults,
             },

@@ -173,6 +173,11 @@ pub struct DflashRung {
     /// 2026-10-09: An explicit per-concurrency ladder (`set_ladder`); when set it decides
     /// `drafts_for` whether or not the resolver is armed.
     ladder: std::sync::RwLock<Option<crate::dflash_ladder::DraftLadder>>,
+    /// 2026-10-10: The single-stream adaptive draft count (`set_adaptive_k`,
+    /// `--dflash-adaptive-k`); `None` leaves every count to the ladder or the resolver.
+    adaptive_k: std::sync::Mutex<Option<crate::dflash_adaptive_k::AdaptiveK>>,
+    /// 2026-10-10: `n_active` of the last `drafts_for` call, whatever decided it.
+    last_active: AtomicUsize,
 }
 
 impl Default for DflashRung {
@@ -202,6 +207,77 @@ impl DflashRung {
                 flips: AtomicU64::new(0),
             },
             ladder: std::sync::RwLock::new(None),
+            adaptive_k: std::sync::Mutex::new(None),
+            last_active: AtomicUsize::new(0),
+        }
+    }
+
+    /// 2026-10-10: Install (or clear) the single-stream adaptive draft count.
+    pub fn set_adaptive_k(&self, k: Option<crate::dflash_adaptive_k::AdaptiveK>) {
+        if let Some(a) = &k {
+            tracing::info!(
+                "DFlash adaptive draft count: single stream, step costs {:?}",
+                a.costs
+            );
+        }
+        *self.adaptive_k.lock().unwrap_or_else(|e| e.into_inner()) = k;
+    }
+
+    /// 2026-10-10: Whether the adaptive draft count is installed.
+    pub fn adaptive_k_on(&self) -> bool {
+        self.adaptive_k
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    /// 2026-10-10: The adaptive controller, when installed and the last dispatched step had one
+    /// active sequence; `None` otherwise (a batch keeps its ladder width).
+    fn single_stream_k(
+        &self,
+    ) -> Option<std::sync::MutexGuard<'_, Option<crate::dflash_adaptive_k::AdaptiveK>>> {
+        if self.last_active.load(Ordering::Relaxed) != 1 {
+            return None;
+        }
+        let g = self.adaptive_k.lock().unwrap_or_else(|e| e.into_inner());
+        g.is_some().then_some(g)
+    }
+
+    /// 2026-10-10: The next step's drafts for `seq` under `cap` from the adaptive controller
+    /// (0: plain decode pays more), or `None` when it does not apply (not installed, or not a
+    /// single stream): the caller keeps `cap`.
+    pub fn adaptive_drafts(
+        &self,
+        seq: &crate::dflash_adaptive_k::SeqAdaptiveK,
+        cap: usize,
+    ) -> Option<usize> {
+        let g = self.single_stream_k()?;
+        g.as_ref().map(|k| k.drafts(seq, cap))
+    }
+
+    /// 2026-10-10: Record a single-stream verify of `drafts` that accepted `accepted`. Nothing
+    /// when the controller does not apply.
+    pub fn adaptive_observe(
+        &self,
+        seq: &mut crate::dflash_adaptive_k::SeqAdaptiveK,
+        drafts: usize,
+        accepted: usize,
+    ) {
+        if let Some(mut g) = self.single_stream_k()
+            && let Some(k) = g.as_mut()
+        {
+            k.observe(seq, drafts, accepted);
+        }
+    }
+
+    /// 2026-10-10: Fold the measured wall `ms` of a single-stream step that verified `drafts`
+    /// (the verify and the propose after it) into the cost scale. Nothing when the controller
+    /// does not apply.
+    pub fn adaptive_step_ms(&self, drafts: usize, ms: f64) {
+        if let Some(mut g) = self.single_stream_k()
+            && let Some(k) = g.as_mut()
+        {
+            k.costs.observe_step(drafts, ms);
         }
     }
 
@@ -298,6 +374,7 @@ impl DflashRung {
     /// `num_drafts` is the serve's configured count (cap - 1) and is returned
     /// unchanged when the resolver is unarmed.
     pub fn drafts_for(&self, n_active: usize, num_drafts: usize) -> usize {
+        self.last_active.store(n_active, Ordering::Relaxed);
         // 2026-10-09: An explicit ladder wins, capped at `num_drafts` like the resolver.
         if let Some(l) = self
             .ladder

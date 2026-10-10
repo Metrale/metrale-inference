@@ -17,6 +17,7 @@
 //! deadlines have already passed when the scheduler checks them, and
 //! cancel flags are flipped by the model at a scripted point.
 
+mod adaptive_k_tests;
 mod dflash_ctx_tests;
 mod ep_prefill_tests;
 mod ep_verify_tests;

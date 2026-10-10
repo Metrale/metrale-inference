@@ -197,8 +197,14 @@ pub(super) fn bootstrap_seq(
     // draft can violate its own position's mask. One draft verifies on
     // the K=2 arm. Without a grammar the propose is sized to this step's
     // `ladder_nd`.
+    // 2026-10-10: On a single stream the adaptive draft count (`--dflash-adaptive-k`) sizes the
+    // propose too, at least one draft: this propose is the re-probe after a suspension.
+    let step_nd = sched
+        .dflash_rung
+        .adaptive_drafts(&a.spec_adapt.k, ladder_nd)
+        .map_or(ladder_nd, |k| k.max(1));
     let effective_num_drafts =
-        crate::scheduler::spec_step::effective_drafts_under_grammar(a, ladder_nd);
+        crate::scheduler::spec_step::effective_drafts_under_grammar(a, step_nd);
     // 2026-09-25: A sequence suspended by adaptive speculation does not
     // propose, so it stays on this bootstrap path until `spec_allowed`
     // re-probes.

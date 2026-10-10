@@ -41,6 +41,8 @@ pub(super) struct RunOptions {
     pub telemetry: &'static metrale_telemetry::Telemetry,
     /// 2026-09-25: Fault injection for the pipelined lane (the negative controls).
     pub pipeline_faults: crate::scheduler::PipelineFaults,
+    /// 2026-10-10: The `--dflash-adaptive-k` cost table; `None` when off.
+    pub dflash_adaptive_k: Option<metrale_speculative::dflash_adaptive_k::CostModel>,
 }
 
 /// 2026-09-25: Never configured: every feed into it takes the `Off` branch.
@@ -73,6 +75,7 @@ impl Default for RunOptions {
             close_inbox_at: None,
             telemetry: &TELEMETRY_OFF,
             pipeline_faults: crate::scheduler::PipelineFaults::NONE,
+            dflash_adaptive_k: None,
         }
     }
 }
