@@ -32,6 +32,8 @@ metrale-circuit = { path = "../circuit" }
 metrale-closure = { path = "../closure", default-features = false }
 metrale-core = { path = "../core", default-features = false }
 metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
+# 2026-10-10: NVML clock-event reasons and temperature around each envelope-sweep timing.
+metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
 metrale-grammar = { path = "../grammar" }
 metrale-kernels = { path = "../kernels" }
 metrale-model-arch = { path = "../model-arch", default-features = false }

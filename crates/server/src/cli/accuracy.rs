@@ -52,8 +52,12 @@ pub(crate) fn dispatch(args: AccuracyArgs) -> Result<i32> {
         AccuracyAction::Check(a) => check(&a, false),
         AccuracyAction::Calibrate(a) => check(&a, true),
         AccuracyAction::Model(a) => super::accuracy_model::run(&a),
+        AccuracyAction::Envelope(a) => envelope_sweep::dispatch(a),
     }
 }
+
+#[path = "envelope_sweep.rs"]
+mod envelope_sweep;
 
 struct Loaded {
     contracts_text: String,

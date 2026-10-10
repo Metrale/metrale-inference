@@ -30,7 +30,14 @@ pub enum AccuracyAction {
     /// `numerics` judges top-1, top-k KL, |dlogprob| p99 and the divergence margin against the
     /// limits given. Exits non-zero on a failure.
     Model(AccuracyModelArgs),
+    /// The kernel envelope sweep: time every contracted candidate at every projection cell the
+    /// described models need (plus a margin), each judged by its own contract.
+    Envelope(EnvelopeArgs),
 }
+
+#[path = "envelope_args.rs"]
+mod envelope_args;
+pub use envelope_args::{EnvelopeAction, EnvelopeArgs, EnvelopeGridArgs, EnvelopeSweepArgs};
 
 /// `met accuracy model` options.
 #[derive(clap::Args, Debug, Clone)]

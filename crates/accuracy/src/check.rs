@@ -171,6 +171,12 @@ pub fn run(job: &Job<'_>, runner: &mut dyn KernelRunner) -> Outcome {
     o
 }
 
+/// 2026-10-10: The case `job` launches (its canonical operands for the job's input class), as
+/// the check builds it: the envelope sweep times and digests candidates on one shared case.
+pub fn case_of(job: &Job<'_>) -> Result<Case, String> {
+    prepare(job).map(|(_, _, c)| c).map_err(|v| v.name())
+}
+
 fn prepare(job: &Job<'_>) -> Result<(Reference, Plan, Case), Verdict> {
     let c = job.contract;
     let err = |e: String| Verdict::Error(e);

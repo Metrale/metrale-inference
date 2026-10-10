@@ -19,6 +19,7 @@
 use anyhow::Result;
 use metrale_accuracy::case::Case;
 use metrale_gpu_runtime::gpu::KernelHandle;
+use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layers::{RowTiers, ops, row_tiers};
 use metrale_model_layers::weight_map::quantized::DenseWeight;
 
@@ -81,20 +82,37 @@ fn dense_tc(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<
     let (rows, k, n) = linear_dims(case)?;
     unsplit(case)?;
     let own = handle(dev, &case.launcher)?;
-    // 2026-10-09: The router of the drafter's GEMMs (draft.rs takes the same pair).
-    let (routed, grid_x) = ops::dense_gemv_tc::kernel_for(dev.gpu, rows as u32, n as u32, k as u32)
-        .ok_or_else(|| {
-            not_runnable(format!(
-                "dense_gemv_tc routes no entry for {rows} rows of [{n}, {k}] \
-                 (METRALE_NO_MTP_TC set, K % 64 != 0, or rows outside 2..=32)"
-            ))
+    // 2026-10-10: The envelope sweep launches the entry on its own grid (every tier's CTA covers
+    // ROWS_PER_CTA outputs) without asking the router, up to the tier's own row capacity.
+    let grid_x = if dev.sweep {
+        need(
+            rows >= ops::dense_gemv_tc::MIN_M as usize
+                && rows <= sweep_max_rows(&case.launcher).unwrap_or(0),
+            || format!("{} does not run {rows} rows", case.launcher),
+        )?;
+        need(k % ops::dense_gemv_tc::K_STEP as usize == 0, || {
+            format!("the BF16 tensor-core GEMV needs K % 64 == 0, not {k}")
         })?;
-    need(routed.0 == own.0, || {
-        format!(
-            "dense_gemv_tc routes {rows} rows to another entry than `{}`",
-            case.launcher
-        )
-    })?;
+        (n as u32).div_ceil(ops::dense_gemv_tc::ROWS_PER_CTA)
+    } else {
+        // 2026-10-09: The router of the drafter's GEMMs (draft.rs takes the same pair).
+        let (routed, grid_x) =
+            ops::dense_gemv_tc::kernel_for(dev.gpu, rows as u32, n as u32, k as u32).ok_or_else(
+                || {
+                    not_runnable(format!(
+                        "dense_gemv_tc routes no entry for {rows} rows of [{n}, {k}] \
+                 (METRALE_NO_MTP_TC set, K % 64 != 0, or rows outside 2..=32)"
+                    ))
+                },
+            )?;
+        need(routed.0 == own.0, || {
+            format!(
+                "dense_gemv_tc routes {rows} rows to another entry than `{}`",
+                case.launcher
+            )
+        })?;
+        grid_x
+    };
     let x = dev.upload(case.tensor("x").map_err(not_runnable)?)?;
     let w = DenseWeight {
         weight: dev.upload(case.tensor("w").map_err(not_runnable)?)?,
@@ -120,6 +138,9 @@ fn w4a16_tc(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<
     let (rows, k, n) = linear_dims(case)?;
     unsplit(case)?;
     let own = own_entry(dev, case, kernel)?;
+    if dev.sweep {
+        return w4a16_tc_direct(dev, case, own, rows, k, n);
+    }
     // 2026-10-09: The route `ops::w4a16_gemv_batchm` takes; its handle cache is keyed by the
     // backend's address, so a stale entry after a target switch is refused here, not launched.
     let (routed, _) = ops::gemv_tc::tc_kernel(dev.gpu, rows as u32, n as u32, k as u32)
@@ -150,6 +171,69 @@ fn w4a16_tc(dev: &mut Dev<'_>, case: &Case, kernel: KernelHandle) -> Result<Vec<
         dev.stream,
     )?;
     dev.read(y, rows * n * 2)
+}
+
+/// 2026-10-10: The envelope sweep's launch of one tensor-core W4A16 tier at any row count it
+/// holds: the tier's own grid and block, as `ops::w4a16_gemv_batchm` launches the tier its
+/// router picks (quant_dispatch.rs: `n / cols_per_cta` CTAs of `TC_BLOCK` threads).
+fn w4a16_tc_direct(
+    dev: &mut Dev<'_>,
+    case: &Case,
+    kernel: KernelHandle,
+    rows: usize,
+    k: usize,
+    n: usize,
+) -> Result<Vec<u8>> {
+    need(rows <= sweep_max_rows(&case.launcher).unwrap_or(0), || {
+        format!("{} holds fewer than {rows} rows", case.launcher)
+    })?;
+    need(k % 128 == 0, || {
+        format!("the tensor-core GEMV needs K % 128 == 0, not {k}")
+    })?;
+    let cols = if case.launcher.ends_with("tc8") {
+        ops::gemv_tc::TC8_COLS_PER_CTA
+    } else {
+        ops::gemv_tc::TC16_COLS_PER_CTA
+    };
+    let x = dev.upload(case.tensor("x").map_err(not_runnable)?)?;
+    let w = nvfp4_weight(dev, case)?;
+    let y = dev.output(rows * n * 2)?;
+    KernelLaunch::new(dev.gpu, kernel)
+        .grid([(n as u32).div_ceil(cols), 1, 1])
+        .block([ops::gemv_tc::TC_BLOCK, 1, 1])
+        .arg_ptr(x)
+        .arg_ptr(w.weight)
+        .arg_ptr(w.weight_scale)
+        .arg_f32(w.weight_scale_2)
+        .arg_ptr(y)
+        .arg_u32(rows as u32)
+        .arg_u32(n as u32)
+        .arg_u32(k as u32)
+        .launch(dev.stream)?;
+    dev.read(y, rows * n * 2)
+}
+
+/// 2026-10-10: The fewest rows a tier runs (the BF16 tensor-core tiers start at two rows).
+pub(crate) fn sweep_min_rows(launcher: &str) -> usize {
+    if launcher.starts_with("dense_gemv_bf16_tc::") {
+        ops::dense_gemv_tc::MIN_M as usize
+    } else {
+        1
+    }
+}
+
+/// 2026-10-10: The most rows one launch of a tensor-core tier holds (the routers' tier caps):
+/// the envelope sweep runs a tier only up to it.
+pub(crate) fn sweep_max_rows(launcher: &str) -> Option<usize> {
+    let cap = match launcher {
+        "w4a16_gemv_tc::w4a16_gemv_tc8" => ops::gemv_tc::TC8_MAX_M,
+        "w4a16_gemv_tc::w4a16_gemv_tc16" => ops::gemv_tc::TC16_MAX_M,
+        "dense_gemv_bf16_tc::dense_gemv_bf16_tc8" => ops::dense_gemv_tc::TC8_MAX_M,
+        "dense_gemv_bf16_tc::dense_gemv_bf16_tc16" => ops::dense_gemv_tc::TC16_MAX_M,
+        "dense_gemv_bf16_tc::dense_gemv_bf16_tc32" => ops::dense_gemv_tc::TC32_MAX_M,
+        _ => return None,
+    };
+    Some(cap as usize)
 }
 
 /// 2026-10-09: The declared NVFP4 head in 64-row calls, as lm_head_nvfp4_rows.rs runs it; the

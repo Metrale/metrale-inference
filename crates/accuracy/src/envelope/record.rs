@@ -99,7 +99,11 @@ impl Measurement {
     pub fn spread(&self) -> Option<f64> {
         let m = self.median_us()?;
         let lo = self.time_us.iter().copied().fold(f64::INFINITY, f64::min);
-        let hi = self.time_us.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let hi = self
+            .time_us
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
         (m > 0.0).then(|| (hi - lo) / m)
     }
 }
