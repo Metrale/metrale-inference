@@ -26,6 +26,8 @@
 //! - From 2 rows up a row's output does not depend on the row count: `w4a16_tc_rows` is
 //!   row-invariant across its entry points and launches here are chunked by whole rows
 //!   ([`W4A16_LAUNCH_ROWS`]). 2026-10-09: one row takes `w4a16_gemv` instead, whose bits differ.
+//!   2026-10-10: Under `METRALE_GLM_W4A16_GEMV_ROWS=<r>` launches of 2..=r rows take the GEMV
+//!   tiers, whose rows are the one-row GEMV's bytes, so rows 1..=r are row-invariant.
 //! - 2026-10-09: `METRALE_GLM_W4A16_SEG` (`glm5next_w4a16_seg`) moves the launches of 2 rows
 //!   and up to the segmented row tiles; [`proj_group`] runs projections that share their input
 //!   in one launch there and declines otherwise. Unset, every launch is as before.
@@ -324,6 +326,10 @@ fn proj_registered(
         metrale_model_layers::layers::ops::w4a16_gemv(gpu, kernel, a, &e.w, c, n32, k32, stream)?;
         return Ok(true);
     }
+    if plan.gemv_tier(m) {
+        seg::launch_gemv_rows(gpu, a, &e.w, c, m, n32, k32, stream)?;
+        return Ok(true);
+    }
     if plan.mode != SegMode::Off {
         let segs = [W4a16Seg {
             weight: e.w,
@@ -357,7 +363,8 @@ fn proj_registered(
 /// projections that share the input `a`, in one launch per 64 rows (`glm5next_w4a16_seg`).
 /// `Ok(false)`, launching nothing, unless the tier is on, `METRALE_GLM_W4A16_SEG` is not `off`,
 /// `m` is 2 or more (one row keeps the GEMV) and every member is registered: the caller then
-/// runs them one by one. A registered member at another shape is an error.
+/// runs them one by one. A registered member at another shape is an error. 2026-10-10: Also
+/// `Ok(false)` at a row count `METRALE_GLM_W4A16_GEMV_ROWS` covers.
 pub fn proj_group(
     gpu: &dyn GpuBackend,
     members: &[(DevicePtr, DevicePtr, usize)],
@@ -382,7 +389,9 @@ fn proj_group_registered(
     k: usize,
     stream: u64,
 ) -> Result<bool> {
-    if plan.mode == SegMode::Off || m < 2 {
+    // 2026-10-10: A launch the GEMV tiers take declines too: its members then run one by one
+    // on them (`proj`).
+    if plan.mode == SegMode::Off || m < 2 || plan.gemv_tier(m) {
         return Ok(false);
     }
     let mut segs = Vec::with_capacity(members.len());

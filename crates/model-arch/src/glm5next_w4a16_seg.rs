@@ -19,15 +19,22 @@
 //!   a row's bits do not depend on the row count; a split launch's bits differ from `off`'s
 //!   (another FP32 summation order), so it is opt-in and accuracy-gated.
 //! - One row keeps the tier's GEMV in every mode.
+//! - 2026-10-10: `METRALE_GLM_W4A16_GEMV_ROWS=<r>` (2..=8; unset or `0` is off) runs launches of
+//!   2..=r rows on the CUDA-core GEMV tiers (`w4a16_gemv_batch{m}`, [`launch_gemv_rows`]) ahead
+//!   of every mode: each row's bytes are the one-row `w4a16_gemv`'s (the kernels' invariant,
+//!   `w4a16_gemv.cu`), so a verify or a batched decode of up to r rows computes the dense
+//!   projections bit for bit as the single-row decode. Opt-in; wider launches are unchanged.
 
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops::{
     W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_SEG_MODULE, W4a16Seg, w4a16_tc_rows_seg,
     w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles, w4a16_tc_rows_split_for,
 };
+use metrale_model_layers::weight_map::QuantizedWeight;
 
 /// 2026-10-09: What [`seg_mode`] selects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,12 +83,111 @@ pub(crate) fn parse_seg(v: Option<&str>, tier_on: bool) -> Result<SegMode, Strin
     Ok(mode)
 }
 
+/// 2026-10-10: The widest row count `METRALE_GLM_W4A16_GEMV_ROWS` may name: the widest
+/// CUDA-core tier `w4a16_gemv_batch8`.
+pub const GEMV_ROWS_MAX: u32 = 8;
+
+/// 2026-10-10: `METRALE_GLM_W4A16_GEMV_ROWS`, read once: 0 (off) when unset or `0`, else the
+/// widest launch, 2..=[`GEMV_ROWS_MAX`], that runs on the GEMV tiers. Another value, or a value
+/// without `--dense-quantization w4a16`, is an error.
+pub fn gemv_rows() -> Result<u32> {
+    static V: OnceLock<Result<u32, String>> = OnceLock::new();
+    V.get_or_init(|| {
+        parse_gemv_rows(
+            std::env::var("METRALE_GLM_W4A16_GEMV_ROWS").ok().as_deref(),
+            crate::glm5next_w4a16_dense::enabled(),
+        )
+    })
+    .clone()
+    .map_err(anyhow::Error::msg)
+}
+
+/// 2026-10-10: [`gemv_rows`]'s parse, pure: the value and whether the tier is on.
+pub(crate) fn parse_gemv_rows(v: Option<&str>, tier_on: bool) -> Result<u32, String> {
+    let r = match v {
+        None | Some("0") => return Ok(0),
+        Some(s) => match s.parse::<u32>() {
+            Ok(r) if (2..=GEMV_ROWS_MAX).contains(&r) => r,
+            _ => {
+                return Err(format!(
+                    "METRALE_GLM_W4A16_GEMV_ROWS={s:?}: expected 0 or 2..={GEMV_ROWS_MAX}"
+                ));
+            }
+        },
+    };
+    if !tier_on {
+        return Err(format!(
+            "METRALE_GLM_W4A16_GEMV_ROWS={r} needs --dense-quantization w4a16"
+        ));
+    }
+    Ok(r)
+}
+
+/// 2026-10-10: The CUDA-core GEMV tier of exactly `m` rows (2..=8): `w4a16_gemv_batch2` and
+/// `_batch3` take no row argument, `_batch4`..`_batch8` take `m`. Never the tensor-core route
+/// of `ops::w4a16_gemv_batchm`, whose bytes differ from the one-row GEMV's.
+const GEMV_ROW_TIERS: [&str; 7] = [
+    "w4a16_gemv_batch2",
+    "w4a16_gemv_batch3",
+    "w4a16_gemv_batch4",
+    "w4a16_gemv_batch5",
+    "w4a16_gemv_batch6",
+    "w4a16_gemv_batch7",
+    "w4a16_gemv_batch8",
+];
+
+/// 2026-10-10: `c [m, n] = a [m, k] @ W^T` (contiguous rows) on the GEMV tier of `m` rows,
+/// 2..=[`GEMV_ROWS_MAX`]; an error outside that range.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_gemv_rows(
+    gpu: &dyn GpuBackend,
+    a: DevicePtr,
+    w: &QuantizedWeight,
+    c: DevicePtr,
+    m: usize,
+    n: u32,
+    k: u32,
+    stream: u64,
+) -> Result<()> {
+    let Some(&name) = m.checked_sub(2).and_then(|i| GEMV_ROW_TIERS.get(i)) else {
+        anyhow::bail!("W4A16 GEMV rows: {m} rows outside 2..={GEMV_ROWS_MAX}");
+    };
+    let kernel = gpu
+        .op_cache()
+        .kernel(gpu, "w4a16_gemv", name)
+        .with_context(|| format!("METRALE_GLM_W4A16_GEMV_ROWS: w4a16_gemv::{name}"))?;
+    let l = KernelLaunch::new(gpu, kernel)
+        .grid([div_ceil(n, 4), 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(a)
+        .arg_ptr(w.weight)
+        .arg_ptr(w.weight_scale)
+        .arg_f32(w.weight_scale_2)
+        .arg_ptr(c);
+    if m <= 3 {
+        l.arg_u32(n).arg_u32(k).launch(stream)
+    } else {
+        l.arg_u32(m as u32).arg_u32(n).arg_u32(k).launch(stream)
+    }
+}
+
 /// 2026-10-09: The SM count the split rule reads, recorded by [`prepare`].
 static SMS: OnceLock<u32> = OnceLock::new();
 
 /// 2026-10-09: At load, under a mode other than `off`: resolve every entry point (a missing one
 /// is refused here, not at the first launch) and record the SM count. Never inside a capture.
+/// 2026-10-10: Under `METRALE_GLM_W4A16_GEMV_ROWS`, also the GEMV tiers it reaches.
 pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
+    // 2026-10-10: The GEMV tiers `METRALE_GLM_W4A16_GEMV_ROWS` reaches, resolved here so a
+    // missing one is refused at load.
+    for &name in GEMV_ROW_TIERS
+        .iter()
+        .take(gemv_rows()?.saturating_sub(1) as usize)
+    {
+        gpu.op_cache()
+            .kernel(gpu, "w4a16_gemv", name)
+            .with_context(|| format!("METRALE_GLM_W4A16_GEMV_ROWS: w4a16_gemv::{name}"))?;
+    }
     if seg_mode()? == SegMode::Off {
         return Ok(());
     }
@@ -98,14 +204,21 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
     Ok(())
 }
 
-/// 2026-10-09: The mode and the SM count its split rule reads.
+/// 2026-10-09: The mode and the SM count its split rule reads. 2026-10-10: `gemv_rows`, the
+/// widest launch on the GEMV tiers ([`gemv_rows`]; 0 = none).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegPlan {
     pub mode: SegMode,
     pub sms: u32,
+    pub gemv_rows: u32,
 }
 
 impl SegPlan {
+    /// 2026-10-10: Whether a launch of `m` rows runs on the GEMV tiers.
+    pub(crate) fn gemv_tier(&self, m: usize) -> bool {
+        m >= 2 && m <= self.gemv_rows as usize
+    }
+
     /// 2026-10-09: The split for a launch over segments `ns` with K `k`.
     pub(crate) fn split(&self, ns: &[u32], k: u32) -> u32 {
         match self.mode {
@@ -125,7 +238,11 @@ pub(crate) fn plan() -> Result<SegPlan> {
             .get()
             .context("METRALE_GLM_W4A16_SEG: the SM count was not recorded at load")?,
     };
-    Ok(SegPlan { mode, sms })
+    Ok(SegPlan {
+        mode,
+        sms,
+        gemv_rows: gemv_rows()?,
+    })
 }
 
 /// 2026-10-09: `segs[i].output [m, n_i] = a [m, k] @ W_i^T` for contiguous rows, in launches of
