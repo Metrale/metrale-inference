@@ -211,7 +211,7 @@ when = { ssm_h_dtype = "f32" }
 numerics = "differs"
 lever = "gdn_fused_norm"
 priority = 200
-cite = "ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:940-942,1051 (the fused kernel clamps the state norm, the unfused one does not)"
+cite = "ml/qwen3_ssm/ssm_forward.rs:284-307 (--gdn-fused-norm, default off: crates/server/src/cli/serve_args.rs:197-206); k/gated_delta_rule.cu:265 (the gated RMS norm runs inside the recurrence's block, not in gated_rms_norm; not proven bit-identical to the unfused chain)"
 
 # 2026-09-30: The same lever on the per-sequence multi-sequence arm. Under `on` the batched arm
 # with this lever runs gated_delta_rule_decode_f32_strided_norm (or its half-register twin),

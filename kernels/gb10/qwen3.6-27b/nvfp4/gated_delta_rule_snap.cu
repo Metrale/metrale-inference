@@ -2,7 +2,7 @@
 
 // 2026-09-25: Kernels `gated_delta_rule_decode_f32_norm_snap` and `gated_delta_rule_decode_f32_strided_norm_snap`:
 // the fused-norm GDN decode kernels of this directory's gated_delta_rule.cu with one addition, an `h_inter` output.
-// Every value stored to H, including the clamp's rescale, is also stored to h_inter: the per-token h-state snapshot
+// Every value stored to H is also stored to h_inter: the per-token h-state snapshot
 // that exact verify rolls back to. h_inter == nullptr skips those stores; the caller passes null for the last token
 // (crates/model-layers/src/layers/qwen3_ssm/trait_decode_batched_conv_gdn_exact.rs).
 //
@@ -51,13 +51,6 @@ __device__ __forceinline__ float gdn_warp_reduce_sum(float val) {
     return val;
 }
 
-// 2026-09-25: The same clamp configuration as gated_delta_rule.cu; a different SSM_STATE_MAX_NORM here would break
-// the bit match with the parent kernels.
-
-#ifndef SSM_STATE_NORM_ENABLED
-#define SSM_STATE_NORM_ENABLED
-#define SSM_STATE_MAX_NORM 1000.0f
-#endif
 #endif
 
 // 2026-09-25: `gated_delta_rule_decode_f32_norm` plus the snapshot. h_inter has h_state's layout,
@@ -127,9 +120,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_norm_snap(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -152,45 +142,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_norm_snap(
             HI[(j + 3) * v_dim + tid] = h3;
         }
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        // 2026-09-25: The squared norm for the clamp, accumulated as in the parent kernel.
-
-
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                // 2026-09-25: The parent's read-scale-store; the snapshot gets the same rescaled value.
-
-
-                float hv = H[j * v_dim + tid] * scale;
-                H[j * v_dim + tid] = hv;
-                if (HI != nullptr) HI[j * v_dim + tid] = hv;
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;
@@ -321,9 +273,6 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_snap(
     float v_new_i = (v_i - g * hk_dot) * bt;
 
     float q_dot = 0.0f;
-#ifdef SSM_STATE_NORM_ENABLED
-    float norm_acc = 0.0f;
-#endif
     #pragma unroll 4
     for (unsigned int j = 0; j < k_dim; j += 4) {
         float h0 = H[(j + 0) * v_dim + tid];
@@ -346,39 +295,7 @@ extern "C" __global__ void gated_delta_rule_decode_f32_strided_norm_snap(
             HI[(j + 3) * v_dim + tid] = h3;
         }
         q_dot += h0 * smem_q[j] + h1 * smem_q[j+1] + h2 * smem_q[j+2] + h3 * smem_q[j+3];
-#ifdef SSM_STATE_NORM_ENABLED
-        norm_acc += h0 * h0;
-        norm_acc += h1 * h1;
-        norm_acc += h2 * h2;
-        norm_acc += h3 * h3;
-#endif
     }
-
-    #ifdef SSM_STATE_NORM_ENABLED
-    {
-        float local_sq = norm_acc;
-        for (int offset = 16; offset >= 1; offset >>= 1)
-            local_sq += __shfl_down_sync(0xFFFFFFFF, local_sq, offset);
-        __shared__ float norm_sums[4];
-        if (tid % 32 == 0) norm_sums[tid / 32] = local_sq;
-        __syncthreads();
-        if (tid == 0) {
-            float total = 0.0f;
-            for (int w = 0; w < 4; w++) total += norm_sums[w];
-            norm_sums[0] = total;
-        }
-        __syncthreads();
-        float head_norm_sq = norm_sums[0];
-        if (head_norm_sq > SSM_STATE_MAX_NORM * SSM_STATE_MAX_NORM) {
-            float scale = SSM_STATE_MAX_NORM * rsqrtf(head_norm_sq);
-            for (unsigned int j = 0; j < k_dim; j++) {
-                float hv = H[j * v_dim + tid] * scale;
-                H[j * v_dim + tid] = hv;
-                if (HI != nullptr) HI[j * v_dim + tid] = hv;
-            }
-        }
-    }
-    #endif
 
     const float inv_sqrt_d = rsqrtf((float)k_dim);
     const float x = q_dot * inv_sqrt_d;

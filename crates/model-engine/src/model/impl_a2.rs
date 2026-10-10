@@ -250,9 +250,9 @@ impl TransformerModel {
                 let is_last = chunk_start + chunk_len >= full_len;
                 let _ =
                     self.prefill_chunk(&full_tokens, seq, chunk_start, chunk_len, is_last, stream)?;
-                // 2026-09-25: Normalize the SSM states after the chunk, as the
-                // head's scheduler does after a prefill chunk, so the ranks'
-                // states stay identical. A failure is logged, not returned.
+                // 2026-09-25: The SSM state pass after the chunk, as the head's
+                // scheduler runs it after a prefill chunk, so the ranks agree. A
+                // failure is logged, not returned.
                 if let Err(e) = self.normalize_ssm_states(seq, stream) {
                     tracing::warn!("Worker SSM state normalization failed: {e:#}");
                 }

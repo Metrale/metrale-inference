@@ -15,8 +15,7 @@ use crate::gpu::{DevicePtr, GpuBackend, KernelArg};
 
 /// 2026-09-25: `gated_delta_rule_decode` against a CPU reference of its update
 /// (`hk`, `v_new`, state update, `q` dot scaled by `1/sqrt(k_dim)`), checking the
-/// output and the in-place state. The state norm stays far below the kernel's
-/// clamp at 1000, so the reference leaves the clamp out.
+/// output and the in-place state. Neither bounds the state norm.
 #[test]
 fn metal_gated_delta_rule_decode_matches_reference() {
     let Some(backend) = maybe_backend() else {
