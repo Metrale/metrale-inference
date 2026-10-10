@@ -22,11 +22,13 @@ const RECUR: u64 = 0x30B;
 const RECUR_SMEM: u64 = 0x30C;
 const RECUR_ROWS: u64 = 0x313;
 const CONV_ROWS: u64 = 0x316;
-const CONV_TOKENS: u64 = 0x317;
-const CONV_WINDOW: u64 = 0x318;
-const RECUR_SEQ: u64 = 0x319;
+pub(super) const CONV_TOKENS: u64 = 0x317;
+pub(super) const CONV_WINDOW: u64 = 0x318;
+pub(super) const RECUR_SEQ: u64 = 0x319;
+pub(super) const CHUNK16_PREP: u64 = 0x31A;
+pub(super) const CHUNK16_SCAN: u64 = 0x31B;
 
-fn cfg() -> Glm5NextKdaConfig {
+pub(super) fn cfg() -> Glm5NextKdaConfig {
     Glm5NextKdaConfig {
         hidden: 256,
         heads: 2,
@@ -39,7 +41,7 @@ fn cfg() -> Glm5NextKdaConfig {
     }
 }
 
-fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
+pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
     let k = KernelHandle;
     let w = || DenseWeight {
         weight: gpu.alloc(64).unwrap(),
@@ -79,6 +81,8 @@ fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
             conv_tokens: k(CONV_TOKENS),
             conv_window: k(CONV_WINDOW),
             recurrent: k(RECUR_SEQ),
+            chunk16_prepare: k(CHUNK16_PREP),
+            chunk16_scan: k(CHUNK16_SCAN),
         },
         o_norm: k(0x30E),
         split_widen: k(0x30F),
@@ -89,7 +93,7 @@ fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
     Glm5NextKdaLayer::new(3, cfg(), weights, kernels).unwrap()
 }
 
-fn seq_state(gpu: &MockGpuBackend) -> KdaSeqState {
+pub(super) fn seq_state(gpu: &MockGpuBackend) -> KdaSeqState {
     let c = cfg();
     KdaSeqState {
         conv: gpu.alloc(c.conv_state_elems() * 4).unwrap(),
@@ -97,7 +101,7 @@ fn seq_state(gpu: &MockGpuBackend) -> KdaSeqState {
     }
 }
 
-fn since(gpu: &MockGpuBackend, from: usize) -> Vec<MockLaunch> {
+pub(super) fn since(gpu: &MockGpuBackend, from: usize) -> Vec<MockLaunch> {
     gpu.launches_snapshot()[from..].to_vec()
 }
 

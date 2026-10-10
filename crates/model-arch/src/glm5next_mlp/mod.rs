@@ -76,6 +76,9 @@ pub const MOE_GROUPED_MODULE: &str = "moe_w4a16";
 pub const W4A4_MOE_MODULE: &str = "w4a4_gemv_mx_moe";
 /// 2026-10-08: Module of `w4a4_gemv_mx.cu` (its file stem): the W4A4 mx GEMVs.
 pub const W4A4_MX_MODULE: &str = "w4a4_gemv_mx";
+/// 2026-10-10: Module of `w4a4_grouped_mx.cu` (its file stem): the grouped W4A4 expert GEMM
+/// for wide routed launches and its tile pass.
+pub const W4A4_GROUPED_MODULE: &str = "w4a4_grouped_mx";
 
 /// 2026-10-08: The unit the dense and shared-expert widths split over TP in. Their `down_proj`
 /// runs with the rank's width as K, and `dense_gemv_bf16`, `dense_gemv_bf16_batchm` (both
@@ -184,6 +187,20 @@ pub struct Glm5NextMlpKernels {
     /// 2026-10-08: The dense W4A4 GEMVs `w4a4_gemv_mx8`, `_mx16`, `_mx32` (`w4a4_gemv_mx.cu`),
     /// for up to 8, 16 and 32 rows.
     pub w4a4_mx: [KernelHandle; 3],
+    /// 2026-10-10: The grouped W4A4 expert GEMM for routed launches wider than
+    /// [`MOE_W4A4_MAX_ROWS`] (`forward::w4a4_grouped`).
+    pub w4a4_grouped: W4a4GroupedKernels,
+}
+
+/// 2026-10-10: `w4a4_grouped_tiles` and `w4a4_grouped_mx_m{32,64,128}[_k64]`
+/// (`w4a4_grouped_mx.cu`), indexed by `forward::w4a4_grouped::W4A4_GROUPED_MT`; the `_k64` entries
+/// read a routed down projection whose K is a multiple of 64 but not of 128. Each is
+/// `KernelHandle(0)` when absent from the target's PTX.
+#[derive(Clone, Copy)]
+pub struct W4a4GroupedKernels {
+    pub tiles: KernelHandle,
+    pub mx: [KernelHandle; 3],
+    pub mx_k64: [KernelHandle; 3],
 }
 
 /// 2026-10-10: `w4a4_quant_rows_static_k64`, `w4a4_gemv_mx8_moe_slots_k64` and
@@ -372,7 +389,42 @@ impl Glm5NextMlpKernels {
             },
             w4a4_mx: ["w4a4_gemv_mx8", "w4a4_gemv_mx16", "w4a4_gemv_mx32"]
                 .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MX_MODULE, e)),
+            w4a4_grouped: W4a4GroupedKernels {
+                tiles: metrale_model_layers::layers::try_kernel(
+                    gpu,
+                    W4A4_GROUPED_MODULE,
+                    "w4a4_grouped_tiles",
+                ),
+                mx: [
+                    "w4a4_grouped_mx_m32",
+                    "w4a4_grouped_mx_m64",
+                    "w4a4_grouped_mx_m128",
+                ]
+                .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_GROUPED_MODULE, e)),
+                mx_k64: [
+                    "w4a4_grouped_mx_m32_k64",
+                    "w4a4_grouped_mx_m64_k64",
+                    "w4a4_grouped_mx_m128_k64",
+                ]
+                .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_GROUPED_MODULE, e)),
+            },
         })
+    }
+
+    /// 2026-10-10: The routed experts' W4A4 row cap with the grouped GEMM
+    /// (`METRALE_GLM_MOE_W4A4_GROUPED=1`, read by the loader): unbounded when it, the sort and
+    /// the indexed combine resolved next to the slot GEMV, else [`Self::w4a4_expert_rows`].
+    pub fn w4a4_expert_rows_grouped(&self) -> usize {
+        let g = self.w4a4_grouped;
+        let ready = g.tiles.0 != 0
+            && g.mx.iter().chain(g.mx_k64.iter()).all(|k| k.0 != 0)
+            && self.moe_sort_by_expert.0 != 0
+            && self.combine_indexed.0 != 0;
+        if ready && self.w4a4_expert_rows() > 0 {
+            usize::MAX
+        } else {
+            self.w4a4_expert_rows()
+        }
     }
 
     /// 2026-10-08: The routed experts' W4A4 row cap on this target: [`MOE_W4A4_MAX_ROWS`] when

@@ -114,6 +114,10 @@ pub struct DsaRowsKernels {
     pub pool_scores: KernelHandle,
     pub topk_pools: KernelHandle,
     pub expand_selection: KernelHandle,
+    /// 2026-10-10: `dsa_index_scores_tiled`: `dsa_index_scores`'s bits for many query rows (a
+    /// prefill sub-chunk) in query x pool tiles (`select::scores_tiled`). Not part of
+    /// [`Self::ready`].
+    pub scores_tiled: KernelHandle,
 }
 
 impl DsaRowsKernels {
@@ -125,6 +129,7 @@ impl DsaRowsKernels {
             pool_scores: k("dsa_pool_scores_rows"),
             topk_pools: k("dsa_topk_pools_rows"),
             expand_selection: k("dsa_expand_selection_rows"),
+            scores_tiled: k("dsa_index_scores_tiled"),
         }
     }
 

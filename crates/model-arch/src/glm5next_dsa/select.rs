@@ -43,6 +43,36 @@ use super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 /// as `SMEM_CEILING` in `examples/dsa_indexer_microtest.rs`.
 pub const TOPK_SMEM_CEILING: usize = 49_152;
 
+/// 2026-10-10: `DSA_ST_P`, `DSA_ST_R` and `DSA_ST_D` of `dsa_index_scores_tiled`
+/// (`dsa_indexer_rows.cu`): pools and query rows per 256-thread block, and the one index head
+/// dim it is built for; its dynamic shared memory holds both tiles, d-major.
+pub const SCORES_TILE_POOLS: usize = 64;
+pub const SCORES_TILE_ROWS: usize = 32;
+pub const SCORES_TILE_D: usize = 128;
+pub const SCORES_TILE_SMEM: u32 =
+    (SCORES_TILE_D * (SCORES_TILE_POOLS + SCORES_TILE_ROWS) * 4) as u32;
+
+/// 2026-10-10: `METRALE_GLM_DSA_SCORES_TILED=1`, read once: score the pools of a prefill
+/// sub-chunk's query rows with `dsa_index_scores_tiled` (each score `dsa_index_scores`'s bits,
+/// the keys and each head's query slice staged once per 32-row x 64-pool tile instead of once
+/// per (pool, query) block). Off unless `1`.
+pub fn scores_tiled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_DSA_SCORES_TILED").as_deref() == Ok("1"))
+}
+
+/// 2026-10-10: Whether a selection pass takes the tiled scores: the lever on, the kernel
+/// resolved, an exact (host-geometry) launch of more than one query row, and a shape inside the
+/// kernel's bounds. Anything else keeps `dsa_index_scores`.
+pub fn scores_tiled_for(
+    ceiling: bool,
+    geom: &DsaSelectGeometry,
+    kernel: metrale_gpu_runtime::gpu::KernelHandle,
+    lever: bool,
+) -> bool {
+    lever && kernel.0 != 0 && !ceiling && geom.q_rows > 1 && geom.index_head_dim == SCORES_TILE_D
+}
+
 /// 2026-09-25: Threads per block for `dsa_index_scores`, and the least shared memory it is
 /// given, in bytes (`select_tokens` requests `max(SCORES_BLOCK, 4 * index_heads)`).
 pub(crate) const SCORES_BLOCK: u32 = 128;

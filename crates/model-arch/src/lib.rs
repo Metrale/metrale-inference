@@ -24,6 +24,7 @@ pub mod glm5next_mtp_head;
 pub mod glm5next_skeleton;
 pub mod glm5next_w4a16_dense;
 pub mod glm5next_w4a16_seg;
+pub mod glm5next_w4a16_wide;
 pub mod kimi_k3;
 pub mod mistral_loader;
 pub mod moe_v41;
