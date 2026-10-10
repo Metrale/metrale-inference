@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-10: config.json -> the `gemma4` circuit's arch shape (Gemma-4-31B dense, Gemma-4-26B-A4B
+# MoE): interleaved sliding-window and global attention layers with their own head geometries,
+# a GeGLU MLP, and with `enable_moe_block` a softmax-routed MoE beside it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/config_map.rs).
+# Invariants:
+# - Every key the checkpoints carry is classified: a dim, a param, a required value, a nested
+#   object, or ignorable with its reason. Any other key is refused.
+# - The model reads `text_config` (Gemma4Config nests the text stack beside the vision and audio
+#   towers); the top level holds the multimodal wrapper and the quantization block.
+# - The layer kinds come from `layer_types`; the global layers' geometry from `global_head_dim`
+#   and `num_global_key_value_heads` (Gemma4TextConfig.__post_init__'s `per_layer_config`).
+# - A default is the transformers 5.19 Gemma4TextConfig default, stated where a checkpoint may
+#   omit the key; the MoE dims default to 0 for the dense model, whose config has them null.
+# - Refused until modelled: per-layer embeddings (`hidden_size_per_layer_input` > 0), KV-shared
+#   layers (`num_kv_shared_layers` > 0), a separate V projection on global layers
+#   (`attention_k_eq_v` false), bidirectional text attention (`use_bidirectional_attention =
+#   "all"`), RoPE types other than default (sliding) and proportional (global), biases, and an
+#   activation other than tanh-GELU.
+# - Not checked (the schema cannot state it): Gemma4TextConfig rewrites a `layer_types` whose last
+#   entry is not `full_attention` to end with one; both checkpoints already end with one. Nor is
+#   `enable_moe_block` checked against `num_experts` being set.
+
+schema = 1
+arch = "gemma4"
+model_types = ["gemma4"]
+nest = "text_config"
+
+[root]
+model_type = "ignore"
+architectures = { ignore = "the HF class name; model_type selects the circuit" }
+transformers_version = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors; the load plan reads each tensor's own" }
+initializer_range = { ignore = "training initialisation" }
+quantization_config = { ignore = "read by the precision plan (DeclaredPrecisionPlan)" }
+vision_config = { ignore = "the vision tower is outside the text circuit (LIFECYCLE-DESIGN.md 13)" }
+audio_config = { ignore = "the audio tower is outside the text circuit (LIFECYCLE-DESIGN.md 13)" }
+vision_soft_tokens_per_image = { ignore = "the vision tower's output length; outside the text circuit" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+image_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+video_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+audio_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+boi_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+eoi_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+boa_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+eoa_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+eoa_token_index = { ignore = "multimodal token ids; outside the text circuit" }
+tie_word_embeddings = { require = true, why = "the circuit's head is tied to the embedding (the checkpoints ship no lm_head tensor)" }
+
+[layers]
+count = "num_hidden_layers"
+sources = [
+  { key = "layer_types", values = { sliding_attention = "sliding_attention", full_attention = "full_attention" } },
+]
+
+[dims]
+hidden = "hidden_size"
+vocab = "vocab_size"
+inter = "intermediate_size"
+q_heads = "num_attention_heads"
+# 2026-10-10: The sliding layers' geometry and window.
+kv_heads = "num_key_value_heads"
+head_dim = "head_dim"
+window = "sliding_window"
+# 2026-10-10: The global layers' geometry: `num_global_key_value_heads` applies with
+# `attention_k_eq_v` (required true); absent, the global layers keep `num_key_value_heads`.
+g_kv_heads = { key = "num_global_key_value_heads", or_dim = "kv_heads" }
+g_head_dim = { key = "global_head_dim", default = 512 }
+moe = { key = "enable_moe_block", bool = true, default = 0 }
+experts = { key = "num_experts", default = 0 }
+top_k = { key = "top_k_experts", default = 0 }
+moe_inter = { key = "moe_intermediate_size", default = 0 }
+# 2026-10-10: The logit softcap is on when `final_logit_softcapping` is set; its value is a param.
+softcap = { key = "final_logit_softcapping", bool_present = true }
+
+[keys]
+model_type = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors" }
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+pad_token_id = { ignore = "tokenizer ids" }
+initializer_range = { ignore = "training initialisation" }
+attention_dropout = { ignore = "training only" }
+use_cache = { ignore = "an HF generate flag" }
+max_position_embeddings = { ignore = "the context limit; neither RoPE type here reads it" }
+vocab_size_per_layer_input = { ignore = "read only by per-layer embeddings, which hidden_size_per_layer_input = 0 (required) turns off" }
+use_double_wide_mlp = { ignore = "doubles the MLP only on KV-shared layers; num_kv_shared_layers = 0 is required" }
+rms_norm_eps = { param = true, default = 1e-6 }
+final_logit_softcapping = { param = true }
+hidden_activation = { require = "gelu_pytorch_tanh", why = "the circuit's MLP and experts are tanh-GELU gated", default = "gelu_pytorch_tanh" }
+attention_bias = { require = false, why = "the circuit's projections have no bias", default = false }
+attention_k_eq_v = { require = true, why = "the circuit's global layers share K and V (no v_proj); a separate V projection there is not modelled", default = false }
+num_kv_shared_layers = { require = 0, why = "KV-shared layers (reusing an earlier layer's K and V) are not modelled", default = 0 }
+hidden_size_per_layer_input = { require = 0, why = "per-layer embeddings (PLE: a second embedding and a gated projection per layer) are not modelled", default = 256 }
+use_bidirectional_attention = { require = "vision", why = "\"all\" makes the text attention bidirectional (and halves the window); the circuit is causal. \"vision\" relaxes the mask among vision tokens only, outside the text circuit" }
+tie_word_embeddings = { require = true, why = "the circuit's head is tied to the embedding (the checkpoints ship no lm_head tensor)", default = true }
+expert_intermediate_size = { refuse = "not a Gemma4TextConfig field in transformers 5.19 (a pre-release export key, null in Gemma-4-31B); its meaning is not established" }
+rope_parameters = { param = "rope", object = { sliding_attention = { object = { rope_type = { param = true, require = "default", why = "the circuit's sliding layers run plain RoPE" }, rope_theta = "param", partial_rotary_factor = { require = 1.0, why = "the circuit's sliding layers rotate the whole head" } } }, full_attention = { object = { rope_type = { param = true, require = "proportional", why = "the circuit's global layers run proportional RoPE" }, rope_theta = "param", partial_rotary_factor = "param", factor = "param" } } } }
