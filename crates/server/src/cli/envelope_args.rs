@@ -27,6 +27,29 @@ pub enum EnvelopeAction {
     Schedules(EnvelopeSchedulesArgs),
     /// Check FUSIONS.toml's row ranges against SCHEDULES.toml and print the report. CPU only.
     Fusions(EnvelopeFusionsArgs),
+    /// Write (or check) the post-sweep union Venn: every model's in-envelope share with the
+    /// cells SCHEDULES.toml decided counted as measured. CPU only.
+    Union(EnvelopeUnionArgs),
+}
+
+/// `met accuracy envelope union` options.
+#[derive(clap::Args, Debug, Clone)]
+pub struct EnvelopeUnionArgs {
+    /// Hardware class (`kernels/<class>/`).
+    #[arg(long)]
+    pub hardware: String,
+    /// The SCHEDULES.toml whose decided cells count as measured.
+    #[arg(long)]
+    pub schedules: std::path::PathBuf,
+    /// The report path, relative to the repository root.
+    #[arg(long)]
+    pub out: String,
+    /// Verify the report at --out is what this command produces now; write nothing.
+    #[arg(long)]
+    pub check: bool,
+    /// Repository root; default as for `schedules`.
+    #[arg(long)]
+    pub root: Option<std::path::PathBuf>,
 }
 
 /// `met accuracy envelope schedules` options.

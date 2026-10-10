@@ -241,8 +241,16 @@ impl AccuracyPoint {
             .collect::<Vec<_>>()
             .join(",");
         let s = &self.shape;
+        // 2026-10-10: Two models can run one point and shape at different runtime values (the
+        // MoE expert count and top-k of DeepSeek-V4 and GLM-5.3): the key names them.
+        let rt = if s.runtime.is_empty() {
+            String::new()
+        } else {
+            let r: Vec<String> = s.runtime.iter().map(|(k, v)| format!("{k}={v}")).collect();
+            format!(" rt[{}]", r.join(","))
+        };
         format!(
-            "{}[{vals}] {} {} w={} a={} k={} n={} rows={}",
+            "{}[{vals}] {} {} w={} a={} k={} n={} rows={}{rt}",
             self.family,
             self.kernels,
             s.op,

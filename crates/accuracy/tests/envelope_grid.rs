@@ -42,7 +42,7 @@ fn candidates_are_contracted_kernels_of_families_that_run_the_formats() {
         let nvfp4 = c.cell.weight.starts_with("nvfp4");
         for cand in &c.candidates {
             let is_w4 = cand.family.starts_with("w4a16") || cand.family == "tc_rows";
-            assert!(!(is_w4 && !nvfp4), "{:?} offers {}", c.cell, cand.kernel);
+            assert!(!is_w4 || nvfp4, "{:?} offers {}", c.cell, cand.kernel);
         }
     }
     // 2026-10-10: Served cells carry today's routed entry. Where it is a candidate (a standalone

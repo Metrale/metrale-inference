@@ -55,6 +55,7 @@ pub(crate) fn dispatch(a: EnvelopeArgs) -> Result<i32> {
         EnvelopeAction::Sweep(s) => sweep_gpu(&s),
         EnvelopeAction::Schedules(s) => envelope_schedules::schedules(&s),
         EnvelopeAction::Fusions(f) => envelope_schedules::fusions(&f),
+        EnvelopeAction::Union(u) => envelope_schedules::union(&u),
     }
 }
 
@@ -163,22 +164,22 @@ impl Gpu0 {
             .unwrap_or(0)
     }
 
-    fn temp_c(&self) -> f64 {
+    fn temp_c(&self) -> Option<f64> {
         self.nvml
             .as_ref()
             .and_then(|n| n.device(0).ok())
             .and_then(|d| d.temperature_c().ok().flatten())
-            .map_or(f64::NAN, f64::from)
+            .map(f64::from)
     }
 
     /// 2026-10-10: Wait while hotter than `max`, until at most `resume`.
     fn cool(&self, max: u32, resume: u32) {
-        let t = self.temp_c();
-        if !(t > f64::from(max)) {
+        let Some(t) = self.temp_c() else { return };
+        if t <= f64::from(max) {
             return;
         }
         eprintln!("cool-down: {t:.0} C > {max} C, waiting for {resume} C");
-        while self.temp_c() > f64::from(resume) {
+        while self.temp_c().is_some_and(|t| t > f64::from(resume)) {
             std::thread::sleep(std::time::Duration::from_secs(5));
         }
     }
@@ -410,7 +411,7 @@ fn measure(
         time_us: Vec::new(),
         floor_us: gc.floor_us,
         throttled: false,
-        temp_c: f64::NAN,
+        temp_c: gpu.temp_c(),
         closure: runner.closure(),
         at: rfc3339(now_unix()),
     };

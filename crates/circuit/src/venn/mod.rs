@@ -36,6 +36,7 @@ pub mod report;
 pub mod roofline;
 pub mod union;
 mod union_render;
+pub mod union_repo;
 mod union_tables;
 
 use std::collections::BTreeMap;

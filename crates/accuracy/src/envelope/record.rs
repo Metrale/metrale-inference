@@ -81,8 +81,9 @@ pub struct Measurement {
     pub floor_us: f64,
     /// 2026-10-10: A power or thermal slowdown was active during the timing: rerun it.
     pub throttled: bool,
-    /// 2026-10-10: GPU temperature after the timing, Celsius.
-    pub temp_c: f64,
+    /// 2026-10-10: GPU temperature when the record was written, Celsius; `None` when NVML
+    /// could not read it (JSON `null`: a NaN would not round-trip).
+    pub temp_c: Option<f64>,
     /// 2026-10-10: The binary's kernel target closure (`hw/model/quant=hash`).
     pub closure: String,
     /// 2026-10-10: UTC timestamp, RFC 3339.

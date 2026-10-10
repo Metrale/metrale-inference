@@ -44,7 +44,7 @@ fn rec(rows: u64, kernel: &str, times: &[f64]) -> Measurement {
         time_us: times.to_vec(),
         floor_us: 1.0,
         throttled: false,
-        temp_c: 60.0,
+        temp_c: Some(60.0),
         closure: "gb10/x/y=0".into(),
         at: "2026-10-11T03:00:00Z".into(),
     }

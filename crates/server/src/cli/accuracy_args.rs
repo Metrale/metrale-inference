@@ -39,7 +39,7 @@ pub enum AccuracyAction {
 mod envelope_args;
 pub use envelope_args::{
     EnvelopeAction, EnvelopeArgs, EnvelopeFusionsArgs, EnvelopeGridArgs, EnvelopeSchedulesArgs,
-    EnvelopeSweepArgs,
+    EnvelopeSweepArgs, EnvelopeUnionArgs,
 };
 
 /// `met accuracy model` options.
