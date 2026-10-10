@@ -15,6 +15,8 @@ toml = "1.1"
 # attest to what the binary was compiled from.
 metrale-closure = { path = "../closure" }
 serde_json.workspace = true
+# 2026-10-10: The SCHEDULES.toml source digests (`build_schedules.rs`).
+sha2.workspace = true
 
 # 2026-09-25: `tests/kernel_shadow_detector.rs` reads the `[modules]` and
 # `[shadow_exempt]` tables out of the real KERNEL.toml files.
@@ -24,6 +26,8 @@ toml = "1.1"
 metrale-closure = { path = "../closure" }
 # 2026-09-25: `tests/layout_mirror.rs` compares the resolver with its Python mirror as JSON.
 serde_json.workspace = true
+# 2026-10-10: `tests/schedules_bake.rs` compiles `build_schedules.rs`.
+sha2.workspace = true
 
 [lints]
 workspace = true
