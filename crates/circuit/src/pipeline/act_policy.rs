@@ -47,6 +47,9 @@ fn family_of(op: &OpKind) -> Option<ProjFamily> {
             | LinearRole::IndexWeights
             | LinearRole::IndexGate
             | LinearRole::HcMix => None,
+            // 2026-10-10: The DeepSeek-V4 grouped output and compressor projections: the flag
+            // has no family for them.
+            LinearRole::OGroup | LinearRole::CompressKv | LinearRole::CompressGate => None,
         },
         OpKind::Router | OpKind::ExpertGateUp | OpKind::ExpertDown => Some(ProjFamily::Moe),
         OpKind::LmHead => Some(ProjFamily::LmHead),

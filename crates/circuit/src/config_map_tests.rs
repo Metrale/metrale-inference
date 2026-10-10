@@ -67,3 +67,46 @@ fn a_malformed_map_is_refused() {
         matches!(ConfigMap::parse(&nest_without_root), Err(ConfigMapError::Schema(m)) if m.contains("[root]"))
     );
 }
+
+/// 2026-10-10: Integer list entries map by their decimal spelling, and a `trailing` key's
+/// count of extra entries (MTP layers) must be listed, must map, and is dropped.
+#[test]
+fn integer_entries_map_and_trailing_entries_are_checked_then_dropped() {
+    let text = MAP.replace(
+        "uniform = \"full_attention\"",
+        "sources = [{ key = \"ratios\", values = { \"0\" = \"sliding_attention\", \"4\" = \
+         \"compressed_sparse_attention\" }, trailing = \"num_nextn_predict_layers\" }]",
+    );
+    let m = |cfg: serde_json::Value| map_config(&ConfigMap::parse(&text).unwrap(), &cfg);
+    let base = json!({"model_type": "toy", "num_hidden_layers": 2, "hidden_size": 8,
+        "num_nextn_predict_layers": 1, "ratios": [4, 0, 0]});
+    let kinds = m(base.clone()).unwrap().shape.layer_kinds;
+    assert_eq!(
+        kinds,
+        [
+            crate::ir::LayerKind::CompressedSparseAttention,
+            crate::ir::LayerKind::SlidingAttention
+        ]
+    );
+    let refused = |cfg, want: &str| match m(cfg) {
+        Err(ConfigMapError::Refused { key, .. }) => assert_eq!(key, want),
+        other => panic!("{other:?}"),
+    };
+    let mut short = base.clone();
+    short["ratios"] = json!([4, 0]);
+    refused(short, "num_hidden_layers");
+    let mut unmapped_trailing = base.clone();
+    unmapped_trailing["ratios"] = json!([4, 0, 8]);
+    refused(unmapped_trailing, "ratios");
+    let mut no_trailing = base.clone();
+    no_trailing["num_nextn_predict_layers"] = 0.into();
+    refused(no_trailing, "num_hidden_layers");
+    let mut absent = base;
+    absent
+        .as_object_mut()
+        .unwrap()
+        .remove("num_nextn_predict_layers");
+    assert!(
+        matches!(m(absent), Err(ConfigMapError::MissingKey { key, .. }) if key == "num_nextn_predict_layers")
+    );
+}

@@ -177,6 +177,19 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
                 kv_per_token += crate::venn::roofline::read_unit_bytes(c, n, settings)
                     .map_err(|e| e.to_string())?;
             }
+            // 2026-10-10: DeepSeek-V4: every KV side its attention reads (the window rows and
+            // the compressed rows), per token at their declared formats.
+            OpKind::CompressedAttention => {
+                for &(idx, access) in &n.state {
+                    if access == crate::state::StateAccess::Read {
+                        let unit = c.states[idx].elements
+                            * crate::venn::roofline::state_dtype(c, n, idx, settings)
+                                .map_err(|e| e.to_string())?
+                                .size();
+                        kv_per_token += unit as f64;
+                    }
+                }
+            }
             OpKind::SsmUpdate => {
                 state += dim("mamba_heads")? * dim("mamba_head_dim")? * dim("ssm_state")? * 4.0;
             }

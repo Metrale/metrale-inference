@@ -68,6 +68,30 @@ fn every_recurrent_and_attention_layer_names_the_state_it_touches() {
                     (OpKind::KpoolCompress, "tail", StateAccess::Update),
                     (OpKind::IndexSelect, "index", StateAccess::Read),
                 ],
+                // 2026-10-10: DeepSeek-V4: every layer writes and attends its window rows; a
+                // compressing layer pools into its tail and writes and attends the compressed
+                // rows; a CSA layer's indexer pools, writes and selects its own keys.
+                LayerKind::SlidingAttention => vec![
+                    (OpKind::KvWrite, "window", StateAccess::Write),
+                    (OpKind::CompressedAttention, "window", StateAccess::Read),
+                ],
+                LayerKind::HeavilyCompressedAttention => vec![
+                    (OpKind::KvWrite, "window", StateAccess::Write),
+                    (OpKind::CompressedAttention, "window", StateAccess::Read),
+                    (OpKind::KpoolCompress, "ctail", StateAccess::Update),
+                    (OpKind::KvWrite, "ckv", StateAccess::Write),
+                    (OpKind::CompressedAttention, "ckv", StateAccess::Read),
+                ],
+                LayerKind::CompressedSparseAttention => vec![
+                    (OpKind::KvWrite, "window", StateAccess::Write),
+                    (OpKind::CompressedAttention, "window", StateAccess::Read),
+                    (OpKind::KpoolCompress, "ctail", StateAccess::Update),
+                    (OpKind::KvWrite, "ckv", StateAccess::Write),
+                    (OpKind::CompressedAttention, "ckv", StateAccess::Read),
+                    (OpKind::KpoolCompress, "itail", StateAccess::Update),
+                    (OpKind::KvWrite, "ikeys", StateAccess::Write),
+                    (OpKind::IndexSelect, "ikeys", StateAccess::Read),
+                ],
             };
             let mut want: Vec<_> = want
                 .into_iter()

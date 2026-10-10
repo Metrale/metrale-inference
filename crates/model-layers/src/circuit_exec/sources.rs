@@ -16,7 +16,7 @@ use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
-pub const CIRCUITS: [(&str, &str); 4] = [
+pub const CIRCUITS: [(&str, &str); 5] = [
     (
         "qwen3_5",
         include_str!("../../../../kernels/circuits/qwen3_5.toml"),
@@ -34,10 +34,15 @@ pub const CIRCUITS: [(&str, &str); 4] = [
         "glm5_next",
         include_str!("../../../../kernels/circuits/glm5_next.toml"),
     ),
+    // 2026-10-10: DeepSeek-V4 (not an executor target; `met circuit` plans and the Venn read it).
+    (
+        "deepseek_v4",
+        include_str!("../../../../kernels/circuits/deepseek_v4.toml"),
+    ),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 6] = [
+pub const PRECISION: [(&str, &str); 7] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
@@ -67,6 +72,10 @@ pub const PRECISION: [(&str, &str); 6] = [
             "../../../../kernels/circuits/precision/nemotron-3-super-120b-a12b-nvfp4.toml"
         ),
     ),
+    (
+        "deepseek-v4-flash-nvfp4-ep2",
+        include_str!("../../../../kernels/circuits/precision/deepseek-v4-flash-nvfp4-ep2.toml"),
+    ),
 ];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
@@ -76,7 +85,7 @@ pub const CHECKPOINTS: [(&str, &str); 1] = [(
 )];
 
 /// 2026-09-28: Every block library a circuit can include.
-pub const BLOCKS: [(&str, &str); 4] = [
+pub const BLOCKS: [(&str, &str); 8] = [
     (
         "qwen3_hybrid",
         include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
@@ -93,6 +102,24 @@ pub const BLOCKS: [(&str, &str); 4] = [
     (
         "glm5_next_ffn",
         include_str!("../../../../kernels/circuits/blocks/glm5_next_ffn.toml"),
+    ),
+    // 2026-10-10: The DeepSeek-V4 block libraries (kernels/circuits/deepseek_v4.toml
+    // includes them).
+    (
+        "deepseek_v4_swa",
+        include_str!("../../../../kernels/circuits/blocks/deepseek_v4_swa.toml"),
+    ),
+    (
+        "deepseek_v4_hca",
+        include_str!("../../../../kernels/circuits/blocks/deepseek_v4_hca.toml"),
+    ),
+    (
+        "deepseek_v4_csa",
+        include_str!("../../../../kernels/circuits/blocks/deepseek_v4_csa.toml"),
+    ),
+    (
+        "deepseek_v4_ffn",
+        include_str!("../../../../kernels/circuits/blocks/deepseek_v4_ffn.toml"),
     ),
 ];
 

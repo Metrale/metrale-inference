@@ -252,3 +252,38 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 [instance.policy]
 opt_in_levers = []
 settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-10: nvidia/DeepSeek-V4-Flash-NVFP4 (`deepseek_v4`), served by the two-node EP recipe.
+# Built by the `new-model` method; the circuit is not an executor target (`golden = false`: the
+# engine runs DeepSeek-V4 through its own layer code; `met circuit venn` reads it).
+# - Shape: config.json (verified 2026-10-10 against the checked-in fixture): `compress_ratios`
+#   (W = 0, sliding_attention, layers 0, 1; C = 4, compressed_sparse_attention, the even layers
+#   from 2; H = 128, heavily_compressed_attention, the odd ones from 3; its 44th entry is the MTP
+#   layer's, dropped), `num_hash_layers`, `hc_mult`, the attention widths, `sliding_window`, the
+#   `index_*` indexer dims, the MoE dims (kernels/circuits/deepseek_v4.config.toml maps each).
+# - No verify or draft plans: the MTP layer is not modelled (kernels/circuits/deepseek_v4.toml),
+#   and the recipe serves without speculation.
+# - kv_cache_dtype: fp8, pinned by the recipe (recipes/deepseek-v4/deepseek-v4-flash-nvfp4-ep2
+#   .yaml `kv_cache_dtype`); the checkpoint declares none. lm_head_dtype: bf16, declared (`head`
+#   is BF16 and excluded from the export). activation_quantization: adaptive, pinned by the
+#   recipe.
+# - row_tiers: by_rows: the checkpoint's canonical quant is nvfp4 (`quant_algo =
+#   MIXED_PRECISION`, crates/server/src/main_modules/serve_quant.rs:23) and it has no
+#   `self_attn.q_proj` the policy reads as FP8, so it is no FP8 MoE checkpoint
+#   (crates/server/src/main_modules/serve_load/model_setup.rs:339-355, ml/row_tiers.rs:64-78).
+#   The other settings are the flag defaults cited for the entries above; the DeepSeek-V4 layer
+#   code reads none of them.
+[[instance]]
+recipe = "deepseek-v4/deepseek-v4-flash-nvfp4-ep2"
+checkpoint = "nvidia/DeepSeek-V4-Flash-NVFP4"
+arch = "deepseek_v4"
+precision = "deepseek-v4-flash-nvfp4-ep2"
+target = "gb10/deepseek-v4-flash/nvfp4"
+golden = false
+layer_kinds = "WWCH CHCH CHCH CHCH CHCH CHCH CHCH CHCH CHCH CHCH CHC"
+dims = { hidden = 4096, vocab = 129280, hc = 4, q_heads = 64, head_dim = 512, rope_dim = 64, q_lora = 1024, o_groups = 8, o_lora = 1024, window = 128, index_heads = 64, index_head_dim = 128, index_topk = 512, index_kpool = 4, hca_ratio = 128, experts = 256, top_k = 6, moe_inter = 2048, shared_inter = 2048, hash_layers = 3 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }

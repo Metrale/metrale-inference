@@ -16,6 +16,7 @@ Each model is the target of a Venn report (`met circuit venn`) against the golde
 | M6 | `glm-5.3/glm-5.3-flash-nvfp4` | `nvidia/GLM-5.3-Flash-NVFP4` | `glm5_next` | no | 11 deepseek_sparse_attention, 34 linear_attention | 84.52 | 337.57 | 926.07 |
 | M7 | `nemotron-3-nano/nemotron-3-nano-30b-a3b-nvfp4` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4` | `nemotron_h` | no | 6 full_attention, 23 mamba, 23 moe | 12.00 | 51.68 | 136.21 |
 | M8 | `nemotron-3-super/nemotron-3-super-120b-a12b-nvfp4` | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` | `nemotron_h` | no | 8 full_attention, 40 mamba, 40 moe | 52.36 | 193.95 | 498.16 |
+| M9 | `deepseek-v4/deepseek-v4-flash-nvfp4-ep2` | `nvidia/DeepSeek-V4-Flash-NVFP4` | `deepseek_v4` | no | 21 compressed_sparse_attention, 20 heavily_compressed_attention, 2 sliding_attention | 45.92 | 234.12 | 671.50 |
 
 ## In-envelope step share per model
 
@@ -39,147 +40,154 @@ Share of each model's estimated step by envelope status.
 | M7 `nemotron-3-nano-30b-a3b-nvfp4` | multi_seq C16 | 0.0% | 11.4% | 86.9% | 1.6% | 0.1% | 0.1% |
 | M8 `nemotron-3-super-120b-a12b-nvfp4` | C1 | 0.0% | 39.0% | 23.8% | 0.1% | 37.1% | 0.0% |
 | M8 `nemotron-3-super-120b-a12b-nvfp4` | multi_seq C16 | 0.0% | 10.2% | 78.9% | 0.6% | 10.3% | 0.0% |
+| M9 `deepseek-v4-flash-nvfp4-ep2` | C1 | 0.0% | 67.4% | 32.4% | 0.0% | 0.1% | 0.1% |
+| M9 `deepseek-v4-flash-nvfp4-ep2` | multi_seq C16 | 0.0% | 13.5% | 85.8% | 0.0% | 0.2% | 0.6% |
 
 ## Family x model matrix
 
 Best status of any site of the model on the family over every run (E/M/U shared, O parameterization opportunity, V policy variant, N novel); `novel:<op>` rows are ops no family implements.
 
-| Family | Models | M1 | M2 | M3 | M4 | M5 | M6 | M7 | M8 |
-|---|---:|---|---|---|---|---|---|---|---|
-| `argmax_host` | 8 | U | U | U | U | U | U | U | U |
-| `dense_bf16` | 8 | M | M | M | M | M | M | M | M |
-| `embed_copy` | 8 | U | U | U | U | U | U | U | U |
-| `kv_write` | 8 | U | U | U | U | V | V | V | V |
-| `rms_norm` | 8 | U | U | U | U | U | V | U | U |
-| `gated_rms_norm` | 7 | U | U | U | U | V |  | V | V |
-| `paged_decode_attn` | 7 | U | U | U | U | O |  | O | O |
-| `causal_conv1d_l2norm` | 5 | U | U | U | U |  | U |  |  |
-| `gdn_recurrence_strided` | 5 | U | U | U | U |  | V |  |  |
-| `nvfp4_mmq` | 5 | U | U |  |  |  | U | U | U |
-| `deinterleave_qg` | 4 | U | U | U | U |  |  |  |  |
-| `dense_bf16_tc` | 4 |  |  |  |  | M | M | M | M |
-| `gdn_ba_gates_gemm` | 4 | U | U | U | U |  |  |  |  |
-| `gdn_ba_gates_gemv` | 4 | U | U | U | U |  |  |  |  |
-| `gdn_recurrence` | 4 | U | U | U | U |  |  |  |  |
-| `glm_router_topk` | 4 |  |  |  |  | U | U | U | U |
-| `moe_nvfp4_gemv_1row` | 4 |  |  |  |  | U | U | U | U |
-| `moe_w4a16_grouped_gemm` | 4 |  |  |  |  | U | U | U | U |
-| `rope` | 4 | U | U | U | U |  |  |  |  |
-| `sigmoid_gate_mul` | 4 | U | U | U | U |  |  |  |  |
-| `w4a4_mx` | 4 |  | U |  |  |  | U | U | U |
-| `w8a8_act_quant` | 4 |  | U |  | U | V |  |  | V |
-| `wxay` | 4 |  | M |  | M | V |  |  | V |
-| `causal_conv1d` | 3 |  |  |  |  | U |  | U | U |
-| `glm_moe_combine` | 3 |  |  |  |  | U | U | U |  |
-| `mamba2_ssm` | 3 |  |  |  |  | U |  | U | U |
-| `moe_blend` | 3 |  |  | U | U |  |  |  | U |
-| `moe_grouped_tc` | 3 |  |  |  | M | U |  |  | V |
-| `moe_relu2_down_1row` | 3 |  |  |  |  |  | U | U | U |
-| `moe_weighted_sum_scale` | 3 |  |  |  |  | U | U | U |  |
-| `novel:state_snapshot` | 3 |  |  |  |  | N |  | N | N |
-| `relu_squared` | 3 |  |  |  |  | U |  | U | U |
-| `tc_rows` | 3 |  |  |  | U | V |  |  | V |
-| `view_split` | 3 |  |  |  |  | U |  | U | U |
-| `moe_fp8_1row` | 2 |  |  | E |  |  | M |  |  |
-| `moe_grouped_fp8_scalar` | 2 |  |  | M |  |  | M |  |  |
-| `moe_topk` | 2 |  |  | U | U |  |  |  |  |
-| `silu_mul` | 2 | U | U |  |  |  |  |  |  |
-| `w4a16_gemm` | 2 | U |  |  |  | U |  |  |  |
-| `w4a16_gemv` | 2 | E |  |  |  | M |  |  |  |
-| `concat` | 1 |  |  |  |  |  | U |  |  |
-| `dsa_indexer` | 1 |  |  |  |  |  | U |  |  |
-| `glm_mhc` | 1 |  |  |  |  |  | U |  |  |
-| `glm_mla_decode` | 1 |  |  |  |  |  | U |  |  |
-| `glm_mla_latent_write` | 1 |  |  |  |  |  | U |  |  |
-| `glm_swiglu_clamp` | 1 |  |  |  |  |  | U |  |  |
-| `kda_gates` | 1 |  |  |  |  |  | U |  |  |
-| `kda_o_norm` | 1 |  |  |  |  |  | U |  |  |
-| `kda_recurrent` | 1 |  |  |  |  |  | U |  |  |
-| `layer_norm` | 1 |  |  |  |  |  | U |  |  |
-| `moe_prefill_w8a8` | 1 |  |  | U |  |  |  |  |  |
-| `novel:index_select` | 1 |  |  |  |  |  | N |  |  |
-| `novel:kpool_compress` | 1 |  |  |  |  |  | N |  |  |
-| `w4a16_tc` | 1 |  |  |  |  | M |  |  |  |
-| `w8a16_gemm` | 1 |  |  | U |  |  |  |  |  |
+| Family | Models | M1 | M2 | M3 | M4 | M5 | M6 | M7 | M8 | M9 |
+|---|---:|---|---|---|---|---|---|---|---|---|
+| `argmax_host` | 9 | U | U | U | U | U | U | U | U | U |
+| `dense_bf16` | 9 | M | M | M | M | M | M | M | M | M |
+| `embed_copy` | 9 | U | U | U | U | U | U | U | U | U |
+| `kv_write` | 9 | U | U | U | U | V | V | V | V | V |
+| `rms_norm` | 9 | U | U | U | U | U | V | U | U | V |
+| `gated_rms_norm` | 7 | U | U | U | U | V |  | V | V |  |
+| `paged_decode_attn` | 7 | U | U | U | U | O |  | O | O |  |
+| `nvfp4_mmq` | 6 | U | U |  |  |  | U | U | U | U |
+| `causal_conv1d_l2norm` | 5 | U | U | U | U |  | U |  |  |  |
+| `dense_bf16_tc` | 5 |  |  |  |  | M | M | M | M | M |
+| `gdn_recurrence_strided` | 5 | U | U | U | U |  | V |  |  |  |
+| `moe_nvfp4_gemv_1row` | 5 |  |  |  |  | U | U | U | U | U |
+| `moe_w4a16_grouped_gemm` | 5 |  |  |  |  | U | U | U | U | U |
+| `rope` | 5 | U | U | U | U |  |  |  |  | U |
+| `w4a4_mx` | 5 |  | U |  |  |  | U | U | U | U |
+| `w8a8_act_quant` | 5 |  | U |  | U | V |  |  | V | U |
+| `wxay` | 5 |  | M |  | M | V |  |  | V | M |
+| `deinterleave_qg` | 4 | U | U | U | U |  |  |  |  |  |
+| `gdn_ba_gates_gemm` | 4 | U | U | U | U |  |  |  |  |  |
+| `gdn_ba_gates_gemv` | 4 | U | U | U | U |  |  |  |  |  |
+| `gdn_recurrence` | 4 | U | U | U | U |  |  |  |  |  |
+| `glm_moe_combine` | 4 |  |  |  |  | U | U | U |  | U |
+| `glm_router_topk` | 4 |  |  |  |  | U | U | U | U |  |
+| `moe_relu2_down_1row` | 4 |  |  |  |  |  | U | U | U | U |
+| `moe_weighted_sum_scale` | 4 |  |  |  |  | U | U | U |  | U |
+| `sigmoid_gate_mul` | 4 | U | U | U | U |  |  |  |  |  |
+| `causal_conv1d` | 3 |  |  |  |  | U |  | U | U |  |
+| `mamba2_ssm` | 3 |  |  |  |  | U |  | U | U |  |
+| `moe_blend` | 3 |  |  | U | U |  |  |  | U |  |
+| `moe_fp8_1row` | 3 |  |  | E |  |  | M |  |  | M |
+| `moe_grouped_fp8_scalar` | 3 |  |  | M |  |  | M |  |  | M |
+| `moe_grouped_tc` | 3 |  |  |  | M | U |  |  | V |  |
+| `moe_topk` | 3 |  |  | U | U |  |  |  |  | V |
+| `novel:state_snapshot` | 3 |  |  |  |  | N |  | N | N |  |
+| `relu_squared` | 3 |  |  |  |  | U |  | U | U |  |
+| `tc_rows` | 3 |  |  |  | U | V |  |  | V |  |
+| `view_split` | 3 |  |  |  |  | U |  | U | U |  |
+| `dsa_indexer` | 2 |  |  |  |  |  | U |  |  | U |
+| `glm_mhc` | 2 |  |  |  |  |  | U |  |  | U |
+| `glm_mla_latent_write` | 2 |  |  |  |  |  | U |  |  | V |
+| `glm_swiglu_clamp` | 2 |  |  |  |  |  | U |  |  | U |
+| `novel:index_select` | 2 |  |  |  |  |  | N |  |  | N |
+| `novel:kpool_compress` | 2 |  |  |  |  |  | N |  |  | N |
+| `silu_mul` | 2 | U | U |  |  |  |  |  |  |  |
+| `w4a16_gemm` | 2 | U |  |  |  | U |  |  |  |  |
+| `w4a16_gemv` | 2 | E |  |  |  | M |  |  |  |  |
+| `concat` | 1 |  |  |  |  |  | U |  |  |  |
+| `glm_mla_decode` | 1 |  |  |  |  |  | U |  |  |  |
+| `kda_gates` | 1 |  |  |  |  |  | U |  |  |  |
+| `kda_o_norm` | 1 |  |  |  |  |  | U |  |  |  |
+| `kda_recurrent` | 1 |  |  |  |  |  | U |  |  |  |
+| `layer_norm` | 1 |  |  |  |  |  | U |  |  |  |
+| `moe_prefill_w8a8` | 1 |  |  | U |  |  |  |  |  |  |
+| `novel:compressed_attention` | 1 |  |  |  |  |  |  |  |  | N |
+| `w4a16_tc` | 1 |  |  |  |  | M |  |  |  |  |
+| `w8a16_gemm` | 1 |  |  | U |  |  |  |  |  |  |
 
 ## Op vocabulary
 
-70 distinct ops (a linear projection counts per role, an activation quantizer per format); 43 recur in two or more models, 27 appear in one.
+74 distinct ops (a linear projection counts per role, an activation quantizer per format); 59 recur in two or more models, 15 appear in one.
 
 | Op | Models | Which |
 |---|---:|---|
-| `argmax` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
+| `argmax` | 9 | M1 M2 M3 M4 M5 M6 M7 M8 M9 |
+| `embed` | 9 | M1 M2 M3 M4 M5 M6 M7 M8 M9 |
+| `final_norm` | 9 | M1 M2 M3 M4 M5 M6 M7 M8 M9 |
+| `kv_write` | 9 | M1 M2 M3 M4 M5 M6 M7 M8 M9 |
+| `linear:o` | 9 | M1 M2 M3 M4 M5 M6 M7 M8 M9 |
+| `lm_head` | 9 | M1 M2 M3 M4 M5 M6 M7 M8 M9 |
+| `rms_norm` | 9 | M1 M2 M3 M4 M5 M6 M7 M8 M9 |
 | `conv1d_update` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
-| `embed` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
-| `final_norm` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
 | `gated_rms_norm` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
-| `kv_write` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
 | `linear:k` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
-| `linear:o` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
 | `linear:q` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
 | `linear:v` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
-| `lm_head` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
-| `rms_norm` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
 | `state_snapshot` | 8 | M1 M2 M3 M4 M5 M6 M7 M8 |
+| `blend` | 7 | M3 M4 M5 M6 M7 M8 M9 |
+| `expert_down` | 7 | M3 M4 M5 M6 M7 M8 M9 |
+| `expert_gate_up` | 7 | M3 M4 M5 M6 M7 M8 M9 |
+| `linear:shared_down` | 7 | M3 M4 M5 M6 M7 M8 M9 |
 | `paged_attention` | 7 | M1 M2 M3 M4 M5 M7 M8 |
 | `residual_add` | 7 | M1 M2 M3 M4 M5 M7 M8 |
+| `router` | 7 | M3 M4 M5 M6 M7 M8 M9 |
 | `split` | 7 | M1 M2 M3 M4 M5 M7 M8 |
-| `blend` | 6 | M3 M4 M5 M6 M7 M8 |
-| `expert_down` | 6 | M3 M4 M5 M6 M7 M8 |
-| `expert_gate_up` | 6 | M3 M4 M5 M6 M7 M8 |
-| `linear:shared_down` | 6 | M3 M4 M5 M6 M7 M8 |
-| `router` | 6 | M3 M4 M5 M6 M7 M8 |
-| `top_k` | 6 | M3 M4 M5 M6 M7 M8 |
+| `top_k` | 7 | M3 M4 M5 M6 M7 M8 M9 |
+| `silu_mul` | 6 | M1 M2 M3 M4 M6 M9 |
+| `act_quant:nvfp4/g16` | 5 | M2 M6 M7 M8 M9 |
 | `gdn_gates` | 5 | M1 M2 M3 M4 M6 |
 | `gdn_recurrence` | 5 | M1 M2 M3 M4 M6 |
 | `l2_norm` | 5 | M1 M2 M3 M4 M6 |
-| `silu_mul` | 5 | M1 M2 M3 M4 M6 |
-| `act_quant:nvfp4/g16` | 4 | M2 M6 M7 M8 |
+| `qk_norm` | 5 | M1 M2 M3 M4 M9 |
+| `rope` | 5 | M1 M2 M3 M4 M9 |
 | `linear:ba` | 4 | M1 M2 M3 M4 |
 | `linear:gdn_out` | 4 | M1 M2 M3 M4 |
 | `linear:qkvz` | 4 | M1 M2 M3 M4 |
-| `qk_norm` | 4 | M1 M2 M3 M4 |
-| `rope` | 4 | M1 M2 M3 M4 |
+| `linear:shared_gate_up` | 4 | M3 M4 M6 M9 |
 | `sigmoid_gate_mul` | 4 | M1 M2 M3 M4 |
 | `linear:down` | 3 | M1 M2 M6 |
 | `linear:gate_up` | 3 | M1 M2 M6 |
 | `linear:mamba_in` | 3 | M5 M7 M8 |
 | `linear:mamba_out` | 3 | M5 M7 M8 |
-| `linear:shared_gate_up` | 3 | M3 M4 M6 |
 | `linear:shared_up` | 3 | M5 M7 M8 |
 | `relu2` | 3 | M5 M7 M8 |
 | `ssm_update` | 3 | M5 M7 M8 |
+| `act_quant:fp8/g128` | 2 | M4 M9 |
 | `act_quant:fp8/tensor` | 2 | M5 M8 |
+| `hc_contract` | 2 | M6 M9 |
+| `hc_expand` | 2 | M6 M9 |
+| `hc_post` | 2 | M6 M9 |
+| `hc_pre` | 2 | M6 M9 |
+| `index_select` | 2 | M6 M9 |
+| `kpool_compress` | 2 | M6 M9 |
+| `linear:hc_mix` | 2 | M6 M9 |
+| `linear:index_gate` | 2 | M6 M9 |
+| `linear:index_k` | 2 | M6 M9 |
+| `linear:index_q` | 2 | M6 M9 |
+| `linear:index_weights` | 2 | M6 M9 |
+| `linear:mla_kv_a` | 2 | M6 M9 |
+| `linear:mla_q_a` | 2 | M6 M9 |
+| `linear:mla_q_b` | 2 | M6 M9 |
 | `linear:shared_gate` | 2 | M3 M4 |
-| `act_quant:fp8/g128` | 1 | M4 |
+| `swiglu_clamp` | 2 | M6 M9 |
 | `act_quant:fp8/token` | 1 | M2 |
+| `compressed_attention` | 1 | M9 |
 | `concat` | 1 | M6 |
-| `hc_contract` | 1 | M6 |
-| `hc_expand` | 1 | M6 |
-| `hc_post` | 1 | M6 |
-| `hc_pre` | 1 | M6 |
-| `index_select` | 1 | M6 |
-| `kpool_compress` | 1 | M6 |
 | `layer_norm` | 1 | M6 |
-| `linear:hc_mix` | 1 | M6 |
-| `linear:index_gate` | 1 | M6 |
-| `linear:index_k` | 1 | M6 |
-| `linear:index_q` | 1 | M6 |
-| `linear:index_weights` | 1 | M6 |
+| `linear:compress_gate` | 1 | M9 |
+| `linear:compress_kv` | 1 | M9 |
 | `linear:kda_b` | 1 | M6 |
 | `linear:kda_f_a` | 1 | M6 |
 | `linear:kda_f_b` | 1 | M6 |
 | `linear:kda_g_a` | 1 | M6 |
 | `linear:kda_g_b` | 1 | M6 |
-| `linear:mla_kv_a` | 1 | M6 |
-| `linear:mla_q_a` | 1 | M6 |
-| `linear:mla_q_b` | 1 | M6 |
 | `linear:moe_latent_in` | 1 | M8 |
 | `linear:moe_latent_out` | 1 | M8 |
+| `linear:o_group` | 1 | M9 |
 | `mla_attention` | 1 | M6 |
-| `swiglu_clamp` | 1 | M6 |
 
-Ops in one model only: `act_quant:fp8/g128` (M4), `act_quant:fp8/token` (M2), `concat` (M6), `hc_contract` (M6), `hc_expand` (M6), `hc_post` (M6), `hc_pre` (M6), `index_select` (M6), `kpool_compress` (M6), `layer_norm` (M6), `linear:hc_mix` (M6), `linear:index_gate` (M6), `linear:index_k` (M6), `linear:index_q` (M6), `linear:index_weights` (M6), `linear:kda_b` (M6), `linear:kda_f_a` (M6), `linear:kda_f_b` (M6), `linear:kda_g_a` (M6), `linear:kda_g_b` (M6), `linear:mla_kv_a` (M6), `linear:mla_q_a` (M6), `linear:mla_q_b` (M6), `linear:moe_latent_in` (M8), `linear:moe_latent_out` (M8), `mla_attention` (M6), `swiglu_clamp` (M6).
+Ops in one model only: `act_quant:fp8/token` (M2), `compressed_attention` (M9), `concat` (M6), `layer_norm` (M6), `linear:compress_gate` (M9), `linear:compress_kv` (M9), `linear:kda_b` (M6), `linear:kda_f_a` (M6), `linear:kda_f_b` (M6), `linear:kda_g_a` (M6), `linear:kda_g_b` (M6), `linear:moe_latent_in` (M8), `linear:moe_latent_out` (M8), `linear:o_group` (M9), `mla_attention` (M6).
 
 ## Saturation curve
 
@@ -195,12 +203,13 @@ In order of addition (INSTANCES.toml order): what each model brings that no earl
 | M6 `glm-5.3-flash-nvfp4` | 50 | 23 | 28 | 11 | 14 | 2 | 68 | 52 | 71 |
 | M7 `nemotron-3-nano-30b-a3b-nvfp4` | 28 | 0 | 20 | 0 | 0 | 0 | 68 | 52 | 71 |
 | M8 `nemotron-3-super-120b-a12b-nvfp4` | 31 | 2 | 23 | 0 | 1 | 0 | 70 | 52 | 72 |
+| M9 `deepseek-v4-flash-nvfp4-ep2` | 38 | 4 | 23 | 0 | 7 | 1 | 74 | 52 | 79 |
 
 ## Shape union per family
 
 The distinct (point, weight shape) pairs the models ask of each family: the compile-time and policy point the Venn reads (head_dim, formats, group size, epilogue, ...) and, for weight-reading ops, the weight's N x K. Per run, the best status over the pair's sites (E measured at this shape, M point measured elsewhere, U/O/V not measured, N novel). Families ordered by the total step share they carry.
 
-### `moe_w4a16_grouped_gemm`: 6 points, 0 measured at their shape somewhere, 4.44 model-steps summed over runs
+### `moe_w4a16_grouped_gemm`: 6 points, 0 measured at their shape somewhere, 6.17 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
@@ -208,19 +217,20 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | - | 1856 x 2688 | M5 M7 |  | U | U |
 | - | 2688 x 1024 | M8 |  | U | U |
 | - | 2688 x 1856 | M7 |  | U | U |
-| - | 4096 x 2048 | M6 |  | U | U |
-| - | 4096 x 4096 | M6 |  | U | U |
+| - | 4096 x 2048 | M6 M9 |  | U | U |
+| - | 4096 x 4096 | M6 M9 |  | U | U |
 
-### `dense_bf16`: 35 points, 0 measured at their shape somewhere, 2.80 model-steps summed over runs
+### `dense_bf16`: 37 points, 0 measured at their shape somewhere, 2.98 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
 | - | 1 x 2048 | M3 M4 |  |  | U |
 | - | 1024 x 2048 | M3 M4 |  |  | U |
-| - | 1024 x 4096 | M8 | M |  | U |
+| - | 1024 x 4096 | M8 M9 | M |  | U |
 | - | 10304 x 2688 | M7 | M |  | U |
 | - | 128 x 2688 | M5 M7 | M | U | U |
 | - | 128 x 4096 | M6 | M |  | U |
+| - | 129280 x 4096 | M9 | M |  | U |
 | - | 131072 x 2688 | M7 | M |  | U |
 | - | 131072 x 4096 | M8 | M |  | U |
 | - | 1536 x 4096 | M6 | M |  | U |
@@ -228,15 +238,16 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | - | 16384 x 1536 | M6 | M |  | U |
 | - | 18560 x 4096 | M8 | M |  | U |
 | - | 2048 x 512 | M3 M4 |  |  | U |
-| - | 24 x 16384 | M6 | M |  | U |
+| - | 24 x 16384 | M6 M9 | M |  | U |
 | - | 248320 x 2048 | M3 | M | U | U |
 | - | 248320 x 5120 | M1 M2 | M | U | U |
 | - | 256 x 2048 | M3 M4 | M | U | U |
 | - | 256 x 2688 | M5 M7 | M |  | U |
-| - | 256 x 4096 | M8 | M |  | U |
+| - | 256 x 4096 | M8 M9 | M | U | U |
 | - | 2688 x 4096 | M5 M7 | M |  | U |
 | - | 288 x 4096 | M6 | M | U | U |
 | - | 32 x 4096 | M6 | M |  | U |
+| - | 4 x 16384 | M9 | M |  | U |
 | - | 4096 x 1024 | M8 | M |  | U |
 | - | 4096 x 1536 | M6 | M |  | U |
 | - | 4096 x 16384 | M6 | M |  | U |
@@ -245,9 +256,9 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | - | 4096 x 4096 | M6 M8 | M |  | U |
 | - | 4096 x 5376 | M8 | M |  | U |
 | - | 4096 x 8192 | M6 M8 | M |  | U |
-| - | 512 x 4096 | M6 M8 | M | U | U |
+| - | 512 x 4096 | M6 M8 M9 | M | U | U |
 | - | 5376 x 4096 | M8 | M |  | U |
-| - | 64 x 4096 | M6 | M |  | U |
+| - | 64 x 4096 | M6 M9 | M |  | U |
 | - | 8192 x 128 | M6 | M |  | U |
 | - | 8192 x 4096 | M6 | M |  | U |
 
@@ -257,6 +268,36 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 |---|---|---|---|---|---|
 | decay=channel | - | M6 |  | V | V |
 | decay=head | - | M1 M2 M3 M4 |  | U | U |
+
+### `wxay`: 25 points, 0 measured at their shape somewhere, 2.22 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| activation=fp8/g128 weight=fp8/block128x128 | 1024 x 4096 | M9 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 12288 x 2048 | M4 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 2048 x 4096 | M4 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 32768 x 1024 | M9 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 4096 x 2048 | M9 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 4096 x 4096 | M9 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 4096 x 8192 | M9 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 512 x 2048 | M4 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 512 x 4096 | M9 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 8192 x 1024 | M9 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 8192 x 2048 | M4 | M | M | U |
+| activation=fp8/g128 weight=fp8/block128x128 | 8192 x 4096 | M9 | M | M | U |
+| activation=fp8/tensor weight=fp8/tensor | 1024 x 4096 | M8 |  |  | V |
+| activation=fp8/tensor weight=fp8/tensor | 10304 x 2688 | M5 |  |  | V |
+| activation=fp8/tensor weight=fp8/tensor | 18560 x 4096 | M8 |  |  | V |
+| activation=fp8/tensor weight=fp8/tensor | 2688 x 4096 | M5 |  |  | V |
+| activation=fp8/tensor weight=fp8/tensor | 4096 x 1024 | M8 |  |  | V |
+| activation=fp8/tensor weight=fp8/tensor | 4096 x 4096 | M8 |  |  | V |
+| activation=fp8/tensor weight=fp8/tensor | 4096 x 8192 | M8 |  |  | V |
+| activation=fp8/token weight=fp8/channel | 1024 x 5120 | M2 | M | M | U |
+| activation=fp8/token weight=fp8/channel | 12288 x 5120 | M2 | M | M | U |
+| activation=fp8/token weight=fp8/channel | 16384 x 5120 | M2 | M | M | U |
+| activation=fp8/token weight=fp8/channel | 34816 x 5120 | M2 | M | M | U |
+| activation=fp8/token weight=fp8/channel | 5120 x 17408 | M2 | M | M | U |
+| activation=fp8/token weight=fp8/channel | 5120 x 6144 | M2 | M | M | U |
 
 ### `moe_grouped_tc`: 8 points, 0 measured at their shape somewhere, 2.16 model-steps summed over runs
 
@@ -277,28 +318,6 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 |---|---|---|---|---|---|
 | head_dim=128 kv_dtype=fp8 | - | M5 M7 M8 | O | O | O |
 | head_dim=256 kv_dtype=bf16 | - | M1 M2 M3 M4 | U | U | U |
-
-### `wxay`: 17 points, 0 measured at their shape somewhere, 1.56 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| activation=fp8/g128 weight=fp8/block128x128 | 12288 x 2048 | M4 | M | M | U |
-| activation=fp8/g128 weight=fp8/block128x128 | 2048 x 4096 | M4 | M | M | U |
-| activation=fp8/g128 weight=fp8/block128x128 | 512 x 2048 | M4 | M | M | U |
-| activation=fp8/g128 weight=fp8/block128x128 | 8192 x 2048 | M4 | M | M | U |
-| activation=fp8/tensor weight=fp8/tensor | 1024 x 4096 | M8 |  |  | V |
-| activation=fp8/tensor weight=fp8/tensor | 10304 x 2688 | M5 |  |  | V |
-| activation=fp8/tensor weight=fp8/tensor | 18560 x 4096 | M8 |  |  | V |
-| activation=fp8/tensor weight=fp8/tensor | 2688 x 4096 | M5 |  |  | V |
-| activation=fp8/tensor weight=fp8/tensor | 4096 x 1024 | M8 |  |  | V |
-| activation=fp8/tensor weight=fp8/tensor | 4096 x 4096 | M8 |  |  | V |
-| activation=fp8/tensor weight=fp8/tensor | 4096 x 8192 | M8 |  |  | V |
-| activation=fp8/token weight=fp8/channel | 1024 x 5120 | M2 | M | M | U |
-| activation=fp8/token weight=fp8/channel | 12288 x 5120 | M2 | M | M | U |
-| activation=fp8/token weight=fp8/channel | 16384 x 5120 | M2 | M | M | U |
-| activation=fp8/token weight=fp8/channel | 34816 x 5120 | M2 | M | M | U |
-| activation=fp8/token weight=fp8/channel | 5120 x 17408 | M2 | M | M | U |
-| activation=fp8/token weight=fp8/channel | 5120 x 6144 | M2 | M | M | U |
 
 ### `mamba2_ssm`: 1 points, 0 measured at their shape somewhere, 1.54 model-steps summed over runs
 
@@ -321,11 +340,11 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | - | 5120 x 17408 | M1 | E |  |  |
 | - | 5120 x 6144 | M1 | E |  |  |
 
-### `nvfp4_mmq`: 10 points, 0 measured at their shape somewhere, 0.98 model-steps summed over runs
+### `nvfp4_mmq`: 10 points, 0 measured at their shape somewhere, 0.99 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| - | - | M1 M2 M6 M7 M8 |  | U | U |
+| - | - | M1 M2 M6 M7 M8 M9 |  | U | U |
 | - | 10304 x 2688 | M7 |  | U | U |
 | - | 24576 x 4096 | M6 |  | U | U |
 | - | 2688 x 3712 | M7 |  | U | U |
@@ -349,11 +368,19 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | weight=fp8/tensor | 4096 x 8192 | M8 | V | V |  |
 | weight=nvfp4/g16 | 248320 x 2048 | M4 | U | U | U |
 
+### `moe_nvfp4_gemv_1row`: 3 points, 0 measured at their shape somewhere, 0.75 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| - | 1856 x 2688 | M5 M7 | U |  |  |
+| - | 2688 x 1024 | M8 | U |  |  |
+| - | 4096 x 4096 | M6 M9 | U |  |  |
+
 ### `moe_grouped_fp8_scalar`: 3 points, 0 measured at their shape somewhere, 0.69 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| - | - | M3 M6 |  | M |  |
+| - | - | M3 M6 M9 |  | M |  |
 | - | 1024 x 2048 | M3 |  | M |  |
 | - | 2048 x 512 | M3 |  | M |  |
 
@@ -361,7 +388,7 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| - | - | M2 M6 M7 M8 | U |  |  |
+| - | - | M2 M6 M7 M8 M9 | U |  |  |
 | - | 10304 x 2688 | M7 | U |  |  |
 | - | 24576 x 4096 | M6 | U |  |  |
 | - | 2688 x 3712 | M7 | U |  |  |
@@ -372,14 +399,6 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | - | 4096 x 5376 | M8 | U |  |  |
 | - | 5120 x 17408 | M2 | U |  |  |
 
-### `moe_nvfp4_gemv_1row`: 3 points, 0 measured at their shape somewhere, 0.54 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| - | 1856 x 2688 | M5 M7 | U |  |  |
-| - | 2688 x 1024 | M8 | U |  |  |
-| - | 4096 x 4096 | M6 | U |  |  |
-
 ### `moe_prefill_w8a8`: 3 points, 0 measured at their shape somewhere, 0.51 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
@@ -387,6 +406,40 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | - | - | M3 |  |  | U |
 | - | 1024 x 2048 | M3 |  |  | U |
 | - | 2048 x 512 | M3 |  |  | U |
+
+### `dense_bf16_tc`: 29 points, 0 measured at their shape somewhere, 0.45 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| - | 1024 x 4096 | M8 M9 |  | M |  |
+| - | 10304 x 2688 | M7 |  | M |  |
+| - | 128 x 4096 | M6 |  | M |  |
+| - | 129280 x 4096 | M9 |  | M |  |
+| - | 131072 x 2688 | M7 |  | M |  |
+| - | 131072 x 4096 | M8 |  | M |  |
+| - | 1536 x 4096 | M6 |  | M |  |
+| - | 154880 x 4096 | M6 |  | M |  |
+| - | 16384 x 1536 | M6 |  | M |  |
+| - | 18560 x 4096 | M8 |  | M |  |
+| - | 24 x 16384 | M6 M9 |  | M |  |
+| - | 256 x 2688 | M5 M7 |  | M |  |
+| - | 256 x 4096 | M8 M9 |  | M |  |
+| - | 2688 x 4096 | M5 M7 |  | M |  |
+| - | 32 x 4096 | M6 |  | M |  |
+| - | 4 x 16384 | M9 |  | M |  |
+| - | 4096 x 1024 | M8 |  | M |  |
+| - | 4096 x 1536 | M6 |  | M |  |
+| - | 4096 x 16384 | M6 |  | M |  |
+| - | 4096 x 2048 | M6 |  | M |  |
+| - | 4096 x 2688 | M5 M7 |  | M |  |
+| - | 4096 x 4096 | M6 M8 |  | M |  |
+| - | 4096 x 5376 | M8 |  | M |  |
+| - | 4096 x 8192 | M6 M8 |  | M |  |
+| - | 512 x 4096 | M6 M9 |  | M |  |
+| - | 5376 x 4096 | M8 |  | M |  |
+| - | 64 x 4096 | M6 M9 |  | M |  |
+| - | 8192 x 128 | M6 |  | M |  |
+| - | 8192 x 4096 | M6 |  | M |  |
 
 ### `w8a16_gemm`: 4 points, 0 measured at their shape somewhere, 0.44 model-steps summed over runs
 
@@ -397,51 +450,19 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | - | 512 x 2048 | M3 | U | U | U |
 | - | 8192 x 2048 | M3 | U | U | U |
 
-### `dense_bf16_tc`: 27 points, 0 measured at their shape somewhere, 0.42 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| - | 1024 x 4096 | M8 |  | M |  |
-| - | 10304 x 2688 | M7 |  | M |  |
-| - | 128 x 4096 | M6 |  | M |  |
-| - | 131072 x 2688 | M7 |  | M |  |
-| - | 131072 x 4096 | M8 |  | M |  |
-| - | 1536 x 4096 | M6 |  | M |  |
-| - | 154880 x 4096 | M6 |  | M |  |
-| - | 16384 x 1536 | M6 |  | M |  |
-| - | 18560 x 4096 | M8 |  | M |  |
-| - | 24 x 16384 | M6 |  | M |  |
-| - | 256 x 2688 | M5 M7 |  | M |  |
-| - | 256 x 4096 | M8 |  | M |  |
-| - | 2688 x 4096 | M5 M7 |  | M |  |
-| - | 32 x 4096 | M6 |  | M |  |
-| - | 4096 x 1024 | M8 |  | M |  |
-| - | 4096 x 1536 | M6 |  | M |  |
-| - | 4096 x 16384 | M6 |  | M |  |
-| - | 4096 x 2048 | M6 |  | M |  |
-| - | 4096 x 2688 | M5 M7 |  | M |  |
-| - | 4096 x 4096 | M6 M8 |  | M |  |
-| - | 4096 x 5376 | M8 |  | M |  |
-| - | 4096 x 8192 | M6 M8 |  | M |  |
-| - | 512 x 4096 | M6 |  | M |  |
-| - | 5376 x 4096 | M8 |  | M |  |
-| - | 64 x 4096 | M6 |  | M |  |
-| - | 8192 x 128 | M6 |  | M |  |
-| - | 8192 x 4096 | M6 |  | M |  |
-
-### `moe_relu2_down_1row`: 3 points, 0 measured at their shape somewhere, 0.31 model-steps summed over runs
+### `moe_relu2_down_1row`: 3 points, 0 measured at their shape somewhere, 0.42 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
 | - | 1024 x 2688 | M8 | U |  |  |
 | - | 2688 x 1856 | M7 | U |  |  |
-| - | 4096 x 2048 | M6 | U |  |  |
+| - | 4096 x 2048 | M6 M9 | U |  |  |
 
 ### `moe_fp8_1row`: 3 points, 3 measured at their shape somewhere, 0.31 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| - | - | M3 M6 | E |  |  |
+| - | - | M3 M6 M9 | E |  |  |
 | - | 1024 x 2048 | M3 | E |  |  |
 | - | 2048 x 512 | M3 | E |  |  |
 
@@ -469,13 +490,14 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 |---|---|---|---|---|---|
 | - | - | M1 M2 M3 M4 M6 | U | U | U |
 
-### `rms_norm`: 3 points, 0 measured at their shape somewhere, 0.06 model-steps summed over runs
+### `rms_norm`: 4 points, 0 measured at their shape somewhere, 0.07 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
 | - | - | M1 M2 M3 M4 M5 M7 M8 | U | U | U |
+| weight_form=none | - | M9 | V | V | V |
 | weight_form=one_plus | - | M1 M2 M3 M4 | U | U | U |
-| weight_form=plain | - | M5 M6 M7 M8 | V | V | V |
+| weight_form=plain | - | M5 M6 M7 M8 M9 | V | V | V |
 
 ### `w4a16_tc`: 3 points, 0 measured at their shape somewhere, 0.04 model-steps summed over runs
 
@@ -504,6 +526,38 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 |---|---|---|---|---|---|
 | - | - | M5 M7 M8 | U | U | U |
 
+### `w8a8_act_quant`: 3 points, 0 measured at their shape somewhere, 0.02 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| format=fp8/g128 | - | M4 M9 | U | U | U |
+| format=fp8/tensor | - | M5 M8 | V | V | V |
+| format=fp8/token | - | M2 | U | U | U |
+
+### `glm_mhc`: 1 points, 0 measured at their shape somewhere, 0.02 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| - | - | M6 M9 | U | U | U |
+
+### `rope`: 1 points, 0 measured at their shape somewhere, 0.02 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| - | - | M1 M2 M3 M4 M9 | U | U | U |
+
+### `novel:compressed_attention`: 1 points, 0 measured at their shape somewhere, 0.02 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| - | - | M9 | N | N | N |
+
+### `glm_moe_combine`: 1 points, 0 measured at their shape somewhere, 0.02 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| shared_gate=none | - | M5 M6 M7 M9 |  | U | U |
+
 ### `moe_blend`: 2 points, 0 measured at their shape somewhere, 0.02 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
@@ -511,25 +565,17 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | - | 1 x 2048 | M3 M4 | U | U |  |
 | shared_gate=sigmoid | - | M3 M4 M8 | U | U | U |
 
-### `w8a8_act_quant`: 3 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| format=fp8/g128 | - | M4 | U | U | U |
-| format=fp8/tensor | - | M5 M8 | V | V | V |
-| format=fp8/token | - | M2 | U | U | U |
-
 ### `kda_recurrent`: 1 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
 | decay=channel | - | M6 | U |  |  |
 
-### `glm_moe_combine`: 1 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
+### `glm_swiglu_clamp`: 1 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| shared_gate=none | - | M5 M6 M7 |  | U | U |
+| - | - | M6 M9 | U | U | U |
 
 ### `gdn_ba_gates_gemv`: 3 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
 
@@ -543,7 +589,7 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| - | - | M1 M2 M3 M4 M5 M6 M7 M8 | U | U | U |
+| - | - | M1 M2 M3 M4 M5 M6 M7 M8 M9 | U | U | U |
 
 ### `gdn_ba_gates_gemm`: 3 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
 
@@ -559,11 +605,11 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 |---|---|---|---|---|---|
 | - | - | M5 M7 M8 | U | U | U |
 
-### `glm_mhc`: 1 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
+### `novel:index_select`: 1 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| - | - | M6 | U | U | U |
+| - | - | M6 M9 |  | N | N |
 
 ### `novel:state_snapshot`: 1 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
 
@@ -577,19 +623,7 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 |---|---|---|---|---|---|
 | layout=interleaved | - | M1 M2 M3 M4 | U | U | U |
 
-### `glm_swiglu_clamp`: 1 points, 0 measured at their shape somewhere, 0.01 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| - | - | M6 | U | U | U |
-
 ### `sigmoid_gate_mul`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| - | - | M1 M2 M3 M4 | U | U | U |
-
-### `rope`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
@@ -600,12 +634,6 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
 | - | - | M6 | U | U | U |
-
-### `novel:index_select`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| - | - | M6 |  | N | N |
 
 ### `kda_o_norm`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
@@ -623,7 +651,7 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| shared_gate=none | - | M5 M6 M7 | U |  |  |
+| shared_gate=none | - | M5 M6 M7 M9 | U |  |  |
 
 ### `silu_mul`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
@@ -631,13 +659,21 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 |---|---|---|---|---|---|
 | - | - | M1 M2 | U |  |  |
 
-### `kv_write`: 3 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
+### `dsa_indexer`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| - | - | M6 M9 | U |  |  |
+
+### `kv_write`: 5 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
 | kv_dtype=bf16 layout=kv | - | M1 M2 M3 M4 | U | U | U |
+| kv_dtype=fp8 layout=compressed | - | M9 |  | V | V |
 | kv_dtype=fp8 layout=kv | - | M5 M7 M8 | V | V | V |
 | kv_dtype=fp8 layout=latent | - | M6 |  | V | V |
+| kv_dtype=fp8 layout=window | - | M9 |  | V | V |
 
 ### `glm_router_topk`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
@@ -645,42 +681,40 @@ The distinct (point, weight shape) pairs the models ask of each family: the comp
 |---|---|---|---|---|---|
 | scoring=sigmoid_bias | - | M5 M6 M7 M8 | U | U | U |
 
-### `moe_topk`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
+### `moe_topk`: 3 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
 | scoring=softmax | - | M3 M4 | U | U | U |
+| scoring=sqrtsoftplus | - | M9 | V | V | V |
+| scoring=sqrtsoftplus_bias | - | M9 | V | V | V |
+
+### `novel:kpool_compress`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
+
+| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
+|---|---|---|---|---|---|
+| - | - | M6 M9 |  | N | N |
 
 ### `embed_copy`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| - | - | M1 M2 M3 M4 M5 M6 M7 M8 | U | U | U |
+| - | - | M1 M2 M3 M4 M5 M6 M7 M8 M9 | U | U | U |
 
-### `dsa_indexer`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
+### `glm_mla_latent_write`: 4 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
-| - | - | M6 | U |  |  |
+| kv_dtype=fp8 layout=compressed | - | M9 | V |  |  |
+| kv_dtype=fp8 layout=latent | - | M6 | U |  |  |
+| kv_dtype=fp8 layout=window | - | M9 | V |  |  |
+| weight_form=plain | - | M6 | U |  |  |
 
 ### `layer_norm`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
 | Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
 |---|---|---|---|---|---|
 | - | - | M6 | U | U | U |
-
-### `novel:kpool_compress`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| - | - | M6 |  | N | N |
-
-### `glm_mla_latent_write`: 2 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
-
-| Point | N x K | Models | C1 | multi_seq C16 | multi_seq C128 |
-|---|---|---|---|---|---|
-| kv_dtype=fp8 layout=latent | - | M6 | U |  |  |
-| weight_form=plain | - | M6 | U |  |  |
 
 ### `view_split`: 1 points, 0 measured at their shape somewhere, 0.00 model-steps summed over runs
 
@@ -698,11 +732,18 @@ Every primary policy variant and parameterization opportunity over all models, d
 | 2 | `moe_grouped_tc` | weight fp8/tensor (have nvfp4/g16) | policy | 12.8% | 3.5% | M8 | 2 |
 | 3 | `gdn_recurrence_strided` | decay channel (have head) | policy | 0.0% | 5.5% | M6 | 1 |
 | 4 | `paged_decode_attn` | head_dim 128 (have 256); kv_dtype fp8 (have bf16) | compile-time+policy | 1.1% | 3.8% | M5 M7 M8 | 3 |
-| 5 | `rms_norm` | weight_form plain (have one_plus) | policy | 0.1% | 0.2% | M5 M6 M7 M8 | 19 |
+| 5 | `rms_norm` | weight_form plain (have one_plus) | policy | 0.1% | 0.3% | M5 M6 M7 M8 M9 | 34 |
 | 6 | `gated_rms_norm` | norm_order gate_first (have norm_first) | policy | 0.1% | 0.2% | M5 M7 M8 | 3 |
-| 7 | `w8a8_act_quant` | format fp8/tensor (have fp8/token) | policy | 0.0% | 0.1% | M5 M8 | 9 |
-| 8 | `kv_write` | kv_dtype fp8 (have bf16) | policy | 0.0% | 0.0% | M5 M7 M8 | 3 |
-| 9 | `kv_write` | kv_dtype fp8 (have bf16); layout latent (have kv) | policy | 0.0% | 0.0% | M6 | 1 |
+| 7 | `rms_norm` | weight_form none (have one_plus) | policy | 0.0% | 0.2% | M9 | 3 |
+| 8 | `w8a8_act_quant` | format fp8/tensor (have fp8/token) | policy | 0.0% | 0.1% | M5 M8 | 9 |
+| 9 | `kv_write` | kv_dtype fp8 (have bf16) | policy | 0.0% | 0.0% | M5 M7 M8 | 3 |
+| 10 | `moe_topk` | scoring sqrtsoftplus_bias (have softmax) | policy | 0.0% | 0.0% | M9 | 1 |
+| 11 | `kv_write` | kv_dtype fp8 (have bf16); layout window (have kv) | policy | 0.0% | 0.0% | M9 | 3 |
+| 12 | `glm_mla_latent_write` | layout compressed (have latent) | policy | 0.0% | 0.0% | M9 | 3 |
+| 13 | `glm_mla_latent_write` | layout window (have latent) | policy | 0.0% | 0.0% | M9 | 3 |
+| 14 | `kv_write` | kv_dtype fp8 (have bf16); layout compressed (have kv) | policy | 0.0% | 0.0% | M9 | 3 |
+| 15 | `kv_write` | kv_dtype fp8 (have bf16); layout latent (have kv) | policy | 0.0% | 0.0% | M6 | 1 |
+| 16 | `moe_topk` | scoring sqrtsoftplus (have softmax) | policy | 0.0% | 0.0% | M9 | 1 |
 
 ## Novel kernels
 
@@ -710,8 +751,9 @@ Ops no family implements with these formats, ranked by summed step share.
 
 | # | Op | Weight | Activation | C1 | multi_seq C16 | Models | Sites |
 |---|---|---|---|---:|---:|---|---|
-| 1 | `state_snapshot` | - | bf16 | 0.0% | 0.2% | M5 M7 M8 | M5 mamba.conv_ckpt, M5 mamba.ssm_ckpt, M7 mamba.conv_ckpt, M7 mamba.ssm_ckpt +2 |
-| 2 | `index_select` | - | bf16 | 0.0% | 0.1% | M6 | M6 dsa.select |
-| 3 | `kpool_compress` | - | bf16 | 0.0% | 0.0% | M6 | M6 dsa.pool |
+| 1 | `compressed_attention` | - | bf16 | 0.1% | 0.4% | M9 | M9 csa.attend, M9 hca.attend, M9 swa.attend |
+| 2 | `index_select` | - | bf16 | 0.0% | 0.2% | M6 M9 | M6 dsa.select, M9 csa.select |
+| 3 | `state_snapshot` | - | bf16 | 0.0% | 0.2% | M5 M7 M8 | M5 mamba.conv_ckpt, M5 mamba.ssm_ckpt, M7 mamba.conv_ckpt, M7 mamba.ssm_ckpt +2 |
+| 4 | `kpool_compress` | - | bf16 | 0.0% | 0.0% | M6 M9 | M6 dsa.pool, M9 csa.c_pool, M9 csa.i_pool, M9 hca.c_pool |
 
-Models: M1 `qwen3.8-27b-nvfp4-unsloth`, M2 `qwen3.8-27b-nvfp4-unsloth-declared`, M3 `qwen3.6-35b-a3b-fp8-bf16head`, M4 `qwen3.6-35b-a3b-nvfp4-declared`, M5 `nemotron-3.5-lightning-30b-a3b-nvfp4`, M6 `glm-5.3-flash-nvfp4`, M7 `nemotron-3-nano-30b-a3b-nvfp4`, M8 `nemotron-3-super-120b-a12b-nvfp4`.
+Models: M1 `qwen3.8-27b-nvfp4-unsloth`, M2 `qwen3.8-27b-nvfp4-unsloth-declared`, M3 `qwen3.6-35b-a3b-fp8-bf16head`, M4 `qwen3.6-35b-a3b-nvfp4-declared`, M5 `nemotron-3.5-lightning-30b-a3b-nvfp4`, M6 `glm-5.3-flash-nvfp4`, M7 `nemotron-3-nano-30b-a3b-nvfp4`, M8 `nemotron-3-super-120b-a12b-nvfp4`, M9 `deepseek-v4-flash-nvfp4-ep2`.

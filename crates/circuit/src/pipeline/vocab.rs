@@ -75,7 +75,9 @@ pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
         | OpKind::HcContract => COMPUTE,
         OpKind::Copy | OpKind::Concat | OpKind::Split | OpKind::HcExpand => &[StepKind::Move],
         OpKind::KvWrite => &[StepKind::Cache],
-        OpKind::PagedAttention => ATTENTION,
+        // 2026-10-10: DeepSeek-V4's shared-KV attention: the window and compressed rows read
+        // from their caches, scored, softmaxed with the sink and accumulated.
+        OpKind::PagedAttention | OpKind::CompressedAttention => ATTENTION,
         OpKind::MlaAttention => LATENT_ATTENTION,
         // 2026-10-08: The pool tail is the state the compression updates; the selection's
         // scores and top-k run at the reference FP32.

@@ -12,6 +12,9 @@
 //!   lists them and the caller refuses the checkpoint.
 //! - A module the plan does not cover is 16-bit (`LayerPrecision::UNQUANTIZED`); an expert
 //!   projection is covered by its fused-experts module's declaration (2026-10-02).
+//! - 2026-10-10: Over a base plan ([`DeclaredPrecision::over_base`], a ModelOpt export of an
+//!   already-quantized checkpoint), a module the export's plan ignores keeps the base plan's
+//!   declaration: the export left it as the base checkpoint stores it.
 
 use std::cell::RefCell;
 
@@ -24,6 +27,7 @@ use crate::precision::{EdgePrecision, LinearFormats};
 /// 2026-09-30: The checkpoint's declared formats as an [`EdgePrecision`].
 pub struct DeclaredPrecision<'a> {
     plan: &'a DeclaredPrecisionPlan,
+    base: Option<&'a DeclaredPrecisionPlan>,
     refusals: RefCell<Vec<String>>,
 }
 
@@ -32,6 +36,17 @@ impl<'a> DeclaredPrecision<'a> {
     pub fn new(plan: &'a DeclaredPrecisionPlan) -> Self {
         DeclaredPrecision {
             plan,
+            base: None,
+            refusals: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// 2026-10-10: Answer from `plan`, an export's plan over the checkpoint it was made from;
+    /// a module `plan` ignores is answered from `base`, that checkpoint's own plan.
+    pub fn over_base(plan: &'a DeclaredPrecisionPlan, base: &'a DeclaredPrecisionPlan) -> Self {
+        DeclaredPrecision {
+            plan,
+            base: Some(base),
             refusals: RefCell::new(Vec::new()),
         }
     }
@@ -99,12 +114,17 @@ impl EdgePrecision for DeclaredPrecision<'_> {
         // 2026-10-02: An expert projection the plan does not name is declared by its experts
         // module, where the checkpoint quantizes that as one (`precision::expert_container`); a
         // projection the checkpoint ignores keeps its own (16-bit) answer.
-        let mut declared = self.plan.resolve(module);
+        let ignored = |p: &DeclaredPrecisionPlan| p.ignore.iter().any(|t| t.matches_name(module));
+        let plan = match self.base {
+            Some(base) if ignored(self.plan) => base,
+            _ => self.plan,
+        };
+        let mut declared = plan.resolve(module);
         if declared.weight.is_none()
-            && !self.plan.ignore.iter().any(|t| t.matches_name(module))
+            && !ignored(plan)
             && let Some(container) = crate::precision::expert_container(module)
         {
-            declared = self.plan.resolve(container);
+            declared = plan.resolve(container);
         }
         let weight = match declared.weight {
             None => Format::Bf16,

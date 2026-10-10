@@ -171,6 +171,8 @@ pub(crate) struct LayersFile {
 }
 
 /// 2026-09-30: A per-layer kind source: a list of names, or a pattern string of letters.
+/// 2026-10-10: A list entry may be an integer, matched by its decimal spelling
+/// (`compress_ratios`: `0`, `4`, `128`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LayerSource {
@@ -181,6 +183,11 @@ pub(crate) struct LayerSource {
     /// 2026-09-30: Pattern letters to layer kinds.
     #[serde(default)]
     pub chars: BTreeMap<String, String>,
+    /// 2026-10-10: A key whose value counts the entries the source lists past the text layers
+    /// (DeepSeek-V4's `compress_ratios` also lists its `num_nextn_predict_layers` MTP layers).
+    /// Those entries must still map, and are then dropped; absent, the source lists exactly
+    /// the text layers.
+    pub trailing: Option<String>,
 }
 
 /// 2026-09-30: How one dim is read.

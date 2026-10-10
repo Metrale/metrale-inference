@@ -98,11 +98,17 @@ pub enum OpKind {
     /// 2026-10-08: The sparse-attention indexer's key pooling: each completed run of
     /// `index_kpool` tokens becomes one pool key, a per-channel softmax over the run's gate
     /// scores plus the learned position embedding weighting its keys. The incomplete run
-    /// waits in a per-sequence tail. It has no output.
+    /// waits in a per-sequence tail. It has no output. 2026-10-10: Or (DeepSeek-V4's
+    /// compressors, `ratio` its run length) the completed pools are its output rows, one per
+    /// `ratio` input rows, which later nodes norm, rotate and write; with `overlap = "true"`
+    /// each input row carries two series and a pool spans its own run and the previous one
+    /// (width `2 * ratio`, stride `ratio`).
     KpoolCompress,
     /// 2026-10-08: The sparse-attention indexer's selection: per row, the head-weighted ReLU
     /// scores of the indexer query against every pool key, and the top `index_topk /
     /// index_kpool` pools. The pool ids are its output; the incomplete tail is always attended.
+    /// 2026-10-10: Or (DeepSeek-V4, `tail = "window"`) the top `index_topk` pools, the
+    /// incomplete run being covered by the sliding window instead.
     IndexSelect,
     /// 2026-10-08: Multi-head latent attention: per-head queries absorbed into the shared KV
     /// latent through `kv_b_proj`'s key half, softmax over the latent cache rows the selection
@@ -118,10 +124,22 @@ pub enum OpKind {
     /// sublayer output plus the combination of the old streams.
     HcPost,
     /// 2026-10-08: The streams' mean: one hidden row per token again (before the final norm).
+    /// 2026-10-10: Or, with `weights = "sigmoid_mix"` (DeepSeek-V4's `hc_head`), the streams
+    /// summed under learned weights: `sigmoid(mix * scale + base) + hc_eps` per stream, `mix`
+    /// the `hc_mix` projection of the RMS-normed streams (the pre half of [`OpKind::HcPre`]
+    /// without the post and combination mixes); it then reads the streams and the mix.
     HcContract,
+    /// 2026-10-10: DeepSeek-V4 shared-KV attention: every query head attends, with one learned
+    /// sink logit per head in its softmax denominator, the sliding window's rows and the
+    /// compressed rows its layer names (`compressed`: `none`; `all` the causally complete
+    /// ones; `selected` the indexer's top-k); each row is both the key and the value of the
+    /// one KV head. Unlike [`OpKind::PagedAttention`] (separate K and V sides, no sink, one
+    /// paged cache) and [`OpKind::MlaAttention`] (absorbed through `kv_b_proj`), it reads two
+    /// caches, the per-sequence window and the per-token compressed rows.
+    CompressedAttention,
 }
 
-const PLAIN_OPS: [(OpKind, &str); 38] = [
+const PLAIN_OPS: [(OpKind, &str); 39] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -160,6 +178,7 @@ const PLAIN_OPS: [(OpKind, &str); 38] = [
     (OpKind::HcPre, "hc_pre"),
     (OpKind::HcPost, "hc_post"),
     (OpKind::HcContract, "hc_contract"),
+    (OpKind::CompressedAttention, "compressed_attention"),
 ];
 
 impl OpKind {
@@ -217,7 +236,7 @@ impl OpKind {
     /// 2026-09-28: An op that is never generated: projections, attention, the recurrence,
     /// the experts and the vocabulary projection. Fusion happens at its edges. 2026-10-08: Also
     /// the indexer's selection, latent attention and the hyper-connection pre-mix (an iterative
-    /// Sinkhorn normalisation).
+    /// Sinkhorn normalisation). 2026-10-10: And DeepSeek-V4's shared-KV attention.
     pub fn is_heavy(&self) -> bool {
         matches!(
             self,
@@ -232,6 +251,7 @@ impl OpKind {
                 | OpKind::IndexSelect
                 | OpKind::MlaAttention
                 | OpKind::HcPre
+                | OpKind::CompressedAttention
         )
     }
 
@@ -342,6 +362,17 @@ pub enum LayerKind {
     /// 2026-10-08: A sparse-attention layer: latent attention over the tokens an indexer
     /// selects (`deepseek_sparse_attention`, GLM-5).
     SparseAttention,
+    /// 2026-10-10: A DeepSeek-V4 layer whose attention reads only its sliding window
+    /// (`sliding_attention`, compress ratio 0): no compressor, no indexer.
+    SlidingAttention,
+    /// 2026-10-10: A DeepSeek-V4 layer whose attention also reads the indexer-selected rows of
+    /// a 4x compressed KV (`compressed_sparse_attention`, CSA): an overlapping-window
+    /// compressor, and an indexer with its own compressor.
+    CompressedSparseAttention,
+    /// 2026-10-10: A DeepSeek-V4 layer whose attention also reads every row of a 128x
+    /// compressed KV (`heavily_compressed_attention`, HCA): a non-overlapping compressor, no
+    /// indexer.
+    HeavilyCompressedAttention,
 }
 
 impl LayerKind {
@@ -353,6 +384,9 @@ impl LayerKind {
             LayerKind::Mamba => "mamba",
             LayerKind::Moe => "moe",
             LayerKind::SparseAttention => "deepseek_sparse_attention",
+            LayerKind::SlidingAttention => "sliding_attention",
+            LayerKind::CompressedSparseAttention => "compressed_sparse_attention",
+            LayerKind::HeavilyCompressedAttention => "heavily_compressed_attention",
         }
     }
 
@@ -364,6 +398,9 @@ impl LayerKind {
             "mamba" => Some(LayerKind::Mamba),
             "moe" => Some(LayerKind::Moe),
             "deepseek_sparse_attention" => Some(LayerKind::SparseAttention),
+            "sliding_attention" => Some(LayerKind::SlidingAttention),
+            "compressed_sparse_attention" => Some(LayerKind::CompressedSparseAttention),
+            "heavily_compressed_attention" => Some(LayerKind::HeavilyCompressedAttention),
             _ => None,
         }
     }
@@ -444,15 +481,22 @@ impl Circuit {
     /// and `out` the sum of its output widths, except for latent attention, whose weight is
     /// `kv_b_proj`, `[q_heads * (mla_qk + mla_v), kv_lora]`. One definition for the roofline,
     /// the footprint and the memory model. `None` when a dim latent attention needs is
-    /// missing or the product overflows.
+    /// missing or the product overflows. 2026-10-10: A grouped output projection
+    /// ([`LinearRole::OGroup`]) holds one `[out / o_groups, k / o_groups]` block per group, so
+    /// its weight is `[out, k / o_groups]`; `None` when `o_groups` is missing, zero, or does
+    /// not divide `k`.
     pub fn weight_shape(&self, n: &Node) -> Option<(u64, u64)> {
+        let d = |k: &str| self.dims.get(k).copied();
         if n.op == OpKind::MlaAttention {
-            let d = |k: &str| self.dims.get(k).copied();
             let per_head = d("mla_qk")?.checked_add(d("mla_v")?)?;
             return Some((d("q_heads")?.checked_mul(per_head)?, d("kv_lora")?));
         }
         let k = n.inputs.first().map_or(0, |&e| self.edges[e].dim_value);
         let out = n.outputs.iter().map(|&e| self.edges[e].dim_value).sum();
+        if n.op == OpKind::Linear(LinearRole::OGroup) {
+            let g = d("o_groups").filter(|&g| g > 0 && k.is_multiple_of(g))?;
+            return Some((out, k / g));
+        }
         Some((out, k))
     }
 }
