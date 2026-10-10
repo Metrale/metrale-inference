@@ -113,6 +113,9 @@ impl Glm5NextKdaLayer {
         state: &KdaSeqState,
         stream: u64,
     ) -> Result<()> {
+        if super::seq_tokens::kda_row_reg() {
+            return self.recurrent_row_reg(gpu, io, state, stream);
+        }
         let c = &self.cfg;
         let qkv = c.qkv_dim();
         let d = c.head_dim;

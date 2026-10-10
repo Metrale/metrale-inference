@@ -2927,7 +2927,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:360-372"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86"
 
 [[rule]]
 id = "glm_router_topk_dsa"
@@ -2939,7 +2939,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:360-372"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86"
 
 # 2026-10-08: Clamp, SiLU and multiply in one pass over separate gate and up rows; the clamped
 # values stay in FP32 registers.
@@ -2965,7 +2965,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:428-450"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126"
 
 [[rule]]
 id = "glm_moe_combine_dsa"
@@ -2977,4 +2977,4 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:428-450"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126"

@@ -214,6 +214,10 @@ impl Glm5NextDsaLayer {
         let gpu = ctx.gpu;
         let block_size = kv_cache.config().block_size;
         let t_proj = profile::start();
+        // 2026-10-10: `hidden` is not written until `project_out`, so under the fp8 and w4a16
+        // tiers `indexer_project_rows` reuses the activation quantization `kv_a_proj` made of it
+        // (same bytes: the same kernel on the same rows).
+        let stable = crate::glm5next_fp8_dense::stable_input(hidden);
         self.project_in(gpu, hidden, n, stream)?;
         // 2026-10-08: One latent-write launch for every row: the metadata's slots are a
         // contiguous i64 array, and the kernel writes row `i` to `slot[i]`.
@@ -418,6 +422,7 @@ impl Glm5NextDsaLayer {
             &paging,
             stream,
         )?;
+        drop(stable);
         self.project_out(gpu, hidden, n, stream)
     }
 }

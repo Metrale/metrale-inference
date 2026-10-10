@@ -2275,12 +2275,13 @@ files = ["kernels/gb10/common/glm5next_ffn.cu"]
 
 # 2026-10-08: Sigmoid scores, top-k on score + e_score_correction_bias, the selected scores
 # renormalised and scaled by `routed_scaling_factor`, from FP32 logits, every row in one launch
-# (glm5next_ffn.cu:86-208); top_k and the scale are runtime arguments.
+# (glm5next_ffn.cu:86-208); top_k and the scale are runtime arguments. 2026-10-10: the _rank
+# entry is the same selection and weights byte for byte from per-expert rank counts.
 [[family]]
 id = "glm_router_topk"
 description = "Sigmoid + correction-bias top-k routing over FP32 logits"
 compute = "memory"
-kernels = ["glm5next_ffn::glm5next_router_topk"]
+kernels = ["glm5next_ffn::glm5next_router_topk", "glm5next_ffn::glm5next_router_topk_rank"]
 rows = [1, 65536]
 pipeline.top_k = { in = ["f32"], score = "f32", out = ["f32", "i32"] }
 # 2026-10-08: The kernel reads FP32 logits (glm5next_ffn.cu:102-118), so it claims only an FP32

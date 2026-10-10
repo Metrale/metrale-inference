@@ -229,11 +229,11 @@ class and exact citation.
 | `glm_index_f32_gemv` | reference | crates/model-arch/src/glm5next_dsa/layer.rs:200-213,246-259 |
 | `glm_mla_absorbed` | reference | crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:54-66,137-149; crates/model-arch/src/glm5next_dsa/layer.rs:321-363 (attend_rows); crates/model-arch/src/glm5next_dsa/attend.rs:163-190 |
 | `glm_router_f32` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:345-358 |
-| `glm_router_topk_kda` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:360-372 |
-| `glm_router_topk_dsa` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:360-372 |
+| `glm_router_topk_kda` | reference | crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86 |
+| `glm_router_topk_dsa` | reference | crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86 |
 | `glm_swiglu_clamp` | reference | crates/model-arch/src/glm5next_mlp/forward/launch.rs:130-150; crates/model-arch/src/glm5next_mlp/forward/dense.rs:72-82 |
-| `glm_moe_combine_kda` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:428-450 |
-| `glm_moe_combine_dsa` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:428-450 |
+| `glm_moe_combine_kda` | reference | crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126 |
+| `glm_moe_combine_dsa` | reference | crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126 |
 
 ## Bit-identical fusions
 

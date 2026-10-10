@@ -145,6 +145,10 @@ pub struct Glm5NextMlpKernels {
     /// does not clamp.
     pub swiglu: KernelHandle,
     pub router: KernelHandle,
+    /// 2026-10-10: `glm5next_router_topk_rank`, [`Self::router`]'s ids and weights byte for byte
+    /// without its per-slot block-wide argmax; launched under `METRALE_GLM_ROUTER_TOPK_RANK=1`
+    /// (`forward::topk_combine`). `0` when absent: the base kernel runs.
+    pub router_rank: KernelHandle,
     pub combine: KernelHandle,
     /// 2026-09-25: `moe_sort_by_expert` (`moe_permute.cu`): counting sort of the `[rows, top_k]`
     /// ids into expert-contiguous order, writing `sorted_token_ids`, `expert_offsets` and
@@ -284,6 +288,11 @@ impl Glm5NextMlpKernels {
             ),
             swiglu: gpu.kernel(FFN_MODULE, "glm5next_swiglu_clamp")?,
             router: gpu.kernel(FFN_MODULE, "glm5next_router_topk")?,
+            router_rank: metrale_model_layers::layers::try_kernel(
+                gpu,
+                FFN_MODULE,
+                "glm5next_router_topk_rank",
+            ),
             combine: gpu.kernel(FFN_MODULE, "glm5next_moe_combine")?,
             moe_sort_by_expert: metrale_model_layers::layers::try_kernel(
                 gpu,

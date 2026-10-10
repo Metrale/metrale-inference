@@ -110,3 +110,56 @@ impl Glm5NextKdaLayer {
 /// 2026-10-09: V columns per block of `kda_recurrent_decode_bf16_seq_reg`: one warp, so a
 /// head's 128 columns run as four blocks.
 const SEQ_VB: usize = 32;
+
+/// 2026-10-10: `METRALE_GLM_KDA_ROW_REG=1` runs each single-row recurrent step
+/// (`stateful_row`: the C1 decode and every per-row walk) on `kda_recurrent_decode_bf16_seq_reg`
+/// at one token instead of `kda_recurrent_decode_bf16_smem`: the same expressions in the same
+/// order, with all of a column's state loads in flight at once. Off until measured end to end.
+/// Read once.
+pub(super) fn kda_row_reg() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("METRALE_GLM_KDA_ROW_REG").as_deref() == Ok("1"))
+}
+
+impl Glm5NextKdaLayer {
+    /// 2026-10-10: One recurrent step of the row buffers `io` on `state.recurrent` with
+    /// `kda_recurrent_decode_bf16_seq_reg` at T = 1, as [`Self::stateful_tokens`] launches it for
+    /// one row. Refuses a target without the kernel or a head_dim other than `KDA_REG_D`: the
+    /// lever asked for it.
+    pub(super) fn recurrent_row_reg(
+        &self,
+        gpu: &dyn GpuBackend,
+        io: RowIo,
+        state: &KdaSeqState,
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let (qkv, d) = (c.qkv_dim(), c.head_dim);
+        if self.kernels.seq.recurrent.0 == 0 || d != KDA_REG_D {
+            bail!(
+                "METRALE_GLM_KDA_ROW_REG=1: needs kda_recurrent_decode_bf16_seq_reg and \
+                 head_dim {KDA_REG_D} (head_dim {d})"
+            );
+        }
+        KernelLaunch::new(gpu, self.kernels.seq.recurrent)
+            .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
+            .block([SEQ_VB as u32, 1, 1])
+            .shared_mem((3 * d * 4) as u32)
+            .arg_ptr(io.conv_out)
+            .arg_ptr(io.conv_out.offset(qkv * 2))
+            .arg_ptr(io.conv_out.offset(qkv * 4))
+            .arg_ptr(io.gate)
+            .arg_ptr(io.beta)
+            .arg_ptr(state.recurrent)
+            .arg_ptr(io.core)
+            .arg_u32(c.heads as u32)
+            .arg_f32(1.0 / (d as f32).sqrt())
+            // 2026-10-10: One token, so the per-token strides are never applied.
+            .arg_u32(1)
+            .arg_u32(0)
+            .arg_u32(0)
+            .arg_u32(0)
+            .arg_u32(0)
+            .launch(stream)
+    }
+}
