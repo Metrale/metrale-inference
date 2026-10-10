@@ -156,6 +156,8 @@ impl TransformerModel {
     ///   `slots[n]`, `tokens[n * k]`, then `committed[n]`
     /// - 0xFFFFFFFA (`EP_CMD_PREFILL_SPANS`, seq_id 0): one chunk of each of `n` sequences in
     ///   one multi-sequence prefill → `n`, the header, the prompts (`prefill_b/spans_wire.rs`)
+    /// - 0xFFFFFFE1 (`EP_CMD_DECODE_FED`): fed single-row decode → the 4-byte token from rank
+    ///   0's feed ids (`decode_fed_ep.rs`)
     /// - 0xFFFFFFF8 (`EP_CMD_DECODE_CKPT`): decode-time Marconi checkpoint →
     ///   `EP_CKPT_WORDS` words in one bulk broadcast
     /// - 0xFFFFFFFF: shutdown (seq_id is ignored)
@@ -387,6 +389,11 @@ impl TransformerModel {
                 // 2026-10-08: DFlash K=γ verify: K, the K tokens, the verify, then the committed
                 // row count (`verify_kgamma_ep.rs`).
                 self.ep_worker_verify_kgamma(seq, stream)?;
+            }
+            // 2026-10-10: A fed single-row decode (`decode_fed_ep.rs`): the token follows on the
+            // device.
+            crate::model::trait_impl::decode_fed_ep::EP_CMD_DECODE_FED => {
+                self.ep_worker_decode_fed(seq)?;
             }
             token => {
                 self.decode(token, seq, stream)?;

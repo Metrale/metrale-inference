@@ -23,7 +23,7 @@ use metrale_model_layers::layers::ops;
 
 use super::super::block_mgmt::ensure_blocks_through_decode;
 use super::super::types::TransformerModel;
-use crate::traits::{FeedSource, RowMask, SequenceState};
+use crate::traits::{FedAheadPolicy, FeedSource, RowMask, SequenceState};
 
 /// 2026-09-25: What a single-sequence decode row is fed. `Host`: the id is embedded from a
 /// host value and pushed into `seq.tokens` by the decode step. `Fed`: the resolved id
@@ -93,14 +93,30 @@ impl TransformerModel {
         let per_row_fallback =
             self.config.hc_mult > 0 || self.is_mla_dispatch() || self.config.index_topk > 0;
         let hss = self.kv_cache.lock().config().cache_blocks_per_seq.is_some();
+        // 2026-10-10: Multi-rank, the fed step is single-row only (`fed_ahead_policy` caps it), so
+        // it takes `decode_dispatch_with` and the batched route's per-row fallback does not
+        // apply. Every layer must declare its decode capturable with the communicator
+        // (`layers_capture_with_comm`): that declaration says each per-step input is read from
+        // device buffers, so the token is the only input the fed step moves off the host.
+        let single_device = self.comm.is_none() && !per_row_fallback;
+        let multi_rank = self.ep_device_feed_active() && self.layers_capture_with_comm();
         kernels
             && !embed_needs_history
             && !layers_need_host_id
-            && !per_row_fallback
-            && self.comm.is_none()
+            && (single_device || multi_rank)
             && !self.use_fp32_logits
             && !self.profile
             && !hss
+    }
+
+    /// 2026-10-10: `RepickOnly` with one row when the multi-rank fed decode is on: a re-run would
+    /// advance recurrent state twice and would need a second announcement to the workers.
+    pub(super) fn fed_ahead_policy_dispatch(&self) -> FedAheadPolicy {
+        if self.comm.is_some() && self.supports_device_token_feed_dispatch() {
+            FedAheadPolicy::RepickOnly { max_rows: 1 }
+        } else {
+            FedAheadPolicy::Redo
+        }
     }
 
     /// 2026-09-25: Resolve `sources` into the feed-id buffer on the device, then run the
@@ -149,6 +165,13 @@ impl TransformerModel {
             n as u32,
             dev_stream,
         )?;
+        // 2026-10-10: Multi-rank: the workers run the same fed step, announced and fed here.
+        if self.comm.is_some() {
+            if n != 1 {
+                bail!("decode_batch_fed: {n} rows on a multi-rank serve, which feeds one");
+            }
+            self.ep_send_fed_step(seqs[0])?;
+        }
         for s in seqs.iter_mut() {
             self.ssm_h_to_f16_dispatch(s)?;
         }

@@ -75,7 +75,7 @@ mod vision;
 
 pub use adapters::ModelAdapters;
 pub use circuit::{ForwardDisclosure, ForwardSelect, ModelCircuit};
-pub use device_feed::ModelDeviceFeed;
+pub use device_feed::{FedAheadPolicy, ModelDeviceFeed};
 pub use draft::ModelDraft;
 pub use ep::ModelEp;
 pub use forward::ModelForward;

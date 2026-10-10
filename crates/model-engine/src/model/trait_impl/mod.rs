@@ -34,6 +34,7 @@ mod decode_a_diag;
 mod decode_b;
 mod decode_b2;
 pub(in crate::model) mod decode_checkpoint;
+pub(in crate::model) mod decode_fed_ep;
 mod decode_graph_key;
 mod slot_graph_key;
 pub(crate) use slot_graph_key::SlotGraphKey;

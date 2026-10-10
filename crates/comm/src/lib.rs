@@ -44,6 +44,16 @@ pub trait CommBackend: Send + Sync {
     /// place.
     fn broadcast(&self, ptr: u64, bytes: usize, root: usize) -> Result<()>;
 
+    /// 2026-10-10: `broadcast`, submitted on the backend's stream without waiting for it to
+    /// complete: later work on that stream sees the bytes, and the host goes on at once. No
+    /// deadline applies; a failure surfaces at the next operation that waits. For the multi-rank
+    /// decode that runs ahead of the host (`METRALE_EP_DEVICE_FEED`), where waiting would hold
+    /// rank 0's host behind the step already in flight. The default waits (`broadcast`), which
+    /// satisfies the same ordering.
+    fn broadcast_enqueue(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
+        self.broadcast(ptr, bytes, root)
+    }
+
     /// 2026-09-26: On a non-root rank, receive the first `u32` of the next
     /// worker command from `root`, the receive side of a 4-byte `broadcast`.
     /// Unlike `broadcast`, it may wait without a deadline, so an implementation

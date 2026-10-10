@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_engine::traits::SequenceState;
@@ -73,6 +73,10 @@ pub(super) struct ModelCfg {
     pub held_blocks: usize,
     /// 2026-09-25: What `supports_device_token_feed` reports.
     pub device_token_feed: bool,
+    /// 2026-10-10: `Some(rows)`: `fed_ahead_policy` is `RepickOnly { max_rows: rows }`, and the
+    /// fake keeps recurrent state that a forward at a position it already consumed corrupts
+    /// (the output turns to [`GARBAGE`]); `None`: `Redo`, no recurrent state.
+    pub recurrent_fed_rows: Option<usize>,
     /// 2026-09-25: `event_query` answers "pending" this many times per event before the
     /// event completes (0 = complete at once).
     pub event_lag: usize,
@@ -105,6 +109,7 @@ impl Default for ModelCfg {
             reclaimable: 0,
             held_blocks: 0,
             device_token_feed: true,
+            recurrent_fed_rows: None,
             event_lag: 0,
             reversed_completion: false,
             event_query_fault_at: None,
@@ -133,68 +138,6 @@ pub(super) struct State {
     pub event_queries: usize,
 }
 
-/// 2026-09-25: A barrier the harness uses to order request arrival against the loop:
-/// the scheduler thread parks in a model call until `release`, and the
-/// harness can wait for the loop to reach a tick.
-#[derive(Default)]
-pub(super) struct Gate {
-    state: Mutex<GateState>,
-    cv: Condvar,
-}
-
-#[derive(Default)]
-struct GateState {
-    started: bool,
-    ticks: usize,
-    block_at_tick: Option<usize>,
-    released: bool,
-}
-
-impl Gate {
-    /// 2026-09-25: Called by the model on the scheduler thread (from `create_stream`)
-    /// before its first tick.
-    pub fn wait_start(&self) {
-        let mut g = self.state.lock().unwrap();
-        while !g.started {
-            g = self.cv.wait(g).unwrap();
-        }
-    }
-    pub fn start(&self) {
-        self.state.lock().unwrap().started = true;
-        self.cv.notify_all();
-    }
-    /// 2026-09-25: Called by the model once per tick. Parks when the harness asked to
-    /// block at this tick, until [`Gate::release`].
-    pub fn tick(&self) -> usize {
-        let mut g = self.state.lock().unwrap();
-        g.ticks += 1;
-        let t = g.ticks;
-        self.cv.notify_all();
-        if g.block_at_tick == Some(t) {
-            g.released = false;
-            while !g.released {
-                g = self.cv.wait(g).unwrap();
-            }
-        }
-        t
-    }
-    pub fn block_at_tick(&self, t: usize) {
-        self.state.lock().unwrap().block_at_tick = Some(t);
-    }
-    pub fn wait_tick(&self, t: usize) {
-        let mut g = self.state.lock().unwrap();
-        while g.ticks < t {
-            g = self.cv.wait(g).unwrap();
-        }
-    }
-    pub fn release(&self) {
-        let mut g = self.state.lock().unwrap();
-        g.released = true;
-        g.block_at_tick = None;
-        self.cv.notify_all();
-    }
-}
-
 /// 2026-09-25: Everything the harness must still reach after the model has been moved
 /// into the scheduler loop: the trace, the scripts, the gate.
 #[derive(Default)]
@@ -203,8 +146,11 @@ pub(super) struct Shared {
     pub scripts: Mutex<HashMap<u64, SeqScript>>,
     pub cancel_flags: Mutex<HashMap<u64, Arc<AtomicBool>>>,
     pub state: Mutex<State>,
-    pub gate: Gate,
+    pub gate: super::gate::Gate,
     pub park: super::park::LinePark,
+    /// 2026-10-10: Per sequence key, the next position its recurrent state expects and whether
+    /// it was corrupted (`model_recurrent.rs`).
+    pub recurrent: Mutex<HashMap<u64, (usize, bool)>>,
 }
 
 pub(super) struct RecordingModel {

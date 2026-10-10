@@ -189,6 +189,10 @@ impl CommBackend for NcclBackend {
         self.broadcast_with_wait(ptr, bytes, root, BroadcastWait::Deadline(deadline))
     }
 
+    fn broadcast_enqueue(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
+        self.broadcast_with_wait(ptr, bytes, root, BroadcastWait::Enqueued)
+    }
+
     fn broadcast_rendezvous(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
         let deadline = Duration::from_secs(RENDEZVOUS_TIMEOUT_SECS);
         self.broadcast_with_wait(ptr, bytes, root, BroadcastWait::Deadline(deadline))
@@ -290,6 +294,8 @@ impl CommBackend for NcclBackend {
 enum BroadcastWait {
     Deadline(Duration),
     Idle,
+    /// 2026-10-10: Submit only (`broadcast_enqueue`); checks the asynchronous error state once.
+    Enqueued,
 }
 
 impl NcclBackend {
@@ -338,6 +344,14 @@ impl NcclBackend {
             BroadcastWait::Idle => crate::collective_wait::poll_idle_command(ready, pause),
             BroadcastWait::Deadline(d) => {
                 crate::collective_wait::poll_completion(d, || start.elapsed(), ready, pause)
+            }
+            // 2026-10-10: Submitted only: the error state is checked once, not waited on.
+            BroadcastWait::Enqueued => {
+                if self.check_async_error(comm) {
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!("NCCL asynchronous failure"))
+                }
             }
         };
         crate::collective_wait::poison_on_error(completion, &self.unhealthy).with_context(
