@@ -191,9 +191,13 @@ fn main() -> Result<()> {
                 .iter()
                 .zip(want.iter().zip(got.iter()))
             {
+                let first = w.chunks(4).zip(g.chunks(4)).position(|(a, b)| a != b);
                 ensure!(
-                    w == g,
-                    "rows {rows} vocab {n} case {kind}: {what} differs from dflash2_topk16"
+                    first.is_none(),
+                    "rows {rows} vocab {n} case {kind}: {what} differs from dflash2_topk16 at \
+                     word {first:?}: {:?} vs {:?}",
+                    first.map(|i| &w[i * 4..i * 4 + 4]),
+                    first.map(|i| &g[i * 4..i * 4 + 4])
                 );
             }
             checked += 1;

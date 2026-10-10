@@ -150,8 +150,9 @@ __device__ __forceinline__ bool topk16_before(float va, unsigned int ta, float v
 
 // 2026-10-10: The block's best (value, entry) of every thread's TOPK16_PER_THREAD slots, 16
 // times; each pass's winner is removed from its owner's slots. Ineligible slots hold
-// (-inf, tie 0xFFFFFFFF), which every eligible value beats. out_v / out_i get the 16 winners
-// in order, (-inf, 0xFFFFFFFF) where none was left.
+// (-inf, tie 0xFFFFFFFF, entry 0xFFFFFFFF), which every eligible value beats; a removed winner
+// becomes one. out_v / out_i get the 16 winners in order, (-inf, 0xFFFFFFFF) where none was
+// left.
 __device__ __forceinline__ void topk16_block_select(
     float (&v)[TOPK16_PER_THREAD],
     unsigned int (&t)[TOPK16_PER_THREAD],
@@ -197,7 +198,11 @@ __device__ __forceinline__ void topk16_block_select(
         const unsigned int win = s_win;
         #pragma unroll
         for (unsigned int j = 0; j < TOPK16_PER_THREAD; ++j) {
-            if (t[j] == win && win != 0xFFFFFFFFu) { v[j] = TOPK16_NEG_INF; t[j] = 0xFFFFFFFFu; }
+            if (t[j] == win && win != 0xFFFFFFFFu) {
+                v[j] = TOPK16_NEG_INF;
+                t[j] = 0xFFFFFFFFu;
+                ix[j] = 0xFFFFFFFFu;
+            }
         }
         __syncthreads();
     }
