@@ -6,12 +6,16 @@
 # probes), k=4 and k=7 (median interval between consecutive verify lines); k=1 extrapolated
 # from the k=2..4 slope (the propose's fixed cost lands at k>=1), k=3/5/6 linear between.
 # A trace is the per-step accepted run, one digit per verify step, in serve order.
+# baseline_* = tokens/ms the DFlash gamma resolver and the MTP gate delivered on this replay
+# (commit 0e3236b67, the last tree that had them; both moved onto spec_ctl after it).
 # Post-fix traces (drafter attention fixed) and two earlier drafter traces (lower
 # acceptance), all replayed on the post-fix cost table.
 step_ms = [28.65, 44.15, 50.5, 56.85, 63.2, 67.73, 72.27, 76.8]
 
 [[trace]]
 name = "glm53_dflash_fk7"
+baseline_resolver_tok_ms = 0.03286
+baseline_gate_tok_ms = 0.03173
 note = "post-fix, ladder 1:7"
 k_logged = 5
 steps = [
@@ -25,6 +29,8 @@ steps = [
 
 [[trace]]
 name = "glm53_dflash_fk4"
+baseline_resolver_tok_ms = 0.03439
+baseline_gate_tok_ms = 0.0345
 note = "post-fix, ladder 1:4"
 k_logged = 4
 steps = [
@@ -38,6 +44,8 @@ steps = [
 
 [[trace]]
 name = "glm53_dflash_dpa2"
+baseline_resolver_tok_ms = 0.03076
+baseline_gate_tok_ms = 0.02651
 note = "post-fix, ladder 1:7, dump build"
 k_logged = 7
 steps = [
@@ -49,6 +57,8 @@ steps = [
 
 [[trace]]
 name = "glm53_dflash_dk7"
+baseline_resolver_tok_ms = 0.02877
+baseline_gate_tok_ms = 0.02433
 note = "pre-fix drafter, ladder 1:7"
 k_logged = 7
 steps = [
@@ -62,6 +72,8 @@ steps = [
 
 [[trace]]
 name = "glm53_dflash_dfr4"
+baseline_resolver_tok_ms = 0.03041
+baseline_gate_tok_ms = 0.03041
 note = "pre-fix drafter, ladder 1:4"
 k_logged = 4
 steps = [
@@ -75,6 +87,8 @@ steps = [
 
 [[trace]]
 name = "glm53_dflash_fk2"
+baseline_resolver_tok_ms = 0.03446
+baseline_gate_tok_ms = 0.03445
 note = "post-fix, ladder 1:2, from 100-step histograms"
 k_logged = 2
 steps = [

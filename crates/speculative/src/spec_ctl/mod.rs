@@ -21,6 +21,7 @@
 //! Hosts (the scheduler's rung and planner call sites) own state placement and measurement.
 
 pub mod accept;
+pub mod batch;
 pub mod calib;
 pub mod chain;
 pub mod controller;

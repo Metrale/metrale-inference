@@ -116,7 +116,6 @@ pub fn step_verify_dflash_batched(
             num_accepted += 1;
         }
         accepted_per_seq.push(num_accepted);
-        crate::scheduler::adaptive_spec::record_verify(a, num_accepted, sched);
 
         // 2026-09-25: rewind the forward's +k to the accepted prefix plus
         // the bonus slot (the same arithmetic as `verify_dflash_step`).
@@ -219,9 +218,8 @@ pub fn step_verify_dflash_batched(
     let t_propose = sched.io.clock.now();
     // 2026-09-25: trim first for everyone: the batched propose reads
     // each sequence's proposer state, so every state must already
-    // reflect what its verify accepted. `spec_allowed` takes &mut, so
-    // eligibility is decided in this pass while the mutable borrow is
-    // already held.
+    // reflect what its verify accepted. Eligibility is decided in the same
+    // pass.
     let mut eligible = vec![false; batch.len()];
     for (i, a) in batch.iter_mut().enumerate() {
         if a.finished {
@@ -237,10 +235,9 @@ pub fn step_verify_dflash_batched(
         if let Err(e) = model.trim_proposer_state(&mut a.seq, num_accepted, 0) {
             tracing::error!("trim_proposer_state (dflash batched): {e:#}");
         }
-        eligible[i] =
-            crate::scheduler::adaptive_spec::spec_allowed(a, sched) && a.grammar_state.is_none();
+        eligible[i] = a.grammar_state.is_none();
     }
-    // 2026-09-25: eligible means not finished, speculation allowed and no
+    // 2026-09-25: eligible means not finished and no
     // grammar (`run_mtp_propose_batched` takes grammarless sequences
     // only).
     let prop_idx: Vec<usize> = (0..batch.len()).filter(|&i| eligible[i]).collect();
@@ -297,7 +294,7 @@ pub fn step_verify_dflash_batched(
         // 2026-09-25: batched path covered every eligible sequence; nothing left to do.
     } else {
         for (i, a) in batch.iter_mut().enumerate() {
-            if a.finished || !crate::scheduler::adaptive_spec::spec_allowed(a, sched) {
+            if a.finished {
                 continue;
             }
             if let Err(e) = model.save_hidden_for_mtp_from_stash(i, 0) {

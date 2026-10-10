@@ -14,6 +14,7 @@ defaults:
   gpu_memory_utilization: 0.85
   scheduler: slai
   speculative: true
+  spec_objective: throughput
   ep_size: 2
 env:
   METRALE_EP_GRAPHS: "0"

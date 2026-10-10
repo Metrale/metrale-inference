@@ -3,11 +3,13 @@
 # 2026-10-10: Qwen3.8-27B NVFP4 + MTP on one GB10, 2026-10-04: two `met bench spec-cost` runs.
 # cells = [n, k, verify_ms, verify_j, draft_ms, draft_j] as the bench table printed them;
 # windows = the serve's 100-step accept histograms at k = 3 during the k = 3 leg,
-# [accepted 3, accepted 2, accepted 1, rejected].
+# [accepted 3, accepted 2, accepted 1, rejected]. baseline_gate_tok_ms = tokens/ms the MTP gate
+# delivered on this replay at n = 1, 2, 4, 8 (commit 0e3236b67, the last tree that had it).
 k_logged = 3
 
 [[run]]
 name = "qwen38_27b_mtp_r1"
+baseline_gate_tok_ms = [0.02194, 0.04353, 0.06544, 0.102]
 cells = [
   [1, 0, 80.02, 4.022, 0.00, 0.000],
   [2, 0, 83.35, 4.799, 0.00, 0.000],
@@ -42,6 +44,7 @@ windows = [
 
 [[run]]
 name = "qwen38_27b_mtp_r2"
+baseline_gate_tok_ms = [0.02197, 0.04362, 0.0655, 0.10237]
 cells = [
   [1, 0, 79.23, 4.395, 0.00, 0.000],
   [2, 0, 82.49, 5.246, 0.00, 0.000],

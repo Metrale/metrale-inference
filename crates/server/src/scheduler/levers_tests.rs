@@ -61,7 +61,7 @@ fn the_turn_termination_levers_ship_on_in_the_live_resolver() {
 fn every_opt_in_lever_ships_off() {
     let d = SchedLevers::defaults();
     assert!(!d.force_temp_zero);
-    assert!(!d.dflash_masked_verify && !d.dflash_adaptive && !d.dflash_spec_think);
+    assert!(!d.dflash_masked_verify && !d.dflash_spec_think);
     assert!(!d.disable_watchdogs);
     assert!(!d.decode_timing && !d.mtp_timing && !d.adadec_diagnostic);
 }
@@ -76,7 +76,7 @@ fn every_opt_in_lever_ships_off() {
 /// production resolves a different value.
 ///
 /// This asserts the resolver itself, with no env set.
-/// `mtp_gate::spec_dispatch_eligible` reads `dflash_spec_think` as
+/// `spec_eligibility::spec_dispatch_eligible` reads `dflash_spec_think` as
 ///
 ///     if inside_thinking && !spec_think { return false; }
 ///
@@ -94,7 +94,7 @@ fn spec_think_is_off_in_the_resolver_the_server_actually_uses() {
         "METRALE_DFLASH_SPEC_THINK must stay OPT-IN: from_env() resolved it ON. \
          It is the one lever here that is not gated behind dflash_verify_raw_argmax, \
          so defaulting it on changes plain-MTP serving and deterministically \
-         damages agentic trajectories. See mtp_gate::spec_dispatch_eligible."
+         damages agentic trajectories. See spec_eligibility::spec_dispatch_eligible."
     );
     assert!(
         live.dflash_masked_verify,
@@ -143,10 +143,10 @@ fn an_absent_mtp_gate_flag_leaves_the_legacy_variable_reachable() {
 fn two_runs_hold_independent_levers() {
     let a = SchedLevers::defaults();
     let b = SchedLevers {
-        dflash_adaptive: true,
+        dflash_spec_think: true,
         ..SchedLevers::defaults()
     };
-    assert!(!a.dflash_adaptive && b.dflash_adaptive);
+    assert!(!a.dflash_spec_think && b.dflash_spec_think);
     a.set_loop_watchdog(true);
     assert!(!b.loop_watchdog(), "and independent runtime state");
 }

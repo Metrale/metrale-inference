@@ -10,10 +10,47 @@
 use super::ServeArgs;
 use super::validate::violation::Violation;
 
+/// 2026-10-10: `--spec-cost-model measured`'s checks and `--spec-objective`'s.
+pub(super) fn check(args: &ServeArgs, v: &mut Vec<Violation>) {
+    check_objective(args, v);
+    check_measured(args, v);
+}
+
+/// 2026-10-10: `--spec-objective` is required whenever the speculation controller runs (MTP
+/// or DFlash without `--mtp-gate force`, which resolves `METRALE_MTP_GATE_FORCE` and
+/// `--hermetic` too); a recipe's objective under a forcing override is simply unused. `energy`
+/// needs the only cost source that measures joules.
+fn check_objective(args: &ServeArgs, v: &mut Vec<Violation>) {
+    use crate::cli::serve_args_spec_cost::{SpecCostModel, SpecObjective};
+    let forced = crate::scheduler::levers::resolve_mtp_gate_force(args.mtp_gate_force());
+    let controlled = (args.speculative || args.dflash) && !forced;
+    if controlled && args.spec_cost.spec_objective.is_none() {
+        v.push(Violation::new(
+            "speculation is on without --spec-objective.",
+            "each step the speculation controller chooses plain decode or a draft depth by an \
+             objective; picking one silently would choose between latency, throughput and \
+             energy for the operator.",
+            "pass --spec-objective latency|throughput|energy, or --mtp-gate force to run \
+             every eligible step speculatively.",
+        ));
+    }
+    if args.spec_cost.spec_objective == Some(SpecObjective::Energy)
+        && args.spec_cost.spec_cost_model != SpecCostModel::Measured
+    {
+        v.push(Violation::new(
+            "--spec-objective energy is set without --spec-cost-model measured.",
+            "the energy objective needs joules per step, and only the measured cost table \
+             carries them.",
+            "add --spec-cost-model measured (with its table, calibration and slack), or pick \
+             latency or throughput.",
+        ));
+    }
+}
+
 /// 2026-10-04: `--spec-cost-model measured` needs its table, calibration and slack (PCND: no
 /// implicit default path or epsilon), needs MTP, and replaces the static K-ladder and D-Cut
 /// rather than composing with them.
-pub(super) fn check(args: &ServeArgs, v: &mut Vec<Violation>) {
+fn check_measured(args: &ServeArgs, v: &mut Vec<Violation>) {
     if args.spec_cost.spec_cost_model != crate::cli::serve_args_spec_cost::SpecCostModel::Measured {
         return;
     }

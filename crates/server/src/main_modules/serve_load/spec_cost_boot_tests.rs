@@ -15,6 +15,7 @@ fn off_args() -> ServeSpecCostArgs {
         spec_cost_calibration: None,
         spec_cost_recipe: None,
         spec_cost_slack: None,
+        spec_objective: None,
     }
 }
 
@@ -37,6 +38,7 @@ fn measured_without_a_drafter_is_refused() {
         spec_cost_calibration: Some("/nonexistent/cal.toml".into()),
         spec_cost_recipe: Some("x/x".into()),
         spec_cost_slack: Some(0.0),
+        spec_objective: None,
     };
     // 2026-10-04: The table path does not exist either, so this fails at the read, not the
     // drafter check; the point is only that `measured` never silently returns `Ok(None)`.

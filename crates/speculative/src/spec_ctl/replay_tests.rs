@@ -5,20 +5,19 @@
 //! measured). Fixtures: `tests/fixtures/spec_ctl/` (provenance in each file's header).
 //!
 //! - Qwen3.8-27B MTP, one GB10, widths 1/2/4/8: the static ladder, the MTP gate (ladder depth
-//!   vs plain decode, by measured throughput) and `--spec-cost-model measured` (calibration
-//!   fitted on the other run, as a serve plans from an earlier bench) against the controller with the measured table (Throughput, and
-//!   Energy with the planner's floor). The adaptive rung adapts widths 9..=16 only, where no
+//!   vs plain decode, by measured throughput; its result recorded in the fixture since the
+//!   gate moved onto this controller) and `--spec-cost-model measured` (calibration fitted on
+//!   the other run, as a serve plans from an earlier bench) against the controller with the
+//!   measured table (Throughput, and Energy with the planner's floor). The adaptive rung adapts widths 9..=16 only, where no
 //!   trace was recorded; at these widths it is the ladder.
-//! - GLM-5.3 Flash DFlash2, one stream: the logged fixed depth, the gamma resolver, the gate
-//!   and the GLM branch's per-stream adaptive count (its exact port) against the controller
+//! - GLM-5.3 Flash DFlash2, one stream: the logged fixed depth, the gamma resolver and the gate
+//!   (both recorded in the fixture), and the GLM branch's per-stream adaptive count (its exact port) against the controller
 //!   with a cold-start prior and a re-probe window.
 //! - Both also against the controller with measured-only costs (no table, no reference
 //!   rates: a chained cold prior): the configuration that replaces the gate where no table exists.
 //!
 //! Owner: speculative.
 //! Invariants: none beyond the types.
-
-use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -32,8 +31,6 @@ use super::online::OnlineTable;
 use super::replay::{Controlled, Fixed, Outcome, Policy, replay};
 use super::reprobe::ReprobePolicy;
 use super::source::{DraftCost, DraftKind, DraftSource};
-use crate::dflash_rung::{DflashRung, Rungs};
-use crate::mtp_gate::{GateStep, MtpGate};
 use crate::spec_cost::{AcceptanceCalibration, Cell, CostTable, SCHEMA, TableKey};
 
 #[derive(Deserialize)]
@@ -45,6 +42,7 @@ struct QwenFile {
 #[derive(Deserialize)]
 struct QwenRun {
     name: String,
+    baseline_gate_tok_ms: [f64; 4],
     cells: Vec<[f64; 6]>,
     windows: Vec<[usize; 4]>,
 }
@@ -58,6 +56,8 @@ struct GlmFile {
 #[derive(Deserialize)]
 struct GlmTrace {
     name: String,
+    baseline_resolver_tok_ms: f64,
+    baseline_gate_tok_ms: f64,
     k_logged: usize,
     steps: Vec<String>,
 }
@@ -135,43 +135,6 @@ fn calibration(trace: &[u8], k: usize) -> AcceptanceCalibration {
         priors.join(", ")
     ))
     .expect("calibration")
-}
-
-/// 2026-10-10: The MTP gate under replay: the gate's chosen step is the ladder depth or plain
-/// decode; walls are the step costs.
-struct Gate {
-    g: MtpGate,
-    k: usize,
-}
-
-impl Policy for Gate {
-    fn decide(&mut self, _: usize) -> usize {
-        match self.g.next_step() {
-            GateStep::MeasureVerify => self.k,
-            GateStep::MeasureDecode => 0,
-        }
-    }
-    fn observe(&mut self, k: usize, accepted: &[usize], cost: StepCost) {
-        let wall = Duration::from_secs_f64(cost.ms / 1000.0);
-        if k == 0 {
-            self.g.record_decode(wall, accepted.len());
-        } else {
-            let emitted = accepted.iter().map(|a| 1 + a).sum();
-            self.g.record_verify_step(wall, emitted, accepted.len());
-        }
-    }
-}
-
-/// 2026-10-10: The gamma resolver under replay, armed at gamma 8 (its C=1 rungs: 7 or 4).
-struct Resolver(DflashRung);
-
-impl Policy for Resolver {
-    fn decide(&mut self, n: usize) -> usize {
-        self.0.drafts_for(n, 7)
-    }
-    fn observe(&mut self, _: usize, accepted: &[usize], _: StepCost) {
-        self.0.observe_step(accepted[0] >= 1);
-    }
 }
 
 /// 2026-10-10: The controller's MTP configuration under test: `source` (the measured table,
@@ -325,7 +288,8 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
         let cal = calibration(&other, f.k_logged);
         let noise = sampling_noise(&trace);
         println!("REPLAY {} sampling noise {noise:.4}", run.name);
-        for n in [1usize, 2, 4, 8] {
+        for (wi, n) in [1usize, 2, 4, 8].into_iter().enumerate() {
+            let gate = run.baseline_gate_tok_ms[wi];
             let budget = n as f64 * trace.iter().map(|&a| 1.0 + a as f64).sum::<f64>();
             let cost = |k: usize| super::cost::table_cost(&t, n, k);
             let ladder = metrale_model_layers::speculative::ladder_drafts_from_steps(
@@ -336,11 +300,6 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
             let run_p =
                 |p: &mut dyn Policy| replay(&trace, f.k_logged, n, budget, cost, p).unwrap();
             let fixed = run_p(&mut Fixed(ladder));
-            let mut gate = Gate {
-                g: MtpGate::new(ladder),
-                k: ladder,
-            };
-            let gated = run_p(&mut gate);
             let planned_k =
                 super::measured::propose_depth(&t, &cal, n, 0.0, 32).clamp(1, f.k_logged);
             let planned = run_p(&mut Fixed(planned_k));
@@ -362,7 +321,6 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
             let en = run_p(&mut mtp_controller(measured(), energy, n, cold));
             for (name, o) in [
                 ("static ladder", &fixed),
-                ("mtp gate", &gated),
                 ("measured planner", &planned),
                 ("ctl throughput", &thr),
                 ("ctl energy", &en),
@@ -370,22 +328,25 @@ fn qwen_mtp_traces_the_controller_is_at_least_as_good_as_every_old_mechanism() {
             ] {
                 row(&run.name, n, name, o);
             }
-            for (name, old) in [("ladder", &fixed), ("gate", &gated), ("planner", &planned)] {
+            let olds = [
+                ("ladder", fixed.tok_per_ms()),
+                ("gate (recorded)", gate),
+                ("planner", planned.tok_per_ms()),
+            ];
+            for (name, old) in olds {
                 assert!(
-                    thr.tok_per_ms() >= old.tok_per_ms() * (1.0 - noise),
-                    "{} n={n}: controller {:.5} tok/ms < {name} {:.5}",
+                    thr.tok_per_ms() >= old * (1.0 - noise),
+                    "{} n={n}: controller {:.5} tok/ms < {name} {old:.5}",
                     run.name,
                     thr.tok_per_ms(),
-                    old.tok_per_ms()
                 );
             }
-            for (name, old) in [("ladder", &fixed), ("gate", &gated)] {
+            for (name, old) in &olds[..2] {
                 assert!(
-                    onl.tok_per_ms() >= old.tok_per_ms() * (1.0 - noise),
-                    "{} n={n}: online controller {:.5} tok/ms < {name} {:.5}",
+                    onl.tok_per_ms() >= old * (1.0 - noise),
+                    "{} n={n}: online controller {:.5} tok/ms < {name} {old:.5}",
                     run.name,
                     onl.tok_per_ms(),
-                    old.tok_per_ms()
                 );
             }
             assert!(
@@ -414,13 +375,6 @@ fn glm_dflash_traces_the_controller_is_at_least_as_good_as_every_old_mechanism()
         let k = tr.k_logged;
         let run_p = |p: &mut dyn Policy| replay(&trace, k, 1, budget, cost, p).unwrap();
         let fixed = run_p(&mut Fixed(k));
-        let rung = DflashRung::new();
-        rung.configure_with(8, false, Rungs::defaults(8));
-        let resolved = run_p(&mut Resolver(rung));
-        let gated = run_p(&mut Gate {
-            g: MtpGate::new(k),
-            k,
-        });
         let ctl = run_p(&mut dflash_controller(&f.step_ms[..=k], k));
         let adaptive_k = run_p(&mut adaptive_k_exact_port(&f.step_ms[..=k], k));
         let mut online = dflash_controller(&f.step_ms[..=k], k);
@@ -430,8 +384,6 @@ fn glm_dflash_traces_the_controller_is_at_least_as_good_as_every_old_mechanism()
         let noise = sampling_noise(&trace);
         for (name, o) in [
             ("fixed (logged)", &fixed),
-            ("gamma resolver", &resolved),
-            ("mtp gate", &gated),
             ("adaptive-K port", &adaptive_k),
             ("ctl latency", &ctl),
             ("ctl online", &onl),
@@ -449,20 +401,23 @@ fn glm_dflash_traces_the_controller_is_at_least_as_good_as_every_old_mechanism()
             ctl.tok_per_ms(),
             adaptive_k.tok_per_ms()
         );
-        for (name, old) in [("fixed", &fixed), ("resolver", &resolved), ("gate", &gated)] {
+        let olds = [
+            ("fixed", fixed.tok_per_ms()),
+            ("resolver (recorded)", tr.baseline_resolver_tok_ms),
+            ("gate (recorded)", tr.baseline_gate_tok_ms),
+        ];
+        for (name, old) in olds {
             assert!(
-                onl.tok_per_ms() >= old.tok_per_ms() * (1.0 - noise),
-                "{}: online controller {:.5} tok/ms < {name} {:.5}",
+                onl.tok_per_ms() >= old * (1.0 - noise),
+                "{}: online controller {:.5} tok/ms < {name} {old:.5}",
                 tr.name,
                 onl.tok_per_ms(),
-                old.tok_per_ms()
             );
             assert!(
-                ctl.tok_per_ms() >= old.tok_per_ms(),
-                "{}: controller {:.5} tok/ms < {name} {:.5}",
+                ctl.tok_per_ms() >= old,
+                "{}: controller {:.5} tok/ms < {name} {old:.5}",
                 tr.name,
                 ctl.tok_per_ms(),
-                old.tok_per_ms()
             );
         }
     }

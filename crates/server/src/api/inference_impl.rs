@@ -348,7 +348,7 @@ impl InferenceRequest {
     }
 
     /// 2026-09-26: When true, the sequence is not eligible for speculative
-    /// decode (`metrale_speculative::mtp_gate::spec_dispatch_eligible`). Every
+    /// decode (`metrale_speculative::spec_eligibility::spec_dispatch_eligible`). Every
     /// API handler sets it to `false`.
     pub fn disable_mtp(&self) -> bool {
         match self {

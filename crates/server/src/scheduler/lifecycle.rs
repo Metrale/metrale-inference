@@ -335,7 +335,7 @@ pub fn resume_swapped_seq(
         think_ended: s.think_ended,
         think_just_ended: s.think_just_ended,
         post_think_emitted: s.post_think_emitted,
-        spec_adapt: Default::default(),
+        spec_ctl: Default::default(),
         think_skip_count: s.think_skip_count,
         require_tool_call: s.require_tool_call,
         tool_request: s.tool_request,

@@ -134,7 +134,7 @@ pub enum InferenceRequest {
         /// to push the `<tool_call>` logit down.
         suppress_tool_call: bool,
         /// 2026-09-26: When true, the sequence is not eligible for speculative
-        /// decode (`mtp_gate::spec_dispatch_eligible`). Every API handler
+        /// decode (`spec_eligibility::spec_dispatch_eligible`). Every API handler
         /// sets `false`.
         disable_mtp: bool,
         grammar_spec: Option<GrammarSpec>,

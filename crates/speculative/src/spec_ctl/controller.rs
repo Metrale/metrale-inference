@@ -96,24 +96,40 @@ impl SpecController {
         m.deeper != 0.0 || m.shallower != 0.0
     }
 
-    /// 2026-10-10: The top candidate depth under `cap`.
-    fn top(&self, cap: usize) -> usize {
-        let src = self.cfg.source.max_k.min(cap);
-        self.cost.source.max_k().map_or(src, |m| m.min(src))
+    /// 2026-10-10: The candidate depths: `allowed` (ascending) up to the drafter's and the cost
+    /// source's deepest, without plain decode while any stream is in its re-probe window
+    /// (unless nothing else is allowed).
+    fn pool(&self, streams: &[&SeqState], allowed: &[usize]) -> Vec<usize> {
+        let src = self.cfg.source.max_k;
+        let top = self.cost.source.max_k().map_or(src, |m| m.min(src));
+        let in_range: Vec<usize> = allowed.iter().copied().filter(|&k| k <= top).collect();
+        let no_plain = streams.iter().any(|s| s.probe_left > 0);
+        let pool: Vec<usize> = in_range
+            .iter()
+            .copied()
+            .filter(|&k| !(no_plain && k == 0))
+            .collect();
+        match (pool.is_empty(), in_range.first()) {
+            (true, Some(&k)) => vec![k],
+            (true, None) => vec![0],
+            (false, _) => pool,
+        }
     }
 
-    /// 2026-10-10: The shallowest candidate depth the cost model has not measured (an online
+    /// 2026-10-10: The shallowest pool depth the cost model has not measured (an online
     /// source's new or stale cell), which runs before anything is planned from it.
-    fn probe(&self, streams: &[&SeqState], n: usize, top: usize) -> Option<usize> {
-        let lo = usize::from(streams.iter().any(|s| s.probe_left > 0)).min(top);
-        (lo..=top).find(|&k| self.cost.needs_probe(n, k))
+    fn probe(&self, n: usize, pool: &[usize]) -> Option<usize> {
+        pool.iter().copied().find(|&k| self.cost.needs_probe(n, k))
     }
 
-    /// 2026-10-10: The candidates for `streams` at width `n` up to `top`: every depth the cost
-    /// model prices. `None` when no stream has rates.
-    fn candidates(&self, streams: &[&SeqState], n: usize, top: usize) -> Option<Vec<Candidate>> {
-        // 2026-10-10: A stream in its re-probe window may not choose plain decode.
-        let lo = usize::from(streams.iter().any(|s| s.probe_left > 0)).min(top);
+    /// 2026-10-10: The candidates for `streams` at width `n` over `pool`: every depth the cost
+    /// model prices. `None` when a stream has no rates.
+    fn candidates(
+        &self,
+        streams: &[&SeqState],
+        n: usize,
+        pool: &[usize],
+    ) -> Option<Vec<Candidate>> {
         let rates: Vec<_> = streams
             .iter()
             .map(|s| {
@@ -121,8 +137,9 @@ impl SpecController {
                     .rates(&self.cfg.accept, Some(&self.global), &self.cold)
             })
             .collect::<Option<_>>()?;
-        let cands = (lo..=top)
-            .filter_map(|k| {
+        let cands = pool
+            .iter()
+            .filter_map(|&k| {
                 let cost = self.cost.cost(n, k)?;
                 let es = rates.iter().map(|c| expected_tokens(c, k));
                 let (tokens, slowest) =
@@ -138,57 +155,84 @@ impl SpecController {
         Some(cands)
     }
 
+    /// 2026-10-10: The decision over `pool` for `streams` at width `n`: a probe when a cell is
+    /// unmeasured, else the choice, then exploration one deeper when it is due and allowed.
+    /// With no rates the caller's `no_data` depth runs.
+    #[allow(clippy::too_many_arguments)]
+    fn decide(
+        &self,
+        streams: &[&SeqState],
+        n: usize,
+        pool: &[usize],
+        incumbent: Option<usize>,
+        explore: &mut ExploreState,
+        steps: u32,
+        no_data: usize,
+    ) -> usize {
+        explore.probing = false;
+        if let Some(k) = self.probe(n, pool) {
+            explore.probing = true;
+            return k;
+        }
+        let deepest = pool.last().copied().unwrap_or(0);
+        let Some(cands) = self.candidates(streams, n, pool) else {
+            return no_data;
+        };
+        let k = choose(&self.cfg.objective, &self.cfg.margins, incumbent, &cands).unwrap_or(0);
+        let e = self.cfg.reprobe.explore(explore, k, steps, deepest);
+        if pool.contains(&e) { e } else { k }
+    }
+
     /// 2026-10-10: The next step's draft count for one stream at width `n` under `cap` (0:
-    /// plain decode). A suspended stream gets 0 until [`Self::note_plain_token`] resumes it.
+    /// plain decode; `cap` while nothing is measured). A suspended stream gets 0 until [`Self::note_plain_token`] resumes it.
     /// Advances the stream's exploration schedule when it explores.
     pub fn drafts(&self, seq: &mut SeqState, n: usize, cap: usize) -> usize {
         if seq.suspended.is_some() {
             return 0;
         }
-        let top = self.top(cap);
-        seq.explore.probing = false;
-        if let Some(k) = self.probe(&[seq], n, top) {
-            seq.explore.probing = true;
-            return k;
-        }
-        let Some(cands) = self.candidates(&[seq], n, top) else {
-            return cap;
-        };
+        let allowed: Vec<usize> = (0..=cap).collect();
+        let pool = self.pool(&[seq], &allowed);
         let inc = if self.hysteresis() {
             seq.incumbent
         } else {
             None
         };
-        let k = choose(&self.cfg.objective, &self.cfg.margins, inc, &cands).unwrap_or(0);
-        self.cfg
-            .reprobe
-            .explore(&mut seq.explore, k, seq.steps, cap)
+        let mut explore = std::mem::take(&mut seq.explore);
+        let k = self.decide(&[seq], n, &pool, inc, &mut explore, seq.steps, cap);
+        seq.explore = explore;
+        k
     }
 
-    /// 2026-10-10: One draft count for a whole batch of `streams` (a uniform-depth verify):
-    /// the objective summed (or, for Latency, minimised) over the streams. `cap` when no stream
-    /// has data. While every stream is suspended the batch plain-decodes. `explore` is the
-    /// batch's exploration schedule, counted in the first stream's decisions.
+    /// 2026-10-10: One draft count for a whole batch of `streams` (a uniform-depth verify) over
+    /// `0..=cap`: the objective summed (or, for Latency, minimised) over the streams. See
+    /// [`Self::batch_drafts_in`].
     pub fn batch_drafts(
         &self,
         streams: &[&SeqState],
         explore: &mut ExploreState,
         cap: usize,
     ) -> usize {
-        if !streams.is_empty() && streams.iter().all(|s| s.suspended()) {
+        let allowed: Vec<usize> = (0..=cap).collect();
+        self.batch_drafts_in(streams, explore, &allowed)
+    }
+
+    /// 2026-10-10: One draft count for a batch, among the depths in `allowed` (ascending; the
+    /// host's dispatchable depths, e.g. plain decode and the ladder's depth). While every
+    /// stream is suspended the batch plain-decodes. `explore` is the batch's exploration
+    /// schedule, counted in the first stream's decisions.
+    pub fn batch_drafts_in(
+        &self,
+        streams: &[&SeqState],
+        explore: &mut ExploreState,
+        allowed: &[usize],
+    ) -> usize {
+        if !streams.is_empty() && streams.iter().all(|s| s.suspended()) && allowed.contains(&0) {
             return 0;
         }
-        let top = self.top(cap);
-        explore.probing = false;
-        if let Some(k) = self.probe(streams, streams.len(), top) {
-            explore.probing = true;
-            return k;
-        }
-        let Some(cands) = self.candidates(streams, streams.len(), top) else {
-            return cap;
-        };
-        let k = choose(&self.cfg.objective, &self.cfg.margins, None, &cands).unwrap_or(0);
-        self.cfg.reprobe.explore(explore, k, streams[0].steps, cap)
+        let pool = self.pool(streams, allowed);
+        let steps = streams.first().map_or(0, |s| s.steps);
+        let no_data = allowed.last().copied().unwrap_or(0);
+        self.decide(streams, streams.len(), &pool, None, explore, steps, no_data)
     }
 
     /// 2026-10-10: The host ran `k` drafts for `seq` as [`Self::drafts`] chose: it becomes the

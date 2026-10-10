@@ -58,12 +58,18 @@ fn the_disclosure_is_read_off_the_rendered_serve() {
     // 2026-09-26: Speculation on and no `mtp_gate` pinned: no `mtp_gate` is
     // disclosed, rather than `auto`.
     assert_eq!(
-        disclosed("  speculative: \"true\"\n", &[]),
+        disclosed(
+            "  speculative: \"true\"\n  spec_objective: throughput\n",
+            &[]
+        ),
         pairs(&[("speculative", "true")])
     );
     // 2026-09-26: An explicit `auto` is disclosed.
     assert_eq!(
-        disclosed("  speculative: \"true\"\n  mtp_gate: auto\n", &[]),
+        disclosed(
+            "  speculative: \"true\"\n  mtp_gate: auto\n  spec_objective: throughput\n",
+            &[]
+        ),
         pairs(&[("mtp_gate", "auto"), ("speculative", "true")])
     );
     // 2026-09-26: A `--serve-override mtp_gate=force` on an `auto` recipe wins.
